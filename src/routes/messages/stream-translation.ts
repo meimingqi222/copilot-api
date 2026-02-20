@@ -1,4 +1,7 @@
-import { type ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
+import {
+  type ChatCompletionChunk,
+  type ChatCompletionReasoningDetail,
+} from "~/services/copilot/create-chat-completions"
 
 import {
   type AnthropicStreamEventData,
@@ -14,6 +17,128 @@ function isToolBlockOpen(state: AnthropicStreamState): boolean {
   return Object.values(state.toolCalls).some(
     (tc) => tc.anthropicBlockIndex === state.contentBlockIndex,
   )
+}
+
+function stopCurrentContentBlock(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+  incrementIndex = true,
+): void {
+  if (!state.contentBlockOpen) {
+    return
+  }
+
+  events.push({
+    type: "content_block_stop",
+    index: state.contentBlockIndex,
+  })
+
+  if (incrementIndex) {
+    state.contentBlockIndex++
+  }
+
+  state.contentBlockOpen = false
+  state.currentContentBlockType = undefined
+}
+
+function ensureTextBlockOpen(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+): void {
+  if (state.contentBlockOpen && state.currentContentBlockType !== "text") {
+    stopCurrentContentBlock(state, events)
+  }
+
+  if (state.contentBlockOpen) {
+    return
+  }
+
+  events.push({
+    type: "content_block_start",
+    index: state.contentBlockIndex,
+    content_block: {
+      type: "text",
+      text: "",
+    },
+  })
+  state.contentBlockOpen = true
+  state.currentContentBlockType = "text"
+}
+
+function ensureThinkingBlockOpen(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+  signature?: string,
+): void {
+  if (state.contentBlockOpen && state.currentContentBlockType !== "thinking") {
+    stopCurrentContentBlock(state, events)
+  }
+
+  if (state.contentBlockOpen) {
+    return
+  }
+
+  events.push({
+    type: "content_block_start",
+    index: state.contentBlockIndex,
+    content_block: {
+      type: "thinking",
+      thinking: "",
+      ...(signature ? { signature } : {}),
+    },
+  })
+  state.contentBlockOpen = true
+  state.currentContentBlockType = "thinking"
+}
+
+function getReasoningText(
+  source: ChatCompletionReasoningDetail,
+): string | undefined {
+  return source.thinking ?? source.reasoning ?? source.text
+}
+
+function getThinkingDelta(
+  delta: ChatCompletionChunk["choices"][number]["delta"],
+): {
+  thinking?: string
+  signature?: string
+} {
+  const reasoningParts: Array<string> = []
+  let signature =
+    delta.thinking_signature
+    ?? delta.reasoning_signature
+    ?? delta.signature
+    ?? undefined
+
+  if (delta.thinking) {
+    reasoningParts.push(delta.thinking)
+  }
+
+  if (delta.reasoning_content) {
+    reasoningParts.push(delta.reasoning_content)
+  }
+
+  if (delta.reasoning) {
+    reasoningParts.push(delta.reasoning)
+  }
+
+  if (Array.isArray(delta.reasoning_details)) {
+    for (const detail of delta.reasoning_details) {
+      const detailText = getReasoningText(detail)
+      if (detailText) {
+        reasoningParts.push(detailText)
+      }
+
+      if (!signature && detail.signature) {
+        signature = detail.signature
+      }
+    }
+  }
+
+  return {
+    thinking: reasoningParts.length > 0 ? reasoningParts.join("") : undefined,
+    signature,
+  }
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity
@@ -57,28 +182,40 @@ export function translateChunkToAnthropicEvents(
     state.messageStartSent = true
   }
 
+  const thinkingDelta = getThinkingDelta(delta)
+  if (thinkingDelta.thinking || thinkingDelta.signature) {
+    ensureThinkingBlockOpen(state, events, thinkingDelta.signature)
+
+    if (thinkingDelta.thinking) {
+      events.push({
+        type: "content_block_delta",
+        index: state.contentBlockIndex,
+        delta: {
+          type: "thinking_delta",
+          thinking: thinkingDelta.thinking,
+        },
+      })
+    }
+
+    if (thinkingDelta.signature) {
+      events.push({
+        type: "content_block_delta",
+        index: state.contentBlockIndex,
+        delta: {
+          type: "signature_delta",
+          signature: thinkingDelta.signature,
+        },
+      })
+    }
+  }
+
   if (delta.content) {
     if (isToolBlockOpen(state)) {
       // A tool block was open, so close it before starting a text block.
-      events.push({
-        type: "content_block_stop",
-        index: state.contentBlockIndex,
-      })
-      state.contentBlockIndex++
-      state.contentBlockOpen = false
+      stopCurrentContentBlock(state, events)
     }
 
-    if (!state.contentBlockOpen) {
-      events.push({
-        type: "content_block_start",
-        index: state.contentBlockIndex,
-        content_block: {
-          type: "text",
-          text: "",
-        },
-      })
-      state.contentBlockOpen = true
-    }
+    ensureTextBlockOpen(state, events)
 
     events.push({
       type: "content_block_delta",
@@ -96,12 +233,7 @@ export function translateChunkToAnthropicEvents(
         // New tool call starting.
         if (state.contentBlockOpen) {
           // Close any previously open block.
-          events.push({
-            type: "content_block_stop",
-            index: state.contentBlockIndex,
-          })
-          state.contentBlockIndex++
-          state.contentBlockOpen = false
+          stopCurrentContentBlock(state, events)
         }
 
         const anthropicBlockIndex = state.contentBlockIndex
@@ -122,6 +254,7 @@ export function translateChunkToAnthropicEvents(
           },
         })
         state.contentBlockOpen = true
+        state.currentContentBlockType = "tool_use"
       }
 
       if (toolCall.function?.arguments) {
@@ -144,11 +277,7 @@ export function translateChunkToAnthropicEvents(
 
   if (choice.finish_reason) {
     if (state.contentBlockOpen) {
-      events.push({
-        type: "content_block_stop",
-        index: state.contentBlockIndex,
-      })
-      state.contentBlockOpen = false
+      stopCurrentContentBlock(state, events, false)
     }
 
     events.push(

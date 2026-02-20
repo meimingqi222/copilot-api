@@ -78,6 +78,14 @@ export interface ChatCompletionChunk {
   }
 }
 
+export interface ChatCompletionReasoningDetail {
+  type?: string
+  text?: string
+  reasoning?: string
+  thinking?: string
+  signature?: string
+}
+
 interface Delta {
   content?: string | null
   role?: "user" | "assistant" | "system" | "tool"
@@ -90,6 +98,13 @@ interface Delta {
       arguments?: string
     }
   }>
+  reasoning?: string | null
+  reasoning_content?: string | null
+  thinking?: string | null
+  signature?: string | null
+  reasoning_signature?: string | null
+  thinking_signature?: string | null
+  reasoning_details?: Array<ChatCompletionReasoningDetail> | null
 }
 
 interface Choice {
@@ -120,8 +135,14 @@ export interface ChatCompletionResponse {
 
 interface ResponseMessage {
   role: "assistant"
-  content: string | null
+  content: string | Array<ContentPart> | null
   tool_calls?: Array<ToolCall>
+  reasoning?: string | null
+  thinking?: string | null
+  signature?: string | null
+  reasoning_signature?: string | null
+  thinking_signature?: string | null
+  reasoning_details?: Array<ChatCompletionReasoningDetail> | null
 }
 
 interface ChoiceNonStreaming {
@@ -157,6 +178,12 @@ export interface ChatCompletionsPayload {
     | { type: "function"; function: { name: string } }
     | null
   user?: string | null
+  reasoning_effort?: "low" | "medium" | "high" | null
+  reasoning?: Record<string, unknown> | null
+  thinking?: {
+    type: "enabled"
+    budget_tokens?: number
+  } | null
 }
 
 export interface Tool {
@@ -186,11 +213,28 @@ export interface ToolCall {
   }
 }
 
-export type ContentPart = TextPart | ImagePart
+export type ContentPart =
+  | TextPart
+  | ImagePart
+  | OutputTextPart
+  | ReasoningContentPart
 
 export interface TextPart {
   type: "text"
   text: string
+}
+
+export interface OutputTextPart {
+  type: "output_text"
+  text: string
+}
+
+export interface ReasoningContentPart {
+  type: "reasoning" | "thinking"
+  text?: string
+  reasoning?: string
+  thinking?: string
+  signature?: string
 }
 
 export interface ImagePart {
