@@ -189,6 +189,89 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation", () => {
     expect(isValidAnthropicResponse(anthropicResponse)).toBe(true)
     expect(anthropicResponse.stop_reason).toBe("max_tokens")
   })
+
+  test("should translate only the first choice", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-multi",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "first choice",
+          },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+        {
+          index: 1,
+          message: {
+            role: "assistant",
+            content: "second choice",
+          },
+          finish_reason: "tool_calls",
+          logprobs: null,
+        },
+      ],
+      usage: {
+        prompt_tokens: 12,
+        completion_tokens: 6,
+        total_tokens: 18,
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(openAIResponse)
+
+    expect(anthropicResponse.stop_reason).toBe("end_turn")
+    expect(anthropicResponse.content).toEqual([
+      { type: "text", text: "first choice" },
+    ])
+  })
+
+  test("should handle invalid tool call arguments", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-invalid-tool-args",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "gpt-4o-2024-05-13",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_invalid",
+                type: "function",
+                function: {
+                  name: "bad_json_tool",
+                  arguments: "{not json",
+                },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+          logprobs: null,
+        },
+      ],
+      usage: {
+        prompt_tokens: 4,
+        completion_tokens: 2,
+        total_tokens: 6,
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(openAIResponse)
+
+    expect(anthropicResponse.content[0]?.type).toBe("tool_use")
+    if (anthropicResponse.content[0]?.type === "tool_use") {
+      expect(anthropicResponse.content[0].input).toEqual({})
+    }
+  })
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation", () => {

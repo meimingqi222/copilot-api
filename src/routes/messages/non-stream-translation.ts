@@ -281,36 +281,19 @@ function translateAnthropicToolChoiceToOpenAI(
 export function translateToAnthropic(
   response: ChatCompletionResponse,
 ): AnthropicResponse {
-  // Merge content from all choices
-  const allTextBlocks: Array<AnthropicTextBlock> = []
-  const allToolUseBlocks: Array<AnthropicToolUseBlock> = []
-  let stopReason: "stop" | "length" | "tool_calls" | "content_filter" | null =
-    null // default
-  stopReason = response.choices[0]?.finish_reason ?? stopReason
-
-  // Process all choices to extract text and tool use blocks
-  for (const choice of response.choices) {
-    const textBlocks = getAnthropicTextBlocks(choice.message.content)
-    const toolUseBlocks = getAnthropicToolUseBlocks(choice.message.tool_calls)
-
-    allTextBlocks.push(...textBlocks)
-    allToolUseBlocks.push(...toolUseBlocks)
-
-    // Use the finish_reason from the first choice, or prioritize tool_calls
-    if (choice.finish_reason === "tool_calls" || stopReason === "stop") {
-      stopReason = choice.finish_reason
-    }
-  }
-
-  // Note: GitHub Copilot doesn't generate thinking blocks, so we don't include them in responses
+  const primaryChoice = response.choices[0]
+  const textBlocks = getAnthropicTextBlocks(primaryChoice.message.content)
+  const toolUseBlocks = getAnthropicToolUseBlocks(
+    primaryChoice.message.tool_calls,
+  )
 
   return {
     id: response.id,
     type: "message",
     role: "assistant",
     model: response.model,
-    content: [...allTextBlocks, ...allToolUseBlocks],
-    stop_reason: mapOpenAIStopReasonToAnthropic(stopReason),
+    content: [...textBlocks, ...toolUseBlocks],
+    stop_reason: mapOpenAIStopReasonToAnthropic(primaryChoice.finish_reason),
     stop_sequence: null,
     usage: {
       input_tokens:
@@ -352,6 +335,21 @@ function getAnthropicToolUseBlocks(
     type: "tool_use",
     id: toolCall.id,
     name: toolCall.function.name,
-    input: JSON.parse(toolCall.function.arguments) as Record<string, unknown>,
+    input: parseToolCallArguments(toolCall.function.arguments),
   }))
+}
+
+function parseToolCallArguments(
+  argumentsJson: string,
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(argumentsJson) as unknown
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+  } catch {
+    return {}
+  }
+
+  return {}
 }

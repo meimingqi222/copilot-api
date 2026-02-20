@@ -15,7 +15,7 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 export async function handleCompletion(c: Context) {
-  await checkRateLimit(state)
+  await checkRateLimit()
 
   let payload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
