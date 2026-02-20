@@ -3,6 +3,10 @@ import { events } from "fetch-event-stream"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import {
+  reportUpstreamRateLimit,
+  reportUpstreamSuccess,
+} from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 
 export const createChatCompletions = async (
@@ -35,9 +39,14 @@ export const createChatCompletions = async (
   })
 
   if (!response.ok) {
+    if (response.status === 429) {
+      await reportUpstreamRateLimit(response)
+    }
     consola.error("Failed to create chat completions", response)
     throw new HTTPError("Failed to create chat completions", response)
   }
+
+  await reportUpstreamSuccess()
 
   if (payload.stream) {
     return events(response)

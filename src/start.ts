@@ -19,12 +19,12 @@ interface RunServerOptions {
   verbose: boolean
   accountType: string
   manual: boolean
-  rateLimit?: number
-  rateLimitWait: boolean
   githubToken?: string
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
+  apiKey?: string
+  adminPassword?: string
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -43,17 +43,27 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   state.manualApprove = options.manual
-  state.rateLimitSeconds = options.rateLimit
-  state.rateLimitWait = options.rateLimitWait
   state.showToken = options.showToken
+  state.apiKey = options.apiKey
+  state.adminPassword = options.adminPassword ?? options.apiKey
 
-  await ensurePaths()
-  await cacheVSCodeVersion()
+  if (state.apiKey) {
+    consola.info("API key protection enabled")
+  }
+
+  if (state.adminPassword) {
+    consola.info("Admin login password is configured")
+  }
 
   if (options.githubToken) {
     state.githubToken = options.githubToken
     consola.info("Using provided GitHub token")
-  } else {
+  }
+
+  await ensurePaths()
+  await cacheVSCodeVersion()
+
+  if (!options.githubToken) {
     await setupGitHubToken()
   }
 
@@ -110,9 +120,15 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     }
   }
 
-  consola.box(
-    `🌐 Usage Viewer: https://ericc-ch.github.io/copilot-api?endpoint=${serverUrl}/usage`,
-  )
+  if (state.apiKey) {
+    consola.box(
+      `🔐 API key protection is enabled.\nAdmin login: ${serverUrl}/admin/login\nUsage dashboard: ${serverUrl}/usage (requires auth)\nAdmin password source: ADMIN_PASSWORD (or --admin-password). Fallback: API_KEY`,
+    )
+  } else {
+    consola.box(
+      `🌐 Local Usage Dashboard: ${serverUrl}/usage\n(Or add API key to require authentication)`,
+    )
+  }
 
   serve({
     fetch: server.fetch as ServerHandler,
@@ -149,18 +165,6 @@ export const start = defineCommand({
       default: false,
       description: "Enable manual request approval",
     },
-    "rate-limit": {
-      alias: "r",
-      type: "string",
-      description: "Rate limit in seconds between requests",
-    },
-    wait: {
-      alias: "w",
-      type: "boolean",
-      default: false,
-      description:
-        "Wait instead of error when rate limit is hit. Has no effect if rate limit is not set",
-    },
     "github-token": {
       alias: "g",
       type: "string",
@@ -179,6 +183,16 @@ export const start = defineCommand({
       default: false,
       description: "Show GitHub and Copilot tokens on fetch and refresh",
     },
+    "api-key": {
+      type: "string",
+      description:
+        "Require callers to provide this API key via Authorization: Bearer <key>",
+    },
+    "admin-password": {
+      type: "string",
+      description:
+        "Password for /admin/login (falls back to API key if not set)",
+    },
     "proxy-env": {
       type: "boolean",
       default: false,
@@ -186,22 +200,17 @@ export const start = defineCommand({
     },
   },
   run({ args }) {
-    const rateLimitRaw = args["rate-limit"]
-    const rateLimit =
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      rateLimitRaw === undefined ? undefined : Number.parseInt(rateLimitRaw, 10)
-
     return runServer({
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
       accountType: args["account-type"],
       manual: args.manual,
-      rateLimit,
-      rateLimitWait: args.wait,
       githubToken: args["github-token"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],
+      apiKey: args["api-key"] || process.env.API_KEY,
+      adminPassword: args["admin-password"] || process.env.ADMIN_PASSWORD,
     })
   },
 })

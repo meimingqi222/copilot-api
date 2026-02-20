@@ -9,17 +9,15 @@ export interface State {
   vsCodeVersion?: string
 
   manualApprove: boolean
-  rateLimitWait: boolean
   showToken: boolean
-
-  // Rate limiting configuration
-  rateLimitSeconds?: number
-  lastRequestTimestamp?: number
+  apiKey?: string
+  adminPassword?: string
+  adminSessionToken?: string
+  adminSessionExpiresAt?: number
 }
 
 export const state: State = {
   accountType: "individual",
   manualApprove: false,
-  rateLimitWait: false,
   showToken: false,
 }

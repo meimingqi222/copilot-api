@@ -2,6 +2,8 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 
+import { requireApiKey } from "./lib/request-auth"
+import { adminRoutes } from "./routes/admin/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
@@ -13,8 +15,10 @@ export const server = new Hono()
 
 server.use(logger())
 server.use(cors())
+server.use("*", requireApiKey)
 
 server.get("/", (c) => c.text("Server running"))
+server.route("/admin", adminRoutes)
 
 server.route("/chat/completions", completionRoutes)
 server.route("/models", modelRoutes)
