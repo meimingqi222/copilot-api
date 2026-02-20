@@ -1,9 +1,10 @@
 import {
+  type ChatCompletionReasoningDetail,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
   type ContentPart,
   type Message,
-  type TextPart,
+  type ReasoningContentPart,
   type Tool,
   type ToolCall,
 } from "~/services/copilot/create-chat-completions"
@@ -43,6 +44,8 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
+    thinking: payload.thinking,
+    reasoning: translateAnthropicThinkingToOpenAI(payload.thinking),
   }
 }
 
@@ -139,25 +142,19 @@ function handleAssistantMessage(
     (block): block is AnthropicToolUseBlock => block.type === "tool_use",
   )
 
-  const textBlocks = message.content.filter(
-    (block): block is AnthropicTextBlock => block.type === "text",
-  )
-
-  const thinkingBlocks = message.content.filter(
-    (block): block is AnthropicThinkingBlock => block.type === "thinking",
-  )
-
-  // Combine text and thinking blocks, as OpenAI doesn't have separate thinking blocks
-  const allTextContent = [
-    ...textBlocks.map((b) => b.text),
-    ...thinkingBlocks.map((b) => b.thinking),
-  ].join("\n\n")
+  const orderedTextContent = message.content
+    .filter(
+      (block): block is AnthropicTextBlock | AnthropicThinkingBlock =>
+        block.type === "text" || block.type === "thinking",
+    )
+    .map((block) => (block.type === "text" ? block.text : block.thinking))
+    .join("\n\n")
 
   return toolUseBlocks.length > 0 ?
       [
         {
           role: "assistant",
-          content: allTextContent || null,
+          content: orderedTextContent || null,
           tool_calls: toolUseBlocks.map((toolUse) => ({
             id: toolUse.id,
             type: "function",
@@ -244,6 +241,22 @@ function translateAnthropicToolsToOpenAI(
   }))
 }
 
+function translateAnthropicThinkingToOpenAI(
+  thinking: AnthropicMessagesPayload["thinking"],
+): ChatCompletionsPayload["reasoning"] {
+  if (!thinking) {
+    return undefined
+  }
+
+  return {
+    type: thinking.type,
+    enabled: true,
+    ...(thinking.budget_tokens !== undefined && {
+      budget_tokens: thinking.budget_tokens,
+    }),
+  }
+}
+
 function translateAnthropicToolChoiceToOpenAI(
   anthropicToolChoice: AnthropicMessagesPayload["tool_choice"],
 ): ChatCompletionsPayload["tool_choice"] {
@@ -282,7 +295,7 @@ export function translateToAnthropic(
   response: ChatCompletionResponse,
 ): AnthropicResponse {
   const primaryChoice = response.choices[0]
-  const textBlocks = getAnthropicTextBlocks(primaryChoice.message.content)
+  const contentBlocks = getAnthropicContentBlocks(primaryChoice.message)
   const toolUseBlocks = getAnthropicToolUseBlocks(
     primaryChoice.message.tool_calls,
   )
@@ -292,7 +305,7 @@ export function translateToAnthropic(
     type: "message",
     role: "assistant",
     model: response.model,
-    content: [...textBlocks, ...toolUseBlocks],
+    content: [...contentBlocks, ...toolUseBlocks],
     stop_reason: mapOpenAIStopReasonToAnthropic(primaryChoice.finish_reason),
     stop_sequence: null,
     usage: {
@@ -309,20 +322,82 @@ export function translateToAnthropic(
   }
 }
 
-function getAnthropicTextBlocks(
-  messageContent: Message["content"],
-): Array<AnthropicTextBlock> {
-  if (typeof messageContent === "string") {
-    return [{ type: "text", text: messageContent }]
+function getAnthropicContentBlocks(
+  message: ChatCompletionResponse["choices"][number]["message"],
+): Array<AnthropicTextBlock | AnthropicThinkingBlock> {
+  const blocks: Array<AnthropicTextBlock | AnthropicThinkingBlock> = []
+  const seenThinking = new Set<string>()
+
+  const addThinkingBlock = (
+    thinking: string | undefined,
+    signature?: string,
+  ) => {
+    if (!thinking) {
+      return
+    }
+
+    const dedupeKey = `${thinking}\u0000${signature ?? ""}`
+    if (seenThinking.has(dedupeKey)) {
+      return
+    }
+
+    seenThinking.add(dedupeKey)
+    blocks.push({
+      type: "thinking",
+      thinking,
+      ...(signature ? { signature } : {}),
+    })
   }
 
-  if (Array.isArray(messageContent)) {
-    return messageContent
-      .filter((part): part is TextPart => part.type === "text")
-      .map((part) => ({ type: "text", text: part.text }))
+  if (typeof message.content === "string") {
+    blocks.push({ type: "text", text: message.content })
+  } else if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      switch (part.type) {
+        case "text": {
+          blocks.push({ type: "text", text: part.text })
+          break
+        }
+        case "output_text": {
+          blocks.push({ type: "text", text: part.text })
+          break
+        }
+        case "reasoning":
+        case "thinking": {
+          addThinkingBlock(
+            getReasoningText(part),
+            "signature" in part ? part.signature : undefined,
+          )
+          break
+        }
+        default: {
+          break
+        }
+      }
+    }
   }
 
-  return []
+  addThinkingBlock(
+    message.thinking ?? message.reasoning ?? undefined,
+    message.thinking_signature
+      ?? message.reasoning_signature
+      ?? message.signature
+      ?? undefined,
+  )
+
+  if (Array.isArray(message.reasoning_details)) {
+    for (const detail of message.reasoning_details) {
+      addThinkingBlock(getReasoningText(detail), detail.signature)
+    }
+  }
+
+  return blocks
+}
+
+function getReasoningText(
+  source: ChatCompletionReasoningDetail | ReasoningContentPart,
+): string | undefined {
+  return source.thinking ?? source.reasoning ?? source.text
 }
 
 function getAnthropicToolUseBlocks(

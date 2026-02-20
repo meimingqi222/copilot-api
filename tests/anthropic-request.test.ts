@@ -50,6 +50,15 @@ const chatCompletionRequestSchema = z.object({
   tools: z.array(z.any()).optional(),
   tool_choice: z.union([z.string(), z.object({})]).optional(),
   user: z.string().optional(),
+  reasoning_effort: z.enum(["low", "medium", "high"]).optional().nullable(),
+  reasoning: z.record(z.string(), z.unknown()).optional().nullable(),
+  thinking: z
+    .object({
+      type: z.literal("enabled"),
+      budget_tokens: z.number().int().optional(),
+    })
+    .optional()
+    .nullable(),
 })
 
 /**
@@ -196,6 +205,56 @@ describe("Anthropic to OpenAI translation logic", () => {
     )
     expect(assistantMessage?.tool_calls).toHaveLength(1)
     expect(assistantMessage?.tool_calls?.[0].function.name).toBe("get_weather")
+  })
+
+  test("should preserve text and thinking order in assistant content", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-3-5-sonnet-20241022",
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "First text." },
+            { type: "thinking", thinking: "First thinking." },
+            { type: "text", text: "Second text." },
+            { type: "thinking", thinking: "Second thinking." },
+          ],
+        },
+      ],
+      max_tokens: 100,
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const assistantMessage = openAIPayload.messages[0]
+
+    expect(assistantMessage.role).toBe("assistant")
+    expect(assistantMessage.content).toBe(
+      "First text.\n\nFirst thinking.\n\nSecond text.\n\nSecond thinking.",
+    )
+  })
+
+  test("should pass thinking configuration to OpenAI reasoning fields", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 512,
+      },
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+
+    expect(openAIPayload.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 512,
+    })
+    expect(openAIPayload.reasoning).toEqual({
+      type: "enabled",
+      enabled: true,
+      budget_tokens: 512,
+    })
   })
 })
 
