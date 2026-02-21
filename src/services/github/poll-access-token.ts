@@ -17,6 +17,14 @@ export async function pollAccessToken(
   const sleepDuration = (deviceCode.interval + 1) * 1000
   consola.debug(`Polling access token with interval of ${sleepDuration}ms`)
 
+  const FATAL_ERRORS = new Set([
+    "access_denied",
+    "expired_token",
+    "unsupported_grant_type",
+    "incorrect_client_credentials",
+    "incorrect_device_code",
+  ])
+
   while (true) {
     const response = await fetch(
       `${GITHUB_BASE_URL}/login/oauth/access_token`,
@@ -32,22 +40,30 @@ export async function pollAccessToken(
     )
 
     if (!response.ok) {
+      const errorText = await response.text()
+      consola.error("Failed to poll access token:", errorText)
       await sleep(sleepDuration)
-      consola.error("Failed to poll access token:", await response.text())
-
       continue
     }
 
-    const json = await response.json()
+    const json = (await response.json()) as AccessTokenResponse & {
+      error?: string
+    }
     consola.debug("Polling access token response:", json)
 
-    const { access_token } = json as AccessTokenResponse
-
-    if (access_token) {
-      return access_token
-    } else {
+    if (json.error) {
+      if (FATAL_ERRORS.has(json.error)) {
+        throw new Error(`GitHub device auth failed: ${json.error}`)
+      }
       await sleep(sleepDuration)
+      continue
     }
+
+    if (json.access_token) {
+      return json.access_token
+    }
+
+    await sleep(sleepDuration)
   }
 }
 

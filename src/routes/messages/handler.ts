@@ -4,7 +4,7 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
-import { checkRateLimit } from "~/lib/rate-limit"
+import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
   createChatCompletions,
@@ -23,7 +23,19 @@ import {
 import { translateChunkToAnthropicEvents } from "./stream-translation"
 
 export async function handleCompletion(c: Context) {
-  await checkRateLimit()
+  const signal = c.req.raw.signal
+
+  try {
+    await checkRateLimit(signal)
+  } catch (e) {
+    if (e instanceof RateLimitQueueFullError) {
+      return c.json({ error: { message: e.message, type: "error" } }, 503)
+    }
+    if (e instanceof DOMException && e.name === "AbortError") {
+      return new Response(null, { status: 499 })
+    }
+    throw e
+  }
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
@@ -38,7 +50,7 @@ export async function handleCompletion(c: Context) {
     await awaitApproval()
   }
 
-  const response = await createChatCompletions(openAIPayload)
+  const response = await createChatCompletions(openAIPayload, signal)
 
   if (isNonStreaming(response)) {
     consola.debug(

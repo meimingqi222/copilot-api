@@ -1,18 +1,22 @@
 import type { Context, Next } from "hono"
 
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
-import { randomBytes } from "node:crypto"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 
 import { state } from "./state"
 
 const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 
+// Paths that are explicitly public and require no API key.
+// /admin and /usage route handlers perform their own auth checks internally.
+const PUBLIC_PATHS = new Set(["/", "/admin/login"])
+const PUBLIC_PREFIXES = ["/admin", "/usage"]
+
 export async function requireApiKey(c: Context, next: Next) {
   if (
-    c.req.path === "/"
-    || c.req.path.startsWith("/admin")
-    || c.req.path.startsWith("/usage")
+    PUBLIC_PATHS.has(c.req.path)
+    || PUBLIC_PREFIXES.some((prefix) => c.req.path.startsWith(prefix))
   ) {
     await next()
     return
@@ -48,7 +52,18 @@ function hasValidApiKey(c: Context): boolean {
 
   const authHeader = c.req.header("authorization")
   const token = extractBearerToken(authHeader)
-  return Boolean(token && token === configuredApiKey)
+  if (!token) return false
+
+  // Use constant-time comparison to prevent timing attacks.
+  try {
+    const tokenBuf = Buffer.from(token)
+    const keyBuf = Buffer.from(configuredApiKey)
+    return (
+      tokenBuf.length === keyBuf.length && timingSafeEqual(tokenBuf, keyBuf)
+    )
+  } catch {
+    return false
+  }
 }
 
 export function setAdminSession(c: Context) {

@@ -32,6 +32,31 @@ function getShell(): ShellName {
   }
 }
 
+// Escape single quotes in POSIX shells: end the single-quote string, insert an
+// escaped single quote, then reopen the string.
+function escapePosixSingleQuote(value: string): string {
+  return value.replaceAll("'", String.raw`'\''`)
+}
+
+// PowerShell single-quoted strings treat ' as literal except '' which is an
+// escaped single quote.
+function escapePowerShell(value: string): string {
+  return value.replaceAll("'", "''")
+}
+
+// CMD does not support reliable escaping for all characters, but we prevent the
+// most dangerous injection by stripping control characters and escaping % (env
+// var expansion) and & | < > ^ (command separators/redirectors).
+function escapeCmd(value: string): string {
+  return value
+    .replaceAll("%", "%%")
+    .replaceAll("^", "^^")
+    .replaceAll("&", "^&")
+    .replaceAll("|", "^|")
+    .replaceAll("<", "^<")
+    .replaceAll(">", "^>")
+}
+
 /**
  * Generates a copy-pasteable script to set multiple environment variables
  * and run a subsequent command.
@@ -53,26 +78,28 @@ export function generateEnvScript(
   switch (shell) {
     case "powershell": {
       commandBlock = filteredEnvVars
-        .map(([key, value]) => `$env:${key} = ${value}`)
+        .map(([key, value]) => `$env:${key} = '${escapePowerShell(value)}'`)
         .join("; ")
       break
     }
     case "cmd": {
       commandBlock = filteredEnvVars
-        .map(([key, value]) => `set ${key}=${value}`)
+        .map(([key, value]) => `set ${key}=${escapeCmd(value)}`)
         .join(" & ")
       break
     }
     case "fish": {
       commandBlock = filteredEnvVars
-        .map(([key, value]) => `set -gx ${key} ${value}`)
+        .map(
+          ([key, value]) => `set -gx ${key} '${escapePosixSingleQuote(value)}'`,
+        )
         .join("; ")
       break
     }
     default: {
       // bash, zsh, sh
       const assignments = filteredEnvVars
-        .map(([key, value]) => `${key}=${value}`)
+        .map(([key, value]) => `${key}='${escapePosixSingleQuote(value)}'`)
         .join(" ")
       commandBlock = filteredEnvVars.length > 0 ? `export ${assignments}` : ""
       break

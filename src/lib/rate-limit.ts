@@ -6,8 +6,10 @@ const DEFAULT_INTERVAL_MS = 250
 const DEFAULT_BURST = 8
 const MAX_BACKOFF_MS = 60_000
 const BASE_BACKOFF_MS = 1_000
+const MAX_QUEUE_SIZE = 100
 
 let limiterLock: Promise<void> = Promise.resolve()
+let limiterQueueSize = 0
 let theoreticalArrivalMs = 0
 let cooldownUntilMs = 0
 let consecutive429Count = 0
@@ -17,7 +19,14 @@ export const adaptiveRateLimitDefaults = {
   burst: DEFAULT_BURST,
 }
 
-export async function checkRateLimit() {
+export class RateLimitQueueFullError extends Error {
+  constructor() {
+    super("Rate limiter queue is full")
+    this.name = "RateLimitQueueFullError"
+  }
+}
+
+export async function checkRateLimit(signal?: AbortSignal) {
   const waitTimeMs = await withLimiterLock(() => {
     const now = Date.now()
     const allowedAt = Math.max(
@@ -35,15 +44,14 @@ export async function checkRateLimit() {
     theoreticalArrivalMs =
       Math.max(now, theoreticalArrivalMs) + DEFAULT_INTERVAL_MS
     return 0
-  })
+  }, signal)
 
   if (waitTimeMs <= 0) return
 
-  const waitTimeSeconds = toWaitSeconds(waitTimeMs)
   consola.warn(
-    `Adaptive rate limiter waiting ${waitTimeSeconds} seconds before sending request...`,
+    `Adaptive rate limiter waiting ${toWaitSeconds(waitTimeMs)} seconds before sending request...`,
   )
-  await sleep(waitTimeMs)
+  await sleep(waitTimeMs, signal)
 }
 
 export async function reportUpstreamRateLimit(response: Response) {
@@ -78,24 +86,73 @@ export async function reportUpstreamSuccess() {
 
 export function resetAdaptiveRateLimiterForTest() {
   limiterLock = Promise.resolve()
+  limiterQueueSize = 0
   theoreticalArrivalMs = 0
   cooldownUntilMs = 0
   consecutive429Count = 0
 }
 
-async function withLimiterLock<T>(fn: () => T | Promise<T>): Promise<T> {
+export async function holdLimiterLockForTest(ms: number): Promise<void> {
+  await withLimiterLock(() => sleep(ms))
+}
+
+async function withLimiterLock<T>(
+  fn: () => T | Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  throwIfAborted(signal)
+
+  if (limiterQueueSize >= MAX_QUEUE_SIZE) {
+    throw new RateLimitQueueFullError()
+  }
+
+  limiterQueueSize += 1
+
   const previousLock = limiterLock
-  let releaseLock: (() => void) | undefined
+  let releaseLock!: () => void
   limiterLock = new Promise<void>((resolve) => {
     releaseLock = resolve
   })
 
-  await previousLock
+  let acquired = false
   try {
+    await (signal ?
+      Promise.race([previousLock, onceAbort(signal)])
+    : previousLock)
+    acquired = true
+
+    throwIfAborted(signal)
     return await fn()
+  } catch (e) {
+    if (!acquired) {
+      void previousLock.finally(() => releaseLock())
+    }
+    throw e
   } finally {
-    releaseLock?.()
+    if (acquired) releaseLock()
+    limiterQueueSize -= 1
   }
+}
+
+function makeAbortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason
+  const err = new Error("Aborted")
+  err.name = "AbortError"
+  return err
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw makeAbortError(signal)
+  }
+}
+
+function onceAbort(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    signal.addEventListener("abort", () => reject(makeAbortError(signal)), {
+      once: true,
+    })
+  })
 }
 
 function parseRetryAfterMs(retryAfterValue: string | null): number | undefined {

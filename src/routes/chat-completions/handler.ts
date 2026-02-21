@@ -4,7 +4,7 @@ import consola from "consola"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
-import { checkRateLimit } from "~/lib/rate-limit"
+import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { isNullish } from "~/lib/utils"
@@ -15,7 +15,19 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 export async function handleCompletion(c: Context) {
-  await checkRateLimit()
+  const signal = c.req.raw.signal
+
+  try {
+    await checkRateLimit(signal)
+  } catch (e) {
+    if (e instanceof RateLimitQueueFullError) {
+      return c.json({ error: { message: e.message, type: "error" } }, 503)
+    }
+    if (e instanceof DOMException && e.name === "AbortError") {
+      return new Response(null, { status: 499 })
+    }
+    throw e
+  }
 
   let payload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
@@ -47,7 +59,7 @@ export async function handleCompletion(c: Context) {
     consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
   }
 
-  const response = await createChatCompletions(payload)
+  const response = await createChatCompletions(payload, signal)
 
   if (isNonStreaming(response)) {
     consola.debug("Non-streaming response:", JSON.stringify(response))
