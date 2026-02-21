@@ -13,10 +13,22 @@ const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`
 
 const API_VERSION = "2025-04-01"
 
-export const copilotBaseUrl = (state: State) =>
-  state.accountType === "individual" ?
-    "https://api.githubcopilot.com"
-  : `https://api.${state.accountType}.githubcopilot.com`
+const ACCOUNT_TYPE_URLS: Record<string, string> = {
+  individual: "https://api.githubcopilot.com",
+  business: "https://api.business.githubcopilot.com",
+  enterprise: "https://api.enterprise.githubcopilot.com",
+}
+
+export const copilotBaseUrl = (state: State): string => {
+  const url = ACCOUNT_TYPE_URLS[state.accountType]
+  if (!url) {
+    throw new Error(
+      `Invalid account type "${state.accountType}". Must be one of: ${Object.keys(ACCOUNT_TYPE_URLS).join(", ")}`,
+    )
+  }
+  return url
+}
+
 export const copilotHeaders = (state: State, vision: boolean = false) => {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${state.copilotToken}`,

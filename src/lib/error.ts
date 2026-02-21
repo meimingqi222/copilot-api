@@ -38,7 +38,7 @@ export async function forwardError(c: Context, error: unknown) {
   return c.json(
     {
       error: {
-        message: (error as Error).message,
+        message: "Internal server error",
         type: "error",
       },
     },
