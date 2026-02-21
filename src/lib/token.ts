@@ -15,30 +15,35 @@ const readGithubToken = () => fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
 const writeGithubToken = (token: string) =>
   fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
 
+let copilotTokenRefreshTimer: ReturnType<typeof setInterval> | undefined
+
 export const setupCopilotToken = async () => {
   const { token, refresh_in } = await getCopilotToken()
   state.copilotToken = token
 
-  // Display the Copilot token to the screen
   consola.debug("GitHub Copilot Token fetched successfully!")
   if (state.showToken) {
     consola.info("Copilot token:", token)
   }
 
+  if (copilotTokenRefreshTimer !== undefined) {
+    clearInterval(copilotTokenRefreshTimer)
+  }
+
   const refreshInterval = (refresh_in - 60) * 1000
-  setInterval(async () => {
+  copilotTokenRefreshTimer = setInterval(() => {
     consola.debug("Refreshing Copilot token")
-    try {
-      const { token } = await getCopilotToken()
-      state.copilotToken = token
-      consola.debug("Copilot token refreshed")
-      if (state.showToken) {
-        consola.info("Refreshed Copilot token:", token)
-      }
-    } catch (error) {
-      consola.error("Failed to refresh Copilot token:", error)
-      throw error
-    }
+    getCopilotToken()
+      .then(({ token: newToken }) => {
+        state.copilotToken = newToken
+        consola.debug("Copilot token refreshed")
+        if (state.showToken) {
+          consola.info("Refreshed Copilot token:", newToken)
+        }
+      })
+      .catch((error: unknown) => {
+        consola.error("Failed to refresh Copilot token:", error)
+      })
   }, refreshInterval)
 }
 
