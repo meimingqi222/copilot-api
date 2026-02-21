@@ -1,3 +1,4 @@
+import { sanitizeId } from "~/lib/id-sanitizer"
 import {
   type ChatCompletionReasoningDetail,
   type ChatCompletionResponse,
@@ -105,7 +106,7 @@ function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
     for (const block of toolResultBlocks) {
       newMessages.push({
         role: "tool",
-        tool_call_id: block.tool_use_id,
+        tool_call_id: sanitizeId(block.tool_use_id),
         content: mapContent(block.content),
       })
     }
@@ -156,7 +157,7 @@ function handleAssistantMessage(
           role: "assistant",
           content: orderedTextContent || null,
           tool_calls: toolUseBlocks.map((toolUse) => ({
-            id: toolUse.id,
+            id: sanitizeId(toolUse.id),
             type: "function",
             function: {
               name: toolUse.name,
@@ -408,7 +409,7 @@ function getAnthropicToolUseBlocks(
   }
   return toolCalls.map((toolCall) => ({
     type: "tool_use",
-    id: toolCall.id,
+    id: sanitizeId(toolCall.id),
     name: toolCall.function.name,
     input: parseToolCallArguments(toolCall.function.arguments),
   }))
