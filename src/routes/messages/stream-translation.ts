@@ -1,3 +1,4 @@
+import { sanitizeId } from "~/lib/id-sanitizer"
 import {
   type ChatCompletionChunk,
   type ChatCompletionReasoningDetail,
@@ -237,8 +238,9 @@ export function translateChunkToAnthropicEvents(
         }
 
         const anthropicBlockIndex = state.contentBlockIndex
+        const sanitizedId = sanitizeId(toolCall.id)
         state.toolCalls[toolCall.index] = {
-          id: toolCall.id,
+          id: sanitizedId,
           name: toolCall.function.name,
           anthropicBlockIndex,
         }
@@ -248,7 +250,7 @@ export function translateChunkToAnthropicEvents(
           index: anthropicBlockIndex,
           content_block: {
             type: "tool_use",
-            id: toolCall.id,
+            id: sanitizedId,
             name: toolCall.function.name,
             input: {},
           },
