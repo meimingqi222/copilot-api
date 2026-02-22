@@ -57,4 +57,16 @@ describe("inferInitiatorFromOpenAIMessages", () => {
     ]
     expect(inferInitiatorFromOpenAIMessages(messages)).toBe("user")
   })
+
+  test("does not treat environment_context wrapper as compaction by itself", () => {
+    const messages: Array<Message> = [
+      { role: "assistant", content: "working..." },
+      {
+        role: "user",
+        content:
+          "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>\n继续",
+      },
+    ]
+    expect(inferInitiatorFromOpenAIMessages(messages)).toBe("user")
+  })
 })

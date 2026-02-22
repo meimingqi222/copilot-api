@@ -4,6 +4,8 @@ import type {
   AnthropicUserMessage,
 } from "./anthropic-types"
 
+import { hasClaudeCodeBeta } from "./anthropic-beta"
+
 export type CopilotInitiator = "agent" | "user"
 
 function hasToolResult(message: AnthropicUserMessage): boolean {
@@ -42,7 +44,7 @@ function isLikelyClaudeCodeCompaction(
   previousMessage: AnthropicMessage | undefined,
   anthropicBeta?: string,
 ): boolean {
-  if (!anthropicBeta?.startsWith("claude-code")) {
+  if (!hasClaudeCodeBeta(anthropicBeta)) {
     return false
   }
 

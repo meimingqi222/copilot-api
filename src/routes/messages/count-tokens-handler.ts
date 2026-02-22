@@ -5,6 +5,7 @@ import consola from "consola"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 
+import { hasClaudeCodeBeta } from "./anthropic-beta"
 import { type AnthropicMessagesPayload } from "./anthropic-types"
 import { translateToOpenAI } from "./non-stream-translation"
 
@@ -34,7 +35,7 @@ export async function handleCountTokens(c: Context) {
 
     if (anthropicPayload.tools && anthropicPayload.tools.length > 0) {
       let mcpToolExist = false
-      if (anthropicBeta?.startsWith("claude-code")) {
+      if (hasClaudeCodeBeta(anthropicBeta)) {
         mcpToolExist = anthropicPayload.tools.some((tool) =>
           tool.name.startsWith("mcp__"),
         )
