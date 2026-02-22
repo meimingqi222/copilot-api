@@ -18,10 +18,14 @@ export interface AnthropicMessagesPayload {
     type: "auto" | "any" | "tool" | "none"
     name?: string
   }
-  thinking?: {
-    type: "enabled"
-    budget_tokens?: number
-  }
+  thinking?:
+    | {
+        type: "enabled"
+        budget_tokens?: number
+      }
+    | {
+        type: "adaptive"
+      }
   service_tier?: "auto" | "standard_only"
 }
 
