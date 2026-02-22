@@ -45,7 +45,6 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
-    thinking: payload.thinking,
     reasoning: translateAnthropicThinkingToOpenAI(payload.thinking),
   }
 }
@@ -75,6 +74,10 @@ function translateAnthropicMessagesToOpenAI(
   return [...systemMessages, ...otherMessages]
 }
 
+function stripBillingHeader(text: string): string {
+  return text.replace(/^x-anthropic-billing-header:[^\n]*\n\n?/, "").trimStart()
+}
+
 function handleSystemPrompt(
   system: string | Array<AnthropicTextBlock> | undefined,
 ): Array<Message> {
@@ -83,10 +86,10 @@ function handleSystemPrompt(
   }
 
   if (typeof system === "string") {
-    return [{ role: "system", content: system }]
+    return [{ role: "system", content: stripBillingHeader(system) }]
   } else {
     const systemText = system.map((block) => block.text).join("\n\n")
-    return [{ role: "system", content: systemText }]
+    return [{ role: "system", content: stripBillingHeader(systemText) }]
   }
 }
 
@@ -94,9 +97,14 @@ function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
   const newMessages: Array<Message> = []
 
   if (Array.isArray(message.content)) {
+    const seenResultIds = new Set<string>()
     const toolResultBlocks = message.content.filter(
-      (block): block is AnthropicToolResultBlock =>
-        block.type === "tool_result",
+      (block): block is AnthropicToolResultBlock => {
+        if (block.type !== "tool_result") return false
+        if (seenResultIds.has(block.tool_use_id)) return false
+        seenResultIds.add(block.tool_use_id)
+        return true
+      },
     )
     const otherBlocks = message.content.filter(
       (block) => block.type !== "tool_result",
@@ -139,8 +147,14 @@ function handleAssistantMessage(
     ]
   }
 
+  const seenToolIds = new Set<string>()
   const toolUseBlocks = message.content.filter(
-    (block): block is AnthropicToolUseBlock => block.type === "tool_use",
+    (block): block is AnthropicToolUseBlock => {
+      if (block.type !== "tool_use") return false
+      if (seenToolIds.has(block.id)) return false
+      seenToolIds.add(block.id)
+      return true
+    },
   )
 
   const orderedTextContent = message.content
@@ -250,7 +264,6 @@ function translateAnthropicThinkingToOpenAI(
   }
 
   return {
-    type: thinking.type,
     enabled: true,
     ...(thinking.type === "enabled"
       && thinking.budget_tokens !== undefined && {

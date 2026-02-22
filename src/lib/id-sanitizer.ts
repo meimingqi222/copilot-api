@@ -20,15 +20,24 @@ const INVALID_ID_CHAR_REGEX = /[^\w-]/g
 export function sanitizeId(id: string): string {
   if (!id) return id
 
-  // Replace any character that's not alphanumeric, hyphen, or underscore
+  // If already valid, return as-is (no collision risk)
+  if (!INVALID_ID_CHAR_REGEX.test(id)) return id
+
+  // Replace invalid chars and append a short hash of the original to avoid collisions
   const sanitized = id.replaceAll(INVALID_ID_CHAR_REGEX, "_")
+  const hash = id
+    .split("")
+    .reduce((acc, c) => (acc * 31 + (c.codePointAt(0) ?? 0)) & 0xfffffff, 0)
+    .toString(36)
+
+  const result = `${sanitized}_${hash}`
 
   // Ensure it's not just underscores after sanitization
-  if (!sanitized.replaceAll("_", "")) {
+  if (!result.replaceAll("_", "")) {
     return `id_${Math.random().toString(36).slice(2, 11)}`
   }
 
-  return sanitized
+  return result
 }
 
 /**
