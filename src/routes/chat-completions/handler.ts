@@ -14,6 +14,8 @@ import {
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
 
+import { inferInitiatorFromOpenAIMessages } from "./initiator"
+
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
 
@@ -59,7 +61,13 @@ export async function handleCompletion(c: Context) {
     consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
   }
 
-  const response = await createChatCompletions(payload, signal)
+  const initiator = inferInitiatorFromOpenAIMessages(
+    payload.messages,
+    c.req.header("user-agent"),
+  )
+  consola.debug("Inferred X-Initiator:", initiator)
+
+  const response = await createChatCompletions(payload, signal, initiator)
 
   if (isNonStreaming(response)) {
     consola.debug("Non-streaming response:", JSON.stringify(response))

@@ -88,3 +88,16 @@ test("ignores system and developer when inferring X-Initiator", async () => {
   ).headers
   expect(headers["X-Initiator"]).toBe("agent")
 })
+
+test("uses initiator override when provided", async () => {
+  const payload: ChatCompletionsPayload = {
+    messages: [{ role: "user", content: "hi" }],
+    model: "gpt-test",
+  }
+  await createChatCompletions(payload, undefined, "agent")
+  expect(fetchMock).toHaveBeenCalled()
+  const headers = (
+    fetchMock.mock.calls[4][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Initiator"]).toBe("agent")
+})

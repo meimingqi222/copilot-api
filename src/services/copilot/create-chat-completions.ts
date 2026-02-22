@@ -12,6 +12,7 @@ import { state } from "~/lib/state"
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
+  initiatorOverride?: "agent" | "user",
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
@@ -28,11 +29,12 @@ export const createChatCompletions = async (
   const isAgentCall = ["assistant", "tool"].includes(
     lastConversationMessage?.role ?? "",
   )
+  const initiator = initiatorOverride ?? (isAgentCall ? "agent" : "user")
 
   // Build headers and add X-Initiator
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
-    "X-Initiator": isAgentCall ? "agent" : "user",
+    "X-Initiator": initiator,
   }
 
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
