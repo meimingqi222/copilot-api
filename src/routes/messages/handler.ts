@@ -16,6 +16,7 @@ import {
   type AnthropicMessagesPayload,
   type AnthropicStreamState,
 } from "./anthropic-types"
+import { inferInitiatorFromAnthropicMessages } from "./initiator"
 import {
   translateToAnthropic,
   translateToOpenAI,
@@ -37,10 +38,16 @@ export async function handleCompletion(c: Context) {
     throw e
   }
 
+  const anthropicBeta = c.req.header("anthropic-beta")
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
   const openAIPayload = translateToOpenAI(anthropicPayload)
+  const initiator = inferInitiatorFromAnthropicMessages(
+    anthropicPayload.messages,
+    anthropicBeta,
+  )
+  consola.debug("Inferred X-Initiator:", initiator)
   consola.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
@@ -72,7 +79,7 @@ export async function handleCompletion(c: Context) {
     await awaitApproval()
   }
 
-  const response = await createChatCompletions(openAIPayload, signal)
+  const response = await createChatCompletions(openAIPayload, signal, initiator)
 
   if (isNonStreaming(response)) {
     consola.debug(
