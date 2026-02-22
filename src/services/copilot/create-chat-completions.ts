@@ -182,10 +182,15 @@ export interface ChatCompletionsPayload {
   user?: string | null
   reasoning_effort?: "low" | "medium" | "high" | null
   reasoning?: Record<string, unknown> | null
-  thinking?: {
-    type: "enabled"
-    budget_tokens?: number
-  } | null
+  thinking?:
+    | {
+        type: "enabled"
+        budget_tokens?: number
+      }
+    | {
+        type: "adaptive"
+      }
+    | null
 }
 
 export interface Tool {

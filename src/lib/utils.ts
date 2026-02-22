@@ -25,7 +25,7 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
       reject(makeSleepAbortError(sig))
     }
 
-    const boundOnAbort = onAbort.bind(null, signal)
+    const boundOnAbort = onAbort.bind(null, signal as AbortSignal)
 
     const id = setTimeout(() => {
       signal?.removeEventListener("abort", boundOnAbort)

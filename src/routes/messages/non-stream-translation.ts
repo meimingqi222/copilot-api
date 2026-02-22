@@ -252,9 +252,10 @@ function translateAnthropicThinkingToOpenAI(
   return {
     type: thinking.type,
     enabled: true,
-    ...(thinking.budget_tokens !== undefined && {
-      budget_tokens: thinking.budget_tokens,
-    }),
+    ...(thinking.type === "enabled"
+      && thinking.budget_tokens !== undefined && {
+        budget_tokens: thinking.budget_tokens,
+      }),
   }
 }
 
