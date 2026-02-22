@@ -265,7 +265,9 @@ describe("Anthropic to OpenAI translation logic", () => {
       "First text.\n\nFirst thinking.\n\nSecond text.\n\nSecond thinking.",
     )
   })
+})
 
+describe("Anthropic thinking and model mapping", () => {
   test("should pass thinking configuration to OpenAI reasoning fields", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",
@@ -288,6 +290,53 @@ describe("Anthropic to OpenAI translation logic", () => {
       enabled: true,
       budget_tokens: 512,
     })
+  })
+
+  test("should map adaptive thinking configuration to OpenAI reasoning fields", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "adaptive",
+      },
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+
+    expect(openAIPayload.thinking).toEqual({
+      type: "adaptive",
+    })
+    expect(openAIPayload.reasoning).toEqual({
+      type: "adaptive",
+      enabled: true,
+    })
+  })
+
+  test("should normalize only numeric claude snapshot model suffixes", () => {
+    const numericSnapshotPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4-20250514",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 16,
+    }
+    const minorVersionPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4-6",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 16,
+    }
+    const nonNumericSuffixPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4-x",
+      messages: [{ role: "user", content: "hi" }],
+      max_tokens: 16,
+    }
+
+    const normalized = translateToOpenAI(numericSnapshotPayload)
+    const minorVersion = translateToOpenAI(minorVersionPayload)
+    const preserved = translateToOpenAI(nonNumericSuffixPayload)
+
+    expect(normalized.model).toBe("claude-sonnet-4")
+    expect(minorVersion.model).toBe("claude-sonnet-4-6")
+    expect(preserved.model).toBe("claude-sonnet-4-x")
   })
 })
 

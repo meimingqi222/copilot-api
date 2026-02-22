@@ -45,16 +45,17 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
+    thinking: payload.thinking,
     reasoning: translateAnthropicThinkingToOpenAI(payload.thinking),
   }
 }
 
 function translateModelName(model: string): string {
-  // Subagent requests use a specific model number which Copilot doesn't support
-  if (model.startsWith("claude-sonnet-4-")) {
-    return model.replace(/^claude-sonnet-4-.*/, "claude-sonnet-4")
-  } else if (model.startsWith("claude-opus-")) {
-    return model.replace(/^claude-opus-4-.*/, "claude-opus-4")
+  // Normalize date-like snapshots only (e.g. -20250514), keep semantic versions like -6.
+  if (/^claude-sonnet-4-\d{8}$/.test(model)) {
+    return "claude-sonnet-4"
+  } else if (/^claude-opus-4-\d{8}$/.test(model)) {
+    return "claude-opus-4"
   }
   return model
 }
@@ -264,6 +265,7 @@ function translateAnthropicThinkingToOpenAI(
   }
 
   return {
+    type: thinking.type,
     enabled: true,
     ...(thinking.type === "enabled"
       && thinking.budget_tokens !== undefined && {
