@@ -54,3 +54,37 @@ test("sets X-Initiator to user if only user present", async () => {
   ).headers
   expect(headers["X-Initiator"]).toBe("user")
 })
+
+test("sets X-Initiator to user when last message is user", async () => {
+  const payload: ChatCompletionsPayload = {
+    messages: [
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "follow-up question" },
+    ],
+    model: "gpt-test",
+  }
+  await createChatCompletions(payload)
+  expect(fetchMock).toHaveBeenCalled()
+  const headers = (
+    fetchMock.mock.calls[2][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Initiator"]).toBe("user")
+})
+
+test("ignores system and developer when inferring X-Initiator", async () => {
+  const payload: ChatCompletionsPayload = {
+    messages: [
+      { role: "system", content: "system prompt" },
+      { role: "developer", content: "developer prompt" },
+      { role: "assistant", content: "internal planning" },
+    ],
+    model: "gpt-test",
+  }
+  await createChatCompletions(payload)
+  expect(fetchMock).toHaveBeenCalled()
+  const headers = (
+    fetchMock.mock.calls[3][1] as { headers: Record<string, string> }
+  ).headers
+  expect(headers["X-Initiator"]).toBe("agent")
+})

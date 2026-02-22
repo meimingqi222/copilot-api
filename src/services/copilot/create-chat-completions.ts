@@ -21,10 +21,12 @@ export const createChatCompletions = async (
       && x.content?.some((x) => x.type === "image_url"),
   )
 
-  // Agent/user check for X-Initiator header
-  // Determine if any message is from an agent ("assistant" or "tool")
-  const isAgentCall = payload.messages.some((msg) =>
-    ["assistant", "tool"].includes(msg.role),
+  // Infer who initiated this turn from the latest non-system message.
+  const lastConversationMessage = [...payload.messages]
+    .reverse()
+    .find((msg) => !["developer", "system"].includes(msg.role))
+  const isAgentCall = ["assistant", "tool"].includes(
+    lastConversationMessage?.role ?? "",
   )
 
   // Build headers and add X-Initiator
