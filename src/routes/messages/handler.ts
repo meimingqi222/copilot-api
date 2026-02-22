@@ -46,6 +46,28 @@ export async function handleCompletion(c: Context) {
     JSON.stringify(openAIPayload),
   )
 
+  // Debug: log all tool_call ids to detect duplicates
+  const allToolCallIds = openAIPayload.messages.flatMap((m) =>
+    m.tool_calls ? m.tool_calls.map((tc) => tc.id) : [],
+  )
+  const duplicateIds = allToolCallIds.filter(
+    (id, i) => allToolCallIds.indexOf(id) !== i,
+  )
+  if (duplicateIds.length > 0) {
+    consola.error("Duplicate tool_call ids detected:", duplicateIds)
+    consola.error(
+      "Messages with tool_calls:",
+      JSON.stringify(
+        openAIPayload.messages
+          .filter((m) => m.tool_calls)
+          .map((m) => ({
+            role: m.role,
+            ids: m.tool_calls?.map((tc) => tc.id),
+          })),
+      ),
+    )
+  }
+
   if (state.manualApprove) {
     await awaitApproval()
   }

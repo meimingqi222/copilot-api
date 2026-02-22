@@ -44,8 +44,18 @@ export const createChatCompletions = async (
     if (response.status === 429) {
       await reportUpstreamRateLimit(response)
     }
-    consola.error("Failed to create chat completions", response)
-    throw new HTTPError("Failed to create chat completions", response)
+    const errorBody = await response.text().catch(() => "(unreadable)")
+    consola.error(
+      "Failed to create chat completions",
+      response.status,
+      errorBody,
+    )
+    consola.error("Request payload was:", JSON.stringify(payload))
+    throw new HTTPError(
+      "Failed to create chat completions",
+      response,
+      errorBody,
+    )
   }
 
   await reportUpstreamSuccess()
