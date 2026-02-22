@@ -112,6 +112,39 @@ describe("Anthropic to OpenAI translation logic", () => {
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
   })
 
+  test("should strip x-anthropic-billing-header from system string", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "gpt-4o",
+      system: "x-anthropic-billing-header:cch=abcde\n\nYou are helpful.",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 0,
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+    expect(openAIPayload.messages[0]).toEqual({
+      role: "system",
+      content: "You are helpful.",
+    })
+  })
+
+  test("should strip x-anthropic-billing-header from system block array", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "gpt-4o",
+      system: [
+        { type: "text", text: "x-anthropic-billing-header:cch=abcde" },
+        { type: "text", text: "You are helpful." },
+      ],
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 0,
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+    expect(openAIPayload.messages[0]).toEqual({
+      role: "system",
+      content: "You are helpful.",
+    })
+  })
+
   test("should handle missing fields gracefully", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "gpt-4o",
