@@ -78,13 +78,6 @@ function isLikelyCodexCompactionOrSyntheticUserMessage(
     return true
   }
 
-  if (
-    trimmed.includes("<environment_context>")
-    || trimmed.includes("</environment_context>")
-  ) {
-    return true
-  }
-
   const looksLikeCodexClient = userAgent?.toLowerCase().includes("codex")
   if (!looksLikeCodexClient) {
     return false

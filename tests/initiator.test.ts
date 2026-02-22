@@ -95,4 +95,20 @@ describe("inferInitiatorFromAnthropicMessages", () => {
       ),
     ).toBe("user")
   })
+
+  test("supports claude-code beta when listed after other beta tokens", () => {
+    const longCompactionPrompt =
+      "Please summarize the conversation and compress context window.\n\n"
+      + "A".repeat(900)
+
+    expect(
+      inferInitiatorFromAnthropicMessages(
+        [
+          { role: "assistant", content: "previous answer" },
+          { role: "user", content: longCompactionPrompt },
+        ],
+        "computer-use-2025-01-24, claude-code-20250124",
+      ),
+    ).toBe("agent")
+  })
 })
