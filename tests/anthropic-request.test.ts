@@ -227,13 +227,11 @@ describe("Anthropic to OpenAI translation logic", () => {
     const openAIPayload = translateToOpenAI(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
-    // Thinking blocks are mapped to reasoning_text; content keeps visible text.
+    // reasoning_text is stripped when tool_calls are present (Copilot rejects both together).
     const assistantMessage = openAIPayload.messages.find(
       (m) => m.role === "assistant",
     )
-    expect(assistantMessage?.reasoning_text).toContain(
-      "I need to call the weather API",
-    )
+    expect(assistantMessage?.reasoning_text).toBeUndefined()
     expect(assistantMessage?.content).toBe("I'll check the weather for you.")
     expect(assistantMessage?.tool_calls).toHaveLength(1)
     expect(assistantMessage?.tool_calls?.[0].function.name).toBe("get_weather")
@@ -299,7 +297,7 @@ describe("Anthropic thinking and model mapping", () => {
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 
-    expect(openAIPayload.reasoning_effort).toBe("medium")
+    expect(openAIPayload.reasoning_effort).toBe("high")
     expect(openAIPayload.temperature).toBe(1)
     expect(openAIPayload.thinking).toBeUndefined()
     expect(openAIPayload.reasoning).toBeUndefined()
