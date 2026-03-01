@@ -288,8 +288,8 @@ function translateAnthropicThinkingToReasoningEffort(
     return "low"
   }
 
-  // adaptive: let the model decide, default to medium
-  return "medium"
+  // adaptive: let the model decide, default to high
+  return "high"
 }
 
 function translateAnthropicToolChoiceToOpenAI(
