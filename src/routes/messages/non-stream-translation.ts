@@ -31,6 +31,9 @@ import { mapOpenAIStopReasonToAnthropic } from "./utils"
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
 ): ChatCompletionsPayload {
+  const reasoningEffort = translateAnthropicThinkingToReasoningEffort(
+    payload.thinking,
+  )
   return {
     model: translateModelName(payload.model),
     messages: translateAnthropicMessagesToOpenAI(
@@ -40,13 +43,13 @@ export function translateToOpenAI(
     max_tokens: payload.max_tokens,
     stop: payload.stop_sequences,
     stream: payload.stream,
-    temperature: payload.temperature,
+    // Copilot requires temperature=1 when reasoning is enabled
+    temperature: reasoningEffort !== undefined ? 1 : payload.temperature,
     top_p: payload.top_p,
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
-    thinking: payload.thinking,
-    reasoning: translateAnthropicThinkingToOpenAI(payload.thinking),
+    reasoning_effort: reasoningEffort,
   }
 }
 
@@ -158,19 +161,28 @@ function handleAssistantMessage(
     },
   )
 
-  const orderedTextContent = message.content
-    .filter(
-      (block): block is AnthropicTextBlock | AnthropicThinkingBlock =>
-        block.type === "text" || block.type === "thinking",
-    )
-    .map((block) => (block.type === "text" ? block.text : block.thinking))
+  const textContent = message.content
+    .filter((block): block is AnthropicTextBlock => block.type === "text")
+    .map((block) => block.text)
     .join("\n\n")
+
+  const thinkingContent = message.content
+    .filter(
+      (block): block is AnthropicThinkingBlock => block.type === "thinking",
+    )
+    .map((block) => block.thinking)
+    .join("\n\n")
+
+  const baseMessage = {
+    role: "assistant" as const,
+    content: textContent || null,
+    ...(thinkingContent ? { reasoning_text: thinkingContent } : {}),
+  }
 
   return toolUseBlocks.length > 0 ?
       [
         {
-          role: "assistant",
-          content: orderedTextContent || null,
+          ...baseMessage,
           tool_calls: toolUseBlocks.map((toolUse) => ({
             id: sanitizeId(toolUse.id),
             type: "function",
@@ -181,12 +193,7 @@ function handleAssistantMessage(
           })),
         },
       ]
-    : [
-        {
-          role: "assistant",
-          content: mapContent(message.content),
-        },
-      ]
+    : [baseMessage]
 }
 
 function mapContent(
@@ -257,21 +264,26 @@ function translateAnthropicToolsToOpenAI(
   }))
 }
 
-function translateAnthropicThinkingToOpenAI(
+// Maps Anthropic thinking config to Copilot's reasoning_effort parameter.
+// Copilot proxy (api.githubcopilot.com) uses OpenAI-compatible format with
+// reasoning_effort instead of Anthropic's budget_tokens.
+function translateAnthropicThinkingToReasoningEffort(
   thinking: AnthropicMessagesPayload["thinking"],
-): ChatCompletionsPayload["reasoning"] {
+): "low" | "medium" | "high" | undefined {
   if (!thinking) {
     return undefined
   }
 
-  return {
-    type: thinking.type,
-    enabled: true,
-    ...(thinking.type === "enabled"
-      && thinking.budget_tokens !== undefined && {
-        budget_tokens: thinking.budget_tokens,
-      }),
+  if (thinking.type === "enabled") {
+    const budget = thinking.budget_tokens
+    // Map budget_tokens ranges to effort levels (matching Copilot's internal logic)
+    if (!budget || budget >= 10000) return "high"
+    if (budget >= 4000) return "medium"
+    return "low"
   }
+
+  // adaptive: let the model decide, default to medium
+  return "medium"
 }
 
 function translateAnthropicToolChoiceToOpenAI(
@@ -339,36 +351,77 @@ export function translateToAnthropic(
   }
 }
 
+type CopilotResponseMessage =
+  ChatCompletionResponse["choices"][number]["message"]
+type ThinkingCollector = {
+  blocks: Array<AnthropicTextBlock | AnthropicThinkingBlock>
+  seenThinking: Set<string>
+}
+
+function addThinkingBlockUnique(
+  collector: ThinkingCollector,
+  thinking: string | undefined,
+  signature?: string,
+): void {
+  if (!thinking) {
+    return
+  }
+
+  const dedupeKey = `${thinking}\u0000${signature ?? ""}`
+  if (collector.seenThinking.has(dedupeKey)) {
+    return
+  }
+
+  collector.seenThinking.add(dedupeKey)
+  collector.blocks.push({
+    type: "thinking",
+    thinking,
+    ...(signature ? { signature } : {}),
+  })
+}
+
+function addTopLevelReasoningBlocks(
+  message: CopilotResponseMessage,
+  collector: ThinkingCollector,
+): void {
+  addThinkingBlockUnique(
+    collector,
+    message.reasoning_text
+      ?? message.thinking
+      ?? message.reasoning
+      ?? undefined,
+    message.reasoning_opaque
+      ?? message.thinking_signature
+      ?? message.reasoning_signature
+      ?? message.signature
+      ?? undefined,
+  )
+
+  if (Array.isArray(message.reasoning_details)) {
+    for (const detail of message.reasoning_details) {
+      addThinkingBlockUnique(
+        collector,
+        getReasoningText(detail),
+        detail.signature,
+      )
+    }
+  }
+}
+
 function getAnthropicContentBlocks(
-  message: ChatCompletionResponse["choices"][number]["message"],
+  message: CopilotResponseMessage,
 ): Array<AnthropicTextBlock | AnthropicThinkingBlock> {
   const blocks: Array<AnthropicTextBlock | AnthropicThinkingBlock> = []
   const seenThinking = new Set<string>()
-
-  const addThinkingBlock = (
-    thinking: string | undefined,
-    signature?: string,
-  ) => {
-    if (!thinking) {
-      return
-    }
-
-    const dedupeKey = `${thinking}\u0000${signature ?? ""}`
-    if (seenThinking.has(dedupeKey)) {
-      return
-    }
-
-    seenThinking.add(dedupeKey)
-    blocks.push({
-      type: "thinking",
-      thinking,
-      ...(signature ? { signature } : {}),
-    })
-  }
+  const collector = { blocks, seenThinking }
 
   if (typeof message.content === "string") {
+    // For Copilot proxy responses: reasoning_text comes before content in generation order.
+    // Anthropic protocol requires thinking blocks to appear before text blocks.
+    addTopLevelReasoningBlocks(message, collector)
     blocks.push({ type: "text", text: message.content })
   } else if (Array.isArray(message.content)) {
+    // For array content: preserve original order (may be interleaved thinking/text).
     for (const part of message.content) {
       switch (part.type) {
         case "text": {
@@ -381,7 +434,8 @@ function getAnthropicContentBlocks(
         }
         case "reasoning":
         case "thinking": {
-          addThinkingBlock(
+          addThinkingBlockUnique(
+            collector,
             getReasoningText(part),
             "signature" in part ? part.signature : undefined,
           )
@@ -392,20 +446,12 @@ function getAnthropicContentBlocks(
         }
       }
     }
-  }
 
-  addThinkingBlock(
-    message.thinking ?? message.reasoning ?? undefined,
-    message.thinking_signature
-      ?? message.reasoning_signature
-      ?? message.signature
-      ?? undefined,
-  )
-
-  if (Array.isArray(message.reasoning_details)) {
-    for (const detail of message.reasoning_details) {
-      addThinkingBlock(getReasoningText(detail), detail.signature)
-    }
+    // Also check top-level fields; deduplication prevents double-counting.
+    addTopLevelReasoningBlocks(message, collector)
+  } else {
+    // message.content can be null for tool-call-only responses; keep reasoning blocks.
+    addTopLevelReasoningBlocks(message, collector)
   }
 
   return blocks

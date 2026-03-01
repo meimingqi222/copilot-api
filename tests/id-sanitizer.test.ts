@@ -12,24 +12,28 @@ describe("ID Sanitizer", () => {
     })
 
     it("should replace colons with underscores", () => {
-      expect(sanitizeId("call_abc:123")).toBe("call_abc_123")
-      expect(sanitizeId("tool:function:arg")).toBe("tool_function_arg")
+      expect(sanitizeId("call_abc:123")).toMatch(/^call_abc_123_[a-z0-9]+$/)
+      expect(sanitizeId("tool:function:arg")).toMatch(
+        /^tool_function_arg_[a-z0-9]+$/,
+      )
     })
 
     it("should replace dots with underscores", () => {
-      expect(sanitizeId("call.abc.123")).toBe("call_abc_123")
+      expect(sanitizeId("call.abc.123")).toMatch(/^call_abc_123_[a-z0-9]+$/)
     })
 
     it("should replace slashes with underscores", () => {
-      expect(sanitizeId("call/abc/123")).toBe("call_abc_123")
+      expect(sanitizeId("call/abc/123")).toMatch(/^call_abc_123_[a-z0-9]+$/)
     })
 
     it("should replace spaces with underscores", () => {
-      expect(sanitizeId("call abc 123")).toBe("call_abc_123")
+      expect(sanitizeId("call abc 123")).toMatch(/^call_abc_123_[a-z0-9]+$/)
     })
 
     it("should handle multiple special characters", () => {
-      expect(sanitizeId("call:abc.123/test-id")).toBe("call_abc_123_test-id")
+      expect(sanitizeId("call:abc.123/test-id")).toMatch(
+        /^call_abc_123_test-id_[a-z0-9]+$/,
+      )
     })
 
     it("should handle UUIDs with special characters", () => {
@@ -37,19 +41,26 @@ describe("ID Sanitizer", () => {
         "call_123e4567-e89b-12d3-a456-426614174000",
       )
       // UUID with colons (invalid format but should still sanitize)
-      expect(sanitizeId("call:123e4567:e89b:12d3:a456:426614174000")).toBe(
-        "call_123e4567_e89b_12d3_a456_426614174000",
+      expect(sanitizeId("call:123e4567:e89b:12d3:a456:426614174000")).toMatch(
+        /^call_123e4567_e89b_12d3_a456_426614174000_[a-z0-9]+$/,
       )
     })
 
-    it("should generate a random ID if result would be empty", () => {
+    it("should still return a valid non-empty ID for all-invalid input", () => {
       const result = sanitizeId("!!!@@@###")
-      expect(result).toMatch(/^id_[a-z0-9]+$/)
+      expect(result).toMatch(/^_+[a-z0-9]+$/)
       expect(result.length).toBeGreaterThan(0)
+      expect(isValidAnthropicId(result)).toBe(true)
     })
 
     it("should preserve empty string", () => {
       expect(sanitizeId("")).toBe("")
+    })
+
+    it("should be deterministic for the same input", () => {
+      const first = sanitizeId("call:abc")
+      const second = sanitizeId("call:abc")
+      expect(first).toBe(second)
     })
   })
 

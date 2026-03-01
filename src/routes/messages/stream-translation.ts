@@ -106,21 +106,19 @@ function getThinkingDelta(
 } {
   const reasoningParts: Array<string> = []
   let signature =
-    delta.thinking_signature
+    delta.reasoning_opaque
+    ?? delta.thinking_signature
     ?? delta.reasoning_signature
     ?? delta.signature
     ?? undefined
 
-  if (delta.thinking) {
-    reasoningParts.push(delta.thinking)
-  }
-
-  if (delta.reasoning_content) {
-    reasoningParts.push(delta.reasoning_content)
-  }
-
-  if (delta.reasoning) {
-    reasoningParts.push(delta.reasoning)
+  // Use ?? chaining so only one top-level field is picked per chunk,
+  // matching the non-streaming translation and avoiding duplication when
+  // the Copilot proxy echoes the same content in multiple alias fields.
+  const topLevelReasoning =
+    delta.reasoning_text ?? delta.thinking ?? delta.reasoning
+  if (topLevelReasoning) {
+    reasoningParts.push(topLevelReasoning)
   }
 
   if (Array.isArray(delta.reasoning_details)) {
