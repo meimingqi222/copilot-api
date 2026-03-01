@@ -344,6 +344,57 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       expect(anthropicResponse.content[0].input).toEqual({})
     }
   })
+
+  test("should keep reasoning blocks when content is null", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-null-content-reasoning",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "claude-sonnet-4",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: null,
+            reasoning_text: "internal chain of thought",
+            reasoning_opaque: "sig-reasoning-1",
+            tool_calls: [
+              {
+                id: "call_reasoning",
+                type: "function",
+                function: {
+                  name: "get_data",
+                  arguments: '{"q":"x"}',
+                },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+          logprobs: null,
+        },
+      ],
+      usage: {
+        prompt_tokens: 4,
+        completion_tokens: 2,
+        total_tokens: 6,
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(openAIResponse)
+
+    expect(anthropicResponse.content).toContainEqual({
+      type: "thinking",
+      thinking: "internal chain of thought",
+      signature: "sig-reasoning-1",
+    })
+    expect(anthropicResponse.content).toContainEqual({
+      type: "tool_use",
+      id: "call_reasoning",
+      name: "get_data",
+      input: { q: "x" },
+    })
+  })
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {

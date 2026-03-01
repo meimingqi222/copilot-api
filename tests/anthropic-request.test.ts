@@ -19,6 +19,7 @@ const messageSchema = z.object({
   name: z.string().optional(),
   tool_calls: z.array(z.any()).optional(),
   tool_call_id: z.string().optional(),
+  reasoning_text: z.string().optional().nullable(),
 })
 
 // Zod schema for the entire chat completion request payload.
@@ -188,14 +189,14 @@ describe("Anthropic to OpenAI translation logic", () => {
     const openAIPayload = translateToOpenAI(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
-    // Check that thinking content is combined with text content
+    // Thinking blocks are mapped to reasoning_text; content keeps visible text.
     const assistantMessage = openAIPayload.messages.find(
       (m) => m.role === "assistant",
     )
-    expect(assistantMessage?.content).toContain(
+    expect(assistantMessage?.content).toBe("2+2 equals 4.")
+    expect(assistantMessage?.reasoning_text).toBe(
       "Let me think about this simple math problem...",
     )
-    expect(assistantMessage?.content).toContain("2+2 equals 4.")
   })
 
   test("should handle thinking blocks with tool calls", () => {
@@ -226,16 +227,14 @@ describe("Anthropic to OpenAI translation logic", () => {
     const openAIPayload = translateToOpenAI(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
-    // Check that thinking content is included in the message content
+    // Thinking blocks are mapped to reasoning_text; content keeps visible text.
     const assistantMessage = openAIPayload.messages.find(
       (m) => m.role === "assistant",
     )
-    expect(assistantMessage?.content).toContain(
+    expect(assistantMessage?.reasoning_text).toContain(
       "I need to call the weather API",
     )
-    expect(assistantMessage?.content).toContain(
-      "I'll check the weather for you.",
-    )
+    expect(assistantMessage?.content).toBe("I'll check the weather for you.")
     expect(assistantMessage?.tool_calls).toHaveLength(1)
     expect(assistantMessage?.tool_calls?.[0].function.name).toBe("get_weather")
   })
@@ -261,8 +260,9 @@ describe("Anthropic to OpenAI translation logic", () => {
     const assistantMessage = openAIPayload.messages[0]
 
     expect(assistantMessage.role).toBe("assistant")
-    expect(assistantMessage.content).toBe(
-      "First text.\n\nFirst thinking.\n\nSecond text.\n\nSecond thinking.",
+    expect(assistantMessage.content).toBe("First text.\n\nSecond text.")
+    expect(assistantMessage.reasoning_text).toBe(
+      "First thinking.\n\nSecond thinking.",
     )
   })
 })
@@ -281,15 +281,10 @@ describe("Anthropic thinking and model mapping", () => {
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 
-    expect(openAIPayload.thinking).toEqual({
-      type: "enabled",
-      budget_tokens: 512,
-    })
-    expect(openAIPayload.reasoning).toEqual({
-      type: "enabled",
-      enabled: true,
-      budget_tokens: 512,
-    })
+    expect(openAIPayload.reasoning_effort).toBe("low")
+    expect(openAIPayload.temperature).toBe(1)
+    expect(openAIPayload.thinking).toBeUndefined()
+    expect(openAIPayload.reasoning).toBeUndefined()
   })
 
   test("should map adaptive thinking configuration to OpenAI reasoning fields", () => {
@@ -304,13 +299,10 @@ describe("Anthropic thinking and model mapping", () => {
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 
-    expect(openAIPayload.thinking).toEqual({
-      type: "adaptive",
-    })
-    expect(openAIPayload.reasoning).toEqual({
-      type: "adaptive",
-      enabled: true,
-    })
+    expect(openAIPayload.reasoning_effort).toBe("medium")
+    expect(openAIPayload.temperature).toBe(1)
+    expect(openAIPayload.thinking).toBeUndefined()
+    expect(openAIPayload.reasoning).toBeUndefined()
   })
 
   test("should normalize only numeric claude snapshot model suffixes", () => {
