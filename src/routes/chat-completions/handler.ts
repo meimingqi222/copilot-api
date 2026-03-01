@@ -76,9 +76,17 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
-    for await (const chunk of response) {
-      consola.debug("Streaming chunk:", JSON.stringify(chunk))
-      await stream.writeSSE(chunk as SSEMessage)
+    try {
+      for await (const chunk of response) {
+        consola.debug("Streaming chunk:", JSON.stringify(chunk))
+        await stream.writeSSE(chunk as SSEMessage)
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") {
+        consola.debug("Stream aborted (client disconnected)")
+        return
+      }
+      throw e
     }
   })
 }

@@ -28,6 +28,19 @@ interface RunServerOptions {
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
+  // Handle unhandled promise rejections
+  process.on("unhandledRejection", (reason: unknown) => {
+    if (
+      reason instanceof DOMException
+      && reason.name === "AbortError"
+      && reason.message === "The connection was closed."
+    ) {
+      // Client disconnected, normal behavior
+      return
+    }
+    consola.error("Unhandled rejection:", reason)
+  })
+
   if (options.proxyEnv) {
     initProxyFromEnv()
   }

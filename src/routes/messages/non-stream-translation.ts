@@ -179,21 +179,27 @@ function handleAssistantMessage(
     ...(thinkingContent ? { reasoning_text: thinkingContent } : {}),
   }
 
-  return toolUseBlocks.length > 0 ?
-      [
-        {
-          ...baseMessage,
-          tool_calls: toolUseBlocks.map((toolUse) => ({
-            id: sanitizeId(toolUse.id),
-            type: "function",
-            function: {
-              name: toolUse.name,
-              arguments: JSON.stringify(toolUse.input),
-            },
-          })),
+  if (toolUseBlocks.length === 0) {
+    return [baseMessage]
+  }
+
+  // Copilot API rejects assistant messages that have both reasoning_text and tool_calls.
+  // Strip reasoning_text when tool_calls are present.
+  const { reasoning_text: _dropped, ...baseMessageWithoutReasoning } =
+    baseMessage
+  return [
+    {
+      ...baseMessageWithoutReasoning,
+      tool_calls: toolUseBlocks.map((toolUse) => ({
+        id: sanitizeId(toolUse.id),
+        type: "function",
+        function: {
+          name: toolUse.name,
+          arguments: JSON.stringify(toolUse.input),
         },
-      ]
-    : [baseMessage]
+      })),
+    },
+  ]
 }
 
 function mapContent(
