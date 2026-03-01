@@ -57,7 +57,7 @@ function isLikelyClaudeCodeCompaction(
     return false
   }
 
-  return /summary|summarize|compression?|context window|conversation/i.test(
+  return /summary|summarize|compression?|context window|conversation (?:summary|history|so far)/i.test(
     text,
   )
 }
