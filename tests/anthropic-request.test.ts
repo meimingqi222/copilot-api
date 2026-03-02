@@ -51,7 +51,10 @@ const chatCompletionRequestSchema = z.object({
   tools: z.array(z.any()).optional(),
   tool_choice: z.union([z.string(), z.object({})]).optional(),
   user: z.string().optional(),
-  reasoning_effort: z.enum(["low", "medium", "high"]).optional().nullable(),
+  reasoning_effort: z
+    .enum(["minimal", "low", "medium", "high", "xhigh"])
+    .optional()
+    .nullable(),
   reasoning: z.record(z.string(), z.unknown()).optional().nullable(),
   thinking: z
     .object({
@@ -279,7 +282,7 @@ describe("Anthropic thinking and model mapping", () => {
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 
-    expect(openAIPayload.reasoning_effort).toBe("low")
+    expect(openAIPayload.reasoning_effort).toBe("minimal")
     expect(openAIPayload.temperature).toBe(1)
     expect(openAIPayload.thinking).toBeUndefined()
     expect(openAIPayload.reasoning).toBeUndefined()

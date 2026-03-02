@@ -197,7 +197,7 @@ export interface ChatCompletionsPayload {
     | { type: "function"; function: { name: string } }
     | null
   user?: string | null
-  reasoning_effort?: "low" | "medium" | "high" | null
+  reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | null
   reasoning?: Record<string, unknown> | null
   thinking?:
     | {

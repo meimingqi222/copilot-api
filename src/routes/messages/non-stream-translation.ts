@@ -273,19 +273,27 @@ function translateAnthropicToolsToOpenAI(
 // Maps Anthropic thinking config to Copilot's reasoning_effort parameter.
 // Copilot proxy (api.githubcopilot.com) uses OpenAI-compatible format with
 // reasoning_effort instead of Anthropic's budget_tokens.
+// Budget mapping:
+// - minimal: 512 (低成本推理)
+// - low: 1024 (快速推理)
+// - medium: 8192 (默认推理深度)
+// - high: 24576 (深度推理)
+// - xhigh: 32768 (更深推理)
 function translateAnthropicThinkingToReasoningEffort(
   thinking: AnthropicMessagesPayload["thinking"],
-): "low" | "medium" | "high" | undefined {
+): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
   if (!thinking) {
     return undefined
   }
 
   if (thinking.type === "enabled") {
-    const budget = thinking.budget_tokens
-    // Map budget_tokens ranges to effort levels (matching Copilot's internal logic)
-    if (!budget || budget >= 10000) return "high"
-    if (budget >= 4000) return "medium"
-    return "low"
+    const budget = thinking.budget_tokens ?? 8192 // default to medium
+    // Map budget_tokens to effort levels
+    if (budget >= 32768) return "xhigh"
+    if (budget >= 24576) return "high"
+    if (budget >= 8192) return "medium"
+    if (budget >= 1024) return "low"
+    return "minimal"
   }
 
   // adaptive: let the model decide, default to high
