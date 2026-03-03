@@ -97,6 +97,7 @@ export async function handleCompletion(c: Context) {
     )
     // Track token usage for non-streaming response
     const usage = anthropicResponse.usage
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (usage) {
       const totalTokens = usage.input_tokens + usage.output_tokens
       void trackTokenUsage(c, totalTokens)
@@ -106,7 +107,7 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response from Copilot")
   return streamSSE(c, (stream) =>
-    handleStreamingResponse(stream, response, signal, c),
+    handleStreamingResponse({ stream, response, clientSignal: signal, c }),
   )
 }
 
@@ -116,12 +117,19 @@ type CopilotStream = Exclude<
   ChatCompletionResponse
 >
 
-async function handleStreamingResponse(
-  stream: SSEStream,
-  response: CopilotStream,
-  clientSignal: AbortSignal,
-  c?: Context,
-): Promise<void> {
+interface HandleStreamingResponseOptions {
+  stream: SSEStream
+  response: CopilotStream
+  clientSignal: AbortSignal
+  c?: Context
+}
+
+async function handleStreamingResponse({
+  stream,
+  response,
+  clientSignal,
+  c,
+}: HandleStreamingResponseOptions): Promise<void> {
   const streamState: AnthropicStreamState = {
     messageStartSent: false,
     messageStopSent: false,
@@ -130,7 +138,9 @@ async function handleStreamingResponse(
     currentContentBlockType: undefined,
     toolCalls: {},
   }
-  let lastUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined
+  let lastUsage:
+    | { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+    | undefined
 
   // Send periodic ping events to keep the SSE connection alive.
   // Without these, idle periods (e.g. while Copilot generates long tool_call
@@ -210,7 +220,12 @@ async function handleStreamingResponse(
     clearInterval(pingInterval)
     // Track token usage after streaming completes
     if (c && lastUsage) {
-      void trackTokenUsage(c, lastUsage.total_tokens ?? lastUsage.prompt_tokens + lastUsage.completion_tokens)
+      void trackTokenUsage(
+        c,
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        lastUsage.total_tokens
+          ?? lastUsage.prompt_tokens + lastUsage.completion_tokens,
+      )
     }
   }
 }

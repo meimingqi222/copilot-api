@@ -7,7 +7,11 @@ import fs from "node:fs/promises"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
-import { initAccounts, scheduleQuotaRefresh, refreshCopilotToken } from "./lib/accounts"
+import {
+  initAccounts,
+  scheduleQuotaRefresh,
+  refreshCopilotToken,
+} from "./lib/accounts"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
@@ -32,6 +36,7 @@ interface RunServerOptions {
   adminPassword?: string
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export async function runServer(options: RunServerOptions): Promise<void> {
   // Handle unhandled promise rejections
   process.on("unhandledRejection", (reason: unknown) => {
@@ -78,14 +83,24 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await cacheVSCodeVersion()
 
   // Collect GitHub tokens from CLI options
-  const allTokens: string[] = []
+  const allTokens: Array<string> = []
   if (options.githubTokens) {
-    allTokens.push(...options.githubTokens.split(",").map((t) => t.trim()).filter(Boolean))
+    allTokens.push(
+      ...options.githubTokens
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    )
   }
   if (options.tokensFile) {
     try {
       const fileContent = await fs.readFile(options.tokensFile, "utf8")
-      allTokens.push(...fileContent.split("\n").map((t) => t.trim()).filter(Boolean))
+      allTokens.push(
+        ...fileContent
+          .split("\n")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      )
     } catch (err) {
       consola.warn("Failed to read tokens file:", err)
     }
@@ -116,7 +131,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
         state.githubToken = account.githubToken
       }
     } catch (err) {
-      consola.warn(`Failed to get Copilot token for account "${account.label}":`, err)
+      consola.warn(
+        `Failed to get Copilot token for account "${account.label}":`,
+        err,
+      )
     }
   }
 
@@ -130,13 +148,18 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
     )
   } else {
-    consola.warn("No models available — add a GitHub account via Web UI to get started")
+    consola.warn(
+      "No models available — add a GitHub account via Web UI to get started",
+    )
   }
 
   const serverUrl = `http://localhost:${options.port}`
 
   if (options.claudeCode) {
-    invariant(state.models, "No models available. Add a GitHub account via Web UI first, or provide a token via --github-token")
+    invariant(
+      state.models,
+      "No models available. Add a GitHub account via Web UI first, or provide a token via --github-token",
+    )
 
     const selectedModel = await consola.prompt(
       "Select a model to use with Claude Code",

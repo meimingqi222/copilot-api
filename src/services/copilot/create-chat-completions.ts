@@ -1,8 +1,8 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
-import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { getActiveAccount, markAccountExhausted } from "~/lib/accounts"
+import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import {
   reportUpstreamRateLimit,

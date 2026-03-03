@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto"
 
 import type { Account } from "./accounts"
-import { state as globalState } from "./state"
 import type { State } from "./state"
+
+import { state as globalState } from "./state"
 
 export const standardHeaders = () => ({
   "content-type": "application/json",
@@ -37,9 +38,9 @@ export const copilotHeaders = (
 ) => {
   // Determine the token: Account has copilotToken, State has copilotToken (legacy)
   const token =
-    "copilotToken" in stateOrAccount
-      ? stateOrAccount.copilotToken
-      : (stateOrAccount as State & { copilotToken?: string }).copilotToken
+    "copilotToken" in stateOrAccount ?
+      stateOrAccount.copilotToken
+    : (stateOrAccount as State & { copilotToken?: string }).copilotToken
 
   const vsCodeVersion = globalState.vsCodeVersion
 

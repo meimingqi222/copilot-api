@@ -1,7 +1,6 @@
+import consola from "consola"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
-
-import consola from "consola"
 
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -35,8 +34,8 @@ const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
 
 export async function loadAccounts(): Promise<void> {
   try {
-    const data = await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
-    const parsed = JSON.parse(data) as Account[]
+    const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
+    const parsed = JSON.parse(data) as Array<Account>
     state.accounts = parsed
     return
   } catch {
@@ -86,7 +85,8 @@ export function getActiveAccount(): Account {
   }
 
   const preferred = state.accounts[state.activeAccountIndex]
-  if (preferred && !preferred.isExhausted) return preferred
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!preferred?.isExhausted) return preferred
 
   const next = nonExhausted[0]
   state.activeAccountIndex = state.accounts.indexOf(next)
@@ -116,14 +116,18 @@ export function switchToNextAccount(): Account | null {
 }
 
 export async function refreshCopilotToken(account: Account): Promise<void> {
-  const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/v2/token`, {
-    headers: {
-      ...githubHeaders(state),
-      authorization: `token ${account.githubToken}`,
+  const response = await fetch(
+    `${GITHUB_API_BASE_URL}/copilot_internal/v2/token`,
+    {
+      headers: {
+        ...githubHeaders(state),
+        authorization: `token ${account.githubToken}`,
+      },
     },
-  })
+  )
 
-  if (!response.ok) throw new HTTPError("Failed to get Copilot token for account", response)
+  if (!response.ok)
+    throw new HTTPError("Failed to get Copilot token for account", response)
 
   const data = (await response.json()) as {
     token: string
@@ -131,7 +135,9 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     refresh_in: number
   }
 
+  // eslint-disable-next-line require-atomic-updates
   account.copilotToken = data.token
+  // eslint-disable-next-line require-atomic-updates
   account.copilotTokenExpiry = data.expires_at * 1000
 
   if (state.showToken) {
@@ -143,16 +149,19 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
   setTimeout(() => {
     consola.debug(`Refreshing Copilot token for "${account.label}"`)
     refreshCopilotToken(account).catch((error: unknown) => {
-      consola.error(`Failed to refresh Copilot token for "${account.label}":`, error)
+      consola.error(
+        `Failed to refresh Copilot token for "${account.label}":`,
+        error,
+      )
     })
   }, refreshInterval)
 }
 
-export async function initAccounts(tokens?: string[]): Promise<void> {
+export async function initAccounts(tokens?: Array<string>): Promise<void> {
   if (tokens && tokens.length > 0) {
     // Build accounts from provided tokens
     const existing = await loadAccountsFile()
-    const newAccounts: Account[] = tokens.map((token, index) => {
+    const newAccounts: Array<Account> = tokens.map((token, index) => {
       const existingAccount = existing.find((a) => a.githubToken === token)
       if (existingAccount) return existingAccount
       return {
@@ -173,15 +182,13 @@ export async function initAccounts(tokens?: string[]): Promise<void> {
 
   // Sync state.githubToken for backward compat
   const active = state.accounts[state.activeAccountIndex]
-  if (active) {
-    state.githubToken = active.githubToken
-  }
+  state.githubToken = active.githubToken
 }
 
-async function loadAccountsFile(): Promise<Account[]> {
+async function loadAccountsFile(): Promise<Array<Account>> {
   try {
-    const data = await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
-    return JSON.parse(data) as Account[]
+    const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
+    return JSON.parse(data) as Array<Account>
   } catch {
     return []
   }
@@ -195,11 +202,15 @@ export function scheduleQuotaRefresh(): void {
 
 export async function refreshQuotaForAccount(account: Account): Promise<void> {
   const usage = await getCopilotUsageForAccount(account)
+  // eslint-disable-next-line require-atomic-updates
   account.quotaInfo = snapshotFromUsage(usage)
   const remaining = account.quotaInfo.premiumInteractionsRemaining ?? Infinity
   const unlimited = account.quotaInfo.unlimited
 
-  if (account.isExhausted && (unlimited || remaining > QUOTA_EXHAUSTION_THRESHOLD)) {
+  if (
+    account.isExhausted
+    && (unlimited || remaining > QUOTA_EXHAUSTION_THRESHOLD)
+  ) {
     account.isExhausted = false
     consola.info(`Account "${account.label}" quota refreshed — re-activating`)
   }
@@ -211,14 +222,21 @@ async function refreshAllQuotas(): Promise<void> {
     try {
       await refreshQuotaForAccount(account)
     } catch (err) {
-      consola.warn(`Failed to refresh quota for account "${account.label}":`, err)
+      consola.warn(
+        `Failed to refresh quota for account "${account.label}":`,
+        err,
+      )
     }
   }
 }
 
 async function getCopilotUsageForAccount(account: Account): Promise<{
   quota_snapshots?: {
-    premium_interactions?: { remaining: number; entitlement: number; unlimited: boolean }
+    premium_interactions?: {
+      remaining: number
+      entitlement: number
+      unlimited: boolean
+    }
     chat?: { remaining: number; entitlement: number; unlimited: boolean }
     completions?: { remaining: number; entitlement: number; unlimited: boolean }
   }
@@ -232,16 +250,22 @@ async function getCopilotUsageForAccount(account: Account): Promise<{
 
   if (!response.ok) throw new HTTPError("Failed to get Copilot usage", response)
 
-  return (await response.json()) as Awaited<ReturnType<typeof getCopilotUsageForAccount>>
+  return (await response.json()) as Awaited<
+    ReturnType<typeof getCopilotUsageForAccount>
+  >
 }
 
-function snapshotFromUsage(usage: Awaited<ReturnType<typeof getCopilotUsageForAccount>>): QuotaSnapshot {
+function snapshotFromUsage(
+  usage: Awaited<ReturnType<typeof getCopilotUsageForAccount>>,
+): QuotaSnapshot {
   const snapshots = usage.quota_snapshots ?? {}
   const premium = snapshots.premium_interactions
   const chat = snapshots.chat
   const completions = snapshots.completions
 
-  const unlimited = Boolean(premium?.unlimited || chat?.unlimited || completions?.unlimited)
+  const unlimited = Boolean(
+    premium?.unlimited || chat?.unlimited || completions?.unlimited,
+  )
 
   return {
     fetchedAt: Date.now(),
@@ -252,4 +276,3 @@ function snapshotFromUsage(usage: Awaited<ReturnType<typeof getCopilotUsageForAc
     unlimited,
   }
 }
-

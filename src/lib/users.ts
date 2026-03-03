@@ -1,7 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
-import fs from "node:fs/promises"
-
 import { randomUUID } from "node:crypto"
+import fs from "node:fs/promises"
 
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
@@ -39,8 +38,8 @@ const keysMatch = (raw: string, hashed: string): boolean => {
 
 export async function loadUsers(): Promise<void> {
   try {
-    const data = await fs.readFile(PATHS.USERS_PATH, "utf8")
-    const parsed = JSON.parse(data) as User[]
+    const data = await fs.readFile(PATHS.USERS_PATH)
+    const parsed = JSON.parse(data) as Array<User>
     state.users = parsed
     return
   } catch {
@@ -148,7 +147,10 @@ export function toPublicUser(user: User): PublicUser {
  * @param tokens - Number of tokens to add
  * @returns true if successful, false if user not found
  */
-export async function incrementUserTokens(userId: string, tokens: number): Promise<boolean> {
+export async function incrementUserTokens(
+  userId: string,
+  tokens: number,
+): Promise<boolean> {
   const user = state.users.find((u) => u.id === userId)
   if (!user) return false
   user.usedTokens += tokens
@@ -156,4 +158,3 @@ export async function incrementUserTokens(userId: string, tokens: number): Promi
   await saveUsers()
   return true
 }
-

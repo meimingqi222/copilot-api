@@ -3,8 +3,8 @@ import type { Context, Next } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 
-import { verifyApiKey } from "./users"
 import { state } from "./state"
+import { verifyApiKey } from "./users"
 
 const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"

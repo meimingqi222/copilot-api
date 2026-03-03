@@ -78,7 +78,9 @@ export async function handleCompletion(c: Context) {
     // Track token usage for non-streaming response
     const usage = response.usage
     if (usage) {
-      const totalTokens = usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
+      const totalTokens =
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
       void trackTokenUsage(c, totalTokens)
     } else {
       // Fallback to estimated tokens if usage not available
@@ -89,7 +91,13 @@ export async function handleCompletion(c: Context) {
 
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
-    let lastUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined
+    let lastUsage:
+      | {
+          prompt_tokens: number
+          completion_tokens: number
+          total_tokens: number
+        }
+      | undefined
     try {
       for await (const chunk of response) {
         consola.debug("Streaming chunk:", JSON.stringify(chunk))
@@ -109,7 +117,12 @@ export async function handleCompletion(c: Context) {
     } finally {
       // Track token usage after streaming completes
       if (lastUsage) {
-        void trackTokenUsage(c, lastUsage.total_tokens ?? lastUsage.prompt_tokens + lastUsage.completion_tokens)
+        void trackTokenUsage(
+          c,
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          lastUsage.total_tokens
+            ?? lastUsage.prompt_tokens + lastUsage.completion_tokens,
+        )
       } else {
         // Fallback to estimated tokens if no usage data received
         void trackTokenUsage(c, estimatedInputTokens)

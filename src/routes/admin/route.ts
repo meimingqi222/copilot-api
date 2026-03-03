@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs"
-import { join, resolve } from "node:path"
-
 import { Hono } from "hono"
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 
 import {
   clearAdminSession,
@@ -42,12 +41,15 @@ adminRoutes.get("/static/*", (c) => {
     }
 
     try {
-      const content = readFileSync(fullPath, "utf-8")
-      const contentType = filePath.endsWith(".css")
-        ? "text/css"
-        : filePath.endsWith(".js")
-          ? "application/javascript"
-          : "text/plain"
+      const content = readFileSync(fullPath, "utf8")
+      let contentType: string
+      if (filePath.endsWith(".css")) {
+        contentType = "text/css"
+      } else if (filePath.endsWith(".js")) {
+        contentType = "application/javascript"
+      } else {
+        contentType = "text/plain"
+      }
       return c.body(content, 200, { "Content-Type": contentType })
     } catch {
       continue
@@ -69,8 +71,6 @@ adminRoutes.route("/api/accounts", accountApiRoutes)
 adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
-
-
 
 // Serve a file from pages directory
 function serveFile(filePath: string): string {
@@ -94,7 +94,7 @@ function serveFile(filePath: string): string {
     }
 
     try {
-      return readFileSync(fullPath, "utf-8")
+      return readFileSync(fullPath, "utf8")
     } catch {
       continue
     }
@@ -136,9 +136,9 @@ adminRoutes.get("/login", (c) => {
   }
 
   const message =
-    hasAdminPasswordConfigured ?
-      undefined
-    : "No management password configured. Set ADMIN_PASSWORD (or --admin-password)."
+    hasAdminPasswordConfigured ? undefined : (
+      "No management password configured. Set ADMIN_PASSWORD (or --admin-password)."
+    )
 
   return c.html(serveLoginPage(message))
 })

@@ -19,7 +19,7 @@ export interface LogEntry {
 const MAX_SIZE = Number(process.env["LOG_BUFFER_SIZE"] ?? 1000)
 
 class LogStore {
-  private buffer: LogEntry[] = []
+  private buffer: Array<LogEntry> = []
   private counter = 0
 
   push(entry: Omit<LogEntry, "id">): void {
@@ -32,7 +32,7 @@ class LogStore {
     search?: string
     limit?: number
     offset?: number
-  }): { entries: LogEntry[]; filteredTotal: number } {
+  }): { entries: Array<LogEntry>; filteredTotal: number } {
     let results = [...this.buffer].reverse() // most recent first
     if (opts.level) results = results.filter((e) => e.level === opts.level)
     if (opts.search) {
@@ -66,4 +66,3 @@ class LogStore {
 }
 
 export const logStore = new LogStore()
-
