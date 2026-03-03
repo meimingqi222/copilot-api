@@ -6,6 +6,7 @@ import fs from "node:fs/promises"
 import type { Account } from "~/lib/accounts"
 
 import {
+  cancelTokenRefreshTimer,
   getActiveAccount,
   refreshCopilotToken,
   refreshQuotaForAccount,
@@ -268,6 +269,9 @@ accountApiRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id")
   const idx = state.accounts.findIndex((a) => a.id === id)
   if (idx === -1) return c.json({ error: "Account not found." }, 404)
+
+  // Cancel any pending token refresh timer to prevent leaks
+  cancelTokenRefreshTimer(id)
 
   state.accounts.splice(idx, 1)
   // Fix active index: if we deleted before the active, shift it down
