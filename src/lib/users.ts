@@ -37,32 +37,37 @@ const keysMatch = (raw: string, hashed: string): boolean => {
 }
 
 export async function loadUsers(): Promise<void> {
+  // Start with persisted users if file exists
   try {
     const data = await fs.readFile(PATHS.USERS_PATH)
     const parsed = JSON.parse(data) as Array<User>
     state.users = parsed
-    return
   } catch {
-    // File doesn't exist — check for legacy API key
+    // File doesn't exist — start with empty array
+    state.users = []
   }
 
-  // If a legacy API key is configured, create in-memory admin user (not persisted)
+  // If a legacy API key is configured, ensure the in-memory admin user exists.
+  // This keeps --api-key functional even after users.json is created/modified.
   if (state.legacyApiKey) {
-    const adminUser: User = {
-      id: randomUUID(),
-      username: "admin",
-      hashedApiKey: hashKey(state.legacyApiKey),
-      quotaLimit: 0,
-      usedTokens: 0,
-      enabled: true,
-      role: "admin",
-      createdAt: Date.now(),
+    const hashedKey = hashKey(state.legacyApiKey)
+    const existingLegacyAdmin = state.users.find(
+      (u) => u.hashedApiKey === hashedKey,
+    )
+    if (!existingLegacyAdmin) {
+      const adminUser: User = {
+        id: randomUUID(),
+        username: "admin",
+        hashedApiKey: hashedKey,
+        quotaLimit: 0,
+        usedTokens: 0,
+        enabled: true,
+        role: "admin",
+        createdAt: Date.now(),
+      }
+      state.users.push(adminUser)
     }
-    state.users = [adminUser]
-    return
   }
-
-  state.users = []
 }
 
 export async function saveUsers(): Promise<void> {
