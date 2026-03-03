@@ -261,8 +261,10 @@ accountApiRoutes.delete("/:id", async (c) => {
   if (idx === -1) return c.json({ error: "Account not found." }, 404)
 
   state.accounts.splice(idx, 1)
-  // Fix active index if needed
-  if (state.activeAccountIndex >= state.accounts.length) {
+  // Fix active index: if we deleted before the active, shift it down
+  if (idx < state.activeAccountIndex) {
+    state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
+  } else if (state.activeAccountIndex >= state.accounts.length) {
     state.activeAccountIndex = Math.max(0, state.accounts.length - 1)
   }
   await saveAccounts()
