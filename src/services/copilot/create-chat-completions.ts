@@ -96,7 +96,6 @@ async function tryNextAccount(
     const response = await doRequest(nextAccount)
     // If the retry account also returns 429, mark it as exhausted too
     if (response.status === 429) {
-      await reportUpstreamRateLimit(response)
       markAccountExhausted(nextAccount.id)
     }
     return response
