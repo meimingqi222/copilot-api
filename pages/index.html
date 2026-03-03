@@ -833,6 +833,11 @@
                 await this.load();
                 return;
               }
+              if (res.status === 'expired') {
+                this.deviceFlowStep = 'input';
+                this.showToast(I18n.t('accounts.deviceFlow.expired') || 'Device flow expired. Please try again.', 'error');
+                return;
+              }
               // Update interval if server asks for slow_down
               if (res.interval) {
                 pollInterval = res.interval * 1000;
