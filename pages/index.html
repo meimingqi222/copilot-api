@@ -313,7 +313,7 @@
 
         <!-- Add Modal -->
         <div x-show="showAddModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
-          <div class="modal-content p-8 w-full max-w-md" @click.away="showAddModal = false">
+          <div class="modal-content p-8 w-full max-w-md" @click.away="closeAddModal()">
             <h3 class="text-title-2 mb-6" x-text="t('accounts.deviceFlow.title')"></h3>
             <div x-show="deviceFlowStep === 'input'">
               <div class="mb-6">
@@ -321,7 +321,7 @@
                 <input x-model="newLabel" type="text" placeholder="work, personal..." class="input">
               </div>
               <div class="flex justify-end gap-3">
-                <button @click="showAddModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+                <button @click="closeAddModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
                 <button @click="startDeviceFlow()" class="btn btn-primary" x-text="t('accounts.deviceFlow.step2')"></button>
               </div>
             </div>
@@ -794,9 +794,20 @@
           this.deviceFlowData = null;
           this.showAddModal = true;
           if (this.pollTimer) clearTimeout(this.pollTimer);
+          this.pollTimer = null;
+        },
+
+        closeAddModal() {
+          this.showAddModal = false;
+          this.deviceFlowStep = 'input';
+          if (this.pollTimer) {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+          }
         },
 
         async startDeviceFlow() {
+          this.pollTimer = null;
           try {
             const res = await API.accounts.create(this.newLabel);
             this.deviceFlowData = res;
