@@ -86,7 +86,7 @@ export function getActiveAccount(): Account {
 
   const preferred = state.accounts[state.activeAccountIndex]
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (!preferred?.isExhausted) return preferred
+  if (preferred && !preferred.isExhausted) return preferred
 
   const next = nonExhausted[0]
   state.activeAccountIndex = state.accounts.indexOf(next)
