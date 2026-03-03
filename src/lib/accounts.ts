@@ -157,7 +157,7 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
   }
 
   // Schedule token refresh
-  const refreshInterval = (data.refresh_in - 60) * 1000
+  const refreshInterval = Math.max((data.refresh_in - 60) * 1000, 60_000)
 
   // Clear any existing timer for this account
   const existingTimer = tokenRefreshTimers.get(account.id)
