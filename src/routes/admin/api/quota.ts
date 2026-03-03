@@ -1,5 +1,5 @@
-import { Hono } from "hono"
 import consola from "consola"
+import { Hono } from "hono"
 
 import { refreshQuotaForAccount } from "~/lib/accounts"
 import { state } from "~/lib/state"
@@ -8,13 +8,18 @@ import { toPublicUser } from "~/lib/users"
 export const quotaApiRoutes = new Hono()
 
 quotaApiRoutes.get("/", (c) => {
-  const accounts = state.accounts.map(({ githubToken: _t, ...rest }) => ({
-    id: rest.id,
-    label: rest.label,
-    isActive: state.accounts.indexOf(state.accounts.find((a) => a.id === rest.id)!) === state.activeAccountIndex,
-    isExhausted: rest.isExhausted,
-    quotaInfo: rest.quotaInfo ?? null,
-  }))
+  const accounts = state.accounts.map(({ githubToken: _t, ...rest }) => {
+    const account = state.accounts.find((a) => a.id === rest.id)
+    return {
+      id: rest.id,
+      label: rest.label,
+      isActive:
+        account !== undefined
+        && state.accounts.indexOf(account) === state.activeAccountIndex,
+      isExhausted: rest.isExhausted,
+      quotaInfo: rest.quotaInfo ?? null,
+    }
+  })
 
   const users = state.users.map((u) => {
     const pub = toPublicUser(u)
@@ -41,13 +46,19 @@ quotaApiRoutes.post("/refresh", async (c) => {
       results.push({ id: account.id, label: account.label, success: true })
       consola.info(`Quota refreshed for account "${account.label}"`)
     } catch (err) {
-      consola.warn(`Failed to refresh quota for account "${account.label}":`, err)
+      consola.warn(
+        `Failed to refresh quota for account "${account.label}":`,
+        err,
+      )
       errors.push({ id: account.id, label: account.label, error: String(err) })
     }
   }
 
   if (errors.length > 0 && results.length === 0) {
-    return c.json({ error: "Failed to refresh any quotas", details: errors }, 502)
+    return c.json(
+      { error: "Failed to refresh any quotas", details: errors },
+      502,
+    )
   }
 
   return c.json({
@@ -57,4 +68,3 @@ quotaApiRoutes.post("/refresh", async (c) => {
     errors: errors.length > 0 ? errors : undefined,
   })
 })
-

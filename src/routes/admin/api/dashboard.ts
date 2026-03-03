@@ -15,7 +15,7 @@ dashboardApiRoutes.get("/", (c) => {
 
   // Aggregate quota across active accounts
   const activeAccount = state.accounts[state.activeAccountIndex]
-  const quotaInfo = activeAccount?.quotaInfo
+  const quotaInfo = activeAccount.quotaInfo
 
   return c.json({
     activeUsers,
@@ -32,4 +32,3 @@ dashboardApiRoutes.get("/", (c) => {
     },
   })
 })
-

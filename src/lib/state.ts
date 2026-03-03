@@ -4,11 +4,11 @@ import type { ModelsResponse } from "~/services/copilot/get-models"
 
 export interface State {
   // Multi-account support
-  accounts: Account[]
+  accounts: Array<Account>
   activeAccountIndex: number
 
   // Multi-user support
-  users: User[]
+  users: Array<User>
 
   // Legacy single-key compatibility
   legacyApiKey?: string

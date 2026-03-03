@@ -1,20 +1,25 @@
+import consola from "consola"
+import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
-import { Hono } from "hono"
-import consola from "consola"
+import type { Account } from "~/lib/accounts"
 
-import { getActiveAccount, refreshCopilotToken, refreshQuotaForAccount, saveAccounts } from "~/lib/accounts"
-import { state } from "~/lib/state"
-import { cacheModels } from "~/lib/utils"
-import { getDeviceCode } from "~/services/github/get-device-code"
+import {
+  getActiveAccount,
+  refreshCopilotToken,
+  refreshQuotaForAccount,
+  saveAccounts,
+} from "~/lib/accounts"
 import {
   GITHUB_BASE_URL,
   GITHUB_CLIENT_ID,
   standardHeaders,
 } from "~/lib/api-config"
 import { PATHS } from "~/lib/paths"
-import type { Account } from "~/lib/accounts"
+import { state } from "~/lib/state"
+import { cacheModels } from "~/lib/utils"
+import { getDeviceCode } from "~/services/github/get-device-code"
 
 export const accountApiRoutes = new Hono()
 
@@ -33,7 +38,7 @@ const pendingFlows = new Map<string, PollState>()
 // Load pending flows from disk
 async function loadPendingFlows(): Promise<void> {
   try {
-    const data = await fs.readFile(PATHS.PENDING_FLOWS_PATH, "utf8")
+    const data = await fs.readFile(PATHS.PENDING_FLOWS_PATH)
     const parsed = JSON.parse(data) as Record<string, PollState>
     for (const [key, value] of Object.entries(parsed)) {
       // Only restore non-expired flows
@@ -63,7 +68,9 @@ function publicAccount(account: Account) {
 }
 
 accountApiRoutes.get("/", (c) => {
-  return c.json({ accounts: state.accounts.map(publicAccount) })
+  return c.json({
+    accounts: state.accounts.map((account) => publicAccount(account)),
+  })
 })
 
 accountApiRoutes.post("/", async (c) => {
@@ -150,7 +157,12 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     return c.json({ status: "pending" })
   }
 
-  let json: { access_token?: string; error?: string; error_description?: string }
+  let json: {
+    access_token?: string
+    error?: string
+    error_description?: string
+    interval?: number
+  }
   try {
     json = await response.json()
     consola.debug("Poll device flow: GitHub response:", json)
@@ -165,10 +177,13 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
 
   if (json.error === "slow_down") {
     // GitHub is asking us to slow down — increase interval
-    const newInterval = json.interval ?? flow.interval + 5
+    const newInterval =
+      typeof json.interval === "number" ? json.interval : flow.interval + 5
     flow.interval = newInterval
     await savePendingFlows()
-    consola.debug(`Poll device flow: slow_down received, increasing interval to ${newInterval}s`)
+    consola.debug(
+      `Poll device flow: slow_down received, increasing interval to ${newInterval}s`,
+    )
     return c.json({ status: "pending", interval: newInterval })
   }
 
@@ -201,7 +216,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     .then(() => {
       consola.info(`GitHub account added: ${account.label}`)
     })
-    .catch((err) => {
+    .catch((err: unknown) => {
       consola.warn(`Failed to initialize account "${account.label}":`, err)
     })
 
@@ -214,7 +229,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     consola.info("First account added — refreshing models cache")
     // Wait a bit for copilot token to be ready
     setTimeout(() => {
-      cacheModels().catch((err) => {
+      cacheModels().catch((err: unknown) => {
         consola.warn("Failed to refresh models after adding account:", err)
       })
     }, 2000)
@@ -282,4 +297,3 @@ accountApiRoutes.post("/:id/activate", (c) => {
   }
   return c.json({ ok: true, activeAccountIndex: idx })
 })
-

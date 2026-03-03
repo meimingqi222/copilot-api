@@ -62,7 +62,9 @@ const quotaKeys: Array<QuotaKey> = [
   "completions",
 ]
 
-export const getCopilotUsage = async (githubToken?: string): Promise<CopilotUsageResponse> => {
+export const getCopilotUsage = async (
+  githubToken?: string,
+): Promise<CopilotUsageResponse> => {
   const tokenToUse = githubToken ?? state.githubToken
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
     headers: {

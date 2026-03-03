@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 
+import { state } from "~/lib/state"
 import {
   createUser,
   deleteUser,
@@ -7,12 +8,11 @@ import {
   toPublicUser,
   updateUser,
 } from "~/lib/users"
-import { state } from "~/lib/state"
 
 export const userApiRoutes = new Hono()
 
 userApiRoutes.get("/", (c) => {
-  return c.json({ users: state.users.map(toPublicUser) })
+  return c.json({ users: state.users.map((user) => toPublicUser(user)) })
 })
 
 userApiRoutes.post("/", async (c) => {
@@ -27,13 +27,22 @@ userApiRoutes.post("/", async (c) => {
     return c.json({ error: "username is required." }, 400)
   }
 
-  const userWithKey = await createUser(body.username, body.quotaLimit ?? 0, body.role ?? "user")
+  const userWithKey = await createUser(
+    body.username,
+    body.quotaLimit ?? 0,
+    body.role ?? "user",
+  )
   return c.json({ user: userWithKey }, 201)
 })
 
 userApiRoutes.put("/:id", async (c) => {
   const id = c.req.param("id")
-  let body: { username?: string; quotaLimit?: number; enabled?: boolean; role?: "admin" | "user" }
+  let body: {
+    username?: string
+    quotaLimit?: number
+    enabled?: boolean
+    role?: "admin" | "user"
+  }
   try {
     body = await c.req.json()
   } catch {
@@ -58,4 +67,3 @@ userApiRoutes.post("/:id/reset-key", async (c) => {
   if (!newKey) return c.json({ error: "User not found." }, 404)
   return c.json({ apiKey: newKey })
 })
-
