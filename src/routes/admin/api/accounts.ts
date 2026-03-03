@@ -155,8 +155,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     json = await response.json()
     consola.debug("Poll device flow: GitHub response:", json)
   } catch (e) {
-    const text = await response.text()
-    consola.error("Poll device flow: Failed to parse GitHub response:", text)
+    consola.error("Poll device flow: Failed to parse GitHub response:", e)
     return c.json({ status: "pending" })
   }
 

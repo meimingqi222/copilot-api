@@ -10,11 +10,11 @@ logApiRoutes.get("/", (c) => {
   const limit = Math.min(Number(c.req.query("limit") ?? 100), 500)
   const offset = Number(c.req.query("offset") ?? 0)
 
-  const entries = logStore.query({ level, search, limit, offset })
+  const { entries, filteredTotal } = logStore.query({ level, search, limit, offset })
 
   return c.json({
     entries,
-    total: logStore.count(),
+    total: filteredTotal,
     limit,
     offset,
   })

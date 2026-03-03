@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 import { Hono } from "hono"
 
@@ -21,15 +21,28 @@ export const adminRoutes = new Hono()
 // Serve static files (CSS/JS)
 adminRoutes.get("/static/*", (c) => {
   const filePath = c.req.path.replace("/admin/static/", "")
-  const paths = [
-    join(process.cwd(), "pages", filePath),
-    join(process.cwd(), "..", "pages", filePath),
-    join(process.cwd(), "..", "..", "pages", filePath),
+
+  // Prevent path traversal - reject paths with .. or null bytes
+  if (filePath.includes("..") || filePath.includes("\0")) {
+    return c.notFound()
+  }
+
+  const allowedDirs = [
+    resolve(process.cwd(), "pages"),
+    resolve(process.cwd(), "..", "pages"),
+    resolve(process.cwd(), "..", "..", "pages"),
   ]
 
-  for (const path of paths) {
+  for (const baseDir of allowedDirs) {
+    const fullPath = resolve(baseDir, filePath)
+
+    // Ensure resolved path is within the allowed directory
+    if (!fullPath.startsWith(baseDir)) {
+      continue
+    }
+
     try {
-      const content = readFileSync(path, "utf-8")
+      const content = readFileSync(fullPath, "utf-8")
       const contentType = filePath.endsWith(".css")
         ? "text/css"
         : filePath.endsWith(".js")
@@ -61,14 +74,27 @@ adminRoutes.route("/api/dashboard", dashboardApiRoutes)
 
 // Serve a file from pages directory
 function serveFile(filePath: string): string {
-  const paths = [
-    join(process.cwd(), "pages", filePath),
-    join(process.cwd(), "..", "pages", filePath),
-    join(process.cwd(), "..", "..", "pages", filePath),
+  // Prevent path traversal
+  if (filePath.includes("..") || filePath.includes("\0")) {
+    return `<h1>Invalid file path</h1>`
+  }
+
+  const allowedDirs = [
+    resolve(process.cwd(), "pages"),
+    resolve(process.cwd(), "..", "pages"),
+    resolve(process.cwd(), "..", "..", "pages"),
   ]
-  for (const path of paths) {
+
+  for (const baseDir of allowedDirs) {
+    const fullPath = resolve(baseDir, filePath)
+
+    // Ensure resolved path is within the allowed directory
+    if (!fullPath.startsWith(baseDir)) {
+      continue
+    }
+
     try {
-      return readFileSync(path, "utf-8")
+      return readFileSync(fullPath, "utf-8")
     } catch {
       continue
     }

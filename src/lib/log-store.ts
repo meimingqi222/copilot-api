@@ -32,7 +32,7 @@ class LogStore {
     search?: string
     limit?: number
     offset?: number
-  }): LogEntry[] {
+  }): { entries: LogEntry[]; filteredTotal: number } {
     let results = [...this.buffer].reverse() // most recent first
     if (opts.level) results = results.filter((e) => e.level === opts.level)
     if (opts.search) {
@@ -45,9 +45,10 @@ class LogStore {
           || (e.path ?? "").toLowerCase().includes(q),
       )
     }
+    const filteredTotal = results.length
     const offset = opts.offset ?? 0
     const limit = Math.min(opts.limit ?? 100, 500)
-    return results.slice(offset, offset + limit)
+    return { entries: results.slice(offset, offset + limit), filteredTotal }
   }
 
   count(): number {
