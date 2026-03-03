@@ -61,7 +61,14 @@ adminRoutes.get("/static/*", (c) => {
 
 // Protect all /api/* routes with admin role check
 adminRoutes.use("/api/*", async (c, next) => {
-  if (!hasAdminRole(c)) {
+  // If no auth is configured at all, allow access (backwards compat)
+  const hasAnyAuth = Boolean(
+    state.apiKey
+      || state.adminPassword
+      || state.legacyApiKey
+      || state.users.length > 0,
+  )
+  if (hasAnyAuth && !hasAdminRole(c)) {
     return c.json(
       { error: "Forbidden. Admin role required to access this resource." },
       403,
