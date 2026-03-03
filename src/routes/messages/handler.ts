@@ -98,7 +98,9 @@ export async function handleCompletion(c: Context) {
   }
 
   consola.debug("Streaming response from Copilot")
-  return streamSSE(c, (stream) => handleStreamingResponse(stream, response))
+  return streamSSE(c, (stream) =>
+    handleStreamingResponse(stream, response, signal),
+  )
 }
 
 type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
@@ -110,17 +112,30 @@ type CopilotStream = Exclude<
 async function handleStreamingResponse(
   stream: SSEStream,
   response: CopilotStream,
+  clientSignal: AbortSignal,
 ): Promise<void> {
-  try {
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      messageStopSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      currentContentBlockType: undefined,
-      toolCalls: {},
-    }
+  const streamState: AnthropicStreamState = {
+    messageStartSent: false,
+    messageStopSent: false,
+    contentBlockIndex: 0,
+    contentBlockOpen: false,
+    currentContentBlockType: undefined,
+    toolCalls: {},
+  }
 
+  // Send periodic ping events to keep the SSE connection alive.
+  // Without these, idle periods (e.g. while Copilot generates long tool_call
+  // arguments) can cause the client's HTTP stream to terminate with a TypeError.
+  const PING_INTERVAL_MS = 5_000
+  const pingInterval = setInterval(async () => {
+    try {
+      await stream.writeSSE({ event: "ping", data: '{"type": "ping"}' })
+    } catch {
+      // Stream already closed; clear interval in finally below.
+    }
+  }, PING_INTERVAL_MS)
+
+  try {
     for await (const rawEvent of response) {
       consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       if (rawEvent.data === "[DONE]") {
@@ -145,23 +160,60 @@ async function handleStreamingResponse(
 
     // If upstream closed without finish_reason (e.g. premature disconnect),
     // send a synthetic error event so the client gets a clean termination.
-    if (streamState.messageStartSent && !streamState.messageStopSent) {
-      consola.warn(
-        "Upstream closed stream without finish_reason, sending error event",
-      )
-      const errorEvent = translateErrorToAnthropicErrorEvent()
-      await stream.writeSSE({
-        event: errorEvent.type,
-        data: JSON.stringify(errorEvent),
-      })
-    }
+    await sendSyntheticErrorIfNeeded(
+      stream,
+      streamState,
+      "Upstream closed stream without finish_reason",
+    )
   } catch (e) {
     if (e instanceof DOMException && e.name === "AbortError") {
-      consola.debug("Stream aborted (client disconnected)")
+      if (clientSignal.aborted) {
+        consola.debug("Stream aborted (client disconnected)")
+        return
+      }
+
+      const sent = await sendSyntheticErrorIfNeeded(
+        stream,
+        streamState,
+        "Upstream aborted stream before finish_reason",
+      )
+      if (sent) {
+        return
+      }
+      consola.warn("Stream aborted unexpectedly before first response event")
+      return
+    }
+
+    const sent = await sendSyntheticErrorIfNeeded(
+      stream,
+      streamState,
+      "Unexpected streaming error",
+    )
+    if (sent) {
       return
     }
     throw e
+  } finally {
+    clearInterval(pingInterval)
   }
+}
+
+async function sendSyntheticErrorIfNeeded(
+  stream: SSEStream,
+  streamState: AnthropicStreamState,
+  reason: string,
+): Promise<boolean> {
+  if (!streamState.messageStartSent || streamState.messageStopSent) {
+    return false
+  }
+
+  consola.warn(`${reason}, sending error event`)
+  const errorEvent = translateErrorToAnthropicErrorEvent()
+  await stream.writeSSE({
+    event: errorEvent.type,
+    data: JSON.stringify(errorEvent),
+  })
+  return true
 }
 
 const isNonStreaming = (
