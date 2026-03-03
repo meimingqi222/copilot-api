@@ -468,14 +468,14 @@
 
         <!-- Filters -->
         <div class="card p-4 mb-6 flex flex-wrap gap-4 items-center">
-          <select x-model="filters.level" @change="load()" class="input w-32">
+          <select x-model="filters.level" @change="filters.offset = 0; load()" class="input w-32">
             <option value="" x-text="t('logs.allLevels')"></option>
             <option value="debug">Debug</option>
             <option value="info">Info</option>
             <option value="warn">Warn</option>
             <option value="error">Error</option>
           </select>
-          <input x-model="filters.search" @keyup.enter="load()" type="text" :placeholder="t('logs.search')" class="input flex-1 min-w-[200px]">
+          <input x-model="filters.search" @keyup.enter="filters.offset = 0; load()" type="text" :placeholder="t('logs.search')" class="input flex-1 min-w-[200px]">
           <button @click="filters = { level: '', search: '', limit: 50, offset: 0 }; load()" class="btn btn-secondary" x-text="t('logs.clearFilters')"></button>
         </div>
 
