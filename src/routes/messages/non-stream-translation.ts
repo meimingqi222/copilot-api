@@ -34,6 +34,7 @@ export function translateToOpenAI(
   const reasoningEffort = translateAnthropicThinkingToReasoningEffort(
     payload.thinking,
   )
+  const maxTokens = normalizeMaxTokens(payload.max_tokens)
   return {
     model: translateModelName(payload.model),
     messages: translateAnthropicMessagesToOpenAI(
@@ -41,7 +42,7 @@ export function translateToOpenAI(
       payload.system,
     ),
     // Copilot API enforces an output token limit; cap to avoid premature stream cuts.
-    max_tokens: Math.min(payload.max_tokens, 16384),
+    ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
     stop: payload.stop_sequences,
     stream: payload.stream,
     // Copilot requires temperature=1 when reasoning is enabled
@@ -52,6 +53,14 @@ export function translateToOpenAI(
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
     reasoning_effort: reasoningEffort,
   }
+}
+
+function normalizeMaxTokens(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined
+  }
+
+  return Math.min(Math.max(value, 0), 16384)
 }
 
 function translateModelName(model: string): string {
