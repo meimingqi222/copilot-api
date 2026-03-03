@@ -1,10 +1,12 @@
+import { getActiveAccount } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
 export const getModels = async () => {
+  const account = getActiveAccount()
   const response = await fetch(`${copilotBaseUrl(state)}/models`, {
-    headers: copilotHeaders(state),
+    headers: copilotHeaders(account),
   })
 
   if (!response.ok) throw new HTTPError("Failed to get models", response)

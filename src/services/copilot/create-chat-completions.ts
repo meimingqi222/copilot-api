@@ -1,6 +1,7 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
+import { getActiveAccount, markAccountExhausted } from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import {
@@ -14,7 +15,8 @@ export const createChatCompletions = async (
   signal?: AbortSignal,
   initiatorOverride?: "agent" | "user",
 ) => {
-  if (!state.copilotToken) throw new Error("Copilot token not found")
+  const account = getActiveAccount()
+  if (!account.copilotToken) throw new Error("Copilot token not found")
 
   const enableVision = payload.messages.some(
     (x) =>
@@ -31,23 +33,30 @@ export const createChatCompletions = async (
   )
   const initiator = initiatorOverride ?? (isAgentCall ? "agent" : "user")
 
-  // Build headers and add X-Initiator
-  const headers: Record<string, string> = {
-    ...copilotHeaders(state, enableVision),
-    "X-Initiator": initiator,
+  const doRequest = async (requestAccount: typeof account) => {
+    const reqHeaders: Record<string, string> = {
+      ...copilotHeaders(requestAccount, enableVision),
+      "editor-version": `vscode/${state.vsCodeVersion}`,
+      "X-Initiator": initiator,
+    }
+    return fetch(`${copilotBaseUrl(state)}/chat/completions`, {
+      method: "POST",
+      headers: reqHeaders,
+      body: JSON.stringify(payload),
+      signal,
+    })
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-    signal,
-  })
+  let response = await doRequest(account)
+
+  // Handle 429 by marking account exhausted and trying next account
+  if (!response.ok && response.status === 429) {
+    await reportUpstreamRateLimit(response)
+    markAccountExhausted(account.id)
+    response = await tryNextAccount(account, doRequest)
+  }
 
   if (!response.ok) {
-    if (response.status === 429) {
-      await reportUpstreamRateLimit(response)
-    }
     const errorBody = await response.text().catch(() => "(unreadable)")
     consola.error(
       "Failed to create chat completions",
@@ -69,6 +78,30 @@ export const createChatCompletions = async (
   }
 
   return (await response.json()) as ChatCompletionResponse
+}
+
+/**
+ * Try the next available account when current account returns 429.
+ * If the retry account also returns 429, mark it as exhausted.
+ */
+async function tryNextAccount(
+  currentAccount: Awaited<ReturnType<typeof getActiveAccount>>,
+  doRequest: (account: typeof currentAccount) => Promise<Response>,
+): Promise<Response> {
+  try {
+    const nextAccount = getActiveAccount()
+    if (nextAccount.id === currentAccount.id) {
+      return new Response("All accounts exhausted", { status: 429 })
+    }
+    const response = await doRequest(nextAccount)
+    // If the retry account also returns 429, mark it as exhausted too
+    if (response.status === 429) {
+      markAccountExhausted(nextAccount.id)
+    }
+    return response
+  } catch {
+    return new Response("All accounts exhausted", { status: 429 })
+  }
 }
 
 // Streaming types

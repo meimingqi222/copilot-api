@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Copilot API Admin</title>
+  <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="login-container" x-data="loginApp()" x-init="init()" x-cloak>
+  <div class="login-card">
+    <!-- Logo -->
+    <div class="login-logo">
+      <i data-lucide="cpu" class="w-10 h-10 text-white"></i>
+    </div>
+
+    <!-- Title -->
+    <h1 class="text-headline mb-2" x-text="t('login.title')"></h1>
+    <p class="text-body text-[var(--apple-text-secondary)] mb-8" x-text="t('login.subtitle')"></p>
+
+    <!-- Form -->
+    <form @submit.prevent="login()" class="space-y-6">
+      <div>
+        <label class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1">
+          <span x-text="t('login.password')"></span>
+        </label>
+        <input 
+          x-model="password" 
+          type="password" 
+          class="input text-center text-lg"
+          :placeholder="t('login.passwordPlaceholder')"
+          autocomplete="current-password"
+        >
+      </div>
+
+      <button type="submit" class="btn btn-primary w-full" :disabled="loading">
+        <span x-show="!loading" x-text="t('login.submit')"></span>
+        <span x-show="loading" class="flex items-center justify-center gap-2">
+          <div class="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
+          <span x-text="t('loading')"></span>
+        </span>
+      </button>
+    </form>
+
+    <!-- Error Message -->
+    <div x-show="error" class="mt-6 p-4 bg-[rgba(255,59,48,0.1)] rounded-lg flex items-center gap-3">
+      <i data-lucide="alert-circle" class="w-5 h-5 text-[var(--apple-red)]"></i>
+      <span class="text-body text-[var(--apple-red)]" x-text="error"></span>
+    </div>
+
+    <!-- Language Switcher -->
+    <div class="mt-8 flex justify-center">
+      <div class="lang-switcher">
+        <button @click="setLang('zh')" :class="{ 'active': lang === 'zh' }" class="cursor-pointer">中文</button>
+        <button @click="setLang('en')" :class="{ 'active': lang === 'en' }" class="cursor-pointer">EN</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple i18n for login page
+    const translations = {
+      zh: {
+        'login.title': '欢迎回来',
+        'login.subtitle': '登录到 Copilot API 管理控制台',
+        'login.password': '密码',
+        'login.passwordPlaceholder': '请输入管理密码',
+        'login.submit': '登录',
+        'login.error': '密码错误',
+        'loading': '加载中...'
+      },
+      en: {
+        'login.title': 'Welcome Back',
+        'login.subtitle': 'Sign in to Copilot API Admin Console',
+        'login.password': 'Password',
+        'login.passwordPlaceholder': 'Enter admin password',
+        'login.submit': 'Sign In',
+        'login.error': 'Invalid password',
+        'loading': 'Loading...'
+      }
+    };
+
+    function loginApp() {
+      return {
+        password: '',
+        loading: false,
+        error: null,
+        lang: 'zh',
+
+        init() {
+          // Detect browser language
+          const browserLang = navigator.language || navigator.userLanguage;
+          const storedLang = localStorage.getItem('copilot-api-lang');
+          this.lang = storedLang || (browserLang.startsWith('zh') ? 'zh' : 'en');
+          
+          this.$nextTick(() => {
+            lucide.createIcons();
+          });
+        },
+
+        t(key) {
+          return translations[this.lang]?.[key] || translations['en']?.[key] || key;
+        },
+
+        setLang(lang) {
+          this.lang = lang;
+          localStorage.setItem('copilot-api-lang', lang);
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async login() {
+          if (!this.password) return;
+          
+          this.loading = true;
+          this.error = null;
+
+          try {
+            const res = await fetch('/admin/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ password: this.password })
+            });
+
+            if (res.ok) {
+              window.location.href = '/admin';
+            } else {
+              this.error = this.t('login.error');
+            }
+          } catch (e) {
+            this.error = 'Network error';
+          } finally {
+            this.loading = false;
+          }
+        }
+      };
+    }
+  </script>
+</body>
+</html>
+

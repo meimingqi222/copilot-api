@@ -199,6 +199,7 @@ export type AnthropicStreamEventData =
 // State for streaming translation
 export interface AnthropicStreamState {
   messageStartSent: boolean
+  messageStopSent: boolean
   contentBlockIndex: number
   contentBlockOpen: boolean
   currentContentBlockType?: "text" | "thinking" | "tool_use"
