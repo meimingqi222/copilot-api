@@ -105,6 +105,7 @@ export function getActiveAccount(): Account {
 export function markAccountExhausted(id: string): void {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return
+  if (account.isExhausted) return
   account.isExhausted = true
   account.exhaustedAt = Date.now()
   consola.warn(`Account "${account.label}" marked as quota-exhausted`)
