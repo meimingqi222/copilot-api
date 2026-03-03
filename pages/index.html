@@ -238,6 +238,29 @@
             </div>
           </div>
         </div>
+
+        <!-- API Key Display Modal -->
+        <div x-show="showKeyModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" x-cloak>
+          <div class="modal-content p-8 w-full max-w-lg" @click.away="showKeyModal = false">
+            <div class="text-center mb-6">
+              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="key" class="w-8 h-8 text-white"></i>
+              </div>
+              <h3 class="text-title-2 mb-2" x-text="t('users.newApiKey')"></h3>
+              <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.keyWarning')"></p>
+            </div>
+            <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 mb-6">
+              <code class="text-sm font-mono break-all text-[var(--apple-text)]" x-text="displayedApiKey"></code>
+            </div>
+            <div class="flex justify-center gap-3">
+              <button @click="navigator.clipboard.writeText(displayedApiKey); showToast(t('copySuccess') || 'Copied!', 'success');" class="btn btn-primary">
+                <i data-lucide="copy" class="w-4 h-4 mr-2"></i>
+                <span x-text="t('copy')"></span>
+              </button>
+              <button @click="showKeyModal = false" class="btn btn-secondary" x-text="t('close')"></button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Accounts View -->
@@ -655,6 +678,8 @@
         loading: false,
         users: [],
         showAddModal: false,
+        showKeyModal: false,
+        displayedApiKey: '',
         newUser: { username: '', role: 'user' },
 
         async load() {
@@ -677,9 +702,14 @@
 
         async createUser() {
           try {
-            await API.users.create(this.newUser);
+            const result = await API.users.create(this.newUser);
             this.showAddModal = false;
             this.showToast(I18n.t('users.createSuccess'), 'success');
+            // Display the API key to the admin
+            if (result.user && result.user.apiKey) {
+              this.displayedApiKey = result.user.apiKey;
+              this.showKeyModal = true;
+            }
             await this.load();
           } catch (e) {
             this.showToast(I18n.t('error.create'), 'error');
@@ -698,8 +728,13 @@
         async resetApiKey(user) {
           if (!confirm(I18n.t('users.confirmReset'))) return;
           try {
-            await API.users.resetKey(user.id);
+            const result = await API.users.resetKey(user.id);
             this.showToast(I18n.t('users.resetSuccess'), 'success');
+            // Display the new API key to the admin
+            if (result.apiKey) {
+              this.displayedApiKey = result.apiKey;
+              this.showKeyModal = true;
+            }
           } catch (e) {
             this.showToast(I18n.t('error.update'), 'error');
           }
