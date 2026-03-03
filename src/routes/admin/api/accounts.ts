@@ -61,10 +61,13 @@ async function savePendingFlows(): Promise<void> {
 // Initialize on module load
 void loadPendingFlows()
 
-// Sanitize account for API response (omit raw githubToken)
+// Sanitize account for API response (omit raw githubToken, compute isActive dynamically)
 function publicAccount(account: Account) {
-  const { githubToken: _token, ...rest } = account
-  return rest
+  const { githubToken: _token, isActive: _isActive, ...rest } = account
+  return {
+    ...rest,
+    isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
+  }
 }
 
 accountApiRoutes.get("/", (c) => {
