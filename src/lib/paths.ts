@@ -9,6 +9,9 @@ const GITHUB_TOKEN_PATH = path.join(APP_DIR, "github_token")
 export const PATHS = {
   APP_DIR,
   GITHUB_TOKEN_PATH,
+  ACCOUNTS_PATH: path.join(APP_DIR, "accounts.json"),
+  USERS_PATH: path.join(APP_DIR, "users.json"),
+  PENDING_FLOWS_PATH: path.join(APP_DIR, "pending_flows.json"),
 }
 
 export async function ensurePaths(): Promise<void> {

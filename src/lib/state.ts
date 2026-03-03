@@ -1,8 +1,20 @@
+import type { Account } from "~/lib/accounts"
+import type { User } from "~/lib/users"
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
 export interface State {
+  // Multi-account support
+  accounts: Account[]
+  activeAccountIndex: number
+
+  // Multi-user support
+  users: User[]
+
+  // Legacy single-key compatibility
+  legacyApiKey?: string
+
+  // Legacy single-token (kept for backward compat with auth subcommand)
   githubToken?: string
-  copilotToken?: string
 
   accountType: string
   models?: ModelsResponse
@@ -10,6 +22,7 @@ export interface State {
 
   manualApprove: boolean
   showToken: boolean
+  // Legacy single api key (kept for backward compat)
   apiKey?: string
   adminPassword?: string
   adminSessionToken?: string
@@ -17,6 +30,9 @@ export interface State {
 }
 
 export const state: State = {
+  accounts: [],
+  activeAccountIndex: 0,
+  users: [],
   accountType: "individual",
   manualApprove: false,
   showToken: false,
