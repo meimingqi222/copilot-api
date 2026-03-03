@@ -4,6 +4,7 @@ import { resolve } from "node:path"
 
 import {
   clearAdminSession,
+  hasAdminRole,
   isAuthorizedRequest,
   setAdminSession,
 } from "~/lib/request-auth"
@@ -58,10 +59,13 @@ adminRoutes.get("/static/*", (c) => {
   return c.notFound()
 })
 
-// Protect all /api/* routes with admin session
+// Protect all /api/* routes with admin role check
 adminRoutes.use("/api/*", async (c, next) => {
-  if (!isAuthorizedRequest(c)) {
-    return c.json({ error: "Unauthorized. Admin session required." }, 401)
+  if (!hasAdminRole(c)) {
+    return c.json(
+      { error: "Forbidden. Admin role required to access this resource." },
+      403,
+    )
   }
   await next()
 })

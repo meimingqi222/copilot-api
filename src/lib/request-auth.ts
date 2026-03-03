@@ -106,6 +106,33 @@ export function isAuthorizedRequest(c: Context): boolean {
   return hasValidAdminSession(c)
 }
 
+/**
+ * Check if the request has admin role
+ * - For API key auth: user must have role="admin"
+ * - For legacy API key: always true (legacy key has full admin access)
+ * - For admin session: always true (session is created via admin password)
+ */
+export function hasAdminRole(c: Context): boolean {
+  // Check API key auth first
+  if (state.users.length > 0) {
+    const authHeader = c.req.header("authorization")
+    const rawKey = extractBearerToken(authHeader)
+    if (rawKey) {
+      const user = verifyApiKey(rawKey)
+      // User must be enabled AND have admin role
+      if (user?.enabled && user.role === "admin") {
+        return true
+      }
+    }
+  } else if (hasValidLegacyApiKey(c)) {
+    // Legacy API key has full admin access
+    return true
+  }
+
+  // Admin session (created via admin password login) has full access
+  return hasValidAdminSession(c)
+}
+
 function hasValidLegacyApiKey(c: Context): boolean {
   const configuredApiKey = state.legacyApiKey ?? state.apiKey
   if (!configuredApiKey) return true

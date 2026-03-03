@@ -1,13 +1,14 @@
 import { Hono } from "hono"
 
-import { state } from "~/lib/state"
+import { getActiveAccount } from "~/lib/accounts"
 
 export const tokenRoute = new Hono()
 
 tokenRoute.get("/", (c) => {
   try {
+    const account = getActiveAccount()
     return c.json({
-      token: state.copilotToken,
+      token: account.copilotToken,
     })
   } catch (error) {
     console.error("Error fetching token:", error)
