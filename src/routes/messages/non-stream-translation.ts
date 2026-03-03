@@ -40,7 +40,8 @@ export function translateToOpenAI(
       payload.messages,
       payload.system,
     ),
-    max_tokens: payload.max_tokens,
+    // Copilot API enforces an output token limit; cap to avoid premature stream cuts.
+    max_tokens: Math.min(payload.max_tokens, 16384),
     stop: payload.stop_sequences,
     stream: payload.stream,
     // Copilot requires temperature=1 when reasoning is enabled
