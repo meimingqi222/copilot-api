@@ -39,8 +39,13 @@ export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
 
 export async function cacheModels(): Promise<void> {
-  const models = await getModels()
-  state.models = models
+  try {
+    const models = await getModels()
+    state.models = models
+  } catch (error) {
+    consola.warn("Failed to cache models (no active accounts yet):", error)
+    state.models = undefined
+  }
 }
 
 export const cacheVSCodeVersion = async () => {

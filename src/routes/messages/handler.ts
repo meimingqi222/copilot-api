@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming"
 import { awaitApproval } from "~/lib/approval"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { incrementUserTokens } from "~/lib/users"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -94,12 +95,18 @@ export async function handleCompletion(c: Context) {
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
+    // Track token usage for non-streaming response
+    const usage = anthropicResponse.usage
+    if (usage) {
+      const totalTokens = usage.input_tokens + usage.output_tokens
+      void trackTokenUsage(c, totalTokens)
+    }
     return c.json(anthropicResponse)
   }
 
   consola.debug("Streaming response from Copilot")
   return streamSSE(c, (stream) =>
-    handleStreamingResponse(stream, response, signal),
+    handleStreamingResponse(stream, response, signal, c),
   )
 }
 
@@ -113,6 +120,7 @@ async function handleStreamingResponse(
   stream: SSEStream,
   response: CopilotStream,
   clientSignal: AbortSignal,
+  c?: Context,
 ): Promise<void> {
   const streamState: AnthropicStreamState = {
     messageStartSent: false,
@@ -122,6 +130,7 @@ async function handleStreamingResponse(
     currentContentBlockType: undefined,
     toolCalls: {},
   }
+  let lastUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined
 
   // Send periodic ping events to keep the SSE connection alive.
   // Without these, idle periods (e.g. while Copilot generates long tool_call
@@ -147,6 +156,10 @@ async function handleStreamingResponse(
       }
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+      // Capture usage from chunk if available
+      if (chunk.usage) {
+        lastUsage = chunk.usage
+      }
       const events = translateChunkToAnthropicEvents(chunk, streamState)
 
       for (const event of events) {
@@ -195,6 +208,10 @@ async function handleStreamingResponse(
     throw e
   } finally {
     clearInterval(pingInterval)
+    // Track token usage after streaming completes
+    if (c && lastUsage) {
+      void trackTokenUsage(c, lastUsage.total_tokens ?? lastUsage.prompt_tokens + lastUsage.completion_tokens)
+    }
   }
 }
 
@@ -219,3 +236,18 @@ async function sendSyntheticErrorIfNeeded(
 const isNonStreaming = (
   response: Awaited<ReturnType<typeof createChatCompletions>>,
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
+
+/**
+ * Track token usage for the authenticated user
+ */
+async function trackTokenUsage(c: Context, tokens: number): Promise<void> {
+  if (tokens <= 0) return
+  const userId = c.get("userId" as never) as string | undefined
+  if (!userId) return
+  try {
+    await incrementUserTokens(userId, tokens)
+    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
+  } catch (error) {
+    consola.warn("Failed to track token usage:", error)
+  }
+}

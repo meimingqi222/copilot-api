@@ -1,8 +1,8 @@
 import consola from "consola"
 import fs from "node:fs/promises"
 
+import { getActiveAccount, refreshCopilotToken } from "~/lib/accounts"
 import { PATHS } from "~/lib/paths"
-import { getCopilotToken } from "~/services/github/get-copilot-token"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
 import { pollAccessToken } from "~/services/github/poll-access-token"
@@ -15,36 +15,14 @@ const readGithubToken = () => fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
 const writeGithubToken = (token: string) =>
   fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
 
-let copilotTokenRefreshTimer: ReturnType<typeof setInterval> | undefined
-
+/**
+ * Refresh the Copilot token for the active account.
+ * Delegates to accounts.ts which handles per-account token refresh + scheduling.
+ */
 export const setupCopilotToken = async () => {
-  const { token, refresh_in } = await getCopilotToken()
-  state.copilotToken = token
-
+  const account = getActiveAccount()
+  await refreshCopilotToken(account)
   consola.debug("GitHub Copilot Token fetched successfully!")
-  if (state.showToken) {
-    consola.info("Copilot token:", token)
-  }
-
-  if (copilotTokenRefreshTimer !== undefined) {
-    clearInterval(copilotTokenRefreshTimer)
-  }
-
-  const refreshInterval = (refresh_in - 60) * 1000
-  copilotTokenRefreshTimer = setInterval(() => {
-    consola.debug("Refreshing Copilot token")
-    getCopilotToken()
-      .then(({ token: newToken }) => {
-        state.copilotToken = newToken
-        consola.debug("Copilot token refreshed")
-        if (state.showToken) {
-          consola.info("Refreshed Copilot token:", newToken)
-        }
-      })
-      .catch((error: unknown) => {
-        consola.error("Failed to refresh Copilot token:", error)
-      })
-  }, refreshInterval)
 }
 
 interface SetupGitHubTokenOptions {

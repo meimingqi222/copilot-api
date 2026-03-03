@@ -3,6 +3,7 @@ import type { Context, Next } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 
+import { verifyApiKey } from "./users"
 import { state } from "./state"
 
 const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
@@ -10,7 +11,7 @@ export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 
 // Paths that are explicitly public and require no API key.
 // /admin and /usage route handlers perform their own auth checks internally.
-const PUBLIC_PATHS = new Set(["/", "/admin/login"])
+const PUBLIC_PATHS = new Set(["/", "/admin/login", "/health"])
 const PUBLIC_PREFIXES = ["/admin", "/usage"]
 
 export async function requireApiKey(c: Context, next: Next) {
@@ -22,7 +23,59 @@ export async function requireApiKey(c: Context, next: Next) {
     return
   }
 
-  if (hasValidApiKey(c)) {
+  // Multi-user mode: verify against users list
+  if (state.users.length > 0) {
+    const authHeader = c.req.header("authorization")
+    const rawKey = extractBearerToken(authHeader)
+    if (!rawKey) {
+      return c.json(
+        {
+          error: {
+            message: "Unauthorized. Provide Authorization: Bearer <API_KEY>.",
+            type: "authentication_error",
+          },
+        },
+        401,
+      )
+    }
+    const user = verifyApiKey(rawKey)
+    if (!user) {
+      return c.json(
+        {
+          error: {
+            message: "Unauthorized. Invalid API key.",
+            type: "authentication_error",
+          },
+        },
+        401,
+      )
+    }
+    if (!user.enabled) {
+      return c.json(
+        {
+          error: {
+            message: "Forbidden. This API key has been disabled.",
+            type: "authentication_error",
+          },
+        },
+        403,
+      )
+    }
+    // Store user info in context for logging
+    c.set("userId" as never, user.id)
+    c.set("username" as never, user.username)
+    await next()
+    return
+  }
+
+  // Legacy single-key mode
+  if (hasValidLegacyApiKey(c)) {
+    await next()
+    return
+  }
+
+  // No auth configured — allow all
+  if (!state.legacyApiKey && !state.apiKey) {
     await next()
     return
   }
@@ -39,15 +92,22 @@ export async function requireApiKey(c: Context, next: Next) {
 }
 
 export function isAuthorizedRequest(c: Context): boolean {
-  if (hasValidApiKey(c)) {
+  if (state.users.length > 0) {
+    const authHeader = c.req.header("authorization")
+    const rawKey = extractBearerToken(authHeader)
+    if (rawKey) {
+      const user = verifyApiKey(rawKey)
+      if (user?.enabled) return true
+    }
+  } else if (hasValidLegacyApiKey(c)) {
     return true
   }
 
   return hasValidAdminSession(c)
 }
 
-function hasValidApiKey(c: Context): boolean {
-  const configuredApiKey = state.apiKey
+function hasValidLegacyApiKey(c: Context): boolean {
+  const configuredApiKey = state.legacyApiKey ?? state.apiKey
   if (!configuredApiKey) return true
 
   const authHeader = c.req.header("authorization")

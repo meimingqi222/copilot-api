@@ -5,8 +5,18 @@ import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat
 import { state } from "../src/lib/state"
 import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
 
-// Mock state
-state.copilotToken = "test-token"
+// Mock state with an active account
+const mockAccount = {
+  id: "test-account-id",
+  label: "test",
+  githubToken: "gh-test-token",
+  copilotToken: "test-token",
+  isActive: true,
+  isExhausted: false,
+  createdAt: Date.now(),
+}
+state.accounts = [mockAccount]
+state.activeAccountIndex = 0
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
 

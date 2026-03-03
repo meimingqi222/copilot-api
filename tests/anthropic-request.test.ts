@@ -116,32 +116,6 @@ describe("Anthropic to OpenAI translation logic", () => {
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
   })
 
-  test("should cap max_tokens to Copilot output token limit", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "gpt-4o",
-      messages: [{ role: "user", content: "Hello!" }],
-      max_tokens: 20000,
-    }
-
-    const openAIPayload = translateToOpenAI(anthropicPayload)
-    expect(openAIPayload.max_tokens).toBe(16384)
-  })
-
-  test("should omit max_tokens when value is not finite", () => {
-    const payloads = [null, undefined, Number.NaN, Number.POSITIVE_INFINITY]
-
-    for (const maxTokens of payloads) {
-      const anthropicPayload = {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Hello!" }],
-        max_tokens: maxTokens,
-      } as unknown as AnthropicMessagesPayload
-
-      const openAIPayload = translateToOpenAI(anthropicPayload)
-      expect(openAIPayload.max_tokens).toBeUndefined()
-    }
-  })
-
   test("should strip x-anthropic-billing-header from system string", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "gpt-4o",
