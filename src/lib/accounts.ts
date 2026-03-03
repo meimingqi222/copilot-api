@@ -69,7 +69,11 @@ export async function loadAccounts(): Promise<void> {
 }
 
 export async function saveAccounts(): Promise<void> {
-  await fs.writeFile(PATHS.ACCOUNTS_PATH, JSON.stringify(state.accounts, null, 2))
+  // Exclude ephemeral copilotToken from persistent storage
+  const sanitized = state.accounts.map(
+    ({ copilotToken: _ct, copilotTokenExpiry: _cte, ...rest }) => rest,
+  )
+  await fs.writeFile(PATHS.ACCOUNTS_PATH, JSON.stringify(sanitized, null, 2))
 }
 
 export function getActiveAccount(): Account {
