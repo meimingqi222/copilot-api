@@ -429,7 +429,7 @@
       </div>
 
       <!-- Logs View -->
-      <div x-show="currentView === 'logs'" x-data="logsView()" x-init="load()" style="display: none;">
+      <div x-show="currentView === 'logs'" x-data="logsView()" x-init="init(); load()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
           <h2 class="text-headline" x-text="t('logs.title')"></h2>
           <div class="flex items-center gap-4">
@@ -847,9 +847,12 @@
           // Initial load
           this.load();
           // Reload when view becomes active (switched back to quota)
-          this.$watch('$parent.currentView', (view) => {
-            if (view === 'quota') this.load();
-          });
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) {
+            Alpine.$data(app).$watch('currentView', (view) => {
+              if (view === 'quota') this.load();
+            });
+          }
         },
 
         async load() {
@@ -914,6 +917,31 @@
         autoRefresh: false,
         refreshTimer: null,
         filters: { level: '', search: '', limit: 50, offset: 0 },
+
+        init() {
+          // Watch autoRefresh and start/stop timer accordingly
+          this.$watch('autoRefresh', (enabled) => {
+            if (enabled) {
+              this.startAutoRefresh();
+            } else {
+              this.stopAutoRefresh();
+            }
+          });
+        },
+
+        startAutoRefresh() {
+          // Refresh every 5 seconds when auto-refresh is enabled
+          this.refreshTimer = setInterval(() => {
+            this.load();
+          }, 5000);
+        },
+
+        stopAutoRefresh() {
+          if (this.refreshTimer) {
+            clearInterval(this.refreshTimer);
+            this.refreshTimer = null;
+          }
+        },
 
         async load() {
           this.loading = true;
