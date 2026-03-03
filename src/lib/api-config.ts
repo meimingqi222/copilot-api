@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
 
+import type { Account } from "./accounts"
 import type { State } from "./state"
+
+import { state as globalState } from "./state"
 
 export const standardHeaders = () => ({
   "content-type": "application/json",
@@ -29,12 +32,23 @@ export const copilotBaseUrl = (state: State): string => {
   return url
 }
 
-export const copilotHeaders = (state: State, vision: boolean = false) => {
+export const copilotHeaders = (
+  stateOrAccount: State | Account,
+  vision: boolean = false,
+) => {
+  // Determine the token: Account has copilotToken, State has copilotToken (legacy)
+  const token =
+    "copilotToken" in stateOrAccount ?
+      stateOrAccount.copilotToken
+    : (stateOrAccount as State & { copilotToken?: string }).copilotToken
+
+  const vsCodeVersion = globalState.vsCodeVersion
+
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${state.copilotToken}`,
+    Authorization: `Bearer ${token}`,
     "content-type": standardHeaders()["content-type"],
     "copilot-integration-id": "vscode-chat",
-    "editor-version": `vscode/${state.vsCodeVersion}`,
+    "editor-version": `vscode/${vsCodeVersion}`,
     "editor-plugin-version": EDITOR_PLUGIN_VERSION,
     "user-agent": USER_AGENT,
     "openai-intent": "conversation-panel",

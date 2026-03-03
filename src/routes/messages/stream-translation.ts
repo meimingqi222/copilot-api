@@ -276,19 +276,9 @@ export function translateChunkToAnthropicEvents(
   }
 
   if (choice.finish_reason) {
-    // Close all open tool call blocks that were never explicitly closed, then
-    // close the current content block (text/thinking) if one is open.
-    const openToolBlocks = Object.values(state.toolCalls)
-      .filter((tc) => tc.anthropicBlockIndex !== state.contentBlockIndex)
-      .sort((a, b) => a.anthropicBlockIndex - b.anthropicBlockIndex)
-
-    for (const tc of openToolBlocks) {
-      events.push({
-        type: "content_block_stop",
-        index: tc.anthropicBlockIndex,
-      })
-    }
-
+    // Close the current content block if one is still open.
+    // Previous blocks (text/tool_use) were already closed when the next block
+    // opened, so we only need to close the last open one here.
     if (state.contentBlockOpen) {
       stopCurrentContentBlock(state, events, false)
     }
@@ -316,6 +306,7 @@ export function translateChunkToAnthropicEvents(
         type: "message_stop",
       },
     )
+    state.messageStopSent = true
   }
 
   return events

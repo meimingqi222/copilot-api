@@ -1,556 +1,1050 @@
 <!doctype html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Copilot API Usage Dashboard</title>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Copilot API Admin</title>
+  <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="/admin/static/js/i18n.js"></script>
+  <script src="/admin/static/js/api.js"></script>
+</head>
+<body x-data="adminApp()" x-init="init()" x-cloak>
+  <!-- Toast Notifications -->
+  <div class="fixed top-6 right-6 z-50 space-y-3">
+    <template x-for="toast in toasts" :key="toast.id">
+      <div class="toast flex items-center gap-3"
+           :class="toast.type === 'error' ? 'border-l-4 border-l-[var(--apple-red)]' : (toast.type === 'success' ? 'border-l-4 border-l-[var(--apple-green)]' : 'border-l-4 border-l-[var(--apple-blue)]')">
+        <i :data-lucide="toast.type === 'error' ? 'alert-circle' : (toast.type === 'success' ? 'check-circle' : 'info')" class="w-5 h-5"></i>
+        <span x-text="toast.message"></span>
+      </div>
+    </template>
+  </div>
 
-    <script src="https://cdn.tailwindcss.com"></script>
+  <div class="flex h-screen" x-show="initialized">
+    <!-- Sidebar -->
+    <aside class="sidebar w-64 flex flex-col">
+      <div class="p-6 border-b border-[var(--apple-gray-5)]">
+        <h1 class="text-title-3 flex items-center gap-3">
+          <div class="w-8 h-8 bg-gradient-to-br from-[var(--apple-blue)] to-[var(--apple-purple)] rounded-lg flex items-center justify-center">
+            <i data-lucide="cpu" class="w-5 h-5 text-white"></i>
+          </div>
+          <span x-text="t('app.name')"></span>
+        </h1>
+      </div>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
+      <nav class="flex-1 py-4">
+        <template x-for="item in navItems" :key="item.id">
+          <a href="#" @click.prevent="currentView = item.id"
+             class="nav-item"
+             :class="{ 'active': currentView === item.id }">
+            <i :data-lucide="item.icon" class="w-5 h-5"></i>
+            <span x-text="item.label"></span>
+          </a>
+        </template>
+      </nav>
 
-    <script src="https://unpkg.com/lucide-react@0.378.0/dist/umd/lucide.min.js"></script>
-
-    <style>
-      /* Gruvbox-themed color palette */
-      :root {
-        /* Main Color Palette */
-        --color-red: #cc241d;
-        --color-green: #98971a;
-        --color-yellow: #d79921;
-        --color-blue: #458588;
-        --color-purple: #b16286;
-        --color-aqua: #689d6a;
-        --color-orange: #d65d0e;
-        --color-gray: #a89984;
-
-        /* Accent/Lighter/Darker Shades of Main Colors */
-        --color-red-accent: #fb4934;
-        --color-green-accent: #b8bb26;
-        --color-yellow-accent: #fabd2f;
-        --color-blue-accent: #83a598;
-        --color-purple-accent: #d3869b;
-        --color-aqua-accent: #8ec07c;
-        --color-orange-accent: #fe8019;
-        --color-gray-accent: #928374;
-
-        /* Background Colors */
-        --color-bg-darkest: #1d2021; /* bg0_h */
-        --color-bg: #282828; /* bg and bg0 */
-        --color-bg-light-1: #3c3836; /* bg1 */
-        --color-bg-light-2: #504945; /* bg2 */
-        --color-bg-light-3: #665c54; /* bg3 */
-        --color-bg-light-4: #7c6f64; /* bg4 */
-        --color-bg-soft: #32302f; /* bg0_s */
-
-        /* Foreground Colors */
-        --color-fg-darker: #a89984; /* fg4 - duplicate of gray */
-        --color-fg-dark: #bdae93; /* fg3 */
-        --color-fg-medium: #d5c4a1; /* fg2 */
-        --color-fg-light: #ebdbb2; /* fg and fg1 */
-        --color-fg-lightest: #fbf1c7; /* fg0 */
-      }
-
-      /* Custom styles using the new palette */
-      body {
-        font-family: "Inter", sans-serif;
-        background-color: var(--color-bg-darkest);
-        color: var(--color-fg-light);
-      }
-
-      /* Custom progress bar styles */
-      .progress-bar-bg {
-        background-color: var(--color-bg-light-1);
-      }
-      .progress-bar-fg {
-        transition: width 0.5s ease-in-out;
-      }
-
-      /* Custom scrollbar for the raw data view */
-      .code-block::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      .code-block::-webkit-scrollbar-track {
-        background: var(--color-bg);
-      }
-      .code-block::-webkit-scrollbar-thumb {
-        background: var(--color-bg-light-3);
-      }
-      .code-block::-webkit-scrollbar-thumb:hover {
-        background: var(--color-bg-light-4);
-      }
-
-      /* Style for focus rings to use variables */
-      .input-focus:focus {
-        --tw-ring-color: var(--color-blue);
-        border-color: var(--color-blue);
-      }
-
-
-    </style>
-  </head>
-  <body class="antialiased">
-    <div id="app" class="min-h-screen p-4 sm:p-6">
-      <div class="max-w-7xl mx-auto">
-        <!-- Header Section -->
-        <header class="mb-6">
-          <h1
-            class="text-2xl font-bold flex items-center gap-2"
-            style="color: var(--color-fg-lightest)"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="lucide lucide-gauge-circle h-7 w-7"
-              style="color: var(--color-aqua-accent)"
-            >
-              <path d="M15.6 3.3a10 10 0 1 0 5.1 5.1" />
-              <path
-                d="M12 12a1 1 0 0 0-1-1v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-3z"
-              />
-              <path d="M12 6.8a10 10 0 0 0 -3.2 7.2" />
-            </svg>
-            <span>Copilot API Usage Dashboard</span>
-          </h1>
-          <p class="mt-1 text-sm" style="color: var(--color-gray)">
-            Should be the same as the one in VSCode
-          </p>
-        </header>
-
-        <!-- Form Section -->
-        <div
-          class="mb-6 p-4 border"
-          style="
-            background-color: var(--color-bg-soft);
-            border-color: var(--color-bg-light-2);
-          "
-        >
-          <form
-            id="endpoint-form"
-            class="flex flex-col sm:flex-row items-center gap-3"
-          >
-            <label
-              for="endpoint-url"
-              class="font-semibold whitespace-nowrap text-sm"
-              style="color: var(--color-fg-lightest)"
-              >API Endpoint URL</label
-            >
-            <input
-              type="text"
-              id="endpoint-url"
-              class="w-full px-3 py-1.5 border focus:ring-1 transition input-focus text-sm"
-              style="
-                background-color: var(--color-bg-darkest);
-                border-color: var(--color-bg-light-3);
-                color: var(--color-fg-medium);
-              "
-              placeholder="http://localhost:4141/usage"
-            />
-            <button
-              id="fetch-button"
-              type="submit"
-              class="w-full sm:w-auto font-bold py-1.5 px-5 transition-colors flex items-center justify-center gap-2 text-sm"
-              style="
-                background-color: var(--color-blue);
-                color: var(--color-bg-darkest);
-              "
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="lucide lucide-refresh-cw h-4 w-4"
-              >
-                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                <path d="M21 3v5h-5" />
-                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                <path d="M3 21v-5h5" />
-              </svg>
-              <span>Fetch</span>
-            </button>
-          </form>
+      <div class="p-4 border-t border-[var(--apple-gray-5)] space-y-4">
+        <!-- Language Switcher -->
+        <div class="lang-switcher">
+          <button @click="setLang('zh')" :class="{ 'active': currentLang === 'zh' }">中文</button>
+          <button @click="setLang('en')" :class="{ 'active': currentLang === 'en' }">EN</button>
         </div>
 
-        <!-- Content Area for dynamic data -->
-        <main id="content-area"></main>
+        <button @click="logout()" class="nav-item w-full !mx-0 !text-[var(--apple-text-secondary)] hover:!text-[var(--apple-text)]">
+          <i data-lucide="log-out" class="w-5 h-5"></i>
+          <span x-text="t('logout')"></span>
+        </button>
       </div>
-    </div>
+    </aside>
 
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        const endpointForm = document.getElementById("endpoint-form");
-        const endpointUrlInput = document.getElementById("endpoint-url");
-        const contentArea = document.getElementById("content-area");
-        const fetchButton = document.getElementById("fetch-button");
+    <!-- Main Content -->
+    <main class="flex-1 overflow-auto p-8 bg-[var(--apple-bg-secondary)]">
+      <!-- Dashboard View -->
+      <div x-show="currentView === 'dashboard'" x-data="dashboardView()" x-init="load()">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('dashboard.title')"></h2>
+          <div class="flex items-center gap-6">
+            <span class="text-body text-[var(--apple-text-secondary)]" x-show="lastRefresh">
+              <span x-text="t('dashboard.lastUpdated') + ': '"></span>
+              <span x-text="formatTime(lastRefresh)"></span>
+            </span>
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
+              <span x-text="t('refresh')"></span>
+            </button>
+          </div>
+        </header>
 
-        // Apply hover effect for fetch button via JS
-        fetchButton.addEventListener("mouseenter", () => {
-          fetchButton.style.backgroundColor = "var(--color-blue-accent)";
-        });
-        fetchButton.addEventListener("mouseleave", () => {
-          fetchButton.style.backgroundColor = "var(--color-blue)";
-        });
+        <div x-show="loading" class="flex justify-center items-center py-20">
+          <div class="text-center">
+            <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('loading')"></p>
+          </div>
+        </div>
 
-        const DEFAULT_ENDPOINT = "http://localhost:4141/usage";
-
-        // --- State Management ---
-        const state = {
-          isLoading: false,
-          error: null,
-          data: null,
-        };
-
-        // --- Rendering Logic ---
-
-        /**
-         * Safely calls lucide.createIcons() if the library is available.
-         */
-        function createIcons() {
-          if (typeof lucide !== "undefined") {
-            lucide.createIcons();
-          }
-        }
-
-        /**
-         * Renders the entire UI based on the current state.
-         */
-        function render() {
-          if (state.isLoading) {
-            contentArea.innerHTML = renderSpinner();
-            return;
-          }
-          if (state.error) {
-            contentArea.innerHTML = renderError(state.error);
-          } else if (state.data) {
-            contentArea.innerHTML = `
-                        ${renderUsageQuotas(state.data.quota_snapshots)}
-                        ${renderDetailedData(state.data)}
-                    `;
-          } else {
-            contentArea.innerHTML = renderWelcomeMessage();
-          }
-          // Replace placeholder icons with actual Lucide icons
-          createIcons();
-        }
-
-        /**
-         * Renders the "Usage Quotas" section with progress bars.
-         * @param {object} snapshots - The quota_snapshots object from the API response.
-         * @returns {string} HTML string for the usage quotas section.
-         */
-        function renderUsageQuotas(snapshots) {
-          if (!snapshots) return "";
-
-          const quotaCards = Object.entries(snapshots)
-            .map(([key, value]) => {
-              return renderQuotaCard(key, value);
-            })
-            .join("");
-
-          return `
-                    <section id="usage-quotas" class="mb-6">
-                        <h2 class="text-xl font-bold mb-3 flex items-center gap-2" style="color: var(--color-fg-lightest);">
-                            <i data-lucide="bar-chart-big"></i> Usage Quotas
-                        </h2>
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            ${quotaCards}
-                        </div>
-                    </section>
-                `;
-        }
-
-        /**
-         * Renders a single quota card.
-         * @param {string} title - The name of the quota (e.g., 'chat').
-         * @param {object} details - The details object for the quota.
-         * @returns {string} HTML string for a single card.
-         */
-        function renderQuotaCard(title, details) {
-          const { entitlement, remaining, percent_remaining, unlimited } =
-            details;
-
-          const percentUsed = unlimited ? 0 : 100 - percent_remaining;
-          const used = unlimited
-            ? "N/A"
-            : (entitlement - remaining).toLocaleString();
-
-          let progressBarColor = "var(--color-green)";
-          if (percentUsed > 75) progressBarColor = "var(--color-yellow)";
-          if (percentUsed > 90) progressBarColor = "var(--color-red)";
-          if (unlimited) progressBarColor = "var(--color-blue)";
-
-          return `
-                    <div class="p-4 border" style="background-color: var(--color-bg); border-color: var(--color-bg-light-2);">
-                        <div class="flex justify-between items-center mb-2">
-                            <h3 class="text-md font-semibold capitalize" style="color: var(--color-fg-lightest);">${title.replace(/_/g, " ")}</h3>
-                            ${
-                              unlimited
-                                ? `<span class="px-2 py-0.5 text-xs font-medium" style="color: var(--color-blue-accent); background-color: var(--color-bg-light-1);">Unlimited</span>`
-                                : `<span class="text-sm font-mono" style="color: var(--color-fg-medium);">${percentUsed.toFixed(1)}% Used</span>`
-                            }
-                        </div>
-                        <div class="mb-3">
-                             <div class="w-full progress-bar-bg h-2">
-                                 <div class="progress-bar-fg h-2" style="width: ${unlimited ? 100 : percentUsed}%; background-color: ${progressBarColor};"></div>
-                             </div>
-                        </div>
-                        <div class="flex justify-between text-xs font-mono" style="color: var(--color-fg-dark);">
-                            <span>${used} / ${unlimited ? "∞" : entitlement.toLocaleString()}</span>
-                            <span>${unlimited ? "∞" : remaining.toLocaleString()} remaining</span>
-                        </div>
-                    </div>
-                `;
-        }
-
-        /**
-         * Recursively builds a formatted HTML list from a JSON object.
-         * @param {object} obj - The object to format.
-         * @returns {string} HTML string for the formatted list.
-         */
-        function formatObject(obj) {
-          if (obj === null || typeof obj !== "object") {
-            return `<span style="color: var(--color-green-accent);">${JSON.stringify(obj)}</span>`;
-          }
-
-          return (
-            '<div class="pl-4">' +
-            Object.entries(obj)
-              .map(([key, value]) => {
-                const formattedKey = key.replace(/_/g, " ");
-                let displayValue;
-
-                if (Array.isArray(value)) {
-                  displayValue =
-                    value.length > 0
-                      ? `<span style='color: var(--color-gray-accent)'>[...${value.length} items]</span>`
-                      : `<span style='color: var(--color-gray-accent)'>[]</span>`;
-                } else if (typeof value === "object" && value !== null) {
-                  displayValue = formatObject(value);
-                } else if (typeof value === "boolean") {
-                  displayValue = `<span class="font-semibold" style="color: ${value ? "var(--color-green-accent)" : "var(--color-red-accent)"}">${value}</span>`;
-                } else {
-                  displayValue = `<span style="color: var(--color-blue-accent);">${JSON.stringify(value)}</span>`;
-                }
-
-                return `<div class="mt-1">
-                                <span class="capitalize font-semibold" style="color: var(--color-fg-medium);">${formattedKey}:</span>
-                                ${typeof value === "object" && value !== null && !Array.isArray(value) ? displayValue : ` ${displayValue}`}
-                           </div>`;
-              })
-              .join("") +
-            "</div>"
-          );
-        }
-
-        /**
-         * Renders the section with the full, formatted API response.
-         * @param {object} data - The full API response data.
-         * @returns {string} HTML string for the full data section.
-         */
-        function renderDetailedData(data) {
-          const formattedDetails = formatObject(data);
-          return `
-                    <section id="detailed-data">
-                        <h2 class="text-xl font-bold mb-3 flex items-center gap-2" style="color: var(--color-fg-lightest);">
-                           <i data-lucide="file-text"></i> Detailed Information
-                        </h2>
-                        <div class="border p-4 relative font-mono text-xs" style="background-color: var(--color-bg-darkest); border-color: var(--color-bg-light-2);">
-                            ${formattedDetails}
-                        </div>
-                    </section>
-                `;
-        }
-
-        /**
-         * Renders a loading spinner.
-         * @returns {string} HTML string for the spinner.
-         */
-        function renderSpinner() {
-          return `
-            <div class="flex justify-center items-center py-20">
-                <div class="animate-spin h-12 w-12 rounded-full border-4 border-transparent border-t-4" style="border-top-color: var(--color-blue);"></div>
-            </div>`;
-        }
-
-        /**
-         * Renders an error message box.
-         * @param {string} message - The error message to display.
-         * @returns {string} HTML string for the error message.
-         */
-        function renderError(message) {
-          const container = document.createElement("div");
-          container.className = "p-3 border";
-          container.style.backgroundColor = "rgba(204, 36, 29, 0.2)";
-          container.style.borderColor = "var(--color-red)";
-          container.style.color = "var(--color-red-accent)";
-          container.setAttribute("role", "alert");
-
-          container.innerHTML = `
-                <div class="flex items-center">
-                    <i data-lucide="alert-triangle" class="h-5 w-5 mr-3"></i>
-                    <div>
-                        <p class="font-bold text-sm">An Error Occurred</p>
-                        <p class="text-xs">${message}</p>
-                    </div>
-                </div>
-            `;
-          // Must create icons *after* innerHTML is set
-          setTimeout(
-            () =>
-              lucide.createIcons({
-                nodes: [container.querySelector("[data-lucide]")],
-              }),
-            0
-          );
-          return container.outerHTML;
-        }
-
-        /**
-         * Renders a welcome message when the page first loads.
-         * @returns {string} HTML string for the welcome message.
-         */
-        function renderWelcomeMessage() {
-          return `
-            <div class="text-center py-16 px-4 border" style="background-color: var(--color-bg-soft); border-color: var(--color-bg-light-2);">
-                <i data-lucide="info" class="mx-auto h-10 w-10" style="color: var(--color-gray-accent);"></i>
-                <h3 class="mt-2 text-lg font-semibold" style="color: var(--color-fg-lightest);">Welcome!</h3>
-                <p class="mt-1 text-sm" style="color: var(--color-gray);">Enter an API endpoint URL and click "Fetch" to see usage data.</p>
+        <div x-show="!loading" class="animate-slide-in">
+          <!-- Stats Grid -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="stat-card card card-hover">
+              <p class="stat-label mb-2" x-text="t('dashboard.activeUsers')"></p>
+              <p class="stat-value" x-text="data.activeUsers || 0"></p>
             </div>
-          `;
-        }
+            <div class="stat-card card card-hover">
+              <p class="stat-label mb-2" x-text="t('dashboard.activeAccounts')"></p>
+              <p class="stat-value" x-text="data.activeAccounts || 0"></p>
+              <p class="text-sm text-[var(--apple-text-tertiary)] mt-2" x-text="(data.activeAccounts || 0) + ' / ' + (data.totalAccounts || 0)"></p>
+            </div>
+            <div class="stat-card card card-hover">
+              <p class="stat-label mb-2" x-text="t('dashboard.requestsToday')"></p>
+              <p class="stat-value" x-text="data.requestsToday || 0"></p>
+            </div>
+            <div class="stat-card card card-hover">
+              <p class="stat-label mb-2" x-text="t('dashboard.errorsToday')"></p>
+              <p class="stat-value text-[var(--apple-red)]" x-text="data.errorsToday || 0"></p>
+            </div>
+          </div>
 
-        // --- Data Fetching ---
+          <!-- Two Column Layout -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Quota Summary -->
+            <div class="card p-6">
+              <h3 class="text-title-2 mb-6" x-text="t('dashboard.quotaSummary')"></h3>
+              <div x-show="data.quota">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-body" x-text="t('quota.remaining')"></span>
+                  <span class="text-title-3">
+                    <span x-text="data.quota?.premiumRemaining ?? 'N/A'"></span>
+                    <span x-show="data.quota?.premiumTotal" class="text-[var(--apple-text-secondary)]">/ <span x-text="data.quota?.premiumTotal"></span></span>
+                  </span>
+                </div>
+                <div class="progress-bar mb-6">
+                  <div class="progress-fill" 
+                       :class="quotaColorClass"
+                       :style="`width: ${quotaPercent}%`"></div>
+                </div>
+                <div x-show="data.quota?.unlimited" class="flex items-center gap-2 text-[var(--apple-green)]">
+                  <i data-lucide="infinity" class="w-5 h-5"></i>
+                  <span class="text-body" x-text="t('dashboard.unlimitedPlan')"></span>
+                </div>
+              </div>
+            </div>
 
-        /**
-         * Fetches data from the specified API endpoint.
-         */
-        async function fetchData() {
-          const url = endpointUrlInput.value.trim();
-          if (!url) {
-            state.error = "Endpoint URL cannot be empty.";
-            state.isLoading = false;
-            render();
-            return;
-          }
+            <!-- Recent Activity -->
+            <div class="card p-6">
+              <h3 class="text-title-2 mb-6" x-text="t('dashboard.recentActivity')"></h3>
+              <div class="space-y-4" x-show="recentLogs.length">
+                <template x-for="log in recentLogs" :key="log.id">
+                  <div class="flex items-center justify-between py-3 border-b border-[var(--apple-gray-5)] last:border-0">
+                    <div class="flex items-center gap-3">
+                      <span class="badge" :class="getLevelClass(log.level)" x-text="log.level"></span>
+                      <span class="text-body" x-text="log.path"></span>
+                    </div>
+                    <span class="text-caption text-[var(--apple-text-secondary)]" x-text="formatTime(log.timestamp)"></span>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!recentLogs.length" class="empty-state">
+                <i data-lucide="activity" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('dashboard.noActivity')"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
-          state.isLoading = true;
-          state.error = null;
-          render();
+      <!-- Users View -->
+      <div x-show="currentView === 'users'" x-data="usersView()" x-init="load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('users.title')"></h2>
+          <div class="flex items-center gap-4">
+            <button @click="openAddModal()" class="btn btn-primary">
+              <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
+              <span x-text="t('users.addUser')"></span>
+            </button>
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
+            </button>
+          </div>
+        </header>
 
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading" class="card overflow-hidden">
+          <table class="w-full">
+            <thead>
+              <tr class="border-b border-[var(--apple-gray-5)]">
+                <th class="text-left p-4" x-text="t('users.username')"></th>
+                <th class="text-left p-4" x-text="t('users.role')"></th>
+                <th class="text-left p-4" x-text="t('users.status.label')"></th>
+                <th class="text-right p-4" x-text="t('users.actions')"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="user in users" :key="user.id">
+                <tr class="border-b border-[var(--apple-gray-5)] last:border-0">
+                  <td class="p-4 font-medium" x-text="user.username"></td>
+                  <td class="p-4">
+                    <span class="badge" :class="user.role === 'admin' ? 'badge-warning' : 'badge-info'" x-text="t('users.role.' + user.role)"></span>
+                  </td>
+                  <td class="p-4">
+                    <span class="badge" :class="user.enabled ? 'badge-success' : 'badge-danger'" x-text="t(user.enabled ? 'users.status.enabled' : 'users.status.disabled')"></span>
+                  </td>
+                  <td class="p-4 text-right">
+                    <button @click="editUser(user)" class="btn btn-secondary btn-small mr-2">
+                      <i data-lucide="pencil" class="w-4 h-4"></i>
+                    </button>
+                    <button @click="resetApiKey(user)" class="btn btn-secondary btn-small mr-2">
+                      <i data-lucide="key" class="w-4 h-4"></i>
+                    </button>
+                    <button @click="deleteUser(user.id)" class="btn btn-danger btn-small">
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div x-show="!users.length" class="empty-state py-12">
+            <i data-lucide="users" class="empty-state-icon"></i>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.noUsers')"></p>
+          </div>
+        </div>
+
+        <!-- Add Modal -->
+        <div x-show="showAddModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
+          <div class="modal-content p-8 w-full max-w-md" @click.away="showAddModal = false">
+            <h3 class="text-title-2 mb-6" x-text="t('users.addUser')"></h3>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.username')"></label>
+                <input x-model="newUser.username" type="text" class="input" :placeholder="t('users.username')">
+              </div>
+              <div>
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.role.label')"></label>
+                <select x-model="newUser.role" class="input">
+                  <option value="user" x-text="t('users.role.user')"></option>
+                  <option value="admin" x-text="t('users.role.admin')"></option>
+                </select>
+              </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-8">
+              <button @click="showAddModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="createUser()" class="btn btn-primary" x-text="t('create')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Key Display Modal -->
+        <div x-show="showKeyModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" x-cloak>
+          <div class="modal-content p-8 w-full max-w-lg" @click.away="showKeyModal = false">
+            <div class="text-center mb-6">
+              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="key" class="w-8 h-8 text-white"></i>
+              </div>
+              <h3 class="text-title-2 mb-2" x-text="t('users.newApiKey')"></h3>
+              <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.keyWarning')"></p>
+            </div>
+            <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 mb-6">
+              <code class="text-sm font-mono break-all text-[var(--apple-text)]" x-text="displayedApiKey"></code>
+            </div>
+            <div class="flex justify-center gap-3">
+              <button @click="navigator.clipboard.writeText(displayedApiKey); showToast(t('copySuccess') || 'Copied!', 'success');" class="btn btn-primary">
+                <i data-lucide="copy" class="w-4 h-4 mr-2"></i>
+                <span x-text="t('copy')"></span>
+              </button>
+              <button @click="showKeyModal = false" class="btn btn-secondary" x-text="t('close')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accounts View -->
+      <div x-show="currentView === 'accounts'" x-data="accountsView()" x-init="load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('accounts.title')"></h2>
+          <div class="flex items-center gap-4">
+            <button @click="openAddModal()" class="btn btn-primary">
+              <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
+              <span x-text="t('accounts.addAccount')"></span>
+            </button>
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
+            </button>
+          </div>
+        </header>
+
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <template x-for="account in accounts" :key="account.id">
+            <div class="card p-6">
+              <div class="flex items-start justify-between mb-4">
+                <div class="flex items-center gap-3">
+                  <i data-lucide="github" class="w-8 h-8"></i>
+                  <div>
+                    <p class="font-medium" x-text="account.label || account.username || 'GitHub'"></p>
+                    <p class="text-sm text-[var(--apple-text-secondary)]" x-text="account.username || '-'"></p>
+                  </div>
+                </div>
+                <span class="badge" :class="account.isActive ? 'badge-success' : 'badge-danger'" x-text="t(account.isActive ? 'accounts.status.active' : 'accounts.status.inactive')"></span>
+              </div>
+              <div class="text-sm text-[var(--apple-text-secondary)] mb-4">
+                <p x-text="t('accounts.requestsToday') + ': ' + (account.requestsToday || 0)"></p>
+                <p x-text="t('accounts.errorsToday') + ': ' + (account.errorsToday || 0)"></p>
+              </div>
+              <div class="flex gap-2">
+                <button @click="refreshToken(account.id)" class="btn btn-secondary btn-small flex-1" x-text="t('accounts.refresh')"></button>
+                <button @click="deleteAccount(account.id)" class="btn btn-danger btn-small" x-text="t('delete')"></button>
+              </div>
+            </div>
+          </template>
+          <div x-show="!accounts.length" class="col-span-full empty-state py-12">
+            <i data-lucide="github" class="empty-state-icon"></i>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
+          </div>
+        </div>
+
+        <!-- Add Modal -->
+        <div x-show="showAddModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
+          <div class="modal-content p-8 w-full max-w-md" @click.away="closeAddModal()">
+            <h3 class="text-title-2 mb-6" x-text="t('accounts.deviceFlow.title')"></h3>
+            <div x-show="deviceFlowStep === 'input'">
+              <div class="mb-6">
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.label')"></label>
+                <input x-model="newLabel" type="text" placeholder="work, personal..." class="input">
+              </div>
+              <div class="flex justify-end gap-3">
+                <button @click="closeAddModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
+                <button @click="startDeviceFlow()" class="btn btn-primary" x-text="t('accounts.deviceFlow.step2')"></button>
+              </div>
+            </div>
+            <div x-show="deviceFlowStep === 'pending'" class="text-center py-6">
+              <div class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-6"></div>
+              <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.deviceFlow.instruction')"></p>
+              <a :href="deviceFlowData?.verificationUri" target="_blank" class="text-[var(--apple-blue)] hover:underline text-body" x-text="deviceFlowData?.verificationUri"></a>
+              <p class="text-3xl font-mono font-bold my-6 tracking-widest" x-text="deviceFlowData?.userCode"></p>
+              <p class="text-caption text-[var(--apple-text-secondary)]" x-text="t('accounts.deviceFlow.waiting')"></p>
+            </div>
+            <div x-show="deviceFlowStep === 'success'" class="text-center py-6">
+              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="check" class="w-8 h-8 text-white"></i>
+              </div>
+              <h4 class="text-title-2 mb-2" x-text="t('accounts.deviceFlow.success')"></h4>
+              <button @click="showAddModal = false; load()" class="btn btn-primary mt-4" x-text="t('done')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quota View -->
+      <div x-show="currentView === 'quota'" x-data="quotaView()" x-init="init()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('quota.title')"></h2>
+          <button @click="refresh()" class="btn btn-secondary" :class="{ 'opacity-75': refreshing }">
+            <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': refreshing }"></i>
+            <span x-text="t('refresh')"></span>
+          </button>
+        </header>
+
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading" class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <!-- Account Quotas -->
+          <div class="card p-6">
+            <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotas')"></h3>
+            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasDesc')"></p>
+            <div class="space-y-6">
+              <template x-for="account in accounts" :key="account.id">
+                <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
+                  <div class="flex items-center gap-3 mb-4">
+                    <i data-lucide="github" class="w-5 h-5"></i>
+                    <span class="font-medium text-body" x-text="account.label"></span>
+                    <span x-show="account.isActive" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-green)] text-white rounded-full" x-text="t('quota.active')"></span>
+                  </div>
+
+                  <!-- Premium Interactions -->
+                  <div class="mb-3">
+                    <div class="flex justify-between items-center mb-1">
+                      <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.premium')"></span>
+                      <span class="text-sm font-medium">
+                        <span x-text="account.quotaInfo?.premiumInteractionsRemaining ?? 'N/A'"></span>
+                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="account.quotaInfo?.premiumInteractionsTotal ?? 'N/A'"></span></span>
+                      </span>
+                    </div>
+                    <div class="progress-bar" x-show="account.quotaInfo?.premiumInteractionsTotal">
+                      <div class="progress-fill"
+                           :class="getUsageColor((account.quotaInfo?.premiumInteractionsTotal || 0) - (account.quotaInfo?.premiumInteractionsRemaining || 0), account.quotaInfo?.premiumInteractionsTotal)"
+                           :style="`width: ${calculatePercent(account.quotaInfo?.premiumInteractionsRemaining, account.quotaInfo?.premiumInteractionsTotal)}%`"></div>
+                    </div>
+                  </div>
+
+                  <!-- Chat -->
+                  <div class="flex justify-between items-center py-1">
+                    <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.chat')"></span>
+                    <span class="text-sm">
+                      <span x-text="account.quotaInfo?.unlimited ? t('quota.unlimited') : (account.quotaInfo?.chatRemaining ?? 'N/A')"></span>
+                    </span>
+                  </div>
+
+                  <!-- Completions -->
+                  <div class="flex justify-between items-center py-1">
+                    <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.completions')"></span>
+                    <span class="text-sm">
+                      <span x-text="account.quotaInfo?.unlimited ? t('quota.unlimited') : (account.quotaInfo?.completionsRemaining ?? 'N/A')"></span>
+                    </span>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!accounts.length" class="empty-state">
+                <i data-lucide="github" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- User Usage -->
+          <div class="card p-6">
+            <h3 class="text-title-2 mb-2" x-text="t('quota.userUsage')"></h3>
+            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.userUsageDesc')"></p>
+            <div class="space-y-6">
+              <template x-for="user in users" :key="user.id">
+                <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
+                  <div class="flex justify-between items-center mb-3">
+                    <span class="font-medium" x-text="user.username"></span>
+                    <div class="text-right">
+                      <div class="text-title-3">
+                        <span x-text="user.usedTokens || 0"></span>
+                        <span x-show="user.quotaLimit">/ <span x-text="user.quotaLimit"></span></span>
+                      </div>
+                      <div class="text-xs text-[var(--apple-text-secondary)]">
+                        <span x-text="t('quota.used')"></span>
+                        <span x-show="user.quotaLimit" x-text="t('quota.quotaLabel')"></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="progress-bar" x-show="user.quotaLimit">
+                    <div class="progress-fill"
+                         :class="getUsageColor(user.usedTokens, user.quotaLimit)"
+                         :style="`width: ${calculatePercent(user.quotaLimit - (user.usedTokens || 0), user.quotaLimit)}%`"></div>
+                  </div>
+                  <p x-show="!user.quotaLimit" class="text-sm text-[var(--apple-text-secondary)]">
+                    <span x-text="t('quota.quotaLabel') + ': '"></span>
+                    <span x-text="t('quota.unlimited')"></span>
+                  </p>
+                </div>
+              </template>
+              <div x-show="!users.length" class="empty-state">
+                <i data-lucide="users" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.noUsers')"></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs View -->
+      <div x-show="currentView === 'logs'" x-data="logsView()" x-init="init(); load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('logs.title')"></h2>
+          <div class="flex items-center gap-4">
+            <button @click="autoRefresh = !autoRefresh" class="btn" :class="autoRefresh ? 'btn-primary' : 'btn-secondary'">
+              <i data-lucide="clock" class="w-4 h-4 mr-1"></i>
+              <span x-text="autoRefresh ? t('logs.autoRefreshOn') : t('logs.autoRefreshOff')"></span>
+            </button>
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
+            </button>
+          </div>
+        </header>
+
+        <!-- Filters -->
+        <div class="card p-4 mb-6 flex flex-wrap gap-4 items-center">
+          <select x-model="filters.level" @change="filters.offset = 0; load()" class="input w-32">
+            <option value="" x-text="t('logs.allLevels')"></option>
+            <option value="debug">Debug</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+          </select>
+          <input x-model="filters.search" @keyup.enter="filters.offset = 0; load()" type="text" :placeholder="t('logs.search')" class="input flex-1 min-w-[200px]">
+          <button @click="filters = { level: '', search: '', limit: 50, offset: 0 }; load()" class="btn btn-secondary" x-text="t('logs.clearFilters')"></button>
+        </div>
+
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading" class="card overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+                <th class="text-left p-3" x-text="t('logs.time')"></th>
+                <th class="text-left p-3" x-text="t('logs.level')"></th>
+                <th class="text-left p-3" x-text="t('logs.path')"></th>
+                <th class="text-left p-3" x-text="t('logs.user')"></th>
+                <th class="text-left p-3" x-text="t('logs.model')"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="log in entries" :key="log.id">
+                <tr class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]">
+                  <td class="p-3 text-[var(--apple-text-secondary)]" x-text="formatTime(log.timestamp)"></td>
+                  <td class="p-3">
+                    <span class="badge" :class="getLevelClass(log.level)" x-text="log.level"></span>
+                  </td>
+                  <td class="p-3 font-mono" x-text="log.path"></td>
+                  <td class="p-3" x-text="log.username || '-'"></td>
+                  <td class="p-3" x-text="log.model || '-'"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div x-show="!entries.length" class="empty-state py-12">
+            <i data-lucide="scroll-text" class="empty-state-icon"></i>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('logs.noLogs')"></p>
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="flex justify-between items-center mt-6" x-show="total > 0">
+          <span class="text-body text-[var(--apple-text-secondary)]" x-text="`${filters.offset + 1} - ${Math.min(filters.offset + filters.limit, total)} of ${total}`"></span>
+          <div class="flex gap-3">
+            <button @click="prevPage()" :disabled="filters.offset === 0" class="btn btn-secondary btn-small" :class="{ 'opacity-50': filters.offset === 0 }" x-text="t('logs.previous')"></button>
+            <button @click="nextPage()" :disabled="filters.offset + filters.limit >= total" class="btn btn-secondary btn-small" :class="{ 'opacity-50': filters.offset + filters.limit >= total }" x-text="t('logs.next')"></button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Main Admin App
+    function adminApp() {
+      return {
+        currentView: 'dashboard',
+        initialized: false,
+        toasts: [],
+        lang: I18n.currentLang(),
+
+        async init() {
+          await this.checkAuth();
+          this.initialized = true;
+          lucide.createIcons();
+          // Refresh quotas in background after login
+          this.refreshQuotaInBackground();
+        },
+
+        async refreshQuotaInBackground() {
           try {
-            const response = await fetch(url);
-            if (!response.ok) {
-              throw new Error(
-                `Request failed with status ${response.status}: ${response.statusText}`
-              );
-            }
-            const jsonData = await response.json();
-            state.data = jsonData;
-          } catch (error) {
-            console.error("Fetch error:", error);
-            state.data = null;
-            state.error = error.message;
-          } finally {
-            state.isLoading = false;
-            render();
-          }
-        }
-
-        // --- Event Handlers & Initialization ---
-
-        /**
-         * Handles the form submission to trigger a data fetch.
-         * @param {Event} event - The form submission event.
-         */
-        function handleFormSubmit(event) {
-          event.preventDefault();
-          const url = endpointUrlInput.value.trim();
-
-          // Update URL query parameter, catching potential security errors in sandboxed environments
-          try {
-            const currentUrl = new URL(window.location);
-            currentUrl.searchParams.set("endpoint", url);
-            window.history.pushState({}, "", currentUrl);
+            // Silently refresh quotas from GitHub Copilot API
+            await API.quota.refresh();
           } catch (e) {
-            console.warn("Could not update URL: ", e.message);
+            // Silent fail - quotas will be loaded from cache on quota view
+            console.warn('Background quota refresh failed:', e);
           }
+        },
 
-          fetchData();
-        }
-
-        /**
-         * Initializes the application.
-         */
-        function init() {
-          endpointForm.addEventListener("submit", handleFormSubmit);
-
-          // Get endpoint from URL param on load
-          const urlParams = new URLSearchParams(window.location.search);
-          const endpointFromUrl = urlParams.get("endpoint");
-
-          if (endpointFromUrl) {
-            endpointUrlInput.value = endpointFromUrl;
-            fetchData();
-          } else {
-            endpointUrlInput.value = DEFAULT_ENDPOINT;
-            render(); // Render initial welcome message
+        async checkAuth() {
+          try {
+            const isAuth = await API.auth.check();
+            if (!isAuth) window.location.href = '/admin/login';
+          } catch (e) {
+            window.location.href = '/admin/login';
           }
+        },
+
+        // i18n helpers
+        t(key, params = {}) {
+          // Access this.lang to establish reactive dependency
+          void this.lang;
+          return I18n.t(key, params);
+        },
+
+        get currentLang() {
+          return this.lang;
+        },
+
+        setLang(lang) {
+          I18n.setLang(lang);
+          this.lang = lang;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        formatTime(ts) {
+          if (!ts) return '-';
+          return new Date(ts).toLocaleString(this.currentLang === 'zh' ? 'zh-CN' : 'en-US');
+        },
+
+        get navItems() {
+          return [
+            { id: 'dashboard', icon: 'layout-dashboard', label: this.t('nav.dashboard') },
+            { id: 'users', icon: 'users', label: this.t('nav.users') },
+            { id: 'accounts', icon: 'github', label: this.t('nav.accounts') },
+            { id: 'quota', icon: 'bar-chart-3', label: this.t('nav.quota') },
+            { id: 'logs', icon: 'scroll-text', label: this.t('nav.logs') }
+          ];
+        },
+
+        // Toast notifications
+        showToast(message, type = 'info', duration = 5000) {
+          const id = Date.now() + Math.random();
+          this.toasts.push({ id, message, type });
+          setTimeout(() => {
+            this.toasts = this.toasts.filter(t => t.id !== id);
+          }, duration);
+        },
+
+        async logout() {
+          await API.auth.logout();
+          window.location.href = '/admin/login';
         }
+      };
+    }
 
-        // Start the app
-        init();
-      });
-    </script>
+    // Dashboard View Component
+    function dashboardView() {
+      return {
+        loading: false,
+        lastRefresh: null,
+        data: { activeUsers: 0, activeAccounts: 0, totalAccounts: 0, requestsToday: 0, errorsToday: 0, quota: null },
+        recentLogs: [],
 
-    <footer
-      class="text-center py-4 text-xs"
-      style="color: var(--color-gray-accent)"
-    >
-      <p>
-        Vibe coded by
-        <a
-          href="https://gemini.google.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="underline transition-colors"
-          style="color: var(--color-fg-dark)"
-          onmouseover="this.style.color='var(--color-fg-light)'"
-          onmouseout="this.style.color='var(--color-fg-dark)'"
-        >
-          Gemini
-        </a>
-        - Based on
-        <a
-          href="https://github.com/uheej0625/copilot-usage-viewer"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="underline transition-colors"
-          style="color: var(--color-fg-dark)"
-          onmouseover="this.style.color='var(--color-fg-light)'"
-          onmouseout="this.style.color='var(--color-fg-dark)'"
-        >
-          copilot-usage-viewer</a
-        >
-      </p>
-    </footer>
-  </body>
+        async load() {
+          this.loading = true;
+          try {
+            const [dashboard, recent] = await Promise.all([
+              API.dashboard.get(),
+              API.logs.getRecent(5)
+            ]);
+            this.data = dashboard;
+            this.recentLogs = recent.entries || [];
+            this.lastRefresh = new Date();
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        get quotaPercent() {
+          const q = this.data.quota;
+          if (!q || q.unlimited || !q.premiumTotal) return 0;
+          return ((q.premiumTotal - (q.premiumRemaining || 0)) / q.premiumTotal * 100);
+        },
+
+        get quotaColorClass() {
+          const pct = this.quotaPercent;
+          if (pct > 90) return 'bg-[var(--apple-red)]';
+          if (pct > 75) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-blue)]';
+        },
+
+        getLevelClass(level) {
+          const map = { debug: 'badge-info', info: 'badge-success', warn: 'badge-warning', error: 'badge-danger' };
+          return map[level] || 'badge-info';
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        formatTime(ts) {
+          if (!ts) return '-';
+          const app = document.querySelector('[x-data^=adminApp]');
+          return app ? Alpine.$data(app).formatTime(ts) : new Date(ts).toLocaleString();
+        },
+        t(key, params) {
+          // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+
+    // Users View Component
+    function usersView() {
+      return {
+        loading: false,
+        users: [],
+        showAddModal: false,
+        showKeyModal: false,
+        displayedApiKey: '',
+        newUser: { username: '', role: 'user' },
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await API.users.list();
+            this.users = data.users || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        openAddModal() {
+          this.newUser = { username: '', role: 'user' };
+          this.showAddModal = true;
+        },
+
+        async createUser() {
+          try {
+            const result = await API.users.create(this.newUser);
+            this.showAddModal = false;
+            this.showToast(I18n.t('users.createSuccess'), 'success');
+            // Display the API key to the admin
+            if (result.user && result.user.apiKey) {
+              this.displayedApiKey = result.user.apiKey;
+              this.showKeyModal = true;
+            }
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.create'), 'error');
+          }
+        },
+
+        async editUser(user) {
+          try {
+            await API.users.update(user.id, { enabled: !user.enabled });
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async resetApiKey(user) {
+          if (!confirm(I18n.t('users.confirmReset'))) return;
+          try {
+            const result = await API.users.resetKey(user.id);
+            this.showToast(I18n.t('users.resetSuccess'), 'success');
+            // Display the new API key to the admin
+            if (result.apiKey) {
+              this.displayedApiKey = result.apiKey;
+              this.showKeyModal = true;
+            }
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async deleteUser(id) {
+          if (!confirm(I18n.t('users.confirmDelete'))) return;
+          try {
+            await API.users.delete(id);
+            this.showToast(I18n.t('users.deleteSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.delete'), 'error');
+          }
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        t(key, params) {
+          // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+
+    // Accounts View Component
+    function accountsView() {
+      return {
+        loading: false,
+        accounts: [],
+        showAddModal: false,
+        newLabel: '',
+        deviceFlowStep: 'input',
+        deviceFlowData: null,
+        pollTimer: null,
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await API.accounts.list();
+            this.accounts = data.accounts || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        openAddModal() {
+          this.newLabel = '';
+          this.deviceFlowStep = 'input';
+          this.deviceFlowData = null;
+          this.showAddModal = true;
+          if (this.pollTimer) clearTimeout(this.pollTimer);
+          this.pollTimer = null;
+        },
+
+        closeAddModal() {
+          this.showAddModal = false;
+          this.deviceFlowStep = 'input';
+          if (this.pollTimer) {
+            clearTimeout(this.pollTimer);
+            this.pollTimer = null;
+          }
+        },
+
+        async startDeviceFlow() {
+          this.pollTimer = null;
+          try {
+            const res = await API.accounts.create(this.newLabel);
+            this.deviceFlowData = res;
+            this.deviceFlowStep = 'pending';
+            this.pollDeviceFlow();
+          } catch (e) {
+            this.showToast(I18n.t('error.create'), 'error');
+          }
+        },
+
+        pollDeviceFlow() {
+          let pollInterval = this.deviceFlowData.interval * 1000 || 5000;
+
+          const doPoll = async () => {
+            if (this.deviceFlowStep !== 'pending') {
+              return;
+            }
+            try {
+              const res = await API.accounts.poll(this.deviceFlowData.deviceCode);
+              if (res.status === 'complete') {
+                this.deviceFlowStep = 'success';
+                // Refresh accounts list to show the new account
+                await this.load();
+                return;
+              }
+              if (res.status === 'expired') {
+                this.deviceFlowStep = 'input';
+                this.showToast(I18n.t('accounts.deviceFlow.expired') || 'Device flow expired. Please try again.', 'error');
+                return;
+              }
+              // Update interval if server asks for slow_down
+              if (res.interval) {
+                pollInterval = res.interval * 1000;
+              }
+            } catch (e) {
+              // Continue polling
+            }
+            // Schedule next poll with current interval
+            this.pollTimer = setTimeout(doPoll, pollInterval);
+          };
+
+          this.pollTimer = setTimeout(doPoll, pollInterval);
+        },
+
+        async refreshToken(id) {
+          try {
+            await API.accounts.refresh(id);
+            this.showToast(I18n.t('accounts.refreshSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async deleteAccount(id) {
+          if (!confirm(I18n.t('accounts.confirmDelete'))) return;
+          try {
+            await API.accounts.delete(id);
+            this.showToast(I18n.t('accounts.deleteSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.delete'), 'error');
+          }
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        t(key, params) {
+          // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+
+    // Quota View Component
+    function quotaView() {
+      return {
+        loading: false,
+        refreshing: false,
+        accounts: [],
+        users: [],
+
+        init() {
+          // Initial load
+          this.load();
+          // Reload when view becomes active (switched back to quota)
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) {
+            Alpine.$data(app).$watch('currentView', (view) => {
+              if (view === 'quota') this.load();
+            });
+          }
+        },
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await API.quota.get();
+            this.accounts = data.accounts || [];
+            this.users = data.users || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        async refresh() {
+          this.refreshing = true;
+          try {
+            await API.quota.refresh();
+            this.showToast(I18n.t('quota.refreshSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('quota.refreshError'), 'error');
+          } finally {
+            this.refreshing = false;
+          }
+        },
+
+        calculatePercent(remaining, total) {
+          if (!total) return 0;
+          return Math.min(((total - (remaining || 0)) / total * 100), 100);
+        },
+
+        getUsageColor(used, limit) {
+          if (!limit) return 'bg-[var(--apple-green)]';
+          const pct = (used || 0) / limit;
+          if (pct > 0.9) return 'bg-[var(--apple-red)]';
+          if (pct > 0.75) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-green)]';
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        t(key, params) {
+          // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+
+    // Logs View Component
+    function logsView() {
+      return {
+        loading: false,
+        entries: [],
+        total: 0,
+        autoRefresh: false,
+        refreshTimer: null,
+        filters: { level: '', search: '', limit: 50, offset: 0 },
+
+        init() {
+          // Watch autoRefresh and start/stop timer accordingly
+          this.$watch('autoRefresh', (enabled) => {
+            if (enabled) {
+              this.startAutoRefresh();
+            } else {
+              this.stopAutoRefresh();
+            }
+          });
+        },
+
+        startAutoRefresh() {
+          // Refresh every 5 seconds when auto-refresh is enabled
+          this.refreshTimer = setInterval(() => {
+            this.load();
+          }, 5000);
+        },
+
+        stopAutoRefresh() {
+          if (this.refreshTimer) {
+            clearInterval(this.refreshTimer);
+            this.refreshTimer = null;
+          }
+        },
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await API.logs.get(this.filters);
+            this.entries = data.entries || [];
+            this.total = data.total || 0;
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        prevPage() {
+          if (this.filters.offset >= this.filters.limit) {
+            this.filters.offset -= this.filters.limit;
+            this.load();
+          }
+        },
+
+        nextPage() {
+          if (this.filters.offset + this.filters.limit < this.total) {
+            this.filters.offset += this.filters.limit;
+            this.load();
+          }
+        },
+
+        getLevelClass(level) {
+          const map = { debug: 'badge-info', info: 'badge-success', warn: 'badge-warning', error: 'badge-danger' };
+          return map[level] || 'badge-info';
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        formatTime(ts) {
+          if (!ts) return '-';
+          const app = document.querySelector('[x-data^=adminApp]');
+          return app ? Alpine.$data(app).formatTime(ts) : new Date(ts).toLocaleString();
+        },
+        t(key, params) {
+          // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+  </script>
+</body>
 </html>
+

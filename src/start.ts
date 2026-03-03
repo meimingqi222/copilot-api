@@ -3,14 +3,21 @@
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
+import fs from "node:fs/promises"
 import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
+import {
+  initAccounts,
+  scheduleQuotaRefresh,
+  refreshCopilotToken,
+} from "./lib/accounts"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
-import { setupCopilotToken, setupGitHubToken } from "./lib/token"
+import { setupGitHubToken } from "./lib/token"
+import { loadUsers } from "./lib/users"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
 import { server } from "./server"
 
@@ -20,6 +27,8 @@ interface RunServerOptions {
   accountType: string
   manual: boolean
   githubToken?: string
+  githubTokens?: string
+  tokensFile?: string
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
@@ -27,6 +36,7 @@ interface RunServerOptions {
   adminPassword?: string
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export async function runServer(options: RunServerOptions): Promise<void> {
   // Handle unhandled promise rejections
   process.on("unhandledRejection", (reason: unknown) => {
@@ -58,6 +68,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.manualApprove = options.manual
   state.showToken = options.showToken
   state.apiKey = options.apiKey
+  state.legacyApiKey = options.apiKey
   state.adminPassword = options.adminPassword ?? options.apiKey
 
   if (state.apiKey) {
@@ -68,29 +79,87 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     consola.info("Admin login password is configured")
   }
 
-  if (options.githubToken) {
-    state.githubToken = options.githubToken
-    consola.info("Using provided GitHub token")
-  }
-
   await ensurePaths()
   await cacheVSCodeVersion()
 
-  if (!options.githubToken) {
-    await setupGitHubToken()
+  // Collect GitHub tokens from CLI options
+  const allTokens: Array<string> = []
+  if (options.githubTokens) {
+    allTokens.push(
+      ...options.githubTokens
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean),
+    )
+  }
+  if (options.tokensFile) {
+    try {
+      const fileContent = await fs.readFile(options.tokensFile, "utf8")
+      allTokens.push(
+        ...fileContent
+          .split("\n")
+          .map((t) => t.trim())
+          .filter(Boolean),
+      )
+    } catch (err) {
+      consola.warn("Failed to read tokens file:", err)
+    }
+  }
+  if (options.githubToken && !allTokens.includes(options.githubToken)) {
+    allTokens.unshift(options.githubToken)
   }
 
-  await setupCopilotToken()
+  if (allTokens.length > 0) {
+    consola.info(`Using ${allTokens.length} provided GitHub token(s)`)
+    // initAccounts will create account objects from tokens
+    await initAccounts(allTokens)
+  } else {
+    // No tokens provided — load from disk or prompt device flow
+    await setupGitHubToken()
+    await initAccounts()
+  }
+
+  // Load users
+  await loadUsers()
+
+  // Refresh Copilot tokens for all accounts
+  for (const account of state.accounts) {
+    try {
+      await refreshCopilotToken(account)
+      // Sync legacy state.githubToken for backward compat services
+      if (account === state.accounts[state.activeAccountIndex]) {
+        state.githubToken = account.githubToken
+      }
+    } catch (err) {
+      consola.warn(
+        `Failed to get Copilot token for account "${account.label}":`,
+        err,
+      )
+    }
+  }
+
+  // Start background quota refresh
+  scheduleQuotaRefresh()
+
   await cacheModels()
 
-  consola.info(
-    `Available models: \n${state.models?.data.map((model) => `- ${model.id}`).join("\n")}`,
-  )
+  if (state.models) {
+    consola.info(
+      `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
+    )
+  } else {
+    consola.warn(
+      "No models available — add a GitHub account via Web UI to get started",
+    )
+  }
 
   const serverUrl = `http://localhost:${options.port}`
 
   if (options.claudeCode) {
-    invariant(state.models, "Models should be loaded by now")
+    invariant(
+      state.models,
+      "No models available. Add a GitHub account via Web UI first, or provide a token via --github-token",
+    )
 
     const selectedModel = await consola.prompt(
       "Select a model to use with Claude Code",
@@ -184,6 +253,16 @@ export const start = defineCommand({
       description:
         "Provide GitHub token directly (must be generated using the `auth` subcommand)",
     },
+    "github-tokens": {
+      type: "string",
+      description:
+        "Comma-separated list of GitHub tokens for multi-account load balancing",
+    },
+    "tokens-file": {
+      type: "string",
+      description:
+        "Path to a file with one GitHub token per line (for multi-account setup)",
+    },
     "claude-code": {
       alias: "c",
       type: "boolean",
@@ -219,6 +298,8 @@ export const start = defineCommand({
       accountType: args["account-type"],
       manual: args.manual,
       githubToken: args["github-token"],
+      githubTokens: args["github-tokens"] || process.env.GITHUB_TOKENS,
+      tokensFile: args["tokens-file"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],

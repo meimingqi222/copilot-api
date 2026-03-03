@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 
+import { requestLogger } from "./lib/log-middleware"
 import { requireApiKey } from "./lib/request-auth"
 import { adminRoutes } from "./routes/admin/route"
 import { completionRoutes } from "./routes/chat-completions/route"
@@ -16,8 +17,12 @@ export const server = new Hono()
 server.use(logger())
 server.use(cors())
 server.use("*", requireApiKey)
+server.use("*", requestLogger)
 
-server.get("/", (c) => c.text("Server running"))
+// Health check endpoint (plain text, always public)
+server.get("/health", (c) => c.text("OK"))
+
+server.get("/", (c) => c.redirect("/admin"))
 server.route("/admin", adminRoutes)
 
 server.route("/chat/completions", completionRoutes)
