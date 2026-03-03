@@ -19,7 +19,7 @@ const API = {
 
     const response = await fetch(url, config)
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       globalThis.location.href = "/admin/login"
       throw new Error("Unauthorized")
     }

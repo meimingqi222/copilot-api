@@ -155,6 +155,10 @@ export async function incrementUserTokens(
   if (!user) return false
   user.usedTokens += tokens
   user.lastUsedAt = Date.now()
-  await saveUsers()
+  // Don't persist legacy admin user created from --api-key flag
+  // to avoid locking out admin when the key changes
+  if (!state.legacyApiKey) {
+    await saveUsers()
+  }
   return true
 }
