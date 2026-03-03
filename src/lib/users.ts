@@ -157,7 +157,9 @@ export async function incrementUserTokens(
   user.lastUsedAt = Date.now()
   // Don't persist legacy admin user created from --api-key flag
   // to avoid locking out admin when the key changes
-  if (!state.legacyApiKey) {
+  const isLegacyAdmin =
+    state.legacyApiKey && user.hashedApiKey === hashKey(state.legacyApiKey)
+  if (!isLegacyAdmin) {
     await saveUsers()
   }
   return true
