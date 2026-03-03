@@ -86,10 +86,16 @@ export function getActiveAccount(): Account {
 
   const preferred = state.accounts[state.activeAccountIndex]
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (preferred && !preferred.isExhausted) return preferred
+  if (preferred && !preferred.isExhausted) {
+    // Sync state.githubToken for backward compat
+    state.githubToken = preferred.githubToken
+    return preferred
+  }
 
   const next = nonExhausted[0]
   state.activeAccountIndex = state.accounts.indexOf(next)
+  // Sync state.githubToken for backward compat
+  state.githubToken = next.githubToken
   return next
 }
 
@@ -108,6 +114,8 @@ export function switchToNextAccount(): Account | null {
     const idx = (state.activeAccountIndex + i) % total
     if (!state.accounts[idx]?.isExhausted) {
       state.activeAccountIndex = idx
+      // Sync state.githubToken for backward compat
+      state.githubToken = state.accounts[idx].githubToken
       consola.info(`Switched to account "${state.accounts[idx].label}"`)
       return state.accounts[idx]
     }

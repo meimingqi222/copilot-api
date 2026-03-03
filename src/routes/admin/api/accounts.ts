@@ -302,9 +302,13 @@ accountApiRoutes.post("/:id/activate", (c) => {
 
   state.activeAccountIndex = idx
   try {
-    getActiveAccount() // validate not exhausted
+    const account = getActiveAccount() // validate not exhausted and sync state.githubToken
+    return c.json({
+      ok: true,
+      activeAccountIndex: idx,
+      account: publicAccount(account),
+    })
   } catch {
     return c.json({ error: "Account is exhausted." }, 409)
   }
-  return c.json({ ok: true, activeAccountIndex: idx })
 })
