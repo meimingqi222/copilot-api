@@ -181,8 +181,8 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
   }
 
   // Sync state.githubToken for backward compat
-  const active = state.accounts[state.activeAccountIndex]
-  state.githubToken = active.githubToken
+  const active = state.accounts[state.activeAccountIndex] as Account | undefined
+  state.githubToken = active?.githubToken
 }
 
 async function loadAccountsFile(): Promise<Array<Account>> {
