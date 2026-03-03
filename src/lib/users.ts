@@ -66,7 +66,13 @@ export async function loadUsers(): Promise<void> {
 }
 
 export async function saveUsers(): Promise<void> {
-  await fs.writeFile(PATHS.USERS_PATH, JSON.stringify(state.users, null, 2))
+  // Filter out legacy admin user (created from --api-key flag) to avoid
+  // locking out admin when the key changes on restart
+  const usersToSave = state.users.filter((user) => {
+    if (!state.legacyApiKey) return true
+    return user.hashedApiKey !== hashKey(state.legacyApiKey)
+  })
+  await fs.writeFile(PATHS.USERS_PATH, JSON.stringify(usersToSave, null, 2))
 }
 
 export function createUserSync(
@@ -155,12 +161,6 @@ export async function incrementUserTokens(
   if (!user) return false
   user.usedTokens += tokens
   user.lastUsedAt = Date.now()
-  // Don't persist legacy admin user created from --api-key flag
-  // to avoid locking out admin when the key changes
-  const isLegacyAdmin =
-    state.legacyApiKey && user.hashedApiKey === hashKey(state.legacyApiKey)
-  if (!isLegacyAdmin) {
-    await saveUsers()
-  }
+  await saveUsers()
   return true
 }
