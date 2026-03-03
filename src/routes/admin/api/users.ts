@@ -32,7 +32,8 @@ userApiRoutes.post("/", async (c) => {
     body.quotaLimit ?? 0,
     body.role ?? "user",
   )
-  return c.json({ user: userWithKey }, 201)
+  const { hashedApiKey: _, ...publicUser } = userWithKey
+  return c.json({ user: publicUser }, 201)
 })
 
 userApiRoutes.put("/:id", async (c) => {
