@@ -32,6 +32,9 @@ export interface QuotaSnapshot {
 const QUOTA_EXHAUSTION_THRESHOLD = 5
 const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
 
+// Map to store token refresh timers for cleanup on account deletion
+const tokenRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
 export async function loadAccounts(): Promise<void> {
   try {
     const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
@@ -154,7 +157,14 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
 
   // Schedule token refresh
   const refreshInterval = (data.refresh_in - 60) * 1000
-  setTimeout(() => {
+
+  // Clear any existing timer for this account
+  const existingTimer = tokenRefreshTimers.get(account.id)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+  }
+
+  const timerId = setTimeout(() => {
     consola.debug(`Refreshing Copilot token for "${account.label}"`)
     refreshCopilotToken(account).catch((error: unknown) => {
       consola.error(
@@ -163,6 +173,21 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
       )
     })
   }, refreshInterval)
+
+  tokenRefreshTimers.set(account.id, timerId)
+}
+
+/**
+ * Cancels the pending token refresh timer for an account.
+ * Should be called when an account is deleted to prevent timer leaks.
+ */
+export function cancelTokenRefreshTimer(accountId: string): void {
+  const timerId = tokenRefreshTimers.get(accountId)
+  if (timerId) {
+    clearTimeout(timerId)
+    tokenRefreshTimers.delete(accountId)
+    consola.debug(`Cancelled token refresh timer for account "${accountId}"`)
+  }
 }
 
 export async function initAccounts(tokens?: Array<string>): Promise<void> {
