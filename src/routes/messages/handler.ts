@@ -21,7 +21,10 @@ import {
   translateToAnthropic,
   translateToOpenAI,
 } from "./non-stream-translation"
-import { translateChunkToAnthropicEvents } from "./stream-translation"
+import {
+  translateChunkToAnthropicEvents,
+  translateErrorToAnthropicErrorEvent,
+} from "./stream-translation"
 
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
@@ -95,45 +98,70 @@ export async function handleCompletion(c: Context) {
   }
 
   consola.debug("Streaming response from Copilot")
-  return streamSSE(c, async (stream) => {
-    try {
-      const streamState: AnthropicStreamState = {
-        messageStartSent: false,
-        contentBlockIndex: 0,
-        contentBlockOpen: false,
-        currentContentBlockType: undefined,
-        toolCalls: {},
-      }
+  return streamSSE(c, (stream) => handleStreamingResponse(stream, response))
+}
 
-      for await (const rawEvent of response) {
-        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
-        if (rawEvent.data === "[DONE]") {
-          break
-        }
+type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
+type CopilotStream = Exclude<
+  Awaited<ReturnType<typeof createChatCompletions>>,
+  ChatCompletionResponse
+>
 
-        if (!rawEvent.data) {
-          continue
-        }
-
-        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-        const events = translateChunkToAnthropicEvents(chunk, streamState)
-
-        for (const event of events) {
-          consola.debug("Translated Anthropic event:", JSON.stringify(event))
-          await stream.writeSSE({
-            event: event.type,
-            data: JSON.stringify(event),
-          })
-        }
-      }
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") {
-        consola.debug("Stream aborted (client disconnected)")
-        return
-      }
-      throw e
+async function handleStreamingResponse(
+  stream: SSEStream,
+  response: CopilotStream,
+): Promise<void> {
+  try {
+    const streamState: AnthropicStreamState = {
+      messageStartSent: false,
+      messageStopSent: false,
+      contentBlockIndex: 0,
+      contentBlockOpen: false,
+      currentContentBlockType: undefined,
+      toolCalls: {},
     }
-  })
+
+    for await (const rawEvent of response) {
+      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+      if (rawEvent.data === "[DONE]") {
+        break
+      }
+
+      if (!rawEvent.data) {
+        continue
+      }
+
+      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+      const events = translateChunkToAnthropicEvents(chunk, streamState)
+
+      for (const event of events) {
+        consola.debug("Translated Anthropic event:", JSON.stringify(event))
+        await stream.writeSSE({
+          event: event.type,
+          data: JSON.stringify(event),
+        })
+      }
+    }
+
+    // If upstream closed without finish_reason (e.g. premature disconnect),
+    // send a synthetic error event so the client gets a clean termination.
+    if (streamState.messageStartSent && !streamState.messageStopSent) {
+      consola.warn(
+        "Upstream closed stream without finish_reason, sending error event",
+      )
+      const errorEvent = translateErrorToAnthropicErrorEvent()
+      await stream.writeSSE({
+        event: errorEvent.type,
+        data: JSON.stringify(errorEvent),
+      })
+    }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      consola.debug("Stream aborted (client disconnected)")
+      return
+    }
+    throw e
+  }
 }
 
 const isNonStreaming = (
