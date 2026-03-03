@@ -49,35 +49,26 @@ export const createChatCompletions = async (
 
   let response = await doRequest(account)
 
-  if (!response.ok) {
-    if (response.status === 429) {
-      await reportUpstreamRateLimit(response)
-      markAccountExhausted(account.id)
-      // Try once with next account
-      try {
-        const nextAccount = getActiveAccount()
-        if (nextAccount.id !== account.id) {
-          response = await doRequest(nextAccount)
-        }
-      } catch {
-        // All accounts exhausted, fall through
-      }
-    }
+  // Handle 429 by marking account exhausted and trying next account
+  if (!response.ok && response.status === 429) {
+    await reportUpstreamRateLimit(response)
+    markAccountExhausted(account.id)
+    response = await tryNextAccount(account, doRequest)
+  }
 
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "(unreadable)")
-      consola.error(
-        "Failed to create chat completions",
-        response.status,
-        errorBody,
-      )
-      consola.error("Request payload was:", JSON.stringify(payload))
-      throw new HTTPError(
-        "Failed to create chat completions",
-        response,
-        errorBody,
-      )
-    }
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "(unreadable)")
+    consola.error(
+      "Failed to create chat completions",
+      response.status,
+      errorBody,
+    )
+    consola.error("Request payload was:", JSON.stringify(payload))
+    throw new HTTPError(
+      "Failed to create chat completions",
+      response,
+      errorBody,
+    )
   }
 
   await reportUpstreamSuccess()
@@ -87,6 +78,31 @@ export const createChatCompletions = async (
   }
 
   return (await response.json()) as ChatCompletionResponse
+}
+
+/**
+ * Try the next available account when current account returns 429.
+ * If the retry account also returns 429, mark it as exhausted.
+ */
+async function tryNextAccount(
+  currentAccount: Awaited<ReturnType<typeof getActiveAccount>>,
+  doRequest: (account: typeof currentAccount) => Promise<Response>,
+): Promise<Response> {
+  try {
+    const nextAccount = getActiveAccount()
+    if (nextAccount.id === currentAccount.id) {
+      return new Response("All accounts exhausted", { status: 429 })
+    }
+    const response = await doRequest(nextAccount)
+    // If the retry account also returns 429, mark it as exhausted too
+    if (response.status === 429) {
+      await reportUpstreamRateLimit(response)
+      markAccountExhausted(nextAccount.id)
+    }
+    return response
+  } catch {
+    return new Response("All accounts exhausted", { status: 429 })
+  }
 }
 
 // Streaming types
