@@ -135,7 +135,7 @@ export function hasAdminRole(c: Context): boolean {
 
 function hasValidLegacyApiKey(c: Context): boolean {
   const configuredApiKey = state.legacyApiKey ?? state.apiKey
-  if (!configuredApiKey) return true
+  if (!configuredApiKey) return false
 
   const authHeader = c.req.header("authorization")
   const token = extractBearerToken(authHeader)
