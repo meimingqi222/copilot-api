@@ -203,6 +203,8 @@ async function loadAccountsFile(): Promise<Array<Account>> {
 }
 
 export function scheduleQuotaRefresh(): void {
+  // Run an immediate quota check to clear any stale isExhausted flags from a previous run
+  void refreshAllQuotas()
   setInterval(() => {
     void refreshAllQuotas()
   }, QUOTA_RECHECK_INTERVAL_MS)
