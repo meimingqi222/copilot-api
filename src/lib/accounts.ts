@@ -156,7 +156,7 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     consola.info(`Copilot token for "${account.label}":`, data.token)
   }
 
-  // Schedule token refresh
+  // Schedule token refresh (ensure minimum 60s interval to prevent rapid calls)
   const refreshInterval = Math.max((data.refresh_in - 60) * 1000, 60_000)
 
   // Clear any existing timer for this account
