@@ -2,14 +2,14 @@ import { Hono } from "hono"
 
 import { logStore } from "~/lib/log-store"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 
 export const dashboardApiRoutes = new Hono()
 
 dashboardApiRoutes.get("/", (c) => {
   const activeUsers = state.users.filter((u) => u.enabled).length
   const totalUsers = state.users.length
-  const requestsToday = logStore.todayCount()
-  const errorsToday = logStore.todayCount("error")
+  const totals = statsStore.getTodayTotals()
   const activeAccounts = state.accounts.filter((a) => !a.isExhausted).length
   const totalAccounts = state.accounts.length
 
@@ -22,8 +22,8 @@ dashboardApiRoutes.get("/", (c) => {
   return c.json({
     activeUsers,
     totalUsers,
-    requestsToday,
-    errorsToday,
+    requestsToday: totals.requests,
+    errorsToday: totals.errors,
     activeAccounts,
     totalAccounts,
     bufferSize: logStore.count(),

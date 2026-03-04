@@ -93,14 +93,18 @@ export async function handleCompletion(c: Context) {
     await awaitApproval()
   }
 
-  const response = await createChatCompletions(openAIPayload, signal, initiator)
+  const result = await createChatCompletions(openAIPayload, signal, initiator)
+  const { accountId, response } = result
 
-  if (isNonStreaming(response)) {
+  // Set accountId for logging
+  c.set("accountId" as never, accountId)
+
+  if (isNonStreaming(result)) {
     consola.debug(
       "Non-streaming response from Copilot:",
-      JSON.stringify(response).slice(-400),
+      JSON.stringify(result.response).slice(-400),
     )
-    const anthropicResponse = translateToAnthropic(response)
+    const anthropicResponse = translateToAnthropic(result.response)
     consola.debug(
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
@@ -115,17 +119,22 @@ export async function handleCompletion(c: Context) {
     return c.json(anthropicResponse)
   }
 
+  const streamingResponse = response as AsyncIterable<ChatCompletionChunk>
+
   consola.debug("Streaming response from Copilot")
   return streamSSE(c, (stream) =>
-    handleStreamingResponse({ stream, response, clientSignal: signal, c }),
+    handleStreamingResponse({
+      stream,
+      response: streamingResponse,
+      clientSignal: signal,
+      c,
+    }),
   )
 }
 
 type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
-type CopilotStream = Exclude<
-  Awaited<ReturnType<typeof createChatCompletions>>,
-  ChatCompletionResponse
->
+// Raw SSE event from fetch-event-stream, not parsed ChatCompletionChunk
+type CopilotStream = AsyncIterable<{ data?: string }>
 
 interface HandleStreamingResponseOptions {
   stream: SSEStream
@@ -259,8 +268,11 @@ async function sendSyntheticErrorIfNeeded(
 }
 
 const isNonStreaming = (
-  response: Awaited<ReturnType<typeof createChatCompletions>>,
-): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
+  result:
+    | { accountId: string; response: AsyncIterable<ChatCompletionChunk> }
+    | { accountId: string; response: ChatCompletionResponse },
+): result is { accountId: string; response: ChatCompletionResponse } =>
+  Object.hasOwn(result.response, "choices")
 
 /**
  * Track token usage for the authenticated user

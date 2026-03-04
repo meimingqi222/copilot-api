@@ -7,6 +7,7 @@ export interface LogEntry {
   message: string
   userId?: string
   username?: string
+  accountId?: string
   model?: string
   promptTokens?: number
   completionTokens?: number

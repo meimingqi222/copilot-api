@@ -1,6 +1,9 @@
 import type { Context, Next } from "hono"
 
+import consola from "consola"
+
 import { logStore } from "./log-store"
+import { statsStore } from "./stats-store"
 
 export const requestLogger = async (c: Context, next: Next) => {
   const start = Date.now()
@@ -17,14 +20,31 @@ export const requestLogger = async (c: Context, next: Next) => {
     level = "info"
   }
 
+  const accountId = c.get("accountId" as never) as string | undefined
+
   logStore.push({
     timestamp: Date.now(),
     level,
     message: `${c.req.method} ${c.req.path} ${status}`,
     userId: c.get("userId" as never) as string | undefined,
     username: c.get("username" as never) as string | undefined,
+    accountId,
     latencyMs,
     statusCode: status,
     path: c.req.path,
   })
+
+  // Persist stats to SQLite for request counting
+  if (accountId) {
+    try {
+      if (status >= 400) {
+        statsStore.incrementErrors(accountId)
+      } else {
+        statsStore.incrementRequests(accountId)
+      }
+    } catch {
+      // Stats persistence failure should not affect request flow
+      consola.debug("Failed to persist stats")
+    }
+  }
 }

@@ -29,6 +29,6 @@ modelRoutes.get("/", async (c) => {
       has_more: false,
     })
   } catch (error) {
-    return await forwardError(c, error)
+    return forwardError(c, error)
   }
 })

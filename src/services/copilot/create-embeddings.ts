@@ -3,7 +3,12 @@ import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
-export const createEmbeddings = async (payload: EmbeddingRequest) => {
+export const createEmbeddings = async (
+  payload: EmbeddingRequest,
+): Promise<{
+  accountId: string
+  response: EmbeddingResponse
+}> => {
   const account = getActiveAccount()
   if (!account.copilotToken) throw new Error("Copilot token not found")
 
@@ -15,7 +20,10 @@ export const createEmbeddings = async (payload: EmbeddingRequest) => {
 
   if (!response.ok) throw new HTTPError("Failed to create embeddings", response)
 
-  return (await response.json()) as EmbeddingResponse
+  return {
+    accountId: account.id,
+    response: (await response.json()) as EmbeddingResponse,
+  }
 }
 
 export interface EmbeddingRequest {
