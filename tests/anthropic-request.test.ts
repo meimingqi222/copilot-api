@@ -192,14 +192,12 @@ describe("Anthropic to OpenAI translation logic", () => {
     const openAIPayload = translateToOpenAI(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
-    // Thinking blocks are mapped to reasoning_text; content keeps visible text.
+    // Historical assistant messages must not carry reasoning_text.
     const assistantMessage = openAIPayload.messages.find(
       (m) => m.role === "assistant",
     )
     expect(assistantMessage?.content).toBe("2+2 equals 4.")
-    expect(assistantMessage?.reasoning_text).toBe(
-      "Let me think about this simple math problem...",
-    )
+    expect(assistantMessage?.reasoning_text).toBeUndefined()
   })
 
   test("should handle thinking blocks with tool calls", () => {
@@ -230,7 +228,7 @@ describe("Anthropic to OpenAI translation logic", () => {
     const openAIPayload = translateToOpenAI(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
-    // reasoning_text is stripped when tool_calls are present (Copilot rejects both together).
+    // reasoning_text is stripped for all historical assistant messages.
     const assistantMessage = openAIPayload.messages.find(
       (m) => m.role === "assistant",
     )
@@ -240,7 +238,7 @@ describe("Anthropic to OpenAI translation logic", () => {
     expect(assistantMessage?.tool_calls?.[0].function.name).toBe("get_weather")
   })
 
-  test("should preserve text and thinking order in assistant content", () => {
+  test("should preserve visible text while stripping thinking from assistant history", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-3-5-sonnet-20241022",
       messages: [
@@ -262,9 +260,33 @@ describe("Anthropic to OpenAI translation logic", () => {
 
     expect(assistantMessage.role).toBe("assistant")
     expect(assistantMessage.content).toBe("First text.\n\nSecond text.")
-    expect(assistantMessage.reasoning_text).toBe(
-      "First thinking.\n\nSecond thinking.",
-    )
+    expect(assistantMessage.reasoning_text).toBeUndefined()
+  })
+
+  test("should strip reasoning_text from historical assistant messages without tool calls", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-3-5-sonnet-20241022",
+      messages: [
+        { role: "user", content: "Round 1 question" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "I should reason before answering." },
+            { type: "text", text: "Round 1 answer" },
+          ],
+        },
+        { role: "user", content: "Round 2 question" },
+      ],
+      max_tokens: 128,
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const historicalAssistantMessage = openAIPayload.messages[1]
+
+    expect(historicalAssistantMessage.role).toBe("assistant")
+    expect(historicalAssistantMessage.content).toBe("Round 1 answer")
+    expect(historicalAssistantMessage.reasoning_text).toBeUndefined()
+    expect(historicalAssistantMessage.tool_calls).toBeUndefined()
   })
 })
 
