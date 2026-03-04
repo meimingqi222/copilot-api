@@ -166,30 +166,21 @@ function handleAssistantMessage(
     .map((block) => block.text)
     .join("\n\n")
 
-  const thinkingContent = message.content
-    .filter(
-      (block): block is AnthropicThinkingBlock => block.type === "thinking",
-    )
-    .map((block) => block.thinking)
-    .join("\n\n")
-
+  // Copilot API rejects reasoning_text in historical assistant messages.
+  // Strip reasoning_text unconditionally; it is only valid on the model's
+  // most-recent live response, not in conversation history.
   const baseMessage = {
     role: "assistant" as const,
     content: textContent || null,
-    ...(thinkingContent ? { reasoning_text: thinkingContent } : {}),
   }
 
   if (toolUseBlocks.length === 0) {
     return [baseMessage]
   }
 
-  // Copilot API rejects assistant messages that have both reasoning_text and tool_calls.
-  // Strip reasoning_text when tool_calls are present.
-  const { reasoning_text: _dropped, ...baseMessageWithoutReasoning } =
-    baseMessage
   return [
     {
-      ...baseMessageWithoutReasoning,
+      ...baseMessage,
       tool_calls: toolUseBlocks.map((toolUse) => ({
         id: sanitizeId(toolUse.id),
         type: "function",
