@@ -19,6 +19,7 @@ import {
 } from "~/lib/api-config"
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { cacheModels } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 
@@ -63,7 +64,10 @@ async function savePendingFlows(): Promise<void> {
 void loadPendingFlows()
 
 // Sanitize account for API response (omit sensitive tokens, compute isActive dynamically)
-function publicAccount(account: Account) {
+function publicAccount(
+  account: Account,
+  statsMap: Map<string, { requests: number; errors: number }>,
+) {
   const {
     githubToken: _token,
     copilotToken: _ct,
@@ -71,15 +75,19 @@ function publicAccount(account: Account) {
     isActive: _isActive,
     ...rest
   } = account
+  const stats = statsMap.get(account.id)
   return {
     ...rest,
     isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
+    requestsToday: stats?.requests ?? 0,
+    errorsToday: stats?.errors ?? 0,
   }
 }
 
 accountApiRoutes.get("/", (c) => {
+  const statsMap = statsStore.getTodayStatsAll()
   return c.json({
-    accounts: state.accounts.map((account) => publicAccount(account)),
+    accounts: state.accounts.map((account) => publicAccount(account, statsMap)),
   })
 })
 
