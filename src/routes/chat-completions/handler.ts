@@ -21,7 +21,8 @@ import { inferInitiatorFromOpenAIMessages } from "./initiator"
 
 interface StreamResult {
   accountId: string
-  response: AsyncIterable<ChatCompletionChunk> | ChatCompletionResponse
+  // Raw SSE events from fetch-event-stream, needs JSON parsing
+  response: AsyncIterable<{ data?: string }> | ChatCompletionResponse
   estimatedInputTokens: number
 }
 
@@ -171,7 +172,7 @@ function handleNonStreamingResponse(
 
 function handleStreamingResponse(
   c: Context,
-  response: AsyncIterable<ChatCompletionChunk>,
+  response: AsyncIterable<{ data?: string }>,
   estimatedInputTokens: number,
 ) {
   consola.debug("Streaming response")
@@ -179,12 +180,21 @@ function handleStreamingResponse(
     let lastUsage: UsageInfo | undefined
     let trackedInAbort = false
     try {
-      for await (const chunk of response) {
-        consola.debug("Streaming chunk:", JSON.stringify(chunk))
+      for await (const rawEvent of response) {
+        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+        if (rawEvent.data === "[DONE]") {
+          break
+        }
+        if (!rawEvent.data) {
+          continue
+        }
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
         if (chunk.usage) {
           lastUsage = chunk.usage
         }
-        await stream.writeSSE(chunk as unknown as SSEMessage)
+        await stream.writeSSE({
+          data: JSON.stringify(chunk),
+        } as SSEMessage)
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
@@ -235,5 +245,5 @@ async function trackTokenUsage(c: Context, tokens: number): Promise<void> {
 }
 
 const isChatCompletionResponse = (
-  response: AsyncIterable<ChatCompletionChunk> | ChatCompletionResponse,
+  response: AsyncIterable<{ data?: string }> | ChatCompletionResponse,
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
