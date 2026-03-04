@@ -10,11 +10,14 @@ export const embeddingRoutes = new Hono()
 
 embeddingRoutes.post("/", async (c) => {
   try {
-    const paylod = await c.req.json<EmbeddingRequest>()
-    const response = await createEmbeddings(paylod)
+    const payload = await c.req.json<EmbeddingRequest>()
+    const result = await createEmbeddings(payload)
 
-    return c.json(response)
+    // Set accountId for logging
+    c.set("accountId" as never, result.accountId)
+
+    return c.json(result.response)
   } catch (error) {
-    return await forwardError(c, error)
+    return forwardError(c, error)
   }
 })

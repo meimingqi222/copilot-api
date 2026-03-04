@@ -16,6 +16,7 @@ import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
+import { statsStore } from "./lib/stats-store"
 import { setupGitHubToken } from "./lib/token"
 import { loadUsers } from "./lib/users"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
@@ -121,6 +122,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   // Load users
   await loadUsers()
+
+  // Initialize stats store
+  statsStore.init()
 
   // Refresh Copilot tokens for all accounts
   for (const account of state.accounts) {

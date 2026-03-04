@@ -422,8 +422,8 @@
                     <span class="font-medium" x-text="user.username"></span>
                     <div class="text-right">
                       <div class="text-title-3">
-                        <span x-text="user.usedTokens || 0"></span>
-                        <span x-show="user.quotaLimit">/ <span x-text="user.quotaLimit"></span></span>
+                        <span x-text="formatTokens(user.usedTokens || 0)"></span>
+                        <span x-show="user.quotaLimit" class="text-[var(--apple-text-secondary)]">/ <span x-text="formatTokens(user.quotaLimit || 0)"></span></span>
                       </div>
                       <div class="text-xs text-[var(--apple-text-secondary)]">
                         <span x-text="t('quota.used')"></span>
@@ -944,6 +944,18 @@
           if (pct > 0.9) return 'bg-[var(--apple-red)]';
           if (pct > 0.75) return 'bg-[var(--apple-orange)]';
           return 'bg-[var(--apple-green)]';
+        },
+
+        // Format token count with appropriate unit (K, M, or raw)
+        formatTokens(tokens) {
+          if (tokens === 0) return '0';
+          if (tokens >= 1000000) {
+            return (tokens / 1000000).toFixed(1) + 'M';
+          }
+          if (tokens >= 1000) {
+            return (tokens / 1000).toFixed(1) + 'K';
+          }
+          return tokens.toString();
         },
 
         showToast(msg, type) {

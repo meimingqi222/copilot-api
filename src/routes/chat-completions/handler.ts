@@ -19,51 +19,125 @@ import {
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
 
+interface StreamResult {
+  accountId: string
+  // Raw SSE events from fetch-event-stream, needs JSON parsing
+  response: AsyncIterable<{ data?: string }> | ChatCompletionResponse
+  estimatedInputTokens: number
+}
+
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
 
+  await checkRateLimitOrThrow(signal)
+
+  const result = await processRequest(c, signal)
+  const { accountId, response, estimatedInputTokens } = result
+
+  // Set accountId for logging
+  c.set("accountId" as never, accountId)
+
+  if (isChatCompletionResponse(response)) {
+    handleNonStreamingResponse(c, response, estimatedInputTokens)
+    return c.json(response)
+  }
+
+  return handleStreamingResponse(c, response, estimatedInputTokens)
+}
+
+async function checkRateLimitOrThrow(signal: AbortSignal): Promise<void> {
   try {
     await checkRateLimit(signal)
   } catch (e) {
     if (e instanceof RateLimitQueueFullError) {
-      return c.json({ error: { message: e.message, type: "error" } }, 503)
+      throw new RateLimitError(e.message)
     }
     if (e instanceof DOMException && e.name === "AbortError") {
-      return new Response(null, { status: 499 })
+      throw new AbortError()
     }
     throw e
   }
+}
 
+export class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "RateLimitError"
+  }
+}
+
+export class AbortError extends Error {
+  constructor() {
+    super("Abort")
+    this.name = "AbortError"
+  }
+}
+
+async function processRequest(
+  c: Context,
+  signal: AbortSignal,
+): Promise<StreamResult> {
   let payload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
-  // Find the selected model
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
 
-  let estimatedInputTokens = 0
+  const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+
+  if (state.manualApprove) await awaitApproval()
+
+  payload = applyMaxTokens(payload, selectedModel)
+
+  const initiator = resolveInitiator(c, payload)
+
+  const result = await createChatCompletions(payload, signal, initiator)
+
+  return {
+    accountId: result.accountId,
+    response: result.response,
+    estimatedInputTokens,
+  }
+}
+
+async function calculateTokens(
+  payload: ChatCompletionsPayload,
+  selectedModel: (typeof state.models.data)[number] | undefined,
+): Promise<number> {
   try {
     if (selectedModel) {
       const tokenCount = await getTokenCount(payload, selectedModel)
       consola.info("Current token count:", tokenCount)
-      estimatedInputTokens = tokenCount.input + tokenCount.output
-    } else {
-      consola.warn("No model selected, skipping token count calculation")
+      return tokenCount.input + tokenCount.output
     }
+    consola.warn("No model selected, skipping token count calculation")
+    return 0
   } catch (error) {
     consola.warn("Failed to calculate token count:", error)
+    return 0
   }
+}
 
-  if (state.manualApprove) await awaitApproval()
-
+function applyMaxTokens(
+  payload: ChatCompletionsPayload,
+  selectedModel: (typeof state.models.data)[number] | undefined,
+): ChatCompletionsPayload {
   if (isNullish(payload.max_tokens)) {
-    payload = {
+    const newPayload = {
       ...payload,
       max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
     }
-    consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
+    consola.debug("Set max_tokens to:", JSON.stringify(newPayload.max_tokens))
+    return newPayload
   }
+  return payload
+}
+
+function resolveInitiator(
+  c: Context,
+  payload: ChatCompletionsPayload,
+): "agent" | "user" | undefined {
   const inferredInitiator = inferInitiatorFromOpenAIMessages(
     payload.messages,
     c.req.header("user-agent"),
@@ -76,65 +150,83 @@ export async function handleCompletion(c: Context) {
     trustedClientAgent,
     initiator,
   )
+  return initiator
+}
 
-  const response = await createChatCompletions(payload, signal, initiator)
-
-  if (isNonStreaming(response)) {
-    consola.debug("Non-streaming response:", JSON.stringify(response))
-    // Track token usage for non-streaming response
-    const usage = response.usage
-    if (usage) {
-      const totalTokens =
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
-      void trackTokenUsage(c, totalTokens)
-    } else {
-      // Fallback to estimated tokens if usage not available
-      void trackTokenUsage(c, estimatedInputTokens)
-    }
-    return c.json(response)
+function handleNonStreamingResponse(
+  c: Context,
+  response: ChatCompletionResponse,
+  estimatedInputTokens: number,
+): void {
+  consola.debug("Non-streaming response:", JSON.stringify(response))
+  const usage = response.usage
+  if (usage) {
+    const totalTokens =
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
+    void trackTokenUsage(c, totalTokens)
+  } else {
+    void trackTokenUsage(c, estimatedInputTokens)
   }
+}
 
+function handleStreamingResponse(
+  c: Context,
+  response: AsyncIterable<{ data?: string }>,
+  estimatedInputTokens: number,
+) {
   consola.debug("Streaming response")
   return streamSSE(c, async (stream) => {
-    let lastUsage:
-      | {
-          prompt_tokens: number
-          completion_tokens: number
-          total_tokens: number
-        }
-      | undefined
+    let lastUsage: UsageInfo | undefined
+    let trackedInAbort = false
     try {
-      for await (const chunk of response) {
-        consola.debug("Streaming chunk:", JSON.stringify(chunk))
-        // Capture usage from the final chunk if available
-        const chunkWithUsage = chunk as ChatCompletionChunk
-        if (chunkWithUsage.usage) {
-          lastUsage = chunkWithUsage.usage
+      for await (const rawEvent of response) {
+        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+        if (rawEvent.data === "[DONE]") {
+          break
         }
-        await stream.writeSSE(chunk as SSEMessage)
+        if (!rawEvent.data) {
+          continue
+        }
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        if (chunk.usage) {
+          lastUsage = chunk.usage
+        }
+        await stream.writeSSE({
+          data: JSON.stringify(chunk),
+        } as SSEMessage)
       }
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") {
         consola.debug("Stream aborted (client disconnected)")
+        if (lastUsage) {
+          trackedInAbort = true
+          void trackTokenUsage(c, calculateTotalTokens(lastUsage))
+        }
         return
       }
       throw e
     } finally {
-      // Track token usage after streaming completes
-      if (lastUsage) {
-        void trackTokenUsage(
-          c,
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          lastUsage.total_tokens
-            ?? lastUsage.prompt_tokens + lastUsage.completion_tokens,
-        )
-      } else {
-        // Fallback to estimated tokens if no usage data received
-        void trackTokenUsage(c, estimatedInputTokens)
+      if (!trackedInAbort) {
+        if (lastUsage) {
+          void trackTokenUsage(c, calculateTotalTokens(lastUsage))
+        } else {
+          void trackTokenUsage(c, estimatedInputTokens)
+        }
       }
     }
   })
+}
+
+interface UsageInfo {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
+function calculateTotalTokens(usage: UsageInfo): number {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  return usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
 }
 
 /**
@@ -152,6 +244,6 @@ async function trackTokenUsage(c: Context, tokens: number): Promise<void> {
   }
 }
 
-const isNonStreaming = (
-  response: Awaited<ReturnType<typeof createChatCompletions>>,
+const isChatCompletionResponse = (
+  response: AsyncIterable<{ data?: string }> | ChatCompletionResponse,
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")

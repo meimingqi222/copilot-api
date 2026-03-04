@@ -14,7 +14,10 @@ export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   initiatorOverride?: "agent" | "user",
-) => {
+): Promise<
+  | { accountId: string; response: AsyncIterable<ChatCompletionChunk> }
+  | { accountId: string; response: ChatCompletionResponse }
+> => {
   const account = getActiveAccount()
   if (!account.copilotToken) throw new Error("Copilot token not found")
 
@@ -47,13 +50,16 @@ export const createChatCompletions = async (
     })
   }
 
+  let usedAccount = account
   let response = await doRequest(account)
 
   // Handle 429 by marking account exhausted and trying next account
   if (!response.ok && response.status === 429) {
     await reportUpstreamRateLimit(response)
     markAccountExhausted(account.id)
-    response = await tryNextAccount(account, doRequest)
+    const retryResult = await tryNextAccount(account, doRequest)
+    response = retryResult.response
+    usedAccount = retryResult.account
   }
 
   if (!response.ok) {
@@ -74,33 +80,48 @@ export const createChatCompletions = async (
   await reportUpstreamSuccess()
 
   if (payload.stream) {
-    return events(response)
+    return {
+      accountId: usedAccount.id,
+      response: events(
+        response,
+      ) as unknown as AsyncIterable<ChatCompletionChunk>,
+    }
   }
 
-  return (await response.json()) as ChatCompletionResponse
+  return {
+    accountId: usedAccount.id,
+    response: (await response.json()) as ChatCompletionResponse,
+  }
 }
 
 /**
  * Try the next available account when current account returns 429.
  * If the retry account also returns 429, mark it as exhausted.
+ * Returns both the response and the account that was used.
  */
 async function tryNextAccount(
   currentAccount: Awaited<ReturnType<typeof getActiveAccount>>,
   doRequest: (account: typeof currentAccount) => Promise<Response>,
-): Promise<Response> {
+): Promise<{ response: Response; account: typeof currentAccount }> {
   try {
     const nextAccount = getActiveAccount()
     if (nextAccount.id === currentAccount.id) {
-      return new Response("All accounts exhausted", { status: 429 })
+      return {
+        response: new Response("All accounts exhausted", { status: 429 }),
+        account: currentAccount,
+      }
     }
     const response = await doRequest(nextAccount)
     // If the retry account also returns 429, mark it as exhausted too
     if (response.status === 429) {
       markAccountExhausted(nextAccount.id)
     }
-    return response
+    return { response, account: nextAccount }
   } catch {
-    return new Response("All accounts exhausted", { status: 429 })
+    return {
+      response: new Response("All accounts exhausted", { status: 429 }),
+      account: currentAccount,
+    }
   }
 }
 
