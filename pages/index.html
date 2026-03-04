@@ -423,7 +423,7 @@
                     <div class="text-right">
                       <div class="text-title-3">
                         <span x-text="formatTokens(user.usedTokens || 0)"></span>
-                        <span x-show="user.quotaLimit" class="text-[var(--apple-text-secondary)]">/ <span x-text="formatTokens(user.quotaLimit)"></span></span>
+                        <span x-show="user.quotaLimit" class="text-[var(--apple-text-secondary)]">/ <span x-text="formatTokens(user.quotaLimit || 0)"></span></span>
                       </div>
                       <div class="text-xs text-[var(--apple-text-secondary)]">
                         <span x-text="t('quota.used')"></span>
