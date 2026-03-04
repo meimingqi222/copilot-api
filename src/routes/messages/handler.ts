@@ -4,6 +4,7 @@ import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { incrementUserTokens } from "~/lib/users"
@@ -47,11 +48,20 @@ export async function handleCompletion(c: Context) {
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  const initiator = inferInitiatorFromAnthropicMessages(
+  const inferredInitiator = inferInitiatorFromAnthropicMessages(
     anthropicPayload.messages,
     anthropicBeta,
   )
-  consola.debug("Inferred X-Initiator:", initiator)
+  // 仅对具备管理权限的已认证调用方信任 x-initiator=agent
+  const { clientInitiator, initiator, trustedClientAgent } =
+    resolveInitiatorWithClientHeader(c, inferredInitiator)
+  consola.debug(
+    "X-Initiator: client=%s inferred=%s trusted_agent=%s final=%s",
+    clientInitiator ?? "(none)",
+    inferredInitiator,
+    trustedClientAgent,
+    initiator,
+  )
   consola.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),

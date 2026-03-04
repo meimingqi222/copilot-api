@@ -4,6 +4,7 @@ import consola from "consola"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
 import { awaitApproval } from "~/lib/approval"
+import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -41,7 +42,6 @@ export async function handleCompletion(c: Context) {
     (model) => model.id === payload.model,
   )
 
-  // Calculate and display token count
   let estimatedInputTokens = 0
   try {
     if (selectedModel) {
@@ -64,12 +64,18 @@ export async function handleCompletion(c: Context) {
     }
     consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
   }
-
-  const initiator = inferInitiatorFromOpenAIMessages(
+  const inferredInitiator = inferInitiatorFromOpenAIMessages(
     payload.messages,
     c.req.header("user-agent"),
   )
-  consola.debug("Inferred X-Initiator:", initiator)
+  const { clientInitiator, initiator, trustedClientAgent } =
+    resolveInitiatorWithClientHeader(c, inferredInitiator)
+  consola.debug(
+    "X-Initiator: client=%s trusted_agent=%s final=%s",
+    clientInitiator ?? "(none)",
+    trustedClientAgent,
+    initiator,
+  )
 
   const response = await createChatCompletions(payload, signal, initiator)
 
