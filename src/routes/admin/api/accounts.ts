@@ -270,7 +270,8 @@ accountApiRoutes.put("/:id", async (c) => {
 
   if (body.label) account.label = body.label
   await saveAccounts()
-  return c.json({ account: publicAccount(account) })
+  const statsMap = statsStore.getTodayStatsAll()
+  return c.json({ account: publicAccount(account, statsMap) })
 })
 
 accountApiRoutes.delete("/:id", async (c) => {
@@ -300,7 +301,8 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
 
   try {
     await refreshCopilotToken(account)
-    return c.json({ account: publicAccount(account) })
+    const statsMap = statsStore.getTodayStatsAll()
+    return c.json({ account: publicAccount(account, statsMap) })
   } catch {
     return c.json({ error: "Failed to refresh Copilot token." }, 502)
   }
@@ -315,10 +317,11 @@ accountApiRoutes.post("/:id/activate", (c) => {
   state.activeAccountIndex = idx
   try {
     const account = getActiveAccount() // validate not exhausted and sync state.githubToken
+    const statsMap = statsStore.getTodayStatsAll()
     return c.json({
       ok: true,
       activeAccountIndex: idx,
-      account: publicAccount(account),
+      account: publicAccount(account, statsMap),
     })
   } catch {
     return c.json({ error: "Account is exhausted." }, 409)
