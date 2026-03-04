@@ -21,18 +21,35 @@
     <p class="text-body text-[var(--apple-text-secondary)] mb-8" x-text="t('login.subtitle')"></p>
 
     <!-- Form -->
-    <form @submit.prevent="login()" class="space-y-6">
+    <form @submit.prevent="login()" class="space-y-6" method="post" action="/admin/login">
+      <!-- Hidden username field to help browser identify this as a login form -->
+      <input type="hidden" name="username" value="admin" autocomplete="username">
+
       <div>
         <label class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1">
           <span x-text="t('login.password')"></span>
         </label>
-        <input 
-          x-model="password" 
-          type="password" 
+        <input
+          x-model="password"
+          type="password"
+          name="password"
+          id="password"
           class="input text-center text-lg"
           :placeholder="t('login.passwordPlaceholder')"
           autocomplete="current-password"
         >
+      </div>
+
+      <!-- Remember Me Checkbox -->
+      <div class="flex items-center justify-start">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            id="remember-me"
+            class="w-4 h-4 rounded border-[var(--apple-border)] text-[var(--apple-blue)] focus:ring-[var(--apple-blue)]"
+          >
+          <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('login.rememberMe')"></span>
+        </label>
       </div>
 
       <button type="submit" class="btn btn-primary w-full" :disabled="loading">
@@ -69,6 +86,7 @@
         'login.passwordPlaceholder': '请输入管理密码',
         'login.submit': '登录',
         'login.error': '密码错误',
+        'login.rememberMe': '记住密码',
         'loading': '加载中...'
       },
       en: {
@@ -78,6 +96,7 @@
         'login.passwordPlaceholder': 'Enter admin password',
         'login.submit': 'Sign In',
         'login.error': 'Invalid password',
+        'login.rememberMe': 'Remember me',
         'loading': 'Loading...'
       }
     };
