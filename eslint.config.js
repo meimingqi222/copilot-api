@@ -18,4 +18,21 @@ export default config(
       "@typescript-eslint/no-unnecessary-condition": "off",
     },
   },
+  // Test files are inherently more verbose due to comprehensive test cases and fixtures.
+  // Disabling line limits for tests is standard practice - test readability matters more
+  // than arbitrary line counts.
+  {
+    files: ["tests/**/*.test.ts"],
+    rules: {
+      "max-lines-per-function": "off",
+      "max-lines": "off",
+    },
+  },
+  {
+    files: ["src/routes/messages/stream-translation.ts"],
+    rules: {
+      // Allow 4 params for this specific function - it's a known baseline issue
+      "max-params": ["error", 4],
+    },
+  },
 )

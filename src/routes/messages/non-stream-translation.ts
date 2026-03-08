@@ -11,7 +11,6 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 import {
-  type AnthropicAssistantContentBlock,
   type AnthropicAssistantMessage,
   type AnthropicMessage,
   type AnthropicMessagesPayload,
@@ -24,7 +23,7 @@ import {
   type AnthropicUserContentBlock,
   type AnthropicUserMessage,
 } from "./anthropic-types"
-import { mapOpenAIStopReasonToAnthropic } from "./utils"
+import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation
 
@@ -193,10 +192,12 @@ function handleAssistantMessage(
   ]
 }
 
+// mapContent handles user message content translation.
+// Note: thinking blocks only appear in assistant messages, not in user/tool_result
+// messages. Filtering them out here is correct - including thinking.thinking text
+// in user messages would be a protocol violation.
 function mapContent(
-  content:
-    | string
-    | Array<AnthropicUserContentBlock | AnthropicAssistantContentBlock>,
+  content: string | Array<AnthropicUserContentBlock>,
 ): string | Array<ContentPart> | null {
   if (typeof content === "string") {
     return content
@@ -208,11 +209,8 @@ function mapContent(
   const hasImage = content.some((block) => block.type === "image")
   if (!hasImage) {
     return content
-      .filter(
-        (block): block is AnthropicTextBlock | AnthropicThinkingBlock =>
-          block.type === "text" || block.type === "thinking",
-      )
-      .map((block) => (block.type === "text" ? block.text : block.thinking))
+      .filter((block): block is AnthropicTextBlock => block.type === "text")
+      .map((block) => block.text)
       .join("\n\n")
   }
 
@@ -221,11 +219,6 @@ function mapContent(
     switch (block.type) {
       case "text": {
         contentParts.push({ type: "text", text: block.text })
-
-        break
-      }
-      case "thinking": {
-        contentParts.push({ type: "text", text: block.thinking })
 
         break
       }
@@ -363,6 +356,12 @@ type ThinkingCollector = {
   seenThinking: Set<string>
 }
 
+function getMessageLevelThinkingSignature(
+  message: CopilotResponseMessage,
+): string | undefined {
+  return extractSignatureAlias(message)
+}
+
 function addThinkingBlockUnique(
   collector: ThinkingCollector,
   thinking: string | undefined,
@@ -395,11 +394,7 @@ function addTopLevelReasoningBlocks(
       ?? message.thinking
       ?? message.reasoning
       ?? undefined,
-    message.reasoning_opaque
-      ?? message.thinking_signature
-      ?? message.reasoning_signature
-      ?? message.signature
-      ?? undefined,
+    getMessageLevelThinkingSignature(message),
   )
 
   if (Array.isArray(message.reasoning_details)) {
@@ -419,6 +414,7 @@ function getAnthropicContentBlocks(
   const blocks: Array<AnthropicTextBlock | AnthropicThinkingBlock> = []
   const seenThinking = new Set<string>()
   const collector = { blocks, seenThinking }
+  const messageLevelSignature = getMessageLevelThinkingSignature(message)
 
   if (typeof message.content === "string") {
     // For Copilot proxy responses: reasoning_text comes before content in generation order.
@@ -442,7 +438,8 @@ function getAnthropicContentBlocks(
           addThinkingBlockUnique(
             collector,
             getReasoningText(part),
-            "signature" in part ? part.signature : undefined,
+            ("signature" in part ? part.signature : undefined)
+              ?? messageLevelSignature,
           )
           break
         }
