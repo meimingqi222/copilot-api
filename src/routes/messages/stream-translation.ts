@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
   type ChatCompletionChunk,
@@ -8,7 +10,7 @@ import {
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "./anthropic-types"
-import { mapOpenAIStopReasonToAnthropic } from "./utils"
+import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 
 function isToolBlockOpen(state: AnthropicStreamState): boolean {
   if (!state.contentBlockOpen) {
@@ -69,7 +71,7 @@ function ensureTextBlockOpen(
 function ensureThinkingBlockOpen(
   state: AnthropicStreamState,
   events: Array<AnthropicStreamEventData>,
-  signature?: string,
+  bufferedThinking: string | undefined,
 ): void {
   if (state.contentBlockOpen && state.currentContentBlockType !== "thinking") {
     stopCurrentContentBlock(state, events)
@@ -79,17 +81,31 @@ function ensureThinkingBlockOpen(
     return
   }
 
+  // Per Anthropic streaming spec, content_block_start for thinking blocks has
+  // ONLY { type: "thinking", thinking: "" }. The signature is sent separately
+  // via signature_delta — never in content_block_start.
   events.push({
     type: "content_block_start",
     index: state.contentBlockIndex,
     content_block: {
       type: "thinking",
       thinking: "",
-      ...(signature ? { signature } : {}),
     },
   })
   state.contentBlockOpen = true
   state.currentContentBlockType = "thinking"
+
+  // Emit any buffered thinking content that arrived before the signature
+  if (bufferedThinking) {
+    events.push({
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: {
+        type: "thinking_delta",
+        thinking: bufferedThinking,
+      },
+    })
+  }
 }
 
 function getReasoningText(
@@ -105,12 +121,7 @@ function getThinkingDelta(
   signature?: string
 } {
   const reasoningParts: Array<string> = []
-  let signature =
-    delta.reasoning_opaque
-    ?? delta.thinking_signature
-    ?? delta.reasoning_signature
-    ?? delta.signature
-    ?? undefined
+  let signature = extractSignatureAlias(delta)
 
   // Use ?? chaining so only one top-level field is picked per chunk,
   // matching the non-streaming translation and avoiding duplication when
@@ -182,8 +193,11 @@ export function translateChunkToAnthropicEvents(
   }
 
   const thinkingDelta = getThinkingDelta(delta)
-  if (thinkingDelta.thinking || thinkingDelta.signature) {
-    ensureThinkingBlockOpen(state, events, thinkingDelta.signature)
+  if (thinkingDelta.signature && !state.suppressLateThinking) {
+    // Signature arrived - create thinking block and flush buffered content.
+    // Per Anthropic spec, signature goes only via signature_delta, not in start event.
+    ensureThinkingBlockOpen(state, events, state.bufferedThinking || undefined)
+    state.bufferedThinking = "" // Clear buffer after flushing
 
     if (thinkingDelta.thinking) {
       events.push({
@@ -196,19 +210,42 @@ export function translateChunkToAnthropicEvents(
       })
     }
 
-    if (thinkingDelta.signature) {
-      events.push({
-        type: "content_block_delta",
-        index: state.contentBlockIndex,
-        delta: {
-          type: "signature_delta",
-          signature: thinkingDelta.signature,
-        },
-      })
-    }
+    events.push({
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: {
+        type: "signature_delta",
+        signature: thinkingDelta.signature,
+      },
+    })
+  } else if (
+    thinkingDelta.thinking
+    && state.contentBlockOpen
+    && state.currentContentBlockType === "thinking"
+  ) {
+    // Thinking block already open - emit thinking delta directly
+    events.push({
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: {
+        type: "thinking_delta",
+        thinking: thinkingDelta.thinking,
+      },
+    })
+  } else if (thinkingDelta.thinking && !state.suppressLateThinking) {
+    // No signature yet and no thinking block open - buffer the thinking content
+    state.bufferedThinking += thinkingDelta.thinking
   }
 
   if (delta.content) {
+    if (!state.contentBlockOpen && state.bufferedThinking) {
+      consola.debug(
+        `Discarding ${state.bufferedThinking.length} chars of unsigned reasoning (text arrived before signature)`,
+      )
+      state.bufferedThinking = ""
+      state.suppressLateThinking = true
+    }
+
     if (isToolBlockOpen(state)) {
       // A tool block was open, so close it before starting a text block.
       stopCurrentContentBlock(state, events)

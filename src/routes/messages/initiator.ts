@@ -9,10 +9,13 @@ import { hasClaudeCodeBeta } from "./anthropic-beta"
 export type CopilotInitiator = "agent" | "user"
 
 function hasToolResult(message: AnthropicUserMessage): boolean {
-  return (
-    Array.isArray(message.content)
-    && message.content.some((block) => block.type === "tool_result")
-  )
+  // Treat as agent-initiated if the message contains ANY tool_result
+  // This covers subagent responses and tool call results
+  if (!Array.isArray(message.content)) {
+    return false
+  }
+
+  return message.content.some((block) => block.type === "tool_result")
 }
 
 function hasToolUse(message: AnthropicAssistantMessage): boolean {
@@ -76,6 +79,8 @@ export function inferInitiatorFromAnthropicMessages(
     return "agent"
   }
 
+  // Check if the user message contains ANY tool results
+  // This covers subagent responses and tool call results (even with mixed content)
   if (hasToolResult(lastMessage)) {
     return "agent"
   }
