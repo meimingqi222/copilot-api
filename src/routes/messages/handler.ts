@@ -15,6 +15,7 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 import {
+  createInitialStreamState,
   type AnthropicMessagesPayload,
   type AnthropicStreamState,
 } from "./anthropic-types"
@@ -149,14 +150,7 @@ async function handleStreamingResponse({
   clientSignal,
   c,
 }: HandleStreamingResponseOptions): Promise<void> {
-  const streamState: AnthropicStreamState = {
-    messageStartSent: false,
-    messageStopSent: false,
-    contentBlockIndex: 0,
-    contentBlockOpen: false,
-    currentContentBlockType: undefined,
-    toolCalls: {},
-  }
+  const streamState = createInitialStreamState()
   let lastUsage:
     | { prompt_tokens: number; completion_tokens: number; total_tokens: number }
     | undefined
