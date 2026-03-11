@@ -14,7 +14,7 @@ export interface Account {
   copilotToken?: string
   copilotTokenExpiry?: number
   quotaInfo?: QuotaSnapshot
-  isActive: boolean
+  enabled: boolean // 用户控制是否启用(参与负载均衡)
   isExhausted: boolean
   exhaustedAt?: number
   createdAt: number
@@ -53,7 +53,7 @@ export async function loadAccounts(): Promise<void> {
         id: randomUUID(),
         label: "default",
         githubToken: legacyToken.trim(),
-        isActive: true,
+        enabled: true,
         isExhausted: false,
         createdAt: Date.now(),
       }
@@ -79,23 +79,24 @@ export async function saveAccounts(): Promise<void> {
 }
 
 export function getActiveAccount(): Account {
-  const nonExhausted = state.accounts.filter((a) => !a.isExhausted)
-  if (nonExhausted.length === 0) {
+  // 只考虑已启用且未耗尽的账户
+  const available = state.accounts.filter((a) => a.enabled && !a.isExhausted)
+  if (available.length === 0) {
     throw new HTTPError(
-      "All GitHub Copilot accounts are quota-exhausted",
+      "No available GitHub Copilot accounts (all disabled or quota-exhausted)",
       new Response("Service Unavailable", { status: 503 }),
     )
   }
 
   const preferred = state.accounts[state.activeAccountIndex]
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (preferred && !preferred.isExhausted) {
+  if (preferred && preferred.enabled && !preferred.isExhausted) {
     // Sync state.githubToken for backward compat
     state.githubToken = preferred.githubToken
     return preferred
   }
 
-  const next = nonExhausted[0]
+  const next = available[0]
   state.activeAccountIndex = state.accounts.indexOf(next)
   // Sync state.githubToken for backward compat
   state.githubToken = next.githubToken
@@ -116,12 +117,14 @@ export function switchToNextAccount(): Account | null {
   const total = state.accounts.length
   for (let i = 1; i <= total; i++) {
     const idx = (state.activeAccountIndex + i) % total
-    if (!state.accounts[idx]?.isExhausted) {
+    const account = state.accounts[idx]
+    // 只切换到已启用且未耗尽的账户
+    if (account.enabled && !account.isExhausted) {
       state.activeAccountIndex = idx
       // Sync state.githubToken for backward compat
-      state.githubToken = state.accounts[idx].githubToken
-      consola.info(`Switched to account "${state.accounts[idx].label}"`)
-      return state.accounts[idx]
+      state.githubToken = account.githubToken
+      consola.info(`Switched to account "${account.label}"`)
+      return account
     }
   }
   return null
@@ -202,7 +205,7 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
         id: randomUUID(),
         label: index === 0 ? "default" : `account-${index + 1}`,
         githubToken: token,
-        isActive: index === 0,
+        enabled: true,
         isExhausted: false,
         createdAt: Date.now(),
       }

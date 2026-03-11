@@ -13,6 +13,7 @@ quotaApiRoutes.get("/", (c) => {
     return {
       id: rest.id,
       label: rest.label,
+      enabled: rest.enabled,
       isActive:
         account !== undefined
         && state.accounts.indexOf(account) === state.activeAccountIndex,

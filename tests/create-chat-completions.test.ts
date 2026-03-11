@@ -11,7 +11,7 @@ const mockAccount = {
   label: "test",
   githubToken: "gh-test-token",
   copilotToken: "test-token",
-  isActive: true,
+  enabled: true,
   isExhausted: false,
   createdAt: Date.now(),
 }
