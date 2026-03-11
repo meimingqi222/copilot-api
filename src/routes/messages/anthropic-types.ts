@@ -133,12 +133,15 @@ export interface AnthropicMessageStartEvent {
 export interface AnthropicContentBlockStartEvent {
   type: "content_block_start"
   index: number
+  // Per Anthropic streaming spec, content_block_start for thinking blocks contains
+  // ONLY { type: "thinking", thinking: "" }. The signature is sent separately via
+  // signature_delta event - never in content_block_start. Do not add signature here.
   content_block:
     | { type: "text"; text: string }
     | (Omit<AnthropicToolUseBlock, "input"> & {
         input: Record<string, unknown>
       })
-    | { type: "thinking"; thinking: string; signature?: string }
+    | { type: "thinking"; thinking: string }
 }
 
 export interface AnthropicContentBlockDeltaEvent {
@@ -203,11 +206,31 @@ export interface AnthropicStreamState {
   contentBlockIndex: number
   contentBlockOpen: boolean
   currentContentBlockType?: "text" | "thinking" | "tool_use"
+  // Buffer for thinking content that arrives before signature
+  // (Copilot sends reasoning first, signature later)
+  bufferedThinking: string
+  // Once visible text starts before a thinking signature arrives, we can no
+  // longer emit a compliant thinking block for the buffered reasoning.
+  suppressLateThinking: boolean
   toolCalls: {
     [openAIToolIndex: number]: {
       id: string
       name: string
       anthropicBlockIndex: number
     }
+  }
+}
+
+/** Factory to create a fresh AnthropicStreamState with all fields at their default values. */
+export function createInitialStreamState(): AnthropicStreamState {
+  return {
+    messageStartSent: false,
+    messageStopSent: false,
+    contentBlockIndex: 0,
+    contentBlockOpen: false,
+    currentContentBlockType: undefined,
+    bufferedThinking: "",
+    suppressLateThinking: false,
+    toolCalls: {},
   }
 }

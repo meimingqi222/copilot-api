@@ -6,7 +6,7 @@ import type {
   ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
 
-import { type AnthropicStreamState } from "~/routes/messages/anthropic-types"
+import { createInitialStreamState } from "~/routes/messages/anthropic-types"
 import { translateToAnthropic } from "~/routes/messages/non-stream-translation"
 import { translateChunkToAnthropicEvents } from "~/routes/messages/stream-translation"
 
@@ -303,6 +303,46 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
     })
   })
 
+  test("should attach message-level signature to reasoning content parts", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-thinking-part-signature",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "claude-sonnet-4",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "hidden chain" },
+              { type: "output_text", text: "Visible answer" },
+            ],
+            reasoning_signature: "sig-from-message",
+          },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: {
+        prompt_tokens: 12,
+        completion_tokens: 6,
+        total_tokens: 18,
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(openAIResponse)
+
+    expect(anthropicResponse.content).toEqual([
+      {
+        type: "thinking",
+        thinking: "hidden chain",
+        signature: "sig-from-message",
+      },
+      { type: "text", text: "Visible answer" },
+    ])
+  })
+
   test("should handle invalid tool call arguments", () => {
     const openAIResponse: ChatCompletionResponse = {
       id: "chatcmpl-invalid-tool-args",
@@ -395,6 +435,43 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       input: { q: "x" },
     })
   })
+
+  test("should preserve unsigned reasoning as thinking block without signature", () => {
+    const openAIResponse: ChatCompletionResponse = {
+      id: "chatcmpl-unsigned-thinking",
+      object: "chat.completion",
+      created: 1677652288,
+      model: "claude-sonnet-4",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "Visible answer",
+            reasoning_text: "unsigned reasoning",
+          },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: {
+        prompt_tokens: 8,
+        completion_tokens: 3,
+        total_tokens: 11,
+      },
+    }
+
+    const anthropicResponse = translateToAnthropic(openAIResponse)
+
+    // Unsigned thinking is preserved (without signature field) so that
+    // multi-turn conversations can include the thinking context.
+    // Silently dropping reasoning can cause 400 errors on downstream
+    // Anthropic endpoints that require thinking blocks in tool_use messages.
+    expect(anthropicResponse.content).toEqual([
+      { type: "thinking", thinking: "unsigned reasoning" },
+      { type: "text", text: "Visible answer" },
+    ])
+  })
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
@@ -453,12 +530,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      toolCalls: {},
-    }
+    const streamState = createInitialStreamState()
     const translatedStream = openAIStream.flatMap((chunk) =>
       translateChunkToAnthropicEvents(chunk, streamState),
     )
@@ -553,13 +625,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
     ]
 
     // Streaming translation requires state
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      currentContentBlockType: undefined,
-      toolCalls: {},
-    }
+    const streamState = createInitialStreamState()
     const translatedStream = openAIStream.flatMap((chunk) =>
       translateChunkToAnthropicEvents(chunk, streamState),
     )
@@ -637,13 +703,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const streamState: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      currentContentBlockType: undefined,
-      toolCalls: {},
-    }
+    const streamState = createInitialStreamState()
 
     const translatedStream = openAIStream.flatMap((chunk) =>
       translateChunkToAnthropicEvents(chunk, streamState),
@@ -654,11 +714,18 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
         event.type === "content_block_start"
         && event.content_block.type === "thinking",
     )
+    // Verify buffered thinking (step-1) is included along with step-2
     const hasThinkingDelta = translatedStream.some(
       (event) =>
         event.type === "content_block_delta"
         && event.delta.type === "thinking_delta"
         && event.delta.thinking.includes("step-1"),
+    )
+    const hasThinkingDelta2 = translatedStream.some(
+      (event) =>
+        event.type === "content_block_delta"
+        && event.delta.type === "thinking_delta"
+        && event.delta.thinking.includes("step-2"),
     )
     const hasSignatureDelta = translatedStream.some(
       (event) =>
@@ -675,7 +742,165 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
 
     expect(hasThinkingStart).toBe(true)
     expect(hasThinkingDelta).toBe(true)
+    expect(hasThinkingDelta2).toBe(true)
     expect(hasSignatureDelta).toBe(true)
     expect(hasTextDelta).toBe(true)
+  })
+
+  test("should not emit thinking events when reasoning never gets a signature", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-unsigned-thinking",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+              reasoning: "step-1",
+            },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-unsigned-thinking",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: { content: " final answer" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-unsigned-thinking",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+      },
+    ]
+
+    const streamState = createInitialStreamState()
+
+    const translatedStream = openAIStream.flatMap((chunk) =>
+      translateChunkToAnthropicEvents(chunk, streamState),
+    )
+
+    const hasThinkingEvent = translatedStream.some(
+      (event) =>
+        (event.type === "content_block_start"
+          && event.content_block.type === "thinking")
+        || (event.type === "content_block_delta"
+          && (event.delta.type === "thinking_delta"
+            || event.delta.type === "signature_delta")),
+    )
+    const hasTextDelta = translatedStream.some(
+      (event) =>
+        event.type === "content_block_delta"
+        && event.delta.type === "text_delta"
+        && event.delta.text.includes("final answer"),
+    )
+
+    expect(hasThinkingEvent).toBe(false)
+    expect(hasTextDelta).toBe(true)
+  })
+
+  test("should ignore late signatures after text has started", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-late-signature",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: { reasoning: "step-1" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-late-signature",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: { content: " visible answer" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-late-signature",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: { reasoning_signature: "sig-late" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-late-signature",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+      },
+    ]
+
+    const streamState = createInitialStreamState()
+
+    const translatedStream = openAIStream.flatMap((chunk) =>
+      translateChunkToAnthropicEvents(chunk, streamState),
+    )
+
+    const thinkingEvents = translatedStream.filter(
+      (event) =>
+        (event.type === "content_block_start"
+          && event.content_block.type === "thinking")
+        || (event.type === "content_block_delta"
+          && (event.delta.type === "thinking_delta"
+            || event.delta.type === "signature_delta")),
+    )
+    const textEvents = translatedStream.filter(
+      (event) =>
+        event.type === "content_block_delta"
+        && event.delta.type === "text_delta",
+    )
+
+    expect(thinkingEvents).toEqual([])
+    expect(textEvents).toEqual([
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "text_delta",
+          text: " visible answer",
+        },
+      },
+    ])
   })
 })
