@@ -321,6 +321,11 @@ function translateAnthropicToolChoiceToOpenAI(
 export function translateToAnthropic(
   response: ChatCompletionResponse,
 ): AnthropicResponse {
+  if (response.choices.length === 0) {
+    throw new Error(
+      `Unexpected empty choices in OpenAI response (id: ${response.id})`,
+    )
+  }
   const primaryChoice = response.choices[0]
   const contentBlocks = getAnthropicContentBlocks(primaryChoice.message)
   const toolUseBlocks = getAnthropicToolUseBlocks(
@@ -336,9 +341,11 @@ export function translateToAnthropic(
     stop_reason: mapOpenAIStopReasonToAnthropic(primaryChoice.finish_reason),
     stop_sequence: null,
     usage: {
-      input_tokens:
+      input_tokens: Math.max(
+        0,
         (response.usage?.prompt_tokens ?? 0)
-        - (response.usage?.prompt_tokens_details?.cached_tokens ?? 0),
+          - (response.usage?.prompt_tokens_details?.cached_tokens ?? 0),
+      ),
       output_tokens: response.usage?.completion_tokens ?? 0,
       ...(response.usage?.prompt_tokens_details?.cached_tokens
         !== undefined && {

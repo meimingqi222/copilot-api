@@ -8,19 +8,14 @@ import { toPublicUser } from "~/lib/users"
 export const quotaApiRoutes = new Hono()
 
 quotaApiRoutes.get("/", (c) => {
-  const accounts = state.accounts.map(({ githubToken: _t, ...rest }) => {
-    const account = state.accounts.find((a) => a.id === rest.id)
-    return {
-      id: rest.id,
-      label: rest.label,
-      enabled: rest.enabled,
-      isActive:
-        account !== undefined
-        && state.accounts.indexOf(account) === state.activeAccountIndex,
-      isExhausted: rest.isExhausted,
-      quotaInfo: rest.quotaInfo ?? null,
-    }
-  })
+  const accounts = state.accounts.map(({ githubToken: _t, ...rest }, idx) => ({
+    id: rest.id,
+    label: rest.label,
+    enabled: rest.enabled,
+    isActive: idx === state.activeAccountIndex,
+    isExhausted: rest.isExhausted,
+    quotaInfo: rest.quotaInfo ?? null,
+  }))
 
   const users = state.users.map((u) => {
     const pub = toPublicUser(u)
