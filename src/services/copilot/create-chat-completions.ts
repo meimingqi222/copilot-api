@@ -170,6 +170,7 @@ interface Delta {
   }>
   reasoning?: string | null
   reasoning_text?: string | null
+  reasoning_content?: string | null
   reasoning_opaque?: string | null
   thinking?: string | null
   signature?: string | null
@@ -210,6 +211,7 @@ interface ResponseMessage {
   tool_calls?: Array<ToolCall>
   reasoning?: string | null
   reasoning_text?: string | null
+  reasoning_content?: string | null
   reasoning_opaque?: string | null
   thinking?: string | null
   signature?: string | null
