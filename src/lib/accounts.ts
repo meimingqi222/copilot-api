@@ -38,8 +38,9 @@ const tokenRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 export async function loadAccounts(): Promise<void> {
   try {
     const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
-    const parsed = JSON.parse(data) as Array<Account>
-    state.accounts = parsed
+    const raw = JSON.parse(data) as Array<Record<string, unknown>>
+    // Apply migration to handle old accounts with isActive instead of enabled
+    state.accounts = raw.map((account) => migrateAccount(account))
     return
   } catch {
     // File doesn't exist or is invalid — migrate from legacy token
@@ -222,10 +223,38 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
   state.githubToken = active?.githubToken
 }
 
+// Migrate old isActive field to enabled field for backward compatibility
+function migrateAccount(account: Record<string, unknown>): Account {
+  const acc = account as Partial<Account> & {
+    isActive?: boolean
+    enabled?: boolean
+  }
+
+  // Migrate isActive → enabled (if enabled not set but isActive is, use isActive)
+  if (typeof acc.enabled !== "boolean" && typeof acc.isActive === "boolean") {
+    acc.enabled = acc.isActive
+    consola.debug(
+      `Migrated account "${acc.label}" isActive → enabled: ${acc.enabled}`,
+    )
+  }
+
+  // Default enabled to true if neither field exists
+  if (typeof acc.enabled !== "boolean") {
+    acc.enabled = true
+  }
+
+  // Clean up old field
+  delete acc.isActive
+
+  return acc as Account
+}
+
 async function loadAccountsFile(): Promise<Array<Account>> {
   try {
     const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
-    return JSON.parse(data) as Array<Account>
+    const raw = JSON.parse(data) as Array<Record<string, unknown>>
+    // Apply migration to handle old accounts with isActive instead of enabled
+    return raw.map((account) => migrateAccount(account))
   } catch {
     return []
   }
