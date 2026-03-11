@@ -18,6 +18,7 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
+import { normalizeChunk, normalizeResponse } from "./normalize"
 
 interface StreamResult {
   accountId: string
@@ -159,7 +160,8 @@ function handleNonStreamingResponse(
   estimatedInputTokens: number,
 ): void {
   consola.debug("Non-streaming response:", JSON.stringify(response))
-  const usage = response.usage
+  const normalized = normalizeResponse(response)
+  const usage = normalized.usage
   if (usage) {
     const totalTokens =
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -168,6 +170,8 @@ function handleNonStreamingResponse(
   } else {
     void trackTokenUsage(c, estimatedInputTokens)
   }
+  // Replace the response with the normalized version for c.json()
+  Object.assign(response, normalized)
 }
 
 function handleStreamingResponse(
@@ -193,7 +197,7 @@ function handleStreamingResponse(
           lastUsage = chunk.usage
         }
         await stream.writeSSE({
-          data: JSON.stringify(chunk),
+          data: JSON.stringify(normalizeChunk(chunk)),
         } as SSEMessage)
       }
     } catch (e) {
