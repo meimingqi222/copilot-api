@@ -11,10 +11,7 @@ completionRoutes.post("/", async (c) => {
     return await handleCompletion(c)
   } catch (error) {
     if (error instanceof RateLimitError) {
-      return c.json(
-        { error: { message: error.message, type: "rate_limit_error" } },
-        429,
-      )
+      return c.json({ error: { message: error.message, type: "error" } }, 429)
     }
     if (error instanceof AbortError) {
       return new Response(null, { status: 499 })
