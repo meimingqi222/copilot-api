@@ -55,6 +55,19 @@ class StatsStore {
     stmt.run(date, accountId)
   }
 
+  incrementRequestAndError(accountId: string, timestamp?: number): void {
+    const db = this.ensureDb()
+    const date = this.getDateString(timestamp)
+    const stmt = db.prepare(`
+      INSERT INTO daily_stats (date, account_id, requests, errors)
+      VALUES (?, ?, 1, 1)
+      ON CONFLICT(date, account_id) DO UPDATE SET
+        requests = requests + 1,
+        errors = errors + 1
+    `)
+    stmt.run(date, accountId)
+  }
+
   incrementErrors(accountId: string, timestamp?: number): void {
     const db = this.ensureDb()
     const date = this.getDateString(timestamp)

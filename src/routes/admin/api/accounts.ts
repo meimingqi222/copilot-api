@@ -11,6 +11,7 @@ import {
   refreshCopilotToken,
   refreshQuotaForAccount,
   saveAccounts,
+  switchToNextAccount,
 } from "~/lib/accounts"
 import {
   GITHUB_BASE_URL,
@@ -287,10 +288,19 @@ accountApiRoutes.delete("/:id", async (c) => {
   // Cancel any pending token refresh timer to prevent leaks
   cancelTokenRefreshTimer(id)
 
+  const wasActive = idx === state.activeAccountIndex
   state.accounts.splice(idx, 1)
-  // Fix active index: if we deleted before the active, shift it down
+  // Fix active index after deletion
   if (idx < state.activeAccountIndex) {
+    // Deleted an account before the active one — shift index down
     state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
+  } else if (wasActive) {
+    // Deleted the active account itself — clamp then find next available
+    state.activeAccountIndex = Math.min(
+      idx,
+      Math.max(0, state.accounts.length - 1),
+    )
+    switchToNextAccount()
   } else if (state.activeAccountIndex >= state.accounts.length) {
     state.activeAccountIndex = Math.max(0, state.accounts.length - 1)
   }
