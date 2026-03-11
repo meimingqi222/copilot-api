@@ -208,11 +208,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   if (state.apiKey) {
     consola.box(
-      `🔐 API key protection is enabled.\nAdmin login: ${serverUrl}/admin/login\nUsage dashboard: ${serverUrl}/usage (requires auth)\nAdmin password source: ADMIN_PASSWORD (or --admin-password). Fallback: API_KEY`,
+      `🔐 API key protection is enabled.\nAdmin login: ${serverUrl}/admin/login\nAdmin password source: ADMIN_PASSWORD (or --admin-password). Fallback: API_KEY`,
     )
   } else {
     consola.box(
-      `🌐 Local Usage Dashboard: ${serverUrl}/usage\n(Or add API key to require authentication)`,
+      `🌐 Admin Dashboard: ${serverUrl}/admin\n(Or add API key to require authentication)`,
     )
   }
 

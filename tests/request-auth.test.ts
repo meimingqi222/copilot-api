@@ -111,7 +111,7 @@ describe("request auth", () => {
     state.adminSessionExpiresAt = Date.now() - 1000
 
     const response = await server.fetch(
-      new Request("http://localhost/usage", {
+      new Request("http://localhost/admin", {
         headers: { cookie: "copilot_api_admin=session-token" },
       }),
     )
