@@ -38,8 +38,36 @@ const tokenRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 export async function loadAccounts(): Promise<void> {
   try {
     const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
-    const parsed = JSON.parse(data) as Array<Account>
-    state.accounts = parsed
+    const raw = JSON.parse(data) as Array<Record<string, unknown>>
+
+    // Migrate old isActive field to enabled field for backward compatibility
+    state.accounts = raw.map((rawAccount) => {
+      const account = rawAccount as Partial<Account> & {
+        isActive?: boolean
+        enabled?: boolean
+      }
+
+      // Migrate isActive → enabled (if enabled not set but isActive is, use isActive)
+      if (
+        typeof account.enabled !== "boolean"
+        && typeof account.isActive === "boolean"
+      ) {
+        account.enabled = account.isActive
+        consola.debug(
+          `Migrated account "${account.label}" isActive → enabled: ${account.enabled}`,
+        )
+      }
+
+      // Default enabled to true if neither field exists
+      if (typeof account.enabled !== "boolean") {
+        account.enabled = true
+      }
+
+      // Clean up old field
+      delete account.isActive
+
+      return account as Account
+    })
     return
   } catch {
     // File doesn't exist or is invalid — migrate from legacy token
