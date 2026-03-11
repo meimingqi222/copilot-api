@@ -10,9 +10,9 @@ const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 
 // Paths that are explicitly public and require no API key.
-// /admin and /usage route handlers perform their own auth checks internally.
+// /admin route handler performs its own auth checks internally.
 const PUBLIC_PATHS = new Set(["/", "/admin/login", "/health"])
-const PUBLIC_PREFIXES = ["/admin", "/usage"]
+const PUBLIC_PREFIXES = ["/admin"]
 
 export async function requireApiKey(c: Context, next: Next) {
   if (
