@@ -37,11 +37,11 @@ export const requestLogger = async (c: Context, next: Next) => {
   // Persist stats to SQLite for request counting
   if (accountId) {
     try {
-      // Always count the request
-      statsStore.incrementRequests(accountId)
-      // Additionally count errors separately
       if (status >= 400) {
-        statsStore.incrementErrors(accountId)
+        // Atomically increment both requests and errors in a single SQL statement
+        statsStore.incrementRequestAndError(accountId)
+      } else {
+        statsStore.incrementRequests(accountId)
       }
     } catch {
       // Stats persistence failure should not affect request flow
