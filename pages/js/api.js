@@ -56,10 +56,14 @@ const API = {
     list: () => API.request("/accounts"),
     create: (label) =>
       API.request("/accounts", { method: "POST", body: { label } }),
+    update: (id, data) =>
+      API.request(`/accounts/${id}`, { method: "PUT", body: data }),
     delete: (id) => API.request(`/accounts/${id}`, { method: "DELETE" }),
     poll: (deviceCode) =>
       API.request(`/accounts/poll/${deviceCode}`, { method: "POST" }),
     refresh: (id) => API.request(`/accounts/${id}/refresh`, { method: "POST" }),
+    activate: (id) =>
+      API.request(`/accounts/${id}/activate`, { method: "POST" }),
   },
 
   // Quota

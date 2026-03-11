@@ -72,7 +72,6 @@ function publicAccount(
     githubToken: _token,
     copilotToken: _ct,
     copilotTokenExpiry: _cte,
-    isActive: _isActive,
     ...rest
   } = account
   const stats = statsMap.get(account.id)
@@ -220,7 +219,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     id: randomUUID(),
     label: flow.label,
     githubToken: json.access_token,
-    isActive: state.accounts.length === 0,
+    enabled: true,
     isExhausted: false,
     createdAt: Date.now(),
   }
@@ -261,7 +260,7 @@ accountApiRoutes.put("/:id", async (c) => {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
-  let body: { label?: string }
+  let body: { label?: string; enabled?: boolean }
   try {
     body = await c.req.json()
   } catch {
@@ -269,6 +268,12 @@ accountApiRoutes.put("/:id", async (c) => {
   }
 
   if (body.label) account.label = body.label
+  if (typeof body.enabled === "boolean") {
+    account.enabled = body.enabled
+    consola.info(
+      `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
+    )
+  }
   await saveAccounts()
   const statsMap = statsStore.getTodayStatsAll()
   return c.json({ account: publicAccount(account, statsMap) })
@@ -314,14 +319,19 @@ accountApiRoutes.post("/:id/activate", (c) => {
   const idx = state.accounts.findIndex((a) => a.id === id)
   if (idx === -1) return c.json({ error: "Account not found." }, 404)
 
+  const account = state.accounts[idx]
+  if (!account.enabled) {
+    return c.json({ error: "Account is disabled." }, 409)
+  }
+
   state.activeAccountIndex = idx
   try {
-    const account = getActiveAccount() // validate not exhausted and sync state.githubToken
+    const activeAccount = getActiveAccount() // validate not exhausted and sync state.githubToken
     const statsMap = statsStore.getTodayStatsAll()
     return c.json({
       ok: true,
       activeAccountIndex: idx,
-      account: publicAccount(account, statsMap),
+      account: publicAccount(activeAccount, statsMap),
     })
   } catch {
     return c.json({ error: "Account is exhausted." }, 409)

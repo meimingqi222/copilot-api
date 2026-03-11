@@ -161,6 +161,15 @@ body {
   color: white;
 }
 
+.btn-success {
+  background: var(--apple-green);
+  color: white;
+}
+
+.btn-success:hover {
+  background: #30b350;
+}
+
 .btn-small {
   padding: 8px 16px;
   font-size: 13px;
@@ -257,6 +266,11 @@ body {
 .badge-info {
   background: rgba(0, 113, 227, 0.15);
   color: #0058b0;
+}
+
+.badge-gray {
+  background: var(--apple-gray-5);
+  color: var(--apple-text-tertiary);
 }
 
 /* Tables */

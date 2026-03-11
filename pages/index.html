@@ -293,14 +293,32 @@
                     <p class="text-sm text-[var(--apple-text-secondary)]" x-text="account.username || '-'"></p>
                   </div>
                 </div>
-                <span class="badge" :class="account.isActive ? 'badge-success' : 'badge-danger'" x-text="t(account.isActive ? 'accounts.status.active' : 'accounts.status.inactive')"></span>
+                <div class="flex flex-col items-end gap-1">
+                  <!-- 用户控制的启用状态 -->
+                  <span class="badge" :class="account.enabled ? 'badge-success' : 'badge-gray'" x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"></span>
+                  <!-- 系统决定的当前使用状态 -->
+                  <span x-show="account.isActive" class="badge badge-info" x-text="t('accounts.status.current')"></span>
+                  <!-- 配额耗尽状态 -->
+                  <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
+                </div>
               </div>
               <div class="text-sm text-[var(--apple-text-secondary)] mb-4">
                 <p x-text="t('accounts.requestsToday') + ': ' + (account.requestsToday || 0)"></p>
                 <p x-text="t('accounts.errorsToday') + ': ' + (account.errorsToday || 0)"></p>
               </div>
-              <div class="flex gap-2">
-                <button @click="refreshToken(account.id)" class="btn btn-secondary btn-small flex-1" x-text="t('accounts.refresh')"></button>
+              <div class="flex gap-2 flex-wrap">
+                <!-- 启用/禁用按钮 -->
+                <button @click="toggleEnabled(account)" class="btn btn-small flex-1"
+                        :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
+                        x-text="t(account.enabled ? 'accounts.disable' : 'accounts.enable')">
+                </button>
+                <!-- 设为当前按钮 -->
+                <button @click="setActive(account.id)" class="btn btn-small"
+                        :class="account.isActive ? 'btn-success' : 'btn-secondary'"
+                        :disabled="!account.enabled || account.isActive"
+                        x-text="t('accounts.setActive')">
+                </button>
+                <button @click="refreshToken(account.id)" class="btn btn-secondary btn-small" x-text="t('accounts.refresh')"></button>
                 <button @click="deleteAccount(account.id)" class="btn btn-danger btn-small" x-text="t('delete')"></button>
               </div>
             </div>
@@ -365,10 +383,18 @@
             <div class="space-y-6">
               <template x-for="account in accounts" :key="account.id">
                 <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
-                  <div class="flex items-center gap-3 mb-4">
+                  <div class="flex items-center gap-3 mb-4 flex-wrap">
                     <i data-lucide="github" class="w-5 h-5"></i>
                     <span class="font-medium text-body" x-text="account.label"></span>
-                    <span x-show="account.isActive" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-green)] text-white rounded-full" x-text="t('quota.active')"></span>
+                    <!-- 启用状态 -->
+                    <span class="px-2 py-0.5 text-xs font-medium rounded-full"
+                          :class="account.enabled ? 'bg-[var(--apple-green)] text-white' : 'bg-gray-400 text-white'"
+                          x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
+                    </span>
+                    <!-- 当前使用状态 -->
+                    <span x-show="account.isActive" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-blue)] text-white rounded-full" x-text="t('accounts.status.current')"></span>
+                    <!-- 配额耗尽状态 -->
+                    <span x-show="account.isExhausted" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-red)] text-white rounded-full" x-text="t('accounts.status.exhausted')"></span>
                   </div>
 
                   <!-- Premium Interactions -->
@@ -859,6 +885,43 @@
             await this.load();
           } catch (e) {
             this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async toggleEnabled(account) {
+          try {
+            await API.accounts.update(account.id, { enabled: !account.enabled });
+            this.showToast(
+              account.enabled
+                ? I18n.t('accounts.disableSuccess')
+                : I18n.t('accounts.enableSuccess'),
+              'success'
+            );
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async setActive(id) {
+          try {
+            const result = await API.accounts.activate(id);
+            if (result.ok) {
+              this.showToast(
+                I18n.t('accounts.setActiveSuccess') || 'Account set as current',
+                'success'
+              );
+            }
+            await this.load();
+          } catch (e) {
+            const msg = e.message || '';
+            if (msg.includes('disabled')) {
+              this.showToast(I18n.t('accounts.errorDisabled') || 'Account is disabled', 'error');
+            } else if (msg.includes('exhausted')) {
+              this.showToast(I18n.t('accounts.errorExhausted') || 'Account is exhausted', 'error');
+            } else {
+              this.showToast(I18n.t('error.update'), 'error');
+            }
           }
         },
 
