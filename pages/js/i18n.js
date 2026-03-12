@@ -148,6 +148,8 @@ const i18n = {
       "quota.tokens.total": "总 Token",
       "quota.tokens.prompt": "输入 Token",
       "quota.tokens.completion": "输出 Token",
+      "quota.tokens.cacheRead": "缓存读",
+      "quota.tokens.cacheWrite": "缓存写",
       "quota.cost": "成本",
       "quota.costEstimate": "预估成本",
 
@@ -338,6 +340,8 @@ const i18n = {
       "quota.tokens.total": "Total Tokens",
       "quota.tokens.prompt": "Prompt Tokens",
       "quota.tokens.completion": "Completion Tokens",
+      "quota.tokens.cacheRead": "Cache Read",
+      "quota.tokens.cacheWrite": "Cache Write",
       "quota.cost": "Cost",
       "quota.costEstimate": "Estimated Cost",
 

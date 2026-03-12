@@ -182,6 +182,8 @@ usageApiRoutes.get("/summary", (c) => {
       requests: number
       promptTokens: number
       completionTokens: number
+      cacheReadTokens: number
+      cacheWriteTokens: number
       totalTokens: number
       cost: number
     }
@@ -221,6 +223,14 @@ usageApiRoutes.get("/summary", (c) => {
       promptTokens: accountStats.reduce((sum, s) => sum + s.promptTokens, 0),
       completionTokens: accountStats.reduce(
         (sum, s) => sum + s.completionTokens,
+        0,
+      ),
+      cacheReadTokens: accountStats.reduce(
+        (sum, s) => sum + s.cacheReadTokens,
+        0,
+      ),
+      cacheWriteTokens: accountStats.reduce(
+        (sum, s) => sum + s.cacheWriteTokens,
         0,
       ),
       totalTokens: accountStats.reduce((sum, s) => sum + s.totalTokens, 0),
