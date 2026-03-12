@@ -115,6 +115,8 @@ const i18n = {
       "accounts.errorDisabled": "账户已禁用",
       "accounts.errorExhausted": "账户配额已耗尽",
       "accounts.noAccounts": "暂无账户",
+      "accounts.doubleClickEdit": "双击编辑名称",
+      "accounts.updateSuccess": "账户名称更新成功",
 
       // Quota
       "quota.title": "配额监控",
@@ -135,6 +137,19 @@ const i18n = {
       "quota.quotaLabel": "配额",
       "quota.refreshSuccess": "配额刷新成功",
       "quota.refreshError": "配额刷新失败",
+      "quota.usageStats": "使用统计",
+      "quota.dateRange": "日期范围",
+      "quota.today": "今日",
+      "quota.week": "本周",
+      "quota.month": "本月",
+      "quota.modelPricing": "模型价格",
+      "quota.modelUsage": "模型使用",
+      "quota.accountUsage": "账户使用",
+      "quota.tokens.total": "总 Token",
+      "quota.tokens.prompt": "输入 Token",
+      "quota.tokens.completion": "输出 Token",
+      "quota.cost": "成本",
+      "quota.costEstimate": "预估成本",
 
       // Logs
       "logs.title": "系统日志",
@@ -290,6 +305,8 @@ const i18n = {
       "accounts.errorDisabled": "Account is disabled",
       "accounts.errorExhausted": "Account quota exhausted",
       "accounts.noAccounts": "No accounts configured",
+      "accounts.doubleClickEdit": "Double-click to edit name",
+      "accounts.updateSuccess": "Account name updated",
 
       // Quota
       "quota.title": "Quota Monitor",
@@ -310,6 +327,19 @@ const i18n = {
       "quota.quotaLabel": "Quota",
       "quota.refreshSuccess": "Quota refreshed successfully",
       "quota.refreshError": "Failed to refresh quota",
+      "quota.usageStats": "Usage Statistics",
+      "quota.dateRange": "Date Range",
+      "quota.today": "Today",
+      "quota.week": "This Week",
+      "quota.month": "This Month",
+      "quota.modelPricing": "Model Pricing",
+      "quota.modelUsage": "Model Usage",
+      "quota.accountUsage": "Account Usage",
+      "quota.tokens.total": "Total Tokens",
+      "quota.tokens.prompt": "Prompt Tokens",
+      "quota.tokens.completion": "Completion Tokens",
+      "quota.cost": "Cost",
+      "quota.costEstimate": "Estimated Cost",
 
       // Logs
       "logs.title": "System Logs",

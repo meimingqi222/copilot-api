@@ -7,6 +7,7 @@ import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
 import {
   createChatCompletions,
@@ -29,6 +30,35 @@ import {
   translateErrorToAnthropicErrorEvent,
 } from "./stream-translation"
 
+type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
+type CopilotStream = AsyncIterable<{ data?: string }>
+
+interface HandleStreamingResponseOptions {
+  stream: SSEStream
+  response: CopilotStream
+  clientSignal: AbortSignal
+  c?: Context
+  accountId: string
+}
+
+interface UsageInfo {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  prompt_tokens_details?: { cached_tokens?: number }
+}
+
+interface UsageRecordInput {
+  c: Context
+  accountId: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
 
@@ -44,8 +74,8 @@ export async function handleCompletion(c: Context) {
     throw e
   }
 
-  const anthropicBeta = c.req.header("anthropic-beta")
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const anthropicBeta = c.req.header("anthropic-beta")
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
 
   const openAIPayload = translateToOpenAI(anthropicPayload)
@@ -53,9 +83,9 @@ export async function handleCompletion(c: Context) {
     anthropicPayload.messages,
     anthropicBeta,
   )
-  // 仅对具备管理权限的已认证调用方信任 x-initiator=agent
   const { clientInitiator, initiator, trustedClientAgent } =
     resolveInitiatorWithClientHeader(c, inferredInitiator)
+
   consola.debug(
     "X-Initiator: client=%s inferred=%s trusted_agent=%s final=%s",
     clientInitiator ?? "(none)",
@@ -68,80 +98,101 @@ export async function handleCompletion(c: Context) {
     JSON.stringify(openAIPayload),
   )
 
-  // Debug: log all tool_call ids to detect duplicates
-  const allToolCallIds = openAIPayload.messages.flatMap((m) =>
-    m.tool_calls ? m.tool_calls.map((tc) => tc.id) : [],
-  )
-  const duplicateIds = allToolCallIds.filter(
-    (id, i) => allToolCallIds.indexOf(id) !== i,
-  )
-  if (duplicateIds.length > 0) {
-    consola.error("Duplicate tool_call ids detected:", duplicateIds)
-    consola.error(
-      "Messages with tool_calls:",
-      JSON.stringify(
-        openAIPayload.messages
-          .filter((m) => m.tool_calls)
-          .map((m) => ({
-            role: m.role,
-            ids: m.tool_calls?.map((tc) => tc.id),
-          })),
-      ),
-    )
-  }
+  logDuplicateToolCallIds(openAIPayload.messages)
 
   if (state.manualApprove) {
     await awaitApproval()
   }
 
   const result = await createChatCompletions(openAIPayload, signal, initiator)
-  const { accountId, response } = result
+  const { accountId } = result
 
-  // Set accountId for logging
   c.set("accountId" as never, accountId)
+  c.set("model" as never, openAIPayload.model)
 
   if (isNonStreaming(result)) {
-    consola.debug(
-      "Non-streaming response from Copilot:",
-      JSON.stringify(result.response).slice(-400),
-    )
-    const anthropicResponse = translateToAnthropic(result.response)
-    consola.debug(
-      "Translated Anthropic response:",
-      JSON.stringify(anthropicResponse),
-    )
-    // Track token usage for non-streaming response
-    const usage = anthropicResponse.usage
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (usage) {
-      const totalTokens = usage.input_tokens + usage.output_tokens
-      void trackTokenUsage(c, totalTokens)
-    }
-    return c.json(anthropicResponse)
+    return c.json(handleNonStreamingResponse(c, accountId, result.response))
   }
 
-  const streamingResponse = response as AsyncIterable<ChatCompletionChunk>
-
-  consola.debug("Streaming response from Copilot")
   return streamSSE(c, (stream) =>
     handleStreamingResponse({
       stream,
-      response: streamingResponse,
+      response: result.response,
       clientSignal: signal,
       c,
+      accountId,
     }),
   )
 }
 
-type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
-// Raw SSE event from fetch-event-stream, not parsed ChatCompletionChunk
-type CopilotStream = AsyncIterable<{ data?: string }>
+function logDuplicateToolCallIds(
+  messages: Array<{ role: string; tool_calls?: Array<{ id: string }> }>,
+): void {
+  const allToolCallIds = messages.flatMap((message) =>
+    message.tool_calls ? message.tool_calls.map((toolCall) => toolCall.id) : [],
+  )
+  const duplicateIds = allToolCallIds.filter(
+    (id, index) => allToolCallIds.indexOf(id) !== index,
+  )
 
-interface HandleStreamingResponseOptions {
-  stream: SSEStream
-  response: CopilotStream
-  clientSignal: AbortSignal
-  c?: Context
+  if (duplicateIds.length === 0) {
+    return
+  }
+
+  consola.error("Duplicate tool_call ids detected:", duplicateIds)
+  consola.error(
+    "Messages with tool_calls:",
+    JSON.stringify(
+      messages
+        .filter((message) => message.tool_calls)
+        .map((message) => ({
+          role: message.role,
+          ids: message.tool_calls?.map((toolCall) => toolCall.id),
+        })),
+    ),
+  )
+}
+
+function handleNonStreamingResponse(
+  c: Context,
+  accountId: string,
+  response: ChatCompletionResponse,
+) {
+  consola.debug(
+    "Non-streaming response from Copilot:",
+    JSON.stringify(response).slice(-400),
+  )
+  const anthropicResponse = translateToAnthropic(response)
+  consola.debug(
+    "Translated Anthropic response:",
+    JSON.stringify(anthropicResponse),
+  )
+
+  const usage = anthropicResponse.usage
+  const model = c.get("model" as never) as string | undefined
+
+  if (model) {
+    const cacheReadTokens = usage.cache_read_input_tokens ?? 0
+    const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0
+    recordUsage(
+      createUsageRecord({
+        c,
+        accountId,
+        model,
+        promptTokens: usage.input_tokens,
+        completionTokens: usage.output_tokens,
+        totalTokens:
+          usage.input_tokens
+          + usage.output_tokens
+          + cacheReadTokens
+          + cacheWriteTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
+      }),
+    )
+  }
+
+  return anthropicResponse
 }
 
 async function handleStreamingResponse({
@@ -149,98 +200,136 @@ async function handleStreamingResponse({
   response,
   clientSignal,
   c,
+  accountId,
 }: HandleStreamingResponseOptions): Promise<void> {
   const streamState = createInitialStreamState()
-  let lastUsage:
-    | { prompt_tokens: number; completion_tokens: number; total_tokens: number }
-    | undefined
+  let lastUsage: UsageInfo | undefined
 
-  // Send periodic ping events to keep the SSE connection alive.
-  // Without these, idle periods (e.g. while Copilot generates long tool_call
-  // arguments) can cause the client's HTTP stream to terminate with a TypeError.
+  const pingInterval = createPingInterval(stream)
+
+  try {
+    for await (const rawEvent of response) {
+      if (rawEvent.data === "[DONE]") {
+        break
+      }
+      if (!rawEvent.data) {
+        continue
+      }
+
+      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+      lastUsage = chunk.usage ?? lastUsage
+      await writeAnthropicEvents(
+        stream,
+        translateChunkToAnthropicEvents(chunk, streamState),
+      )
+    }
+
+    await sendSyntheticErrorIfNeeded(
+      stream,
+      streamState,
+      "Upstream closed stream without finish_reason",
+    )
+  } catch (error) {
+    if (
+      await handleStreamingError({
+        error,
+        clientSignal,
+        stream,
+        streamState,
+      })
+    ) {
+      return
+    }
+    throw error
+  } finally {
+    clearInterval(pingInterval)
+    if (c) {
+      recordStreamingUsage(c, accountId, lastUsage)
+    }
+  }
+}
+
+function createPingInterval(stream: SSEStream): ReturnType<typeof setInterval> {
   const PING_INTERVAL_MS = 5_000
-  const pingInterval = setInterval(async () => {
+  return setInterval(async () => {
     try {
       await stream.writeSSE({ event: "ping", data: '{"type": "ping"}' })
     } catch {
       // Stream already closed; clear interval in finally below.
     }
   }, PING_INTERVAL_MS)
+}
 
-  try {
-    for await (const rawEvent of response) {
-      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
-      if (rawEvent.data === "[DONE]") {
-        break
-      }
+async function writeAnthropicEvents(
+  stream: SSEStream,
+  events: Array<ReturnType<typeof translateChunkToAnthropicEvents>[number]>,
+): Promise<void> {
+  for (const event of events) {
+    consola.debug("Translated Anthropic event:", JSON.stringify(event))
+    await stream.writeSSE({
+      event: event.type,
+      data: JSON.stringify(event),
+    })
+  }
+}
 
-      if (!rawEvent.data) {
-        continue
-      }
-
-      const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      // Capture usage from chunk if available
-      if (chunk.usage) {
-        lastUsage = chunk.usage
-      }
-      const events = translateChunkToAnthropicEvents(chunk, streamState)
-
-      for (const event of events) {
-        consola.debug("Translated Anthropic event:", JSON.stringify(event))
-        await stream.writeSSE({
-          event: event.type,
-          data: JSON.stringify(event),
-        })
-      }
-    }
-
-    // If upstream closed without finish_reason (e.g. premature disconnect),
-    // send a synthetic error event so the client gets a clean termination.
-    await sendSyntheticErrorIfNeeded(
-      stream,
-      streamState,
-      "Upstream closed stream without finish_reason",
-    )
-  } catch (e) {
-    if (e instanceof DOMException && e.name === "AbortError") {
-      if (clientSignal.aborted) {
-        consola.debug("Stream aborted (client disconnected)")
-        return
-      }
-
-      const sent = await sendSyntheticErrorIfNeeded(
-        stream,
-        streamState,
-        "Upstream aborted stream before finish_reason",
-      )
-      if (sent) {
-        return
-      }
-      consola.warn("Stream aborted unexpectedly before first response event")
-      return
+async function handleStreamingError(input: {
+  error: unknown
+  clientSignal: AbortSignal
+  stream: SSEStream
+  streamState: AnthropicStreamState
+}): Promise<boolean> {
+  const { error, clientSignal, stream, streamState } = input
+  if (error instanceof DOMException && error.name === "AbortError") {
+    if (clientSignal.aborted) {
+      consola.debug("Stream aborted (client disconnected)")
+      return true
     }
 
     const sent = await sendSyntheticErrorIfNeeded(
       stream,
       streamState,
-      "Unexpected streaming error",
+      "Upstream aborted stream before finish_reason",
     )
     if (sent) {
-      return
+      return true
     }
-    throw e
-  } finally {
-    clearInterval(pingInterval)
-    // Track token usage after streaming completes
-    if (c && lastUsage) {
-      void trackTokenUsage(
-        c,
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        lastUsage.total_tokens
-          ?? lastUsage.prompt_tokens + lastUsage.completion_tokens,
-      )
-    }
+
+    consola.warn("Stream aborted unexpectedly before first response event")
+    return true
   }
+
+  const sent = await sendSyntheticErrorIfNeeded(
+    stream,
+    streamState,
+    "Unexpected streaming error",
+  )
+  return sent
+}
+
+function recordStreamingUsage(
+  c: Context,
+  accountId: string,
+  lastUsage: UsageInfo | undefined,
+): void {
+  const model = c.get("model" as never) as string | undefined
+  if (!model || !lastUsage) {
+    return
+  }
+
+  const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
+  recordUsage(
+    createUsageRecord({
+      c,
+      accountId,
+      model,
+      promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
+      completionTokens: lastUsage.completion_tokens,
+      totalTokens: lastUsage.total_tokens,
+      cacheReadTokens,
+    }),
+  )
 }
 
 async function sendSyntheticErrorIfNeeded(
@@ -263,22 +352,70 @@ async function sendSyntheticErrorIfNeeded(
 
 const isNonStreaming = (
   result:
-    | { accountId: string; response: AsyncIterable<ChatCompletionChunk> }
+    | { accountId: string; response: CopilotStream }
     | { accountId: string; response: ChatCompletionResponse },
 ): result is { accountId: string; response: ChatCompletionResponse } =>
   Object.hasOwn(result.response, "choices")
 
-/**
- * Track token usage for the authenticated user
- */
-async function trackTokenUsage(c: Context, tokens: number): Promise<void> {
+function createUsageRecord(input: UsageRecordInput): UsageRecordInput {
+  return input
+}
+
+function recordUsage(input: UsageRecordInput): void {
+  const {
+    c,
+    accountId,
+    model,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cacheReadTokens = 0,
+    cacheWriteTokens = 0,
+  } = input
+
+  void trackUserTokenUsage(c, totalTokens)
+
+  try {
+    const now = Date.now()
+    const pricing = statsStore.getModelPricing(model)
+    const cost =
+      pricing ?
+        (promptTokens / 1000) * pricing.promptPricePer1k
+        + (completionTokens / 1000) * pricing.completionPricePer1k
+        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
+        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
+      : 0
+
+    statsStore.recordUsage({
+      date: new Date(now).toISOString().split("T")[0] ?? "",
+      accountId,
+      model,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      cost,
+      timestamp: now,
+    })
+    consola.debug(
+      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
+    )
+  } catch (error) {
+    consola.warn("Failed to record usage:", error)
+  }
+}
+
+async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
   if (tokens <= 0) return
+
   const userId = c.get("userId" as never) as string | undefined
   if (!userId) return
+
   try {
     await incrementUserTokens(userId, tokens)
     consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
   } catch (error) {
-    consola.warn("Failed to track token usage:", error)
+    consola.warn("Failed to track user token usage:", error)
   }
 }

@@ -17,7 +17,6 @@ import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { statsStore } from "./lib/stats-store"
-import { setupGitHubToken } from "./lib/token"
 import { loadUsers } from "./lib/users"
 import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
 import { server } from "./server"
@@ -115,8 +114,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     // initAccounts will create account objects from tokens
     await initAccounts(allTokens)
   } else {
-    // No tokens provided — load from disk or prompt device flow
-    await setupGitHubToken()
+    // No tokens provided — load from disk, skip device flow
+    // User can add accounts via Web UI later
     await initAccounts()
   }
 

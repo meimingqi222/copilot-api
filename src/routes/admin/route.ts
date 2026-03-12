@@ -14,6 +14,7 @@ import { accountApiRoutes } from "./api/accounts"
 import { dashboardApiRoutes } from "./api/dashboard"
 import { logApiRoutes } from "./api/logs"
 import { quotaApiRoutes } from "./api/quota"
+import { usageApiRoutes } from "./api/usage"
 import { userApiRoutes } from "./api/users"
 
 export const adminRoutes = new Hono()
@@ -81,6 +82,7 @@ adminRoutes.route("/api/users", userApiRoutes)
 adminRoutes.route("/api/accounts", accountApiRoutes)
 adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
+adminRoutes.route("/api/usage", usageApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
 
 // Serve a file from pages directory

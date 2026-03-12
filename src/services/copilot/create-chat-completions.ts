@@ -15,7 +15,7 @@ export const createChatCompletions = async (
   signal?: AbortSignal,
   initiatorOverride?: "agent" | "user",
 ): Promise<
-  | { accountId: string; response: AsyncIterable<ChatCompletionChunk> }
+  | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > => {
   const account = getActiveAccount()
@@ -84,7 +84,7 @@ export const createChatCompletions = async (
       accountId: usedAccount.id,
       response: events(
         response,
-      ) as unknown as AsyncIterable<ChatCompletionChunk>,
+      ) as unknown as AsyncIterable<CopilotStreamEvent>,
     }
   }
 
@@ -126,6 +126,10 @@ async function tryNextAccount(
 }
 
 // Streaming types
+
+export interface CopilotStreamEvent {
+  data?: string
+}
 
 export interface ChatCompletionChunk {
   id: string
