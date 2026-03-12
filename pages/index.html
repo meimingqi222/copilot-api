@@ -429,6 +429,11 @@
                   <span class="text-sm text-[var(--apple-text-secondary)] mx-1">/</span>
                   <span x-text="formatTokens(usageSummary.totals.completionTokens || 0)"></span>
                 </p>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-show="(usageSummary.totals.cacheReadTokens || 0) + (usageSummary.totals.cacheWriteTokens || 0) > 0">
+                  <span x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(usageSummary.totals.cacheReadTokens || 0)"></span>
+                  <span class="mx-1">·</span>
+                  <span x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(usageSummary.totals.cacheWriteTokens || 0)"></span>
+                </p>
               </div>
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.cost')"></p>
@@ -482,6 +487,10 @@
                       <span x-text="'Prompt: ' + formatTokens(data.promptTokens)"></span>
                       <span x-text="'Completion: ' + formatTokens(data.completionTokens)"></span>
                       <span class="text-[var(--apple-blue)]" x-text="'$' + (data.cost || 0).toFixed(4)"></span>
+                    </div>
+                    <div class="flex gap-3 text-xs text-[var(--apple-text-tertiary)] mt-1" x-show="(data.cacheReadTokens || 0) + (data.cacheWriteTokens || 0) > 0">
+                      <span x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(data.cacheReadTokens || 0)"></span>
+                      <span x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(data.cacheWriteTokens || 0)"></span>
                     </div>
                   </div>
                 </template>
