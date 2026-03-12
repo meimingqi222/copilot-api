@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite"
 
+import { getDefaultModelPrice } from "~/lib/default-prices"
 import { PATHS } from "~/lib/paths"
 
 export interface DailyStats {
@@ -7,6 +8,19 @@ export interface DailyStats {
   accountId: string
   requests: number
   errors: number
+}
+
+export interface UsageStats {
+  date: string
+  accountId: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  totalTokens: number
+  cost?: number
+  timestamp: number
 }
 
 class StatsStore {
@@ -29,6 +43,47 @@ class StatsStore {
       `)
       this.db.run(`
         CREATE INDEX IF NOT EXISTS idx_account ON daily_stats(account_id)
+      `)
+
+      // New table for detailed usage statistics
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS usage_stats (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          date TEXT NOT NULL,
+          account_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          prompt_tokens INTEGER DEFAULT 0,
+          completion_tokens INTEGER DEFAULT 0,
+          cache_read_tokens INTEGER DEFAULT 0,
+          cache_write_tokens INTEGER DEFAULT 0,
+          total_tokens INTEGER DEFAULT 0,
+          cost REAL DEFAULT 0,
+          timestamp INTEGER NOT NULL
+        )
+      `)
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_stats(date)
+      `)
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_usage_account ON usage_stats(account_id)
+      `)
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_stats(model)
+      `)
+      this.db.run(`
+        CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_stats(timestamp)
+      `)
+
+      // Model pricing table
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS model_pricing (
+          model TEXT PRIMARY KEY,
+          prompt_price_per_1k REAL DEFAULT 0,
+          completion_price_per_1k REAL DEFAULT 0,
+          cache_read_price_per_1k REAL DEFAULT 0,
+          cache_write_price_per_1k REAL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        )
       `)
     }
     return this.db
@@ -143,6 +198,227 @@ class StatsStore {
       DELETE FROM daily_stats WHERE date < ?
     `)
     stmt.run(cutoffDate)
+  }
+
+  // Usage statistics methods
+  recordUsage(stats: UsageStats): void {
+    const db = this.ensureDb()
+    const stmt = db.prepare(`
+      INSERT INTO usage_stats (
+        date, account_id, model, prompt_tokens, completion_tokens,
+        cache_read_tokens, cache_write_tokens, total_tokens, cost, timestamp
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    stmt.run(
+      stats.date,
+      stats.accountId,
+      stats.model,
+      stats.promptTokens,
+      stats.completionTokens,
+      stats.cacheReadTokens ?? 0,
+      stats.cacheWriteTokens ?? 0,
+      stats.totalTokens,
+      stats.cost ?? 0,
+      stats.timestamp,
+    )
+  }
+
+  getUsageStats(
+    accountId?: string,
+    startDate?: string,
+    endDate?: string,
+  ): Array<{
+    date: string
+    requests: number
+    promptTokens: number
+    completionTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+    totalTokens: number
+    cost: number
+    models: Record<string, { tokens: number; cost: number }>
+  }> {
+    const db = this.ensureDb()
+    let query = `
+      SELECT 
+        date,
+        COUNT(*) as requests,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(completion_tokens) as completion_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_write_tokens) as cache_write_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost) as cost
+      FROM usage_stats
+      WHERE 1=1
+    `
+    const params: Array<string> = []
+
+    if (accountId) {
+      query += " AND account_id = ?"
+      params.push(accountId)
+    }
+    if (startDate) {
+      query += " AND date >= ?"
+      params.push(startDate)
+    }
+    if (endDate) {
+      query += " AND date <= ?"
+      params.push(endDate)
+    }
+
+    query += " GROUP BY date ORDER BY date DESC"
+
+    const stmt = db.prepare(query)
+    const rows = stmt.all(...params) as Array<{
+      date: string
+      requests: number
+      prompt_tokens: number
+      completion_tokens: number
+      cache_read_tokens: number
+      cache_write_tokens: number
+      total_tokens: number
+      cost: number
+    }>
+
+    // Get model breakdown for each day
+    const result = rows.map((row) => {
+      const modelStmt = db.prepare(`
+        SELECT model, SUM(total_tokens) as tokens, SUM(cost) as cost
+        FROM usage_stats
+        WHERE date = ?${accountId ? " AND account_id = ?" : ""}
+        GROUP BY model
+      `)
+      const modelParams = accountId ? [row.date, accountId] : [row.date]
+      const modelRows = modelStmt.all(...modelParams) as Array<{
+        model: string
+        tokens: number
+        cost: number
+      }>
+      const models: Record<string, { tokens: number; cost: number }> = {}
+      for (const m of modelRows) {
+        models[m.model] = { tokens: m.tokens, cost: m.cost }
+      }
+
+      return {
+        date: row.date,
+        requests: row.requests,
+        promptTokens: row.prompt_tokens,
+        completionTokens: row.completion_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+        cacheWriteTokens: row.cache_write_tokens,
+        totalTokens: row.total_tokens,
+        cost: row.cost,
+        models,
+      }
+    })
+
+    return result
+  }
+
+  // Model pricing methods
+  setModelPricing(
+    model: string,
+    pricing: {
+      promptPricePer1k: number
+      completionPricePer1k: number
+      cacheReadPricePer1k?: number
+      cacheWritePricePer1k?: number
+    },
+  ): void {
+    const db = this.ensureDb()
+    const stmt = db.prepare(`
+      INSERT INTO model_pricing (
+        model, prompt_price_per_1k, completion_price_per_1k,
+        cache_read_price_per_1k, cache_write_price_per_1k, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(model) DO UPDATE SET
+        prompt_price_per_1k = excluded.prompt_price_per_1k,
+        completion_price_per_1k = excluded.completion_price_per_1k,
+        cache_read_price_per_1k = excluded.cache_read_price_per_1k,
+        cache_write_price_per_1k = excluded.cache_write_price_per_1k,
+        updated_at = excluded.updated_at
+    `)
+    stmt.run(
+      model,
+      pricing.promptPricePer1k,
+      pricing.completionPricePer1k,
+      pricing.cacheReadPricePer1k ?? 0,
+      pricing.cacheWritePricePer1k ?? 0,
+      Date.now(),
+    )
+  }
+
+  getModelPricing(model: string): {
+    promptPricePer1k: number
+    completionPricePer1k: number
+    cacheReadPricePer1k: number
+    cacheWritePricePer1k: number
+  } | null {
+    const db = this.ensureDb()
+    const stmt = db.prepare(`
+      SELECT * FROM model_pricing WHERE model = ?
+    `)
+    const row = stmt.get(model) as
+      | {
+          prompt_price_per_1k: number
+          completion_price_per_1k: number
+          cache_read_price_per_1k: number
+          cache_write_price_per_1k: number
+        }
+      | undefined
+
+    if (!row) {
+      // Return default price if no custom price set
+      const defaultPrice = getDefaultModelPrice(model)
+      if (defaultPrice) {
+        return {
+          promptPricePer1k: defaultPrice.promptPricePer1k,
+          completionPricePer1k: defaultPrice.completionPricePer1k,
+          cacheReadPricePer1k: defaultPrice.cacheReadPricePer1k,
+          cacheWritePricePer1k: defaultPrice.cacheWritePricePer1k,
+        }
+      }
+      return null
+    }
+
+    return {
+      promptPricePer1k: row.prompt_price_per_1k,
+      completionPricePer1k: row.completion_price_per_1k,
+      cacheReadPricePer1k: row.cache_read_price_per_1k,
+      cacheWritePricePer1k: row.cache_write_price_per_1k,
+    }
+  }
+
+  getAllModelPricing(): Array<{
+    model: string
+    promptPricePer1k: number
+    completionPricePer1k: number
+    cacheReadPricePer1k: number
+    cacheWritePricePer1k: number
+    updatedAt: number
+  }> {
+    const db = this.ensureDb()
+    const stmt = db.prepare(`
+      SELECT * FROM model_pricing ORDER BY model
+    `)
+    const rows = stmt.all() as Array<{
+      model: string
+      prompt_price_per_1k: number
+      completion_price_per_1k: number
+      cache_read_price_per_1k: number
+      cache_write_price_per_1k: number
+      updated_at: number
+    }>
+
+    return rows.map((row) => ({
+      model: row.model,
+      promptPricePer1k: row.prompt_price_per_1k,
+      completionPricePer1k: row.completion_price_per_1k,
+      cacheReadPricePer1k: row.cache_read_price_per_1k,
+      cacheWritePricePer1k: row.cache_write_price_per_1k,
+      updatedAt: row.updated_at,
+    }))
   }
 }
 

@@ -7,6 +7,7 @@ import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { getTokenCount } from "~/lib/tokenizer"
 import { incrementUserTokens } from "~/lib/users"
 import { isNullish } from "~/lib/utils"
@@ -20,11 +21,41 @@ import {
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
 import { normalizeChunk, normalizeResponse } from "./normalize"
 
+type CopilotStream = AsyncIterable<{ data?: string }>
+type CachedModel = NonNullable<typeof state.models>["data"][number]
+
 interface StreamResult {
   accountId: string
-  // Raw SSE events from fetch-event-stream, needs JSON parsing
-  response: AsyncIterable<{ data?: string }> | ChatCompletionResponse
+  response: CopilotStream | ChatCompletionResponse
   estimatedInputTokens: number
+  model: string
+}
+
+interface UsageInfo {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  prompt_tokens_details?: { cached_tokens?: number }
+}
+
+interface UsageRecordInput {
+  c: Context
+  accountId: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+interface StreamUsageInput {
+  c: Context
+  accountId?: string
+  model?: string
+  lastUsage?: UsageInfo
+  estimatedInputTokens: number
+  onlyWhenUsageExists?: boolean
 }
 
 export async function handleCompletion(c: Context) {
@@ -33,16 +64,17 @@ export async function handleCompletion(c: Context) {
   await checkRateLimitOrThrow(signal)
 
   const result = await processRequest(c, signal)
-  const { accountId, response, estimatedInputTokens } = result
+  const { accountId, estimatedInputTokens, model } = result
 
-  // Set accountId for logging
   c.set("accountId" as never, accountId)
+  c.set("model" as never, model)
 
-  if (isChatCompletionResponse(response)) {
-    handleNonStreamingResponse(c, response, estimatedInputTokens)
-    return c.json(response)
+  if (isChatCompletionResponse(result.response)) {
+    handleNonStreamingResponse(c, result.response, estimatedInputTokens)
+    return c.json(result.response)
   }
 
+  const response = result.response
   return handleStreamingResponse(c, response, estimatedInputTokens)
 }
 
@@ -84,36 +116,36 @@ async function processRequest(
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
-
   const estimatedInputTokens = await calculateTokens(payload, selectedModel)
 
   if (state.manualApprove) await awaitApproval()
 
   payload = applyMaxTokens(payload, selectedModel)
 
-  const initiator = resolveInitiator(c, payload)
-
-  const result = await createChatCompletions(payload, signal, initiator)
-
   return {
-    accountId: result.accountId,
-    response: result.response,
+    ...(await createChatCompletions(
+      payload,
+      signal,
+      resolveInitiator(c, payload),
+    )),
     estimatedInputTokens,
+    model: payload.model,
   }
 }
 
 async function calculateTokens(
   payload: ChatCompletionsPayload,
-  selectedModel: (typeof state.models.data)[number] | undefined,
+  selectedModel: CachedModel | undefined,
 ): Promise<number> {
   try {
-    if (selectedModel) {
-      const tokenCount = await getTokenCount(payload, selectedModel)
-      consola.info("Current token count:", tokenCount)
-      return tokenCount.input + tokenCount.output
+    if (!selectedModel) {
+      consola.warn("No model selected, skipping token count calculation")
+      return 0
     }
-    consola.warn("No model selected, skipping token count calculation")
-    return 0
+
+    const tokenCount = await getTokenCount(payload, selectedModel)
+    consola.info("Current token count:", tokenCount)
+    return tokenCount.input + tokenCount.output
   } catch (error) {
     consola.warn("Failed to calculate token count:", error)
     return 0
@@ -122,7 +154,7 @@ async function calculateTokens(
 
 function applyMaxTokens(
   payload: ChatCompletionsPayload,
-  selectedModel: (typeof state.models.data)[number] | undefined,
+  selectedModel: CachedModel | undefined,
 ): ChatCompletionsPayload {
   if (isNullish(payload.max_tokens)) {
     const newPayload = {
@@ -162,92 +194,212 @@ function handleNonStreamingResponse(
   consola.debug("Non-streaming response:", JSON.stringify(response))
   const normalized = normalizeResponse(response)
   const usage = normalized.usage
-  if (usage) {
-    const totalTokens =
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
-    void trackTokenUsage(c, totalTokens)
-  } else {
-    void trackTokenUsage(c, estimatedInputTokens)
+  const model = c.get("model" as never) as string | undefined
+  const accountId = c.get("accountId" as never) as string | undefined
+
+  if (usage && model && accountId) {
+    const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
+    recordUsage(
+      createUsageRecord({
+        c,
+        accountId,
+        model,
+        promptTokens: Math.max(usage.prompt_tokens - cacheReadTokens, 0),
+        completionTokens: usage.completion_tokens,
+        totalTokens: calculateTotalTokens(usage),
+        cacheReadTokens,
+      }),
+    )
+  } else if (model && accountId) {
+    recordUsage(
+      createUsageRecord({
+        c,
+        accountId,
+        model,
+        promptTokens: estimatedInputTokens,
+        completionTokens: 0,
+        totalTokens: estimatedInputTokens,
+      }),
+    )
   }
-  // Replace the response with the normalized version for c.json()
+
   Object.assign(response, normalized)
 }
 
 function handleStreamingResponse(
   c: Context,
-  response: AsyncIterable<{ data?: string }>,
+  response: CopilotStream,
   estimatedInputTokens: number,
 ) {
   consola.debug("Streaming response")
+  const model = c.get("model" as never) as string | undefined
+  const accountId = c.get("accountId" as never) as string | undefined
+
   return streamSSE(c, async (stream) => {
     let lastUsage: UsageInfo | undefined
-    let trackedInAbort = false
+    let recordedOnAbort = false
+
     try {
       for await (const rawEvent of response) {
-        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
         if (rawEvent.data === "[DONE]") {
           break
         }
         if (!rawEvent.data) {
           continue
         }
+
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-        if (chunk.usage) {
-          lastUsage = chunk.usage
-        }
+        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+        lastUsage = chunk.usage ?? lastUsage
         await stream.writeSSE({
           data: JSON.stringify(normalizeChunk(chunk)),
         } as SSEMessage)
       }
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") {
+    } catch (error) {
+      if (isAbortError(error)) {
         consola.debug("Stream aborted (client disconnected)")
-        if (lastUsage) {
-          trackedInAbort = true
-          void trackTokenUsage(c, calculateTotalTokens(lastUsage))
-        }
+        recordedOnAbort = recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+          onlyWhenUsageExists: true,
+        })
         return
       }
-      throw e
+      throw error
     } finally {
-      if (!trackedInAbort) {
-        if (lastUsage) {
-          void trackTokenUsage(c, calculateTotalTokens(lastUsage))
-        } else {
-          void trackTokenUsage(c, estimatedInputTokens)
-        }
+      if (!recordedOnAbort) {
+        recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+        })
       }
     }
   })
 }
 
-interface UsageInfo {
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
+function recordStreamingUsage(input: StreamUsageInput): boolean {
+  const {
+    c,
+    accountId,
+    model,
+    lastUsage,
+    estimatedInputTokens,
+    onlyWhenUsageExists = false,
+  } = input
+  if (!accountId || !model) {
+    return false
+  }
+
+  if (lastUsage) {
+    const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
+    recordUsage(
+      createUsageRecord({
+        c,
+        accountId,
+        model,
+        promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
+        completionTokens: lastUsage.completion_tokens,
+        totalTokens: calculateTotalTokens(lastUsage),
+        cacheReadTokens,
+      }),
+    )
+    return true
+  }
+
+  if (onlyWhenUsageExists) {
+    return false
+  }
+
+  recordUsage(
+    createUsageRecord({
+      c,
+      accountId,
+      model,
+      promptTokens: estimatedInputTokens,
+      completionTokens: 0,
+      totalTokens: estimatedInputTokens,
+    }),
+  )
+  return true
 }
 
 function calculateTotalTokens(usage: UsageInfo): number {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  return usage.total_tokens ?? usage.prompt_tokens + usage.completion_tokens
+  return usage.total_tokens
 }
 
-/**
- * Track token usage for the authenticated user
- */
-async function trackTokenUsage(c: Context, tokens: number): Promise<void> {
-  if (tokens <= 0) return
-  const userId = c.get("userId" as never) as string | undefined
-  if (!userId) return
+function createUsageRecord(input: UsageRecordInput): UsageRecordInput {
+  return input
+}
+
+function recordUsage(input: UsageRecordInput): void {
+  const {
+    c,
+    accountId,
+    model,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cacheReadTokens = 0,
+    cacheWriteTokens = 0,
+  } = input
+
+  void trackUserTokenUsage(c, totalTokens)
+
   try {
-    await incrementUserTokens(userId, tokens)
-    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
+    const now = Date.now()
+    const pricing = statsStore.getModelPricing(model)
+    const cost =
+      pricing ?
+        (promptTokens / 1000) * pricing.promptPricePer1k
+        + (completionTokens / 1000) * pricing.completionPricePer1k
+        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
+        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
+      : 0
+
+    statsStore.recordUsage({
+      date: new Date(now).toISOString().split("T")[0] ?? "",
+      accountId,
+      model,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      cost,
+      timestamp: now,
+    })
+    consola.debug(
+      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
+    )
   } catch (error) {
-    consola.warn("Failed to track token usage:", error)
+    consola.warn("Failed to record usage:", error)
   }
 }
 
 const isChatCompletionResponse = (
-  response: AsyncIterable<{ data?: string }> | ChatCompletionResponse,
+  response: CopilotStream | ChatCompletionResponse,
 ): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError"
+}
+
+async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
+  if (tokens <= 0) return
+
+  const userId = c.get("userId" as never) as string | undefined
+  if (!userId) return
+
+  try {
+    await incrementUserTokens(userId, tokens)
+    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
+  } catch (error) {
+    consola.warn("Failed to track user token usage:", error)
+  }
+}

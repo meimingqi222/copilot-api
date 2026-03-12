@@ -37,7 +37,8 @@
 
       <nav class="flex-1 py-4">
         <template x-for="item in navItems" :key="item.id">
-          <a href="#" @click.prevent="currentView = item.id"
+          <a href="#" 
+             @click.prevent="currentView = item.id; window.location.hash = item.id"
              class="nav-item"
              :class="{ 'active': currentView === item.id }">
             <i :data-lucide="item.icon" class="w-5 h-5"></i>
@@ -289,8 +290,22 @@
                 <div class="flex items-center gap-3">
                   <i data-lucide="github" class="w-8 h-8"></i>
                   <div>
-                    <p class="font-medium" x-text="account.label || account.username || 'GitHub'"></p>
-                    <p class="text-sm text-[var(--apple-text-secondary)]" x-text="account.username || '-'"></p>
+                    <p class="font-medium" x-text="account.label || 'GitHub'"></p>
+                    <!-- 允许编辑账户名称 -->
+                    <input
+                      x-show="editingLabel === account.id"
+                      x-model="editLabelValue"
+                      @blur="saveLabel(account)"
+                      @keydown.enter="saveLabel(account)"
+                      @keydown.escape="editingLabel = null"
+                      class="input text-sm mt-1 p-1 h-8"
+                      x-ref="labelInput"
+                    >
+                    <p
+                      x-show="editingLabel !== account.id"
+                      @dblclick="startEditLabel(account)"
+                      class="text-sm text-[var(--apple-text-secondary)] cursor-pointer hover:underline"
+                      x-text="t('accounts.doubleClickEdit') || '双击编辑名称'"></p>
                   </div>
                 </div>
                 <div class="flex flex-col items-end gap-1">
@@ -303,8 +318,7 @@
                 </div>
               </div>
               <div class="text-sm text-[var(--apple-text-secondary)] mb-4">
-                <p x-text="t('accounts.requestsToday') + ': ' + (account.requestsToday || 0)"></p>
-                <p x-text="t('accounts.errorsToday') + ': ' + (account.errorsToday || 0)"></p>
+                <p x-text="t('accounts.doubleClickEdit') || '双击编辑名称'"></p>
               </div>
               <div class="flex gap-2 flex-wrap">
                 <!-- 启用/禁用按钮 -->
@@ -365,18 +379,121 @@
       <div x-show="currentView === 'quota'" x-data="quotaView()" x-init="init()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
           <h2 class="text-headline" x-text="t('quota.title')"></h2>
-          <button @click="refresh()" class="btn btn-secondary" :class="{ 'opacity-75': refreshing }">
-            <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': refreshing }"></i>
-            <span x-text="t('refresh')"></span>
-          </button>
+          <div class="flex items-center gap-4">
+            <button @click="showPricingModal = true" class="btn btn-secondary">
+              <i data-lucide="settings" class="w-4 h-4"></i>
+              <span x-text="t('quota.modelPricing')"></span>
+            </button>
+            <button @click="refresh()" class="btn btn-secondary" :class="{ 'opacity-75': refreshing }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': refreshing }"></i>
+              <span x-text="t('refresh')"></span>
+            </button>
+          </div>
         </header>
 
         <div x-show="loading" class="flex justify-center py-20">
           <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
         </div>
 
-        <div x-show="!loading" class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <!-- Account Quotas -->
+        <div x-show="!loading">
+          <!-- Usage Statistics Summary -->
+          <div class="mb-8">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-title-2" x-text="t('quota.usageStats')"></h3>
+              <!-- Date Range Selector -->
+              <div class="flex items-center gap-2">
+                <button @click="setRange('today')" class="btn btn-small" :class="dateRange === 'today' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.today')"></button>
+                <button @click="setRange('week')" class="btn btn-small" :class="dateRange === 'week' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.week')"></button>
+                <button @click="setRange('month')" class="btn btn-small" :class="dateRange === 'month' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.month')"></button>
+              </div>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <div class="card p-4">
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('dashboard.requestsToday')"></p>
+                <p class="text-2xl font-bold" x-text="usageSummary.totals.requests || 0"></p>
+              </div>
+              <div class="card p-4">
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.tokens.total')"></p>
+                <p class="text-2xl font-bold" x-text="formatTokens(usageSummary.totals.totalTokens || 0)"></p>
+              </div>
+              <div class="card p-4">
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1">
+                  <span x-text="t('quota.tokens.prompt')"></span>
+                  <span class="text-xs"> / </span>
+                  <span x-text="t('quota.tokens.completion')"></span>
+                </p>
+                <p class="text-lg font-bold">
+                  <span x-text="formatTokens(usageSummary.totals.promptTokens || 0)"></span>
+                  <span class="text-sm text-[var(--apple-text-secondary)] mx-1">/</span>
+                  <span x-text="formatTokens(usageSummary.totals.completionTokens || 0)"></span>
+                </p>
+              </div>
+              <div class="card p-4">
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.cost')"></p>
+                <p class="text-2xl font-bold" x-text="'$' + (usageSummary.totals.cost || 0).toFixed(4)"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Two Column Layout -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Model Usage -->
+            <div class="card p-6">
+              <h3 class="text-title-2 mb-4" x-text="t('quota.modelUsage')"></h3>
+              <div class="space-y-4" x-show="Object.keys(usageSummary.byModel).length">
+                <template x-for="(data, model) in usageSummary.byModel" :key="model">
+                  <div>
+                    <div class="flex justify-between items-center mb-2">
+                      <span class="text-sm font-medium" x-text="model"></span>
+                      <div class="text-right">
+                        <span class="text-sm font-bold" x-text="formatTokens(data.tokens)"></span>
+                        <span class="text-xs text-[var(--apple-text-secondary)] ml-2" x-text="'$' + (data.cost || 0).toFixed(4)"></span>
+                      </div>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill bg-[var(--apple-blue)]"
+                           :style="`width: ${calculatePercent(data.tokens, maxModelTokens)}%`"></div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!Object.keys(usageSummary.byModel).length" class="empty-state">
+                <i data-lucide="cpu" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]">暂无模型使用数据</p>
+              </div>
+            </div>
+
+            <!-- Account Usage -->
+            <div class="card p-6">
+              <h3 class="text-title-2 mb-4" x-text="t('quota.accountUsage')"></h3>
+              <div class="space-y-4" x-show="Object.keys(usageSummary.byAccount).length">
+                <template x-for="(data, accountId) in usageSummary.byAccount" :key="accountId">
+                  <div class="pb-4 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
+                    <div class="flex justify-between items-center mb-2">
+                      <span class="font-medium" x-text="data.label"></span>
+                      <div class="text-right">
+                        <p class="text-sm font-bold" x-text="formatTokens(data.totalTokens)"></p>
+                        <p class="text-xs text-[var(--apple-text-secondary)]" x-text="data.requests + ' requests'"></p>
+                      </div>
+                    </div>
+                    <div class="flex justify-between text-xs text-[var(--apple-text-secondary)]">
+                      <span x-text="'Prompt: ' + formatTokens(data.promptTokens)"></span>
+                      <span x-text="'Completion: ' + formatTokens(data.completionTokens)"></span>
+                      <span class="text-[var(--apple-blue)]" x-text="'$' + (data.cost || 0).toFixed(4)"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!Object.keys(usageSummary.byAccount).length" class="empty-state">
+                <i data-lucide="github" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]">暂无账户使用数据</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- GitHub Account Quotas (Original Content) -->
           <div class="card p-6">
             <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotas')"></h3>
             <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasDesc')"></p>
@@ -408,8 +525,8 @@
                     </div>
                     <div class="progress-bar" x-show="account.quotaInfo?.premiumInteractionsTotal">
                       <div class="progress-fill"
-                           :class="getUsageColor((account.quotaInfo?.premiumInteractionsTotal || 0) - (account.quotaInfo?.premiumInteractionsRemaining || 0), account.quotaInfo?.premiumInteractionsTotal)"
-                           :style="`width: ${calculatePercent(account.quotaInfo?.premiumInteractionsRemaining, account.quotaInfo?.premiumInteractionsTotal)}%`"></div>
+                           :class="getUsageColor(account.quotaInfo?.premiumInteractionsRemaining, account.quotaInfo?.premiumInteractionsTotal)"
+                           :style="`width: ${(account.quotaInfo?.premiumInteractionsRemaining || 0) / (account.quotaInfo?.premiumInteractionsTotal || 1) * 100}%`"></div>
                     </div>
                   </div>
 
@@ -438,7 +555,7 @@
           </div>
 
           <!-- User Usage -->
-          <div class="card p-6">
+          <div class="card p-6 mt-8">
             <h3 class="text-title-2 mb-2" x-text="t('quota.userUsage')"></h3>
             <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.userUsageDesc')"></p>
             <div class="space-y-6">
@@ -459,8 +576,8 @@
                   </div>
                   <div class="progress-bar" x-show="user.quotaLimit">
                     <div class="progress-fill"
-                         :class="getUsageColor(user.usedTokens, user.quotaLimit)"
-                         :style="`width: ${calculatePercent(user.quotaLimit - (user.usedTokens || 0), user.quotaLimit)}%`"></div>
+                         :class="getUsageColor(user.quotaLimit - (user.usedTokens || 0), user.quotaLimit)"
+                         :style="`width: ${(user.quotaLimit - (user.usedTokens || 0)) / (user.quotaLimit || 1) * 100}%`"></div>
                   </div>
                   <p x-show="!user.quotaLimit" class="text-sm text-[var(--apple-text-secondary)]">
                     <span x-text="t('quota.quotaLabel') + ': '"></span>
@@ -472,6 +589,86 @@
                 <i data-lucide="users" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.noUsers')"></p>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Pricing Modal -->
+        <div x-show="showPricingModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" x-cloak>
+          <div class="modal-content p-0 w-full max-w-6xl max-h-[85vh] overflow-hidden flex flex-col" @click.away="showPricingModal = false">
+            <!-- Header -->
+            <div class="flex justify-between items-center p-6 border-b border-[var(--apple-gray-5)] bg-gradient-to-r from-[var(--apple-bg-secondary)] to-[var(--apple-bg)]">
+              <div>
+                <h3 class="text-title-2 mb-1" x-text="t('quota.modelPricing')"></h3>
+                <p class="text-sm text-[var(--apple-text-secondary)]">配置每个模型的价格（每 1M tokens，USD）</p>
+              </div>
+              <button @click="showPricingModal = false" class="text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)] transition-colors p-2 hover:bg-[var(--apple-gray-3)] rounded-lg">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+            
+            <!-- Scrollable Content -->
+            <div class="overflow-y-auto flex-1 p-6">
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="(price, model) in modelPrices" :key="model">
+                  <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 border border-[var(--apple-gray-5)] hover:border-[var(--apple-blue)] transition-colors">
+                    <!-- Model Name -->
+                    <div class="flex items-start justify-between mb-3">
+                      <h4 class="font-medium text-sm text-[var(--apple-text)] truncate flex-1 mr-2" :title="model" x-text="model"></h4>
+                      <button @click="saveModelPricing(model)" class="btn btn-primary btn-small px-3 py-1 text-xs shrink-0">
+                        <i data-lucide="check" class="w-3.5 h-3.5 mr-1"></i>
+                        保存
+                      </button>
+                    </div>
+                    
+                    <!-- Price Inputs Grid -->
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">Prompt <span class="text-[10px] opacity-70">($/1M)</span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.promptPricePer1m" 
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">Completion <span class="text-[10px] opacity-70">($/1M)</span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.completionPricePer1m" 
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">缓存读取 <span class="text-[10px] opacity-70">($/1M)</span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.cacheReadPricePer1m" 
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">缓存写入 <span class="text-[10px] opacity-70">($/1M)</span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.cacheWritePricePer1m" 
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              
+              <div x-show="Object.keys(modelPrices).length === 0" class="empty-state py-16">
+                <i data-lucide="cpu" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)] mt-3">暂无模型价格配置</p>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="flex justify-end gap-3 p-4 border-t border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+              <button @click="showPricingModal = false" class="btn btn-secondary px-6" x-text="t('close')"></button>
             </div>
           </div>
         </div>
@@ -562,11 +759,32 @@
         lang: I18n.currentLang(),
 
         async init() {
+          // Restore view from URL hash or default to dashboard
+          const hash = window.location.hash.slice(1);
+          if (hash && ['dashboard', 'users', 'accounts', 'quota', 'logs'].includes(hash)) {
+            this.currentView = hash;
+          }
+          
           await this.checkAuth();
           this.initialized = true;
           lucide.createIcons();
           // Refresh quotas in background after login
           this.refreshQuotaInBackground();
+          
+          // Listen for hash changes
+          window.addEventListener('hashchange', () => {
+            const hash = window.location.hash.slice(1);
+            if (hash && ['dashboard', 'users', 'accounts', 'quota', 'logs'].includes(hash)) {
+              this.currentView = hash;
+            }
+          });
+          
+          // Update hash when currentView changes
+          this.$watch('currentView', (view) => {
+            if (window.location.hash.slice(1) !== view) {
+              window.location.hash = view;
+            }
+          });
         },
 
         async refreshQuotaInBackground() {
@@ -800,6 +1018,8 @@
         deviceFlowStep: 'input',
         deviceFlowData: null,
         pollTimer: null,
+        editingLabel: null,
+        editLabelValue: '',
 
         async load() {
           this.loading = true;
@@ -811,6 +1031,31 @@
           } finally {
             this.loading = false;
             this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        startEditLabel(account) {
+          this.editingLabel = account.id;
+          this.editLabelValue = account.label;
+          this.$nextTick(() => {
+            const input = this.$refs.labelInput;
+            if (input) input.focus();
+          });
+        },
+
+        async saveLabel(account) {
+          if (!this.editLabelValue.trim()) {
+            this.editingLabel = null;
+            return;
+          }
+          try {
+            await API.accounts.update(account.id, { label: this.editLabelValue.trim() });
+            this.showToast(I18n.t('accounts.updateSuccess') || 'Account name updated', 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          } finally {
+            this.editingLabel = null;
           }
         },
 
@@ -956,6 +1201,21 @@
         refreshing: false,
         accounts: [],
         users: [],
+        dateRange: 'today',
+        showPricingModal: false,
+        modelPrices: {},
+        usageSummary: {
+          totals: {
+            requests: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cost: 0,
+          },
+          byAccount: {},
+          byModel: {},
+        },
+        maxModelTokens: 0,
 
         init() {
           // Initial load
@@ -969,17 +1229,73 @@
           }
         },
 
+        setRange(range) {
+          this.dateRange = range;
+          this.loadUsageStats();
+        },
+
         async load() {
           this.loading = true;
           try {
             const data = await API.quota.get();
             this.accounts = data.accounts || [];
             this.users = data.users || [];
+            await this.loadUsageStats();
+            await this.loadModelPricing();
           } catch (e) {
             this.showToast(I18n.t('error.load'), 'error');
           } finally {
             this.loading = false;
             this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        async loadModelPricing() {
+          try {
+            const data = await API.usage.getPricing();
+            // Convert from $/1K to $/1M for display (multiply by 1000)
+            this.modelPrices = {};
+            for (const [model, price] of Object.entries(data.pricing || {})) {
+              this.modelPrices[model] = {
+                promptPricePer1m: price.promptPricePer1k * 1000,
+                completionPricePer1m: price.completionPricePer1k * 1000,
+                cacheReadPricePer1m: price.cacheReadPricePer1k * 1000,
+                cacheWritePricePer1m: price.cacheWritePricePer1k * 1000,
+              };
+            }
+          } catch (e) {
+            console.error('Failed to load model pricing:', e);
+          }
+        },
+
+        async saveModelPricing(model) {
+          try {
+            const price = this.modelPrices[model];
+            // Convert from $/1M to $/1K for storage (divide by 1000)
+            await API.usage.updatePricing(model, {
+              promptPricePer1k: (parseFloat(price.promptPricePer1m) || 0) / 1000,
+              completionPricePer1k: (parseFloat(price.completionPricePer1m) || 0) / 1000,
+              cacheReadPricePer1k: (parseFloat(price.cacheReadPricePer1m) || 0) / 1000,
+              cacheWritePricePer1k: (parseFloat(price.cacheWritePricePer1m) || 0) / 1000,
+            });
+            this.showToast('模型价格已保存', 'success');
+          } catch (e) {
+            this.showToast('保存失败：' + e.message, 'error');
+          }
+        },
+
+        async loadUsageStats() {
+          try {
+            const data = await API.usage.summary(this.dateRange);
+            this.usageSummary = data;
+            
+            // Calculate max model tokens for progress bar
+            this.maxModelTokens = Math.max(
+              ...Object.values(data.byModel || {}).map((m) => m.tokens),
+              1
+            );
+          } catch (e) {
+            console.error('Failed to load usage stats:', e);
           }
         },
 
@@ -1001,11 +1317,11 @@
           return Math.min(((total - (remaining || 0)) / total * 100), 100);
         },
 
-        getUsageColor(used, limit) {
+        getUsageColor(remaining, limit) {
           if (!limit) return 'bg-[var(--apple-green)]';
-          const pct = (used || 0) / limit;
-          if (pct > 0.9) return 'bg-[var(--apple-red)]';
-          if (pct > 0.75) return 'bg-[var(--apple-orange)]';
+          const pct = (remaining || 0) / limit;
+          if (pct < 0.2) return 'bg-[var(--apple-red)]';
+          if (pct < 0.5) return 'bg-[var(--apple-orange)]';
           return 'bg-[var(--apple-green)]';
         },
 

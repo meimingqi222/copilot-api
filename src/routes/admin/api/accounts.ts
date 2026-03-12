@@ -20,7 +20,6 @@ import {
 } from "~/lib/api-config"
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
-import { statsStore } from "~/lib/stats-store"
 import { cacheModels } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 
@@ -65,29 +64,23 @@ async function savePendingFlows(): Promise<void> {
 void loadPendingFlows()
 
 // Sanitize account for API response (omit sensitive tokens, compute isActive dynamically)
-function publicAccount(
-  account: Account,
-  statsMap: Map<string, { requests: number; errors: number }>,
-) {
+function publicAccount(account: Account) {
   const {
     githubToken: _token,
     copilotToken: _ct,
     copilotTokenExpiry: _cte,
+    quotaInfo: _quota,
     ...rest
   } = account
-  const stats = statsMap.get(account.id)
   return {
     ...rest,
     isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
-    requestsToday: stats?.requests ?? 0,
-    errorsToday: stats?.errors ?? 0,
   }
 }
 
 accountApiRoutes.get("/", (c) => {
-  const statsMap = statsStore.getTodayStatsAll()
   return c.json({
-    accounts: state.accounts.map((account) => publicAccount(account, statsMap)),
+    accounts: state.accounts.map((account) => publicAccount(account)),
   })
 })
 
@@ -182,7 +175,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     interval?: number
   }
   try {
-    json = await response.json()
+    json = (await response.json()) as typeof json
     consola.debug("Poll device flow: GitHub response:", json)
   } catch (e) {
     consola.error("Poll device flow: Failed to parse GitHub response:", e)
@@ -276,8 +269,7 @@ accountApiRoutes.put("/:id", async (c) => {
     )
   }
   await saveAccounts()
-  const statsMap = statsStore.getTodayStatsAll()
-  return c.json({ account: publicAccount(account, statsMap) })
+  return c.json({ account: publicAccount(account) })
 })
 
 accountApiRoutes.delete("/:id", async (c) => {
@@ -316,8 +308,7 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
 
   try {
     await refreshCopilotToken(account)
-    const statsMap = statsStore.getTodayStatsAll()
-    return c.json({ account: publicAccount(account, statsMap) })
+    return c.json({ account: publicAccount(account) })
   } catch {
     return c.json({ error: "Failed to refresh Copilot token." }, 502)
   }
@@ -337,11 +328,10 @@ accountApiRoutes.post("/:id/activate", (c) => {
   state.activeAccountIndex = idx
   try {
     const activeAccount = getActiveAccount() // validate not exhausted and sync state.githubToken
-    const statsMap = statsStore.getTodayStatsAll()
     return c.json({
       ok: true,
       activeAccountIndex: idx,
-      account: publicAccount(activeAccount, statsMap),
+      account: publicAccount(activeAccount),
     })
   } catch {
     return c.json({ error: "Account is exhausted." }, 409)

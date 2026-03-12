@@ -72,6 +72,14 @@ const API = {
     refresh: () => API.request("/quota/refresh", { method: "POST" }),
   },
 
+  // Usage Statistics
+  usage: {
+    summary: (range = "today") => API.request(`/usage/summary?range=${range}`),
+    getPricing: () => API.request("/usage/pricing"),
+    updatePricing: (model, pricing) =>
+      API.request(`/usage/pricing/${model}`, { method: "PUT", body: pricing }),
+  },
+
   // Logs
   logs: {
     get: (filters = {}) => {
