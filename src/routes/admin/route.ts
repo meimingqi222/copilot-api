@@ -15,7 +15,6 @@ import { dashboardApiRoutes } from "./api/dashboard"
 import { logApiRoutes } from "./api/logs"
 import { quotaApiRoutes } from "./api/quota"
 import { usageApiRoutes } from "./api/usage"
-import { userApiRoutes } from "./api/users"
 
 export const adminRoutes = new Hono()
 
@@ -64,10 +63,7 @@ adminRoutes.get("/static/*", (c) => {
 adminRoutes.use("/api/*", async (c, next) => {
   // If no auth is configured at all, allow access (backwards compat)
   const hasAnyAuth = Boolean(
-    state.apiKey
-      || state.adminPassword
-      || state.legacyApiKey
-      || state.users.length > 0,
+    state.apiKey || state.adminPassword || state.legacyApiKey,
   )
   if (hasAnyAuth && !hasAdminRole(c)) {
     return c.json(
@@ -78,7 +74,6 @@ adminRoutes.use("/api/*", async (c, next) => {
   await next()
 })
 
-adminRoutes.route("/api/users", userApiRoutes)
 adminRoutes.route("/api/accounts", accountApiRoutes)
 adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)

@@ -25,7 +25,9 @@ export interface QuotaSnapshot {
   premiumInteractionsRemaining?: number
   premiumInteractionsTotal?: number
   chatRemaining?: number
+  chatTotal?: number
   completionsRemaining?: number
+  completionsTotal?: number
   unlimited: boolean
 }
 
@@ -37,7 +39,8 @@ const tokenRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export async function loadAccounts(): Promise<void> {
   try {
-    const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
+    // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+    const data = await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
     const raw = JSON.parse(data) as Array<Record<string, unknown>>
     // Apply migration to handle old accounts with isActive instead of enabled
     state.accounts = raw.map((account) => migrateAccount(account))
@@ -251,7 +254,8 @@ function migrateAccount(account: Record<string, unknown>): Account {
 
 async function loadAccountsFile(): Promise<Array<Account>> {
   try {
-    const data = await fs.readFile(PATHS.ACCOUNTS_PATH)
+    // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+    const data = await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
     const raw = JSON.parse(data) as Array<Record<string, unknown>>
     // Apply migration to handle old accounts with isActive instead of enabled
     return raw.map((account) => migrateAccount(account))
