@@ -39,7 +39,8 @@ const keysMatch = (raw: string, hashed: string): boolean => {
 export async function loadUsers(): Promise<void> {
   // Start with persisted users if file exists
   try {
-    const data = await fs.readFile(PATHS.USERS_PATH)
+    // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+    const data = await fs.readFile(PATHS.USERS_PATH, "utf8")
     const parsed = JSON.parse(data) as Array<User>
     state.users = parsed
   } catch {

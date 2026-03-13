@@ -467,3 +467,37 @@ body {
 
 [x-cloak] { display: none !important; }
 
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .flex.h-screen { display: block !important; }
+  .sidebar { position: fixed; left: -100%; top: 0; height: 100vh; width: 280px; z-index: 50; transition: left 0.3s ease; }
+  .sidebar.open { left: 0; box-shadow: 2px 0 20px rgba(0,0,0,0.15); }
+  .sidebar-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 45; backdrop-filter: blur(2px); }
+  .sidebar-overlay.open { display: block; }
+  .mobile-header { display: flex !important; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--apple-bg); border-bottom: 1px solid var(--apple-gray-5); position: fixed; top: 0; left: 0; right: 0; z-index: 40; height: 60px; }
+  .hamburger-btn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--radius); background: var(--apple-gray-6); border: none; cursor: pointer; }
+  main { padding: 76px 16px 16px !important; }
+  .text-headline { font-size: 24px; }
+  .grid { gap: 12px !important; }
+  .stat-card { padding: 16px; }
+  .stat-value { font-size: 24px; }
+  header { flex-direction: column; align-items: flex-start !important; gap: 12px !important; }
+  header > div { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .card { border-radius: var(--radius); margin-bottom: 12px; }
+  .btn { padding: 10px 16px; font-size: 14px; }
+  .progress-bar { height: 8px; }
+  .badge { padding: 3px 8px; font-size: 10px; }
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+  .modal-content { margin: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+  .toast { left: 16px; right: 16px; top: auto; bottom: 16px; }
+}
+@media (min-width: 769px) { .mobile-header { display: none !important; } .sidebar-overlay { display: none !important; } }
+.hamburger-icon { width: 20px; height: 14px; position: relative; display: block; }
+.hamburger-icon span { display: block; position: absolute; height: 2px; width: 100%; background: var(--apple-text); border-radius: 2px; left: 0; transition: 0.25s ease-in-out; }
+.hamburger-icon span:nth-child(1) { top: 0px; }
+.hamburger-icon span:nth-child(2) { top: 6px; }
+.hamburger-icon span:nth-child(3) { top: 12px; }
+.hamburger-btn.open .hamburger-icon span:nth-child(1) { top: 6px; transform: rotate(135deg); }
+.hamburger-btn.open .hamburger-icon span:nth-child(2) { opacity: 0; left: -60px; }
+.hamburger-btn.open .hamburger-icon span:nth-child(3) { top: 6px; transform: rotate(-135deg); }
+

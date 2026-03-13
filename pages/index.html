@@ -24,8 +24,23 @@
   </div>
 
   <div class="flex h-screen" x-show="initialized">
+    <!-- Mobile Header -->
+    <div class="mobile-header">
+      <button @click="sidebarOpen = !sidebarOpen" class="hamburger-btn" :class="{ 'open': sidebarOpen }">
+        <div class="hamburger-icon"><span></span><span></span><span></span></div>
+      </button>
+      <h1 class="text-title-3 flex items-center gap-2">
+        <div class="w-7 h-7 bg-gradient-to-br from-[var(--apple-blue)] to-[var(--apple-purple)] rounded-lg flex items-center justify-center">
+          <i data-lucide="cpu" class="w-4 h-4 text-white"></i>
+        </div>
+        <span x-text="t('app.name')"></span>
+      </h1>
+      <div class="w-10"></div>
+    </div>
+    <!-- Sidebar Overlay -->
+    <div class="sidebar-overlay" :class="{ 'open': sidebarOpen }" @click="sidebarOpen = false"></div>
     <!-- Sidebar -->
-    <aside class="sidebar w-64 flex flex-col">
+    <aside class="sidebar w-64 flex flex-col" :class="{ 'open': sidebarOpen }">
       <div class="p-6 border-b border-[var(--apple-gray-5)]">
         <h1 class="text-title-3 flex items-center gap-3">
           <div class="w-8 h-8 bg-gradient-to-br from-[var(--apple-blue)] to-[var(--apple-purple)] rounded-lg flex items-center justify-center">
@@ -38,7 +53,7 @@
       <nav class="flex-1 py-4">
         <template x-for="item in navItems" :key="item.id">
           <a href="#" 
-             @click.prevent="currentView = item.id; window.location.hash = item.id"
+             @click.prevent="currentView = item.id; window.location.hash = item.id; sidebarOpen = false"
              class="nav-item"
              :class="{ 'active': currentView === item.id }">
             <i :data-lucide="item.icon" class="w-5 h-5"></i>
@@ -113,22 +128,122 @@
             <!-- Quota Summary -->
             <div class="card p-6">
               <h3 class="text-title-2 mb-6" x-text="t('dashboard.quotaSummary')"></h3>
-              <div x-show="data.quota">
-                <div class="flex items-center justify-between mb-3">
-                  <span class="text-body" x-text="t('quota.remaining')"></span>
-                  <span class="text-title-3">
-                    <span x-text="data.quota?.premiumRemaining ?? 'N/A'"></span>
-                    <span x-show="data.quota?.premiumTotal" class="text-[var(--apple-text-secondary)]">/ <span x-text="data.quota?.premiumTotal"></span></span>
-                  </span>
+              <div x-show="data.activeAccountQuota || data.totalQuota">
+                <!-- Total Quota (All Accounts) -->
+                <div x-show="data.totalQuota" class="mb-6">
+                  <div class="flex items-center gap-2 mb-3">
+                    <i data-lucide="layers" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                    <span class="text-sm font-medium text-[var(--apple-text-secondary)]" x-text="t('quota.totalQuota') || '全部账户'"></span>
+                  </div>
+                  
+                  <!-- Total Chat Quota -->
+                  <div x-show="data.totalQuota?.chatTotal" class="mb-4">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <i data-lucide="message-square" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                        <span class="text-sm" x-text="t('quota.chat')"></span>
+                      </div>
+                      <span class="text-sm font-medium">
+                        <span x-text="data.totalQuota?.chatRemaining ?? 'N/A'"></span>
+                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="data.totalQuota?.chatTotal"></span></span>
+                      </span>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill" 
+                           :class="totalQuotaColorClass"
+                           :style="`width: ${totalChatQuotaPercent}%`"></div>
+                    </div>
+                  </div>
+
+                  <!-- Total Premium -->
+                  <div x-show="data.totalQuota?.premiumTotal">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <i data-lucide="sparkles" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                        <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.premium')"></span>
+                      </div>
+                      <span class="text-sm font-medium">
+                        <span x-text="data.totalQuota?.premiumRemaining ?? 'N/A'"></span>
+                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="data.totalQuota?.premiumTotal"></span></span>
+                      </span>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill" 
+                           :class="totalPremiumColorClass"
+                           :style="`width: ${totalPremiumPercent}%`"></div>
+                    </div>
+                  </div>
                 </div>
-                <div class="progress-bar mb-6">
-                  <div class="progress-fill" 
-                       :class="quotaColorClass"
-                       :style="`width: ${quotaPercent}%`"></div>
-                </div>
-                <div x-show="data.quota?.unlimited" class="flex items-center gap-2 text-[var(--apple-green)]">
-                  <i data-lucide="infinity" class="w-5 h-5"></i>
-                  <span class="text-body" x-text="t('dashboard.unlimitedPlan')"></span>
+
+                <!-- Divider -->
+                <div x-show="data.activeAccountQuota && data.totalQuota" class="border-t border-[var(--apple-gray-5)] my-4"></div>
+
+                <!-- Active Account Quota -->
+                <div x-show="data.activeAccountQuota">
+                  <div class="flex items-center gap-2 mb-3">
+                    <i data-lucide="user" class="w-4 h-4 text-[var(--apple-blue)]"></i>
+                    <span class="text-sm font-medium text-[var(--apple-blue)]" x-text="t('quota.currentAccount') || '当前账户'"></span>
+                  </div>
+
+                  <!-- Chat Quota (Priority Display) -->
+                  <div x-show="data.activeAccountQuota?.chatTotal" class="mb-4">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <i data-lucide="message-square" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                        <span class="text-sm font-medium" x-text="t('quota.chat')"></span>
+                      </div>
+                      <span class="text-title-3">
+                        <span x-text="data.activeAccountQuota?.chatRemaining ?? 'N/A'"></span>
+                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="data.activeAccountQuota?.chatTotal"></span></span>
+                      </span>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill" 
+                           :class="chatQuotaColorClass"
+                           :style="`width: ${chatQuotaPercent}%`"></div>
+                    </div>
+                  </div>
+
+                  <!-- Premium Interactions -->
+                  <div x-show="data.activeAccountQuota?.premiumTotal" class="py-3 border-t border-[var(--apple-gray-5)]">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <i data-lucide="sparkles" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                        <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.premium')"></span>
+                      </div>
+                      <span class="text-sm font-medium">
+                        <span x-text="data.activeAccountQuota?.premiumRemaining ?? 'N/A'"></span>
+                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="data.activeAccountQuota?.premiumTotal"></span></span>
+                      </span>
+                    </div>
+                    <div class="progress-bar">
+                      <div class="progress-fill" 
+                           :class="premiumQuotaColorClass"
+                           :style="`width: ${premiumQuotaPercent}%`"></div>
+                    </div>
+                  </div>
+
+                  <!-- Completions (Autocomplete) - Simplified -->
+                  <div x-show="data.activeAccountQuota?.unlimited || data.activeAccountQuota?.completionsTotal" class="py-3 border-t border-[var(--apple-gray-5)]">
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <i data-lucide="keyboard" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                        <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.completions')"></span>
+                      </div>
+                      <span x-show="data.activeAccountQuota?.unlimited" class="text-sm text-[var(--apple-green)] font-medium">
+                        <span x-text="t('quota.unlimited')"></span>
+                      </span>
+                      <span x-show="!data.activeAccountQuota?.unlimited" class="text-sm font-medium">
+                        <span x-text="data.activeAccountQuota?.completionsRemaining ?? 'N/A'"></span>
+                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="data.activeAccountQuota?.completionsTotal"></span></span>
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- No quota data -->
+                  <div x-show="!data.activeAccountQuota?.chatTotal && !data.activeAccountQuota?.premiumTotal && !data.activeAccountQuota?.completionsTotal" class="text-center py-4">
+                    <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.noData') || '暂无配额数据'"></p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -151,114 +266,6 @@
                 <i data-lucide="activity" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('dashboard.noActivity')"></p>
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Users View -->
-      <div x-show="currentView === 'users'" x-data="usersView()" x-init="load()" style="display: none;">
-        <header class="flex justify-between items-center mb-8">
-          <h2 class="text-headline" x-text="t('users.title')"></h2>
-          <div class="flex items-center gap-4">
-            <button @click="openAddModal()" class="btn btn-primary">
-              <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
-              <span x-text="t('users.addUser')"></span>
-            </button>
-            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
-              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
-            </button>
-          </div>
-        </header>
-
-        <div x-show="loading" class="flex justify-center py-20">
-          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
-        </div>
-
-        <div x-show="!loading" class="card overflow-hidden">
-          <table class="w-full">
-            <thead>
-              <tr class="border-b border-[var(--apple-gray-5)]">
-                <th class="text-left p-4" x-text="t('users.username')"></th>
-                <th class="text-left p-4" x-text="t('users.role')"></th>
-                <th class="text-left p-4" x-text="t('users.status.label')"></th>
-                <th class="text-right p-4" x-text="t('users.actions')"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="user in users" :key="user.id">
-                <tr class="border-b border-[var(--apple-gray-5)] last:border-0">
-                  <td class="p-4 font-medium" x-text="user.username"></td>
-                  <td class="p-4">
-                    <span class="badge" :class="user.role === 'admin' ? 'badge-warning' : 'badge-info'" x-text="t('users.role.' + user.role)"></span>
-                  </td>
-                  <td class="p-4">
-                    <span class="badge" :class="user.enabled ? 'badge-success' : 'badge-danger'" x-text="t(user.enabled ? 'users.status.enabled' : 'users.status.disabled')"></span>
-                  </td>
-                  <td class="p-4 text-right">
-                    <button @click="editUser(user)" class="btn btn-secondary btn-small mr-2">
-                      <i data-lucide="pencil" class="w-4 h-4"></i>
-                    </button>
-                    <button @click="resetApiKey(user)" class="btn btn-secondary btn-small mr-2">
-                      <i data-lucide="key" class="w-4 h-4"></i>
-                    </button>
-                    <button @click="deleteUser(user.id)" class="btn btn-danger btn-small">
-                      <i data-lucide="trash-2" class="w-4 h-4"></i>
-                    </button>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-          <div x-show="!users.length" class="empty-state py-12">
-            <i data-lucide="users" class="empty-state-icon"></i>
-            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.noUsers')"></p>
-          </div>
-        </div>
-
-        <!-- Add Modal -->
-        <div x-show="showAddModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
-          <div class="modal-content p-8 w-full max-w-md" @click.away="showAddModal = false">
-            <h3 class="text-title-2 mb-6" x-text="t('users.addUser')"></h3>
-            <div class="space-y-4">
-              <div>
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.username')"></label>
-                <input x-model="newUser.username" type="text" class="input" :placeholder="t('users.username')">
-              </div>
-              <div>
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.role.label')"></label>
-                <select x-model="newUser.role" class="input">
-                  <option value="user" x-text="t('users.role.user')"></option>
-                  <option value="admin" x-text="t('users.role.admin')"></option>
-                </select>
-              </div>
-            </div>
-            <div class="flex justify-end gap-3 mt-8">
-              <button @click="showAddModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
-              <button @click="createUser()" class="btn btn-primary" x-text="t('create')"></button>
-            </div>
-          </div>
-        </div>
-
-        <!-- API Key Display Modal -->
-        <div x-show="showKeyModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" x-cloak>
-          <div class="modal-content p-8 w-full max-w-lg" @click.away="showKeyModal = false">
-            <div class="text-center mb-6">
-              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
-                <i data-lucide="key" class="w-8 h-8 text-white"></i>
-              </div>
-              <h3 class="text-title-2 mb-2" x-text="t('users.newApiKey')"></h3>
-              <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.keyWarning')"></p>
-            </div>
-            <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 mb-6">
-              <code class="text-sm font-mono break-all text-[var(--apple-text)]" x-text="displayedApiKey"></code>
-            </div>
-            <div class="flex justify-center gap-3">
-              <button @click="navigator.clipboard.writeText(displayedApiKey); showToast(t('copySuccess') || 'Copied!', 'success');" class="btn btn-primary">
-                <i data-lucide="copy" class="w-4 h-4 mr-2"></i>
-                <span x-text="t('copy')"></span>
-              </button>
-              <button @click="showKeyModal = false" class="btn btn-secondary" x-text="t('close')"></button>
             </div>
           </div>
         </div>
@@ -766,11 +773,12 @@
         initialized: false,
         toasts: [],
         lang: I18n.currentLang(),
+        sidebarOpen: false,
 
         async init() {
           // Restore view from URL hash or default to dashboard
           const hash = window.location.hash.slice(1);
-          if (hash && ['dashboard', 'users', 'accounts', 'quota', 'logs'].includes(hash)) {
+          if (hash && ['dashboard', 'accounts', 'quota', 'logs'].includes(hash)) {
             this.currentView = hash;
           }
           
@@ -783,7 +791,7 @@
           // Listen for hash changes
           window.addEventListener('hashchange', () => {
             const hash = window.location.hash.slice(1);
-            if (hash && ['dashboard', 'users', 'accounts', 'quota', 'logs'].includes(hash)) {
+            if (hash && ['dashboard', 'accounts', 'quota', 'logs'].includes(hash)) {
               this.currentView = hash;
             }
           });
@@ -840,7 +848,6 @@
         get navItems() {
           return [
             { id: 'dashboard', icon: 'layout-dashboard', label: this.t('nav.dashboard') },
-            { id: 'users', icon: 'users', label: this.t('nav.users') },
             { id: 'accounts', icon: 'github', label: this.t('nav.accounts') },
             { id: 'quota', icon: 'bar-chart-3', label: this.t('nav.quota') },
             { id: 'logs', icon: 'scroll-text', label: this.t('nav.logs') }
@@ -868,7 +875,7 @@
       return {
         loading: false,
         lastRefresh: null,
-        data: { activeUsers: 0, activeAccounts: 0, totalAccounts: 0, requestsToday: 0, errorsToday: 0, quota: null },
+        data: { activeAccounts: 0, totalAccounts: 0, requestsToday: 0, errorsToday: 0, activeAccountQuota: null, totalQuota: null },
         recentLogs: [],
 
         async load() {
@@ -890,16 +897,68 @@
         },
 
         get quotaPercent() {
-          const q = this.data.quota;
+          const q = this.data.activeAccountQuota;
           if (!q || q.unlimited || !q.premiumTotal) return 0;
-          return ((q.premiumTotal - (q.premiumRemaining || 0)) / q.premiumTotal * 100);
+          return ((q.premiumRemaining || 0) / q.premiumTotal * 100);
         },
 
         get quotaColorClass() {
           const pct = this.quotaPercent;
-          if (pct > 90) return 'bg-[var(--apple-red)]';
-          if (pct > 75) return 'bg-[var(--apple-orange)]';
-          return 'bg-[var(--apple-blue)]';
+          if (pct < 10) return 'bg-[var(--apple-red)]';
+          if (pct < 25) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-green)]';
+        },
+
+        get chatQuotaPercent() {
+          const q = this.data.activeAccountQuota;
+          if (!q || !q.chatTotal) return 0;
+          return ((q.chatRemaining || 0) / q.chatTotal * 100);
+        },
+
+        get chatQuotaColorClass() {
+          const pct = this.chatQuotaPercent;
+          if (pct < 10) return 'bg-[var(--apple-red)]';
+          if (pct < 25) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-green)]';
+        },
+
+        get premiumQuotaPercent() {
+          const q = this.data.activeAccountQuota;
+          if (!q || !q.premiumTotal) return 0;
+          return ((q.premiumRemaining || 0) / q.premiumTotal * 100);
+        },
+
+        get premiumQuotaColorClass() {
+          const pct = this.premiumQuotaPercent;
+          if (pct < 10) return 'bg-[var(--apple-red)]';
+          if (pct < 25) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-green)]';
+        },
+
+        get totalChatQuotaPercent() {
+          const q = this.data.totalQuota;
+          if (!q || !q.chatTotal) return 0;
+          return ((q.chatRemaining || 0) / q.chatTotal * 100);
+        },
+
+        get totalQuotaColorClass() {
+          const pct = this.totalChatQuotaPercent;
+          if (pct < 10) return 'bg-[var(--apple-red)]';
+          if (pct < 25) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-green)]';
+        },
+
+        get totalPremiumPercent() {
+          const q = this.data.totalQuota;
+          if (!q || !q.premiumTotal) return 0;
+          return ((q.premiumRemaining || 0) / q.premiumTotal * 100);
+        },
+
+        get totalPremiumColorClass() {
+          const pct = this.totalPremiumPercent;
+          if (pct < 10) return 'bg-[var(--apple-red)]';
+          if (pct < 25) return 'bg-[var(--apple-orange)]';
+          return 'bg-[var(--apple-green)]';
         },
 
         getLevelClass(level) {
@@ -915,98 +974,6 @@
           if (!ts) return '-';
           const app = document.querySelector('[x-data^=adminApp]');
           return app ? Alpine.$data(app).formatTime(ts) : new Date(ts).toLocaleString();
-        },
-        t(key, params) {
-          // Access parent lang to establish reactive dependency
-          const app = document.querySelector('[x-data^=adminApp]');
-          if (app) void Alpine.$data(app).lang;
-          return I18n.t(key, params);
-        }
-      };
-    }
-
-    // Users View Component
-    function usersView() {
-      return {
-        loading: false,
-        users: [],
-        showAddModal: false,
-        showKeyModal: false,
-        displayedApiKey: '',
-        newUser: { username: '', role: 'user' },
-
-        async load() {
-          this.loading = true;
-          try {
-            const data = await API.users.list();
-            this.users = data.users || [];
-          } catch (e) {
-            this.showToast(I18n.t('error.load'), 'error');
-          } finally {
-            this.loading = false;
-            this.$nextTick(() => lucide.createIcons());
-          }
-        },
-
-        openAddModal() {
-          this.newUser = { username: '', role: 'user' };
-          this.showAddModal = true;
-        },
-
-        async createUser() {
-          try {
-            const result = await API.users.create(this.newUser);
-            this.showAddModal = false;
-            this.showToast(I18n.t('users.createSuccess'), 'success');
-            // Display the API key to the admin
-            if (result.user && result.user.apiKey) {
-              this.displayedApiKey = result.user.apiKey;
-              this.showKeyModal = true;
-            }
-            await this.load();
-          } catch (e) {
-            this.showToast(I18n.t('error.create'), 'error');
-          }
-        },
-
-        async editUser(user) {
-          try {
-            await API.users.update(user.id, { enabled: !user.enabled });
-            await this.load();
-          } catch (e) {
-            this.showToast(I18n.t('error.update'), 'error');
-          }
-        },
-
-        async resetApiKey(user) {
-          if (!confirm(I18n.t('users.confirmReset'))) return;
-          try {
-            const result = await API.users.resetKey(user.id);
-            this.showToast(I18n.t('users.resetSuccess'), 'success');
-            // Display the new API key to the admin
-            if (result.apiKey) {
-              this.displayedApiKey = result.apiKey;
-              this.showKeyModal = true;
-            }
-          } catch (e) {
-            this.showToast(I18n.t('error.update'), 'error');
-          }
-        },
-
-        async deleteUser(id) {
-          if (!confirm(I18n.t('users.confirmDelete'))) return;
-          try {
-            await API.users.delete(id);
-            this.showToast(I18n.t('users.deleteSuccess'), 'success');
-            await this.load();
-          } catch (e) {
-            this.showToast(I18n.t('error.delete'), 'error');
-          }
-        },
-
-        showToast(msg, type) {
-          const app = document.querySelector('[x-data^=adminApp]');
-          if (app) Alpine.$data(app).showToast(msg, type);
         },
         t(key, params) {
           // Access parent lang to establish reactive dependency

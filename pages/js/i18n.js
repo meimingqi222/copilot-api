@@ -152,6 +152,9 @@ const i18n = {
       "quota.tokens.cacheWrite": "缓存写",
       "quota.cost": "成本",
       "quota.costEstimate": "预估成本",
+      "quota.noData": "暂无配额数据",
+      "quota.totalQuota": "全部账户",
+      "quota.currentAccount": "当前账户",
 
       // Logs
       "logs.title": "系统日志",
@@ -344,6 +347,9 @@ const i18n = {
       "quota.tokens.cacheWrite": "Cache Write",
       "quota.cost": "Cost",
       "quota.costEstimate": "Estimated Cost",
+      "quota.noData": "No quota data",
+      "quota.totalQuota": "All Accounts",
+      "quota.currentAccount": "Current Account",
 
       // Logs
       "logs.title": "System Logs",

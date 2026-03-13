@@ -3,7 +3,6 @@ import { Hono } from "hono"
 
 import { refreshQuotaForAccount } from "~/lib/accounts"
 import { state } from "~/lib/state"
-import { toPublicUser } from "~/lib/users"
 
 export const quotaApiRoutes = new Hono()
 
@@ -17,18 +16,7 @@ quotaApiRoutes.get("/", (c) => {
     quotaInfo: rest.quotaInfo ?? null,
   }))
 
-  const users = state.users.map((u) => {
-    const pub = toPublicUser(u)
-    return {
-      id: pub.id,
-      username: pub.username,
-      usedTokens: pub.usedTokens,
-      quotaLimit: pub.quotaLimit,
-      enabled: pub.enabled,
-    }
-  })
-
-  return c.json({ accounts, users })
+  return c.json({ accounts })
 })
 
 // Force-refresh all account quotas from GitHub Copilot API
