@@ -339,7 +339,6 @@
                         :disabled="!account.enabled || account.isActive"
                         x-text="t('accounts.setActive')">
                 </button>
-                <button @click="refreshToken(account.id)" class="btn btn-secondary btn-small" x-text="t('accounts.refresh')"></button>
                 <button @click="deleteAccount(account.id)" class="btn btn-danger btn-small" x-text="t('delete')"></button>
               </div>
             </div>
@@ -1097,16 +1096,6 @@
           };
 
           this.pollTimer = setTimeout(doPoll, pollInterval);
-        },
-
-        async refreshToken(id) {
-          try {
-            await API.accounts.refresh(id);
-            this.showToast(I18n.t('accounts.refreshSuccess'), 'success');
-            await this.load();
-          } catch (e) {
-            this.showToast(I18n.t('error.update'), 'error');
-          }
         },
 
         async toggleEnabled(account) {
