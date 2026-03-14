@@ -129,32 +129,23 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
   })
 })
 
-// Get summary statistics
-usageApiRoutes.get("/summary", (c) => {
-  const range = c.req.query("range") || "today"
-
+// Helper: Get date range from query
+function getDateRange(range: string): { startDate: string; endDate: string } {
   const now = new Date()
-  let startDate: string
   const endDate = now.toISOString().split("T")[0] ?? ""
+  let startDate: string
 
   switch (range) {
-    case "today": {
-      startDate = endDate
-
-      break
-    }
     case "week": {
       const weekAgo = new Date(now)
       weekAgo.setDate(weekAgo.getDate() - 7)
       startDate = weekAgo.toISOString().split("T")[0] ?? ""
-
       break
     }
     case "month": {
       const monthAgo = new Date(now)
       monthAgo.setMonth(monthAgo.getMonth() - 1)
       startDate = monthAgo.toISOString().split("T")[0] ?? ""
-
       break
     }
     default: {
@@ -162,9 +153,11 @@ usageApiRoutes.get("/summary", (c) => {
     }
   }
 
-  const allStats = statsStore.getUsageStats(undefined, startDate, endDate)
+  return { startDate, endDate }
+}
 
-  // Aggregate totals
+// Helper: Aggregate usage statistics
+function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
   const totals = {
     requests: 0,
     promptTokens: 0,
@@ -175,6 +168,45 @@ usageApiRoutes.get("/summary", (c) => {
     cost: 0,
   }
 
+  const timeSeries: Array<{
+    date: string
+    requests: number
+    totalTokens: number
+    cost: number
+  }> = []
+
+  const byModel: Record<string, { tokens: number; cost: number }> = {}
+
+  for (const stat of allStats) {
+    totals.requests += stat.requests
+    totals.promptTokens += stat.promptTokens
+    totals.completionTokens += stat.completionTokens
+    totals.cacheReadTokens += stat.cacheReadTokens
+    totals.cacheWriteTokens += stat.cacheWriteTokens
+    totals.totalTokens += stat.totalTokens
+    totals.cost += stat.cost
+
+    timeSeries.push({
+      date: stat.date,
+      requests: stat.requests,
+      totalTokens: stat.totalTokens,
+      cost: stat.cost,
+    })
+
+    for (const [model, usage] of Object.entries(stat.models)) {
+      if (!Object.hasOwn(byModel, model)) {
+        byModel[model] = { tokens: 0, cost: 0 }
+      }
+      byModel[model].tokens += usage.tokens
+      byModel[model].cost += usage.cost
+    }
+  }
+
+  return { totals, timeSeries, byModel }
+}
+
+// Helper: Aggregate by account
+function aggregateByAccount(startDate: string, endDate: string) {
   const byAccount: Record<
     string,
     {
@@ -189,28 +221,6 @@ usageApiRoutes.get("/summary", (c) => {
     }
   > = {}
 
-  const byModel: Record<string, { tokens: number; cost: number }> = {}
-
-  for (const stat of allStats) {
-    totals.requests += stat.requests
-    totals.promptTokens += stat.promptTokens
-    totals.completionTokens += stat.completionTokens
-    totals.cacheReadTokens += stat.cacheReadTokens
-    totals.cacheWriteTokens += stat.cacheWriteTokens
-    totals.totalTokens += stat.totalTokens
-    totals.cost += stat.cost
-
-    // Aggregate by model
-    for (const [model, usage] of Object.entries(stat.models)) {
-      if (!Object.hasOwn(byModel, model)) {
-        byModel[model] = { tokens: 0, cost: 0 }
-      }
-      byModel[model].tokens += usage.tokens
-      byModel[model].cost += usage.cost
-    }
-  }
-
-  // Aggregate by account
   for (const account of state.accounts) {
     const accountStats = statsStore.getUsageStats(
       account.id,
@@ -238,10 +248,23 @@ usageApiRoutes.get("/summary", (c) => {
     }
   }
 
+  return byAccount
+}
+
+// Get summary statistics
+usageApiRoutes.get("/summary", (c) => {
+  const range = c.req.query("range") || "today"
+  const { startDate, endDate } = getDateRange(range)
+
+  const allStats = statsStore.getUsageStats(undefined, startDate, endDate)
+  const { totals, timeSeries, byModel } = aggregateStats(allStats)
+  const byAccount = aggregateByAccount(startDate, endDate)
+
   return c.json({
     totals,
     byAccount,
     byModel,
+    timeSeries,
     period: { startDate, endDate },
   })
 })

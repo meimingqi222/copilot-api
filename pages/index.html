@@ -8,6 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="/admin/static/js/i18n.js"></script>
   <script src="/admin/static/js/api.js"></script>
 </head>
@@ -417,7 +418,7 @@
             <!-- Stats Cards -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
               <div class="card p-4">
-                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('dashboard.requestsToday')"></p>
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.requests' + dateRange.charAt(0).toUpperCase() + dateRange.slice(1))"></p>
                 <p class="text-2xl font-bold" x-text="usageSummary.totals.requests || 0"></p>
               </div>
               <div class="card p-4">
@@ -569,41 +570,16 @@
             </div>
           </div>
 
-          <!-- User Usage -->
+          <!-- Usage Trend Chart -->
           <div class="card p-6 mt-8">
-            <h3 class="text-title-2 mb-2" x-text="t('quota.userUsage')"></h3>
-            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.userUsageDesc')"></p>
-            <div class="space-y-6">
-              <template x-for="user in users" :key="user.id">
-                <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
-                  <div class="flex justify-between items-center mb-3">
-                    <span class="font-medium" x-text="user.username"></span>
-                    <div class="text-right">
-                      <div class="text-title-3">
-                        <span x-text="formatTokens(user.usedTokens || 0)"></span>
-                        <span x-show="user.quotaLimit" class="text-[var(--apple-text-secondary)]">/ <span x-text="formatTokens(user.quotaLimit || 0)"></span></span>
-                      </div>
-                      <div class="text-xs text-[var(--apple-text-secondary)]">
-                        <span x-text="t('quota.used')"></span>
-                        <span x-show="user.quotaLimit" x-text="t('quota.quotaLabel')"></span>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="progress-bar" x-show="user.quotaLimit">
-                    <div class="progress-fill"
-                         :class="getUsageColor(user.quotaLimit - (user.usedTokens || 0), user.quotaLimit)"
-                         :style="`width: ${(user.quotaLimit - (user.usedTokens || 0)) / (user.quotaLimit || 1) * 100}%`"></div>
-                  </div>
-                  <p x-show="!user.quotaLimit" class="text-sm text-[var(--apple-text-secondary)]">
-                    <span x-text="t('quota.quotaLabel') + ': '"></span>
-                    <span x-text="t('quota.unlimited')"></span>
-                  </p>
-                </div>
-              </template>
-              <div x-show="!users.length" class="empty-state">
-                <i data-lucide="users" class="empty-state-icon"></i>
-                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.noUsers')"></p>
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-title-2 mb-1" x-text="t('quota.usageTrend')"></h3>
+                <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.usageTrendDesc')"></p>
               </div>
+            </div>
+            <div class="relative h-64">
+              <canvas id="usageTrendChart"></canvas>
             </div>
           </div>
         </div>
@@ -1179,8 +1155,10 @@
           },
           byAccount: {},
           byModel: {},
+          timeSeries: [],
         },
         maxModelTokens: 0,
+        usageChart: null,
 
         init() {
           // Initial load
@@ -1253,15 +1231,164 @@
           try {
             const data = await API.usage.summary(this.dateRange);
             this.usageSummary = data;
-            
+
             // Calculate max model tokens for progress bar
             this.maxModelTokens = Math.max(
               ...Object.values(data.byModel || {}).map((m) => m.tokens),
               1
             );
+
+            // Render chart after data is loaded
+            this.$nextTick(() => this.renderChart());
           } catch (e) {
             console.error('Failed to load usage stats:', e);
           }
+        },
+
+        renderChart() {
+          // Check if Chart.js is loaded
+          if (typeof Chart === 'undefined') {
+            console.warn('Chart.js not loaded');
+            return;
+          }
+
+          const canvas = document.getElementById('usageTrendChart');
+          if (!canvas) return;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+
+          // Destroy existing chart if any
+          if (this.usageChart) {
+            this.usageChart.destroy();
+            this.usageChart = null;
+          }
+
+          const timeSeries = this.usageSummary.timeSeries || [];
+          if (timeSeries.length === 0) return;
+
+          // Sort by date ascending
+          const sortedData = [...timeSeries].sort((a, b) => a.date.localeCompare(b.date));
+
+          // Get CSS variables for colors
+          const root = getComputedStyle(document.documentElement);
+          const blueColor = root.getPropertyValue('--apple-blue')?.trim() || '#007AFF';
+          const greenColor = root.getPropertyValue('--apple-green')?.trim() || '#34C759';
+          const textColor = root.getPropertyValue('--apple-text')?.trim() || '#1D1D1F';
+          const textSecondaryColor = root.getPropertyValue('--apple-text-secondary')?.trim() || '#86868B';
+
+          // Format date labels (handle ISO date string as local date)
+          const labels = sortedData.map(d => {
+            const parts = d.date.split('-');
+            return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
+          });
+
+          this.usageChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels,
+              datasets: [
+                {
+                  label: this.t('quota.tokens.total'),
+                  data: sortedData.map(d => d.totalTokens),
+                  borderColor: blueColor,
+                  backgroundColor: blueColor + '20',
+                  fill: true,
+                  tension: 0.4,
+                  pointRadius: 4,
+                  pointHoverRadius: 6,
+                },
+                {
+                  label: this.t('quota.requestsToday'),
+                  data: sortedData.map(d => d.requests * 1000), // Scale up for visibility
+                  borderColor: greenColor,
+                  backgroundColor: 'transparent',
+                  fill: false,
+                  tension: 0.4,
+                  pointRadius: 3,
+                  pointHoverRadius: 5,
+                  borderDash: [5, 5],
+                  yAxisID: 'y1',
+                }
+              ]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              interaction: {
+                mode: 'index',
+                intersect: false,
+              },
+              plugins: {
+                legend: {
+                  position: 'top',
+                  labels: {
+                    color: textColor,
+                    usePointStyle: true,
+                    padding: 20,
+                  }
+                },
+                tooltip: {
+                  backgroundColor: 'rgba(0,0,0,0.8)',
+                  titleColor: '#fff',
+                  bodyColor: '#fff',
+                  padding: 12,
+                  cornerRadius: 8,
+                  callbacks: {
+                    label: function(context) {
+                      let label = context.dataset.label || '';
+                      if (label) label += ': ';
+                      if (context.datasetIndex === 1) {
+                        // Requests dataset - show actual value
+                        label += Math.round(context.raw / 1000);
+                      } else {
+                        // Tokens dataset
+                        const val = context.raw;
+                        if (val >= 1000000) label += (val / 1000000).toFixed(1) + 'M';
+                        else if (val >= 1000) label += (val / 1000).toFixed(1) + 'K';
+                        else label += val;
+                      }
+                      return label;
+                    }
+                  }
+                }
+              },
+              scales: {
+                x: {
+                  ticks: {
+                    color: textSecondaryColor,
+                  },
+                  grid: {
+                    color: 'rgba(0,0,0,0.05)',
+                  }
+                },
+                y: {
+                  type: 'linear',
+                  display: true,
+                  position: 'left',
+                  ticks: {
+                    color: textSecondaryColor,
+                    callback: function(value) {
+                      if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
+                      if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
+                      return value;
+                    }
+                  },
+                  grid: {
+                    color: 'rgba(0,0,0,0.05)',
+                  }
+                },
+                y1: {
+                  type: 'linear',
+                  display: false,
+                  position: 'right',
+                  grid: {
+                    drawOnChartArea: false,
+                  }
+                }
+              }
+            }
+          });
         },
 
         async refresh() {
