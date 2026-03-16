@@ -328,9 +328,28 @@
               <!-- Available Models -->
               <div x-show="account.availableModels && account.availableModels.length" class="mb-4">
                 <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
-                <div class="flex flex-wrap gap-1">
+                <div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
                   <template x-for="(model, idx) in (account.availableModels || [])" :key="idx">
-                    <span class="inline-block text-xs px-1.5 py-0.5 rounded font-mono" style="background:rgba(0,113,227,0.1);color:var(--apple-blue)" x-text="model"></span>
+                    <div class="flex items-center justify-between gap-1 text-xs px-1.5 py-1 rounded" style="background:rgba(0,113,227,0.07)">
+                      <div class="flex items-center gap-1 min-w-0">
+                        <!-- picker indicator -->
+                        <span :title="model.pickerEnabled ? t('accounts.models.pickerOn') : t('accounts.models.pickerOff')"
+                              :class="model.pickerEnabled ? 'text-[var(--apple-green)]' : 'text-[var(--apple-text-tertiary)]'">
+                          <i :data-lucide="model.pickerEnabled ? 'eye' : 'eye-off'" class="w-3 h-3 inline-block"></i>
+                        </span>
+                        <span class="font-mono truncate" style="color:var(--apple-blue)" x-text="model.id"></span>
+                      </div>
+                      <!-- supported endpoints -->
+                      <div class="flex gap-0.5 shrink-0">
+                        <template x-for="ep in (model.supportedEndpoints || [])" :key="ep">
+                          <span class="px-1 py-0.5 rounded text-[10px] font-medium"
+                                :class="ep === '/v1/messages' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'"
+                                x-text="ep === '/v1/messages' ? 'ANT' : ep === '/chat/completions' ? 'OAI' : ep === '/responses' ? 'RSP' : ep"></span>
+                        </template>
+                        <span x-show="!model.supportedEndpoints || !model.supportedEndpoints.length"
+                              class="px-1 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500">all</span>
+                      </div>
+                    </div>
                   </template>
                 </div>
               </div>
