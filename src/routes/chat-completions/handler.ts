@@ -159,7 +159,7 @@ function applyMaxTokens(
   if (isNullish(payload.max_tokens)) {
     const newPayload = {
       ...payload,
-      max_tokens: selectedModel?.capabilities.limits.max_output_tokens,
+      max_tokens: selectedModel?.capabilities.limits?.max_output_tokens,
     }
     consola.debug("Set max_tokens to:", JSON.stringify(newPayload.max_tokens))
     return newPayload

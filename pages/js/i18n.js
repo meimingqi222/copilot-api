@@ -117,6 +117,8 @@ const i18n = {
       "accounts.updateSuccess": "账户名称更新成功",
       "accounts.availableModels": "可用模型",
       "accounts.modelsLoading": "模型信息加载中...",
+      "accounts.models.pickerOn": "在模型选择器中显示",
+      "accounts.models.pickerOff": "在模型选择器中隐藏",
 
       // Quota
       "quota.title": "配额监控",
@@ -317,6 +319,8 @@ const i18n = {
       "accounts.updateSuccess": "Account name updated",
       "accounts.availableModels": "Available Models",
       "accounts.modelsLoading": "Loading model info...",
+      "accounts.models.pickerOn": "Shown in model picker",
+      "accounts.models.pickerOff": "Hidden from model picker",
 
       // Quota
       "quota.title": "Quota Monitor",

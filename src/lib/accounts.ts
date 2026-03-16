@@ -14,11 +14,20 @@ export interface Account {
   copilotToken?: string
   copilotTokenExpiry?: number
   quotaInfo?: QuotaSnapshot
-  availableModels?: Array<string>
+  availableModels?: Array<AccountModel>
   enabled: boolean // 用户控制是否启用(参与负载均衡)
   isExhausted: boolean
   exhaustedAt?: number
   createdAt: number
+}
+
+export interface AccountModel {
+  id: string
+  name: string
+  vendor: string
+  pickerEnabled: boolean
+  pickerCategory?: string
+  supportedEndpoints: Array<string>
 }
 
 export interface QuotaSnapshot {
@@ -99,7 +108,8 @@ export function getAccountForModel(modelId: string): Account {
 
   // Accounts that support the model (or have no model restriction)
   const capable = available.filter(
-    (a) => !a.availableModels || a.availableModels.includes(modelId),
+    (a) =>
+      !a.availableModels || a.availableModels.some((m) => m.id === modelId),
   )
 
   if (capable.length === 0) {
@@ -119,7 +129,7 @@ export function getAccountForModel(modelId: string): Account {
     && preferred.enabled
     && !preferred.isExhausted
     && (!preferred.availableModels
-      || preferred.availableModels.includes(modelId))
+      || preferred.availableModels.some((m) => m.id === modelId))
   ) {
     state.githubToken = preferred.githubToken
     return preferred
@@ -147,7 +157,8 @@ export function switchToNextAccountForModel(
     if (
       account.enabled
       && !account.isExhausted
-      && (!account.availableModels || account.availableModels.includes(modelId))
+      && (!account.availableModels
+        || account.availableModels.some((m) => m.id === modelId))
     ) {
       state.activeAccountIndex = idx
       state.githubToken = account.githubToken

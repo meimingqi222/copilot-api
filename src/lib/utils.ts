@@ -56,14 +56,25 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
   try {
     if (!account.copilotToken) return
     const models = await getModelsForAccount(account)
+    const seen = new Set<string>()
     // eslint-disable-next-line require-atomic-updates
-    account.availableModels = [
-      ...new Set(
-        models.data.filter((m) => m.model_picker_enabled).map((m) => m.id),
-      ),
-    ]
+    account.availableModels = models.data
+      .filter((m) => {
+        if (m.policy?.state !== "enabled") return false
+        if (seen.has(m.id)) return false
+        seen.add(m.id)
+        return true
+      })
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        vendor: m.vendor,
+        pickerEnabled: m.model_picker_enabled,
+        pickerCategory: m.model_picker_category,
+        supportedEndpoints: m.supported_endpoints ?? [],
+      }))
     consola.debug(
-      `Models for "${account.label}": ${account.availableModels.join(", ")}`,
+      `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
     )
   } catch (error) {
     consola.warn(
