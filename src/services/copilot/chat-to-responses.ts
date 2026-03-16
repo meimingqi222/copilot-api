@@ -95,6 +95,7 @@ export function translateToResponsesPayload(
       {
         reasoning: {
           effort: normalizeReasoningEffort(payload.reasoning_effort),
+          summary: "auto" as const,
         },
       }
     : {}),

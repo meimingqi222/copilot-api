@@ -32,6 +32,10 @@ const fetchMock = mock(
             model: "gpt-responses",
             output: [
               {
+                type: "reasoning",
+                summary: [{ type: "summary_text", text: "thinking..." }],
+              },
+              {
                 type: "message",
                 role: "assistant",
                 content: [{ type: "output_text", text: "ok" }],
@@ -153,6 +157,7 @@ test("routes responses-only models to /responses", async () => {
     messages: [{ role: "user", content: "hi" }],
     model: "gpt-responses",
     max_tokens: 64,
+    reasoning_effort: "medium",
   }
 
   const result = await createChatCompletions(payload)
@@ -165,10 +170,15 @@ test("routes responses-only models to /responses", async () => {
     model: "gpt-responses",
     input: [{ role: "user", content: "hi" }],
     max_output_tokens: 64,
+    reasoning: { summary: "auto" },
   })
 
   if ("choices" in result.response) {
+    expect(result.response.choices[0]?.message.reasoning_content).toBe(
+      "thinking...",
+    )
     expect(result.response.choices[0]?.message.content).toEqual([
+      { type: "reasoning", text: "thinking..." },
       { type: "output_text", text: "ok" },
     ])
     return

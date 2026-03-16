@@ -131,6 +131,7 @@ export interface ResponsesPayload {
   user?: string | null
   reasoning?: {
     effort: "low" | "medium" | "high"
+    summary?: "auto" | "concise" | "detailed" | null
   }
 }
 
