@@ -481,20 +481,50 @@
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
             <!-- Model Usage -->
             <div class="card p-6">
-              <h3 class="text-title-2 mb-4" x-text="t('quota.modelUsage')"></h3>
+              <div class="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h3 class="text-title-2 mb-1" x-text="t('quota.modelUsage')"></h3>
+                  <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.modelUsageDesc')"></p>
+                </div>
+                <div class="text-right text-xs text-[var(--apple-text-secondary)]" x-show="usageSummary.totals.totalTokens > 0">
+                  <p>
+                    <span x-text="t('quota.tokens.total')"></span>
+                    <span class="mx-1">·</span>
+                    <span x-text="formatTokens(usageSummary.totals.totalTokens || 0)"></span>
+                  </p>
+                </div>
+              </div>
               <div class="space-y-4" x-show="Object.keys(usageSummary.byModel).length">
-                <template x-for="(data, model) in usageSummary.byModel" :key="model">
-                  <div>
-                    <div class="flex justify-between items-center mb-2">
-                      <span class="text-sm font-medium" x-text="model"></span>
-                      <div class="text-right">
-                        <span class="text-sm font-bold" x-text="formatTokens(data.tokens)"></span>
-                        <span class="text-xs text-[var(--apple-text-secondary)] ml-2" x-text="'$' + (data.cost || 0).toFixed(4)"></span>
+                <template x-for="([model, data]) in sortedModelUsage" :key="model">
+                  <div class="rounded-2xl border border-[var(--apple-gray-5)] p-4 bg-[var(--apple-bg-secondary)]">
+                    <div class="flex justify-between items-start gap-3 mb-3">
+                      <div>
+                        <span class="text-sm font-medium break-all" x-text="model"></span>
+                        <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
+                          <span x-text="t('quota.modelUsageCount') + ': ' + (data.requests || 0)"></span>
+                          <span class="mx-1">·</span>
+                          <span x-text="t('quota.modelShare') + ': ' + formatPercent(getModelShare(data.totalTokens))"></span>
+                        </p>
+                      </div>
+                      <div class="text-right shrink-0">
+                        <p class="text-sm font-bold" x-text="formatTokens(data.totalTokens)"></p>
+                        <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
+                          <span x-text="formatTokens(data.promptTokens || 0)"></span>
+                          <span class="mx-1">/</span>
+                          <span x-text="formatTokens(data.completionTokens || 0)"></span>
+                        </p>
+                        <p class="text-xs text-[var(--apple-blue)] mt-1" x-text="'$' + (data.cost || 0).toFixed(4)"></p>
                       </div>
                     </div>
-                    <div class="progress-bar">
+                    <div class="progress-bar mb-2">
                       <div class="progress-fill bg-[var(--apple-blue)]"
-                           :style="`width: ${calculatePercent(data.tokens, maxModelTokens)}%`"></div>
+                           :style="`width: ${getModelShare(data.totalTokens) * 100}%`"></div>
+                    </div>
+                    <div class="flex flex-wrap gap-3 text-xs text-[var(--apple-text-tertiary)]">
+                      <span x-text="t('quota.tokens.prompt') + ': ' + formatTokens(data.promptTokens || 0)"></span>
+                      <span x-text="t('quota.tokens.completion') + ': ' + formatTokens(data.completionTokens || 0)"></span>
+                      <span x-show="(data.cacheReadTokens || 0) > 0" x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(data.cacheReadTokens || 0)"></span>
+                      <span x-show="(data.cacheWriteTokens || 0) > 0" x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(data.cacheWriteTokens || 0)"></span>
                     </div>
                   </div>
                 </template>
@@ -606,7 +636,7 @@
                 <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.usageTrendDesc')"></p>
               </div>
             </div>
-            <div class="relative h-64">
+            <div class="relative h-80">
               <canvas id="usageTrendChart"></canvas>
             </div>
           </div>
@@ -1185,7 +1215,6 @@
           byModel: {},
           timeSeries: [],
         },
-        maxModelTokens: 0,
         usageChart: null,
 
         init() {
@@ -1260,13 +1289,6 @@
             const data = await API.usage.summary(this.dateRange);
             this.usageSummary = data;
 
-            // Calculate max model tokens for progress bar
-            this.maxModelTokens = Math.max(
-              ...Object.values(data.byModel || {}).map((m) => m.tokens),
-              1
-            );
-
-            // Render chart after data is loaded
             this.$nextTick(() => this.renderChart());
           } catch (e) {
             console.error('Failed to load usage stats:', e);
@@ -1302,8 +1324,13 @@
           const root = getComputedStyle(document.documentElement);
           const blueColor = root.getPropertyValue('--apple-blue')?.trim() || '#007AFF';
           const greenColor = root.getPropertyValue('--apple-green')?.trim() || '#34C759';
+          const orangeColor = root.getPropertyValue('--apple-orange')?.trim() || '#FF9500';
+          const purpleColor = root.getPropertyValue('--apple-purple')?.trim() || '#AF52DE';
+          const pinkColor = root.getPropertyValue('--apple-pink')?.trim() || '#FF2D55';
+          const redColor = root.getPropertyValue('--apple-red')?.trim() || '#FF3B30';
           const textColor = root.getPropertyValue('--apple-text')?.trim() || '#1D1D1F';
           const textSecondaryColor = root.getPropertyValue('--apple-text-secondary')?.trim() || '#86868B';
+          const palette = [blueColor, greenColor, orangeColor, purpleColor, pinkColor, redColor];
 
           // Format date labels (handle ISO date string as local date)
           const labels = sortedData.map(d => {
@@ -1311,34 +1338,40 @@
             return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
           });
 
+          const datasets = [
+            {
+              label: this.t('quota.tokens.total'),
+              data: sortedData.map(d => d.totalTokens),
+              borderColor: blueColor,
+              backgroundColor: blueColor + '20',
+              fill: true,
+              tension: 0.35,
+              pointRadius: 3,
+              pointHoverRadius: 5,
+              borderWidth: 2,
+            }
+          ];
+
+          for (const [index, [model]] of this.sortedModelUsage.entries()) {
+            const color = palette[index % palette.length];
+            datasets.push({
+              label: `${model}`,
+              data: sortedData.map(d => d.models?.[model]?.totalTokens || 0),
+              borderColor: color,
+              backgroundColor: 'transparent',
+              fill: false,
+              tension: 0.35,
+              pointRadius: 2,
+              pointHoverRadius: 4,
+              borderWidth: 2,
+            });
+          }
+
           this.usageChart = new Chart(ctx, {
             type: 'line',
             data: {
               labels,
-              datasets: [
-                {
-                  label: this.t('quota.tokens.total'),
-                  data: sortedData.map(d => d.totalTokens),
-                  borderColor: blueColor,
-                  backgroundColor: blueColor + '20',
-                  fill: true,
-                  tension: 0.4,
-                  pointRadius: 4,
-                  pointHoverRadius: 6,
-                },
-                {
-                  label: this.t('quota.requestsToday'),
-                  data: sortedData.map(d => d.requests * 1000), // Scale up for visibility
-                  borderColor: greenColor,
-                  backgroundColor: 'transparent',
-                  fill: false,
-                  tension: 0.4,
-                  pointRadius: 3,
-                  pointHoverRadius: 5,
-                  borderDash: [5, 5],
-                  yAxisID: 'y1',
-                }
-              ]
+              datasets,
             },
             options: {
               responsive: true,
@@ -1353,29 +1386,22 @@
                   labels: {
                     color: textColor,
                     usePointStyle: true,
-                    padding: 20,
+                    padding: 16,
+                    boxWidth: 10,
+                    boxHeight: 10,
                   }
                 },
                 tooltip: {
-                  backgroundColor: 'rgba(0,0,0,0.8)',
+                  backgroundColor: 'rgba(0,0,0,0.82)',
                   titleColor: '#fff',
                   bodyColor: '#fff',
                   padding: 12,
-                  cornerRadius: 8,
+                  cornerRadius: 10,
                   callbacks: {
-                    label: function(context) {
+                    label: (context) => {
                       let label = context.dataset.label || '';
                       if (label) label += ': ';
-                      if (context.datasetIndex === 1) {
-                        // Requests dataset - show actual value
-                        label += Math.round(context.raw / 1000);
-                      } else {
-                        // Tokens dataset
-                        const val = context.raw;
-                        if (val >= 1000000) label += (val / 1000000).toFixed(1) + 'M';
-                        else if (val >= 1000) label += (val / 1000).toFixed(1) + 'K';
-                        else label += val;
-                      }
+                      label += this.formatTokens(context.raw || 0);
                       return label;
                     }
                   }
@@ -1396,27 +1422,27 @@
                   position: 'left',
                   ticks: {
                     color: textSecondaryColor,
-                    callback: function(value) {
-                      if (value >= 1000000) return (value / 1000000).toFixed(1) + 'M';
-                      if (value >= 1000) return (value / 1000).toFixed(1) + 'K';
-                      return value;
-                    }
+                    callback: (value) => this.formatTokens(value),
                   },
                   grid: {
                     color: 'rgba(0,0,0,0.05)',
-                  }
-                },
-                y1: {
-                  type: 'linear',
-                  display: false,
-                  position: 'right',
-                  grid: {
-                    drawOnChartArea: false,
                   }
                 }
               }
             }
           });
+        },
+
+        get sortedModelUsage() {
+          return Object.entries(this.usageSummary.byModel || {}).sort(([, left], [, right]) => {
+            return (right.totalTokens || 0) - (left.totalTokens || 0);
+          });
+        },
+
+        getModelShare(tokens) {
+          const totalTokens = this.usageSummary?.totals?.totalTokens || 0;
+          if (!totalTokens) return 0;
+          return Math.min(tokens / totalTokens, 1);
         },
 
         async refresh() {
@@ -1447,14 +1473,15 @@
 
         // Format token count with appropriate unit (K, M, or raw)
         formatTokens(tokens) {
-          if (tokens === 0) return '0';
-          if (tokens >= 1000000) {
-            return (tokens / 1000000).toFixed(1) + 'M';
+          const numericTokens = Number(tokens || 0);
+          if (numericTokens === 0) return '0';
+          if (numericTokens >= 1000000) {
+            return (numericTokens / 1000000).toFixed(1) + 'M';
           }
-          if (tokens >= 1000) {
-            return (tokens / 1000).toFixed(1) + 'K';
+          if (numericTokens >= 1000) {
+            return (numericTokens / 1000).toFixed(1) + 'K';
           }
-          return tokens.toString();
+          return numericTokens.toString();
         },
 
         showToast(msg, type) {

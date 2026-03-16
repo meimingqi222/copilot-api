@@ -23,6 +23,50 @@ export interface UsageStats {
   timestamp: number
 }
 
+type UsageModelStats = {
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  cost: number
+}
+
+type UsageDayStats = {
+  date: string
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  cost: number
+  models: Record<string, UsageModelStats>
+}
+
+type UsageDayRow = {
+  date: string
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  cost: number
+}
+
+type UsageModelRow = {
+  model: string
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  cost: number
+}
+
 class StatsStore {
   private db: Database | null = null
 
@@ -227,20 +271,37 @@ class StatsStore {
     accountId?: string,
     startDate?: string,
     endDate?: string,
-  ): Array<{
-    date: string
-    requests: number
-    promptTokens: number
-    completionTokens: number
-    cacheReadTokens: number
-    cacheWriteTokens: number
-    totalTokens: number
-    cost: number
-    models: Record<string, { tokens: number; cost: number }>
-  }> {
+  ): Array<UsageDayStats> {
     const db = this.ensureDb()
+    const rows = this.queryUsageDayRows(db, {
+      accountId,
+      startDate,
+      endDate,
+    })
+
+    return rows.map((row) => ({
+      date: row.date,
+      requests: row.requests,
+      promptTokens: row.prompt_tokens,
+      completionTokens: row.completion_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      totalTokens: row.total_tokens,
+      cost: row.cost,
+      models: this.queryUsageModelsByDate(db, row.date, accountId),
+    }))
+  }
+
+  private queryUsageDayRows(
+    db: Database,
+    filters: {
+      accountId?: string
+      startDate?: string
+      endDate?: string
+    },
+  ): Array<UsageDayRow> {
     let query = `
-      SELECT 
+      SELECT
         date,
         COUNT(*) as requests,
         SUM(prompt_tokens) as prompt_tokens,
@@ -254,54 +315,50 @@ class StatsStore {
     `
     const params: Array<string> = []
 
-    if (accountId) {
+    if (filters.accountId) {
       query += " AND account_id = ?"
-      params.push(accountId)
+      params.push(filters.accountId)
     }
-    if (startDate) {
+    if (filters.startDate) {
       query += " AND date >= ?"
-      params.push(startDate)
+      params.push(filters.startDate)
     }
-    if (endDate) {
+    if (filters.endDate) {
       query += " AND date <= ?"
-      params.push(endDate)
+      params.push(filters.endDate)
     }
 
     query += " GROUP BY date ORDER BY date DESC"
 
     const stmt = db.prepare(query)
-    const rows = stmt.all(...params) as Array<{
-      date: string
-      requests: number
-      prompt_tokens: number
-      completion_tokens: number
-      cache_read_tokens: number
-      cache_write_tokens: number
-      total_tokens: number
-      cost: number
-    }>
+    return stmt.all(...params) as Array<UsageDayRow>
+  }
 
-    // Get model breakdown for each day
-    const result = rows.map((row) => {
-      const modelStmt = db.prepare(`
-        SELECT model, SUM(total_tokens) as tokens, SUM(cost) as cost
-        FROM usage_stats
-        WHERE date = ?${accountId ? " AND account_id = ?" : ""}
-        GROUP BY model
-      `)
-      const modelParams = accountId ? [row.date, accountId] : [row.date]
-      const modelRows = modelStmt.all(...modelParams) as Array<{
-        model: string
-        tokens: number
-        cost: number
-      }>
-      const models: Record<string, { tokens: number; cost: number }> = {}
-      for (const m of modelRows) {
-        models[m.model] = { tokens: m.tokens, cost: m.cost }
-      }
+  private queryUsageModelsByDate(
+    db: Database,
+    date: string,
+    accountId?: string,
+  ): Record<string, UsageModelStats> {
+    const modelStmt = db.prepare(`
+      SELECT
+        model,
+        COUNT(*) as requests,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(completion_tokens) as completion_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_write_tokens) as cache_write_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost) as cost
+      FROM usage_stats
+      WHERE date = ?${accountId ? " AND account_id = ?" : ""}
+      GROUP BY model
+    `)
+    const modelParams = accountId ? [date, accountId] : [date]
+    const modelRows = modelStmt.all(...modelParams) as Array<UsageModelRow>
+    const models: Record<string, UsageModelStats> = {}
 
-      return {
-        date: row.date,
+    for (const row of modelRows) {
+      models[row.model] = {
         requests: row.requests,
         promptTokens: row.prompt_tokens,
         completionTokens: row.completion_tokens,
@@ -309,11 +366,15 @@ class StatsStore {
         cacheWriteTokens: row.cache_write_tokens,
         totalTokens: row.total_tokens,
         cost: row.cost,
-        models,
       }
-    })
+    }
 
-    return result
+    return models
+  }
+
+  clearUsageStatsForTest(): void {
+    const db = this.ensureDb()
+    db.run(`DELETE FROM usage_stats`)
   }
 
   // Model pricing methods
