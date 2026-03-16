@@ -20,7 +20,7 @@ import {
 } from "~/lib/api-config"
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
-import { cacheModels } from "~/lib/utils"
+import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 
 export const accountApiRoutes = new Hono()
@@ -225,6 +225,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
   // Refresh Copilot token and quota in background
   refreshCopilotToken(account)
     .then(() => refreshQuotaForAccount(account))
+    .then(() => refreshModelsForAccount(account))
     .then(() => {
       consola.info(`GitHub account added: ${account.label}`)
     })
@@ -309,6 +310,7 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
 
   try {
     await refreshCopilotToken(account)
+    void refreshModelsForAccount(account)
     return c.json({ account: publicAccount(account) })
   } catch {
     return c.json({ error: "Failed to refresh Copilot token." }, 502)

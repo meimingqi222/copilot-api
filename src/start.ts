@@ -18,7 +18,11 @@ import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { statsStore } from "./lib/stats-store"
 import { loadUsers } from "./lib/users"
-import { cacheModels, cacheVSCodeVersion } from "./lib/utils"
+import {
+  cacheModels,
+  cacheVSCodeVersion,
+  scheduleModelsRefresh,
+} from "./lib/utils"
 import { server } from "./server"
 
 interface RunServerOptions {
@@ -145,6 +149,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   scheduleQuotaRefresh()
 
   await cacheModels()
+
+  // Refresh models for all accounts and schedule periodic refresh
+  scheduleModelsRefresh()
 
   if (state.models) {
     consola.info(

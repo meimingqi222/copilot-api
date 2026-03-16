@@ -14,6 +14,7 @@ export interface Account {
   copilotToken?: string
   copilotTokenExpiry?: number
   quotaInfo?: QuotaSnapshot
+  availableModels?: Array<string>
   enabled: boolean // 用户控制是否启用(参与负载均衡)
   isExhausted: boolean
   exhaustedAt?: number
@@ -80,6 +81,83 @@ export async function saveAccounts(): Promise<void> {
     ({ copilotToken: _ct, copilotTokenExpiry: _cte, ...rest }) => rest,
   )
   await fs.writeFile(PATHS.ACCOUNTS_PATH, JSON.stringify(sanitized, null, 2))
+}
+
+/**
+ * Get an account that supports the given model, preferring the currently active account.
+ * Falls back to the first available account that supports the model.
+ * If no account specifies model support (availableModels is undefined), any enabled/non-exhausted account works.
+ */
+export function getAccountForModel(modelId: string): Account {
+  const available = state.accounts.filter((a) => a.enabled && !a.isExhausted)
+  if (available.length === 0) {
+    throw new HTTPError(
+      "No available GitHub Copilot accounts (all disabled or quota-exhausted)",
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+
+  // Accounts that support the model (or have no model restriction)
+  const capable = available.filter(
+    (a) => !a.availableModels || a.availableModels.includes(modelId),
+  )
+
+  if (capable.length === 0) {
+    throw new HTTPError(
+      `No available account supports model "${modelId}"`,
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+
+  // Prefer current active account if it supports the model
+  const preferred = state.accounts[state.activeAccountIndex] as
+    | Account
+    | undefined
+
+  if (
+    preferred
+    && preferred.enabled
+    && !preferred.isExhausted
+    && (!preferred.availableModels
+      || preferred.availableModels.includes(modelId))
+  ) {
+    state.githubToken = preferred.githubToken
+    return preferred
+  }
+
+  // Otherwise pick first capable account
+  const next = capable[0]
+  state.activeAccountIndex = state.accounts.indexOf(next)
+  state.githubToken = next.githubToken
+  return next
+}
+
+/**
+ * Switch to next account that supports the given model.
+ */
+export function switchToNextAccountForModel(
+  currentAccount: Account,
+  modelId: string,
+): Account | null {
+  const total = state.accounts.length
+  const currentIdx = state.accounts.indexOf(currentAccount)
+  for (let i = 1; i <= total; i++) {
+    const idx = (currentIdx + i) % total
+    const account = state.accounts[idx]
+    if (
+      account.enabled
+      && !account.isExhausted
+      && (!account.availableModels || account.availableModels.includes(modelId))
+    ) {
+      state.activeAccountIndex = idx
+      state.githubToken = account.githubToken
+      consola.info(
+        `Switched to account "${account.label}" for model "${modelId}"`,
+      )
+      return account
+    }
+  }
+  return null
 }
 
 export function getActiveAccount(): Account {
