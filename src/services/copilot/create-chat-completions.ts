@@ -13,6 +13,13 @@ import {
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import {
+  shouldUseResponsesApi,
+  translateResponsesStreamToChatCompletions,
+  translateResponsesToChatCompletion,
+  translateToResponsesPayload,
+  type ResponsesResponse,
+} from "~/services/copilot/responses-api"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
@@ -24,6 +31,7 @@ export const createChatCompletions = async (
 > => {
   const account = getAccountForModel(payload.model)
   if (!account.copilotToken) throw new Error("Copilot token not found")
+  const useResponsesApi = shouldUseResponsesApi(payload.model, account)
 
   const enableVision = payload.messages.some(
     (x) =>
@@ -46,12 +54,17 @@ export const createChatCompletions = async (
       "editor-version": `vscode/${state.vsCodeVersion}`,
       "X-Initiator": initiator,
     }
-    return fetch(`${copilotBaseUrl(state)}/chat/completions`, {
-      method: "POST",
-      headers: reqHeaders,
-      body: JSON.stringify(payload),
-      signal,
-    })
+    return fetch(
+      `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`,
+      {
+        method: "POST",
+        headers: reqHeaders,
+        body: JSON.stringify(
+          useResponsesApi ? translateToResponsesPayload(payload) : payload,
+        ),
+        signal,
+      },
+    )
   }
 
   let usedAccount = account
@@ -88,17 +101,31 @@ export const createChatCompletions = async (
   await reportUpstreamSuccess()
 
   if (payload.stream) {
+    const stream = events(
+      response,
+    ) as unknown as AsyncIterable<CopilotStreamEvent>
     return {
       accountId: usedAccount.id,
-      response: events(
-        response,
-      ) as unknown as AsyncIterable<CopilotStreamEvent>,
+      response:
+        useResponsesApi ?
+          (translateResponsesStreamToChatCompletions(
+            stream,
+            payload.model,
+          ) as AsyncIterable<CopilotStreamEvent>)
+        : stream,
     }
   }
 
+  const responseBody = (await response.json()) as
+    | ChatCompletionResponse
+    | ResponsesResponse
+
   return {
     accountId: usedAccount.id,
-    response: (await response.json()) as ChatCompletionResponse,
+    response:
+      useResponsesApi ?
+        translateResponsesToChatCompletion(responseBody as ResponsesResponse)
+      : (responseBody as ChatCompletionResponse),
   }
 }
 
@@ -138,6 +165,7 @@ async function tryNextAccountForModel(
 
 export interface CopilotStreamEvent {
   data?: string
+  event?: string
 }
 
 export interface ChatCompletionChunk {

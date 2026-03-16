@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
+import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
@@ -14,10 +15,16 @@ import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
+import { createMessages } from "~/services/copilot/create-messages"
+import {
+  supportsMessagesApi,
+  type CopilotStreamEventLike,
+} from "~/services/copilot/responses-api"
 
 import {
   createInitialStreamState,
   type AnthropicMessagesPayload,
+  type AnthropicResponse,
   type AnthropicStreamState,
 } from "./anthropic-types"
 import { inferInitiatorFromAnthropicMessages } from "./initiator"
@@ -31,7 +38,7 @@ import {
 } from "./stream-translation"
 
 type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
-type CopilotStream = AsyncIterable<{ data?: string }>
+type CopilotStream = AsyncIterable<{ data?: string; event?: string }>
 
 interface HandleStreamingResponseOptions {
   stream: SSEStream
@@ -76,9 +83,8 @@ export async function handleCompletion(c: Context) {
 
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
   const anthropicBeta = c.req.header("anthropic-beta")
+  const anthropicVersion = c.req.header("anthropic-version")
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
-
-  const openAIPayload = translateToOpenAI(anthropicPayload)
   const inferredInitiator = inferInitiatorFromAnthropicMessages(
     anthropicPayload.messages,
     anthropicBeta,
@@ -93,16 +99,49 @@ export async function handleCompletion(c: Context) {
     trustedClientAgent,
     initiator,
   )
+
+  if (state.manualApprove) {
+    await awaitApproval()
+  }
+
+  const account = getAccountForModel(anthropicPayload.model)
+  if (supportsMessagesApi(anthropicPayload.model, account)) {
+    const result = await createMessages(anthropicPayload, signal, {
+      initiatorOverride: initiator,
+      forwardedHeaders: {
+        anthropicBeta,
+        anthropicVersion,
+      },
+    })
+    const { accountId } = result
+
+    c.set("accountId" as never, accountId)
+    c.set("model" as never, anthropicPayload.model)
+
+    if (isDirectAnthropicResponse(result.response)) {
+      recordAnthropicUsage(c, accountId, result.response)
+      return c.json(result.response)
+    }
+
+    const streamResponse = result.response
+    return streamSSE(c, (stream) =>
+      handleDirectStreamingResponse({
+        stream,
+        response: streamResponse,
+        clientSignal: signal,
+        c,
+        accountId,
+      }),
+    )
+  }
+
+  const openAIPayload = translateToOpenAI(anthropicPayload)
   consola.debug(
     "Translated OpenAI request payload:",
     JSON.stringify(openAIPayload),
   )
 
   logDuplicateToolCallIds(openAIPayload.messages)
-
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
 
   const result = await createChatCompletions(openAIPayload, signal, initiator)
   const { accountId } = result
@@ -250,6 +289,57 @@ async function handleStreamingResponse({
   }
 }
 
+async function handleDirectStreamingResponse({
+  stream,
+  response,
+  clientSignal,
+  c,
+  accountId,
+}: HandleStreamingResponseOptions): Promise<void> {
+  let lastUsage:
+    | {
+        input_tokens?: number
+        output_tokens: number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?: number
+      }
+    | undefined
+
+  try {
+    for await (const rawEvent of response) {
+      if (!rawEvent.data) {
+        continue
+      }
+
+      const parsed = JSON.parse(rawEvent.data) as {
+        type?: string
+        usage?: typeof lastUsage
+      }
+      if (parsed.type === "message_delta" && parsed.usage) {
+        lastUsage = parsed.usage
+      }
+
+      await stream.writeSSE({
+        ...(rawEvent.event ? { event: rawEvent.event } : {}),
+        data: rawEvent.data,
+      })
+    }
+  } catch (error) {
+    if (
+      error instanceof DOMException
+      && error.name === "AbortError"
+      && clientSignal.aborted
+    ) {
+      return
+    }
+    throw error
+  } finally {
+    if (c) {
+      recordDirectStreamingUsage(c, accountId, lastUsage)
+    }
+  }
+}
+
 function createPingInterval(stream: SSEStream): ReturnType<typeof setInterval> {
   const PING_INTERVAL_MS = 5_000
   return setInterval(async () => {
@@ -332,6 +422,46 @@ function recordStreamingUsage(
   )
 }
 
+function recordDirectStreamingUsage(
+  c: Context,
+  accountId: string,
+  lastUsage:
+    | {
+        input_tokens?: number
+        output_tokens: number
+        cache_creation_input_tokens?: number
+        cache_read_input_tokens?: number
+      }
+    | undefined,
+): void {
+  const model = c.get("model" as never) as string | undefined
+  if (!model || !lastUsage) {
+    return
+  }
+
+  const cacheReadTokens = lastUsage.cache_read_input_tokens ?? 0
+  const cacheWriteTokens = lastUsage.cache_creation_input_tokens ?? 0
+  recordUsage(
+    createUsageRecord({
+      c,
+      accountId,
+      model,
+      promptTokens: Math.max(
+        (lastUsage.input_tokens ?? 0) - cacheReadTokens,
+        0,
+      ),
+      completionTokens: lastUsage.output_tokens,
+      totalTokens:
+        (lastUsage.input_tokens ?? 0)
+        + lastUsage.output_tokens
+        + cacheReadTokens
+        + cacheWriteTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    }),
+  )
+}
+
 async function sendSyntheticErrorIfNeeded(
   stream: SSEStream,
   streamState: AnthropicStreamState,
@@ -356,6 +486,43 @@ const isNonStreaming = (
     | { accountId: string; response: ChatCompletionResponse },
 ): result is { accountId: string; response: ChatCompletionResponse } =>
   Object.hasOwn(result.response, "choices")
+
+function isDirectAnthropicResponse(
+  response: AsyncIterable<CopilotStreamEventLike> | AnthropicResponse,
+): response is AnthropicResponse {
+  return Object.hasOwn(response, "content") && Object.hasOwn(response, "usage")
+}
+
+function recordAnthropicUsage(
+  c: Context,
+  accountId: string,
+  response: AnthropicResponse,
+): void {
+  const usage = response.usage
+  const model = c.get("model" as never) as string | undefined
+  if (!model) {
+    return
+  }
+
+  const cacheReadTokens = usage.cache_read_input_tokens ?? 0
+  const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0
+  recordUsage(
+    createUsageRecord({
+      c,
+      accountId,
+      model,
+      promptTokens: Math.max(usage.input_tokens - cacheReadTokens, 0),
+      completionTokens: usage.output_tokens,
+      totalTokens:
+        usage.input_tokens
+        + usage.output_tokens
+        + cacheReadTokens
+        + cacheWriteTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    }),
+  )
+}
 
 function createUsageRecord(input: UsageRecordInput): UsageRecordInput {
   return input

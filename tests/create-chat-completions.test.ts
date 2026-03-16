@@ -22,10 +22,23 @@ state.accountType = "individual"
 
 // Helper to mock fetch
 const fetchMock = mock(
-  (_url: string, opts: { headers: Record<string, string> }) => {
+  (url: string, opts: { headers: Record<string, string>; body?: string }) => {
     return {
       ok: true,
-      json: () => ({ id: "123", object: "chat.completion", choices: [] }),
+      json: () =>
+        url.endsWith("/responses") ?
+          {
+            id: "resp_123",
+            model: "gpt-responses",
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "ok" }],
+              },
+            ],
+          }
+        : { id: "123", object: "chat.completion", choices: [] },
       headers: opts.headers,
     }
   },
@@ -110,4 +123,56 @@ test("uses initiator override when provided", async () => {
     fetchMock.mock.calls[4][1] as { headers: Record<string, string> }
   ).headers
   expect(headers["X-Initiator"]).toBe("agent")
+})
+
+test("routes responses-only models to /responses", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "gpt-responses",
+        object: "model",
+        name: "GPT Responses",
+        preview: false,
+        vendor: "OpenAI",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/responses"],
+        capabilities: {
+          family: "gpt-5",
+          object: "capabilities",
+          supports: {},
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+    ],
+  }
+
+  const payload: ChatCompletionsPayload = {
+    messages: [{ role: "user", content: "hi" }],
+    model: "gpt-responses",
+    max_tokens: 64,
+  }
+
+  const result = await createChatCompletions(payload)
+  const [url, options] = fetchMock.mock.calls[5] as [
+    string,
+    { body?: string; headers: Record<string, string> },
+  ]
+  expect(url).toContain("/responses")
+  expect(JSON.parse(options.body ?? "{}")).toMatchObject({
+    model: "gpt-responses",
+    input: [{ role: "user", content: "hi" }],
+    max_output_tokens: 64,
+  })
+
+  if ("choices" in result.response) {
+    expect(result.response.choices[0]?.message.content).toEqual([
+      { type: "output_text", text: "ok" },
+    ])
+    return
+  }
+
+  throw new Error("Expected non-streaming response")
 })
