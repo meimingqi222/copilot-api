@@ -1,9 +1,13 @@
 import consola from "consola"
 
-import { getModels } from "~/services/copilot/get-models"
+import { getModels, getModelsForAccount } from "~/services/copilot/get-models"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 
+import type { Account } from "./accounts"
+
 import { state } from "./state"
+
+const MODELS_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 
 function makeSleepAbortError(signal: AbortSignal): Error {
   if (signal.reason instanceof Error) return signal.reason
@@ -46,6 +50,36 @@ export async function cacheModels(): Promise<void> {
     consola.warn("Failed to cache models (no active accounts yet):", error)
     state.models = undefined
   }
+}
+
+export async function refreshModelsForAccount(account: Account): Promise<void> {
+  try {
+    if (!account.copilotToken) return
+    const models = await getModelsForAccount(account)
+    // eslint-disable-next-line require-atomic-updates
+    account.availableModels = models.data.map((m) => m.id)
+    consola.debug(
+      `Models for "${account.label}": ${account.availableModels.join(", ")}`,
+    )
+  } catch (error) {
+    consola.warn(
+      `Failed to refresh models for account "${account.label}":`,
+      error,
+    )
+  }
+}
+
+export async function refreshModelsForAllAccounts(): Promise<void> {
+  for (const account of state.accounts) {
+    await refreshModelsForAccount(account)
+  }
+}
+
+export function scheduleModelsRefresh(): void {
+  void refreshModelsForAllAccounts()
+  setInterval(() => {
+    void refreshModelsForAllAccounts()
+  }, MODELS_REFRESH_INTERVAL_MS)
 }
 
 export const cacheVSCodeVersion = async () => {

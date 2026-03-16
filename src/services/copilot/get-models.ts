@@ -1,3 +1,5 @@
+import type { Account } from "~/lib/accounts"
+
 import { getActiveAccount } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -5,6 +7,10 @@ import { state } from "~/lib/state"
 
 export const getModels = async () => {
   const account = getActiveAccount()
+  return getModelsForAccount(account)
+}
+
+export const getModelsForAccount = async (account: Account) => {
   const response = await fetch(`${copilotBaseUrl(state)}/models`, {
     headers: copilotHeaders(account),
   })

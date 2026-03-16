@@ -325,8 +325,17 @@
                   <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
                 </div>
               </div>
-              <div class="text-sm text-[var(--apple-text-secondary)] mb-4">
-                <p x-text="t('accounts.doubleClickEdit') || '双击编辑名称'"></p>
+              <!-- Available Models -->
+              <div x-show="account.availableModels && account.availableModels.length" class="mb-4">
+                <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="model in (account.availableModels || [])" :key="model">
+                    <span class="inline-block text-xs px-1.5 py-0.5 rounded bg-[var(--apple-blue-light,rgba(0,122,255,0.12))] text-[var(--apple-blue)] font-mono" x-text="model"></span>
+                  </template>
+                </div>
+              </div>
+              <div x-show="!account.availableModels || !account.availableModels.length" class="mb-4">
+                <p class="text-xs text-[var(--apple-text-secondary)] italic" x-text="t('accounts.modelsLoading')"></p>
               </div>
               <div class="flex gap-2 flex-wrap">
                 <!-- 启用/禁用按钮 -->

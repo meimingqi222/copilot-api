@@ -1,7 +1,11 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
-import { getActiveAccount, markAccountExhausted } from "~/lib/accounts"
+import {
+  getAccountForModel,
+  markAccountExhausted,
+  switchToNextAccountForModel,
+} from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import {
@@ -18,7 +22,7 @@ export const createChatCompletions = async (
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > => {
-  const account = getActiveAccount()
+  const account = getAccountForModel(payload.model)
   if (!account.copilotToken) throw new Error("Copilot token not found")
 
   const enableVision = payload.messages.some(
@@ -53,11 +57,15 @@ export const createChatCompletions = async (
   let usedAccount = account
   let response = await doRequest(account)
 
-  // Handle 429 by marking account exhausted and trying next account
+  // Handle 429 by marking account exhausted and trying next account for the same model
   if (!response.ok && response.status === 429) {
     await reportUpstreamRateLimit(response)
     markAccountExhausted(account.id)
-    const retryResult = await tryNextAccount(account, doRequest)
+    const retryResult = await tryNextAccountForModel(
+      account,
+      payload.model,
+      doRequest,
+    )
     response = retryResult.response
     usedAccount = retryResult.account
   }
@@ -95,17 +103,18 @@ export const createChatCompletions = async (
 }
 
 /**
- * Try the next available account when current account returns 429.
+ * Try the next available account that supports the requested model when current account returns 429.
  * If the retry account also returns 429, mark it as exhausted.
  * Returns both the response and the account that was used.
  */
-async function tryNextAccount(
-  currentAccount: Awaited<ReturnType<typeof getActiveAccount>>,
+async function tryNextAccountForModel(
+  currentAccount: Awaited<ReturnType<typeof getAccountForModel>>,
+  modelId: string,
   doRequest: (account: typeof currentAccount) => Promise<Response>,
 ): Promise<{ response: Response; account: typeof currentAccount }> {
   try {
-    const nextAccount = getActiveAccount()
-    if (nextAccount.id === currentAccount.id) {
+    const nextAccount = switchToNextAccountForModel(currentAccount, modelId)
+    if (!nextAccount || nextAccount.id === currentAccount.id) {
       return {
         response: new Response("All accounts exhausted", { status: 429 }),
         account: currentAccount,

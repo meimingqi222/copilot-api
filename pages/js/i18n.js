@@ -115,6 +115,8 @@ const i18n = {
       "accounts.noAccounts": "暂无账户",
       "accounts.doubleClickEdit": "双击编辑名称",
       "accounts.updateSuccess": "账户名称更新成功",
+      "accounts.availableModels": "可用模型",
+      "accounts.modelsLoading": "模型信息加载中...",
 
       // Quota
       "quota.title": "配额监控",
@@ -313,6 +315,8 @@ const i18n = {
       "accounts.noAccounts": "No accounts configured",
       "accounts.doubleClickEdit": "Double-click to edit name",
       "accounts.updateSuccess": "Account name updated",
+      "accounts.availableModels": "Available Models",
+      "accounts.modelsLoading": "Loading model info...",
 
       // Quota
       "quota.title": "Quota Monitor",
