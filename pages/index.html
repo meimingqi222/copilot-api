@@ -329,8 +329,8 @@
               <div x-show="account.availableModels && account.availableModels.length" class="mb-4">
                 <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
                 <div class="flex flex-wrap gap-1">
-                  <template x-for="model in (account.availableModels || [])" :key="model">
-                    <span class="inline-block text-xs px-1.5 py-0.5 rounded bg-[var(--apple-blue-light,rgba(0,122,255,0.12))] text-[var(--apple-blue)] font-mono" x-text="model"></span>
+                  <template x-for="(model, idx) in (account.availableModels || [])" :key="idx">
+                    <span class="inline-block text-xs px-1.5 py-0.5 rounded font-mono" style="background:rgba(0,113,227,0.1);color:var(--apple-blue)" x-text="model"></span>
                   </template>
                 </div>
               </div>

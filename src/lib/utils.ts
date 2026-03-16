@@ -57,7 +57,11 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
     if (!account.copilotToken) return
     const models = await getModelsForAccount(account)
     // eslint-disable-next-line require-atomic-updates
-    account.availableModels = models.data.map((m) => m.id)
+    account.availableModels = [
+      ...new Set(
+        models.data.filter((m) => m.model_picker_enabled).map((m) => m.id),
+      ),
+    ]
     consola.debug(
       `Models for "${account.label}": ${account.availableModels.join(", ")}`,
     )
