@@ -6,6 +6,21 @@ import { statsStore } from "~/lib/stats-store"
 
 export const usageApiRoutes = new Hono()
 
+type UsageMetrics = {
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  cost: number
+}
+
+type UsageSeriesEntry = UsageMetrics & {
+  date: string
+  models: Record<string, UsageMetrics>
+}
+
 // Get usage statistics with date range
 usageApiRoutes.get("/", (c) => {
   const accountId = c.req.query("accountId")
@@ -22,8 +37,8 @@ usageApiRoutes.get("/", (c) => {
       const now = new Date()
       const weekAgo = new Date(now)
       weekAgo.setDate(weekAgo.getDate() - 7)
-      effectiveStart = weekAgo.toISOString().split("T")[0] ?? ""
-      effectiveEnd = now.toISOString().split("T")[0] ?? ""
+      effectiveStart = formatDate(weekAgo)
+      effectiveEnd = formatDate(now)
 
       break
     }
@@ -31,14 +46,14 @@ usageApiRoutes.get("/", (c) => {
       const now = new Date()
       const monthAgo = new Date(now)
       monthAgo.setMonth(monthAgo.getMonth() - 1)
-      effectiveStart = monthAgo.toISOString().split("T")[0] ?? ""
-      effectiveEnd = now.toISOString().split("T")[0] ?? ""
+      effectiveStart = formatDate(monthAgo)
+      effectiveEnd = formatDate(now)
 
       break
     }
     case "today": {
       const now = new Date()
-      effectiveStart = now.toISOString().split("T")[0] ?? ""
+      effectiveStart = formatDate(now)
       effectiveEnd = effectiveStart
 
       break
@@ -129,36 +144,12 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
   })
 })
 
-// Helper: Get date range from query
-function getDateRange(range: string): { startDate: string; endDate: string } {
-  const now = new Date()
-  const endDate = now.toISOString().split("T")[0] ?? ""
-  let startDate: string
-
-  switch (range) {
-    case "week": {
-      const weekAgo = new Date(now)
-      weekAgo.setDate(weekAgo.getDate() - 7)
-      startDate = weekAgo.toISOString().split("T")[0] ?? ""
-      break
-    }
-    case "month": {
-      const monthAgo = new Date(now)
-      monthAgo.setMonth(monthAgo.getMonth() - 1)
-      startDate = monthAgo.toISOString().split("T")[0] ?? ""
-      break
-    }
-    default: {
-      startDate = endDate
-    }
-  }
-
-  return { startDate, endDate }
+function formatDate(date: Date): string {
+  return date.toISOString().split("T")[0] || ""
 }
 
-// Helper: Aggregate usage statistics
-function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
-  const totals = {
+function createUsageMetrics(): UsageMetrics {
+  return {
     requests: 0,
     promptTokens: 0,
     completionTokens: 0,
@@ -167,40 +158,111 @@ function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
     totalTokens: 0,
     cost: 0,
   }
+}
 
-  const timeSeries: Array<{
-    date: string
-    requests: number
-    totalTokens: number
-    cost: number
-  }> = []
+function mergeUsageMetrics(target: UsageMetrics, source: UsageMetrics): void {
+  target.requests += source.requests
+  target.promptTokens += source.promptTokens
+  target.completionTokens += source.completionTokens
+  target.cacheReadTokens += source.cacheReadTokens
+  target.cacheWriteTokens += source.cacheWriteTokens
+  target.totalTokens += source.totalTokens
+  target.cost += source.cost
+}
 
-  const byModel: Record<string, { tokens: number; cost: number }> = {}
+// Helper: Get date range from query
+function getDateRange(
+  range: string,
+  startDate?: string,
+  endDate?: string,
+): { startDate: string; endDate: string } {
+  if (startDate && endDate) {
+    return { startDate, endDate }
+  }
+
+  const now = new Date()
+  const resolvedEndDate = endDate || formatDate(now)
+  let resolvedStartDate = startDate || resolvedEndDate
+
+  switch (range) {
+    case "week": {
+      const weekAgo = new Date(now)
+      weekAgo.setDate(weekAgo.getDate() - 7)
+      resolvedStartDate = startDate || formatDate(weekAgo)
+      break
+    }
+    case "month": {
+      const monthAgo = new Date(now)
+      monthAgo.setMonth(monthAgo.getMonth() - 1)
+      resolvedStartDate = startDate || formatDate(monthAgo)
+      break
+    }
+    default:
+  }
+
+  return { startDate: resolvedStartDate, endDate: resolvedEndDate }
+}
+
+function createUsageSeriesEntry(date: string): UsageSeriesEntry {
+  return {
+    date,
+    ...createUsageMetrics(),
+    models: {},
+  }
+}
+
+function getOrCreateSeriesEntry(
+  timeSeriesMap: Record<string, UsageSeriesEntry>,
+  date: string,
+): UsageSeriesEntry {
+  if (date in timeSeriesMap) {
+    return timeSeriesMap[date]
+  }
+
+  return createUsageSeriesEntry(date)
+}
+
+function getOrCreateMetrics(
+  metricsMap: Record<string, UsageMetrics>,
+  key: string,
+): UsageMetrics {
+  if (key in metricsMap) {
+    return metricsMap[key]
+  }
+
+  return createUsageMetrics()
+}
+
+function aggregateModelUsage(
+  target: Record<string, UsageMetrics>,
+  source: Record<string, UsageMetrics>,
+): void {
+  for (const [model, usage] of Object.entries(source)) {
+    const summary = getOrCreateMetrics(target, model)
+    mergeUsageMetrics(summary, usage)
+    target[model] = summary
+  }
+}
+
+// Helper: Aggregate usage statistics
+function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
+  const totals = createUsageMetrics()
+  const timeSeriesMap: Record<string, UsageSeriesEntry> = {}
+  const byModel: Record<string, UsageMetrics> = {}
 
   for (const stat of allStats) {
-    totals.requests += stat.requests
-    totals.promptTokens += stat.promptTokens
-    totals.completionTokens += stat.completionTokens
-    totals.cacheReadTokens += stat.cacheReadTokens
-    totals.cacheWriteTokens += stat.cacheWriteTokens
-    totals.totalTokens += stat.totalTokens
-    totals.cost += stat.cost
+    mergeUsageMetrics(totals, stat)
 
-    timeSeries.push({
-      date: stat.date,
-      requests: stat.requests,
-      totalTokens: stat.totalTokens,
-      cost: stat.cost,
-    })
-
-    for (const [model, usage] of Object.entries(stat.models)) {
-      if (!Object.hasOwn(byModel, model)) {
-        byModel[model] = { tokens: 0, cost: 0 }
-      }
-      byModel[model].tokens += usage.tokens
-      byModel[model].cost += usage.cost
-    }
+    const timeSeriesEntry = getOrCreateSeriesEntry(timeSeriesMap, stat.date)
+    timeSeriesMap[stat.date] = timeSeriesEntry
+    mergeUsageMetrics(timeSeriesEntry, stat)
+    aggregateModelUsage(timeSeriesEntry.models, stat.models)
+    aggregateModelUsage(byModel, stat.models)
   }
+
+  const timeSeries = Object.values(timeSeriesMap).sort((a, b) =>
+    b.date.localeCompare(a.date),
+  )
 
   return { totals, timeSeries, byModel }
 }
@@ -209,15 +271,9 @@ function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
 function aggregateByAccount(startDate: string, endDate: string) {
   const byAccount: Record<
     string,
-    {
+    UsageMetrics & {
       label: string
-      requests: number
-      promptTokens: number
-      completionTokens: number
-      cacheReadTokens: number
-      cacheWriteTokens: number
-      totalTokens: number
-      cost: number
+      models: Record<string, UsageMetrics>
     }
   > = {}
 
@@ -227,24 +283,18 @@ function aggregateByAccount(startDate: string, endDate: string) {
       startDate,
       endDate,
     )
+    const totals = createUsageMetrics()
+    const models: Record<string, UsageMetrics> = {}
+
+    for (const stat of accountStats) {
+      mergeUsageMetrics(totals, stat)
+      aggregateModelUsage(models, stat.models)
+    }
+
     byAccount[account.id] = {
       label: account.label,
-      requests: accountStats.reduce((sum, s) => sum + s.requests, 0),
-      promptTokens: accountStats.reduce((sum, s) => sum + s.promptTokens, 0),
-      completionTokens: accountStats.reduce(
-        (sum, s) => sum + s.completionTokens,
-        0,
-      ),
-      cacheReadTokens: accountStats.reduce(
-        (sum, s) => sum + s.cacheReadTokens,
-        0,
-      ),
-      cacheWriteTokens: accountStats.reduce(
-        (sum, s) => sum + s.cacheWriteTokens,
-        0,
-      ),
-      totalTokens: accountStats.reduce((sum, s) => sum + s.totalTokens, 0),
-      cost: accountStats.reduce((sum, s) => sum + s.cost, 0),
+      ...totals,
+      models,
     }
   }
 
@@ -254,7 +304,13 @@ function aggregateByAccount(startDate: string, endDate: string) {
 // Get summary statistics
 usageApiRoutes.get("/summary", (c) => {
   const range = c.req.query("range") || "today"
-  const { startDate, endDate } = getDateRange(range)
+  const requestedStartDate = c.req.query("startDate")
+  const requestedEndDate = c.req.query("endDate")
+  const { startDate, endDate } = getDateRange(
+    range,
+    requestedStartDate,
+    requestedEndDate,
+  )
 
   const allStats = statsStore.getUsageStats(undefined, startDate, endDate)
   const { totals, timeSeries, byModel } = aggregateStats(allStats)
