@@ -186,6 +186,11 @@ export function translateChunkToAnthropicEvents(
             cache_read_input_tokens:
               chunk.usage.prompt_tokens_details.cached_tokens,
           }),
+          ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
+            !== undefined && {
+            cache_creation_input_tokens:
+              chunk.usage.prompt_tokens_details.cache_creation_input_tokens,
+          }),
         },
       },
     })
@@ -336,6 +341,11 @@ export function translateChunkToAnthropicEvents(
             !== undefined && {
             cache_read_input_tokens:
               chunk.usage.prompt_tokens_details.cached_tokens,
+          }),
+          ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
+            !== undefined && {
+            cache_creation_input_tokens:
+              chunk.usage.prompt_tokens_details.cache_creation_input_tokens,
           }),
         },
       },

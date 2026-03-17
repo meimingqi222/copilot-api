@@ -36,7 +36,10 @@ interface UsageInfo {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
-  prompt_tokens_details?: { cached_tokens?: number }
+  prompt_tokens_details?: {
+    cached_tokens?: number
+    cache_creation_input_tokens?: number
+  }
 }
 
 interface UsageRecordInput {
@@ -200,6 +203,8 @@ function handleNonStreamingResponse(
 
   if (usage && model && accountId) {
     const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
+    const cacheWriteTokens =
+      usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
     recordUsage(
       createUsageRecord({
         c,
@@ -209,6 +214,7 @@ function handleNonStreamingResponse(
         completionTokens: usage.completion_tokens,
         totalTokens: calculateTotalTokens(usage),
         cacheReadTokens,
+        cacheWriteTokens,
       }),
     )
   } else if (model && accountId) {
@@ -312,6 +318,8 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
 
   if (lastUsage) {
     const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
+    const cacheWriteTokens =
+      lastUsage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
     recordUsage(
       createUsageRecord({
         c,
@@ -321,6 +329,7 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
         completionTokens: lastUsage.completion_tokens,
         totalTokens: calculateTotalTokens(lastUsage),
         cacheReadTokens,
+        cacheWriteTokens,
       }),
     )
     return true

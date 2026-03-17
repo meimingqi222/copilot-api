@@ -25,6 +25,7 @@ interface UsageRecordInput {
   completionTokens: number
   totalTokens: number
   cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export async function handleResponses(c: Context) {
@@ -128,6 +129,8 @@ function recordResponsesUsage(
   }
 
   const cacheReadTokens = usage.input_tokens_details?.cached_tokens ?? 0
+  const cacheWriteTokens =
+    usage.input_tokens_details?.cache_creation_input_tokens ?? 0
   const promptTokens = Math.max((usage.input_tokens ?? 0) - cacheReadTokens, 0)
   recordUsage({
     c,
@@ -139,6 +142,7 @@ function recordResponsesUsage(
       usage.total_tokens
       ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
     cacheReadTokens,
+    cacheWriteTokens,
   })
 }
 
@@ -151,6 +155,7 @@ function recordUsage(input: UsageRecordInput): void {
     completionTokens,
     totalTokens,
     cacheReadTokens = 0,
+    cacheWriteTokens = 0,
   } = input
 
   void trackUserTokenUsage(c, totalTokens)
@@ -163,6 +168,7 @@ function recordUsage(input: UsageRecordInput): void {
         (promptTokens / 1000) * pricing.promptPricePer1k
         + (completionTokens / 1000) * pricing.completionPricePer1k
         + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
+        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
       : 0
 
     statsStore.recordUsage({
@@ -173,7 +179,7 @@ function recordUsage(input: UsageRecordInput): void {
       completionTokens,
       totalTokens,
       cacheReadTokens,
-      cacheWriteTokens: 0,
+      cacheWriteTokens,
       cost,
       timestamp: now,
     })
