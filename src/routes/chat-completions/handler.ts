@@ -23,6 +23,7 @@ import { normalizeChunk, normalizeResponse } from "./normalize"
 
 type CopilotStream = AsyncIterable<{ data?: string }>
 type CachedModel = NonNullable<typeof state.models>["data"][number]
+type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
 
 interface StreamResult {
   accountId: string
@@ -238,6 +239,7 @@ function handleStreamingResponse(
   return streamSSE(c, async (stream) => {
     let lastUsage: UsageInfo | undefined
     let recordedOnAbort = false
+    const pingInterval = createPingInterval(stream)
 
     try {
       for await (const rawEvent of response) {
@@ -270,6 +272,7 @@ function handleStreamingResponse(
       }
       throw error
     } finally {
+      clearInterval(pingInterval)
       if (!recordedOnAbort) {
         recordStreamingUsage({
           c,
@@ -281,6 +284,17 @@ function handleStreamingResponse(
       }
     }
   })
+}
+
+function createPingInterval(stream: SSEStream): ReturnType<typeof setInterval> {
+  const PING_INTERVAL_MS = 5_000
+  return setInterval(async () => {
+    try {
+      await stream.writeSSE({ event: "ping", data: '{"type": "ping"}' })
+    } catch {
+      // Stream already closed; clear interval in finally below.
+    }
+  }, PING_INTERVAL_MS)
 }
 
 function recordStreamingUsage(input: StreamUsageInput): boolean {
