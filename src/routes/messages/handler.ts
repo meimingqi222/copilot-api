@@ -305,6 +305,8 @@ async function handleDirectStreamingResponse({
       }
     | undefined
 
+  const pingInterval = createPingInterval(stream)
+
   try {
     for await (const rawEvent of response) {
       if (!rawEvent.data) {
@@ -334,6 +336,7 @@ async function handleDirectStreamingResponse({
     }
     throw error
   } finally {
+    clearInterval(pingInterval)
     if (c) {
       recordDirectStreamingUsage(c, accountId, lastUsage)
     }
