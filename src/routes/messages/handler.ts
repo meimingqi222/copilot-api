@@ -52,7 +52,10 @@ interface UsageInfo {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
-  prompt_tokens_details?: { cached_tokens?: number }
+  prompt_tokens_details?: {
+    cached_tokens?: number
+    cache_creation_input_tokens?: number
+  }
 }
 
 interface UsageRecordInput {
@@ -412,6 +415,8 @@ function recordStreamingUsage(
   }
 
   const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
+  const cacheWriteTokens =
+    lastUsage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
   recordUsage(
     createUsageRecord({
       c,
@@ -421,6 +426,7 @@ function recordStreamingUsage(
       completionTokens: lastUsage.completion_tokens,
       totalTokens: lastUsage.total_tokens,
       cacheReadTokens,
+      cacheWriteTokens,
     }),
   )
 }

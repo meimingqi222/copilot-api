@@ -352,6 +352,11 @@ export function translateToAnthropic(
         cache_read_input_tokens:
           response.usage.prompt_tokens_details.cached_tokens,
       }),
+      ...(response.usage?.prompt_tokens_details?.cache_creation_input_tokens
+        !== undefined && {
+        cache_creation_input_tokens:
+          response.usage.prompt_tokens_details.cache_creation_input_tokens,
+      }),
     },
   }
 }
