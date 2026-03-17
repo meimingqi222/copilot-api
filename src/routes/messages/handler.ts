@@ -448,6 +448,7 @@ function recordDirectStreamingUsage(
     return
   }
 
+  // Anthropic API: input_tokens does NOT include cache tokens
   const cacheReadTokens = lastUsage.cache_read_input_tokens ?? 0
   const cacheWriteTokens = lastUsage.cache_creation_input_tokens ?? 0
   recordUsage(
@@ -455,10 +456,7 @@ function recordDirectStreamingUsage(
       c,
       accountId,
       model,
-      promptTokens: Math.max(
-        (lastUsage.input_tokens ?? 0) - cacheReadTokens,
-        0,
-      ),
+      promptTokens: lastUsage.input_tokens ?? 0,
       completionTokens: lastUsage.output_tokens,
       totalTokens:
         (lastUsage.input_tokens ?? 0)
@@ -513,6 +511,8 @@ function recordAnthropicUsage(
     return
   }
 
+  // Anthropic API: input_tokens does NOT include cache tokens
+  // (unlike OpenAI where prompt_tokens includes cached_tokens)
   const cacheReadTokens = usage.cache_read_input_tokens ?? 0
   const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0
   recordUsage(
@@ -520,7 +520,7 @@ function recordAnthropicUsage(
       c,
       accountId,
       model,
-      promptTokens: Math.max(usage.input_tokens - cacheReadTokens, 0),
+      promptTokens: usage.input_tokens,
       completionTokens: usage.output_tokens,
       totalTokens:
         usage.input_tokens
