@@ -420,110 +420,57 @@ describe("Anthropic thinking and model mapping", () => {
 })
 
 describe("Copilot /v1/messages endpoint translation", () => {
-  test("should translate thinking.budget_tokens to reasoning_effort for minimal", () => {
+  test("should not include reasoning_effort in output (OpenAI-specific param)", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
       max_tokens: 128,
       thinking: {
         type: "enabled",
-        budget_tokens: 512,
+        budget_tokens: 8192,
       },
     }
 
     const copilotPayload = translateToCopilotMessages(anthropicPayload)
 
-    expect(copilotPayload.reasoning_effort).toBe("minimal")
-    expect(copilotPayload.temperature).toBe(1)
-    expect(copilotPayload.thinking).toBeUndefined()
+    // reasoning_effort is OpenAI-specific, should not be sent to Copilot's Anthropic endpoint
+    expect(copilotPayload.reasoning_effort).toBeUndefined()
+    // thinking is Anthropic's native param, should be preserved
+    expect(copilotPayload.thinking).toEqual({ type: "enabled", budget_tokens: 8192 })
   })
 
-  test("should translate thinking.budget_tokens to reasoning_effort for low", () => {
+  test("should not include reasoning_effort when reasoning_effort is provided in input", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      reasoning_effort: "high",
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    // reasoning_effort should be stripped
+    expect(copilotPayload.reasoning_effort).toBeUndefined()
+  })
+
+  test("should preserve thinking configuration", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
       max_tokens: 128,
       thinking: {
         type: "enabled",
-        budget_tokens: 2000,
+        budget_tokens: 16000,
       },
     }
 
     const copilotPayload = translateToCopilotMessages(anthropicPayload)
 
-    expect(copilotPayload.reasoning_effort).toBe("low")
-    expect(copilotPayload.temperature).toBe(1)
+    // thinking should be preserved as-is
+    expect(copilotPayload.thinking).toEqual({ type: "enabled", budget_tokens: 16000 })
   })
 
-  test("should translate thinking.budget_tokens to reasoning_effort for medium (default)", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
-      max_tokens: 128,
-      thinking: {
-        type: "enabled",
-        budget_tokens: 10000,
-      },
-    }
-
-    const copilotPayload = translateToCopilotMessages(anthropicPayload)
-
-    expect(copilotPayload.reasoning_effort).toBe("medium")
-    expect(copilotPayload.temperature).toBe(1)
-  })
-
-  test("should translate thinking.budget_tokens to reasoning_effort for high", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
-      max_tokens: 128,
-      thinking: {
-        type: "enabled",
-        budget_tokens: 25000,
-      },
-    }
-
-    const copilotPayload = translateToCopilotMessages(anthropicPayload)
-
-    expect(copilotPayload.reasoning_effort).toBe("high")
-    expect(copilotPayload.temperature).toBe(1)
-  })
-
-  test("should translate thinking.budget_tokens to reasoning_effort for xhigh", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
-      max_tokens: 128,
-      thinking: {
-        type: "enabled",
-        budget_tokens: 40000,
-      },
-    }
-
-    const copilotPayload = translateToCopilotMessages(anthropicPayload)
-
-    expect(copilotPayload.reasoning_effort).toBe("xhigh")
-    expect(copilotPayload.temperature).toBe(1)
-  })
-
-  test("should translate thinking with default budget_tokens when not specified", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
-      max_tokens: 128,
-      thinking: {
-        type: "enabled",
-      },
-    }
-
-    const copilotPayload = translateToCopilotMessages(anthropicPayload)
-
-    // Default budget is 8192, which maps to medium
-    expect(copilotPayload.reasoning_effort).toBe("medium")
-    expect(copilotPayload.temperature).toBe(1)
-  })
-
-  test("should translate adaptive thinking to high reasoning_effort", () => {
+  test("should preserve adaptive thinking", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
@@ -535,8 +482,7 @@ describe("Copilot /v1/messages endpoint translation", () => {
 
     const copilotPayload = translateToCopilotMessages(anthropicPayload)
 
-    expect(copilotPayload.reasoning_effort).toBe("high")
-    expect(copilotPayload.temperature).toBe(1)
+    expect(copilotPayload.thinking).toEqual({ type: "adaptive" })
   })
 
   test("should not add reasoning_effort when thinking is not specified", () => {
@@ -562,6 +508,7 @@ describe("Copilot /v1/messages endpoint translation", () => {
       metadata: { user_id: "user-123" },
       stop_sequences: ["stop"],
       stream: true,
+      temperature: 0.7,
       top_p: 0.9,
       top_k: 40,
       tools: [{ name: "test", input_schema: {} }],
@@ -585,61 +532,12 @@ describe("Copilot /v1/messages endpoint translation", () => {
     expect(copilotPayload.top_k).toBe(40)
     expect(copilotPayload.tools).toHaveLength(1)
     expect(copilotPayload.tool_choice).toEqual({ type: "auto" })
-    expect(copilotPayload.reasoning_effort).toBe("low")
-    expect(copilotPayload.temperature).toBe(1)
+    expect(copilotPayload.reasoning_effort).toBeUndefined()
+    expect(copilotPayload.thinking).toEqual({ type: "enabled", budget_tokens: 1024 })
+    expect(copilotPayload.temperature).toBe(0.7)
   })
 
-  test("should handle boundary values for budget_tokens", () => {
-    // Test exact boundary values
-    const testCases = [
-      { budget: 0, expected: "minimal" },
-      { budget: 1023, expected: "minimal" },
-      { budget: 1024, expected: "low" },
-      { budget: 8191, expected: "low" },
-      { budget: 8192, expected: "medium" },
-      { budget: 24575, expected: "medium" },
-      { budget: 24576, expected: "high" },
-      { budget: 32767, expected: "high" },
-      { budget: 32768, expected: "xhigh" },
-      { budget: 100000, expected: "xhigh" },
-    ]
-
-    for (const { budget, expected } of testCases) {
-      const anthropicPayload: AnthropicMessagesPayload = {
-        model: "claude-sonnet-4",
-        messages: [{ role: "user", content: "test" }],
-        max_tokens: 128,
-        thinking: {
-          type: "enabled",
-          budget_tokens: budget,
-        },
-      }
-
-      const copilotPayload = translateToCopilotMessages(anthropicPayload)
-      expect(copilotPayload.reasoning_effort).toBe(expected)
-    }
-  })
-
-  test("should override temperature to 1 when thinking is enabled", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
-      max_tokens: 128,
-      temperature: 0.3,
-      thinking: {
-        type: "enabled",
-        budget_tokens: 8192,
-      },
-    }
-
-    const copilotPayload = translateToCopilotMessages(anthropicPayload)
-
-    // temperature should be overridden to 1 when reasoning is enabled
-    expect(copilotPayload.temperature).toBe(1)
-    expect(copilotPayload.reasoning_effort).toBe("medium")
-  })
-
-  test("should preserve original temperature when thinking is not enabled", () => {
+  test("should preserve original temperature", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
@@ -651,24 +549,6 @@ describe("Copilot /v1/messages endpoint translation", () => {
 
     expect(copilotPayload.temperature).toBe(0.7)
     expect(copilotPayload.reasoning_effort).toBeUndefined()
-  })
-
-  test("should not include thinking field in output", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
-      max_tokens: 128,
-      thinking: {
-        type: "enabled",
-        budget_tokens: 8192,
-      },
-    }
-
-    const copilotPayload = translateToCopilotMessages(anthropicPayload)
-
-    // thinking field should be removed, replaced with reasoning_effort
-    expect(copilotPayload.thinking).toBeUndefined()
-    expect(copilotPayload.reasoning_effort).toBe("medium")
   })
 })
 
