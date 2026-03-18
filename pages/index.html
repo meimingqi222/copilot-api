@@ -600,8 +600,6 @@
                           :class="account.enabled ? 'bg-[var(--apple-green)] text-white' : 'bg-gray-400 text-white'"
                           x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
                     </span>
-                    <!-- 当前使用状态 -->
-                    <span x-show="account.isActive" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-blue)] text-white rounded-full" x-text="t('accounts.status.current')"></span>
                     <!-- 配额耗尽状态 -->
                     <span x-show="account.isExhausted" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-red)] text-white rounded-full" x-text="t('accounts.status.exhausted')"></span>
                   </div>
