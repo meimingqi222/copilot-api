@@ -4,6 +4,8 @@ import { z } from "zod"
 import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
 
 import { translateToOpenAI } from "../src/routes/messages/non-stream-translation"
+import { translateToCopilotMessages } from "../src/services/copilot/create-messages"
+import { translateToResponsesPayload } from "../src/services/copilot/chat-to-responses"
 
 // Zod schema for a single message in the chat completion request.
 const messageSchema = z.object({
@@ -328,6 +330,68 @@ describe("Anthropic thinking and model mapping", () => {
     expect(openAIPayload.reasoning).toBeUndefined()
   })
 
+  test("should handle boundary values for budget_tokens in OpenAI translation", () => {
+    const testCases = [
+      { budget: 0, expected: "minimal" },
+      { budget: 1023, expected: "minimal" },
+      { budget: 1024, expected: "low" },
+      { budget: 8191, expected: "low" },
+      { budget: 8192, expected: "medium" },
+      { budget: 24575, expected: "medium" },
+      { budget: 24576, expected: "high" },
+      { budget: 32767, expected: "high" },
+      { budget: 32768, expected: "xhigh" },
+      { budget: 100000, expected: "xhigh" },
+    ]
+
+    for (const { budget, expected } of testCases) {
+      const anthropicPayload: AnthropicMessagesPayload = {
+        model: "claude-sonnet-4",
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 128,
+        thinking: {
+          type: "enabled",
+          budget_tokens: budget,
+        },
+      }
+
+      const openAIPayload = translateToOpenAI(anthropicPayload)
+      expect(openAIPayload.reasoning_effort).toBe(expected)
+    }
+  })
+
+  test("should override temperature to 1 when thinking is enabled in OpenAI translation", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      temperature: 0.3,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 8192,
+      },
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+
+    expect(openAIPayload.temperature).toBe(1)
+    expect(openAIPayload.reasoning_effort).toBe("medium")
+  })
+
+  test("should preserve original temperature when thinking is not enabled in OpenAI translation", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      temperature: 0.7,
+    }
+
+    const openAIPayload = translateToOpenAI(anthropicPayload)
+
+    expect(openAIPayload.temperature).toBe(0.7)
+    expect(openAIPayload.reasoning_effort).toBeUndefined()
+  })
+
   test("should normalize only numeric claude snapshot model suffixes", () => {
     const numericSnapshotPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4-20250514",
@@ -352,6 +416,337 @@ describe("Anthropic thinking and model mapping", () => {
     expect(normalized.model).toBe("claude-sonnet-4")
     expect(minorVersion.model).toBe("claude-sonnet-4-6")
     expect(preserved.model).toBe("claude-sonnet-4-x")
+  })
+})
+
+describe("Copilot /v1/messages endpoint translation", () => {
+  test("should translate thinking.budget_tokens to reasoning_effort for minimal", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 512,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBe("minimal")
+    expect(copilotPayload.temperature).toBe(1)
+    expect(copilotPayload.thinking).toBeUndefined()
+  })
+
+  test("should translate thinking.budget_tokens to reasoning_effort for low", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 2000,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBe("low")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should translate thinking.budget_tokens to reasoning_effort for medium (default)", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 10000,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBe("medium")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should translate thinking.budget_tokens to reasoning_effort for high", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 25000,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBe("high")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should translate thinking.budget_tokens to reasoning_effort for xhigh", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 40000,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBe("xhigh")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should translate thinking with default budget_tokens when not specified", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    // Default budget is 8192, which maps to medium
+    expect(copilotPayload.reasoning_effort).toBe("medium")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should translate adaptive thinking to high reasoning_effort", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "adaptive",
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBe("high")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should not add reasoning_effort when thinking is not specified", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      temperature: 0.5,
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.reasoning_effort).toBeUndefined()
+    expect(copilotPayload.temperature).toBe(0.5)
+  })
+
+  test("should preserve all other payload fields", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      system: "You are helpful.",
+      metadata: { user_id: "user-123" },
+      stop_sequences: ["stop"],
+      stream: true,
+      top_p: 0.9,
+      top_k: 40,
+      tools: [{ name: "test", input_schema: {} }],
+      tool_choice: { type: "auto" },
+      thinking: {
+        type: "enabled",
+        budget_tokens: 1024,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.model).toBe("claude-sonnet-4")
+    expect(copilotPayload.messages).toEqual([{ role: "user", content: "hello" }])
+    expect(copilotPayload.max_tokens).toBe(128)
+    expect(copilotPayload.system).toBe("You are helpful.")
+    expect(copilotPayload.metadata).toEqual({ user_id: "user-123" })
+    expect(copilotPayload.stop_sequences).toEqual(["stop"])
+    expect(copilotPayload.stream).toBe(true)
+    expect(copilotPayload.top_p).toBe(0.9)
+    expect(copilotPayload.top_k).toBe(40)
+    expect(copilotPayload.tools).toHaveLength(1)
+    expect(copilotPayload.tool_choice).toEqual({ type: "auto" })
+    expect(copilotPayload.reasoning_effort).toBe("low")
+    expect(copilotPayload.temperature).toBe(1)
+  })
+
+  test("should handle boundary values for budget_tokens", () => {
+    // Test exact boundary values
+    const testCases = [
+      { budget: 0, expected: "minimal" },
+      { budget: 1023, expected: "minimal" },
+      { budget: 1024, expected: "low" },
+      { budget: 8191, expected: "low" },
+      { budget: 8192, expected: "medium" },
+      { budget: 24575, expected: "medium" },
+      { budget: 24576, expected: "high" },
+      { budget: 32767, expected: "high" },
+      { budget: 32768, expected: "xhigh" },
+      { budget: 100000, expected: "xhigh" },
+    ]
+
+    for (const { budget, expected } of testCases) {
+      const anthropicPayload: AnthropicMessagesPayload = {
+        model: "claude-sonnet-4",
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 128,
+        thinking: {
+          type: "enabled",
+          budget_tokens: budget,
+        },
+      }
+
+      const copilotPayload = translateToCopilotMessages(anthropicPayload)
+      expect(copilotPayload.reasoning_effort).toBe(expected)
+    }
+  })
+
+  test("should override temperature to 1 when thinking is enabled", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      temperature: 0.3,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 8192,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    // temperature should be overridden to 1 when reasoning is enabled
+    expect(copilotPayload.temperature).toBe(1)
+    expect(copilotPayload.reasoning_effort).toBe("medium")
+  })
+
+  test("should preserve original temperature when thinking is not enabled", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      temperature: 0.7,
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.temperature).toBe(0.7)
+    expect(copilotPayload.reasoning_effort).toBeUndefined()
+  })
+
+  test("should not include thinking field in output", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 8192,
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    // thinking field should be removed, replaced with reasoning_effort
+    expect(copilotPayload.thinking).toBeUndefined()
+    expect(copilotPayload.reasoning_effort).toBe("medium")
+  })
+})
+
+describe("Responses API endpoint translation (through OpenAI payload)", () => {
+  test("should translate reasoning_effort to Responses reasoning format", () => {
+    const openAIPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      reasoning_effort: "high" as const,
+    }
+
+    const responsesPayload = translateToResponsesPayload(openAIPayload)
+
+    expect(responsesPayload.reasoning).toEqual({
+      effort: "high",
+      summary: "auto",
+    })
+  })
+
+  test("should normalize reasoning_effort values for Responses API", () => {
+    const testCases = [
+      { input: "minimal" as const, expected: "low" as const },
+      { input: "low" as const, expected: "low" as const },
+      { input: "medium" as const, expected: "medium" as const },
+      { input: "high" as const, expected: "high" as const },
+      { input: "xhigh" as const, expected: "high" as const },
+    ]
+
+    for (const { input, expected } of testCases) {
+      const openAIPayload = {
+        model: "claude-sonnet-4",
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 128,
+        reasoning_effort: input,
+      }
+
+      const responsesPayload = translateToResponsesPayload(openAIPayload)
+      expect(responsesPayload.reasoning?.effort).toBe(expected)
+    }
+  })
+
+  test("should not include reasoning when reasoning_effort is not specified", () => {
+    const openAIPayload = {
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+    }
+
+    const responsesPayload = translateToResponsesPayload(openAIPayload)
+
+    expect(responsesPayload.reasoning).toBeUndefined()
+  })
+
+  test("should preserve other fields in Responses payload", () => {
+    const openAIPayload = {
+      model: "claude-sonnet-4",
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi there" },
+      ],
+      max_tokens: 256,
+      temperature: 0.7,
+      top_p: 0.9,
+      stream: true,
+      reasoning_effort: "medium" as const,
+      tools: [{ type: "function" as const, function: { name: "test", parameters: {} } }],
+    }
+
+    const responsesPayload = translateToResponsesPayload(openAIPayload)
+
+    expect(responsesPayload.model).toBe("claude-sonnet-4")
+    expect(responsesPayload.max_output_tokens).toBe(256)
+    expect(responsesPayload.temperature).toBe(0.7)
+    expect(responsesPayload.top_p).toBe(0.9)
+    expect(responsesPayload.stream).toBe(true)
+    expect(responsesPayload.reasoning).toEqual({ effort: "medium", summary: "auto" })
+    expect(responsesPayload.tools).toHaveLength(1)
   })
 })
 
