@@ -7,7 +7,6 @@ import type { Account } from "~/lib/accounts"
 
 import {
   cancelTokenRefreshTimer,
-  getActiveAccount,
   refreshCopilotToken,
   refreshQuotaForAccount,
   saveAccounts,
@@ -75,6 +74,7 @@ function publicAccount(account: Account) {
   } = account
   return {
     ...rest,
+    priority: account.priority ?? 0,
     isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
   }
 }
@@ -215,6 +215,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     label: flow.label,
     githubToken: json.access_token,
     enabled: true,
+    priority: 0,
     isExhausted: false,
     createdAt: Date.now(),
   }
@@ -256,7 +257,7 @@ accountApiRoutes.put("/:id", async (c) => {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
-  let body: { label?: string; enabled?: boolean }
+  let body: { label?: string; enabled?: boolean; priority?: number }
   try {
     body = await c.req.json()
   } catch {
@@ -269,6 +270,10 @@ accountApiRoutes.put("/:id", async (c) => {
     consola.info(
       `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
     )
+  }
+  if (typeof body.priority === "number") {
+    account.priority = Math.max(0, Math.min(100, body.priority))
+    consola.info(`Account "${account.label}" priority set to ${account.priority}`)
   }
   await saveAccounts()
   return c.json({ account: publicAccount(account) })
@@ -317,26 +322,28 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
   }
 })
 
-// Set active account
-accountApiRoutes.post("/:id/activate", (c) => {
+// Set account priority (formerly "activate" - now sets highest priority)
+accountApiRoutes.post("/:id/activate", async (c) => {
   const id = c.req.param("id")
-  const idx = state.accounts.findIndex((a) => a.id === id)
-  if (idx === -1) return c.json({ error: "Account not found." }, 404)
+  const account = state.accounts.find((a) => a.id === id)
+  if (!account) return c.json({ error: "Account not found." }, 404)
 
-  const account = state.accounts[idx]
   if (!account.enabled) {
     return c.json({ error: "Account is disabled." }, 409)
   }
 
-  state.activeAccountIndex = idx
-  try {
-    const activeAccount = getActiveAccount() // validate not exhausted and sync state.githubToken
-    return c.json({
-      ok: true,
-      activeAccountIndex: idx,
-      account: publicAccount(activeAccount),
-    })
-  } catch {
-    return c.json({ error: "Account is exhausted." }, 409)
-  }
+  // Find minimum priority among all accounts
+  const minPriority = Math.min(...state.accounts.map((a) => a.priority ?? 0))
+  // Set this account to highest priority (lower than current minimum)
+  account.priority = Math.max(0, minPriority - 1)
+  await saveAccounts()
+
+  consola.info(
+    `Account "${account.label}" set to highest priority (${account.priority})`,
+  )
+
+  return c.json({
+    ok: true,
+    account: publicAccount(account),
+  })
 })

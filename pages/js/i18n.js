@@ -119,6 +119,9 @@ const i18n = {
       "accounts.modelsLoading": "模型信息加载中...",
       "accounts.models.pickerOn": "在模型选择器中显示",
       "accounts.models.pickerOff": "在模型选择器中隐藏",
+      "accounts.priority": "优先级",
+      "accounts.priorityHint": "数值越小优先级越高，相同优先级按顺序使用",
+      "accounts.prioritySuccess": "优先级已更新",
 
       // Quota
       "quota.title": "配额监控",
@@ -325,6 +328,9 @@ const i18n = {
       "accounts.modelsLoading": "Loading model info...",
       "accounts.models.pickerOn": "Shown in model picker",
       "accounts.models.pickerOff": "Hidden from model picker",
+      "accounts.priority": "Priority",
+      "accounts.priorityHint": "Lower value = higher priority. Same priority uses order.",
+      "accounts.prioritySuccess": "Priority updated",
 
       // Quota
       "quota.title": "Quota Monitor",

@@ -19,6 +19,7 @@ beforeEach(() => {
       githubToken: "gh-test-token",
       copilotToken: "test-token",
       enabled: true,
+      priority: 0,
       isExhausted: false,
       createdAt: Date.now(),
     },

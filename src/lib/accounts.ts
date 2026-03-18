@@ -16,6 +16,7 @@ export interface Account {
   quotaInfo?: QuotaSnapshot
   availableModels?: Array<AccountModel>
   enabled: boolean // 用户控制是否启用(参与负载均衡)
+  priority: number // 优先级，数值越小优先级越高，默认为 0
   isExhausted: boolean
   exhaustedAt?: number
   createdAt: number
@@ -68,6 +69,7 @@ export async function loadAccounts(): Promise<void> {
         label: "default",
         githubToken: legacyToken.trim(),
         enabled: true,
+        priority: 0,
         isExhausted: false,
         createdAt: Date.now(),
       }
@@ -93,12 +95,26 @@ export async function saveAccounts(): Promise<void> {
 }
 
 /**
- * Get an account that supports the given model, preferring the currently active account.
+ * Get an account that supports the given model, sorted by priority (lower is higher priority).
+ * Accounts with the same priority are selected in their original order (stable).
  * Falls back to the first available account that supports the model.
  * If no account specifies model support (availableModels is undefined), any enabled/non-exhausted account works.
  */
 export function getAccountForModel(modelId: string): Account {
-  const available = state.accounts.filter((a) => a.enabled && !a.isExhausted)
+  // Get available accounts and sort by priority (stable sort by array index for same priority)
+  const available = state.accounts
+    .filter((a) => a.enabled && !a.isExhausted)
+    .map((a, originalIndex) => ({ account: a, originalIndex }))
+    .sort((left, right) => {
+      const leftPriority = left.account.priority ?? 0
+      const rightPriority = right.account.priority ?? 0
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+      return left.originalIndex - right.originalIndex
+    })
+    .map((item) => item.account)
+
   if (available.length === 0) {
     throw new HTTPError(
       "No available GitHub Copilot accounts (all disabled or quota-exhausted)",
@@ -119,48 +135,45 @@ export function getAccountForModel(modelId: string): Account {
     )
   }
 
-  // Prefer current active account if it supports the model
-  const preferred = state.accounts[state.activeAccountIndex] as
-    | Account
-    | undefined
-
-  if (
-    preferred
-    && preferred.enabled
-    && !preferred.isExhausted
-    && (!preferred.availableModels
-      || preferred.availableModels.some((m) => m.id === modelId))
-  ) {
-    state.githubToken = preferred.githubToken
-    return preferred
-  }
-
-  // Otherwise pick first capable account
-  const next = capable[0]
-  state.activeAccountIndex = state.accounts.indexOf(next)
-  state.githubToken = next.githubToken
-  return next
+  // Return the highest priority capable account
+  const selected = capable[0]
+  state.activeAccountIndex = state.accounts.indexOf(selected)
+  state.githubToken = selected.githubToken
+  return selected
 }
 
 /**
- * Switch to next account that supports the given model.
+ * Switch to next account that supports the given model, sorted by priority.
  */
 export function switchToNextAccountForModel(
   currentAccount: Account,
   modelId: string,
 ): Account | null {
-  const total = state.accounts.length
-  const currentIdx = state.accounts.indexOf(currentAccount)
-  for (let i = 1; i <= total; i++) {
-    const idx = (currentIdx + i) % total
-    const account = state.accounts[idx]
+  // Sort accounts by priority (stable sort)
+  const sorted = state.accounts
+    .map((account, originalIndex) => ({ account, originalIndex }))
+    .sort((left, right) => {
+      const leftPriority = left.account.priority ?? 0
+      const rightPriority = right.account.priority ?? 0
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+      return left.originalIndex - right.originalIndex
+    })
+    .map((item) => item.account)
+
+  // Find current account in sorted list and get the next capable one
+  const currentIdx = sorted.indexOf(currentAccount)
+  for (let i = 1; i < sorted.length; i++) {
+    const idx = (currentIdx + i) % sorted.length
+    const account = sorted[idx]
     if (
       account.enabled
       && !account.isExhausted
       && (!account.availableModels
         || account.availableModels.some((m) => m.id === modelId))
     ) {
-      state.activeAccountIndex = idx
+      state.activeAccountIndex = state.accounts.indexOf(account)
       state.githubToken = account.githubToken
       consola.info(
         `Switched to account "${account.label}" for model "${modelId}"`,
@@ -172,28 +185,32 @@ export function switchToNextAccountForModel(
 }
 
 export function getActiveAccount(): Account {
-  // 只考虑已启用且未耗尽的账户
-  const available = state.accounts.filter((a) => a.enabled && !a.isExhausted)
-  if (available.length === 0) {
+  // Get available accounts sorted by priority
+  const sorted = state.accounts
+    .filter((a) => a.enabled && !a.isExhausted)
+    .map((account, originalIndex) => ({ account, originalIndex }))
+    .sort((left, right) => {
+      const leftPriority = left.account.priority ?? 0
+      const rightPriority = right.account.priority ?? 0
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+      return left.originalIndex - right.originalIndex
+    })
+    .map((item) => item.account)
+
+  if (sorted.length === 0) {
     throw new HTTPError(
       "No available GitHub Copilot accounts (all disabled or quota-exhausted)",
       new Response("Service Unavailable", { status: 503 }),
     )
   }
 
-  const preferred = state.accounts[state.activeAccountIndex]
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (preferred && preferred.enabled && !preferred.isExhausted) {
-    // Sync state.githubToken for backward compat
-    state.githubToken = preferred.githubToken
-    return preferred
-  }
-
-  const next = available[0]
-  state.activeAccountIndex = state.accounts.indexOf(next)
+  const selected = sorted[0]
+  state.activeAccountIndex = state.accounts.indexOf(selected)
   // Sync state.githubToken for backward compat
-  state.githubToken = next.githubToken
-  return next
+  state.githubToken = selected.githubToken
+  return selected
 }
 
 export function markAccountExhausted(id: string): void {
@@ -207,13 +224,27 @@ export function markAccountExhausted(id: string): void {
 }
 
 export function switchToNextAccount(): Account | null {
-  const total = state.accounts.length
-  for (let i = 1; i <= total; i++) {
-    const idx = (state.activeAccountIndex + i) % total
-    const account = state.accounts[idx]
+  // Sort accounts by priority (stable sort)
+  const sorted = state.accounts
+    .map((account, originalIndex) => ({ account, originalIndex }))
+    .sort((left, right) => {
+      const leftPriority = left.account.priority ?? 0
+      const rightPriority = right.account.priority ?? 0
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+      return left.originalIndex - right.originalIndex
+    })
+    .map((item) => item.account)
+
+  // Find next enabled and non-exhausted account after current
+  const currentIdx = sorted.indexOf(state.accounts[state.activeAccountIndex])
+  for (let i = 1; i < sorted.length; i++) {
+    const idx = (currentIdx + i) % sorted.length
+    const account = sorted[idx]
     // 只切换到已启用且未耗尽的账户
     if (account.enabled && !account.isExhausted) {
-      state.activeAccountIndex = idx
+      state.activeAccountIndex = state.accounts.indexOf(account)
       // Sync state.githubToken for backward compat
       state.githubToken = account.githubToken
       consola.info(`Switched to account "${account.label}"`)
@@ -299,6 +330,7 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
         label: index === 0 ? "default" : `account-${index + 1}`,
         githubToken: token,
         enabled: true,
+        priority: 0,
         isExhausted: false,
         createdAt: Date.now(),
       }
@@ -320,6 +352,7 @@ function migrateAccount(account: Record<string, unknown>): Account {
   const acc = account as Partial<Account> & {
     isActive?: boolean
     enabled?: boolean
+    priority?: number
   }
 
   // Migrate isActive → enabled (if enabled not set but isActive is, use isActive)
@@ -333,6 +366,11 @@ function migrateAccount(account: Record<string, unknown>): Account {
   // Default enabled to true if neither field exists
   if (typeof acc.enabled !== "boolean") {
     acc.enabled = true
+  }
+
+  // Default priority to 0 if not set
+  if (typeof acc.priority !== "number") {
+    acc.priority = 0
   }
 
   // Clean up old field

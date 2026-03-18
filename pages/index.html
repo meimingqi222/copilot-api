@@ -325,6 +325,28 @@
                   <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
                 </div>
               </div>
+              <!-- Priority Setting -->
+              <div class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <i data-lucide="list-ordered" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                    <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.priority')"></span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button @click="decreasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
+                      <i data-lucide="minus" class="w-4 h-4"></i>
+                    </button>
+                    <input type="number" x-model.number="account.priority" @change="savePriority(account)"
+                           min="0" max="100" step="1"
+                           class="input w-16 text-center text-sm py-1 px-2 h-8"
+                           :disabled="!account.enabled">
+                    <button @click="increasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
+                      <i data-lucide="plus" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                </div>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('accounts.priorityHint')"></p>
+              </div>
               <!-- Available Models -->
               <div x-show="account.availableModels && account.availableModels.length" class="mb-4">
                 <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
@@ -361,12 +383,6 @@
                 <button @click="toggleEnabled(account)" class="btn btn-small flex-1"
                         :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
                         x-text="t(account.enabled ? 'accounts.disable' : 'accounts.enable')">
-                </button>
-                <!-- 设为当前按钮 -->
-                <button @click="setActive(account.id)" class="btn btn-small"
-                        :class="account.isActive ? 'btn-success' : 'btn-secondary'"
-                        :disabled="!account.enabled || account.isActive"
-                        x-text="t('accounts.setActive')">
                 </button>
                 <button @click="deleteAccount(account.id)" class="btn btn-danger btn-small" x-text="t('delete')"></button>
               </div>
@@ -577,6 +593,10 @@
                   <div class="flex items-center gap-3 mb-4 flex-wrap">
                     <i data-lucide="github" class="w-5 h-5"></i>
                     <span class="font-medium text-body" x-text="account.label"></span>
+                    <!-- 优先级 -->
+                    <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-[var(--apple-purple)] text-white">
+                      <span x-text="t('accounts.priority') + ': ' + (account.priority ?? 0)"></span>
+                    </span>
                     <!-- 启用状态 -->
                     <span class="px-2 py-0.5 text-xs font-medium rounded-full"
                           :class="account.enabled ? 'bg-[var(--apple-green)] text-white' : 'bg-gray-400 text-white'"
@@ -1147,26 +1167,26 @@
           }
         },
 
-        async setActive(id) {
+        async savePriority(account) {
+          const priority = Math.max(0, Math.min(100, account.priority ?? 0));
           try {
-            const result = await API.accounts.activate(id);
-            if (result.ok) {
-              this.showToast(
-                I18n.t('accounts.setActiveSuccess') || 'Account set as current',
-                'success'
-              );
-            }
-            await this.load();
+            await API.accounts.update(account.id, { priority });
+            this.showToast(I18n.t('accounts.prioritySuccess') || 'Priority updated', 'success');
           } catch (e) {
-            const msg = e.message || '';
-            if (msg.includes('disabled')) {
-              this.showToast(I18n.t('accounts.errorDisabled') || 'Account is disabled', 'error');
-            } else if (msg.includes('exhausted')) {
-              this.showToast(I18n.t('accounts.errorExhausted') || 'Account is exhausted', 'error');
-            } else {
-              this.showToast(I18n.t('error.update'), 'error');
-            }
+            this.showToast(I18n.t('error.update'), 'error');
           }
+        },
+
+        async decreasePriority(account) {
+          const newPriority = Math.max(0, (account.priority ?? 0) + 1);
+          account.priority = newPriority;
+          await this.savePriority(account);
+        },
+
+        async increasePriority(account) {
+          const newPriority = Math.max(0, (account.priority ?? 0) - 1);
+          account.priority = newPriority;
+          await this.savePriority(account);
         },
 
         async deleteAccount(id) {
