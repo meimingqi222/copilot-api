@@ -62,7 +62,7 @@ export async function reportUpstreamRateLimit(response: Response) {
 
     const adaptivePenaltyMs =
       retryAfterMs ?? computeBackoffMs(consecutive429Count)
-    const cooldownMs = Math.max(1, adaptivePenaltyMs)
+    const cooldownMs = Math.min(MAX_BACKOFF_MS, Math.max(1, adaptivePenaltyMs))
     const cooldownUntil = Date.now() + cooldownMs
 
     cooldownUntilMs = Math.max(cooldownUntilMs, cooldownUntil)
