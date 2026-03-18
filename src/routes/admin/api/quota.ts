@@ -11,6 +11,7 @@ quotaApiRoutes.get("/", (c) => {
     id: rest.id,
     label: rest.label,
     enabled: rest.enabled,
+    priority: rest.priority ?? 0,
     isActive: idx === state.activeAccountIndex,
     isExhausted: rest.isExhausted,
     quotaInfo: rest.quotaInfo ?? null,
