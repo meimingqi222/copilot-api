@@ -30,9 +30,9 @@ import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
 ): ChatCompletionsPayload {
-  const reasoningEffort = translateAnthropicThinkingToReasoningEffort(
-    payload.thinking,
-  )
+  const reasoningEffort =
+    payload.reasoning_effort
+    ?? translateAnthropicThinkingToReasoningEffort(payload.thinking)
   return {
     model: translateModelName(payload.model),
     messages: translateAnthropicMessagesToOpenAI(

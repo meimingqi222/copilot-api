@@ -27,6 +27,7 @@ export interface AnthropicMessagesPayload {
         type: "adaptive"
       }
   service_tier?: "auto" | "standard_only"
+  reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | null
 }
 
 export interface AnthropicTextBlock {
