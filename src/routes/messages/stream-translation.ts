@@ -1,5 +1,3 @@
-import consola from "consola"
-
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
   type ChatCompletionChunk,
@@ -127,7 +125,10 @@ function getThinkingDelta(
   // matching the non-streaming translation and avoiding duplication when
   // the Copilot proxy echoes the same content in multiple alias fields.
   const topLevelReasoning =
-    delta.reasoning_text ?? delta.thinking ?? delta.reasoning
+    delta.reasoning_text
+    ?? delta.thinking
+    ?? delta.reasoning
+    ?? delta.reasoning_content
   if (topLevelReasoning) {
     reasoningParts.push(topLevelReasoning)
   }
@@ -244,10 +245,12 @@ export function translateChunkToAnthropicEvents(
 
   if (delta.content) {
     if (!state.contentBlockOpen && state.bufferedThinking) {
-      consola.debug(
-        `Discarding ${state.bufferedThinking.length} chars of unsigned reasoning (text arrived before signature)`,
-      )
+      // OpenAI reasoning models (e.g. gpt-5.1-codex-mini) send reasoning
+      // without a signature. Emit the buffered thinking as an unsigned
+      // thinking block so clients can still display reasoning info.
+      ensureThinkingBlockOpen(state, events, state.bufferedThinking)
       state.bufferedThinking = ""
+      stopCurrentContentBlock(state, events)
       state.suppressLateThinking = true
     }
 

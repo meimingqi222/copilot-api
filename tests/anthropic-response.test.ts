@@ -812,7 +812,10 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
         && event.delta.text.includes("final answer"),
     )
 
-    expect(hasThinkingEvent).toBe(false)
+    // Unsigned thinking is emitted as an unsigned thinking block so that
+    // OpenAI reasoning models (which never send signatures) can still
+    // surface reasoning info to Anthropic protocol clients.
+    expect(hasThinkingEvent).toBe(true)
     expect(hasTextDelta).toBe(true)
   })
 
@@ -891,11 +894,24 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
         && event.delta.type === "text_delta",
     )
 
-    expect(thinkingEvents).toEqual([])
-    expect(textEvents).toEqual([
+    // Unsigned thinking is emitted before text, late signatures after
+    // text has started are still suppressed.
+    expect(thinkingEvents).toEqual([
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "thinking", thinking: "" },
+      },
       {
         type: "content_block_delta",
         index: 0,
+        delta: { type: "thinking_delta", thinking: "step-1" },
+      },
+    ])
+    expect(textEvents).toEqual([
+      {
+        type: "content_block_delta",
+        index: 1,
         delta: {
           type: "text_delta",
           text: " visible answer",
