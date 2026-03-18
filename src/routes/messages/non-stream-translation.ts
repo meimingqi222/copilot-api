@@ -405,6 +405,7 @@ function addTopLevelReasoningBlocks(
     message.reasoning_text
       ?? message.thinking
       ?? message.reasoning
+      ?? message.reasoning_content
       ?? undefined,
     getMessageLevelThinkingSignature(message),
   )
