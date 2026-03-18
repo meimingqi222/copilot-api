@@ -18,6 +18,7 @@ import {
   standardHeaders,
 } from "~/lib/api-config"
 import { PATHS } from "~/lib/paths"
+import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
@@ -74,7 +75,7 @@ function publicAccount(account: Account) {
   } = account
   return {
     ...rest,
-    priority: account.priority ?? 0,
+    priority: account.priority,
     isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
   }
 }
@@ -273,7 +274,9 @@ accountApiRoutes.put("/:id", async (c) => {
   }
   if (typeof body.priority === "number") {
     account.priority = Math.max(0, Math.min(100, body.priority))
-    consola.info(`Account "${account.label}" priority set to ${account.priority}`)
+    consola.info(
+      `Account "${account.label}" priority set to ${account.priority}`,
+    )
   }
   await saveAccounts()
   return c.json({ account: publicAccount(account) })
@@ -286,6 +289,9 @@ accountApiRoutes.delete("/:id", async (c) => {
 
   // Cancel any pending token refresh timer to prevent leaks
   cancelTokenRefreshTimer(id)
+
+  // Clear rate limit state for this account
+  clearAccountRateLimitState(id)
 
   const wasActive = idx === state.activeAccountIndex
   state.accounts.splice(idx, 1)
@@ -333,7 +339,7 @@ accountApiRoutes.post("/:id/activate", async (c) => {
   }
 
   // Find minimum priority among all accounts
-  const minPriority = Math.min(...state.accounts.map((a) => a.priority ?? 0))
+  const minPriority = Math.min(...state.accounts.map((a) => a.priority))
   // Set this account to highest priority (lower than current minimum)
   account.priority = Math.max(0, minPriority - 1)
   await saveAccounts()

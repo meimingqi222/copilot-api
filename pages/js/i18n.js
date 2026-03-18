@@ -332,7 +332,8 @@ const i18n = {
       "accounts.models.pickerOn": "Shown in model picker",
       "accounts.models.pickerOff": "Hidden from model picker",
       "accounts.priority": "Priority",
-      "accounts.priorityHint": "Lower value = higher priority. Same priority uses order.",
+      "accounts.priorityHint":
+        "Lower value = higher priority. Same priority uses order.",
       "accounts.prioritySuccess": "Priority updated",
 
       // Quota

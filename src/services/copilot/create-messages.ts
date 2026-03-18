@@ -9,7 +9,7 @@ import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import {
   getAccountForModel,
   markAccountExhausted,
-  switchToNextAccountForModel,
+  tryNextAccountForModel,
 } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -33,7 +33,9 @@ export function translateToCopilotMessages(
   return {
     ...rest,
     ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
-    ...(payload.temperature !== undefined ? { temperature: payload.temperature } : {}),
+    ...(payload.temperature !== undefined ?
+      { temperature: payload.temperature }
+    : {}),
     ...(payload.top_p !== undefined ? { top_p: payload.top_p } : {}),
     ...(payload.top_k !== undefined ? { top_k: payload.top_k } : {}),
     ...(payload.tools ? { tools: payload.tools } : {}),
@@ -101,7 +103,7 @@ export const createMessages = async (
   let response = await doRequest(account)
 
   if (!response.ok && response.status === 429) {
-    await reportUpstreamRateLimit(response)
+    await reportUpstreamRateLimit(account.id, response)
     markAccountExhausted(account.id)
     const retryResult = await tryNextAccountForModel(
       account,
@@ -117,7 +119,7 @@ export const createMessages = async (
     throw new HTTPError("Failed to create messages", response, errorBody)
   }
 
-  await reportUpstreamSuccess()
+  await reportUpstreamSuccess(usedAccount.id)
 
   if (payload.stream) {
     return {
@@ -131,32 +133,6 @@ export const createMessages = async (
   return {
     accountId: usedAccount.id,
     response: (await response.json()) as AnthropicResponse,
-  }
-}
-
-async function tryNextAccountForModel(
-  currentAccount: Awaited<ReturnType<typeof getAccountForModel>>,
-  modelId: string,
-  doRequest: (
-    account: Awaited<ReturnType<typeof getAccountForModel>>,
-  ) => Promise<Response>,
-): Promise<{
-  response: Response
-  account: Awaited<ReturnType<typeof getAccountForModel>>
-}> {
-  const nextAccount = switchToNextAccountForModel(currentAccount, modelId)
-  if (nextAccount) {
-    const retryResponse = await doRequest(nextAccount)
-    if (!retryResponse.ok && retryResponse.status === 429) {
-      await reportUpstreamRateLimit(retryResponse)
-      markAccountExhausted(nextAccount.id)
-    }
-    return { response: retryResponse, account: nextAccount }
-  }
-
-  return {
-    response: new Response("All accounts exhausted", { status: 429 }),
-    account: currentAccount,
   }
 }
 

@@ -4,7 +4,7 @@ import { events } from "fetch-event-stream"
 import {
   getAccountForModel,
   markAccountExhausted,
-  switchToNextAccountForModel,
+  tryNextAccountForModel,
 } from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -72,7 +72,7 @@ export const createChatCompletions = async (
 
   // Handle 429 by marking account exhausted and trying next account for the same model
   if (!response.ok && response.status === 429) {
-    await reportUpstreamRateLimit(response)
+    await reportUpstreamRateLimit(account.id, response)
     markAccountExhausted(account.id)
     const retryResult = await tryNextAccountForModel(
       account,
@@ -98,7 +98,7 @@ export const createChatCompletions = async (
     )
   }
 
-  await reportUpstreamSuccess()
+  await reportUpstreamSuccess(usedAccount.id)
 
   if (payload.stream) {
     const stream = events(
@@ -126,38 +126,6 @@ export const createChatCompletions = async (
       useResponsesApi ?
         translateResponsesToChatCompletion(responseBody as ResponsesResponse)
       : (responseBody as ChatCompletionResponse),
-  }
-}
-
-/**
- * Try the next available account that supports the requested model when current account returns 429.
- * If the retry account also returns 429, mark it as exhausted.
- * Returns both the response and the account that was used.
- */
-async function tryNextAccountForModel(
-  currentAccount: Awaited<ReturnType<typeof getAccountForModel>>,
-  modelId: string,
-  doRequest: (account: typeof currentAccount) => Promise<Response>,
-): Promise<{ response: Response; account: typeof currentAccount }> {
-  try {
-    const nextAccount = switchToNextAccountForModel(currentAccount, modelId)
-    if (!nextAccount || nextAccount.id === currentAccount.id) {
-      return {
-        response: new Response("All accounts exhausted", { status: 429 }),
-        account: currentAccount,
-      }
-    }
-    const response = await doRequest(nextAccount)
-    // If the retry account also returns 429, mark it as exhausted too
-    if (response.status === 429) {
-      markAccountExhausted(nextAccount.id)
-    }
-    return { response, account: nextAccount }
-  } catch {
-    return {
-      response: new Response("All accounts exhausted", { status: 429 }),
-      account: currentAccount,
-    }
   }
 }
 

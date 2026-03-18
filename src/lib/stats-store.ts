@@ -1,7 +1,6 @@
+import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
-
-import { Database } from "bun:sqlite"
 
 import { getDefaultModelPrice } from "~/lib/default-prices"
 import { PATHS } from "~/lib/paths"
