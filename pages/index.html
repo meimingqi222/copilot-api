@@ -319,8 +319,6 @@
                 <div class="flex flex-col items-end gap-1">
                   <!-- 用户控制的启用状态 -->
                   <span class="badge" :class="account.enabled ? 'badge-success' : 'badge-gray'" x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"></span>
-                  <!-- 系统决定的当前使用状态 -->
-                  <span x-show="account.isActive" class="badge badge-info" x-text="t('accounts.status.current')"></span>
                   <!-- 配额耗尽状态 -->
                   <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
                 </div>
@@ -333,15 +331,15 @@
                     <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.priority')"></span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <button @click="decreasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
-                      <i data-lucide="minus" class="w-4 h-4"></i>
+                    <button @click="increasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
+                      <i data-lucide="plus" class="w-4 h-4"></i>
                     </button>
                     <input type="number" x-model.number="account.priority" @change="savePriority(account)"
                            min="0" max="100" step="1"
                            class="input w-16 text-center text-sm py-1 px-2 h-8"
                            :disabled="!account.enabled">
-                    <button @click="increasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
-                      <i data-lucide="plus" class="w-4 h-4"></i>
+                    <button @click="decreasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
+                      <i data-lucide="minus" class="w-4 h-4"></i>
                     </button>
                   </div>
                 </div>
