@@ -169,6 +169,9 @@ const i18n = {
       "quota.noData": "暂无配额数据",
       "quota.totalQuota": "全部账户",
       "quota.currentAccount": "当前账户",
+      "quota.accountModelUsage": "模型使用情况",
+      "quota.noUsageData": "暂无使用数据",
+      "quota.requests": "次",
 
       // Logs
       "logs.title": "系统日志",
@@ -379,6 +382,9 @@ const i18n = {
       "quota.noData": "No quota data",
       "quota.totalQuota": "All Accounts",
       "quota.currentAccount": "Current Account",
+      "quota.accountModelUsage": "Model Usage",
+      "quota.noUsageData": "No usage data",
+      "quota.requests": "requests",
 
       // Logs
       "logs.title": "System Logs",
