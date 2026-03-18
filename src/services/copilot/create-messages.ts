@@ -19,6 +19,67 @@ import {
 } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 
+/**
+ * Translates Anthropic thinking config to Copilot's /v1/messages format.
+ * Copilot's /v1/messages endpoint uses reasoning_effort instead of budget_tokens.
+ * Budget mapping:
+ * - minimal: budget < 1024
+ * - low: 1024 <= budget < 8192
+ * - medium: 8192 <= budget < 24576
+ * - high: 24576 <= budget < 32768
+ * - xhigh: budget >= 32768
+ */
+function translateThinkingToReasoningEffort(
+  thinking: AnthropicMessagesPayload["thinking"],
+): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
+  if (!thinking) {
+    return undefined
+  }
+
+  if (thinking.type === "enabled") {
+    const budget = thinking.budget_tokens ?? 8192
+    if (budget >= 32768) return "xhigh"
+    if (budget >= 24576) return "high"
+    if (budget >= 8192) return "medium"
+    if (budget >= 1024) return "low"
+    return "minimal"
+  }
+
+  // adaptive: let the model decide, default to high
+  return "high"
+}
+
+/**
+ * Translates Anthropic messages payload to Copilot's /v1/messages format.
+ * The main difference is that Copilot uses reasoning_effort instead of thinking.budget_tokens.
+ */
+export function translateToCopilotMessages(
+  payload: AnthropicMessagesPayload,
+): Record<string, unknown> {
+  const reasoningEffort = translateThinkingToReasoningEffort(payload.thinking)
+
+  return {
+    model: payload.model,
+    messages: payload.messages,
+    max_tokens: payload.max_tokens,
+    ...(payload.system ? { system: payload.system } : {}),
+    ...(payload.metadata ? { metadata: payload.metadata } : {}),
+    ...(payload.stop_sequences ? { stop_sequences: payload.stop_sequences } : {}),
+    ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
+    // Copilot requires temperature=1 when reasoning is enabled
+    ...(reasoningEffort !== undefined
+      ? { temperature: 1, reasoning_effort: reasoningEffort }
+      : payload.temperature !== undefined
+        ? { temperature: payload.temperature }
+        : {}),
+    ...(payload.top_p !== undefined ? { top_p: payload.top_p } : {}),
+    ...(payload.top_k !== undefined ? { top_k: payload.top_k } : {}),
+    ...(payload.tools ? { tools: payload.tools } : {}),
+    ...(payload.tool_choice ? { tool_choice: payload.tool_choice } : {}),
+    ...(payload.service_tier ? { service_tier: payload.service_tier } : {}),
+  }
+}
+
 export const createMessages = async (
   payload: AnthropicMessagesPayload,
   signal?: AbortSignal,
@@ -46,6 +107,9 @@ export const createMessages = async (
   const initiator =
     options?.initiatorOverride ?? inferMessagesInitiator(payload)
 
+  // Translate thinking to reasoning_effort for Copilot's /v1/messages endpoint
+  const copilotPayload = translateToCopilotMessages(payload)
+
   const doRequest = async (requestAccount: typeof account) => {
     const headers: Record<string, string> = {
       ...copilotHeaders(requestAccount, enableVision),
@@ -66,7 +130,7 @@ export const createMessages = async (
     return fetch(`${copilotBaseUrl(state)}/v1/messages`, {
       method: "POST",
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(copilotPayload),
       signal,
     })
   }
