@@ -318,10 +318,28 @@ async function handleDirectStreamingResponse({
 
       const parsed = JSON.parse(rawEvent.data) as {
         type?: string
-        usage?: typeof lastUsage
+        message?: {
+          usage?: {
+            input_tokens?: number
+            cache_read_input_tokens?: number
+            cache_creation_input_tokens?: number
+          }
+        }
+        usage?: { output_tokens: number }
       }
-      if (parsed.type === "message_delta" && parsed.usage) {
-        lastUsage = parsed.usage
+      if (parsed.type === "message_start" && parsed.message?.usage) {
+        const msgUsage = parsed.message.usage
+        lastUsage = {
+          input_tokens: msgUsage.input_tokens ?? 0,
+          output_tokens: lastUsage?.output_tokens ?? 0,
+          cache_read_input_tokens: msgUsage.cache_read_input_tokens,
+          cache_creation_input_tokens: msgUsage.cache_creation_input_tokens,
+        }
+      } else if (parsed.type === "message_delta" && parsed.usage) {
+        lastUsage = {
+          ...(lastUsage ?? { input_tokens: 0, output_tokens: 0 }),
+          output_tokens: parsed.usage.output_tokens,
+        }
       }
 
       await stream.writeSSE({
