@@ -220,6 +220,11 @@ export interface AnthropicStreamState {
       anthropicBlockIndex: number
     }
   }
+  // Pre-calculated estimate of input tokens from the request payload.
+  // Used as a fallback in message_start when the upstream API (e.g. Responses
+  // API) does not include usage data until the final streaming chunk, which
+  // would otherwise cause message_start to report input_tokens = 0.
+  estimatedInputTokens: number
 }
 
 /** Factory to create a fresh AnthropicStreamState with all fields at their default values. */
@@ -233,5 +238,6 @@ export function createInitialStreamState(): AnthropicStreamState {
     bufferedThinking: "",
     suppressLateThinking: false,
     toolCalls: {},
+    estimatedInputTokens: 0,
   }
 }

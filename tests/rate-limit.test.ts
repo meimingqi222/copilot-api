@@ -10,6 +10,8 @@ import {
 } from "~/lib/rate-limit"
 import { sleep } from "~/lib/utils"
 
+const TEST_ACCOUNT_ID = "test-account"
+
 afterEach(() => {
   resetAdaptiveRateLimiterForTest()
 })
@@ -19,7 +21,7 @@ describe("adaptive rate limiter", () => {
     const start = Date.now()
     await Promise.all(
       Array.from({ length: adaptiveRateLimitDefaults.burst }, () =>
-        checkRateLimit(),
+        checkRateLimit(TEST_ACCOUNT_ID),
       ),
     )
     const elapsed = Date.now() - start
@@ -30,12 +32,12 @@ describe("adaptive rate limiter", () => {
   test("queues requests after burst capacity", async () => {
     await Promise.all(
       Array.from({ length: adaptiveRateLimitDefaults.burst }, () =>
-        checkRateLimit(),
+        checkRateLimit(TEST_ACCOUNT_ID),
       ),
     )
 
     const start = Date.now()
-    await checkRateLimit()
+    await checkRateLimit(TEST_ACCOUNT_ID)
     const elapsed = Date.now() - start
 
     expect(elapsed).toBeGreaterThanOrEqual(
@@ -48,10 +50,10 @@ describe("adaptive rate limiter", () => {
       status: 429,
       headers: { "retry-after": "0.05" },
     })
-    await reportUpstreamRateLimit(response)
+    await reportUpstreamRateLimit(TEST_ACCOUNT_ID, response)
 
     const start = Date.now()
-    await checkRateLimit()
+    await checkRateLimit(TEST_ACCOUNT_ID)
     const elapsed = Date.now() - start
 
     expect(elapsed).toBeGreaterThanOrEqual(40)
@@ -86,7 +88,7 @@ describe("checkRateLimit with AbortSignal", () => {
   test("aborts during sleep phase (after burst)", async () => {
     await Promise.all(
       Array.from({ length: adaptiveRateLimitDefaults.burst }, () =>
-        checkRateLimit(),
+        checkRateLimit(TEST_ACCOUNT_ID),
       ),
     )
 
@@ -94,7 +96,9 @@ describe("checkRateLimit with AbortSignal", () => {
     const start = Date.now()
     setTimeout(() => ac.abort(), 20)
 
-    const err = await checkRateLimit(ac.signal).catch((e: unknown) => e)
+    const err = await checkRateLimit(TEST_ACCOUNT_ID, ac.signal).catch(
+      (e: unknown) => e,
+    )
     expect((err as Error).name).toBe("AbortError")
     expect(Date.now() - start).toBeLessThan(
       adaptiveRateLimitDefaults.intervalMs,
@@ -103,31 +107,35 @@ describe("checkRateLimit with AbortSignal", () => {
 
   test("aborts while waiting for lock", async () => {
     const holdMs = 100
-    void holdLimiterLockForTest(holdMs)
+    void holdLimiterLockForTest(TEST_ACCOUNT_ID, holdMs)
 
     const ac = new AbortController()
     const start = Date.now()
     setTimeout(() => ac.abort(), 20)
 
-    const err = await checkRateLimit(ac.signal).catch((e: unknown) => e)
+    const err = await checkRateLimit(TEST_ACCOUNT_ID, ac.signal).catch(
+      (e: unknown) => e,
+    )
     expect((err as Error).name).toBe("AbortError")
     expect(Date.now() - start).toBeLessThan(holdMs)
   })
 
   test("aborted request does not block subsequent requests", async () => {
     const holdMs = 80
-    void holdLimiterLockForTest(holdMs)
+    void holdLimiterLockForTest(TEST_ACCOUNT_ID, holdMs)
 
     const ac = new AbortController()
     setTimeout(() => ac.abort(), 20)
 
-    const err = await checkRateLimit(ac.signal).catch((e: unknown) => e)
+    const err = await checkRateLimit(TEST_ACCOUNT_ID, ac.signal).catch(
+      (e: unknown) => e,
+    )
     expect((err as Error).name).toBe("AbortError")
 
     await sleep(holdMs + 20)
 
     const start = Date.now()
-    await checkRateLimit()
+    await checkRateLimit(TEST_ACCOUNT_ID)
     expect(Date.now() - start).toBeLessThan(50)
   })
 })
@@ -135,15 +143,17 @@ describe("checkRateLimit with AbortSignal", () => {
 describe("rate limiter queue size limit", () => {
   test("throws RateLimitQueueFullError when queue is full", async () => {
     const ac = new AbortController()
-    void holdLimiterLockForTest(200)
+    void holdLimiterLockForTest(TEST_ACCOUNT_ID, 200)
 
     const pending: Array<Promise<void>> = []
 
     for (let i = 0; i < 100; i++) {
-      pending.push(checkRateLimit(ac.signal).catch(() => {}))
+      pending.push(checkRateLimit(TEST_ACCOUNT_ID, ac.signal).catch(() => {}))
     }
 
-    const err = await checkRateLimit(ac.signal).catch((e: unknown) => e)
+    const err = await checkRateLimit(TEST_ACCOUNT_ID, ac.signal).catch(
+      (e: unknown) => e,
+    )
     expect(err).toBeInstanceOf(RateLimitQueueFullError)
 
     ac.abort()

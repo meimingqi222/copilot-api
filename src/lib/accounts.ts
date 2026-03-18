@@ -5,6 +5,7 @@ import fs from "node:fs/promises"
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { PATHS } from "~/lib/paths"
+import { reportUpstreamRateLimit } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 
 export interface Account {
@@ -106,8 +107,8 @@ export function getAccountForModel(modelId: string): Account {
     .filter((a) => a.enabled && !a.isExhausted)
     .map((a, originalIndex) => ({ account: a, originalIndex }))
     .sort((left, right) => {
-      const leftPriority = left.account.priority ?? 0
-      const rightPriority = right.account.priority ?? 0
+      const leftPriority = left.account.priority
+      const rightPriority = right.account.priority
       if (leftPriority !== rightPriority) {
         return leftPriority - rightPriority
       }
@@ -153,8 +154,8 @@ export function switchToNextAccountForModel(
   const sorted = state.accounts
     .map((account, originalIndex) => ({ account, originalIndex }))
     .sort((left, right) => {
-      const leftPriority = left.account.priority ?? 0
-      const rightPriority = right.account.priority ?? 0
+      const leftPriority = left.account.priority
+      const rightPriority = right.account.priority
       if (leftPriority !== rightPriority) {
         return leftPriority - rightPriority
       }
@@ -190,8 +191,8 @@ export function getActiveAccount(): Account {
     .filter((a) => a.enabled && !a.isExhausted)
     .map((account, originalIndex) => ({ account, originalIndex }))
     .sort((left, right) => {
-      const leftPriority = left.account.priority ?? 0
-      const rightPriority = right.account.priority ?? 0
+      const leftPriority = left.account.priority
+      const rightPriority = right.account.priority
       if (leftPriority !== rightPriority) {
         return leftPriority - rightPriority
       }
@@ -228,8 +229,8 @@ export function switchToNextAccount(): Account | null {
   const sorted = state.accounts
     .map((account, originalIndex) => ({ account, originalIndex }))
     .sort((left, right) => {
-      const leftPriority = left.account.priority ?? 0
-      const rightPriority = right.account.priority ?? 0
+      const leftPriority = left.account.priority
+      const rightPriority = right.account.priority
       if (leftPriority !== rightPriority) {
         return leftPriority - rightPriority
       }
@@ -473,5 +474,48 @@ function snapshotFromUsage(
     chatRemaining: chat?.remaining,
     completionsRemaining: completions?.remaining,
     unlimited,
+  }
+}
+
+/**
+ * Try the next available account for a model when the current account fails with 429.
+ * Handles rate limiting, account exhaustion marking, and failover logic.
+ *
+ * @param currentAccount - The account that just failed
+ * @param modelId - The model being requested
+ * @param doRequest - Function to execute the request with a given account
+ * @returns The response and the account that was used
+ */
+export async function tryNextAccountForModel(
+  currentAccount: Account,
+  modelId: string,
+  doRequest: (account: Account) => Promise<Response>,
+): Promise<{ response: Response; account: Account }> {
+  const nextAccount = switchToNextAccountForModel(currentAccount, modelId)
+
+  // No other account available or same account returned
+  if (!nextAccount || nextAccount.id === currentAccount.id) {
+    return {
+      response: new Response("All accounts exhausted", { status: 429 }),
+      account: currentAccount,
+    }
+  }
+
+  try {
+    const response = await doRequest(nextAccount)
+
+    // If the retry account also returns 429, report rate limit and mark exhausted
+    if (response.status === 429) {
+      await reportUpstreamRateLimit(nextAccount.id, response)
+      markAccountExhausted(nextAccount.id)
+    }
+
+    return { response, account: nextAccount }
+  } catch (error) {
+    consola.warn(`Request failed for account "${nextAccount.label}":`, error)
+    return {
+      response: new Response("All accounts exhausted", { status: 429 }),
+      account: nextAccount,
+    }
   }
 }

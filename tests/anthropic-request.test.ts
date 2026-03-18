@@ -4,8 +4,8 @@ import { z } from "zod"
 import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
 
 import { translateToOpenAI } from "../src/routes/messages/non-stream-translation"
-import { translateToCopilotMessages } from "../src/services/copilot/create-messages"
 import { translateToResponsesPayload } from "../src/services/copilot/chat-to-responses"
+import { translateToCopilotMessages } from "../src/services/copilot/create-messages"
 
 // Zod schema for a single message in the chat completion request.
 const messageSchema = z.object({
@@ -356,7 +356,9 @@ describe("Anthropic thinking and model mapping", () => {
       }
 
       const openAIPayload = translateToOpenAI(anthropicPayload)
-      expect(openAIPayload.reasoning_effort).toBe(expected)
+      expect(openAIPayload.reasoning_effort).toBe(
+        expected as "minimal" | "low" | "medium" | "high" | "xhigh",
+      )
     }
   })
 
@@ -436,7 +438,10 @@ describe("Copilot /v1/messages endpoint translation", () => {
     // reasoning_effort is OpenAI-specific, should not be sent to Copilot's Anthropic endpoint
     expect(copilotPayload.reasoning_effort).toBeUndefined()
     // thinking is Anthropic's native param, should be preserved
-    expect(copilotPayload.thinking).toEqual({ type: "enabled", budget_tokens: 8192 })
+    expect(copilotPayload.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 8192,
+    })
   })
 
   test("should not include reasoning_effort when reasoning_effort is provided in input", () => {
@@ -467,7 +472,10 @@ describe("Copilot /v1/messages endpoint translation", () => {
     const copilotPayload = translateToCopilotMessages(anthropicPayload)
 
     // thinking should be preserved as-is
-    expect(copilotPayload.thinking).toEqual({ type: "enabled", budget_tokens: 16000 })
+    expect(copilotPayload.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 16000,
+    })
   })
 
   test("should preserve adaptive thinking", () => {
@@ -522,7 +530,9 @@ describe("Copilot /v1/messages endpoint translation", () => {
     const copilotPayload = translateToCopilotMessages(anthropicPayload)
 
     expect(copilotPayload.model).toBe("claude-sonnet-4")
-    expect(copilotPayload.messages).toEqual([{ role: "user", content: "hello" }])
+    expect(copilotPayload.messages).toEqual([
+      { role: "user", content: "hello" },
+    ])
     expect(copilotPayload.max_tokens).toBe(128)
     expect(copilotPayload.system).toBe("You are helpful.")
     expect(copilotPayload.metadata).toEqual({ user_id: "user-123" })
@@ -533,7 +543,10 @@ describe("Copilot /v1/messages endpoint translation", () => {
     expect(copilotPayload.tools).toHaveLength(1)
     expect(copilotPayload.tool_choice).toEqual({ type: "auto" })
     expect(copilotPayload.reasoning_effort).toBeUndefined()
-    expect(copilotPayload.thinking).toEqual({ type: "enabled", budget_tokens: 1024 })
+    expect(copilotPayload.thinking).toEqual({
+      type: "enabled",
+      budget_tokens: 1024,
+    })
     expect(copilotPayload.temperature).toBe(0.7)
   })
 
@@ -556,7 +569,7 @@ describe("Responses API endpoint translation (through OpenAI payload)", () => {
   test("should translate reasoning_effort to Responses reasoning format", () => {
     const openAIPayload = {
       model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
+      messages: [{ role: "user" as const, content: "hello" }],
       max_tokens: 128,
       reasoning_effort: "high" as const,
     }
@@ -581,7 +594,7 @@ describe("Responses API endpoint translation (through OpenAI payload)", () => {
     for (const { input, expected } of testCases) {
       const openAIPayload = {
         model: "claude-sonnet-4",
-        messages: [{ role: "user", content: "test" }],
+        messages: [{ role: "user" as const, content: "test" }],
         max_tokens: 128,
         reasoning_effort: input,
       }
@@ -594,7 +607,7 @@ describe("Responses API endpoint translation (through OpenAI payload)", () => {
   test("should not include reasoning when reasoning_effort is not specified", () => {
     const openAIPayload = {
       model: "claude-sonnet-4",
-      messages: [{ role: "user", content: "hello" }],
+      messages: [{ role: "user" as const, content: "hello" }],
       max_tokens: 128,
     }
 
@@ -607,15 +620,20 @@ describe("Responses API endpoint translation (through OpenAI payload)", () => {
     const openAIPayload = {
       model: "claude-sonnet-4",
       messages: [
-        { role: "user", content: "hello" },
-        { role: "assistant", content: "hi there" },
+        { role: "user" as const, content: "hello" },
+        { role: "assistant" as const, content: "hi there" },
       ],
       max_tokens: 256,
       temperature: 0.7,
       top_p: 0.9,
       stream: true,
       reasoning_effort: "medium" as const,
-      tools: [{ type: "function" as const, function: { name: "test", parameters: {} } }],
+      tools: [
+        {
+          type: "function" as const,
+          function: { name: "test", parameters: {} },
+        },
+      ],
     }
 
     const responsesPayload = translateToResponsesPayload(openAIPayload)
@@ -625,7 +643,10 @@ describe("Responses API endpoint translation (through OpenAI payload)", () => {
     expect(responsesPayload.temperature).toBe(0.7)
     expect(responsesPayload.top_p).toBe(0.9)
     expect(responsesPayload.stream).toBe(true)
-    expect(responsesPayload.reasoning).toEqual({ effort: "medium", summary: "auto" })
+    expect(responsesPayload.reasoning).toEqual({
+      effort: "medium",
+      summary: "auto",
+    })
     expect(responsesPayload.tools).toHaveLength(1)
   })
 })

@@ -8,15 +8,42 @@ const MAX_BACKOFF_MS = 60_000
 const BASE_BACKOFF_MS = 1_000
 const MAX_QUEUE_SIZE = 100
 
-let limiterLock: Promise<void> = Promise.resolve()
-let limiterQueueSize = 0
-let theoreticalArrivalMs = 0
-let cooldownUntilMs = 0
-let consecutive429Count = 0
+interface AccountRateLimitState {
+  limiterLock: Promise<void>
+  limiterQueueSize: number
+  theoreticalArrivalMs: number
+  cooldownUntilMs: number
+  consecutive429Count: number
+}
+
+const accountLimiters = new Map<string, AccountRateLimitState>()
+
+function getAccountState(accountId: string): AccountRateLimitState {
+  let state = accountLimiters.get(accountId)
+  if (!state) {
+    state = {
+      limiterLock: Promise.resolve(),
+      limiterQueueSize: 0,
+      theoreticalArrivalMs: 0,
+      cooldownUntilMs: 0,
+      consecutive429Count: 0,
+    }
+    accountLimiters.set(accountId, state)
+  }
+  return state
+}
 
 export const adaptiveRateLimitDefaults = {
   intervalMs: DEFAULT_INTERVAL_MS,
   burst: DEFAULT_BURST,
+}
+
+/**
+ * Clear rate limit state for a specific account.
+ * Should be called when an account is deleted.
+ */
+export function clearAccountRateLimitState(accountId: string): void {
+  accountLimiters.delete(accountId)
 }
 
 export class RateLimitQueueFullError extends Error {
@@ -26,25 +53,30 @@ export class RateLimitQueueFullError extends Error {
   }
 }
 
-export async function checkRateLimit(signal?: AbortSignal) {
-  const waitTimeMs = await withLimiterLock(() => {
-    const now = Date.now()
-    const allowedAt = Math.max(
-      cooldownUntilMs,
-      theoreticalArrivalMs - (DEFAULT_BURST - 1) * DEFAULT_INTERVAL_MS,
-    )
+export async function checkRateLimit(accountId: string, signal?: AbortSignal) {
+  const state = getAccountState(accountId)
+  const waitTimeMs = await withLimiterLock(
+    state,
+    () => {
+      const now = Date.now()
+      const allowedAt = Math.max(
+        state.cooldownUntilMs,
+        state.theoreticalArrivalMs - (DEFAULT_BURST - 1) * DEFAULT_INTERVAL_MS,
+      )
 
-    if (now < allowedAt) {
-      const waitMs = Math.ceil(allowedAt - now)
-      theoreticalArrivalMs =
-        Math.max(theoreticalArrivalMs, allowedAt) + DEFAULT_INTERVAL_MS
-      return waitMs
-    }
+      if (now < allowedAt) {
+        const waitMs = Math.ceil(allowedAt - now)
+        state.theoreticalArrivalMs =
+          Math.max(state.theoreticalArrivalMs, allowedAt) + DEFAULT_INTERVAL_MS
+        return waitMs
+      }
 
-    theoreticalArrivalMs =
-      Math.max(now, theoreticalArrivalMs) + DEFAULT_INTERVAL_MS
-    return 0
-  }, signal)
+      state.theoreticalArrivalMs =
+        Math.max(now, state.theoreticalArrivalMs) + DEFAULT_INTERVAL_MS
+      return 0
+    },
+    signal,
+  )
 
   if (waitTimeMs <= 0) return
 
@@ -54,63 +86,72 @@ export async function checkRateLimit(signal?: AbortSignal) {
   await sleep(waitTimeMs, signal)
 }
 
-export async function reportUpstreamRateLimit(response: Response) {
+export async function reportUpstreamRateLimit(
+  accountId: string,
+  response: Response,
+) {
+  const state = getAccountState(accountId)
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"))
 
-  await withLimiterLock(() => {
-    consecutive429Count += 1
+  await withLimiterLock(state, () => {
+    state.consecutive429Count += 1
 
     const adaptivePenaltyMs =
-      retryAfterMs ?? computeBackoffMs(consecutive429Count)
+      retryAfterMs ?? computeBackoffMs(state.consecutive429Count)
     const cooldownMs = Math.min(MAX_BACKOFF_MS, Math.max(1, adaptivePenaltyMs))
     const cooldownUntil = Date.now() + cooldownMs
 
-    cooldownUntilMs = Math.max(cooldownUntilMs, cooldownUntil)
-    theoreticalArrivalMs = Math.max(theoreticalArrivalMs, cooldownUntilMs)
+    state.cooldownUntilMs = Math.max(state.cooldownUntilMs, cooldownUntil)
+    state.theoreticalArrivalMs = Math.max(
+      state.theoreticalArrivalMs,
+      state.cooldownUntilMs,
+    )
 
     consola.warn(
-      `Upstream returned 429. Applying adaptive cooldown for ${toWaitSeconds(cooldownMs)} seconds.`,
+      `Upstream returned 429 for account "${accountId}". Applying adaptive cooldown for ${toWaitSeconds(cooldownMs)} seconds.`,
     )
   })
 }
 
-export async function reportUpstreamSuccess() {
-  await withLimiterLock(() => {
-    consecutive429Count = 0
+export async function reportUpstreamSuccess(accountId: string) {
+  const state = getAccountState(accountId)
+  await withLimiterLock(state, () => {
+    state.consecutive429Count = 0
 
-    if (Date.now() >= cooldownUntilMs) {
-      cooldownUntilMs = 0
+    if (Date.now() >= state.cooldownUntilMs) {
+      state.cooldownUntilMs = 0
     }
   })
 }
 
 export function resetAdaptiveRateLimiterForTest() {
-  limiterLock = Promise.resolve()
-  limiterQueueSize = 0
-  theoreticalArrivalMs = 0
-  cooldownUntilMs = 0
-  consecutive429Count = 0
+  accountLimiters.clear()
 }
 
-export async function holdLimiterLockForTest(ms: number): Promise<void> {
-  await withLimiterLock(() => sleep(ms))
+export async function holdLimiterLockForTest(
+  accountId: string,
+  ms: number,
+): Promise<void> {
+  const state = getAccountState(accountId)
+  await withLimiterLock(state, () => sleep(ms))
 }
 
 async function withLimiterLock<T>(
+  state: AccountRateLimitState,
   fn: () => T | Promise<T>,
   signal?: AbortSignal,
 ): Promise<T> {
   throwIfAborted(signal)
 
-  if (limiterQueueSize >= MAX_QUEUE_SIZE) {
+  if (state.limiterQueueSize >= MAX_QUEUE_SIZE) {
     throw new RateLimitQueueFullError()
   }
 
-  limiterQueueSize += 1
+  state.limiterQueueSize += 1
 
-  const previousLock = limiterLock
+  const previousLock = state.limiterLock
   let releaseLock!: () => void
-  limiterLock = new Promise<void>((resolve) => {
+  state.limiterLock = new Promise<void>((resolve) => {
     releaseLock = resolve
   })
 
@@ -130,7 +171,7 @@ async function withLimiterLock<T>(
     throw e
   } finally {
     if (acquired) releaseLock()
-    limiterQueueSize -= 1
+    state.limiterQueueSize -= 1
   }
 }
 

@@ -3,7 +3,7 @@ import { events } from "fetch-event-stream"
 import {
   getAccountForModel,
   markAccountExhausted,
-  switchToNextAccountForModel,
+  tryNextAccountForModel,
 } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -85,7 +85,7 @@ export const createResponses = async (
   let response = await doRequest(account)
 
   if (!response.ok && response.status === 429) {
-    await reportUpstreamRateLimit(response)
+    await reportUpstreamRateLimit(account.id, response)
     markAccountExhausted(account.id)
     const retryResult = await tryNextAccountForModel(
       account,
@@ -101,7 +101,7 @@ export const createResponses = async (
     throw new HTTPError("Failed to create responses", response, errorBody)
   }
 
-  await reportUpstreamSuccess()
+  await reportUpstreamSuccess(usedAccount.id)
 
   if (payload.stream) {
     return {
@@ -115,32 +115,6 @@ export const createResponses = async (
   return {
     accountId: usedAccount.id,
     response: (await response.json()) as ResponsesResponse,
-  }
-}
-
-async function tryNextAccountForModel(
-  currentAccount: Awaited<ReturnType<typeof getAccountForModel>>,
-  modelId: string,
-  doRequest: (
-    account: Awaited<ReturnType<typeof getAccountForModel>>,
-  ) => Promise<Response>,
-): Promise<{
-  response: Response
-  account: Awaited<ReturnType<typeof getAccountForModel>>
-}> {
-  const nextAccount = switchToNextAccountForModel(currentAccount, modelId)
-  if (nextAccount) {
-    const retryResponse = await doRequest(nextAccount)
-    if (!retryResponse.ok && retryResponse.status === 429) {
-      await reportUpstreamRateLimit(retryResponse)
-      markAccountExhausted(nextAccount.id)
-    }
-    return { response: retryResponse, account: nextAccount }
-  }
-
-  return {
-    response: new Response("All accounts exhausted", { status: 429 }),
-    account: currentAccount,
   }
 }
 

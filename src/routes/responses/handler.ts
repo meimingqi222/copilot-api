@@ -9,6 +9,7 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
+import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
@@ -30,12 +31,14 @@ interface UsageRecordInput {
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
+  const payload = await c.req.json<ResponsesPayload>()
+  const account = getAccountForModel(payload.model)
 
   try {
-    await checkRateLimit(signal)
+    await checkRateLimit(account.id, signal)
   } catch (error) {
     if (error instanceof RateLimitQueueFullError) {
-      return c.json({ error: { message: error.message, type: "error" } }, 503)
+      return c.json({ error: { message: error.message, type: "error" } }, 429)
     }
     if (error instanceof DOMException && error.name === "AbortError") {
       return new Response(null, { status: 499 })
@@ -43,7 +46,6 @@ export async function handleResponses(c: Context) {
     throw error
   }
 
-  const payload = await c.req.json<ResponsesPayload>()
   const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
   const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
 

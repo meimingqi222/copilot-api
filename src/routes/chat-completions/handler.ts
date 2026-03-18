@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE, type SSEMessage } from "hono/streaming"
 
+import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
@@ -24,13 +25,6 @@ import { normalizeChunk, normalizeResponse } from "./normalize"
 type CopilotStream = AsyncIterable<{ data?: string }>
 type CachedModel = NonNullable<typeof state.models>["data"][number]
 type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
-
-interface StreamResult {
-  accountId: string
-  response: CopilotStream | ChatCompletionResponse
-  estimatedInputTokens: number
-  model: string
-}
 
 interface UsageInfo {
   prompt_tokens: number
@@ -64,14 +58,31 @@ interface StreamUsageInput {
 
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
+  let payload = await c.req.json<ChatCompletionsPayload>()
+  consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
-  await checkRateLimitOrThrow(signal)
+  const account = getAccountForModel(payload.model)
 
-  const result = await processRequest(c, signal)
-  const { accountId, estimatedInputTokens, model } = result
+  await checkRateLimitOrThrow(account.id, signal)
+
+  const selectedModel = state.models?.data.find(
+    (model) => model.id === payload.model,
+  )
+  const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+
+  if (state.manualApprove) await awaitApproval()
+
+  payload = applyMaxTokens(payload, selectedModel)
+
+  const result = await createChatCompletions(
+    payload,
+    signal,
+    resolveInitiator(c, payload),
+  )
+  const { accountId } = result
 
   c.set("accountId" as never, accountId)
-  c.set("model" as never, model)
+  c.set("model" as never, payload.model)
 
   if (isChatCompletionResponse(result.response)) {
     handleNonStreamingResponse(c, result.response, estimatedInputTokens)
@@ -82,9 +93,12 @@ export async function handleCompletion(c: Context) {
   return handleStreamingResponse(c, response, estimatedInputTokens)
 }
 
-async function checkRateLimitOrThrow(signal: AbortSignal): Promise<void> {
+async function checkRateLimitOrThrow(
+  accountId: string,
+  signal: AbortSignal,
+): Promise<void> {
   try {
-    await checkRateLimit(signal)
+    await checkRateLimit(accountId, signal)
   } catch (e) {
     if (e instanceof RateLimitQueueFullError) {
       throw new RateLimitError(e.message)
@@ -107,33 +121,6 @@ export class AbortError extends Error {
   constructor() {
     super("Abort")
     this.name = "AbortError"
-  }
-}
-
-async function processRequest(
-  c: Context,
-  signal: AbortSignal,
-): Promise<StreamResult> {
-  let payload = await c.req.json<ChatCompletionsPayload>()
-  consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
-
-  const selectedModel = state.models?.data.find(
-    (model) => model.id === payload.model,
-  )
-  const estimatedInputTokens = await calculateTokens(payload, selectedModel)
-
-  if (state.manualApprove) await awaitApproval()
-
-  payload = applyMaxTokens(payload, selectedModel)
-
-  return {
-    ...(await createChatCompletions(
-      payload,
-      signal,
-      resolveInitiator(c, payload),
-    )),
-    estimatedInputTokens,
-    model: payload.model,
   }
 }
 

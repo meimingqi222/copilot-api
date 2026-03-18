@@ -167,6 +167,16 @@ export function translateChunkToAnthropicEvents(
   const { delta } = choice
 
   if (!state.messageStartSent) {
+    // For models that use the Responses API (e.g. gpt-5.3-codex), usage data
+    // only arrives in the final response.completed chunk, so the first
+    // streaming chunk has no usage.  Fall back to the pre-calculated estimate
+    // so message_start carries a meaningful input_tokens value from the start.
+    const cachedTokens = chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0
+    const inputTokens =
+      chunk.usage ?
+        chunk.usage.prompt_tokens - cachedTokens
+      : state.estimatedInputTokens
+
     events.push({
       type: "message_start",
       message: {
@@ -178,14 +188,10 @@ export function translateChunkToAnthropicEvents(
         stop_reason: null,
         stop_sequence: null,
         usage: {
-          input_tokens:
-            (chunk.usage?.prompt_tokens ?? 0)
-            - (chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0),
+          input_tokens: inputTokens,
           output_tokens: 0, // Will be updated in message_delta when finished
-          ...(chunk.usage?.prompt_tokens_details?.cached_tokens
-            !== undefined && {
-            cache_read_input_tokens:
-              chunk.usage.prompt_tokens_details.cached_tokens,
+          ...(cachedTokens !== 0 && {
+            cache_read_input_tokens: cachedTokens,
           }),
           ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
             !== undefined && {
@@ -340,10 +346,10 @@ export function translateChunkToAnthropicEvents(
             (chunk.usage?.prompt_tokens ?? 0)
             - (chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0),
           output_tokens: chunk.usage?.completion_tokens ?? 0,
-          ...(chunk.usage?.prompt_tokens_details?.cached_tokens
-            !== undefined && {
+          ...((chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0)
+            !== 0 && {
             cache_read_input_tokens:
-              chunk.usage.prompt_tokens_details.cached_tokens,
+              chunk.usage?.prompt_tokens_details?.cached_tokens,
           }),
           ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
             !== undefined && {
