@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs"
+import path from "node:path"
+
 import { Database } from "bun:sqlite"
 
 import { getDefaultModelPrice } from "~/lib/default-prices"
@@ -72,6 +75,7 @@ class StatsStore {
 
   private ensureDb(): Database {
     if (!this.db) {
+      mkdirSync(path.dirname(PATHS.STATS_PATH), { recursive: true })
       this.db = new Database(PATHS.STATS_PATH)
       this.db.run(`
         CREATE TABLE IF NOT EXISTS daily_stats (
