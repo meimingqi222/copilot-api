@@ -635,6 +635,31 @@
                       <span x-text="account.quotaInfo?.unlimited ? t('quota.unlimited') : (account.quotaInfo?.completionsRemaining ?? 'N/A')"></span>
                     </span>
                   </div>
+
+                  <!-- Account Model Usage -->
+                  <div class="mt-4 pt-4 border-t border-[var(--apple-gray-5)]">
+                    <h4 class="text-sm font-medium text-[var(--apple-text-secondary)] mb-3" x-text="t('quota.accountModelUsage')"></h4>
+                    <div class="space-y-2">
+                      <template x-for="(modelData, modelName) in (usageSummary.byAccount[account.id]?.models || {})" :key="modelName">
+                        <div class="flex items-center justify-between text-sm">
+                          <span class="font-mono text-[var(--apple-blue)]" x-text="modelName"></span>
+                          <div class="flex items-center gap-4">
+                            <span class="text-[var(--apple-text-secondary)]">
+                              <span x-text="modelData.requests"></span>
+                              <span class="ml-1" x-text="t('quota.requests')"></span>
+                            </span>
+                            <span class="w-24 text-right">
+                              <span x-text="formatTokens(modelData.totalTokens)"></span>
+                            </span>
+                            <span class="w-20 text-right text-[var(--apple-text-secondary)]">
+                              <span x-text="'$' + (modelData.cost || 0).toFixed(4)"></span>
+                            </span>
+                          </div>
+                        </div>
+                      </template>
+                      <div x-show="!usageSummary.byAccount[account.id]?.models || Object.keys(usageSummary.byAccount[account.id]?.models || {}).length === 0" class="text-sm text-[var(--apple-text-tertiary)] text-center py-2" x-text="t('quota.noUsageData')"></div>
+                    </div>
+                  </div>
                 </div>
               </template>
               <div x-show="!accounts.length" class="empty-state">
