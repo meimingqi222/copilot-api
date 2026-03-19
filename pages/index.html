@@ -1512,6 +1512,10 @@
           return 'bg-[var(--apple-green)]';
         },
 
+        formatPercent(value) {
+          return (value * 100).toFixed(1) + '%';
+        },
+
         // Format token count with appropriate unit (K, M, or raw)
         formatTokens(tokens) {
           const numericTokens = Number(tokens || 0);
