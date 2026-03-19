@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
 const originalFetch = globalThis.fetch
@@ -12,6 +13,7 @@ const originalVsCodeVersion = state.vsCodeVersion
 const originalAccountType = state.accountType
 
 beforeEach(() => {
+  statsStore.clearUsageStatsForTest()
   state.accounts = [
     {
       id: "test-account-id",
@@ -31,6 +33,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  statsStore.clearUsageStatsForTest()
   globalThis.fetch = originalFetch
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
