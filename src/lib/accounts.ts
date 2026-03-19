@@ -56,6 +56,16 @@ export async function loadAccounts(): Promise<void> {
     const raw = JSON.parse(data) as Array<Record<string, unknown>>
     // Apply migration to handle old accounts with isActive instead of enabled
     state.accounts = raw.map((account) => migrateAccount(account))
+    // Clear isExhausted on startup since rate limiter cooldown state is in-memory
+    // If upstream is still rate limiting, the next request will re-trigger it
+    for (const account of state.accounts) {
+      if (account.isExhausted) {
+        account.isExhausted = false
+        consola.info(
+          `Cleared exhausted flag for account "${account.label}" on startup`,
+        )
+      }
+    }
     return
   } catch {
     // File doesn't exist or is invalid — migrate from legacy token
