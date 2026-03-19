@@ -117,8 +117,18 @@ export function getAccountForModel(modelId: string): Account {
     .map((item) => item.account)
 
   if (available.length === 0) {
+    // Check if there are enabled accounts that are exhausted (rate limited)
+    const hasExhaustedAccounts = state.accounts.some(
+      (a) => a.enabled && a.isExhausted,
+    )
+    if (hasExhaustedAccounts) {
+      throw new HTTPError(
+        "All accounts are temporarily unavailable due to rate limiting",
+        new Response("Too Many Requests", { status: 429 }),
+      )
+    }
     throw new HTTPError(
-      "No available GitHub Copilot accounts (all disabled or quota-exhausted)",
+      "No available GitHub Copilot accounts (all disabled or no accounts configured)",
       new Response("Service Unavailable", { status: 503 }),
     )
   }
@@ -130,6 +140,20 @@ export function getAccountForModel(modelId: string): Account {
   )
 
   if (capable.length === 0) {
+    // Check if any exhausted account supports this model
+    const exhaustedWithModel = state.accounts.filter(
+      (a) =>
+        a.enabled
+        && a.isExhausted
+        && (!a.availableModels
+          || a.availableModels.some((m) => m.id === modelId)),
+    )
+    if (exhaustedWithModel.length > 0) {
+      throw new HTTPError(
+        `All accounts supporting model "${modelId}" are rate limited`,
+        new Response("Too Many Requests", { status: 429 }),
+      )
+    }
     throw new HTTPError(
       `No available account supports model "${modelId}"`,
       new Response("Service Unavailable", { status: 503 }),
@@ -201,8 +225,18 @@ export function getActiveAccount(): Account {
     .map((item) => item.account)
 
   if (sorted.length === 0) {
+    // Check if there are enabled accounts that are exhausted (rate limited)
+    const hasExhaustedAccounts = state.accounts.some(
+      (a) => a.enabled && a.isExhausted,
+    )
+    if (hasExhaustedAccounts) {
+      throw new HTTPError(
+        "All accounts are temporarily unavailable due to rate limiting",
+        new Response("Too Many Requests", { status: 429 }),
+      )
+    }
     throw new HTTPError(
-      "No available GitHub Copilot accounts (all disabled or quota-exhausted)",
+      "No available GitHub Copilot accounts (all disabled or no accounts configured)",
       new Response("Service Unavailable", { status: 503 }),
     )
   }

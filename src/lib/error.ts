@@ -18,7 +18,9 @@ export function forwardError(c: Context, error: unknown) {
   consola.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {
-    const errorText = error.responseBody
+    // Prefer error.message over responseBody for locally-generated errors
+    // responseBody is used for upstream API error responses
+    const errorText = error.responseBody || error.message
     let errorJson: unknown
     try {
       errorJson = JSON.parse(errorText)
