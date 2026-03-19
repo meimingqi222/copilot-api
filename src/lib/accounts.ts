@@ -114,7 +114,31 @@ export async function saveAccounts(): Promise<void> {
  * Falls back to the first available account that supports the model.
  * If no account specifies model support (availableModels is undefined), any enabled/non-exhausted account works.
  */
+
+/**
+ * Check if an account's cooldown has expired and clear isExhausted if so.
+ * This ensures accounts become available again after the rate limit cooldown period.
+ */
+function checkAndClearExpiredCooldown(account: Account): boolean {
+  if (!account.isExhausted) return false
+
+  const remainingCooldown = getRemainingCooldownSeconds(account.id)
+  if (remainingCooldown <= 0) {
+    account.isExhausted = false
+    consola.info(
+      `Account "${account.label}" cooldown expired — re-activating`,
+    )
+    return true
+  }
+  return false
+}
+
 export function getAccountForModel(modelId: string): Account {
+  // First, clear isExhausted for any accounts whose cooldown has expired
+  for (const account of state.accounts) {
+    checkAndClearExpiredCooldown(account)
+  }
+
   // Get available accounts and sort by priority (stable sort by array index for same priority)
   const available = state.accounts
     .filter((a) => a.enabled && !a.isExhausted)
@@ -223,6 +247,11 @@ export function switchToNextAccountForModel(
 }
 
 export function getActiveAccount(): Account {
+  // First, clear isExhausted for any accounts whose cooldown has expired
+  for (const account of state.accounts) {
+    checkAndClearExpiredCooldown(account)
+  }
+
   // Get available accounts sorted by priority
   const sorted = state.accounts
     .filter((a) => a.enabled && !a.isExhausted)
