@@ -39,7 +39,11 @@ export const createResponses = async (
     throw new Error("Copilot token not found")
   }
 
-  if (!supportsResponsesApi(payload.model, account)) {
+  const hasVision = hasVisionInput(payload)
+
+  // Fall back to Chat Completions API if Responses API is not supported
+  // OR if the request contains images (Responses API may not support input_image)
+  if (!supportsResponsesApi(payload.model, account) || hasVision) {
     const chatPayload = translateResponsesToChatPayload(payload)
     const result = await createChatCompletions(
       chatPayload,
@@ -63,12 +67,12 @@ export const createResponses = async (
     }
   }
 
-  const enableVision = hasVisionInput(payload)
+  // At this point, we know there are no images (otherwise we would have fallen back above)
   const initiator = initiatorOverride ?? inferResponsesInitiator(payload)
 
   const doRequest = async (requestAccount: typeof account) => {
     const headers: Record<string, string> = {
-      ...copilotHeaders(requestAccount, enableVision),
+      ...copilotHeaders(requestAccount, false),
       "editor-version": `vscode/${state.vsCodeVersion}`,
       "X-Initiator": initiator,
     }
