@@ -337,7 +337,7 @@ async function handleDirectStreamingResponse({
 
   try {
     for await (const rawEvent of response) {
-      if (!rawEvent.data) {
+      if (!rawEvent.data || rawEvent.data === "[DONE]") {
         continue
       }
 
