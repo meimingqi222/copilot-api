@@ -1,8 +1,9 @@
-import { test, expect, mock } from "bun:test"
+import { afterEach, expect, mock, test } from "bun:test"
 
 import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat-completions"
 
 import { state } from "../src/lib/state"
+import { statsStore } from "../src/lib/stats-store"
 import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
 
 // Mock state with an active account
@@ -20,6 +21,10 @@ state.accounts = [mockAccount]
 state.activeAccountIndex = 0
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
+
+afterEach(() => {
+  statsStore.clearUsageStatsForTest()
+})
 
 // Helper to mock fetch
 const fetchMock = mock(
