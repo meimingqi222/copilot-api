@@ -5,7 +5,10 @@ import fs from "node:fs/promises"
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { PATHS } from "~/lib/paths"
-import { reportUpstreamRateLimit } from "~/lib/rate-limit"
+import {
+  getRemainingCooldownSeconds,
+  reportUpstreamRateLimit,
+} from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 
 export interface Account {
@@ -264,7 +267,12 @@ export function markAccountExhausted(id: string): void {
   if (account.isExhausted) return
   account.isExhausted = true
   account.exhaustedAt = Date.now()
-  consola.warn(`Account "${account.label}" marked as quota-exhausted`)
+  const cooldownSeconds = getRemainingCooldownSeconds(id)
+  const cooldownInfo =
+    cooldownSeconds > 0 ? ` (cooldown: ${cooldownSeconds}s remaining)` : ""
+  consola.warn(
+    `Account "${account.label}" marked as quota-exhausted${cooldownInfo}`,
+  )
   switchToNextAccount()
 }
 

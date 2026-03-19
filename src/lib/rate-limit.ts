@@ -107,8 +107,12 @@ export async function reportUpstreamRateLimit(
       state.cooldownUntilMs,
     )
 
+    const retryAfterInfo =
+      retryAfterMs ?
+        ` (upstream retry-after: ${toWaitSeconds(retryAfterMs)}s)`
+      : " (no retry-after header, using exponential backoff)"
     consola.warn(
-      `Upstream returned 429 for account "${accountId}". Applying adaptive cooldown for ${toWaitSeconds(cooldownMs)} seconds.`,
+      `Upstream returned 429 for account "${accountId}". Applying cooldown for ${toWaitSeconds(cooldownMs)} seconds${retryAfterInfo}`,
     )
   })
 }
@@ -126,6 +130,18 @@ export async function reportUpstreamSuccess(accountId: string) {
 
 export function resetAdaptiveRateLimiterForTest() {
   accountLimiters.clear()
+}
+
+/**
+ * Get the remaining cooldown time for an account in seconds.
+ * Returns 0 if the account is not in cooldown.
+ */
+export function getRemainingCooldownSeconds(accountId: string): number {
+  const state = accountLimiters.get(accountId)
+  if (!state) return 0
+
+  const remaining = state.cooldownUntilMs - Date.now()
+  return remaining > 0 ? Math.ceil(remaining / 1000) : 0
 }
 
 export async function holdLimiterLockForTest(
