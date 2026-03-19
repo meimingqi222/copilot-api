@@ -71,68 +71,82 @@ type UsageModelRow = {
 
 class StatsStore {
   private db: Database | null = null
+  private isTestMode = false
+
+  useTestDb(): void {
+    this.isTestMode = true
+    this.db = new Database(":memory:")
+    this.createTables()
+  }
+
+  private createTables(): void {
+    const db = this.db!
+    db.run(`
+      CREATE TABLE IF NOT EXISTS daily_stats (
+        date TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        requests INTEGER DEFAULT 0,
+        errors INTEGER DEFAULT 0,
+        PRIMARY KEY (date, account_id)
+      )
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_date ON daily_stats(date)
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_account ON daily_stats(account_id)
+    `)
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS usage_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        account_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        prompt_tokens INTEGER DEFAULT 0,
+        completion_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_write_tokens INTEGER DEFAULT 0,
+        total_tokens INTEGER DEFAULT 0,
+        cost REAL DEFAULT 0,
+        timestamp INTEGER NOT NULL
+      )
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_stats(date)
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_account ON usage_stats(account_id)
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_stats(model)
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_stats(timestamp)
+    `)
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS model_pricing (
+        model TEXT PRIMARY KEY,
+        prompt_price_per_1k REAL DEFAULT 0,
+        completion_price_per_1k REAL DEFAULT 0,
+        cache_read_price_per_1k REAL DEFAULT 0,
+        cache_write_price_per_1k REAL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      )
+    `)
+  }
 
   private ensureDb(): Database {
-    if (!this.db) {
-      mkdirSync(path.dirname(PATHS.STATS_PATH), { recursive: true })
-      this.db = new Database(PATHS.STATS_PATH)
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS daily_stats (
-          date TEXT NOT NULL,
-          account_id TEXT NOT NULL,
-          requests INTEGER DEFAULT 0,
-          errors INTEGER DEFAULT 0,
-          PRIMARY KEY (date, account_id)
-        )
-      `)
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_date ON daily_stats(date)
-      `)
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_account ON daily_stats(account_id)
-      `)
-
-      // New table for detailed usage statistics
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS usage_stats (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          date TEXT NOT NULL,
-          account_id TEXT NOT NULL,
-          model TEXT NOT NULL,
-          prompt_tokens INTEGER DEFAULT 0,
-          completion_tokens INTEGER DEFAULT 0,
-          cache_read_tokens INTEGER DEFAULT 0,
-          cache_write_tokens INTEGER DEFAULT 0,
-          total_tokens INTEGER DEFAULT 0,
-          cost REAL DEFAULT 0,
-          timestamp INTEGER NOT NULL
-        )
-      `)
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_stats(date)
-      `)
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_usage_account ON usage_stats(account_id)
-      `)
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_stats(model)
-      `)
-      this.db.run(`
-        CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_stats(timestamp)
-      `)
-
-      // Model pricing table
-      this.db.run(`
-        CREATE TABLE IF NOT EXISTS model_pricing (
-          model TEXT PRIMARY KEY,
-          prompt_price_per_1k REAL DEFAULT 0,
-          completion_price_per_1k REAL DEFAULT 0,
-          cache_read_price_per_1k REAL DEFAULT 0,
-          cache_write_price_per_1k REAL DEFAULT 0,
-          updated_at INTEGER NOT NULL
-        )
-      `)
+    if (this.db) return this.db
+    if (this.isTestMode) {
+      this.db = new Database(":memory:")
+      this.createTables()
+      return this.db
     }
+    mkdirSync(path.dirname(PATHS.STATS_PATH), { recursive: true })
+    this.db = new Database(PATHS.STATS_PATH)
+    this.createTables()
     return this.db
   }
 
@@ -376,8 +390,7 @@ class StatsStore {
   }
 
   clearUsageStatsForTest(): void {
-    const db = this.ensureDb()
-    db.run(`DELETE FROM usage_stats`)
+    this.useTestDb()
   }
 
   // Model pricing methods
