@@ -62,23 +62,88 @@ export async function handleCompletion(c: Context) {
 
   payload = applyMaxTokens(payload, selectedModel)
 
-  const result = await createChatCompletions(
-    payload,
-    signal,
-    resolveInitiator(c, payload),
-  )
-  const { accountId } = result
+  if (!payload.stream) {
+    const result = await createChatCompletions(
+      payload,
+      signal,
+      resolveInitiator(c, payload),
+    )
 
-  c.set("accountId" as never, accountId)
-  c.set("model" as never, payload.model)
+    c.set("accountId" as never, result.accountId)
+    c.set("model" as never, payload.model)
 
-  if (isChatCompletionResponse(result.response)) {
-    handleNonStreamingResponse(c, result.response, estimatedInputTokens)
-    return c.json(result.response)
+    if (isChatCompletionResponse(result.response)) {
+      handleNonStreamingResponse(c, result.response, estimatedInputTokens)
+      return c.json(result.response)
+    }
+
+    return handleStreamingResponse(c, result.response, estimatedInputTokens)
   }
 
-  const response = result.response
-  return handleStreamingResponse(c, response, estimatedInputTokens)
+  return streamSSE(c, async (stream) => {
+    const pingInterval = createSsePingInterval(stream)
+    let lastUsage: UsageInfo | undefined
+    let recordedOnAbort = false
+    let accountId: string | undefined
+    const model = payload.model
+
+    try {
+      const result = await createChatCompletions(
+        payload,
+        signal,
+        resolveInitiator(c, payload),
+      )
+      accountId = result.accountId
+
+      c.set("accountId" as never, accountId)
+      c.set("model" as never, model)
+
+      if (isChatCompletionResponse(result.response)) {
+        handleNonStreamingResponse(c, result.response, estimatedInputTokens)
+        await writeSseEvent(stream, JSON.stringify(result.response))
+        return
+      }
+
+      for await (const rawEvent of result.response) {
+        if (rawEvent.data === "[DONE]") {
+          break
+        }
+        if (!rawEvent.data) {
+          continue
+        }
+
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+        lastUsage = chunk.usage ?? lastUsage
+        await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+      }
+    } catch (error) {
+      if (isAbortError(error)) {
+        consola.debug("Stream aborted (client disconnected)")
+        recordedOnAbort = recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+          onlyWhenUsageExists: true,
+        })
+        return
+      }
+      throw error
+    } finally {
+      clearInterval(pingInterval)
+      if (!recordedOnAbort) {
+        recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+        })
+      }
+    }
+  })
 }
 
 async function calculateTokens(
