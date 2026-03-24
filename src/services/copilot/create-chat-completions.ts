@@ -1,18 +1,12 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
-import {
-  getAccountForModel,
-  markAccountExhausted,
-  tryNextAccountForModel,
-} from "~/lib/accounts"
+import { getAccountForModel } from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import {
-  reportUpstreamRateLimit,
-  reportUpstreamSuccess,
-} from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { inferInitiatorFromChatMessages } from "~/services/copilot/initiator"
+import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
 import {
   shouldUseResponsesApi,
   translateResponsesStreamToChatCompletions,
@@ -39,14 +33,8 @@ export const createChatCompletions = async (
       && x.content?.some((x) => x.type === "image_url"),
   )
 
-  // Infer who initiated this turn from the latest non-system message.
-  const lastConversationMessage = [...payload.messages]
-    .reverse()
-    .find((msg) => !["developer", "system"].includes(msg.role))
-  const isAgentCall = ["assistant", "tool"].includes(
-    lastConversationMessage?.role ?? "",
-  )
-  const initiator = initiatorOverride ?? (isAgentCall ? "agent" : "user")
+  const initiator =
+    initiatorOverride ?? inferInitiatorFromChatMessages(payload.messages)
 
   const doRequest = async (requestAccount: typeof account) => {
     const reqHeaders: Record<string, string> = {
@@ -67,21 +55,12 @@ export const createChatCompletions = async (
     )
   }
 
-  let usedAccount = account
-  let response = await doRequest(account)
-
-  // Handle 429 by marking account exhausted and trying next account for the same model
-  if (!response.ok && response.status === 429) {
-    await reportUpstreamRateLimit(account.id, response)
-    markAccountExhausted(account.id)
-    const retryResult = await tryNextAccountForModel(
+  const { account: usedAccount, response } =
+    await executeCopilotRequestWithRetry({
       account,
-      payload.model,
+      model: payload.model,
       doRequest,
-    )
-    response = retryResult.response
-    usedAccount = retryResult.account
-  }
+    })
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")
@@ -97,8 +76,6 @@ export const createChatCompletions = async (
       errorBody,
     )
   }
-
-  await reportUpstreamSuccess(usedAccount.id)
 
   if (payload.stream) {
     const stream = events(

@@ -7,11 +7,16 @@ import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
+import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
+import {
+  createSsePingInterval,
+  forwardSseEvent,
+  type SSEStream,
+  writeSseEvent,
+} from "~/lib/sse"
 import { state } from "~/lib/state"
-import { statsStore } from "~/lib/stats-store"
 import { getTokenCount } from "~/lib/tokenizer"
-import { incrementUserTokens } from "~/lib/users"
+import { recordUsage } from "~/lib/usage"
 import {
   createChatCompletions,
   type ChatCompletionChunk,
@@ -40,7 +45,6 @@ import {
   translateErrorToAnthropicErrorEvent,
 } from "./stream-translation"
 
-type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
 type CopilotStream = AsyncIterable<{ data?: string; event?: string }>
 
 interface HandleStreamingResponseOptions {
@@ -62,33 +66,12 @@ interface UsageInfo {
   }
 }
 
-interface UsageRecordInput {
-  c: Context
-  accountId: string
-  model: string
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cacheReadTokens?: number
-  cacheWriteTokens?: number
-}
-
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
   const account = getAccountForModel(anthropicPayload.model)
 
-  try {
-    await checkRateLimit(account.id, signal)
-  } catch (e) {
-    if (e instanceof RateLimitQueueFullError) {
-      return c.json({ error: { message: e.message, type: "error" } }, 429)
-    }
-    if (e instanceof DOMException && e.name === "AbortError") {
-      return new Response(null, { status: 499 })
-    }
-    throw e
-  }
+  await checkAccountRateLimitOrThrow(account.id, signal)
 
   const anthropicBeta = c.req.header("anthropic-beta")
   const anthropicVersion = c.req.header("anthropic-version")
@@ -239,22 +222,20 @@ function handleNonStreamingResponse(
   if (model) {
     const cacheReadTokens = usage.cache_read_input_tokens ?? 0
     const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0
-    recordUsage(
-      createUsageRecord({
-        c,
-        accountId,
-        model,
-        promptTokens: usage.input_tokens,
-        completionTokens: usage.output_tokens,
-        totalTokens:
-          usage.input_tokens
-          + usage.output_tokens
-          + cacheReadTokens
-          + cacheWriteTokens,
-        cacheReadTokens,
-        cacheWriteTokens,
-      }),
-    )
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: usage.input_tokens,
+      completionTokens: usage.output_tokens,
+      totalTokens:
+        usage.input_tokens
+        + usage.output_tokens
+        + cacheReadTokens
+        + cacheWriteTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+    })
   }
 
   return anthropicResponse
@@ -272,7 +253,7 @@ async function handleStreamingResponse({
   streamState.estimatedInputTokens = estimatedInputTokens
   let lastUsage: UsageInfo | undefined
 
-  const pingInterval = createPingInterval(stream)
+  const pingInterval = createSsePingInterval(stream)
 
   try {
     for await (const rawEvent of response) {
@@ -333,7 +314,7 @@ async function handleDirectStreamingResponse({
       }
     | undefined
 
-  const pingInterval = createPingInterval(stream)
+  const pingInterval = createSsePingInterval(stream)
 
   try {
     for await (const rawEvent of response) {
@@ -343,10 +324,7 @@ async function handleDirectStreamingResponse({
 
       lastUsage = updateLastUsage(rawEvent.data, lastUsage)
 
-      await stream.writeSSE({
-        ...(rawEvent.event ? { event: rawEvent.event } : {}),
-        data: rawEvent.data,
-      })
+      await forwardSseEvent(stream, rawEvent)
     }
   } catch (error) {
     if (
@@ -416,27 +394,13 @@ function updateLastUsage(
   return lastUsage
 }
 
-function createPingInterval(stream: SSEStream): ReturnType<typeof setInterval> {
-  const PING_INTERVAL_MS = 5_000
-  return setInterval(async () => {
-    try {
-      await stream.writeSSE({ event: "ping", data: '{"type": "ping"}' })
-    } catch {
-      // Stream already closed; clear interval in finally below.
-    }
-  }, PING_INTERVAL_MS)
-}
-
 async function writeAnthropicEvents(
   stream: SSEStream,
   events: Array<ReturnType<typeof translateChunkToAnthropicEvents>[number]>,
 ): Promise<void> {
   for (const event of events) {
     consola.debug("Translated Anthropic event:", JSON.stringify(event))
-    await stream.writeSSE({
-      event: event.type,
-      data: JSON.stringify(event),
-    })
+    await writeSseEvent(stream, JSON.stringify(event), event.type)
   }
 }
 
@@ -487,18 +451,16 @@ function recordStreamingUsage(
   const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
   const cacheWriteTokens =
     lastUsage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
-  recordUsage(
-    createUsageRecord({
-      c,
-      accountId,
-      model,
-      promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
-      completionTokens: lastUsage.completion_tokens,
-      totalTokens: lastUsage.total_tokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-    }),
-  )
+  recordUsage({
+    c,
+    accountId,
+    model,
+    promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
+    completionTokens: lastUsage.completion_tokens,
+    totalTokens: lastUsage.total_tokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+  })
 }
 
 function recordDirectStreamingUsage(
@@ -521,22 +483,20 @@ function recordDirectStreamingUsage(
   // Anthropic API: input_tokens does NOT include cache tokens
   const cacheReadTokens = lastUsage.cache_read_input_tokens ?? 0
   const cacheWriteTokens = lastUsage.cache_creation_input_tokens ?? 0
-  recordUsage(
-    createUsageRecord({
-      c,
-      accountId,
-      model,
-      promptTokens: lastUsage.input_tokens ?? 0,
-      completionTokens: lastUsage.output_tokens,
-      totalTokens:
-        (lastUsage.input_tokens ?? 0)
-        + lastUsage.output_tokens
-        + cacheReadTokens
-        + cacheWriteTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-    }),
-  )
+  recordUsage({
+    c,
+    accountId,
+    model,
+    promptTokens: lastUsage.input_tokens ?? 0,
+    completionTokens: lastUsage.output_tokens,
+    totalTokens:
+      (lastUsage.input_tokens ?? 0)
+      + lastUsage.output_tokens
+      + cacheReadTokens
+      + cacheWriteTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+  })
 }
 
 async function sendSyntheticErrorIfNeeded(
@@ -550,10 +510,7 @@ async function sendSyntheticErrorIfNeeded(
 
   consola.warn(`${reason}, sending error event`)
   const errorEvent = translateErrorToAnthropicErrorEvent()
-  await stream.writeSSE({
-    event: errorEvent.type,
-    data: JSON.stringify(errorEvent),
-  })
+  await writeSseEvent(stream, JSON.stringify(errorEvent), errorEvent.type)
   return true
 }
 
@@ -643,83 +600,18 @@ function recordAnthropicUsage(
   // (unlike OpenAI where prompt_tokens includes cached_tokens)
   const cacheReadTokens = usage.cache_read_input_tokens ?? 0
   const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0
-  recordUsage(
-    createUsageRecord({
-      c,
-      accountId,
-      model,
-      promptTokens: usage.input_tokens,
-      completionTokens: usage.output_tokens,
-      totalTokens:
-        usage.input_tokens
-        + usage.output_tokens
-        + cacheReadTokens
-        + cacheWriteTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-    }),
-  )
-}
-
-function createUsageRecord(input: UsageRecordInput): UsageRecordInput {
-  return input
-}
-
-function recordUsage(input: UsageRecordInput): void {
-  const {
+  recordUsage({
     c,
     accountId,
     model,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cacheReadTokens = 0,
-    cacheWriteTokens = 0,
-  } = input
-
-  void trackUserTokenUsage(c, totalTokens)
-
-  try {
-    const now = Date.now()
-    const pricing = statsStore.getModelPricing(model)
-    const cost =
-      pricing ?
-        (promptTokens / 1000) * pricing.promptPricePer1k
-        + (completionTokens / 1000) * pricing.completionPricePer1k
-        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
-        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
-      : 0
-
-    statsStore.recordUsage({
-      date: new Date(now).toISOString().split("T")[0] ?? "",
-      accountId,
-      model,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      cost,
-      timestamp: now,
-    })
-    consola.debug(
-      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
-    )
-  } catch (error) {
-    consola.warn("Failed to record usage:", error)
-  }
-}
-
-async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
-  if (tokens <= 0) return
-
-  const userId = c.get("userId" as never) as string | undefined
-  if (!userId) return
-
-  try {
-    await incrementUserTokens(userId, tokens)
-    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
-  } catch (error) {
-    consola.warn("Failed to track user token usage:", error)
-  }
+    promptTokens: usage.input_tokens,
+    completionTokens: usage.output_tokens,
+    totalTokens:
+      usage.input_tokens
+      + usage.output_tokens
+      + cacheReadTokens
+      + cacheWriteTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+  })
 }

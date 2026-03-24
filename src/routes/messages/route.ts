@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
+import { respondToKnownRouteError } from "~/lib/request-lifecycle"
 
 import { handleCountTokens } from "./count-tokens-handler"
 import { handleCompletion } from "./handler"
@@ -11,6 +12,11 @@ messageRoutes.post("/", async (c) => {
   try {
     return await handleCompletion(c)
   } catch (error) {
+    const knownErrorResponse = respondToKnownRouteError(c, error)
+    if (knownErrorResponse) {
+      return knownErrorResponse
+    }
+
     return forwardError(c, error)
   }
 })
