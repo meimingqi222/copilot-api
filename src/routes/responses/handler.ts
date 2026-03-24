@@ -10,9 +10,14 @@ import type {
 
 import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
+import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
-import { createSsePingInterval, forwardSseEvent } from "~/lib/sse"
+import {
+  createSsePingInterval,
+  forwardSseEvent,
+  writeSseEvent,
+} from "~/lib/sse"
 import { state } from "~/lib/state"
 import { recordUsage } from "~/lib/usage"
 import { createResponses } from "~/services/copilot/create-responses"
@@ -32,47 +37,67 @@ export async function handleResponses(c: Context) {
     await awaitApproval()
   }
 
-  const result = await createResponses(payload, signal, initiator)
-  c.set("accountId" as never, result.accountId)
   c.set("model" as never, payload.model)
 
-  if (isNonStreaming(result.response)) {
-    recordResponsesUsage(c, result.accountId, result.response)
-    return c.json(result.response)
+  if (payload.stream) {
+    return streamSSE(c, async (stream) => {
+      const pingInterval = createSsePingInterval(stream)
+      let accountId: string | undefined
+      let completedResponse: ResponsesResponse | undefined
+
+      try {
+        const result = await createResponses(payload, signal, initiator)
+        accountId = result.accountId
+        c.set("accountId" as never, result.accountId)
+
+        if (isNonStreaming(result.response)) {
+          completedResponse = result.response
+          await writeSseEvent(stream, JSON.stringify(result.response))
+          return
+        }
+
+        for await (const event of result.response) {
+          if (event.data === "[DONE]") {
+            break
+          }
+          if (!event.data) {
+            continue
+          }
+
+          const parsed = JSON.parse(event.data) as Record<string, unknown>
+          if (
+            parsed.type === "response.completed"
+            && parsed.response
+            && typeof parsed.response === "object"
+          ) {
+            completedResponse = parsed.response as ResponsesResponse
+          }
+
+          await forwardSseEvent(stream, event)
+        }
+      } catch (error) {
+        if (isAbortError(error) && signal.aborted) {
+          return
+        }
+
+        await writeResponsesErrorEvent(stream, error)
+      } finally {
+        clearInterval(pingInterval)
+        if (completedResponse && accountId) {
+          recordResponsesUsage(c, accountId, completedResponse)
+        }
+      }
+    })
   }
 
-  let completedResponse: ResponsesResponse | undefined
-  const streamResponse = result.response
-  return streamSSE(c, async (stream) => {
-    const pingInterval = createSsePingInterval(stream)
+  const result = await createResponses(payload, signal, initiator)
+  c.set("accountId" as never, result.accountId)
+  if (!isNonStreaming(result.response)) {
+    throw new Error("Expected non-streaming response for non-stream request")
+  }
 
-    try {
-      for await (const event of streamResponse) {
-        if (event.data === "[DONE]") {
-          break
-        }
-        if (!event.data) {
-          continue
-        }
-
-        const parsed = JSON.parse(event.data) as Record<string, unknown>
-        if (
-          parsed.type === "response.completed"
-          && parsed.response
-          && typeof parsed.response === "object"
-        ) {
-          completedResponse = parsed.response as ResponsesResponse
-        }
-
-        await forwardSseEvent(stream, event)
-      }
-    } finally {
-      clearInterval(pingInterval)
-      if (completedResponse) {
-        recordResponsesUsage(c, result.accountId, completedResponse)
-      }
-    }
-  })
+  recordResponsesUsage(c, result.accountId, result.response)
+  return c.json(result.response)
 }
 
 function isNonStreaming(
@@ -108,4 +133,32 @@ function recordResponsesUsage(
     cacheReadTokens,
     cacheWriteTokens,
   })
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError"
+}
+
+async function writeResponsesErrorEvent(
+  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+  error: unknown,
+): Promise<void> {
+  let message = "Internal server error"
+
+  if (error instanceof HTTPError) {
+    message = error.responseBody || error.message
+  } else if (error instanceof Error) {
+    message = error.message
+  }
+
+  await writeSseEvent(
+    stream,
+    JSON.stringify({
+      type: "error",
+      error: {
+        message,
+        type: "error",
+      },
+    }),
+  )
 }
