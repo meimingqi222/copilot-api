@@ -119,7 +119,7 @@ interface HandleMessagesApiOpts {
   c: Context
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
-  initiator: string
+  initiator: "agent" | "user" | undefined
   anthropicBeta: string | undefined
   anthropicVersion: string | undefined
 }
@@ -182,7 +182,7 @@ interface HandleCopilotApiOpts {
   c: Context
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
-  initiator: string
+  initiator: "agent" | "user" | undefined
 }
 
 async function handleCopilotApi(opts: HandleCopilotApiOpts) {
