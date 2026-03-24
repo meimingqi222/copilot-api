@@ -258,3 +258,72 @@ test("POST /v1/responses streaming ignores terminal [DONE] frame", async () => {
   expect(body).toContain("response.created")
   expect(body).toContain("response.completed")
 })
+
+test("POST /v1/responses streaming sends ping while waiting for upstream response", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "gpt-responses",
+        object: "model",
+        name: "GPT Responses",
+        preview: false,
+        vendor: "OpenAI",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/responses"],
+        capabilities: {
+          family: "gpt-5",
+          object: "capabilities",
+          supports: {},
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+    ],
+  }
+
+  const fetchMock = mock(
+    () =>
+      new Promise<Response>((resolve) => {
+        setTimeout(() => {
+          resolve(
+            new Response(
+              [
+                'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-responses","status":"in_progress"}}',
+                "",
+                'data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"gpt-responses","status":"completed","output_text":"ok","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
+                "",
+                "data: [DONE]",
+                "",
+              ].join("\n"),
+              {
+                status: 200,
+                headers: { "content-type": "text/event-stream" },
+              },
+            ),
+          )
+        }, 5_200)
+      }),
+  )
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+
+  const response = await server.fetch(
+    new Request("http://localhost/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-responses",
+        input: "hi",
+        stream: true,
+      }),
+    }),
+  )
+
+  expect(response.status).toBe(200)
+  const body = await response.text()
+  expect(body).toContain("event: ping")
+  expect(body.indexOf("event: ping")).toBeLessThan(
+    body.indexOf("response.created"),
+  )
+}, 12_000)
