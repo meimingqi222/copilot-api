@@ -125,12 +125,26 @@ function checkAndClearExpiredCooldown(account: Account): boolean {
   const remainingCooldown = getRemainingCooldownSeconds(account.id)
   if (remainingCooldown <= 0) {
     account.isExhausted = false
-    consola.info(
-      `Account "${account.label}" cooldown expired — re-activating`,
-    )
+    consola.info(`Account "${account.label}" cooldown expired — re-activating`)
     return true
   }
   return false
+}
+
+function rateLimitedResponse(body: string): Response {
+  let minCooldown = 0
+  for (const account of state.accounts) {
+    if (account.enabled && account.isExhausted) {
+      const cooldown = getRemainingCooldownSeconds(account.id)
+      if (cooldown > 0 && (minCooldown === 0 || cooldown < minCooldown)) {
+        minCooldown = cooldown
+      }
+    }
+  }
+  return new Response(body, {
+    status: 429,
+    headers: minCooldown > 0 ? { "Retry-After": String(minCooldown) } : {},
+  })
 }
 
 export function getAccountForModel(modelId: string): Account {
@@ -161,7 +175,7 @@ export function getAccountForModel(modelId: string): Account {
     if (hasExhaustedAccounts) {
       throw new HTTPError(
         "All accounts are temporarily unavailable due to rate limiting",
-        new Response("Too Many Requests", { status: 429 }),
+        rateLimitedResponse("Too Many Requests"),
       )
     }
     throw new HTTPError(
@@ -188,7 +202,7 @@ export function getAccountForModel(modelId: string): Account {
     if (exhaustedWithModel.length > 0) {
       throw new HTTPError(
         `All accounts supporting model "${modelId}" are rate limited`,
-        new Response("Too Many Requests", { status: 429 }),
+        rateLimitedResponse("Too Many Requests"),
       )
     }
     throw new HTTPError(
@@ -274,7 +288,7 @@ export function getActiveAccount(): Account {
     if (hasExhaustedAccounts) {
       throw new HTTPError(
         "All accounts are temporarily unavailable due to rate limiting",
-        new Response("Too Many Requests", { status: 429 }),
+        rateLimitedResponse("Too Many Requests"),
       )
     }
     throw new HTTPError(
@@ -577,7 +591,7 @@ export async function tryNextAccountForModel(
   // No other account available or same account returned
   if (!nextAccount || nextAccount.id === currentAccount.id) {
     return {
-      response: new Response("All accounts exhausted", { status: 429 }),
+      response: rateLimitedResponse("All accounts exhausted"),
       account: currentAccount,
     }
   }
@@ -595,7 +609,7 @@ export async function tryNextAccountForModel(
   } catch (error) {
     consola.warn(`Request failed for account "${nextAccount.label}":`, error)
     return {
-      response: new Response("All accounts exhausted", { status: 429 }),
+      response: rateLimitedResponse("All accounts exhausted"),
       account: nextAccount,
     }
   }
