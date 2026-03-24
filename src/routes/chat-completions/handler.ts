@@ -1,16 +1,16 @@
 import type { Context } from "hono"
 
 import consola from "consola"
-import { streamSSE, type SSEMessage } from "hono/streaming"
+import { streamSSE } from "hono/streaming"
 
 import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
+import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
+import { createSsePingInterval, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
-import { statsStore } from "~/lib/stats-store"
 import { getTokenCount } from "~/lib/tokenizer"
-import { incrementUserTokens } from "~/lib/users"
+import { recordUsage } from "~/lib/usage"
 import { isNullish } from "~/lib/utils"
 import {
   createChatCompletions,
@@ -24,7 +24,6 @@ import { normalizeChunk, normalizeResponse } from "./normalize"
 
 type CopilotStream = AsyncIterable<{ data?: string }>
 type CachedModel = NonNullable<typeof state.models>["data"][number]
-type SSEStream = Parameters<Parameters<typeof streamSSE>[1]>[0]
 
 interface UsageInfo {
   prompt_tokens: number
@@ -34,17 +33,6 @@ interface UsageInfo {
     cached_tokens?: number
     cache_creation_input_tokens?: number
   }
-}
-
-interface UsageRecordInput {
-  c: Context
-  accountId: string
-  model: string
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cacheReadTokens?: number
-  cacheWriteTokens?: number
 }
 
 interface StreamUsageInput {
@@ -63,7 +51,7 @@ export async function handleCompletion(c: Context) {
 
   const account = getAccountForModel(payload.model)
 
-  await checkRateLimitOrThrow(account.id, signal)
+  await checkAccountRateLimitOrThrow(account.id, signal)
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
@@ -91,37 +79,6 @@ export async function handleCompletion(c: Context) {
 
   const response = result.response
   return handleStreamingResponse(c, response, estimatedInputTokens)
-}
-
-async function checkRateLimitOrThrow(
-  accountId: string,
-  signal: AbortSignal,
-): Promise<void> {
-  try {
-    await checkRateLimit(accountId, signal)
-  } catch (e) {
-    if (e instanceof RateLimitQueueFullError) {
-      throw new RateLimitError(e.message)
-    }
-    if (e instanceof DOMException && e.name === "AbortError") {
-      throw new AbortError()
-    }
-    throw e
-  }
-}
-
-export class RateLimitError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "RateLimitError"
-  }
-}
-
-export class AbortError extends Error {
-  constructor() {
-    super("Abort")
-    this.name = "AbortError"
-  }
 }
 
 async function calculateTokens(
@@ -192,29 +149,25 @@ function handleNonStreamingResponse(
     const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
     const cacheWriteTokens =
       usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
-    recordUsage(
-      createUsageRecord({
-        c,
-        accountId,
-        model,
-        promptTokens: Math.max(usage.prompt_tokens - cacheReadTokens, 0),
-        completionTokens: usage.completion_tokens,
-        totalTokens: calculateTotalTokens(usage),
-        cacheReadTokens,
-        cacheWriteTokens,
-      }),
-    )
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: Math.max(usage.prompt_tokens - cacheReadTokens, 0),
+      completionTokens: usage.completion_tokens,
+      totalTokens: calculateTotalTokens(usage),
+      cacheReadTokens,
+      cacheWriteTokens,
+    })
   } else if (model && accountId) {
-    recordUsage(
-      createUsageRecord({
-        c,
-        accountId,
-        model,
-        promptTokens: estimatedInputTokens,
-        completionTokens: 0,
-        totalTokens: estimatedInputTokens,
-      }),
-    )
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: estimatedInputTokens,
+      completionTokens: 0,
+      totalTokens: estimatedInputTokens,
+    })
   }
 
   Object.assign(response, normalized)
@@ -232,7 +185,7 @@ function handleStreamingResponse(
   return streamSSE(c, async (stream) => {
     let lastUsage: UsageInfo | undefined
     let recordedOnAbort = false
-    const pingInterval = createPingInterval(stream)
+    const pingInterval = createSsePingInterval(stream)
 
     try {
       for await (const rawEvent of response) {
@@ -246,9 +199,7 @@ function handleStreamingResponse(
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
         consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
         lastUsage = chunk.usage ?? lastUsage
-        await stream.writeSSE({
-          data: JSON.stringify(normalizeChunk(chunk)),
-        } as SSEMessage)
+        await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
       }
     } catch (error) {
       if (isAbortError(error)) {
@@ -279,17 +230,6 @@ function handleStreamingResponse(
   })
 }
 
-function createPingInterval(stream: SSEStream): ReturnType<typeof setInterval> {
-  const PING_INTERVAL_MS = 5_000
-  return setInterval(async () => {
-    try {
-      await stream.writeSSE({ event: "ping", data: '{"type": "ping"}' })
-    } catch {
-      // Stream already closed; clear interval in finally below.
-    }
-  }, PING_INTERVAL_MS)
-}
-
 function recordStreamingUsage(input: StreamUsageInput): boolean {
   const {
     c,
@@ -307,18 +247,16 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
     const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
     const cacheWriteTokens =
       lastUsage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
-    recordUsage(
-      createUsageRecord({
-        c,
-        accountId,
-        model,
-        promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
-        completionTokens: lastUsage.completion_tokens,
-        totalTokens: calculateTotalTokens(lastUsage),
-        cacheReadTokens,
-        cacheWriteTokens,
-      }),
-    )
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
+      completionTokens: lastUsage.completion_tokens,
+      totalTokens: calculateTotalTokens(lastUsage),
+      cacheReadTokens,
+      cacheWriteTokens,
+    })
     return true
   }
 
@@ -326,70 +264,19 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
     return false
   }
 
-  recordUsage(
-    createUsageRecord({
-      c,
-      accountId,
-      model,
-      promptTokens: estimatedInputTokens,
-      completionTokens: 0,
-      totalTokens: estimatedInputTokens,
-    }),
-  )
+  recordUsage({
+    c,
+    accountId,
+    model,
+    promptTokens: estimatedInputTokens,
+    completionTokens: 0,
+    totalTokens: estimatedInputTokens,
+  })
   return true
 }
 
 function calculateTotalTokens(usage: UsageInfo): number {
   return usage.total_tokens
-}
-
-function createUsageRecord(input: UsageRecordInput): UsageRecordInput {
-  return input
-}
-
-function recordUsage(input: UsageRecordInput): void {
-  const {
-    c,
-    accountId,
-    model,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cacheReadTokens = 0,
-    cacheWriteTokens = 0,
-  } = input
-
-  void trackUserTokenUsage(c, totalTokens)
-
-  try {
-    const now = Date.now()
-    const pricing = statsStore.getModelPricing(model)
-    const cost =
-      pricing ?
-        (promptTokens / 1000) * pricing.promptPricePer1k
-        + (completionTokens / 1000) * pricing.completionPricePer1k
-        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
-        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
-      : 0
-
-    statsStore.recordUsage({
-      date: new Date(now).toISOString().split("T")[0] ?? "",
-      accountId,
-      model,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      cost,
-      timestamp: now,
-    })
-    consola.debug(
-      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
-    )
-  } catch (error) {
-    consola.warn("Failed to record usage:", error)
-  }
 }
 
 const isChatCompletionResponse = (
@@ -398,18 +285,4 @@ const isChatCompletionResponse = (
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError"
-}
-
-async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
-  if (tokens <= 0) return
-
-  const userId = c.get("userId" as never) as string | undefined
-  if (!userId) return
-
-  try {
-    await incrementUserTokens(userId, tokens)
-    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
-  } catch (error) {
-    consola.warn("Failed to track user token usage:", error)
-  }
 }

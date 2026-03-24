@@ -1,8 +1,9 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
+import { respondToKnownRouteError } from "~/lib/request-lifecycle"
 
-import { handleCompletion, RateLimitError, AbortError } from "./handler"
+import { handleCompletion } from "./handler"
 
 export const completionRoutes = new Hono()
 
@@ -10,15 +11,15 @@ completionRoutes.post("/", async (c) => {
   try {
     return await handleCompletion(c)
   } catch (error) {
-    if (error instanceof RateLimitError) {
-      return c.json(
-        { error: { message: error.message, type: "rate_limit_error" } },
-        429,
-      )
+    const knownErrorResponse = respondToKnownRouteError(
+      c,
+      error,
+      "rate_limit_error",
+    )
+    if (knownErrorResponse) {
+      return knownErrorResponse
     }
-    if (error instanceof AbortError) {
-      return new Response(null, { status: 499 })
-    }
+
     return forwardError(c, error)
   }
 })

@@ -1,21 +1,15 @@
 import { events } from "fetch-event-stream"
 
-import {
-  getAccountForModel,
-  markAccountExhausted,
-  tryNextAccountForModel,
-} from "~/lib/accounts"
+import { getAccountForModel } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import {
-  reportUpstreamRateLimit,
-  reportUpstreamSuccess,
-} from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
+import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
+import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
 import {
   supportsResponsesApi,
   translateChatCompletionToResponses,
@@ -64,7 +58,8 @@ export const createResponses = async (
   }
 
   const enableVision = hasVisionInput(payload)
-  const initiator = initiatorOverride ?? inferResponsesInitiator(payload)
+  const initiator =
+    initiatorOverride ?? inferInitiatorFromResponsesPayload(payload)
 
   const doRequest = async (requestAccount: typeof account) => {
     const headers: Record<string, string> = {
@@ -81,27 +76,17 @@ export const createResponses = async (
     })
   }
 
-  let usedAccount = account
-  let response = await doRequest(account)
-
-  if (!response.ok && response.status === 429) {
-    await reportUpstreamRateLimit(account.id, response)
-    markAccountExhausted(account.id)
-    const retryResult = await tryNextAccountForModel(
+  const { account: usedAccount, response } =
+    await executeCopilotRequestWithRetry({
       account,
-      payload.model,
+      model: payload.model,
       doRequest,
-    )
-    response = retryResult.response
-    usedAccount = retryResult.account
-  }
+    })
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")
     throw new HTTPError("Failed to create responses", response, errorBody)
   }
-
-  await reportUpstreamSuccess(usedAccount.id)
 
   if (payload.stream) {
     return {
@@ -129,24 +114,6 @@ function hasVisionInput(payload: ResponsesPayload): boolean {
       && Array.isArray(item.content)
       && item.content.some((content) => content.type === "input_image"),
   )
-}
-
-function inferResponsesInitiator(payload: ResponsesPayload): "agent" | "user" {
-  if (typeof payload.input === "string") {
-    return "user"
-  }
-
-  const lastInput = payload.input.at(-1)
-
-  if (!lastInput) {
-    return "user"
-  }
-
-  if ("role" in lastInput) {
-    return lastInput.role === "assistant" ? "agent" : "user"
-  }
-
-  return "agent"
 }
 
 function isChatCompletionResponse(

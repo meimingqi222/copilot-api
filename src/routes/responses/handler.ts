@@ -1,6 +1,5 @@
 import type { Context } from "hono"
 
-import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import type {
@@ -12,39 +11,19 @@ import type {
 import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
+import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
+import { createSsePingInterval, forwardSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
-import { statsStore } from "~/lib/stats-store"
-import { incrementUserTokens } from "~/lib/users"
+import { recordUsage } from "~/lib/usage"
 import { createResponses } from "~/services/copilot/create-responses"
-
-interface UsageRecordInput {
-  c: Context
-  accountId: string
-  model: string
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cacheReadTokens?: number
-  cacheWriteTokens?: number
-}
+import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
   const account = getAccountForModel(payload.model)
 
-  try {
-    await checkRateLimit(account.id, signal)
-  } catch (error) {
-    if (error instanceof RateLimitQueueFullError) {
-      return c.json({ error: { message: error.message, type: "error" } }, 429)
-    }
-    if (error instanceof DOMException && error.name === "AbortError") {
-      return new Response(null, { status: 499 })
-    }
-    throw error
-  }
+  await checkAccountRateLimitOrThrow(account.id, signal)
 
   const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
   const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
@@ -65,52 +44,35 @@ export async function handleResponses(c: Context) {
   let completedResponse: ResponsesResponse | undefined
   const streamResponse = result.response
   return streamSSE(c, async (stream) => {
-    for await (const event of streamResponse) {
-      if (event.data === "[DONE]") {
-        break
-      }
-      if (!event.data) {
-        continue
-      }
+    const pingInterval = createSsePingInterval(stream)
 
-      const parsed = JSON.parse(event.data) as Record<string, unknown>
-      if (
-        parsed.type === "response.completed"
-        && parsed.response
-        && typeof parsed.response === "object"
-      ) {
-        completedResponse = parsed.response as ResponsesResponse
+    try {
+      for await (const event of streamResponse) {
+        if (event.data === "[DONE]") {
+          break
+        }
+        if (!event.data) {
+          continue
+        }
+
+        const parsed = JSON.parse(event.data) as Record<string, unknown>
+        if (
+          parsed.type === "response.completed"
+          && parsed.response
+          && typeof parsed.response === "object"
+        ) {
+          completedResponse = parsed.response as ResponsesResponse
+        }
+
+        await forwardSseEvent(stream, event)
       }
-
-      await stream.writeSSE({
-        ...(event.event ? { event: event.event } : {}),
-        data: event.data,
-      })
-    }
-
-    if (completedResponse) {
-      recordResponsesUsage(c, result.accountId, completedResponse)
+    } finally {
+      clearInterval(pingInterval)
+      if (completedResponse) {
+        recordResponsesUsage(c, result.accountId, completedResponse)
+      }
     }
   })
-}
-
-function inferInitiatorFromResponsesPayload(
-  payload: ResponsesPayload,
-): "agent" | "user" {
-  if (typeof payload.input === "string") {
-    return "user"
-  }
-
-  const lastInput = payload.input.at(-1)
-  if (!lastInput) {
-    return "user"
-  }
-
-  if ("role" in lastInput) {
-    return lastInput.role === "assistant" ? "agent" : "user"
-  }
-
-  return "agent"
 }
 
 function isNonStreaming(
@@ -146,66 +108,4 @@ function recordResponsesUsage(
     cacheReadTokens,
     cacheWriteTokens,
   })
-}
-
-function recordUsage(input: UsageRecordInput): void {
-  const {
-    c,
-    accountId,
-    model,
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cacheReadTokens = 0,
-    cacheWriteTokens = 0,
-  } = input
-
-  void trackUserTokenUsage(c, totalTokens)
-
-  try {
-    const now = Date.now()
-    const pricing = statsStore.getModelPricing(model)
-    const cost =
-      pricing ?
-        (promptTokens / 1000) * pricing.promptPricePer1k
-        + (completionTokens / 1000) * pricing.completionPricePer1k
-        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
-        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
-      : 0
-
-    statsStore.recordUsage({
-      date: new Date(now).toISOString().split("T")[0] ?? "",
-      accountId,
-      model,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      cacheReadTokens,
-      cacheWriteTokens,
-      cost,
-      timestamp: now,
-    })
-    consola.debug(
-      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
-    )
-  } catch (error) {
-    consola.warn("Failed to record usage:", error)
-  }
-}
-
-async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
-  if (tokens <= 0) {
-    return
-  }
-
-  const userId = c.get("userId" as never) as string | undefined
-  if (!userId) {
-    return
-  }
-
-  try {
-    await incrementUserTokens(userId, tokens)
-  } catch (error) {
-    consola.warn("Failed to track user token usage:", error)
-  }
 }

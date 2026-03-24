@@ -1,0 +1,80 @@
+import type { Context } from "hono"
+
+import consola from "consola"
+
+import { statsStore } from "~/lib/stats-store"
+import { incrementUserTokens } from "~/lib/users"
+
+export interface UsageRecordInput {
+  c: Context
+  accountId: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+}
+
+export function recordUsage(input: UsageRecordInput): void {
+  const {
+    c,
+    accountId,
+    model,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cacheReadTokens = 0,
+    cacheWriteTokens = 0,
+  } = input
+
+  void trackUserTokenUsage(c, totalTokens)
+
+  try {
+    const now = Date.now()
+    const pricing = statsStore.getModelPricing(model)
+    const cost =
+      pricing ?
+        (promptTokens / 1000) * pricing.promptPricePer1k
+        + (completionTokens / 1000) * pricing.completionPricePer1k
+        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
+        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
+      : 0
+
+    statsStore.recordUsage({
+      date: new Date(now).toISOString().split("T")[0] ?? "",
+      accountId,
+      model,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      cost,
+      timestamp: now,
+    })
+    consola.debug(
+      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
+    )
+  } catch (error) {
+    consola.warn("Failed to record usage:", error)
+  }
+}
+
+async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
+  if (tokens <= 0) {
+    return
+  }
+
+  const userId = c.get("userId" as never) as string | undefined
+  if (!userId) {
+    return
+  }
+
+  try {
+    await incrementUserTokens(userId, tokens)
+    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
+  } catch (error) {
+    consola.warn("Failed to track user token usage:", error)
+  }
+}

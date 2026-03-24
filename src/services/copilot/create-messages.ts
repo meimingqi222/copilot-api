@@ -6,18 +6,12 @@ import type {
 } from "~/routes/messages/anthropic-types"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import {
-  getAccountForModel,
-  markAccountExhausted,
-  tryNextAccountForModel,
-} from "~/lib/accounts"
+import { getAccountForModel } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import {
-  reportUpstreamRateLimit,
-  reportUpstreamSuccess,
-} from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
+import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
 
 /**
  * Translates Anthropic messages payload to Copilot's /v1/messages format.
@@ -69,7 +63,7 @@ export const createMessages = async (
       && message.content.some((block) => block.type === "image"),
   )
   const initiator =
-    options?.initiatorOverride ?? inferMessagesInitiator(payload)
+    options?.initiatorOverride ?? inferInitiatorFromAnthropicPayload(payload)
 
   // Strip reasoning_effort and thinking - OpenAI-specific params not supported by Copilot's Anthropic endpoint
   const copilotPayload = translateToCopilotMessages(payload)
@@ -99,27 +93,17 @@ export const createMessages = async (
     })
   }
 
-  let usedAccount = account
-  let response = await doRequest(account)
-
-  if (!response.ok && response.status === 429) {
-    await reportUpstreamRateLimit(account.id, response)
-    markAccountExhausted(account.id)
-    const retryResult = await tryNextAccountForModel(
+  const { account: usedAccount, response } =
+    await executeCopilotRequestWithRetry({
       account,
-      payload.model,
+      model: payload.model,
       doRequest,
-    )
-    response = retryResult.response
-    usedAccount = retryResult.account
-  }
+    })
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")
     throw new HTTPError("Failed to create messages", response, errorBody)
   }
-
-  await reportUpstreamSuccess(usedAccount.id)
 
   if (payload.stream) {
     return {
@@ -134,26 +118,4 @@ export const createMessages = async (
     accountId: usedAccount.id,
     response: (await response.json()) as AnthropicResponse,
   }
-}
-
-function inferMessagesInitiator(
-  payload: AnthropicMessagesPayload,
-): "agent" | "user" {
-  const lastMessage = payload.messages.at(-1)
-  if (!lastMessage) {
-    return "user"
-  }
-
-  if (lastMessage.role === "assistant") {
-    return "agent"
-  }
-
-  if (
-    Array.isArray(lastMessage.content)
-    && lastMessage.content.some((block) => block.type === "tool_result")
-  ) {
-    return "agent"
-  }
-
-  return "user"
 }
