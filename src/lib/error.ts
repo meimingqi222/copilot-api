@@ -28,14 +28,19 @@ export function forwardError(c: Context, error: unknown) {
       errorJson = errorText
     }
     consola.error("HTTP error:", errorJson)
+    const status = error.response.status as ContentfulStatusCode
+    const retryAfter = error.response.headers.get("Retry-After")
+    if (retryAfter) {
+      c.header("Retry-After", retryAfter)
+    }
     return c.json(
       {
         error: {
           message: errorText,
-          type: "error",
+          type: status === 429 ? "rate_limit_error" : "error",
         },
       },
-      error.response.status as ContentfulStatusCode,
+      status,
     )
   }
 

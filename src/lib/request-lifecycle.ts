@@ -1,11 +1,17 @@
 import type { Context } from "hono"
 
-import { checkRateLimit, RateLimitQueueFullError } from "~/lib/rate-limit"
+import {
+  checkRateLimit,
+  getRemainingCooldownSeconds,
+  RateLimitQueueFullError,
+} from "~/lib/rate-limit"
 
 export class RouteRateLimitError extends Error {
-  constructor(message: string) {
+  retryAfterSeconds: number
+  constructor(message: string, retryAfterSeconds = 0) {
     super(message)
     this.name = "RouteRateLimitError"
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -24,7 +30,10 @@ export async function checkAccountRateLimitOrThrow(
     await checkRateLimit(accountId, signal)
   } catch (error) {
     if (error instanceof RateLimitQueueFullError) {
-      throw new RouteRateLimitError(error.message)
+      throw new RouteRateLimitError(
+        error.message,
+        getRemainingCooldownSeconds(accountId),
+      )
     }
     if (error instanceof DOMException && error.name === "AbortError") {
       throw new ClientAbortError()
@@ -39,6 +48,9 @@ export function respondToKnownRouteError(
   rateLimitType = "error",
 ): Response | undefined {
   if (error instanceof RouteRateLimitError) {
+    if (error.retryAfterSeconds > 0) {
+      c.header("Retry-After", String(error.retryAfterSeconds))
+    }
     return c.json(
       { error: { message: error.message, type: rateLimitType } },
       429,
