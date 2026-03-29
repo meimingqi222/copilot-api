@@ -76,11 +76,10 @@ class StatsStore {
   useTestDb(): void {
     this.isTestMode = true
     this.db = new Database(":memory:")
-    this.createTables()
+    this.createTables(this.db)
   }
 
-  private createTables(): void {
-    const db = this.db!
+  private createTables(db: Database): void {
     db.run(`
       CREATE TABLE IF NOT EXISTS daily_stats (
         date TEXT NOT NULL,
@@ -141,12 +140,12 @@ class StatsStore {
     if (this.db) return this.db
     if (this.isTestMode) {
       this.db = new Database(":memory:")
-      this.createTables()
+      this.createTables(this.db)
       return this.db
     }
     mkdirSync(path.dirname(PATHS.STATS_PATH), { recursive: true })
     this.db = new Database(PATHS.STATS_PATH)
-    this.createTables()
+    this.createTables(this.db)
     return this.db
   }
 
