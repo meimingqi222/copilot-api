@@ -3,8 +3,8 @@
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
+import { websocket } from "hono/bun"
 import fs from "node:fs/promises"
-import { serve, type ServerHandler } from "srvx"
 import invariant from "tiny-invariant"
 
 import {
@@ -222,12 +222,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     )
   }
 
-  serve({
-    fetch: server.fetch as ServerHandler,
+  Bun.serve({
+    fetch: server.fetch,
+    websocket,
     port: options.port,
-    bun: {
-      idleTimeout: 0,
-    },
+    idleTimeout: 0,
   })
 }
 

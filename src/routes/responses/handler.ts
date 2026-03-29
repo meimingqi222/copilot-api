@@ -26,18 +26,7 @@ import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
-  const account = getAccountForModel(payload.model)
-
-  await checkAccountRateLimitOrThrow(account.id, signal)
-
-  const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
-  const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
-
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
-
-  c.set("model" as never, payload.model)
+  const initiator = await prepareResponsesRequest(c, payload, signal)
 
   if (payload.stream) {
     return streamSSE(c, async (stream) => {
@@ -100,13 +89,32 @@ export async function handleResponses(c: Context) {
   return c.json(result.response)
 }
 
-function isNonStreaming(
+export async function prepareResponsesRequest(
+  c: Context,
+  payload: ResponsesPayload,
+  signal: AbortSignal,
+): Promise<"agent" | "user" | undefined> {
+  const account = getAccountForModel(payload.model)
+  await checkAccountRateLimitOrThrow(account.id, signal)
+
+  const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
+  const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
+
+  if (state.manualApprove) {
+    await awaitApproval()
+  }
+
+  c.set("model" as never, payload.model)
+  return initiator
+}
+
+export function isNonStreaming(
   response: AsyncIterable<CopilotStreamEventLike> | ResponsesResponse,
 ): response is ResponsesResponse {
   return Object.hasOwn(response, "id") && Object.hasOwn(response, "model")
 }
 
-function recordResponsesUsage(
+export function recordResponsesUsage(
   c: Context,
   accountId: string,
   response: ResponsesResponse,
@@ -135,14 +143,17 @@ function recordResponsesUsage(
   })
 }
 
-function isAbortError(error: unknown): boolean {
+export function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError"
 }
 
-async function writeResponsesErrorEvent(
-  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
-  error: unknown,
-): Promise<void> {
+export function createResponsesErrorPayload(error: unknown): {
+  type: "error"
+  error: {
+    message: string
+    type: "error"
+  }
+} {
   let message = "Internal server error"
 
   if (error instanceof HTTPError) {
@@ -151,14 +162,21 @@ async function writeResponsesErrorEvent(
     message = error.message
   }
 
+  return {
+    type: "error",
+    error: {
+      message,
+      type: "error",
+    },
+  }
+}
+
+async function writeResponsesErrorEvent(
+  stream: Parameters<Parameters<typeof streamSSE>[1]>[0],
+  error: unknown,
+): Promise<void> {
   await writeSseEvent(
     stream,
-    JSON.stringify({
-      type: "error",
-      error: {
-        message,
-        type: "error",
-      },
-    }),
+    JSON.stringify(createResponsesErrorPayload(error)),
   )
 }
