@@ -13,7 +13,11 @@ responsesRoutes.post("/", async (c) => {
   try {
     return await handleResponses(c)
   } catch (error) {
-    const knownErrorResponse = respondToKnownRouteError(c, error)
+    const knownErrorResponse = respondToKnownRouteError(
+      c,
+      error,
+      "rate_limit_error",
+    )
     if (knownErrorResponse) {
       return knownErrorResponse
     }
