@@ -172,6 +172,18 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         accountId: result.accountId,
         skipPing: true,
       })
+    } catch (error) {
+      if (error instanceof HTTPError) {
+        consola.error(
+          "Messages API upstream error",
+          error.response.status,
+          error.responseBody,
+        )
+        const errPayload = buildAnthropicUpstreamError(error)
+        await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
+        return
+      }
+      throw error
     } finally {
       clearInterval(pingInterval)
     }
@@ -412,6 +424,8 @@ async function handleDirectStreamingResponse({
 
   const pingInterval = skipPing ? undefined : createSsePingInterval(stream)
 
+  let receivedMessageStop = false
+
   try {
     for await (const rawEvent of response) {
       if (!rawEvent.data || rawEvent.data === "[DONE]") {
@@ -420,7 +434,31 @@ async function handleDirectStreamingResponse({
 
       lastUsage = updateLastUsage(rawEvent.data, lastUsage)
 
+      try {
+        const parsed = JSON.parse(rawEvent.data) as { type?: string }
+        if (parsed.type === "message_stop") {
+          receivedMessageStop = true
+        }
+      } catch {
+        // ignore parse errors for tracking purposes
+      }
+
       await forwardSseEvent(stream, rawEvent)
+    }
+
+    if (!receivedMessageStop) {
+      consola.warn(
+        "Direct streaming: upstream closed without message_stop, sending synthetic error",
+      )
+      const errPayload = {
+        type: "error",
+        error: {
+          type: "api_error",
+          message:
+            "Upstream closed the stream unexpectedly. The model may not support images in tool results for this endpoint.",
+        },
+      }
+      await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
     }
   } catch (error) {
     if (
@@ -663,6 +701,37 @@ function buildAnthropicContextWindowError(error: HTTPError): {
     type: "error",
     error: {
       type: "invalid_request_error",
+      message,
+    },
+  }
+}
+
+/** Build a generic Anthropic-format error response from any upstream HTTPError. */
+function buildAnthropicUpstreamError(error: HTTPError): {
+  type: string
+  error: { type: string; message: string }
+} {
+  let message = `Upstream API error (${error.response.status}): ${error.message}`
+  try {
+    const parsed = JSON.parse(error.responseBody) as {
+      error?: { message?: string }
+      message?: string
+    }
+    const raw = parsed.error?.message ?? parsed.message
+    if (raw) {
+      message =
+        raw.startsWith("{") ?
+          ((JSON.parse(raw) as { error?: { message?: string } }).error?.message
+          ?? raw)
+        : raw
+    }
+  } catch {
+    // Keep default message
+  }
+  return {
+    type: "error",
+    error: {
+      type: "api_error",
       message,
     },
   }
