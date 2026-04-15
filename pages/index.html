@@ -1384,19 +1384,23 @@
             return;
           }
 
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            console.warn('Failed to get canvas context');
-            return;
-          }
-
           // Reset retry counter on successful render
           this.chartRenderRetries = 0;
 
-          // Destroy existing chart if any
+          // Destroy existing chart and replace the canvas element to sever any
+          // lingering Chart.js rAF references that would call getContext on a
+          // stale canvas handle after destroy().
           if (this.usageChart) {
             this.usageChart.destroy();
             this.usageChart = null;
+          }
+          const freshCanvas = document.createElement('canvas');
+          freshCanvas.id = 'usageTrendChart';
+          canvas.replaceWith(freshCanvas);
+          const ctx = freshCanvas.getContext('2d');
+          if (!ctx) {
+            console.warn('Failed to get canvas context after replace');
+            return;
           }
 
           const isToday = this.dateRange === 'today';
