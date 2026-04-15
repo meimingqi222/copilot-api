@@ -1396,6 +1396,9 @@
           }
           const freshCanvas = document.createElement('canvas');
           freshCanvas.id = 'usageTrendChart';
+          // Preserve CSS class and inline styles from original canvas
+          freshCanvas.className = canvas.className;
+          freshCanvas.style.cssText = canvas.style.cssText;
           canvas.replaceWith(freshCanvas);
           const ctx = freshCanvas.getContext('2d');
           if (!ctx) {
