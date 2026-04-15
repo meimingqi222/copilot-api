@@ -1263,7 +1263,7 @@
           // Patch Chart.js bug #11743: destroy() doesn't cancel pending rAF,
           // so clear/draw can fire on a null canvas after destroy.
           // This only needs to run once.
-          if (!Chart._patchedNullCanvas) {
+          if (typeof Chart !== 'undefined' && !Chart._patchedNullCanvas) {
             Chart._patchedNullCanvas = true;
             const origClear = Chart.prototype.clear;
             Chart.prototype.clear = function() {
