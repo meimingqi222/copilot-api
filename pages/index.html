@@ -1260,6 +1260,23 @@
         chartRenderToken: 0,
 
         init() {
+          // Patch Chart.js bug #11743: destroy() doesn't cancel pending rAF,
+          // so clear/draw can fire on a null canvas after destroy.
+          // This only needs to run once.
+          if (!Chart._patchedNullCanvas) {
+            Chart._patchedNullCanvas = true;
+            const origClear = Chart.prototype.clear;
+            Chart.prototype.clear = function() {
+              if (!this.canvas) return this;
+              return origClear.call(this);
+            };
+            const origDraw = Chart.prototype.draw;
+            Chart.prototype.draw = function() {
+              if (!this.canvas) return this;
+              return origDraw.call(this);
+            };
+          }
+
           // Initial load
           this.load();
           // Reload when view becomes active (switched back to quota)
@@ -1452,19 +1469,8 @@
               });
             }
 
-            // Plugin that silently skips draw when the canvas is detached or
-            // hidden, preventing the "Cannot read properties of null" error
-            // that Chart.js throws when it tries to draw on a removed canvas.
-            const safeDrawPlugin = {
-              id: 'safeDraw',
-              beforeDraw(chart) {
-                if (!chart.canvas || !chart.canvas.parentNode) return false;
-              }
-            };
-
             this.usageChart = new Chart(ctx, {
               type: 'line',
-              plugins: [safeDrawPlugin],
               data: { labels, datasets },
               options: {
                 responsive: true,
