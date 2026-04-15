@@ -1358,13 +1358,15 @@
 
           if (typeof Chart === 'undefined') return;
 
-          const attempt = () => {
+          const attempt = (retryCount = 0) => {
             // Bail out if a newer renderChart() call has started
             if (token !== this.chartRenderToken) return;
 
             const canvas = document.getElementById('usageTrendChart');
             if (!canvas || canvas.offsetParent === null) {
-              setTimeout(attempt, 150);
+              if (retryCount < 30) {
+                setTimeout(() => attempt(retryCount + 1), 150);
+              }
               return;
             }
 
