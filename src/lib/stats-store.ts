@@ -476,14 +476,28 @@ class StatsStore {
       slot.cacheWriteTokens += row.cache_write_tokens
       slot.totalTokens += row.total_tokens
       slot.cost += row.cost
+      const existingModel =
+        row.model in slot.models ?
+          slot.models[row.model]
+        : {
+            requests: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 0,
+            cost: 0,
+          }
       slot.models[row.model] = {
-        requests: row.requests,
-        promptTokens: row.prompt_tokens,
-        completionTokens: row.completion_tokens,
-        cacheReadTokens: row.cache_read_tokens,
-        cacheWriteTokens: row.cache_write_tokens,
-        totalTokens: row.total_tokens,
-        cost: row.cost,
+        requests: existingModel.requests + row.requests,
+        promptTokens: existingModel.promptTokens + row.prompt_tokens,
+        completionTokens:
+          existingModel.completionTokens + row.completion_tokens,
+        cacheReadTokens: existingModel.cacheReadTokens + row.cache_read_tokens,
+        cacheWriteTokens:
+          existingModel.cacheWriteTokens + row.cache_write_tokens,
+        totalTokens: existingModel.totalTokens + row.total_tokens,
+        cost: existingModel.cost + row.cost,
       }
     }
 
