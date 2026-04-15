@@ -1205,7 +1205,7 @@
         },
 
         async increasePriority(account) {
-          const newPriority = (account.priority ?? 0) + 1;
+          const newPriority = Math.min(100, (account.priority ?? 0) + 1);
           account.priority = newPriority;
           await this.savePriority(account);
         },
@@ -1399,11 +1399,14 @@
             this.usageChart = null;
           }
 
+          const isToday = this.dateRange === 'today';
+          const intervalSeries = this.usageSummary.intervalSeries || [];
           const timeSeries = this.usageSummary.timeSeries || [];
-          if (timeSeries.length === 0) return;
 
-          // Sort by date ascending
-          const sortedData = [...timeSeries].sort((a, b) => a.date.localeCompare(b.date));
+          // For today, prefer 15-min interval series; otherwise fall back to daily
+          const useInterval = isToday && intervalSeries.length > 0;
+          const hasDailyData = timeSeries.length > 0;
+          if (!useInterval && !hasDailyData) return;
 
           // Get CSS variables for colors
           const root = getComputedStyle(document.documentElement);
@@ -1417,11 +1420,24 @@
           const textSecondaryColor = root.getPropertyValue('--apple-text-secondary')?.trim() || '#86868B';
           const palette = [blueColor, greenColor, orangeColor, purpleColor, pinkColor, redColor];
 
-          // Format date labels (handle ISO date string as local date)
-          const labels = sortedData.map(d => {
-            const parts = d.date.split('-');
-            return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
-          });
+          let labels, sortedData;
+          if (useInterval) {
+            // 15-min slots: sort by slotTs, format as HH:MM
+            sortedData = [...intervalSeries].sort((a, b) => a.slotTs - b.slotTs);
+            labels = sortedData.map(d => {
+              const date = new Date(d.slotTs);
+              const hh = String(date.getHours()).padStart(2, '0');
+              const mm = String(date.getMinutes()).padStart(2, '0');
+              return `${hh}:${mm}`;
+            });
+          } else {
+            // Daily: sort by date ascending
+            sortedData = [...timeSeries].sort((a, b) => a.date.localeCompare(b.date));
+            labels = sortedData.map(d => {
+              const parts = d.date.split('-');
+              return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}`;
+            });
+          }
 
           const datasets = [
             {

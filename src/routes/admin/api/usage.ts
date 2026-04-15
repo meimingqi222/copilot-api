@@ -316,11 +316,17 @@ usageApiRoutes.get("/summary", (c) => {
   const { totals, timeSeries, byModel } = aggregateStats(allStats)
   const byAccount = aggregateByAccount(startDate, endDate)
 
+  const intervalSeries =
+    range === "today" ?
+      statsStore.getUsageStatsByInterval(15, undefined, startDate)
+    : null
+
   return c.json({
     totals,
     byAccount,
     byModel,
     timeSeries,
+    intervalSeries,
     period: { startDate, endDate },
   })
 })
