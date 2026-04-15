@@ -47,7 +47,7 @@ export interface AnthropicImageBlock {
 export interface AnthropicToolResultBlock {
   type: "tool_result"
   tool_use_id: string
-  content: string
+  content: string | Array<AnthropicTextBlock | AnthropicImageBlock>
   is_error?: boolean
 }
 

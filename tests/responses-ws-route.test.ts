@@ -146,7 +146,43 @@ test("WS /responses supports sequential response.create requests", async () => {
 })
 
 test("WS /v1/responses handshake requires API key middleware", async () => {
+  // 显式重置状态以避免并发污染
   state.apiKey = "secret"
+  state.accounts = [
+    {
+      id: "test-account-id",
+      label: "test",
+      githubToken: "gh-test-token",
+      copilotToken: "test-token",
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+    },
+  ]
+  state.activeAccountIndex = 0
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "gpt-responses",
+        object: "model",
+        name: "GPT Responses",
+        preview: false,
+        vendor: "OpenAI",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/responses"],
+        capabilities: {
+          family: "gpt-5",
+          object: "capabilities",
+          supports: {},
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+    ],
+  }
 
   using appServer = Bun.serve({
     port: 0,
