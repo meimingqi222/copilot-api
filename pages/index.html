@@ -296,7 +296,7 @@
             <div class="card p-6">
               <div class="flex items-start justify-between mb-4">
                 <div class="flex items-center gap-3">
-                  <i data-lucide="github" class="w-8 h-8"></i>
+                  <i data-lucide="git-branch" class="w-8 h-8"></i>
                   <div>
                     <p class="font-medium" x-text="account.label || 'GitHub'"></p>
                     <!-- 允许编辑账户名称 -->
@@ -387,7 +387,7 @@
             </div>
           </template>
           <div x-show="!accounts.length" class="col-span-full empty-state py-12">
-            <i data-lucide="github" class="empty-state-icon"></i>
+            <i data-lucide="git-branch" class="empty-state-icon"></i>
             <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
           </div>
         </div>
@@ -575,7 +575,7 @@
                 </template>
               </div>
               <div x-show="!Object.keys(usageSummary.byAccount).length" class="empty-state">
-                <i data-lucide="github" class="empty-state-icon"></i>
+                <i data-lucide="git-branch" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]">暂无账户使用数据</p>
               </div>
             </div>
@@ -589,7 +589,7 @@
               <template x-for="account in accounts" :key="account.id">
                 <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
                   <div class="flex items-center gap-3 mb-4 flex-wrap">
-                    <i data-lucide="github" class="w-5 h-5"></i>
+                    <i data-lucide="git-branch" class="w-5 h-5"></i>
                     <span class="font-medium text-body" x-text="account.label"></span>
                     <!-- 优先级 -->
                     <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-[var(--apple-purple)] text-white">
@@ -663,7 +663,7 @@
                 </div>
               </template>
               <div x-show="!accounts.length" class="empty-state">
-                <i data-lucide="github" class="empty-state-icon"></i>
+                <i data-lucide="git-branch" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
               </div>
             </div>
@@ -1199,13 +1199,13 @@
         },
 
         async decreasePriority(account) {
-          const newPriority = Math.max(0, (account.priority ?? 0) + 1);
+          const newPriority = Math.max(0, (account.priority ?? 0) - 1);
           account.priority = newPriority;
           await this.savePriority(account);
         },
 
         async increasePriority(account) {
-          const newPriority = Math.max(0, (account.priority ?? 0) - 1);
+          const newPriority = (account.priority ?? 0) + 1;
           account.priority = newPriority;
           await this.savePriority(account);
         },
@@ -1257,6 +1257,8 @@
           timeSeries: [],
         },
         usageChart: null,
+        chartRenderRetries: 0,
+        maxChartRenderRetries: 10,
 
         init() {
           // Initial load
@@ -1265,14 +1267,28 @@
           const app = document.querySelector('[x-data^=adminApp]');
           if (app) {
             Alpine.$data(app).$watch('currentView', (view) => {
-              if (view === 'quota') this.load();
+              if (view === 'quota') {
+                this.load();
+              } else {
+                // Destroy chart when leaving quota view to prevent canvas errors
+                this.destroyChart();
+              }
             });
+          }
+        },
+
+        destroyChart() {
+          if (this.usageChart) {
+            this.usageChart.destroy();
+            this.usageChart = null;
           }
         },
 
         setRange(range) {
           this.dateRange = range;
-          this.loadUsageStats();
+          this.loadUsageStats().then(() => {
+            this.$nextTick(() => this.renderChart());
+          });
         },
 
         async load() {
@@ -1287,7 +1303,10 @@
             this.showToast(I18n.t('error.load'), 'error');
           } finally {
             this.loading = false;
-            this.$nextTick(() => lucide.createIcons());
+            this.$nextTick(() => {
+              lucide.createIcons();
+              this.renderChart();
+            });
           }
         },
 
@@ -1329,8 +1348,6 @@
           try {
             const data = await API.usage.summary(this.dateRange);
             this.usageSummary = data;
-
-            this.$nextTick(() => this.renderChart());
           } catch (e) {
             console.error('Failed to load usage stats:', e);
           }
@@ -1344,10 +1361,37 @@
           }
 
           const canvas = document.getElementById('usageTrendChart');
-          if (!canvas) return;
+          if (!canvas) {
+            if (this.chartRenderRetries < this.maxChartRenderRetries) {
+              this.chartRenderRetries++;
+              console.warn(`Canvas element not found, retrying... (${this.chartRenderRetries}/${this.maxChartRenderRetries})`);
+              setTimeout(() => this.renderChart(), 100);
+            } else {
+              console.error('Max retries reached for canvas element');
+            }
+            return;
+          }
+
+          // Check if canvas is visible (not hidden by x-show)
+          if (canvas.offsetParent === null) {
+            if (this.chartRenderRetries < this.maxChartRenderRetries) {
+              this.chartRenderRetries++;
+              console.warn(`Canvas element not visible, retrying... (${this.chartRenderRetries}/${this.maxChartRenderRetries})`);
+              setTimeout(() => this.renderChart(), 100);
+            } else {
+              console.error('Max retries reached for canvas visibility');
+            }
+            return;
+          }
 
           const ctx = canvas.getContext('2d');
-          if (!ctx) return;
+          if (!ctx) {
+            console.warn('Failed to get canvas context');
+            return;
+          }
+
+          // Reset retry counter on successful render
+          this.chartRenderRetries = 0;
 
           // Destroy existing chart if any
           if (this.usageChart) {

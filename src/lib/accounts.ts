@@ -350,6 +350,33 @@ export function switchToNextAccount(): Account | null {
   return null
 }
 
+const TOKEN_REFRESH_RETRY_DELAY_MS = 60_000
+
+/**
+ * Schedule a token refresh retry for an account after a fixed backoff delay.
+ * Called when a scheduled refresh fails, to keep the timer chain alive.
+ * If the retry also fails, it calls itself again — ensuring continuous retries
+ * until the account is deleted or the refresh eventually succeeds (which will
+ * re-enter the normal refresh scheduling path inside refreshCopilotToken).
+ */
+function scheduleTokenRefreshRetry(accountId: string): void {
+  consola.warn(
+    `Scheduling token refresh retry for account "${accountId}" in ${TOKEN_REFRESH_RETRY_DELAY_MS / 1000}s`,
+  )
+  const retryTimerId = setTimeout(() => {
+    const account = state.accounts.find((a) => a.id === accountId)
+    if (!account) {
+      tokenRefreshTimers.delete(accountId)
+      return
+    }
+    refreshCopilotToken(account).catch((error: unknown) => {
+      consola.error(`Token refresh retry failed for "${account.label}":`, error)
+      scheduleTokenRefreshRetry(accountId)
+    })
+  }, TOKEN_REFRESH_RETRY_DELAY_MS)
+  tokenRefreshTimers.set(accountId, retryTimerId)
+}
+
 export async function refreshCopilotToken(account: Account): Promise<void> {
   const response = await fetch(
     `${GITHUB_API_BASE_URL}/copilot_internal/v2/token`,
@@ -388,13 +415,28 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     clearTimeout(existingTimer)
   }
 
+  // Use accountId instead of account object reference to avoid stale closures
+  const accountId = account.id
   const timerId = setTimeout(() => {
-    consola.debug(`Refreshing Copilot token for "${account.label}"`)
-    refreshCopilotToken(account).catch((error: unknown) => {
+    // Find the current account object from state.accounts to avoid stale references
+    const currentAccount = state.accounts.find((a) => a.id === accountId)
+    if (!currentAccount) {
+      consola.warn(
+        `Account "${accountId}" not found during token refresh, cancelling timer`,
+      )
+      tokenRefreshTimers.delete(accountId)
+      return
+    }
+
+    consola.debug(`Refreshing Copilot token for "${currentAccount.label}"`)
+    refreshCopilotToken(currentAccount).catch((error: unknown) => {
       consola.error(
-        `Failed to refresh Copilot token for "${account.label}":`,
+        `Failed to refresh Copilot token for "${currentAccount.label}":`,
         error,
       )
+      // refreshCopilotToken only schedules the next timer on success.
+      // On failure we must reschedule manually to keep the chain alive.
+      scheduleTokenRefreshRetry(accountId)
     })
   }, refreshInterval)
 
