@@ -476,9 +476,10 @@ class StatsStore {
       slot.cacheWriteTokens += row.cache_write_tokens
       slot.totalTokens += row.total_tokens
       slot.cost += row.cost
+      const modelKey = row.model || "unknown"
       const existingModel =
-        row.model in slot.models ?
-          slot.models[row.model]
+        modelKey in slot.models ?
+          slot.models[modelKey]
         : {
             requests: 0,
             promptTokens: 0,
@@ -488,7 +489,7 @@ class StatsStore {
             totalTokens: 0,
             cost: 0,
           }
-      slot.models[row.model] = {
+      slot.models[modelKey] = {
         requests: existingModel.requests + row.requests,
         promptTokens: existingModel.promptTokens + row.prompt_tokens,
         completionTokens:
