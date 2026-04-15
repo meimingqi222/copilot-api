@@ -248,9 +248,9 @@ function handleStreamingResponse(
   const accountId = c.get("accountId" as never) as string | undefined
 
   return streamSSE(c, async (stream) => {
+    const pingInterval = createSsePingInterval(stream)
     let lastUsage: UsageInfo | undefined
     let recordedOnAbort = false
-    const pingInterval = createSsePingInterval(stream)
 
     try {
       for await (const rawEvent of response) {

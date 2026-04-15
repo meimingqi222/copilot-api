@@ -1,8 +1,12 @@
 import { events } from "fetch-event-stream"
 
 import type {
+  AnthropicImageBlock,
+  AnthropicMessage,
   AnthropicMessagesPayload,
   AnthropicResponse,
+  AnthropicTextBlock,
+  AnthropicToolResultBlock,
 } from "~/routes/messages/anthropic-types"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
@@ -12,6 +16,70 @@ import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
 import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
+
+/**
+ * Copilot's /v1/messages endpoint does not support image blocks nested inside
+ * tool_result content arrays.  This function moves any such images to the
+ * top-level content of the surrounding user message so the endpoint can
+ * process them as regular vision inputs.
+ *
+ * Before:
+ *   user.content = [
+ *     { type: "tool_result", content: [{ type: "image", source: … }] }
+ *   ]
+ *
+ * After:
+ *   user.content = [
+ *     { type: "tool_result", content: "[See attached image]" },
+ *     { type: "image", source: … }
+ *   ]
+ */
+function hoistToolResultImages(
+  messages: Array<AnthropicMessage>,
+): Array<AnthropicMessage> {
+  return messages.map((message) => {
+    if (message.role !== "user" || !Array.isArray(message.content)) {
+      return message
+    }
+
+    const processedContent: typeof message.content = []
+    const hoistedImages: Array<AnthropicImageBlock> = []
+
+    for (const block of message.content) {
+      if (
+        block.type === "tool_result"
+        && Array.isArray(block.content)
+        && block.content.some((c) => c.type === "image")
+      ) {
+        const textContent = block.content
+          .filter((c): c is AnthropicTextBlock => c.type === "text")
+          .map((c) => c.text)
+          .join("\n")
+        const images = block.content.filter(
+          (c): c is AnthropicImageBlock => c.type === "image",
+        )
+
+        const newBlock: AnthropicToolResultBlock = {
+          ...block,
+          content: textContent || "[See attached image from tool result]",
+        }
+        processedContent.push(newBlock)
+        hoistedImages.push(...images)
+      } else {
+        processedContent.push(block)
+      }
+    }
+
+    if (hoistedImages.length === 0) {
+      return message
+    }
+
+    return {
+      ...message,
+      content: [...processedContent, ...hoistedImages],
+    }
+  })
+}
 
 /**
  * Translates Anthropic messages payload to Copilot's /v1/messages format.
@@ -26,6 +94,7 @@ export function translateToCopilotMessages(
 
   return {
     ...rest,
+    messages: hoistToolResultImages(rest.messages),
     ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
     ...(payload.temperature !== undefined ?
       { temperature: payload.temperature }
@@ -57,7 +126,10 @@ export const createMessages = async (
     throw new Error("Copilot token not found")
   }
 
-  const enableVision = payload.messages.some(
+  // hoist is also applied in translateToCopilotMessages; run it here first so
+  // enableVision correctly detects images that were originally in tool_results.
+  const hoistedMessages = hoistToolResultImages(payload.messages)
+  const enableVision = hoistedMessages.some(
     (message) =>
       Array.isArray(message.content)
       && message.content.some((block) => block.type === "image"),

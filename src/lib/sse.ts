@@ -1,5 +1,6 @@
 export interface SSEStream {
   writeSSE(message: { event?: string; data: string }): Promise<void>
+  write?(input: string | Uint8Array): Promise<unknown>
 }
 
 export interface SSEEventLike {
@@ -8,16 +9,23 @@ export interface SSEEventLike {
 }
 
 const DEFAULT_PING_INTERVAL_MS = 5_000
-const DEFAULT_PING_EVENT = "ping"
-const DEFAULT_PING_PAYLOAD = '{"type":"ping"}'
 
+/**
+ * Sends SSE comment as keep-alive signal.
+ * SSE spec defines comment lines starting with `:` which clients ignore.
+ * This is the standard way to prevent idle connection timeouts.
+ */
 export function createSsePingInterval(
   stream: SSEStream,
   intervalMs = DEFAULT_PING_INTERVAL_MS,
 ): ReturnType<typeof setInterval> {
   return setInterval(async () => {
     try {
-      await writeSseEvent(stream, DEFAULT_PING_PAYLOAD, DEFAULT_PING_EVENT)
+      // SSE comment format: `: comment\n\n`
+      // This is the standard SSE keep-alive mechanism
+      if (stream.write) {
+        await stream.write(": keep-alive\n\n")
+      }
     } catch {
       // Stream already closed; the caller clears the interval in finally.
     }
