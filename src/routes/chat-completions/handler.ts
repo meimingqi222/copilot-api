@@ -5,6 +5,7 @@ import { streamSSE } from "hono/streaming"
 
 import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
+import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
 import { createSsePingInterval, writeSseEvent } from "~/lib/sse"
@@ -92,69 +93,10 @@ export async function handleCompletion(c: Context) {
     return handleStreamingResponse(c, result.response, estimatedInputTokens)
   }
 
-  return streamSSE(c, async (stream) => {
-    const pingInterval = createSsePingInterval(stream)
-    let lastUsage: UsageInfo | undefined
-    let recordedOnAbort = false
-    let accountId: string | undefined
-    const model = payload.model
-
-    try {
-      const result = await createChatCompletions(
-        payload,
-        signal,
-        resolveInitiator(c, payload),
-      )
-      accountId = result.accountId
-
-      c.set("accountId" as never, accountId)
-      c.set("model" as never, model)
-
-      if (isChatCompletionResponse(result.response)) {
-        handleNonStreamingResponse(c, result.response, estimatedInputTokens)
-        await writeSseEvent(stream, JSON.stringify(result.response))
-        return
-      }
-
-      for await (const rawEvent of result.response) {
-        if (rawEvent.data === "[DONE]") {
-          break
-        }
-        if (!rawEvent.data) {
-          continue
-        }
-
-        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
-        lastUsage = chunk.usage ?? lastUsage
-        await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
-      }
-    } catch (error) {
-      if (isAbortError(error)) {
-        consola.debug("Stream aborted (client disconnected)")
-        recordedOnAbort = recordStreamingUsage({
-          c,
-          accountId,
-          model,
-          lastUsage,
-          estimatedInputTokens,
-          onlyWhenUsageExists: true,
-        })
-        return
-      }
-      throw error
-    } finally {
-      clearInterval(pingInterval)
-      if (!recordedOnAbort) {
-        recordStreamingUsage({
-          c,
-          accountId,
-          model,
-          lastUsage,
-          estimatedInputTokens,
-        })
-      }
-    }
+  return handleStreamingCompletion(c, {
+    payload,
+    signal,
+    estimatedInputTokens,
   })
 }
 
@@ -362,4 +304,98 @@ const isChatCompletionResponse = (
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError"
+}
+
+interface StreamingCompletionOptions {
+  payload: ChatCompletionsPayload
+  signal: AbortSignal | undefined
+  estimatedInputTokens: number
+}
+
+function handleStreamingCompletion(
+  c: Context,
+  options: StreamingCompletionOptions,
+) {
+  return streamSSE(c, async (stream) => {
+    const { payload, signal, estimatedInputTokens } = options
+    const pingInterval = createSsePingInterval(stream)
+    let lastUsage: UsageInfo | undefined
+    let recordedOnAbort = false
+    let accountId: string | undefined
+    const model = payload.model
+
+    try {
+      const result = await createChatCompletions(
+        payload,
+        signal,
+        resolveInitiator(c, payload),
+      )
+      accountId = result.accountId
+
+      c.set("accountId" as never, accountId)
+      c.set("model" as never, model)
+
+      if (isChatCompletionResponse(result.response)) {
+        handleNonStreamingResponse(c, result.response, estimatedInputTokens)
+        await writeSseEvent(stream, JSON.stringify(result.response))
+        return
+      }
+
+      for await (const rawEvent of result.response) {
+        if (rawEvent.data === "[DONE]") {
+          break
+        }
+        if (!rawEvent.data) {
+          continue
+        }
+
+        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+        lastUsage = chunk.usage ?? lastUsage
+        await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+      }
+    } catch (error) {
+      if (isAbortError(error)) {
+        consola.debug("Stream aborted (client disconnected)")
+        recordedOnAbort = recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+          onlyWhenUsageExists: true,
+        })
+        return
+      }
+      // Write error to SSE stream
+      consola.error("Streaming error:", error)
+      const errorMessage =
+        error instanceof Error ? error.message : "Internal server error"
+      const errorType =
+        error instanceof HTTPError && error.response.status === 429 ?
+          "rate_limit_error"
+        : "error"
+      await writeSseEvent(
+        stream,
+        JSON.stringify({
+          error: {
+            message: errorMessage,
+            type: errorType,
+          },
+        }),
+      )
+      throw error
+    } finally {
+      clearInterval(pingInterval)
+      if (!recordedOnAbort) {
+        recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+        })
+      }
+    }
+  })
 }
