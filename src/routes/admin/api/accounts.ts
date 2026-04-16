@@ -3,7 +3,7 @@ import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
-import type { Account } from "~/lib/accounts"
+import type { Account, AccountProvider } from "~/lib/accounts"
 
 import {
   cancelTokenRefreshTimer,
@@ -23,11 +23,68 @@ import { state } from "~/lib/state"
 import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 
+async function updateCodebuffAccount(
+  account: Account,
+  body: {
+    label?: string
+    enabled?: boolean
+    priority?: number
+    authToken?: string
+    baseUrl?: string
+    cliVersion?: string
+    agentId?: string
+    costMode?: string
+    allowFallbacks?: boolean
+    modelIds?: Array<string>
+  },
+): Promise<void> {
+  if (account.provider !== "codebuff") return
+
+  if (Object.hasOwn(body, "authToken")) {
+    account.codebuffAuthToken = body.authToken
+  }
+  if (Object.hasOwn(body, "baseUrl")) {
+    account.codebuffBaseUrl = body.baseUrl
+  }
+  if (Object.hasOwn(body, "cliVersion")) {
+    account.codebuffCliVersion = body.cliVersion
+  }
+  if (Object.hasOwn(body, "agentId")) {
+    account.codebuffAgentId = body.agentId
+  }
+  if (Object.hasOwn(body, "costMode")) {
+    account.codebuffCostMode = body.costMode
+  }
+  if (Object.hasOwn(body, "allowFallbacks")) {
+    account.codebuffAllowFallbacks = body.allowFallbacks
+  }
+
+  if (Array.isArray(body.modelIds)) {
+    account.availableModels = body.modelIds.map((modelId) => ({
+      id: modelId,
+      name: modelId,
+      vendor: "codebuff",
+      pickerEnabled: true,
+      supportedEndpoints: ["/chat/completions"],
+    }))
+  } else if (
+    Object.hasOwn(body, "authToken")
+    || Object.hasOwn(body, "baseUrl")
+    || Object.hasOwn(body, "cliVersion")
+    || Object.hasOwn(body, "agentId")
+    || Object.hasOwn(body, "costMode")
+    || Object.hasOwn(body, "allowFallbacks")
+  ) {
+    await refreshModelsForAccount(account)
+  }
+}
+
 export const accountApiRoutes = new Hono()
 
 // Persisted map of pending device-code flows: deviceCode → pollState
 interface PollState {
   label: string
+  provider?: AccountProvider
   interval: number
   expiresAt: number
   status: "pending" | "complete" | "expired"
@@ -71,6 +128,7 @@ function publicAccount(account: Account) {
     copilotToken: _ct,
     copilotTokenExpiry: _cte,
     quotaInfo: _quota,
+    codebuffAuthToken: _codebuffToken,
     ...rest
   } = account
   return {
@@ -87,14 +145,54 @@ accountApiRoutes.get("/", (c) => {
 })
 
 accountApiRoutes.post("/", async (c) => {
-  let body: { label?: string }
+  let body: {
+    label?: string
+    provider?: AccountProvider
+    authToken?: string
+    baseUrl?: string
+    cliVersion?: string
+    agentId?: string
+    costMode?: string
+    allowFallbacks?: boolean
+  }
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
 
+  const provider =
+    body.provider === "codebuff" || body.provider === "copilot" ?
+      body.provider
+    : "copilot"
   const label = body.label ?? `account-${state.accounts.length + 1}`
+
+  if (provider === "codebuff") {
+    const account: Account = {
+      id: randomUUID(),
+      label,
+      provider,
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+      codebuffAuthToken: body.authToken,
+      codebuffBaseUrl: body.baseUrl,
+      codebuffCliVersion: body.cliVersion,
+      codebuffAgentId: body.agentId,
+      codebuffCostMode: body.costMode,
+      codebuffAllowFallbacks: body.allowFallbacks,
+    }
+
+    state.accounts.push(account)
+    await refreshModelsForAccount(account)
+
+    return c.json({
+      status: "complete",
+      accountId: account.id,
+      account: publicAccount(account),
+    })
+  }
 
   let deviceCodeResponse: Awaited<ReturnType<typeof getDeviceCode>>
   try {
@@ -108,6 +206,7 @@ accountApiRoutes.post("/", async (c) => {
 
   pendingFlows.set(device_code, {
     label,
+    provider: "copilot",
     interval,
     expiresAt: Date.now() + expires_in * 1000,
     status: "pending",
@@ -214,6 +313,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
   const account: Account = {
     id: randomUUID(),
     label: flow.label,
+    provider: "copilot",
     githubToken: json.access_token,
     enabled: true,
     priority: 0,
@@ -244,9 +344,11 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     consola.info("First account added — refreshing models cache")
     // Wait a bit for copilot token to be ready
     setTimeout(() => {
-      cacheModels().catch((err: unknown) => {
+      try {
+        cacheModels()
+      } catch (err: unknown) {
         consola.warn("Failed to refresh models after adding account:", err)
-      })
+      }
     }, 2000)
   }
 
@@ -258,7 +360,18 @@ accountApiRoutes.put("/:id", async (c) => {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
-  let body: { label?: string; enabled?: boolean; priority?: number }
+  let body: {
+    label?: string
+    enabled?: boolean
+    priority?: number
+    authToken?: string
+    baseUrl?: string
+    cliVersion?: string
+    agentId?: string
+    costMode?: string
+    allowFallbacks?: boolean
+    modelIds?: Array<string>
+  }
   try {
     body = await c.req.json()
   } catch {
@@ -278,7 +391,11 @@ accountApiRoutes.put("/:id", async (c) => {
       `Account "${account.label}" priority set to ${account.priority}`,
     )
   }
+
+  await updateCodebuffAccount(account, body)
+
   await saveAccounts()
+  cacheModels()
   return c.json({ account: publicAccount(account) })
 })
 
@@ -320,11 +437,20 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
   if (!account) return c.json({ error: "Account not found." }, 404)
 
   try {
+    if (account.provider === "codebuff") {
+      await refreshModelsForAccount(account)
+      await saveAccounts()
+      cacheModels()
+      return c.json({ account: publicAccount(account) })
+    }
+
     await refreshCopilotToken(account)
-    void refreshModelsForAccount(account)
+    await refreshModelsForAccount(account)
+    await saveAccounts()
+    cacheModels()
     return c.json({ account: publicAccount(account) })
   } catch {
-    return c.json({ error: "Failed to refresh Copilot token." }, 502)
+    return c.json({ error: "Failed to refresh account." }, 502)
   }
 })
 

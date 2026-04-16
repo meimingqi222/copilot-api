@@ -50,7 +50,6 @@ export async function handleCompletion(c: Context) {
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
   const account = getAccountForModel(payload.model)
-
   await checkAccountRateLimitOrThrow(account.id, signal)
 
   const selectedModel = state.models?.data.find(

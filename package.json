@@ -37,7 +37,7 @@
     "pre-commit": "bunx lint-staged"
   },
   "lint-staged": {
-    "*": "bun run lint --fix"
+    "*.{ts,js,tsx,jsx}": "bun run lint --fix"
   },
   "dependencies": {
     "citty": "^0.1.6",

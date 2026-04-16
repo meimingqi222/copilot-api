@@ -29,9 +29,6 @@ export const createResponses = async (
   | { accountId: string; response: ResponsesResponse }
 > => {
   const account = getAccountForModel(payload.model)
-  if (!account.copilotToken) {
-    throw new Error("Copilot token not found")
-  }
 
   if (!supportsResponsesApi(payload.model, account)) {
     const chatPayload = translateResponsesToChatPayload(payload)
@@ -55,6 +52,10 @@ export const createResponses = async (
         payload,
       ),
     }
+  }
+
+  if (!account.copilotToken) {
+    throw new Error("Copilot token not found")
   }
 
   const enableVision = hasVisionInput(payload)

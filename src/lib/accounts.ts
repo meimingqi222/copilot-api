@@ -11,10 +11,22 @@ import {
 } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 
-export interface Account {
+export type AccountProvider = "copilot" | "codebuff"
+
+export interface CodebuffAccountConfig {
+  codebuffAuthToken?: string
+  codebuffBaseUrl?: string
+  codebuffCliVersion?: string
+  codebuffAgentId?: string
+  codebuffCostMode?: string
+  codebuffAllowFallbacks?: boolean
+}
+
+export interface Account extends CodebuffAccountConfig {
   id: string
   label: string
-  githubToken: string
+  provider?: AccountProvider
+  githubToken?: string
   copilotToken?: string
   copilotTokenExpiry?: number
   quotaInfo?: QuotaSnapshot
@@ -81,6 +93,7 @@ export async function loadAccounts(): Promise<void> {
       const account: Account = {
         id: randomUUID(),
         label: "default",
+        provider: "copilot",
         githubToken: legacyToken.trim(),
         enabled: true,
         priority: 0,
@@ -147,6 +160,37 @@ function rateLimitedResponse(body: string): Response {
   })
 }
 
+function getAccountProvider(account: Account): AccountProvider {
+  return account.provider ?? "copilot"
+}
+
+function supportsModelExplicitly(account: Account, modelId: string): boolean {
+  return account.availableModels?.some((model) => model.id === modelId) ?? false
+}
+
+function supportsModelWithFallback(account: Account, modelId: string): boolean {
+  return supportsModelExplicitly(account, modelId) || !account.availableModels
+}
+
+function inferProviderForModel(modelId: string): AccountProvider {
+  const normalized = modelId.toLowerCase()
+  if (normalized.includes("codebuff")) {
+    return "codebuff"
+  }
+
+  const codebuffModelExists = state.accounts.some(
+    (account) =>
+      getAccountProvider(account) === "codebuff"
+      && supportsModelExplicitly(account, modelId),
+  )
+
+  if (codebuffModelExists) {
+    return "codebuff"
+  }
+
+  return "copilot"
+}
+
 export function getAccountForModel(modelId: string): Account {
   // First, clear isExhausted for any accounts whose cooldown has expired
   for (const account of state.accounts) {
@@ -179,26 +223,47 @@ export function getAccountForModel(modelId: string): Account {
       )
     }
     throw new HTTPError(
-      "No available GitHub Copilot accounts (all disabled or no accounts configured)",
+      "No available accounts (all disabled or no accounts configured)",
       new Response("Service Unavailable", { status: 503 }),
     )
   }
 
-  // Accounts that support the model (or have no model restriction)
-  const capable = available.filter(
-    (a) =>
-      !a.availableModels || a.availableModels.some((m) => m.id === modelId),
+  // Prefer accounts that explicitly declare support for this model.
+  const expectedProvider = inferProviderForModel(modelId)
+  const providerMatched = available.filter(
+    (account) => getAccountProvider(account) === expectedProvider,
   )
+
+  const capablePool = providerMatched.length > 0 ? providerMatched : available
+
+  const explicitlyCapable = capablePool.filter((account) =>
+    supportsModelExplicitly(account, modelId),
+  )
+  const capable =
+    explicitlyCapable.length > 0 ?
+      explicitlyCapable
+    : capablePool.filter((account) =>
+        supportsModelWithFallback(account, modelId),
+      )
 
   if (capable.length === 0) {
     // Check if any exhausted account supports this model
-    const exhaustedWithModel = state.accounts.filter(
-      (a) =>
-        a.enabled
-        && a.isExhausted
-        && (!a.availableModels
-          || a.availableModels.some((m) => m.id === modelId)),
+    const exhaustedEnabled = state.accounts.filter(
+      (account) =>
+        account.enabled
+        && account.isExhausted
+        && (providerMatched.length === 0
+          || getAccountProvider(account) === expectedProvider),
     )
+    const exhaustedExplicit = exhaustedEnabled.filter((account) =>
+      supportsModelExplicitly(account, modelId),
+    )
+    const exhaustedWithModel =
+      exhaustedExplicit.length > 0 ?
+        exhaustedExplicit
+      : exhaustedEnabled.filter((account) =>
+          supportsModelWithFallback(account, modelId),
+        )
     if (exhaustedWithModel.length > 0) {
       throw new HTTPError(
         `All accounts supporting model "${modelId}" are rate limited`,
@@ -214,7 +279,10 @@ export function getAccountForModel(modelId: string): Account {
   // Return the highest priority capable account
   const selected = capable[0]
   state.activeAccountIndex = state.accounts.indexOf(selected)
-  state.githubToken = selected.githubToken
+  state.githubToken =
+    getAccountProvider(selected) === "copilot" ?
+      selected.githubToken
+    : undefined
   return selected
 }
 
@@ -238,24 +306,43 @@ export function switchToNextAccountForModel(
     })
     .map((item) => item.account)
 
-  // Find current account in sorted list and get the next capable one
-  const currentIdx = sorted.indexOf(currentAccount)
-  for (let i = 1; i < sorted.length; i++) {
-    const idx = (currentIdx + i) % sorted.length
-    const account = sorted[idx]
-    if (
+  const expectedProvider = inferProviderForModel(modelId)
+  const providerMatched = sorted.filter(
+    (account) =>
       account.enabled
       && !account.isExhausted
-      && (!account.availableModels
-        || account.availableModels.some((m) => m.id === modelId))
-    ) {
-      state.activeAccountIndex = state.accounts.indexOf(account)
-      state.githubToken = account.githubToken
-      consola.info(
-        `Switched to account "${account.label}" for model "${modelId}"`,
-      )
-      return account
-    }
+      && getAccountProvider(account) === expectedProvider,
+  )
+
+  const capablePool =
+    providerMatched.length > 0 ?
+      providerMatched
+    : sorted.filter((account) => account.enabled && !account.isExhausted)
+
+  const explicitCapable = capablePool.filter((account) =>
+    supportsModelExplicitly(account, modelId),
+  )
+  const fallbackCapable = capablePool.filter((account) =>
+    supportsModelWithFallback(account, modelId),
+  )
+  const capable = explicitCapable.length > 0 ? explicitCapable : fallbackCapable
+
+  if (capable.length === 0) {
+    return null
+  }
+
+  // Find current account in sorted list and get the next capable one
+  const currentIdx = capable.indexOf(currentAccount)
+  for (let i = 1; i <= capable.length; i++) {
+    const idx = currentIdx === -1 ? i - 1 : (currentIdx + i) % capable.length
+    const account = capable[idx]
+
+    state.activeAccountIndex = state.accounts.indexOf(account)
+    state.githubToken = account.githubToken
+    consola.info(
+      `Switched to account "${account.label}" for model "${modelId}"`,
+    )
+    return account
   }
   return null
 }
@@ -292,7 +379,7 @@ export function getActiveAccount(): Account {
       )
     }
     throw new HTTPError(
-      "No available GitHub Copilot accounts (all disabled or no accounts configured)",
+      "No available accounts (all disabled or no accounts configured)",
       new Response("Service Unavailable", { status: 503 }),
     )
   }
@@ -300,7 +387,10 @@ export function getActiveAccount(): Account {
   const selected = sorted[0]
   state.activeAccountIndex = state.accounts.indexOf(selected)
   // Sync state.githubToken for backward compat
-  state.githubToken = selected.githubToken
+  state.githubToken =
+    getAccountProvider(selected) === "copilot" ?
+      selected.githubToken
+    : undefined
   return selected
 }
 
@@ -308,6 +398,11 @@ export function markAccountExhausted(id: string): void {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return
   if (account.isExhausted) return
+
+  if (getAccountProvider(account) !== "copilot") {
+    return
+  }
+
   account.isExhausted = true
   account.exhaustedAt = Date.now()
   const cooldownSeconds = getRemainingCooldownSeconds(id)
@@ -342,7 +437,10 @@ export function switchToNextAccount(): Account | null {
     if (account.enabled && !account.isExhausted) {
       state.activeAccountIndex = state.accounts.indexOf(account)
       // Sync state.githubToken for backward compat
-      state.githubToken = account.githubToken
+      state.githubToken =
+        getAccountProvider(account) === "copilot" ?
+          account.githubToken
+        : undefined
       consola.info(`Switched to account "${account.label}"`)
       return account
     }
@@ -378,6 +476,14 @@ function scheduleTokenRefreshRetry(accountId: string): void {
 }
 
 export async function refreshCopilotToken(account: Account): Promise<void> {
+  if (getAccountProvider(account) !== "copilot") {
+    return
+  }
+
+  if (!account.githubToken) {
+    throw new Error(`GitHub token missing for account "${account.label}"`)
+  }
+
   const response = await fetch(
     `${GITHUB_API_BASE_URL}/copilot_internal/v2/token`,
     {
@@ -461,11 +567,14 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
     // Build accounts from provided tokens
     const existing = await loadAccountsFile()
     const newAccounts: Array<Account> = tokens.map((token, index) => {
-      const existingAccount = existing.find((a) => a.githubToken === token)
+      const existingAccount = existing.find(
+        (a) => a.provider === "copilot" && a.githubToken === token,
+      )
       if (existingAccount) return existingAccount
       return {
         id: randomUUID(),
         label: index === 0 ? "default" : `account-${index + 1}`,
+        provider: "copilot",
         githubToken: token,
         enabled: true,
         priority: 0,
@@ -482,7 +591,10 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
 
   // Sync state.githubToken for backward compat
   const active = state.accounts[state.activeAccountIndex] as Account | undefined
-  state.githubToken = active?.githubToken
+  state.githubToken =
+    active && getAccountProvider(active) === "copilot" ?
+      active.githubToken
+    : undefined
 }
 
 // Migrate old isActive field to enabled field for backward compatibility
@@ -491,6 +603,7 @@ function migrateAccount(account: Record<string, unknown>): Account {
     isActive?: boolean
     enabled?: boolean
     priority?: number
+    provider?: AccountProvider
   }
 
   // Migrate isActive → enabled (if enabled not set but isActive is, use isActive)
@@ -509,6 +622,11 @@ function migrateAccount(account: Record<string, unknown>): Account {
   // Default priority to 0 if not set
   if (typeof acc.priority !== "number") {
     acc.priority = 0
+  }
+
+  // Default provider for legacy account records
+  if (acc.provider !== "copilot" && acc.provider !== "codebuff") {
+    acc.provider = "copilot"
   }
 
   // Clean up old field
@@ -538,6 +656,10 @@ export function scheduleQuotaRefresh(): void {
 }
 
 export async function refreshQuotaForAccount(account: Account): Promise<void> {
+  if (getAccountProvider(account) !== "copilot") {
+    return
+  }
+
   const usage = await getCopilotUsageForAccount(account)
   // eslint-disable-next-line require-atomic-updates
   account.quotaInfo = snapshotFromUsage(usage)
@@ -578,6 +700,10 @@ async function getCopilotUsageForAccount(account: Account): Promise<{
     completions?: { remaining: number; entitlement: number; unlimited: boolean }
   }
 }> {
+  if (!account.githubToken) {
+    throw new Error(`GitHub token missing for account "${account.label}"`)
+  }
+
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
     headers: {
       ...githubHeaders(state),

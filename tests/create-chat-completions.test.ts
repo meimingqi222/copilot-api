@@ -1,6 +1,9 @@
 import { afterEach, expect, mock, test } from "bun:test"
 
-import type { ChatCompletionsPayload } from "../src/services/copilot/create-chat-completions"
+import type {
+  ChatCompletionsPayload,
+  CopilotStreamEvent,
+} from "../src/services/copilot/create-chat-completions"
 
 import { state } from "../src/lib/state"
 import { statsStore } from "../src/lib/stats-store"
@@ -10,6 +13,7 @@ import { createChatCompletions } from "../src/services/copilot/create-chat-compl
 const mockAccount = {
   id: "test-account-id",
   label: "test",
+  provider: "copilot" as const,
   githubToken: "gh-test-token",
   copilotToken: "test-token",
   enabled: true,
@@ -19,6 +23,7 @@ const mockAccount = {
 }
 state.accounts = [mockAccount]
 state.activeAccountIndex = 0
+state.provider = "copilot"
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
 
@@ -191,4 +196,234 @@ test("routes responses-only models to /responses", async () => {
   }
 
   throw new Error("Expected non-streaming response")
+})
+
+test("codebuff account sends start/chat/finish workflow", async () => {
+  state.provider = "copilot"
+  state.codebuffBaseUrl = "https://www.codebuff.com"
+  state.codebuffAuthToken = "global-cb-token"
+  state.codebuffCliVersion = "0.0.33"
+  state.codebuffAgentId = "base"
+  state.codebuffModel = "z-ai/glm-5.1"
+  state.codebuffCostMode = "normal"
+  state.codebuffAllowFallbacks = true
+  state.accounts = [
+    {
+      id: "codebuff-account-id",
+      label: "codebuff",
+      provider: "codebuff",
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+      codebuffAuthToken: "cb-token",
+      codebuffBaseUrl: "https://www.codebuff.com",
+      codebuffCliVersion: "0.0.44",
+      codebuffAgentId: "cb-agent",
+      codebuffCostMode: "fast",
+      codebuffAllowFallbacks: false,
+      availableModels: [
+        {
+          id: "z-ai/glm-5.1",
+          name: "z-ai/glm-5.1",
+          vendor: "codebuff",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions"],
+        },
+      ],
+    },
+  ]
+  state.activeAccountIndex = 0
+
+  const localFetchMock = mock((url: string, opts?: { body?: string }) => {
+    if (url.endsWith("/api/v1/agent-runs")) {
+      const body = JSON.parse(opts?.body ?? "{}") as { action?: string }
+      if (body.action === "START") {
+        return {
+          ok: true,
+          json: () => ({ runId: "run-123" }),
+        }
+      }
+      return {
+        ok: true,
+        json: () => ({}),
+      }
+    }
+
+    return {
+      ok: true,
+      json: () => ({
+        id: "chatcmpl-codebuff",
+        object: "chat.completion",
+        model: "z-ai/glm-5.1",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: "ok",
+            },
+            logprobs: null,
+            finish_reason: "stop",
+          },
+        ],
+      }),
+    }
+  })
+
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+    localFetchMock as unknown as typeof fetch
+
+  const result = await createChatCompletions({
+    model: "z-ai/glm-5.1",
+    messages: [{ role: "user", content: "hello" }],
+    stream: false,
+  })
+
+  expect(result.accountId).toBe("codebuff-account-id")
+  expect(localFetchMock).toHaveBeenCalledTimes(3)
+
+  const startHeaders = (
+    localFetchMock.mock.calls[0]?.[1] as {
+      headers?: Record<string, string>
+    }
+  ).headers
+  expect(startHeaders?.["User-Agent"]).toContain("0.0.44")
+
+  const startBody = JSON.parse(
+    (localFetchMock.mock.calls[0]?.[1] as { body?: string }).body ?? "{}",
+  ) as Record<string, unknown>
+  expect(startBody.action).toBe("START")
+  expect(startBody.agentId).toBe("cb-agent")
+
+  const chatBody = JSON.parse(
+    (localFetchMock.mock.calls[1]?.[1] as { body?: string }).body ?? "{}",
+  ) as Record<string, unknown>
+  expect(chatBody.codebuff_metadata).toBeDefined()
+  expect(chatBody.provider).toEqual({ allow_fallbacks: false })
+  expect((chatBody.codebuff_metadata as { cost_mode?: string }).cost_mode).toBe(
+    "fast",
+  )
+
+  const finishBody = JSON.parse(
+    (localFetchMock.mock.calls[2]?.[1] as { body?: string }).body ?? "{}",
+  ) as Record<string, unknown>
+  expect(finishBody.action).toBe("FINISH")
+  expect(finishBody.runId).toBe("run-123")
+
+  state.provider = "copilot"
+  state.accounts = [mockAccount]
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+    fetchMock as unknown as typeof fetch
+})
+
+test("codebuff streaming still triggers finish agent run", async () => {
+  state.provider = "copilot"
+  state.codebuffBaseUrl = "https://www.codebuff.com"
+  state.codebuffAuthToken = "global-cb-token"
+  state.codebuffCliVersion = "0.0.33"
+  state.codebuffAgentId = "base"
+  state.codebuffModel = "z-ai/glm-5.1"
+  state.codebuffCostMode = "normal"
+  state.codebuffAllowFallbacks = true
+  state.accounts = [
+    {
+      id: "codebuff-stream-account-id",
+      label: "codebuff-stream",
+      provider: "codebuff",
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+      codebuffAuthToken: "cb-token",
+      codebuffBaseUrl: "https://www.codebuff.com",
+      codebuffCliVersion: "0.0.44",
+      codebuffAgentId: "stream-agent",
+      codebuffCostMode: "normal",
+      codebuffAllowFallbacks: true,
+      availableModels: [
+        {
+          id: "z-ai/glm-5.1",
+          name: "z-ai/glm-5.1",
+          vendor: "codebuff",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions"],
+        },
+      ],
+    },
+  ]
+  state.activeAccountIndex = 0
+
+  const localFetchMock = mock((url: string, opts?: { body?: string }) => {
+    if (url.endsWith("/api/v1/agent-runs")) {
+      const body = JSON.parse(opts?.body ?? "{}") as { action?: string }
+      if (body.action === "START") {
+        return {
+          ok: true,
+          json: () => ({ runId: "run-stream" }),
+        }
+      }
+      return {
+        ok: true,
+        json: () => ({}),
+      }
+    }
+
+    const stream = {
+      async *[Symbol.asyncIterator](): AsyncIterableIterator<CopilotStreamEvent> {
+        await Promise.resolve()
+        yield {
+          data: JSON.stringify({
+            id: "chunk-1",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "z-ai/glm-5.1",
+            choices: [
+              {
+                index: 0,
+                delta: { content: "你" },
+                finish_reason: null,
+                logprobs: null,
+              },
+            ],
+          }),
+        }
+        yield { data: "[DONE]" }
+      },
+    }
+
+    return {
+      ok: true,
+      [Symbol.asyncIterator]: stream[Symbol.asyncIterator].bind(stream),
+    }
+  })
+
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+    localFetchMock as unknown as typeof fetch
+
+  const result = await createChatCompletions({
+    model: "z-ai/glm-5.1",
+    messages: [{ role: "user", content: "stream" }],
+    stream: true,
+  })
+
+  if ("choices" in result.response) {
+    throw new Error("Expected streaming response")
+  }
+
+  for await (const _event of result.response) {
+    // consume stream to trigger finally
+  }
+
+  expect(localFetchMock).toHaveBeenCalledTimes(3)
+  const finishBody = JSON.parse(
+    (localFetchMock.mock.calls[2]?.[1] as { body?: string }).body ?? "{}",
+  ) as Record<string, unknown>
+  expect(finishBody.action).toBe("FINISH")
+  expect(finishBody.runId).toBe("run-stream")
+
+  state.provider = "copilot"
+  state.accounts = [mockAccount]
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+    fetchMock as unknown as typeof fetch
 })

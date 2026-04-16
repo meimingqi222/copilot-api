@@ -11,12 +11,14 @@ const originalModels = state.models
 const originalApiKey = state.apiKey
 const originalVsCodeVersion = state.vsCodeVersion
 const originalAccountType = state.accountType
+const originalProvider = state.provider
 
 beforeEach(() => {
   state.accounts = [
     {
       id: "test-account-id",
       label: "test",
+      provider: "copilot",
       githubToken: "gh-test-token",
       copilotToken: "test-token",
       enabled: true,
@@ -29,6 +31,7 @@ beforeEach(() => {
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
   state.apiKey = undefined
+  state.provider = "copilot"
   state.models = {
     object: "list",
     data: [
@@ -61,6 +64,7 @@ afterEach(() => {
   state.apiKey = originalApiKey
   state.vsCodeVersion = originalVsCodeVersion
   state.accountType = originalAccountType
+  state.provider = originalProvider
 })
 
 test("WS /responses supports sequential response.create requests", async () => {
@@ -152,6 +156,7 @@ test("WS /v1/responses handshake requires API key middleware", async () => {
     {
       id: "test-account-id",
       label: "test",
+      provider: "copilot",
       githubToken: "gh-test-token",
       copilotToken: "test-token",
       enabled: true,

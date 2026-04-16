@@ -28,6 +28,7 @@ import { server } from "./server"
 interface RunServerOptions {
   port: number
   verbose: boolean
+  provider: "copilot" | "codebuff"
   accountType: string
   manual: boolean
   githubToken?: string
@@ -38,6 +39,13 @@ interface RunServerOptions {
   proxyEnv: boolean
   apiKey?: string
   adminPassword?: string
+  codebuffBaseUrl?: string
+  codebuffAuthToken?: string
+  codebuffCliVersion?: string
+  codebuffAgentId?: string
+  codebuffModel?: string
+  codebuffCostMode?: string
+  codebuffAllowFallbacks: boolean
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity
@@ -64,9 +72,22 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     consola.info("Verbose logging enabled")
   }
 
+  state.provider = options.provider
   state.accountType = options.accountType
   if (options.accountType !== "individual") {
     consola.info(`Using ${options.accountType} plan GitHub account`)
+  }
+
+  if (options.provider === "codebuff") {
+    state.codebuffBaseUrl = options.codebuffBaseUrl ?? state.codebuffBaseUrl
+    state.codebuffAuthToken = options.codebuffAuthToken
+    state.codebuffCliVersion =
+      options.codebuffCliVersion ?? state.codebuffCliVersion
+    state.codebuffAgentId = options.codebuffAgentId ?? state.codebuffAgentId
+    state.codebuffModel = options.codebuffModel ?? state.codebuffModel
+    state.codebuffCostMode = options.codebuffCostMode ?? state.codebuffCostMode
+    state.codebuffAllowFallbacks = options.codebuffAllowFallbacks
+    consola.info(`Using codebuff defaults: ${state.codebuffBaseUrl}`)
   }
 
   state.manualApprove = options.manual
@@ -86,41 +107,81 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await ensurePaths()
   await cacheVSCodeVersion()
 
-  // Collect GitHub tokens from CLI options
-  const allTokens: Array<string> = []
-  if (options.githubTokens) {
-    allTokens.push(
-      ...options.githubTokens
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-    )
-  }
-  if (options.tokensFile) {
-    try {
-      const fileContent = await fs.readFile(options.tokensFile, "utf8")
+  {
+    // Collect GitHub tokens from CLI options
+    const allTokens: Array<string> = []
+    if (options.githubTokens) {
       allTokens.push(
-        ...fileContent
-          .split("\n")
+        ...options.githubTokens
+          .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
       )
-    } catch (err) {
-      consola.warn("Failed to read tokens file:", err)
     }
-  }
-  if (options.githubToken && !allTokens.includes(options.githubToken)) {
-    allTokens.unshift(options.githubToken)
-  }
+    if (options.tokensFile) {
+      try {
+        const fileContent = await fs.readFile(options.tokensFile, "utf8")
+        allTokens.push(
+          ...fileContent
+            .split("\n")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        )
+      } catch (err) {
+        consola.warn("Failed to read tokens file:", err)
+      }
+    }
+    if (options.githubToken && !allTokens.includes(options.githubToken)) {
+      allTokens.unshift(options.githubToken)
+    }
 
-  if (allTokens.length > 0) {
-    consola.info(`Using ${allTokens.length} provided GitHub token(s)`)
-    // initAccounts will create account objects from tokens
-    await initAccounts(allTokens)
-  } else {
-    // No tokens provided — load from disk, skip device flow
-    // User can add accounts via Web UI later
-    await initAccounts()
+    if (allTokens.length > 0) {
+      consola.info(`Using ${allTokens.length} provided GitHub token(s)`)
+      // initAccounts will create account objects from tokens
+      await initAccounts(allTokens)
+    } else {
+      // No tokens provided — load from disk, skip device flow
+      // User can add accounts via Web UI later
+      await initAccounts()
+    }
+
+    // Refresh Copilot tokens for copilot accounts
+    for (const account of state.accounts) {
+      if ((account.provider ?? "copilot") !== "copilot") {
+        continue
+      }
+
+      try {
+        await refreshCopilotToken(account)
+        // Sync legacy state.githubToken for backward compat services
+        if (account === state.accounts[state.activeAccountIndex]) {
+          state.githubToken = account.githubToken
+        }
+      } catch (err) {
+        consola.warn(
+          `Failed to get Copilot token for account "${account.label}":`,
+          err,
+        )
+      }
+    }
+
+    // Start background quota refresh
+    scheduleQuotaRefresh()
+
+    cacheModels()
+
+    // Refresh models for all accounts and schedule periodic refresh
+    scheduleModelsRefresh()
+
+    if (state.models) {
+      consola.info(
+        `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
+      )
+    } else {
+      consola.warn(
+        "No models available — add a GitHub account via Web UI to get started",
+      )
+    }
   }
 
   // Load users
@@ -128,40 +189,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   // Initialize stats store
   statsStore.init()
-
-  // Refresh Copilot tokens for all accounts
-  for (const account of state.accounts) {
-    try {
-      await refreshCopilotToken(account)
-      // Sync legacy state.githubToken for backward compat services
-      if (account === state.accounts[state.activeAccountIndex]) {
-        state.githubToken = account.githubToken
-      }
-    } catch (err) {
-      consola.warn(
-        `Failed to get Copilot token for account "${account.label}":`,
-        err,
-      )
-    }
-  }
-
-  // Start background quota refresh
-  scheduleQuotaRefresh()
-
-  await cacheModels()
-
-  // Refresh models for all accounts and schedule periodic refresh
-  scheduleModelsRefresh()
-
-  if (state.models) {
-    consola.info(
-      `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
-    )
-  } else {
-    consola.warn(
-      "No models available — add a GitHub account via Web UI to get started",
-    )
-  }
 
   const serverUrl = `http://localhost:${options.port}`
 
@@ -248,6 +275,11 @@ export const start = defineCommand({
       default: false,
       description: "Enable verbose logging",
     },
+    provider: {
+      type: "string",
+      default: "copilot",
+      description: "Provider to use (copilot, codebuff)",
+    },
     "account-type": {
       alias: "a",
       type: "string",
@@ -302,11 +334,51 @@ export const start = defineCommand({
       default: false,
       description: "Initialize proxy from environment variables",
     },
+    "codebuff-base-url": {
+      type: "string",
+      default: process.env.CODEBUFF_BASE_URL ?? "https://www.codebuff.com",
+      description: "Codebuff API base URL",
+    },
+    "codebuff-auth-token": {
+      type: "string",
+      default: process.env.CODEBUFF_AUTH_TOKEN,
+      description: "Codebuff auth token",
+    },
+    "codebuff-cli-version": {
+      type: "string",
+      default: process.env.CODEBUFF_CLI_VERSION ?? "0.0.33",
+      description: "Codebuff CLI version for User-Agent",
+    },
+    "codebuff-agent-id": {
+      type: "string",
+      default: process.env.CODEBUFF_AGENT_ID ?? "base",
+      description: "Codebuff agent ID",
+    },
+    "codebuff-model": {
+      type: "string",
+      default: process.env.CODEBUFF_MODEL ?? "z-ai/glm-5.1",
+      description: "Codebuff default model",
+    },
+    "codebuff-cost-mode": {
+      type: "string",
+      default: process.env.CODEBUFF_COST_MODE ?? "normal",
+      description: "Codebuff cost mode",
+    },
+    "codebuff-allow-fallbacks": {
+      type: "boolean",
+      default: process.env.CODEBUFF_ALLOW_FALLBACKS !== "false",
+      description: "Codebuff provider.allow_fallbacks",
+    },
   },
   run({ args }) {
+    const provider =
+      args.provider === "codebuff" ?
+        ("codebuff" as const)
+      : ("copilot" as const)
     return runServer({
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
+      provider,
       accountType: args["account-type"],
       manual: args.manual,
       githubToken: args["github-token"],
@@ -317,6 +389,13 @@ export const start = defineCommand({
       proxyEnv: args["proxy-env"],
       apiKey: args["api-key"] || process.env.API_KEY,
       adminPassword: args["admin-password"] || process.env.ADMIN_PASSWORD,
+      codebuffBaseUrl: args["codebuff-base-url"],
+      codebuffAuthToken: args["codebuff-auth-token"],
+      codebuffCliVersion: args["codebuff-cli-version"],
+      codebuffAgentId: args["codebuff-agent-id"],
+      codebuffModel: args["codebuff-model"],
+      codebuffCostMode: args["codebuff-cost-mode"],
+      codebuffAllowFallbacks: args["codebuff-allow-fallbacks"],
     })
   },
 })

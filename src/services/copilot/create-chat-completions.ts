@@ -1,10 +1,13 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
+import type { Account } from "~/lib/accounts"
+
 import { getAccountForModel } from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { createCodebuffChatCompletions } from "~/services/codebuff/create-chat-completions"
 import { inferInitiatorFromChatMessages } from "~/services/copilot/initiator"
 import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
 import {
@@ -24,6 +27,10 @@ export const createChatCompletions = async (
   | { accountId: string; response: ChatCompletionResponse }
 > => {
   const account = getAccountForModel(payload.model)
+  if (isCodebuffAccount(account)) {
+    return createCodebuffChatCompletions(account, payload, signal)
+  }
+
   if (!account.copilotToken) throw new Error("Copilot token not found")
   const useResponsesApi = shouldUseResponsesApi(payload.model, account)
 
@@ -104,6 +111,10 @@ export const createChatCompletions = async (
         translateResponsesToChatCompletion(responseBody as ResponsesResponse)
       : (responseBody as ChatCompletionResponse),
   }
+}
+
+function isCodebuffAccount(account: Account): boolean {
+  return account.provider === "codebuff"
 }
 
 // Streaming types

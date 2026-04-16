@@ -1,4 +1,4 @@
-import { getActiveAccount } from "~/lib/accounts"
+import { getAccountForModel } from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
@@ -9,7 +9,11 @@ export const createEmbeddings = async (
   accountId: string
   response: EmbeddingResponse
 }> => {
-  const account = getActiveAccount()
+  const account = getAccountForModel(payload.model)
+  if (account.provider === "codebuff") {
+    throw new Error(`Model "${payload.model}" does not support embeddings`)
+  }
+
   if (!account.copilotToken) throw new Error("Copilot token not found")
 
   const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {

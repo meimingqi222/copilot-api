@@ -37,6 +37,7 @@ const originalActiveAccountIndex = state.activeAccountIndex
 const originalApiKey = state.apiKey
 const originalAdminPassword = state.adminPassword
 const originalUsers = state.users
+const originalProvider = state.provider
 
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
@@ -44,6 +45,7 @@ beforeEach(() => {
     {
       id: "account-1",
       label: "default",
+      provider: "copilot",
       githubToken: "gh-test-token-1",
       copilotToken: "copilot-token-1",
       enabled: true,
@@ -54,6 +56,7 @@ beforeEach(() => {
     {
       id: "account-2",
       label: "edu",
+      provider: "copilot",
       githubToken: "gh-test-token-2",
       copilotToken: "copilot-token-2",
       enabled: true,
@@ -66,6 +69,7 @@ beforeEach(() => {
   state.apiKey = undefined
   state.adminPassword = undefined
   state.users = []
+  state.provider = "copilot"
 })
 
 afterEach(() => {
@@ -75,6 +79,7 @@ afterEach(() => {
   state.apiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.users = originalUsers
+  state.provider = originalProvider
 })
 
 test("GET /admin/api/usage/summary returns per-model request counts and time series token breakdown", async () => {
