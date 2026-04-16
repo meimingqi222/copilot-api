@@ -52,7 +52,7 @@ export async function handleCompletion(c: Context) {
   if (!payload.model) {
     payload = {
       ...payload,
-      model: state.codebuffModel,
+      model: "gpt-4o",
     }
   }
 
