@@ -11,6 +11,7 @@ const originalModels = state.models
 const originalApiKey = state.apiKey
 const originalVsCodeVersion = state.vsCodeVersion
 const originalAccountType = state.accountType
+const originalProvider = state.provider
 
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
@@ -18,6 +19,7 @@ beforeEach(() => {
     {
       id: "test-account-id",
       label: "test",
+      provider: "copilot",
       githubToken: "gh-test-token",
       copilotToken: "test-token",
       enabled: true,
@@ -30,6 +32,7 @@ beforeEach(() => {
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
   state.apiKey = undefined
+  state.provider = "copilot"
 })
 
 afterEach(() => {
@@ -41,6 +44,7 @@ afterEach(() => {
   state.apiKey = originalApiKey
   state.vsCodeVersion = originalVsCodeVersion
   state.accountType = originalAccountType
+  state.provider = originalProvider
 })
 
 test("POST /v1/messages routes messages-capable models to upstream /v1/messages", async () => {

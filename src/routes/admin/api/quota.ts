@@ -7,15 +7,17 @@ import { state } from "~/lib/state"
 export const quotaApiRoutes = new Hono()
 
 quotaApiRoutes.get("/", (c) => {
-  const accounts = state.accounts.map(({ githubToken: _t, ...rest }, idx) => ({
-    id: rest.id,
-    label: rest.label,
-    enabled: rest.enabled,
-    priority: rest.priority,
-    isActive: idx === state.activeAccountIndex,
-    isExhausted: rest.isExhausted,
-    quotaInfo: rest.quotaInfo ?? null,
-  }))
+  const accounts = state.accounts.map(
+    ({ githubToken: _t, codebuffAuthToken: _cbt, ...rest }, idx) => ({
+      id: rest.id,
+      label: rest.label,
+      enabled: rest.enabled,
+      priority: rest.priority,
+      isActive: idx === state.activeAccountIndex,
+      isExhausted: rest.isExhausted,
+      quotaInfo: rest.quotaInfo ?? null,
+    }),
+  )
 
   return c.json({ accounts })
 })

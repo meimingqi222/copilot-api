@@ -296,10 +296,12 @@
             <div class="card p-6">
               <div class="flex items-start justify-between mb-4">
                 <div class="flex items-center gap-3">
-                  <i data-lucide="git-branch" class="w-8 h-8"></i>
+                  <i :data-lucide="(account.provider || 'copilot') === 'codebuff' ? 'bot' : 'github'" class="w-8 h-8"></i>
                   <div>
-                    <p class="font-medium" x-text="account.label || 'GitHub'"></p>
-                    <!-- 允许编辑账户名称 -->
+                    <div class="flex items-center gap-2">
+                      <p class="font-medium" x-text="account.label || t('accounts.provider.' + (account.provider || 'copilot'))"></p>
+                      <span class="badge badge-info uppercase" x-text="account.provider || 'copilot'"></span>
+                    </div>
                     <input
                       x-show="editingLabel === account.id"
                       x-model="editLabelValue"
@@ -317,9 +319,7 @@
                   </div>
                 </div>
                 <div class="flex flex-col items-end gap-1">
-                  <!-- 用户控制的启用状态 -->
                   <span class="badge" :class="account.enabled ? 'badge-success' : 'badge-gray'" x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"></span>
-                  <!-- 配额耗尽状态 -->
                   <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
                 </div>
               </div>
@@ -352,22 +352,23 @@
                   <template x-for="(model, idx) in (account.availableModels || [])" :key="idx">
                     <div class="flex items-center justify-between gap-1 text-xs px-1.5 py-1 rounded" style="background:rgba(0,113,227,0.07)">
                       <div class="flex items-center gap-1 min-w-0">
-                        <!-- picker indicator -->
                         <span :title="model.pickerEnabled ? t('accounts.models.pickerOn') : t('accounts.models.pickerOff')"
                               :class="model.pickerEnabled ? 'text-[var(--apple-green)]' : 'text-[var(--apple-text-tertiary)]'">
                           <i :data-lucide="model.pickerEnabled ? 'eye' : 'eye-off'" class="w-3 h-3 inline-block"></i>
                         </span>
                         <span class="font-mono truncate" style="color:var(--apple-blue)" x-text="model.id"></span>
                       </div>
-                      <!-- supported endpoints -->
-                      <div class="flex gap-0.5 shrink-0">
-                        <template x-for="ep in (model.supportedEndpoints || [])" :key="ep">
-                          <span class="px-1 py-0.5 rounded text-[10px] font-medium"
-                                :class="ep === '/v1/messages' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'"
-                                x-text="ep === '/v1/messages' ? 'ANT' : ep === '/chat/completions' ? 'OAI' : ep === '/responses' ? 'RSP' : ep"></span>
-                        </template>
-                        <span x-show="!model.supportedEndpoints || !model.supportedEndpoints.length"
-                              class="px-1 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500">all</span>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <span x-show="model.vendor" class="px-1 py-0.5 rounded text-[10px] bg-indigo-100 text-indigo-700" x-text="model.vendor"></span>
+                        <div class="flex gap-0.5 shrink-0">
+                          <template x-for="ep in (model.supportedEndpoints || [])" :key="ep">
+                            <span class="px-1 py-0.5 rounded text-[10px] font-medium"
+                                  :class="ep === '/v1/messages' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'"
+                                  x-text="ep === '/v1/messages' ? 'ANT' : ep === '/chat/completions' ? 'OAI' : ep === '/responses' ? 'RSP' : ep"></span>
+                          </template>
+                          <span x-show="!model.supportedEndpoints || !model.supportedEndpoints.length"
+                                class="px-1 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500">all</span>
+                        </div>
                       </div>
                     </div>
                   </template>
@@ -387,7 +388,7 @@
             </div>
           </template>
           <div x-show="!accounts.length" class="col-span-full empty-state py-12">
-            <i data-lucide="git-branch" class="empty-state-icon"></i>
+            <i :data-lucide="accounts.some((account) => (account.provider || 'copilot') === 'codebuff') ? 'bot' : 'github'" class="empty-state-icon"></i>
             <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
           </div>
         </div>
@@ -397,13 +398,53 @@
           <div class="modal-content p-8 w-full max-w-md" @click.away="closeAddModal()">
             <h3 class="text-title-2 mb-6" x-text="t('accounts.deviceFlow.title')"></h3>
             <div x-show="deviceFlowStep === 'input'">
-              <div class="mb-6">
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.label')"></label>
-                <input x-model="newLabel" type="text" placeholder="work, personal..." class="input">
+              <div class="space-y-4 mb-6">
+                <div>
+                  <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.label')"></label>
+                  <input x-model="newAccount.label" type="text" :placeholder="t('accounts.labelPlaceholder')" class="input">
+                </div>
+                <div>
+                  <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.provider')"></label>
+                  <select x-model="newAccount.provider" class="input">
+                    <option value="copilot" x-text="t('accounts.provider.copilot')"></option>
+                    <option value="codebuff" x-text="t('accounts.provider.codebuff')"></option>
+                  </select>
+                </div>
+                <div x-show="newAccount.provider === 'codebuff'" class="space-y-3">
+                  <p class="text-sm font-medium" x-text="t('accounts.provider.codebuff')"></p>
+                  <div>
+                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffAuthToken')"></label>
+                    <input x-model="newAccount.codebuffAuthToken" type="password" class="input">
+                  </div>
+                  <div>
+                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffBaseUrl')"></label>
+                    <input x-model="newAccount.codebuffBaseUrl" type="text" class="input">
+                  </div>
+                  <div>
+                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffCliVersion')"></label>
+                    <input x-model="newAccount.codebuffCliVersion" type="text" class="input">
+                  </div>
+                  <div>
+                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffAgentId')"></label>
+                    <input x-model="newAccount.codebuffAgentId" type="text" class="input">
+                  </div>
+                  <div>
+                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffModel')"></label>
+                    <input x-model="newAccount.codebuffModel" type="text" class="input">
+                  </div>
+                  <div>
+                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffCostMode')"></label>
+                    <input x-model="newAccount.codebuffCostMode" type="text" class="input">
+                  </div>
+                  <label class="flex items-center gap-2 text-sm text-[var(--apple-text-secondary)]">
+                    <input x-model="newAccount.codebuffAllowFallbacks" type="checkbox">
+                    <span x-text="t('accounts.codebuffAllowFallbacks')"></span>
+                  </label>
+                </div>
               </div>
               <div class="flex justify-end gap-3">
                 <button @click="closeAddModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
-                <button @click="startDeviceFlow()" class="btn btn-primary" x-text="t('accounts.deviceFlow.step2')"></button>
+                <button @click="submitAccount()" class="btn btn-primary" x-text="newAccount.provider === 'copilot' ? t('accounts.deviceFlow.step2') : t('create')"></button>
               </div>
             </div>
             <div x-show="deviceFlowStep === 'pending'" class="text-center py-6">
@@ -418,7 +459,7 @@
                 <i data-lucide="check" class="w-8 h-8 text-white"></i>
               </div>
               <h4 class="text-title-2 mb-2" x-text="t('accounts.deviceFlow.success')"></h4>
-              <button @click="showAddModal = false; load()" class="btn btn-primary mt-4" x-text="t('done')"></button>
+              <button @click="closeAddModal(); load()" class="btn btn-primary mt-4" x-text="t('done')"></button>
             </div>
           </div>
         </div>
@@ -1064,7 +1105,30 @@
         loading: false,
         accounts: [],
         showAddModal: false,
-        newLabel: '',
+        defaultNewAccount() {
+          return {
+            label: '',
+            provider: 'copilot',
+            codebuffAuthToken: '',
+            codebuffBaseUrl: 'https://www.codebuff.com',
+            codebuffCliVersion: '0.0.33',
+            codebuffAgentId: 'base',
+            codebuffModel: 'z-ai/glm-5.1',
+            codebuffCostMode: 'normal',
+            codebuffAllowFallbacks: true,
+          };
+        },
+        newAccount: {
+          label: '',
+          provider: 'copilot',
+          codebuffAuthToken: '',
+          codebuffBaseUrl: 'https://www.codebuff.com',
+          codebuffCliVersion: '0.0.33',
+          codebuffAgentId: 'base',
+          codebuffModel: 'z-ai/glm-5.1',
+          codebuffCostMode: 'normal',
+          codebuffAllowFallbacks: true,
+        },
         deviceFlowStep: 'input',
         deviceFlowData: null,
         pollTimer: null,
@@ -1110,7 +1174,7 @@
         },
 
         openAddModal() {
-          this.newLabel = '';
+          this.newAccount = this.defaultNewAccount();
           this.deviceFlowStep = 'input';
           this.deviceFlowData = null;
           this.showAddModal = true;
@@ -1120,27 +1184,51 @@
 
         closeAddModal() {
           this.showAddModal = false;
+          this.newAccount = this.defaultNewAccount();
           this.deviceFlowStep = 'input';
+          this.deviceFlowData = null;
           if (this.pollTimer) {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
           }
         },
 
-        async startDeviceFlow() {
+        async submitAccount() {
           this.pollTimer = null;
           try {
-            const res = await API.accounts.create(this.newLabel);
-            this.deviceFlowData = res;
-            this.deviceFlowStep = 'pending';
-            this.pollDeviceFlow();
+            const provider = this.newAccount.provider || 'copilot';
+            const payload = provider === 'copilot'
+              ? {
+                label: this.newAccount.label.trim() || undefined,
+                provider,
+              }
+              : {
+                ...this.newAccount,
+                label: this.newAccount.label.trim() || undefined,
+                provider,
+              };
+            const res = await API.accounts.create(payload);
+            if (provider === 'copilot') {
+              if (!res?.deviceCode || !res?.userCode || !res?.verificationUri) {
+                throw new Error('Invalid device flow response');
+              }
+              this.deviceFlowData = res;
+              this.deviceFlowStep = 'pending';
+              this.pollDeviceFlow();
+              return;
+            }
+            if (res?.status && res.status !== 'complete') {
+              throw new Error('Unexpected account creation status');
+            }
+            this.deviceFlowStep = 'success';
+            await this.load();
           } catch (e) {
             this.showToast(I18n.t('error.create'), 'error');
           }
         },
 
         pollDeviceFlow() {
-          let pollInterval = this.deviceFlowData.interval * 1000 || 5000;
+          let pollInterval = this.deviceFlowData?.interval * 1000 || 5000;
 
           const doPoll = async () => {
             if (this.deviceFlowStep !== 'pending') {

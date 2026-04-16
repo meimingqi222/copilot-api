@@ -54,8 +54,7 @@ const API = {
   // Accounts
   accounts: {
     list: () => API.request("/accounts"),
-    create: (label) =>
-      API.request("/accounts", { method: "POST", body: { label } }),
+    create: (data) => API.request("/accounts", { method: "POST", body: data }),
     update: (id, data) =>
       API.request(`/accounts/${id}`, { method: "PUT", body: data }),
     delete: (id) => API.request(`/accounts/${id}`, { method: "DELETE" }),

@@ -1,6 +1,8 @@
 import consola from "consola"
 
-import { getModels, getModelsForAccount } from "~/services/copilot/get-models"
+import { saveAccounts } from "~/lib/accounts"
+import { getCodebuffModelsForAccount } from "~/services/codebuff/get-models"
+import { getModelsForAccount } from "~/services/copilot/get-models"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 
 import type { Account } from "./accounts"
@@ -42,18 +44,62 @@ export const sleep = (ms: number, signal?: AbortSignal) =>
 export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
 
-export async function cacheModels(): Promise<void> {
-  try {
-    const models = await getModels()
-    state.models = models
-  } catch (error) {
-    consola.warn("Failed to cache models (no active accounts yet):", error)
-    state.models = undefined
+export function cacheModels(): void {
+  const accountModels = state.accounts.flatMap((account) =>
+    (account.availableModels ?? []).map((model) => ({ model, account })),
+  )
+
+  if (accountModels.length > 0) {
+    const merged = new Map<string, (typeof accountModels)[number]["model"]>()
+    for (const entry of accountModels) {
+      if (!merged.has(entry.model.id)) {
+        merged.set(entry.model.id, entry.model)
+      }
+    }
+
+    state.models = {
+      object: "list",
+      data: Array.from(merged.values()).map((model) => ({
+        id: model.id,
+        object: "model",
+        name: model.name,
+        preview: false,
+        vendor: model.vendor,
+        version: "1",
+        model_picker_enabled: model.pickerEnabled,
+        model_picker_category: model.pickerCategory,
+        supported_endpoints: model.supportedEndpoints,
+        capabilities: {
+          family:
+            model.vendor.toLowerCase() === "codebuff" ? "codebuff" : "copilot",
+          object: "capabilities",
+          supports: { streaming: true },
+          tokenizer: "unknown",
+          type: "chat",
+        },
+      })),
+    }
+    return
   }
+
+  state.models = undefined
 }
 
 export async function refreshModelsForAccount(account: Account): Promise<void> {
   try {
+    const provider = account.provider ?? "copilot"
+
+    if (provider === "codebuff") {
+      // eslint-disable-next-line require-atomic-updates
+      account.availableModels = await getCodebuffModelsForAccount(account)
+      consola.debug(
+        `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
+      )
+      await saveAccounts()
+      cacheModels()
+      return
+    }
+
     if (!account.copilotToken) return
     const models = await getModelsForAccount(account)
     const seen = new Set<string>()
@@ -76,11 +122,27 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
     consola.debug(
       `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
     )
+    await saveAccounts()
+    cacheModels()
   } catch (error) {
     consola.warn(
       `Failed to refresh models for account "${account.label}":`,
       error,
     )
+
+    if ((account.provider ?? "copilot") === "codebuff") {
+      account.availableModels = [
+        {
+          id: state.codebuffModel,
+          name: state.codebuffModel,
+          vendor: "codebuff",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions"],
+        },
+      ]
+      await saveAccounts()
+      cacheModels()
+    }
   }
 }
 
