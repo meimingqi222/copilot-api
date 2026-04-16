@@ -51,14 +51,14 @@ export async function handleCompletion(c: Context) {
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
   // Normalize model name (e.g., "z-ai/glm5" -> "z-ai/glm-5.1")
+  const normalizedModel = payload.model ? canonicalModelId(payload.model) : ""
   payload = {
     ...payload,
     model:
-      payload.model ?
-        canonicalModelId(payload.model)
-        // Use a Copilot-compatible default model (with vendor prefix)
-        // This model ID is recognized by Copilot's backend
-      : "gpt-5-mini",
+      normalizedModel
+      // Use a Copilot-compatible default model (with vendor prefix)
+      // This model ID is recognized by Copilot's backend
+      || "gpt-5-mini",
   }
 
   const account = getAccountForModel(payload.model)
