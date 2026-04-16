@@ -3,7 +3,7 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
-import { getAccountForModel } from "~/lib/accounts"
+import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
@@ -49,18 +49,15 @@ export async function handleCompletion(c: Context) {
   let payload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
-  if (!payload.model) {
-    payload = {
-      ...payload,
-      model: "gpt-4o",
-    }
-  }
-
-  if (payload.model === "z-ai/glm5" || payload.model === "glm5") {
-    payload = {
-      ...payload,
-      model: state.codebuffModel,
-    }
+  // Normalize model name (e.g., "z-ai/glm5" -> "z-ai/glm-5.1")
+  payload = {
+    ...payload,
+    model:
+      payload.model ?
+        canonicalModelId(payload.model)
+        // Use a Copilot-compatible default model (with vendor prefix)
+        // This model ID is recognized by Copilot's backend
+      : "gpt-5-mini",
   }
 
   const account = getAccountForModel(payload.model)
