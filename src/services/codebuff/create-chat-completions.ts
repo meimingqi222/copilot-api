@@ -218,12 +218,15 @@ interface CodebuffRuntimeSettings {
 }
 
 function resolveCodebuffSettings(account: Account): CodebuffRuntimeSettings {
+  const normalizedModel =
+    account.availableModels?.[0]?.id ?? state.codebuffModel
+
   return {
     authToken: account.codebuffAuthToken ?? state.codebuffAuthToken,
     baseUrl: account.codebuffBaseUrl ?? state.codebuffBaseUrl,
     cliVersion: account.codebuffCliVersion ?? state.codebuffCliVersion,
     agentId: account.codebuffAgentId ?? state.codebuffAgentId,
-    defaultModel: state.codebuffModel,
+    defaultModel: normalizedModel,
     costMode: account.codebuffCostMode ?? state.codebuffCostMode,
     allowFallbacks:
       account.codebuffAllowFallbacks ?? state.codebuffAllowFallbacks,

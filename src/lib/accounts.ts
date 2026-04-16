@@ -164,8 +164,21 @@ function getAccountProvider(account: Account): AccountProvider {
   return account.provider ?? "copilot"
 }
 
+export function canonicalModelId(modelId: string): string {
+  const normalized = modelId.trim().toLowerCase()
+  if (normalized === "z-ai/glm5" || normalized === "glm5") {
+    return "z-ai/glm-5.1"
+  }
+  return normalized
+}
+
 function supportsModelExplicitly(account: Account, modelId: string): boolean {
-  return account.availableModels?.some((model) => model.id === modelId) ?? false
+  const target = canonicalModelId(modelId)
+  return (
+    account.availableModels?.some(
+      (model) => canonicalModelId(model.id) === target,
+    ) ?? false
+  )
 }
 
 function supportsModelWithFallback(account: Account, modelId: string): boolean {

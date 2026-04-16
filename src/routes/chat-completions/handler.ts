@@ -49,8 +49,24 @@ export async function handleCompletion(c: Context) {
   let payload = await c.req.json<ChatCompletionsPayload>()
   consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
 
+  if (!payload.model) {
+    payload = {
+      ...payload,
+      model: state.codebuffModel,
+    }
+  }
+
+  if (payload.model === "z-ai/glm5" || payload.model === "glm5") {
+    payload = {
+      ...payload,
+      model: state.codebuffModel,
+    }
+  }
+
   const account = getAccountForModel(payload.model)
-  await checkAccountRateLimitOrThrow(account.id, signal)
+  if ((account.provider ?? "copilot") === "copilot") {
+    await checkAccountRateLimitOrThrow(account.id, signal)
+  }
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,

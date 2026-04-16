@@ -3,7 +3,7 @@ import { events } from "fetch-event-stream"
 
 import type { Account } from "~/lib/accounts"
 
-import { getAccountForModel } from "~/lib/accounts"
+import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
@@ -26,22 +26,31 @@ export const createChatCompletions = async (
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > => {
-  const account = getAccountForModel(payload.model)
+  const normalizedPayload = {
+    ...payload,
+    model: canonicalModelId(payload.model),
+  }
+
+  const account = getAccountForModel(normalizedPayload.model)
   if (isCodebuffAccount(account)) {
-    return createCodebuffChatCompletions(account, payload, signal)
+    return createCodebuffChatCompletions(account, normalizedPayload, signal)
   }
 
   if (!account.copilotToken) throw new Error("Copilot token not found")
-  const useResponsesApi = shouldUseResponsesApi(payload.model, account)
+  const useResponsesApi = shouldUseResponsesApi(
+    normalizedPayload.model,
+    account,
+  )
 
-  const enableVision = payload.messages.some(
+  const enableVision = normalizedPayload.messages.some(
     (x) =>
       typeof x.content !== "string"
       && x.content?.some((x) => x.type === "image_url"),
   )
 
   const initiator =
-    initiatorOverride ?? inferInitiatorFromChatMessages(payload.messages)
+    initiatorOverride
+    ?? inferInitiatorFromChatMessages(normalizedPayload.messages)
 
   const doRequest = async (requestAccount: typeof account) => {
     const reqHeaders: Record<string, string> = {
@@ -55,7 +64,9 @@ export const createChatCompletions = async (
         method: "POST",
         headers: reqHeaders,
         body: JSON.stringify(
-          useResponsesApi ? translateToResponsesPayload(payload) : payload,
+          useResponsesApi ?
+            translateToResponsesPayload(normalizedPayload)
+          : normalizedPayload,
         ),
         signal,
       },
@@ -65,7 +76,7 @@ export const createChatCompletions = async (
   const { account: usedAccount, response } =
     await executeCopilotRequestWithRetry({
       account,
-      model: payload.model,
+      model: normalizedPayload.model,
       doRequest,
     })
 
@@ -76,7 +87,7 @@ export const createChatCompletions = async (
       response.status,
       errorBody,
     )
-    consola.error("Request payload was:", JSON.stringify(payload))
+    consola.error("Request payload was:", JSON.stringify(normalizedPayload))
     throw new HTTPError(
       "Failed to create chat completions",
       response,
@@ -84,7 +95,7 @@ export const createChatCompletions = async (
     )
   }
 
-  if (payload.stream) {
+  if (normalizedPayload.stream) {
     const stream = events(
       response,
     ) as unknown as AsyncIterable<CopilotStreamEvent>
@@ -94,7 +105,7 @@ export const createChatCompletions = async (
         useResponsesApi ?
           (translateResponsesStreamToChatCompletions(
             stream,
-            payload.model,
+            normalizedPayload.model,
           ) as AsyncIterable<CopilotStreamEvent>)
         : stream,
     }

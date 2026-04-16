@@ -275,7 +275,7 @@ test("codebuff account sends start/chat/finish workflow", async () => {
     localFetchMock as unknown as typeof fetch
 
   const result = await createChatCompletions({
-    model: "z-ai/glm-5.1",
+    model: "z-ai/glm5",
     messages: [{ role: "user", content: "hello" }],
     stream: false,
   })
@@ -288,21 +288,21 @@ test("codebuff account sends start/chat/finish workflow", async () => {
       headers?: Record<string, string>
     }
   ).headers
-  expect(startHeaders?.["User-Agent"]).toContain("0.0.44")
+  expect(startHeaders?.["User-Agent"]).toContain("0.0.44") // Account-level config
 
   const startBody = JSON.parse(
     (localFetchMock.mock.calls[0]?.[1] as { body?: string }).body ?? "{}",
   ) as Record<string, unknown>
   expect(startBody.action).toBe("START")
-  expect(startBody.agentId).toBe("cb-agent")
+  expect(startBody.agentId).toBe("cb-agent") // Account-level config
 
   const chatBody = JSON.parse(
     (localFetchMock.mock.calls[1]?.[1] as { body?: string }).body ?? "{}",
   ) as Record<string, unknown>
   expect(chatBody.codebuff_metadata).toBeDefined()
-  expect(chatBody.provider).toEqual({ allow_fallbacks: false })
+  expect(chatBody.provider).toEqual({ allow_fallbacks: false }) // Account-level config
   expect((chatBody.codebuff_metadata as { cost_mode?: string }).cost_mode).toBe(
-    "fast",
+    "fast", // Account-level config
   )
 
   const finishBody = JSON.parse(
@@ -336,11 +336,6 @@ test("codebuff streaming still triggers finish agent run", async () => {
       isExhausted: false,
       createdAt: Date.now(),
       codebuffAuthToken: "cb-token",
-      codebuffBaseUrl: "https://www.codebuff.com",
-      codebuffCliVersion: "0.0.44",
-      codebuffAgentId: "stream-agent",
-      codebuffCostMode: "normal",
-      codebuffAllowFallbacks: true,
       availableModels: [
         {
           id: "z-ai/glm-5.1",

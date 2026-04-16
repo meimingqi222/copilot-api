@@ -416,30 +416,6 @@
                     <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffAuthToken')"></label>
                     <input x-model="newAccount.codebuffAuthToken" type="password" class="input">
                   </div>
-                  <div>
-                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffBaseUrl')"></label>
-                    <input x-model="newAccount.codebuffBaseUrl" type="text" class="input">
-                  </div>
-                  <div>
-                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffCliVersion')"></label>
-                    <input x-model="newAccount.codebuffCliVersion" type="text" class="input">
-                  </div>
-                  <div>
-                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffAgentId')"></label>
-                    <input x-model="newAccount.codebuffAgentId" type="text" class="input">
-                  </div>
-                  <div>
-                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffModel')"></label>
-                    <input x-model="newAccount.codebuffModel" type="text" class="input">
-                  </div>
-                  <div>
-                    <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.codebuffCostMode')"></label>
-                    <input x-model="newAccount.codebuffCostMode" type="text" class="input">
-                  </div>
-                  <label class="flex items-center gap-2 text-sm text-[var(--apple-text-secondary)]">
-                    <input x-model="newAccount.codebuffAllowFallbacks" type="checkbox">
-                    <span x-text="t('accounts.codebuffAllowFallbacks')"></span>
-                  </label>
                 </div>
               </div>
               <div class="flex justify-end gap-3">
@@ -1110,24 +1086,12 @@
             label: '',
             provider: 'copilot',
             codebuffAuthToken: '',
-            codebuffBaseUrl: 'https://www.codebuff.com',
-            codebuffCliVersion: '0.0.33',
-            codebuffAgentId: 'base',
-            codebuffModel: 'z-ai/glm-5.1',
-            codebuffCostMode: 'normal',
-            codebuffAllowFallbacks: true,
           };
         },
         newAccount: {
           label: '',
           provider: 'copilot',
           codebuffAuthToken: '',
-          codebuffBaseUrl: 'https://www.codebuff.com',
-          codebuffCliVersion: '0.0.33',
-          codebuffAgentId: 'base',
-          codebuffModel: 'z-ai/glm-5.1',
-          codebuffCostMode: 'normal',
-          codebuffAllowFallbacks: true,
         },
         deviceFlowStep: 'input',
         deviceFlowData: null,
@@ -1203,9 +1167,9 @@
                 provider,
               }
               : {
-                ...this.newAccount,
                 label: this.newAccount.label.trim() || undefined,
                 provider,
+                authToken: this.newAccount.codebuffAuthToken?.trim() || undefined,
               };
             const res = await API.accounts.create(payload);
             if (provider === 'copilot') {

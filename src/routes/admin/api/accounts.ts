@@ -30,51 +30,12 @@ async function updateCodebuffAccount(
     enabled?: boolean
     priority?: number
     authToken?: string
-    baseUrl?: string
-    cliVersion?: string
-    agentId?: string
-    costMode?: string
-    allowFallbacks?: boolean
-    modelIds?: Array<string>
   },
 ): Promise<void> {
   if (account.provider !== "codebuff") return
 
   if (Object.hasOwn(body, "authToken")) {
-    account.codebuffAuthToken = body.authToken
-  }
-  if (Object.hasOwn(body, "baseUrl")) {
-    account.codebuffBaseUrl = body.baseUrl
-  }
-  if (Object.hasOwn(body, "cliVersion")) {
-    account.codebuffCliVersion = body.cliVersion
-  }
-  if (Object.hasOwn(body, "agentId")) {
-    account.codebuffAgentId = body.agentId
-  }
-  if (Object.hasOwn(body, "costMode")) {
-    account.codebuffCostMode = body.costMode
-  }
-  if (Object.hasOwn(body, "allowFallbacks")) {
-    account.codebuffAllowFallbacks = body.allowFallbacks
-  }
-
-  if (Array.isArray(body.modelIds)) {
-    account.availableModels = body.modelIds.map((modelId) => ({
-      id: modelId,
-      name: modelId,
-      vendor: "codebuff",
-      pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
-    }))
-  } else if (
-    Object.hasOwn(body, "authToken")
-    || Object.hasOwn(body, "baseUrl")
-    || Object.hasOwn(body, "cliVersion")
-    || Object.hasOwn(body, "agentId")
-    || Object.hasOwn(body, "costMode")
-    || Object.hasOwn(body, "allowFallbacks")
-  ) {
+    account.codebuffAuthToken = body.authToken?.trim() || undefined
     await refreshModelsForAccount(account)
   }
 }
@@ -149,11 +110,6 @@ accountApiRoutes.post("/", async (c) => {
     label?: string
     provider?: AccountProvider
     authToken?: string
-    baseUrl?: string
-    cliVersion?: string
-    agentId?: string
-    costMode?: string
-    allowFallbacks?: boolean
   }
   try {
     body = await c.req.json()
@@ -168,6 +124,11 @@ accountApiRoutes.post("/", async (c) => {
   const label = body.label ?? `account-${state.accounts.length + 1}`
 
   if (provider === "codebuff") {
+    const authToken = body.authToken?.trim()
+    if (!authToken) {
+      return c.json({ error: "Codebuff auth token is required." }, 400)
+    }
+
     const account: Account = {
       id: randomUUID(),
       label,
@@ -176,12 +137,7 @@ accountApiRoutes.post("/", async (c) => {
       priority: 0,
       isExhausted: false,
       createdAt: Date.now(),
-      codebuffAuthToken: body.authToken,
-      codebuffBaseUrl: body.baseUrl,
-      codebuffCliVersion: body.cliVersion,
-      codebuffAgentId: body.agentId,
-      codebuffCostMode: body.costMode,
-      codebuffAllowFallbacks: body.allowFallbacks,
+      codebuffAuthToken: authToken,
     }
 
     state.accounts.push(account)
@@ -365,12 +321,6 @@ accountApiRoutes.put("/:id", async (c) => {
     enabled?: boolean
     priority?: number
     authToken?: string
-    baseUrl?: string
-    cliVersion?: string
-    agentId?: string
-    costMode?: string
-    allowFallbacks?: boolean
-    modelIds?: Array<string>
   }
   try {
     body = await c.req.json()
