@@ -10,8 +10,11 @@ export const requestLogger = async (c: Context, next: Next) => {
   const start = Date.now()
   await next()
 
-  // Skip logging for admin panel and health check — they add noise
+  // Skip logging for admin panel, health check, and static resources
   if (c.req.path.startsWith("/admin") || c.req.path === "/health") return
+  if (c.req.path.startsWith("/favicon.ico") || c.req.path.startsWith("/static"))
+    return
+  if (c.req.path === "/robots.txt" || c.req.path === "/sitemap.xml") return
 
   const latencyMs = Date.now() - start
 
@@ -71,13 +74,26 @@ export const requestLogger = async (c: Context, next: Next) => {
 
 function extractClientIp(c: Context): string | undefined {
   const cfIp = c.req.header("cf-connecting-ip")
-  if (cfIp) return cfIp
+  if (cfIp && isValidIp(cfIp)) return cfIp
 
   const forwarded = c.req.header("x-forwarded-for")
-  if (forwarded) return forwarded.split(",")[0]?.trim()
+  if (forwarded) {
+    const firstIp = forwarded.split(",")[0]?.trim()
+    if (isValidIp(firstIp)) return firstIp
+  }
 
   const realIp = c.req.header("x-real-ip")
-  if (realIp) return realIp
+  if (realIp && isValidIp(realIp)) return realIp
 
   return undefined
+}
+
+// Simple IP validation (IPv4 and IPv6)
+function isValidIp(ip: string): boolean {
+  if (!ip) return false
+  // Basic IPv4 regex
+  const ipv4Regex = /^(?:\d{1,3}\.){3}\d{1,3}$/
+  // Basic IPv6 regex (simplified)
+  const ipv6Regex = /^(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}$/i
+  return ipv4Regex.test(ip) || ipv6Regex.test(ip)
 }
