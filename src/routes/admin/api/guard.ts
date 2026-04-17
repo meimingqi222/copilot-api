@@ -83,6 +83,10 @@ guardApiRoutes.post("/ua-whitelist", async (c) => {
   }
   const pattern = body.pattern?.trim()
   if (!pattern) return c.json({ error: "pattern is required." }, 400)
+  const currentCustom = getCustomUaWhitelist()
+  if (currentCustom.includes(pattern.toLowerCase())) {
+    return c.json({ error: "Pattern already exists in whitelist." }, 409)
+  }
   await addUaWhitelistPattern(pattern)
   return c.json({ ok: true })
 })

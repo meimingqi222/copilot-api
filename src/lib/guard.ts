@@ -88,6 +88,8 @@ const ERROR_RATE_THRESHOLD = 0.3
 const HIGH_FREQUENCY_THRESHOLD = 100
 // Auto-block: >= this many user-initiator requests with 0 agent requests
 const PREMIUM_ABUSE_THRESHOLD = 30
+// Auto-block: >= this many errors (brute force protection)
+const ERROR_COUNT_THRESHOLD = 20
 
 // ── In-memory state ────────────────────────────────────────────
 
@@ -253,6 +255,8 @@ function updateSnapshot(
 
 function checkAutoBlock(snap: ClientSnapshot): void {
   if (snap.blocked) return
+
+  // Premium abuse: all user-initiator, no agent, high volume
   if (
     snap.userInitiatorCount >= PREMIUM_ABUSE_THRESHOLD
     && snap.agentInitiatorCount === 0
@@ -268,6 +272,25 @@ function checkAutoBlock(snap: ClientSnapshot): void {
     snap.blocked = true
     consola.warn(
       `⚠ Guard auto-blocked ${snap.type} ${snap.key}: ${snap.userInitiatorCount} user-initiator requests, 0 agent`,
+    )
+    // Best-effort persist (don't await in sync context)
+    void saveGuard()
+    return
+  }
+
+  // Brute force: too many errors
+  if (snap.errors >= ERROR_COUNT_THRESHOLD) {
+    const blocklist = snap.type === "ip" ? ipBlacklist : uaBlacklist
+    const entry: BlacklistEntry = {
+      value: snap.key,
+      type: snap.type,
+      reason: `Auto-blocked: ${snap.errors} errors (likely brute force)`,
+      createdAt: Date.now(),
+    }
+    blocklist.set(snap.key, entry)
+    snap.blocked = true
+    consola.warn(
+      `⚠ Guard auto-blocked ${snap.type} ${snap.key}: ${snap.errors} errors (brute force)`,
     )
     // Best-effort persist (don't await in sync context)
     void saveGuard()
