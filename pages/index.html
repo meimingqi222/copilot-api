@@ -315,7 +315,7 @@
                     <span class="badge" :class="user.enabled ? 'badge-success' : 'badge-gray'" x-text="t(user.enabled ? 'users.status.enabled' : 'users.status.disabled')"></span>
                   </td>
                   <td class="p-3" x-text="user.quotaLimit === 0 ? t('quota.unlimited') : user.quotaLimit"></td>
-                  <td class="p-3" x-text="user.tokensUsed || 0"></td>
+                  <td class="p-3" x-text="user.usedTokens || 0"></td>
                   <td class="p-3 text-[var(--apple-text-secondary)]" x-text="user.lastUsedAt ? formatTime(user.lastUsedAt) : '-'"></td>
                   <td class="p-3">
                     <div class="flex gap-2">
