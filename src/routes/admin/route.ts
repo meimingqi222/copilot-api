@@ -64,11 +64,14 @@ adminRoutes.get("/static/*", (c) => {
 
 // Protect all /api/* routes with admin role check
 adminRoutes.use("/api/*", async (c, next) => {
-  // If no auth is configured at all, allow access (backwards compat)
-  const hasAnyAuth = Boolean(
+  // Multi-user mode always requires auth
+  const hasMultiUserMode = state.users.length > 0
+  // Single-user mode requires auth if system-level auth is configured
+  const hasSystemAuth = Boolean(
     state.apiKey || state.adminPassword || state.legacyApiKey,
   )
-  if (hasAnyAuth && !hasAdminRole(c)) {
+  // Require auth in multi-user mode OR if system auth is configured
+  if ((hasMultiUserMode || hasSystemAuth) && !hasAdminRole(c)) {
     return c.json(
       { error: "Forbidden. Admin role required to access this resource." },
       403,
@@ -133,7 +136,14 @@ function serveLoginPage(message?: string): string {
 
 // Route handlers
 adminRoutes.get("/", (c) => {
-  if (state.apiKey && !isAuthorizedRequest(c)) {
+  // Multi-user mode always requires auth
+  const hasMultiUserMode = state.users.length > 0
+  // Single-user mode requires auth if system-level auth is configured
+  const hasSystemAuth = Boolean(
+    state.apiKey || state.adminPassword || state.legacyApiKey,
+  )
+  // Require auth in multi-user mode OR if system auth is configured
+  if ((hasMultiUserMode || hasSystemAuth) && !isAuthorizedRequest(c)) {
     return c.redirect("/admin/login")
   }
   return c.html(serveSPA())
