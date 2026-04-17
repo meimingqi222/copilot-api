@@ -143,7 +143,7 @@ adminRoutes.get("/", (c) => {
     state.apiKey || state.adminPassword || state.legacyApiKey,
   )
   // Require auth in multi-user mode OR if system auth is configured
-  if ((hasMultiUserMode || hasSystemAuth) && !isAuthorizedRequest(c)) {
+  if ((hasMultiUserMode || hasSystemAuth) && !hasAdminRole(c)) {
     return c.redirect("/admin/login")
   }
   return c.html(serveSPA())
