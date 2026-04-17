@@ -2,6 +2,30 @@
 const API = {
   baseUrl: "/admin/api",
 
+  // Helper: Extract error message from response
+  extractErrorMessage(errorText, responseStatus) {
+    let errorData = { error: errorText || `HTTP ${responseStatus}` }
+    try {
+      errorData = JSON.parse(errorText)
+    } catch {
+      // Not JSON, use raw text
+    }
+
+    // Extract error message with fallbacks
+    let message = errorText
+    if (typeof errorData.error === "string") {
+      message = errorData.error
+    } else if (typeof errorData.error?.message === "string") {
+      message = errorData.error.message
+    } else if (errorData.message) {
+      message = errorData.message
+    }
+
+    const error = new Error(message || `HTTP ${responseStatus}`)
+    error.data = errorData
+    return error
+  },
+
   // Helper: Make request
   async request(endpoint, options = {}) {
     const url = `${this.baseUrl}${endpoint}`
@@ -26,23 +50,7 @@ const API = {
 
     if (!response.ok) {
       const errorText = await response.text()
-      // Try to parse JSON error response
-      let errorData = { error: errorText || `HTTP ${response.status}` }
-      try {
-        errorData = JSON.parse(errorText)
-      } catch {
-        // Not JSON, use raw text
-      }
-      const error = new Error(
-        (typeof errorData.error === "string" ?
-          errorData.error
-        : errorData.error?.message)
-          || errorData.message
-          || errorText
-          || `HTTP ${response.status}`,
-      )
-      error.data = errorData
-      throw error
+      throw this.extractErrorMessage(errorText, response.status)
     }
 
     const contentType = response.headers.get("content-type")
