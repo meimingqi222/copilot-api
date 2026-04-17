@@ -34,7 +34,9 @@ const API = {
         // Not JSON, use raw text
       }
       const error = new Error(
-        errorData.error
+        (typeof errorData.error === "string" ?
+          errorData.error
+        : errorData.error?.message)
           || errorData.message
           || errorText
           || `HTTP ${response.status}`,
