@@ -18,10 +18,10 @@ export const server = new Hono()
 
 server.use(logger())
 server.use(cors())
+server.use("*", requestLogger)
 server.use("*", guardMiddleware)
 server.use("*", requireApiKey)
 server.use("*", clientRateLimit())
-server.use("*", requestLogger)
 
 // Health check endpoint (plain text, always public)
 server.get("/health", (c) => c.text("OK"))
