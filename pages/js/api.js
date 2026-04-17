@@ -13,12 +13,23 @@ const API = {
 
     // Extract error message with fallbacks
     let message = errorText
-    if (typeof errorData.error === "string") {
-      message = errorData.error
-    } else if (typeof errorData.error?.message === "string") {
-      message = errorData.error.message
-    } else if (errorData.message) {
-      message = errorData.message
+    switch ("string") {
+      case typeof errorData.error: {
+        message = errorData.error
+
+        break
+      }
+      case typeof errorData.error?.message: {
+        message = errorData.error.message
+
+        break
+      }
+      case typeof errorData.message: {
+        message = errorData.message
+
+        break
+      }
+      // No default
     }
 
     const error = new Error(message || `HTTP ${responseStatus}`)
