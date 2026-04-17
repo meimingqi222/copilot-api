@@ -4,7 +4,9 @@ import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
 import { websocket } from "hono/bun"
+import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
+import { resolve } from "node:path"
 import invariant from "tiny-invariant"
 
 import {
@@ -12,6 +14,7 @@ import {
   scheduleQuotaRefresh,
   refreshCopilotToken,
 } from "./lib/accounts"
+import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
@@ -98,10 +101,26 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   if (state.apiKey) {
     consola.info("API key protection enabled")
+    consola.warn(
+      "⚠ Legacy API_KEY mode is deprecated. Use the admin panel to create per-user API keys for better security and auditability.",
+    )
   }
 
   if (state.adminPassword) {
     consola.info("Admin login password is configured")
+    await hashAdminPasswordInEnv(state.adminPassword)
+  }
+
+  // Scrub sensitive values from process.env to reduce exposure in memory
+  for (const key of [
+    "API_KEY",
+    "ADMIN_PASSWORD",
+    "GITHUB_TOKEN",
+    "GITHUB_TOKENS",
+  ]) {
+    if (process.env[key]) {
+      Reflect.deleteProperty(process.env, key)
+    }
   }
 
   await ensurePaths()
@@ -187,6 +206,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // Load users
   await loadUsers()
 
+  // Load guard blacklist
+  await loadGuard()
+
   // Initialize stats store
   statsStore.init()
 
@@ -255,6 +277,34 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     port: options.port,
     idleTimeout: 0,
   })
+}
+
+/**
+ * If the admin password is plaintext (not sha256: prefixed),
+ * hash it in-place and rewrite the .env file so the secret
+ * is never stored in cleartext on disk after first boot.
+ */
+async function hashAdminPasswordInEnv(password: string): Promise<void> {
+  if (password.startsWith("sha256:")) return
+
+  const hashed = `sha256:${createHash("sha256").update(password).digest("hex")}`
+  state.adminPassword = hashed
+
+  // Attempt to rewrite .env — best-effort, non-fatal
+  const envPath = resolve(process.cwd(), ".env")
+  try {
+    const content = await fs.readFile(envPath, "utf8")
+    const updated = content.replace(
+      /^ADMIN_PASSWORD=.+$/m,
+      `ADMIN_PASSWORD=${hashed}`,
+    )
+    if (updated !== content) {
+      await fs.writeFile(envPath, updated, "utf8")
+      consola.success("ADMIN_PASSWORD in .env has been auto-hashed (sha256)")
+    }
+  } catch {
+    // .env may not exist (password via CLI flag) — that's fine
+  }
 }
 
 export const start = defineCommand({

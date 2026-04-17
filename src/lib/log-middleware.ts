@@ -2,12 +2,17 @@ import type { Context, Next } from "hono"
 
 import consola from "consola"
 
+import { recordRequest as recordGuardSnapshot } from "./guard"
 import { logStore } from "./log-store"
 import { statsStore } from "./stats-store"
 
 export const requestLogger = async (c: Context, next: Next) => {
   const start = Date.now()
   await next()
+
+  // Skip logging for admin panel and health check — they add noise
+  if (c.req.path.startsWith("/admin") || c.req.path === "/health") return
+
   const latencyMs = Date.now() - start
 
   const status = c.res.status
@@ -21,6 +26,8 @@ export const requestLogger = async (c: Context, next: Next) => {
   }
 
   const accountId = c.get("accountId" as never) as string | undefined
+  const clientIp = extractClientIp(c)
+  const userAgent = c.req.header("user-agent") || undefined
 
   logStore.push({
     timestamp: Date.now(),
@@ -32,6 +39,18 @@ export const requestLogger = async (c: Context, next: Next) => {
     latencyMs,
     statusCode: status,
     path: c.req.path,
+    clientIp,
+    userAgent,
+  })
+
+  // Feed guard snapshot tracking
+  recordGuardSnapshot({
+    ip: clientIp,
+    ua: userAgent,
+    username: c.get("username" as never) as string | undefined,
+    path: c.req.path,
+    isError: status >= 400,
+    initiator: c.req.header("x-initiator") || undefined,
   })
 
   // Persist stats to SQLite for request counting
@@ -48,4 +67,17 @@ export const requestLogger = async (c: Context, next: Next) => {
       consola.debug("Failed to persist stats")
     }
   }
+}
+
+function extractClientIp(c: Context): string | undefined {
+  const cfIp = c.req.header("cf-connecting-ip")
+  if (cfIp) return cfIp
+
+  const forwarded = c.req.header("x-forwarded-for")
+  if (forwarded) return forwarded.split(",")[0]?.trim()
+
+  const realIp = c.req.header("x-real-ip")
+  if (realIp) return realIp
+
+  return undefined
 }

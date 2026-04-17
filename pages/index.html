@@ -272,6 +272,124 @@
         </div>
       </div>
 
+      <!-- Users (API Keys) View -->
+      <div x-show="currentView === 'users'" x-data="usersView()" x-init="load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('users.title')"></h2>
+          <div class="flex items-center gap-4">
+            <button @click="openCreateModal()" class="btn btn-primary">
+              <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
+              <span x-text="t('users.addUser')"></span>
+            </button>
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
+            </button>
+          </div>
+        </header>
+
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading" class="card overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+                <th class="text-left p-3" x-text="t('users.username')"></th>
+                <th class="text-left p-3" x-text="t('users.role')"></th>
+                <th class="text-left p-3" x-text="t('users.status')"></th>
+                <th class="text-left p-3" x-text="t('users.quota')"></th>
+                <th class="text-left p-3" x-text="t('users.used')"></th>
+                <th class="text-left p-3" x-text="t('users.lastUsed')"></th>
+                <th class="text-left p-3" x-text="t('users.actions')"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="user in users" :key="user.id">
+                <tr class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]">
+                  <td class="p-3 font-medium" x-text="user.username"></td>
+                  <td class="p-3">
+                    <span class="badge" :class="user.role === 'admin' ? 'badge-warning' : 'badge-info'" x-text="t('users.role.' + user.role)"></span>
+                  </td>
+                  <td class="p-3">
+                    <span class="badge" :class="user.enabled ? 'badge-success' : 'badge-gray'" x-text="t(user.enabled ? 'users.status.enabled' : 'users.status.disabled')"></span>
+                  </td>
+                  <td class="p-3" x-text="user.quotaLimit === 0 ? t('quota.unlimited') : user.quotaLimit"></td>
+                  <td class="p-3" x-text="user.tokensUsed || 0"></td>
+                  <td class="p-3 text-[var(--apple-text-secondary)]" x-text="user.lastUsedAt ? formatTime(user.lastUsedAt) : '-'"></td>
+                  <td class="p-3">
+                    <div class="flex gap-2">
+                      <button @click="toggleEnabled(user)" class="btn btn-small" :class="user.enabled ? 'btn-secondary' : 'btn-primary'"
+                              x-text="t(user.enabled ? 'accounts.disable' : 'accounts.enable')"></button>
+                      <button @click="resetKey(user)" class="btn btn-small btn-secondary" x-text="t('users.resetKey')"></button>
+                      <button @click="deleteUser(user)" class="btn btn-small btn-danger" x-text="t('delete')"></button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div x-show="!users.length" class="empty-state py-12">
+            <i data-lucide="key" class="empty-state-icon"></i>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('users.noUsers')"></p>
+          </div>
+        </div>
+
+        <!-- Create User Modal -->
+        <div x-show="showCreateModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
+          <div class="modal-content p-8 w-full max-w-md" @click.away="showCreateModal = false">
+            <h3 class="text-title-2 mb-6" x-text="t('users.addUser')"></h3>
+            <div class="space-y-4 mb-6">
+              <div>
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.username')"></label>
+                <input x-model="newUser.username" type="text" class="input" placeholder="e.g. alice">
+              </div>
+              <div>
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.role.label')"></label>
+                <select x-model="newUser.role" class="input">
+                  <option value="user" x-text="t('users.role.user')"></option>
+                  <option value="admin" x-text="t('users.role.admin')"></option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2">
+                  <span x-text="t('users.quota')"></span>
+                  <span class="text-xs text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.quotaHint') + ')'"></span>
+                </label>
+                <input x-model.number="newUser.quotaLimit" type="number" min="0" class="input" placeholder="0">
+              </div>
+            </div>
+            <div class="flex justify-end gap-3">
+              <button @click="showCreateModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="createUser()" class="btn btn-primary" x-text="t('create')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- New API Key Modal -->
+        <div x-show="showKeyModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
+          <div class="modal-content p-8 w-full max-w-lg" @click.away="showKeyModal = false">
+            <div class="text-center mb-6">
+              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="key" class="w-8 h-8 text-white"></i>
+              </div>
+              <h3 class="text-title-2 mb-2" x-text="t('users.newApiKey')"></h3>
+              <p class="text-sm text-[var(--apple-red)]" x-text="t('users.keyWarning')"></p>
+            </div>
+            <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 mb-6">
+              <code class="text-sm break-all select-all" x-text="newApiKey"></code>
+            </div>
+            <div class="flex justify-center gap-3">
+              <button @click="copyKey()" class="btn btn-primary">
+                <i data-lucide="copy" class="w-4 h-4 mr-1"></i>
+                <span x-text="t('copy')"></span>
+              </button>
+              <button @click="showKeyModal = false" class="btn btn-secondary" x-text="t('done')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Accounts View -->
       <div x-show="currentView === 'accounts'" x-data="accountsView()" x-init="load()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
@@ -781,6 +899,202 @@
         </div>
       </div>
 
+      <!-- Guard View -->
+      <div x-show="currentView === 'guard'" x-data="guardView()" x-init="load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('guard.title')"></h2>
+          <button class="btn btn-secondary" @click="load()">
+            <i data-lucide="refresh-cw" class="w-4 h-4 mr-2"></i>
+            <span x-text="t('refresh')"></span>
+          </button>
+        </header>
+
+        <!-- Tab bar: IPs / UAs / Blacklist -->
+        <div class="flex gap-2 mb-6">
+          <button class="btn" :class="tab === 'ip' ? 'btn-primary' : 'btn-secondary'" @click="tab = 'ip'; load()">
+            <i data-lucide="globe" class="w-4 h-4 mr-1"></i>
+            <span x-text="t('guard.clientIps')"></span>
+          </button>
+          <button class="btn" :class="tab === 'ua' ? 'btn-primary' : 'btn-secondary'" @click="tab = 'ua'; load()">
+            <i data-lucide="monitor" class="w-4 h-4 mr-1"></i>
+            <span x-text="t('guard.clientUas')"></span>
+          </button>
+          <button class="btn" :class="tab === 'blacklist' ? 'btn-primary' : 'btn-secondary'" @click="tab = 'blacklist'; loadBlacklist()">
+            <i data-lucide="ban" class="w-4 h-4 mr-1"></i>
+            <span x-text="t('guard.blacklist')"></span>
+          </button>
+          <button class="btn" :class="tab === 'whitelist' ? 'btn-primary' : 'btn-secondary'" @click="tab = 'whitelist'; loadWhitelist()">
+            <i data-lucide="shield-check" class="w-4 h-4 mr-1"></i>
+            <span x-text="t('guard.whitelist')"></span>
+          </button>
+        </div>
+
+        <!-- Loading -->
+        <div x-show="loading" class="text-center py-12">
+          <div class="loading-spinner mx-auto mb-4"></div>
+        </div>
+
+        <!-- Clients table (IP / UA) -->
+        <div x-show="!loading && (tab === 'ip' || tab === 'ua')" class="card overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+                <th class="text-left p-3 w-10"></th>
+                <th class="text-left p-3" x-text="tab === 'ip' ? 'IP' : 'User-Agent'"></th>
+                <th class="text-left p-3" x-text="t('guard.requests')"></th>
+                <th class="text-left p-3" x-text="t('guard.errors')"></th>
+                <th class="text-left p-3" x-text="t('guard.initiator')"></th>
+                <th class="text-left p-3" x-text="t('guard.users')"></th>
+                <th class="text-left p-3" x-text="t('guard.lastSeen')"></th>
+                <th class="text-left p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="client in clients" :key="client.key">
+                <tr class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]"
+                    :class="{ 'opacity-50': client.blocked, 'bg-red-50 dark:bg-red-950/20': client.suspicious && !client.blocked }">
+                  <td class="p-3">
+                    <template x-if="client.suspicious">
+                      <span class="inline-flex items-center gap-1 badge bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 text-[10px] cursor-help"
+                            :title="client.suspiciousReasons.map(r => t('guard.reason.' + r)).join(', ')">
+                        <i data-lucide="alert-triangle" class="w-3 h-3"></i>
+                      </span>
+                    </template>
+                    <template x-if="!client.suspicious">
+                      <span class="inline-flex items-center badge bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 text-[10px]">
+                        <i data-lucide="check-circle" class="w-3 h-3"></i>
+                      </span>
+                    </template>
+                  </td>
+                  <td class="p-3 font-mono text-xs max-w-[260px] truncate" :title="client.key" x-text="client.key"></td>
+                  <td class="p-3">
+                    <span class="font-medium" :class="client.suspicious && client.requests >= 100 ? 'text-red-500' : ''" x-text="client.requests"></span>
+                  </td>
+                  <td class="p-3">
+                    <span :class="client.errors > 0 ? 'text-red-500 font-medium' : ''" x-text="client.errors"></span>
+                  </td>
+                  <td class="p-3 text-xs whitespace-nowrap">
+                    <template x-if="client.userInitiatorCount > 0 || client.agentInitiatorCount > 0">
+                      <span>
+                        <span :class="client.userInitiatorCount > 0 && client.agentInitiatorCount === 0 ? 'text-red-500 font-medium' : ''" x-text="'U:' + client.userInitiatorCount"></span>
+                        <span class="text-[var(--apple-text-secondary)] mx-0.5">/</span>
+                        <span :class="client.agentInitiatorCount > 0 ? 'text-green-600' : 'text-[var(--apple-text-secondary)]'" x-text="'A:' + client.agentInitiatorCount"></span>
+                      </span>
+                    </template>
+                    <template x-if="client.userInitiatorCount === 0 && client.agentInitiatorCount === 0">
+                      <span class="text-[var(--apple-text-secondary)]">-</span>
+                    </template>
+                  </td>
+                  <td class="p-3 text-xs" x-text="client.usernames.length ? client.usernames.join(', ') : '-'"></td>
+                  <td class="p-3 text-[var(--apple-text-secondary)] text-xs" x-text="formatTime(client.lastSeenAt)"></td>
+                  <td class="p-3 text-right whitespace-nowrap">
+                    <template x-if="client.blocked">
+                      <span class="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" x-text="t('guard.blocked')"></span>
+                    </template>
+                    <template x-if="!client.blocked">
+                      <button class="btn btn-secondary text-xs px-2 py-1" @click="blockClient(client)">
+                        <i data-lucide="ban" class="w-3 h-3 mr-1"></i>
+                        <span x-text="t('guard.block')"></span>
+                      </button>
+                    </template>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div x-show="!clients.length" class="empty-state py-12">
+            <i data-lucide="shield" class="empty-state-icon"></i>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('guard.noClients')"></p>
+          </div>
+        </div>
+
+        <!-- Blacklist table -->
+        <div x-show="!loading && tab === 'blacklist'" class="card overflow-hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+                <th class="text-left p-3" x-text="t('guard.type')"></th>
+                <th class="text-left p-3" x-text="t('guard.value')"></th>
+                <th class="text-left p-3" x-text="t('guard.reason')"></th>
+                <th class="text-left p-3" x-text="t('guard.createdAt')"></th>
+                <th class="text-left p-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="entry in blacklist" :key="entry.value + entry.type">
+                <tr class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]">
+                  <td class="p-3">
+                    <span class="badge" :class="entry.type === 'ip' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'" x-text="entry.type.toUpperCase()"></span>
+                  </td>
+                  <td class="p-3 font-mono text-xs" x-text="entry.value"></td>
+                  <td class="p-3 text-xs text-[var(--apple-text-secondary)]" x-text="entry.reason || '-'"></td>
+                  <td class="p-3 text-xs text-[var(--apple-text-secondary)]" x-text="formatTime(entry.createdAt)"></td>
+                  <td class="p-3 text-right">
+                    <button class="btn btn-secondary text-xs px-2 py-1" @click="unblockEntry(entry)">
+                      <i data-lucide="shield-off" class="w-3 h-3 mr-1"></i>
+                      <span x-text="t('guard.unblock')"></span>
+                    </button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div x-show="!blacklist.length" class="empty-state py-12">
+            <i data-lucide="shield-check" class="empty-state-icon"></i>
+            <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('guard.noBlacklist')"></p>
+          </div>
+        </div>
+
+        <!-- Whitelist panel -->
+        <div x-show="!loading && tab === 'whitelist'" class="space-y-6">
+          <!-- Add custom pattern -->
+          <div class="card p-4">
+            <h3 class="text-subheadline font-medium mb-3" x-text="t('guard.addWhitelist')"></h3>
+            <div class="flex gap-3">
+              <input type="text" x-model="newWhitelistPattern" :placeholder="t('guard.whitelistPattern')"
+                     class="input flex-1" @keydown.enter="addWhitelistPattern()">
+              <button class="btn btn-primary" @click="addWhitelistPattern()" :disabled="!newWhitelistPattern.trim()">
+                <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
+                <span x-text="t('guard.addWhitelist')"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Custom patterns -->
+          <div class="card overflow-hidden">
+            <div class="p-3 border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+              <h3 class="text-subheadline font-medium" x-text="t('guard.whitelistCustom')"></h3>
+            </div>
+            <template x-if="whitelistCustom.length > 0">
+              <div class="divide-y divide-[var(--apple-gray-5)]">
+                <template x-for="pattern in whitelistCustom" :key="pattern">
+                  <div class="flex items-center justify-between p-3">
+                    <span class="font-mono text-sm" x-text="pattern"></span>
+                    <button class="btn btn-secondary text-xs px-2 py-1" @click="removeWhitelistPattern(pattern)">
+                      <i data-lucide="trash-2" class="w-3 h-3 mr-1"></i>
+                      <span x-text="t('delete')"></span>
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div x-show="!whitelistCustom.length" class="p-4 text-center text-[var(--apple-text-secondary)] text-sm">-</div>
+          </div>
+
+          <!-- Built-in patterns -->
+          <div class="card overflow-hidden">
+            <div class="p-3 border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+              <h3 class="text-subheadline font-medium" x-text="t('guard.whitelistBuiltin')"></h3>
+            </div>
+            <div class="flex flex-wrap gap-2 p-3">
+              <template x-for="pattern in whitelistBuiltin" :key="pattern">
+                <span class="badge bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] px-2 py-1 text-xs font-mono" x-text="pattern"></span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Logs View -->
       <div x-show="currentView === 'logs'" x-data="logsView()" x-init="init(); load()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
@@ -821,6 +1135,8 @@
                 <th class="text-left p-3" x-text="t('logs.level')"></th>
                 <th class="text-left p-3" x-text="t('logs.path')"></th>
                 <th class="text-left p-3" x-text="t('logs.user')"></th>
+                <th class="text-left p-3" x-text="t('logs.clientIp')"></th>
+                <th class="text-left p-3" x-text="t('logs.userAgent')"></th>
                 <th class="text-left p-3" x-text="t('logs.model')"></th>
               </tr>
             </thead>
@@ -833,6 +1149,8 @@
                   </td>
                   <td class="p-3 font-mono" x-text="log.path"></td>
                   <td class="p-3" x-text="log.username || '-'"></td>
+                  <td class="p-3 font-mono text-xs" x-text="log.clientIp || '-'"></td>
+                  <td class="p-3 text-xs max-w-[200px] truncate" :title="log.userAgent || ''" x-text="log.userAgent || '-'"></td>
                   <td class="p-3" x-text="log.model || '-'"></td>
                 </tr>
               </template>
@@ -869,7 +1187,7 @@
         async init() {
           // Restore view from URL hash or default to dashboard
           const hash = window.location.hash.slice(1);
-          if (hash && ['dashboard', 'accounts', 'quota', 'logs'].includes(hash)) {
+          if (hash && ['dashboard', 'users', 'accounts', 'quota', 'guard', 'logs'].includes(hash)) {
             this.currentView = hash;
           }
           
@@ -882,7 +1200,7 @@
           // Listen for hash changes
           window.addEventListener('hashchange', () => {
             const hash = window.location.hash.slice(1);
-            if (hash && ['dashboard', 'accounts', 'quota', 'logs'].includes(hash)) {
+            if (hash && ['dashboard', 'users', 'accounts', 'quota', 'guard', 'logs'].includes(hash)) {
               this.currentView = hash;
             }
           });
@@ -939,8 +1257,10 @@
         get navItems() {
           return [
             { id: 'dashboard', icon: 'layout-dashboard', label: this.t('nav.dashboard') },
+            { id: 'users', icon: 'key', label: this.t('nav.users') },
             { id: 'accounts', icon: 'users', label: this.t('nav.accounts') },
             { id: 'quota', icon: 'bar-chart-3', label: this.t('nav.quota') },
+            { id: 'guard', icon: 'shield', label: this.t('nav.guard') },
             { id: 'logs', icon: 'scroll-text', label: this.t('nav.logs') }
           ];
         },
@@ -1068,6 +1388,115 @@
         },
         t(key, params) {
           // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+
+    // Users (API Keys) View Component
+    function usersView() {
+      return {
+        loading: false,
+        users: [],
+        showCreateModal: false,
+        showKeyModal: false,
+        newApiKey: '',
+        newUser: { username: '', role: 'user', quotaLimit: 0 },
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await API.users.list();
+            this.users = data.users || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        openCreateModal() {
+          this.newUser = { username: '', role: 'user', quotaLimit: 0 };
+          this.showCreateModal = true;
+        },
+
+        async createUser() {
+          try {
+            const res = await API.users.create(this.newUser);
+            this.showCreateModal = false;
+            this.newApiKey = res.apiKey;
+            this.showKeyModal = true;
+            this.showToast(I18n.t('users.createSuccess'), 'success');
+            await this.load();
+            this.$nextTick(() => lucide.createIcons());
+          } catch (e) {
+            this.showToast(I18n.t('error.create'), 'error');
+          }
+        },
+
+        async toggleEnabled(user) {
+          try {
+            await API.users.update(user.id, { enabled: !user.enabled });
+            this.showToast(I18n.t('users.updateSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async resetKey(user) {
+          if (!confirm(I18n.t('users.confirmReset'))) return;
+          try {
+            const res = await API.users.resetKey(user.id);
+            this.newApiKey = res.apiKey;
+            this.showKeyModal = true;
+            this.showToast(I18n.t('users.resetSuccess'), 'success');
+            this.$nextTick(() => lucide.createIcons());
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async deleteUser(user) {
+          if (!confirm(I18n.t('users.confirmDelete'))) return;
+          try {
+            await API.users.delete(user.id);
+            this.showToast(I18n.t('users.deleteSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.delete'), 'error');
+          }
+        },
+
+        async copyKey() {
+          try {
+            await navigator.clipboard.writeText(this.newApiKey);
+            this.showToast(I18n.t('copySuccess'), 'success');
+          } catch {
+            // Fallback
+            const el = document.createElement('textarea');
+            el.value = this.newApiKey;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            this.showToast(I18n.t('copySuccess'), 'success');
+          }
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        formatTime(ts) {
+          if (!ts) return '-';
+          const app = document.querySelector('[x-data^=adminApp]');
+          return app ? Alpine.$data(app).formatTime(ts) : new Date(ts).toLocaleString();
+        },
+        t(key, params) {
           const app = document.querySelector('[x-data^=adminApp]');
           if (app) void Alpine.$data(app).lang;
           return I18n.t(key, params);
@@ -1638,6 +2067,123 @@
         },
         t(key, params) {
           // Access parent lang to establish reactive dependency
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        }
+      };
+    }
+
+    // Guard View Component
+    function guardView() {
+      return {
+        loading: false,
+        tab: 'ip',
+        clients: [],
+        blacklist: [],
+        whitelistBuiltin: [],
+        whitelistCustom: [],
+        newWhitelistPattern: '',
+
+        async load() {
+          if (this.tab === 'blacklist') { await this.loadBlacklist(); return; }
+          if (this.tab === 'whitelist') { await this.loadWhitelist(); return; }
+          this.loading = true;
+          try {
+            const data = await API.guard.clients(this.tab);
+            this.clients = data.clients || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        async loadBlacklist() {
+          this.loading = true;
+          try {
+            const data = await API.guard.blacklist();
+            this.blacklist = data.blacklist || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        async loadWhitelist() {
+          this.loading = true;
+          try {
+            const data = await API.guard.uaWhitelist();
+            this.whitelistBuiltin = data.builtin || [];
+            this.whitelistCustom = data.custom || [];
+          } catch (e) {
+            this.showToast(I18n.t('error.load'), 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        async addWhitelistPattern() {
+          const pattern = this.newWhitelistPattern.trim();
+          if (!pattern) return;
+          try {
+            await API.guard.addUaWhitelist(pattern);
+            this.newWhitelistPattern = '';
+            this.showToast(I18n.t('guard.whitelistAdded'), 'success');
+            await this.loadWhitelist();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async removeWhitelistPattern(pattern) {
+          if (!confirm(I18n.t('guard.confirmRemoveWhitelist'))) return;
+          try {
+            await API.guard.removeUaWhitelist(pattern);
+            this.showToast(I18n.t('guard.whitelistRemoved'), 'success');
+            await this.loadWhitelist();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async blockClient(client) {
+          const reason = prompt(I18n.t('guard.blockReason'));
+          if (reason === null) return;
+          try {
+            await API.guard.block({ value: client.key, type: this.tab, reason: reason || undefined });
+            this.showToast(I18n.t('guard.blockSuccess'), 'success');
+            await this.load();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        async unblockEntry(entry) {
+          if (!confirm(I18n.t('guard.confirmUnblock'))) return;
+          try {
+            await API.guard.unblock({ value: entry.value, type: entry.type });
+            this.showToast(I18n.t('guard.unblockSuccess'), 'success');
+            await this.loadBlacklist();
+          } catch (e) {
+            this.showToast(I18n.t('error.update'), 'error');
+          }
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+        formatTime(ts) {
+          if (!ts) return '-';
+          const app = document.querySelector('[x-data^=adminApp]');
+          return app ? Alpine.$data(app).formatTime(ts) : new Date(ts).toLocaleString();
+        },
+        t(key, params) {
           const app = document.querySelector('[x-data^=adminApp]');
           if (app) void Alpine.$data(app).lang;
           return I18n.t(key, params);

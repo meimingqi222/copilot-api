@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono"
 
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
-import { randomBytes, timingSafeEqual } from "node:crypto"
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 
 import { state } from "./state"
 import { verifyApiKey } from "./users"
@@ -193,6 +193,38 @@ function hasValidAdminSession(c: Context): boolean {
 
 function getAdminPassword(): string | undefined {
   return state.adminPassword ?? state.apiKey
+}
+
+/**
+ * Verify a plaintext password against the configured admin password.
+ * Supports two formats:
+ * - Plain text: direct constant-time comparison
+ * - Hashed: "sha256:<hex>" — hash the input and compare
+ */
+export function verifyAdminPassword(input: string): boolean {
+  const configured = getAdminPassword()
+  if (!configured) return false
+
+  if (configured.startsWith("sha256:")) {
+    const expectedHash = configured.slice(7)
+    const inputHash = createHash("sha256").update(input).digest("hex")
+    try {
+      const a = Buffer.from(inputHash)
+      const b = Buffer.from(expectedHash)
+      return a.length === b.length && timingSafeEqual(a, b)
+    } catch {
+      return false
+    }
+  }
+
+  // Plain text comparison
+  try {
+    const a = Buffer.from(input)
+    const b = Buffer.from(configured)
+    return a.length === b.length && timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
 }
 
 function createSessionToken(): string {
