@@ -12,8 +12,7 @@ export const requestLogger = async (c: Context, next: Next) => {
 
   // Skip logging for admin panel, health check, and static resources
   if (c.req.path.startsWith("/admin") || c.req.path === "/health") return
-  if (c.req.path.startsWith("/favicon.ico") || c.req.path.startsWith("/static"))
-    return
+  if (c.req.path === "/favicon.ico" || c.req.path.startsWith("/static")) return
   if (c.req.path === "/robots.txt" || c.req.path === "/sitemap.xml") return
 
   const latencyMs = Date.now() - start
@@ -79,7 +78,7 @@ function extractClientIp(c: Context): string | undefined {
   const forwarded = c.req.header("x-forwarded-for")
   if (forwarded) {
     const firstIp = forwarded.split(",")[0]?.trim()
-    if (isValidIp(firstIp)) return firstIp
+    if (firstIp && isValidIp(firstIp)) return firstIp
   }
 
   const realIp = c.req.header("x-real-ip")
