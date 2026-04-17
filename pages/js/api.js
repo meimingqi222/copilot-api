@@ -25,8 +25,22 @@ const API = {
     }
 
     if (!response.ok) {
-      const error = await response.text()
-      throw new Error(error || `HTTP ${response.status}`)
+      const errorText = await response.text()
+      // Try to parse JSON error response
+      let errorData = { error: errorText || `HTTP ${response.status}` }
+      try {
+        errorData = JSON.parse(errorText)
+      } catch {
+        // Not JSON, use raw text
+      }
+      const error = new Error(
+        errorData.error
+          || errorData.message
+          || errorText
+          || `HTTP ${response.status}`,
+      )
+      error.data = errorData
+      throw error
     }
 
     const contentType = response.headers.get("content-type")
