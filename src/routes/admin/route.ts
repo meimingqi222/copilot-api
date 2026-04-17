@@ -7,14 +7,17 @@ import {
   hasAdminRole,
   isAuthorizedRequest,
   setAdminSession,
+  verifyAdminPassword,
 } from "~/lib/request-auth"
 import { state } from "~/lib/state"
 
 import { accountApiRoutes } from "./api/accounts"
 import { dashboardApiRoutes } from "./api/dashboard"
+import { guardApiRoutes } from "./api/guard"
 import { logApiRoutes } from "./api/logs"
 import { quotaApiRoutes } from "./api/quota"
 import { usageApiRoutes } from "./api/usage"
+import { userApiRoutes } from "./api/users"
 
 export const adminRoutes = new Hono()
 
@@ -79,6 +82,8 @@ adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
 adminRoutes.route("/api/usage", usageApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
+adminRoutes.route("/api/users", userApiRoutes)
+adminRoutes.route("/api/guard", guardApiRoutes)
 
 // Serve a file from pages directory
 function serveFile(filePath: string): string {
@@ -152,9 +157,7 @@ adminRoutes.get("/login", (c) => {
 })
 
 adminRoutes.post("/login", async (c) => {
-  const configuredAdminPassword = state.adminPassword ?? state.apiKey
-
-  if (!configuredAdminPassword) {
+  if (!state.adminPassword && !state.apiKey) {
     return c.json(
       {
         error:
@@ -183,7 +186,7 @@ adminRoutes.post("/login", async (c) => {
     return c.json({ error: "Invalid request payload." }, 400)
   }
 
-  if (!password || password !== configuredAdminPassword) {
+  if (!password || !verifyAdminPassword(password)) {
     return c.json({ error: "Invalid management password." }, 401)
   }
 

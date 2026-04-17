@@ -86,7 +86,7 @@ export function createUserSync(
   quotaLimit = 0,
   role: "admin" | "user" = "user",
 ): UserWithKey {
-  const rawKey = randomBytes(32).toString("hex")
+  const rawKey = `sk-${randomBytes(32).toString("hex")}`
   const user: User = {
     id: randomUUID(),
     username,
@@ -142,7 +142,7 @@ export async function deleteUser(id: string): Promise<boolean> {
 export async function resetApiKey(id: string): Promise<string | null> {
   const user = state.users.find((u) => u.id === id)
   if (!user) return null
-  const rawKey = randomBytes(32).toString("hex")
+  const rawKey = `sk-${randomBytes(32).toString("hex")}`
   user.hashedApiKey = hashKey(rawKey)
   await saveUsers()
   return rawKey

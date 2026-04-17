@@ -95,6 +95,24 @@ const API = {
     getRecent: (limit = 10) => API.request(`/logs?limit=${limit}`),
   },
 
+  // Guard
+  guard: {
+    clients: (type = "ip") => API.request(`/guard/clients?type=${type}`),
+    blacklist: () => API.request("/guard/blacklist"),
+    block: (data) =>
+      API.request("/guard/blacklist", { method: "POST", body: data }),
+    unblock: (data) =>
+      API.request("/guard/blacklist", { method: "DELETE", body: data }),
+    uaWhitelist: () => API.request("/guard/ua-whitelist"),
+    addUaWhitelist: (pattern) =>
+      API.request("/guard/ua-whitelist", { method: "POST", body: { pattern } }),
+    removeUaWhitelist: (pattern) =>
+      API.request("/guard/ua-whitelist", {
+        method: "DELETE",
+        body: { pattern },
+      }),
+  },
+
   // Auth
   auth: {
     check: async () => {
