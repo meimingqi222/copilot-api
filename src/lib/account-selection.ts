@@ -274,9 +274,10 @@ export function switchToNextAccountForModel(
       return account
     }
   }
-  // If currentAccount is not in capable list, return the first one
+  // If currentAccount is not in capable list, return the first one with a different ID
   if (currentIdx === -1 && capable.length > 0) {
-    return capable[0]
+    const firstDifferent = capable.find((a) => a.id !== currentAccount.id)
+    return firstDifferent ?? null
   }
   return null
 }
