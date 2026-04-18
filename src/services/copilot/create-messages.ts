@@ -1,5 +1,6 @@
 import { events } from "fetch-event-stream"
 
+import type { Account } from "~/lib/accounts"
 import type {
   AnthropicImageBlock,
   AnthropicMessage,
@@ -10,12 +11,22 @@ import type {
 } from "~/routes/messages/anthropic-types"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import { getAccountForModel, getCopilotToken } from "~/lib/accounts"
+import { getCopilotToken, parseModelReference } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
-import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
+import { executeProviderRequestWithRetry } from "~/services/providers/execution"
+
+interface CreateMessagesOptions {
+  account: Account
+  signal?: AbortSignal
+  forwardedHeaders?: {
+    anthropicBeta?: string
+    anthropicVersion?: string
+  }
+  initiatorOverride?: "agent" | "user"
+}
 
 /**
  * Copilot's /v1/messages endpoint does not support image blocks nested inside
@@ -91,9 +102,11 @@ export function translateToCopilotMessages(
   payload: AnthropicMessagesPayload,
 ): Record<string, unknown> {
   const { reasoning_effort: _, ...rest } = payload
+  const model = parseModelReference(payload.model).nativeModelId
 
   return {
     ...rest,
+    model,
     messages: hoistToolResultImages(rest.messages),
     ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
     ...(payload.temperature !== undefined ?
@@ -109,19 +122,12 @@ export function translateToCopilotMessages(
 
 export const createMessages = async (
   payload: AnthropicMessagesPayload,
-  signal?: AbortSignal,
-  options?: {
-    forwardedHeaders?: {
-      anthropicBeta?: string
-      anthropicVersion?: string
-    }
-    initiatorOverride?: "agent" | "user"
-  },
+  options: CreateMessagesOptions,
 ): Promise<
   | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
   | { accountId: string; response: AnthropicResponse }
 > => {
-  const account = getAccountForModel(payload.model)
+  const { account, signal } = options
   if (!getCopilotToken(account)) {
     throw new Error("Copilot token not found")
   }
@@ -135,7 +141,7 @@ export const createMessages = async (
       && message.content.some((block) => block.type === "image"),
   )
   const initiator =
-    options?.initiatorOverride ?? inferInitiatorFromAnthropicPayload(payload)
+    options.initiatorOverride ?? inferInitiatorFromAnthropicPayload(payload)
 
   // Strip reasoning_effort and thinking - OpenAI-specific params not supported by Copilot's Anthropic endpoint
   const copilotPayload = translateToCopilotMessages(payload)
@@ -145,31 +151,39 @@ export const createMessages = async (
       ...copilotHeaders(requestAccount, enableVision),
       "editor-version": `vscode/${state.vsCodeVersion}`,
       "X-Initiator": initiator,
-      ...(options?.forwardedHeaders?.anthropicBeta ?
+      ...(options.forwardedHeaders?.anthropicBeta ?
         {
           "anthropic-beta": options.forwardedHeaders.anthropicBeta,
         }
       : {}),
-      ...(options?.forwardedHeaders?.anthropicVersion ?
+      ...(options.forwardedHeaders?.anthropicVersion ?
         {
           "anthropic-version": options.forwardedHeaders.anthropicVersion,
         }
       : {}),
     }
 
-    return fetch(`${copilotBaseUrl(state)}/v1/messages`, {
+    const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
       method: "POST",
       headers,
       body: JSON.stringify(copilotPayload),
       signal,
     })
+
+    if (response.status === 429) {
+      const errorBody = await response.text().catch(() => "(unreadable)")
+      throw new HTTPError("Failed to create messages", response, errorBody)
+    }
+
+    return response
   }
 
-  const { account: usedAccount, response } =
-    await executeCopilotRequestWithRetry({
+  const { account: usedAccount, result: response } =
+    await executeProviderRequestWithRetry({
       account,
       model: payload.model,
-      doRequest,
+      signal,
+      execute: doRequest,
     })
 
   if (!response.ok) {

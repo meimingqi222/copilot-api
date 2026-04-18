@@ -3,12 +3,12 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
-import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
-import { awaitApproval } from "~/lib/approval"
+import type { Account } from "~/lib/accounts"
+
+import { canonicalModelId } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
-import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
+import { prepareRequestAdmission } from "~/lib/request-admission"
+import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { createSsePingInterval, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -20,8 +20,6 @@ import {
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
-import { initializeProviderRegistry } from "~/services/providers"
-import { providerSupports } from "~/services/providers/registry"
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
 import { normalizeChunk, normalizeResponse } from "./normalize"
@@ -64,35 +62,31 @@ export async function handleCompletion(c: Context) {
       || "gpt-5-mini",
   }
 
-  checkProtectedRouteGuard(c, {
+  const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
     maxTokens:
       typeof payload.max_tokens === "number" ? payload.max_tokens : undefined,
     stream: payload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromOpenAIMessages(
+      payload.messages,
+      c.req.header("user-agent"),
+    ),
   })
-
-  const account = getAccountForModel(payload.model)
-  initializeProviderRegistry()
-  if (providerSupports(account, "cooldown")) {
-    await checkAccountRateLimitOrThrow(account.id, signal)
-  }
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
   const estimatedInputTokens = await calculateTokens(payload, selectedModel)
 
-  if (state.manualApprove) await awaitApproval()
-
   payload = applyMaxTokens(payload, selectedModel)
 
   if (!payload.stream) {
-    const result = await createChatCompletions(
-      payload,
+    const result = await createChatCompletions(payload, {
       signal,
-      resolveInitiator(c, payload),
-    )
+      initiatorOverride: admission.initiator,
+      account: admission.account,
+    })
 
     c.set("accountId" as never, result.accountId)
     c.set("model" as never, payload.model)
@@ -107,7 +101,9 @@ export async function handleCompletion(c: Context) {
 
   return handleStreamingCompletion(c, {
     payload,
+    account: admission.account,
     signal,
+    initiator: admission.initiator,
     estimatedInputTokens,
   })
 }
@@ -144,26 +140,6 @@ function applyMaxTokens(
     return newPayload
   }
   return payload
-}
-
-function resolveInitiator(
-  c: Context,
-  payload: ChatCompletionsPayload,
-): "agent" | "user" | undefined {
-  const inferredInitiator = inferInitiatorFromOpenAIMessages(
-    payload.messages,
-    c.req.header("user-agent"),
-  )
-  const { clientInitiator, initiator, trustedClientAgent } =
-    resolveInitiatorWithClientHeader(c, inferredInitiator)
-  consola.debug(
-    "X-Initiator: client=%s trusted_agent=%s final=%s",
-    clientInitiator ?? "(none)",
-    trustedClientAgent,
-    initiator,
-  )
-  c.set("guardInitiator" as never, initiator)
-  return initiator
 }
 
 function handleNonStreamingResponse(
@@ -321,7 +297,9 @@ function isAbortError(error: unknown): boolean {
 
 interface StreamingCompletionOptions {
   payload: ChatCompletionsPayload
+  account: Account
   signal: AbortSignal | undefined
+  initiator?: "agent" | "user"
   estimatedInputTokens: number
 }
 
@@ -329,8 +307,10 @@ function handleStreamingCompletion(
   c: Context,
   options: StreamingCompletionOptions,
 ) {
+  // eslint-disable-next-line complexity
   return streamSSE(c, async (stream) => {
-    const { payload, signal, estimatedInputTokens } = options
+    const { payload, account, signal, initiator, estimatedInputTokens } =
+      options
     const pingInterval = createSsePingInterval(stream)
     let lastUsage: UsageInfo | undefined
     let recordedOnAbort = false
@@ -338,11 +318,11 @@ function handleStreamingCompletion(
     const model = payload.model
 
     try {
-      const result = await createChatCompletions(
-        payload,
+      const result = await createChatCompletions(payload, {
         signal,
-        resolveInitiator(c, payload),
-      )
+        initiatorOverride: initiator,
+        account,
+      })
       accountId = result.accountId
 
       c.set("accountId" as never, accountId)
@@ -380,14 +360,19 @@ function handleStreamingCompletion(
         })
         return
       }
-      // Write error to SSE stream
       consola.error("Streaming error:", error)
+      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+      if (knownError?.status === 499) {
+        return
+      }
       const errorMessage =
-        error instanceof Error ? error.message : "Internal server error"
+        knownError?.message
+        ?? (error instanceof Error ? error.message : "Internal server error")
       const errorType =
-        error instanceof HTTPError && error.response.status === 429 ?
+        knownError?.type
+        ?? (error instanceof HTTPError && error.response.status === 429 ?
           "rate_limit_error"
-        : "error"
+        : "error")
       await writeSseEvent(
         stream,
         JSON.stringify({

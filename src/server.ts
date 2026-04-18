@@ -2,7 +2,6 @@ import { Hono } from "hono"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
 
-import { clientRateLimit } from "./lib/client-rate-limit"
 import { guardMiddleware } from "./lib/guard-middleware"
 import { requestLogger } from "./lib/log-middleware"
 import { requireApiKey } from "./lib/request-auth"
@@ -21,7 +20,6 @@ server.use(cors())
 server.use("*", requestLogger)
 server.use("*", guardMiddleware)
 server.use("*", requireApiKey)
-server.use("*", clientRateLimit())
 
 // Health check endpoint (plain text, always public)
 server.get("/health", (c) => c.text("OK"))

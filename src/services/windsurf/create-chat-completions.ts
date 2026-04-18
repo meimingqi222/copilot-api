@@ -17,6 +17,7 @@ import {
   getWindsurfJwt,
 } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { executeProviderRequestWithRetry } from "~/services/providers/execution"
 
 import { fetchWindsurfJwt } from "./auth"
 import {
@@ -776,6 +777,33 @@ export async function createWindsurfChatCompletions(
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
+  const { account: usedAccount, result } =
+    await executeProviderRequestWithRetry({
+      account,
+      model: payload.model,
+      signal,
+      execute: (requestAccount) =>
+        createWindsurfChatCompletionsOnce(requestAccount, payload, signal),
+    })
+
+  if (isChatCompletionResponse(result)) {
+    return {
+      accountId: usedAccount.id,
+      response: result,
+    }
+  }
+
+  return {
+    accountId: usedAccount.id,
+    response: result,
+  }
+}
+
+async function createWindsurfChatCompletionsOnce(
+  account: Account,
+  payload: ChatCompletionsPayload,
+  signal?: AbortSignal,
+): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
   const settings = getWindsurfSettings(account)
   if (!settings) {
     throw new Error(`Windsurf settings missing for account "${account.label}"`)
@@ -825,11 +853,14 @@ export async function createWindsurfChatCompletions(
   }
 
   if (payload.stream) {
-    return { accountId: account.id, response: streamToOpenAI(response, model) }
+    return streamToOpenAI(response, model)
   }
 
-  return {
-    accountId: account.id,
-    response: await collectChatCompletion(response, model),
-  }
+  return await collectChatCompletion(response, model)
+}
+
+function isChatCompletionResponse(
+  response: AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse,
+): response is ChatCompletionResponse {
+  return Object.hasOwn(response, "choices")
 }

@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 
+import consola from "consola"
 import { createHash } from "node:crypto"
 
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
@@ -15,8 +16,11 @@ interface GuardEvent {
 
 interface PrincipalGuardState {
   recentEvents: Array<GuardEvent>
+  recentRequests: Array<number>
+  warned: boolean
   cooldownUntil?: number
   blockedUntil?: number
+  lastSeen: number
 }
 
 interface GuardInput {
@@ -37,6 +41,13 @@ const BLOCK_THRESHOLD = 80
 const SHORT_COOLDOWN_MS = 3 * 60 * 1000
 const LONG_COOLDOWN_MS = 15 * 60 * 1000
 const TEMPORARY_BLOCK_MS = 30 * 60 * 1000
+const REQUEST_WINDOW_MS = 60_000
+const REQUEST_LIMIT = 30
+const ALERT_THRESHOLD = 20
+const CLEANUP_INTERVAL_MS = 5 * 60_000
+const IDLE_TTL_MS = TEMPORARY_BLOCK_MS + WINDOW_MS
+
+let cleanupTimer: ReturnType<typeof setInterval> | undefined
 
 export class ProtectedRouteGuardError extends Error {
   status: 403 | 429
@@ -61,6 +72,7 @@ export function checkProtectedRouteGuard(
   c: Context,
   input: GuardInput = {},
 ): void {
+  ensureCleanup()
   const routeKind = input.routeKind ?? getProtectedRouteKind(c.req.path)
   if (!routeKind) {
     return
@@ -70,8 +82,22 @@ export function checkProtectedRouteGuard(
   const now = Date.now()
   const state = getOrCreateState(principal)
   pruneState(state, now)
+  state.lastSeen = now
 
   c.set("protectedRouteGuardPrincipal" as never, principal)
+
+  if (state.recentRequests.length >= REQUEST_LIMIT) {
+    const retryAfterSeconds = Math.ceil(
+      ((state.recentRequests[0] ?? now) + REQUEST_WINDOW_MS - now) / 1000,
+    )
+    markPreviewCapture(c, "high")
+    throw new ProtectedRouteGuardError({
+      message: `Rate limit exceeded. Maximum ${REQUEST_LIMIT} requests per ${REQUEST_WINDOW_MS / 1000} seconds. Retry after ${retryAfterSeconds}s.`,
+      status: 429,
+      errorType: "rate_limit_error",
+      retryAfterSeconds,
+    })
+  }
 
   const activeBlockMs = (state.blockedUntil ?? 0) - now
   if (activeBlockMs > 0) {
@@ -96,6 +122,9 @@ export function checkProtectedRouteGuard(
     })
   }
 
+  state.recentRequests.push(now)
+  emitSuspiciousWarning(c, principal, state)
+
   const requestScore = estimateRequestScore(routeKind, input)
   const windowScore = state.recentEvents.reduce(
     (total, entry) => total + entry.score,
@@ -108,6 +137,9 @@ export function checkProtectedRouteGuard(
   c.set("protectedRouteGuardRisk" as never, riskLevel)
 
   if (projectedScore >= BLOCK_THRESHOLD) {
+    // Start a fresh window after the penalty period. Otherwise the stale
+    // accumulated score can immediately re-trigger the block on the next call.
+    state.recentEvents = []
     state.blockedUntil = now + TEMPORARY_BLOCK_MS
     markPreviewCapture(c, "critical")
     throw new ProtectedRouteGuardError({
@@ -120,6 +152,9 @@ export function checkProtectedRouteGuard(
   }
 
   if (projectedScore >= HIGH_RISK_THRESHOLD) {
+    // Reset the accumulated score when entering cooldown so clients can recover
+    // after serving the penalty instead of being re-limited instantly.
+    state.recentEvents = []
     state.cooldownUntil = now + LONG_COOLDOWN_MS
     markPreviewCapture(c, "high")
     throw new ProtectedRouteGuardError({
@@ -131,6 +166,9 @@ export function checkProtectedRouteGuard(
   }
 
   if (projectedScore >= COOLDOWN_THRESHOLD) {
+    // Reset the accumulated score when entering cooldown so clients can recover
+    // after serving the penalty instead of being re-limited instantly.
+    state.recentEvents = []
     state.cooldownUntil = now + SHORT_COOLDOWN_MS
     markPreviewCapture(c, "high")
     throw new ProtectedRouteGuardError({
@@ -154,14 +192,34 @@ function getOrCreateState(principal: string): PrincipalGuardState {
     return state
   }
 
-  state = { recentEvents: [] }
+  state = { recentEvents: [], recentRequests: [], warned: false, lastSeen: 0 }
   guardState.set(principal, state)
   return state
+}
+
+function ensureCleanup(): void {
+  if (cleanupTimer) {
+    return
+  }
+
+  cleanupTimer = setInterval(() => {
+    cleanupIdleState(Date.now())
+  }, CLEANUP_INTERVAL_MS)
+
+  if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) {
+    cleanupTimer.unref()
+  }
 }
 
 function pruneState(state: PrincipalGuardState, now: number): void {
   const cutoff = now - WINDOW_MS
   state.recentEvents = state.recentEvents.filter((entry) => entry.at >= cutoff)
+  state.recentRequests = state.recentRequests.filter(
+    (timestamp) => timestamp >= now - REQUEST_WINDOW_MS,
+  )
+  if (state.recentRequests.length === 0) {
+    state.warned = false
+  }
 
   if ((state.cooldownUntil ?? 0) <= now) {
     state.cooldownUntil = undefined
@@ -169,6 +227,23 @@ function pruneState(state: PrincipalGuardState, now: number): void {
   if ((state.blockedUntil ?? 0) <= now) {
     state.blockedUntil = undefined
   }
+}
+
+function emitSuspiciousWarning(
+  c: Context,
+  principal: string,
+  state: PrincipalGuardState,
+): void {
+  if (state.warned || state.recentRequests.length < ALERT_THRESHOLD) {
+    return
+  }
+
+  state.warned = true
+  const ip = getClientIpFromRequest(c)
+  const ua = c.req.header("user-agent") || "unknown"
+  consola.warn(
+    `Suspicious activity: ${principal} made ${state.recentRequests.length} requests in ${REQUEST_WINDOW_MS / 1000}s (IP: ${ip}, UA: ${ua})`,
+  )
 }
 
 function estimateRequestScore(
@@ -280,4 +355,34 @@ function getClientIpFromRequest(c: Context): string {
 
 export function resetProtectedRouteGuardForTest(): void {
   guardState.clear()
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer)
+    cleanupTimer = undefined
+  }
+}
+
+function cleanupIdleState(now: number): void {
+  for (const [principal, state] of guardState) {
+    pruneState(state, now)
+    const hasActivePenalty =
+      (state.cooldownUntil ?? 0) > now || (state.blockedUntil ?? 0) > now
+    const hasRecentActivity =
+      state.recentEvents.length > 0 || state.recentRequests.length > 0
+
+    if (hasActivePenalty || hasRecentActivity) {
+      continue
+    }
+
+    if (now - state.lastSeen >= IDLE_TTL_MS) {
+      guardState.delete(principal)
+    }
+  }
+}
+
+export function cleanupProtectedRouteGuardForTest(now = Date.now()): void {
+  cleanupIdleState(now)
+}
+
+export function getProtectedRouteGuardSizeForTest(): number {
+  return guardState.size
 }

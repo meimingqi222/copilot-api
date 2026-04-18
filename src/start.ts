@@ -10,14 +10,16 @@ import { resolve } from "node:path"
 import invariant from "tiny-invariant"
 
 import {
+  initAccounts,
+  refreshCopilotToken,
+  saveAccounts,
+  scheduleQuotaRefresh,
+} from "./lib/account-store"
+import {
   type CodebuffAccount,
   type WindsurfAccount,
   getCodebuffAuthToken,
   getWindsurfApiKey,
-  initAccounts,
-  scheduleQuotaRefresh,
-  refreshCopilotToken,
-  saveAccounts,
 } from "./lib/accounts"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
@@ -418,7 +420,7 @@ function createCodebuffDefaultAccount() {
     codebuffAllowFallbacks: defaults.allowFallbacks,
     enabled: true,
     priority: 0,
-    isExhausted: false,
+    quotaState: "unknown" as const,
     createdAt: Date.now(),
   }
 }
@@ -500,7 +502,7 @@ function createWindsurfDefaultAccount() {
     windsurfClientName: defaults.clientName,
     enabled: true,
     priority: 0,
-    isExhausted: false,
+    quotaState: "unknown" as const,
     createdAt: Date.now(),
   }
 }

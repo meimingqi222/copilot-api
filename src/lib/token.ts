@@ -1,7 +1,8 @@
 import consola from "consola"
 import fs from "node:fs/promises"
 
-import { getActiveAccount, refreshCopilotToken } from "~/lib/accounts"
+import { getActiveAccount } from "~/lib/account-selection"
+import { refreshCopilotToken } from "~/lib/account-store"
 import { PATHS } from "~/lib/paths"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"

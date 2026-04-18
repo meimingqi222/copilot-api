@@ -61,6 +61,23 @@ const fetchMock = mock(
 // @ts-expect-error - Mock fetch doesn't implement all fetch properties
 ;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock
 
+function createWithSelectedAccount(
+  payload: ChatCompletionsPayload,
+  options?: {
+    signal?: AbortSignal
+    initiatorOverride?: "agent" | "user"
+  },
+) {
+  const account = state.accounts.at(0)
+  if (!account) {
+    throw new Error("Expected at least one account in test state")
+  }
+  return createChatCompletions(payload, {
+    account,
+    ...options,
+  })
+}
+
 test("sets X-Initiator to agent if tool/assistant present", async () => {
   const payload: ChatCompletionsPayload = {
     messages: [
@@ -69,7 +86,7 @@ test("sets X-Initiator to agent if tool/assistant present", async () => {
     ],
     model: "gpt-test",
   }
-  await createChatCompletions(payload)
+  await createWithSelectedAccount(payload)
   expect(fetchMock).toHaveBeenCalled()
   const headers = (
     fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
@@ -85,7 +102,7 @@ test("sets X-Initiator to user if only user present", async () => {
     ],
     model: "gpt-test",
   }
-  await createChatCompletions(payload)
+  await createWithSelectedAccount(payload)
   expect(fetchMock).toHaveBeenCalled()
   const headers = (
     fetchMock.mock.calls[1][1] as { headers: Record<string, string> }
@@ -102,7 +119,7 @@ test("sets X-Initiator to user when last message is user", async () => {
     ],
     model: "gpt-test",
   }
-  await createChatCompletions(payload)
+  await createWithSelectedAccount(payload)
   expect(fetchMock).toHaveBeenCalled()
   const headers = (
     fetchMock.mock.calls[2][1] as { headers: Record<string, string> }
@@ -119,7 +136,7 @@ test("ignores system and developer when inferring X-Initiator", async () => {
     ],
     model: "gpt-test",
   }
-  await createChatCompletions(payload)
+  await createWithSelectedAccount(payload)
   expect(fetchMock).toHaveBeenCalled()
   const headers = (
     fetchMock.mock.calls[3][1] as { headers: Record<string, string> }
@@ -132,7 +149,7 @@ test("uses initiator override when provided", async () => {
     messages: [{ role: "user", content: "hi" }],
     model: "gpt-test",
   }
-  await createChatCompletions(payload, undefined, "agent")
+  await createWithSelectedAccount(payload, { initiatorOverride: "agent" })
   expect(fetchMock).toHaveBeenCalled()
   const headers = (
     fetchMock.mock.calls[4][1] as { headers: Record<string, string> }
@@ -171,7 +188,7 @@ test("routes responses-only models to /responses", async () => {
     reasoning_effort: "medium",
   }
 
-  const result = await createChatCompletions(payload)
+  const result = await createWithSelectedAccount(payload)
   const [url, options] = fetchMock.mock.calls[5] as [
     string,
     { body?: string; headers: Record<string, string> },
@@ -239,7 +256,7 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     localFetchMock as unknown as typeof fetch
 
-  await createChatCompletions({
+  await createWithSelectedAccount({
     model: "copilot/gpt-test",
     messages: [{ role: "user", content: "hello" }],
   })
@@ -334,7 +351,7 @@ test("codebuff account sends start/chat/finish workflow", async () => {
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     localFetchMock as unknown as typeof fetch
 
-  const result = await createChatCompletions({
+  const result = await createWithSelectedAccount({
     model: "z-ai/glm5",
     messages: [{ role: "user", content: "hello" }],
     stream: false,
@@ -456,7 +473,7 @@ test("codebuff streaming still triggers finish agent run", async () => {
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     localFetchMock as unknown as typeof fetch
 
-  const result = await createChatCompletions({
+  const result = await createWithSelectedAccount({
     model: "z-ai/glm-5.1",
     messages: [{ role: "user", content: "stream" }],
     stream: true,

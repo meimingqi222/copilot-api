@@ -54,11 +54,20 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
     options,
   }))
   globalThis.fetch = fetchMock as unknown as typeof fetch
+  const account = state.accounts.at(0)
+  if (!account) {
+    throw new Error("Expected at least one account in test state")
+  }
 
-  const result = await createEmbeddings({
-    model: "copilot/text-embedding-3-small",
-    input: "hello",
-  })
+  const result = await createEmbeddings(
+    {
+      model: "copilot/text-embedding-3-small",
+      input: "hello",
+    },
+    {
+      account,
+    },
+  )
 
   expect(result.accountId).toBe("copilot-1")
   const [url, options] = fetchMock.mock.calls[0] as [string, { body?: string }]

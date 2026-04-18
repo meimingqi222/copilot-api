@@ -4,17 +4,18 @@ import { events } from "fetch-event-stream"
 import type { Account, AccountModel } from "~/lib/accounts"
 
 import {
+  refreshCopilotToken,
+  refreshQuotaForAccount,
+} from "~/lib/account-store"
+import {
   parseModelReference,
   canonicalNativeModelId,
   getCopilotToken,
-  refreshCopilotToken,
-  refreshQuotaForAccount,
 } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { getModelsForAccount } from "~/services/copilot/get-models"
-import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
 import {
   shouldUseResponsesApi,
   supportsResponsesApi,
@@ -22,6 +23,7 @@ import {
   translateResponsesToChatCompletion,
   translateToResponsesPayload,
 } from "~/services/copilot/responses-api"
+import { executeProviderRequestWithRetry } from "~/services/providers/execution"
 
 import type { ProviderRuntime } from "./runtime"
 
@@ -125,7 +127,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
         headers["X-Initiator"] = ctx.initiator
       }
 
-      return fetch(
+      const response = await fetch(
         `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`,
         {
           method: "POST",
@@ -138,13 +140,25 @@ export const copilotProviderRuntime: ProviderRuntime = {
           signal,
         },
       )
+
+      if (response.status === 429) {
+        const errorBody = await response.text().catch(() => "(unreadable)")
+        throw new HTTPError(
+          "Failed to create chat completions",
+          response,
+          errorBody,
+        )
+      }
+
+      return response
     }
 
-    const { account: usedAccount, response } =
-      await executeCopilotRequestWithRetry({
+    const { account: usedAccount, result: response } =
+      await executeProviderRequestWithRetry({
         account,
         model: normalizedPayload.model,
-        doRequest,
+        signal,
+        execute: doRequest,
       })
 
     if (!response.ok) {
@@ -223,7 +237,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
       if (ctx?.initiator) {
         headers["X-Initiator"] = ctx.initiator
       }
-      return fetch(`${copilotBaseUrl(state)}/responses`, {
+      const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -232,13 +246,21 @@ export const copilotProviderRuntime: ProviderRuntime = {
         }),
         signal,
       })
+
+      if (response.status === 429) {
+        const errorBody = await response.text().catch(() => "(unreadable)")
+        throw new HTTPError("Failed to create responses", response, errorBody)
+      }
+
+      return response
     }
 
-    const { account: usedAccount, response } =
-      await executeCopilotRequestWithRetry({
+    const { account: usedAccount, result: response } =
+      await executeProviderRequestWithRetry({
         account,
         model: normalizedModel,
-        doRequest,
+        signal,
+        execute: doRequest,
       })
 
     if (!response.ok) {
@@ -271,22 +293,36 @@ export const copilotProviderRuntime: ProviderRuntime = {
       throw new Error("Copilot token not found")
     }
 
-    const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
-      method: "POST",
-      headers: copilotHeaders(account),
-      body: JSON.stringify({
-        ...payload,
-        model: parseModelReference(payload.model).nativeModelId,
-      }),
-      signal,
-    })
+    const { account: usedAccount, result: response } =
+      await executeProviderRequestWithRetry({
+        account,
+        model: payload.model,
+        signal,
+        execute: async (requestAccount) => {
+          const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
+            method: "POST",
+            headers: copilotHeaders(requestAccount),
+            body: JSON.stringify({
+              ...payload,
+              model: parseModelReference(payload.model).nativeModelId,
+            }),
+            signal,
+          })
+
+          if (response.status === 429) {
+            throw new HTTPError("Failed to create embeddings", response)
+          }
+
+          return response
+        },
+      })
 
     if (!response.ok) {
       throw new HTTPError("Failed to create embeddings", response)
     }
 
     return {
-      accountId: account.id,
+      accountId: usedAccount.id,
       response:
         (await response.json()) as import("~/services/copilot/create-embeddings").EmbeddingResponse,
     }

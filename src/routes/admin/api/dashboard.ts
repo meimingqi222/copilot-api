@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 
+import { isAccountAvailable } from "~/lib/account-availability"
 import { logStore } from "~/lib/log-store"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -88,8 +89,8 @@ function buildDashboardResponse(aggregated: AggregatedQuota) {
   const activeUsers = state.users.filter((u) => u.enabled).length
   const totalUsers = state.users.length
   const totals = statsStore.getTodayTotals()
-  const activeAccounts = state.accounts.filter(
-    (a) => !a.isExhausted && a.enabled,
+  const activeAccounts = state.accounts.filter((account) =>
+    isAccountAvailable(account),
   ).length
   const totalAccounts = state.accounts.length
 

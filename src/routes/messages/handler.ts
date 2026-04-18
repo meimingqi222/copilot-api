@@ -3,12 +3,11 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
-import { getAccountForModel } from "~/lib/accounts"
-import { awaitApproval } from "~/lib/approval"
+import type { Account } from "~/lib/accounts"
+
 import { HTTPError } from "~/lib/error"
-import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
-import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
+import { prepareRequestAdmission } from "~/lib/request-admission"
+import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
   forwardSseEvent,
@@ -29,8 +28,6 @@ import {
   supportsMessagesApi,
   type CopilotStreamEventLike,
 } from "~/services/copilot/responses-api"
-import { initializeProviderRegistry } from "~/services/providers"
-import { providerSupports } from "~/services/providers/registry"
 
 import {
   createInitialStreamState,
@@ -74,7 +71,8 @@ export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
 
-  checkProtectedRouteGuard(c, {
+  const anthropicBeta = c.req.header("anthropic-beta")
+  const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: anthropicPayload.model,
     maxTokens:
@@ -82,47 +80,25 @@ export async function handleCompletion(c: Context) {
         anthropicPayload.max_tokens
       : undefined,
     stream: anthropicPayload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromAnthropicMessages(
+      anthropicPayload.messages,
+      anthropicBeta,
+    ),
   })
 
-  const account = getAccountForModel(anthropicPayload.model)
-
-  initializeProviderRegistry()
-  if (providerSupports(account, "cooldown")) {
-    await checkAccountRateLimitOrThrow(account.id, signal)
-  }
-
-  const anthropicBeta = c.req.header("anthropic-beta")
   const anthropicVersion = c.req.header("anthropic-version")
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
-  const inferredInitiator = inferInitiatorFromAnthropicMessages(
-    anthropicPayload.messages,
-    anthropicBeta,
-  )
-  const { clientInitiator, initiator, trustedClientAgent } =
-    resolveInitiatorWithClientHeader(c, inferredInitiator)
-
-  consola.debug(
-    "X-Initiator: client=%s inferred=%s trusted_agent=%s final=%s",
-    clientInitiator ?? "(none)",
-    inferredInitiator,
-    trustedClientAgent,
-    initiator,
-  )
-  c.set("guardInitiator" as never, initiator)
-
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
 
   if (
-    supportsMessagesApi(anthropicPayload.model, account)
-    && account.provider === "copilot"
+    supportsMessagesApi(anthropicPayload.model, admission.account)
+    && admission.account.provider === "copilot"
   ) {
     return handleMessagesApi({
       c,
       anthropicPayload,
       signal,
-      initiator,
+      account: admission.account,
+      initiator: admission.initiator,
       anthropicBeta,
       anthropicVersion,
     })
@@ -132,7 +108,8 @@ export async function handleCompletion(c: Context) {
     c,
     anthropicPayload,
     signal,
-    initiator,
+    account: admission.account,
+    initiator: admission.initiator,
   })
 }
 
@@ -140,6 +117,7 @@ interface HandleMessagesApiOpts {
   c: Context
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
+  account: Account
   initiator: "agent" | "user" | undefined
   anthropicBeta: string | undefined
   anthropicVersion: string | undefined
@@ -150,12 +128,15 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     c,
     anthropicPayload,
     signal,
+    account,
     initiator,
     anthropicBeta,
     anthropicVersion,
   } = opts
   if (!anthropicPayload.stream) {
-    const result = await createMessages(anthropicPayload, signal, {
+    const result = await createMessages(anthropicPayload, {
+      account,
+      signal,
       initiatorOverride: initiator,
       forwardedHeaders: { anthropicBeta, anthropicVersion },
     })
@@ -172,7 +153,9 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
   return streamSSE(c, async (stream) => {
     const pingInterval = createSsePingInterval(stream)
     try {
-      const result = await createMessages(anthropicPayload, signal, {
+      const result = await createMessages(anthropicPayload, {
+        account,
+        signal,
         initiatorOverride: initiator,
         forwardedHeaders: { anthropicBeta, anthropicVersion },
       })
@@ -194,6 +177,18 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         skipPing: true,
       })
     } catch (error) {
+      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+      if (knownError) {
+        const errPayload = {
+          type: "error",
+          error: {
+            type: knownError.type,
+            message: knownError.message,
+          },
+        }
+        await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
+        return
+      }
       if (error instanceof HTTPError) {
         consola.error(
           "Messages API upstream error",
@@ -215,11 +210,12 @@ interface HandleCopilotApiOpts {
   c: Context
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
+  account: Account
   initiator: "agent" | "user" | undefined
 }
 
 async function handleCopilotApi(opts: HandleCopilotApiOpts) {
-  const { c, anthropicPayload, signal, initiator } = opts
+  const { c, anthropicPayload, signal, account, initiator } = opts
   const openAIPayload = translateToOpenAI(anthropicPayload)
   consola.debug(
     "Translated OpenAI request payload:",
@@ -236,7 +232,11 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   if (!anthropicPayload.stream) {
     let result
     try {
-      result = await createChatCompletions(openAIPayload, signal, initiator)
+      result = await createChatCompletions(openAIPayload, {
+        signal,
+        initiatorOverride: initiator,
+        account,
+      })
     } catch (error) {
       if (error instanceof HTTPError && isContextWindowError(error)) {
         consola.warn(
@@ -263,8 +263,24 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     try {
       let result
       try {
-        result = await createChatCompletions(openAIPayload, signal, initiator)
+        result = await createChatCompletions(openAIPayload, {
+          signal,
+          initiatorOverride: initiator,
+          account,
+        })
       } catch (error) {
+        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+        if (knownError) {
+          const errPayload = {
+            type: "error",
+            error: {
+              type: knownError.type,
+              message: knownError.message,
+            },
+          }
+          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
+          return
+        }
         if (error instanceof HTTPError && isContextWindowError(error)) {
           consola.warn(
             "Context window exceeded (estimated input tokens: %d)",

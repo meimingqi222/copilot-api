@@ -120,6 +120,80 @@ test("POST /v1/responses routes responses-capable models to upstream /responses"
   })
 })
 
+test("POST /v1/responses preserves X-Initiator when forwarding to Copilot", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "gpt-responses",
+        object: "model",
+        name: "GPT Responses",
+        preview: false,
+        vendor: "OpenAI",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/responses"],
+        capabilities: {
+          family: "gpt-5",
+          object: "capabilities",
+          supports: {},
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+    ],
+  }
+
+  const fetchMock = mock(
+    (
+      url: string,
+      opts: { body?: string; headers?: Record<string, string> },
+    ) => ({
+      ok: true,
+      json: () => ({
+        id: "resp_123",
+        object: "response",
+        model: "gpt-responses",
+        status: "completed",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        output_text: "ok",
+      }),
+      text: () => Promise.resolve(""),
+      status: 200,
+      url,
+      headers: opts.headers ?? {},
+    }),
+  )
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+
+  const response = await server.fetch(
+    new Request("http://localhost/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-initiator": "agent",
+      },
+      body: JSON.stringify({
+        model: "gpt-responses",
+        input: "hi",
+      }),
+    }),
+  )
+
+  expect(response.status).toBe(200)
+  const [, options] = fetchMock.mock.calls[0] as [
+    string,
+    { body?: string; headers?: Record<string, string> },
+  ]
+  expect(options.headers?.["X-Initiator"]).toBe("agent")
+})
+
 test("POST /v1/responses falls back to chat completions when model lacks /responses", async () => {
   state.models = {
     object: "list",

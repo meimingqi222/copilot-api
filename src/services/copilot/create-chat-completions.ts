@@ -1,12 +1,19 @@
-import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
+import type { Account } from "~/lib/accounts"
+
+import { canonicalModelId } from "~/lib/accounts"
 import { inferInitiatorFromChatMessages } from "~/services/copilot/initiator"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
+interface CreateChatCompletionsOptions {
+  account: Account
+  signal?: AbortSignal
+  initiatorOverride?: "agent" | "user"
+}
+
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
-  signal?: AbortSignal,
-  initiatorOverride?: "agent" | "user",
+  options: CreateChatCompletionsOptions,
 ): Promise<
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
@@ -17,9 +24,8 @@ export const createChatCompletions = async (
   }
 
   initializeProviderRegistry()
-  const account = getAccountForModel(normalizedPayload.model)
   const initiator =
-    initiatorOverride
+    options.initiatorOverride
     ?? inferInitiatorFromChatMessages(normalizedPayload.messages)
   const enableVision = normalizedPayload.messages.some(
     (message) =>
@@ -27,10 +33,10 @@ export const createChatCompletions = async (
       && message.content?.some((content) => content.type === "image_url"),
   )
 
-  return getProviderRuntime(account.provider).createChatCompletions(
-    account,
+  return getProviderRuntime(options.account.provider).createChatCompletions(
+    options.account,
     normalizedPayload,
-    signal,
+    options.signal,
     {
       initiator,
       enableVision,

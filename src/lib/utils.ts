@@ -1,6 +1,7 @@
 import consola from "consola"
 
-import { canonicalNativeModelId, saveAccounts } from "~/lib/accounts"
+import { saveAccounts } from "~/lib/account-store"
+import { canonicalNativeModelId } from "~/lib/accounts"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"

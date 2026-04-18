@@ -1,7 +1,8 @@
 import consola from "consola"
 import { Hono } from "hono"
 
-import { refreshQuotaForAccount } from "~/lib/accounts"
+import { getAccountAvailability } from "~/lib/account-availability"
+import { refreshQuotaForAccount } from "~/lib/account-store"
 import { state } from "~/lib/state"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
@@ -10,20 +11,26 @@ export const quotaApiRoutes = new Hono()
 
 quotaApiRoutes.get("/", (c) => {
   initializeProviderRegistry()
-  const accounts = state.accounts.map((account, idx) => ({
-    id: account.id,
-    label: account.label,
-    provider: account.provider,
-    enabled: account.enabled,
-    priority: account.priority,
-    isActive: idx === state.activeAccountIndex,
-    isExhausted: account.isExhausted,
-    quotaInfo: account.quotaInfo ?? null,
-    supportsQuota: getProviderRuntime(account.provider).supports(
-      account,
-      "quota",
-    ),
-  }))
+  const accounts = state.accounts.map((account, idx) => {
+    const availability = getAccountAvailability(account)
+    return {
+      availability,
+      id: account.id,
+      label: account.label,
+      provider: account.provider,
+      enabled: account.enabled,
+      priority: account.priority,
+      isActive: idx === state.activeAccountIndex,
+      isExhausted:
+        availability.reason === "cooldown" || availability.reason === "quota",
+      quotaState: account.quotaState ?? "unknown",
+      quotaInfo: account.quotaInfo ?? null,
+      supportsQuota: getProviderRuntime(account.provider).supports(
+        account,
+        "quota",
+      ),
+    }
+  })
 
   return c.json({ accounts })
 })

@@ -1,4 +1,6 @@
-import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
+import type { Account } from "~/lib/accounts"
+
+import { canonicalModelId } from "~/lib/accounts"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
@@ -16,10 +18,15 @@ import {
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
+interface CreateResponsesOptions {
+  account: Account
+  signal?: AbortSignal
+  initiatorOverride?: "agent" | "user"
+}
+
 export const createResponses = async (
   payload: ResponsesPayload,
-  signal?: AbortSignal,
-  initiatorOverride?: "agent" | "user",
+  options: CreateResponsesOptions,
 ): Promise<
   | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
   | { accountId: string; response: ResponsesResponse }
@@ -29,15 +36,15 @@ export const createResponses = async (
     ...payload,
     model: canonicalModelId(payload.model),
   }
-  const account = getAccountForModel(routedPayload.model)
+  const account = options.account
 
   if (!supportsResponsesApi(routedPayload.model, account)) {
     const chatPayload = translateResponsesToChatPayload(routedPayload)
-    const result = await createChatCompletions(
-      chatPayload,
-      signal,
-      initiatorOverride,
-    )
+    const result = await createChatCompletions(chatPayload, {
+      signal: options.signal,
+      initiatorOverride: options.initiatorOverride,
+      account,
+    })
 
     if (isChatCompletionResponse(result.response)) {
       return {
@@ -60,7 +67,8 @@ export const createResponses = async (
 
   const enableVision = hasVisionInput(routedPayload)
   const initiator =
-    initiatorOverride ?? inferInitiatorFromResponsesPayload(routedPayload)
+    options.initiatorOverride
+    ?? inferInitiatorFromResponsesPayload(routedPayload)
 
   const runtime = getProviderRuntime(account.provider)
   if (!runtime.createResponses) {
@@ -69,7 +77,7 @@ export const createResponses = async (
     )
   }
 
-  return runtime.createResponses(account, routedPayload, signal, {
+  return runtime.createResponses(account, routedPayload, options.signal, {
     initiator,
     enableVision,
   })
