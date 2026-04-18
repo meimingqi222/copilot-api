@@ -7,6 +7,7 @@ import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
+import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
 import { createSsePingInterval, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
@@ -19,6 +20,8 @@ import {
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
+import { initializeProviderRegistry } from "~/services/providers"
+import { providerSupports } from "~/services/providers/registry"
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
 import { normalizeChunk, normalizeResponse } from "./normalize"
@@ -61,8 +64,17 @@ export async function handleCompletion(c: Context) {
       || "gpt-5-mini",
   }
 
+  checkProtectedRouteGuard(c, {
+    routeKind: "reasoning",
+    model: payload.model,
+    maxTokens:
+      typeof payload.max_tokens === "number" ? payload.max_tokens : undefined,
+    stream: payload.stream === true ? true : undefined,
+  })
+
   const account = getAccountForModel(payload.model)
-  if ((account.provider ?? "copilot") === "copilot") {
+  initializeProviderRegistry()
+  if (providerSupports(account, "cooldown")) {
     await checkAccountRateLimitOrThrow(account.id, signal)
   }
 
@@ -150,6 +162,7 @@ function resolveInitiator(
     trustedClientAgent,
     initiator,
   )
+  c.set("guardInitiator" as never, initiator)
   return initiator
 }
 

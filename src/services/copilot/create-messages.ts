@@ -10,7 +10,7 @@ import type {
 } from "~/routes/messages/anthropic-types"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import { getAccountForModel } from "~/lib/accounts"
+import { getAccountForModel, getCopilotToken } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
@@ -122,7 +122,7 @@ export const createMessages = async (
   | { accountId: string; response: AnthropicResponse }
 > => {
   const account = getAccountForModel(payload.model)
-  if (!account.copilotToken) {
+  if (!getCopilotToken(account)) {
     throw new Error("Copilot token not found")
   }
 

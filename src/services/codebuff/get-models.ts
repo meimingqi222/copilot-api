@@ -1,15 +1,16 @@
 import type { Account, AccountModel } from "~/lib/accounts"
 
+import { getCodebuffSettings } from "~/lib/accounts"
 import { state } from "~/lib/state"
 
 function resolveCodebuffConfig(account: Account): {
   model: string
 } {
-  const normalizedModel =
-    account.availableModels?.[0]?.id ?? state.codebuffModel
+  const settings = getCodebuffSettings(account)
+  const normalizedModel = account.availableModels?.[0]?.id ?? settings?.model
 
   return {
-    model: normalizedModel,
+    model: normalizedModel ?? state.codebuffModel,
   }
 }
 
@@ -21,6 +22,7 @@ function fallbackModels(defaultModel: string): Array<AccountModel> {
       vendor: "codebuff",
       pickerEnabled: true,
       supportedEndpoints: ["/chat/completions"],
+      provider: "codebuff",
     },
   ]
 }

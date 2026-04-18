@@ -1,6 +1,11 @@
 import type { Account } from "~/lib/accounts"
 import type { Model } from "~/services/copilot/get-models"
 
+import {
+  canonicalModelId,
+  canonicalNativeModelId,
+  parseModelReference,
+} from "~/lib/accounts"
 import { state } from "~/lib/state"
 
 const CHAT_COMPLETIONS_ENDPOINTS = ["/chat/completions", "/v1/chat/completions"]
@@ -237,13 +242,17 @@ function getSupportedEndpoints(
   modelId: string,
   account: Account,
 ): Array<string> | undefined {
-  const cachedModel = state.models?.data.find((model) => model.id === modelId)
+  const exactModelId = canonicalModelId(modelId)
+  const targetModelId = parseModelReference(modelId).nativeModelId
+  const cachedModel = state.models?.data.find(
+    (model) => canonicalModelId(model.id) === exactModelId,
+  )
   if (cachedModel?.supported_endpoints) {
     return cachedModel.supported_endpoints
   }
 
   const accountModel = account.availableModels?.find(
-    (model) => model.id === modelId,
+    (model) => canonicalNativeModelId(model.id) === targetModelId,
   )
   return accountModel?.supportedEndpoints
 }

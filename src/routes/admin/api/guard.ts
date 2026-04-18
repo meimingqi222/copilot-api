@@ -26,7 +26,12 @@ guardApiRoutes.get("/blacklist", (c) => {
 
 // POST /api/guard/blacklist  { value, type, reason? }
 guardApiRoutes.post("/blacklist", async (c) => {
-  let body: { value?: string; type?: "ip" | "ua"; reason?: string }
+  let body: {
+    value?: string
+    type?: "ip" | "ua"
+    reason?: string
+    expiresAt?: number
+  }
   try {
     body = await c.req.json()
   } catch {
@@ -38,8 +43,22 @@ guardApiRoutes.post("/blacklist", async (c) => {
     return c.json({ error: "value is required." }, 400)
   }
   const type = body.type === "ua" ? "ua" : "ip"
+  const expiresAt =
+    typeof body.expiresAt === "number" && Number.isFinite(body.expiresAt) ?
+      body.expiresAt
+    : undefined
 
-  const entry = await addBlacklistEntry({ value, type, reason: body.reason })
+  if (expiresAt !== undefined && expiresAt <= Date.now()) {
+    return c.json({ error: "expiresAt must be in the future." }, 400)
+  }
+
+  const entry = await addBlacklistEntry({
+    value,
+    type,
+    reason: body.reason,
+    source: "manual",
+    expiresAt,
+  })
   return c.json({ entry })
 })
 

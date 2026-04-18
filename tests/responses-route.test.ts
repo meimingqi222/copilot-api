@@ -202,6 +202,188 @@ test("POST /v1/responses falls back to chat completions when model lacks /respon
   })
 })
 
+test("POST /v1/responses keeps provider-qualified model bound during chat fallback", async () => {
+  state.accounts = [
+    {
+      id: "codebuff-account-id",
+      label: "codebuff",
+      provider: "codebuff",
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+      credentials: { authToken: "cb-token" },
+      settings: {
+        baseUrl: "https://codebuff.example",
+        cliVersion: "0.0.44",
+        agentId: "cb-agent",
+        model: "gpt-chat",
+        costMode: "normal",
+        allowFallbacks: false,
+      },
+      codebuffAuthToken: "cb-token",
+      codebuffBaseUrl: "https://codebuff.example",
+      codebuffCliVersion: "0.0.44",
+      codebuffAgentId: "cb-agent",
+      codebuffModel: "gpt-chat",
+      codebuffCostMode: "normal",
+      codebuffAllowFallbacks: false,
+      availableModels: [
+        {
+          id: "gpt-chat",
+          name: "gpt-chat",
+          vendor: "codebuff",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions"],
+          provider: "codebuff",
+        },
+      ],
+    },
+    {
+      id: "copilot-account-id",
+      label: "copilot",
+      provider: "copilot",
+      githubToken: "gh-test-token",
+      copilotToken: "copilot-token",
+      enabled: true,
+      priority: 1,
+      isExhausted: false,
+      createdAt: Date.now(),
+      availableModels: [
+        {
+          id: "gpt-chat",
+          name: "gpt-chat",
+          vendor: "OpenAI",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions"],
+          provider: "copilot",
+        },
+      ],
+    },
+  ]
+  state.activeAccountIndex = 0
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "gpt-chat",
+        object: "model",
+        name: "GPT Chat",
+        preview: false,
+        vendor: "OpenAI",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/chat/completions"],
+        capabilities: {
+          family: "gpt-5",
+          object: "capabilities",
+          supports: {},
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+      {
+        id: "codebuff/gpt-chat",
+        object: "model",
+        name: "GPT Chat (Codebuff)",
+        preview: false,
+        vendor: "codebuff",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/chat/completions"],
+        capabilities: {
+          family: "codebuff",
+          object: "capabilities",
+          supports: {},
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+    ],
+  }
+
+  const fetchMock = mock((url: string, opts?: { body?: string }) => {
+    if (url.endsWith("/api/v1/agent-runs")) {
+      const body = JSON.parse(opts?.body ?? "{}") as { action?: string }
+      return {
+        ok: true,
+        json: () => (body.action === "START" ? { runId: "run-123" } : {}),
+        text: () => Promise.resolve(""),
+        status: 200,
+        url,
+      }
+    }
+
+    if (url.endsWith("/api/v1/chat/completions")) {
+      return {
+        ok: true,
+        json: () => ({
+          id: "chat_qualified",
+          object: "chat.completion",
+          created: 1,
+          model: "gpt-chat",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "ok",
+              },
+              logprobs: null,
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_tokens: 2,
+          },
+        }),
+        text: () => Promise.resolve(""),
+        status: 200,
+        url,
+      }
+    }
+
+    throw new Error(`Unexpected upstream URL: ${url}`)
+  })
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+
+  const response = await server.fetch(
+    new Request("http://localhost/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "codebuff/gpt-chat",
+        input: "hi",
+      }),
+    }),
+  )
+
+  expect(response.status).toBe(200)
+  expect(fetchMock).toHaveBeenCalledTimes(3)
+  expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+    "https://codebuff.example/api/v1/agent-runs",
+  )
+  expect((fetchMock.mock.calls[1] as [string])[0]).toBe(
+    "https://codebuff.example/api/v1/chat/completions",
+  )
+  expect(
+    JSON.parse(
+      (fetchMock.mock.calls[1]?.[1] as { body?: string }).body ?? "{}",
+    ),
+  ).toMatchObject({
+    model: "gpt-chat",
+    messages: [{ role: "user", content: "hi" }],
+  })
+
+  const body = await response.json()
+  expect(body).toMatchObject({
+    object: "response",
+    output_text: "ok",
+  })
+})
+
 test("POST /v1/responses streaming ignores terminal [DONE] frame", async () => {
   state.models = {
     object: "list",

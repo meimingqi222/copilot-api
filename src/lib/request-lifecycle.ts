@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 
+import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
 import {
   checkRateLimit,
   getRemainingCooldownSeconds,
@@ -47,6 +48,16 @@ export function respondToKnownRouteError(
   error: unknown,
   rateLimitType = "error",
 ): Response | undefined {
+  if (error instanceof ProtectedRouteGuardError) {
+    if (error.retryAfterSeconds > 0) {
+      c.header("Retry-After", String(error.retryAfterSeconds))
+    }
+    return c.json(
+      { error: { message: error.message, type: error.errorType } },
+      error.status,
+    )
+  }
+
   if (error instanceof RouteRateLimitError) {
     if (error.retryAfterSeconds > 0) {
       c.header("Retry-After", String(error.retryAfterSeconds))

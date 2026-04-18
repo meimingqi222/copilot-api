@@ -1,22 +1,7 @@
-import consola from "consola"
-import { events } from "fetch-event-stream"
-
-import type { Account } from "~/lib/accounts"
-
 import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
-import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
-import { HTTPError } from "~/lib/error"
-import { state } from "~/lib/state"
-import { createCodebuffChatCompletions } from "~/services/codebuff/create-chat-completions"
 import { inferInitiatorFromChatMessages } from "~/services/copilot/initiator"
-import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
-import {
-  shouldUseResponsesApi,
-  translateResponsesStreamToChatCompletions,
-  translateResponsesToChatCompletion,
-  translateToResponsesPayload,
-  type ResponsesResponse,
-} from "~/services/copilot/responses-api"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
@@ -31,101 +16,26 @@ export const createChatCompletions = async (
     model: canonicalModelId(payload.model),
   }
 
+  initializeProviderRegistry()
   const account = getAccountForModel(normalizedPayload.model)
-  if (isCodebuffAccount(account)) {
-    return createCodebuffChatCompletions(account, normalizedPayload, signal)
-  }
-
-  if (!account.copilotToken) throw new Error("Copilot token not found")
-  const useResponsesApi = shouldUseResponsesApi(
-    normalizedPayload.model,
-    account,
-  )
-
-  const enableVision = normalizedPayload.messages.some(
-    (x) =>
-      typeof x.content !== "string"
-      && x.content?.some((x) => x.type === "image_url"),
-  )
-
   const initiator =
     initiatorOverride
     ?? inferInitiatorFromChatMessages(normalizedPayload.messages)
+  const enableVision = normalizedPayload.messages.some(
+    (message) =>
+      typeof message.content !== "string"
+      && message.content?.some((content) => content.type === "image_url"),
+  )
 
-  const doRequest = async (requestAccount: typeof account) => {
-    const reqHeaders: Record<string, string> = {
-      ...copilotHeaders(requestAccount, enableVision),
-      "editor-version": `vscode/${state.vsCodeVersion}`,
-      "X-Initiator": initiator,
-    }
-    return fetch(
-      `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`,
-      {
-        method: "POST",
-        headers: reqHeaders,
-        body: JSON.stringify(
-          useResponsesApi ?
-            translateToResponsesPayload(normalizedPayload)
-          : normalizedPayload,
-        ),
-        signal,
-      },
-    )
-  }
-
-  const { account: usedAccount, response } =
-    await executeCopilotRequestWithRetry({
-      account,
-      model: normalizedPayload.model,
-      doRequest,
-    })
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "(unreadable)")
-    consola.error(
-      "Failed to create chat completions",
-      response.status,
-      errorBody,
-    )
-    consola.error("Request payload was:", JSON.stringify(normalizedPayload))
-    throw new HTTPError(
-      "Failed to create chat completions",
-      response,
-      errorBody,
-    )
-  }
-
-  if (normalizedPayload.stream) {
-    const stream = events(
-      response,
-    ) as unknown as AsyncIterable<CopilotStreamEvent>
-    return {
-      accountId: usedAccount.id,
-      response:
-        useResponsesApi ?
-          (translateResponsesStreamToChatCompletions(
-            stream,
-            normalizedPayload.model,
-          ) as AsyncIterable<CopilotStreamEvent>)
-        : stream,
-    }
-  }
-
-  const responseBody = (await response.json()) as
-    | ChatCompletionResponse
-    | ResponsesResponse
-
-  return {
-    accountId: usedAccount.id,
-    response:
-      useResponsesApi ?
-        translateResponsesToChatCompletion(responseBody as ResponsesResponse)
-      : (responseBody as ChatCompletionResponse),
-  }
-}
-
-function isCodebuffAccount(account: Account): boolean {
-  return account.provider === "codebuff"
+  return getProviderRuntime(account.provider).createChatCompletions(
+    account,
+    normalizedPayload,
+    signal,
+    {
+      initiator,
+      enableVision,
+    },
+  )
 }
 
 // Streaming types

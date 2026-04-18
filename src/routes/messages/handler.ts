@@ -7,6 +7,7 @@ import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
+import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
@@ -28,6 +29,8 @@ import {
   supportsMessagesApi,
   type CopilotStreamEventLike,
 } from "~/services/copilot/responses-api"
+import { initializeProviderRegistry } from "~/services/providers"
+import { providerSupports } from "~/services/providers/registry"
 
 import {
   createInitialStreamState,
@@ -70,9 +73,23 @@ interface UsageInfo {
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+
+  checkProtectedRouteGuard(c, {
+    routeKind: "reasoning",
+    model: anthropicPayload.model,
+    maxTokens:
+      typeof anthropicPayload.max_tokens === "number" ?
+        anthropicPayload.max_tokens
+      : undefined,
+    stream: anthropicPayload.stream === true ? true : undefined,
+  })
+
   const account = getAccountForModel(anthropicPayload.model)
 
-  await checkAccountRateLimitOrThrow(account.id, signal)
+  initializeProviderRegistry()
+  if (providerSupports(account, "cooldown")) {
+    await checkAccountRateLimitOrThrow(account.id, signal)
+  }
 
   const anthropicBeta = c.req.header("anthropic-beta")
   const anthropicVersion = c.req.header("anthropic-version")
@@ -91,12 +108,16 @@ export async function handleCompletion(c: Context) {
     trustedClientAgent,
     initiator,
   )
+  c.set("guardInitiator" as never, initiator)
 
   if (state.manualApprove) {
     await awaitApproval()
   }
 
-  if (supportsMessagesApi(anthropicPayload.model, account)) {
+  if (
+    supportsMessagesApi(anthropicPayload.model, account)
+    && account.provider === "copilot"
+  ) {
     return handleMessagesApi({
       c,
       anthropicPayload,

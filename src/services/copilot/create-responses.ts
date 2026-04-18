@@ -1,15 +1,9 @@
-import { events } from "fetch-event-stream"
-
-import { getAccountForModel } from "~/lib/accounts"
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
-import { HTTPError } from "~/lib/error"
-import { state } from "~/lib/state"
+import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
 import {
   createChatCompletions,
   type ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
-import { executeCopilotRequestWithRetry } from "~/services/copilot/request"
 import {
   supportsResponsesApi,
   translateChatCompletionToResponses,
@@ -19,6 +13,8 @@ import {
   type ResponsesPayload,
   type ResponsesResponse,
 } from "~/services/copilot/responses-api"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
 export const createResponses = async (
   payload: ResponsesPayload,
@@ -28,10 +24,15 @@ export const createResponses = async (
   | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
   | { accountId: string; response: ResponsesResponse }
 > => {
-  const account = getAccountForModel(payload.model)
+  initializeProviderRegistry()
+  const routedPayload = {
+    ...payload,
+    model: canonicalModelId(payload.model),
+  }
+  const account = getAccountForModel(routedPayload.model)
 
-  if (!supportsResponsesApi(payload.model, account)) {
-    const chatPayload = translateResponsesToChatPayload(payload)
+  if (!supportsResponsesApi(routedPayload.model, account)) {
+    const chatPayload = translateResponsesToChatPayload(routedPayload)
     const result = await createChatCompletions(
       chatPayload,
       signal,
@@ -41,7 +42,10 @@ export const createResponses = async (
     if (isChatCompletionResponse(result.response)) {
       return {
         accountId: result.accountId,
-        response: translateChatCompletionToResponses(result.response, payload),
+        response: translateChatCompletionToResponses(
+          result.response,
+          routedPayload,
+        ),
       }
     }
 
@@ -49,59 +53,26 @@ export const createResponses = async (
       accountId: result.accountId,
       response: translateChatCompletionsStreamToResponses(
         result.response,
-        payload,
+        routedPayload,
       ),
     }
   }
 
-  if (!account.copilotToken) {
-    throw new Error("Copilot token not found")
-  }
-
-  const enableVision = hasVisionInput(payload)
+  const enableVision = hasVisionInput(routedPayload)
   const initiator =
-    initiatorOverride ?? inferInitiatorFromResponsesPayload(payload)
+    initiatorOverride ?? inferInitiatorFromResponsesPayload(routedPayload)
 
-  const doRequest = async (requestAccount: typeof account) => {
-    const headers: Record<string, string> = {
-      ...copilotHeaders(requestAccount, enableVision),
-      "editor-version": `vscode/${state.vsCodeVersion}`,
-      "X-Initiator": initiator,
-    }
-
-    return fetch(`${copilotBaseUrl(state)}/responses`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal,
-    })
+  const runtime = getProviderRuntime(account.provider)
+  if (!runtime.createResponses) {
+    throw new Error(
+      `Provider "${account.provider}" does not implement native responses`,
+    )
   }
 
-  const { account: usedAccount, response } =
-    await executeCopilotRequestWithRetry({
-      account,
-      model: payload.model,
-      doRequest,
-    })
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "(unreadable)")
-    throw new HTTPError("Failed to create responses", response, errorBody)
-  }
-
-  if (payload.stream) {
-    return {
-      accountId: usedAccount.id,
-      response: events(
-        response,
-      ) as unknown as AsyncIterable<CopilotStreamEventLike>,
-    }
-  }
-
-  return {
-    accountId: usedAccount.id,
-    response: (await response.json()) as ResponsesResponse,
-  }
+  return runtime.createResponses(account, routedPayload, signal, {
+    initiator,
+    enableVision,
+  })
 }
 
 function hasVisionInput(payload: ResponsesPayload): boolean {

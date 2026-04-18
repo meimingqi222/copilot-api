@@ -1,9 +1,9 @@
 import consola from "consola"
 
-import { saveAccounts } from "~/lib/accounts"
-import { getCodebuffModelsForAccount } from "~/services/codebuff/get-models"
-import { getModelsForAccount } from "~/services/copilot/get-models"
+import { canonicalNativeModelId, saveAccounts } from "~/lib/accounts"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
 import type { Account } from "./accounts"
 
@@ -45,22 +45,59 @@ export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
 
 export function cacheModels(): void {
-  const accountModels = state.accounts.flatMap((account) =>
-    (account.availableModels ?? []).map((model) => ({ model, account })),
-  )
+  const accountModels = state.accounts
+    .map((account, originalIndex) => ({ account, originalIndex }))
+    .sort((left, right) => {
+      if (left.account.priority !== right.account.priority) {
+        return left.account.priority - right.account.priority
+      }
+      return left.originalIndex - right.originalIndex
+    })
+    .flatMap(({ account }) =>
+      (account.availableModels ?? []).map((model) => ({ model, account })),
+    )
 
   if (accountModels.length > 0) {
-    const merged = new Map<string, (typeof accountModels)[number]["model"]>()
+    const duplicateCounts = new Map<string, number>()
     for (const entry of accountModels) {
-      if (!merged.has(entry.model.id)) {
-        merged.set(entry.model.id, entry.model)
+      const nativeModelId = canonicalNativeModelId(entry.model.id)
+      duplicateCounts.set(
+        nativeModelId,
+        (duplicateCounts.get(nativeModelId) ?? 0) + 1,
+      )
+    }
+
+    const merged = new Map<
+      string,
+      {
+        model: (typeof accountModels)[number]["model"]
+        publicId: string
+      }
+    >()
+    for (const entry of accountModels) {
+      const providerId = entry.model.provider ?? entry.account.provider
+      const nativeModelId = canonicalNativeModelId(entry.model.id)
+      const publicIds = [
+        entry.model.id,
+        ...((duplicateCounts.get(nativeModelId) ?? 0) > 1 ?
+          [`${providerId}/${entry.model.id}`]
+        : []),
+      ]
+
+      for (const publicId of publicIds) {
+        if (!merged.has(publicId)) {
+          merged.set(publicId, {
+            model: entry.model,
+            publicId,
+          })
+        }
       }
     }
 
     state.models = {
       object: "list",
-      data: Array.from(merged.values()).map((model) => ({
-        id: model.id,
+      data: Array.from(merged.values()).map(({ model, publicId }) => ({
+        id: publicId,
         object: "model",
         name: model.name,
         preview: false,
@@ -70,8 +107,7 @@ export function cacheModels(): void {
         model_picker_category: model.pickerCategory,
         supported_endpoints: model.supportedEndpoints,
         capabilities: {
-          family:
-            model.vendor.toLowerCase() === "codebuff" ? "codebuff" : "copilot",
+          family: model.provider ?? model.vendor.toLowerCase(),
           object: "capabilities",
           supports: { streaming: true },
           tokenizer: "unknown",
@@ -86,39 +122,12 @@ export function cacheModels(): void {
 }
 
 export async function refreshModelsForAccount(account: Account): Promise<void> {
+  initializeProviderRegistry()
   try {
-    const provider = account.provider ?? "copilot"
-
-    if (provider === "codebuff") {
-      // eslint-disable-next-line require-atomic-updates
-      account.availableModels = await getCodebuffModelsForAccount(account)
-      consola.debug(
-        `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
-      )
-      await saveAccounts()
-      cacheModels()
-      return
-    }
-
-    if (!account.copilotToken) return
-    const models = await getModelsForAccount(account)
-    const seen = new Set<string>()
     // eslint-disable-next-line require-atomic-updates
-    account.availableModels = models.data
-      .filter((m) => {
-        if (m.policy?.state !== "enabled") return false
-        if (seen.has(m.id)) return false
-        seen.add(m.id)
-        return true
-      })
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        vendor: m.vendor,
-        pickerEnabled: m.model_picker_enabled,
-        pickerCategory: m.model_picker_category,
-        supportedEndpoints: m.supported_endpoints ?? [],
-      }))
+    account.availableModels = await getProviderRuntime(
+      account.provider,
+    ).refreshModels(account)
     consola.debug(
       `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
     )
@@ -130,7 +139,7 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
       error,
     )
 
-    if ((account.provider ?? "copilot") === "codebuff") {
+    if (account.provider === "codebuff") {
       account.availableModels = [
         {
           id: state.codebuffModel,
@@ -138,6 +147,23 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
           vendor: "codebuff",
           pickerEnabled: true,
           supportedEndpoints: ["/chat/completions"],
+          provider: "codebuff",
+        },
+      ]
+      await saveAccounts()
+      cacheModels()
+      return
+    }
+
+    if (account.provider === "windsurf") {
+      account.availableModels = [
+        {
+          id: state.providerDefaults.windsurf.defaultModel,
+          name: state.providerDefaults.windsurf.defaultModel,
+          vendor: "Windsurf",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions", "/v1/messages"],
+          provider: "windsurf",
         },
       ]
       await saveAccounts()
