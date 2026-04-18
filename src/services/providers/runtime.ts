@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import type { Account, AccountModel, QuotaSnapshot } from "~/lib/accounts"
 import type {
   ProviderDescriptor,
@@ -23,6 +25,7 @@ export interface RequestExecutionContext {
   initiator?: "agent" | "user"
   enableVision?: boolean
   forwardedHeaders?: Record<string, string | undefined>
+  c?: Context
 }
 
 export type ProviderChatResult =

@@ -1,5 +1,7 @@
 import type { Context } from "hono"
 
+import consola from "consola"
+
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
 import {
   checkRateLimit,
@@ -98,6 +100,24 @@ export function respondToKnownRouteError(
     c.header("Retry-After", String(details.retryAfterSeconds))
   }
 
+  consola.warn(
+    `Known route error response: ${JSON.stringify({
+      source: getKnownRouteErrorSource(error),
+      path: c.req.path,
+      method: c.req.method,
+      status: details.status,
+      type: details.type,
+      message: details.message,
+      retryAfterSeconds: details.retryAfterSeconds,
+      model: c.get("model" as never) as string | undefined,
+      accountId: c.get("accountId" as never) as string | undefined,
+      principal: c.get("protectedRouteGuardPrincipal" as never) as
+        | string
+        | undefined,
+      risk: c.get("protectedRouteGuardRisk" as never) as string | undefined,
+    })}`,
+  )
+
   if (details.status === 499) {
     return new Response(null, { status: 499 })
   }
@@ -106,4 +126,17 @@ export function respondToKnownRouteError(
     { error: { message: details.message, type: details.type } },
     { status: details.status as 403 | 429 },
   )
+}
+
+function getKnownRouteErrorSource(error: unknown): string {
+  if (error instanceof ProtectedRouteGuardError) {
+    return "protected_route_guard"
+  }
+  if (error instanceof RouteRateLimitError) {
+    return "adaptive_rate_limiter"
+  }
+  if (error instanceof ClientAbortError) {
+    return "client_abort"
+  }
+  return "unknown"
 }

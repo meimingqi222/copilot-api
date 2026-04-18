@@ -125,7 +125,6 @@ export function cacheModels(): void {
 export async function refreshModelsForAccount(account: Account): Promise<void> {
   initializeProviderRegistry()
   try {
-    // eslint-disable-next-line require-atomic-updates
     account.availableModels = await getProviderRuntime(
       account.provider,
     ).refreshModels(account)

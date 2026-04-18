@@ -1,4 +1,3 @@
-/* eslint-disable require-atomic-updates */
 import { createWindsurfChatCompletions } from "~/services/windsurf/create-chat-completions"
 import {
   fallbackWindsurfModels,
@@ -38,7 +37,7 @@ export const windsurfProviderRuntime: ProviderRuntime = {
       return defaults
     }
   },
-  createChatCompletions(account, payload, signal) {
-    return createWindsurfChatCompletions(account, payload, signal)
+  createChatCompletions(account, payload, signal, ctx) {
+    return createWindsurfChatCompletions({ account, payload, signal, ctx })
   },
 }

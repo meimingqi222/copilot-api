@@ -1,7 +1,7 @@
 /**
  * Live test: verify tool call request/response round-trip
  */
-/* eslint-disable @typescript-eslint/no-non-null-assertion, complexity, @typescript-eslint/use-unknown-in-catch-callback-variable */
+/* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/use-unknown-in-catch-callback-variable */
 import { Database } from "bun:sqlite"
 import { join } from "node:path"
 
@@ -191,10 +191,13 @@ console.log(`\nModel: ${sweModel.id} (upstream: ${sweModel.upstreamId})`)
 
 // ── Test 1: Simple chat ───────────────────────────────────────────────────────
 console.log("\n=== Test 1: Simple streaming chat ===")
-const r1 = await createWindsurfChatCompletions(account, {
-  model: sweModel.id,
-  stream: true,
-  messages: [{ role: "user", content: 'Reply with exactly: "OK"' }],
+const r1 = await createWindsurfChatCompletions({
+  account,
+  payload: {
+    model: sweModel.id,
+    stream: true,
+    messages: [{ role: "user", content: 'Reply with exactly: "OK"' }],
+  },
 })
 const t1 = await collectStream(r1.response as AsyncIterable<CopilotStreamEvent>)
 console.log(`finish_reason: ${t1.finishReason}`)
@@ -204,13 +207,16 @@ console.log(`content: ${JSON.stringify(t1.content)}`)
 console.log(
   "\n=== Test 2: Streaming with tools (capture real tool call ID) ===",
 )
-const r2 = await createWindsurfChatCompletions(account, {
-  model: sweModel.id,
-  stream: true,
-  messages: [
-    { role: "user", content: "Use list_dir to list the files in /tmp." },
-  ],
-  tools: TOOLS,
+const r2 = await createWindsurfChatCompletions({
+  account,
+  payload: {
+    model: sweModel.id,
+    stream: true,
+    messages: [
+      { role: "user", content: "Use list_dir to list the files in /tmp." },
+    ],
+    tools: TOOLS,
+  },
 })
 const t2 = await collectStream(r2.response as AsyncIterable<CopilotStreamEvent>)
 console.log(`finish_reason: ${t2.finishReason}`)
@@ -231,23 +237,26 @@ if (t2.toolCalls.length === 0) {
     `Using tool call id=${JSON.stringify(firstCall.id)} name=${firstCall.function.name}`,
   )
 
-  const r3 = await createWindsurfChatCompletions(account, {
-    model: sweModel.id,
-    stream: false,
-    messages: [
-      { role: "user", content: "Use list_dir to list the files in /tmp." },
-      {
-        role: "assistant",
-        content: t2.content || null,
-        tool_calls: t2.toolCalls,
-      },
-      {
-        role: "tool",
-        content: "file1.txt\nfile2.log\ntemp_data.csv",
-        tool_call_id: firstCall.id,
-      },
-    ],
-    tools: TOOLS,
+  const r3 = await createWindsurfChatCompletions({
+    account,
+    payload: {
+      model: sweModel.id,
+      stream: false,
+      messages: [
+        { role: "user", content: "Use list_dir to list the files in /tmp." },
+        {
+          role: "assistant",
+          content: t2.content || null,
+          tool_calls: t2.toolCalls,
+        },
+        {
+          role: "tool",
+          content: "file1.txt\nfile2.log\ntemp_data.csv",
+          tool_call_id: firstCall.id,
+        },
+      ],
+      tools: TOOLS,
+    },
   }).catch((err: Error) => {
     console.error(`❌ Error: ${err.message}`)
     return null
@@ -273,10 +282,13 @@ if (t2.toolCalls.length === 0) {
 
 // ── Test 4: Reasoning ─────────────────────────────────────────────────────────
 console.log("\n=== Test 4: Non-streaming (check reasoning_text) ===")
-const r4 = await createWindsurfChatCompletions(account, {
-  model: sweModel.id,
-  stream: false,
-  messages: [{ role: "user", content: "What is 3 + 5? Think step by step." }],
+const r4 = await createWindsurfChatCompletions({
+  account,
+  payload: {
+    model: sweModel.id,
+    stream: false,
+    messages: [{ role: "user", content: "What is 3 + 5? Think step by step." }],
+  },
 })
 const resp4 = r4.response as ChatCompletionResponse
 console.log(`finish_reason: ${resp4.choices[0]?.finish_reason}`)

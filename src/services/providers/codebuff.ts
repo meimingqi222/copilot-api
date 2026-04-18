@@ -48,10 +48,10 @@ export const codebuffProviderRuntime: ProviderRuntime = {
     account.availableModels = models
     return Promise.resolve(models)
   },
-  createChatCompletions(account, payload, signal) {
-    return createCodebuffChatCompletions(
+  createChatCompletions(account, payload, signal, ctx) {
+    return createCodebuffChatCompletions({
       account,
-      {
+      payload: {
         ...payload,
         model:
           payload.model.includes("/") ?
@@ -59,6 +59,7 @@ export const codebuffProviderRuntime: ProviderRuntime = {
           : payload.model,
       },
       signal,
-    )
+      ctx,
+    })
   },
 }

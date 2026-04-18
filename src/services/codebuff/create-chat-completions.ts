@@ -6,6 +6,7 @@ import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
@@ -31,14 +32,16 @@ interface CodebuffChatPayload
   }
 }
 
-export async function createCodebuffChatCompletions(
-  account: Account,
-  payload: ChatCompletionsPayload,
-  signal?: AbortSignal,
-): Promise<
+export async function createCodebuffChatCompletions(options: {
+  account: Account
+  payload: ChatCompletionsPayload
+  signal?: AbortSignal
+  ctx?: RequestExecutionContext
+}): Promise<
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
+  const { account, payload, signal, ctx } = options
   const { account: usedAccount, result } =
     await executeProviderRequestWithRetry({
       account,
@@ -46,6 +49,7 @@ export async function createCodebuffChatCompletions(
       signal,
       execute: (requestAccount) =>
         createCodebuffChatCompletionsOnce(requestAccount, payload, signal),
+      c: ctx?.c,
     })
 
   if (isChatCompletionResponse(result)) {
@@ -240,7 +244,6 @@ interface CodebuffRuntimeSettings {
   allowFallbacks: boolean
 }
 
-// eslint-disable-next-line complexity
 function resolveCodebuffSettings(account: Account): CodebuffRuntimeSettings {
   const settings = getCodebuffSettings(account)
   const normalizedModel = account.availableModels?.[0]?.id ?? settings?.model

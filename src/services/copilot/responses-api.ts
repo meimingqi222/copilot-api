@@ -5,6 +5,7 @@ export {
 } from "~/services/copilot/chat-to-responses"
 export {
   type CopilotStreamEventLike,
+  extractMessageContentFromResponsesPayload,
   getPublicModelData,
   type ResponsesFunctionCallItem,
   type ResponsesInputContent,

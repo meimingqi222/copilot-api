@@ -44,7 +44,6 @@ function getHasCredentials(account: Account): boolean {
   return Boolean(getWindsurfApiKey(account))
 }
 
-// eslint-disable-next-line complexity
 async function updateProviderAccount(
   account: Account,
   body: {
@@ -217,7 +216,6 @@ accountApiRoutes.get("/", (c) => {
   })
 })
 
-// eslint-disable-next-line max-lines-per-function
 accountApiRoutes.post("/", async (c) => {
   initializeProviderRegistry()
   let body: {
@@ -355,7 +353,6 @@ accountApiRoutes.post("/", async (c) => {
   })
 })
 
-// eslint-disable-next-line max-lines-per-function
 async function pollAccountFlow(flowId: string): Promise<{
   status: string
   accountId?: string

@@ -34,6 +34,7 @@ import {
   type AnthropicMessagesPayload,
   type AnthropicResponse,
   type AnthropicStreamState,
+  extractMessageContentFromAnthropicPayload,
 } from "./anthropic-types"
 import { inferInitiatorFromAnthropicMessages } from "./initiator"
 import {
@@ -70,6 +71,8 @@ interface UsageInfo {
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const messageContent =
+    extractMessageContentFromAnthropicPayload(anthropicPayload)
 
   const anthropicBeta = c.req.header("anthropic-beta")
   const admission = await prepareRequestAdmission(c, {
@@ -84,6 +87,7 @@ export async function handleCompletion(c: Context) {
       anthropicPayload.messages,
       anthropicBeta,
     ),
+    messageContent,
   })
 
   const anthropicVersion = c.req.header("anthropic-version")
@@ -139,6 +143,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
       signal,
       initiatorOverride: initiator,
       forwardedHeaders: { anthropicBeta, anthropicVersion },
+      c,
     })
 
     c.set("accountId" as never, result.accountId)
@@ -158,6 +163,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         signal,
         initiatorOverride: initiator,
         forwardedHeaders: { anthropicBeta, anthropicVersion },
+        c,
       })
 
       c.set("accountId" as never, result.accountId)

@@ -7,18 +7,29 @@ import type { ProtectedRouteKind } from "~/lib/protected-routes"
 
 import { getProtectedRouteKind } from "~/lib/protected-routes"
 
-type RiskLevel = "low" | "medium" | "high" | "critical"
+type BehaviorEventType = "request" | "upstream_429" | "error" | "success"
 
-interface GuardEvent {
+interface BehaviorEvent {
   at: number
-  score: number
+  type: BehaviorEventType
+  path?: string
+  model?: string
+  contentHash?: string
 }
 
-interface PrincipalGuardState {
-  recentEvents: Array<GuardEvent>
+interface PrincipalBehavior {
+  upstream429TotalCount: number
+  upstream429DenseCount: number
+  burstScore: number
+  failureRate: number
+  automatedPattern: boolean
+  repeatedContentCount: number
+}
+
+export interface PrincipalGuardState {
+  events: Array<BehaviorEvent>
   recentRequests: Array<number>
   warned: boolean
-  cooldownUntil?: number
   blockedUntil?: number
   lastSeen: number
 }
@@ -28,24 +39,62 @@ interface GuardInput {
   model?: string
   maxTokens?: number
   stream?: boolean
+  trustedClient?: boolean
+  messageContent?: string
 }
 
 const guardState = new Map<string, PrincipalGuardState>()
 
-const WINDOW_MS = 10 * 60 * 1000
-const MEDIUM_RISK_THRESHOLD = 30
-const COOLDOWN_THRESHOLD = 55
-const HIGH_RISK_THRESHOLD = 70
-const BLOCK_THRESHOLD = 80
-
-const SHORT_COOLDOWN_MS = 3 * 60 * 1000
-const LONG_COOLDOWN_MS = 15 * 60 * 1000
-const TEMPORARY_BLOCK_MS = 30 * 60 * 1000
+const BEHAVIOR_WINDOW_MS = 10 * 60 * 1000
 const REQUEST_WINDOW_MS = 60_000
-const REQUEST_LIMIT = 30
-const ALERT_THRESHOLD = 20
+const REQUEST_LIMIT = 60
+const TRUSTED_CLIENT_REQUEST_LIMIT = 120
+
+const UPSTREAM_429_DENSE_THRESHOLD = 5
+const UPSTREAM_429_DENSE_WINDOW_MS = 60_000
+const UPSTREAM_429_TOTAL_THRESHOLD = 15
+const BURST_SCORE_BLOCK_THRESHOLD = 100
+const FAILURE_RATE_BLOCK_THRESHOLD = 0.7
+const MIN_SAMPLES_FOR_FAILURE_RATE = 10
+
+const REPEATED_CONTENT_THRESHOLD = 3
+const REPEATED_CONTENT_WINDOW_MS = 24 * 60 * 60 * 1000
+
+const TEMPORARY_BLOCK_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 5 * 60_000
-const IDLE_TTL_MS = TEMPORARY_BLOCK_MS + WINDOW_MS
+const IDLE_TTL_MS = TEMPORARY_BLOCK_MS + BEHAVIOR_WINDOW_MS
+
+const TRUSTED_CLIENT_PATTERNS = [
+  /charm-crush/i,
+  /claude-code/i,
+  /cursor/i,
+  /windsurf/i,
+  /zed-editor/i,
+  /opencode/i,
+  /amp/i,
+  /droid/i,
+]
+
+const AUTOMATION_PATTERNS = [
+  /python-requests/i,
+  /python-httpx/i,
+  /curl/i,
+  /wget/i,
+  /http\.js/i,
+  /axios/i,
+  /node-fetch/i,
+  /got\//i,
+  /scrapy/i,
+  /selenium/i,
+  /puppeteer/i,
+  /playwright/i,
+  /headless/i,
+  /bot/i,
+  /crawler/i,
+  /spider/i,
+]
+
+const PROBE_PATTERNS = [/Please repeat:\s*\w{6,}/i]
 
 let cleanupTimer: ReturnType<typeof setInterval> | undefined
 
@@ -81,109 +130,429 @@ export function checkProtectedRouteGuard(
   const principal = getPrincipalKey(c)
   const now = Date.now()
   const state = getOrCreateState(principal)
+  const trustedClient =
+    input.trustedClient ?? isTrustedClient(c.req.header("user-agent"))
+
   pruneState(state, now)
   state.lastSeen = now
 
   c.set("protectedRouteGuardPrincipal" as never, principal)
 
-  if (state.recentRequests.length >= REQUEST_LIMIT) {
+  enforceRequestLimit({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput: { ...input, trustedClient },
+    now,
+  })
+
+  enforceActiveBlock({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput: { ...input, trustedClient },
+    now,
+  })
+
+  state.recentRequests.push(now)
+
+  const contentHash =
+    input.messageContent ?
+      createHash("sha256")
+        .update(input.messageContent)
+        .digest("hex")
+        .slice(0, 16)
+    : undefined
+
+  state.events.push({
+    at: now,
+    type: "request",
+    path: c.req.path,
+    model: input.model,
+    contentHash,
+  })
+
+  const behavior = analyzeBehavior(state, now, {
+    userAgent: c.req.header("user-agent"),
+    trustedClient,
+    currentContentHash: contentHash,
+  })
+  c.set("protectedRouteGuardBehavior" as never, behavior)
+
+  enforceBehaviorBlock({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput: { ...input, trustedClient },
+    now,
+    behavior,
+  })
+
+  enforceProbeDetection({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput: { ...input, trustedClient },
+    now,
+  })
+
+  emitSuspiciousWarning(c, { principal, state, behavior })
+}
+
+export function reportUpstream429(c: Context): void {
+  const principal = c.get("protectedRouteGuardPrincipal" as never) as
+    | string
+    | undefined
+  if (!principal) return
+
+  const state = guardState.get(principal)
+  if (!state) return
+
+  state.events.push({
+    at: Date.now(),
+    type: "upstream_429",
+  })
+}
+
+export function reportRequestError(c: Context): void {
+  const principal = c.get("protectedRouteGuardPrincipal" as never) as
+    | string
+    | undefined
+  if (!principal) return
+
+  const state = guardState.get(principal)
+  if (!state) return
+
+  state.events.push({
+    at: Date.now(),
+    type: "error",
+  })
+}
+
+export function reportRequestSuccess(c: Context): void {
+  const principal = c.get("protectedRouteGuardPrincipal" as never) as
+    | string
+    | undefined
+  if (!principal) return
+
+  const state = guardState.get(principal)
+  if (!state) return
+
+  state.events.push({
+    at: Date.now(),
+    type: "success",
+  })
+}
+
+function analyzeBehavior(
+  state: PrincipalGuardState,
+  now: number,
+  options: {
+    userAgent?: string
+    trustedClient: boolean
+    currentContentHash?: string
+  },
+): PrincipalBehavior {
+  const { userAgent, trustedClient, currentContentHash } = options
+  const windowStart = now - BEHAVIOR_WINDOW_MS
+  const recentEvents = state.events.filter((e) => e.at >= windowStart)
+
+  const upstream429Count = recentEvents.filter(
+    (e) => e.type === "upstream_429",
+  ).length
+
+  const denseWindowStart = now - UPSTREAM_429_DENSE_WINDOW_MS
+  const dense429Count = recentEvents.filter(
+    (e) => e.type === "upstream_429" && e.at >= denseWindowStart,
+  ).length
+
+  const burstScore = calculateBurstScore(state.recentRequests, now)
+
+  const failureRate = calculateFailureRate(recentEvents)
+
+  const automatedPattern =
+    trustedClient ? false : detectAutomation(userAgent, state.recentRequests)
+
+  const repeatedContentCount =
+    currentContentHash ?
+      countRepeatedContent(state.events, now, currentContentHash)
+    : 0
+
+  return {
+    upstream429TotalCount: upstream429Count,
+    upstream429DenseCount: dense429Count,
+    burstScore,
+    failureRate,
+    automatedPattern,
+    repeatedContentCount,
+  }
+}
+
+function calculateBurstScore(
+  recentRequests: Array<number>,
+  now: number,
+): number {
+  const windowStart = now - REQUEST_WINDOW_MS
+  const requestsInWindow = recentRequests.filter((t) => t >= windowStart)
+  const count = requestsInWindow.length
+
+  if (count < 10) return 0
+
+  if (count >= 100) return 100
+
+  const intervals: Array<number> = []
+  for (let i = 1; i < requestsInWindow.length; i++) {
+    const diff = requestsInWindow[i] - requestsInWindow[i - 1]
+    if (diff > 0 && diff < 10_000) {
+      intervals.push(diff)
+    }
+  }
+
+  if (intervals.length < 5) return count
+
+  const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length
+  const variance =
+    intervals.reduce((sum, i) => sum + (i - avgInterval) ** 2, 0)
+    / intervals.length
+  const stdDev = Math.sqrt(variance)
+
+  const regularityScore = stdDev < avgInterval * 0.2 ? 30 : 0
+
+  return count + regularityScore
+}
+
+function calculateFailureRate(recentEvents: Array<BehaviorEvent>): number {
+  const outcomes = recentEvents.filter(
+    (e) =>
+      e.type === "success" || e.type === "error" || e.type === "upstream_429",
+  )
+
+  if (outcomes.length < MIN_SAMPLES_FOR_FAILURE_RATE) return 0
+
+  const failures = outcomes.filter(
+    (e) => e.type === "error" || e.type === "upstream_429",
+  ).length
+
+  return failures / outcomes.length
+}
+
+function countRepeatedContent(
+  events: Array<BehaviorEvent>,
+  now: number,
+  currentContentHash: string,
+): number {
+  const windowStart = now - REPEATED_CONTENT_WINDOW_MS
+  return events.filter(
+    (e) => e.at >= windowStart && e.contentHash === currentContentHash,
+  ).length
+}
+
+function detectAutomation(
+  userAgent: string | undefined,
+  recentRequests: Array<number>,
+): boolean {
+  if (AUTOMATION_PATTERNS.some((p) => p.test(userAgent ?? ""))) return true
+
+  if (recentRequests.length >= 20) {
+    const intervals: Array<number> = []
+    for (let i = 1; i < recentRequests.length; i++) {
+      const diff = recentRequests[i] - recentRequests[i - 1]
+      if (diff > 0 && diff < 5000) {
+        intervals.push(diff)
+      }
+    }
+
+    if (intervals.length >= 10) {
+      const avgInterval =
+        intervals.reduce((a, b) => a + b, 0) / intervals.length
+      const variance =
+        intervals.reduce((sum, i) => sum + (i - avgInterval) ** 2, 0)
+        / intervals.length
+      const stdDev = Math.sqrt(variance)
+
+      if (stdDev < 50 && avgInterval < 2000) return true
+    }
+  }
+
+  return false
+}
+
+function enforceRequestLimit(input: {
+  c: Context
+  principal: string
+  state: PrincipalGuardState
+  routeKind: ProtectedRouteKind
+  guardInput: GuardInput
+  now: number
+}): void {
+  const { c, principal, state, routeKind, guardInput, now } = input
+  const requestLimit =
+    guardInput.trustedClient ? TRUSTED_CLIENT_REQUEST_LIMIT : REQUEST_LIMIT
+
+  if (state.recentRequests.length >= requestLimit) {
     const retryAfterSeconds = Math.ceil(
       ((state.recentRequests[0] ?? now) + REQUEST_WINDOW_MS - now) / 1000,
     )
-    markPreviewCapture(c, "high")
-    throw new ProtectedRouteGuardError({
-      message: `Rate limit exceeded. Maximum ${REQUEST_LIMIT} requests per ${REQUEST_WINDOW_MS / 1000} seconds. Retry after ${retryAfterSeconds}s.`,
+    throwLoggedGuardError({
+      c,
+      principal,
+      state,
+      routeKind,
+      guardInput,
+      reason: "request_limit_window",
+      retryAfterSeconds,
+      message: `Rate limit exceeded. Maximum ${requestLimit} requests per ${REQUEST_WINDOW_MS / 1000} seconds. Retry after ${retryAfterSeconds}s.`,
       status: 429,
       errorType: "rate_limit_error",
-      retryAfterSeconds,
     })
   }
+}
+
+function enforceActiveBlock(input: {
+  c: Context
+  principal: string
+  state: PrincipalGuardState
+  routeKind: ProtectedRouteKind
+  guardInput: GuardInput
+  now: number
+}): void {
+  const { c, principal, state, routeKind, guardInput, now } = input
 
   const activeBlockMs = (state.blockedUntil ?? 0) - now
   if (activeBlockMs > 0) {
-    markPreviewCapture(c, "critical")
-    throw new ProtectedRouteGuardError({
-      message:
-        "Forbidden. Protected routes are temporarily blocked for this client.",
-      status: 403,
-      errorType: "forbidden_error",
+    throwLoggedGuardError({
+      c,
+      principal,
+      state,
+      routeKind,
+      guardInput,
+      reason: "active_block",
       retryAfterSeconds: Math.ceil(activeBlockMs / 1000),
-    })
-  }
-
-  const activeCooldownMs = (state.cooldownUntil ?? 0) - now
-  if (activeCooldownMs > 0) {
-    markPreviewCapture(c, "high")
-    throw new ProtectedRouteGuardError({
-      message: "Rate limit exceeded for protected routes. Retry later.",
-      status: 429,
-      errorType: "rate_limit_error",
-      retryAfterSeconds: Math.ceil(activeCooldownMs / 1000),
-    })
-  }
-
-  state.recentRequests.push(now)
-  emitSuspiciousWarning(c, principal, state)
-
-  const requestScore = estimateRequestScore(routeKind, input)
-  const windowScore = state.recentEvents.reduce(
-    (total, entry) => total + entry.score,
-    0,
-  )
-  const projectedScore = windowScore + requestScore
-  const riskLevel = getRiskLevel(projectedScore)
-
-  c.set("protectedRouteGuardScore" as never, projectedScore)
-  c.set("protectedRouteGuardRisk" as never, riskLevel)
-
-  if (projectedScore >= BLOCK_THRESHOLD) {
-    // Start a fresh window after the penalty period. Otherwise the stale
-    // accumulated score can immediately re-trigger the block on the next call.
-    state.recentEvents = []
-    state.blockedUntil = now + TEMPORARY_BLOCK_MS
-    markPreviewCapture(c, "critical")
-    throw new ProtectedRouteGuardError({
       message:
-        "Forbidden. Protected routes are temporarily blocked for this client.",
+        "Forbidden. Client is temporarily blocked due to suspicious behavior.",
       status: 403,
       errorType: "forbidden_error",
-      retryAfterSeconds: Math.ceil(TEMPORARY_BLOCK_MS / 1000),
     })
   }
+}
 
-  if (projectedScore >= HIGH_RISK_THRESHOLD) {
-    // Reset the accumulated score when entering cooldown so clients can recover
-    // after serving the penalty instead of being re-limited instantly.
-    state.recentEvents = []
-    state.cooldownUntil = now + LONG_COOLDOWN_MS
-    markPreviewCapture(c, "high")
-    throw new ProtectedRouteGuardError({
-      message: "Rate limit exceeded for protected routes. Retry later.",
-      status: 429,
-      errorType: "rate_limit_error",
-      retryAfterSeconds: Math.ceil(LONG_COOLDOWN_MS / 1000),
-    })
+function enforceBehaviorBlock(input: {
+  c: Context
+  principal: string
+  state: PrincipalGuardState
+  routeKind: ProtectedRouteKind
+  guardInput: GuardInput
+  now: number
+  behavior: PrincipalBehavior
+}): void {
+  const { c, principal, state, routeKind, guardInput, now, behavior } = input
+
+  const effectiveFailureThreshold =
+    behavior.automatedPattern ?
+      FAILURE_RATE_BLOCK_THRESHOLD * 0.7
+    : FAILURE_RATE_BLOCK_THRESHOLD
+
+  const hasDense429 =
+    behavior.upstream429DenseCount >= UPSTREAM_429_DENSE_THRESHOLD
+  const hasTotal429 =
+    behavior.upstream429TotalCount >= UPSTREAM_429_TOTAL_THRESHOLD
+
+  const userAgent = c.req.header("user-agent")
+  const hasRepeatedContent =
+    behavior.repeatedContentCount >= REPEATED_CONTENT_THRESHOLD
+    && (!userAgent || AUTOMATION_PATTERNS.some((p) => p.test(userAgent)))
+
+  const shouldBlock =
+    hasDense429
+    || hasTotal429
+    || behavior.burstScore >= BURST_SCORE_BLOCK_THRESHOLD
+    || behavior.failureRate >= effectiveFailureThreshold
+    || hasRepeatedContent
+
+  if (!shouldBlock) return
+
+  const reasons: Array<string> = []
+  if (hasDense429) {
+    reasons.push(`upstream_429_dense=${behavior.upstream429DenseCount}/min`)
+  }
+  if (hasTotal429) {
+    reasons.push(`upstream_429_total=${behavior.upstream429TotalCount}/10min`)
+  }
+  if (behavior.burstScore >= BURST_SCORE_BLOCK_THRESHOLD) {
+    reasons.push(`burst_score=${behavior.burstScore}`)
+  }
+  if (behavior.failureRate >= effectiveFailureThreshold) {
+    const automationNote = behavior.automatedPattern ? "+automation" : ""
+    reasons.push(
+      `failure_rate=${(behavior.failureRate * 100).toFixed(1)}%${automationNote}`,
+    )
+  }
+  if (hasRepeatedContent) {
+    reasons.push(
+      `repeated_content=${behavior.repeatedContentCount}x,ua=${userAgent ? "automation" : "none"}`,
+    )
   }
 
-  if (projectedScore >= COOLDOWN_THRESHOLD) {
-    // Reset the accumulated score when entering cooldown so clients can recover
-    // after serving the penalty instead of being re-limited instantly.
-    state.recentEvents = []
-    state.cooldownUntil = now + SHORT_COOLDOWN_MS
-    markPreviewCapture(c, "high")
-    throw new ProtectedRouteGuardError({
-      message: "Rate limit exceeded for protected routes. Retry later.",
-      status: 429,
-      errorType: "rate_limit_error",
-      retryAfterSeconds: Math.ceil(SHORT_COOLDOWN_MS / 1000),
-    })
-  }
+  state.blockedUntil = now + TEMPORARY_BLOCK_MS
 
-  state.recentEvents.push({ at: now, score: requestScore })
+  throwLoggedGuardError({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput,
+    reason: `behavior_block:${reasons.join(",")}`,
+    retryAfterSeconds: Math.ceil(TEMPORARY_BLOCK_MS / 1000),
+    message:
+      "Forbidden. Client blocked due to suspicious behavior patterns detected.",
+    status: 403,
+    errorType: "forbidden_error",
+    behavior,
+  })
+}
 
-  if (riskLevel !== "low") {
-    markPreviewCapture(c, riskLevel)
-  }
+function enforceProbeDetection(input: {
+  c: Context
+  principal: string
+  state: PrincipalGuardState
+  routeKind: ProtectedRouteKind
+  guardInput: GuardInput
+  now: number
+}): void {
+  const { c, principal, state, routeKind, guardInput, now } = input
+  const content = guardInput.messageContent
+
+  if (!content) return
+
+  const matchedPattern = PROBE_PATTERNS.find((p) => p.test(content))
+  if (!matchedPattern) return
+
+  state.blockedUntil = now + TEMPORARY_BLOCK_MS
+
+  consola.warn(
+    `Probe request detected and blocked: ${JSON.stringify({
+      principal,
+      pattern: matchedPattern.source,
+      contentPreview: content.slice(0, 100),
+    })}`,
+  )
+
+  throwLoggedGuardError({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput,
+    reason: `probe_detection:${matchedPattern.source}`,
+    retryAfterSeconds: Math.ceil(TEMPORARY_BLOCK_MS / 1000),
+    message: "Forbidden. Client blocked due to probe request pattern detected.",
+    status: 403,
+    errorType: "forbidden_error",
+  })
 }
 
 function getOrCreateState(principal: string): PrincipalGuardState {
@@ -192,7 +561,7 @@ function getOrCreateState(principal: string): PrincipalGuardState {
     return state
   }
 
-  state = { recentEvents: [], recentRequests: [], warned: false, lastSeen: 0 }
+  state = { events: [], recentRequests: [], warned: false, lastSeen: 0 }
   guardState.set(principal, state)
   return state
 }
@@ -212,18 +581,18 @@ function ensureCleanup(): void {
 }
 
 function pruneState(state: PrincipalGuardState, now: number): void {
-  const cutoff = now - WINDOW_MS
-  state.recentEvents = state.recentEvents.filter((entry) => entry.at >= cutoff)
+  const eventCutoff = now - BEHAVIOR_WINDOW_MS
+  state.events = state.events.filter((e) => e.at >= eventCutoff)
+
+  const requestCutoff = now - REQUEST_WINDOW_MS
   state.recentRequests = state.recentRequests.filter(
-    (timestamp) => timestamp >= now - REQUEST_WINDOW_MS,
+    (timestamp) => timestamp >= requestCutoff,
   )
+
   if (state.recentRequests.length === 0) {
     state.warned = false
   }
 
-  if ((state.cooldownUntil ?? 0) <= now) {
-    state.cooldownUntil = undefined
-  }
   if ((state.blockedUntil ?? 0) <= now) {
     state.blockedUntil = undefined
   }
@@ -231,84 +600,101 @@ function pruneState(state: PrincipalGuardState, now: number): void {
 
 function emitSuspiciousWarning(
   c: Context,
-  principal: string,
-  state: PrincipalGuardState,
+  data: {
+    principal: string
+    state: PrincipalGuardState
+    behavior: PrincipalBehavior
+  },
 ): void {
-  if (state.warned || state.recentRequests.length < ALERT_THRESHOLD) {
-    return
-  }
+  const { state, behavior } = data
+  if (state.warned) return
+
+  const isSuspicious =
+    behavior.upstream429DenseCount >= 2
+    || behavior.upstream429TotalCount >= 5
+    || behavior.burstScore >= 50
+    || behavior.automatedPattern
+
+  if (!isSuspicious) return
 
   state.warned = true
   const ip = getClientIpFromRequest(c)
   const ua = c.req.header("user-agent") || "unknown"
+
   consola.warn(
-    `Suspicious activity: ${principal} made ${state.recentRequests.length} requests in ${REQUEST_WINDOW_MS / 1000}s (IP: ${ip}, UA: ${ua})`,
+    `Suspicious activity detected: ${JSON.stringify({
+      principal: data.principal,
+      behavior,
+      ip,
+      userAgent: ua,
+      recentRequestCount: state.recentRequests.length,
+    })}`,
   )
 }
 
-function estimateRequestScore(
-  routeKind: ProtectedRouteKind,
-  input: GuardInput,
-): number {
-  if (routeKind === "token") {
-    return 8
-  }
-
-  const baseScore = 2
-  const modelMultiplier = getModelMultiplier(input.model)
-  const outputMultiplier = getOutputMultiplier(input.maxTokens)
-  const streamMultiplier = input.stream ? 1.1 : 1
-
-  return baseScore * modelMultiplier * outputMultiplier * streamMultiplier
+function throwLoggedGuardError(input: {
+  c: Context
+  principal: string
+  state: PrincipalGuardState
+  routeKind: ProtectedRouteKind
+  guardInput: GuardInput
+  reason: string
+  retryAfterSeconds: number
+  message: string
+  status: 403 | 429
+  errorType: "forbidden_error" | "rate_limit_error"
+  behavior?: PrincipalBehavior
+}): never {
+  logGuardRejection(input)
+  throw new ProtectedRouteGuardError({
+    message: input.message,
+    status: input.status,
+    errorType: input.errorType,
+    retryAfterSeconds: input.retryAfterSeconds,
+  })
 }
 
-function getModelMultiplier(model: string | undefined): number {
-  if (!model) {
-    return 1.5
-  }
+function logGuardRejection(input: {
+  c: Context
+  principal: string
+  state: PrincipalGuardState
+  routeKind: ProtectedRouteKind
+  guardInput: GuardInput
+  reason: string
+  retryAfterSeconds: number
+  behavior?: PrincipalBehavior
+}): void {
+  const {
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput,
+    reason,
+    retryAfterSeconds,
+    behavior,
+  } = input
+  const now = Date.now()
+  const activeBlockSeconds = Math.max(
+    0,
+    Math.ceil(((state.blockedUntil ?? 0) - now) / 1000),
+  )
 
-  const normalized = model.toLowerCase()
-  if (/mini|nano|haiku|flash|4o-mini|gpt-5-mini|gpt-5-nano/.test(normalized)) {
-    return 1
-  }
-  if (/o1|o3|o4|opus|reasoning|gpt-5(?!-mini|-nano)/.test(normalized)) {
-    return 3
-  }
-  return 1.5
-}
-
-function getOutputMultiplier(maxTokens: number | undefined): number {
-  if (!maxTokens || !Number.isFinite(maxTokens)) {
-    return 1
-  }
-  if (maxTokens >= 16_000) {
-    return 1.5
-  }
-  if (maxTokens >= 8_000) {
-    return 1.25
-  }
-  return 1
-}
-
-function getRiskLevel(score: number): RiskLevel {
-  if (score >= BLOCK_THRESHOLD) {
-    return "critical"
-  }
-  if (score >= HIGH_RISK_THRESHOLD) {
-    return "high"
-  }
-  if (score >= MEDIUM_RISK_THRESHOLD) {
-    return "medium"
-  }
-  return "low"
-}
-
-function markPreviewCapture(
-  c: Context,
-  riskLevel: Exclude<RiskLevel, "low">,
-): void {
-  c.set("protectedRouteGuardCapturePreview" as never, true)
-  c.set("protectedRouteGuardRisk" as never, riskLevel)
+  consola.warn(
+    `Protected route guard rejected request: ${JSON.stringify({
+      reason,
+      path: c.req.path,
+      routeKind,
+      principal,
+      model: guardInput.model,
+      retryAfterSeconds,
+      recentRequestCount: state.recentRequests.length,
+      activeBlockSeconds,
+      behavior,
+      clientIp: getClientIpFromRequest(c),
+      userAgent: c.req.header("user-agent") || "unknown",
+    })}`,
+  )
 }
 
 function getPrincipalKey(c: Context): string {
@@ -364,10 +750,9 @@ export function resetProtectedRouteGuardForTest(): void {
 function cleanupIdleState(now: number): void {
   for (const [principal, state] of guardState) {
     pruneState(state, now)
-    const hasActivePenalty =
-      (state.cooldownUntil ?? 0) > now || (state.blockedUntil ?? 0) > now
+    const hasActivePenalty = (state.blockedUntil ?? 0) > now
     const hasRecentActivity =
-      state.recentEvents.length > 0 || state.recentRequests.length > 0
+      state.events.length > 0 || state.recentRequests.length > 0
 
     if (hasActivePenalty || hasRecentActivity) {
       continue
@@ -379,10 +764,41 @@ function cleanupIdleState(now: number): void {
   }
 }
 
+function isTrustedClient(userAgent: string | undefined): boolean {
+  if (!userAgent) {
+    return false
+  }
+  return TRUSTED_CLIENT_PATTERNS.some((pattern) => pattern.test(userAgent))
+}
+
 export function cleanupProtectedRouteGuardForTest(now = Date.now()): void {
   cleanupIdleState(now)
 }
 
 export function getProtectedRouteGuardSizeForTest(): number {
   return guardState.size
+}
+
+export function getPrincipalStateForTest(
+  principal: string,
+): PrincipalGuardState | undefined {
+  return guardState.get(principal)
+}
+
+export function getPrincipalBehaviorForTest(
+  c: Context,
+): PrincipalBehavior | undefined {
+  const principal = c.get("protectedRouteGuardPrincipal" as never) as
+    | string
+    | undefined
+  if (!principal) return undefined
+
+  const state = guardState.get(principal)
+  if (!state) return undefined
+
+  const trustedClient = isTrustedClient(c.req.header("user-agent"))
+  return analyzeBehavior(state, Date.now(), {
+    userAgent: c.req.header("user-agent"),
+    trustedClient,
+  })
 }

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 import { websocket } from "hono/bun"
 
+import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
 import { server } from "~/server"
 
@@ -15,6 +16,7 @@ const originalProvider = state.provider
 const originalUsers = state.users
 
 beforeEach(() => {
+  resetProtectedRouteGuardForTest()
   state.accounts = [
     {
       id: "test-account-id",
