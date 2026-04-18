@@ -100,6 +100,15 @@ const API = {
       API.request(`/accounts/${id}/activate`, { method: "POST" }),
   },
 
+  providers: {
+    list: () => API.request("/providers"),
+  },
+
+  accountFlows: {
+    poll: (flowId) =>
+      API.request(`/account-flows/${flowId}/poll`, { method: "POST" }),
+  },
+
   // Quota
   quota: {
     get: () => API.request("/quota"),

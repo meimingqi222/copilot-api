@@ -9,6 +9,25 @@ import { createResponsesWebSocketSession } from "./ws-handler"
 
 export const responsesRoutes = new Hono()
 
+const upgradeResponsesWebSocket = upgradeWebSocket((c) => {
+  const session = createResponsesWebSocketSession(c)
+
+  return {
+    onMessage(event, ws) {
+      session.onMessage(
+        event as MessageEvent<string | ArrayBuffer>,
+        ws.raw as unknown as import("./ws-handler").WebSocketSendTarget,
+      )
+    },
+    onClose() {
+      session.onClose()
+    },
+    onError() {
+      session.onError()
+    },
+  }
+})
+
 responsesRoutes.post("/", async (c) => {
   try {
     return await handleResponses(c)
@@ -26,24 +45,6 @@ responsesRoutes.post("/", async (c) => {
   }
 })
 
-responsesRoutes.get(
-  "/",
-  upgradeWebSocket((c) => {
-    const session = createResponsesWebSocketSession(c)
-
-    return {
-      onMessage(event, ws) {
-        session.onMessage(
-          event as MessageEvent<string | ArrayBuffer>,
-          ws.raw as unknown as import("./ws-handler").WebSocketSendTarget,
-        )
-      },
-      onClose() {
-        session.onClose()
-      },
-      onError() {
-        session.onError()
-      },
-    }
-  }),
-)
+responsesRoutes.get("/", (c, next) => {
+  return upgradeResponsesWebSocket(c, next)
+})

@@ -1,17 +1,29 @@
 import { Hono } from "hono"
 
-import { getActiveAccount } from "~/lib/accounts"
+import { getActiveAccount, getCopilotToken } from "~/lib/accounts"
+import { forwardError } from "~/lib/error"
+import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
+import { respondToKnownRouteError } from "~/lib/request-lifecycle"
 
 export const tokenRoute = new Hono()
 
 tokenRoute.get("/", (c) => {
   try {
+    checkProtectedRouteGuard(c, { routeKind: "token" })
     const account = getActiveAccount()
     return c.json({
-      token: account.copilotToken,
+      token: getCopilotToken(account),
     })
   } catch (error) {
-    console.error("Error fetching token:", error)
-    return c.json({ error: "Failed to fetch token", token: null }, 500)
+    const knownErrorResponse = respondToKnownRouteError(
+      c,
+      error,
+      "rate_limit_error",
+    )
+    if (knownErrorResponse) {
+      return knownErrorResponse
+    }
+
+    return forwardError(c, error)
   }
 })

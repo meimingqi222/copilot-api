@@ -3,33 +3,45 @@ import { Hono } from "hono"
 
 import { refreshQuotaForAccount } from "~/lib/accounts"
 import { state } from "~/lib/state"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
 export const quotaApiRoutes = new Hono()
 
 quotaApiRoutes.get("/", (c) => {
-  const accounts = state.accounts.map(
-    ({ githubToken: _t, codebuffAuthToken: _cbt, ...rest }, idx) => ({
-      id: rest.id,
-      label: rest.label,
-      enabled: rest.enabled,
-      priority: rest.priority,
-      isActive: idx === state.activeAccountIndex,
-      isExhausted: rest.isExhausted,
-      quotaInfo: rest.quotaInfo ?? null,
-    }),
-  )
+  initializeProviderRegistry()
+  const accounts = state.accounts.map((account, idx) => ({
+    id: account.id,
+    label: account.label,
+    provider: account.provider,
+    enabled: account.enabled,
+    priority: account.priority,
+    isActive: idx === state.activeAccountIndex,
+    isExhausted: account.isExhausted,
+    quotaInfo: account.quotaInfo ?? null,
+    supportsQuota: getProviderRuntime(account.provider).supports(
+      account,
+      "quota",
+    ),
+  }))
 
   return c.json({ accounts })
 })
 
 // Force-refresh all account quotas from GitHub Copilot API
 quotaApiRoutes.post("/refresh", async (c) => {
+  initializeProviderRegistry()
   const results = []
   const errors = []
 
   for (const account of state.accounts) {
     try {
-      await refreshQuotaForAccount(account)
+      const runtime = getProviderRuntime(account.provider)
+      if (runtime.refreshQuota) {
+        await runtime.refreshQuota(account)
+      } else if (account.provider === "copilot") {
+        await refreshQuotaForAccount(account)
+      }
       results.push({ id: account.id, label: account.label, success: true })
       consola.info(`Quota refreshed for account "${account.label}"`)
     } catch (err) {

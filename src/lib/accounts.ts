@@ -1,34 +1,62 @@
+/* eslint-disable max-lines */
 import consola from "consola"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
+import type { ProviderId } from "~/lib/provider-config"
+
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { PATHS } from "~/lib/paths"
+import { isProviderId } from "~/lib/provider-config"
 import {
   getRemainingCooldownSeconds,
   reportUpstreamRateLimit,
 } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 
-export type AccountProvider = "copilot" | "codebuff"
+export type AccountProvider = ProviderId
+
+export interface AccountRuntimeState {
+  copilotToken?: string
+  copilotTokenExpiry?: number
+  windsurfJwt?: string
+  windsurfJwtFetchedAt?: number
+  authStatus?: "ready" | "pending" | "error"
+  lastError?: string
+}
+
+export interface CopilotAccountCredentials {
+  githubToken?: string
+}
+
+export interface CopilotAccountSettings {
+  accountType?: string
+}
 
 export interface CodebuffAccountConfig {
   codebuffAuthToken?: string
   codebuffBaseUrl?: string
   codebuffCliVersion?: string
   codebuffAgentId?: string
+  codebuffModel?: string
   codebuffCostMode?: string
   codebuffAllowFallbacks?: boolean
 }
 
-export interface Account extends CodebuffAccountConfig {
+export interface WindsurfAccountConfig {
+  windsurfApiKey?: string
+  windsurfBaseUrl?: string
+  windsurfAppVersion?: string
+  windsurfLsVersion?: string
+  windsurfDefaultModel?: string
+  windsurfClientName?: string
+}
+
+export interface BaseAccount {
   id: string
   label: string
-  provider?: AccountProvider
-  githubToken?: string
-  copilotToken?: string
-  copilotTokenExpiry?: number
+  provider: AccountProvider
   quotaInfo?: QuotaSnapshot
   availableModels?: Array<AccountModel>
   enabled: boolean // 用户控制是否启用(参与负载均衡)
@@ -36,7 +64,48 @@ export interface Account extends CodebuffAccountConfig {
   isExhausted: boolean
   exhaustedAt?: number
   createdAt: number
+  runtimeState?: AccountRuntimeState
 }
+
+export interface CopilotAccount extends BaseAccount {
+  provider: "copilot"
+  credentials?: CopilotAccountCredentials
+  settings?: CopilotAccountSettings
+  githubToken?: string
+  copilotToken?: string
+  copilotTokenExpiry?: number
+}
+
+export interface CodebuffAccount extends BaseAccount, CodebuffAccountConfig {
+  provider: "codebuff"
+  credentials?: {
+    authToken?: string
+  }
+  settings?: {
+    baseUrl?: string
+    cliVersion?: string
+    agentId?: string
+    model?: string
+    costMode?: string
+    allowFallbacks?: boolean
+  }
+}
+
+export interface WindsurfAccount extends BaseAccount, WindsurfAccountConfig {
+  provider: "windsurf"
+  credentials?: {
+    apiKey?: string
+  }
+  settings?: {
+    baseUrl?: string
+    appVersion?: string
+    lsVersion?: string
+    defaultModel?: string
+    clientName?: string
+  }
+}
+
+export type Account = CopilotAccount | CodebuffAccount | WindsurfAccount
 
 export interface AccountModel {
   id: string
@@ -45,6 +114,8 @@ export interface AccountModel {
   pickerEnabled: boolean
   pickerCategory?: string
   supportedEndpoints: Array<string>
+  provider?: AccountProvider
+  upstreamId?: string
 }
 
 export interface QuotaSnapshot {
@@ -63,6 +134,197 @@ const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
 
 // Map to store token refresh timers for cleanup on account deletion
 const tokenRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function defaultProvider(provider?: AccountProvider): AccountProvider {
+  return provider ?? "copilot"
+}
+
+export function getAccountProvider(account: Account): AccountProvider {
+  return defaultProvider(account.provider)
+}
+
+export function getGitHubToken(account: Account): string | undefined {
+  if (account.provider !== "copilot") {
+    return undefined
+  }
+  return account.credentials?.githubToken ?? account.githubToken
+}
+
+export function setGitHubToken(
+  account: Account,
+  githubToken: string | undefined,
+): void {
+  if (account.provider !== "copilot") {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    githubToken,
+  }
+  account.githubToken = githubToken
+}
+
+export function getCopilotToken(account: Account): string | undefined {
+  if (account.provider !== "copilot") {
+    return undefined
+  }
+  return account.runtimeState?.copilotToken ?? account.copilotToken
+}
+
+export function setCopilotToken(
+  account: Account,
+  copilotToken: string | undefined,
+): void {
+  if (account.provider !== "copilot") {
+    return
+  }
+  account.runtimeState = {
+    ...account.runtimeState,
+    copilotToken,
+  }
+  account.copilotToken = copilotToken
+}
+
+export function getCopilotTokenExpiry(account: Account): number | undefined {
+  if (account.provider !== "copilot") {
+    return undefined
+  }
+  return account.runtimeState?.copilotTokenExpiry ?? account.copilotTokenExpiry
+}
+
+export function setCopilotTokenExpiry(
+  account: Account,
+  expiry: number | undefined,
+): void {
+  if (account.provider !== "copilot") {
+    return
+  }
+  account.runtimeState = {
+    ...account.runtimeState,
+    copilotTokenExpiry: expiry,
+  }
+  account.copilotTokenExpiry = expiry
+}
+
+export function getCodebuffAuthToken(account: Account): string | undefined {
+  if (account.provider !== "codebuff") {
+    return undefined
+  }
+  return account.credentials?.authToken ?? account.codebuffAuthToken
+}
+
+export function setCodebuffAuthToken(
+  account: Account,
+  authToken: string | undefined,
+): void {
+  if (account.provider !== "codebuff") {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    authToken,
+  }
+  account.codebuffAuthToken = authToken
+}
+
+export function getWindsurfApiKey(account: Account): string | undefined {
+  if (account.provider !== "windsurf") {
+    return undefined
+  }
+  return account.credentials?.apiKey ?? account.windsurfApiKey
+}
+
+export function setWindsurfApiKey(
+  account: Account,
+  apiKey: string | undefined,
+): void {
+  if (account.provider !== "windsurf") {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    apiKey,
+  }
+  account.windsurfApiKey = apiKey
+}
+
+export function getWindsurfJwt(account: Account): string | undefined {
+  if (account.provider !== "windsurf") {
+    return undefined
+  }
+  return account.runtimeState?.windsurfJwt
+}
+
+export function setWindsurfJwt(
+  account: Account,
+  jwt: string | undefined,
+): void {
+  if (account.provider !== "windsurf") {
+    return
+  }
+  account.runtimeState = {
+    ...account.runtimeState,
+    windsurfJwt: jwt,
+    windsurfJwtFetchedAt: jwt ? Date.now() : undefined,
+  }
+}
+
+// eslint-disable-next-line complexity
+export function getCodebuffSettings(account: Account) {
+  if (account.provider !== "codebuff") {
+    return undefined
+  }
+  const defaults = state.providerDefaults.codebuff
+  return {
+    authToken: getCodebuffAuthToken(account) ?? defaults.authToken,
+    baseUrl:
+      account.settings?.baseUrl ?? account.codebuffBaseUrl ?? defaults.baseUrl,
+    cliVersion:
+      account.settings?.cliVersion
+      ?? account.codebuffCliVersion
+      ?? defaults.cliVersion,
+    agentId:
+      account.settings?.agentId ?? account.codebuffAgentId ?? defaults.agentId,
+    model: account.settings?.model ?? account.codebuffModel ?? defaults.model,
+    costMode:
+      account.settings?.costMode
+      ?? account.codebuffCostMode
+      ?? defaults.costMode,
+    allowFallbacks:
+      account.settings?.allowFallbacks
+      ?? account.codebuffAllowFallbacks
+      ?? defaults.allowFallbacks,
+  }
+}
+
+// eslint-disable-next-line complexity
+export function getWindsurfSettings(account: Account) {
+  if (account.provider !== "windsurf") {
+    return undefined
+  }
+  const defaults = state.providerDefaults.windsurf
+  return {
+    apiKey: getWindsurfApiKey(account) ?? defaults.apiKey,
+    baseUrl:
+      account.settings?.baseUrl ?? account.windsurfBaseUrl ?? defaults.baseUrl,
+    appVersion:
+      account.settings?.appVersion
+      ?? account.windsurfAppVersion
+      ?? defaults.appVersion,
+    lsVersion:
+      account.settings?.lsVersion
+      ?? account.windsurfLsVersion
+      ?? defaults.lsVersion,
+    defaultModel:
+      account.settings?.defaultModel
+      ?? account.windsurfDefaultModel
+      ?? defaults.defaultModel,
+    clientName:
+      account.settings?.clientName
+      ?? account.windsurfClientName
+      ?? defaults.clientName,
+  }
+}
 
 export async function loadAccounts(): Promise<void> {
   try {
@@ -94,6 +356,10 @@ export async function loadAccounts(): Promise<void> {
         id: randomUUID(),
         label: "default",
         provider: "copilot",
+        credentials: {
+          githubToken: legacyToken.trim(),
+        },
+        settings: {},
         githubToken: legacyToken.trim(),
         enabled: true,
         priority: 0,
@@ -114,11 +380,64 @@ export async function loadAccounts(): Promise<void> {
 }
 
 export async function saveAccounts(): Promise<void> {
-  // Exclude ephemeral copilotToken from persistent storage
-  const sanitized = state.accounts.map(
-    ({ copilotToken: _ct, copilotTokenExpiry: _cte, ...rest }) => rest,
-  )
+  const sanitized = state.accounts.map((account) => serializeAccount(account))
   await fs.writeFile(PATHS.ACCOUNTS_PATH, JSON.stringify(sanitized, null, 2))
+}
+
+function serializeAccount(account: Account): Record<string, unknown> {
+  const base = {
+    id: account.id,
+    label: account.label,
+    provider: account.provider,
+    enabled: account.enabled,
+    priority: account.priority,
+    isExhausted: account.isExhausted,
+    exhaustedAt: account.exhaustedAt,
+    createdAt: account.createdAt,
+    availableModels: account.availableModels,
+    quotaInfo: account.quotaInfo,
+  }
+
+  if (account.provider === "copilot") {
+    return {
+      ...base,
+      credentials: {
+        githubToken: getGitHubToken(account),
+      },
+      settings: account.settings ?? {},
+    }
+  }
+
+  if (account.provider === "codebuff") {
+    return {
+      ...base,
+      credentials: {
+        authToken: getCodebuffAuthToken(account),
+      },
+      settings: account.settings ?? {
+        baseUrl: account.codebuffBaseUrl,
+        cliVersion: account.codebuffCliVersion,
+        agentId: account.codebuffAgentId,
+        model: account.codebuffModel,
+        costMode: account.codebuffCostMode,
+        allowFallbacks: account.codebuffAllowFallbacks,
+      },
+    }
+  }
+
+  return {
+    ...base,
+    credentials: {
+      apiKey: getWindsurfApiKey(account),
+    },
+    settings: account.settings ?? {
+      baseUrl: account.windsurfBaseUrl,
+      appVersion: account.windsurfAppVersion,
+      lsVersion: account.windsurfLsVersion,
+      defaultModel: account.windsurfDefaultModel,
+      clientName: account.windsurfClientName,
+    },
+  }
 }
 
 /**
@@ -160,11 +479,14 @@ function rateLimitedResponse(body: string): Response {
   })
 }
 
-function getAccountProvider(account: Account): AccountProvider {
-  return account.provider ?? "copilot"
+export function canonicalModelId(modelId: string): string {
+  const parsed = parseModelReference(modelId)
+  return parsed.provider ?
+      `${parsed.provider}/${parsed.nativeModelId}`
+    : parsed.nativeModelId
 }
 
-export function canonicalModelId(modelId: string): string {
+export function canonicalNativeModelId(modelId: string): string {
   const normalized = modelId.trim().toLowerCase()
   if (normalized === "z-ai/glm5" || normalized === "glm5") {
     return "z-ai/glm-5.1"
@@ -172,11 +494,31 @@ export function canonicalModelId(modelId: string): string {
   return normalized
 }
 
+export function parseModelReference(modelId: string): {
+  provider?: AccountProvider
+  nativeModelId: string
+} {
+  const trimmed = modelId.trim()
+  const slashIndex = trimmed.indexOf("/")
+  if (slashIndex > 0) {
+    const maybeProvider = trimmed.slice(0, slashIndex).toLowerCase()
+    if (isProviderId(maybeProvider)) {
+      return {
+        provider: maybeProvider,
+        nativeModelId: canonicalNativeModelId(trimmed.slice(slashIndex + 1)),
+      }
+    }
+  }
+  return {
+    nativeModelId: canonicalNativeModelId(trimmed),
+  }
+}
+
 function supportsModelExplicitly(account: Account, modelId: string): boolean {
-  const target = canonicalModelId(modelId)
+  const target = parseModelReference(modelId).nativeModelId
   return (
     account.availableModels?.some(
-      (model) => canonicalModelId(model.id) === target,
+      (model) => canonicalNativeModelId(model.id) === target,
     ) ?? false
   )
 }
@@ -185,26 +527,8 @@ function supportsModelWithFallback(account: Account, modelId: string): boolean {
   return supportsModelExplicitly(account, modelId) || !account.availableModels
 }
 
-function inferProviderForModel(modelId: string): AccountProvider {
-  const normalized = modelId.toLowerCase()
-  if (normalized.includes("codebuff")) {
-    return "codebuff"
-  }
-
-  const codebuffModelExists = state.accounts.some(
-    (account) =>
-      getAccountProvider(account) === "codebuff"
-      && supportsModelExplicitly(account, modelId),
-  )
-
-  if (codebuffModelExists) {
-    return "codebuff"
-  }
-
-  return "copilot"
-}
-
 export function getAccountForModel(modelId: string): Account {
+  const reference = parseModelReference(modelId)
   // First, clear isExhausted for any accounts whose cooldown has expired
   for (const account of state.accounts) {
     checkAndClearExpiredCooldown(account)
@@ -241,22 +565,23 @@ export function getAccountForModel(modelId: string): Account {
     )
   }
 
-  // Prefer accounts that explicitly declare support for this model.
-  const expectedProvider = inferProviderForModel(modelId)
-  const providerMatched = available.filter(
-    (account) => getAccountProvider(account) === expectedProvider,
-  )
+  const providerMatched =
+    reference.provider ?
+      available.filter(
+        (account) => getAccountProvider(account) === reference.provider,
+      )
+    : available
 
-  const capablePool = providerMatched.length > 0 ? providerMatched : available
+  const capablePool = reference.provider ? providerMatched : available
 
   const explicitlyCapable = capablePool.filter((account) =>
-    supportsModelExplicitly(account, modelId),
+    supportsModelExplicitly(account, reference.nativeModelId),
   )
   const capable =
     explicitlyCapable.length > 0 ?
       explicitlyCapable
     : capablePool.filter((account) =>
-        supportsModelWithFallback(account, modelId),
+        supportsModelWithFallback(account, reference.nativeModelId),
       )
 
   if (capable.length === 0) {
@@ -265,17 +590,17 @@ export function getAccountForModel(modelId: string): Account {
       (account) =>
         account.enabled
         && account.isExhausted
-        && (providerMatched.length === 0
-          || getAccountProvider(account) === expectedProvider),
+        && (!reference.provider
+          || getAccountProvider(account) === reference.provider),
     )
     const exhaustedExplicit = exhaustedEnabled.filter((account) =>
-      supportsModelExplicitly(account, modelId),
+      supportsModelExplicitly(account, reference.nativeModelId),
     )
     const exhaustedWithModel =
       exhaustedExplicit.length > 0 ?
         exhaustedExplicit
       : exhaustedEnabled.filter((account) =>
-          supportsModelWithFallback(account, modelId),
+          supportsModelWithFallback(account, reference.nativeModelId),
         )
     if (exhaustedWithModel.length > 0) {
       throw new HTTPError(
@@ -294,7 +619,7 @@ export function getAccountForModel(modelId: string): Account {
   state.activeAccountIndex = state.accounts.indexOf(selected)
   state.githubToken =
     getAccountProvider(selected) === "copilot" ?
-      selected.githubToken
+      getGitHubToken(selected)
     : undefined
   return selected
 }
@@ -306,6 +631,7 @@ export function switchToNextAccountForModel(
   currentAccount: Account,
   modelId: string,
 ): Account | null {
+  const reference = parseModelReference(modelId)
   // Sort accounts by priority (stable sort)
   const sorted = state.accounts
     .map((account, originalIndex) => ({ account, originalIndex }))
@@ -319,24 +645,26 @@ export function switchToNextAccountForModel(
     })
     .map((item) => item.account)
 
-  const expectedProvider = inferProviderForModel(modelId)
-  const providerMatched = sorted.filter(
-    (account) =>
-      account.enabled
-      && !account.isExhausted
-      && getAccountProvider(account) === expectedProvider,
-  )
+  const providerMatched =
+    reference.provider ?
+      sorted.filter(
+        (account) =>
+          account.enabled
+          && !account.isExhausted
+          && getAccountProvider(account) === reference.provider,
+      )
+    : []
 
   const capablePool =
-    providerMatched.length > 0 ?
-      providerMatched
-    : sorted.filter((account) => account.enabled && !account.isExhausted)
+    reference.provider ? providerMatched : (
+      sorted.filter((account) => account.enabled && !account.isExhausted)
+    )
 
   const explicitCapable = capablePool.filter((account) =>
-    supportsModelExplicitly(account, modelId),
+    supportsModelExplicitly(account, reference.nativeModelId),
   )
   const fallbackCapable = capablePool.filter((account) =>
-    supportsModelWithFallback(account, modelId),
+    supportsModelWithFallback(account, reference.nativeModelId),
   )
   const capable = explicitCapable.length > 0 ? explicitCapable : fallbackCapable
 
@@ -351,7 +679,10 @@ export function switchToNextAccountForModel(
     const account = capable[idx]
 
     state.activeAccountIndex = state.accounts.indexOf(account)
-    state.githubToken = account.githubToken
+    state.githubToken =
+      getAccountProvider(account) === "copilot" ?
+        getGitHubToken(account)
+      : undefined
     consola.info(
       `Switched to account "${account.label}" for model "${modelId}"`,
     )
@@ -402,7 +733,7 @@ export function getActiveAccount(): Account {
   // Sync state.githubToken for backward compat
   state.githubToken =
     getAccountProvider(selected) === "copilot" ?
-      selected.githubToken
+      getGitHubToken(selected)
     : undefined
   return selected
 }
@@ -411,10 +742,6 @@ export function markAccountExhausted(id: string): void {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return
   if (account.isExhausted) return
-
-  if (getAccountProvider(account) !== "copilot") {
-    return
-  }
 
   account.isExhausted = true
   account.exhaustedAt = Date.now()
@@ -452,7 +779,7 @@ export function switchToNextAccount(): Account | null {
       // Sync state.githubToken for backward compat
       state.githubToken =
         getAccountProvider(account) === "copilot" ?
-          account.githubToken
+          getGitHubToken(account)
         : undefined
       consola.info(`Switched to account "${account.label}"`)
       return account
@@ -493,7 +820,8 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     return
   }
 
-  if (!account.githubToken) {
+  const githubToken = getGitHubToken(account)
+  if (!githubToken) {
     throw new Error(`GitHub token missing for account "${account.label}"`)
   }
 
@@ -502,7 +830,7 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     {
       headers: {
         ...githubHeaders(state),
-        authorization: `token ${account.githubToken}`,
+        authorization: `token ${githubToken}`,
       },
     },
   )
@@ -516,10 +844,8 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     refresh_in: number
   }
 
-  // eslint-disable-next-line require-atomic-updates
-  account.copilotToken = data.token
-  // eslint-disable-next-line require-atomic-updates
-  account.copilotTokenExpiry = data.expires_at * 1000
+  setCopilotToken(account, data.token)
+  setCopilotTokenExpiry(account, data.expires_at * 1000)
 
   if (state.showToken) {
     consola.info(`Copilot token for "${account.label}":`, data.token)
@@ -581,13 +907,17 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
     const existing = await loadAccountsFile()
     const newAccounts: Array<Account> = tokens.map((token, index) => {
       const existingAccount = existing.find(
-        (a) => a.provider === "copilot" && a.githubToken === token,
+        (a) => a.provider === "copilot" && getGitHubToken(a) === token,
       )
       if (existingAccount) return existingAccount
       return {
         id: randomUUID(),
         label: index === 0 ? "default" : `account-${index + 1}`,
         provider: "copilot",
+        credentials: {
+          githubToken: token,
+        },
+        settings: {},
         githubToken: token,
         enabled: true,
         priority: 0,
@@ -606,18 +936,36 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
   const active = state.accounts[state.activeAccountIndex] as Account | undefined
   state.githubToken =
     active && getAccountProvider(active) === "copilot" ?
-      active.githubToken
+      getGitHubToken(active)
     : undefined
 }
 
 // Migrate old isActive field to enabled field for backward compatibility
+// eslint-disable-next-line complexity, max-lines-per-function
 function migrateAccount(account: Record<string, unknown>): Account {
-  const acc = account as Partial<Account> & {
-    isActive?: boolean
-    enabled?: boolean
-    priority?: number
-    provider?: AccountProvider
-  }
+  const acc = account as Record<string, unknown>
+    & Partial<Account> & {
+      isActive?: boolean
+      enabled?: boolean
+      priority?: number
+      provider?: AccountProvider
+      githubToken?: string
+      copilotToken?: string
+      copilotTokenExpiry?: number
+      codebuffAuthToken?: string
+      codebuffBaseUrl?: string
+      codebuffCliVersion?: string
+      codebuffAgentId?: string
+      codebuffModel?: string
+      codebuffCostMode?: string
+      codebuffAllowFallbacks?: boolean
+      windsurfApiKey?: string
+      windsurfBaseUrl?: string
+      windsurfAppVersion?: string
+      windsurfLsVersion?: string
+      windsurfDefaultModel?: string
+      windsurfClientName?: string
+    }
 
   // Migrate isActive → enabled (if enabled not set but isActive is, use isActive)
   if (typeof acc.enabled !== "boolean" && typeof acc.isActive === "boolean") {
@@ -638,14 +986,84 @@ function migrateAccount(account: Record<string, unknown>): Account {
   }
 
   // Default provider for legacy account records
-  if (acc.provider !== "copilot" && acc.provider !== "codebuff") {
+  if (!isProviderId(String(acc.provider))) {
     acc.provider = "copilot"
   }
 
-  // Clean up old field
   delete acc.isActive
 
-  return acc as Account
+  const provider = defaultProvider(acc.provider)
+
+  if (provider === "copilot") {
+    const githubToken =
+      typeof acc.githubToken === "string" ? acc.githubToken : undefined
+    const copilotToken =
+      typeof acc.copilotToken === "string" ? acc.copilotToken : undefined
+    const copilotTokenExpiry =
+      typeof acc.copilotTokenExpiry === "number" ?
+        acc.copilotTokenExpiry
+      : undefined
+
+    return {
+      ...(acc as Partial<CopilotAccount>),
+      provider,
+      credentials: {
+        githubToken:
+          (acc as Partial<CopilotAccount>).credentials?.githubToken
+          ?? githubToken,
+      },
+      settings: (acc as Partial<CopilotAccount>).settings ?? {},
+      githubToken,
+      copilotToken,
+      copilotTokenExpiry,
+      runtimeState: {
+        ...acc.runtimeState,
+        copilotToken,
+        copilotTokenExpiry,
+      },
+    } as CopilotAccount
+  }
+
+  if (provider === "codebuff") {
+    const authToken =
+      typeof acc.codebuffAuthToken === "string" ?
+        acc.codebuffAuthToken
+      : undefined
+    return {
+      ...(acc as Partial<CodebuffAccount>),
+      provider,
+      credentials: {
+        authToken:
+          (acc as Partial<CodebuffAccount>).credentials?.authToken ?? authToken,
+      },
+      settings: (acc as Partial<CodebuffAccount>).settings ?? {
+        baseUrl: acc.codebuffBaseUrl,
+        cliVersion: acc.codebuffCliVersion,
+        agentId: acc.codebuffAgentId,
+        model: acc.codebuffModel,
+        costMode: acc.codebuffCostMode,
+        allowFallbacks: acc.codebuffAllowFallbacks,
+      },
+    } as CodebuffAccount
+  }
+
+  const apiKey =
+    typeof acc.windsurfApiKey === "string" ? acc.windsurfApiKey : undefined
+
+  return {
+    ...(acc as Partial<WindsurfAccount>),
+    provider,
+    credentials: {
+      apiKey: (acc as Partial<WindsurfAccount>).credentials?.apiKey ?? apiKey,
+    },
+    settings: (acc as Partial<WindsurfAccount>).settings ?? {
+      baseUrl: acc.windsurfBaseUrl,
+      appVersion: acc.windsurfAppVersion,
+      lsVersion: acc.windsurfLsVersion,
+      defaultModel: acc.windsurfDefaultModel,
+      clientName: acc.windsurfClientName,
+    },
+  } as WindsurfAccount
 }
 
 async function loadAccountsFile(): Promise<Array<Account>> {
@@ -713,14 +1131,15 @@ async function getCopilotUsageForAccount(account: Account): Promise<{
     completions?: { remaining: number; entitlement: number; unlimited: boolean }
   }
 }> {
-  if (!account.githubToken) {
+  const githubToken = getGitHubToken(account)
+  if (!githubToken) {
     throw new Error(`GitHub token missing for account "${account.label}"`)
   }
 
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
     headers: {
       ...githubHeaders(state),
-      authorization: `token ${account.githubToken}`,
+      authorization: `token ${githubToken}`,
     },
   })
 

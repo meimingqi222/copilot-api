@@ -4,15 +4,20 @@ import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
 import { websocket } from "hono/bun"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 import { resolve } from "node:path"
 import invariant from "tiny-invariant"
 
 import {
+  type CodebuffAccount,
+  type WindsurfAccount,
+  getCodebuffAuthToken,
+  getWindsurfApiKey,
   initAccounts,
   scheduleQuotaRefresh,
   refreshCopilotToken,
+  saveAccounts,
 } from "./lib/accounts"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
@@ -31,7 +36,7 @@ import { server } from "./server"
 interface RunServerOptions {
   port: number
   verbose: boolean
-  provider: "copilot" | "codebuff"
+  provider: "copilot" | "codebuff" | "windsurf"
   accountType: string
   manual: boolean
   githubToken?: string
@@ -49,6 +54,12 @@ interface RunServerOptions {
   codebuffModel?: string
   codebuffCostMode?: string
   codebuffAllowFallbacks: boolean
+  windsurfApiKey?: string
+  windsurfBaseUrl?: string
+  windsurfAppVersion?: string
+  windsurfLsVersion?: string
+  windsurfModel?: string
+  windsurfClientName?: string
 }
 
 // eslint-disable-next-line max-lines-per-function, complexity
@@ -75,22 +86,56 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     consola.info("Verbose logging enabled")
   }
 
+  state.defaultProvider = options.provider
   state.provider = options.provider
   state.accountType = options.accountType
   if (options.accountType !== "individual") {
     consola.info(`Using ${options.accountType} plan GitHub account`)
   }
 
+  state.providerDefaults.codebuff.baseUrl =
+    options.codebuffBaseUrl ?? state.providerDefaults.codebuff.baseUrl
+  state.providerDefaults.codebuff.authToken = options.codebuffAuthToken
+  state.providerDefaults.codebuff.cliVersion =
+    options.codebuffCliVersion ?? state.providerDefaults.codebuff.cliVersion
+  state.providerDefaults.codebuff.agentId =
+    options.codebuffAgentId ?? state.providerDefaults.codebuff.agentId
+  state.providerDefaults.codebuff.model =
+    options.codebuffModel ?? state.providerDefaults.codebuff.model
+  state.providerDefaults.codebuff.costMode =
+    options.codebuffCostMode ?? state.providerDefaults.codebuff.costMode
+  state.providerDefaults.codebuff.allowFallbacks =
+    options.codebuffAllowFallbacks
+
+  state.codebuffBaseUrl = state.providerDefaults.codebuff.baseUrl
+  state.codebuffAuthToken = state.providerDefaults.codebuff.authToken
+  state.codebuffCliVersion = state.providerDefaults.codebuff.cliVersion
+  state.codebuffAgentId = state.providerDefaults.codebuff.agentId
+  state.codebuffModel = state.providerDefaults.codebuff.model
+  state.codebuffCostMode = state.providerDefaults.codebuff.costMode
+  state.codebuffAllowFallbacks = state.providerDefaults.codebuff.allowFallbacks
+
+  state.providerDefaults.windsurf.apiKey = options.windsurfApiKey
+  state.providerDefaults.windsurf.baseUrl =
+    options.windsurfBaseUrl ?? state.providerDefaults.windsurf.baseUrl
+  state.providerDefaults.windsurf.appVersion =
+    options.windsurfAppVersion ?? state.providerDefaults.windsurf.appVersion
+  state.providerDefaults.windsurf.lsVersion =
+    options.windsurfLsVersion ?? state.providerDefaults.windsurf.lsVersion
+  state.providerDefaults.windsurf.defaultModel =
+    options.windsurfModel ?? state.providerDefaults.windsurf.defaultModel
+  state.providerDefaults.windsurf.clientName =
+    options.windsurfClientName ?? state.providerDefaults.windsurf.clientName
+
   if (options.provider === "codebuff") {
-    state.codebuffBaseUrl = options.codebuffBaseUrl ?? state.codebuffBaseUrl
-    state.codebuffAuthToken = options.codebuffAuthToken
-    state.codebuffCliVersion =
-      options.codebuffCliVersion ?? state.codebuffCliVersion
-    state.codebuffAgentId = options.codebuffAgentId ?? state.codebuffAgentId
-    state.codebuffModel = options.codebuffModel ?? state.codebuffModel
-    state.codebuffCostMode = options.codebuffCostMode ?? state.codebuffCostMode
-    state.codebuffAllowFallbacks = options.codebuffAllowFallbacks
-    consola.info(`Using codebuff defaults: ${state.codebuffBaseUrl}`)
+    consola.info(
+      `Using codebuff defaults: ${state.providerDefaults.codebuff.baseUrl}`,
+    )
+  }
+  if (options.provider === "windsurf") {
+    consola.info(
+      `Using windsurf defaults: ${state.providerDefaults.windsurf.baseUrl}`,
+    )
   }
 
   state.manualApprove = options.manual
@@ -164,9 +209,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       await initAccounts()
     }
 
+    await ensureDirectProviderAccounts()
+
     // Refresh Copilot tokens for copilot accounts
     for (const account of state.accounts) {
-      if ((account.provider ?? "copilot") !== "copilot") {
+      if (account.provider !== "copilot") {
         continue
       }
 
@@ -174,7 +221,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
         await refreshCopilotToken(account)
         // Sync legacy state.githubToken for backward compat services
         if (account === state.accounts[state.activeAccountIndex]) {
-          state.githubToken = account.githubToken
+          state.githubToken =
+            account.credentials?.githubToken ?? account.githubToken
         }
       } catch (err) {
         consola.warn(
@@ -279,6 +327,192 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   })
 }
 
+export async function ensureDirectProviderAccounts(): Promise<void> {
+  let changed = false
+  changed = syncCodebuffDefaultAccount() || changed
+  changed = syncWindsurfDefaultAccount() || changed
+
+  if (changed) {
+    await saveAccounts()
+  }
+}
+
+function syncCodebuffDefaultAccount(): boolean {
+  let changed = false
+  const defaults = state.providerDefaults.codebuff
+  const existingAccount = state.accounts.find(
+    (account): account is CodebuffAccount =>
+      isCodebuffManagedDefaultAccount(account)
+      && getCodebuffAuthToken(account) === defaults.authToken,
+  )
+
+  if (existingAccount) {
+    applyCodebuffDefaults(existingAccount)
+    changed = true
+  }
+
+  if (
+    defaults.authToken
+    && !state.accounts.some(
+      (account) =>
+        account.provider === "codebuff"
+        && getCodebuffAuthToken(account) === defaults.authToken,
+    )
+  ) {
+    state.accounts.push(createCodebuffDefaultAccount())
+    changed = true
+  }
+
+  return changed
+}
+
+function isCodebuffManagedDefaultAccount(account: {
+  provider: string
+  label: string
+}): account is CodebuffAccount {
+  return account.provider === "codebuff" && account.label === "codebuff-default"
+}
+
+function applyCodebuffDefaults(account: CodebuffAccount): void {
+  const defaults = state.providerDefaults.codebuff
+  account.settings = {
+    ...account.settings,
+    baseUrl: defaults.baseUrl,
+    cliVersion: defaults.cliVersion,
+    agentId: defaults.agentId,
+    model: defaults.model,
+    costMode: defaults.costMode,
+    allowFallbacks: defaults.allowFallbacks,
+  }
+  account.codebuffBaseUrl = defaults.baseUrl
+  account.codebuffCliVersion = defaults.cliVersion
+  account.codebuffAgentId = defaults.agentId
+  account.codebuffModel = defaults.model
+  account.codebuffCostMode = defaults.costMode
+  account.codebuffAllowFallbacks = defaults.allowFallbacks
+}
+
+function createCodebuffDefaultAccount() {
+  const defaults = state.providerDefaults.codebuff
+  return {
+    id: randomUUID(),
+    label: "codebuff-default",
+    provider: "codebuff" as const,
+    credentials: {
+      authToken: defaults.authToken,
+    },
+    settings: {
+      baseUrl: defaults.baseUrl,
+      cliVersion: defaults.cliVersion,
+      agentId: defaults.agentId,
+      model: defaults.model,
+      costMode: defaults.costMode,
+      allowFallbacks: defaults.allowFallbacks,
+    },
+    codebuffAuthToken: defaults.authToken,
+    codebuffBaseUrl: defaults.baseUrl,
+    codebuffCliVersion: defaults.cliVersion,
+    codebuffAgentId: defaults.agentId,
+    codebuffModel: defaults.model,
+    codebuffCostMode: defaults.costMode,
+    codebuffAllowFallbacks: defaults.allowFallbacks,
+    enabled: true,
+    priority: 0,
+    isExhausted: false,
+    createdAt: Date.now(),
+  }
+}
+
+function syncWindsurfDefaultAccount(): boolean {
+  let changed = false
+  const defaults = state.providerDefaults.windsurf
+  const existingAccount = state.accounts.find(
+    (account): account is WindsurfAccount =>
+      isWindsurfManagedDefaultAccount(account)
+      && getWindsurfApiKey(account) === defaults.apiKey,
+  )
+
+  if (existingAccount) {
+    applyWindsurfDefaults(existingAccount)
+    changed = true
+  }
+
+  if (
+    defaults.apiKey
+    && !state.accounts.some(
+      (account) =>
+        account.provider === "windsurf"
+        && getWindsurfApiKey(account) === defaults.apiKey,
+    )
+  ) {
+    state.accounts.push(createWindsurfDefaultAccount())
+    changed = true
+  }
+
+  return changed
+}
+
+function isWindsurfManagedDefaultAccount(account: {
+  provider: string
+  label: string
+}): account is WindsurfAccount {
+  return account.provider === "windsurf" && account.label === "windsurf-default"
+}
+
+function applyWindsurfDefaults(account: WindsurfAccount): void {
+  const defaults = state.providerDefaults.windsurf
+  account.settings = {
+    ...account.settings,
+    baseUrl: defaults.baseUrl,
+    appVersion: defaults.appVersion,
+    lsVersion: defaults.lsVersion,
+    defaultModel: defaults.defaultModel,
+    clientName: defaults.clientName,
+  }
+  account.windsurfBaseUrl = defaults.baseUrl
+  account.windsurfAppVersion = defaults.appVersion
+  account.windsurfLsVersion = defaults.lsVersion
+  account.windsurfDefaultModel = defaults.defaultModel
+  account.windsurfClientName = defaults.clientName
+}
+
+function createWindsurfDefaultAccount() {
+  const defaults = state.providerDefaults.windsurf
+  return {
+    id: randomUUID(),
+    label: "windsurf-default",
+    provider: "windsurf" as const,
+    credentials: {
+      apiKey: defaults.apiKey,
+    },
+    settings: {
+      baseUrl: defaults.baseUrl,
+      appVersion: defaults.appVersion,
+      lsVersion: defaults.lsVersion,
+      defaultModel: defaults.defaultModel,
+      clientName: defaults.clientName,
+    },
+    windsurfApiKey: defaults.apiKey,
+    windsurfBaseUrl: defaults.baseUrl,
+    windsurfAppVersion: defaults.appVersion,
+    windsurfLsVersion: defaults.lsVersion,
+    windsurfDefaultModel: defaults.defaultModel,
+    windsurfClientName: defaults.clientName,
+    enabled: true,
+    priority: 0,
+    isExhausted: false,
+    createdAt: Date.now(),
+  }
+}
+
+function resolveProvider(
+  provider?: string,
+): "copilot" | "codebuff" | "windsurf" {
+  if (provider === "codebuff") return "codebuff"
+  if (provider === "windsurf") return "windsurf"
+  return "copilot"
+}
+
 /**
  * If the admin password is plaintext (not sha256: prefixed),
  * hash it in-place and rewrite the .env file so the secret
@@ -328,7 +562,7 @@ export const start = defineCommand({
     provider: {
       type: "string",
       default: "copilot",
-      description: "Provider to use (copilot, codebuff)",
+      description: "Provider to use (copilot, codebuff, windsurf)",
     },
     "account-type": {
       alias: "a",
@@ -419,12 +653,41 @@ export const start = defineCommand({
       default: process.env.CODEBUFF_ALLOW_FALLBACKS !== "false",
       description: "Codebuff provider.allow_fallbacks",
     },
+    "windsurf-api-key": {
+      type: "string",
+      default: process.env.WINDSURF_API_KEY,
+      description: "Windsurf API key",
+    },
+    "windsurf-base-url": {
+      type: "string",
+      default:
+        process.env.WINDSURF_BASE_URL
+        ?? "https://server.self-serve.windsurf.com",
+      description: "Windsurf API base URL",
+    },
+    "windsurf-app-version": {
+      type: "string",
+      default: process.env.WINDSURF_APP_VERSION ?? "1.48.2",
+      description: "Windsurf app version",
+    },
+    "windsurf-ls-version": {
+      type: "string",
+      default: process.env.WINDSURF_LS_VERSION ?? "2.0.1050",
+      description: "Windsurf language-server version",
+    },
+    "windsurf-model": {
+      type: "string",
+      default: process.env.WINDSURF_MODEL ?? "swe-1-6-fast",
+      description: "Windsurf default model",
+    },
+    "windsurf-client-name": {
+      type: "string",
+      default: process.env.WINDSURF_CLIENT_NAME ?? "windsurf-next",
+      description: "Windsurf client name",
+    },
   },
   run({ args }) {
-    const provider =
-      args.provider === "codebuff" ?
-        ("codebuff" as const)
-      : ("copilot" as const)
+    const provider = resolveProvider(args.provider)
     return runServer({
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
@@ -446,6 +709,12 @@ export const start = defineCommand({
       codebuffModel: args["codebuff-model"],
       codebuffCostMode: args["codebuff-cost-mode"],
       codebuffAllowFallbacks: args["codebuff-allow-fallbacks"],
+      windsurfApiKey: args["windsurf-api-key"],
+      windsurfBaseUrl: args["windsurf-base-url"],
+      windsurfAppVersion: args["windsurf-app-version"],
+      windsurfLsVersion: args["windsurf-ls-version"],
+      windsurfModel: args["windsurf-model"],
+      windsurfClientName: args["windsurf-client-name"],
     })
   },
 })

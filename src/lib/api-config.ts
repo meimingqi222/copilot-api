@@ -38,9 +38,12 @@ export const copilotHeaders = (
 ) => {
   // Determine the token: Account has copilotToken, State has copilotToken (legacy)
   const token =
-    "copilotToken" in stateOrAccount ?
-      stateOrAccount.copilotToken
-    : (stateOrAccount as State & { copilotToken?: string }).copilotToken
+    "accounts" in stateOrAccount ?
+      (stateOrAccount as State & { copilotToken?: string }).copilotToken
+    : (stateOrAccount.runtimeState?.copilotToken
+      ?? ("copilotToken" in stateOrAccount ?
+        stateOrAccount.copilotToken
+      : undefined))
 
   const vsCodeVersion = globalState.vsCodeVersion
 

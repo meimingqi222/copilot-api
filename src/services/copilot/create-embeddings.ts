@@ -1,7 +1,6 @@
-import { getAccountForModel } from "~/lib/accounts"
-import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
-import { HTTPError } from "~/lib/error"
-import { state } from "~/lib/state"
+import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
 export const createEmbeddings = async (
   payload: EmbeddingRequest,
@@ -9,25 +8,20 @@ export const createEmbeddings = async (
   accountId: string
   response: EmbeddingResponse
 }> => {
-  const account = getAccountForModel(payload.model)
-  if (account.provider === "codebuff") {
-    throw new Error(`Model "${payload.model}" does not support embeddings`)
+  initializeProviderRegistry()
+  const routedPayload = {
+    ...payload,
+    model: canonicalModelId(payload.model),
+  }
+  const account = getAccountForModel(routedPayload.model)
+  const runtime = getProviderRuntime(account.provider)
+  if (!runtime.createEmbeddings) {
+    throw new Error(
+      `Model "${payload.model}" does not support embeddings on provider "${account.provider}"`,
+    )
   }
 
-  if (!account.copilotToken) throw new Error("Copilot token not found")
-
-  const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
-    method: "POST",
-    headers: copilotHeaders(account),
-    body: JSON.stringify(payload),
-  })
-
-  if (!response.ok) throw new HTTPError("Failed to create embeddings", response)
-
-  return {
-    accountId: account.id,
-    response: (await response.json()) as EmbeddingResponse,
-  }
+  return runtime.createEmbeddings(account, routedPayload)
 }
 
 export interface EmbeddingRequest {

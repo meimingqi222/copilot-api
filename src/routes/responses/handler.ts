@@ -12,6 +12,7 @@ import { getAccountForModel } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
+import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
@@ -22,6 +23,8 @@ import { state } from "~/lib/state"
 import { recordUsage } from "~/lib/usage"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
+import { initializeProviderRegistry } from "~/services/providers"
+import { providerSupports } from "~/services/providers/registry"
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
@@ -94,11 +97,25 @@ export async function prepareResponsesRequest(
   payload: ResponsesPayload,
   signal: AbortSignal,
 ): Promise<"agent" | "user" | undefined> {
+  checkProtectedRouteGuard(c, {
+    routeKind: "reasoning",
+    model: payload.model,
+    maxTokens:
+      typeof payload.max_output_tokens === "number" ?
+        payload.max_output_tokens
+      : undefined,
+    stream: payload.stream === true ? true : undefined,
+  })
+
   const account = getAccountForModel(payload.model)
-  await checkAccountRateLimitOrThrow(account.id, signal)
+  initializeProviderRegistry()
+  if (providerSupports(account, "cooldown")) {
+    await checkAccountRateLimitOrThrow(account.id, signal)
+  }
 
   const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
   const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
+  c.set("guardInitiator" as never, initiator)
 
   if (state.manualApprove) {
     await awaitApproval()

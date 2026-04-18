@@ -198,6 +198,66 @@ test("routes responses-only models to /responses", async () => {
   throw new Error("Expected non-streaming response")
 })
 
+test("strips copilot prefix before forwarding qualified chat models upstream", async () => {
+  state.accounts = [
+    {
+      id: "copilot-qualified-account",
+      label: "copilot-qualified",
+      provider: "copilot",
+      githubToken: "gh-test-token",
+      copilotToken: "test-token",
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+      availableModels: [
+        {
+          id: "gpt-test",
+          name: "gpt-test",
+          vendor: "OpenAI",
+          pickerEnabled: true,
+          supportedEndpoints: ["/chat/completions"],
+          provider: "copilot",
+        },
+      ],
+    },
+  ]
+  state.activeAccountIndex = 0
+
+  const localFetchMock = mock((url: string, opts?: { body?: string }) => ({
+    ok: true,
+    json: () => ({
+      id: "chatcmpl-qualified",
+      object: "chat.completion",
+      created: 1,
+      model: "gpt-test",
+      choices: [],
+    }),
+    url,
+    opts,
+  }))
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+    localFetchMock as unknown as typeof fetch
+
+  await createChatCompletions({
+    model: "copilot/gpt-test",
+    messages: [{ role: "user", content: "hello" }],
+  })
+
+  const [, options] = localFetchMock.mock.calls[0] as [
+    string,
+    { body?: string },
+  ]
+  expect(JSON.parse(options.body ?? "{}")).toMatchObject({
+    model: "gpt-test",
+  })
+
+  state.accounts = [mockAccount]
+  state.activeAccountIndex = 0
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
+    fetchMock as unknown as typeof fetch
+})
+
 test("codebuff account sends start/chat/finish workflow", async () => {
   state.provider = "copilot"
   state.codebuffBaseUrl = "https://www.codebuff.com"

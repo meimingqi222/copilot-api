@@ -2,6 +2,8 @@ import type { Context, Next } from "hono"
 
 import consola from "consola"
 
+import { isProtectedRoute } from "~/lib/protected-routes"
+
 /**
  * Per-key client-side rate limiter.
  *
@@ -111,6 +113,11 @@ export function clientRateLimit(options?: {
   return async (c: Context, next: Next) => {
     // Skip rate limiting for admin dashboard and health check
     if (c.req.path === "/health" || c.req.path.startsWith("/admin")) {
+      await next()
+      return
+    }
+
+    if (!isProtectedRoute(c.req.path)) {
       await next()
       return
     }

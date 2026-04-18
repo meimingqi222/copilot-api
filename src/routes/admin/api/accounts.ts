@@ -7,9 +7,14 @@ import type { Account, AccountProvider } from "~/lib/accounts"
 
 import {
   cancelTokenRefreshTimer,
+  getCodebuffAuthToken,
+  getGitHubToken,
+  getWindsurfApiKey,
   refreshCopilotToken,
   refreshQuotaForAccount,
   saveAccounts,
+  setCodebuffAuthToken,
+  setWindsurfApiKey,
   switchToNextAccount,
 } from "~/lib/accounts"
 import {
@@ -18,34 +23,128 @@ import {
   standardHeaders,
 } from "~/lib/api-config"
 import { PATHS } from "~/lib/paths"
+import { isProviderId } from "~/lib/provider-config"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
-async function updateCodebuffAccount(
+function getHasCredentials(account: Account): boolean {
+  if (account.provider === "copilot") {
+    return Boolean(getGitHubToken(account))
+  }
+  if (account.provider === "codebuff") {
+    return Boolean(getCodebuffAuthToken(account))
+  }
+  return Boolean(getWindsurfApiKey(account))
+}
+
+// eslint-disable-next-line complexity
+async function updateProviderAccount(
   account: Account,
   body: {
     label?: string
     enabled?: boolean
     priority?: number
     authToken?: string
+    apiKey?: string
+    credentials?: Record<string, unknown>
+    settings?: Record<string, unknown>
   },
 ): Promise<void> {
-  if (account.provider !== "codebuff") return
+  if (account.provider === "codebuff") {
+    const authToken =
+      typeof body.credentials?.authToken === "string" ?
+        body.credentials.authToken
+      : body.authToken
+    if (
+      Object.hasOwn(body, "authToken")
+      || Object.hasOwn(body.credentials ?? {}, "authToken")
+    ) {
+      setCodebuffAuthToken(account, authToken?.trim() || undefined)
+    }
+    account.settings = {
+      ...account.settings,
+      ...body.settings,
+    }
+    const settings = account.settings
+    account.codebuffBaseUrl =
+      typeof settings.baseUrl === "string" ?
+        settings.baseUrl
+      : account.codebuffBaseUrl
+    account.codebuffCliVersion =
+      typeof settings.cliVersion === "string" ?
+        settings.cliVersion
+      : account.codebuffCliVersion
+    account.codebuffAgentId =
+      typeof settings.agentId === "string" ?
+        settings.agentId
+      : account.codebuffAgentId
+    account.codebuffModel =
+      typeof settings.model === "string" ?
+        settings.model
+      : account.codebuffModel
+    account.codebuffCostMode =
+      typeof settings.costMode === "string" ?
+        settings.costMode
+      : account.codebuffCostMode
+    account.codebuffAllowFallbacks =
+      typeof settings.allowFallbacks === "boolean" ?
+        settings.allowFallbacks
+      : account.codebuffAllowFallbacks
+    await refreshModelsForAccount(account)
+    return
+  }
 
-  if (Object.hasOwn(body, "authToken")) {
-    account.codebuffAuthToken = body.authToken?.trim() || undefined
+  if (account.provider === "windsurf") {
+    const apiKey =
+      typeof body.credentials?.apiKey === "string" ?
+        body.credentials.apiKey
+      : body.apiKey
+    if (
+      Object.hasOwn(body, "apiKey")
+      || Object.hasOwn(body.credentials ?? {}, "apiKey")
+    ) {
+      setWindsurfApiKey(account, apiKey?.trim() || undefined)
+    }
+    account.settings = {
+      ...account.settings,
+      ...body.settings,
+    }
+    const settings = account.settings
+    account.windsurfBaseUrl =
+      typeof settings.baseUrl === "string" ?
+        settings.baseUrl
+      : account.windsurfBaseUrl
+    account.windsurfAppVersion =
+      typeof settings.appVersion === "string" ?
+        settings.appVersion
+      : account.windsurfAppVersion
+    account.windsurfLsVersion =
+      typeof settings.lsVersion === "string" ?
+        settings.lsVersion
+      : account.windsurfLsVersion
+    account.windsurfDefaultModel =
+      typeof settings.defaultModel === "string" ?
+        settings.defaultModel
+      : account.windsurfDefaultModel
+    account.windsurfClientName =
+      typeof settings.clientName === "string" ?
+        settings.clientName
+      : account.windsurfClientName
     await refreshModelsForAccount(account)
   }
 }
 
 export const accountApiRoutes = new Hono()
+export const accountFlowApiRoutes = new Hono()
 
 // Persisted map of pending device-code flows: deviceCode → pollState
 interface PollState {
   label: string
-  provider?: AccountProvider
+  provider: AccountProvider
   interval: number
   expiresAt: number
   status: "pending" | "complete" | "expired"
@@ -84,17 +183,22 @@ void loadPendingFlows()
 
 // Sanitize account for API response (omit sensitive tokens, compute isActive dynamically)
 function publicAccount(account: Account) {
-  const {
-    githubToken: _token,
-    copilotToken: _ct,
-    copilotTokenExpiry: _cte,
-    quotaInfo: _quota,
-    codebuffAuthToken: _codebuffToken,
-    ...rest
-  } = account
+  initializeProviderRegistry()
+  const runtime = getProviderRuntime(account.provider)
   return {
-    ...rest,
+    id: account.id,
+    label: account.label,
+    provider: account.provider,
+    availableModels: account.availableModels,
+    enabled: account.enabled,
     priority: account.priority,
+    isExhausted: account.isExhausted,
+    exhaustedAt: account.exhaustedAt,
+    createdAt: account.createdAt,
+    settings: account.settings ?? {},
+    providerFeatures: runtime.descriptor.features,
+    authStatus: account.runtimeState?.authStatus ?? "ready",
+    hasCredentials: getHasCredentials(account),
     isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
   }
 }
@@ -105,11 +209,16 @@ accountApiRoutes.get("/", (c) => {
   })
 })
 
+// eslint-disable-next-line max-lines-per-function
 accountApiRoutes.post("/", async (c) => {
+  initializeProviderRegistry()
   let body: {
     label?: string
     provider?: AccountProvider
     authToken?: string
+    apiKey?: string
+    credentials?: Record<string, unknown>
+    settings?: Record<string, unknown>
   }
   try {
     body = await c.req.json()
@@ -118,13 +227,14 @@ accountApiRoutes.post("/", async (c) => {
   }
 
   const provider =
-    body.provider === "codebuff" || body.provider === "copilot" ?
-      body.provider
-    : "copilot"
+    isProviderId(String(body.provider)) ? body.provider : "copilot"
   const label = body.label ?? `account-${state.accounts.length + 1}`
 
   if (provider === "codebuff") {
-    const authToken = body.authToken?.trim()
+    const authToken =
+      typeof body.credentials?.authToken === "string" ?
+        body.credentials.authToken.trim()
+      : body.authToken?.trim()
     if (!authToken) {
       return c.json({ error: "Codebuff auth token is required." }, 400)
     }
@@ -137,11 +247,55 @@ accountApiRoutes.post("/", async (c) => {
       priority: 0,
       isExhausted: false,
       createdAt: Date.now(),
+      credentials: {
+        authToken,
+      },
+      settings: {
+        ...body.settings,
+      },
       codebuffAuthToken: authToken,
     }
 
     state.accounts.push(account)
     await refreshModelsForAccount(account)
+    await saveAccounts()
+
+    return c.json({
+      status: "complete",
+      accountId: account.id,
+      account: publicAccount(account),
+    })
+  }
+
+  if (provider === "windsurf") {
+    const apiKey =
+      typeof body.credentials?.apiKey === "string" ?
+        body.credentials.apiKey.trim()
+      : body.apiKey?.trim()
+    if (!apiKey) {
+      return c.json({ error: "Windsurf API key is required." }, 400)
+    }
+
+    const account: Account = {
+      id: randomUUID(),
+      label,
+      provider,
+      enabled: true,
+      priority: 0,
+      isExhausted: false,
+      createdAt: Date.now(),
+      credentials: {
+        apiKey,
+      },
+      settings: {
+        ...body.settings,
+      },
+      windsurfApiKey: apiKey,
+    }
+
+    state.accounts.push(account)
+    await refreshModelsForAccount(account)
+    await saveAccounts()
 
     return c.json({
       status: "complete",
@@ -183,6 +337,8 @@ accountApiRoutes.post("/", async (c) => {
   }, expires_in * 1000)
 
   return c.json({
+    flowId: device_code,
+    status: "pending_auth",
     deviceCode: device_code,
     userCode: user_code,
     verificationUri: verification_uri,
@@ -191,22 +347,27 @@ accountApiRoutes.post("/", async (c) => {
   })
 })
 
-accountApiRoutes.post("/poll/:deviceCode", async (c) => {
-  const deviceCode = c.req.param("deviceCode")
-  const flow = pendingFlows.get(deviceCode)
+// eslint-disable-next-line max-lines-per-function
+async function pollAccountFlow(flowId: string): Promise<{
+  status: string
+  accountId?: string
+  interval?: number
+  error?: string
+}> {
+  const flow = pendingFlows.get(flowId)
 
   if (!flow) {
-    return c.json({ error: "Unknown or expired device code." }, 404)
+    return { status: "error", error: "Unknown or expired flow." }
   }
 
   if (flow.status === "complete") {
-    return c.json({ status: "complete", accountId: flow.accountId })
+    return { status: "complete", accountId: flow.accountId }
   }
 
   if (flow.status === "expired" || Date.now() > flow.expiresAt) {
     flow.status = "expired"
     await savePendingFlows()
-    return c.json({ status: "expired" })
+    return { status: "expired" }
   }
 
   // Try to exchange device_code for access_token
@@ -215,14 +376,14 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     headers: standardHeaders(),
     body: JSON.stringify({
       client_id: GITHUB_CLIENT_ID,
-      device_code: deviceCode,
+      device_code: flowId,
       grant_type: "urn:ietf:params:oauth:grant-type:device_code",
     }),
   })
 
   if (!response.ok) {
     consola.debug(`Poll device flow: GitHub returned ${response.status}`)
-    return c.json({ status: "pending" })
+    return { status: "pending" }
   }
 
   let json: {
@@ -236,11 +397,11 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     consola.debug("Poll device flow: GitHub response:", json)
   } catch (e) {
     consola.error("Poll device flow: Failed to parse GitHub response:", e)
-    return c.json({ status: "pending" })
+    return { status: "pending" }
   }
 
   if (json.error === "authorization_pending") {
-    return c.json({ status: "pending", interval: flow.interval })
+    return { status: "pending", interval: flow.interval }
   }
 
   if (json.error === "slow_down") {
@@ -252,17 +413,17 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     consola.debug(
       `Poll device flow: slow_down received, increasing interval to ${newInterval}s`,
     )
-    return c.json({ status: "pending", interval: newInterval })
+    return { status: "pending", interval: newInterval }
   }
 
   if (json.error) {
     flow.status = "expired"
     await savePendingFlows()
-    return c.json({ status: "expired" })
+    return { status: "expired" }
   }
 
   if (!json.access_token) {
-    return c.json({ status: "pending" })
+    return { status: "pending" }
   }
 
   // Create account
@@ -270,6 +431,10 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     id: randomUUID(),
     label: flow.label,
     provider: "copilot",
+    credentials: {
+      githubToken: json.access_token,
+    },
+    settings: {},
     githubToken: json.access_token,
     enabled: true,
     priority: 0,
@@ -308,7 +473,23 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
     }, 2000)
   }
 
-  return c.json({ status: "complete", accountId: account.id })
+  return { status: "complete", accountId: account.id }
+}
+
+accountApiRoutes.post("/poll/:deviceCode", async (c) => {
+  const result = await pollAccountFlow(c.req.param("deviceCode"))
+  if (result.error) {
+    return c.json({ error: result.error }, 404)
+  }
+  return c.json(result)
+})
+
+accountFlowApiRoutes.post("/:flowId/poll", async (c) => {
+  const result = await pollAccountFlow(c.req.param("flowId"))
+  if (result.error) {
+    return c.json({ error: result.error }, 404)
+  }
+  return c.json(result)
 })
 
 accountApiRoutes.put("/:id", async (c) => {
@@ -321,6 +502,9 @@ accountApiRoutes.put("/:id", async (c) => {
     enabled?: boolean
     priority?: number
     authToken?: string
+    apiKey?: string
+    credentials?: Record<string, unknown>
+    settings?: Record<string, unknown>
   }
   try {
     body = await c.req.json()
@@ -342,7 +526,7 @@ accountApiRoutes.put("/:id", async (c) => {
     )
   }
 
-  await updateCodebuffAccount(account, body)
+  await updateProviderAccount(account, body)
 
   await saveAccounts()
   cacheModels()
@@ -380,22 +564,24 @@ accountApiRoutes.delete("/:id", async (c) => {
   return c.json({ ok: true })
 })
 
-// Force-refresh Copilot token for an account
 accountApiRoutes.post("/:id/refresh", async (c) => {
+  initializeProviderRegistry()
   const id = c.req.param("id")
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
   try {
-    if (account.provider === "codebuff") {
-      await refreshModelsForAccount(account)
-      await saveAccounts()
-      cacheModels()
-      return c.json({ account: publicAccount(account) })
+    const runtime = getProviderRuntime(account.provider)
+    if (runtime.refreshAuth) {
+      await runtime.refreshAuth(account)
     }
 
-    await refreshCopilotToken(account)
     await refreshModelsForAccount(account)
+    if (runtime.refreshQuota) {
+      await runtime.refreshQuota(account)
+    } else if (account.provider === "copilot") {
+      await refreshQuotaForAccount(account)
+    }
     await saveAccounts()
     cacheModels()
     return c.json({ account: publicAccount(account) })

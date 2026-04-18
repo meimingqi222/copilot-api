@@ -7,6 +7,7 @@ import type {
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
+import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
@@ -217,19 +218,19 @@ interface CodebuffRuntimeSettings {
   allowFallbacks: boolean
 }
 
+// eslint-disable-next-line complexity
 function resolveCodebuffSettings(account: Account): CodebuffRuntimeSettings {
-  const normalizedModel =
-    account.availableModels?.[0]?.id ?? state.codebuffModel
+  const settings = getCodebuffSettings(account)
+  const normalizedModel = account.availableModels?.[0]?.id ?? settings?.model
 
   return {
-    authToken: account.codebuffAuthToken ?? state.codebuffAuthToken,
-    baseUrl: account.codebuffBaseUrl ?? state.codebuffBaseUrl,
-    cliVersion: account.codebuffCliVersion ?? state.codebuffCliVersion,
-    agentId: account.codebuffAgentId ?? state.codebuffAgentId,
-    defaultModel: normalizedModel,
-    costMode: account.codebuffCostMode ?? state.codebuffCostMode,
-    allowFallbacks:
-      account.codebuffAllowFallbacks ?? state.codebuffAllowFallbacks,
+    authToken: settings?.authToken ?? state.codebuffAuthToken,
+    baseUrl: settings?.baseUrl ?? state.codebuffBaseUrl,
+    cliVersion: settings?.cliVersion ?? state.codebuffCliVersion,
+    agentId: settings?.agentId ?? state.codebuffAgentId,
+    defaultModel: normalizedModel ?? state.codebuffModel,
+    costMode: settings?.costMode ?? state.codebuffCostMode,
+    allowFallbacks: settings?.allowFallbacks ?? state.codebuffAllowFallbacks,
   }
 }
 
