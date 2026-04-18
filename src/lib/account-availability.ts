@@ -31,7 +31,10 @@ export function refreshAccountRuntimeAvailability(account: Account): boolean {
     return false
   }
 
-  if (account.cooldownUntil || account.lastRateLimitAt) {
+  // Check if the account's cooldownUntil field is set but the rate-limit state
+  // indicates no active cooldown, which means the account's cooldown has expired
+  // and we need to clear the stale cooldownUntil timestamp.
+  if (account.cooldownUntil && account.cooldownUntil < Date.now()) {
     account.cooldownUntil = undefined
     account.lastRateLimitReason = undefined
     syncLegacyExhaustedState(account)
