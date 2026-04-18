@@ -267,10 +267,16 @@ export function switchToNextAccountForModel(
   }
 
   const currentIdx = capable.indexOf(currentAccount)
-  for (let i = 1; i <= capable.length; i++) {
-    const idx = currentIdx === -1 ? i - 1 : (currentIdx + i) % capable.length
+  for (let i = 1; i < capable.length; i++) {
+    const idx = (currentIdx + i) % capable.length
     const account = capable[idx]
-    return account
+    if (account.id !== currentAccount.id) {
+      return account
+    }
+  }
+  // If currentAccount is not in capable list, return the first one
+  if (currentIdx === -1 && capable.length > 0) {
+    return capable[0]
   }
   return null
 }
