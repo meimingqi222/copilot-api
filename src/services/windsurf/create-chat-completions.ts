@@ -1,4 +1,4 @@
-/* eslint-disable complexity, max-depth, default-case, no-useless-assignment */
+/* eslint-disable max-depth, default-case, no-useless-assignment */
 import { createHash, randomUUID } from "node:crypto"
 
 import type { Account } from "~/lib/accounts"
@@ -10,6 +10,7 @@ import type {
   Tool,
   ToolCall,
 } from "~/services/copilot/create-chat-completions"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import {
   canonicalNativeModelId,
@@ -769,14 +770,16 @@ async function collectChatCompletion(
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
-export async function createWindsurfChatCompletions(
-  account: Account,
-  payload: ChatCompletionsPayload,
-  signal?: AbortSignal,
-): Promise<
+export async function createWindsurfChatCompletions(options: {
+  account: Account
+  payload: ChatCompletionsPayload
+  signal?: AbortSignal
+  ctx?: RequestExecutionContext
+}): Promise<
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
+  const { account, payload, signal, ctx } = options
   const { account: usedAccount, result } =
     await executeProviderRequestWithRetry({
       account,
@@ -784,6 +787,7 @@ export async function createWindsurfChatCompletions(
       signal,
       execute: (requestAccount) =>
         createWindsurfChatCompletionsOnce(requestAccount, payload, signal),
+      c: ctx?.c,
     })
 
   if (isChatCompletionResponse(result)) {

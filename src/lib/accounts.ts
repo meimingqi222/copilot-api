@@ -257,7 +257,6 @@ export function setWindsurfJwt(
   }
 }
 
-// eslint-disable-next-line complexity
 export function getCodebuffSettings(account: Account) {
   if (account.provider !== "codebuff") {
     return undefined
@@ -285,7 +284,6 @@ export function getCodebuffSettings(account: Account) {
   }
 }
 
-// eslint-disable-next-line complexity
 export function getWindsurfSettings(account: Account) {
   if (account.provider !== "windsurf") {
     return undefined

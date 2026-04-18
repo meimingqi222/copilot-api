@@ -256,3 +256,28 @@ function getSupportedEndpoints(
   )
   return accountModel?.supportedEndpoints
 }
+
+export function extractMessageContentFromResponsesPayload(
+  payload: ResponsesPayload,
+): string {
+  const { input } = payload
+  if (typeof input === "string") {
+    return input
+  }
+
+  const parts: Array<string> = []
+  for (const item of input) {
+    if (!("content" in item) || item.role !== "user") continue
+    if (typeof item.content === "string") {
+      parts.push(item.content)
+      continue
+    }
+    if (!Array.isArray(item.content)) continue
+    for (const c of item.content) {
+      if (c.type === "input_text" && c.text) {
+        parts.push(c.text)
+      }
+    }
+  }
+  return parts.join(" ")
+}

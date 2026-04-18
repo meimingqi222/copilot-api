@@ -64,7 +64,6 @@ interface RunServerOptions {
   windsurfClientName?: string
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity
 export async function runServer(options: RunServerOptions): Promise<void> {
   // Handle unhandled promise rejections
   process.on("unhandledRejection", (reason: unknown) => {

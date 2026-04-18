@@ -1,4 +1,3 @@
-/* eslint-disable require-atomic-updates */
 import { events } from "fetch-event-stream"
 
 import type { Account, AccountModel } from "~/lib/accounts"
@@ -90,7 +89,6 @@ export const copilotProviderRuntime: ProviderRuntime = {
   async refreshAuth(account) {
     await refreshCopilotToken(account)
   },
-  // eslint-disable-next-line max-params
   async createChatCompletions(account, payload, signal, ctx) {
     if (account.provider !== "copilot") {
       throw new Error(
@@ -159,6 +157,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
         model: normalizedPayload.model,
         signal,
         execute: doRequest,
+        c: ctx?.c,
       })
 
     if (!response.ok) {
@@ -201,7 +200,6 @@ export const copilotProviderRuntime: ProviderRuntime = {
         : (responseBody as import("~/services/copilot/create-chat-completions").ChatCompletionResponse),
     }
   },
-  // eslint-disable-next-line max-params
   async createResponses(account, payload, signal, ctx) {
     if (account.provider !== "copilot") {
       throw new Error(
@@ -261,6 +259,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
         model: normalizedModel,
         signal,
         execute: doRequest,
+        c: ctx?.c,
       })
 
     if (!response.ok) {

@@ -19,6 +19,7 @@ import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
+  extractMessageContentFromChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
@@ -62,6 +63,8 @@ export async function handleCompletion(c: Context) {
       || "gpt-5-mini",
   }
 
+  const messageContent =
+    extractMessageContentFromChatCompletionsPayload(payload)
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
@@ -72,6 +75,7 @@ export async function handleCompletion(c: Context) {
       payload.messages,
       c.req.header("user-agent"),
     ),
+    messageContent,
   })
 
   const selectedModel = state.models?.data.find(
@@ -307,7 +311,6 @@ function handleStreamingCompletion(
   c: Context,
   options: StreamingCompletionOptions,
 ) {
-  // eslint-disable-next-line complexity
   return streamSSE(c, async (stream) => {
     const { payload, account, signal, initiator, estimatedInputTokens } =
       options

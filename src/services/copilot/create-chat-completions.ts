@@ -255,3 +255,23 @@ export interface ImagePart {
     detail?: "low" | "high" | "auto"
   }
 }
+
+export function extractMessageContentFromChatCompletionsPayload(
+  payload: ChatCompletionsPayload,
+): string {
+  const parts: Array<string> = []
+  for (const msg of payload.messages) {
+    if (msg.role !== "user" && msg.role !== "system") continue
+    if (typeof msg.content === "string") {
+      parts.push(msg.content)
+      continue
+    }
+    if (!Array.isArray(msg.content)) continue
+    for (const part of msg.content) {
+      if (part.type === "text" || part.type === "output_text") {
+        parts.push(part.text)
+      }
+    }
+  }
+  return parts.join(" ")
+}

@@ -241,3 +241,34 @@ export function createInitialStreamState(): AnthropicStreamState {
     estimatedInputTokens: 0,
   }
 }
+
+export function extractMessageContentFromAnthropicPayload(
+  payload: AnthropicMessagesPayload,
+): string {
+  const parts: Array<string> = []
+
+  if (payload.system) {
+    if (typeof payload.system === "string") {
+      parts.unshift(payload.system)
+    } else {
+      for (const block of payload.system) {
+        parts.unshift(block.text)
+      }
+    }
+  }
+
+  for (const msg of payload.messages) {
+    if (msg.role !== "user") continue
+    if (typeof msg.content === "string") {
+      parts.push(msg.content)
+    } else if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === "text") {
+          parts.push(block.text)
+        }
+      }
+    }
+  }
+
+  return parts.join(" ")
+}

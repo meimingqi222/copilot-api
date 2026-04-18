@@ -2,6 +2,7 @@ import consola from "consola"
 
 import type { Account, AccountQuotaState } from "~/lib/accounts"
 
+import { buildAccountDiagnosticSnapshot } from "~/lib/account-diagnostics"
 import {
   getRemainingCooldownSeconds,
   reportUpstreamRateLimit,
@@ -34,7 +35,11 @@ export function refreshAccountRuntimeAvailability(account: Account): boolean {
     account.cooldownUntil = undefined
     account.lastRateLimitReason = undefined
     syncLegacyExhaustedState(account)
-    consola.info(`Account "${account.label}" cooldown expired — re-activating`)
+    consola.info(
+      `Account cooldown expired — re-activating: ${JSON.stringify(
+        buildAccountDiagnosticSnapshot(account),
+      )}`,
+    )
     return true
   }
 
@@ -100,7 +105,9 @@ export async function markAccountRateLimited(
   const cooldownInfo =
     remainingCooldown > 0 ? ` (cooldown: ${remainingCooldown}s remaining)` : ""
   consola.warn(
-    `Account "${account.label}" marked unavailable due to upstream rate limit${cooldownInfo}`,
+    `Account "${account.label}" marked unavailable due to upstream rate limit${cooldownInfo}: ${JSON.stringify(
+      buildAccountDiagnosticSnapshot(account),
+    )}`,
   )
 }
 

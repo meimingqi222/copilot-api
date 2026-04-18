@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import type { Account } from "~/lib/accounts"
 
 import {
@@ -6,6 +8,7 @@ import {
   isAccountAvailable,
   refreshAccountRuntimeAvailability,
 } from "~/lib/account-availability"
+import { buildAccountsDiagnosticSnapshot } from "~/lib/account-diagnostics"
 import {
   canonicalNativeModelId,
   getAccountProvider,
@@ -78,12 +81,38 @@ function getCapableAccounts(
   return explicitCapable.length > 0 ? explicitCapable : fallbackCapable
 }
 
+function logAccountSelectionFailure(input: {
+  reason: string
+  message: string
+  status: number
+  modelId?: string
+  provider?: string
+  accounts: Array<Account>
+}): void {
+  consola.warn(
+    `Account selection rejected: ${JSON.stringify({
+      reason: input.reason,
+      status: input.status,
+      message: input.message,
+      modelId: input.modelId,
+      provider: input.provider,
+      accounts: buildAccountsDiagnosticSnapshot(input.accounts, input.modelId),
+    })}`,
+  )
+}
+
 function throwNoAvailableAccounts(): never {
   const hasCooldownAccounts = state.accounts.some(
     (account) =>
       account.enabled && getAccountAvailability(account).reason === "cooldown",
   )
   if (hasCooldownAccounts) {
+    logAccountSelectionFailure({
+      reason: "all_accounts_cooldown",
+      message: "All accounts are temporarily unavailable due to rate limiting",
+      status: 429,
+      accounts: state.accounts,
+    })
     throw new HTTPError(
       "All accounts are temporarily unavailable due to rate limiting",
       rateLimitedResponse("Too Many Requests"),
@@ -95,14 +124,170 @@ function throwNoAvailableAccounts(): never {
       account.enabled && getAccountAvailability(account).reason === "quota",
   )
   if (hasQuotaExhaustedAccounts) {
+    logAccountSelectionFailure({
+      reason: "all_accounts_quota_exhausted",
+      message: "All accounts are unavailable due to quota exhaustion",
+      status: 503,
+      accounts: state.accounts,
+    })
     throw new HTTPError(
       "All accounts are unavailable due to quota exhaustion",
       new Response("Service Unavailable", { status: 503 }),
     )
   }
 
+  logAccountSelectionFailure({
+    reason: "no_available_accounts",
+    message: "No available accounts (all disabled or no accounts configured)",
+    status: 503,
+    accounts: state.accounts,
+  })
   throw new HTTPError(
     "No available accounts (all disabled or no accounts configured)",
+    new Response("Service Unavailable", { status: 503 }),
+  )
+}
+
+function throwProviderSelectionError(
+  modelId: string,
+  provider: string,
+  providerMatched: Array<Account>,
+): never {
+  const providerEnabled = state.accounts.filter(
+    (account) => getAccountProvider(account) === provider && account.enabled,
+  )
+  const providerAvailable = providerEnabled.filter(
+    (account) => getAccountAvailability(account).available,
+  )
+
+  if (providerEnabled.length === 0) {
+    logAccountSelectionFailure({
+      reason: "provider_not_configured",
+      message: `No accounts configured for provider "${provider}"`,
+      status: 503,
+      modelId,
+      provider,
+      accounts: state.accounts,
+    })
+    throw new HTTPError(
+      `No accounts configured for provider "${provider}"`,
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+
+  if (providerMatched.length > 0 || providerAvailable.length > 0) {
+    throwProviderModelUnavailable(modelId, providerMatched, provider)
+  }
+
+  const anyCooldown = providerEnabled.some(
+    (account) => getAccountAvailability(account).reason === "cooldown",
+  )
+  if (anyCooldown) {
+    logAccountSelectionFailure({
+      reason: "provider_all_cooldown",
+      message: `All "${provider}" accounts are temporarily unavailable due to rate limiting`,
+      status: 429,
+      modelId,
+      provider,
+      accounts: providerEnabled,
+    })
+    throw new HTTPError(
+      `All "${provider}" accounts are temporarily unavailable due to rate limiting`,
+      rateLimitedResponse("Too Many Requests", providerEnabled),
+    )
+  }
+
+  const anyQuota = providerEnabled.some(
+    (account) => getAccountAvailability(account).reason === "quota",
+  )
+  if (anyQuota) {
+    logAccountSelectionFailure({
+      reason: "provider_all_quota_exhausted",
+      message: `All "${provider}" accounts are unavailable due to quota exhaustion`,
+      status: 503,
+      modelId,
+      provider,
+      accounts: providerEnabled,
+    })
+    throw new HTTPError(
+      `All "${provider}" accounts are unavailable due to quota exhaustion`,
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+
+  throwProviderModelUnavailable(modelId, providerMatched, provider)
+}
+
+function throwProviderModelUnavailable(
+  modelId: string,
+  providerMatched: Array<Account>,
+  provider?: string,
+): never {
+  logAccountSelectionFailure({
+    reason: "model_unsupported_or_unavailable",
+    message: `No available account supports model "${modelId}"`,
+    status: 503,
+    modelId,
+    provider,
+    accounts: providerMatched,
+  })
+  throw new HTTPError(
+    `No available account supports model "${modelId}"`,
+    new Response("Service Unavailable", { status: 503 }),
+  )
+}
+
+function throwCapableAccountsUnavailable(
+  modelId: string,
+  provider: string | undefined,
+  capableEnabledAccounts: Array<Account>,
+): never {
+  const anyCooldown = capableEnabledAccounts.some(
+    (account) => getAccountAvailability(account).reason === "cooldown",
+  )
+  if (anyCooldown) {
+    logAccountSelectionFailure({
+      reason: "model_all_cooldown",
+      message: `All accounts supporting model "${modelId}" are temporarily unavailable due to rate limiting`,
+      status: 429,
+      modelId,
+      provider,
+      accounts: capableEnabledAccounts,
+    })
+    throw new HTTPError(
+      `All accounts supporting model "${modelId}" are temporarily unavailable due to rate limiting`,
+      rateLimitedResponse("Too Many Requests", capableEnabledAccounts),
+    )
+  }
+
+  const anyQuota = capableEnabledAccounts.some(
+    (account) => getAccountAvailability(account).reason === "quota",
+  )
+  if (anyQuota) {
+    logAccountSelectionFailure({
+      reason: "model_all_quota_exhausted",
+      message: `All accounts supporting model "${modelId}" are quota exhausted`,
+      status: 503,
+      modelId,
+      provider,
+      accounts: capableEnabledAccounts,
+    })
+    throw new HTTPError(
+      `All accounts supporting model "${modelId}" are quota exhausted`,
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+
+  logAccountSelectionFailure({
+    reason: "model_unsupported_or_unavailable",
+    message: `No available account supports model "${modelId}"`,
+    status: 503,
+    modelId,
+    provider,
+    accounts: capableEnabledAccounts,
+  })
+  throw new HTTPError(
+    `No available account supports model "${modelId}"`,
     new Response("Service Unavailable", { status: 503 }),
   )
 }
@@ -113,39 +298,7 @@ function throwModelSelectionError(
   providerMatched: Array<Account>,
 ): never {
   if (reference.provider && providerMatched.length === 0) {
-    const providerEnabled = state.accounts.filter(
-      (account) =>
-        getAccountProvider(account) === reference.provider && account.enabled,
-    )
-    const providerAvailable = providerEnabled.filter(
-      (account) => getAccountAvailability(account).available,
-    )
-    if (providerEnabled.length === 0) {
-      throw new HTTPError(
-        `No accounts configured for provider "${reference.provider}"`,
-        new Response("Service Unavailable", { status: 503 }),
-      )
-    }
-    if (providerAvailable.length === 0) {
-      const anyCooldown = providerEnabled.some(
-        (account) => getAccountAvailability(account).reason === "cooldown",
-      )
-      if (anyCooldown) {
-        throw new HTTPError(
-          `All "${reference.provider}" accounts are temporarily unavailable due to rate limiting`,
-          rateLimitedResponse("Too Many Requests", providerEnabled),
-        )
-      }
-      const anyQuota = providerEnabled.some(
-        (account) => getAccountAvailability(account).reason === "quota",
-      )
-      if (anyQuota) {
-        throw new HTTPError(
-          `All "${reference.provider}" accounts are unavailable due to quota exhaustion`,
-          new Response("Service Unavailable", { status: 503 }),
-        )
-      }
-    }
+    throwProviderSelectionError(modelId, reference.provider, providerMatched)
   }
 
   const enabledRelevantPool = state.accounts.filter((account) => {
@@ -166,29 +319,17 @@ function throwModelSelectionError(
   )
 
   if (capableEnabledAccounts.length > 0) {
-    const anyCooldown = capableEnabledAccounts.some(
-      (account) => getAccountAvailability(account).reason === "cooldown",
+    throwCapableAccountsUnavailable(
+      modelId,
+      reference.provider,
+      capableEnabledAccounts,
     )
-    if (anyCooldown) {
-      throw new HTTPError(
-        `All accounts supporting model "${modelId}" are temporarily unavailable due to rate limiting`,
-        rateLimitedResponse("Too Many Requests", capableEnabledAccounts),
-      )
-    }
-    const anyQuota = capableEnabledAccounts.some(
-      (account) => getAccountAvailability(account).reason === "quota",
-    )
-    if (anyQuota) {
-      throw new HTTPError(
-        `All accounts supporting model "${modelId}" are quota exhausted`,
-        new Response("Service Unavailable", { status: 503 }),
-      )
-    }
   }
 
-  throw new HTTPError(
-    `No available account supports model "${modelId}"`,
-    new Response("Service Unavailable", { status: 503 }),
+  throwProviderModelUnavailable(
+    modelId,
+    enabledRelevantPool,
+    reference.provider,
   )
 }
 

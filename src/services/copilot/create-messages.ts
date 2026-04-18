@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import { events } from "fetch-event-stream"
 
 import type { Account } from "~/lib/accounts"
@@ -26,6 +28,7 @@ interface CreateMessagesOptions {
     anthropicVersion?: string
   }
   initiatorOverride?: "agent" | "user"
+  c?: Context
 }
 
 /**
@@ -184,6 +187,7 @@ export const createMessages = async (
       model: payload.model,
       signal,
       execute: doRequest,
+      c: options.c,
     })
 
   if (!response.ok) {

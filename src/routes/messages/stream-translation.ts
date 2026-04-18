@@ -152,7 +152,6 @@ function getThinkingDelta(
   }
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity
 export function translateChunkToAnthropicEvents(
   chunk: ChatCompletionChunk,
   state: AnthropicStreamState,

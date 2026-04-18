@@ -19,10 +19,12 @@ import {
 import { recordUsage } from "~/lib/usage"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
+import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
+  const messageContent = extractMessageContentFromResponsesPayload(payload)
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
@@ -32,6 +34,7 @@ export async function handleResponses(c: Context) {
       : undefined,
     stream: payload.stream === true ? true : undefined,
     inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+    messageContent,
   })
 
   if (payload.stream) {

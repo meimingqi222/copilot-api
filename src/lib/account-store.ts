@@ -280,7 +280,6 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
     : undefined
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function
 function migrateAccount(account: Record<string, unknown>): Account {
   const acc = account as Record<string, unknown>
     & Partial<Account> & {
@@ -447,7 +446,6 @@ export async function refreshQuotaForAccount(account: Account): Promise<void> {
   }
 
   const usage = await getCopilotUsageForAccount(account)
-  // eslint-disable-next-line require-atomic-updates
   account.quotaInfo = snapshotFromUsage(usage)
   const remaining = account.quotaInfo.premiumInteractionsRemaining ?? Infinity
   const unlimited = account.quotaInfo.unlimited

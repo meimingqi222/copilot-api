@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
+import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -15,6 +16,7 @@ const originalProvider = state.provider
 
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
+  resetProtectedRouteGuardForTest()
   state.accounts = [
     {
       id: "test-account-id",

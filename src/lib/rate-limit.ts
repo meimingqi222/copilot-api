@@ -81,7 +81,13 @@ export async function checkRateLimit(accountId: string, signal?: AbortSignal) {
   if (waitTimeMs <= 0) return
 
   consola.warn(
-    `Adaptive rate limiter waiting ${toWaitSeconds(waitTimeMs)} seconds before sending request...`,
+    `Adaptive rate limiter waiting ${toWaitSeconds(waitTimeMs)} seconds before sending request: ${JSON.stringify(
+      {
+        accountId,
+        waitTimeMs,
+        state: getAccountRateLimitSnapshot(accountId),
+      },
+    )}`,
   )
   await sleep(waitTimeMs, signal)
 }
@@ -92,40 +98,56 @@ export async function reportUpstreamRateLimit(
 ) {
   const state = getAccountState(accountId)
   const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"))
+  let appliedCooldownMs = 0
 
   await withLimiterLock(state, () => {
     state.consecutive429Count += 1
 
     const adaptivePenaltyMs =
       retryAfterMs ?? computeBackoffMs(state.consecutive429Count)
-    const cooldownMs = Math.min(MAX_BACKOFF_MS, Math.max(1, adaptivePenaltyMs))
-    const cooldownUntil = Date.now() + cooldownMs
+    appliedCooldownMs = Math.min(MAX_BACKOFF_MS, Math.max(1, adaptivePenaltyMs))
+    const cooldownUntil = Date.now() + appliedCooldownMs
 
     state.cooldownUntilMs = Math.max(state.cooldownUntilMs, cooldownUntil)
     state.theoreticalArrivalMs = Math.max(
       state.theoreticalArrivalMs,
       state.cooldownUntilMs,
     )
-
-    const retryAfterInfo =
-      retryAfterMs ?
-        ` (upstream retry-after: ${toWaitSeconds(retryAfterMs)}s)`
-      : " (no retry-after header, using exponential backoff)"
-    consola.warn(
-      `Upstream returned 429 for account "${accountId}". Applying cooldown for ${toWaitSeconds(cooldownMs)} seconds${retryAfterInfo}`,
-    )
   })
+
+  consola.warn(
+    `Upstream returned 429 for account "${accountId}": ${JSON.stringify({
+      retryAfterHeader: response.headers.get("retry-after"),
+      retryAfterMs,
+      appliedCooldownMs,
+      state: getAccountRateLimitSnapshot(accountId),
+    })}`,
+  )
 }
 
 export async function reportUpstreamSuccess(accountId: string) {
   const state = getAccountState(accountId)
+  let hadRateLimitPressure: boolean | undefined
   await withLimiterLock(state, () => {
+    hadRateLimitPressure =
+      state.consecutive429Count > 0 || Date.now() < state.cooldownUntilMs
     state.consecutive429Count = 0
 
     if (Date.now() >= state.cooldownUntilMs) {
       state.cooldownUntilMs = 0
     }
   })
+
+  if (hadRateLimitPressure === true) {
+    consola.info(
+      `Adaptive rate limiter recovered for account "${accountId}": ${JSON.stringify(
+        {
+          accountId,
+          state: getAccountRateLimitSnapshot(accountId),
+        },
+      )}`,
+    )
+  }
 }
 
 export function resetAdaptiveRateLimiterForTest() {
@@ -142,6 +164,36 @@ export function getRemainingCooldownSeconds(accountId: string): number {
 
   const remaining = state.cooldownUntilMs - Date.now()
   return remaining > 0 ? Math.ceil(remaining / 1000) : 0
+}
+
+export function getAccountRateLimitSnapshot(
+  accountId: string,
+): Record<string, number | boolean> {
+  const state = accountLimiters.get(accountId)
+  if (!state) {
+    return {
+      hasState: false,
+      limiterQueueSize: 0,
+      cooldownRemainingSeconds: 0,
+      consecutive429Count: 0,
+      theoreticalArrivalDelayMs: 0,
+    }
+  }
+
+  const now = Date.now()
+  return {
+    hasState: true,
+    limiterQueueSize: state.limiterQueueSize,
+    cooldownRemainingSeconds: Math.max(
+      0,
+      Math.ceil((state.cooldownUntilMs - now) / 1000),
+    ),
+    consecutive429Count: state.consecutive429Count,
+    theoreticalArrivalDelayMs: Math.max(
+      0,
+      Math.ceil(state.theoreticalArrivalMs - now),
+    ),
+  }
 }
 
 export async function holdLimiterLockForTest(
