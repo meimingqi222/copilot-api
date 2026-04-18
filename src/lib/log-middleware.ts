@@ -157,8 +157,7 @@ function isValidIp(ip: string): boolean {
   return ipv4Regex.test(ip) || ipv6Regex.test(ip)
 }
 
-const MAX_GUARD_PREVIEW_BYTES = 16 * 1024
-const MAX_GUARD_PREVIEW_CHARS = 1500
+const MAX_GUARD_PREVIEW_BYTES = 256 * 1024
 const REDACTED_VALUE = "[redacted]"
 const REDACT_FIELD_RE =
   /authorization|api[-_]?key|password|token|secret|cookie|session|image|base64|data/i
@@ -185,52 +184,37 @@ async function captureRequestPreview(c: Context): Promise<string | undefined> {
   try {
     const raw = await c.req.raw.clone().text()
     if (!raw) return undefined
+    if (Buffer.byteLength(raw, "utf8") > MAX_GUARD_PREVIEW_BYTES) {
+      return "[body omitted: too large]"
+    }
 
     if (contentType.includes("application/json")) {
       try {
         const parsed: unknown = JSON.parse(raw)
-        return truncatePreview(JSON.stringify(sanitizeJson(parsed), null, 2))
+        return JSON.stringify(sanitizeJson(parsed), null, 2)
       } catch {
-        return truncatePreview(raw)
+        return raw
       }
     }
 
-    return truncatePreview(raw)
+    return raw
   } catch {
     return undefined
   }
 }
 
-function sanitizeJson(value: unknown, depth = 0): unknown {
-  if (depth >= 4) return "[truncated]"
-
+function sanitizeJson(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.slice(0, 8).map((item) => sanitizeJson(item, depth + 1))
+    return value.map((item) => sanitizeJson(item))
   }
 
   if (value && typeof value === "object") {
-    const entries = Object.entries(value)
-      .slice(0, 20)
-      .map(([key, nested]) => [
-        key,
-        REDACT_FIELD_RE.test(key) ? REDACTED_VALUE : (
-          sanitizeJson(nested, depth + 1)
-        ),
-      ])
+    const entries = Object.entries(value).map(([key, nested]) => [
+      key,
+      REDACT_FIELD_RE.test(key) ? REDACTED_VALUE : sanitizeJson(nested),
+    ])
     return Object.fromEntries(entries)
   }
 
-  if (typeof value === "string") {
-    return truncatePreview(value, 400)
-  }
-
   return value
-}
-
-function truncatePreview(
-  value: string,
-  limit = MAX_GUARD_PREVIEW_CHARS,
-): string {
-  if (value.length <= limit) return value
-  return `${value.slice(0, limit)}…`
 }

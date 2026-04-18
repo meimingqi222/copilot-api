@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
-import { getActiveAccount, getCopilotToken } from "~/lib/accounts"
+import { getActiveAccount } from "~/lib/account-selection"
+import { getCopilotToken } from "~/lib/accounts"
 import { forwardError } from "~/lib/error"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"

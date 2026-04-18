@@ -6,20 +6,13 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import { getAccountForModel } from "~/lib/accounts"
-import { awaitApproval } from "~/lib/approval"
-import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
+import { prepareRequestAdmission } from "~/lib/request-admission"
 import {
-  checkAccountRateLimitOrThrow,
   ClientAbortError,
-  RouteRateLimitError,
+  getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
-import { state } from "~/lib/state"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
-import { initializeProviderRegistry } from "~/services/providers"
-import { providerSupports } from "~/services/providers/registry"
 
 import {
   createResponsesErrorPayload,
@@ -181,7 +174,7 @@ async function executeResponseCreate(
   accountId: string
   response: ResponsesResponse | AsyncIterable<CopilotStreamEventLike>
 }> {
-  checkProtectedRouteGuard(c, {
+  const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
     maxTokens:
@@ -189,25 +182,14 @@ async function executeResponseCreate(
         payload.max_output_tokens
       : undefined,
     stream: payload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
   })
 
-  const account = getAccountForModel(payload.model)
-  initializeProviderRegistry()
-  if (providerSupports(account, "cooldown")) {
-    await checkAccountRateLimitOrThrow(account.id, signal)
-  }
-
-  const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
-  const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
-  c.set("guardInitiator" as never, initiator)
-
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
-
-  c.set("model" as never, payload.model)
-
-  const result = await createResponses(payload, signal, initiator)
+  const result = await createResponses(payload, {
+    signal,
+    initiatorOverride: admission.initiator,
+    account: admission.account,
+  })
   c.set("accountId" as never, result.accountId)
 
   return result
@@ -261,15 +243,16 @@ function handleResponseError(
     return
   }
 
-  if (error instanceof RouteRateLimitError) {
+  const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+  if (knownError) {
     sendJson(ws, {
       type: "error",
       error: {
-        message: error.message,
-        type: "rate_limit_error",
-        code: "rate_limit_error",
-        ...(error.retryAfterSeconds > 0 ?
-          { retry_after: error.retryAfterSeconds }
+        message: knownError.message,
+        type: knownError.type,
+        code: knownError.type,
+        ...(knownError.retryAfterSeconds > 0 ?
+          { retry_after: knownError.retryAfterSeconds }
         : {}),
       },
     })

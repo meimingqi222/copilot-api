@@ -8,28 +8,31 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
-import { getAccountForModel } from "~/lib/accounts"
-import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
-import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
-import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
-import { checkAccountRateLimitOrThrow } from "~/lib/request-lifecycle"
+import { prepareRequestAdmission } from "~/lib/request-admission"
+import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
   forwardSseEvent,
   writeSseEvent,
 } from "~/lib/sse"
-import { state } from "~/lib/state"
 import { recordUsage } from "~/lib/usage"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
-import { initializeProviderRegistry } from "~/services/providers"
-import { providerSupports } from "~/services/providers/registry"
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
-  const initiator = await prepareResponsesRequest(c, payload, signal)
+  const admission = await prepareRequestAdmission(c, {
+    routeKind: "reasoning",
+    model: payload.model,
+    maxTokens:
+      typeof payload.max_output_tokens === "number" ?
+        payload.max_output_tokens
+      : undefined,
+    stream: payload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+  })
 
   if (payload.stream) {
     return streamSSE(c, async (stream) => {
@@ -38,7 +41,11 @@ export async function handleResponses(c: Context) {
       let completedResponse: ResponsesResponse | undefined
 
       try {
-        const result = await createResponses(payload, signal, initiator)
+        const result = await createResponses(payload, {
+          signal,
+          initiatorOverride: admission.initiator,
+          account: admission.account,
+        })
         accountId = result.accountId
         c.set("accountId" as never, result.accountId)
 
@@ -82,7 +89,11 @@ export async function handleResponses(c: Context) {
     })
   }
 
-  const result = await createResponses(payload, signal, initiator)
+  const result = await createResponses(payload, {
+    signal,
+    initiatorOverride: admission.initiator,
+    account: admission.account,
+  })
   c.set("accountId" as never, result.accountId)
   if (!isNonStreaming(result.response)) {
     throw new Error("Expected non-streaming response for non-stream request")
@@ -90,39 +101,6 @@ export async function handleResponses(c: Context) {
 
   recordResponsesUsage(c, result.accountId, result.response)
   return c.json(result.response)
-}
-
-export async function prepareResponsesRequest(
-  c: Context,
-  payload: ResponsesPayload,
-  signal: AbortSignal,
-): Promise<"agent" | "user" | undefined> {
-  checkProtectedRouteGuard(c, {
-    routeKind: "reasoning",
-    model: payload.model,
-    maxTokens:
-      typeof payload.max_output_tokens === "number" ?
-        payload.max_output_tokens
-      : undefined,
-    stream: payload.stream === true ? true : undefined,
-  })
-
-  const account = getAccountForModel(payload.model)
-  initializeProviderRegistry()
-  if (providerSupports(account, "cooldown")) {
-    await checkAccountRateLimitOrThrow(account.id, signal)
-  }
-
-  const inferredInitiator = inferInitiatorFromResponsesPayload(payload)
-  const { initiator } = resolveInitiatorWithClientHeader(c, inferredInitiator)
-  c.set("guardInitiator" as never, initiator)
-
-  if (state.manualApprove) {
-    await awaitApproval()
-  }
-
-  c.set("model" as never, payload.model)
-  return initiator
 }
 
 export function isNonStreaming(
@@ -168,9 +146,20 @@ export function createResponsesErrorPayload(error: unknown): {
   type: "error"
   error: {
     message: string
-    type: "error"
+    type: string
   }
 } {
+  const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+  if (knownError) {
+    return {
+      type: "error",
+      error: {
+        message: knownError.message,
+        type: knownError.type,
+      },
+    }
+  }
+
   let message = "Internal server error"
 
   if (error instanceof HTTPError) {

@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
 import {
+  cleanupProtectedRouteGuardForTest,
   checkProtectedRouteGuard,
+  getProtectedRouteGuardSizeForTest,
   resetProtectedRouteGuardForTest,
 } from "~/lib/protected-route-guard"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
@@ -108,5 +110,104 @@ describe("protected route guard", () => {
     )
 
     expect(otherUserResponse.status).toBe(200)
+  })
+
+  test("cooldown expiry resets the rolling budget", async () => {
+    const app = new Hono()
+    const realNow = Date.now
+    let now = 0
+    Date.now = () => now
+
+    app.post("/chat/completions", async (c) => {
+      c.set("userId" as never, "user-1")
+      const payload = await c.req.json<{ model: string }>()
+
+      try {
+        checkProtectedRouteGuard(c, {
+          routeKind: "reasoning",
+          model: payload.model,
+        })
+      } catch (error) {
+        return respondToKnownRouteError(c, error) ?? c.text("unexpected", 500)
+      }
+
+      return c.json({ ok: true })
+    })
+
+    try {
+      for (let index = 0; index < 18; index += 1) {
+        const response = await app.request(
+          "http://localhost/chat/completions",
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: "swe-1-6-fast" }),
+          },
+        )
+        expect(response.status).toBe(200)
+      }
+
+      const cooldownResponse = await app.request(
+        "http://localhost/chat/completions",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "swe-1-6-fast" }),
+        },
+      )
+      expect(cooldownResponse.status).toBe(429)
+
+      now += 3 * 60 * 1000 + 1
+
+      const recoveredResponse = await app.request(
+        "http://localhost/chat/completions",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "swe-1-6-fast" }),
+        },
+      )
+      expect(recoveredResponse.status).toBe(200)
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      Date.now = realNow
+    }
+  })
+
+  test("idle principals are cleaned up after their state expires", async () => {
+    const app = new Hono()
+    const realNow = Date.now
+    let now = 0
+    Date.now = () => now
+
+    app.post("/chat/completions", (c) => {
+      c.set("userId" as never, "user-1")
+
+      try {
+        checkProtectedRouteGuard(c, {
+          routeKind: "reasoning",
+          model: "gpt-5-mini",
+        })
+      } catch (error) {
+        return respondToKnownRouteError(c, error) ?? c.text("unexpected", 500)
+      }
+
+      return c.json({ ok: true })
+    })
+
+    try {
+      const response = await app.request("http://localhost/chat/completions", {
+        method: "POST",
+      })
+      expect(response.status).toBe(200)
+      expect(getProtectedRouteGuardSizeForTest()).toBe(1)
+
+      now += 40 * 60 * 1000
+      cleanupProtectedRouteGuardForTest(now)
+      expect(getProtectedRouteGuardSizeForTest()).toBe(0)
+    } finally {
+      // eslint-disable-next-line require-atomic-updates
+      Date.now = realNow
+    }
   })
 })

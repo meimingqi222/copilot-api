@@ -1,9 +1,17 @@
-import { canonicalModelId, getAccountForModel } from "~/lib/accounts"
+import type { Account } from "~/lib/accounts"
+
+import { canonicalModelId } from "~/lib/accounts"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
+interface CreateEmbeddingsOptions {
+  account: Account
+  signal?: AbortSignal
+}
+
 export const createEmbeddings = async (
   payload: EmbeddingRequest,
+  options: CreateEmbeddingsOptions,
 ): Promise<{
   accountId: string
   response: EmbeddingResponse
@@ -13,7 +21,7 @@ export const createEmbeddings = async (
     ...payload,
     model: canonicalModelId(payload.model),
   }
-  const account = getAccountForModel(routedPayload.model)
+  const account = options.account
   const runtime = getProviderRuntime(account.provider)
   if (!runtime.createEmbeddings) {
     throw new Error(
@@ -21,7 +29,7 @@ export const createEmbeddings = async (
     )
   }
 
-  return runtime.createEmbeddings(account, routedPayload)
+  return runtime.createEmbeddings(account, routedPayload, options.signal)
 }
 
 export interface EmbeddingRequest {

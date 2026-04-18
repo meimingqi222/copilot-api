@@ -10,6 +10,7 @@ import type {
 import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { executeProviderRequestWithRetry } from "~/services/providers/execution"
 
 interface CodebuffAgentRunResponse {
   runId?: string
@@ -38,6 +39,33 @@ export async function createCodebuffChatCompletions(
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
+  const { account: usedAccount, result } =
+    await executeProviderRequestWithRetry({
+      account,
+      model: payload.model,
+      signal,
+      execute: (requestAccount) =>
+        createCodebuffChatCompletionsOnce(requestAccount, payload, signal),
+    })
+
+  if (isChatCompletionResponse(result)) {
+    return {
+      accountId: usedAccount.id,
+      response: result,
+    }
+  }
+
+  return {
+    accountId: usedAccount.id,
+    response: result,
+  }
+}
+
+async function createCodebuffChatCompletionsOnce(
+  account: Account,
+  payload: ChatCompletionsPayload,
+  signal?: AbortSignal,
+): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
   const settings = resolveCodebuffSettings(account)
   const authToken = settings.authToken
   if (!authToken) {
@@ -87,18 +115,12 @@ export async function createCodebuffChatCompletions(
     const stream = events(
       response,
     ) as unknown as AsyncIterable<CopilotStreamEvent>
-    return {
-      accountId: account.id,
-      response: finalizeStream(stream, { settings, authToken, runId }),
-    }
+    return finalizeStream(stream, { settings, authToken, runId })
   }
 
   const responseBody = (await response.json()) as ChatCompletionResponse
   await finishAgentRun(settings, authToken, runId)
-  return {
-    accountId: account.id,
-    response: responseBody,
-  }
+  return responseBody
 }
 
 interface FinalizeStreamOptions {
@@ -242,4 +264,10 @@ function genClientSessionId(): string {
     output += chars[idx] ?? ""
   }
   return output
+}
+
+function isChatCompletionResponse(
+  response: AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse,
+): response is ChatCompletionResponse {
+  return Object.hasOwn(response, "choices")
 }

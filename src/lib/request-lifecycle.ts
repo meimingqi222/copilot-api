@@ -25,7 +25,7 @@ export class ClientAbortError extends Error {
 
 export async function checkAccountRateLimitOrThrow(
   accountId: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
 ): Promise<void> {
   try {
     await checkRateLimit(accountId, signal)
@@ -43,34 +43,67 @@ export async function checkAccountRateLimitOrThrow(
   }
 }
 
+export function getKnownRouteErrorDetails(
+  error: unknown,
+  rateLimitType = "error",
+):
+  | {
+      status: number
+      message: string
+      type: string
+      retryAfterSeconds: number
+    }
+  | undefined {
+  if (error instanceof ProtectedRouteGuardError) {
+    return {
+      status: error.status,
+      message: error.message,
+      type: error.errorType,
+      retryAfterSeconds: error.retryAfterSeconds,
+    }
+  }
+
+  if (error instanceof RouteRateLimitError) {
+    return {
+      status: 429,
+      message: error.message,
+      type: rateLimitType,
+      retryAfterSeconds: error.retryAfterSeconds,
+    }
+  }
+
+  if (error instanceof ClientAbortError) {
+    return {
+      status: 499,
+      message: error.message,
+      type: "abort_error",
+      retryAfterSeconds: 0,
+    }
+  }
+
+  return undefined
+}
+
 export function respondToKnownRouteError(
   c: Context,
   error: unknown,
   rateLimitType = "error",
 ): Response | undefined {
-  if (error instanceof ProtectedRouteGuardError) {
-    if (error.retryAfterSeconds > 0) {
-      c.header("Retry-After", String(error.retryAfterSeconds))
-    }
-    return c.json(
-      { error: { message: error.message, type: error.errorType } },
-      error.status,
-    )
+  const details = getKnownRouteErrorDetails(error, rateLimitType)
+  if (!details) {
+    return undefined
   }
 
-  if (error instanceof RouteRateLimitError) {
-    if (error.retryAfterSeconds > 0) {
-      c.header("Retry-After", String(error.retryAfterSeconds))
-    }
-    return c.json(
-      { error: { message: error.message, type: rateLimitType } },
-      429,
-    )
+  if (details.retryAfterSeconds > 0) {
+    c.header("Retry-After", String(details.retryAfterSeconds))
   }
 
-  if (error instanceof ClientAbortError) {
+  if (details.status === 499) {
     return new Response(null, { status: 499 })
   }
 
-  return undefined
+  return c.json(
+    { error: { message: details.message, type: details.type } },
+    { status: details.status as 403 | 429 },
+  )
 }

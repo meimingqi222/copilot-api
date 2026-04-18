@@ -5,17 +5,20 @@ import fs from "node:fs/promises"
 
 import type { Account, AccountProvider } from "~/lib/accounts"
 
+import { getAccountAvailability } from "~/lib/account-availability"
+import { switchToNextAccount } from "~/lib/account-selection"
 import {
   cancelTokenRefreshTimer,
-  getCodebuffAuthToken,
-  getGitHubToken,
-  getWindsurfApiKey,
   refreshCopilotToken,
   refreshQuotaForAccount,
   saveAccounts,
+} from "~/lib/account-store"
+import {
+  getCodebuffAuthToken,
+  getGitHubToken,
+  getWindsurfApiKey,
   setCodebuffAuthToken,
   setWindsurfApiKey,
-  switchToNextAccount,
 } from "~/lib/accounts"
 import {
   GITHUB_BASE_URL,
@@ -185,6 +188,7 @@ void loadPendingFlows()
 function publicAccount(account: Account) {
   initializeProviderRegistry()
   const runtime = getProviderRuntime(account.provider)
+  const availability = getAccountAvailability(account)
   return {
     id: account.id,
     label: account.label,
@@ -192,8 +196,12 @@ function publicAccount(account: Account) {
     availableModels: account.availableModels,
     enabled: account.enabled,
     priority: account.priority,
-    isExhausted: account.isExhausted,
+    isExhausted:
+      availability.reason === "cooldown" || availability.reason === "quota",
     exhaustedAt: account.exhaustedAt,
+    availabilityReason: availability.reason,
+    retryAfterSeconds: availability.retryAfterSeconds || null,
+    quotaState: account.quotaState ?? "unknown",
     createdAt: account.createdAt,
     settings: account.settings ?? {},
     providerFeatures: runtime.descriptor.features,
@@ -245,7 +253,7 @@ accountApiRoutes.post("/", async (c) => {
       provider,
       enabled: true,
       priority: 0,
-      isExhausted: false,
+      quotaState: "unknown",
       createdAt: Date.now(),
       credentials: {
         authToken,
@@ -282,7 +290,7 @@ accountApiRoutes.post("/", async (c) => {
       provider,
       enabled: true,
       priority: 0,
-      isExhausted: false,
+      quotaState: "unknown",
       createdAt: Date.now(),
       credentials: {
         apiKey,
@@ -438,7 +446,7 @@ async function pollAccountFlow(flowId: string): Promise<{
     githubToken: json.access_token,
     enabled: true,
     priority: 0,
-    isExhausted: false,
+    quotaState: "unknown",
     createdAt: Date.now(),
   }
 

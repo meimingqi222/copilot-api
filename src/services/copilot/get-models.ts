@@ -1,6 +1,6 @@
 import type { Account } from "~/lib/accounts"
 
-import { getActiveAccount } from "~/lib/accounts"
+import { getActiveAccount } from "~/lib/account-selection"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
