@@ -146,7 +146,8 @@ export const createMessages = async (
   const initiator =
     options.initiatorOverride ?? inferInitiatorFromAnthropicPayload(payload)
 
-  // Strip reasoning_effort and thinking - OpenAI-specific params not supported by Copilot's Anthropic endpoint
+  // Strip only reasoning_effort; Anthropic-native fields such as thinking and
+  // output_config must continue to pass through unchanged.
   const copilotPayload = translateToCopilotMessages(payload)
 
   const doRequest = async (requestAccount: typeof account) => {

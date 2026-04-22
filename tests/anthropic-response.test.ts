@@ -819,6 +819,135 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     expect(hasTextDelta).toBe(true)
   })
 
+  test("should flush unsigned thinking before a direct tool_use block", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-thinking-tool",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-opus-4.7",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+              reasoning: "step-1",
+            },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-thinking-tool",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-opus-4.7",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call_1",
+                  type: "function",
+                  function: {
+                    name: "bash",
+                    arguments: '{"cmd":"pwd"}',
+                  },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+            logprobs: null,
+          },
+        ],
+      },
+    ]
+
+    const streamState = createInitialStreamState()
+
+    const translatedStream = openAIStream.flatMap((chunk) =>
+      translateChunkToAnthropicEvents(chunk, streamState),
+    )
+
+    expect(translatedStream).toEqual([
+      {
+        type: "message_start",
+        message: {
+          id: "cmpl-thinking-tool",
+          type: "message",
+          role: "assistant",
+          content: [],
+          model: "claude-opus-4.7",
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+          },
+        },
+      },
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "thinking",
+          thinking: "",
+        },
+      },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "thinking_delta",
+          thinking: "step-1",
+        },
+      },
+      {
+        type: "content_block_stop",
+        index: 0,
+      },
+      {
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "tool_use",
+          id: "call_1",
+          name: "bash",
+          input: {},
+        },
+      },
+      {
+        type: "content_block_delta",
+        index: 1,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"cmd":"pwd"}',
+        },
+      },
+      {
+        type: "content_block_stop",
+        index: 1,
+      },
+      {
+        type: "message_delta",
+        delta: {
+          stop_reason: "tool_use",
+          stop_sequence: null,
+        },
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+        },
+      },
+      {
+        type: "message_stop",
+      },
+    ])
+  })
+
   test("should ignore late signatures after text has started", () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {

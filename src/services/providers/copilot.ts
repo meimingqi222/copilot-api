@@ -16,6 +16,7 @@ import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { getModelsForAccount } from "~/services/copilot/get-models"
 import {
+  normalizeResponsesStreamIds,
   shouldUseResponsesApi,
   supportsResponsesApi,
   translateResponsesStreamToChatCompletions,
@@ -270,9 +271,11 @@ export const copilotProviderRuntime: ProviderRuntime = {
     if (payload.stream) {
       return {
         accountId: usedAccount.id,
-        response: events(response) as unknown as AsyncIterable<
-          import("~/services/copilot/responses-api").CopilotStreamEventLike
-        >,
+        response: normalizeResponsesStreamIds(
+          events(response) as unknown as AsyncIterable<
+            import("~/services/copilot/responses-api").CopilotStreamEventLike
+          >,
+        ),
       }
     }
 
