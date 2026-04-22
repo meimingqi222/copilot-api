@@ -493,6 +493,28 @@ describe("Copilot /v1/messages endpoint translation", () => {
     expect(copilotPayload.thinking).toEqual({ type: "adaptive" })
   })
 
+  test("should preserve output_config effort for adaptive thinking models", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-opus-4.7",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: {
+        type: "adaptive",
+      },
+      output_config: {
+        effort: "medium",
+      },
+    }
+
+    const copilotPayload = translateToCopilotMessages(anthropicPayload)
+
+    expect(copilotPayload.thinking).toEqual({ type: "adaptive" })
+    expect(copilotPayload.output_config).toEqual({
+      effort: "medium",
+    })
+    expect(copilotPayload.reasoning_effort).toBeUndefined()
+  })
+
   test("should not add reasoning_effort when thinking is not specified", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",

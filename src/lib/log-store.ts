@@ -30,6 +30,11 @@ class LogStore {
     this.buffer.push({ id: ++this.counter, ...entry })
   }
 
+  clearForTest(): void {
+    this.buffer = []
+    this.counter = 0
+  }
+
   query(opts: {
     level?: LogLevel
     search?: string

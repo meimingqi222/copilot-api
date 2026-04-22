@@ -3,6 +3,7 @@ export {
   translateChatCompletionToResponses,
   translateToResponsesPayload,
 } from "~/services/copilot/chat-to-responses"
+export { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 export {
   type CopilotStreamEventLike,
   extractMessageContentFromResponsesPayload,

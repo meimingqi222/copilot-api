@@ -2,6 +2,7 @@ import type { Context } from "hono"
 
 import consola from "consola"
 
+import { logStore } from "~/lib/log-store"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
 
@@ -14,6 +15,7 @@ export interface UsageRecordInput {
   totalTokens: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  timestamp?: number
 }
 
 export function recordUsage(input: UsageRecordInput): void {
@@ -26,12 +28,13 @@ export function recordUsage(input: UsageRecordInput): void {
     totalTokens,
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
+    timestamp,
   } = input
 
   void trackUserTokenUsage(c, totalTokens)
 
   try {
-    const now = Date.now()
+    const now = timestamp ?? Date.now()
     const pricing = statsStore.getModelPricing(model)
     const cost =
       pricing ?
@@ -52,6 +55,19 @@ export function recordUsage(input: UsageRecordInput): void {
       cacheWriteTokens,
       cost,
       timestamp: now,
+    })
+    logStore.push({
+      timestamp: now,
+      level: "info",
+      message: `Usage recorded for ${model}`,
+      userId: c.get("userId" as never) as string | undefined,
+      username: c.get("username" as never) as string | undefined,
+      accountId,
+      model,
+      promptTokens,
+      completionTokens,
+      path: c.req.path,
+      statusCode: c.res.status,
     })
     consola.debug(
       `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,

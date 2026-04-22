@@ -277,6 +277,16 @@ export function translateChunkToAnthropicEvents(
   }
 
   if (delta.tool_calls) {
+    if (!state.contentBlockOpen && state.bufferedThinking) {
+      // If unsigned reasoning is followed directly by a tool call, flush the
+      // buffered thinking before opening the tool_use block so Anthropic
+      // clients can still display it.
+      ensureThinkingBlockOpen(state, events, state.bufferedThinking)
+      state.bufferedThinking = ""
+      stopCurrentContentBlock(state, events)
+      state.suppressLateThinking = true
+    }
+
     for (const toolCall of delta.tool_calls) {
       if (toolCall.id && toolCall.function?.name) {
         // New tool call starting.
