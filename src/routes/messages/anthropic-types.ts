@@ -22,9 +22,11 @@ export interface AnthropicMessagesPayload {
     | {
         type: "enabled"
         budget_tokens?: number
+        display?: "summarized" | "omitted"
       }
     | {
         type: "adaptive"
+        display?: "summarized" | "omitted"
       }
   output_config?: {
     effort?: "low" | "medium" | "high" | null

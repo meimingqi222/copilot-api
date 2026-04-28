@@ -100,12 +100,40 @@ function hoistToolResultImages(
  * reasoning_effort is an OpenAI-specific parameter and should not be sent to
  * Copilot's Anthropic-compatible /v1/messages endpoint.
  * thinking is Anthropic's native parameter and should be preserved.
+ *
+ * For opus-4.7 models:
+ * - Limit effort to "medium" max (Copilot restriction)
+ * - Add display: "summarized" to thinking config
  */
 export function translateToCopilotMessages(
   payload: AnthropicMessagesPayload,
 ): Record<string, unknown> {
   const { reasoning_effort: _, ...rest } = payload
   const model = parseModelReference(payload.model).nativeModelId
+
+  // For opus-4.7, ensure thinking has display: "summarized"
+  // and limit effort to "medium" max (Copilot restriction)
+  let thinking = payload.thinking
+  let outputConfig = payload.output_config
+
+  const isOpus47 = model.includes("opus-4.7") || model.includes("opus-4-7")
+
+  if (isOpus47) {
+    // Add display: "summarized" for thinking
+    if (thinking && thinking.type === "adaptive" && !thinking.display) {
+      thinking = { ...thinking, display: "summarized" }
+    }
+
+    // Limit effort to "medium" max for output_config
+    if (outputConfig?.effort) {
+      const effortOrder = ["low", "medium", "high"] as const
+      const currentIdx = effortOrder.indexOf(outputConfig.effort)
+      const mediumIdx = effortOrder.indexOf("medium")
+      if (currentIdx > mediumIdx) {
+        outputConfig = { ...outputConfig, effort: "medium" }
+      }
+    }
+  }
 
   return {
     ...rest,
@@ -120,6 +148,8 @@ export function translateToCopilotMessages(
     ...(payload.tools ? { tools: payload.tools } : {}),
     ...(payload.tool_choice ? { tool_choice: payload.tool_choice } : {}),
     ...(payload.service_tier ? { service_tier: payload.service_tier } : {}),
+    ...(thinking ? { thinking } : {}),
+    ...(outputConfig ? { output_config: outputConfig } : {}),
   }
 }
 
