@@ -77,6 +77,13 @@ export async function handleResponses(c: Context) {
 
           await forwardSseEvent(stream, event)
         }
+
+        if (!completedResponse) {
+          await writeResponsesErrorEvent(
+            stream,
+            new Error("Upstream stream ended without response.completed"),
+          )
+        }
       } catch (error) {
         if (isAbortError(error) && signal.aborted) {
           return

@@ -166,6 +166,18 @@ export async function* translateChatCompletionsStreamToResponses(
       return
     }
   }
+
+  // Fallback: upstream stream ended without a finish_reason chunk.
+  // Emit a synthetic incomplete completion so the client gets a concrete signal
+  // instead of an empty stream (which maps to finish_reason=unknown on the client).
+  if (state.createdSent) {
+    yield {
+      data: JSON.stringify({
+        type: "response.completed",
+        response: buildIncompleteResponseFromStream(state),
+      }),
+    }
+  }
 }
 
 function buildCompletedResponsesObject(
@@ -344,6 +356,39 @@ function buildCompletedResponsesResponseFromStream(
     top_p: state.request.top_p ?? null,
     truncation: state.request.truncation ?? null,
     usage: state.usage ?? translateChatUsageToResponsesUsage(chunk.usage),
+    user: state.request.user ?? null,
+    metadata: state.request.metadata ?? {},
+  }
+}
+
+function buildIncompleteResponseFromStream(
+  state: ChatToResponsesStreamState,
+): ResponsesResponse {
+  return {
+    id: state.responseId,
+    object: "response",
+    created_at: state.createdAt,
+    completed_at: Math.floor(Date.now() / 1000),
+    status: "incomplete",
+    error: null,
+    model: state.model,
+    output: buildCompletedOutput(state),
+    output_text: state.outputText,
+    incomplete_details: { reason: "interrupted" },
+    instructions: state.request.instructions ?? null,
+    max_output_tokens: state.request.max_output_tokens ?? null,
+    parallel_tool_calls:
+      state.request.parallel_tool_calls ?? state.toolCalls.size > 1,
+    previous_response_id: state.request.previous_response_id ?? null,
+    reasoning: getResponsesReasoning(state.request, state.reasoningText),
+    store: state.request.store ?? null,
+    temperature: state.request.temperature ?? null,
+    text: state.request.text ?? { format: { type: "text" } },
+    tool_choice: state.request.tool_choice ?? "auto",
+    tools: state.request.tools ?? [],
+    top_p: state.request.top_p ?? null,
+    truncation: state.request.truncation ?? null,
+    usage: state.usage,
     user: state.request.user ?? null,
     metadata: state.request.metadata ?? {},
   }
