@@ -705,6 +705,7 @@ accountApiRoutes.post("/import", async (c) => {
           duplicateIndex,
           Math.max(0, state.accounts.length - 1),
         )
+        switchToNextAccount()
       }
     }
 
