@@ -98,6 +98,32 @@ const API = {
     refresh: (id) => API.request(`/accounts/${id}/refresh`, { method: "POST" }),
     activate: (id) =>
       API.request(`/accounts/${id}/activate`, { method: "POST" }),
+    export: async () => {
+      const response = await fetch(`${API.baseUrl}/accounts/export`)
+      if (response.status === 401 || response.status === 403) {
+        globalThis.location.href = "/admin/login"
+        throw new Error("Unauthorized")
+      }
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw API.extractErrorMessage(errorText, response.status)
+      }
+      return response
+    },
+    exportOne: async (id) => {
+      const response = await fetch(`${API.baseUrl}/accounts/${id}/export`)
+      if (response.status === 401 || response.status === 403) {
+        globalThis.location.href = "/admin/login"
+        throw new Error("Unauthorized")
+      }
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw API.extractErrorMessage(errorText, response.status)
+      }
+      return response
+    },
+    import: (data) =>
+      API.request("/accounts/import", { method: "POST", body: data }),
   },
 
   providers: {

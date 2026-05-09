@@ -399,6 +399,14 @@
               <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
               <span x-text="t('accounts.addAccount')"></span>
             </button>
+            <button @click="exportAccounts()" class="btn btn-secondary">
+              <i data-lucide="download" class="w-4 h-4 mr-1"></i>
+              <span x-text="t('accounts.export')"></span>
+            </button>
+            <button @click="openImportModal()" class="btn btn-secondary">
+              <i data-lucide="upload" class="w-4 h-4 mr-1"></i>
+              <span x-text="t('accounts.import')"></span>
+            </button>
             <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
               <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
             </button>
@@ -512,6 +520,9 @@
                         :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
                         x-text="t(account.enabled ? 'accounts.disable' : 'accounts.enable')">
                 </button>
+                <button @click="exportOneAccount(account)" class="btn btn-secondary btn-small" :title="t('accounts.exportOne')">
+                  <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                </button>
                 <button @click="deleteAccount(account.id)" class="btn btn-danger btn-small" x-text="t('delete')"></button>
               </div>
             </div>
@@ -593,6 +604,45 @@
               </div>
               <h4 class="text-title-2 mb-2" x-text="t('accounts.deviceFlow.success')"></h4>
               <button @click="closeAddModal(); load()" class="btn btn-primary mt-4" x-text="t('done')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Import Modal -->
+        <div x-show="showImportModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
+          <div class="modal-content p-8 w-full max-w-md" @click.away="closeImportModal()">
+            <h3 class="text-title-2 mb-2" x-text="t('accounts.importTitle')"></h3>
+            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('accounts.importDesc')"></p>
+            <div class="space-y-4 mb-6">
+              <div>
+                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.importFile')"></label>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  @change="importFileSelected($event)"
+                  class="input text-sm"
+                  x-ref="importFileInput"
+                >
+              </div>
+              <div class="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="importSkipDuplicates"
+                  x-model="importSkipDuplicates"
+                  class="w-4 h-4 mt-0.5"
+                >
+                <div>
+                  <label for="importSkipDuplicates" class="text-sm cursor-pointer" x-text="t('accounts.importOverwrite')"></label>
+                  <p class="text-xs text-[var(--apple-text-tertiary)] mt-0.5" x-text="t('accounts.importOverwriteHint')"></p>
+                </div>
+              </div>
+            </div>
+            <div class="flex justify-end gap-3">
+              <button @click="closeImportModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="submitImport()" class="btn btn-primary" :disabled="!importFile" :class="{ 'opacity-50 cursor-not-allowed': !importFile }">
+                <i data-lucide="upload" class="w-4 h-4 mr-1"></i>
+                <span x-text="t('accounts.import')"></span>
+              </button>
             </div>
           </div>
         </div>
@@ -1728,6 +1778,9 @@
         accounts: [],
         providers: [],
         showAddModal: false,
+        showImportModal: false,
+        importFile: null,
+        importSkipDuplicates: true,
         defaultNewAccount() {
           return {
             label: '',
@@ -1969,6 +2022,97 @@
             await this.load();
           } catch (e) {
             this.showToast(I18n.t('error.delete'), 'error');
+          }
+        },
+
+        async exportAccounts() {
+          try {
+            const response = await API.accounts.export();
+            const blob = await response.blob();
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="?([^"]+)"?/);
+            const filename = match ? match[1] : 'copilot-api-accounts.json';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+            this.showToast(I18n.t('accounts.exportSuccess'), 'success');
+          } catch (e) {
+            this.showToast(e.message || I18n.t('error.load'), 'error');
+          }
+        },
+
+        async exportOneAccount(account) {
+          try {
+            const response = await API.accounts.exportOne(account.id);
+            const blob = await response.blob();
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const match = disposition.match(/filename="?([^"]+)"?/);
+            const filename = match ? match[1] : 'copilot-api-account.json';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+            this.showToast(I18n.t('accounts.exportOneSuccess'), 'success');
+          } catch (e) {
+            this.showToast(e.message || I18n.t('error.load'), 'error');
+          }
+        },
+
+        openImportModal() {
+          this.importFile = null;
+          this.importSkipDuplicates = true;
+          this.showImportModal = true;
+          this.$nextTick(() => {
+            if (this.$refs.importFileInput) this.$refs.importFileInput.value = '';
+          });
+        },
+
+        closeImportModal() {
+          this.showImportModal = false;
+          this.importFile = null;
+        },
+
+        importFileSelected(event) {
+          this.importFile = event.target.files[0] || null;
+        },
+
+        async submitImport() {
+          if (!this.importFile) {
+            this.showToast(I18n.t('accounts.importNoFile'), 'error');
+            return;
+          }
+          let parsed;
+          try {
+            const text = await this.importFile.text();
+            parsed = JSON.parse(text);
+          } catch {
+            this.showToast(I18n.t('accounts.importInvalidFile'), 'error');
+            return;
+          }
+          // Support both { accounts: [...] } and plain array
+          const accounts = Array.isArray(parsed) ? parsed : (parsed.accounts || []);
+          if (!accounts.length) {
+            this.showToast(I18n.t('accounts.importInvalidFile'), 'error');
+            return;
+          }
+          try {
+            const result = await API.accounts.import({
+              accounts,
+              overwrite: !this.importSkipDuplicates,
+            });
+            let msg = I18n.t('accounts.importSuccess', { count: result.imported });
+            if (result.skipped > 0) msg += I18n.t('accounts.importSkipped', { count: result.skipped });
+            if (result.failed > 0) msg += I18n.t('accounts.importFailed', { count: result.failed });
+            this.showToast(msg, result.imported > 0 ? 'success' : 'info');
+            this.closeImportModal();
+            await this.load();
+          } catch (e) {
+            this.showToast(e.message || I18n.t('error.create'), 'error');
           }
         },
 

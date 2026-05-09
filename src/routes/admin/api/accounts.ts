@@ -12,12 +12,14 @@ import {
   refreshCopilotToken,
   refreshQuotaForAccount,
   saveAccounts,
+  serializeAccountForExport,
 } from "~/lib/account-store"
 import {
   getCodebuffAuthToken,
   getGitHubToken,
   getWindsurfApiKey,
   setCodebuffAuthToken,
+  setGitHubToken,
   setWindsurfApiKey,
 } from "~/lib/accounts"
 import {
@@ -618,5 +620,204 @@ accountApiRoutes.post("/:id/activate", async (c) => {
   return c.json({
     ok: true,
     account: publicAccount(account),
+  })
+})
+
+// Export all accounts (includes credentials)
+accountApiRoutes.get("/export", (c) => {
+  const exported = state.accounts.map((account) =>
+    serializeAccountForExport(account),
+  )
+  const filename = `copilot-api-accounts-${new Date().toISOString().slice(0, 10)}.json`
+  c.header("Content-Disposition", `attachment; filename="${filename}"`)
+  c.header("Content-Type", "application/json")
+  return c.body(JSON.stringify({ accounts: exported }, null, 2))
+})
+
+// Export a single account (includes credentials)
+accountApiRoutes.get("/:id/export", (c) => {
+  const id = c.req.param("id")
+  const account = state.accounts.find((a) => a.id === id)
+  if (!account) return c.json({ error: "Account not found." }, 404)
+
+  const exported = serializeAccountForExport(account)
+  const safeName = account.label.replaceAll(/[^\w-]/g, "_")
+  const filename = `copilot-api-account-${safeName}-${new Date().toISOString().slice(0, 10)}.json`
+  c.header("Content-Disposition", `attachment; filename="${filename}"`)
+  c.header("Content-Type", "application/json")
+  return c.body(JSON.stringify({ accounts: [exported] }, null, 2))
+})
+
+interface ImportAccountPayload {
+  id?: string
+  label?: string
+  provider?: string
+  enabled?: boolean
+  priority?: number
+  credentials?: Record<string, unknown>
+  settings?: Record<string, unknown>
+  createdAt?: number
+}
+
+// Import accounts from exported JSON
+accountApiRoutes.post("/import", async (c) => {
+  let body: { accounts?: Array<ImportAccountPayload>; overwrite?: boolean }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "Invalid JSON payload." }, 400)
+  }
+
+  if (!Array.isArray(body.accounts) || body.accounts.length === 0) {
+    return c.json({ error: "No accounts provided in payload." }, 400)
+  }
+
+  const overwrite = body.overwrite === true
+  const imported: Array<string> = []
+  const skipped: Array<string> = []
+  const failed: Array<{ label: string; reason: string }> = []
+
+  for (const raw of body.accounts) {
+    const label = raw.label ?? `imported-${imported.length + 1}`
+    const providerStr = raw.provider ?? "copilot"
+    const provider: AccountProvider =
+      isProviderId(providerStr) ? providerStr : "copilot"
+
+    // Check for existing account with matching label+provider
+    const duplicateIndex = state.accounts.findIndex(
+      (a) => a.label === label && a.provider === provider,
+    )
+    if (duplicateIndex !== -1) {
+      if (!overwrite) {
+        skipped.push(label)
+        continue
+      }
+      // overwrite=true: remove existing account before importing new one
+      const existing = state.accounts[duplicateIndex]
+      cancelTokenRefreshTimer(existing.id)
+      clearAccountRateLimitState(existing.id)
+      state.accounts.splice(duplicateIndex, 1)
+      // Fix activeAccountIndex after splice (mirrors delete handler)
+      if (duplicateIndex < state.activeAccountIndex) {
+        state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
+      } else if (duplicateIndex === state.activeAccountIndex) {
+        state.activeAccountIndex = Math.min(
+          duplicateIndex,
+          Math.max(0, state.accounts.length - 1),
+        )
+      }
+    }
+
+    if (provider === "copilot") {
+      const githubToken =
+        typeof raw.credentials?.githubToken === "string" ?
+          raw.credentials.githubToken.trim()
+        : undefined
+
+      if (!githubToken) {
+        failed.push({ label, reason: "Missing githubToken in credentials." })
+        continue
+      }
+
+      const account: Account = {
+        id: randomUUID(),
+        label,
+        provider: "copilot",
+        credentials: { githubToken },
+        settings: raw.settings ?? {},
+        githubToken,
+        enabled: raw.enabled ?? true,
+        priority: raw.priority ?? 0,
+        quotaState: "unknown",
+        createdAt: raw.createdAt ?? Date.now(),
+      }
+      setGitHubToken(account, githubToken)
+      state.accounts.push(account)
+      imported.push(label)
+
+      // Refresh token in background
+      refreshCopilotToken(account)
+        .then(() => refreshQuotaForAccount(account))
+        .then(() => refreshModelsForAccount(account))
+        .catch((err: unknown) => {
+          consola.warn(`Import: failed to init account "${label}":`, err)
+        })
+      continue
+    }
+
+    if (provider === "codebuff") {
+      const authToken =
+        typeof raw.credentials?.authToken === "string" ?
+          raw.credentials.authToken.trim()
+        : undefined
+
+      if (!authToken) {
+        failed.push({ label, reason: "Missing authToken in credentials." })
+        continue
+      }
+
+      const account: Account = {
+        id: randomUUID(),
+        label,
+        provider: "codebuff",
+        credentials: { authToken },
+        settings: raw.settings ?? {},
+        codebuffAuthToken: authToken,
+        enabled: raw.enabled ?? true,
+        priority: raw.priority ?? 0,
+        quotaState: "unknown",
+        createdAt: raw.createdAt ?? Date.now(),
+      }
+      state.accounts.push(account)
+      imported.push(label)
+      refreshModelsForAccount(account).catch((err: unknown) => {
+        consola.warn(`Import: failed to init account "${label}":`, err)
+      })
+      continue
+    }
+
+    // provider === "windsurf"
+    const apiKey =
+      typeof raw.credentials?.apiKey === "string" ?
+        raw.credentials.apiKey.trim()
+      : undefined
+
+    if (!apiKey) {
+      failed.push({ label, reason: "Missing apiKey in credentials." })
+      continue
+    }
+
+    const windsurfAccount: Account = {
+      id: randomUUID(),
+      label,
+      provider: "windsurf",
+      credentials: { apiKey },
+      settings: raw.settings ?? {},
+      windsurfApiKey: apiKey,
+      enabled: raw.enabled ?? true,
+      priority: raw.priority ?? 0,
+      quotaState: "unknown",
+      createdAt: raw.createdAt ?? Date.now(),
+    }
+    state.accounts.push(windsurfAccount)
+    imported.push(label)
+    refreshModelsForAccount(windsurfAccount).catch((err: unknown) => {
+      consola.warn(`Import: failed to init account "${label}":`, err)
+    })
+  }
+
+  if (imported.length > 0) {
+    await saveAccounts()
+    consola.info(
+      `Imported ${imported.length} account(s): ${imported.join(", ")}`,
+    )
+  }
+
+  return c.json({
+    ok: true,
+    imported: imported.length,
+    skipped: skipped.length,
+    failed: failed.length,
+    details: { imported, skipped, failed },
   })
 })
