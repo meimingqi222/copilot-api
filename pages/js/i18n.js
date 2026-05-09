@@ -141,6 +141,22 @@ const i18n = {
       "accounts.priority": "优先级",
       "accounts.priorityHint": "数值越小优先级越高，相同优先级按顺序使用",
       "accounts.prioritySuccess": "优先级已更新",
+      "accounts.export": "导出账户",
+      "accounts.exportSuccess": "账户导出成功",
+      "accounts.exportOne": "导出此账户",
+      "accounts.exportOneSuccess": "账户导出成功",
+      "accounts.import": "导入账户",
+      "accounts.importTitle": "导入账户",
+      "accounts.importDesc": "从 JSON 文件导入账户，支持批量导入。",
+      "accounts.importFile": "选择 JSON 文件",
+      "accounts.importOverwrite": "跳过已存在的同名账户",
+      "accounts.importOverwriteHint":
+        "若关闭此选项，将覆盖同名账户（标签+供应商相同）",
+      "accounts.importSuccess": "成功导入 {count} 个账户",
+      "accounts.importSkipped": "，跳过 {count} 个（已存在）",
+      "accounts.importFailed": "，{count} 个失败",
+      "accounts.importNoFile": "请选择要导入的文件",
+      "accounts.importInvalidFile": "文件格式无效，请选择正确的 JSON 文件",
 
       // Quota
       "quota.title": "配额监控",
@@ -464,6 +480,24 @@ const i18n = {
       "accounts.priorityHint":
         "Lower value = higher priority. Same priority uses order.",
       "accounts.prioritySuccess": "Priority updated",
+      "accounts.export": "Export Accounts",
+      "accounts.exportSuccess": "Accounts exported successfully",
+      "accounts.exportOne": "Export this account",
+      "accounts.exportOneSuccess": "Account exported successfully",
+      "accounts.import": "Import Accounts",
+      "accounts.importTitle": "Import Accounts",
+      "accounts.importDesc":
+        "Import accounts from a JSON file. Batch import is supported.",
+      "accounts.importFile": "Select JSON file",
+      "accounts.importOverwrite": "Skip accounts with duplicate label+provider",
+      "accounts.importOverwriteHint":
+        "When disabled, accounts with the same label and provider will be overwritten.",
+      "accounts.importSuccess": "Successfully imported {count} account(s)",
+      "accounts.importSkipped": ", skipped {count} (already exist)",
+      "accounts.importFailed": ", {count} failed",
+      "accounts.importNoFile": "Please select a file to import",
+      "accounts.importInvalidFile":
+        "Invalid file format. Please select a valid JSON file.",
 
       // Quota
       "quota.title": "Quota Monitor",

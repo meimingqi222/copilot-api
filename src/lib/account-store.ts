@@ -89,6 +89,12 @@ export async function saveAccounts(): Promise<void> {
   await fs.writeFile(PATHS.ACCOUNTS_PATH, JSON.stringify(sanitized, null, 2))
 }
 
+export function serializeAccountForExport(
+  account: Account,
+): Record<string, unknown> {
+  return serializeAccount(account)
+}
+
 function serializeAccount(account: Account): Record<string, unknown> {
   syncLegacyExhaustedState(account)
   const base = {
