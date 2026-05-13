@@ -176,6 +176,28 @@ const API = {
         `/provider-connections/${connectionId}/credentials/${credentialId}/reset-status`,
         { method: "POST" },
       ),
+    testConnection: (id, credentialId) =>
+      API.request(`/provider-connections/${id}/test`, {
+        method: "POST",
+        body: credentialId ? { credentialId } : undefined,
+      }),
+    addModel: (id, data) =>
+      API.request(`/provider-connections/${id}/models`, {
+        method: "POST",
+        body: data,
+      }),
+    updateModel: (id, publicId, data) =>
+      API.request(
+        `/provider-connections/${id}/models/${encodeURIComponent(publicId)}`,
+        { method: "PUT", body: data },
+      ),
+    deleteModel: (id, publicId) =>
+      API.request(
+        `/provider-connections/${id}/models/${encodeURIComponent(publicId)}`,
+        { method: "DELETE" },
+      ),
+    revealCredential: (id, credId) =>
+      API.request(`/provider-connections/${id}/credentials/${credId}/value`),
   },
 
   accountFlows: {

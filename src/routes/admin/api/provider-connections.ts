@@ -10,21 +10,28 @@ import { Hono } from "hono"
 
 import {
   addCredential,
+  addModel,
+  applyDiscoveredModels,
   createConnection,
   deleteConnection,
   deleteCredential,
+  deleteModel,
   findCredential,
   getProviderConnection,
   isCredentialAuthMode,
+  isModelEndpoint,
   isProviderProtocol,
   listProviderConnections,
+  type ModelEndpoint,
   persistProviderConnections,
   resetCredentialStatus,
   sanitizeConnection,
   sanitizeCredential,
   setCredentialEnabled,
+  setDiscoveryError,
   updateConnection,
   updateCredential,
+  updateModel,
 } from "~/lib/provider-connections"
 import {
   getProtocolAdapter,
@@ -176,7 +183,8 @@ providerConnectionApiRoutes.delete("/:id", async (c) => {
 // 触发自动模型发现
 providerConnectionApiRoutes.post("/:id/refresh-models", async (c) => {
   initializeProtocolAdapters()
-  const connection = getProviderConnection(c.req.param("id"))
+  const id = c.req.param("id")
+  const connection = getProviderConnection(id)
   if (!connection) return c.json({ error: "Not found" }, 404)
   const adapter = getProtocolAdapter(connection.protocol)
   if (!adapter?.discoverModels) {
@@ -190,38 +198,177 @@ providerConnectionApiRoutes.post("/:id/refresh-models", async (c) => {
     return c.json({ error: "No enabled credentials" }, 400)
   }
 
-  const previous = structuredClone(connection)
   try {
     const discovered = await adapter.discoverModels(connection, usable)
     const mode = connection.modelDiscovery?.mode ?? "merge"
-    const existing = connection.models ?? []
-    if (mode === "replace") {
-      connection.models = discovered
-    } else if (mode === "manual-only") {
-      // 不修改 models
-    } else {
-      // merge: 已存在的 publicId 优先
-      const map = new Map(existing.map((m) => [m.publicId, m]))
-      for (const m of discovered) {
-        if (!map.has(m.publicId)) map.set(m.publicId, m)
-      }
-      connection.models = [...map.values()]
-    }
-    connection.lastModelDiscoveryAt = Date.now()
-    connection.lastModelDiscoveryError = undefined
-    await persistProviderConnections()
+    await applyDiscoveredModels(id, discovered, mode)
+    const updated = getProviderConnection(id)
+    if (!updated) return c.json({ error: "Not found" }, 404)
     return c.json({
-      connection: sanitizeConnection(connection),
+      connection: sanitizeConnection(updated),
       discovered: discovered.length,
     })
   } catch (error) {
-    Object.assign(connection, previous, {
-      lastModelDiscoveryError: (error as Error).message,
-    })
-    await persistProviderConnections().catch((persistError: unknown) => {
-      consola.error("Failed to persist discovery error:", persistError)
-    })
+    await setDiscoveryError(id, (error as Error).message).catch(() => {})
     return c.json({ error: (error as Error).message }, 502)
+  }
+})
+
+// 测试 API 连通性
+providerConnectionApiRoutes.post("/:id/test", async (c) => {
+  initializeProtocolAdapters()
+  const connection = getProviderConnection(c.req.param("id"))
+  if (!connection) return c.json({ error: "Not found" }, 404)
+
+  const body = (await c.req
+    .json()
+    .catch(() => ({}) as Record<string, unknown>)) as Record<string, unknown>
+  const credentialId =
+    typeof body.credentialId === "string" ? body.credentialId : undefined
+  const credential =
+    credentialId ?
+      connection.credentials.find((cr) => cr.id === credentialId)
+    : connection.credentials.find((cr) => cr.enabled)
+  if (!credential)
+    return c.json({ ok: false, error: "No enabled credentials" }, 400)
+
+  const adapter = getProtocolAdapter(connection.protocol)
+  const start = Date.now()
+
+  try {
+    if (adapter?.discoverModels) {
+      await adapter.discoverModels(connection, credential)
+      return c.json({
+        ok: true,
+        latencyMs: Date.now() - start,
+        method: "model-list",
+      })
+    }
+    // fallback: plain HTTP probe
+    const testUrl = `${connection.baseUrl}/models`
+    const headers: Record<string, string> = {}
+    if (credential.authMode === "header") {
+      headers[credential.headerName ?? "Authorization"] = credential.value
+    } else {
+      headers["Authorization"] = `Bearer ${credential.value}`
+    }
+    const res = await fetch(testUrl, {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    })
+    return c.json({
+      ok: res.ok,
+      status: res.status,
+      latencyMs: Date.now() - start,
+    })
+  } catch (error) {
+    return c.json(
+      {
+        ok: false,
+        error: (error as Error).message,
+        latencyMs: Date.now() - start,
+      },
+      502,
+    )
+  }
+})
+
+// 手动添加模型
+providerConnectionApiRoutes.post("/:id/models", async (c) => {
+  const connection = getProviderConnection(c.req.param("id"))
+  if (!connection) return c.json({ error: "Not found" }, 404)
+
+  let payload: Record<string, unknown>
+  try {
+    payload = await c.req.json()
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400)
+  }
+
+  const publicId =
+    typeof payload.publicId === "string" ? payload.publicId.trim() : ""
+  if (!publicId) return c.json({ error: "`publicId` is required" }, 400)
+
+  const rawEndpoints =
+    Array.isArray(payload.endpoints) ?
+      (payload.endpoints as Array<string>).filter((e): e is ModelEndpoint =>
+        isModelEndpoint(e),
+      )
+    : []
+
+  const model = {
+    publicId,
+    upstreamId:
+      typeof payload.upstreamId === "string" && payload.upstreamId ?
+        payload.upstreamId
+      : publicId,
+    name:
+      typeof payload.name === "string" && payload.name ?
+        payload.name
+      : undefined,
+    vendor:
+      typeof payload.vendor === "string" && payload.vendor ?
+        payload.vendor
+      : undefined,
+    endpoints:
+      rawEndpoints.length > 0 ?
+        rawEndpoints
+      : (["chat"] as Array<ModelEndpoint>),
+    enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
+  }
+
+  try {
+    await addModel(c.req.param("id"), model)
+    return c.json({ connection: sanitizeConnection(connection), model }, 201)
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 409)
+  }
+})
+
+// 更新模型
+providerConnectionApiRoutes.put("/:id/models/:publicId", async (c) => {
+  const connection = getProviderConnection(c.req.param("id"))
+  if (!connection) return c.json({ error: "Not found" }, 404)
+
+  const publicId = decodeURIComponent(c.req.param("publicId"))
+
+  let payload: Record<string, unknown>
+  try {
+    payload = await c.req.json()
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400)
+  }
+
+  const patch: Parameters<typeof updateModel>[2] = {}
+  if (typeof payload.upstreamId === "string" && payload.upstreamId)
+    patch.upstreamId = payload.upstreamId
+  if (typeof payload.name === "string") patch.name = payload.name || undefined
+  if (typeof payload.vendor === "string")
+    patch.vendor = payload.vendor || undefined
+  if (Array.isArray(payload.endpoints)) {
+    const eps = (payload.endpoints as Array<string>).filter(
+      (e): e is ModelEndpoint => isModelEndpoint(e),
+    )
+    if (eps.length > 0) patch.endpoints = eps
+  }
+  if (typeof payload.enabled === "boolean") patch.enabled = payload.enabled
+
+  try {
+    const model = await updateModel(c.req.param("id"), publicId, patch)
+    return c.json({ connection: sanitizeConnection(connection), model })
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 404)
+  }
+})
+
+// 删除模型
+providerConnectionApiRoutes.delete("/:id/models/:publicId", async (c) => {
+  const publicId = decodeURIComponent(c.req.param("publicId"))
+  try {
+    await deleteModel(c.req.param("id"), publicId)
+    return c.json({ success: true })
+  } catch (error) {
+    return c.json({ error: (error as Error).message }, 404)
   }
 })
 
@@ -368,3 +515,9 @@ providerConnectionApiRoutes.post(
     }
   },
 )
+
+providerConnectionApiRoutes.get("/:id/credentials/:credentialId/value", (c) => {
+  const found = findCredential(c.req.param("id"), c.req.param("credentialId"))
+  if (!found) return c.json({ error: "Not found" }, 404)
+  return c.json({ value: found.credential.value })
+})

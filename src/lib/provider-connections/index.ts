@@ -26,16 +26,21 @@ export {
 export {
   __resetProviderConnectionsForTest,
   addCredential,
+  addModel,
+  applyDiscoveredModels,
   createConnection,
   deleteConnection,
   deleteCredential,
+  deleteModel,
   findCredential,
   getProviderConnection,
   initializeProviderConnections,
   listProviderConnections,
   persistProviderConnections,
+  setDiscoveryError,
   updateConnection,
   updateCredential,
+  updateModel,
 } from "./state"
 export type {
   CreateConnectionInput,
