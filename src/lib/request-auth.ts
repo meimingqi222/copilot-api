@@ -25,13 +25,13 @@ export async function requireApiKey(c: Context, next: Next) {
 
   // Multi-user mode: verify against users list
   if (state.users.length > 0) {
-    const authHeader = c.req.header("authorization")
-    const rawKey = extractBearerToken(authHeader)
+    const rawKey = extractApiKey(c)
     if (!rawKey) {
       return c.json(
         {
           error: {
-            message: "Unauthorized. Provide Authorization: Bearer <API_KEY>.",
+            message:
+              "Unauthorized. Provide Authorization: Bearer <API_KEY> or X-Api-Key: <API_KEY>.",
             type: "authentication_error",
           },
         },
@@ -83,7 +83,8 @@ export async function requireApiKey(c: Context, next: Next) {
   return c.json(
     {
       error: {
-        message: "Unauthorized. Provide Authorization: Bearer <API_KEY>.",
+        message:
+          "Unauthorized. Provide Authorization: Bearer <API_KEY> or X-Api-Key: <API_KEY>.",
         type: "authentication_error",
       },
     },
@@ -93,8 +94,7 @@ export async function requireApiKey(c: Context, next: Next) {
 
 export function isAuthorizedRequest(c: Context): boolean {
   if (state.users.length > 0) {
-    const authHeader = c.req.header("authorization")
-    const rawKey = extractBearerToken(authHeader)
+    const rawKey = extractApiKey(c)
     if (rawKey) {
       const user = verifyApiKey(rawKey)
       if (user?.enabled) return true
@@ -115,8 +115,7 @@ export function isAuthorizedRequest(c: Context): boolean {
 export function hasAdminRole(c: Context): boolean {
   // Check API key auth first
   if (state.users.length > 0) {
-    const authHeader = c.req.header("authorization")
-    const rawKey = extractBearerToken(authHeader)
+    const rawKey = extractApiKey(c)
     if (rawKey) {
       const user = verifyApiKey(rawKey)
       // User must be enabled AND have admin role
@@ -137,8 +136,7 @@ function hasValidLegacyApiKey(c: Context): boolean {
   const configuredApiKey = state.legacyApiKey ?? state.apiKey
   if (!configuredApiKey) return false
 
-  const authHeader = c.req.header("authorization")
-  const token = extractBearerToken(authHeader)
+  const token = extractApiKey(c)
   if (!token) return false
 
   // Use constant-time comparison to prevent timing attacks.
@@ -229,6 +227,21 @@ export function verifyAdminPassword(input: string): boolean {
 
 function createSessionToken(): string {
   return randomBytes(32).toString("hex")
+}
+
+/**
+ * Extract API key from either OpenAI-style Bearer token or Anthropic-style x-api-key header.
+ * Tries Authorization: Bearer <token> first, then x-api-key.
+ */
+function extractApiKey(c: Context): string | null {
+  const authHeader = c.req.header("authorization")
+  const bearer = extractBearerToken(authHeader)
+  if (bearer) return bearer
+
+  const xApiKey = c.req.header("x-api-key")
+  if (xApiKey?.trim()) return xApiKey.trim()
+
+  return null
 }
 
 function extractBearerToken(authHeader: string | undefined): string | null {

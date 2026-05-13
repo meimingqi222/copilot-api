@@ -648,6 +648,240 @@
         </div>
       </div>
 
+      <!-- Provider Connections View -->
+      <div x-show="currentView === 'connections'" x-data="connectionsView()" x-init="load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('connections.title') || 'External Providers'"></h2>
+          <div class="flex items-center gap-3">
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
+              <span x-text="t('refresh')"></span>
+            </button>
+            <button @click="openCreate()" class="btn btn-primary">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span x-text="t('connections.add') || 'Add Connection'"></span>
+            </button>
+          </div>
+        </header>
+
+        <div x-show="loading && connections.length === 0" class="flex justify-center py-20">
+          <div class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading && connections.length === 0" class="card text-center py-12">
+          <i data-lucide="plug" class="w-12 h-12 mx-auto text-[var(--apple-text-tertiary)] mb-3"></i>
+          <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('connections.empty') || 'No external providers configured.'"></p>
+        </div>
+
+        <div class="space-y-4">
+          <template x-for="conn in connections" :key="conn.id">
+            <div class="card">
+              <div class="flex items-start justify-between gap-4 mb-4">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-3 mb-1">
+                    <h3 class="text-title-3" x-text="conn.name"></h3>
+                    <span class="tag" :class="conn.enabled ? 'tag-success' : 'tag-muted'" x-text="conn.enabled ? t('enabled') || 'enabled' : t('disabled') || 'disabled'"></span>
+                    <span class="tag tag-info" x-text="conn.protocol"></span>
+                  </div>
+                  <p class="text-sm text-[var(--apple-text-secondary)] break-all" x-text="conn.baseUrl"></p>
+                  <p class="text-xs text-[var(--apple-text-tertiary)] mt-1">
+                    <span x-text="'id: ' + conn.id"></span>
+                    <span class="mx-2">·</span>
+                    <span x-text="'priority: ' + conn.priority"></span>
+                    <span class="mx-2">·</span>
+                    <span x-text="'weight: ' + (conn.weight ?? 1)"></span>
+                    <span x-show="conn.lastModelDiscoveryAt" class="mx-2">·</span>
+                    <span x-show="conn.lastModelDiscoveryAt" x-text="'discovered: ' + formatTime(conn.lastModelDiscoveryAt)"></span>
+                  </p>
+                  <p x-show="conn.lastModelDiscoveryError" class="text-xs text-[var(--apple-red)] mt-1" x-text="conn.lastModelDiscoveryError"></p>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <button @click="refreshModels(conn)" class="btn btn-secondary btn-sm" :title="t('connections.refreshModels') || 'Refresh models'">
+                    <i data-lucide="refresh-ccw" class="w-4 h-4"></i>
+                  </button>
+                  <button @click="openEdit(conn)" class="btn btn-secondary btn-sm">
+                    <i data-lucide="edit" class="w-4 h-4"></i>
+                  </button>
+                  <button @click="deleteConn(conn)" class="btn btn-secondary btn-sm !text-[var(--apple-red)]">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Credentials -->
+              <div class="border-t border-[var(--apple-gray-5)] pt-3">
+                <div class="flex items-center justify-between mb-2">
+                  <h4 class="text-sm font-medium text-[var(--apple-text-secondary)]" x-text="t('connections.credentials') || 'Credentials'"></h4>
+                  <button @click="openAddCredential(conn)" class="btn btn-tertiary btn-sm">
+                    <i data-lucide="plus" class="w-3 h-3"></i>
+                    <span x-text="t('connections.addCredential') || 'Add credential'"></span>
+                  </button>
+                </div>
+                <div class="space-y-2">
+                  <template x-for="cred in conn.credentials" :key="cred.id">
+                    <div class="flex items-center justify-between gap-2 px-3 py-2 bg-[var(--apple-bg-secondary)] rounded-lg">
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 text-sm">
+                          <span class="font-medium" x-text="cred.label || cred.id"></span>
+                          <span class="tag tag-sm" :class="statusTagClass(cred.status)" x-text="cred.status"></span>
+                          <span class="text-xs text-[var(--apple-text-tertiary)]" x-text="cred.authMode + (cred.headerName ? ' (' + cred.headerName + ')' : '')"></span>
+                        </div>
+                        <p class="text-xs text-[var(--apple-text-tertiary)] font-mono mt-1" x-text="cred.valuePreview || '***'"></p>
+                        <p x-show="cred.lastError" class="text-xs text-[var(--apple-red)] mt-1 truncate" x-text="cred.lastError"></p>
+                      </div>
+                      <div class="flex items-center gap-1 flex-shrink-0">
+                        <button x-show="cred.status !== 'ready' && cred.enabled" @click="resetCredential(conn, cred)" class="btn btn-tertiary btn-sm" :title="t('connections.resetStatus') || 'Reset status'">
+                          <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+                        </button>
+                        <button @click="toggleCredential(conn, cred)" class="btn btn-tertiary btn-sm">
+                          <i :data-lucide="cred.enabled ? 'pause' : 'play'" class="w-3 h-3"></i>
+                        </button>
+                        <button @click="openEditCredential(conn, cred)" class="btn btn-tertiary btn-sm">
+                          <i data-lucide="edit" class="w-3 h-3"></i>
+                        </button>
+                        <button @click="deleteCredential(conn, cred)" class="btn btn-tertiary btn-sm !text-[var(--apple-red)]">
+                          <i data-lucide="trash-2" class="w-3 h-3"></i>
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                  <p x-show="!conn.credentials || conn.credentials.length === 0" class="text-xs text-[var(--apple-text-tertiary)] italic" x-text="t('connections.noCredentials') || 'No credentials added yet.'"></p>
+                </div>
+              </div>
+
+              <!-- Models -->
+              <div class="border-t border-[var(--apple-gray-5)] mt-3 pt-3">
+                <h4 class="text-sm font-medium text-[var(--apple-text-secondary)] mb-2">
+                  <span x-text="t('connections.models') || 'Models'"></span>
+                  <span class="text-[var(--apple-text-tertiary)]" x-text="'(' + (conn.models?.length || 0) + ')'"></span>
+                </h4>
+                <div class="flex flex-wrap gap-1">
+                  <template x-for="m in (conn.models || []).slice(0, 12)" :key="m.publicId">
+                    <span class="tag tag-sm" :class="m.enabled ? 'tag-info' : 'tag-muted'" x-text="m.publicId"></span>
+                  </template>
+                  <span x-show="(conn.models?.length || 0) > 12" class="text-xs text-[var(--apple-text-tertiary)]" x-text="'+' + (conn.models.length - 12) + ' more'"></span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Connection Modal -->
+        <div x-show="showConnModal" class="modal-overlay" @click.self="showConnModal = false" style="display: none;">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="connForm.id ? (t('connections.edit') || 'Edit Provider') : (t('connections.add') || 'Add Provider')"></h3>
+              <button @click="showConnModal = false" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="modal-body space-y-4">
+              <div>
+                <label class="form-label" x-text="t('connections.name') || 'Name'"></label>
+                <input type="text" x-model="connForm.name" class="form-input" placeholder="DeepSeek Production">
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" x-text="t('connections.protocol') || 'Protocol'"></label>
+                  <select x-model="connForm.protocol" class="form-input">
+                    <option value="openai-compatible">openai-compatible</option>
+                    <option value="anthropic-compatible">anthropic-compatible</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" x-text="t('connections.priority') || 'Priority'"></label>
+                  <input type="number" x-model.number="connForm.priority" class="form-input" placeholder="10">
+                </div>
+              </div>
+              <div>
+                <label class="form-label" x-text="t('connections.baseUrl') || 'Base URL'"></label>
+                <input type="text" x-model="connForm.baseUrl" class="form-input" placeholder="https://api.deepseek.com/v1">
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('connections.baseUrlHint') || 'Include /v1 if your provider requires it.'"></p>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" x-text="t('connections.weight') || 'Weight'"></label>
+                  <input type="number" x-model.number="connForm.weight" class="form-input" placeholder="1">
+                </div>
+                <div class="flex items-end">
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" x-model="connForm.enabled">
+                    <span x-text="t('enabled') || 'Enabled'"></span>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label class="form-label" x-text="t('connections.modelDiscovery') || 'Model Discovery'"></label>
+                <div class="flex items-center gap-3">
+                  <label class="flex items-center gap-2">
+                    <input type="checkbox" x-model="connForm.discoveryEnabled">
+                    <span x-text="t('connections.discoveryEnabled') || 'Auto-discover models'"></span>
+                  </label>
+                  <select x-model="connForm.discoveryMode" class="form-input flex-1" :disabled="!connForm.discoveryEnabled">
+                    <option value="merge">merge</option>
+                    <option value="replace">replace</option>
+                    <option value="manual-only">manual-only</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button @click="showConnModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="saveConn()" class="btn btn-primary" x-text="t('save')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Credential Modal -->
+        <div x-show="showCredModal" class="modal-overlay" @click.self="showCredModal = false" style="display: none;">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="credForm.id ? (t('connections.editCredential') || 'Edit Credential') : (t('connections.addCredential') || 'Add Credential')"></h3>
+              <button @click="showCredModal = false" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="modal-body space-y-4">
+              <div>
+                <label class="form-label" x-text="t('connections.credLabel') || 'Label (optional)'"></label>
+                <input type="text" x-model="credForm.label" class="form-input" placeholder="primary">
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" x-text="t('connections.authMode') || 'Auth Mode'"></label>
+                  <select x-model="credForm.authMode" class="form-input">
+                    <option value="bearer">bearer</option>
+                    <option value="header">header</option>
+                  </select>
+                </div>
+                <div x-show="credForm.authMode === 'header'">
+                  <label class="form-label" x-text="t('connections.headerName') || 'Header Name'"></label>
+                  <input type="text" x-model="credForm.headerName" class="form-input" placeholder="x-api-key">
+                </div>
+              </div>
+              <div>
+                <label class="form-label" x-text="t('connections.credValue') || 'Secret Value'"></label>
+                <input type="password" x-model="credForm.value" class="form-input" :placeholder="credForm.id ? (t('connections.leaveBlank') || 'Leave blank to keep current') : 'sk-...'">
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="form-label" x-text="t('connections.priority') || 'Priority'"></label>
+                  <input type="number" x-model.number="credForm.priority" class="form-input">
+                </div>
+                <div>
+                  <label class="form-label" x-text="t('connections.weight') || 'Weight'"></label>
+                  <input type="number" x-model.number="credForm.weight" class="form-input">
+                </div>
+              </div>
+              <label class="flex items-center gap-2">
+                <input type="checkbox" x-model="credForm.enabled">
+                <span x-text="t('enabled') || 'Enabled'"></span>
+              </label>
+            </div>
+            <div class="modal-footer">
+              <button @click="showCredModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="saveCred()" class="btn btn-primary" x-text="t('save')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Quota View -->
       <div x-show="currentView === 'quota'" x-data="quotaView()" x-init="init()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
@@ -1526,6 +1760,7 @@
             { id: 'dashboard', icon: 'layout-dashboard', label: this.t('nav.dashboard') },
             { id: 'users', icon: 'key', label: this.t('nav.users') },
             { id: 'accounts', icon: 'users', label: this.t('nav.accounts') },
+            { id: 'connections', icon: 'plug', label: this.t('nav.connections') },
             { id: 'quota', icon: 'bar-chart-3', label: this.t('nav.quota') },
             { id: 'guard', icon: 'shield', label: this.t('nav.guard') },
             { id: 'logs', icon: 'scroll-text', label: this.t('nav.logs') }
@@ -2126,6 +2361,214 @@
           if (app) void Alpine.$data(app).lang;
           return I18n.t(key, params);
         }
+      };
+    }
+
+    // Connections View Component
+    function connectionsView() {
+      return {
+        loading: false,
+        connections: [],
+        showConnModal: false,
+        showCredModal: false,
+        connForm: { id: null, name: '', protocol: 'openai-compatible', baseUrl: '', priority: 10, weight: 1, enabled: true, discoveryEnabled: false, discoveryMode: 'merge' },
+        credForm: { connectionId: null, id: null, label: '', authMode: 'bearer', headerName: '', value: '', priority: 0, weight: 1, enabled: true },
+
+        t(key, params) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) void Alpine.$data(app).lang;
+          return I18n.t(key, params);
+        },
+
+        formatTime(ts) {
+          if (!ts) return '';
+          return new Date(ts).toLocaleString();
+        },
+
+        showToast(msg, type) {
+          const app = document.querySelector('[x-data^=adminApp]');
+          if (app) Alpine.$data(app).showToast(msg, type);
+        },
+
+        statusTagClass(status) {
+          switch (status) {
+            case 'ready': return 'tag-success';
+            case 'cooldown': return 'tag-warning';
+            case 'auth_error': return 'tag-danger';
+            case 'quota_exhausted': return 'tag-danger';
+            case 'disabled': return 'tag-muted';
+            default: return 'tag-info';
+          }
+        },
+
+        async load() {
+          this.loading = true;
+          try {
+            const data = await API.providerConnections.list();
+            this.connections = data.connections || [];
+          } catch (e) {
+            this.showToast(e.message || 'Failed to load connections', 'error');
+          } finally {
+            this.loading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        openCreate() {
+          this.connForm = { id: null, name: '', protocol: 'openai-compatible', baseUrl: '', priority: 10, weight: 1, enabled: true, discoveryEnabled: false, discoveryMode: 'merge' };
+          this.showConnModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        openEdit(conn) {
+          this.connForm = {
+            id: conn.id,
+            name: conn.name,
+            protocol: conn.protocol,
+            baseUrl: conn.baseUrl,
+            priority: conn.priority,
+            weight: conn.weight ?? 1,
+            enabled: conn.enabled,
+            discoveryEnabled: !!conn.modelDiscovery?.enabled,
+            discoveryMode: conn.modelDiscovery?.mode || 'merge',
+          };
+          this.showConnModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async saveConn() {
+          const form = this.connForm;
+          if (!form.name || !form.baseUrl) {
+            this.showToast('Name and Base URL are required', 'error');
+            return;
+          }
+          const payload = {
+            name: form.name,
+            protocol: form.protocol,
+            baseUrl: form.baseUrl,
+            priority: form.priority,
+            weight: form.weight,
+            enabled: form.enabled,
+            modelDiscovery: { enabled: form.discoveryEnabled, mode: form.discoveryMode },
+          };
+          try {
+            if (form.id) {
+              await API.providerConnections.update(form.id, payload);
+            } else {
+              await API.providerConnections.create(payload);
+            }
+            this.showConnModal = false;
+            await this.load();
+            this.showToast('Saved', 'success');
+          } catch (e) {
+            this.showToast(e.message || 'Save failed', 'error');
+          }
+        },
+
+        async deleteConn(conn) {
+          if (!confirm('Delete connection "' + conn.name + '"?')) return;
+          try {
+            await API.providerConnections.delete(conn.id);
+            await this.load();
+            this.showToast('Deleted', 'success');
+          } catch (e) {
+            this.showToast(e.message || 'Delete failed', 'error');
+          }
+        },
+
+        async refreshModels(conn) {
+          try {
+            const res = await API.providerConnections.refreshModels(conn.id);
+            await this.load();
+            this.showToast('Discovered ' + (res.discovered ?? 0) + ' model(s)', 'success');
+          } catch (e) {
+            this.showToast(e.message || 'Refresh failed', 'error');
+          }
+        },
+
+        openAddCredential(conn) {
+          this.credForm = { connectionId: conn.id, id: null, label: '', authMode: 'bearer', headerName: '', value: '', priority: 0, weight: 1, enabled: true };
+          this.showCredModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        openEditCredential(conn, cred) {
+          this.credForm = {
+            connectionId: conn.id,
+            id: cred.id,
+            label: cred.label || '',
+            authMode: cred.authMode,
+            headerName: cred.headerName || '',
+            value: '',
+            priority: cred.priority ?? 0,
+            weight: cred.weight ?? 1,
+            enabled: cred.enabled,
+          };
+          this.showCredModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async saveCred() {
+          const form = this.credForm;
+          const payload = {
+            label: form.label || undefined,
+            authMode: form.authMode,
+            headerName: form.authMode === 'header' ? form.headerName || undefined : undefined,
+            priority: form.priority,
+            weight: form.weight,
+            enabled: form.enabled,
+          };
+          if (form.value) payload.value = form.value;
+          try {
+            if (form.id) {
+              await API.providerConnections.updateCredential(form.connectionId, form.id, payload);
+            } else {
+              if (!form.value) {
+                this.showToast('Secret value is required', 'error');
+                return;
+              }
+              await API.providerConnections.addCredential(form.connectionId, payload);
+            }
+            this.showCredModal = false;
+            await this.load();
+            this.showToast('Saved', 'success');
+          } catch (e) {
+            this.showToast(e.message || 'Save failed', 'error');
+          }
+        },
+
+        async toggleCredential(conn, cred) {
+          try {
+            if (cred.enabled) {
+              await API.providerConnections.disableCredential(conn.id, cred.id);
+            } else {
+              await API.providerConnections.enableCredential(conn.id, cred.id);
+            }
+            await this.load();
+          } catch (e) {
+            this.showToast(e.message || 'Failed', 'error');
+          }
+        },
+
+        async resetCredential(conn, cred) {
+          try {
+            await API.providerConnections.resetCredentialStatus(conn.id, cred.id);
+            await this.load();
+            this.showToast('Status reset', 'success');
+          } catch (e) {
+            this.showToast(e.message || 'Failed', 'error');
+          }
+        },
+
+        async deleteCredential(conn, cred) {
+          if (!confirm('Delete credential?')) return;
+          try {
+            await API.providerConnections.deleteCredential(conn.id, cred.id);
+            await this.load();
+          } catch (e) {
+            this.showToast(e.message || 'Failed', 'error');
+          }
+        },
       };
     }
 

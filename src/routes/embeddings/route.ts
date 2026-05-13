@@ -1,7 +1,10 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
-import { prepareRequestAdmission } from "~/lib/request-admission"
+import {
+  prepareRequestAdmission,
+  requireLegacyAdmission,
+} from "~/lib/request-admission"
 import {
   createEmbeddings,
   type EmbeddingRequest,
@@ -12,9 +15,12 @@ export const embeddingRoutes = new Hono()
 embeddingRoutes.post("/", async (c) => {
   try {
     const payload = await c.req.json<EmbeddingRequest>()
-    const admission = await prepareRequestAdmission(c, {
-      model: payload.model,
-    })
+    const admission = requireLegacyAdmission(
+      await prepareRequestAdmission(c, {
+        model: payload.model,
+        endpoint: "embeddings",
+      }),
+    )
     const result = await createEmbeddings(payload, {
       account: admission.account,
     })

@@ -14,6 +14,7 @@ export const PATHS = {
   PENDING_FLOWS_PATH: path.join(APP_DIR, "pending_flows.json"),
   STATS_PATH: path.join(APP_DIR, "stats.db"),
   GUARD_PATH: path.join(APP_DIR, "guard.json"),
+  PROVIDER_CONNECTIONS_PATH: path.join(APP_DIR, "provider-connections.json"),
 }
 
 export async function ensurePaths(): Promise<void> {

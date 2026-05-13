@@ -32,6 +32,7 @@ const i18n = {
       "nav.dashboard": "仪表盘",
       "nav.users": "用户管理",
       "nav.accounts": "账户管理",
+      "nav.connections": "外部 Provider",
       "nav.quota": "配额监控",
       "nav.logs": "系统日志",
 
@@ -365,6 +366,7 @@ const i18n = {
       "nav.dashboard": "Dashboard",
       "nav.users": "Users",
       "nav.accounts": "Accounts",
+      "nav.connections": "External Providers",
       "nav.quota": "Quota",
       "nav.logs": "Logs",
 

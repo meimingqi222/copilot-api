@@ -3,7 +3,7 @@ import type { Context } from "hono"
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
-import type { Account } from "~/lib/accounts"
+import type { RequestAdmission } from "~/lib/request-admission"
 
 import { canonicalModelId } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
@@ -15,12 +15,12 @@ import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
 import { isNullish } from "~/lib/utils"
 import {
-  createChatCompletions,
   type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
   extractMessageContentFromChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
+import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"
 import { normalizeChunk, normalizeResponse } from "./normalize"
@@ -68,6 +68,7 @@ export async function handleCompletion(c: Context) {
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
+    endpoint: "chat",
     maxTokens:
       typeof payload.max_tokens === "number" ? payload.max_tokens : undefined,
     stream: payload.stream === true ? true : undefined,
@@ -86,11 +87,7 @@ export async function handleCompletion(c: Context) {
   payload = applyMaxTokens(payload, selectedModel)
 
   if (!payload.stream) {
-    const result = await createChatCompletions(payload, {
-      signal,
-      initiatorOverride: admission.initiator,
-      account: admission.account,
-    })
+    const result = await dispatchChatCompletions(payload, admission, signal)
 
     c.set("accountId" as never, result.accountId)
     c.set("model" as never, payload.model)
@@ -105,9 +102,8 @@ export async function handleCompletion(c: Context) {
 
   return handleStreamingCompletion(c, {
     payload,
-    account: admission.account,
+    admission,
     signal,
-    initiator: admission.initiator,
     estimatedInputTokens,
   })
 }
@@ -301,9 +297,8 @@ function isAbortError(error: unknown): boolean {
 
 interface StreamingCompletionOptions {
   payload: ChatCompletionsPayload
-  account: Account
+  admission: RequestAdmission
   signal: AbortSignal | undefined
-  initiator?: "agent" | "user"
   estimatedInputTokens: number
 }
 
@@ -312,8 +307,7 @@ function handleStreamingCompletion(
   options: StreamingCompletionOptions,
 ) {
   return streamSSE(c, async (stream) => {
-    const { payload, account, signal, initiator, estimatedInputTokens } =
-      options
+    const { payload, admission, signal, estimatedInputTokens } = options
     const pingInterval = createSsePingInterval(stream)
     let lastUsage: UsageInfo | undefined
     let recordedOnAbort = false
@@ -321,11 +315,7 @@ function handleStreamingCompletion(
     const model = payload.model
 
     try {
-      const result = await createChatCompletions(payload, {
-        signal,
-        initiatorOverride: initiator,
-        account,
-      })
+      const result = await dispatchChatCompletions(payload, admission, signal)
       accountId = result.accountId
 
       c.set("accountId" as never, accountId)

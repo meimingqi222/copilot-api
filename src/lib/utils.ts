@@ -2,6 +2,7 @@ import consola from "consola"
 
 import { saveAccounts } from "~/lib/account-store"
 import { canonicalNativeModelId } from "~/lib/accounts"
+import { listExposedPublicModels } from "~/lib/route-target/build"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
@@ -116,10 +117,105 @@ export function cacheModels(): void {
         },
       })),
     }
+    appendProviderConnectionModels()
     return
   }
 
-  state.models = undefined
+  appendProviderConnectionModels()
+  if (!state.models) {
+    state.models = undefined
+  }
+}
+
+function endpointToSupported(endpoint: string): string {
+  switch (endpoint) {
+    case "chat": {
+      return "/chat/completions"
+    }
+    case "messages": {
+      return "/v1/messages"
+    }
+    case "responses": {
+      return "/v1/responses"
+    }
+    case "embeddings": {
+      return "/v1/embeddings"
+    }
+    default: {
+      return `/${endpoint}`
+    }
+  }
+}
+
+type ExposedModel = ReturnType<typeof listExposedPublicModels>[number]
+
+function buildConnectionModelEntry(
+  id: string,
+  entry: ExposedModel,
+): NonNullable<typeof state.models>["data"][number] {
+  const vendor = entry.vendor ?? entry.connectionId
+  return {
+    id,
+    object: "model",
+    name: entry.name ?? id,
+    preview: false,
+    vendor,
+    version: "1",
+    model_picker_enabled: entry.pickerEnabled,
+    model_picker_category: entry.pickerCategory,
+    supported_endpoints: entry.endpoints.map((e) => endpointToSupported(e)),
+    capabilities: {
+      family: vendor.toLowerCase(),
+      object: "capabilities",
+      supports: { streaming: true },
+      tokenizer: "unknown",
+      type: "chat",
+    },
+  }
+}
+
+function appendProviderConnectionModels(): void {
+  const exposed = listExposedPublicModels()
+  if (exposed.length === 0) return
+
+  // Count distinct connections per publicId: when > 1, also expose
+  // provider-pinned entries (connectionId/publicId).
+  const connSetByModel = new Map<string, Set<string>>()
+  for (const entry of exposed) {
+    const s = connSetByModel.get(entry.publicId) ?? new Set<string>()
+    connSetByModel.set(entry.publicId, s.add(entry.connectionId))
+  }
+
+  const existing = new Set((state.models?.data ?? []).map((m) => m.id))
+  const additions: NonNullable<typeof state.models>["data"] = []
+  const autoLbSeen = new Set<string>()
+
+  for (const entry of exposed) {
+    // Auto-LB entry: bare publicId (added once, load-balanced across all providers)
+    if (!autoLbSeen.has(entry.publicId)) {
+      autoLbSeen.add(entry.publicId)
+      if (!existing.has(entry.publicId)) {
+        existing.add(entry.publicId)
+        additions.push(buildConnectionModelEntry(entry.publicId, entry))
+      }
+    }
+
+    // Provider-pinned entry: connectionId/publicId — only when multiple connections
+    // serve the same publicId, letting the client target a specific provider.
+    if ((connSetByModel.get(entry.publicId)?.size ?? 1) > 1) {
+      const pinnedId = `${entry.connectionId}/${entry.publicId}`
+      if (!existing.has(pinnedId)) {
+        existing.add(pinnedId)
+        additions.push(buildConnectionModelEntry(pinnedId, entry))
+      }
+    }
+  }
+
+  if (additions.length === 0 && state.models) return
+  state.models = {
+    object: "list",
+    data: [...(state.models?.data ?? []), ...additions],
+  }
 }
 
 export async function refreshModelsForAccount(account: Account): Promise<void> {

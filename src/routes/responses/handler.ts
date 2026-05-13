@@ -9,7 +9,10 @@ import type {
 } from "~/services/copilot/responses-api"
 
 import { HTTPError } from "~/lib/error"
-import { prepareRequestAdmission } from "~/lib/request-admission"
+import {
+  prepareRequestAdmission,
+  requireLegacyAdmission,
+} from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
@@ -25,17 +28,20 @@ export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
   const messageContent = extractMessageContentFromResponsesPayload(payload)
-  const admission = await prepareRequestAdmission(c, {
-    routeKind: "reasoning",
-    model: payload.model,
-    maxTokens:
-      typeof payload.max_output_tokens === "number" ?
-        payload.max_output_tokens
-      : undefined,
-    stream: payload.stream === true ? true : undefined,
-    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
-    messageContent,
-  })
+  const admission = requireLegacyAdmission(
+    await prepareRequestAdmission(c, {
+      routeKind: "reasoning",
+      model: payload.model,
+      endpoint: "responses",
+      maxTokens:
+        typeof payload.max_output_tokens === "number" ?
+          payload.max_output_tokens
+        : undefined,
+      stream: payload.stream === true ? true : undefined,
+      inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+      messageContent,
+    }),
+  )
 
   if (payload.stream) {
     return streamSSE(c, async (stream) => {

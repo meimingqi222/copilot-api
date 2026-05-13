@@ -6,7 +6,10 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import { prepareRequestAdmission } from "~/lib/request-admission"
+import {
+  prepareRequestAdmission,
+  requireLegacyAdmission,
+} from "~/lib/request-admission"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
@@ -174,16 +177,19 @@ async function executeResponseCreate(
   accountId: string
   response: ResponsesResponse | AsyncIterable<CopilotStreamEventLike>
 }> {
-  const admission = await prepareRequestAdmission(c, {
-    routeKind: "reasoning",
-    model: payload.model,
-    maxTokens:
-      typeof payload.max_output_tokens === "number" ?
-        payload.max_output_tokens
-      : undefined,
-    stream: payload.stream === true ? true : undefined,
-    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
-  })
+  const admission = requireLegacyAdmission(
+    await prepareRequestAdmission(c, {
+      routeKind: "reasoning",
+      model: payload.model,
+      endpoint: "responses",
+      maxTokens:
+        typeof payload.max_output_tokens === "number" ?
+          payload.max_output_tokens
+        : undefined,
+      stream: payload.stream === true ? true : undefined,
+      inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+    }),
+  )
 
   const result = await createResponses(payload, {
     signal,
