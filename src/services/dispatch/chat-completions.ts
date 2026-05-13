@@ -10,6 +10,8 @@
  * - connection:在此层捕获 HTTPError,排除已尝试 target,调用 next 直到耗尽候选。
  */
 
+import consola from "consola"
+
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
@@ -100,7 +102,12 @@ async function dispatchViaConnection(
           retryAfterMs: DEFAULTS.COOLDOWN_NETWORK_MS,
           reason: error instanceof Error ? error.message : "network error",
         })
-        await persistProviderConnections().catch(() => {})
+        await persistProviderConnections().catch((err: unknown) => {
+          consola.warn(
+            "[dispatch/chat] failed to persist credential status:",
+            (err as Error).message,
+          )
+        })
       }
 
       const next = switchToNextRouteTarget(
