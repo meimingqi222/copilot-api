@@ -343,7 +343,7 @@
         </div>
 
         <!-- Create User Modal -->
-        <div x-show="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false" style="display: none;">
+        <div x-show="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false" x-cloak>
           <div class="modal">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="t('users.addUser')"></h3>
@@ -379,7 +379,7 @@
         </div>
 
         <!-- New API Key Modal -->
-        <div x-show="showKeyModal" class="modal-overlay" @click.self="showKeyModal = false" style="display: none;">
+        <div x-show="showKeyModal" class="modal-overlay" @click.self="showKeyModal = false" x-cloak>
           <div class="modal" style="max-width:520px">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="t('users.newApiKey')"></h3>
@@ -552,7 +552,7 @@
         </div>
 
         <!-- Add Modal -->
-        <div x-show="showAddModal" class="modal-overlay" @click.self="closeAddModal()" style="display: none;">
+        <div x-show="showAddModal" class="modal-overlay" @click.self="closeAddModal()" x-cloak>
           <div class="modal">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="t('accounts.deviceFlow.title')"></h3>
@@ -628,7 +628,7 @@
         </div>
 
         <!-- Import Modal -->
-        <div x-show="showImportModal" class="modal-overlay" @click.self="closeImportModal()" style="display: none;">
+        <div x-show="showImportModal" class="modal-overlay" @click.self="closeImportModal()" x-cloak>
           <div class="modal">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="t('accounts.importTitle')"></h3>
@@ -824,7 +824,7 @@
         </div>
 
         <!-- Connection Modal -->
-        <div x-show="showConnModal" class="modal-overlay" @click.self="showConnModal = false" style="display: none;">
+        <div x-show="showConnModal" class="modal-overlay" @click.self="showConnModal = false" x-cloak>
           <div class="modal">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="connForm.id ? t('connections.edit') : t('connections.add')"></h3>
@@ -890,7 +890,7 @@
         </div>
 
         <!-- Credential Modal -->
-        <div x-show="showCredModal" class="modal-overlay" @click.self="showCredModal = false" style="display: none;">
+        <div x-show="showCredModal" class="modal-overlay" @click.self="showCredModal = false" x-cloak>
           <div class="modal">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="credForm.id ? t('connections.editCredential') : t('connections.addCredential')"></h3>
