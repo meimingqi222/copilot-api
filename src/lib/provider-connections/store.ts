@@ -199,14 +199,15 @@ function normalizeCredential(value: unknown): ApiCredential | null {
   if (typeof obj.id !== "string" || obj.id === "") return null
   if (typeof obj.value !== "string") return null
 
+  const legacyAuthMode =
+    obj.authMode === "api-key-header" || obj.authMode === "custom-header"
+  if (legacyAuthMode) {
+    consola.warn(
+      `[provider-connections] credential "${obj.id}" uses deprecated authMode "${String(obj.authMode)}", normalizing to "header"`,
+    )
+  }
   const authMode =
-    (
-      obj.authMode === "header"
-      || obj.authMode === "api-key-header"
-      || obj.authMode === "custom-header"
-    ) ?
-      "header"
-    : "bearer"
+    obj.authMode === "header" || legacyAuthMode ? "header" : "bearer"
 
   const status =
     typeof obj.status === "string" ?

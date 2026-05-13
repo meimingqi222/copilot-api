@@ -5,6 +5,8 @@
  * 的情形。Failover 策略与 chat-completions dispatcher 一致。
  */
 
+import consola from "consola"
+
 import { HTTPError } from "~/lib/error"
 import {
   DEFAULTS,
@@ -68,7 +70,12 @@ export async function dispatchMessages(
           retryAfterMs: DEFAULTS.COOLDOWN_NETWORK_MS,
           reason: error instanceof Error ? error.message : "network error",
         })
-        await persistProviderConnections().catch(() => {})
+        await persistProviderConnections().catch((err: unknown) => {
+          consola.warn(
+            "[dispatch/messages] failed to persist credential status:",
+            (err as Error).message,
+          )
+        })
       }
 
       const next = switchToNextRouteTarget(

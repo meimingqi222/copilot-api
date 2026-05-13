@@ -43,10 +43,16 @@ async function refreshConnectionModelsUnsafe(
   const adapter = getProtocolAdapter(connection.protocol)
   if (!adapter?.discoverModels) return
 
-  const credential = connection.credentials.find(
+  const usable = connection.credentials.filter(
     (c) => c.enabled && c.status !== "auth_error" && c.status !== "disabled",
   )
-  if (!credential) {
+  const credential =
+    usable.length > 0 ?
+      usable.reduce((best, c) =>
+        (c.priority ?? 0) < (best.priority ?? 0) ? c : best,
+      )
+    : undefined
+  if (credential === undefined) {
     connection.lastModelDiscoveryError = "no usable credential"
     return
   }

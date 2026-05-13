@@ -192,6 +192,8 @@ export function classifyUpstreamError(input: {
   return { kind: "unknown" }
 }
 
+const MAX_RETRY_AFTER_MS = DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+
 function parseRetryAfter(
   header: string | null | undefined,
 ): number | undefined {
@@ -199,12 +201,12 @@ function parseRetryAfter(
   const trimmed = header.trim()
   const asNumber = Number(trimmed)
   if (Number.isFinite(asNumber) && asNumber >= 0) {
-    return Math.round(asNumber * 1000)
+    return Math.min(Math.round(asNumber * 1000), MAX_RETRY_AFTER_MS)
   }
   const asDate = Date.parse(trimmed)
   if (!Number.isNaN(asDate)) {
     const delta = asDate - Date.now()
-    return Math.max(delta, 0)
+    return Math.min(Math.max(delta, 0), MAX_RETRY_AFTER_MS)
   }
   return undefined
 }

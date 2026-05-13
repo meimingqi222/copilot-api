@@ -6,6 +6,7 @@
  * 配置(baseUrl、headers)与 ApiCredential(authMode/value)构造请求。
  */
 
+import consola from "consola"
 import { events } from "fetch-event-stream"
 
 import type {
@@ -114,7 +115,12 @@ async function handleUpstreamFailure(
     }
   }
 
-  await persistProviderConnections().catch(() => {})
+  await persistProviderConnections().catch((err: unknown) => {
+    consola.warn(
+      "[openai-compatible] failed to persist credential status:",
+      (err as Error).message,
+    )
+  })
 
   throw new HTTPError(contextMessage, response, body)
 }

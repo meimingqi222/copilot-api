@@ -6,6 +6,7 @@
  * 上层(`src/routes/messages/handler.ts`)在调用前已经处理了路径分支。
  */
 
+import consola from "consola"
 import { events } from "fetch-event-stream"
 
 import { HTTPError } from "~/lib/error"
@@ -99,7 +100,12 @@ async function handleUpstreamFailure(
       break
     }
   }
-  await persistProviderConnections().catch(() => {})
+  await persistProviderConnections().catch((err: unknown) => {
+    consola.warn(
+      "[anthropic-compatible] failed to persist credential status:",
+      (err as Error).message,
+    )
+  })
   throw new HTTPError(contextMessage, response, body)
 }
 
