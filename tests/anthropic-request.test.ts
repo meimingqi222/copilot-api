@@ -508,7 +508,11 @@ describe("Copilot /v1/messages endpoint translation", () => {
 
     const copilotPayload = translateToCopilotMessages(anthropicPayload)
 
-    expect(copilotPayload.thinking).toEqual({ type: "adaptive" })
+    // opus-4.7 with adaptive thinking: display: "summarized" is added automatically
+    expect(copilotPayload.thinking).toEqual({
+      type: "adaptive",
+      display: "summarized",
+    })
     expect(copilotPayload.output_config).toEqual({
       effort: "medium",
     })

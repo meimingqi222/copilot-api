@@ -130,6 +130,54 @@ const API = {
     list: () => API.request("/providers"),
   },
 
+  providerConnections: {
+    list: () => API.request("/provider-connections"),
+    get: (id) => API.request(`/provider-connections/${id}`),
+    create: (data) =>
+      API.request("/provider-connections", { method: "POST", body: data }),
+    update: (id, data) =>
+      API.request(`/provider-connections/${id}`, {
+        method: "PUT",
+        body: data,
+      }),
+    delete: (id) =>
+      API.request(`/provider-connections/${id}`, { method: "DELETE" }),
+    refreshModels: (id) =>
+      API.request(`/provider-connections/${id}/refresh-models`, {
+        method: "POST",
+      }),
+    addCredential: (connectionId, data) =>
+      API.request(`/provider-connections/${connectionId}/credentials`, {
+        method: "POST",
+        body: data,
+      }),
+    updateCredential: (connectionId, credentialId, data) =>
+      API.request(
+        `/provider-connections/${connectionId}/credentials/${credentialId}`,
+        { method: "PUT", body: data },
+      ),
+    deleteCredential: (connectionId, credentialId) =>
+      API.request(
+        `/provider-connections/${connectionId}/credentials/${credentialId}`,
+        { method: "DELETE" },
+      ),
+    enableCredential: (connectionId, credentialId) =>
+      API.request(
+        `/provider-connections/${connectionId}/credentials/${credentialId}/enable`,
+        { method: "POST" },
+      ),
+    disableCredential: (connectionId, credentialId) =>
+      API.request(
+        `/provider-connections/${connectionId}/credentials/${credentialId}/disable`,
+        { method: "POST" },
+      ),
+    resetCredentialStatus: (connectionId, credentialId) =>
+      API.request(
+        `/provider-connections/${connectionId}/credentials/${credentialId}/reset-status`,
+        { method: "POST" },
+      ),
+  },
+
   accountFlows: {
     poll: (flowId) =>
       API.request(`/account-flows/${flowId}/poll`, { method: "POST" }),

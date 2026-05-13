@@ -34,7 +34,8 @@ describe("request auth", () => {
     const data = await response.json()
     expect(data).toEqual({
       error: {
-        message: "Unauthorized. Provide Authorization: Bearer <API_KEY>.",
+        message:
+          "Unauthorized. Provide Authorization: Bearer <API_KEY> or X-Api-Key: <API_KEY>.",
         type: "authentication_error",
       },
     })

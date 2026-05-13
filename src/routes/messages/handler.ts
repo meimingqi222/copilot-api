@@ -1,9 +1,11 @@
+/* eslint-disable max-lines */
 import type { Context } from "hono"
 
 import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
 import type { Account } from "~/lib/accounts"
+import type { RequestAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
@@ -18,7 +20,6 @@ import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
 import {
-  createChatCompletions,
   type ChatCompletionChunk,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
@@ -28,6 +29,8 @@ import {
   supportsMessagesApi,
   type CopilotStreamEventLike,
 } from "~/services/copilot/responses-api"
+import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
+import { dispatchMessages } from "~/services/dispatch/messages"
 
 import {
   createInitialStreamState,
@@ -78,6 +81,7 @@ export async function handleCompletion(c: Context) {
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: anthropicPayload.model,
+    endpoint: "messages",
     maxTokens:
       typeof anthropicPayload.max_tokens === "number" ?
         anthropicPayload.max_tokens
@@ -92,6 +96,28 @@ export async function handleCompletion(c: Context) {
 
   const anthropicVersion = c.req.header("anthropic-version")
   consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
+
+  // Provider Connection 路径
+  if (admission.kind === "connection") {
+    if (admission.connection.protocol === "anthropic-compatible") {
+      return handleAnthropicViaConnection({
+        c,
+        anthropicPayload,
+        signal,
+        admission,
+        anthropicBeta,
+        anthropicVersion,
+      })
+    }
+    // openai-compatible 或其它:走 Anthropic -> OpenAI 翻译链路,
+    // 然后通过 dispatcher 调用对应 adapter。
+    return handleCopilotApi({
+      c,
+      anthropicPayload,
+      signal,
+      admission,
+    })
+  }
 
   if (
     supportsMessagesApi(anthropicPayload.model, admission.account)
@@ -112,8 +138,7 @@ export async function handleCompletion(c: Context) {
     c,
     anthropicPayload,
     signal,
-    account: admission.account,
-    initiator: admission.initiator,
+    admission,
   })
 }
 
@@ -212,16 +237,130 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
   })
 }
 
+interface HandleAnthropicViaConnectionOpts {
+  c: Context
+  anthropicPayload: AnthropicMessagesPayload
+  signal: AbortSignal
+  admission: Extract<RequestAdmission, { kind: "connection" }>
+  anthropicBeta: string | undefined
+  anthropicVersion: string | undefined
+}
+
+async function handleAnthropicViaConnection(
+  opts: HandleAnthropicViaConnectionOpts,
+) {
+  const {
+    c,
+    anthropicPayload,
+    signal,
+    admission,
+    anthropicBeta,
+    anthropicVersion,
+  } = opts
+  const forwarded: Record<string, string | undefined> = {
+    "anthropic-beta": anthropicBeta,
+    "anthropic-version": anthropicVersion,
+  }
+
+  if (!anthropicPayload.stream) {
+    const result = await dispatchMessages(
+      anthropicPayload as unknown as Record<string, unknown> & {
+        model: string
+        stream?: boolean
+      },
+      admission,
+      signal,
+      forwarded,
+    )
+    c.set("accountId" as never, result.accountId)
+    c.set("model" as never, anthropicPayload.model)
+    if (!isAsyncIterable(result.response)) {
+      if (
+        isDirectAnthropicResponse(
+          result.response as unknown as AnthropicResponse,
+        )
+      ) {
+        recordAnthropicUsage(
+          c,
+          result.accountId,
+          result.response as unknown as AnthropicResponse,
+        )
+      }
+      return c.json(result.response as unknown as AnthropicResponse)
+    }
+  }
+
+  return streamSSE(c, async (stream) => {
+    const pingInterval = createSsePingInterval(stream)
+    try {
+      const result = await dispatchMessages(
+        anthropicPayload as unknown as Record<string, unknown> & {
+          model: string
+          stream?: boolean
+        },
+        admission,
+        signal,
+        forwarded,
+      )
+      c.set("accountId" as never, result.accountId)
+      c.set("model" as never, anthropicPayload.model)
+      if (!isAsyncIterable(result.response)) {
+        if (
+          isDirectAnthropicResponse(
+            result.response as unknown as AnthropicResponse,
+          )
+        ) {
+          recordAnthropicUsage(
+            c,
+            result.accountId,
+            result.response as unknown as AnthropicResponse,
+          )
+        }
+        await writeSseEvent(stream, JSON.stringify(result.response))
+        return
+      }
+      for await (const event of result.response as AsyncIterable<{
+        data?: string
+        event?: string
+      }>) {
+        if (!event.data) continue
+        await forwardSseEvent(stream, event)
+      }
+    } catch (error) {
+      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+      if (knownError) {
+        await writeSseEvent(
+          stream,
+          JSON.stringify({
+            type: "error",
+            error: { type: knownError.type, message: knownError.message },
+          }),
+          "error",
+        )
+        return
+      }
+      throw error
+    } finally {
+      clearInterval(pingInterval)
+    }
+  })
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    typeof value === "object" && value !== null && Symbol.asyncIterator in value
+  )
+}
+
 interface HandleCopilotApiOpts {
   c: Context
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
-  account: Account
-  initiator: "agent" | "user" | undefined
+  admission: RequestAdmission
 }
 
 async function handleCopilotApi(opts: HandleCopilotApiOpts) {
-  const { c, anthropicPayload, signal, account, initiator } = opts
+  const { c, anthropicPayload, signal, admission } = opts
   const openAIPayload = translateToOpenAI(anthropicPayload)
   consola.debug(
     "Translated OpenAI request payload:",
@@ -238,11 +377,7 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   if (!anthropicPayload.stream) {
     let result
     try {
-      result = await createChatCompletions(openAIPayload, {
-        signal,
-        initiatorOverride: initiator,
-        account,
-      })
+      result = await dispatchChatCompletions(openAIPayload, admission, signal)
     } catch (error) {
       if (error instanceof HTTPError && isContextWindowError(error)) {
         consola.warn(
@@ -269,11 +404,7 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     try {
       let result
       try {
-        result = await createChatCompletions(openAIPayload, {
-          signal,
-          initiatorOverride: initiator,
-          account,
-        })
+        result = await dispatchChatCompletions(openAIPayload, admission, signal)
       } catch (error) {
         const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
         if (knownError) {

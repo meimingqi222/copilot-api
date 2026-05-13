@@ -23,6 +23,10 @@ import {
 } from "./lib/accounts"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
+import {
+  initializeProviderConnections,
+  scheduleConnectionModelDiscovery,
+} from "./lib/provider-connections"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
@@ -34,6 +38,7 @@ import {
   scheduleModelsRefresh,
 } from "./lib/utils"
 import { server } from "./server"
+import { initializeProtocolAdapters } from "./services/protocols"
 
 interface RunServerOptions {
   port: number
@@ -212,6 +217,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
     await ensureDirectProviderAccounts()
 
+    // Load provider connections (generic OpenAI/Anthropic-compatible providers)
+    await initializeProviderConnections()
+    initializeProtocolAdapters()
+
     // Refresh Copilot tokens for copilot accounts
     for (const account of state.accounts) {
       if (account.provider !== "copilot") {
@@ -240,6 +249,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
     // Refresh models for all accounts and schedule periodic refresh
     scheduleModelsRefresh()
+    scheduleConnectionModelDiscovery()
 
     if (state.models) {
       consola.info(
