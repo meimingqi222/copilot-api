@@ -318,11 +318,18 @@
                   <td class="p-3" x-text="user.usedTokens || 0"></td>
                   <td class="p-3 text-[var(--apple-text-secondary)]" x-text="user.lastUsedAt ? formatTime(user.lastUsedAt) : '-'"></td>
                   <td class="p-3">
-                    <div class="flex gap-2">
-                      <button @click="toggleEnabled(user)" class="btn btn-small" :class="user.enabled ? 'btn-secondary' : 'btn-primary'"
-                              x-text="t(user.enabled ? 'accounts.disable' : 'accounts.enable')"></button>
-                      <button @click="resetKey(user)" class="btn btn-small btn-secondary" x-text="t('users.resetKey')"></button>
-                      <button @click="deleteUser(user)" class="btn btn-small btn-danger" x-text="t('delete')"></button>
+                    <div class="flex gap-1">
+                      <button @click="toggleEnabled(user)" class="btn-icon"
+                              :title="t(user.enabled ? 'accounts.disable' : 'accounts.enable')"
+                              :style="user.enabled ? 'color:var(--apple-orange)' : 'color:var(--apple-green)'">
+                        <i :data-lucide="user.enabled ? 'pause-circle' : 'play-circle'" class="w-4 h-4"></i>
+                      </button>
+                      <button @click="resetKey(user)" class="btn-icon" :title="t('users.resetKey')">
+                        <i data-lucide="key" class="w-4 h-4"></i>
+                      </button>
+                      <button @click="deleteUser(user)" class="btn-icon" style="color:var(--apple-red)" :title="t('delete')">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -336,30 +343,35 @@
         </div>
 
         <!-- Create User Modal -->
-        <div x-show="showCreateModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
-          <div class="modal-content p-8 w-full max-w-md" @click.away="showCreateModal = false">
-            <h3 class="text-title-2 mb-6" x-text="t('users.addUser')"></h3>
-            <div class="space-y-4 mb-6">
+        <div x-show="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false" style="display: none;">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('users.addUser')"></h3>
+              <button @click="showCreateModal = false" class="btn-icon">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+            <div class="modal-body space-y-4">
               <div>
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.username')"></label>
-                <input x-model="newUser.username" type="text" class="input" placeholder="e.g. alice">
+                <label class="form-label" x-text="t('users.username')"></label>
+                <input x-model="newUser.username" type="text" class="form-input" placeholder="e.g. alice">
               </div>
               <div>
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('users.role.label')"></label>
-                <select x-model="newUser.role" class="input">
+                <label class="form-label" x-text="t('users.role.label')"></label>
+                <select x-model="newUser.role" class="form-input">
                   <option value="user" x-text="t('users.role.user')"></option>
                   <option value="admin" x-text="t('users.role.admin')"></option>
                 </select>
               </div>
               <div>
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2">
+                <label class="form-label">
                   <span x-text="t('users.quota')"></span>
-                  <span class="text-xs text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.quotaHint') + ')'"></span>
+                  <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.quotaHint') + ')'"></span>
                 </label>
-                <input x-model.number="newUser.quotaLimit" type="number" min="0" class="input" placeholder="0">
+                <input x-model.number="newUser.quotaLimit" type="number" min="0" class="form-input" placeholder="0">
               </div>
             </div>
-            <div class="flex justify-end gap-3">
+            <div class="modal-footer">
               <button @click="showCreateModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
               <button @click="createUser()" class="btn btn-primary" x-text="t('create')"></button>
             </div>
@@ -367,21 +379,26 @@
         </div>
 
         <!-- New API Key Modal -->
-        <div x-show="showKeyModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
-          <div class="modal-content p-8 w-full max-w-lg" @click.away="showKeyModal = false">
-            <div class="text-center mb-6">
-              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
-                <i data-lucide="key" class="w-8 h-8 text-white"></i>
+        <div x-show="showKeyModal" class="modal-overlay" @click.self="showKeyModal = false" style="display: none;">
+          <div class="modal" style="max-width:520px">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('users.newApiKey')"></h3>
+              <button @click="showKeyModal = false" class="btn-icon">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+            <div class="modal-body text-center">
+              <div class="w-14 h-14 bg-[var(--apple-green)] rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="key" class="w-7 h-7 text-white"></i>
               </div>
-              <h3 class="text-title-2 mb-2" x-text="t('users.newApiKey')"></h3>
-              <p class="text-sm text-[var(--apple-red)]" x-text="t('users.keyWarning')"></p>
+              <p class="text-sm text-[var(--apple-red)] mb-5" x-text="t('users.keyWarning')"></p>
+              <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4">
+                <code class="text-sm break-all select-all font-mono" x-text="newApiKey"></code>
+              </div>
             </div>
-            <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 mb-6">
-              <code class="text-sm break-all select-all" x-text="newApiKey"></code>
-            </div>
-            <div class="flex justify-center gap-3">
+            <div class="modal-footer justify-center">
               <button @click="copyKey()" class="btn btn-primary">
-                <i data-lucide="copy" class="w-4 h-4 mr-1"></i>
+                <i data-lucide="copy" class="w-4 h-4"></i>
                 <span x-text="t('copy')"></span>
               </button>
               <button @click="showKeyModal = false" class="btn btn-secondary" x-text="t('done')"></button>
@@ -452,7 +469,7 @@
               </div>
               <div x-show="account.providerFeatures && account.providerFeatures.length" class="mb-4 flex flex-wrap gap-1">
                 <template x-for="feature in account.providerFeatures" :key="feature">
-                  <span class="px-2 py-1 rounded text-[10px] bg-[var(--apple-gray-4)] text-[var(--apple-text-secondary)]" x-text="feature"></span>
+                  <span class="tag tag-sm tag-muted" x-text="feature"></span>
                 </template>
               </div>
               <!-- Priority Setting -->
@@ -514,16 +531,17 @@
               <div x-show="!account.availableModels || !account.availableModels.length" class="mb-4">
                 <p class="text-xs text-[var(--apple-text-secondary)] italic" x-text="t('accounts.modelsLoading')"></p>
               </div>
-              <div class="flex gap-2 flex-wrap">
-                <!-- 启用/禁用按钮 -->
-                <button @click="toggleEnabled(account)" class="btn btn-small flex-1"
+              <div class="flex items-center gap-1.5">
+                <button @click="toggleEnabled(account)" class="btn btn-sm flex-1"
                         :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
                         x-text="t(account.enabled ? 'accounts.disable' : 'accounts.enable')">
                 </button>
-                <button @click="exportOneAccount(account)" class="btn btn-secondary btn-small" :title="t('accounts.exportOne')">
-                  <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <button @click="exportOneAccount(account)" class="btn-icon" :title="t('accounts.exportOne')">
+                  <i data-lucide="download" class="w-4 h-4"></i>
                 </button>
-                <button @click="deleteAccount(account.id)" class="btn btn-danger btn-small" x-text="t('delete')"></button>
+                <button @click="deleteAccount(account.id)" class="btn-icon" style="color:var(--apple-red)" :title="t('delete')">
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
               </div>
             </div>
           </template>
@@ -534,93 +552,97 @@
         </div>
 
         <!-- Add Modal -->
-        <div x-show="showAddModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
-          <div class="modal-content p-8 w-full max-w-md" @click.away="closeAddModal()">
-            <h3 class="text-title-2 mb-6" x-text="t('accounts.deviceFlow.title')"></h3>
-            <div x-show="deviceFlowStep === 'input'">
-              <div class="space-y-4 mb-6">
-                <div>
-                  <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.label')"></label>
-                  <input x-model="newAccount.label" type="text" :placeholder="t('accounts.labelPlaceholder')" class="input">
-                </div>
-                <div>
-                  <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.provider')"></label>
-                  <select x-model="newAccount.provider" class="input">
-                    <template x-for="provider in providers" :key="provider.id">
-                      <option :value="provider.id" x-text="provider.name || provider.id"></option>
-                    </template>
-                  </select>
-                </div>
-                <div x-show="selectedProviderFields().length" class="space-y-3">
-                  <template x-for="field in selectedProviderFields()" :key="field.key">
-                    <div>
-                      <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="fieldLabel(field)"></label>
-                      <template x-if="field.type === 'checkbox'">
-                        <input
-                          type="checkbox"
-                          class="w-4 h-4"
-                          :checked="Boolean(getAccountFieldValue(field))"
-                          @change="setAccountFieldValue(field, $event.target.checked)"
-                        >
-                      </template>
-                      <template x-if="field.type === 'select'">
-                        <select
-                          class="input"
-                          :value="getAccountFieldValue(field) ?? ''"
-                          @change="setAccountFieldValue(field, $event.target.value)"
-                        >
-                          <template x-for="option in (field.options || [])" :key="option.value">
-                            <option :value="option.value" x-text="option.label"></option>
-                          </template>
-                        </select>
-                      </template>
-                      <template x-if="field.type !== 'checkbox' && field.type !== 'select'">
-                        <input
-                          :type="field.type === 'secret' ? 'password' : 'text'"
-                          class="input"
-                          :value="getAccountFieldValue(field) ?? ''"
-                          @input="setAccountFieldValue(field, $event.target.value)"
-                        >
-                      </template>
-                    </div>
-                  </template>
-                </div>
+        <div x-show="showAddModal" class="modal-overlay" @click.self="closeAddModal()" style="display: none;">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('accounts.deviceFlow.title')"></h3>
+              <button @click="closeAddModal()" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div x-show="deviceFlowStep === 'input'" class="modal-body space-y-4">
+              <div>
+                <label class="form-label" x-text="t('accounts.label')"></label>
+                <input x-model="newAccount.label" type="text" :placeholder="t('accounts.labelPlaceholder')" class="form-input">
               </div>
-              <div class="flex justify-end gap-3">
+              <div>
+                <label class="form-label" x-text="t('accounts.provider')"></label>
+                <select x-model="newAccount.provider" class="form-input">
+                  <template x-for="provider in providers" :key="provider.id">
+                    <option :value="provider.id" x-text="provider.name || provider.id"></option>
+                  </template>
+                </select>
+              </div>
+              <div x-show="selectedProviderFields().length" class="space-y-3">
+                <template x-for="field in selectedProviderFields()" :key="field.key">
+                  <div>
+                    <label class="form-label" x-text="fieldLabel(field)"></label>
+                    <template x-if="field.type === 'checkbox'">
+                      <input
+                        type="checkbox"
+                        class="w-4 h-4"
+                        :checked="Boolean(getAccountFieldValue(field))"
+                        @change="setAccountFieldValue(field, $event.target.checked)"
+                      >
+                    </template>
+                    <template x-if="field.type === 'select'">
+                      <select
+                        class="form-input"
+                        :value="getAccountFieldValue(field) ?? ''"
+                        @change="setAccountFieldValue(field, $event.target.value)"
+                      >
+                        <template x-for="option in (field.options || [])" :key="option.value">
+                          <option :value="option.value" x-text="option.label"></option>
+                        </template>
+                      </select>
+                    </template>
+                    <template x-if="field.type !== 'checkbox' && field.type !== 'select'">
+                      <input
+                        :type="field.type === 'secret' ? 'password' : 'text'"
+                        class="form-input"
+                        :value="getAccountFieldValue(field) ?? ''"
+                        @input="setAccountFieldValue(field, $event.target.value)"
+                      >
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <div class="modal-footer">
                 <button @click="closeAddModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
                 <button @click="submitAccount()" class="btn btn-primary" x-text="selectedProvider()?.authMode === 'device_flow' ? t('accounts.deviceFlow.step2') : t('create')"></button>
               </div>
             </div>
-            <div x-show="deviceFlowStep === 'pending'" class="text-center py-6">
+            <div x-show="deviceFlowStep === 'pending'" class="modal-body text-center py-6">
               <div class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-6"></div>
               <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.deviceFlow.instruction')"></p>
               <a :href="deviceFlowData?.verificationUri" target="_blank" class="text-[var(--apple-blue)] hover:underline text-body" x-text="deviceFlowData?.verificationUri"></a>
               <p class="text-3xl font-mono font-bold my-6 tracking-widest" x-text="deviceFlowData?.userCode"></p>
               <p class="text-caption text-[var(--apple-text-secondary)]" x-text="t('accounts.deviceFlow.waiting')"></p>
             </div>
-            <div x-show="deviceFlowStep === 'success'" class="text-center py-6">
-              <div class="w-16 h-16 bg-[var(--apple-green)] rounded-full flex items-center justify-center mx-auto mb-4">
-                <i data-lucide="check" class="w-8 h-8 text-white"></i>
+            <div x-show="deviceFlowStep === 'success'" class="modal-body text-center py-6">
+              <div class="w-14 h-14 bg-[var(--apple-green)] rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="check" class="w-7 h-7 text-white"></i>
               </div>
-              <h4 class="text-title-2 mb-2" x-text="t('accounts.deviceFlow.success')"></h4>
+              <h4 class="text-title-3 mb-2" x-text="t('accounts.deviceFlow.success')"></h4>
               <button @click="closeAddModal(); load()" class="btn btn-primary mt-4" x-text="t('done')"></button>
             </div>
           </div>
         </div>
 
         <!-- Import Modal -->
-        <div x-show="showImportModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-40" x-cloak>
-          <div class="modal-content p-8 w-full max-w-md" @click.away="closeImportModal()">
-            <h3 class="text-title-2 mb-2" x-text="t('accounts.importTitle')"></h3>
-            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('accounts.importDesc')"></p>
-            <div class="space-y-4 mb-6">
+        <div x-show="showImportModal" class="modal-overlay" @click.self="closeImportModal()" style="display: none;">
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('accounts.importTitle')"></h3>
+              <button @click="closeImportModal()" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="modal-body space-y-4">
+              <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.importDesc')"></p>
               <div>
-                <label class="block text-sm text-[var(--apple-text-secondary)] mb-2" x-text="t('accounts.importFile')"></label>
+                <label class="form-label" x-text="t('accounts.importFile')"></label>
                 <input
                   type="file"
                   accept=".json,application/json"
                   @change="importFileSelected($event)"
-                  class="input text-sm"
+                  class="form-input text-sm"
                   x-ref="importFileInput"
                 >
               </div>
@@ -629,7 +651,7 @@
                   type="checkbox"
                   id="importSkipDuplicates"
                   x-model="importSkipDuplicates"
-                  class="w-4 h-4 mt-0.5"
+                  class="w-4 h-4 mt-0.5 accent-[var(--apple-blue)]"
                 >
                 <div>
                   <label for="importSkipDuplicates" class="text-sm cursor-pointer" x-text="t('accounts.importOverwrite')"></label>
@@ -637,10 +659,10 @@
                 </div>
               </div>
             </div>
-            <div class="flex justify-end gap-3">
+            <div class="modal-footer">
               <button @click="closeImportModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
               <button @click="submitImport()" class="btn btn-primary" :disabled="!importFile" :class="{ 'opacity-50 cursor-not-allowed': !importFile }">
-                <i data-lucide="upload" class="w-4 h-4 mr-1"></i>
+                <i data-lucide="upload" class="w-4 h-4"></i>
                 <span x-text="t('accounts.import')"></span>
               </button>
             </div>
@@ -651,115 +673,150 @@
       <!-- Provider Connections View -->
       <div x-show="currentView === 'connections'" x-data="connectionsView()" x-init="load()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
-          <h2 class="text-headline" x-text="t('connections.title') || 'External Providers'"></h2>
+          <h2 class="text-headline" x-text="t('connections.title')"></h2>
           <div class="flex items-center gap-3">
-            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-75': loading }">
+            <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-60': loading }">
               <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
               <span x-text="t('refresh')"></span>
             </button>
             <button @click="openCreate()" class="btn btn-primary">
               <i data-lucide="plus" class="w-4 h-4"></i>
-              <span x-text="t('connections.add') || 'Add Connection'"></span>
+              <span x-text="t('connections.add')"></span>
             </button>
           </div>
         </header>
 
+        <!-- Loading state -->
         <div x-show="loading && connections.length === 0" class="flex justify-center py-20">
           <div class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
         </div>
 
-        <div x-show="!loading && connections.length === 0" class="card text-center py-12">
-          <i data-lucide="plug" class="w-12 h-12 mx-auto text-[var(--apple-text-tertiary)] mb-3"></i>
-          <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('connections.empty') || 'No external providers configured.'"></p>
+        <!-- Empty state -->
+        <div x-show="!loading && connections.length === 0" class="card p-16 text-center">
+          <div class="w-16 h-16 rounded-2xl bg-[var(--apple-gray-6)] flex items-center justify-center mx-auto mb-4">
+            <i data-lucide="plug" class="w-8 h-8 text-[var(--apple-text-tertiary)]"></i>
+          </div>
+          <p class="text-title-3 mb-1" x-text="t('connections.title')"></p>
+          <p class="text-sm text-[var(--apple-text-secondary)] mb-5" x-text="t('connections.empty')"></p>
+          <button @click="openCreate()" class="btn btn-primary mx-auto">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span x-text="t('connections.add')"></span>
+          </button>
         </div>
 
+        <!-- Connection list -->
         <div class="space-y-4">
           <template x-for="conn in connections" :key="conn.id">
-            <div class="card">
-              <div class="flex items-start justify-between gap-4 mb-4">
+            <div class="card p-0 overflow-hidden">
+              <!-- Card header -->
+              <div class="p-5 flex items-start gap-4">
+                <!-- Provider avatar -->
+                <div class="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-base font-semibold flex-shrink-0 shadow-sm"
+                     :style="'background:' + protocolColor(conn.protocol)">
+                  <span x-text="conn.name?.[0]?.toUpperCase() || '?'"></span>
+                </div>
+
+                <!-- Info block -->
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-3 mb-1">
+                  <div class="flex items-center gap-2 flex-wrap mb-1">
                     <h3 class="text-title-3" x-text="conn.name"></h3>
-                    <span class="tag" :class="conn.enabled ? 'tag-success' : 'tag-muted'" x-text="conn.enabled ? t('enabled') || 'enabled' : t('disabled') || 'disabled'"></span>
+                    <span class="tag" :class="conn.enabled ? 'tag-success' : 'tag-muted'"
+                          x-text="conn.enabled ? t('enabled') : t('disabled')"></span>
                     <span class="tag tag-info" x-text="conn.protocol"></span>
                   </div>
-                  <p class="text-sm text-[var(--apple-text-secondary)] break-all" x-text="conn.baseUrl"></p>
-                  <p class="text-xs text-[var(--apple-text-tertiary)] mt-1">
-                    <span x-text="'id: ' + conn.id"></span>
-                    <span class="mx-2">·</span>
-                    <span x-text="'priority: ' + conn.priority"></span>
-                    <span class="mx-2">·</span>
-                    <span x-text="'weight: ' + (conn.weight ?? 1)"></span>
-                    <span x-show="conn.lastModelDiscoveryAt" class="mx-2">·</span>
-                    <span x-show="conn.lastModelDiscoveryAt" x-text="'discovered: ' + formatTime(conn.lastModelDiscoveryAt)"></span>
-                  </p>
-                  <p x-show="conn.lastModelDiscoveryError" class="text-xs text-[var(--apple-red)] mt-1" x-text="conn.lastModelDiscoveryError"></p>
+                  <p class="text-sm text-[var(--apple-text-secondary)] font-mono break-all leading-snug" x-text="conn.baseUrl"></p>
+                  <div class="flex items-center gap-3 mt-1.5 flex-wrap">
+                    <span class="text-xs text-[var(--apple-text-tertiary)]">id: <span class="font-mono" x-text="conn.id"></span></span>
+                    <span class="text-xs text-[var(--apple-text-tertiary)]">priority <span class="font-mono" x-text="conn.priority"></span></span>
+                    <span class="text-xs text-[var(--apple-text-tertiary)]">weight <span class="font-mono" x-text="conn.weight ?? 1"></span></span>
+                    <span x-show="conn.lastModelDiscoveryAt" class="text-xs text-[var(--apple-text-tertiary)]">↻ <span x-text="formatTime(conn.lastModelDiscoveryAt)"></span></span>
+                  </div>
+                  <p x-show="conn.lastModelDiscoveryError" class="text-xs text-[var(--apple-red)] mt-1 truncate" x-text="conn.lastModelDiscoveryError"></p>
                 </div>
-                <div class="flex items-center gap-2 flex-shrink-0">
-                  <button @click="refreshModels(conn)" class="btn btn-secondary btn-sm" :title="t('connections.refreshModels') || 'Refresh models'">
+
+                <!-- Action buttons -->
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                  <button @click="refreshModels(conn)" class="btn-icon" :title="t('connections.refreshModels')">
                     <i data-lucide="refresh-ccw" class="w-4 h-4"></i>
                   </button>
-                  <button @click="openEdit(conn)" class="btn btn-secondary btn-sm">
-                    <i data-lucide="edit" class="w-4 h-4"></i>
+                  <button @click="openEdit(conn)" class="btn-icon">
+                    <i data-lucide="edit-2" class="w-4 h-4"></i>
                   </button>
-                  <button @click="deleteConn(conn)" class="btn btn-secondary btn-sm !text-[var(--apple-red)]">
+                  <button @click="deleteConn(conn)" class="btn-icon" style="color: var(--apple-red)">
                     <i data-lucide="trash-2" class="w-4 h-4"></i>
                   </button>
                 </div>
               </div>
 
-              <!-- Credentials -->
-              <div class="border-t border-[var(--apple-gray-5)] pt-3">
-                <div class="flex items-center justify-between mb-2">
-                  <h4 class="text-sm font-medium text-[var(--apple-text-secondary)]" x-text="t('connections.credentials') || 'Credentials'"></h4>
-                  <button @click="openAddCredential(conn)" class="btn btn-tertiary btn-sm">
-                    <i data-lucide="plus" class="w-3 h-3"></i>
-                    <span x-text="t('connections.addCredential') || 'Add credential'"></span>
+              <!-- Credentials section -->
+              <div class="border-t border-[var(--apple-gray-5)] px-5 py-4">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="text-xs font-semibold text-[var(--apple-text-tertiary)] uppercase tracking-wider" x-text="t('connections.credentials')"></span>
+                  <button @click="openAddCredential(conn)" class="btn btn-sm btn-ghost">
+                    <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                    <span x-text="t('connections.addCredential')"></span>
                   </button>
                 </div>
-                <div class="space-y-2">
+                <div class="space-y-1.5">
                   <template x-for="cred in conn.credentials" :key="cred.id">
-                    <div class="flex items-center justify-between gap-2 px-3 py-2 bg-[var(--apple-bg-secondary)] rounded-lg">
+                    <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-[var(--apple-bg-secondary)] hover:bg-[var(--apple-gray-6)] transition-colors group">
+                      <!-- Status dot -->
+                      <div class="w-2 h-2 rounded-full flex-shrink-0 mt-0.5"
+                           :class="{
+                             'bg-[var(--apple-green)]': cred.enabled && cred.status === 'ready',
+                             'bg-[var(--apple-orange)]': cred.status === 'cooldown',
+                             'bg-[var(--apple-red)]': cred.status === 'auth_error' || cred.status === 'quota_exhausted',
+                             'bg-[var(--apple-gray-3)]': !cred.enabled || cred.status === 'disabled'
+                           }"></div>
+                      <!-- Credential info -->
                       <div class="flex-1 min-w-0">
-                        <div class="flex items-center gap-2 text-sm">
-                          <span class="font-medium" x-text="cred.label || cred.id"></span>
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <span class="text-sm font-medium" x-text="cred.label || cred.id"></span>
                           <span class="tag tag-sm" :class="statusTagClass(cred.status)" x-text="cred.status"></span>
                           <span class="text-xs text-[var(--apple-text-tertiary)]" x-text="cred.authMode + (cred.headerName ? ' (' + cred.headerName + ')' : '')"></span>
                         </div>
-                        <p class="text-xs text-[var(--apple-text-tertiary)] font-mono mt-1" x-text="cred.valuePreview || '***'"></p>
-                        <p x-show="cred.lastError" class="text-xs text-[var(--apple-red)] mt-1 truncate" x-text="cred.lastError"></p>
+                        <div class="flex items-center gap-3 mt-0.5">
+                          <span class="text-xs text-[var(--apple-text-tertiary)] font-mono" x-text="cred.secretPreview || '••••••••'"></span>
+                          <span x-show="cred.lastError" class="text-xs text-[var(--apple-red)] truncate max-w-xs" x-text="cred.lastError"></span>
+                        </div>
                       </div>
-                      <div class="flex items-center gap-1 flex-shrink-0">
-                        <button x-show="cred.status !== 'ready' && cred.enabled" @click="resetCredential(conn, cred)" class="btn btn-tertiary btn-sm" :title="t('connections.resetStatus') || 'Reset status'">
-                          <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
+                      <!-- Credential actions -->
+                      <div class="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button x-show="cred.status !== 'ready' && cred.enabled" @click="resetCredential(conn, cred)"
+                                class="btn-icon" style="width:28px;height:28px" :title="t('connections.resetStatus')">
+                          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
                         </button>
-                        <button @click="toggleCredential(conn, cred)" class="btn btn-tertiary btn-sm">
-                          <i :data-lucide="cred.enabled ? 'pause' : 'play'" class="w-3 h-3"></i>
+                        <button @click="toggleCredential(conn, cred)" class="btn-icon" style="width:28px;height:28px">
+                          <i :data-lucide="cred.enabled ? 'pause-circle' : 'play-circle'" class="w-3.5 h-3.5"></i>
                         </button>
-                        <button @click="openEditCredential(conn, cred)" class="btn btn-tertiary btn-sm">
-                          <i data-lucide="edit" class="w-3 h-3"></i>
+                        <button @click="openEditCredential(conn, cred)" class="btn-icon" style="width:28px;height:28px">
+                          <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
                         </button>
-                        <button @click="deleteCredential(conn, cred)" class="btn btn-tertiary btn-sm !text-[var(--apple-red)]">
-                          <i data-lucide="trash-2" class="w-3 h-3"></i>
+                        <button @click="deleteCredential(conn, cred)" class="btn-icon" style="width:28px;height:28px;color:var(--apple-red)">
+                          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                         </button>
                       </div>
                     </div>
                   </template>
-                  <p x-show="!conn.credentials || conn.credentials.length === 0" class="text-xs text-[var(--apple-text-tertiary)] italic" x-text="t('connections.noCredentials') || 'No credentials added yet.'"></p>
+                  <p x-show="!conn.credentials || conn.credentials.length === 0"
+                     class="text-sm text-[var(--apple-text-tertiary)] italic py-1 px-1"
+                     x-text="t('connections.noCredentials')"></p>
                 </div>
               </div>
 
-              <!-- Models -->
-              <div class="border-t border-[var(--apple-gray-5)] mt-3 pt-3">
-                <h4 class="text-sm font-medium text-[var(--apple-text-secondary)] mb-2">
-                  <span x-text="t('connections.models') || 'Models'"></span>
-                  <span class="text-[var(--apple-text-tertiary)]" x-text="'(' + (conn.models?.length || 0) + ')'"></span>
-                </h4>
+              <!-- Models section -->
+              <div class="border-t border-[var(--apple-gray-5)] px-5 py-3">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="text-xs font-semibold text-[var(--apple-text-tertiary)] uppercase tracking-wider" x-text="t('connections.models')"></span>
+                  <span class="tag tag-sm tag-muted" x-text="conn.models?.length || 0"></span>
+                </div>
                 <div class="flex flex-wrap gap-1">
-                  <template x-for="m in (conn.models || []).slice(0, 12)" :key="m.publicId">
+                  <template x-for="m in (conn.models || []).slice(0, 15)" :key="m.publicId">
                     <span class="tag tag-sm" :class="m.enabled ? 'tag-info' : 'tag-muted'" x-text="m.publicId"></span>
                   </template>
-                  <span x-show="(conn.models?.length || 0) > 12" class="text-xs text-[var(--apple-text-tertiary)]" x-text="'+' + (conn.models.length - 12) + ' more'"></span>
+                  <span x-show="(conn.models?.length || 0) > 15" class="tag tag-sm tag-muted"
+                        x-text="'+' + (conn.models.length - 15) + ' more'"></span>
+                  <span x-show="!conn.models?.length" class="text-xs text-[var(--apple-text-tertiary)] italic">—</span>
                 </div>
               </div>
             </div>
@@ -770,50 +827,52 @@
         <div x-show="showConnModal" class="modal-overlay" @click.self="showConnModal = false" style="display: none;">
           <div class="modal">
             <div class="modal-header">
-              <h3 class="text-title-3" x-text="connForm.id ? (t('connections.edit') || 'Edit Provider') : (t('connections.add') || 'Add Provider')"></h3>
-              <button @click="showConnModal = false" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+              <h3 class="text-title-3" x-text="connForm.id ? t('connections.edit') : t('connections.add')"></h3>
+              <button @click="showConnModal = false" class="btn-icon">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
             </div>
             <div class="modal-body space-y-4">
               <div>
-                <label class="form-label" x-text="t('connections.name') || 'Name'"></label>
+                <label class="form-label" x-text="t('connections.name')"></label>
                 <input type="text" x-model="connForm.name" class="form-input" placeholder="DeepSeek Production">
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="form-label" x-text="t('connections.protocol') || 'Protocol'"></label>
+                  <label class="form-label" x-text="t('connections.protocol')"></label>
                   <select x-model="connForm.protocol" class="form-input">
                     <option value="openai-compatible">openai-compatible</option>
                     <option value="anthropic-compatible">anthropic-compatible</option>
                   </select>
                 </div>
                 <div>
-                  <label class="form-label" x-text="t('connections.priority') || 'Priority'"></label>
-                  <input type="number" x-model.number="connForm.priority" class="form-input" placeholder="10">
+                  <label class="form-label" x-text="t('connections.priority')"></label>
+                  <input type="number" x-model.number="connForm.priority" class="form-input" placeholder="10" min="0">
                 </div>
               </div>
               <div>
-                <label class="form-label" x-text="t('connections.baseUrl') || 'Base URL'"></label>
+                <label class="form-label" x-text="t('connections.baseUrl')"></label>
                 <input type="text" x-model="connForm.baseUrl" class="form-input" placeholder="https://api.deepseek.com/v1">
-                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('connections.baseUrlHint') || 'Include /v1 if your provider requires it.'"></p>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1.5" x-text="t('connections.baseUrlHint')"></p>
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="form-label" x-text="t('connections.weight') || 'Weight'"></label>
-                  <input type="number" x-model.number="connForm.weight" class="form-input" placeholder="1">
+                  <label class="form-label" x-text="t('connections.weight')"></label>
+                  <input type="number" x-model.number="connForm.weight" class="form-input" placeholder="1" min="1">
                 </div>
-                <div class="flex items-end">
-                  <label class="flex items-center gap-2">
-                    <input type="checkbox" x-model="connForm.enabled">
-                    <span x-text="t('enabled') || 'Enabled'"></span>
+                <div class="flex items-end pb-0.5">
+                  <label class="flex items-center gap-2.5 cursor-pointer">
+                    <input type="checkbox" x-model="connForm.enabled" class="w-4 h-4 rounded accent-[var(--apple-blue)]">
+                    <span class="text-sm font-medium" x-text="t('enabled')"></span>
                   </label>
                 </div>
               </div>
               <div>
-                <label class="form-label" x-text="t('connections.modelDiscovery') || 'Model Discovery'"></label>
+                <label class="form-label" x-text="t('connections.modelDiscovery')"></label>
                 <div class="flex items-center gap-3">
-                  <label class="flex items-center gap-2">
-                    <input type="checkbox" x-model="connForm.discoveryEnabled">
-                    <span x-text="t('connections.discoveryEnabled') || 'Auto-discover models'"></span>
+                  <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" x-model="connForm.discoveryEnabled" class="w-4 h-4 rounded accent-[var(--apple-blue)]">
+                    <span class="text-sm" x-text="t('connections.discoveryEnabled')"></span>
                   </label>
                   <select x-model="connForm.discoveryMode" class="form-input flex-1" :disabled="!connForm.discoveryEnabled">
                     <option value="merge">merge</option>
@@ -834,44 +893,47 @@
         <div x-show="showCredModal" class="modal-overlay" @click.self="showCredModal = false" style="display: none;">
           <div class="modal">
             <div class="modal-header">
-              <h3 class="text-title-3" x-text="credForm.id ? (t('connections.editCredential') || 'Edit Credential') : (t('connections.addCredential') || 'Add Credential')"></h3>
-              <button @click="showCredModal = false" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+              <h3 class="text-title-3" x-text="credForm.id ? t('connections.editCredential') : t('connections.addCredential')"></h3>
+              <button @click="showCredModal = false" class="btn-icon">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
             </div>
             <div class="modal-body space-y-4">
               <div>
-                <label class="form-label" x-text="t('connections.credLabel') || 'Label (optional)'"></label>
+                <label class="form-label" x-text="t('connections.credLabel')"></label>
                 <input type="text" x-model="credForm.label" class="form-input" placeholder="primary">
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="form-label" x-text="t('connections.authMode') || 'Auth Mode'"></label>
+                  <label class="form-label" x-text="t('connections.authMode')"></label>
                   <select x-model="credForm.authMode" class="form-input">
                     <option value="bearer">bearer</option>
                     <option value="header">header</option>
                   </select>
                 </div>
                 <div x-show="credForm.authMode === 'header'">
-                  <label class="form-label" x-text="t('connections.headerName') || 'Header Name'"></label>
+                  <label class="form-label" x-text="t('connections.headerName')"></label>
                   <input type="text" x-model="credForm.headerName" class="form-input" placeholder="x-api-key">
                 </div>
               </div>
               <div>
-                <label class="form-label" x-text="t('connections.credValue') || 'Secret Value'"></label>
-                <input type="password" x-model="credForm.value" class="form-input" :placeholder="credForm.id ? (t('connections.leaveBlank') || 'Leave blank to keep current') : 'sk-...'">
+                <label class="form-label" x-text="t('connections.credValue')"></label>
+                <input type="password" x-model="credForm.value" class="form-input"
+                       :placeholder="credForm.id ? t('connections.leaveBlank') : 'sk-...'">
               </div>
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="form-label" x-text="t('connections.priority') || 'Priority'"></label>
-                  <input type="number" x-model.number="credForm.priority" class="form-input">
+                  <label class="form-label" x-text="t('connections.priority')"></label>
+                  <input type="number" x-model.number="credForm.priority" class="form-input" min="0">
                 </div>
                 <div>
-                  <label class="form-label" x-text="t('connections.weight') || 'Weight'"></label>
-                  <input type="number" x-model.number="credForm.weight" class="form-input">
+                  <label class="form-label" x-text="t('connections.weight')"></label>
+                  <input type="number" x-model.number="credForm.weight" class="form-input" min="1">
                 </div>
               </div>
-              <label class="flex items-center gap-2">
-                <input type="checkbox" x-model="credForm.enabled">
-                <span x-text="t('enabled') || 'Enabled'"></span>
+              <label class="flex items-center gap-2.5 cursor-pointer">
+                <input type="checkbox" x-model="credForm.enabled" class="w-4 h-4 rounded accent-[var(--apple-blue)]">
+                <span class="text-sm font-medium" x-text="t('enabled')"></span>
               </label>
             </div>
             <div class="modal-footer">
@@ -2399,6 +2461,17 @@
             case 'disabled': return 'tag-muted';
             default: return 'tag-info';
           }
+        },
+
+        protocolColor(protocol) {
+          const colors = {
+            'openai-compatible': '#10a37f',
+            'anthropic-compatible': '#c96442',
+            'copilot-native': '#0071e3',
+            'windsurf-native': '#7c3aed',
+            'codebuff-native': '#d97706',
+          };
+          return colors[protocol] || '#8e8e93';
         },
 
         async load() {

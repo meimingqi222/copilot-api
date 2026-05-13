@@ -501,3 +501,191 @@ body {
 .hamburger-btn.open .hamburger-icon span:nth-child(2) { opacity: 0; left: -60px; }
 .hamburger-btn.open .hamburger-icon span:nth-child(3) { top: 6px; transform: rotate(-135deg); }
 
+
+/* ── Modal Overlay (connections view) ───────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--apple-bg);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
+  width: 100%;
+  max-width: 560px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 16px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--apple-gray-5);
+  flex-shrink: 0;
+}
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--apple-gray-5);
+  flex-shrink: 0;
+}
+
+/* ── Form Elements ───────────────────────────────────────────────────────── */
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 13px;
+  font-size: 15px;
+  background: var(--apple-bg);
+  border: 1.5px solid var(--apple-border);
+  border-radius: var(--radius);
+  color: var(--apple-text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: none;
+  font-family: var(--font-sf);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.16);
+}
+
+.form-input::placeholder {
+  color: var(--apple-text-tertiary);
+}
+
+.form-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--apple-bg-secondary);
+}
+
+select.form-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2386868b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+/* ── Button: small size & new variants ───────────────────────────────────── */
+.btn-sm {
+  padding: 7px 14px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+.btn-tertiary {
+  background: transparent;
+  color: var(--apple-text-secondary);
+  border: 1px solid var(--apple-gray-4);
+}
+
+.btn-tertiary:hover {
+  background: var(--apple-gray-6);
+  color: var(--apple-text);
+  border-color: var(--apple-gray-3);
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--apple-text-secondary);
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-icon:hover {
+  background: var(--apple-gray-6);
+  color: var(--apple-text);
+}
+
+/* ── Tags / Pills ────────────────────────────────────────────────────────── */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.tag-sm {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 5px;
+}
+
+.tag-success {
+  background: rgba(52, 199, 89, 0.12);
+  color: #1a7a32;
+}
+
+.tag-info {
+  background: rgba(0, 113, 227, 0.1);
+  color: #0058b0;
+}
+
+.tag-warning {
+  background: rgba(255, 149, 0, 0.12);
+  color: #a05900;
+}
+
+.tag-danger,
+.tag-error {
+  background: rgba(255, 59, 48, 0.1);
+  color: #c41c14;
+}
+
+.tag-muted {
+  background: var(--apple-gray-5);
+  color: var(--apple-text-secondary);
+}
+
+.tag-purple {
+  background: rgba(175, 82, 222, 0.1);
+  color: #7d3d9e;
+}
