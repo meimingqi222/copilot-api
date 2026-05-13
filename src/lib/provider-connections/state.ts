@@ -271,6 +271,99 @@ export async function deleteCredential(
   })
 }
 
+export async function applyDiscoveredModels(
+  connectionId: string,
+  discovered: Array<ModelMapping>,
+  mode: "merge" | "replace" | "manual-only",
+): Promise<void> {
+  await withMutation(() => {
+    const connection = getProviderConnection(connectionId)
+    if (!connection) throw new Error(`Connection not found: ${connectionId}`)
+    if (mode === "replace") {
+      connection.models = discovered
+    } else if (mode === "merge") {
+      const existing = connection.models ?? []
+      const map = new Map(existing.map((m) => [m.publicId, m]))
+      for (const m of discovered) {
+        if (!map.has(m.publicId)) map.set(m.publicId, m)
+      }
+      connection.models = [...map.values()]
+    }
+    // manual-only: 不修改 models
+    connection.lastModelDiscoveryAt = Date.now()
+    connection.lastModelDiscoveryError = undefined
+    connection.updatedAt = Date.now()
+  })
+}
+
+export async function setDiscoveryError(
+  connectionId: string,
+  errorMessage: string,
+): Promise<void> {
+  await withMutation(() => {
+    const connection = getProviderConnection(connectionId)
+    if (!connection) return
+    connection.lastModelDiscoveryError = errorMessage
+    connection.updatedAt = Date.now()
+  })
+}
+
+export async function addModel(
+  connectionId: string,
+  model: ModelMapping,
+): Promise<void> {
+  await withMutation(() => {
+    const connection = getProviderConnection(connectionId)
+    if (!connection) throw new Error(`Connection not found: ${connectionId}`)
+    if (connection.models?.some((m) => m.publicId === model.publicId)) {
+      throw new Error(`Model "${model.publicId}" already exists`)
+    }
+    connection.models = [...(connection.models ?? []), model]
+    connection.updatedAt = Date.now()
+  })
+}
+
+export async function updateModel(
+  connectionId: string,
+  publicId: string,
+  patch: Partial<
+    Pick<
+      ModelMapping,
+      "upstreamId" | "name" | "vendor" | "endpoints" | "enabled"
+    >
+  >,
+): Promise<ModelMapping> {
+  return withMutation(() => {
+    const connection = getProviderConnection(connectionId)
+    if (!connection) throw new Error(`Connection not found: ${connectionId}`)
+    const model = connection.models?.find((m) => m.publicId === publicId)
+    if (!model) throw new Error(`Model "${publicId}" not found`)
+    if (patch.upstreamId !== undefined) model.upstreamId = patch.upstreamId
+    if (patch.name !== undefined) model.name = patch.name
+    if (patch.vendor !== undefined) model.vendor = patch.vendor
+    if (patch.endpoints !== undefined && patch.endpoints.length > 0)
+      model.endpoints = patch.endpoints
+    if (patch.enabled !== undefined) model.enabled = patch.enabled
+    connection.updatedAt = Date.now()
+    return model
+  })
+}
+
+export async function deleteModel(
+  connectionId: string,
+  publicId: string,
+): Promise<void> {
+  await withMutation(() => {
+    const connection = getProviderConnection(connectionId)
+    if (!connection) throw new Error(`Connection not found: ${connectionId}`)
+    const idx =
+      connection.models?.findIndex((m) => m.publicId === publicId) ?? -1
+    if (idx < 0) throw new Error(`Model "${publicId}" not found`)
+    connection.models?.splice(idx, 1)
+    connection.updatedAt = Date.now()
+  })
+}
+
 /** 持久化当前内存状态(供 availability / discovery 运行时改动后调用)。 */
 export async function persistProviderConnections(): Promise<void> {
   const run = mutationQueue

@@ -236,6 +236,22 @@ const i18n = {
       "connections.headerName": "Header 名称",
       "connections.credValue": "密钥值",
       "connections.leaveBlank": "留空保持当前值",
+      "connections.addModel": "手动添加模型",
+      "connections.editModel": "编辑模型",
+      "connections.modelPublicId": "对外模型 ID",
+      "connections.modelUpstreamId": "上游映射 ID",
+      "connections.modelUpstreamIdHint":
+        "留空则与对外 ID 相同。用于将客户端名称映射到供应商实际名称（如 glm-4 → GLM-4）",
+      "connections.modelName": "显示名称",
+      "connections.modelVendor": "厂商",
+      "connections.modelEnabled": "启用",
+      "connections.modelEndpoints": "支持端点",
+      "connections.testApi": "测试连通性",
+      "connections.testSuccess": "连通正常",
+      "connections.testFailed": "连通失败",
+      "connections.testAll": "批量测试",
+      "connections.credBulkHint": "每行一个 API Key，支持批量粘贴",
+      "connections.apiKey": "API Key",
 
       // Guard
       "nav.guard": "安全防护",
@@ -606,6 +622,22 @@ const i18n = {
       "connections.headerName": "Header Name",
       "connections.credValue": "Secret Value",
       "connections.leaveBlank": "Leave blank to keep current",
+      "connections.addModel": "Add Model",
+      "connections.editModel": "Edit Model",
+      "connections.modelPublicId": "Public Model ID",
+      "connections.modelUpstreamId": "Upstream Mapping ID",
+      "connections.modelUpstreamIdHint":
+        "Leave blank to use the same ID. Maps the public name to the provider's actual model name (e.g. glm-4 → GLM-4)",
+      "connections.modelName": "Display Name",
+      "connections.modelVendor": "Vendor",
+      "connections.modelEnabled": "Enabled",
+      "connections.modelEndpoints": "Endpoints",
+      "connections.testApi": "Test API",
+      "connections.testSuccess": "Connected",
+      "connections.testFailed": "Failed",
+      "connections.testAll": "Test All",
+      "connections.credBulkHint": "One API Key per line, supports bulk paste",
+      "connections.apiKey": "API Key",
 
       // Guard
       "nav.guard": "Guard",
@@ -789,5 +821,5 @@ const i18n = {
 i18n.init()
 
 // Global variable
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+
 const I18n = i18n

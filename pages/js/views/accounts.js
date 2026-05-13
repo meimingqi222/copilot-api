@@ -1,0 +1,390 @@
+function accountsView() {
+  return {
+    loading: false,
+    accounts: [],
+    providers: [],
+    showAddModal: false,
+    showImportModal: false,
+    importFile: null,
+    importSkipDuplicates: true,
+    defaultNewAccount() {
+      return {
+        label: "",
+        provider: "copilot",
+        credentials: {},
+        settings: {},
+      }
+    },
+    newAccount: {
+      label: "",
+      provider: "copilot",
+      credentials: {},
+      settings: {},
+    },
+    deviceFlowStep: "input",
+    deviceFlowData: null,
+    pollTimer: null,
+    editingLabel: null,
+    editLabelValue: "",
+
+    async load() {
+      this.loading = true
+      try {
+        const [data, providerData] = await Promise.all([
+          API.accounts.list(),
+          API.providers.list(),
+        ])
+        this.accounts = data.accounts || []
+        this.providers = providerData.providers || []
+      } catch {
+        this.showToast(I18n.t("error.load"), "error")
+      } finally {
+        this.loading = false
+        this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    providerIcon(providerId) {
+      const provider = this.providers.find((item) => item.id === providerId)
+      return (
+        provider?.icon
+        || (providerId === "codebuff" ? "bot"
+        : providerId === "windsurf" ? "wind"
+        : "github")
+      )
+    },
+
+    providerLabel(providerId) {
+      const provider = this.providers.find((item) => item.id === providerId)
+      return (
+        provider?.name
+        || I18n.t(`accounts.provider.${providerId}.name`)
+        || providerId
+      )
+    },
+
+    selectedProvider() {
+      return (
+        this.providers.find(
+          (provider) => provider.id === this.newAccount.provider,
+        ) || null
+      )
+    },
+
+    selectedProviderFields() {
+      return this.selectedProvider()?.accountFields || []
+    },
+
+    fieldLabel(field) {
+      return I18n.t(field.labelKey) || field.key
+    },
+
+    getAccountFieldValue(field) {
+      if (field.key in (this.newAccount.credentials || {})) {
+        return this.newAccount.credentials[field.key]
+      }
+      return this.newAccount.settings?.[field.key]
+    },
+
+    setAccountFieldValue(field, value) {
+      const directCredentialKeys = ["authToken", "apiKey"]
+      if (directCredentialKeys.includes(field.key)) {
+        this.newAccount.credentials = {
+          ...this.newAccount.credentials,
+          [field.key]: value,
+        }
+        return
+      }
+
+      this.newAccount.settings = {
+        ...this.newAccount.settings,
+        [field.key]: value,
+      }
+    },
+
+    startEditLabel(account) {
+      this.editingLabel = account.id
+      this.editLabelValue = account.label
+      this.$nextTick(() => {
+        const input = this.$refs.labelInput
+        if (input) input.focus()
+      })
+    },
+
+    async saveLabel(account) {
+      if (!this.editLabelValue.trim()) {
+        this.editingLabel = null
+        return
+      }
+      try {
+        await API.accounts.update(account.id, {
+          label: this.editLabelValue.trim(),
+        })
+        this.showToast(
+          I18n.t("accounts.updateSuccess") || "Account name updated",
+          "success",
+        )
+        await this.load()
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      } finally {
+        this.editingLabel = null
+      }
+    },
+
+    openAddModal() {
+      this.newAccount = this.defaultNewAccount()
+      this.deviceFlowStep = "input"
+      this.deviceFlowData = null
+      this.showAddModal = true
+      if (this.pollTimer) clearTimeout(this.pollTimer)
+      this.pollTimer = null
+    },
+
+    closeAddModal() {
+      this.showAddModal = false
+      this.newAccount = this.defaultNewAccount()
+      this.deviceFlowStep = "input"
+      this.deviceFlowData = null
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer)
+        this.pollTimer = null
+      }
+    },
+
+    async submitAccount() {
+      this.pollTimer = null
+      try {
+        const provider = this.newAccount.provider || "copilot"
+        const payload = {
+          label: this.newAccount.label.trim() || undefined,
+          provider,
+          credentials: Object.fromEntries(
+            Object.entries(this.newAccount.credentials || {}).filter(
+              ([, value]) => value !== "" && value !== undefined,
+            ),
+          ),
+          settings: Object.fromEntries(
+            Object.entries(this.newAccount.settings || {}).filter(
+              ([, value]) => value !== "" && value !== undefined,
+            ),
+          ),
+        }
+        const res = await API.accounts.create(payload)
+        if (this.selectedProvider()?.authMode === "device_flow") {
+          if (!res?.flowId || !res?.userCode || !res?.verificationUri) {
+            throw new Error("Invalid device flow response")
+          }
+          this.deviceFlowData = res
+          this.deviceFlowStep = "pending"
+          this.pollDeviceFlow()
+          return
+        }
+        if (res?.status && res.status !== "complete") {
+          throw new Error("Unexpected account creation status")
+        }
+        this.deviceFlowStep = "success"
+        await this.load()
+      } catch {
+        this.showToast(I18n.t("error.create"), "error")
+      }
+    },
+
+    pollDeviceFlow() {
+      let pollInterval = this.deviceFlowData?.interval * 1000 || 5000
+
+      const doPoll = async () => {
+        if (this.deviceFlowStep !== "pending") {
+          return
+        }
+        try {
+          const flowId =
+            this.deviceFlowData.flowId || this.deviceFlowData.deviceCode
+          const res = await API.accountFlows.poll(flowId)
+          if (res.status === "complete") {
+            this.deviceFlowStep = "success"
+            // Refresh accounts list to show the new account
+            await this.load()
+            return
+          }
+          if (res.status === "expired") {
+            this.deviceFlowStep = "input"
+            this.showToast(
+              I18n.t("accounts.deviceFlow.expired")
+                || "Device flow expired. Please try again.",
+              "error",
+            )
+            return
+          }
+          // Update interval if server asks for slow_down
+          if (res.interval) {
+            pollInterval = res.interval * 1000
+          }
+        } catch {
+          // Continue polling
+        }
+        // Schedule next poll with current interval
+        this.pollTimer = setTimeout(doPoll, pollInterval)
+      }
+
+      this.pollTimer = setTimeout(doPoll, pollInterval)
+    },
+
+    async toggleEnabled(account) {
+      try {
+        await API.accounts.update(account.id, { enabled: !account.enabled })
+        this.showToast(
+          account.enabled ?
+            I18n.t("accounts.disableSuccess")
+          : I18n.t("accounts.enableSuccess"),
+          "success",
+        )
+        await this.load()
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
+    async savePriority(account) {
+      const priority = Math.max(0, Math.min(100, account.priority ?? 0))
+      try {
+        await API.accounts.update(account.id, { priority })
+        this.showToast(
+          I18n.t("accounts.prioritySuccess") || "Priority updated",
+          "success",
+        )
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
+    async decreasePriority(account) {
+      const newPriority = Math.max(0, (account.priority ?? 0) - 1)
+      account.priority = newPriority
+      await this.savePriority(account)
+    },
+
+    async increasePriority(account) {
+      const newPriority = Math.min(100, (account.priority ?? 0) + 1)
+      account.priority = newPriority
+      await this.savePriority(account)
+    },
+
+    async deleteAccount(id) {
+      if (!confirm(I18n.t("accounts.confirmDelete"))) return
+      try {
+        await API.accounts.delete(id)
+        this.showToast(I18n.t("accounts.deleteSuccess"), "success")
+        await this.load()
+      } catch {
+        this.showToast(I18n.t("error.delete"), "error")
+      }
+    },
+
+    async exportAccounts() {
+      try {
+        const response = await API.accounts.export()
+        const blob = await response.blob()
+        const disposition = response.headers.get("Content-Disposition") || ""
+        const match = disposition.match(/filename="?([^"]+)"?/)
+        const filename = match ? match[1] : "copilot-api-accounts.json"
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+        this.showToast(I18n.t("accounts.exportSuccess"), "success")
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.load"), "error")
+      }
+    },
+
+    async exportOneAccount(account) {
+      try {
+        const response = await API.accounts.exportOne(account.id)
+        const blob = await response.blob()
+        const disposition = response.headers.get("Content-Disposition") || ""
+        const match = disposition.match(/filename="?([^"]+)"?/)
+        const filename = match ? match[1] : "copilot-api-account.json"
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+        this.showToast(I18n.t("accounts.exportOneSuccess"), "success")
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.load"), "error")
+      }
+    },
+
+    openImportModal() {
+      this.importFile = null
+      this.importSkipDuplicates = true
+      this.showImportModal = true
+      this.$nextTick(() => {
+        if (this.$refs.importFileInput) this.$refs.importFileInput.value = ""
+      })
+    },
+
+    closeImportModal() {
+      this.showImportModal = false
+      this.importFile = null
+    },
+
+    importFileSelected(event) {
+      this.importFile = event.target.files[0] || null
+    },
+
+    async submitImport() {
+      if (!this.importFile) {
+        this.showToast(I18n.t("accounts.importNoFile"), "error")
+        return
+      }
+      let parsed
+      try {
+        const text = await this.importFile.text()
+        parsed = JSON.parse(text)
+      } catch {
+        this.showToast(I18n.t("accounts.importInvalidFile"), "error")
+        return
+      }
+      // Support both { accounts: [...] } and plain array
+      const accounts = Array.isArray(parsed) ? parsed : parsed.accounts || []
+      if (accounts.length === 0) {
+        this.showToast(I18n.t("accounts.importInvalidFile"), "error")
+        return
+      }
+      try {
+        const result = await API.accounts.import({
+          accounts,
+          overwrite: !this.importSkipDuplicates,
+        })
+        let msg = I18n.t("accounts.importSuccess", { count: result.imported })
+        if (result.skipped > 0)
+          msg += I18n.t("accounts.importSkipped", { count: result.skipped })
+        if (result.failed > 0)
+          msg += I18n.t("accounts.importFailed", { count: result.failed })
+        this.showToast(msg, result.imported > 0 ? "success" : "info")
+        this.closeImportModal()
+        await this.load()
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.create"), "error")
+      }
+    },
+
+    showToast(msg, type) {
+      const app = document.querySelector("[x-data^=adminApp]")
+      if (app) Alpine.$data(app).showToast(msg, type)
+    },
+    t(key, params) {
+      // Access parent lang to establish reactive dependency
+      const app = document.querySelector("[x-data^=adminApp]")
+      if (app) void Alpine.$data(app).lang
+      return I18n.t(key, params)
+    },
+  }
+}
+
+// Connections View Component
