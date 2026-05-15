@@ -5,6 +5,7 @@ function quotaView() {
     accounts: [],
     users: [],
     dateRange: "today",
+    selectedMonth: "", // YYYY-MM, set when dateRange === "custom"
     showPricingModal: false,
     modelPrices: {},
     usageSummary: {
@@ -18,6 +19,7 @@ function quotaView() {
       byAccount: {},
       byModel: {},
       timeSeries: [],
+      period: { startDate: "", endDate: "" },
     },
     usageChart: null,
     chartRenderToken: 0,
@@ -65,6 +67,18 @@ function quotaView() {
 
     setRange(range) {
       this.dateRange = range
+      if (range !== "custom") {
+        this.selectedMonth = ""
+      }
+      this.loadUsageStats().then(() => {
+        this.$nextTick(() => this.renderChart())
+      })
+    },
+
+    setMonth(month) {
+      if (!month) return
+      this.dateRange = "custom"
+      this.selectedMonth = month
       this.loadUsageStats().then(() => {
         this.$nextTick(() => this.renderChart())
       })
@@ -129,7 +143,11 @@ function quotaView() {
 
     async loadUsageStats() {
       try {
-        const data = await API.usage.summary(this.dateRange)
+        const params =
+          this.dateRange === "custom" && this.selectedMonth ?
+            { month: this.selectedMonth }
+          : { range: this.dateRange }
+        const data = await API.usage.summary(params)
         this.usageSummary = data
       } catch (e) {
         console.error("Failed to load usage stats:", e)
@@ -167,12 +185,11 @@ function quotaView() {
         const ctx = canvas.getContext("2d")
         if (!ctx) return
 
-        const isToday = this.dateRange === "today"
         const intervalSeries = this.usageSummary.intervalSeries || []
         const timeSeries = this.usageSummary.timeSeries || []
 
-        // For today, prefer 15-min interval series; otherwise fall back to daily
-        const useInterval = isToday && intervalSeries.length > 0
+        // Server returns intervalSeries only when range is a single day
+        const useInterval = intervalSeries.length > 0
         const hasDailyData = timeSeries.length > 0
         if (!useInterval && !hasDailyData) return
 
