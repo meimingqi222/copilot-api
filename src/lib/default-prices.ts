@@ -56,49 +56,49 @@ export const DEFAULT_MODEL_PRICES: Record<
     promptPricePer1m: 3.0,
     completionPricePer1m: 15.0,
     cacheReadPricePer1m: 0.3,
-    cacheWritePricePer1m: 3.0,
+    cacheWritePricePer1m: 3.75, // Anthropic 5min cache: prompt * 1.25
   },
   "claude-sonnet-4.5": {
     promptPricePer1m: 3.0,
     completionPricePer1m: 15.0,
     cacheReadPricePer1m: 0.3,
-    cacheWritePricePer1m: 3.0,
+    cacheWritePricePer1m: 3.75,
   },
   "claude-sonnet-4.6": {
     promptPricePer1m: 3.0,
     completionPricePer1m: 15.0,
     cacheReadPricePer1m: 0.3,
-    cacheWritePricePer1m: 3.0,
+    cacheWritePricePer1m: 3.75,
   },
   "claude-sonnet-4-fast": {
     promptPricePer1m: 18.0, // 3.0 * 6
     completionPricePer1m: 90.0, // 15.0 * 6
     cacheReadPricePer1m: 1.8,
-    cacheWritePricePer1m: 18.0,
+    cacheWritePricePer1m: 22.5, // 3.75 * 6
   },
   "claude-sonnet-4.5-fast": {
     promptPricePer1m: 18.0,
     completionPricePer1m: 90.0,
     cacheReadPricePer1m: 1.8,
-    cacheWritePricePer1m: 18.0,
+    cacheWritePricePer1m: 22.5,
   },
   "claude-sonnet-4.6-fast": {
     promptPricePer1m: 18.0,
     completionPricePer1m: 90.0,
     cacheReadPricePer1m: 1.8,
-    cacheWritePricePer1m: 18.0,
+    cacheWritePricePer1m: 22.5,
   },
   "claude-3-sonnet": {
     promptPricePer1m: 3.0,
     completionPricePer1m: 15.0,
     cacheReadPricePer1m: 0.3,
-    cacheWritePricePer1m: 3.0,
+    cacheWritePricePer1m: 3.75,
   },
   "claude-3.5-sonnet": {
     promptPricePer1m: 3.0,
     completionPricePer1m: 15.0,
     cacheReadPricePer1m: 0.3,
-    cacheWritePricePer1m: 3.0,
+    cacheWritePricePer1m: 3.75,
   },
 
   // Claude Opus series
@@ -106,43 +106,49 @@ export const DEFAULT_MODEL_PRICES: Record<
     promptPricePer1m: 5.0,
     completionPricePer1m: 25.0,
     cacheReadPricePer1m: 0.5,
-    cacheWritePricePer1m: 5.0,
+    cacheWritePricePer1m: 6.25, // Anthropic 5min cache: prompt * 1.25
   },
   "claude-opus-4.1": {
     promptPricePer1m: 5.0,
     completionPricePer1m: 25.0,
     cacheReadPricePer1m: 0.5,
-    cacheWritePricePer1m: 5.0,
+    cacheWritePricePer1m: 6.25,
   },
   "claude-opus-4.5": {
     promptPricePer1m: 5.0,
     completionPricePer1m: 25.0,
     cacheReadPricePer1m: 0.5,
-    cacheWritePricePer1m: 5.0,
+    cacheWritePricePer1m: 6.25,
   },
   "claude-opus-4.6": {
     promptPricePer1m: 5.0,
     completionPricePer1m: 25.0,
     cacheReadPricePer1m: 0.5,
-    cacheWritePricePer1m: 5.0,
+    cacheWritePricePer1m: 6.25,
+  },
+  "claude-opus-4.7": {
+    promptPricePer1m: 5.0,
+    completionPricePer1m: 25.0,
+    cacheReadPricePer1m: 0.5,
+    cacheWritePricePer1m: 6.25,
   },
   "claude-opus-4.1-fast": {
     promptPricePer1m: 30.0, // 5.0 * 6
     completionPricePer1m: 150.0, // 25.0 * 6
     cacheReadPricePer1m: 3.0,
-    cacheWritePricePer1m: 30.0,
+    cacheWritePricePer1m: 37.5, // 6.25 * 6
   },
   "claude-opus-4.6-fast": {
     promptPricePer1m: 30.0,
     completionPricePer1m: 150.0,
     cacheReadPricePer1m: 3.0,
-    cacheWritePricePer1m: 30.0,
+    cacheWritePricePer1m: 37.5,
   },
   "claude-3-opus": {
     promptPricePer1m: 15.0,
     completionPricePer1m: 75.0,
     cacheReadPricePer1m: 1.5,
-    cacheWritePricePer1m: 15.0,
+    cacheWritePricePer1m: 18.75, // 15.0 * 1.25
   },
 
   // ==================== OpenAI GPT Models ====================
@@ -190,10 +196,18 @@ export const DEFAULT_MODEL_PRICES: Record<
     cacheWritePricePer1m: 1.75,
   },
   "gpt-5.4": {
-    promptPricePer1m: 2.5,
-    completionPricePer1m: 15.0,
-    cacheReadPricePer1m: 0.25,
-    cacheWritePricePer1m: 2.5,
+    // Calibrated against GitHub billing aic_gross_amount on 2026-05-15
+    promptPricePer1m: 1.75,
+    completionPricePer1m: 14.0,
+    cacheReadPricePer1m: 0.175,
+    cacheWritePricePer1m: 1.75,
+  },
+  "gpt-5.5": {
+    // Calibrated against GitHub billing aic_gross_amount on 2026-05-06/07/11/12
+    promptPricePer1m: 5.0,
+    completionPricePer1m: 30.0,
+    cacheReadPricePer1m: 0.5,
+    cacheWritePricePer1m: 5.0,
   },
   "gpt-5-nano": {
     promptPricePer1m: 0.05,

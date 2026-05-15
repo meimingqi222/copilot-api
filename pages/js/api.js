@@ -213,7 +213,16 @@ const API = {
 
   // Usage Statistics
   usage: {
-    summary: (range = "today") => API.request(`/usage/summary?range=${range}`),
+    summary: (params = {}) => {
+      const opts = typeof params === "string" ? { range: params } : params
+      const qs = new URLSearchParams()
+      if (opts.range) qs.set("range", opts.range)
+      if (opts.month) qs.set("month", opts.month)
+      if (opts.startDate) qs.set("startDate", opts.startDate)
+      if (opts.endDate) qs.set("endDate", opts.endDate)
+      const query = qs.toString()
+      return API.request(`/usage/summary${query ? "?" + query : ""}`)
+    },
     getPricing: () => API.request("/usage/pricing"),
     updatePricing: (model, pricing) =>
       API.request(`/usage/pricing/${model}`, { method: "PUT", body: pricing }),
