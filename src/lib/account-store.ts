@@ -153,17 +153,22 @@ function serializeAccount(account: Account): Record<string, unknown> {
 }
 
 function scheduleTokenRefreshRetry(accountId: string): void {
+  const account = state.accounts.find((a) => a.id === accountId)
+  if (!account || !account.enabled) {
+    tokenRefreshTimers.delete(accountId)
+    return
+  }
   consola.warn(
     `Scheduling token refresh retry for account "${accountId}" in ${TOKEN_REFRESH_RETRY_DELAY_MS / 1000}s`,
   )
   const retryTimerId = setTimeout(() => {
-    const account = state.accounts.find((a) => a.id === accountId)
-    if (!account) {
+    const currentAccount = state.accounts.find((a) => a.id === accountId)
+    if (!currentAccount || !currentAccount.enabled) {
       tokenRefreshTimers.delete(accountId)
       return
     }
-    refreshCopilotToken(account).catch((error: unknown) => {
-      consola.error(`Token refresh retry failed for "${account.label}":`, error)
+    refreshCopilotToken(currentAccount).catch((error: unknown) => {
+      consola.error(`Token refresh retry failed for "${currentAccount.label}":`, error)
       scheduleTokenRefreshRetry(accountId)
     })
   }, TOKEN_REFRESH_RETRY_DELAY_MS)
@@ -171,7 +176,7 @@ function scheduleTokenRefreshRetry(accountId: string): void {
 }
 
 export async function refreshCopilotToken(account: Account): Promise<void> {
-  if (getAccountProvider(account) !== "copilot") {
+  if (getAccountProvider(account) !== "copilot" || !account.enabled) {
     return
   }
 
@@ -216,10 +221,7 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
   const accountId = account.id
   const timerId = setTimeout(() => {
     const currentAccount = state.accounts.find((a) => a.id === accountId)
-    if (!currentAccount) {
-      consola.warn(
-        `Account "${accountId}" not found during token refresh, cancelling timer`,
-      )
+    if (!currentAccount || !currentAccount.enabled) {
       tokenRefreshTimers.delete(accountId)
       return
     }
