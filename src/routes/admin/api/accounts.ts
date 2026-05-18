@@ -522,6 +522,9 @@ accountApiRoutes.put("/:id", async (c) => {
   if (body.label) account.label = body.label
   if (typeof body.enabled === "boolean") {
     account.enabled = body.enabled
+    if (!account.enabled) {
+      cancelTokenRefreshTimer(account.id)
+    }
     consola.info(
       `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
     )

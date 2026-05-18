@@ -173,7 +173,16 @@ export function classifyUpstreamError(input: {
     return { kind: "rate_limited", retryAfterMs }
   }
 
-  if (status === 401 || status === 403) {
+  if (status === 401) {
+    return { kind: "auth_error" }
+  }
+
+  if (status === 403) {
+    // CDN/WAF 返回的 403 Blocked 页面(body 是 HTML)与 API 返回的鉴权 403(body 是 JSON)
+    // 是两种不同的情况。WAF 403 通常是临时的,不应锁死 credential。
+    if (body && (/<!DOCTYPE/i.test(body) || /<html/i.test(body))) {
+      return { kind: "server_error", retryAfterMs }
+    }
     return { kind: "auth_error" }
   }
 
