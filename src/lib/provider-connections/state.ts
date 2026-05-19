@@ -15,6 +15,7 @@ import {
   type CredentialAuthMode,
   DEFAULTS,
   type ModelDiscoveryConfig,
+  type ModelEndpoint,
   type ModelMapping,
   type ProviderConnection,
   type ProviderProtocol,
@@ -31,6 +32,7 @@ const stateRoot: ConnectionStateRoot = {
 }
 
 let mutationQueue: Promise<void> = Promise.resolve()
+let persistenceEnabled = true
 
 export async function initializeProviderConnections(): Promise<void> {
   if (stateRoot.loaded) return
@@ -71,6 +73,7 @@ export function findCredential(
 }
 
 async function persist(): Promise<void> {
+  if (!persistenceEnabled) return
   await saveProviderConnections(stateRoot.connections)
 }
 
@@ -175,6 +178,7 @@ export async function updateConnection(
   return withMutation(() => {
     const connection = getProviderConnection(id)
     if (!connection) throw new Error(`Connection not found: ${id}`)
+    const previousProtocol = connection.protocol
 
     if (patch.name !== undefined) connection.name = patch.name
     if (patch.baseUrl !== undefined) connection.baseUrl = patch.baseUrl
@@ -190,10 +194,56 @@ export async function updateConnection(
     }
     if (patch.models !== undefined) {
       connection.models = patch.models ?? undefined
+    } else if (
+      patch.protocol !== undefined
+      && patch.protocol !== previousProtocol
+      && connection.models
+    ) {
+      connection.models = normalizeModelEndpointsForProtocol(
+        connection.models,
+        patch.protocol,
+      )
     }
     connection.updatedAt = Date.now()
     return connection
   })
+}
+
+function normalizeModelEndpointsForProtocol(
+  models: Array<ModelMapping>,
+  protocol: ProviderProtocol,
+): Array<ModelMapping> {
+  return models.map((model) => ({
+    ...model,
+    endpoints: normalizeEndpointsForProtocol(model.endpoints, protocol),
+  }))
+}
+
+function normalizeEndpointsForProtocol(
+  endpoints: Array<ModelEndpoint>,
+  protocol: ProviderProtocol,
+): Array<ModelEndpoint> {
+  if (protocol === "anthropic-compatible") {
+    return uniqueEndpoints(
+      endpoints.map((endpoint) =>
+        endpoint === "chat" ? "messages" : endpoint,
+      ),
+    )
+  }
+  if (protocol === "openai-compatible") {
+    return uniqueEndpoints(
+      endpoints.map((endpoint) =>
+        endpoint === "messages" ? "chat" : endpoint,
+      ),
+    )
+  }
+  return endpoints
+}
+
+function uniqueEndpoints(
+  endpoints: Array<ModelEndpoint>,
+): Array<ModelEndpoint> {
+  return [...new Set(endpoints)]
 }
 
 export async function deleteConnection(id: string): Promise<void> {
@@ -409,4 +459,5 @@ export function __resetProviderConnectionsForTest(): void {
   stateRoot.connections = []
   stateRoot.loaded = false
   mutationQueue = Promise.resolve()
+  persistenceEnabled = false
 }

@@ -20,6 +20,7 @@ import {
   setCredentialEnabled,
   type ApiCredential,
   type ProviderConnection,
+  updateConnection,
 } from "~/lib/provider-connections"
 import {
   __resetRouteTargetRoundRobin,
@@ -74,6 +75,50 @@ describe("provider-connections state", () => {
     const conn = getProviderConnection("deepseek")
     expect(conn?.protocol).toBe("openai-compatible")
     expect(conn?.credentials[0].status).toBe("ready")
+  })
+
+  test("switching to anthropic-compatible migrates existing chat models to messages", async () => {
+    await setupSimpleConnection()
+
+    await updateConnection("deepseek", {
+      protocol: "anthropic-compatible",
+    })
+
+    const conn = getProviderConnection("deepseek")
+    expect(conn?.protocol).toBe("anthropic-compatible")
+    expect(conn?.models?.[0].endpoints).toEqual(["messages"])
+    expect(
+      buildRouteTargets({
+        publicModelId: "deepseek-chat",
+        endpoint: "messages",
+      }),
+    ).toHaveLength(1)
+  })
+
+  test("switching to openai-compatible migrates existing message models to chat", async () => {
+    await createConnection({
+      id: "anthropic",
+      name: "Anthropic",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://api.anthropic.com/v1",
+      credentials: [{ id: "cred-a", value: "sk-ant", authMode: "header" }],
+      models: [
+        {
+          publicId: "claude-sonnet",
+          upstreamId: "claude-sonnet",
+          endpoints: ["messages"],
+          enabled: true,
+        },
+      ],
+    })
+
+    await updateConnection("anthropic", {
+      protocol: "openai-compatible",
+    })
+
+    const conn = getProviderConnection("anthropic")
+    expect(conn?.protocol).toBe("openai-compatible")
+    expect(conn?.models?.[0].endpoints).toEqual(["chat"])
   })
 })
 
