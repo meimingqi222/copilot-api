@@ -88,8 +88,7 @@ function accountsView() {
     },
 
     setAccountFieldValue(field, value) {
-      const directCredentialKeys = ["authToken", "apiKey"]
-      if (directCredentialKeys.includes(field.key)) {
+      if (field.type === "secret") {
         this.newAccount.credentials = {
           ...this.newAccount.credentials,
           [field.key]: value,

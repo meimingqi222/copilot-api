@@ -156,21 +156,29 @@ async function updateProviderAccount(
     const serviceToken =
       typeof body.credentials?.serviceToken === "string" ?
         body.credentials.serviceToken
-      : body.serviceToken
+      : (body.serviceToken
+        ?? (typeof body.settings?.serviceToken === "string" ?
+          body.settings.serviceToken
+        : undefined))
     const xiaomichatbotPh =
       typeof body.credentials?.xiaomichatbotPh === "string" ?
         body.credentials.xiaomichatbotPh
-      : body.xiaomichatbotPh
+      : (body.xiaomichatbotPh
+        ?? (typeof body.settings?.xiaomichatbotPh === "string" ?
+          body.settings.xiaomichatbotPh
+        : undefined))
 
     if (
       Object.hasOwn(body, "serviceToken")
       || Object.hasOwn(body.credentials ?? {}, "serviceToken")
+      || Object.hasOwn(body.settings ?? {}, "serviceToken")
     ) {
       setMimoServiceToken(account, serviceToken?.trim() || undefined)
     }
     if (
       Object.hasOwn(body, "xiaomichatbotPh")
       || Object.hasOwn(body.credentials ?? {}, "xiaomichatbotPh")
+      || Object.hasOwn(body.settings ?? {}, "xiaomichatbotPh")
     ) {
       setMimoPh(account, xiaomichatbotPh?.trim() || undefined)
     }
@@ -364,11 +372,17 @@ accountApiRoutes.post("/", async (c) => {
     const serviceToken =
       typeof body.credentials?.serviceToken === "string" ?
         body.credentials.serviceToken.trim()
-      : body.serviceToken?.trim()
+      : (body.serviceToken?.trim()
+        ?? (typeof body.settings?.serviceToken === "string" ?
+          body.settings.serviceToken.trim()
+        : undefined))
     const xiaomichatbotPh =
       typeof body.credentials?.xiaomichatbotPh === "string" ?
         body.credentials.xiaomichatbotPh.trim()
-      : body.xiaomichatbotPh?.trim()
+      : (body.xiaomichatbotPh?.trim()
+        ?? (typeof body.settings?.xiaomichatbotPh === "string" ?
+          body.settings.xiaomichatbotPh.trim()
+        : undefined))
 
     if (!serviceToken || !xiaomichatbotPh) {
       return c.json({ error: "Service Token and PH cookie are required." }, 400)
@@ -749,6 +763,8 @@ interface ImportAccountPayload {
   provider?: string
   enabled?: boolean
   priority?: number
+  serviceToken?: string
+  xiaomichatbotPh?: string
   credentials?: Record<string, unknown>
   settings?: Record<string, unknown>
   createdAt?: number
@@ -907,11 +923,17 @@ accountApiRoutes.post("/import", async (c) => {
       const serviceToken =
         typeof raw.credentials?.serviceToken === "string" ?
           raw.credentials.serviceToken.trim()
-        : undefined
+        : (raw.serviceToken?.trim()
+          ?? (typeof raw.settings?.serviceToken === "string" ?
+            raw.settings.serviceToken.trim()
+          : undefined))
       const xiaomichatbotPh =
         typeof raw.credentials?.xiaomichatbotPh === "string" ?
           raw.credentials.xiaomichatbotPh.trim()
-        : undefined
+        : (raw.xiaomichatbotPh?.trim()
+          ?? (typeof raw.settings?.xiaomichatbotPh === "string" ?
+            raw.settings.xiaomichatbotPh.trim()
+          : undefined))
 
       if (!serviceToken || !xiaomichatbotPh) {
         failed.push({
