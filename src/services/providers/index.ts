@@ -1,5 +1,6 @@
 import { codebuffProviderRuntime } from "./codebuff"
 import { copilotProviderRuntime } from "./copilot"
+import { mimoProviderRuntime } from "./mimo"
 import { registerProvider } from "./registry"
 import { windsurfProviderRuntime } from "./windsurf"
 
@@ -13,5 +14,6 @@ export function initializeProviderRegistry(): void {
   registerProvider(copilotProviderRuntime)
   registerProvider(codebuffProviderRuntime)
   registerProvider(windsurfProviderRuntime)
+  registerProvider(mimoProviderRuntime)
   initialized = true
 }

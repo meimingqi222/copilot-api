@@ -106,6 +106,12 @@ const i18n = {
       "accounts.provider.windsurf.fields.defaultModel": "Windsurf 默认模型",
       "accounts.provider.windsurf.fields.appVersion": "Windsurf App 版本",
       "accounts.provider.windsurf.fields.lsVersion": "Windsurf LS 版本",
+      "accounts.provider.mimo-aistudio.name": "Mimo AI Studio",
+      "accounts.provider.mimo-aistudio.fields.userId": "小米用户 ID",
+      "accounts.provider.mimo-aistudio.fields.serviceToken":
+        "Service Token 凭证",
+      "accounts.provider.mimo-aistudio.fields.xiaomichatbotPh":
+        "xiaomichatbot_ph Cookie",
       "accounts.codebuffAuthToken": "Codebuff 授权令牌",
       "accounts.status": "状态",
       "accounts.active": "活跃账户",
@@ -498,6 +504,12 @@ const i18n = {
         "Windsurf Default Model",
       "accounts.provider.windsurf.fields.appVersion": "Windsurf App Version",
       "accounts.provider.windsurf.fields.lsVersion": "Windsurf LS Version",
+      "accounts.provider.mimo-aistudio.name": "Mimo AI Studio",
+      "accounts.provider.mimo-aistudio.fields.userId": "Xiaomi User ID",
+      "accounts.provider.mimo-aistudio.fields.serviceToken":
+        "Service Token Credential",
+      "accounts.provider.mimo-aistudio.fields.xiaomichatbotPh":
+        "xiaomichatbot_ph Cookie",
       "accounts.codebuffAuthToken": "Codebuff Auth Token",
       "accounts.status": "Status",
       "accounts.active": "Active Accounts",

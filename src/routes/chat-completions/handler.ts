@@ -87,7 +87,7 @@ export async function handleCompletion(c: Context) {
   payload = applyMaxTokens(payload, selectedModel)
 
   if (!payload.stream) {
-    const result = await dispatchChatCompletions(payload, admission, signal)
+    const result = await dispatchChatCompletions(payload, admission, signal, c)
 
     c.set("accountId" as never, result.accountId)
     c.set("model" as never, payload.model)
@@ -315,7 +315,12 @@ function handleStreamingCompletion(
     const model = payload.model
 
     try {
-      const result = await dispatchChatCompletions(payload, admission, signal)
+      const result = await dispatchChatCompletions(
+        payload,
+        admission,
+        signal,
+        c,
+      )
       accountId = result.accountId
 
       c.set("accountId" as never, accountId)

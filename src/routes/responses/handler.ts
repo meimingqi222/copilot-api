@@ -54,9 +54,11 @@ export async function handleResponses(c: Context) {
           signal,
           initiatorOverride: admission.initiator,
           account: admission.account,
+          c,
         })
         accountId = result.accountId
         c.set("accountId" as never, result.accountId)
+        c.set("model" as never, payload.model)
 
         if (isNonStreaming(result.response)) {
           completedResponse = result.response
@@ -109,8 +111,10 @@ export async function handleResponses(c: Context) {
     signal,
     initiatorOverride: admission.initiator,
     account: admission.account,
+    c,
   })
   c.set("accountId" as never, result.accountId)
+  c.set("model" as never, payload.model)
   if (!isNonStreaming(result.response)) {
     throw new Error("Expected non-streaming response for non-stream request")
   }

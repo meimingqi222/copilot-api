@@ -9,6 +9,7 @@ import type {
   CodebuffAccount,
   CopilotAccount,
   WindsurfAccount,
+  MimoAccount,
 } from "~/lib/accounts"
 
 import {
@@ -20,6 +21,8 @@ import {
   getCodebuffAuthToken,
   getGitHubToken,
   getWindsurfApiKey,
+  getMimoServiceToken,
+  getMimoPh,
   setCopilotToken,
   setCopilotTokenExpiry,
 } from "~/lib/accounts"
@@ -137,17 +140,30 @@ function serializeAccount(account: Account): Record<string, unknown> {
     }
   }
 
+  if (account.provider === "windsurf") {
+    return {
+      ...base,
+      credentials: {
+        apiKey: getWindsurfApiKey(account),
+      },
+      settings: account.settings ?? {
+        baseUrl: account.windsurfBaseUrl,
+        appVersion: account.windsurfAppVersion,
+        lsVersion: account.windsurfLsVersion,
+        defaultModel: account.windsurfDefaultModel,
+        clientName: account.windsurfClientName,
+      },
+    }
+  }
+
   return {
     ...base,
     credentials: {
-      apiKey: getWindsurfApiKey(account),
+      serviceToken: getMimoServiceToken(account),
+      xiaomichatbotPh: getMimoPh(account),
     },
     settings: account.settings ?? {
-      baseUrl: account.windsurfBaseUrl,
-      appVersion: account.windsurfAppVersion,
-      lsVersion: account.windsurfLsVersion,
-      defaultModel: account.windsurfDefaultModel,
-      clientName: account.windsurfClientName,
+      userId: account.userId,
     },
   }
 }
@@ -406,25 +422,53 @@ function migrateAccount(account: Record<string, unknown>): Account {
     } as CodebuffAccount
   }
 
-  const apiKey =
-    typeof acc.windsurfApiKey === "string" ? acc.windsurfApiKey : undefined
+  if (provider === "windsurf") {
+    const apiKey =
+      typeof acc.windsurfApiKey === "string" ? acc.windsurfApiKey : undefined
+
+    return {
+      ...(acc as Partial<WindsurfAccount>),
+      provider,
+      credentials: {
+        apiKey: (acc as Partial<WindsurfAccount>).credentials?.apiKey ?? apiKey,
+      },
+      settings: (acc as Partial<WindsurfAccount>).settings ?? {
+        baseUrl: acc.windsurfBaseUrl,
+        appVersion: acc.windsurfAppVersion,
+        lsVersion: acc.windsurfLsVersion,
+        defaultModel: acc.windsurfDefaultModel,
+        clientName: acc.windsurfClientName,
+      },
+      quotaState: acc.quotaState,
+      quotaExhaustedAt: acc.quotaExhaustedAt,
+    } as WindsurfAccount
+  }
+
+  const serviceToken =
+    typeof acc.serviceToken === "string" ? acc.serviceToken : undefined
+  const xiaomichatbotPh =
+    typeof acc.xiaomichatbotPh === "string" ? acc.xiaomichatbotPh : undefined
+  const userId = typeof acc.userId === "string" ? acc.userId : undefined
 
   return {
-    ...(acc as Partial<WindsurfAccount>),
+    ...(acc as Partial<MimoAccount>),
     provider,
     credentials: {
-      apiKey: (acc as Partial<WindsurfAccount>).credentials?.apiKey ?? apiKey,
+      serviceToken:
+        (acc as Partial<MimoAccount>).credentials?.serviceToken ?? serviceToken,
+      xiaomichatbotPh:
+        (acc as Partial<MimoAccount>).credentials?.xiaomichatbotPh
+        ?? xiaomichatbotPh,
     },
-    settings: (acc as Partial<WindsurfAccount>).settings ?? {
-      baseUrl: acc.windsurfBaseUrl,
-      appVersion: acc.windsurfAppVersion,
-      lsVersion: acc.windsurfLsVersion,
-      defaultModel: acc.windsurfDefaultModel,
-      clientName: acc.windsurfClientName,
+    settings: (acc as Partial<MimoAccount>).settings ?? {
+      userId,
     },
+    serviceToken,
+    xiaomichatbotPh,
+    userId,
     quotaState: acc.quotaState,
     quotaExhaustedAt: acc.quotaExhaustedAt,
-  } as WindsurfAccount
+  } as MimoAccount
 }
 
 async function loadAccountsFile(): Promise<Array<Account>> {

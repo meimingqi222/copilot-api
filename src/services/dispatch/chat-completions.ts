@@ -10,6 +10,8 @@
  * - connection:在此层捕获 HTTPError,排除已尝试 target,调用 next 直到耗尽候选。
  */
 
+import type { Context } from "hono"
+
 import consola from "consola"
 
 import type {
@@ -43,23 +45,26 @@ export async function dispatchChatCompletions(
   payload: ChatCompletionsPayload,
   admission: RequestAdmission,
   signal?: AbortSignal,
+  c?: Context,
 ): Promise<ChatDispatchResult> {
   if (admission.kind === "legacy") {
     const result = await createChatCompletions(payload, {
       account: admission.account,
       signal,
       initiatorOverride: admission.initiator,
+      c,
     })
     return result as ChatDispatchResult
   }
 
-  return await dispatchViaConnection(payload, admission, signal)
+  return await dispatchViaConnection(payload, admission, signal, c)
 }
 
 async function dispatchViaConnection(
   payload: ChatCompletionsPayload,
   admission: Extract<RequestAdmission, { kind: "connection" }>,
   signal?: AbortSignal,
+  c?: Context,
 ): Promise<ChatDispatchResult> {
   initializeProtocolAdapters()
 
@@ -84,7 +89,7 @@ async function dispatchViaConnection(
         current.credential,
         payload,
         signal,
-        { initiator: current.initiator },
+        { initiator: current.initiator, c },
       )
       return {
         accountId: result.credentialId,

@@ -18,9 +18,14 @@ import {
   getCodebuffAuthToken,
   getGitHubToken,
   getWindsurfApiKey,
+  getMimoServiceToken,
+  getMimoPh,
   setCodebuffAuthToken,
   setGitHubToken,
   setWindsurfApiKey,
+  setMimoServiceToken,
+  setMimoPh,
+  setMimoUserId,
 } from "~/lib/accounts"
 import {
   GITHUB_BASE_URL,
@@ -43,7 +48,10 @@ function getHasCredentials(account: Account): boolean {
   if (account.provider === "codebuff") {
     return Boolean(getCodebuffAuthToken(account))
   }
-  return Boolean(getWindsurfApiKey(account))
+  if (account.provider === "windsurf") {
+    return Boolean(getWindsurfApiKey(account))
+  }
+  return Boolean(getMimoServiceToken(account) && getMimoPh(account))
 }
 
 async function updateProviderAccount(
@@ -138,6 +146,43 @@ async function updateProviderAccount(
       typeof settings.clientName === "string" ?
         settings.clientName
       : account.windsurfClientName
+    await refreshModelsForAccount(account)
+  }
+
+  if (account.provider === "mimo-aistudio") {
+    const serviceToken =
+      typeof body.credentials?.serviceToken === "string" ?
+        body.credentials.serviceToken
+      : (body as any).serviceToken
+    const xiaomichatbotPh =
+      typeof body.credentials?.xiaomichatbotPh === "string" ?
+        body.credentials.xiaomichatbotPh
+      : (body as any).xiaomichatbotPh
+
+    if (
+      Object.hasOwn(body, "serviceToken")
+      || Object.hasOwn(body.credentials ?? {}, "serviceToken")
+    ) {
+      setMimoServiceToken(account, serviceToken?.trim() || undefined)
+    }
+    if (
+      Object.hasOwn(body, "xiaomichatbotPh")
+      || Object.hasOwn(body.credentials ?? {}, "xiaomichatbotPh")
+    ) {
+      setMimoPh(account, xiaomichatbotPh?.trim() || undefined)
+    }
+
+    account.settings = {
+      ...account.settings,
+      ...body.settings,
+    }
+    const settings = account.settings
+    const userId =
+      typeof settings.userId === "string" ?
+        settings.userId
+      : (account as any).userId
+    setMimoUserId(account, userId?.trim() || undefined)
+
     await refreshModelsForAccount(account)
   }
 }
@@ -299,6 +344,51 @@ accountApiRoutes.post("/", async (c) => {
         ...body.settings,
       },
       windsurfApiKey: apiKey,
+    }
+
+    state.accounts.push(account)
+    await refreshModelsForAccount(account)
+    await saveAccounts()
+
+    return c.json({
+      status: "complete",
+      accountId: account.id,
+      account: publicAccount(account),
+    })
+  }
+
+  if (provider === "mimo-aistudio") {
+    const serviceToken =
+      typeof body.credentials?.serviceToken === "string" ?
+        body.credentials.serviceToken.trim()
+      : (body as any).serviceToken?.trim()
+    const xiaomichatbotPh =
+      typeof body.credentials?.xiaomichatbotPh === "string" ?
+        body.credentials.xiaomichatbotPh.trim()
+      : (body as any).xiaomichatbotPh?.trim()
+
+    if (!serviceToken || !xiaomichatbotPh) {
+      return c.json({ error: "Service Token and PH cookie are required." }, 400)
+    }
+
+    const account: Account = {
+      id: randomUUID(),
+      label,
+      provider,
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        serviceToken,
+        xiaomichatbotPh,
+      },
+      settings: {
+        ...body.settings,
+      },
+      serviceToken,
+      xiaomichatbotPh,
+      userId: (body.settings as any)?.userId,
     }
 
     state.accounts.push(account)
@@ -779,34 +869,76 @@ accountApiRoutes.post("/import", async (c) => {
       continue
     }
 
-    // provider === "windsurf"
-    const apiKey =
-      typeof raw.credentials?.apiKey === "string" ?
-        raw.credentials.apiKey.trim()
-      : undefined
+    if (provider === "windsurf") {
+      const apiKey =
+        typeof raw.credentials?.apiKey === "string" ?
+          raw.credentials.apiKey.trim()
+        : undefined
 
-    if (!apiKey) {
-      failed.push({ label, reason: "Missing apiKey in credentials." })
+      if (!apiKey) {
+        failed.push({ label, reason: "Missing apiKey in credentials." })
+        continue
+      }
+
+      const windsurfAccount: Account = {
+        id: randomUUID(),
+        label,
+        provider: "windsurf",
+        credentials: { apiKey },
+        settings: raw.settings ?? {},
+        windsurfApiKey: apiKey,
+        enabled: raw.enabled ?? true,
+        priority: raw.priority ?? 0,
+        quotaState: "unknown",
+        createdAt: raw.createdAt ?? Date.now(),
+      }
+      state.accounts.push(windsurfAccount)
+      imported.push(label)
+      refreshModelsForAccount(windsurfAccount).catch((err: unknown) => {
+        consola.warn(`Import: failed to init account "${label}":`, err)
+      })
       continue
     }
 
-    const windsurfAccount: Account = {
-      id: randomUUID(),
-      label,
-      provider: "windsurf",
-      credentials: { apiKey },
-      settings: raw.settings ?? {},
-      windsurfApiKey: apiKey,
-      enabled: raw.enabled ?? true,
-      priority: raw.priority ?? 0,
-      quotaState: "unknown",
-      createdAt: raw.createdAt ?? Date.now(),
+    if (provider === "mimo-aistudio") {
+      const serviceToken =
+        typeof raw.credentials?.serviceToken === "string" ?
+          raw.credentials.serviceToken.trim()
+        : undefined
+      const xiaomichatbotPh =
+        typeof raw.credentials?.xiaomichatbotPh === "string" ?
+          raw.credentials.xiaomichatbotPh.trim()
+        : undefined
+
+      if (!serviceToken || !xiaomichatbotPh) {
+        failed.push({
+          label,
+          reason: "Missing serviceToken or xiaomichatbotPh in credentials.",
+        })
+        continue
+      }
+
+      const mimoAccount: Account = {
+        id: randomUUID(),
+        label,
+        provider: "mimo-aistudio",
+        credentials: { serviceToken, xiaomichatbotPh },
+        settings: raw.settings ?? {},
+        serviceToken,
+        xiaomichatbotPh,
+        userId: (raw.settings as any)?.userId,
+        enabled: raw.enabled ?? true,
+        priority: raw.priority ?? 0,
+        quotaState: "unknown",
+        createdAt: raw.createdAt ?? Date.now(),
+      }
+      state.accounts.push(mimoAccount)
+      imported.push(label)
+      refreshModelsForAccount(mimoAccount).catch((err: unknown) => {
+        consola.warn(`Import: failed to init account "${label}":`, err)
+      })
+      continue
     }
-    state.accounts.push(windsurfAccount)
-    imported.push(label)
-    refreshModelsForAccount(windsurfAccount).catch((err: unknown) => {
-      consola.warn(`Import: failed to init account "${label}":`, err)
-    })
   }
 
   if (imported.length > 0) {

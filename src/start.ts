@@ -38,6 +38,7 @@ import {
   scheduleModelsRefresh,
 } from "./lib/utils"
 import { server } from "./server"
+import { startMimoManager } from "./services/mimo/manager"
 import { initializeProtocolAdapters } from "./services/protocols"
 
 interface RunServerOptions {
@@ -250,6 +251,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     // Refresh models for all accounts and schedule periodic refresh
     scheduleModelsRefresh()
     scheduleConnectionModelDiscovery()
+
+    // Start background MIMO manager
+    startMimoManager()
 
     if (state.models) {
       consola.info(

@@ -11,7 +11,7 @@ export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 
 // Paths that are explicitly public and require no API key.
 // /admin route handler performs its own auth checks internally.
-const PUBLIC_PATHS = new Set(["/", "/admin/login", "/health"])
+const PUBLIC_PATHS = new Set(["/", "/admin/login", "/health", "/ws/mimo"])
 const PUBLIC_PREFIXES = ["/admin"]
 
 export async function requireApiKey(c: Context, next: Next) {
