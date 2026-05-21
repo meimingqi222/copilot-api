@@ -323,6 +323,9 @@
                   <td class="p-3 text-[var(--apple-text-secondary)]" x-text="user.lastUsedAt ? formatTime(user.lastUsedAt) : '-'"></td>
                   <td class="p-3">
                     <div class="flex gap-1">
+                      <button @click="openEditModal(user)" class="btn-icon" :title="t('users.edit')" style="color:var(--apple-blue)">
+                        <i data-lucide="pencil" class="w-4 h-4"></i>
+                      </button>
                       <button @click="toggleEnabled(user)" class="btn-icon"
                               :title="t(user.enabled ? 'accounts.disable' : 'accounts.enable')"
                               :style="user.enabled ? 'color:var(--apple-orange)' : 'color:var(--apple-green)'">
@@ -426,6 +429,62 @@
             <div class="modal-footer">
               <button @click="showModelsModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
               <button @click="saveModels()" class="btn btn-primary" x-text="t('save')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit User Modal -->
+        <div x-show="showEditModal" class="modal-overlay" @click.self="showEditModal = false" x-cloak>
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('users.editUser', { name: editingUser?.username || '' })"></h3>
+              <button @click="showEditModal = false" class="btn-icon">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+            <div class="modal-body space-y-4">
+              <div>
+                <label class="form-label" x-text="t('users.username')"></label>
+                <input x-model="editingUser.username" type="text" class="form-input" placeholder="e.g. alice">
+              </div>
+              <div>
+                <label class="form-label" x-text="t('users.role.label')"></label>
+                <select x-model="editingUser.role" class="form-input">
+                  <option value="user" x-text="t('users.role.user')"></option>
+                  <option value="admin" x-text="t('users.role.admin')"></option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">
+                  <span x-text="t('users.quota')"></span>
+                  <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.quotaHint') + ')'"></span>
+                </label>
+                <input x-model.number="editingUser.quotaLimit" type="number" min="0" class="form-input" placeholder="0">
+              </div>
+              <div>
+                <label class="form-label">
+                  <span x-text="t('users.models')"></span>
+                  <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.modelsHint') + ')'"></span>
+                </label>
+                <div class="flex gap-2 mb-2">
+                  <button @click="editingUser.allowedModels = []" class="btn btn-secondary btn-xs" x-text="t('users.models.unrestricted')"></button>
+                  <button @click="editingUser.allowedModels = models.map((m) => m.id)" class="btn btn-secondary btn-xs" x-text="t('users.models.selectAll')"></button>
+                </div>
+                <div class="max-h-48 overflow-y-auto rounded-xl border border-[var(--apple-gray-5)] p-3 space-y-2">
+                  <template x-for="model in models" :key="model.id">
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" class="form-checkbox" :checked="editingUser.allowedModels.includes(model.id)" @change="toggleEditModel(model.id)">
+                      <span class="font-mono" x-text="model.id"></span>
+                      <span class="text-xs text-[var(--apple-text-tertiary)]" x-text="model.vendor || ''"></span>
+                    </label>
+                  </template>
+                  <p x-show="!models.length" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('users.noModels')"></p>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button @click="showEditModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="saveEditUser()" class="btn btn-primary" x-text="t('save')"></button>
             </div>
           </div>
         </div>

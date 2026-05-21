@@ -51,6 +51,7 @@ const i18n = {
       // Users
       "users.title": "用户管理",
       "users.addUser": "添加用户",
+      "users.edit": "编辑",
       "users.editUser": "编辑用户",
       "users.username": "用户名",
       "users.role": "角色",
@@ -446,6 +447,7 @@ const i18n = {
       // Users
       "users.title": "User Management",
       "users.addUser": "Add User",
+      "users.edit": "Edit",
       "users.editUser": "Edit User",
       "users.username": "Username",
       "users.role": "Role",
