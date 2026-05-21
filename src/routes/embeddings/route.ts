@@ -5,6 +5,7 @@ import {
   prepareRequestAdmission,
   requireLegacyAdmission,
 } from "~/lib/request-admission"
+import { recordUsage } from "~/lib/usage"
 import {
   createEmbeddings,
   type EmbeddingRequest,
@@ -23,10 +24,21 @@ embeddingRoutes.post("/", async (c) => {
     )
     const result = await createEmbeddings(payload, {
       account: admission.account,
+      signal: c.req.raw.signal,
     })
 
     // Set accountId for logging
     c.set("accountId" as never, result.accountId)
+
+    const usage = result.response.usage
+    recordUsage({
+      c,
+      accountId: result.accountId,
+      model: result.response.model,
+      promptTokens: usage.prompt_tokens,
+      completionTokens: 0,
+      totalTokens: usage.total_tokens,
+    })
 
     return c.json(result.response)
   } catch (error) {

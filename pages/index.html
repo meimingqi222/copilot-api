@@ -300,6 +300,7 @@
                 <th class="text-left p-3" x-text="t('users.status')"></th>
                 <th class="text-left p-3" x-text="t('users.quota')"></th>
                 <th class="text-left p-3" x-text="t('users.used')"></th>
+                <th class="text-left p-3" x-text="t('users.models')"></th>
                 <th class="text-left p-3" x-text="t('users.lastUsed')"></th>
                 <th class="text-left p-3" x-text="t('users.actions')"></th>
               </tr>
@@ -316,6 +317,9 @@
                   </td>
                   <td class="p-3" x-text="user.quotaLimit === 0 ? t('quota.unlimited') : user.quotaLimit"></td>
                   <td class="p-3" x-text="user.usedTokens || 0"></td>
+                  <td class="p-3">
+                    <button @click="openModelsModal(user)" class="badge badge-info" x-text="modelAccessText(user)"></button>
+                  </td>
                   <td class="p-3 text-[var(--apple-text-secondary)]" x-text="user.lastUsedAt ? formatTime(user.lastUsedAt) : '-'"></td>
                   <td class="p-3">
                     <div class="flex gap-1">
@@ -370,10 +374,58 @@
                 </label>
                 <input x-model.number="newUser.quotaLimit" type="number" min="0" class="form-input" placeholder="0">
               </div>
+              <div>
+                <label class="form-label">
+                  <span x-text="t('users.models')"></span>
+                  <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.modelsHint') + ')'"></span>
+                </label>
+                <div class="max-h-48 overflow-y-auto rounded-xl border border-[var(--apple-gray-5)] p-3 space-y-2">
+                  <template x-for="model in models" :key="model.id">
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                      <input type="checkbox" class="form-checkbox" x-model="newUser.allowedModels" :value="model.id">
+                      <span class="font-mono" x-text="model.id"></span>
+                    </label>
+                  </template>
+                  <p x-show="!models.length" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('users.noModels')"></p>
+                </div>
+              </div>
             </div>
             <div class="modal-footer">
               <button @click="showCreateModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
               <button @click="createUser()" class="btn btn-primary" x-text="t('create')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit User Model Access Modal -->
+        <div x-show="showModelsModal" class="modal-overlay" @click.self="showModelsModal = false" x-cloak>
+          <div class="modal" style="max-width:640px">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('users.modelsTitle', { name: selectedUser?.username || '' })"></h3>
+              <button @click="showModelsModal = false" class="btn-icon">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+            <div class="modal-body space-y-4">
+              <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('users.modelsHint')"></p>
+              <div class="flex gap-2">
+                <button @click="selectedModels = []" class="btn btn-secondary" x-text="t('users.models.unrestricted')"></button>
+                <button @click="selectedModels = models.map((m) => m.id)" class="btn btn-secondary" x-text="t('users.models.selectAll')"></button>
+              </div>
+              <div class="max-h-80 overflow-y-auto rounded-xl border border-[var(--apple-gray-5)] p-3 space-y-2">
+                <template x-for="model in models" :key="model.id">
+                  <label class="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" class="form-checkbox" :checked="isModelSelected(model.id)" @change="toggleModel(model.id)">
+                    <span class="font-mono" x-text="model.id"></span>
+                    <span class="text-xs text-[var(--apple-text-tertiary)]" x-text="model.vendor || ''"></span>
+                  </label>
+                </template>
+                <p x-show="!models.length" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('users.noModels')"></p>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button @click="showModelsModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="saveModels()" class="btn btn-primary" x-text="t('save')"></button>
             </div>
           </div>
         </div>
@@ -1108,6 +1160,33 @@
               </div>
             </div>
 
+            <!-- User Usage -->
+            <div class="card p-6">
+              <h3 class="text-title-2 mb-4" x-text="t('quota.userUsage')"></h3>
+              <div class="space-y-4" x-show="Object.keys(usageSummary.byUser || {}).length">
+                <template x-for="(data, userId) in usageSummary.byUser" :key="userId">
+                  <div class="pb-4 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
+                    <div class="flex justify-between items-center mb-2">
+                      <span class="font-medium" x-text="data.username"></span>
+                      <div class="text-right">
+                        <p class="text-sm font-bold" x-text="formatTokens(data.totalTokens)"></p>
+                        <p class="text-xs text-[var(--apple-text-secondary)]" x-text="data.requests + ' requests'"></p>
+                      </div>
+                    </div>
+                    <div class="flex justify-between text-xs text-[var(--apple-text-secondary)]">
+                      <span x-text="'Prompt: ' + formatTokens(data.promptTokens)"></span>
+                      <span x-text="'Completion: ' + formatTokens(data.completionTokens)"></span>
+                      <span class="text-[var(--apple-blue)]" x-text="'$' + (data.cost || 0).toFixed(4)"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div x-show="!Object.keys(usageSummary.byUser || {}).length" class="empty-state">
+                <i data-lucide="users" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('quota.noUsageData')"></p>
+              </div>
+            </div>
+
             <!-- Account Usage -->
             <div class="card p-6">
               <h3 class="text-title-2 mb-4" x-text="t('quota.accountUsage')"></h3>
@@ -1786,4 +1865,3 @@
   <script src="/admin/static/js/views/logs.js"></script>
 </body>
 </html>
-

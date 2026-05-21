@@ -9,6 +9,7 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
+import type { User } from "~/lib/users"
 
 import { getAccountForModel } from "~/lib/account-selection"
 import { awaitApproval } from "~/lib/approval"
@@ -26,6 +27,7 @@ import {
   selectRouteTarget,
 } from "~/lib/route-target"
 import { state } from "~/lib/state"
+import { isUserAllowedModel } from "~/lib/users"
 
 /**
  * 路由解析结果。
@@ -65,6 +67,7 @@ export async function prepareRequestAdmission(
   options: PrepareRequestAdmissionOptions,
 ): Promise<RequestAdmission> {
   c.set("model" as never, options.model)
+  enforceUserModelAccess(c, options.model)
 
   try {
     checkProtectedRouteGuard(c, {
@@ -192,6 +195,18 @@ function tryResolveConnection(
 
   // Connections exist but all credentials are unavailable → diagnostic error
   throwUnavailableConnectionError(allTargets)
+}
+
+function enforceUserModelAccess(c: Context, model: string): void {
+  const user = c.get("user" as never) as User | undefined
+  if (!user || isUserAllowedModel(user, model)) {
+    return
+  }
+
+  throw new HTTPError(
+    `Model "${model}" is not enabled for user "${user.username}"`,
+    new Response("Forbidden", { status: 403 }),
+  )
 }
 
 /**

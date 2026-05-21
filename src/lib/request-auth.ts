@@ -61,9 +61,22 @@ export async function requireApiKey(c: Context, next: Next) {
         403,
       )
     }
+    if (user.quotaLimit > 0 && user.usedTokens >= user.quotaLimit) {
+      return c.json(
+        {
+          error: {
+            message:
+              "Quota exceeded. This API key has used all allowed tokens.",
+            type: "rate_limit_error",
+          },
+        },
+        429,
+      )
+    }
     // Store user info in context for logging
     c.set("userId" as never, user.id)
     c.set("username" as never, user.username)
+    c.set("user" as never, user)
     await next()
     return
   }

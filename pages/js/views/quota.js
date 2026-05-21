@@ -17,6 +17,7 @@ function quotaView() {
         cost: 0,
       },
       byAccount: {},
+      byUser: {},
       byModel: {},
       timeSeries: [],
       period: { startDate: "", endDate: "" },
