@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import consola from "consola"
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
@@ -62,6 +63,8 @@ async function updateProviderAccount(
     priority?: number
     authToken?: string
     apiKey?: string
+    serviceToken?: string
+    xiaomichatbotPh?: string
     credentials?: Record<string, unknown>
     settings?: Record<string, unknown>
   },
@@ -153,11 +156,11 @@ async function updateProviderAccount(
     const serviceToken =
       typeof body.credentials?.serviceToken === "string" ?
         body.credentials.serviceToken
-      : (body as any).serviceToken
+      : body.serviceToken
     const xiaomichatbotPh =
       typeof body.credentials?.xiaomichatbotPh === "string" ?
         body.credentials.xiaomichatbotPh
-      : (body as any).xiaomichatbotPh
+      : body.xiaomichatbotPh
 
     if (
       Object.hasOwn(body, "serviceToken")
@@ -178,9 +181,7 @@ async function updateProviderAccount(
     }
     const settings = account.settings
     const userId =
-      typeof settings.userId === "string" ?
-        settings.userId
-      : (account as any).userId
+      typeof settings.userId === "string" ? settings.userId : undefined
     setMimoUserId(account, userId?.trim() || undefined)
 
     await refreshModelsForAccount(account)
@@ -270,6 +271,8 @@ accountApiRoutes.post("/", async (c) => {
     provider?: AccountProvider
     authToken?: string
     apiKey?: string
+    serviceToken?: string
+    xiaomichatbotPh?: string
     credentials?: Record<string, unknown>
     settings?: Record<string, unknown>
   }
@@ -361,16 +364,17 @@ accountApiRoutes.post("/", async (c) => {
     const serviceToken =
       typeof body.credentials?.serviceToken === "string" ?
         body.credentials.serviceToken.trim()
-      : (body as any).serviceToken?.trim()
+      : body.serviceToken?.trim()
     const xiaomichatbotPh =
       typeof body.credentials?.xiaomichatbotPh === "string" ?
         body.credentials.xiaomichatbotPh.trim()
-      : (body as any).xiaomichatbotPh?.trim()
+      : body.xiaomichatbotPh?.trim()
 
     if (!serviceToken || !xiaomichatbotPh) {
       return c.json({ error: "Service Token and PH cookie are required." }, 400)
     }
 
+    const settings = body.settings ?? {}
     const account: Account = {
       id: randomUUID(),
       label,
@@ -383,12 +387,10 @@ accountApiRoutes.post("/", async (c) => {
         serviceToken,
         xiaomichatbotPh,
       },
-      settings: {
-        ...body.settings,
-      },
+      settings,
       serviceToken,
       xiaomichatbotPh,
-      userId: (body.settings as any)?.userId,
+      userId: typeof settings.userId === "string" ? settings.userId : undefined,
     }
 
     state.accounts.push(account)
@@ -900,6 +902,7 @@ accountApiRoutes.post("/import", async (c) => {
       continue
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (provider === "mimo-aistudio") {
       const serviceToken =
         typeof raw.credentials?.serviceToken === "string" ?
@@ -918,15 +921,17 @@ accountApiRoutes.post("/import", async (c) => {
         continue
       }
 
+      const settings = raw.settings ?? {}
       const mimoAccount: Account = {
         id: randomUUID(),
         label,
         provider: "mimo-aistudio",
         credentials: { serviceToken, xiaomichatbotPh },
-        settings: raw.settings ?? {},
+        settings,
         serviceToken,
         xiaomichatbotPh,
-        userId: (raw.settings as any)?.userId,
+        userId:
+          typeof settings.userId === "string" ? settings.userId : undefined,
         enabled: raw.enabled ?? true,
         priority: raw.priority ?? 0,
         quotaState: "unknown",

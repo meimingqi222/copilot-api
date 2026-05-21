@@ -168,6 +168,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       }))
   },
 
+  // eslint-disable-next-line max-params
   async createChatCompletions(
     target,
     connection,
