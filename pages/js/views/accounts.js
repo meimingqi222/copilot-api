@@ -26,6 +26,7 @@ function accountsView() {
     pollTimer: null,
     editingLabel: null,
     editLabelValue: "",
+    modelSearch: {},
 
     async load() {
       this.loading = true
@@ -383,6 +384,17 @@ function accountsView() {
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) void Alpine.$data(app).lang
       return I18n.t(key, params)
+    },
+    getFilteredModels(account) {
+      const q = (this.modelSearch[account.id] || "").toLowerCase()
+      if (!q) return account.availableModels || []
+      return (account.availableModels || []).filter((m) => {
+        return (
+          (m.id || "").toLowerCase().includes(q)
+          || (m.name || "").toLowerCase().includes(q)
+          || (m.vendor || "").toLowerCase().includes(q)
+        )
+      })
     },
   }
 }
