@@ -168,7 +168,14 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       }))
   },
 
-  async createChatCompletions(target, connection, credential, payload, signal) {
+  async createChatCompletions(
+    target,
+    connection,
+    credential,
+    payload,
+    signal,
+    _ctx,
+  ) {
     const upstreamPayload = {
       ...payload,
       model: target.upstreamModelId,

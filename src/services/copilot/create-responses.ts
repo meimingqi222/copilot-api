@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import type { Account } from "~/lib/accounts"
 
 import { canonicalModelId } from "~/lib/accounts"
@@ -22,6 +24,7 @@ interface CreateResponsesOptions {
   account: Account
   signal?: AbortSignal
   initiatorOverride?: "agent" | "user"
+  c?: Context
 }
 
 export const createResponses = async (
@@ -44,6 +47,7 @@ export const createResponses = async (
       signal: options.signal,
       initiatorOverride: options.initiatorOverride,
       account,
+      c: options.c,
     })
 
     if (isChatCompletionResponse(result.response)) {
@@ -80,6 +84,7 @@ export const createResponses = async (
   return runtime.createResponses(account, routedPayload, options.signal, {
     initiator,
     enableVision,
+    c: options.c,
   })
 }
 

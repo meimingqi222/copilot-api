@@ -1,4 +1,9 @@
-export const PROVIDER_IDS = ["copilot", "codebuff", "windsurf"] as const
+export const PROVIDER_IDS = [
+  "copilot",
+  "codebuff",
+  "windsurf",
+  "mimo-aistudio",
+] as const
 
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 

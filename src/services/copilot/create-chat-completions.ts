@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import type { Account } from "~/lib/accounts"
 
 import { canonicalModelId } from "~/lib/accounts"
@@ -9,6 +11,7 @@ interface CreateChatCompletionsOptions {
   account: Account
   signal?: AbortSignal
   initiatorOverride?: "agent" | "user"
+  c?: Context
 }
 
 export const createChatCompletions = async (
@@ -40,6 +43,7 @@ export const createChatCompletions = async (
     {
       initiator,
       enableVision,
+      c: options.c,
     },
   )
 }

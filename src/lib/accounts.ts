@@ -42,6 +42,12 @@ export interface WindsurfAccountConfig {
   windsurfClientName?: string
 }
 
+export interface MimoAccountConfig {
+  userId?: string
+  serviceToken?: string
+  xiaomichatbotPh?: string
+}
+
 export interface BaseAccount {
   id: string
   label: string
@@ -99,7 +105,22 @@ export interface WindsurfAccount extends BaseAccount, WindsurfAccountConfig {
   }
 }
 
-export type Account = CopilotAccount | CodebuffAccount | WindsurfAccount
+export interface MimoAccount extends BaseAccount, MimoAccountConfig {
+  provider: "mimo-aistudio"
+  credentials?: {
+    serviceToken?: string
+    xiaomichatbotPh?: string
+  }
+  settings?: {
+    userId?: string
+  }
+}
+
+export type Account =
+  | CopilotAccount
+  | CodebuffAccount
+  | WindsurfAccount
+  | MimoAccount
 
 export interface AccountModel {
   id: string
@@ -309,6 +330,80 @@ export function getWindsurfSettings(account: Account) {
       account.settings?.clientName
       ?? account.windsurfClientName
       ?? defaults.clientName,
+  }
+}
+
+export function getMimoServiceToken(account: Account): string | undefined {
+  if (account.provider !== "mimo-aistudio") {
+    return undefined
+  }
+  return account.credentials?.serviceToken ?? account.serviceToken
+}
+
+export function setMimoServiceToken(
+  account: Account,
+  serviceToken: string | undefined,
+): void {
+  if (account.provider !== "mimo-aistudio") {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    serviceToken,
+  }
+  account.serviceToken = serviceToken
+}
+
+export function getMimoPh(account: Account): string | undefined {
+  if (account.provider !== "mimo-aistudio") {
+    return undefined
+  }
+  return account.credentials?.xiaomichatbotPh ?? account.xiaomichatbotPh
+}
+
+export function setMimoPh(
+  account: Account,
+  xiaomichatbotPh: string | undefined,
+): void {
+  if (account.provider !== "mimo-aistudio") {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    xiaomichatbotPh,
+  }
+  account.xiaomichatbotPh = xiaomichatbotPh
+}
+
+export function getMimoUserId(account: Account): string | undefined {
+  if (account.provider !== "mimo-aistudio") {
+    return undefined
+  }
+  return account.settings?.userId ?? account.userId
+}
+
+export function setMimoUserId(
+  account: Account,
+  userId: string | undefined,
+): void {
+  if (account.provider !== "mimo-aistudio") {
+    return
+  }
+  account.settings = {
+    ...account.settings,
+    userId,
+  }
+  account.userId = userId
+}
+
+export function getMimoSettings(account: Account) {
+  if (account.provider !== "mimo-aistudio") {
+    return undefined
+  }
+  return {
+    serviceToken: getMimoServiceToken(account),
+    xiaomichatbotPh: getMimoPh(account),
+    userId: getMimoUserId(account),
   }
 }
 

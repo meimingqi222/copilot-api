@@ -292,6 +292,15 @@ async function handleAnthropicViaConnection(
 
   return streamSSE(c, async (stream) => {
     const pingInterval = createSsePingInterval(stream)
+    let lastUsage:
+      | {
+          input_tokens?: number
+          output_tokens: number
+          cache_creation_input_tokens?: number
+          cache_read_input_tokens?: number
+        }
+      | undefined
+    let resultAccountId: string | undefined
     try {
       const result = await dispatchMessages(
         anthropicPayload as unknown as Record<string, unknown> & {
@@ -302,6 +311,7 @@ async function handleAnthropicViaConnection(
         signal,
         forwarded,
       )
+      resultAccountId = result.accountId
       c.set("accountId" as never, result.accountId)
       c.set("model" as never, anthropicPayload.model)
       if (!isAsyncIterable(result.response)) {
@@ -324,6 +334,7 @@ async function handleAnthropicViaConnection(
         event?: string
       }>) {
         if (!event.data) continue
+        lastUsage = updateLastUsage(event.data, lastUsage)
         await forwardSseEvent(stream, event)
       }
     } catch (error) {
@@ -342,6 +353,9 @@ async function handleAnthropicViaConnection(
       throw error
     } finally {
       clearInterval(pingInterval)
+      if (resultAccountId) {
+        recordDirectStreamingUsage(c, resultAccountId, lastUsage)
+      }
     }
   })
 }
@@ -377,7 +391,12 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   if (!anthropicPayload.stream) {
     let result
     try {
-      result = await dispatchChatCompletions(openAIPayload, admission, signal)
+      result = await dispatchChatCompletions(
+        openAIPayload,
+        admission,
+        signal,
+        c,
+      )
     } catch (error) {
       if (error instanceof HTTPError && isContextWindowError(error)) {
         consola.warn(
@@ -404,7 +423,12 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     try {
       let result
       try {
-        result = await dispatchChatCompletions(openAIPayload, admission, signal)
+        result = await dispatchChatCompletions(
+          openAIPayload,
+          admission,
+          signal,
+          c,
+        )
       } catch (error) {
         const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
         if (knownError) {

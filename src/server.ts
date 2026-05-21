@@ -9,6 +9,7 @@ import { adminRoutes } from "./routes/admin/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { messageRoutes } from "./routes/messages/route"
+import { mimoWsRoute } from "./routes/mimo/ws"
 import { modelRoutes } from "./routes/models/route"
 import { responsesRoutes } from "./routes/responses/route"
 import { tokenRoute } from "./routes/token/route"
@@ -29,6 +30,7 @@ server.route("/admin", adminRoutes)
 
 server.route("/chat/completions", completionRoutes)
 server.route("/responses", responsesRoutes)
+server.route("/ws/mimo", mimoWsRoute)
 server.route("/models", modelRoutes)
 server.route("/embeddings", embeddingRoutes)
 server.route("/token", tokenRoute)
