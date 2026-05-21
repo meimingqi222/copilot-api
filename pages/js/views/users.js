@@ -6,9 +6,11 @@ function usersView() {
     showCreateModal: false,
     showModelsModal: false,
     showKeyModal: false,
+    showEditModal: false,
     newApiKey: "",
     selectedUser: null,
     selectedModels: [],
+    editingUser: null,
     newUser: { username: "", role: "user", quotaLimit: 0, allowedModels: [] },
 
     async load() {
@@ -121,6 +123,44 @@ function usersView() {
         await this.load()
       } catch {
         this.showToast(I18n.t("error.delete"), "error")
+      }
+    },
+
+    openEditModal(user) {
+      this.editingUser = {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        quotaLimit: user.quotaLimit ?? 0,
+        allowedModels: [...(user.allowedModels || [])],
+      }
+      this.showEditModal = true
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    toggleEditModel(modelId) {
+      if (!this.editingUser) return
+      const idx = this.editingUser.allowedModels.indexOf(modelId)
+      this.editingUser.allowedModels =
+        idx !== -1 ?
+          this.editingUser.allowedModels.filter((id) => id !== modelId)
+        : [...this.editingUser.allowedModels, modelId]
+    },
+
+    async saveEditUser() {
+      if (!this.editingUser) return
+      try {
+        await API.users.update(this.editingUser.id, {
+          username: this.editingUser.username.trim(),
+          role: this.editingUser.role,
+          quotaLimit: this.editingUser.quotaLimit ?? 0,
+          allowedModels: this.editingUser.allowedModels,
+        })
+        this.showEditModal = false
+        this.showToast(I18n.t("users.updateSuccess"), "success")
+        await this.load()
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
       }
     },
 
