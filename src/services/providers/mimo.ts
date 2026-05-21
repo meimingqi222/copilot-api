@@ -11,6 +11,10 @@ import {
 
 import type { ProviderRuntime } from "./runtime"
 
+interface StreamChunk {
+  data: string
+}
+
 const MIMO_MODELS = [
   { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", vendor: "MiMo" },
   { id: "mimo-v2.5", name: "MiMo V2.5", vendor: "MiMo" },
@@ -56,7 +60,7 @@ export const mimoProviderRuntime: ProviderRuntime = {
   supports(_account, feature) {
     return this.descriptor.features.includes(feature)
   },
-  async refreshModels(account) {
+  refreshModels(account) {
     const models: Array<AccountModel> = MIMO_MODELS.map((m) => ({
       id: m.id,
       name: m.name,
@@ -66,7 +70,7 @@ export const mimoProviderRuntime: ProviderRuntime = {
       provider: "mimo-aistudio",
     }))
     account.availableModels = models
-    return models
+    return Promise.resolve(models)
   },
   async createChatCompletions(account, payload, signal, _ctx) {
     const conn = mimoConnections.get(account.id)
@@ -76,10 +80,10 @@ export const mimoProviderRuntime: ProviderRuntime = {
       )
     }
 
-    const req_id = randomUUID()
+    const reqId = randomUUID()
 
     const wsPayload = {
-      req_id,
+      req_id: reqId,
       method: "POST",
       path: "/v1/chat/completions",
       body: JSON.stringify(payload),
@@ -90,27 +94,40 @@ export const mimoProviderRuntime: ProviderRuntime = {
     if (payload.stream) {
       return {
         accountId: account.id,
-        response: streamResponse(conn, req_id, signal),
+        response: streamResponse(conn, reqId, signal),
       }
-    } else {
-      const response = await collectResponse(conn, req_id, signal)
-      return {
-        accountId: account.id,
-        response,
-      }
+    }
+
+    const response = await collectResponse(conn, reqId, signal)
+    return {
+      accountId: account.id,
+      response,
     }
   },
 }
 
+function parseStreamLines(body: string): Array<string> {
+  const results: Array<string> = []
+  const lines = body.split("\n")
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith("data: ")) continue
+    const dataStr = trimmed.slice(6).trim()
+    if (dataStr === "[DONE]") continue
+    results.push(dataStr)
+  }
+  return results
+}
+
 async function* streamResponse(
   conn: MimoConnection,
-  req_id: string,
+  reqId: string,
   signal?: AbortSignal,
-): AsyncIterable<any> {
+): AsyncIterable<StreamChunk> {
   const queue: Array<MimoMessage> = []
   let resolveNext: (() => void) | null = null
   let done = false
-  let error: any = null
+  let error: Error | null = null
 
   const listener = (msg: MimoMessage) => {
     queue.push(msg)
@@ -120,10 +137,10 @@ async function* streamResponse(
     }
   }
 
-  conn.activeRequests.set(req_id, listener)
+  conn.activeRequests.set(reqId, listener)
 
   const cleanup = () => {
-    conn.activeRequests.delete(req_id)
+    conn.activeRequests.delete(reqId)
   }
 
   if (signal) {
@@ -138,6 +155,7 @@ async function* streamResponse(
 
   try {
     while (!done) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       if (queue.length === 0) {
@@ -146,23 +164,15 @@ async function* streamResponse(
         })
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       const msg = queue.shift()
       if (!msg) continue
 
       if (msg.type === "chunk" && msg.body) {
-        const lines = msg.body.split("\n")
-        for (const line of lines) {
-          const trimmed = line.trim()
-          if (trimmed.startsWith("data: ")) {
-            const dataStr = trimmed.slice(6).trim()
-            if (dataStr === "[DONE]") {
-              // ignore
-            } else {
-              yield { data: dataStr }
-            }
-          }
+        for (const dataStr of parseStreamLines(msg.body)) {
+          yield { data: dataStr }
         }
       } else if (msg.type === "finish") {
         done = true
@@ -178,13 +188,13 @@ async function* streamResponse(
 
 async function collectResponse(
   conn: MimoConnection,
-  req_id: string,
+  reqId: string,
   signal?: AbortSignal,
 ): Promise<ChatCompletionResponse> {
   const queue: Array<MimoMessage> = []
   let resolveNext: (() => void) | null = null
   let done = false
-  let error: any = null
+  let error: Error | null = null
   let accumulatedBody = ""
 
   const listener = (msg: MimoMessage) => {
@@ -195,10 +205,10 @@ async function collectResponse(
     }
   }
 
-  conn.activeRequests.set(req_id, listener)
+  conn.activeRequests.set(reqId, listener)
 
   const cleanup = () => {
-    conn.activeRequests.delete(req_id)
+    conn.activeRequests.delete(reqId)
   }
 
   if (signal) {
@@ -213,6 +223,7 @@ async function collectResponse(
 
   try {
     while (!done) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       if (queue.length === 0) {
@@ -221,6 +232,7 @@ async function collectResponse(
         })
       }
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       const msg = queue.shift()

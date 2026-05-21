@@ -18,16 +18,27 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
     onOpen(_event, ws) {
       consola.info(`[Claw WS] Node connected for account: ${accountId}`)
 
-      // Store connection
       mimoConnections.set(accountId, {
         accountId,
-        ws: ws as any,
+        ws,
         activeRequests: new Map(),
       })
     },
-    onMessage(event, _ws) {
+    async onMessage(event, _ws) {
       try {
-        const msg = JSON.parse(event.data.toString()) as MimoMessage
+        const rawData = event.data
+        let dataStr: string
+        if (typeof rawData === "string") {
+          dataStr = rawData
+        } else if (rawData instanceof ArrayBuffer) {
+          dataStr = new TextDecoder().decode(rawData)
+        } else if (rawData instanceof Blob) {
+          dataStr = await rawData.text()
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-base-to-string
+          dataStr = String(rawData)
+        }
+        const msg = JSON.parse(dataStr) as MimoMessage
         const conn = mimoConnections.get(accountId)
         if (conn && msg.req_id) {
           const callback = conn.activeRequests.get(msg.req_id)
@@ -43,11 +54,10 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
       consola.info(`[Claw WS] Node disconnected for account: ${accountId}`)
       const conn = mimoConnections.get(accountId)
       if (conn) {
-        // Reject all active requests with error
-        for (const [req_id, callback] of conn.activeRequests.entries()) {
+        for (const [reqId, callback] of conn.activeRequests.entries()) {
           callback({
             type: "error",
-            req_id,
+            req_id: reqId,
             body: "Node disconnected",
           })
         }
