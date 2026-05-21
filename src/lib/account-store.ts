@@ -168,7 +168,10 @@ function scheduleTokenRefreshRetry(accountId: string): void {
       return
     }
     refreshCopilotToken(currentAccount).catch((error: unknown) => {
-      consola.error(`Token refresh retry failed for "${currentAccount.label}":`, error)
+      consola.error(
+        `Token refresh retry failed for "${currentAccount.label}":`,
+        error,
+      )
       scheduleTokenRefreshRetry(accountId)
     })
   }, TOKEN_REFRESH_RETRY_DELAY_MS)

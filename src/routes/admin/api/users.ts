@@ -8,6 +8,7 @@ import {
   toPublicUser,
   updateUser,
 } from "~/lib/users"
+import { cacheModels, refreshModelsForAllAccounts } from "~/lib/utils"
 
 export const userApiRoutes = new Hono()
 
@@ -17,11 +18,28 @@ userApiRoutes.get("/", (c) => {
   })
 })
 
+userApiRoutes.get("/models", async (c) => {
+  if (!state.models) {
+    await refreshModelsForAllAccounts()
+    cacheModels()
+  }
+
+  const models = state.models?.data ?? []
+  return c.json({
+    models: models.map((model) => ({
+      id: model.id,
+      name: model.name,
+      vendor: model.vendor,
+    })),
+  })
+})
+
 userApiRoutes.post("/", async (c) => {
   let body: {
     username?: string
     quotaLimit?: number
     role?: "admin" | "user"
+    allowedModels?: Array<string>
   }
   try {
     body = await c.req.json()
@@ -42,7 +60,12 @@ userApiRoutes.post("/", async (c) => {
   }
 
   const role = body.role === "admin" ? "admin" : "user"
-  const userWithKey = await createUser(username, body.quotaLimit ?? 0, role)
+  const userWithKey = await createUser(
+    username,
+    body.quotaLimit ?? 0,
+    role,
+    body.allowedModels ?? [],
+  )
 
   return c.json({
     user: toPublicUser(userWithKey),
@@ -58,6 +81,7 @@ userApiRoutes.put("/:id", async (c) => {
     quotaLimit?: number
     enabled?: boolean
     role?: "admin" | "user"
+    allowedModels?: Array<string>
   }
   try {
     body = await c.req.json()
@@ -70,6 +94,7 @@ userApiRoutes.put("/:id", async (c) => {
   if (body.quotaLimit !== undefined) patch.quotaLimit = body.quotaLimit
   if (body.enabled !== undefined) patch.enabled = body.enabled
   if (body.role !== undefined) patch.role = body.role
+  if (body.allowedModels !== undefined) patch.allowedModels = body.allowedModels
 
   const user = await updateUser(id, patch)
   if (!user) return c.json({ error: "User not found." }, 404)

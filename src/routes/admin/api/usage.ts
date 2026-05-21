@@ -318,6 +318,39 @@ function aggregateByAccount(startDate: string, endDate: string) {
   return byAccount
 }
 
+function aggregateByUser(startDate: string, endDate: string) {
+  const byUser: Record<
+    string,
+    UsageMetrics & {
+      username: string
+      models: Record<string, UsageMetrics>
+    }
+  > = {}
+
+  for (const user of state.users) {
+    const userStats = statsStore.getUsageStatsForUser(
+      user.id,
+      startDate,
+      endDate,
+    )
+    const totals = createUsageMetrics()
+    const models: Record<string, UsageMetrics> = {}
+
+    for (const stat of userStats) {
+      mergeUsageMetrics(totals, stat)
+      aggregateModelUsage(models, stat.models)
+    }
+
+    byUser[user.id] = {
+      username: user.username,
+      ...totals,
+      models,
+    }
+  }
+
+  return byUser
+}
+
 // Get summary statistics
 usageApiRoutes.get("/summary", (c) => {
   const range = c.req.query("range") || "today"
@@ -334,6 +367,7 @@ usageApiRoutes.get("/summary", (c) => {
   const allStats = statsStore.getUsageStats(undefined, startDate, endDate)
   const { totals, timeSeries, byModel } = aggregateStats(allStats)
   const byAccount = aggregateByAccount(startDate, endDate)
+  const byUser = aggregateByUser(startDate, endDate)
 
   // Only show 15-minute interval breakdown when the range is a single day
   const intervalSeries =
@@ -344,6 +378,7 @@ usageApiRoutes.get("/summary", (c) => {
   return c.json({
     totals,
     byAccount,
+    byUser,
     byModel,
     timeSeries,
     intervalSeries,

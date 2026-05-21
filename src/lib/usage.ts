@@ -47,6 +47,7 @@ export function recordUsage(input: UsageRecordInput): void {
     statsStore.recordUsage({
       date: new Date(now).toISOString().split("T")[0] ?? "",
       accountId,
+      userId: c.get("userId" as never) as string | undefined,
       model,
       promptTokens,
       completionTokens,

@@ -15,6 +15,7 @@ export interface DailyStats {
 export interface UsageStats {
   date: string
   accountId: string
+  userId?: string
   model: string
   promptTokens: number
   completionTokens: number
@@ -113,6 +114,7 @@ class StatsStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
         account_id TEXT NOT NULL,
+        user_id TEXT,
         model TEXT NOT NULL,
         prompt_tokens INTEGER DEFAULT 0,
         completion_tokens INTEGER DEFAULT 0,
@@ -128,6 +130,10 @@ class StatsStore {
     `)
     db.run(`
       CREATE INDEX IF NOT EXISTS idx_usage_account ON usage_stats(account_id)
+    `)
+    this.ensureUsageUserColumn(db)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_stats(user_id)
     `)
     db.run(`
       CREATE INDEX IF NOT EXISTS idx_usage_model ON usage_stats(model)
@@ -146,6 +152,16 @@ class StatsStore {
         updated_at INTEGER NOT NULL
       )
     `)
+  }
+
+  private ensureUsageUserColumn(db: Database): void {
+    const rows = db.prepare("PRAGMA table_info(usage_stats)").all() as Array<{
+      name: string
+    }>
+    if (rows.some((row) => row.name === "user_id")) {
+      return
+    }
+    db.run("ALTER TABLE usage_stats ADD COLUMN user_id TEXT")
   }
 
   private ensureDb(): Database {
@@ -277,13 +293,14 @@ class StatsStore {
     const db = this.ensureDb()
     const stmt = db.prepare(`
       INSERT INTO usage_stats (
-        date, account_id, model, prompt_tokens, completion_tokens,
+        date, account_id, user_id, model, prompt_tokens, completion_tokens,
         cache_read_tokens, cache_write_tokens, total_tokens, cost, timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       stats.date,
       stats.accountId,
+      stats.userId ?? null,
       stats.model,
       stats.promptTokens,
       stats.completionTokens,
@@ -293,6 +310,31 @@ class StatsStore {
       stats.cost ?? 0,
       stats.timestamp,
     )
+  }
+
+  getUsageStatsForUser(
+    userId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Array<UsageDayStats> {
+    const db = this.ensureDb()
+    const rows = this.queryUsageDayRows(db, {
+      userId,
+      startDate,
+      endDate,
+    })
+
+    return rows.map((row) => ({
+      date: row.date,
+      requests: row.requests,
+      promptTokens: row.prompt_tokens,
+      completionTokens: row.completion_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      totalTokens: row.total_tokens,
+      cost: row.cost,
+      models: this.queryUsageModelsByDate(db, row.date, undefined, userId),
+    }))
   }
 
   getUsageStats(
@@ -324,6 +366,7 @@ class StatsStore {
     db: Database,
     filters: {
       accountId?: string
+      userId?: string
       startDate?: string
       endDate?: string
     },
@@ -347,6 +390,10 @@ class StatsStore {
       query += " AND account_id = ?"
       params.push(filters.accountId)
     }
+    if (filters.userId) {
+      query += " AND user_id = ?"
+      params.push(filters.userId)
+    }
     if (filters.startDate) {
       query += " AND date >= ?"
       params.push(filters.startDate)
@@ -366,8 +413,9 @@ class StatsStore {
     db: Database,
     date: string,
     accountId?: string,
+    userId?: string,
   ): Record<string, UsageModelStats> {
-    const modelStmt = db.prepare(`
+    let query = `
       SELECT
         model,
         COUNT(*) as requests,
@@ -378,11 +426,22 @@ class StatsStore {
         SUM(total_tokens) as total_tokens,
         SUM(cost) as cost
       FROM usage_stats
-      WHERE date = ?${accountId ? " AND account_id = ?" : ""}
+      WHERE date = ?
+    `
+    const params = [date]
+    if (accountId) {
+      query += " AND account_id = ?"
+      params.push(accountId)
+    }
+    if (userId) {
+      query += " AND user_id = ?"
+      params.push(userId)
+    }
+    query += `
       GROUP BY model
-    `)
-    const modelParams = accountId ? [date, accountId] : [date]
-    const modelRows = modelStmt.all(...modelParams) as Array<UsageModelRow>
+    `
+    const modelStmt = db.prepare(query)
+    const modelRows = modelStmt.all(...params) as Array<UsageModelRow>
     const models: Record<string, UsageModelStats> = {}
 
     for (const row of modelRows) {

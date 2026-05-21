@@ -11,6 +11,7 @@ export interface User {
   hashedApiKey: string
   quotaLimit: number
   usedTokens: number
+  allowedModels?: Array<string>
   enabled: boolean
   role: "admin" | "user"
   createdAt: number
@@ -42,7 +43,7 @@ export async function loadUsers(): Promise<void> {
     // eslint-disable-next-line unicorn/prefer-json-parse-buffer
     const data = await fs.readFile(PATHS.USERS_PATH, "utf8")
     const parsed = JSON.parse(data) as Array<User>
-    state.users = parsed
+    state.users = parsed.map((user) => normalizeUser(user))
   } catch {
     // File doesn't exist — start with empty array
     state.users = []
@@ -62,6 +63,7 @@ export async function loadUsers(): Promise<void> {
         hashedApiKey: hashedKey,
         quotaLimit: 0,
         usedTokens: 0,
+        allowedModels: [],
         enabled: true,
         role: "admin",
         createdAt: Date.now(),
@@ -85,6 +87,7 @@ export function createUserSync(
   username: string,
   quotaLimit = 0,
   role: "admin" | "user" = "user",
+  allowedModels: Array<string> = [],
 ): UserWithKey {
   const rawKey = `sk-${randomBytes(32).toString("hex")}`
   const user: User = {
@@ -93,6 +96,7 @@ export function createUserSync(
     hashedApiKey: hashKey(rawKey),
     quotaLimit,
     usedTokens: 0,
+    allowedModels: normalizeAllowedModels(allowedModels),
     enabled: true,
     role,
     createdAt: Date.now(),
@@ -105,8 +109,9 @@ export async function createUser(
   username: string,
   quotaLimit = 0,
   role: "admin" | "user" = "user",
+  allowedModels: Array<string> = [],
 ): Promise<UserWithKey> {
-  const userWithKey = createUserSync(username, quotaLimit, role)
+  const userWithKey = createUserSync(username, quotaLimit, role, allowedModels)
   await saveUsers()
   return userWithKey
 }
@@ -122,11 +127,19 @@ export function verifyApiKey(rawKey: string): User | null {
 
 export async function updateUser(
   id: string,
-  patch: Partial<Pick<User, "username" | "quotaLimit" | "enabled" | "role">>,
+  patch: Partial<
+    Pick<User, "username" | "quotaLimit" | "enabled" | "role" | "allowedModels">
+  >,
 ): Promise<User | null> {
   const user = state.users.find((u) => u.id === id)
   if (!user) return null
-  Object.assign(user, patch)
+  Object.assign(user, {
+    ...patch,
+    allowedModels:
+      patch.allowedModels === undefined ?
+        user.allowedModels
+      : normalizeAllowedModels(patch.allowedModels),
+  })
   await saveUsers()
   return user
 }
@@ -169,4 +182,33 @@ export async function incrementUserTokens(
   user.lastUsedAt = Date.now()
   await saveUsers()
   return true
+}
+
+export function isUserAllowedModel(user: User, model: string): boolean {
+  const allowedModels = user.allowedModels ?? []
+  if (allowedModels.length === 0) return true
+  return allowedModels.includes(model)
+}
+
+type PersistedUser = Partial<User>
+  & Pick<User, "id" | "username" | "hashedApiKey">
+
+function normalizeUser(user: PersistedUser): User {
+  return {
+    ...user,
+    quotaLimit: user.quotaLimit ?? 0,
+    usedTokens: user.usedTokens ?? 0,
+    allowedModels: normalizeAllowedModels(user.allowedModels ?? []),
+    enabled: user.enabled ?? true,
+    role: user.role ?? "user",
+    createdAt: user.createdAt ?? Date.now(),
+  }
+}
+
+function normalizeAllowedModels(models: Array<string>): Array<string> {
+  return Array.from(
+    new Set(
+      models.map((model) => model.trim()).filter((model) => model.length > 0),
+    ),
+  )
 }

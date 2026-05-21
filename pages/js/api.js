@@ -79,6 +79,7 @@ const API = {
   // Users
   users: {
     list: () => API.request("/users"),
+    models: () => API.request("/users/models"),
     create: (data) => API.request("/users", { method: "POST", body: data }),
     update: (id, data) =>
       API.request(`/users/${id}`, { method: "PUT", body: data }),

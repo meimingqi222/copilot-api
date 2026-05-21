@@ -2,16 +2,24 @@ function usersView() {
   return {
     loading: false,
     users: [],
+    models: [],
     showCreateModal: false,
+    showModelsModal: false,
     showKeyModal: false,
     newApiKey: "",
-    newUser: { username: "", role: "user", quotaLimit: 0 },
+    selectedUser: null,
+    selectedModels: [],
+    newUser: { username: "", role: "user", quotaLimit: 0, allowedModels: [] },
 
     async load() {
       this.loading = true
       try {
-        const data = await API.users.list()
-        this.users = data.users || []
+        const [usersData, modelsData] = await Promise.all([
+          API.users.list(),
+          API.users.models(),
+        ])
+        this.users = usersData.users || []
+        this.models = modelsData.models || []
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
@@ -21,7 +29,12 @@ function usersView() {
     },
 
     openCreateModal() {
-      this.newUser = { username: "", role: "user", quotaLimit: 0 }
+      this.newUser = {
+        username: "",
+        role: "user",
+        quotaLimit: 0,
+        allowedModels: [],
+      }
       this.showCreateModal = true
     },
 
@@ -47,6 +60,44 @@ function usersView() {
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       }
+    },
+
+    openModelsModal(user) {
+      this.selectedUser = user
+      this.selectedModels = [...(user.allowedModels || [])]
+      this.showModelsModal = true
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    isModelSelected(modelId) {
+      return this.selectedModels.includes(modelId)
+    },
+
+    toggleModel(modelId) {
+      if (this.isModelSelected(modelId)) {
+        this.selectedModels = this.selectedModels.filter((id) => id !== modelId)
+        return
+      }
+      this.selectedModels = [...this.selectedModels, modelId]
+    },
+
+    async saveModels() {
+      if (!this.selectedUser) return
+      try {
+        await API.users.update(this.selectedUser.id, {
+          allowedModels: this.selectedModels,
+        })
+        this.showModelsModal = false
+        this.showToast(I18n.t("users.updateSuccess"), "success")
+        await this.load()
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
+    modelAccessText(user) {
+      const count = user.allowedModels?.length || 0
+      return count === 0 ? I18n.t("users.models.unrestricted") : String(count)
     },
 
     async resetKey(user) {
