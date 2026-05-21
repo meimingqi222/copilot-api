@@ -156,6 +156,17 @@ function usersView() {
       if (app) void Alpine.$data(app).lang
       return I18n.t(key, params)
     },
+    formatTokens(tokens) {
+      const numericTokens = Number(tokens || 0)
+      if (numericTokens === 0) return "0"
+      if (numericTokens >= 1000000) {
+        return (numericTokens / 1000000).toFixed(1) + "M"
+      }
+      if (numericTokens >= 1000) {
+        return (numericTokens / 1000).toFixed(1) + "K"
+      }
+      return numericTokens.toString()
+    },
   }
 }
 
