@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import type { AccountModel } from "~/lib/accounts"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
+import { parseModelReference } from "~/lib/accounts"
 import {
   type MimoMessage,
   mimoConnections,
@@ -39,7 +40,7 @@ export const mimoProviderRuntime: ProviderRuntime = {
         type: "text",
         labelKey: "accounts.provider.mimo-aistudio.fields.userId",
         required: true,
-        placeholder: "e.g., 10001",
+        placeholder: "Xiaomi User ID",
       },
       {
         key: "serviceToken",
@@ -54,6 +55,13 @@ export const mimoProviderRuntime: ProviderRuntime = {
         labelKey: "accounts.provider.mimo-aistudio.fields.xiaomichatbotPh",
         required: true,
         placeholder: "xiaomichatbot_ph",
+      },
+      {
+        key: "proxy",
+        type: "text",
+        labelKey: "accounts.provider.mimo-aistudio.fields.proxy",
+        required: false,
+        placeholder: "http://your-proxy:port",
       },
     ],
   },
@@ -82,23 +90,31 @@ export const mimoProviderRuntime: ProviderRuntime = {
 
     const reqId = randomUUID()
 
+    // Strip provider prefix from model ID before forwarding to upstream API
+    const nativePayload = {
+      ...payload,
+      model: parseModelReference(payload.model).nativeModelId,
+    }
+
     const wsPayload = {
       req_id: reqId,
       method: "POST",
       path: "/v1/chat/completions",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(nativePayload),
     }
 
-    conn.ws.send(JSON.stringify(wsPayload))
-
     if (payload.stream) {
+      const response = streamResponse(conn, reqId, signal)
+      conn.ws.send(JSON.stringify(wsPayload))
       return {
         accountId: account.id,
-        response: streamResponse(conn, reqId, signal),
+        response,
       }
     }
 
-    const response = await collectResponse(conn, reqId, signal)
+    const responsePromise = collectResponse(conn, reqId, signal)
+    conn.ws.send(JSON.stringify(wsPayload))
+    const response = await responsePromise
     return {
       accountId: account.id,
       response,

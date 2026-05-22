@@ -316,7 +316,15 @@
                     <span class="badge" :class="user.enabled ? 'badge-success' : 'badge-gray'" x-text="t(user.enabled ? 'users.status.enabled' : 'users.status.disabled')"></span>
                   </td>
                   <td class="p-3" x-text="user.quotaLimit === 0 ? t('quota.unlimited') : formatTokens(user.quotaLimit)"></td>
-                  <td class="p-3" x-text="formatTokens(user.usedTokens || 0)"></td>
+                  <td class="p-3">
+                    <div class="flex items-center gap-1">
+                      <span x-text="formatTokens(user.usedTokens || 0)"></span>
+                      <button @click="resetTokens(user)"
+                              class="w-5 h-5 rounded inline-flex items-center justify-center hover:bg-[var(--apple-gray-5)] transition-colors"
+                              :title="t('users.resetTokens')"
+                              style="font-size:11px;color:var(--apple-text-tertiary)">↺</button>
+                    </div>
+                  </td>
                   <td class="p-3">
                     <button @click="openModelsModal(user)" class="badge badge-info" x-text="modelAccessText(user)"></button>
                   </td>
@@ -383,10 +391,12 @@
                   <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.modelsHint') + ')'"></span>
                 </label>
                 <div class="max-h-48 overflow-y-auto rounded-xl border border-[var(--apple-gray-5)] p-3 space-y-2">
-                  <template x-for="model in models" :key="model.id">
+                  <input type="text" x-model="modelSearch" class="form-input mb-2" :placeholder="t('search') + '...'" style="padding:4px 8px;font-size:12px">
+                  <template x-for="model in filteredModels" :key="model.id">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                       <input type="checkbox" class="form-checkbox" x-model="newUser.allowedModels" :value="model.id">
-                      <span class="font-mono" x-text="model.id"></span>
+                      <span class="font-mono" x-text="model.displayId || model.id"></span>
+                      <span x-show="model.provider" class="text-xs text-[var(--apple-text-tertiary)]" x-text="'via ' + model.provider"></span>
                     </label>
                   </template>
                   <p x-show="!models.length" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('users.noModels')"></p>
@@ -416,11 +426,12 @@
                 <button @click="selectedModels = models.map((m) => m.id)" class="btn btn-secondary" x-text="t('users.models.selectAll')"></button>
               </div>
               <div class="max-h-80 overflow-y-auto rounded-xl border border-[var(--apple-gray-5)] p-3 space-y-2">
-                <template x-for="model in models" :key="model.id">
+                <input type="text" x-model="modelSearch" class="form-input mb-2" :placeholder="t('search') + '...'" style="padding:4px 8px;font-size:12px">
+                <template x-for="model in filteredModels" :key="model.id">
                   <label class="flex items-center gap-2 text-sm cursor-pointer">
                     <input type="checkbox" class="form-checkbox" :checked="isModelSelected(model.id)" @change="toggleModel(model.id)">
-                    <span class="font-mono" x-text="model.id"></span>
-                    <span class="text-xs text-[var(--apple-text-tertiary)]" x-text="model.vendor || ''"></span>
+                    <span class="font-mono" x-text="model.displayId || model.id"></span>
+                    <span x-show="model.provider" class="text-xs text-[var(--apple-text-tertiary)]" x-text="'via ' + model.provider"></span>
                   </label>
                 </template>
                 <p x-show="!models.length" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('users.noModels')"></p>
@@ -471,10 +482,12 @@
                   <button @click="editingUser.allowedModels = models.map((m) => m.id)" class="btn btn-secondary btn-xs" x-text="t('users.models.selectAll')"></button>
                 </div>
                 <div class="max-h-48 overflow-y-auto rounded-xl border border-[var(--apple-gray-5)] p-3 space-y-2">
-                  <template x-for="model in models" :key="model.id">
+                  <input type="text" x-model="modelSearchEdit" class="form-input mb-2" :placeholder="t('search') + '...'" style="padding:4px 8px;font-size:12px">
+                  <template x-for="model in filteredModelsEdit" :key="model.id">
                     <label class="flex items-center gap-2 text-sm cursor-pointer">
                       <input type="checkbox" class="form-checkbox" :checked="editingUser.allowedModels.includes(model.id)" @change="toggleEditModel(model.id)">
-                      <span class="font-mono" x-text="model.id"></span>
+                      <span class="font-mono" x-text="model.displayId || model.id"></span>
+                      <span x-show="model.provider" class="text-xs text-[var(--apple-text-tertiary)]" x-text="'via ' + model.provider"></span>
                       <span class="text-xs text-[var(--apple-text-tertiary)]" x-text="model.vendor || ''"></span>
                     </label>
                   </template>
@@ -688,6 +701,12 @@
                     <option :value="provider.id" x-text="provider.name || provider.id"></option>
                   </template>
                 </select>
+              </div>
+              <div x-show="newAccount.provider === 'mimo-aistudio'" class="space-y-1">
+                <label class="form-label" x-text="t('accounts.provider.mimo-aistudio.cookieHint')"></label>
+                <textarea x-model="mimoCookieInput" @input="parseMimoCookie()"
+                  class="form-input font-mono text-xs" rows="2"
+                  placeholder='serviceToken="..."; userId=...; xiaomichatbot_ph="..."'></textarea>
               </div>
               <div x-show="selectedProviderFields().length" class="space-y-3">
                 <template x-for="field in selectedProviderFields()" :key="field.key">
@@ -944,11 +963,16 @@
                 </div>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="m in (conn.models || []).slice(0, 20)" :key="m.publicId">
-                    <div class="group relative inline-flex">
+                    <div class="group relative inline-flex items-center gap-0.5">
                       <span class="tag tag-sm cursor-pointer" :class="m.enabled ? 'tag-info' : 'tag-muted'"
-                            @click="openEditModel(conn, m)" x-text="m.publicId"></span>
+                            @click="toggleModel(conn, m)" x-text="m.publicId"
+                            :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"></span>
+                      <button @click.stop="openEditModel(conn, m)"
+                              class="w-4 h-4 rounded-full bg-[var(--apple-gray-4)] text-[var(--apple-text-secondary)]
+                                     flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              style="font-size:10px;line-height:1">✎</button>
                       <button @click.stop="deleteModel(conn, m)"
-                              class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--apple-red)] text-white
+                              class="w-4 h-4 rounded-full bg-[var(--apple-red)] text-white
                                      flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                               style="font-size:10px;line-height:1">×</button>
                     </div>

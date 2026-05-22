@@ -12,6 +12,28 @@ function usersView() {
     selectedModels: [],
     editingUser: null,
     newUser: { username: "", role: "user", quotaLimit: 0, allowedModels: [] },
+    modelSearch: "",
+    modelSearchEdit: "",
+
+    get filteredModels() {
+      const q = (this.modelSearch || "").toLowerCase()
+      if (!q) return this.models
+      return this.models.filter(
+        (m) =>
+          m.id.toLowerCase().includes(q)
+          || (m.name || "").toLowerCase().includes(q),
+      )
+    },
+
+    get filteredModelsEdit() {
+      const q = (this.modelSearchEdit || "").toLowerCase()
+      if (!q) return this.models
+      return this.models.filter(
+        (m) =>
+          m.id.toLowerCase().includes(q)
+          || (m.name || "").toLowerCase().includes(q),
+      )
+    },
 
     async load() {
       this.loading = true
@@ -110,6 +132,17 @@ function usersView() {
         this.showKeyModal = true
         this.showToast(I18n.t("users.resetSuccess"), "success")
         this.$nextTick(() => lucide.createIcons())
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
+    async resetTokens(user) {
+      if (!confirm(I18n.t("users.confirmResetTokens"))) return
+      try {
+        await API.users.resetTokens(user.id)
+        user.usedTokens = 0
+        this.showToast(I18n.t("users.resetTokensSuccess"), "success")
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       }

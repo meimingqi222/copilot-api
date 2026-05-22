@@ -5,6 +5,7 @@ import {
   createUser,
   deleteUser,
   resetApiKey,
+  resetUserTokens,
   toPublicUser,
   updateUser,
 } from "~/lib/users"
@@ -26,11 +27,17 @@ userApiRoutes.get("/models", async (c) => {
 
   const models = state.models?.data ?? []
   return c.json({
-    models: models.map((model) => ({
-      id: model.id,
-      name: model.name,
-      vendor: model.vendor,
-    })),
+    models: models.map((model) => {
+      const id = model.id
+      const slashIdx = id.indexOf("/")
+      return {
+        id,
+        name: model.name,
+        vendor: model.vendor,
+        displayId: slashIdx > 0 ? id.slice(slashIdx + 1) : id,
+        provider: slashIdx > 0 ? id.slice(0, slashIdx) : "",
+      }
+    }),
   })
 })
 
@@ -114,4 +121,11 @@ userApiRoutes.post("/:id/reset-key", async (c) => {
   const newKey = await resetApiKey(id)
   if (!newKey) return c.json({ error: "User not found." }, 404)
   return c.json({ apiKey: newKey })
+})
+
+userApiRoutes.post("/:id/reset-tokens", async (c) => {
+  const id = c.req.param("id")
+  const ok = await resetUserTokens(id)
+  if (!ok) return c.json({ error: "User not found." }, 404)
+  return c.json({ ok: true })
 })

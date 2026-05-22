@@ -85,6 +85,8 @@ const API = {
       API.request(`/users/${id}`, { method: "PUT", body: data }),
     delete: (id) => API.request(`/users/${id}`, { method: "DELETE" }),
     resetKey: (id) => API.request(`/users/${id}/reset-key`, { method: "POST" }),
+    resetTokens: (id) =>
+      API.request(`/users/${id}/reset-tokens`, { method: "POST" }),
   },
 
   // Accounts

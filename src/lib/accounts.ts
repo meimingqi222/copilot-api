@@ -46,6 +46,7 @@ export interface MimoAccountConfig {
   userId?: string
   serviceToken?: string
   xiaomichatbotPh?: string
+  proxy?: string
 }
 
 export interface BaseAccount {
@@ -113,6 +114,7 @@ export interface MimoAccount extends BaseAccount, MimoAccountConfig {
   }
   settings?: {
     userId?: string
+    proxy?: string
   }
 }
 
@@ -396,6 +398,27 @@ export function setMimoUserId(
   account.userId = userId
 }
 
+export function getMimoProxy(account: Account): string | undefined {
+  if (account.provider !== "mimo-aistudio") {
+    return undefined
+  }
+  return account.settings?.proxy ?? account.proxy
+}
+
+export function setMimoProxy(
+  account: Account,
+  proxy: string | undefined,
+): void {
+  if (account.provider !== "mimo-aistudio") {
+    return
+  }
+  account.settings = {
+    ...account.settings,
+    proxy,
+  }
+  account.proxy = proxy
+}
+
 export function getMimoSettings(account: Account) {
   if (account.provider !== "mimo-aistudio") {
     return undefined
@@ -404,6 +427,7 @@ export function getMimoSettings(account: Account) {
     serviceToken: getMimoServiceToken(account),
     xiaomichatbotPh: getMimoPh(account),
     userId: getMimoUserId(account),
+    proxy: getMimoProxy(account),
   }
 }
 

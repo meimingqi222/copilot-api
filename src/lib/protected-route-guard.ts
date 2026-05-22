@@ -127,6 +127,12 @@ export function checkProtectedRouteGuard(
     return
   }
 
+  // Skip guard for localhost / direct (no proxy) requests
+  const clientIp = getClientIpFromRequest(c)
+  if (clientIp === "127.0.0.1" || clientIp === "::1") {
+    return
+  }
+
   const principal = getPrincipalKey(c)
   const now = Date.now()
   const state = getOrCreateState(principal)
