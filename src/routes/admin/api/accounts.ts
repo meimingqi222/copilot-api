@@ -26,6 +26,7 @@ import {
   setWindsurfApiKey,
   setMimoServiceToken,
   setMimoPh,
+  setMimoProxy,
   setMimoUserId,
 } from "~/lib/accounts"
 import {
@@ -55,6 +56,7 @@ function getHasCredentials(account: Account): boolean {
   return Boolean(getMimoServiceToken(account) && getMimoPh(account))
 }
 
+// eslint-disable-next-line complexity
 async function updateProviderAccount(
   account: Account,
   body: {
@@ -191,6 +193,12 @@ async function updateProviderAccount(
     const userId =
       typeof settings.userId === "string" ? settings.userId : undefined
     setMimoUserId(account, userId?.trim() || undefined)
+
+    if (Object.hasOwn(body.settings ?? {}, "proxy")) {
+      const proxy =
+        typeof settings.proxy === "string" ? settings.proxy : undefined
+      setMimoProxy(account, proxy?.trim() || undefined)
+    }
 
     await refreshModelsForAccount(account)
   }
@@ -405,6 +413,7 @@ accountApiRoutes.post("/", async (c) => {
       serviceToken,
       xiaomichatbotPh,
       userId: typeof settings.userId === "string" ? settings.userId : undefined,
+      proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
     }
 
     state.accounts.push(account)
@@ -954,6 +963,7 @@ accountApiRoutes.post("/import", async (c) => {
         xiaomichatbotPh,
         userId:
           typeof settings.userId === "string" ? settings.userId : undefined,
+        proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
         enabled: raw.enabled ?? true,
         priority: raw.priority ?? 0,
         quotaState: "unknown",

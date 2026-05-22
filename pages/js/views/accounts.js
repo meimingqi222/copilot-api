@@ -24,6 +24,43 @@ function accountsView() {
     deviceFlowStep: "input",
     deviceFlowData: null,
     pollTimer: null,
+    mimoCookieInput: "",
+
+    parseMimoCookie() {
+      const str = this.mimoCookieInput
+      if (!str) return
+      const re = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^;]+))/g
+      let m
+      while ((m = re.exec(str)) !== null) {
+        const val = m[2] ?? m[3] ?? m[4] ?? ""
+        switch (m[1]) {
+          case "serviceToken": {
+            this.setAccountFieldValue(
+              { key: "serviceToken", type: "secret" },
+              val.trim(),
+            )
+            break
+          }
+          case "xiaomichatbot_ph": {
+            this.setAccountFieldValue(
+              { key: "xiaomichatbotPh", type: "secret" },
+              val.trim(),
+            )
+            break
+          }
+          case "userId": {
+            this.setAccountFieldValue(
+              { key: "userId", type: "text" },
+              val.trim(),
+            )
+            break
+          }
+          default: {
+            break
+          }
+        }
+      }
+    },
     editingLabel: null,
     editLabelValue: "",
     modelSearch: {},

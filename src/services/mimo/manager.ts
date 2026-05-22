@@ -2,9 +2,20 @@
 import consola from "consola"
 import { randomUUID } from "node:crypto"
 
+import type { ClawWs } from "~/services/mimo/ws-proxy"
+
 import { saveAccounts } from "~/lib/account-store"
-import { getMimoPh, getMimoServiceToken, getMimoUserId } from "~/lib/accounts"
+import {
+  getMimoPh,
+  getMimoProxy,
+  getMimoServiceToken,
+  getMimoUserId,
+} from "~/lib/accounts"
 import { state } from "~/lib/state"
+import {
+  connectWebSocketThroughProxy,
+  fetchWithProxy,
+} from "~/services/mimo/ws-proxy"
 
 interface WsMessage {
   type: string
@@ -62,10 +73,10 @@ async def handle_request(ws, req, client, lock):
                 "req_id": req_id, "type": "start",
                 "status": r.status_code, "headers": dict(r.headers)
             })
-            async for chunk in r.aiter_text():
-                if chunk:
+            async for line in r.aiter_lines():
+                if line:
                     await safe_send(ws, lock, {
-                        "req_id": req_id, "type": "chunk", "body": chunk
+                        "req_id": req_id, "type": "chunk", "body": line + "\n"
                     })
             await safe_send(ws, lock, {"req_id": req_id, "type": "finish"})
 
@@ -93,7 +104,7 @@ function getBridgeCode(accountId: string): string {
   return BRIDGE_CODE.replace("__WS_URL__", finalWsUrl)
 }
 
-async function markAccountFailed(accountId: string, errorMsg: string) {
+export async function markAccountFailed(accountId: string, errorMsg: string) {
   const acc = state.accounts.find((a) => a.id === accountId)
   if (acc) {
     acc.runtimeState = {
@@ -106,7 +117,7 @@ async function markAccountFailed(accountId: string, errorMsg: string) {
   }
 }
 
-async function markAccountReady(accountId: string) {
+export async function markAccountReady(accountId: string) {
   const acc = state.accounts.find((a) => a.id === accountId)
   if (
     acc
@@ -129,42 +140,50 @@ class NativeClawClient {
   private userId: string
   private serviceToken: string
   label: string
-  private ws: WebSocket | null = null
+  private proxy: string | undefined
+  private ws: ClawWs | null = null
   private connected = false
   private events: Array<ChatEvent> = []
   private responses = new Map<string, WsMessage>()
   private resolveConnected: (() => void) | null = null
 
+  // eslint-disable-next-line max-params
   constructor(
     accountId: string,
     ph: string,
     userId: string,
     serviceToken: string,
     label: string,
+    proxy?: string,
   ) {
     this.accountId = accountId
     this.ph = ph
     this.userId = userId
     this.serviceToken = serviceToken
     this.label = label
+    this.proxy = proxy
   }
 
   async destroyClaw(): Promise<boolean> {
     const url = `https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/destroy?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
-    const cookies = `userId=${this.userId}; serviceToken=${this.serviceToken}; xiaomichatbot_ph=${this.ph}`
+    const cookies = `userId=${this.userId}; serviceToken="${this.serviceToken}"; xiaomichatbot_ph="${this.ph}"`
     try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          Cookie: cookies,
-          Accept: "*/*",
-          "Content-Type": "application/json",
-          Origin: "https://aistudio.xiaomimimo.com",
-          Referer: "https://aistudio.xiaomimimo.com/",
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      const resp = await fetchWithProxy(
+        url,
+        {
+          method: "POST",
+          headers: {
+            Cookie: cookies,
+            Accept: "*/*",
+            "Content-Type": "application/json",
+            Origin: "https://aistudio.xiaomimimo.com",
+            Referer: "https://aistudio.xiaomimimo.com/",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
         },
-      })
+        this.proxy,
+      )
       const text = await resp.text()
       consola.info(
         `[Claw ${this.label}] Destroy response: ${resp.status} ${text.slice(0, 100)}`,
@@ -186,7 +205,7 @@ class NativeClawClient {
     const urlAgree = `https://aistudio.xiaomimimo.com/open-apis/agreement/user/mimo-claw?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
     const urlCreate = `https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/create?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
     const urlStatus = `https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/status`
-    const cookies = `userId=${this.userId}; serviceToken=${this.serviceToken}; xiaomichatbot_ph=${this.ph}`
+    const cookies = `userId=${this.userId}; serviceToken="${this.serviceToken}"; xiaomichatbot_ph="${this.ph}"`
     const headers = {
       Cookie: cookies,
       Accept: "*/*",
@@ -198,11 +217,19 @@ class NativeClawClient {
     }
 
     try {
-      await fetch(urlAgree, { method: "POST", headers }).catch(() => {
+      await fetchWithProxy(
+        urlAgree,
+        { method: "POST", headers },
+        this.proxy,
+      ).catch(() => {
         // Ignore agreement errors
       })
 
-      const createResp = await fetch(urlCreate, { method: "POST", headers })
+      const createResp = await fetchWithProxy(
+        urlCreate,
+        { method: "POST", headers },
+        this.proxy,
+      )
       const createText = await createResp.text()
       consola.info(
         `[Claw ${this.label}] Create response: ${createResp.status} ${createText.slice(0, 100)}`,
@@ -218,7 +245,11 @@ class NativeClawClient {
       const deadline = Date.now() + 120_000
       let lastStatus = ""
       while (Date.now() < deadline) {
-        const statusResp = await fetch(urlStatus, { method: "GET", headers })
+        const statusResp = await fetchWithProxy(
+          urlStatus,
+          { method: "GET", headers },
+          this.proxy,
+        )
         if (statusResp.status === 401) {
           await markAccountFailed(
             this.accountId,
@@ -253,18 +284,22 @@ class NativeClawClient {
 
   async getTicket(): Promise<string> {
     const url = `https://aistudio.xiaomimimo.com/open-apis/user/ws/ticket?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
-    const cookies = `userId=${this.userId}; serviceToken=${this.serviceToken}; xiaomichatbot_ph=${this.ph}`
+    const cookies = `userId=${this.userId}; serviceToken="${this.serviceToken}"; xiaomichatbot_ph="${this.ph}"`
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        const resp = await fetch(url, {
-          headers: {
-            Cookie: cookies,
-            Accept: "*/*",
-            "User-Agent": "Mozilla/5.0",
-            Origin: "https://aistudio.xiaomimimo.com",
-            Referer: "https://aistudio.xiaomimimo.com/",
+        const resp = await fetchWithProxy(
+          url,
+          {
+            headers: {
+              Cookie: cookies,
+              Accept: "*/*",
+              "User-Agent": "Mozilla/5.0",
+              Origin: "https://aistudio.xiaomimimo.com",
+              Referer: "https://aistudio.xiaomimimo.com/",
+            },
           },
-        })
+          this.proxy,
+        )
         if (resp.status === 401) {
           await markAccountFailed(
             this.accountId,
@@ -292,28 +327,32 @@ class NativeClawClient {
 
     try {
       const ticket = await this.getTicket()
-      const cookieStr = `userId=${this.userId}; serviceToken=${this.serviceToken}; xiaomichatbot_ph=${this.ph}`
+      const cookieStr = `userId=${this.userId}; serviceToken="${this.serviceToken}"; xiaomichatbot_ph="${this.ph}"`
       const headers = {
         Cookie: cookieStr,
         Origin: "https://aistudio.xiaomimimo.com",
       }
       const wsUrl = `wss://aistudio.xiaomimimo.com/ws/proxy?ticket=${ticket}`
 
-      this.ws = new WebSocket(wsUrl, { headers })
+      this.ws =
+        this.proxy ?
+          await connectWebSocketThroughProxy(wsUrl, headers, this.proxy)
+        : (new WebSocket(wsUrl, { headers }) as unknown as ClawWs)
 
-      this.ws.addEventListener("message", async (event) => {
+      this.ws.addEventListener("message", (rawData: unknown) => {
         try {
-          const rawData: unknown = event.data
-          let dataStr: string
-          if (typeof rawData === "string") {
-            dataStr = rawData
-          } else if (rawData instanceof ArrayBuffer) {
-            dataStr = new TextDecoder().decode(rawData)
-          } else if (rawData instanceof Blob) {
-            dataStr = await rawData.text()
-          } else {
-            dataStr = String(rawData)
+          // Native Bun WebSocket passes MessageEvent, proxy passes string
+          let raw: unknown = rawData
+          if (typeof rawData !== "string") {
+            if (
+              rawData
+              && typeof rawData === "object"
+              && "data" in rawData
+            ) {
+              raw = (rawData as { data: unknown }).data
+            }
           }
+          const dataStr = typeof raw === "string" ? raw : String(raw)
           const data = JSON.parse(dataStr) as WsMessage
           this.handleWsMessage(data)
         } catch (e) {
@@ -331,15 +370,23 @@ class NativeClawClient {
         this.connected = false
       })
 
-      const success = await new Promise<boolean>((resolve) => {
-        this.resolveConnected = () => resolve(true)
-        setTimeout(() => {
-          this.resolveConnected = null
-          resolve(false)
-        }, 15000)
-      })
-
-      return success && this.connected
+      // Wait for connect-challenge to complete (needed for both native and proxy WS)
+      // NOTE: connected is set to true in handleWsMessage when connect.ok is sent
+      if (!this.connected) {
+        const success = await new Promise<boolean>((resolve) => {
+          if (this.connected) {
+            resolve(true)
+            return
+          }
+          this.resolveConnected = () => resolve(true)
+          setTimeout(() => {
+            this.resolveConnected = null
+            resolve(false)
+          }, 15000)
+        })
+        return success && this.connected
+      }
+      return this.connected
     } catch (e) {
       consola.error(`[Claw ${this.label}] WS connection error:`, e)
       return false
@@ -451,20 +498,24 @@ class MimoAccountManager {
   private userId: string
   private serviceToken: string
   private ph: string
+  private proxy: string | undefined
   private active = true
 
+  // eslint-disable-next-line max-params
   constructor(
     accountId: string,
     label: string,
     userId: string,
     serviceToken: string,
     ph: string,
+    proxy?: string,
   ) {
     this.accountId = accountId
     this.label = label
     this.userId = userId
     this.serviceToken = serviceToken
     this.ph = ph
+    this.proxy = proxy
   }
 
   stop() {
@@ -479,17 +530,25 @@ class MimoAccountManager {
       try {
         const urlStatus =
           "https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/status"
-        const cookies = `userId=${this.userId}; serviceToken=${this.serviceToken}; xiaomichatbot_ph=${this.ph}`
+        const cookies = `userId=${this.userId}; serviceToken="${this.serviceToken}"; xiaomichatbot_ph="${this.ph}"`
         let st = ""
         let remainSec = 0
         try {
-          const statusResp = await fetch(urlStatus, {
-            headers: {
-              Cookie: cookies,
-              Accept: "*/*",
-              "User-Agent": "Mozilla/5.0",
+          const statusResp = await fetchWithProxy(
+            urlStatus,
+            {
+              headers: {
+                Cookie: cookies,
+                Accept: "*/*",
+                "Content-Type": "application/json",
+                Origin: "https://aistudio.xiaomimimo.com",
+                Referer: "https://aistudio.xiaomimimo.com/",
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              },
             },
-          })
+            this.proxy,
+          )
           if (statusResp.ok) {
             const data = (await statusResp.json()) as StatusResponse
             st = data.data?.status || ""
@@ -515,6 +574,7 @@ class MimoAccountManager {
           this.userId,
           this.serviceToken,
           this.label,
+          this.proxy,
         )
         activeClient = client
 
@@ -578,6 +638,7 @@ class MimoAccountManager {
           this.userId,
           this.serviceToken,
           this.label,
+          this.proxy,
         )
         activeClient = client2
         if (!(await client2.connect(false))) {
@@ -650,6 +711,7 @@ export function startMimoManager() {
       const serviceToken = getMimoServiceToken(account)
       const ph = getMimoPh(account)
       const userId = getMimoUserId(account)
+      const proxy = getMimoProxy(account)
 
       if (!serviceToken || !ph || !userId) {
         consola.warn(
@@ -664,6 +726,7 @@ export function startMimoManager() {
         userId,
         serviceToken,
         ph,
+        proxy,
       )
       activeManagers.set(account.id, mgr)
       mgr.runLifecycle().catch((e: unknown) => {

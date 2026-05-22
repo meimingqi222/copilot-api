@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { upgradeWebSocket } from "hono/bun"
 
 import { type MimoMessage, mimoConnections } from "~/services/mimo/connections"
+import { markAccountFailed, markAccountReady } from "~/services/mimo/manager"
 
 export const mimoWsRoute = new Hono()
 
@@ -23,6 +24,7 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         ws,
         activeRequests: new Map(),
       })
+      void markAccountReady(accountId)
     },
     async onMessage(event, _ws) {
       try {
@@ -63,6 +65,7 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         }
         mimoConnections.delete(accountId)
       }
+      void markAccountFailed(accountId, "Bridge node disconnected")
     },
     onError(_event, _ws) {
       consola.error(`[Claw WS] Node error for account: ${accountId}`)

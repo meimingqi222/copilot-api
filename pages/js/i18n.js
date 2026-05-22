@@ -75,6 +75,9 @@ const i18n = {
       "users.resetKey": "重置密钥",
       "users.confirmReset":
         "确定要重置该用户的 API 密钥吗？旧的密钥将立即失效。",
+      "users.resetTokens": "重置用量",
+      "users.confirmResetTokens": "确定要重置该用户的 token 用量计数吗？",
+      "users.resetTokensSuccess": "Token 用量已重置为 0",
       "users.newApiKey": "新的 API 密钥",
       "users.keyWarning": "请立即复制此密钥，它不会再显示。",
       "users.quotaHint": "0 = 无限制",
@@ -113,6 +116,8 @@ const i18n = {
         "Service Token 凭证",
       "accounts.provider.mimo-aistudio.fields.xiaomichatbotPh":
         "xiaomichatbot_ph Cookie",
+      "accounts.provider.mimo-aistudio.cookieHint":
+        "粘贴 Cookie 自动解析（可选）",
       "accounts.codebuffAuthToken": "Codebuff 授权令牌",
       "accounts.status": "状态",
       "accounts.active": "活跃账户",
@@ -264,6 +269,8 @@ const i18n = {
       "connections.modelName": "显示名称",
       "connections.modelVendor": "厂商",
       "connections.modelEnabled": "启用",
+      "connections.modelEnable": "点击启用",
+      "connections.modelDisable": "点击禁用",
       "connections.modelEndpoints": "支持端点",
       "connections.testApi": "测试连通性",
       "connections.testSuccess": "连通正常",
@@ -471,6 +478,10 @@ const i18n = {
       "users.resetKey": "Reset Key",
       "users.confirmReset":
         "Are you sure you want to reset this user's API key? The old key will be invalidated immediately.",
+      "users.resetTokens": "Reset Usage",
+      "users.confirmResetTokens":
+        "Are you sure you want to reset this user's token usage count?",
+      "users.resetTokensSuccess": "Token usage reset to 0",
       "users.newApiKey": "New API Key",
       "users.keyWarning": "Copy this key now. It will not be shown again.",
       "users.quotaHint": "0 = unlimited",
@@ -512,6 +523,8 @@ const i18n = {
         "Service Token Credential",
       "accounts.provider.mimo-aistudio.fields.xiaomichatbotPh":
         "xiaomichatbot_ph Cookie",
+      "accounts.provider.mimo-aistudio.cookieHint":
+        "Paste cookie to auto-parse (optional)",
       "accounts.codebuffAuthToken": "Codebuff Auth Token",
       "accounts.status": "Status",
       "accounts.active": "Active Accounts",
@@ -669,6 +682,8 @@ const i18n = {
       "connections.modelName": "Display Name",
       "connections.modelVendor": "Vendor",
       "connections.modelEnabled": "Enabled",
+      "connections.modelEnable": "Click to enable",
+      "connections.modelDisable": "Click to disable",
       "connections.modelEndpoints": "Endpoints",
       "connections.testApi": "Test API",
       "connections.testSuccess": "Connected",

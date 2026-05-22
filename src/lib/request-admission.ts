@@ -193,8 +193,8 @@ function tryResolveConnection(
     return null
   }
 
-  // Connections exist but all credentials are unavailable → diagnostic error
-  throwUnavailableConnectionError(allTargets)
+  // Connections exist but all credentials are unavailable → fall through to legacy
+  return null
 }
 
 function enforceUserModelAccess(c: Context, model: string): void {
@@ -236,67 +236,4 @@ export function switchToNextRouteTarget(
   const found = findCredential(target.connectionId, target.credentialId)
   if (!found) return null
   return { target, connection, credential: found.credential }
-}
-
-/**
- * 所有 connection 候选存在但均不可用时,根据聚合状态抛出诊断性 HTTPError:
- * - 全部 cooldown → 429 + Retry-After
- * - 全部 auth_error → 503 + 提示检查 key
- * - 全部 quota_exhausted → 503 + 提示配额耗尽
- * - 全部 disabled / 混合 → 503
- */
-function throwUnavailableConnectionError(
-  allTargets: Array<RouteTarget>,
-): never {
-  const statuses: Array<ApiCredential["status"] | "disabled"> = []
-  let minCooldownUntil = Infinity
-
-  for (const t of allTargets) {
-    const found = findCredential(t.connectionId, t.credentialId)
-    if (!found) continue
-    const cred = found.credential
-    const effective = !cred.enabled ? "disabled" : cred.status
-    statuses.push(effective)
-    if (effective === "cooldown" && cred.cooldownUntil) {
-      minCooldownUntil = Math.min(minCooldownUntil, cred.cooldownUntil)
-    }
-  }
-
-  if (statuses.length === 0) {
-    throw new HTTPError(
-      "No providers available for this model",
-      new Response("Service Unavailable", { status: 503 }),
-    )
-  }
-
-  if (statuses.every((s) => s === "cooldown")) {
-    const retryAfterSec =
-      minCooldownUntil < Infinity ?
-        Math.max(0, Math.ceil((minCooldownUntil - Date.now()) / 1000))
-      : 60
-    const headers = new Headers({ "Retry-After": String(retryAfterSec) })
-    throw new HTTPError(
-      "All provider credentials are rate limited, please retry later",
-      new Response("Too Many Requests", { status: 429, headers }),
-    )
-  }
-
-  if (statuses.every((s) => s === "auth_error")) {
-    throw new HTTPError(
-      "All provider credentials have authentication errors, please check your API keys via the admin dashboard",
-      new Response("Service Unavailable", { status: 503 }),
-    )
-  }
-
-  if (statuses.every((s) => s === "quota_exhausted")) {
-    throw new HTTPError(
-      "All provider credentials have exhausted their quota",
-      new Response("Service Unavailable", { status: 503 }),
-    )
-  }
-
-  throw new HTTPError(
-    "No available provider credentials for this model",
-    new Response("Service Unavailable", { status: 503 }),
-  )
 }

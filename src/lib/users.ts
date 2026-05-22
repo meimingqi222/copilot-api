@@ -57,30 +57,32 @@ export async function loadUsers(): Promise<void> {
       (u) => u.hashedApiKey === hashedKey,
     )
     if (!existingLegacyAdmin) {
-      const adminUser: User = {
-        id: randomUUID(),
-        username: "admin",
-        hashedApiKey: hashedKey,
-        quotaLimit: 0,
-        usedTokens: 0,
-        allowedModels: [],
-        enabled: true,
-        role: "admin",
-        createdAt: Date.now(),
+      // Check for persisted admin with stale key — update key, preserve tokens
+      const persistedAdmin = state.users.find(
+        (u) => u.username === "admin" && u.role === "admin",
+      )
+      if (persistedAdmin) {
+        persistedAdmin.hashedApiKey = hashedKey
+      } else {
+        const adminUser: User = {
+          id: randomUUID(),
+          username: "admin",
+          hashedApiKey: hashedKey,
+          quotaLimit: 0,
+          usedTokens: 0,
+          allowedModels: [],
+          enabled: true,
+          role: "admin",
+          createdAt: Date.now(),
+        }
+        state.users.push(adminUser)
       }
-      state.users.push(adminUser)
     }
   }
 }
 
 export async function saveUsers(): Promise<void> {
-  // Filter out legacy admin user (created from --api-key flag) to avoid
-  // locking out admin when the key changes on restart
-  const usersToSave = state.users.filter((user) => {
-    if (!state.legacyApiKey) return true
-    return user.hashedApiKey !== hashKey(state.legacyApiKey)
-  })
-  await fs.writeFile(PATHS.USERS_PATH, JSON.stringify(usersToSave, null, 2))
+  await fs.writeFile(PATHS.USERS_PATH, JSON.stringify(state.users, null, 2))
 }
 
 export function createUserSync(
@@ -180,6 +182,14 @@ export async function incrementUserTokens(
   if (!user) return false
   user.usedTokens += tokens
   user.lastUsedAt = Date.now()
+  await saveUsers()
+  return true
+}
+
+export async function resetUserTokens(id: string): Promise<boolean> {
+  const user = state.users.find((u) => u.id === id)
+  if (!user) return false
+  user.usedTokens = 0
   await saveUsers()
   return true
 }

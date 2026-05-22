@@ -16,6 +16,12 @@ export async function guardMiddleware(c: Context, next: Next) {
   const ip = extractGuardIp(c)
   const ua = c.req.header("user-agent") || undefined
 
+  // Skip guard for localhost requests
+  if (!ip || ip === "127.0.0.1" || ip === "::1") {
+    await next()
+    return
+  }
+
   const entry = isBlocked({ ip, ua })
   if (entry) {
     const reason = entry.reason ? `: ${entry.reason}` : ""

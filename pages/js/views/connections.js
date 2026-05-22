@@ -415,6 +415,17 @@ function connectionsView() {
       }
     },
 
+    async toggleModel(conn, model) {
+      try {
+        await API.providerConnections.updateModel(conn.id, model.publicId, {
+          enabled: !model.enabled,
+        })
+        model.enabled = !model.enabled
+      } catch (e) {
+        this.showToast(e.message || "Toggle failed", "error")
+      }
+    },
+
     async deleteModel(conn, model) {
       if (!confirm(`Delete model "${model.publicId}"?`)) return
       try {
