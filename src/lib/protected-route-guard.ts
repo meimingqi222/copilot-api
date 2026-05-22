@@ -209,11 +209,15 @@ export function checkProtectedRouteGuard(
   emitSuspiciousWarning(c, { principal, state, behavior })
 }
 
-export function reportUpstream429(c: Context): void {
+export function reportUpstream429(c: Context, provider?: string): void {
   const principal = c.get("protectedRouteGuardPrincipal" as never) as
     | string
     | undefined
   if (!principal) return
+
+  // Only count 429s as suspicious for Copilot (GitHub's API).
+  // Other providers have their own rate limits which are normal.
+  if (provider && provider !== "copilot") return
 
   const state = guardState.get(principal)
   if (!state) return
