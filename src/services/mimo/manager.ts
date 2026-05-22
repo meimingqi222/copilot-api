@@ -112,24 +112,18 @@ export async function markAccountFailed(accountId: string, errorMsg: string) {
       authStatus: "error",
       lastError: errorMsg,
     }
-    acc.quotaState = "exhausted"
     await saveAccounts()
   }
 }
 
 export async function markAccountReady(accountId: string) {
   const acc = state.accounts.find((a) => a.id === accountId)
-  if (
-    acc
-    && (acc.runtimeState?.authStatus !== "ready"
-      || acc.quotaState !== "available")
-  ) {
+  if (acc && acc.runtimeState?.authStatus !== "ready") {
     acc.runtimeState = {
       ...acc.runtimeState,
       authStatus: "ready",
       lastError: undefined,
     }
-    acc.quotaState = "available"
     await saveAccounts()
   }
 }
