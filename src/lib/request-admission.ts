@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import consola from "consola"
 
 import type { Account } from "~/lib/accounts"
+import { parseModelReference } from "~/lib/accounts"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 import type {
   ApiCredential,
@@ -76,6 +77,7 @@ export async function prepareRequestAdmission(
       maxTokens: options.maxTokens,
       stream: options.stream,
       messageContent: options.messageContent,
+      provider: inferProviderFromModel(options.model),
     })
   } catch (error) {
     if (error instanceof Error) {
@@ -236,4 +238,18 @@ export function switchToNextRouteTarget(
   const found = findCredential(target.connectionId, target.credentialId)
   if (!found) return null
   return { target, connection, credential: found.credential }
+}
+
+/** Infer provider ID from model name (for guard auto-detection exemption). */
+function inferProviderFromModel(model: string): string | undefined {
+  const parsed = parseModelReference(model)
+  if (parsed.provider) return parsed.provider
+  // Check connection-level prefix
+  const slashIdx = model.indexOf("/")
+  if (slashIdx > 0) {
+    const maybeConn = model.slice(0, slashIdx)
+    const conn = getProviderConnection(maybeConn)
+    if (conn) return conn.protocol === "copilot-native" ? "copilot" : maybeConn
+  }
+  return undefined
 }
