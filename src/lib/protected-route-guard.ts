@@ -41,6 +41,8 @@ interface GuardInput {
   stream?: boolean
   trustedClient?: boolean
   messageContent?: string
+  /** Provider ID — auto-detection skips non-Copilot providers */
+  provider?: string
 }
 
 const guardState = new Map<string, PrincipalGuardState>()
@@ -184,6 +186,7 @@ export function checkProtectedRouteGuard(
     userAgent: c.req.header("user-agent"),
     trustedClient,
     currentContentHash: contentHash,
+    provider: input.provider,
   })
   c.set("protectedRouteGuardBehavior" as never, behavior)
 
@@ -265,9 +268,10 @@ function analyzeBehavior(
     userAgent?: string
     trustedClient: boolean
     currentContentHash?: string
+    provider?: string
   },
 ): PrincipalBehavior {
-  const { userAgent, trustedClient, currentContentHash } = options
+  const { userAgent, trustedClient, currentContentHash, provider } = options
   const windowStart = now - BEHAVIOR_WINDOW_MS
   const recentEvents = state.events.filter((e) => e.at >= windowStart)
 
@@ -284,8 +288,12 @@ function analyzeBehavior(
 
   const failureRate = calculateFailureRate(recentEvents)
 
+  // Only detect automation/initiator for Copilot — other providers
+  // have their own rate limits and no User/Agent initiator distinction.
   const automatedPattern =
-    trustedClient ? false : detectAutomation(userAgent, state.recentRequests)
+    provider && provider !== "copilot" ? false
+    : trustedClient ? false
+    : detectAutomation(userAgent, state.recentRequests)
 
   const repeatedContentCount =
     currentContentHash ?
