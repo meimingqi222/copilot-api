@@ -20,6 +20,7 @@ import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
+import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
@@ -1024,7 +1025,7 @@ const isNonStreaming = (
     | { accountId: string; response: CopilotStream }
     | { accountId: string; response: ChatCompletionResponse },
 ): result is { accountId: string; response: ChatCompletionResponse } =>
-  Object.hasOwn(result.response, "choices")
+  isChatCompletionResponse(result.response as object)
 
 function isDirectAnthropicResponse(
   response: AsyncIterable<CopilotStreamEventLike> | AnthropicResponse,

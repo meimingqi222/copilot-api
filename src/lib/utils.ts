@@ -1,7 +1,10 @@
 import consola from "consola"
 
+import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
+
 import { saveAccounts } from "~/lib/account-store"
 import { canonicalNativeModelId } from "~/lib/accounts"
+import { HTTPError } from "~/lib/error"
 import { listExposedPublicModels } from "~/lib/route-target/build"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -286,4 +289,27 @@ export const cacheVSCodeVersion = async () => {
   state.vsCodeVersion = response
 
   consola.info(`Using VSCode version: ${response}`)
+}
+
+export function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof Error || error instanceof DOMException)
+    && error.name === "AbortError"
+  )
+}
+
+export function isChatCompletionResponse(
+  response: object,
+): response is ChatCompletionResponse {
+  return Object.hasOwn(response, "choices")
+}
+
+export function shouldFailover(error: unknown): boolean {
+  if (!(error instanceof HTTPError)) return false
+  const status = error.response.status
+  if (status === 401 || status === 402 || status === 403 || status === 429) {
+    return true
+  }
+  if (status >= 500) return true
+  return false
 }

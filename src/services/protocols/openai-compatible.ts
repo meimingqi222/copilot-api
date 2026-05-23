@@ -6,7 +6,6 @@
  * 配置(baseUrl、headers)与 ApiCredential(authMode/value)构造请求。
  */
 
-import consola from "consola"
 import { events } from "fetch-event-stream"
 
 import type {
@@ -15,18 +14,16 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { EmbeddingResponse } from "~/services/copilot/create-embeddings"
 
-import { HTTPError } from "~/lib/error"
 import {
-  classifyUpstreamError,
-  markCredentialAuthError,
-  markCredentialCooldown,
-  markCredentialQuotaExhausted,
-  persistProviderConnections,
-  DEFAULTS,
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
 } from "~/lib/provider-connections"
+import {
+  buildBaseHeaders,
+  handleUpstreamFailure,
+  joinUrl,
+} from "~/services/protocols/shared"
 
 import type {
   AdapterChatResult,
@@ -34,95 +31,17 @@ import type {
   ProtocolAdapter,
 } from "./types"
 
-function joinUrl(baseUrl: string, path: string): string {
-  const trimmedBase = baseUrl.replace(/\/+$/, "")
-  const trimmedPath = path.startsWith("/") ? path : `/${path}`
-  return `${trimmedBase}${trimmedPath}`
-}
-
 function buildHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
 ): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    ...connection.headers,
-  }
-
-  if (credential.authMode === "bearer") {
-    headers["Authorization"] = `Bearer ${credential.value}`
-  } else {
-    const headerName = credential.headerName ?? "Authorization"
-    headers[headerName] = credential.value
-  }
-  return headers
+  return buildBaseHeaders(connection, credential)
 }
 
 function classifyDiscoveredModelEndpoints(
   id: string,
 ): Array<"chat" | "embeddings"> {
   return /embed/i.test(id) ? ["embeddings"] : ["chat"]
-}
-
-/** 根据上游错误响应分类并更新 credential 状态。返回原始错误供路由层处理。 */
-async function handleUpstreamFailure(
-  response: Response,
-  credential: ApiCredential,
-  contextMessage: string,
-): Promise<never> {
-  const body = await response
-    .clone()
-    .text()
-    .catch(() => "")
-  const classified = classifyUpstreamError({
-    status: response.status,
-    retryAfterHeader: response.headers.get("retry-after"),
-    body,
-  })
-
-  switch (classified.kind) {
-    case "rate_limited": {
-      markCredentialCooldown(credential, {
-        retryAfterMs: classified.retryAfterMs,
-        reason: `HTTP ${response.status}`,
-      })
-      break
-    }
-    case "auth_error": {
-      markCredentialAuthError(
-        credential,
-        `HTTP ${response.status}: ${body.slice(0, 200)}`,
-      )
-      break
-    }
-    case "quota_exhausted": {
-      markCredentialQuotaExhausted(
-        credential,
-        `HTTP ${response.status}: ${body.slice(0, 200)}`,
-      )
-      break
-    }
-    case "server_error": {
-      markCredentialCooldown(credential, {
-        retryAfterMs: classified.retryAfterMs ?? DEFAULTS.COOLDOWN_5XX_MS,
-        reason: `HTTP ${response.status}`,
-      })
-      break
-    }
-    default: {
-      break
-    }
-  }
-
-  await persistProviderConnections().catch((err: unknown) => {
-    consola.warn(
-      "[openai-compatible] failed to persist credential status:",
-      (err as Error).message,
-    )
-  })
-
-  throw new HTTPError(contextMessage, response, body)
 }
 
 export const openAICompatibleAdapter: ProtocolAdapter = {
@@ -147,6 +66,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
         response,
         credential,
         "Failed to discover models",
+        "openai-compatible",
       )
     }
 
@@ -197,6 +117,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
         response,
         credential,
         "Failed to create chat completions",
+        "openai-compatible",
       )
     }
 
@@ -235,6 +156,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
         response,
         credential,
         "Failed to create embeddings",
+        "openai-compatible",
       )
     }
 
