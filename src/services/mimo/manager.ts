@@ -10,6 +10,7 @@ import {
   getMimoProxy,
   getMimoServiceToken,
   getMimoUserId,
+  type Account,
 } from "~/lib/accounts"
 import { state } from "~/lib/state"
 import { mimoConnections } from "~/services/mimo/connections"
@@ -623,6 +624,10 @@ class MimoAccountManager {
           }
         }
 
+        await waitForClawCreateSlot()
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (!this.active) continue
+
         if (st !== "DESTROYED") {
           consola.info(`[MimoManager ${this.label}] Destroying container...`)
           await client.destroyClaw()
@@ -709,6 +714,30 @@ class MimoAccountManager {
 
 const activeManagers = new Map<string, MimoAccountManager>()
 
+const MIN_CLAW_CREATE_INTERVAL_MS = 120_000
+const clawCreateTimestamps: Array<number> = []
+
+async function waitForClawCreateSlot(): Promise<void> {
+  while (true) {
+    const now = Date.now()
+    while (
+      clawCreateTimestamps.length > 0
+      && clawCreateTimestamps[0] < now - MIN_CLAW_CREATE_INTERVAL_MS
+    ) {
+      clawCreateTimestamps.shift()
+    }
+    if (clawCreateTimestamps.length === 0) {
+      clawCreateTimestamps.push(now)
+      return
+    }
+    const waitMs = clawCreateTimestamps[0] + MIN_CLAW_CREATE_INTERVAL_MS - now
+    consola.debug(
+      `[MimoManager] Waiting ~${Math.ceil(waitMs / 1000)}s for claw create slot...`,
+    )
+    await new Promise((r) => setTimeout(r, waitMs))
+  }
+}
+
 export function startMimoManager() {
   consola.info("🚀 Mimo AI Studio control engine (Manager) initialized.")
   setInterval(() => {
@@ -721,6 +750,12 @@ export function startMimoManager() {
       }
     }
 
+    const toStart: Array<{
+      account: Account
+      serviceToken: string
+      ph: string
+      userId: string
+    }> = []
     for (const account of state.accounts) {
       if (account.provider !== "mimo-aistudio" || !account.enabled) {
         continue
@@ -732,7 +767,6 @@ export function startMimoManager() {
       const serviceToken = getMimoServiceToken(account)
       const ph = getMimoPh(account)
       const userId = getMimoUserId(account)
-      const proxy = getMimoProxy(account)
 
       if (!serviceToken || !ph || !userId) {
         consola.warn(
@@ -741,18 +775,30 @@ export function startMimoManager() {
         continue
       }
 
-      const mgr = new MimoAccountManager(
-        account.id,
-        account.label,
-        userId,
-        serviceToken,
-        ph,
-        proxy,
-      )
-      activeManagers.set(account.id, mgr)
-      mgr.runLifecycle().catch((e: unknown) => {
-        consola.error(`Manager for account "${account.label}" failed:`, e)
-      })
+      toStart.push({ account, serviceToken, ph, userId })
+    }
+
+    for (const [
+      i,
+      { account, serviceToken, ph, userId },
+    ] of toStart.entries()) {
+      const delay = i * MIN_CLAW_CREATE_INTERVAL_MS
+      setTimeout(() => {
+        if (activeManagers.has(account.id)) return
+        const proxy = getMimoProxy(account)
+        const mgr = new MimoAccountManager(
+          account.id,
+          account.label,
+          userId,
+          serviceToken,
+          ph,
+          proxy,
+        )
+        activeManagers.set(account.id, mgr)
+        mgr.runLifecycle().catch((e: unknown) => {
+          consola.error(`Manager for account "${account.label}" failed:`, e)
+        })
+      }, delay)
     }
   }, 15000)
 }
