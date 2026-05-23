@@ -12,6 +12,7 @@ import {
   getMimoUserId,
 } from "~/lib/accounts"
 import { state } from "~/lib/state"
+import { mimoConnections } from "~/services/mimo/connections"
 import {
   connectWebSocketThroughProxy,
   fetchWithProxy,
@@ -126,6 +127,27 @@ export async function markAccountReady(accountId: string) {
     }
     await saveAccounts()
   }
+}
+
+/**
+ * Sleep in 60s intervals, checking if the bridge is still connected.
+ * Returns false if bridge disconnected, true if full duration elapsed.
+ */
+async function sleepWithHealthCheck(
+  accountId: string,
+  totalSec: number,
+): Promise<boolean> {
+  const interval = 60
+  const end = Date.now() + totalSec * 1000
+  while (Date.now() < end) {
+    const remaining = Math.min(interval, Math.max(1, Math.ceil((end - Date.now()) / 1000)))
+    await new Promise((r) => setTimeout(r, remaining * 1000))
+    if (!mimoConnections.has(accountId)) {
+      consola.warn(`[MimoManager] Bridge disconnected for account ${accountId}, restarting cycle...`)
+      return false
+    }
+  }
+  return true
 }
 
 class NativeClawClient {
@@ -592,8 +614,8 @@ class MimoAccountManager {
             consola.info(
               `[MimoManager ${this.label}] Sleep for ${sleepTime}s before container expires...`,
             )
-            await new Promise((r) => setTimeout(r, sleepTime * 1000))
-            continue
+            const ok = await sleepWithHealthCheck(this.accountId, sleepTime)
+            if (!ok) continue // bridge disconnected, restart cycle
           }
         }
 
@@ -657,7 +679,8 @@ class MimoAccountManager {
         consola.info(
           `[MimoManager ${this.label}] Inject complete. Running in background for 55m.`,
         )
-        await new Promise((r) => setTimeout(r, 55 * 60 * 1000))
+        const ok = await sleepWithHealthCheck(this.accountId, 55 * 60)
+        if (!ok) continue
       } catch (e: unknown) {
         consola.error(
           `[MimoManager ${this.label}] Manager lifecycle loop error:`,
