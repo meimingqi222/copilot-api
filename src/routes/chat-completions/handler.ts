@@ -378,7 +378,7 @@ function handleStreamingCompletion(
         return
       }
 
-      streamStart = Date.now()
+      streamStart = dispatchStart
       for await (const rawEvent of result.response) {
         if (rawEvent.data === "[DONE]") {
           break

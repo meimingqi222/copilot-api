@@ -9,7 +9,6 @@ type PerformanceRow = {
   requests: number
   streamingRequests: number
   avgTtftMs: number | null
-  avgTps: number | null
   avgStreamingTps: number | null
   avgNonStreamingTps: number | null
 }
@@ -125,5 +124,4 @@ test("GET /admin/api/usage/performance uses a weighted TPS average", async () =>
     avgNonStreamingTps: 5,
   })
   expect(body.performance[0].avgStreamingTps).toBeCloseTo(10.1, 1)
-  expect(body.performance[0].avgTps).toBeCloseTo(7.55, 2)
 })

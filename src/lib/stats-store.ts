@@ -598,7 +598,6 @@ class StatsStore {
     requests: number
     streamingRequests: number
     avgTtftMs: number | null
-    avgTps: number | null
     avgStreamingTps: number | null
     avgNonStreamingTps: number | null
   }> {
@@ -609,8 +608,6 @@ class StatsStore {
         COUNT(*) as requests,
         SUM(CASE WHEN streaming = 1 THEN 1 ELSE 0 END) as streaming_requests,
         AVG(ttft_ms) as avg_ttft_ms,
-        SUM(CASE WHEN tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
-          / NULLIF(SUM(CASE WHEN tps > 0 THEN completion_tokens / tps ELSE 0 END), 0) as avg_tps,
         SUM(CASE WHEN streaming = 1 AND tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
           / NULLIF(SUM(CASE WHEN streaming = 1 AND tps > 0 THEN completion_tokens / tps ELSE 0 END), 0) as avg_streaming_tps,
         SUM(CASE WHEN streaming = 0 AND tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
@@ -637,7 +634,6 @@ class StatsStore {
       requests: number
       streaming_requests: number
       avg_ttft_ms: number | null
-      avg_tps: number | null
       avg_streaming_tps: number | null
       avg_nonstreaming_tps: number | null
     }>
@@ -647,7 +643,6 @@ class StatsStore {
       requests: row.requests,
       streamingRequests: row.streaming_requests,
       avgTtftMs: row.avg_ttft_ms,
-      avgTps: row.avg_tps,
       avgStreamingTps: row.avg_streaming_tps,
       avgNonStreamingTps: row.avg_nonstreaming_tps,
     }))

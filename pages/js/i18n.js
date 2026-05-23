@@ -419,9 +419,8 @@ const i18n = {
       "perf.nonStreamingTps": "非流式 TPS",
       "perf.noData": "暂无性能数据",
       "perf.ttftDesc": "流式请求中从发出请求到收到第一个 token 的耗时",
-      "perf.tpsDesc":
-        "Tokens Per Second：流式为生成阶段 token 速率，非流式为整体响应速率",
-      "perf.streamingTpsDesc": "排除首字耗时后，生成阶段的 token 速率",
+      "perf.streamingTpsDesc":
+        "从请求发出到响应结束的完整 token 速率（含首字延迟和缓冲）",
       "perf.nonStreamingTpsDesc": "完整的请求-响应周期 token 速率",
     },
 
@@ -850,10 +849,8 @@ const i18n = {
       "perf.noData": "No performance data available",
       "perf.ttftDesc":
         "Time from request dispatch to first token received (streaming)",
-      "perf.tpsDesc":
-        "Tokens Per Second: streaming = generation rate; non-streaming = overall response rate",
       "perf.streamingTpsDesc":
-        "Token generation rate excluding TTFT (prefill) time",
+        "Full response rate including TTFT and buffering (request to last token)",
       "perf.nonStreamingTpsDesc":
         "Overall tokens-per-second for the full request-response cycle",
     },
