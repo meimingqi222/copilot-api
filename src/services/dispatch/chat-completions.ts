@@ -31,6 +31,7 @@ import {
   type RequestAdmission,
 } from "~/lib/request-admission"
 import { targetKey } from "~/lib/route-target"
+import { isAbortError, shouldFailover } from "~/lib/utils"
 import { createChatCompletions } from "~/services/copilot/create-chat-completions"
 import {
   getProtocolAdapter,
@@ -131,19 +132,4 @@ async function dispatchViaConnection(
       }
     }
   }
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AbortError"
-}
-
-function shouldFailover(error: unknown): boolean {
-  if (!(error instanceof HTTPError)) return false
-  const status = error.response.status
-  // 401/402/403/429/5xx 可 failover;客户端参数类 4xx 错误不 failover
-  if (status === 401 || status === 402 || status === 403 || status === 429) {
-    return true
-  }
-  if (status >= 500) return true
-  return false
 }

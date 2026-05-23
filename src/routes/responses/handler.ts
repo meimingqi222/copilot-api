@@ -20,6 +20,7 @@ import {
   writeSseEvent,
 } from "~/lib/sse"
 import { recordUsage } from "~/lib/usage"
+import { isAbortError } from "~/lib/utils"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
@@ -156,10 +157,6 @@ export function recordResponsesUsage(
     cacheReadTokens,
     cacheWriteTokens,
   })
-}
-
-export function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError"
 }
 
 export function createResponsesErrorPayload(error: unknown): {

@@ -14,12 +14,12 @@ import {
   ClientAbortError,
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
+import { isAbortError } from "~/lib/utils"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 
 import {
   createResponsesErrorPayload,
-  isAbortError,
   isNonStreaming,
   recordResponsesUsage,
 } from "./handler"

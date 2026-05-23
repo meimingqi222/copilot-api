@@ -14,7 +14,7 @@ import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
-import { isNullish } from "~/lib/utils"
+import { isAbortError, isChatCompletionResponse, isNullish } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
@@ -322,14 +322,6 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
 
 function calculateTotalTokens(usage: UsageInfo): number {
   return usage.total_tokens
-}
-
-const isChatCompletionResponse = (
-  response: CopilotStream | ChatCompletionResponse,
-): response is ChatCompletionResponse => Object.hasOwn(response, "choices")
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError"
 }
 
 interface StreamingCompletionOptions {
