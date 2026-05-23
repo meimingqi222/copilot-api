@@ -60,6 +60,7 @@ interface HandleStreamingResponseOptions {
   accountId: string
   estimatedInputTokens?: number
   skipPing?: boolean
+  streamStartTs?: number
 }
 
 interface UsageInfo {
@@ -189,6 +190,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
 
   return streamSSE(c, async (stream) => {
     const pingInterval = createSsePingInterval(stream)
+    const streamStartTs = Date.now()
     try {
       const result = await createMessages(anthropicPayload, {
         account,
@@ -213,6 +215,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         c,
         accountId: result.accountId,
         skipPing: true,
+        streamStartTs,
       })
     } catch (error) {
       const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
@@ -314,6 +317,7 @@ async function handleAnthropicViaConnection(
     let firstChunkTs: number | undefined
     let streamStart = 0
     try {
+      streamStart = Date.now()
       const result = await dispatchMessages(
         anthropicPayload as unknown as Record<string, unknown> & {
           model: string
@@ -341,7 +345,6 @@ async function handleAnthropicViaConnection(
         await writeSseEvent(stream, JSON.stringify(result.response))
         return
       }
-      streamStart = Date.now()
       for await (const event of result.response as AsyncIterable<{
         data?: string
         event?: string
@@ -452,6 +455,7 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
 
   return streamSSE(c, async (stream) => {
     const pingInterval = createSsePingInterval(stream)
+    const streamStartTs = Date.now()
     try {
       let result
       try {
@@ -502,6 +506,7 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
         accountId: result.accountId,
         estimatedInputTokens,
         skipPing: true,
+        streamStartTs,
       })
     } finally {
       clearInterval(pingInterval)
@@ -592,12 +597,13 @@ async function handleStreamingResponse({
   accountId,
   estimatedInputTokens = 0,
   skipPing = false,
+  streamStartTs,
 }: HandleStreamingResponseOptions): Promise<void> {
   const streamState = createInitialStreamState()
   streamState.estimatedInputTokens = estimatedInputTokens
   let lastUsage: UsageInfo | undefined
   let firstChunkTs: number | undefined
-  const streamStart = Date.now()
+  const streamStart = streamStartTs ?? Date.now()
 
   const pingInterval = skipPing ? undefined : createSsePingInterval(stream)
 
@@ -664,6 +670,7 @@ async function handleDirectStreamingResponse({
   c,
   accountId,
   skipPing = false,
+  streamStartTs,
 }: HandleStreamingResponseOptions): Promise<void> {
   let lastUsage:
     | {
@@ -678,7 +685,7 @@ async function handleDirectStreamingResponse({
 
   let receivedMessageStop = false
   let firstChunkTs: number | undefined
-  const streamStart = Date.now()
+  const streamStart = streamStartTs ?? Date.now()
 
   try {
     for await (const rawEvent of response) {
