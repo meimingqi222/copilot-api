@@ -714,7 +714,7 @@ class MimoAccountManager {
 
 const activeManagers = new Map<string, MimoAccountManager>()
 
-const MIN_CLAW_CREATE_INTERVAL_MS = 120_000
+const MIN_CLAW_CREATE_INTERVAL_MS = 600_000
 const clawCreateTimestamps: Array<number> = []
 
 async function waitForClawCreateSlot(): Promise<void> {
@@ -722,7 +722,7 @@ async function waitForClawCreateSlot(): Promise<void> {
     const now = Date.now()
     while (
       clawCreateTimestamps.length > 0
-      && clawCreateTimestamps[0] < now - MIN_CLAW_CREATE_INTERVAL_MS
+      && clawCreateTimestamps[0] <= now - MIN_CLAW_CREATE_INTERVAL_MS
     ) {
       clawCreateTimestamps.shift()
     }

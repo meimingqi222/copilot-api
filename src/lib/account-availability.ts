@@ -52,13 +52,17 @@ export function refreshAccountRuntimeAvailability(account: Account): boolean {
 
 export function getAccountAvailability(account: Account): {
   available: boolean
-  reason: "available" | "disabled" | "cooldown" | "quota"
+  reason: "available" | "disabled" | "cooldown" | "quota" | "error"
   retryAfterSeconds: number
 } {
   refreshAccountRuntimeAvailability(account)
 
   if (!account.enabled) {
     return { available: false, reason: "disabled", retryAfterSeconds: 0 }
+  }
+
+  if (account.runtimeState?.authStatus === "error") {
+    return { available: false, reason: "error", retryAfterSeconds: 10 }
   }
 
   const remainingCooldown = getRemainingCooldownSeconds(account.id)
