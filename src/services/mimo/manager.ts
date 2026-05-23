@@ -140,10 +140,15 @@ async function sleepWithHealthCheck(
   const interval = 60
   const end = Date.now() + totalSec * 1000
   while (Date.now() < end) {
-    const remaining = Math.min(interval, Math.max(1, Math.ceil((end - Date.now()) / 1000)))
+    const remaining = Math.min(
+      interval,
+      Math.max(1, Math.ceil((end - Date.now()) / 1000)),
+    )
     await new Promise((r) => setTimeout(r, remaining * 1000))
     if (!mimoConnections.has(accountId)) {
-      consola.warn(`[MimoManager] Bridge disconnected for account ${accountId}, restarting cycle...`)
+      consola.warn(
+        `[MimoManager] Bridge disconnected for account ${accountId}, restarting cycle...`,
+      )
       return false
     }
   }
@@ -359,14 +364,13 @@ class NativeClawClient {
         try {
           // Native Bun WebSocket passes MessageEvent, proxy passes string
           let raw: unknown = rawData
-          if (typeof rawData !== "string") {
-            if (
-              rawData
-              && typeof rawData === "object"
-              && "data" in rawData
-            ) {
-              raw = (rawData as { data: unknown }).data
-            }
+          if (
+            typeof rawData !== "string"
+            && rawData
+            && typeof rawData === "object"
+            && "data" in rawData
+          ) {
+            raw = (rawData as { data: unknown }).data
           }
           const dataStr = typeof raw === "string" ? raw : String(raw)
           const data = JSON.parse(dataStr) as WsMessage

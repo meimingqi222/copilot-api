@@ -17,6 +17,9 @@ export interface LogEntry {
   error?: string
   clientIp?: string
   userAgent?: string
+  ttftMs?: number
+  generationTps?: number
+  streaming?: boolean
 }
 
 const MAX_SIZE = Number(process.env["LOG_BUFFER_SIZE"] ?? 1000)

@@ -385,3 +385,24 @@ usageApiRoutes.get("/summary", (c) => {
     period: { startDate, endDate },
   })
 })
+
+// Get per-model performance metrics (TTFT, TPS)
+usageApiRoutes.get("/performance", (c) => {
+  const range = c.req.query("range") || "today"
+  const month = c.req.query("month")
+  const requestedStartDate = c.req.query("startDate")
+  const requestedEndDate = c.req.query("endDate")
+  const { startDate, endDate } = resolveDateRange({
+    range,
+    month,
+    startDate: requestedStartDate,
+    endDate: requestedEndDate,
+  })
+
+  const performance = statsStore.getPerformanceByModel(startDate, endDate)
+
+  return c.json({
+    performance,
+    period: { startDate, endDate },
+  })
+})

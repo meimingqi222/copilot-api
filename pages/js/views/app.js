@@ -16,6 +16,7 @@ function adminApp() {
           "dashboard",
           "guard",
           "logs",
+          "performance",
           "quota",
           "users",
         ].includes(hash)
@@ -39,6 +40,7 @@ function adminApp() {
             "dashboard",
             "guard",
             "logs",
+            "performance",
             "quota",
             "users",
           ].includes(hash)
@@ -109,6 +111,7 @@ function adminApp() {
         { id: "accounts", icon: "users", label: this.t("nav.accounts") },
         { id: "connections", icon: "plug", label: this.t("nav.connections") },
         { id: "quota", icon: "bar-chart-3", label: this.t("nav.quota") },
+        { id: "performance", icon: "gauge", label: this.t("nav.performance") },
         { id: "guard", icon: "shield", label: this.t("nav.guard") },
         { id: "logs", icon: "scroll-text", label: this.t("nav.logs") },
       ]

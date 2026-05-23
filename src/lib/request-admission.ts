@@ -3,7 +3,6 @@ import type { Context } from "hono"
 import consola from "consola"
 
 import type { Account } from "~/lib/accounts"
-import { parseModelReference } from "~/lib/accounts"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 import type {
   ApiCredential,
@@ -13,6 +12,7 @@ import type {
 import type { User } from "~/lib/users"
 
 import { getAccountForModel } from "~/lib/account-selection"
+import { parseModelReference } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"

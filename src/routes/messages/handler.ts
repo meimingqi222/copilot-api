@@ -17,6 +17,7 @@ import {
   writeSseEvent,
 } from "~/lib/sse"
 import { state } from "~/lib/state"
+import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
 import {
@@ -163,6 +164,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     anthropicVersion,
   } = opts
   if (!anthropicPayload.stream) {
+    const nonStreamStart = Date.now()
     const result = await createMessages(anthropicPayload, {
       account,
       signal,
@@ -175,7 +177,12 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     c.set("model" as never, anthropicPayload.model)
 
     if (isDirectAnthropicResponse(result.response)) {
-      recordAnthropicUsage(c, result.accountId, result.response)
+      const elapsed = Date.now() - nonStreamStart
+      const tps =
+        elapsed > 0 ?
+          result.response.usage.output_tokens / (elapsed / 1000)
+        : undefined
+      recordAnthropicUsage(c, result.accountId, result.response, tps)
       return c.json(result.response)
     }
   }
@@ -263,6 +270,7 @@ async function handleAnthropicViaConnection(
   }
 
   if (!anthropicPayload.stream) {
+    const nonStreamStart = Date.now()
     const result = await dispatchMessages(
       anthropicPayload as unknown as Record<string, unknown> & {
         model: string
@@ -280,11 +288,13 @@ async function handleAnthropicViaConnection(
           result.response as unknown as AnthropicResponse,
         )
       ) {
-        recordAnthropicUsage(
-          c,
-          result.accountId,
-          result.response as unknown as AnthropicResponse,
-        )
+        const elapsed = Date.now() - nonStreamStart
+        const response = result.response as unknown as AnthropicResponse
+        const tps =
+          elapsed > 0 ?
+            response.usage.output_tokens / (elapsed / 1000)
+          : undefined
+        recordAnthropicUsage(c, result.accountId, response, tps)
       }
       return c.json(result.response as unknown as AnthropicResponse)
     }
@@ -301,6 +311,8 @@ async function handleAnthropicViaConnection(
         }
       | undefined
     let resultAccountId: string | undefined
+    let firstChunkTs: number | undefined
+    let streamStart = 0
     try {
       const result = await dispatchMessages(
         anthropicPayload as unknown as Record<string, unknown> & {
@@ -329,11 +341,15 @@ async function handleAnthropicViaConnection(
         await writeSseEvent(stream, JSON.stringify(result.response))
         return
       }
+      streamStart = Date.now()
       for await (const event of result.response as AsyncIterable<{
         data?: string
         event?: string
       }>) {
         if (!event.data) continue
+        if (!firstChunkTs) {
+          firstChunkTs = Date.now()
+        }
         lastUsage = updateLastUsage(event.data, lastUsage)
         await forwardSseEvent(stream, event)
       }
@@ -354,7 +370,16 @@ async function handleAnthropicViaConnection(
     } finally {
       clearInterval(pingInterval)
       if (resultAccountId) {
-        recordDirectStreamingUsage(c, resultAccountId, lastUsage)
+        recordDirectStreamingUsage(
+          c,
+          resultAccountId,
+          lastUsage,
+          computeStreamingTiming(
+            streamStart,
+            firstChunkTs,
+            lastUsage?.output_tokens ?? 0,
+          ),
+        )
       }
     }
   })
@@ -389,6 +414,7 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   const estimatedInputTokens = await estimateInputTokens(openAIPayload)
 
   if (!anthropicPayload.stream) {
+    const nonStreamStart = Date.now()
     let result
     try {
       result = await dispatchChatCompletions(
@@ -412,8 +438,14 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     c.set("model" as never, openAIPayload.model)
 
     if (isNonStreaming(result)) {
+      const elapsed = Date.now() - nonStreamStart
       return c.json(
-        handleNonStreamingResponse(c, result.accountId, result.response),
+        handleNonStreamingResponse(
+          c,
+          result.accountId,
+          result.response,
+          elapsed,
+        ),
       )
     }
   }
@@ -509,6 +541,7 @@ function handleNonStreamingResponse(
   c: Context,
   accountId: string,
   response: ChatCompletionResponse,
+  elapsedMs?: number,
 ) {
   consola.debug(
     "Non-streaming response from Copilot:",
@@ -526,6 +559,10 @@ function handleNonStreamingResponse(
   if (model) {
     const cacheReadTokens = usage.cache_read_input_tokens ?? 0
     const cacheWriteTokens = usage.cache_creation_input_tokens ?? 0
+    const tps =
+      elapsedMs && elapsedMs > 0 ?
+        usage.output_tokens / (elapsedMs / 1000)
+      : undefined
     recordUsage({
       c,
       accountId,
@@ -539,6 +576,8 @@ function handleNonStreamingResponse(
         + cacheWriteTokens,
       cacheReadTokens,
       cacheWriteTokens,
+      tps,
+      streaming: false,
     })
   }
 
@@ -557,6 +596,8 @@ async function handleStreamingResponse({
   const streamState = createInitialStreamState()
   streamState.estimatedInputTokens = estimatedInputTokens
   let lastUsage: UsageInfo | undefined
+  let firstChunkTs: number | undefined
+  const streamStart = Date.now()
 
   const pingInterval = skipPing ? undefined : createSsePingInterval(stream)
 
@@ -567,6 +608,10 @@ async function handleStreamingResponse({
       }
       if (!rawEvent.data) {
         continue
+      }
+
+      if (!firstChunkTs) {
+        firstChunkTs = Date.now()
       }
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
@@ -598,7 +643,16 @@ async function handleStreamingResponse({
   } finally {
     clearInterval(pingInterval)
     if (c) {
-      recordStreamingUsage(c, accountId, lastUsage)
+      recordStreamingUsage(
+        c,
+        accountId,
+        lastUsage,
+        computeStreamingTiming(
+          streamStart,
+          firstChunkTs,
+          lastUsage?.completion_tokens ?? 0,
+        ),
+      )
     }
   }
 }
@@ -623,11 +677,17 @@ async function handleDirectStreamingResponse({
   const pingInterval = skipPing ? undefined : createSsePingInterval(stream)
 
   let receivedMessageStop = false
+  let firstChunkTs: number | undefined
+  const streamStart = Date.now()
 
   try {
     for await (const rawEvent of response) {
       if (!rawEvent.data || rawEvent.data === "[DONE]") {
         continue
+      }
+
+      if (!firstChunkTs) {
+        firstChunkTs = Date.now()
       }
 
       lastUsage = updateLastUsage(rawEvent.data, lastUsage)
@@ -670,7 +730,16 @@ async function handleDirectStreamingResponse({
   } finally {
     clearInterval(pingInterval)
     if (c) {
-      recordDirectStreamingUsage(c, accountId, lastUsage)
+      recordDirectStreamingUsage(
+        c,
+        accountId,
+        lastUsage,
+        computeStreamingTiming(
+          streamStart,
+          firstChunkTs,
+          lastUsage?.output_tokens ?? 0,
+        ),
+      )
     }
   }
 }
@@ -774,6 +843,7 @@ function recordStreamingUsage(
   c: Context,
   accountId: string,
   lastUsage: UsageInfo | undefined,
+  timing?: { ttftMs: number; tps: number },
 ): void {
   const model = c.get("model" as never) as string | undefined
   if (!model || !lastUsage) {
@@ -792,6 +862,9 @@ function recordStreamingUsage(
     totalTokens: lastUsage.total_tokens,
     cacheReadTokens,
     cacheWriteTokens,
+    ttftMs: timing?.ttftMs,
+    tps: timing?.tps,
+    streaming: true,
   })
 }
 
@@ -806,6 +879,7 @@ function recordDirectStreamingUsage(
         cache_read_input_tokens?: number
       }
     | undefined,
+  timing?: { ttftMs: number; tps: number },
 ): void {
   const model = c.get("model" as never) as string | undefined
   if (!model || !lastUsage) {
@@ -828,6 +902,9 @@ function recordDirectStreamingUsage(
       + cacheWriteTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    ttftMs: timing?.ttftMs,
+    tps: timing?.tps,
+    streaming: true,
   })
 }
 
@@ -952,6 +1029,7 @@ function recordAnthropicUsage(
   c: Context,
   accountId: string,
   response: AnthropicResponse,
+  tps?: number,
 ): void {
   const usage = response.usage
   const model = c.get("model" as never) as string | undefined
@@ -976,5 +1054,7 @@ function recordAnthropicUsage(
       + cacheWriteTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    tps,
+    streaming: false,
   })
 }

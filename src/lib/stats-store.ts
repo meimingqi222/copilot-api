@@ -24,6 +24,9 @@ export interface UsageStats {
   totalTokens: number
   cost?: number
   timestamp: number
+  ttftMs?: number
+  tps?: number
+  streaming?: boolean
 }
 
 type UsageModelStats = {
@@ -142,6 +145,11 @@ class StatsStore {
       CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_stats(timestamp)
     `)
 
+    // Add performance columns to usage_stats (migration for existing DBs)
+    this.ensureColumn(db, "usage_stats", "ttft_ms", "REAL")
+    this.ensureColumn(db, "usage_stats", "tps", "REAL")
+    this.ensureColumn(db, "usage_stats", "streaming", "INTEGER DEFAULT 0")
+
     db.run(`
       CREATE TABLE IF NOT EXISTS model_pricing (
         model TEXT PRIMARY KEY,
@@ -152,6 +160,20 @@ class StatsStore {
         updated_at INTEGER NOT NULL
       )
     `)
+  }
+
+  private ensureColumn(
+    db: Database,
+    table: string,
+    column: string,
+    type: string,
+  ): void {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string
+    }>
+    if (!rows.some((r) => r.name === column)) {
+      db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+    }
   }
 
   private ensureUsageUserColumn(db: Database): void {
@@ -294,8 +316,9 @@ class StatsStore {
     const stmt = db.prepare(`
       INSERT INTO usage_stats (
         date, account_id, user_id, model, prompt_tokens, completion_tokens,
-        cache_read_tokens, cache_write_tokens, total_tokens, cost, timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cache_read_tokens, cache_write_tokens, total_tokens, cost, timestamp,
+        ttft_ms, tps, streaming
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       stats.date,
@@ -309,6 +332,9 @@ class StatsStore {
       stats.totalTokens,
       stats.cost ?? 0,
       stats.timestamp,
+      stats.ttftMs ?? null,
+      stats.tps ?? null,
+      stats.streaming ? 1 : 0,
     )
   }
 
@@ -562,6 +588,66 @@ class StatsStore {
     }
 
     return Object.values(slotMap).sort((a, b) => a.slotTs - b.slotTs)
+  }
+
+  getPerformanceByModel(
+    startDate?: string,
+    endDate?: string,
+  ): Array<{
+    model: string
+    requests: number
+    streamingRequests: number
+    avgTtftMs: number | null
+    avgTps: number | null
+    avgStreamingTps: number | null
+    avgNonStreamingTps: number | null
+  }> {
+    const db = this.ensureDb()
+    let query = `
+      SELECT
+        model,
+        COUNT(*) as requests,
+        SUM(CASE WHEN streaming = 1 THEN 1 ELSE 0 END) as streaming_requests,
+        AVG(ttft_ms) as avg_ttft_ms,
+        AVG(tps) as avg_tps,
+        AVG(CASE WHEN streaming = 1 THEN tps ELSE NULL END) as avg_streaming_tps,
+        AVG(CASE WHEN streaming = 0 THEN tps ELSE NULL END) as avg_nonstreaming_tps
+      FROM usage_stats
+      WHERE ttft_ms IS NOT NULL OR tps IS NOT NULL
+    `
+    const params: Array<string> = []
+
+    if (startDate) {
+      query += " AND date >= ?"
+      params.push(startDate)
+    }
+    if (endDate) {
+      query += " AND date <= ?"
+      params.push(endDate)
+    }
+
+    query += " GROUP BY model ORDER BY requests DESC"
+
+    const stmt = db.prepare(query)
+    const rows = stmt.all(...params) as Array<{
+      model: string
+      requests: number
+      streaming_requests: number
+      avg_ttft_ms: number | null
+      avg_tps: number | null
+      avg_streaming_tps: number | null
+      avg_nonstreaming_tps: number | null
+    }>
+
+    return rows.map((row) => ({
+      model: row.model,
+      requests: row.requests,
+      streamingRequests: row.streaming_requests,
+      avgTtftMs: row.avg_ttft_ms,
+      avgTps: row.avg_tps,
+      avgStreamingTps: row.avg_streaming_tps,
+      avgNonStreamingTps: row.avg_nonstreaming_tps,
+    }))
   }
 
   // Model pricing methods

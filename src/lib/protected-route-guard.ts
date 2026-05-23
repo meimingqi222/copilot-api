@@ -290,10 +290,10 @@ function analyzeBehavior(
 
   // Only detect automation/initiator for Copilot — other providers
   // have their own rate limits and no User/Agent initiator distinction.
-  const automatedPattern =
-    provider && provider !== "copilot" ? false
-    : trustedClient ? false
-    : detectAutomation(userAgent, state.recentRequests)
+  let automatedPattern = false
+  if ((!provider || provider === "copilot") && !trustedClient) {
+    automatedPattern = detectAutomation(userAgent, state.recentRequests)
+  }
 
   const repeatedContentCount =
     currentContentHash ?
