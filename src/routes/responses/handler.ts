@@ -49,6 +49,8 @@ export async function handleResponses(c: Context) {
       const pingInterval = createSsePingInterval(stream)
       let accountId: string | undefined
       let completedResponse: ResponsesResponse | undefined
+      let firstChunkTs: number | undefined
+      const streamStartTs = Date.now()
 
       try {
         const result = await createResponses(payload, {
@@ -62,7 +64,18 @@ export async function handleResponses(c: Context) {
         c.set("model" as never, payload.model)
 
         if (isNonStreaming(result.response)) {
+          const elapsed = Date.now() - streamStartTs
+          const usage = result.response.usage
+          const completionTokens = usage?.output_tokens ?? 0
+          const tps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
           completedResponse = result.response
+          recordResponsesUsage({
+            c,
+            accountId,
+            response: completedResponse,
+            tps,
+            streaming: false,
+          })
           await writeSseEvent(stream, JSON.stringify(result.response))
           return
         }
@@ -73,6 +86,10 @@ export async function handleResponses(c: Context) {
           }
           if (!event.data) {
             continue
+          }
+
+          if (!firstChunkTs) {
+            firstChunkTs = Date.now()
           }
 
           const parsed = JSON.parse(event.data) as Record<string, unknown>
@@ -102,12 +119,24 @@ export async function handleResponses(c: Context) {
       } finally {
         clearInterval(pingInterval)
         if (completedResponse && accountId) {
-          recordResponsesUsage(c, accountId, completedResponse)
+          const elapsed = Date.now() - streamStartTs
+          const completionTokens = completedResponse.usage?.output_tokens ?? 0
+          const tps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
+          const ttftMs = firstChunkTs ? firstChunkTs - streamStartTs : undefined
+          recordResponsesUsage({
+            c,
+            accountId,
+            response: completedResponse,
+            tps,
+            streaming: true,
+            ttftMs,
+          })
         }
       }
     })
   }
 
+  const nonStreamStart = Date.now()
   const result = await createResponses(payload, {
     signal,
     initiatorOverride: admission.initiator,
@@ -120,7 +149,16 @@ export async function handleResponses(c: Context) {
     throw new Error("Expected non-streaming response for non-stream request")
   }
 
-  recordResponsesUsage(c, result.accountId, result.response)
+  const elapsed = Date.now() - nonStreamStart
+  const completionTokens = result.response.usage?.output_tokens ?? 0
+  const tps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
+  recordResponsesUsage({
+    c,
+    accountId: result.accountId,
+    response: result.response,
+    tps,
+    streaming: false,
+  })
   return c.json(result.response)
 }
 
@@ -130,11 +168,17 @@ export function isNonStreaming(
   return Object.hasOwn(response, "id") && Object.hasOwn(response, "model")
 }
 
-export function recordResponsesUsage(
-  c: Context,
-  accountId: string,
-  response: ResponsesResponse,
-): void {
+interface RecordResponsesUsageOpts {
+  c: Context
+  accountId: string
+  response: ResponsesResponse
+  tps?: number
+  streaming?: boolean
+  ttftMs?: number
+}
+
+export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
+  const { c, accountId, response, tps, streaming, ttftMs } = opts
   const usage = response.usage
   const model = c.get("model" as never) as string | undefined
   if (!usage || !model) {
@@ -156,6 +200,9 @@ export function recordResponsesUsage(
       ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
     cacheReadTokens,
     cacheWriteTokens,
+    tps,
+    streaming,
+    ttftMs,
   })
 }
 

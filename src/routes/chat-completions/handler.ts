@@ -191,6 +191,7 @@ function handleNonStreamingResponse(
       promptTokens: estimatedInputTokens,
       completionTokens: 0,
       totalTokens: estimatedInputTokens,
+      tps: 0,
       streaming: false,
     })
   }
@@ -210,9 +211,10 @@ function handleStreamingResponse(
   return streamSSE(c, async (stream) => {
     const pingInterval = createSsePingInterval(stream)
     let lastUsage: UsageInfo | undefined
-    let recordedOnAbort = false
+    let usageRecorded = false
     let firstChunkTs: number | undefined
     const streamStart = Date.now()
+    let streamFailed = false
 
     try {
       for await (const rawEvent of response) {
@@ -235,7 +237,7 @@ function handleStreamingResponse(
     } catch (error) {
       if (isAbortError(error)) {
         consola.debug("Stream aborted (client disconnected)")
-        recordedOnAbort = recordStreamingUsage({
+        usageRecorded = recordStreamingUsage({
           c,
           accountId,
           model,
@@ -250,16 +252,18 @@ function handleStreamingResponse(
         })
         return
       }
+      streamFailed = true
       throw error
     } finally {
       clearInterval(pingInterval)
-      if (!recordedOnAbort) {
+      if (!usageRecorded) {
         recordStreamingUsage({
           c,
           accountId,
           model,
           lastUsage,
           estimatedInputTokens,
+          onlyWhenUsageExists: streamFailed,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,
@@ -316,6 +320,9 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
     promptTokens: estimatedInputTokens,
     completionTokens: 0,
     totalTokens: estimatedInputTokens,
+    tps: 0,
+    ttftMs: timing?.ttftMs,
+    streaming: true,
   })
   return true
 }
@@ -339,11 +346,12 @@ function handleStreamingCompletion(
     const { payload, admission, signal, estimatedInputTokens } = options
     const pingInterval = createSsePingInterval(stream)
     let lastUsage: UsageInfo | undefined
-    let recordedOnAbort = false
+    let usageRecorded = false
     let accountId: string | undefined
     const model = payload.model
     let firstChunkTs: number | undefined
     let streamStart = 0
+    let streamFailed = false
 
     try {
       const dispatchStart = Date.now()
@@ -367,6 +375,7 @@ function handleStreamingCompletion(
           elapsed,
         )
         await writeSseEvent(stream, JSON.stringify(result.response))
+        usageRecorded = true
         return
       }
 
@@ -391,7 +400,7 @@ function handleStreamingCompletion(
     } catch (error) {
       if (isAbortError(error)) {
         consola.debug("Stream aborted (client disconnected)")
-        recordedOnAbort = recordStreamingUsage({
+        usageRecorded = recordStreamingUsage({
           c,
           accountId,
           model,
@@ -411,6 +420,7 @@ function handleStreamingCompletion(
       if (knownError?.status === 499) {
         return
       }
+      streamFailed = true
       const errorMessage =
         knownError?.message
         ?? (error instanceof Error ? error.message : "Internal server error")
@@ -431,13 +441,14 @@ function handleStreamingCompletion(
       throw error
     } finally {
       clearInterval(pingInterval)
-      if (!recordedOnAbort) {
+      if (!usageRecorded) {
         recordStreamingUsage({
           c,
           accountId,
           model,
           lastUsage,
           estimatedInputTokens,
+          onlyWhenUsageExists: streamFailed,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,

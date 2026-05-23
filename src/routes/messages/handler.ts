@@ -181,9 +181,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     if (isDirectAnthropicResponse(result.response)) {
       const elapsed = Date.now() - nonStreamStart
       const tps =
-        elapsed > 0 ?
-          result.response.usage.output_tokens / (elapsed / 1000)
-        : undefined
+        elapsed > 0 ? result.response.usage.output_tokens / (elapsed / 1000) : 0
       recordAnthropicUsage(c, result.accountId, result.response, tps)
       return c.json(result.response)
     }
@@ -205,7 +203,12 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
       c.set("model" as never, anthropicPayload.model)
 
       if (isDirectAnthropicResponse(result.response)) {
-        recordAnthropicUsage(c, result.accountId, result.response)
+        const elapsed = Date.now() - streamStartTs
+        const tps =
+          elapsed > 0 ?
+            result.response.usage.output_tokens / (elapsed / 1000)
+          : 0
+        recordAnthropicUsage(c, result.accountId, result.response, tps)
         return
       }
 
@@ -295,9 +298,7 @@ async function handleAnthropicViaConnection(
         const elapsed = Date.now() - nonStreamStart
         const response = result.response as unknown as AnthropicResponse
         const tps =
-          elapsed > 0 ?
-            response.usage.output_tokens / (elapsed / 1000)
-          : undefined
+          elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
         recordAnthropicUsage(c, result.accountId, response, tps)
       }
       return c.json(result.response as unknown as AnthropicResponse)
@@ -337,11 +338,11 @@ async function handleAnthropicViaConnection(
             result.response as unknown as AnthropicResponse,
           )
         ) {
-          recordAnthropicUsage(
-            c,
-            result.accountId,
-            result.response as unknown as AnthropicResponse,
-          )
+          const elapsed = Date.now() - streamStart
+          const response = result.response as unknown as AnthropicResponse
+          const tps =
+            elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
+          recordAnthropicUsage(c, result.accountId, response, tps)
         }
         await writeSseEvent(stream, JSON.stringify(result.response))
         return
@@ -495,7 +496,13 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       c.set("model" as never, openAIPayload.model)
 
       if (isNonStreaming(result)) {
-        handleNonStreamingResponse(c, result.accountId, result.response)
+        const elapsed = Date.now() - streamStartTs
+        handleNonStreamingResponse(
+          c,
+          result.accountId,
+          result.response,
+          elapsed,
+        )
         return
       }
 

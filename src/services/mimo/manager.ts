@@ -13,7 +13,7 @@ import {
   type Account,
 } from "~/lib/accounts"
 import { state } from "~/lib/state"
-import { mimoConnections } from "~/services/mimo/connections"
+import { getMimoWsToken, mimoConnections } from "~/services/mimo/connections"
 import {
   connectWebSocketThroughProxy,
   fetchWithProxy,
@@ -57,6 +57,14 @@ KEY = os.getenv("MIMO_API_KEY")
 URL = os.getenv("MIMO_API_ENDPOINT")
 BASE = URL.split("/v1/")[0] if "/v1/" in URL else URL
 WS_URL = "__WS_URL__"
+WS_TOKEN = "__WS_TOKEN__"
+
+def connect_ws():
+    headers = {"x-mimo-ws-token": WS_TOKEN}
+    try:
+        return websockets.connect(WS_URL, max_size=10**8, additional_headers=headers)
+    except TypeError:
+        return websockets.connect(WS_URL, max_size=10**8, extra_headers=headers)
 
 async def safe_send(ws, lock, data):
     async with lock:
@@ -89,7 +97,7 @@ async def main():
     async with httpx.AsyncClient(timeout=None) as client:
         while True:
             try:
-                async with websockets.connect(WS_URL, max_size=10**8) as ws:
+                async with connect_ws() as ws:
                     send_lock = asyncio.Lock()
                     async for msg in ws:
                         asyncio.create_task(handle_request(ws, json.loads(msg), client, send_lock))
@@ -102,8 +110,11 @@ if __name__ == "__main__":
 function getBridgeCode(accountId: string): string {
   const wsUrl = process.env.MIMO_WS_URL || "ws://localhost:4141/ws/mimo"
   const delimiter = wsUrl.includes("?") ? "&" : "?"
-  const finalWsUrl = `${wsUrl}${delimiter}accountId=${accountId}`
-  return BRIDGE_CODE.replace("__WS_URL__", finalWsUrl)
+  const finalWsUrl = `${wsUrl}${delimiter}accountId=${encodeURIComponent(accountId)}`
+  return BRIDGE_CODE.replace("__WS_URL__", finalWsUrl).replace(
+    "__WS_TOKEN__",
+    JSON.stringify(getMimoWsToken()),
+  )
 }
 
 export async function markAccountFailed(accountId: string, errorMsg: string) {

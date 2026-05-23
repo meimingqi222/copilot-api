@@ -123,13 +123,16 @@ function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
 }
 
 /**
- * Derives a stable session UUID from the conversation's invariant prefix:
- * model + system prompt + first user message content.
+ * Derives a stable session UUID from the request parts that should remain
+ * constant across turns: model + system prompt + tool schema (+ user hint).
  *
  * Windsurf uses field-22 (session UUID) for server-side KV cache.
  * Requests sharing the same session UUID allow the server to reuse cached
  * attention for the common prefix, avoiding full recomputation every turn.
- * A random UUID per request defeats this entirely.
+ * Keying this on the first user message is too narrow for clients that send
+ * one-shot or windowed requests where that message changes every turn; the
+ * stable prompt/tool prefix is still cacheable and is usually the expensive
+ * part for coding-agent traffic.
  */
 function deriveSessionId(
   model: string,
@@ -140,11 +143,10 @@ function deriveSessionId(
     .map((m) => serializeMessageContent(m.content))
     .join("\n")
 
-  const firstUser = payload.messages.find((m) => m.role === "user")
-  const firstUserText =
-    firstUser ? serializeMessageContent(firstUser.content) : ""
+  const toolSignature = stableStringify(payload.tools ?? [])
+  const userHint = payload.user ?? ""
 
-  const seed = `${model}\x00${systemText}\x00${firstUserText}`
+  const seed = `${model}\x00${userHint}\x00${systemText}\x00${toolSignature}`
   const hex = createHash("sha256").update(seed).digest("hex")
 
   // Format as RFC-4122 UUID v5-like (variant bits set for validity)
@@ -156,6 +158,20 @@ function deriveSessionId(
       + hex.slice(17, 20),
     hex.slice(20, 32),
   ].join("-")
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
 }
 
 // ── Tool-definition builder ────────────────────────────────────────────────────

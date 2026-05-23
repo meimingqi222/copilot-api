@@ -338,6 +338,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     fetch: server.fetch,
     websocket,
     port: options.port,
+    hostname: process.env.HOST || undefined,
     idleTimeout: 0,
   })
 }
