@@ -2,7 +2,12 @@ import consola from "consola"
 import { Hono } from "hono"
 import { upgradeWebSocket } from "hono/bun"
 
-import { type MimoMessage, mimoConnections } from "~/services/mimo/connections"
+import { state } from "~/lib/state"
+import {
+  isValidMimoWsToken,
+  type MimoMessage,
+  mimoConnections,
+} from "~/services/mimo/connections"
 import { markAccountFailed, markAccountReady } from "~/services/mimo/manager"
 
 export const mimoWsRoute = new Hono()
@@ -73,6 +78,23 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
   }
 })
 
-mimoWsRoute.get("/", (c, next) => {
+mimoWsRoute.get("/", async (c, next) => {
+  const accountId = c.req.query("accountId")
+  if (!accountId) {
+    return c.text("Missing accountId", 400)
+  }
+
+  const token = c.req.header("x-mimo-ws-token") ?? c.req.query("token")
+  if (!isValidMimoWsToken(token)) {
+    consola.warn("Rejecting Claw WS connection: invalid token")
+    return c.text("Unauthorized", 401)
+  }
+
+  const account = state.accounts.find((item) => item.id === accountId)
+  if (!account || !account.enabled || account.provider !== "mimo-aistudio") {
+    consola.warn(`Rejecting Claw WS connection: invalid account ${accountId}`)
+    return c.text("Forbidden", 403)
+  }
+
   return upgradeMimoWebSocket(c, next)
 })

@@ -164,7 +164,11 @@ async function processResponseCreate(
     return
   } finally {
     if (completedResponse && accountId) {
-      recordResponsesUsage(c, accountId, completedResponse)
+      recordResponsesUsage({
+        c,
+        accountId,
+        response: completedResponse,
+      })
     }
   }
 }
