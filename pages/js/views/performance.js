@@ -69,10 +69,9 @@ function performanceView() {
 
     formatTps(tps) {
       if (tps === null || tps === undefined) return "-"
-      if (tps >= 100) {
-        return Math.round(tps).toString()
-      }
-      return tps.toFixed(1)
+      return new Intl.NumberFormat(undefined, {
+        maximumFractionDigits: 2,
+      }).format(tps)
     },
 
     getTtftClass(ms) {
