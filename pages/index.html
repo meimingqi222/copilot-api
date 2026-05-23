@@ -1561,26 +1561,34 @@
             <!-- Model Performance Table -->
             <div class="card p-6" x-show="performance.length">
               <div class="table-container">
-                <table class="table">
+                <table class="table" style="table-layout: fixed;">
+                  <colgroup>
+                    <col style="width: 34%;">
+                    <col style="width: 11%;">
+                    <col style="width: 11%;">
+                    <col style="width: 14%;">
+                    <col style="width: 15%;">
+                    <col style="width: 15%;">
+                  </colgroup>
                   <thead>
                     <tr>
                       <th x-text="t('perf.model')"></th>
-                      <th class="text-right" x-text="t('perf.requests')"></th>
-                      <th class="text-right" x-text="t('perf.streaming')"></th>
-                      <th class="text-right" x-text="t('perf.avgTtft')"></th>
-                      <th class="text-right" x-text="t('perf.streamingTps')"></th>
-                      <th class="text-right" x-text="t('perf.nonStreamingTps')"></th>
+                      <th class="text-right whitespace-nowrap" x-text="t('perf.requests')"></th>
+                      <th class="text-right whitespace-nowrap" x-text="t('perf.streaming')"></th>
+                      <th class="text-right whitespace-nowrap" x-text="t('perf.avgTtft')"></th>
+                      <th class="text-right whitespace-nowrap" x-text="t('perf.streamingTps')"></th>
+                      <th class="text-right whitespace-nowrap" x-text="t('perf.nonStreamingTps')"></th>
                     </tr>
                   </thead>
                   <tbody>
                     <template x-for="row in performance" :key="row.model">
                       <tr class="hover:bg-[var(--apple-gray-5)]">
                         <td class="font-medium text-sm break-all" x-text="row.model"></td>
-                        <td class="text-right text-sm" x-text="row.requests"></td>
-                        <td class="text-right text-sm" x-text="row.streamingRequests || 0"></td>
-                        <td class="text-right text-sm font-medium" :class="getTtftClass(row.avgTtftMs)" x-text="formatMs(row.avgTtftMs)"></td>
-                        <td class="text-right text-sm font-medium" :class="getTpsClass(row.avgStreamingTps)" x-text="formatTps(row.avgStreamingTps)"></td>
-                        <td class="text-right text-sm font-medium" x-text="formatTps(row.avgNonStreamingTps)"></td>
+                        <td class="text-right text-sm whitespace-nowrap" x-text="row.requests"></td>
+                        <td class="text-right text-sm whitespace-nowrap" x-text="row.streamingRequests || 0"></td>
+                        <td class="text-right text-sm font-medium whitespace-nowrap" :class="getTtftClass(row.avgTtftMs)" x-text="formatMs(row.avgTtftMs)"></td>
+                        <td class="text-right text-sm font-medium whitespace-nowrap" :class="getTpsClass(row.avgStreamingTps)" x-text="formatTps(row.avgStreamingTps)"></td>
+                        <td class="text-right text-sm font-medium whitespace-nowrap" x-text="formatTps(row.avgNonStreamingTps)"></td>
                       </tr>
                     </template>
                   </tbody>

@@ -609,9 +609,12 @@ class StatsStore {
         COUNT(*) as requests,
         SUM(CASE WHEN streaming = 1 THEN 1 ELSE 0 END) as streaming_requests,
         AVG(ttft_ms) as avg_ttft_ms,
-        AVG(tps) as avg_tps,
-        AVG(CASE WHEN streaming = 1 THEN tps ELSE NULL END) as avg_streaming_tps,
-        AVG(CASE WHEN streaming = 0 THEN tps ELSE NULL END) as avg_nonstreaming_tps
+        SUM(CASE WHEN tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
+          / NULLIF(SUM(CASE WHEN tps > 0 THEN completion_tokens / tps ELSE 0 END), 0) as avg_tps,
+        SUM(CASE WHEN streaming = 1 AND tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
+          / NULLIF(SUM(CASE WHEN streaming = 1 AND tps > 0 THEN completion_tokens / tps ELSE 0 END), 0) as avg_streaming_tps,
+        SUM(CASE WHEN streaming = 0 AND tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
+          / NULLIF(SUM(CASE WHEN streaming = 0 AND tps > 0 THEN completion_tokens / tps ELSE 0 END), 0) as avg_nonstreaming_tps
       FROM usage_stats
       WHERE ttft_ms IS NOT NULL OR tps IS NOT NULL
     `
