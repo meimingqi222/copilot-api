@@ -11,6 +11,7 @@ import { prepareRequestAdmission } from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { createSsePingInterval, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
+import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
 import { isNullish } from "~/lib/utils"
@@ -45,6 +46,7 @@ interface StreamUsageInput {
   lastUsage?: UsageInfo
   estimatedInputTokens: number
   onlyWhenUsageExists?: boolean
+  timing?: { ttftMs: number; tps: number }
 }
 
 export async function handleCompletion(c: Context) {
@@ -87,13 +89,20 @@ export async function handleCompletion(c: Context) {
   payload = applyMaxTokens(payload, selectedModel)
 
   if (!payload.stream) {
+    const nonStreamStart = Date.now()
     const result = await dispatchChatCompletions(payload, admission, signal, c)
 
     c.set("accountId" as never, result.accountId)
     c.set("model" as never, payload.model)
 
     if (isChatCompletionResponse(result.response)) {
-      handleNonStreamingResponse(c, result.response, estimatedInputTokens)
+      const elapsed = Date.now() - nonStreamStart
+      handleNonStreamingResponse(
+        c,
+        result.response,
+        estimatedInputTokens,
+        elapsed,
+      )
       return c.json(result.response)
     }
 
@@ -146,6 +155,7 @@ function handleNonStreamingResponse(
   c: Context,
   response: ChatCompletionResponse,
   estimatedInputTokens: number,
+  elapsedMs?: number,
 ): void {
   consola.debug("Non-streaming response:", JSON.stringify(response))
   const normalized = normalizeResponse(response)
@@ -157,6 +167,10 @@ function handleNonStreamingResponse(
     const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
     const cacheWriteTokens =
       usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
+    const tps =
+      elapsedMs && elapsedMs > 0 ?
+        usage.completion_tokens / (elapsedMs / 1000)
+      : undefined
     recordUsage({
       c,
       accountId,
@@ -166,6 +180,8 @@ function handleNonStreamingResponse(
       totalTokens: calculateTotalTokens(usage),
       cacheReadTokens,
       cacheWriteTokens,
+      tps,
+      streaming: false,
     })
   } else if (model && accountId) {
     recordUsage({
@@ -175,6 +191,7 @@ function handleNonStreamingResponse(
       promptTokens: estimatedInputTokens,
       completionTokens: 0,
       totalTokens: estimatedInputTokens,
+      streaming: false,
     })
   }
 
@@ -194,6 +211,8 @@ function handleStreamingResponse(
     const pingInterval = createSsePingInterval(stream)
     let lastUsage: UsageInfo | undefined
     let recordedOnAbort = false
+    let firstChunkTs: number | undefined
+    const streamStart = Date.now()
 
     try {
       for await (const rawEvent of response) {
@@ -202,6 +221,10 @@ function handleStreamingResponse(
         }
         if (!rawEvent.data) {
           continue
+        }
+
+        if (!firstChunkTs) {
+          firstChunkTs = Date.now()
         }
 
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
@@ -219,6 +242,11 @@ function handleStreamingResponse(
           lastUsage,
           estimatedInputTokens,
           onlyWhenUsageExists: true,
+          timing: computeStreamingTiming(
+            streamStart,
+            firstChunkTs,
+            lastUsage?.completion_tokens ?? 0,
+          ),
         })
         return
       }
@@ -232,6 +260,11 @@ function handleStreamingResponse(
           model,
           lastUsage,
           estimatedInputTokens,
+          timing: computeStreamingTiming(
+            streamStart,
+            firstChunkTs,
+            lastUsage?.completion_tokens ?? 0,
+          ),
         })
       }
     }
@@ -246,6 +279,7 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
     lastUsage,
     estimatedInputTokens,
     onlyWhenUsageExists = false,
+    timing,
   } = input
   if (!accountId || !model) {
     return false
@@ -264,6 +298,9 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
       totalTokens: calculateTotalTokens(lastUsage),
       cacheReadTokens,
       cacheWriteTokens,
+      ttftMs: timing?.ttftMs,
+      tps: timing?.tps,
+      streaming: true,
     })
     return true
   }
@@ -313,8 +350,11 @@ function handleStreamingCompletion(
     let recordedOnAbort = false
     let accountId: string | undefined
     const model = payload.model
+    let firstChunkTs: number | undefined
+    let streamStart = 0
 
     try {
+      const dispatchStart = Date.now()
       const result = await dispatchChatCompletions(
         payload,
         admission,
@@ -327,17 +367,28 @@ function handleStreamingCompletion(
       c.set("model" as never, model)
 
       if (isChatCompletionResponse(result.response)) {
-        handleNonStreamingResponse(c, result.response, estimatedInputTokens)
+        const elapsed = Date.now() - dispatchStart
+        handleNonStreamingResponse(
+          c,
+          result.response,
+          estimatedInputTokens,
+          elapsed,
+        )
         await writeSseEvent(stream, JSON.stringify(result.response))
         return
       }
 
+      streamStart = Date.now()
       for await (const rawEvent of result.response) {
         if (rawEvent.data === "[DONE]") {
           break
         }
         if (!rawEvent.data) {
           continue
+        }
+
+        if (!firstChunkTs) {
+          firstChunkTs = Date.now()
         }
 
         const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
@@ -355,6 +406,11 @@ function handleStreamingCompletion(
           lastUsage,
           estimatedInputTokens,
           onlyWhenUsageExists: true,
+          timing: computeStreamingTiming(
+            streamStart,
+            firstChunkTs,
+            lastUsage?.completion_tokens ?? 0,
+          ),
         })
         return
       }
@@ -390,6 +446,11 @@ function handleStreamingCompletion(
           model,
           lastUsage,
           estimatedInputTokens,
+          timing: computeStreamingTiming(
+            streamStart,
+            firstChunkTs,
+            lastUsage?.completion_tokens ?? 0,
+          ),
         })
       }
     }

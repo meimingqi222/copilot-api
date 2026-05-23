@@ -1498,6 +1498,104 @@
         </div>
       </div>
 
+      <!-- Performance View -->
+      <div x-show="currentView === 'performance'" x-data="performanceView()" x-init="init()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('perf.title')"></h2>
+        </header>
+
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading">
+          <div class="mb-8">
+            <div class="flex items-start justify-between mb-2 gap-3 flex-wrap">
+              <h3 class="text-title-2 flex items-center gap-2">
+                <i data-lucide="gauge" class="w-5 h-5"></i>
+                <span>TPS / TTFT</span>
+              </h3>
+              <div class="flex flex-wrap items-center gap-2 justify-end">
+                <button @click="setRange('today')" class="btn btn-small" :class="dateRange === 'today' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.today')"></button>
+                <button @click="setRange('week')" class="btn btn-small" :class="dateRange === 'week' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.week')"></button>
+                <button @click="setRange('month')" class="btn btn-small" :class="dateRange === 'month' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.month')"></button>
+                <button @click="setRange('last30d')" class="btn btn-small" :class="dateRange === 'last30d' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.last30d')"></button>
+                <button @click="setRange('all')" class="btn btn-small" :class="dateRange === 'all' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.all')"></button>
+                <input
+                  type="month"
+                  class="input input-small"
+                  :value="selectedMonth"
+                  @change="setMonth($event.target.value)"
+                  :title="t('quota.pickMonth')" />
+              </div>
+            </div>
+            <p class="text-xs text-[var(--apple-text-secondary)] mb-4" x-show="period.startDate">
+              <span x-text="t('quota.period')"></span>:
+              <span x-text="period.startDate"></span>
+              →
+              <span x-text="period.endDate"></span>
+            </p>
+
+            <!-- Explanation Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div class="card p-4 bg-[var(--apple-bg-secondary)]">
+                <div class="flex items-start gap-3">
+                  <i data-lucide="timer" class="w-5 h-5 text-[var(--apple-blue)] mt-0.5 shrink-0"></i>
+                  <div>
+                    <p class="text-sm font-medium">TTFT（首字耗时）</p>
+                    <p class="text-xs text-[var(--apple-text-secondary)] mt-1" x-text="t('perf.ttftDesc')"></p>
+                  </div>
+                </div>
+              </div>
+              <div class="card p-4 bg-[var(--apple-bg-secondary)]">
+                <div class="flex items-start gap-3">
+                  <i data-lucide="zap" class="w-5 h-5 text-[var(--apple-purple)] mt-0.5 shrink-0"></i>
+                  <div>
+                    <p class="text-sm font-medium">TPS（Tokens Per Second）</p>
+                    <p class="text-xs text-[var(--apple-text-secondary)] mt-1" x-text="t('perf.tpsDesc')"></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Model Performance Table -->
+            <div class="card p-6" x-show="performance.length">
+              <div class="table-container">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th x-text="t('perf.model')"></th>
+                      <th class="text-right" x-text="t('perf.requests')"></th>
+                      <th class="text-right" x-text="t('perf.streaming')"></th>
+                      <th class="text-right" x-text="t('perf.avgTtft')"></th>
+                      <th class="text-right" x-text="t('perf.streamingTps')"></th>
+                      <th class="text-right" x-text="t('perf.nonStreamingTps')"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="row in performance" :key="row.model">
+                      <tr class="hover:bg-[var(--apple-gray-5)]">
+                        <td class="font-medium text-sm break-all" x-text="row.model"></td>
+                        <td class="text-right text-sm" x-text="row.requests"></td>
+                        <td class="text-right text-sm" x-text="row.streamingRequests || 0"></td>
+                        <td class="text-right text-sm font-medium" :class="getTtftClass(row.avgTtftMs)" x-text="formatMs(row.avgTtftMs)"></td>
+                        <td class="text-right text-sm font-medium" :class="getTpsClass(row.avgStreamingTps)" x-text="formatTps(row.avgStreamingTps)"></td>
+                        <td class="text-right text-sm font-medium" x-text="formatTps(row.avgNonStreamingTps)"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div x-show="!performance.length" class="empty-state">
+              <i data-lucide="gauge" class="empty-state-icon"></i>
+              <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('perf.noData')"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Guard View -->
       <div x-show="currentView === 'guard'" x-data="guardView()" x-init="load()" style="display: none;">
         <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
@@ -1954,6 +2052,7 @@
   <script src="/admin/static/js/views/accounts.js"></script>
   <script src="/admin/static/js/views/connections.js"></script>
   <script src="/admin/static/js/views/quota.js"></script>
+  <script src="/admin/static/js/views/performance.js"></script>
   <script src="/admin/static/js/views/guard.js"></script>
   <script src="/admin/static/js/views/logs.js"></script>
 </body>

@@ -64,6 +64,7 @@ export default config(
     files: ["pages/**/*.js"],
     rules: {
       "max-lines-per-function": "off",
+      "max-lines": "off",
       "@typescript-eslint/no-dynamic-delete": "off",
     },
   },

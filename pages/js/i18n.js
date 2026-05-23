@@ -34,6 +34,7 @@ const i18n = {
       "nav.accounts": "账户管理",
       "nav.connections": "外部 Provider",
       "nav.quota": "配额监控",
+      "nav.performance": "性能监控",
       "nav.logs": "系统日志",
 
       // Dashboard
@@ -406,6 +407,22 @@ const i18n = {
       "error.create": "创建失败",
       "error.update": "更新失败",
       "error.delete": "删除失败",
+
+      // Performance
+      "perf.title": "性能监控",
+      "perf.model": "模型",
+      "perf.requests": "请求数",
+      "perf.streaming": "流式请求",
+      "perf.avgTtft": "平均首字耗时",
+      "perf.avgTps": "平均 TPS",
+      "perf.streamingTps": "流式 TPS",
+      "perf.nonStreamingTps": "非流式 TPS",
+      "perf.noData": "暂无性能数据",
+      "perf.ttftDesc": "流式请求中从发出请求到收到第一个 token 的耗时",
+      "perf.tpsDesc":
+        "Tokens Per Second：流式为生成阶段 token 速率，非流式为整体响应速率",
+      "perf.streamingTpsDesc": "排除首字耗时后，生成阶段的 token 速率",
+      "perf.nonStreamingTpsDesc": "完整的请求-响应周期 token 速率",
     },
 
     en: {
@@ -437,6 +454,7 @@ const i18n = {
       "nav.accounts": "Accounts",
       "nav.connections": "External Providers",
       "nav.quota": "Quota",
+      "nav.performance": "Performance",
       "nav.logs": "Logs",
 
       // Dashboard
@@ -819,6 +837,25 @@ const i18n = {
       "error.create": "Failed to create",
       "error.update": "Failed to update",
       "error.delete": "Failed to delete",
+
+      // Performance
+      "perf.title": "Performance Monitor",
+      "perf.model": "Model",
+      "perf.requests": "Requests",
+      "perf.streaming": "Streaming Requests",
+      "perf.avgTtft": "Avg TTFT",
+      "perf.avgTps": "Avg TPS",
+      "perf.streamingTps": "Streaming TPS",
+      "perf.nonStreamingTps": "Non-Streaming TPS",
+      "perf.noData": "No performance data available",
+      "perf.ttftDesc":
+        "Time from request dispatch to first token received (streaming)",
+      "perf.tpsDesc":
+        "Tokens Per Second: streaming = generation rate; non-streaming = overall response rate",
+      "perf.streamingTpsDesc":
+        "Token generation rate excluding TTFT (prefill) time",
+      "perf.nonStreamingTpsDesc":
+        "Overall tokens-per-second for the full request-response cycle",
     },
   },
 

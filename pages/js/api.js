@@ -226,6 +226,15 @@ const API = {
       const query = qs.toString()
       return API.request(`/usage/summary${query ? "?" + query : ""}`)
     },
+    performance: (params = {}) => {
+      const qs = new URLSearchParams()
+      if (params.range) qs.set("range", params.range)
+      if (params.month) qs.set("month", params.month)
+      if (params.startDate) qs.set("startDate", params.startDate)
+      if (params.endDate) qs.set("endDate", params.endDate)
+      const query = qs.toString()
+      return API.request(`/usage/performance${query ? "?" + query : ""}`)
+    },
     getPricing: () => API.request("/usage/pricing"),
     updatePricing: (model, pricing) =>
       API.request(`/usage/pricing/${model}`, { method: "PUT", body: pricing }),

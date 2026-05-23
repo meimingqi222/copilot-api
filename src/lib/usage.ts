@@ -16,6 +16,9 @@ export interface UsageRecordInput {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   timestamp?: number
+  ttftMs?: number
+  tps?: number
+  streaming?: boolean
 }
 
 export function recordUsage(input: UsageRecordInput): void {
@@ -29,6 +32,9 @@ export function recordUsage(input: UsageRecordInput): void {
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
     timestamp,
+    ttftMs,
+    tps,
+    streaming,
   } = input
 
   void trackUserTokenUsage(c, totalTokens)
@@ -56,6 +62,9 @@ export function recordUsage(input: UsageRecordInput): void {
       cacheWriteTokens,
       cost,
       timestamp: now,
+      ttftMs,
+      tps,
+      streaming,
     })
     logStore.push({
       timestamp: now,
@@ -69,6 +78,9 @@ export function recordUsage(input: UsageRecordInput): void {
       completionTokens,
       path: c.req.path,
       statusCode: c.res.status,
+      ttftMs,
+      generationTps: tps,
+      streaming,
     })
     consola.debug(
       `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
