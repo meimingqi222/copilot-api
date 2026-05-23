@@ -588,7 +588,10 @@
                 <div class="flex flex-col items-end gap-1">
                   <span class="badge" :class="account.enabled ? 'badge-success' : 'badge-gray'" x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"></span>
                   <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
-                  <span class="badge badge-gray" x-text="account.authStatus || 'ready'"></span>
+                  <span class="badge" :class="account.authStatus === 'error' ? 'badge-danger' : account.authStatus === 'ready' ? 'badge-success' : 'badge-gray'"
+                        :title="account.authError || ''"
+                        :style="account.authError ? 'cursor:help' : ''"
+                        x-text="account.authStatus || 'ready'"></span>
                 </div>
               </div>
               <div x-show="account.providerFeatures && account.providerFeatures.length" class="mb-4 flex flex-wrap gap-1">

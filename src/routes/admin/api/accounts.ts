@@ -269,6 +269,7 @@ function publicAccount(account: Account) {
     settings: account.settings ?? {},
     providerFeatures: runtime.descriptor.features,
     authStatus: account.runtimeState?.authStatus ?? "ready",
+    authError: account.runtimeState?.lastError ?? null,
     hasCredentials: getHasCredentials(account),
     isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
   }
