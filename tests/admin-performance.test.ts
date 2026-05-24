@@ -105,6 +105,7 @@ test("GET /admin/api/usage/performance uses a weighted TPS average", async () =>
     totalTokens: 100,
     cost: 0.5,
     timestamp: ts + 2,
+    ttftMs: 180,
     tps: 5,
     streaming: false,
   })

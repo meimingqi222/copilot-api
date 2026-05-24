@@ -122,6 +122,17 @@ export const mimoProviderRuntime: ProviderRuntime = {
   },
 }
 
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000
+const IDLE_TIMEOUT_MS = (() => {
+  const raw = process.env.MIMO_IDLE_TIMEOUT_MS
+  if (!raw) return DEFAULT_IDLE_TIMEOUT_MS
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ?
+      parsed
+    : DEFAULT_IDLE_TIMEOUT_MS
+})()
+const IDLE_TIMEOUT_MESSAGE = `Request timeout: No data received from Mimo node for ${Math.round(IDLE_TIMEOUT_MS / 1000)} seconds`
+
 function parseStreamLines(body: string): Array<string> {
   const results: Array<string> = []
   const lines = body.split("\n")
@@ -144,9 +155,22 @@ async function* streamResponse(
   let resolveNext: (() => void) | null = null
   let done = false
   let error: Error | null = null
+  let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+  const resetIdleTimer = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    idleTimeoutId = setTimeout(() => {
+      error = new Error(IDLE_TIMEOUT_MESSAGE)
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+    }, IDLE_TIMEOUT_MS)
+  }
 
   const listener = (msg: MimoMessage) => {
     queue.push(msg)
+    resetIdleTimer()
     if (resolveNext) {
       resolveNext()
       resolveNext = null
@@ -156,6 +180,7 @@ async function* streamResponse(
   conn.activeRequests.set(reqId, listener)
 
   const cleanup = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId)
     conn.activeRequests.delete(reqId)
   }
 
@@ -168,6 +193,8 @@ async function* streamResponse(
       }
     })
   }
+
+  resetIdleTimer()
 
   try {
     while (!done) {
@@ -212,9 +239,22 @@ async function collectResponse(
   let done = false
   let error: Error | null = null
   let accumulatedBody = ""
+  let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+  const resetIdleTimer = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    idleTimeoutId = setTimeout(() => {
+      error = new Error(IDLE_TIMEOUT_MESSAGE)
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+    }, IDLE_TIMEOUT_MS)
+  }
 
   const listener = (msg: MimoMessage) => {
     queue.push(msg)
+    resetIdleTimer()
     if (resolveNext) {
       resolveNext()
       resolveNext = null
@@ -224,6 +264,7 @@ async function collectResponse(
   conn.activeRequests.set(reqId, listener)
 
   const cleanup = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId)
     conn.activeRequests.delete(reqId)
   }
 
@@ -236,6 +277,8 @@ async function collectResponse(
       }
     })
   }
+
+  resetIdleTimer()
 
   try {
     while (!done) {
