@@ -11,7 +11,7 @@ function usersView() {
     selectedUser: null,
     selectedModels: [],
     editingUser: null,
-    newUser: { username: "", role: "user", quotaLimit: 0, allowedModels: [] },
+    newUser: { username: "", role: "user", quotaLimit: "0", allowedModels: [] },
     modelSearch: "",
     modelSearchEdit: "",
 
@@ -56,7 +56,7 @@ function usersView() {
       this.newUser = {
         username: "",
         role: "user",
-        quotaLimit: 0,
+        quotaLimit: "0",
         allowedModels: [],
       }
       this.showCreateModal = true
@@ -64,7 +64,10 @@ function usersView() {
 
     async createUser() {
       try {
-        const res = await API.users.create(this.newUser)
+        const res = await API.users.create({
+          ...this.newUser,
+          quotaLimit: this.parseQuotaToNumber(this.newUser.quotaLimit),
+        })
         this.showCreateModal = false
         this.newApiKey = res.apiKey
         this.showKeyModal = true
@@ -164,7 +167,7 @@ function usersView() {
         id: user.id,
         username: user.username,
         role: user.role,
-        quotaLimit: user.quotaLimit ?? 0,
+        quotaLimit: this.formatQuotaToString(user.quotaLimit),
         allowedModels: [...(user.allowedModels || [])],
       }
       this.showEditModal = true
@@ -186,7 +189,7 @@ function usersView() {
         await API.users.update(this.editingUser.id, {
           username: this.editingUser.username.trim(),
           role: this.editingUser.role,
-          quotaLimit: this.editingUser.quotaLimit ?? 0,
+          quotaLimit: this.parseQuotaToNumber(this.editingUser.quotaLimit),
           allowedModels: this.editingUser.allowedModels,
         })
         this.showEditModal = false
@@ -239,6 +242,31 @@ function usersView() {
         return (numericTokens / 1000).toFixed(1) + "K"
       }
       return numericTokens.toString()
+    },
+
+    parseQuotaToNumber(val) {
+      if (val === undefined || val === null || val === "") return 0
+      const str = String(val).trim().toLowerCase()
+      if (str === "0") return 0
+      const match = str.match(/^(\d+(?:\.\d+)?)([kmb]?)$/)
+      if (!match) return Number.parseInt(str, 10) || 0
+      const num = Number.parseFloat(match[1])
+      const suffix = match[2]
+      if (suffix === "k") return Math.round(num * 1000)
+      if (suffix === "m") return Math.round(num * 1_000_000)
+      if (suffix === "b") return Math.round(num * 1_000_000_000)
+      return Math.round(num)
+    },
+
+    formatQuotaToString(val) {
+      const num = Number(val || 0)
+      if (num === 0) return "0"
+      if (num >= 1_000_000_000 && num % 1_000_000_000 === 0)
+        return num / 1_000_000_000 + "B"
+      if (num >= 1_000_000 && num % 1_000_000 === 0)
+        return num / 1_000_000 + "M"
+      if (num >= 1000 && num % 1000 === 0) return num / 1000 + "K"
+      return String(num)
     },
   }
 }

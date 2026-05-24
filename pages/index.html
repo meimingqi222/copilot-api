@@ -383,7 +383,7 @@
                   <span x-text="t('users.quota')"></span>
                   <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.quotaHint') + ')'"></span>
                 </label>
-                <input x-model.number="newUser.quotaLimit" type="number" min="0" class="form-input" placeholder="0">
+                <input x-model="newUser.quotaLimit" type="text" class="form-input" placeholder="e.g. 700m">
               </div>
               <div>
                 <label class="form-label">
@@ -470,7 +470,7 @@
                   <span x-text="t('users.quota')"></span>
                   <span class="text-xs font-normal text-[var(--apple-text-tertiary)] ml-1" x-text="'(' + t('users.quotaHint') + ')'"></span>
                 </label>
-                <input x-model.number="editingUser.quotaLimit" type="number" min="0" class="form-input" placeholder="0">
+                <input x-model="editingUser.quotaLimit" type="text" class="form-input" placeholder="e.g. 700m">
               </div>
               <div>
                 <label class="form-label">
