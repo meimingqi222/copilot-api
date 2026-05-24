@@ -1,5 +1,6 @@
 /* eslint-disable max-depth, default-case, no-useless-assignment */
 import { createHash, randomUUID } from "node:crypto"
+import os from "node:os"
 
 import type { Account } from "~/lib/accounts"
 import type {
@@ -123,16 +124,8 @@ function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
 }
 
 /**
- * Derives a stable session UUID from the request parts that should remain
- * constant across turns: model + system prompt + tool schema (+ user hint).
- *
- * Windsurf uses field-22 (session UUID) for server-side KV cache.
- * Requests sharing the same session UUID allow the server to reuse cached
- * attention for the common prefix, avoiding full recomputation every turn.
- * Keying this on the first user message is too narrow for clients that send
- * one-shot or windowed requests where that message changes every turn; the
- * stable prompt/tool prefix is still cacheable and is usually the expensive
- * part for coding-agent traffic.
+ * Derives a stable session UUID from model + system prompt + tools + first user
+ * message. Requests with the same prefix context can reuse server-side KV cache.
  */
 function deriveSessionId(
   model: string,
@@ -143,13 +136,17 @@ function deriveSessionId(
     .map((m) => serializeMessageContent(m.content))
     .join("\n")
 
-  const toolSignature = stableStringify(payload.tools ?? [])
-  const userHint = payload.user ?? ""
+  const firstUserMsg = payload.messages.find(
+    (m) => m.role === "user" || m.role === "developer",
+  )
+  const firstUserContent =
+    firstUserMsg ? serializeMessageContent(firstUserMsg.content) : ""
 
-  const seed = `${model}\x00${userHint}\x00${systemText}\x00${toolSignature}`
+  const toolSignature = stableStringify(payload.tools ?? [])
+
+  const seed = `${model}\x00${firstUserContent}\x00${systemText}\x00${toolSignature}`
   const hex = createHash("sha256").update(seed).digest("hex")
 
-  // Format as RFC-4122 UUID v5-like (variant bits set for validity)
   return [
     hex.slice(0, 8),
     hex.slice(8, 12),
@@ -205,6 +202,49 @@ function buildDoNotCallTool(): ProtobufEncoder {
   })
 }
 
+// ── Cached system metadata (computed once at module load) ───────────────────────
+
+const _arch = os.arch() === "x64" ? "amd64" : os.arch()
+const _cpus = os.cpus()
+const _cpuModel = _cpus[0]?.model ?? "Unknown CPU"
+const _numCores = _cpus.length
+const _totalMemMB = Math.round(os.totalmem() / (1024 * 1024))
+const _release = os.release()
+const _releaseParts = _release.split(".")
+const _build = _releaseParts[2] ?? ""
+const _major = Number.parseInt(_releaseParts[0] ?? "10")
+const _minor = Number.parseInt(_releaseParts[1] ?? "0")
+function getProductName(): string {
+  if (process.platform === "darwin") return "macOS"
+  if (process.platform === "linux") return "Linux"
+  return (Number.parseInt(_build) || 0) >= 22000 ? "Windows 11 Pro" : "Windows 10 Pro"
+}
+function getOsLabel(): string {
+  if (process.platform === "win32") return "windows"
+  if (process.platform === "darwin") return "macos"
+  return process.platform
+}
+const _productName = getProductName()
+const _osLabel = getOsLabel()
+
+const CACHED_SYSTEM_INFO = JSON.stringify({
+  Os: _osLabel,
+  Arch: _arch,
+  Version: os.version(),
+  ProductName: _productName,
+  MajorVersionNumber: _major,
+  MinorVersionNumber: _minor,
+  Build: _build,
+})
+
+const CACHED_HARDWARE_INFO = JSON.stringify({
+  NumSockets: 1,
+  NumCores: _numCores,
+  NumThreads: _numCores,
+  ModelName: _cpuModel,
+  Memory: _totalMemMB,
+})
+
 // ── Metadata & sampling ────────────────────────────────────────────────────────
 
 function buildMetadata(
@@ -217,26 +257,9 @@ function buildMetadata(
   metadata.writeString(2, settings.appVersion)
   metadata.writeString(3, apiKey)
   metadata.writeString(4, "en")
-  metadata.writeString(
-    5,
-    JSON.stringify({
-      Os: process.platform === "win32" ? "windows" : process.platform,
-      Arch: process.arch,
-      Version: process.version,
-      ProductName: process.platform,
-    }),
-  )
+  metadata.writeString(5, CACHED_SYSTEM_INFO)
   metadata.writeString(7, settings.lsVersion)
-  metadata.writeString(
-    8,
-    JSON.stringify({
-      NumSockets: 1,
-      NumCores: 4,
-      NumThreads: 4,
-      ModelName: process.arch,
-      Memory: 0,
-    }),
-  )
+  metadata.writeString(8, CACHED_HARDWARE_INFO)
   metadata.writeString(12, settings.clientName)
   metadata.writeString(21, jwt)
   metadata.writeBytes(30, Uint8Array.from([0, 1]))
@@ -256,7 +279,7 @@ const SWE_SPECIAL_TOKENS = [
   "<|user|>",
   "<|bot|>",
   "<|context_request|>",
-  "<|endoftext|>",
+  "",
   "<|end_of_turn|>",
 ]
 
@@ -498,28 +521,82 @@ interface ChatStreamFrame {
     completion_tokens: number
     total_tokens: number
     cached_tokens: number
+    cache_write_tokens?: number
+    cache_read_tokens?: number
   }
 }
 
 function parseUsageFromMeta(
   nodes: Array<import("./protobuf").ProtobufNode>,
 ): ChatStreamFrame["usage"] | undefined {
-  const varints: Array<number> = []
+  let promptTokens = 0
+  let completionTokens = 0
+  let cacheWriteTokens: number | undefined
+  let cacheReadTokens: number | undefined
   for (const node of nodes) {
-    if (node.wire === 0 && node.varint !== undefined) {
-      varints.push(node.varint)
+    if (node.field === 2 && node.wire === 0 && node.varint !== undefined) {
+      promptTokens = node.varint
+    }
+    if (node.field === 3 && node.wire === 0 && node.varint !== undefined) {
+      completionTokens = node.varint
+    }
+    if (node.field === 4 && node.wire === 0 && node.varint !== undefined) {
+      cacheWriteTokens = node.varint
+    }
+    if (node.field === 5 && node.wire === 0 && node.varint !== undefined) {
+      cacheReadTokens = node.varint
     }
   }
-  if (varints.length < 2) return undefined
-  const promptTokens = varints[0] ?? 0
-  const completionTokens = varints[1] ?? 0
-  const cachedTokens = varints[2] ?? 0
+  if (promptTokens === 0 && completionTokens === 0) return undefined
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: promptTokens + completionTokens,
-    cached_tokens: cachedTokens,
+    cached_tokens: cacheReadTokens ?? cacheWriteTokens ?? 0,
+    cache_write_tokens: cacheWriteTokens,
+    cache_read_tokens: cacheReadTokens,
   }
+}
+
+function parseFloat32(raw: Uint8Array): number {
+  return new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getFloat32(
+    0,
+    true,
+  )
+}
+
+function parseCachedTokensFromField28(
+  nodes: Array<import("./protobuf").ProtobufNode>,
+): number | undefined {
+  for (const node of nodes) {
+    if (node.field === 28 && node.sub) {
+      // Look for "Token Usage" section (field-1 = title)
+      const title = node.sub.find((n) => n.field === 1)
+      if (!title?.raw) continue
+      const titleStr = new TextDecoder().decode(title.raw)
+      if (!titleStr.includes("Token Usage")) continue
+
+      for (const section of node.sub) {
+        if (section.field !== 2 || !section.sub) continue
+
+        // field-5 contains the metric name as first string child
+        const nameNode = section.sub.find((n) => n.field === 5)
+        if (!nameNode?.raw) continue
+        const name = new TextDecoder().decode(nameNode.raw)
+        if (name !== "cached_input_tokens") continue
+
+        // field-4 contains the value block
+        const valueBlock = section.sub.find((n) => n.field === 4)?.sub
+        if (!valueBlock) return undefined
+
+        // field-2 (wire 5) = 32-bit float value (may be absent when 0)
+        const valueField = valueBlock.find((n) => n.field === 2 && n.wire === 5)
+        if (valueField?.raw) return parseFloat32(valueField.raw)
+        return 0
+      }
+    }
+  }
+  return undefined
 }
 
 function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
@@ -545,8 +622,6 @@ function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
 
     // field 6 = tool call delta
-    // Init frame: sub has /1 (callId) + /2 (toolName)
-    // Args frame: sub has only /3 (args token)
     if (node.field === 6 && node.wire === 2 && node.raw) {
       const sub = parseMessage(node.raw, 0, 1)
       const f1 = sub.find((n) => n.field === 1 && n.wire === 2)
@@ -559,7 +634,6 @@ function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
         if (callId && toolName) {
           deltas.push({ kind: "tool_call_init", callId, toolName })
         }
-        // args token may appear in the same init frame
         if (f3?.raw) {
           const args = decodeFrameText(f3.raw)
           if (args) deltas.push({ kind: "tool_call_args", args })
@@ -572,17 +646,53 @@ function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
 
     // field 5 = stop signal
-    // varint 2  → text generation done
-    // varint 10 → tool calls done
     if (node.field === 5 && node.wire === 0) {
       if (node.varint === 2) textDone = true
       else if (node.varint === 10) toolCallsDone = true
       continue
     }
 
-    // field 7 = usage metadata (last frame)
+    // field 7 = ModelUsageStats (usage metadata, last frame)
     if (node.field === 7 && node.wire === 2 && node.sub) {
-      usage = parseUsageFromMeta(node.sub) ?? usage
+      const metaUsage = parseUsageFromMeta(node.sub)
+      if (metaUsage) {
+        if (usage) {
+          const prevCached = usage.cached_tokens
+          usage = { ...usage, ...metaUsage }
+          usage.cached_tokens = Math.max(prevCached, metaUsage.cached_tokens)
+        } else {
+          usage = metaUsage
+        }
+      }
+      continue
+    }
+
+    // field 33 = CortexStepMetadata.cache_read_tokens
+    if (node.field === 33 && node.wire === 0 && node.varint !== undefined) {
+      if (!usage) {
+        usage = {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          cached_tokens: node.varint,
+        }
+      } else {
+        usage.cache_read_tokens = (usage.cache_read_tokens ?? 0) + node.varint
+        usage.cached_tokens = Math.max(usage.cached_tokens, node.varint)
+      }
+      continue
+    }
+
+    // field 28 = cached_input_tokens (final metadata frame)
+    if (node.field === 28 && node.wire === 2 && node.raw) {
+      const field28Nodes = parseMessage(node.raw, 0, 6)
+      const cached = parseCachedTokensFromField28([
+        { field: 28, wire: 2, sub: field28Nodes },
+      ])
+      if (cached !== undefined && usage) {
+        usage.cached_tokens = Math.max(usage.cached_tokens, Math.round(cached))
+      }
+      continue
     }
   }
 

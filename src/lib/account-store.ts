@@ -201,7 +201,8 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
 
   const githubToken = getGitHubToken(account)
   if (!githubToken) {
-    throw new Error(`GitHub token missing for account "${account.label}"`)
+    // No token yet — account can be added later via Web UI
+    return
   }
 
   const response = await fetch(
@@ -215,7 +216,8 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
   )
 
   if (!response.ok) {
-    throw new HTTPError("Failed to get Copilot token for account", response)
+    const body = await response.text()
+    throw new HTTPError("Failed to get Copilot token for account", response, body)
   }
 
   const data = (await response.json()) as {

@@ -236,8 +236,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
             account.credentials?.githubToken ?? account.githubToken
         }
       } catch (err) {
-        consola.warn(
-          `Failed to get Copilot token for account "${account.label}":`,
+        consola.debug(
+          `Failed to get Copilot token for account "${account.label}"`,
           err,
         )
       }
