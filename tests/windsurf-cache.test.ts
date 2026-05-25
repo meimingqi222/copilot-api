@@ -262,7 +262,8 @@ async function runTurn(opts: RunTurnOptions): Promise<TurnResult> {
     for (const node of nodes) {
       if (node.field === 3 && node.wire === 2 && node.raw) {
         try {
-          content += new TextDecoder("utf8", { fatal: true }).decode(node.raw)
+          // eslint-disable-next-line unicorn/text-encoding-identifier-case
+          content += new TextDecoder("utf-8", { fatal: true }).decode(node.raw)
         } catch {
           /* binary */
         }
