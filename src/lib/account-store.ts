@@ -217,7 +217,11 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
 
   if (!response.ok) {
     const body = await response.text()
-    throw new HTTPError("Failed to get Copilot token for account", response, body)
+    throw new HTTPError(
+      "Failed to get Copilot token for account",
+      response,
+      body,
+    )
   }
 
   const data = (await response.json()) as {

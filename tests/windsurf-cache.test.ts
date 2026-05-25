@@ -155,10 +155,16 @@ interface TurnResult {
 }
 
 function parseFloat32(raw: Uint8Array): number {
-  return new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getFloat32(0, true)
+  return new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getFloat32(
+    0,
+    true,
+  )
 }
 
-function parseMetricFromField28(frame: Uint8Array, metricName: string): number | undefined {
+function parseMetricFromField28(
+  frame: Uint8Array,
+  metricName: string,
+): number | undefined {
   const nodes = parseMessage(frame, 0, 6)
   for (const node of nodes) {
     if (node.field === 28 && node.sub) {
@@ -282,7 +288,14 @@ async function runTurn(opts: RunTurnOptions): Promise<TurnResult> {
     }
   }
 
-  return { cachedTokens, promptTokens, completionTokens, content, frameCount, rawField7Varints }
+  return {
+    cachedTokens,
+    promptTokens,
+    completionTokens,
+    content,
+    frameCount,
+    rawField7Varints,
+  }
 }
 
 // ── Auth helper ─────────────────────────────────────────────────────────
@@ -360,16 +373,17 @@ async function discoverModel(
 
 const SYSTEM_PROMPT = "You are a helpful assistant. Be concise."
 const USER_MSG_1 = "Write a short poem about programming in Python."
-const ASSISTANT_1 = "In Python's realm, where indents reign,\nWhitespace both pleasure and a pain.\nWith lists, dicts, and functions too,\nA coder's dreams can all come true."
+const ASSISTANT_1 =
+  "In Python's realm, where indents reign,\nWhitespace both pleasure and a pain.\nWith lists, dicts, and functions too,\nA coder's dreams can all come true."
 const USER_MSG_2 = "Now add error handling to that poem."
-const ASSISTANT_2 = "But watch for errors, sharp and deep,\nExceptions that can make you weep.\nWith try-except blocks standing tall,\nYou catch the bugs before they fall."
+const ASSISTANT_2 =
+  "But watch for errors, sharp and deep,\nExceptions that can make you weep.\nWith try-except blocks standing tall,\nYou catch the bugs before they fall."
 const USER_MSG_3 = "Add a verse about list comprehensions."
-const ASSISTANT_3 = "List comprehensions, crisp and neat,\nTransform collections with such fleet.\nOne line loops where many stood,\nMaking complex code feel good."
+const ASSISTANT_3 =
+  "List comprehensions, crisp and neat,\nTransform collections with such fleet.\nOne line loops where many stood,\nMaking complex code feel good."
 const USER_MSG_4 = "Write a final verse about decorators."
 
-const TURN_1: Array<ChatMessage> = [
-  { role: "user", content: USER_MSG_1 },
-]
+const TURN_1: Array<ChatMessage> = [{ role: "user", content: USER_MSG_1 }]
 
 const TURN_2: Array<ChatMessage> = TURN_1.concat([
   { role: "assistant", content: ASSISTANT_1 },
@@ -434,18 +448,25 @@ Session UUID (stable): ${stableId}
 
       console.log(`\nCache accumulation (field-28 cached_input_tokens):`)
       for (const r of results) {
-        const pct = r.promptTokens > 0
-          ? ((r.cachedTokens / r.promptTokens) * 100).toFixed(1)
+        const pct =
+          r.promptTokens > 0 ?
+            ((r.cachedTokens / r.promptTokens) * 100).toFixed(1)
           : "N/A"
-        console.log(`  ${r.label.padEnd(22)}  cached=${String(r.cachedTokens).padStart(5)}  (${pct}% of prompt)`)
+        console.log(
+          `  ${r.label.padEnd(22)}  cached=${String(r.cachedTokens).padStart(5)}  (${pct}% of prompt)`,
+        )
       }
 
       // Note: swe-1-6 currently reports 0 cached tokens in field-28
       // regardless of session UUID. This test documents the baseline.
-      const lastResult = results[results.length - 1]
-      console.log(`\nℹ️  cached_input_tokens: ${lastResult.cachedTokens} (field-28 Token Usage)`)
+      const lastResult = results.at(-1)
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const cacheTokens = lastResult!.cachedTokens
+      console.log(
+        `\nℹ️  cached_input_tokens: ${cacheTokens} (field-28 Token Usage)`,
+      )
       // Accept any value (including 0) — cache depends on server behavior
-      expect(lastResult.cachedTokens).toBeGreaterThanOrEqual(0)
+      expect(cacheTokens).toBeGreaterThanOrEqual(0)
     },
     300_000,
   )
@@ -494,13 +515,18 @@ Session UUID (stable): ${stableId}
         console.log(`  Random run ${i + 1}: cached=${r.cachedTokens}`)
       }
 
-      const stableLast = stableResults[stableResults.length - 1]
-      const randomLast = randomResults[randomResults.length - 1]
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const stableLast = stableResults.at(-1)!
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const randomLast = randomResults.at(-1)!
       console.log(`\n  Stable last run cached: ${stableLast}`)
       console.log(`  Random last run cached: ${randomLast}`)
       console.log(`ℹ️  Both stable and random show cached=0 for swe-1-6`)
 
-      const totalCached = [...stableResults, ...randomResults].reduce((a, b) => a + b, 0)
+      const totalCached = [...stableResults, ...randomResults].reduce(
+        (a, b) => a + b,
+        0,
+      )
       expect(totalCached).toBeGreaterThanOrEqual(0)
     },
     300_000,

@@ -1,4 +1,4 @@
-/* eslint-disable max-depth, default-case, no-useless-assignment */
+/* eslint-disable max-depth, default-case, no-useless-assignment, max-lines */
 import { createHash, randomUUID } from "node:crypto"
 import os from "node:os"
 
@@ -217,7 +217,9 @@ const _minor = Number.parseInt(_releaseParts[1] ?? "0")
 function getProductName(): string {
   if (process.platform === "darwin") return "macOS"
   if (process.platform === "linux") return "Linux"
-  return (Number.parseInt(_build) || 0) >= 22000 ? "Windows 11 Pro" : "Windows 10 Pro"
+  return (Number.parseInt(_build) || 0) >= 22000 ?
+      "Windows 11 Pro"
+    : "Windows 10 Pro"
 }
 function getOsLabel(): string {
   if (process.platform === "win32") return "windows"
