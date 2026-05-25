@@ -116,6 +116,12 @@ export const copilotProviderRuntime: ProviderRuntime = {
           && message.content?.some((content) => content.type === "image_url"),
       )
 
+    const chatCompletionsBody = JSON.stringify(normalizedPayload)
+    const responsesBody =
+      useResponsesApi ?
+        JSON.stringify(translateToResponsesPayload(normalizedPayload))
+      : ""
+
     const doRequest = async (requestAccount: Account) => {
       const headers: Record<string, string> = {
         ...copilotHeaders(requestAccount, enableVision),
@@ -131,11 +137,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
         {
           method: "POST",
           headers,
-          body: JSON.stringify(
-            useResponsesApi ?
-              translateToResponsesPayload(normalizedPayload)
-            : normalizedPayload,
-          ),
+          body: useResponsesApi ? responsesBody : chatCompletionsBody,
           signal,
         },
       )
@@ -228,6 +230,11 @@ export const copilotProviderRuntime: ProviderRuntime = {
             && item.content.some((content) => content.type === "input_image"),
         ))
 
+    const responsesBody = JSON.stringify({
+      ...payload,
+      model: normalizedModel,
+    })
+
     const doRequest = async (requestAccount: Account) => {
       const headers: Record<string, string> = {
         ...copilotHeaders(requestAccount, enableVision),
@@ -239,10 +246,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
       const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
         method: "POST",
         headers,
-        body: JSON.stringify({
-          ...payload,
-          model: normalizedModel,
-        }),
+        body: responsesBody,
         signal,
       })
 

@@ -28,7 +28,7 @@ embeddingRoutes.post("/", async (c) => {
     })
 
     // Set accountId for logging
-    c.set("accountId" as never, result.accountId)
+    c.set("accountId", result.accountId)
 
     const usage = result.response.usage
     recordUsage({

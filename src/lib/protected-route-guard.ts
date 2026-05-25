@@ -5,7 +5,9 @@ import { createHash } from "node:crypto"
 
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 
+import { HTTPError } from "~/lib/error"
 import { getProtectedRouteKind } from "~/lib/protected-routes"
+import { getClientIp } from "~/lib/utils"
 
 type BehaviorEventType = "request" | "upstream_429" | "error" | "success"
 
@@ -17,7 +19,7 @@ interface BehaviorEvent {
   contentHash?: string
 }
 
-interface PrincipalBehavior {
+export interface PrincipalBehavior {
   upstream429TotalCount: number
   upstream429DenseCount: number
   burstScore: number
@@ -131,7 +133,10 @@ export function checkProtectedRouteGuard(
 
   // Skip guard for localhost / direct (no proxy) requests
   const clientIp = getClientIpFromRequest(c)
-  if (clientIp === "127.0.0.1" || clientIp === "::1") {
+  if (
+    process.env.NODE_ENV !== "test"
+    && (clientIp === "127.0.0.1" || clientIp === "::1")
+  ) {
     return
   }
 
@@ -144,7 +149,7 @@ export function checkProtectedRouteGuard(
   pruneState(state, now)
   state.lastSeen = now
 
-  c.set("protectedRouteGuardPrincipal" as never, principal)
+  c.set("protectedRouteGuardPrincipal", principal)
 
   enforceRequestLimit({
     c,
@@ -188,7 +193,7 @@ export function checkProtectedRouteGuard(
     currentContentHash: contentHash,
     provider: input.provider,
   })
-  c.set("protectedRouteGuardBehavior" as never, behavior)
+  c.set("protectedRouteGuardBehavior", behavior)
 
   enforceBehaviorBlock({
     c,
@@ -212,15 +217,31 @@ export function checkProtectedRouteGuard(
   emitSuspiciousWarning(c, { principal, state, behavior })
 }
 
-export function reportUpstream429(c: Context, provider?: string): void {
-  const principal = c.get("protectedRouteGuardPrincipal" as never) as
-    | string
-    | undefined
+export function reportUpstream429(
+  c: Context,
+  provider?: string,
+  responseBody?: string,
+): void {
+  const principal = c.get("protectedRouteGuardPrincipal")
   if (!principal) return
 
   // Only count 429s as suspicious for Copilot (GitHub's API).
   // Other providers have their own rate limits which are normal.
   if (provider && provider !== "copilot") return
+
+  // Skip if responseBody indicates quota-related issue
+  if (responseBody) {
+    const bodyLower = responseBody.toLowerCase()
+    if (
+      bodyLower.includes("quota")
+      || bodyLower.includes("rate_limit")
+      || bodyLower.includes("rate limit")
+      || bodyLower.includes("exhausted")
+      || bodyLower.includes("billing")
+    ) {
+      return
+    }
+  }
 
   const state = guardState.get(principal)
   if (!state) return
@@ -231,11 +252,14 @@ export function reportUpstream429(c: Context, provider?: string): void {
   })
 }
 
-export function reportRequestError(c: Context): void {
-  const principal = c.get("protectedRouteGuardPrincipal" as never) as
-    | string
-    | undefined
+export function reportRequestError(c: Context, error?: unknown): void {
+  const principal = c.get("protectedRouteGuardPrincipal")
   if (!principal) return
+
+  // Skip upstream 5xx errors or server-side issues
+  if (error instanceof HTTPError && error.response.status >= 500) {
+    return
+  }
 
   const state = guardState.get(principal)
   if (!state) return
@@ -247,9 +271,7 @@ export function reportRequestError(c: Context): void {
 }
 
 export function reportRequestSuccess(c: Context): void {
-  const principal = c.get("protectedRouteGuardPrincipal" as never) as
-    | string
-    | undefined
+  const principal = c.get("protectedRouteGuardPrincipal")
   if (!principal) return
 
   const state = guardState.get(principal)
@@ -716,7 +738,7 @@ function logGuardRejection(input: {
 }
 
 function getPrincipalKey(c: Context): string {
-  const userId = c.get("userId" as never) as string | undefined
+  const userId = c.get("userId")
   if (userId) {
     return `user:${userId}`
   }
@@ -740,21 +762,17 @@ function extractBearerToken(
     return undefined
   }
 
-  const [scheme, token] = authHeader.split(" ")
-  if (!scheme || scheme.toLowerCase() !== "bearer" || !token) {
+  const trimmed = authHeader.trim()
+  const match = trimmed.match(/^Bearer\s+(\S+)$/i)
+  if (!match) {
     return undefined
   }
 
-  return token
+  return match[1]
 }
 
 function getClientIpFromRequest(c: Context): string {
-  return (
-    c.req.header("cf-connecting-ip")
-    || c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
-    || c.req.header("x-real-ip")
-    || "unknown"
-  )
+  return getClientIp(c)
 }
 
 export function resetProtectedRouteGuardForTest(): void {
@@ -806,9 +824,7 @@ export function getPrincipalStateForTest(
 export function getPrincipalBehaviorForTest(
   c: Context,
 ): PrincipalBehavior | undefined {
-  const principal = c.get("protectedRouteGuardPrincipal" as never) as
-    | string
-    | undefined
+  const principal = c.get("protectedRouteGuardPrincipal")
   if (!principal) return undefined
 
   const state = guardState.get(principal)

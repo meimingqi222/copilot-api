@@ -25,6 +25,7 @@ import {
   getMimoPh,
   setCopilotToken,
   setCopilotTokenExpiry,
+  setupAccountPropertyProxies,
 } from "~/lib/accounts"
 import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
@@ -43,11 +44,18 @@ function defaultProvider(provider?: AccountProvider): AccountProvider {
 }
 
 export async function loadAccounts(): Promise<void> {
+  clearAllAccountTimers()
   try {
     const raw = await readAccountsFile(PATHS.ACCOUNTS_PATH)
     state.accounts = raw.map((account) => migrateAccount(account))
     for (const account of state.accounts) {
-      account.cooldownUntil = undefined
+      if (typeof account.cooldownUntil === "number") {
+        if (account.cooldownUntil <= Date.now()) {
+          account.cooldownUntil = undefined
+        }
+      } else {
+        account.cooldownUntil = undefined
+      }
       account.lastRateLimitAt = undefined
       account.lastRateLimitReason = undefined
       syncLegacyExhaustedState(account)
@@ -87,9 +95,43 @@ export async function loadAccounts(): Promise<void> {
   state.accounts = []
 }
 
+class Mutex {
+  private queue: Promise<void> = Promise.resolve()
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    let resolve: (() => void) | undefined
+    const next = new Promise<void>((r) => {
+      resolve = r
+    })
+    const prev = this.queue
+    this.queue = next
+
+    try {
+      await prev
+      return await fn()
+    } finally {
+      resolve?.()
+    }
+  }
+}
+
+const fileMutex = new Mutex()
+
 export async function saveAccounts(): Promise<void> {
   const sanitized = state.accounts.map((account) => serializeAccount(account))
-  await fs.writeFile(PATHS.ACCOUNTS_PATH, JSON.stringify(sanitized, null, 2))
+  const targetPath = PATHS.ACCOUNTS_PATH
+  const appDir = PATHS.APP_DIR
+  return fileMutex.runExclusive(async () => {
+    const tmpPath = `${targetPath}.${process.pid}.tmp`
+    try {
+      await fs.mkdir(appDir, { recursive: true })
+      await fs.writeFile(tmpPath, JSON.stringify(sanitized, null, 2), "utf8")
+      await fs.rename(tmpPath, targetPath)
+    } catch (error) {
+      await fs.unlink(tmpPath).catch(() => {})
+      throw error
+    }
+  })
 }
 
 export function serializeAccountForExport(
@@ -111,6 +153,7 @@ function serializeAccount(account: Account): Record<string, unknown> {
     createdAt: account.createdAt,
     availableModels: account.availableModels,
     quotaInfo: account.quotaInfo,
+    cooldownUntil: account.cooldownUntil,
   }
 
   if (account.provider === "copilot") {
@@ -273,8 +316,15 @@ export function cancelTokenRefreshTimer(accountId: string): void {
   }
 }
 
+function clearAllAccountTimers(): void {
+  for (const account of state.accounts) {
+    cancelTokenRefreshTimer(account.id)
+  }
+}
+
 export async function initAccounts(tokens?: Array<string>): Promise<void> {
   if (tokens && tokens.length > 0) {
+    clearAllAccountTimers()
     const existing = await loadAccountsFile()
     const newAccounts: Array<Account> = tokens.map((token, index) => {
       const existingAccount = existing.find(
@@ -284,7 +334,7 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
       if (existingAccount) {
         return existingAccount
       }
-      return {
+      const acc: Account = {
         id: randomUUID(),
         label: index === 0 ? "default" : `account-${index + 1}`,
         provider: "copilot",
@@ -298,6 +348,8 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
         quotaState: "unknown",
         createdAt: Date.now(),
       }
+      setupAccountPropertyProxies(acc)
+      return acc
     })
     state.accounts = newAccounts
     state.activeAccountIndex = 0
@@ -314,6 +366,20 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
 }
 
 function migrateAccount(account: Record<string, unknown>): Account {
+  const acc = migrateAccountInternal(account)
+  if (typeof account.cooldownUntil === "number") {
+    acc.cooldownUntil = account.cooldownUntil
+  } else if (typeof account.cooldownUntil === "string") {
+    const parsed = Date.parse(account.cooldownUntil)
+    if (!Number.isNaN(parsed)) {
+      acc.cooldownUntil = parsed
+    }
+  }
+  setupAccountPropertyProxies(acc)
+  return acc
+}
+
+function migrateAccountInternal(account: Record<string, unknown>): Account {
   const acc = account as Record<string, unknown>
     & Partial<Account> & {
       isActive?: boolean
@@ -490,8 +556,10 @@ async function loadAccountsFile(): Promise<Array<Account>> {
 async function readAccountsFile(
   path: string,
 ): Promise<Array<Record<string, unknown>>> {
-  const data = await fs.readFile(path)
-  return JSON.parse(data.toString("utf8")) as Array<Record<string, unknown>>
+  return fileMutex.runExclusive(async () => {
+    const data = await fs.readFile(path)
+    return JSON.parse(data.toString("utf8")) as Array<Record<string, unknown>>
+  })
 }
 
 export function scheduleQuotaRefresh(): void {
@@ -501,7 +569,10 @@ export function scheduleQuotaRefresh(): void {
   }, QUOTA_RECHECK_INTERVAL_MS)
 }
 
-export async function refreshQuotaForAccount(account: Account): Promise<void> {
+export async function refreshQuotaForAccount(
+  account: Account,
+  skipSave = false,
+): Promise<void> {
   if (getAccountProvider(account) !== "copilot") {
     return
   }
@@ -523,20 +594,21 @@ export async function refreshQuotaForAccount(account: Account): Promise<void> {
     }
     setAccountQuotaState(account, "available")
   }
-  await saveAccounts()
+  if (!skipSave) {
+    await saveAccounts()
+  }
 }
 
 async function refreshAllQuotas(): Promise<void> {
-  for (const account of state.accounts) {
-    try {
-      await refreshQuotaForAccount(account)
-    } catch (err) {
-      consola.warn(
-        `Failed to refresh quota for account "${account.label}":`,
-        err,
-      )
+  const results = await Promise.allSettled(
+    state.accounts.map((account) => refreshQuotaForAccount(account, true)),
+  )
+  for (const result of results) {
+    if (result.status === "rejected") {
+      consola.warn("Failed to refresh quota for account:", result.reason)
     }
   }
+  await saveAccounts()
 }
 
 async function getCopilotUsageForAccount(account: Account): Promise<{

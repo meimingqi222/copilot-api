@@ -9,6 +9,7 @@ import {
 import { logStore } from "./log-store"
 import { isProtectedRoute } from "./protected-routes"
 import { statsStore } from "./stats-store"
+import { getClientIp } from "./utils"
 
 export const requestLogger = async (c: Context, next: Next) => {
   const start = Date.now()
@@ -28,16 +29,16 @@ export const requestLogger = async (c: Context, next: Next) => {
     level = "info"
   }
 
-  const accountId = c.get("accountId" as never) as string | undefined
-  const clientIp = extractClientIp(c)
+  const accountId = c.get("accountId")
+  const clientIp = getClientIp(c)
   const userAgent = c.req.header("user-agent") || undefined
 
   logStore.push({
     timestamp: Date.now(),
     level,
     message: `${c.req.method} ${c.req.path} ${status}`,
-    userId: c.get("userId" as never) as string | undefined,
-    username: c.get("username" as never) as string | undefined,
+    userId: c.get("userId"),
+    username: c.get("username"),
     accountId,
     latencyMs,
     statusCode: status,
@@ -50,10 +51,10 @@ export const requestLogger = async (c: Context, next: Next) => {
   const guardResult = recordGuardSnapshot({
     ip: clientIp,
     ua: userAgent,
-    username: c.get("username" as never) as string | undefined,
+    username: c.get("username"),
     path: c.req.path,
     isError: shouldCountGuardError(c.req.path, status),
-    initiator: c.get("guardInitiator" as never) as string | undefined,
+    initiator: c.get("guardInitiator"),
     statusCode: status,
   })
 
@@ -111,7 +112,7 @@ function shouldCaptureGuardPreview(
   return (
     isProtectedRoute(path)
     && (guardResult.shouldCapturePreview
-      || Boolean(c.get("protectedRouteGuardCapturePreview" as never)))
+      || Boolean(c.get("protectedRouteGuardCapturePreview")))
   )
 }
 
@@ -129,32 +130,6 @@ function shouldCountGuardError(path: string, status: number): boolean {
   }
 
   return false
-}
-
-function extractClientIp(c: Context): string | undefined {
-  const cfIp = c.req.header("cf-connecting-ip")
-  if (cfIp && isValidIp(cfIp)) return cfIp
-
-  const forwarded = c.req.header("x-forwarded-for")
-  if (forwarded) {
-    const firstIp = forwarded.split(",")[0]?.trim()
-    if (firstIp && isValidIp(firstIp)) return firstIp
-  }
-
-  const realIp = c.req.header("x-real-ip")
-  if (realIp && isValidIp(realIp)) return realIp
-
-  return undefined
-}
-
-// Simple IP validation (IPv4 and IPv6)
-function isValidIp(ip: string): boolean {
-  if (!ip) return false
-  // Basic IPv4 regex
-  const ipv4Regex = /^(?:\d{1,3}\.){3}\d{1,3}$/
-  // Basic IPv6 regex (simplified)
-  const ipv6Regex = /^(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}$/i
-  return ipv4Regex.test(ip) || ipv6Regex.test(ip)
 }
 
 const MAX_GUARD_PREVIEW_BYTES = 256 * 1024

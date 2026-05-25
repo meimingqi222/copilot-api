@@ -53,7 +53,7 @@ export function recordUsage(input: UsageRecordInput): void {
     statsStore.recordUsage({
       date: new Date(now).toISOString().split("T")[0] ?? "",
       accountId,
-      userId: c.get("userId" as never) as string | undefined,
+      userId: c.get("userId"),
       model,
       promptTokens,
       completionTokens,
@@ -70,8 +70,8 @@ export function recordUsage(input: UsageRecordInput): void {
       timestamp: now,
       level: "info",
       message: `Usage recorded for ${model}`,
-      userId: c.get("userId" as never) as string | undefined,
-      username: c.get("username" as never) as string | undefined,
+      userId: c.get("userId"),
+      username: c.get("username"),
       accountId,
       model,
       promptTokens,
@@ -95,7 +95,7 @@ async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
     return
   }
 
-  const userId = c.get("userId" as never) as string | undefined
+  const userId = c.get("userId")
   if (!userId) {
     return
   }

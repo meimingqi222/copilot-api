@@ -530,10 +530,15 @@ function getHighErrorRateSignal(
   errorRate: number,
 ): SuspiciousSignal | undefined {
   if (snap.requests < 10 || errorRate < ERROR_RATE_THRESHOLD) return undefined
-  return {
-    reason: "high_error_rate",
-    score: errorRate >= 0.6 ? 30 : 18,
-  }
+  const nonAuthErrors = snap.errors - snap.authFailures
+  const nonAuthErrorRate = snap.requests > 0 ? nonAuthErrors / snap.requests : 0
+  // If failures are mostly non-auth related (e.g. upstream 5xx or timeouts),
+  // assign a lower suspicious score to avoid false-positive blocking of valid clients.
+  const isNonAuth =
+    nonAuthErrorRate > ERROR_RATE_THRESHOLD
+    && snap.authFailures < AUTH_FAILURE_THRESHOLD
+  const score = !isNonAuth && errorRate >= 0.6 ? 30 : 18
+  return { reason: "high_error_rate", score }
 }
 
 function getHighFrequencySignal(

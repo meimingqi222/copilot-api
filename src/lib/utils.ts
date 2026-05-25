@@ -1,4 +1,7 @@
+import type { Context } from "hono"
+
 import consola from "consola"
+import { getConnInfo } from "hono/bun"
 
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
@@ -272,8 +275,13 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
 }
 
 export async function refreshModelsForAllAccounts(): Promise<void> {
-  for (const account of state.accounts) {
-    await refreshModelsForAccount(account)
+  const results = await Promise.allSettled(
+    state.accounts.map((account) => refreshModelsForAccount(account)),
+  )
+  for (const result of results) {
+    if (result.status === "rejected") {
+      consola.warn("Failed to refresh models for account:", result.reason)
+    }
   }
 }
 
@@ -312,4 +320,88 @@ export function shouldFailover(error: unknown): boolean {
   }
   if (status >= 500) return true
   return false
+}
+
+export function isValidIp(ip: string): boolean {
+  if (!ip) return false
+  const ipv4Regex = /^(?:\d{1,3}\.){3}\d{1,3}$/
+  const ipv6Regex = /^(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}$/i
+  return ipv4Regex.test(ip) || ipv6Regex.test(ip)
+}
+
+export function isPrivateIp(ip: string): boolean {
+  if (ip === "127.0.0.1" || ip === "::1" || ip === "localhost") {
+    return true
+  }
+  // IPv4 Private Ranges
+  if (ip.startsWith("0.")) {
+    return true
+  }
+  if (ip.startsWith("10.")) {
+    return true
+  }
+  if (ip.startsWith("169.254.")) {
+    return true
+  }
+  if (ip.startsWith("192.168.")) {
+    return true
+  }
+  if (ip.startsWith("172.")) {
+    const parts = ip.split(".")
+    if (parts.length >= 2) {
+      const second = Number.parseInt(parts[1], 10)
+      if (second >= 16 && second <= 31) {
+        return true
+      }
+    }
+  }
+  // IPv6 Link-Local and Private Ranges
+  const ipLower = ip.toLowerCase()
+  if (
+    ipLower.startsWith("fe80:")
+    || ipLower.startsWith("fc00:")
+    || ipLower.startsWith("fd00:")
+  ) {
+    return true
+  }
+  return false
+}
+
+export function getClientIp(c: Context): string {
+  const trustProxy =
+    process.env.TRUST_PROXY === "true" || process.env.TRUST_PROXY === "1"
+
+  if (trustProxy) {
+    const cfIp = c.req.header("cf-connecting-ip")
+    if (cfIp && isValidIp(cfIp) && !isPrivateIp(cfIp)) return cfIp
+
+    const forwarded = c.req.header("x-forwarded-for")
+    if (forwarded) {
+      const parts = forwarded.split(",").map((ip) => ip.trim())
+      // 从右往左寻找第一个公网 IP
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const ip = parts[i]
+        if (ip && isValidIp(ip) && !isPrivateIp(ip)) {
+          return ip
+        }
+      }
+      // 如果全都是私网 IP，退而求其次选择最右侧的
+      const rightmostIp = parts.at(-1)
+      if (rightmostIp && isValidIp(rightmostIp)) return rightmostIp
+    }
+
+    const realIp = c.req.header("x-real-ip")
+    if (realIp && isValidIp(realIp) && !isPrivateIp(realIp)) return realIp
+  }
+
+  try {
+    const connInfo = getConnInfo(c)
+    if (connInfo.remote.address) {
+      return connInfo.remote.address
+    }
+  } catch {
+    // Ignore error
+  }
+
+  return "127.0.0.1"
 }

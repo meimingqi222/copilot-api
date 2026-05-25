@@ -85,7 +85,7 @@ export async function executeProviderRequestWithRetry<T>(
 
       const retryAccount = switchToNextAccountForModel(currentAccount, model)
       if (!retryAccount || attemptedAccounts.has(retryAccount.id)) {
-        if (c) reportUpstream429(c, currentAccount.provider)
+        if (c) reportUpstream429(c, currentAccount.provider, error.responseBody)
         consola.warn(
           `Provider request cannot fail over after 429: ${JSON.stringify({
             model,

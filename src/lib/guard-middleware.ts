@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono"
 
 import { isBlocked } from "~/lib/guard"
+import { getClientIp } from "~/lib/utils"
 
 /**
  * Guard middleware — rejects requests from blacklisted IPs or User-Agents.
@@ -13,7 +14,7 @@ export async function guardMiddleware(c: Context, next: Next) {
     return
   }
 
-  const ip = extractGuardIp(c)
+  const ip = getClientIp(c)
   const ua = c.req.header("user-agent") || undefined
 
   // Skip guard for localhost requests
@@ -37,30 +38,4 @@ export async function guardMiddleware(c: Context, next: Next) {
   }
 
   await next()
-}
-
-function extractGuardIp(c: Context): string | undefined {
-  const cfIp = c.req.header("cf-connecting-ip")
-  if (cfIp && isValidIp(cfIp)) return cfIp
-
-  const forwarded = c.req.header("x-forwarded-for")
-  if (forwarded) {
-    const firstIp = forwarded.split(",")[0]?.trim()
-    if (isValidIp(firstIp)) return firstIp
-  }
-
-  const realIp = c.req.header("x-real-ip")
-  if (realIp && isValidIp(realIp)) return realIp
-
-  return undefined
-}
-
-// Simple IP validation (IPv4 and IPv6)
-function isValidIp(ip: string): boolean {
-  if (!ip) return false
-  // Basic IPv4 regex
-  const ipv4Regex = /^(?:\d{1,3}\.){3}\d{1,3}$/
-  // Basic IPv6 regex (simplified)
-  const ipv6Regex = /^(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}$/i
-  return ipv4Regex.test(ip) || ipv6Regex.test(ip)
 }

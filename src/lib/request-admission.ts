@@ -9,7 +9,6 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
-import type { User } from "~/lib/users"
 
 import { getAccountForModel } from "~/lib/account-selection"
 import { parseModelReference } from "~/lib/accounts"
@@ -67,7 +66,7 @@ export async function prepareRequestAdmission(
   c: Context,
   options: PrepareRequestAdmissionOptions,
 ): Promise<RequestAdmission> {
-  c.set("model" as never, options.model)
+  c.set("model", options.model)
   enforceUserModelAccess(c, options.model)
 
   try {
@@ -100,7 +99,7 @@ export async function prepareRequestAdmission(
     c,
     options.inferredInitiator ?? "user",
   )
-  c.set("guardInitiator" as never, initiator)
+  c.set("guardInitiator", initiator)
 
   // 1) 尝试 Provider Connection 路径
   const connectionResult = tryResolveConnection(options.model, options.endpoint)
@@ -200,7 +199,7 @@ function tryResolveConnection(
 }
 
 function enforceUserModelAccess(c: Context, model: string): void {
-  const user = c.get("user" as never) as User | undefined
+  const user = c.get("user")
   if (!user || isUserAllowedModel(user, model)) {
     return
   }

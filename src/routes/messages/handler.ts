@@ -2,17 +2,20 @@
 import type { Context } from "hono"
 
 import consola from "consola"
-import { streamSSE } from "hono/streaming"
 
 import type { Account } from "~/lib/accounts"
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
+import {
+  buildAnthropicContextWindowError,
+  buildAnthropicUpstreamError,
+} from "~/lib/error-builder"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
-  createSsePingInterval,
   forwardSseEvent,
+  handleSseStream,
   type SSEStream,
   writeSseEvent,
 } from "~/lib/sse"
@@ -98,7 +101,12 @@ export async function handleCompletion(c: Context) {
   })
 
   const anthropicVersion = c.req.header("anthropic-version")
-  consola.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
+  if (consola.level >= 4) {
+    consola.debug(
+      "Anthropic request payload:",
+      JSON.stringify(anthropicPayload),
+    )
+  }
 
   // Provider Connection 路径
   if (admission.kind === "connection") {
@@ -175,8 +183,8 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
       c,
     })
 
-    c.set("accountId" as never, result.accountId)
-    c.set("model" as never, anthropicPayload.model)
+    c.set("accountId", result.accountId)
+    c.set("model", anthropicPayload.model)
 
     if (isDirectAnthropicResponse(result.response)) {
       const elapsed = Date.now() - nonStreamStart
@@ -187,20 +195,19 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     }
   }
 
-  return streamSSE(c, async (stream) => {
-    const pingInterval = createSsePingInterval(stream)
+  return handleSseStream(c, async (stream, sseSignal) => {
     const streamStartTs = Date.now()
     try {
       const result = await createMessages(anthropicPayload, {
         account,
-        signal,
+        signal: sseSignal,
         initiatorOverride: initiator,
         forwardedHeaders: { anthropicBeta, anthropicVersion },
         c,
       })
 
-      c.set("accountId" as never, result.accountId)
-      c.set("model" as never, anthropicPayload.model)
+      c.set("accountId", result.accountId)
+      c.set("model", anthropicPayload.model)
 
       if (isDirectAnthropicResponse(result.response)) {
         const elapsed = Date.now() - streamStartTs
@@ -215,7 +222,7 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
       await handleDirectStreamingResponse({
         stream,
         response: result.response,
-        clientSignal: signal,
+        clientSignal: sseSignal,
         c,
         accountId: result.accountId,
         skipPing: true,
@@ -245,8 +252,6 @@ async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         return
       }
       throw error
-    } finally {
-      clearInterval(pingInterval)
     }
   })
 }
@@ -287,8 +292,8 @@ async function handleAnthropicViaConnection(
       signal,
       forwarded,
     )
-    c.set("accountId" as never, result.accountId)
-    c.set("model" as never, anthropicPayload.model)
+    c.set("accountId", result.accountId)
+    c.set("model", anthropicPayload.model)
     if (!isAsyncIterable(result.response)) {
       if (
         isDirectAnthropicResponse(
@@ -305,8 +310,7 @@ async function handleAnthropicViaConnection(
     }
   }
 
-  return streamSSE(c, async (stream) => {
-    const pingInterval = createSsePingInterval(stream)
+  return handleSseStream(c, async (stream, sseSignal) => {
     let lastUsage:
       | {
           input_tokens?: number
@@ -326,12 +330,12 @@ async function handleAnthropicViaConnection(
           stream?: boolean
         },
         admission,
-        signal,
+        sseSignal,
         forwarded,
       )
       resultAccountId = result.accountId
-      c.set("accountId" as never, result.accountId)
-      c.set("model" as never, anthropicPayload.model)
+      c.set("accountId", result.accountId)
+      c.set("model", anthropicPayload.model)
       if (!isAsyncIterable(result.response)) {
         if (
           isDirectAnthropicResponse(
@@ -373,7 +377,6 @@ async function handleAnthropicViaConnection(
       }
       throw error
     } finally {
-      clearInterval(pingInterval)
       if (resultAccountId) {
         recordDirectStreamingUsage(
           c,
@@ -406,10 +409,12 @@ interface HandleCopilotApiOpts {
 async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   const { c, anthropicPayload, signal, admission } = opts
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  consola.debug(
-    "Translated OpenAI request payload:",
-    JSON.stringify(openAIPayload),
-  )
+  if (consola.level >= 4) {
+    consola.debug(
+      "Translated OpenAI request payload:",
+      JSON.stringify(openAIPayload),
+    )
+  }
 
   logDuplicateToolCallIds(openAIPayload.messages)
 
@@ -439,8 +444,8 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       throw error
     }
 
-    c.set("accountId" as never, result.accountId)
-    c.set("model" as never, openAIPayload.model)
+    c.set("accountId", result.accountId)
+    c.set("model", openAIPayload.model)
 
     if (isNonStreaming(result)) {
       const elapsed = Date.now() - nonStreamStart
@@ -455,70 +460,60 @@ async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     }
   }
 
-  return streamSSE(c, async (stream) => {
-    const pingInterval = createSsePingInterval(stream)
+  return handleSseStream(c, async (stream, sseSignal) => {
     const streamStartTs = Date.now()
+    let result
     try {
-      let result
-      try {
-        result = await dispatchChatCompletions(
-          openAIPayload,
-          admission,
-          signal,
-          c,
-        )
-      } catch (error) {
-        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-        if (knownError) {
-          const errPayload = {
-            type: "error",
-            error: {
-              type: knownError.type,
-              message: knownError.message,
-            },
-          }
-          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
-          return
+      result = await dispatchChatCompletions(
+        openAIPayload,
+        admission,
+        sseSignal,
+        c,
+      )
+    } catch (error) {
+      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+      if (knownError) {
+        const errPayload = {
+          type: "error",
+          error: {
+            type: knownError.type,
+            message: knownError.message,
+          },
         }
-        if (error instanceof HTTPError && isContextWindowError(error)) {
-          consola.warn(
-            "Context window exceeded (estimated input tokens: %d)",
-            estimatedInputTokens,
-          )
-          const errPayload = buildAnthropicContextWindowError(error)
-          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
-          return
-        }
-        throw error
-      }
-
-      c.set("accountId" as never, result.accountId)
-      c.set("model" as never, openAIPayload.model)
-
-      if (isNonStreaming(result)) {
-        const elapsed = Date.now() - streamStartTs
-        handleNonStreamingResponse(
-          c,
-          result.accountId,
-          result.response,
-          elapsed,
-        )
+        await writeSseEvent(stream, JSON.stringify(errPayload), "error")
         return
       }
-
-      await handleStreamingResponse({
-        stream,
-        response: result.response,
-        clientSignal: signal,
-        c,
-        accountId: result.accountId,
-        estimatedInputTokens,
-        skipPing: true,
-        streamStartTs,
-      })
-    } finally {
-      clearInterval(pingInterval)
+      if (error instanceof HTTPError && isContextWindowError(error)) {
+        consola.warn(
+          "Context window exceeded (estimated input tokens: %d)",
+          estimatedInputTokens,
+        )
+        const errPayload = buildAnthropicContextWindowError(error)
+        await writeSseEvent(stream, JSON.stringify(errPayload), "error")
+        return
+      }
+      throw error
     }
+
+    c.set("accountId", result.accountId)
+    c.set("model", openAIPayload.model)
+
+    if (isNonStreaming(result)) {
+      const elapsed = Date.now() - streamStartTs
+      handleNonStreamingResponse(c, result.accountId, result.response, elapsed)
+      return
+    }
+
+    await handleStreamingResponse({
+      stream,
+      response: result.response,
+      clientSignal: sseSignal,
+      c,
+      accountId: result.accountId,
+      estimatedInputTokens,
+      skipPing: true,
+      streamStartTs,
+    })
   })
 }
 
@@ -556,18 +551,22 @@ function handleNonStreamingResponse(
   response: ChatCompletionResponse,
   elapsedMs?: number,
 ) {
-  consola.debug(
-    "Non-streaming response from Copilot:",
-    JSON.stringify(response).slice(-400),
-  )
+  if (consola.level >= 4) {
+    consola.debug(
+      "Non-streaming response from Copilot:",
+      JSON.stringify(response).slice(-400),
+    )
+  }
   const anthropicResponse = translateToAnthropic(response)
-  consola.debug(
-    "Translated Anthropic response:",
-    JSON.stringify(anthropicResponse),
-  )
+  if (consola.level >= 4) {
+    consola.debug(
+      "Translated Anthropic response:",
+      JSON.stringify(anthropicResponse),
+    )
+  }
 
   const usage = anthropicResponse.usage
-  const model = c.get("model" as never) as string | undefined
+  const model = c.get("model")
 
   if (model) {
     const cacheReadTokens = usage.cache_read_input_tokens ?? 0
@@ -604,7 +603,6 @@ async function handleStreamingResponse({
   c,
   accountId,
   estimatedInputTokens = 0,
-  skipPing = false,
   streamStartTs,
 }: HandleStreamingResponseOptions): Promise<void> {
   const streamState = createInitialStreamState()
@@ -612,8 +610,6 @@ async function handleStreamingResponse({
   let lastUsage: UsageInfo | undefined
   let firstChunkTs: number | undefined
   const streamStart = streamStartTs ?? Date.now()
-
-  const pingInterval = skipPing ? undefined : createSsePingInterval(stream)
 
   try {
     for await (const rawEvent of response) {
@@ -629,7 +625,9 @@ async function handleStreamingResponse({
       }
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+      if (consola.level >= 4) {
+        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+      }
       lastUsage = chunk.usage ?? lastUsage
       await writeAnthropicEvents(
         stream,
@@ -655,7 +653,6 @@ async function handleStreamingResponse({
     }
     throw error
   } finally {
-    clearInterval(pingInterval)
     if (c) {
       recordStreamingUsage(
         c,
@@ -677,7 +674,6 @@ async function handleDirectStreamingResponse({
   clientSignal,
   c,
   accountId,
-  skipPing = false,
   streamStartTs,
 }: HandleStreamingResponseOptions): Promise<void> {
   let lastUsage:
@@ -688,8 +684,6 @@ async function handleDirectStreamingResponse({
         cache_read_input_tokens?: number
       }
     | undefined
-
-  const pingInterval = skipPing ? undefined : createSsePingInterval(stream)
 
   let receivedMessageStop = false
   let firstChunkTs: number | undefined
@@ -705,15 +699,12 @@ async function handleDirectStreamingResponse({
         firstChunkTs = Date.now()
       }
 
-      lastUsage = updateLastUsage(rawEvent.data, lastUsage)
-
-      try {
-        const parsed = JSON.parse(rawEvent.data) as { type?: string }
-        if (parsed.type === "message_stop") {
-          receivedMessageStop = true
-        }
-      } catch {
-        // ignore parse errors for tracking purposes
+      const dataStr = rawEvent.data
+      if (dataStr.includes('"usage"')) {
+        lastUsage = updateLastUsage(dataStr, lastUsage)
+      }
+      if (dataStr.includes('"message_stop"')) {
+        receivedMessageStop = receivedMessageStop || isMessageStopChunk(dataStr)
       }
 
       await forwardSseEvent(stream, rawEvent)
@@ -743,7 +734,6 @@ async function handleDirectStreamingResponse({
     }
     throw error
   } finally {
-    clearInterval(pingInterval)
     if (c) {
       recordDirectStreamingUsage(
         c,
@@ -756,6 +746,15 @@ async function handleDirectStreamingResponse({
         ),
       )
     }
+  }
+}
+
+function isMessageStopChunk(dataStr: string): boolean {
+  try {
+    const parsed = JSON.parse(dataStr) as { type?: string }
+    return parsed.type === "message_stop"
+  } catch {
+    return false
   }
 }
 
@@ -777,6 +776,9 @@ function updateLastUsage(
       cache_read_input_tokens?: number
     }
   | undefined {
+  if (!eventData.includes('"usage"')) {
+    return lastUsage
+  }
   try {
     const parsed = JSON.parse(eventData) as {
       type?: string
@@ -815,7 +817,9 @@ async function writeAnthropicEvents(
   events: Array<ReturnType<typeof translateChunkToAnthropicEvents>[number]>,
 ): Promise<void> {
   for (const event of events) {
-    consola.debug("Translated Anthropic event:", JSON.stringify(event))
+    if (consola.level >= 4) {
+      consola.debug("Translated Anthropic event:", JSON.stringify(event))
+    }
     await writeSseEvent(stream, JSON.stringify(event), event.type)
   }
 }
@@ -860,7 +864,7 @@ function recordStreamingUsage(
   lastUsage: UsageInfo | undefined,
   timing?: { ttftMs: number; tps: number },
 ): void {
-  const model = c.get("model" as never) as string | undefined
+  const model = c.get("model")
   if (!model || !lastUsage) {
     return
   }
@@ -896,7 +900,7 @@ function recordDirectStreamingUsage(
     | undefined,
   timing?: { ttftMs: number; tps: number },
 ): void {
-  const model = c.get("model" as never) as string | undefined
+  const model = c.get("model")
   if (!model || !lastUsage) {
     return
   }
@@ -964,69 +968,6 @@ function isContextWindowError(error: HTTPError): boolean {
   )
 }
 
-/** Build a proper Anthropic-format error response for context-window violations. */
-function buildAnthropicContextWindowError(error: HTTPError): {
-  type: string
-  error: { type: string; message: string }
-} {
-  const defaultMessage =
-    "Your input exceeds the context window of this model. Please adjust your input and try again."
-  let message = defaultMessage
-  try {
-    const parsed = JSON.parse(error.responseBody) as {
-      error?: { message?: string }
-    }
-    if (parsed.error?.message) {
-      message = parsed.error.message
-    }
-    // Unwrap double-encoded JSON (upstream sometimes wraps it twice)
-    if (message.startsWith("{")) {
-      const inner = JSON.parse(message) as { error?: { message?: string } }
-      message = inner.error?.message || defaultMessage
-    }
-  } catch {
-    // Keep default message
-  }
-  return {
-    type: "error",
-    error: {
-      type: "invalid_request_error",
-      message,
-    },
-  }
-}
-
-/** Build a generic Anthropic-format error response from any upstream HTTPError. */
-function buildAnthropicUpstreamError(error: HTTPError): {
-  type: string
-  error: { type: string; message: string }
-} {
-  let message = `Upstream API error (${error.response.status}): ${error.message}`
-  try {
-    const parsed = JSON.parse(error.responseBody) as {
-      error?: { message?: string }
-      message?: string
-    }
-    const raw = parsed.error?.message ?? parsed.message
-    if (raw) {
-      message =
-        raw.startsWith("{") ?
-          ((JSON.parse(raw) as { error?: { message?: string } }).error?.message
-          ?? raw)
-        : raw
-    }
-  } catch {
-    // Keep default message
-  }
-  return {
-    type: "error",
-    error: {
-      type: "api_error",
-      message,
-    },
-  }
-}
-
 const isNonStreaming = (
   result:
     | { accountId: string; response: CopilotStream }
@@ -1047,7 +988,7 @@ function recordAnthropicUsage(
   tps?: number,
 ): void {
   const usage = response.usage
-  const model = c.get("model" as never) as string | undefined
+  const model = c.get("model")
   if (!model) {
     return
   }

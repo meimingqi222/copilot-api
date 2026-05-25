@@ -74,9 +74,9 @@ export async function requireApiKey(c: Context, next: Next) {
       )
     }
     // Store user info in context for logging
-    c.set("userId" as never, user.id)
-    c.set("username" as never, user.username)
-    c.set("user" as never, user)
+    c.set("userId", user.id)
+    c.set("username", user.username)
+    c.set("user", user)
     await next()
     return
   }
@@ -173,11 +173,21 @@ export function setAdminSession(c: Context) {
   state.adminSessionExpiresAt =
     Date.now() + ADMIN_SESSION_MAX_AGE_SECONDS * 1000
 
-  const isHttps = c.req.url.startsWith("https://")
+  const isHttps =
+    c.req.url.startsWith("https://")
+    || c.req.header("x-forwarded-proto") === "https"
+  const cookieSecureEnv = process.env.COOKIE_SECURE
+  let secure = isHttps
+  if (cookieSecureEnv === "true" || cookieSecureEnv === "1") {
+    secure = true
+  } else if (cookieSecureEnv === "false" || cookieSecureEnv === "0") {
+    secure = false
+  }
+
   setCookie(c, ADMIN_SESSION_COOKIE, sessionToken, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: isHttps,
+    secure,
     path: "/",
     maxAge: ADMIN_SESSION_MAX_AGE_SECONDS,
   })
@@ -260,9 +270,9 @@ function extractApiKey(c: Context): string | null {
 function extractBearerToken(authHeader: string | undefined): string | null {
   if (!authHeader) return null
 
-  const [scheme, token] = authHeader.split(" ")
-  if (scheme.toLowerCase() !== "bearer") return null
-  if (!token) return null
+  const trimmed = authHeader.trim()
+  const match = trimmed.match(/^Bearer\s+(\S+)$/i)
+  if (!match) return null
 
-  return token
+  return match[1]
 }

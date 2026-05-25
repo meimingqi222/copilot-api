@@ -28,6 +28,7 @@ import {
   setMimoPh,
   setMimoProxy,
   setMimoUserId,
+  addAccount,
 } from "~/lib/accounts"
 import {
   GITHUB_BASE_URL,
@@ -329,7 +330,7 @@ accountApiRoutes.post("/", async (c) => {
       codebuffAuthToken: authToken,
     }
 
-    state.accounts.push(account)
+    addAccount(account)
     await refreshModelsForAccount(account)
     await saveAccounts()
 
@@ -366,7 +367,7 @@ accountApiRoutes.post("/", async (c) => {
       windsurfApiKey: apiKey,
     }
 
-    state.accounts.push(account)
+    addAccount(account)
     await refreshModelsForAccount(account)
     await saveAccounts()
 
@@ -417,7 +418,7 @@ accountApiRoutes.post("/", async (c) => {
       proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
     }
 
-    state.accounts.push(account)
+    addAccount(account)
     await refreshModelsForAccount(account)
     await saveAccounts()
 
@@ -565,7 +566,7 @@ async function pollAccountFlow(flowId: string): Promise<{
     createdAt: Date.now(),
   }
 
-  state.accounts.push(account)
+  addAccount(account)
   await saveAccounts()
 
   // Refresh Copilot token and quota in background
@@ -853,7 +854,7 @@ accountApiRoutes.post("/import", async (c) => {
         createdAt: raw.createdAt ?? Date.now(),
       }
       setGitHubToken(account, githubToken)
-      state.accounts.push(account)
+      addAccount(account)
       imported.push(label)
 
       // Refresh token in background
@@ -889,7 +890,7 @@ accountApiRoutes.post("/import", async (c) => {
         quotaState: "unknown",
         createdAt: raw.createdAt ?? Date.now(),
       }
-      state.accounts.push(account)
+      addAccount(account)
       imported.push(label)
       refreshModelsForAccount(account).catch((err: unknown) => {
         consola.warn(`Import: failed to init account "${label}":`, err)
@@ -920,7 +921,7 @@ accountApiRoutes.post("/import", async (c) => {
         quotaState: "unknown",
         createdAt: raw.createdAt ?? Date.now(),
       }
-      state.accounts.push(windsurfAccount)
+      addAccount(windsurfAccount)
       imported.push(label)
       refreshModelsForAccount(windsurfAccount).catch((err: unknown) => {
         consola.warn(`Import: failed to init account "${label}":`, err)
@@ -970,7 +971,7 @@ accountApiRoutes.post("/import", async (c) => {
         quotaState: "unknown",
         createdAt: raw.createdAt ?? Date.now(),
       }
-      state.accounts.push(mimoAccount)
+      addAccount(mimoAccount)
       imported.push(label)
       refreshModelsForAccount(mimoAccount).catch((err: unknown) => {
         consola.warn(`Import: failed to init account "${label}":`, err)

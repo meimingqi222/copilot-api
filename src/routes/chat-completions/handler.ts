@@ -1,7 +1,6 @@
 import type { Context } from "hono"
 
 import consola from "consola"
-import { streamSSE } from "hono/streaming"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 
@@ -9,12 +8,12 @@ import { canonicalModelId } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
-import { createSsePingInterval, writeSseEvent } from "~/lib/sse"
+import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
-import { isAbortError, isChatCompletionResponse, isNullish } from "~/lib/utils"
+import { isChatCompletionResponse, isNullish } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
@@ -52,7 +51,9 @@ interface StreamUsageInput {
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   let payload = await c.req.json<ChatCompletionsPayload>()
-  consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
+  if (consola.level >= 4) {
+    consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
+  }
 
   // Normalize model name (e.g., "z-ai/glm5" -> "z-ai/glm-5.1")
   const normalizedModel = payload.model ? canonicalModelId(payload.model) : ""
@@ -92,8 +93,8 @@ export async function handleCompletion(c: Context) {
     const nonStreamStart = Date.now()
     const result = await dispatchChatCompletions(payload, admission, signal, c)
 
-    c.set("accountId" as never, result.accountId)
-    c.set("model" as never, payload.model)
+    c.set("accountId", result.accountId)
+    c.set("model", payload.model)
 
     if (isChatCompletionResponse(result.response)) {
       const elapsed = Date.now() - nonStreamStart
@@ -157,11 +158,13 @@ function handleNonStreamingResponse(
   estimatedInputTokens: number,
   elapsedMs?: number,
 ): void {
-  consola.debug("Non-streaming response:", JSON.stringify(response))
+  if (consola.level >= 4) {
+    consola.debug("Non-streaming response:", JSON.stringify(response))
+  }
   const normalized = normalizeResponse(response)
   const usage = normalized.usage
-  const model = c.get("model" as never) as string | undefined
-  const accountId = c.get("accountId" as never) as string | undefined
+  const model = c.get("model")
+  const accountId = c.get("accountId")
 
   if (usage && model && accountId) {
     const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
@@ -205,38 +208,65 @@ function handleStreamingResponse(
   estimatedInputTokens: number,
 ) {
   consola.debug("Streaming response")
-  const model = c.get("model" as never) as string | undefined
-  const accountId = c.get("accountId" as never) as string | undefined
+  const model = c.get("model")
+  const accountId = c.get("accountId")
 
-  return streamSSE(c, async (stream) => {
-    const pingInterval = createSsePingInterval(stream)
-    let lastUsage: UsageInfo | undefined
-    let usageRecorded = false
-    let firstChunkTs: number | undefined
-    const streamStart = Date.now()
-    let streamFailed = false
+  let lastUsage: UsageInfo | undefined
+  let usageRecorded = false
+  let firstChunkTs: number | undefined
+  const streamStart = Date.now()
+  let streamFailed = false
 
-    try {
-      for await (const rawEvent of response) {
-        if (rawEvent.data === "[DONE]") {
-          break
+  return handleSseStream(
+    c,
+    async (stream) => {
+      try {
+        for await (const rawEvent of response) {
+          if (rawEvent.data === "[DONE]") {
+            break
+          }
+          if (!rawEvent.data) {
+            continue
+          }
+
+          if (!firstChunkTs) {
+            firstChunkTs = Date.now()
+          }
+
+          const dataStr = rawEvent.data
+          const hasUsage = /"usage"\s*:/.test(dataStr)
+          const chunk = JSON.parse(dataStr) as ChatCompletionChunk
+          if (consola.level >= 4) {
+            consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+          }
+          if (hasUsage) {
+            lastUsage = chunk.usage ?? lastUsage
+          }
+          await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
         }
-        if (!rawEvent.data) {
-          continue
+      } catch (error) {
+        streamFailed = true
+        throw error
+      } finally {
+        if (!usageRecorded) {
+          usageRecorded = recordStreamingUsage({
+            c,
+            accountId,
+            model,
+            lastUsage,
+            estimatedInputTokens,
+            onlyWhenUsageExists: streamFailed,
+            timing: computeStreamingTiming(
+              streamStart,
+              firstChunkTs,
+              lastUsage?.completion_tokens ?? 0,
+            ),
+          })
         }
-
-        if (!firstChunkTs) {
-          firstChunkTs = Date.now()
-        }
-
-        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
-        lastUsage = chunk.usage ?? lastUsage
-        await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
       }
-    } catch (error) {
-      if (isAbortError(error)) {
-        consola.debug("Stream aborted (client disconnected)")
+    },
+    {
+      onAbort: () => {
         usageRecorded = recordStreamingUsage({
           c,
           accountId,
@@ -250,29 +280,9 @@ function handleStreamingResponse(
             lastUsage?.completion_tokens ?? 0,
           ),
         })
-        return
-      }
-      streamFailed = true
-      throw error
-    } finally {
-      clearInterval(pingInterval)
-      if (!usageRecorded) {
-        recordStreamingUsage({
-          c,
-          accountId,
-          model,
-          lastUsage,
-          estimatedInputTokens,
-          onlyWhenUsageExists: streamFailed,
-          timing: computeStreamingTiming(
-            streamStart,
-            firstChunkTs,
-            lastUsage?.completion_tokens ?? 0,
-          ),
-        })
-      }
-    }
-  })
+      },
+    },
+  )
 }
 
 function recordStreamingUsage(input: StreamUsageInput): boolean {
@@ -342,70 +352,120 @@ function handleStreamingCompletion(
   c: Context,
   options: StreamingCompletionOptions,
 ) {
-  return streamSSE(c, async (stream) => {
-    const { payload, admission, signal, estimatedInputTokens } = options
-    const pingInterval = createSsePingInterval(stream)
-    let lastUsage: UsageInfo | undefined
-    let usageRecorded = false
-    let accountId: string | undefined
-    const model = payload.model
-    let firstChunkTs: number | undefined
-    let streamStart = 0
-    let streamFailed = false
+  let lastUsage: UsageInfo | undefined
+  let usageRecorded = false
+  let accountId: string | undefined
+  let firstChunkTs: number | undefined
+  let streamStart = 0
+  let streamFailed = false
 
-    try {
-      const dispatchStart = Date.now()
-      const result = await dispatchChatCompletions(
-        payload,
-        admission,
-        signal,
-        c,
-      )
-      accountId = result.accountId
+  return handleSseStream(
+    c,
+    async (stream) => {
+      const { payload, admission, signal, estimatedInputTokens } = options
+      const model = payload.model
 
-      c.set("accountId" as never, accountId)
-      c.set("model" as never, model)
-
-      if (isChatCompletionResponse(result.response)) {
-        const elapsed = Date.now() - dispatchStart
-        handleNonStreamingResponse(
+      try {
+        const dispatchStart = Date.now()
+        const result = await dispatchChatCompletions(
+          payload,
+          admission,
+          signal,
           c,
-          result.response,
-          estimatedInputTokens,
-          elapsed,
         )
-        await writeSseEvent(stream, JSON.stringify(result.response))
-        usageRecorded = true
-        return
+        accountId = result.accountId
+
+        c.set("accountId", accountId)
+        c.set("model", model)
+
+        if (isChatCompletionResponse(result.response)) {
+          const elapsed = Date.now() - dispatchStart
+          handleNonStreamingResponse(
+            c,
+            result.response,
+            estimatedInputTokens,
+            elapsed,
+          )
+          await writeSseEvent(stream, JSON.stringify(result.response))
+          usageRecorded = true
+          return
+        }
+
+        streamStart = dispatchStart
+        for await (const rawEvent of result.response) {
+          if (rawEvent.data === "[DONE]") {
+            break
+          }
+          if (!rawEvent.data) {
+            continue
+          }
+
+          if (!firstChunkTs) {
+            firstChunkTs = Date.now()
+          }
+
+          const dataStr = rawEvent.data
+          const hasUsage = /"usage"\s*:/.test(dataStr)
+          const chunk = JSON.parse(dataStr) as ChatCompletionChunk
+          if (consola.level >= 4) {
+            consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+          }
+          if (hasUsage) {
+            lastUsage = chunk.usage ?? lastUsage
+          }
+          await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+        }
+      } catch (error) {
+        consola.error("Streaming error:", error)
+        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+        if (knownError?.status === 499) {
+          return
+        }
+        streamFailed = true
+        const errorMessage =
+          knownError?.message
+          ?? (error instanceof Error ? error.message : "Internal server error")
+        const errorType =
+          knownError?.type
+          ?? (error instanceof HTTPError && error.response.status === 429 ?
+            "rate_limit_error"
+          : "error")
+        await writeSseEvent(
+          stream,
+          JSON.stringify({
+            error: {
+              message: errorMessage,
+              type: errorType,
+            },
+          }),
+        )
+        throw error
+      } finally {
+        if (!usageRecorded) {
+          recordStreamingUsage({
+            c,
+            accountId,
+            model,
+            lastUsage,
+            estimatedInputTokens,
+            onlyWhenUsageExists: streamFailed,
+            timing: computeStreamingTiming(
+              streamStart,
+              firstChunkTs,
+              lastUsage?.completion_tokens ?? 0,
+            ),
+          })
+        }
       }
-
-      streamStart = dispatchStart
-      for await (const rawEvent of result.response) {
-        if (rawEvent.data === "[DONE]") {
-          break
-        }
-        if (!rawEvent.data) {
-          continue
-        }
-
-        if (!firstChunkTs) {
-          firstChunkTs = Date.now()
-        }
-
-        const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-        consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
-        lastUsage = chunk.usage ?? lastUsage
-        await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
-      }
-    } catch (error) {
-      if (isAbortError(error)) {
-        consola.debug("Stream aborted (client disconnected)")
+    },
+    {
+      onAbort: () => {
         usageRecorded = recordStreamingUsage({
           c,
           accountId,
-          model,
+          model: options.payload.model,
           lastUsage,
-          estimatedInputTokens,
+          estimatedInputTokens: options.estimatedInputTokens,
           onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
@@ -413,49 +473,7 @@ function handleStreamingCompletion(
             lastUsage?.completion_tokens ?? 0,
           ),
         })
-        return
-      }
-      consola.error("Streaming error:", error)
-      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-      if (knownError?.status === 499) {
-        return
-      }
-      streamFailed = true
-      const errorMessage =
-        knownError?.message
-        ?? (error instanceof Error ? error.message : "Internal server error")
-      const errorType =
-        knownError?.type
-        ?? (error instanceof HTTPError && error.response.status === 429 ?
-          "rate_limit_error"
-        : "error")
-      await writeSseEvent(
-        stream,
-        JSON.stringify({
-          error: {
-            message: errorMessage,
-            type: errorType,
-          },
-        }),
-      )
-      throw error
-    } finally {
-      clearInterval(pingInterval)
-      if (!usageRecorded) {
-        recordStreamingUsage({
-          c,
-          accountId,
-          model,
-          lastUsage,
-          estimatedInputTokens,
-          onlyWhenUsageExists: streamFailed,
-          timing: computeStreamingTiming(
-            streamStart,
-            firstChunkTs,
-            lastUsage?.completion_tokens ?? 0,
-          ),
-        })
-      }
-    }
-  })
+      },
+    },
+  )
 }
