@@ -20,6 +20,7 @@ import {
   type WindsurfAccount,
   getCodebuffAuthToken,
   getWindsurfApiKey,
+  addAccount,
 } from "./lib/accounts"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
@@ -375,7 +376,7 @@ function syncCodebuffDefaultAccount(): boolean {
         && getCodebuffAuthToken(account) === defaults.authToken,
     )
   ) {
-    state.accounts.push(createCodebuffDefaultAccount())
+    addAccount(createCodebuffDefaultAccount())
     changed = true
   }
 
@@ -461,7 +462,7 @@ function syncWindsurfDefaultAccount(): boolean {
         && getWindsurfApiKey(account) === defaults.apiKey,
     )
   ) {
-    state.accounts.push(createWindsurfDefaultAccount())
+    addAccount(createWindsurfDefaultAccount())
     changed = true
   }
 

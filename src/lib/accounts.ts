@@ -150,6 +150,10 @@ function defaultProvider(provider?: AccountProvider): AccountProvider {
   return provider ?? "copilot"
 }
 
+function getLegacyField(account: Account, key: string): unknown {
+  return (account as unknown as Record<string, unknown>)[key]
+}
+
 export function getAccountProvider(account: Account): AccountProvider {
   return defaultProvider(account.provider)
 }
@@ -158,7 +162,11 @@ export function getGitHubToken(account: Account): string | undefined {
   if (account.provider !== "copilot") {
     return undefined
   }
-  return account.credentials?.githubToken ?? account.githubToken
+  // Migration fallback: read the flat field from the object if it exists (e.g. legacy data)
+  return (
+    account.credentials?.githubToken
+    ?? (getLegacyField(account, "githubToken") as string | undefined)
+  )
 }
 
 export function setGitHubToken(
@@ -172,14 +180,16 @@ export function setGitHubToken(
     ...account.credentials,
     githubToken,
   }
-  account.githubToken = githubToken
 }
 
 export function getCopilotToken(account: Account): string | undefined {
   if (account.provider !== "copilot") {
     return undefined
   }
-  return account.runtimeState?.copilotToken ?? account.copilotToken
+  return (
+    account.runtimeState?.copilotToken
+    ?? (getLegacyField(account, "copilotToken") as string | undefined)
+  )
 }
 
 export function setCopilotToken(
@@ -193,14 +203,16 @@ export function setCopilotToken(
     ...account.runtimeState,
     copilotToken,
   }
-  account.copilotToken = copilotToken
 }
 
 export function getCopilotTokenExpiry(account: Account): number | undefined {
   if (account.provider !== "copilot") {
     return undefined
   }
-  return account.runtimeState?.copilotTokenExpiry ?? account.copilotTokenExpiry
+  return (
+    account.runtimeState?.copilotTokenExpiry
+    ?? (getLegacyField(account, "copilotTokenExpiry") as number | undefined)
+  )
 }
 
 export function setCopilotTokenExpiry(
@@ -214,14 +226,16 @@ export function setCopilotTokenExpiry(
     ...account.runtimeState,
     copilotTokenExpiry: expiry,
   }
-  account.copilotTokenExpiry = expiry
 }
 
 export function getCodebuffAuthToken(account: Account): string | undefined {
   if (account.provider !== "codebuff") {
     return undefined
   }
-  return account.credentials?.authToken ?? account.codebuffAuthToken
+  return (
+    account.credentials?.authToken
+    ?? (getLegacyField(account, "authToken") as string | undefined)
+  )
 }
 
 export function setCodebuffAuthToken(
@@ -235,14 +249,16 @@ export function setCodebuffAuthToken(
     ...account.credentials,
     authToken,
   }
-  account.codebuffAuthToken = authToken
 }
 
 export function getWindsurfApiKey(account: Account): string | undefined {
   if (account.provider !== "windsurf") {
     return undefined
   }
-  return account.credentials?.apiKey ?? account.windsurfApiKey
+  return (
+    account.credentials?.apiKey
+    ?? (getLegacyField(account, "apiKey") as string | undefined)
+  )
 }
 
 export function setWindsurfApiKey(
@@ -256,14 +272,16 @@ export function setWindsurfApiKey(
     ...account.credentials,
     apiKey,
   }
-  account.windsurfApiKey = apiKey
 }
 
 export function getWindsurfJwt(account: Account): string | undefined {
   if (account.provider !== "windsurf") {
     return undefined
   }
-  return account.runtimeState?.windsurfJwt
+  return (
+    account.runtimeState?.windsurfJwt
+    ?? (getLegacyField(account, "windsurfJwt") as string | undefined)
+  )
 }
 
 export function setWindsurfJwt(
@@ -339,7 +357,10 @@ export function getMimoServiceToken(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return account.credentials?.serviceToken ?? account.serviceToken
+  return (
+    account.credentials?.serviceToken
+    ?? (getLegacyField(account, "serviceToken") as string | undefined)
+  )
 }
 
 export function setMimoServiceToken(
@@ -353,14 +374,16 @@ export function setMimoServiceToken(
     ...account.credentials,
     serviceToken,
   }
-  account.serviceToken = serviceToken
 }
 
 export function getMimoPh(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return account.credentials?.xiaomichatbotPh ?? account.xiaomichatbotPh
+  return (
+    account.credentials?.xiaomichatbotPh
+    ?? (getLegacyField(account, "xiaomichatbotPh") as string | undefined)
+  )
 }
 
 export function setMimoPh(
@@ -374,14 +397,16 @@ export function setMimoPh(
     ...account.credentials,
     xiaomichatbotPh,
   }
-  account.xiaomichatbotPh = xiaomichatbotPh
 }
 
 export function getMimoUserId(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return account.settings?.userId ?? account.userId
+  return (
+    account.settings?.userId
+    ?? (getLegacyField(account, "userId") as string | undefined)
+  )
 }
 
 export function setMimoUserId(
@@ -395,14 +420,16 @@ export function setMimoUserId(
     ...account.settings,
     userId,
   }
-  account.userId = userId
 }
 
 export function getMimoProxy(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return account.settings?.proxy ?? account.proxy
+  return (
+    account.settings?.proxy
+    ?? (getLegacyField(account, "proxy") as string | undefined)
+  )
 }
 
 export function setMimoProxy(
@@ -416,7 +443,6 @@ export function setMimoProxy(
     ...account.settings,
     proxy,
   }
-  account.proxy = proxy
 }
 
 export function getMimoSettings(account: Account) {
@@ -464,4 +490,130 @@ export function parseModelReference(modelId: string): {
   return {
     nativeModelId: canonicalNativeModelId(trimmed),
   }
+}
+
+export function setupAccountPropertyProxies(account: Account): void {
+  switch (account.provider) {
+    case "copilot": {
+      Object.defineProperty(account, "githubToken", {
+        get() {
+          return account.credentials?.githubToken
+        },
+        set(v: string | undefined) {
+          if (!account.credentials) account.credentials = {}
+          account.credentials.githubToken = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      Object.defineProperty(account, "copilotToken", {
+        get() {
+          return account.runtimeState?.copilotToken
+        },
+        set(v: string | undefined) {
+          if (!account.runtimeState) account.runtimeState = {}
+          account.runtimeState.copilotToken = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      Object.defineProperty(account, "copilotTokenExpiry", {
+        get() {
+          return account.runtimeState?.copilotTokenExpiry
+        },
+        set(v: number | undefined) {
+          if (!account.runtimeState) account.runtimeState = {}
+          account.runtimeState.copilotTokenExpiry = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+
+      break
+    }
+    case "codebuff": {
+      Object.defineProperty(account, "codebuffAuthToken", {
+        get() {
+          return account.credentials?.authToken
+        },
+        set(v: string | undefined) {
+          if (!account.credentials) account.credentials = {}
+          account.credentials.authToken = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+
+      break
+    }
+    case "windsurf": {
+      Object.defineProperty(account, "windsurfApiKey", {
+        get() {
+          return account.credentials?.apiKey
+        },
+        set(v: string | undefined) {
+          if (!account.credentials) account.credentials = {}
+          account.credentials.apiKey = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+
+      break
+    }
+    case "mimo-aistudio": {
+      Object.defineProperty(account, "serviceToken", {
+        get() {
+          return account.credentials?.serviceToken
+        },
+        set(v: string | undefined) {
+          if (!account.credentials) account.credentials = {}
+          account.credentials.serviceToken = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      Object.defineProperty(account, "xiaomichatbotPh", {
+        get() {
+          return account.credentials?.xiaomichatbotPh
+        },
+        set(v: string | undefined) {
+          if (!account.credentials) account.credentials = {}
+          account.credentials.xiaomichatbotPh = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      Object.defineProperty(account, "userId", {
+        get() {
+          return account.settings?.userId
+        },
+        set(v: string | undefined) {
+          if (!account.settings) account.settings = {}
+          account.settings.userId = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+      Object.defineProperty(account, "proxy", {
+        get() {
+          return account.settings?.proxy
+        },
+        set(v: string | undefined) {
+          if (!account.settings) account.settings = {}
+          account.settings.proxy = v
+        },
+        configurable: true,
+        enumerable: true,
+      })
+
+      break
+    }
+    // No default
+  }
+}
+
+export function addAccount(account: Account): void {
+  setupAccountPropertyProxies(account)
+  state.accounts.push(account)
 }

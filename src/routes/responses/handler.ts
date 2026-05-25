@@ -8,7 +8,7 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
-import { HTTPError } from "~/lib/error"
+import { extractErrorMessage } from "~/lib/error-builder"
 import {
   prepareRequestAdmission,
   requireLegacyAdmission,
@@ -60,8 +60,8 @@ export async function handleResponses(c: Context) {
           c,
         })
         accountId = result.accountId
-        c.set("accountId" as never, result.accountId)
-        c.set("model" as never, payload.model)
+        c.set("accountId", result.accountId)
+        c.set("model", payload.model)
 
         if (isNonStreaming(result.response)) {
           const elapsed = Date.now() - streamStartTs
@@ -143,8 +143,8 @@ export async function handleResponses(c: Context) {
     account: admission.account,
     c,
   })
-  c.set("accountId" as never, result.accountId)
-  c.set("model" as never, payload.model)
+  c.set("accountId", result.accountId)
+  c.set("model", payload.model)
   if (!isNonStreaming(result.response)) {
     throw new Error("Expected non-streaming response for non-stream request")
   }
@@ -180,7 +180,7 @@ interface RecordResponsesUsageOpts {
 export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
   const { c, accountId, response, tps, streaming, ttftMs } = opts
   const usage = response.usage
-  const model = c.get("model" as never) as string | undefined
+  const model = c.get("model")
   if (!usage || !model) {
     return
   }
@@ -224,13 +224,7 @@ export function createResponsesErrorPayload(error: unknown): {
     }
   }
 
-  let message = "Internal server error"
-
-  if (error instanceof HTTPError) {
-    message = error.responseBody || error.message
-  } else if (error instanceof Error) {
-    message = error.message
-  }
+  const message = extractErrorMessage(error)
 
   return {
     type: "error",

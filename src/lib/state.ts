@@ -90,12 +90,48 @@ export const state: State = {
       clientName: "windsurf-next",
     },
   },
-  codebuffBaseUrl: "https://www.codebuff.com",
-  codebuffCliVersion: "0.0.33",
-  codebuffAgentId: "base",
-  codebuffModel: "z-ai/glm-5.1",
-  codebuffCostMode: "normal",
-  codebuffAllowFallbacks: true,
+  get codebuffBaseUrl() {
+    return this.providerDefaults.codebuff.baseUrl
+  },
+  set codebuffBaseUrl(v: string) {
+    this.providerDefaults.codebuff.baseUrl = v
+  },
+  get codebuffAuthToken() {
+    return this.providerDefaults.codebuff.authToken
+  },
+  set codebuffAuthToken(v: string | undefined) {
+    this.providerDefaults.codebuff.authToken = v
+  },
+  get codebuffCliVersion() {
+    return this.providerDefaults.codebuff.cliVersion
+  },
+  set codebuffCliVersion(v: string) {
+    this.providerDefaults.codebuff.cliVersion = v
+  },
+  get codebuffAgentId() {
+    return this.providerDefaults.codebuff.agentId
+  },
+  set codebuffAgentId(v: string) {
+    this.providerDefaults.codebuff.agentId = v
+  },
+  get codebuffModel() {
+    return this.providerDefaults.codebuff.model
+  },
+  set codebuffModel(v: string) {
+    this.providerDefaults.codebuff.model = v
+  },
+  get codebuffCostMode() {
+    return this.providerDefaults.codebuff.costMode
+  },
+  set codebuffCostMode(v: string) {
+    this.providerDefaults.codebuff.costMode = v
+  },
+  get codebuffAllowFallbacks() {
+    return this.providerDefaults.codebuff.allowFallbacks
+  },
+  set codebuffAllowFallbacks(v: boolean) {
+    this.providerDefaults.codebuff.allowFallbacks = v
+  },
   manualApprove: false,
   showToken: false,
 }

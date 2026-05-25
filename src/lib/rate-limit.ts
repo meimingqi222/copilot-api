@@ -1,5 +1,7 @@
 import consola from "consola"
 
+import { state as globalState } from "~/lib/state"
+
 import { sleep } from "./utils"
 
 const DEFAULT_INTERVAL_MS = 250
@@ -157,20 +159,36 @@ export function resetAdaptiveRateLimiterForTest() {
 /**
  * Get the remaining cooldown time for an account in seconds.
  * Returns 0 if the account is not in cooldown.
+ *
+ * NOTE (Side Effect): If the memory limiter state does not have an active cooldown
+ * but the account object has a valid persisted `cooldownUntil` timestamp, this function
+ * will automatically sync the account's cooldown state into the memory limiter. This is
+ * necessary to restore the cooldown states correctly across application restarts.
  */
 export function getRemainingCooldownSeconds(accountId: string): number {
-  const state = accountLimiters.get(accountId)
-  if (!state) return 0
+  const limiterState = getAccountState(accountId)
 
-  const remaining = state.cooldownUntilMs - Date.now()
+  if (limiterState.cooldownUntilMs <= Date.now()) {
+    const account = globalState.accounts.find((a) => a.id === accountId)
+    if (
+      account
+      && typeof account.cooldownUntil === "number"
+      && account.cooldownUntil > Date.now()
+    ) {
+      // Sync persisted cooldown from account object to in-memory rate limiter state
+      limiterState.cooldownUntilMs = account.cooldownUntil
+    }
+  }
+
+  const remaining = limiterState.cooldownUntilMs - Date.now()
   return remaining > 0 ? Math.ceil(remaining / 1000) : 0
 }
 
 export function getAccountRateLimitSnapshot(
   accountId: string,
 ): Record<string, number | boolean> {
-  const state = accountLimiters.get(accountId)
-  if (!state) {
+  const limiterState = accountLimiters.get(accountId)
+  if (!limiterState) {
     return {
       hasState: false,
       limiterQueueSize: 0,
@@ -183,15 +201,15 @@ export function getAccountRateLimitSnapshot(
   const now = Date.now()
   return {
     hasState: true,
-    limiterQueueSize: state.limiterQueueSize,
+    limiterQueueSize: limiterState.limiterQueueSize,
     cooldownRemainingSeconds: Math.max(
       0,
-      Math.ceil((state.cooldownUntilMs - now) / 1000),
+      Math.ceil((limiterState.cooldownUntilMs - now) / 1000),
     ),
-    consecutive429Count: state.consecutive429Count,
+    consecutive429Count: limiterState.consecutive429Count,
     theoreticalArrivalDelayMs: Math.max(
       0,
-      Math.ceil(state.theoreticalArrivalMs - now),
+      Math.ceil(limiterState.theoreticalArrivalMs - now),
     ),
   }
 }

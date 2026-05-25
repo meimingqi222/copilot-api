@@ -3,6 +3,7 @@ import consola from "consola"
 import type { Account, AccountQuotaState } from "~/lib/accounts"
 
 import { buildAccountDiagnosticSnapshot } from "~/lib/account-diagnostics"
+import { saveAccounts } from "~/lib/account-store"
 import {
   getRemainingCooldownSeconds,
   reportUpstreamRateLimit,
@@ -108,6 +109,9 @@ export async function markAccountRateLimited(
     remainingCooldown > 0 ? Date.now() + remainingCooldown * 1000 : undefined
   account.lastRateLimitReason = "upstream_429"
   syncLegacyExhaustedState(account)
+  saveAccounts().catch((err: unknown) => {
+    consola.error("Failed to auto-save accounts after rate limit:", err)
+  })
 
   const cooldownInfo =
     remainingCooldown > 0 ? ` (cooldown: ${remainingCooldown}s remaining)` : ""
@@ -124,6 +128,9 @@ export async function markAccountRateLimitRecovered(id: string): Promise<void> {
   if (!account) return
   refreshAccountRuntimeAvailability(account)
   syncLegacyExhaustedState(account)
+  saveAccounts().catch((err: unknown) => {
+    consola.error("Failed to auto-save accounts after recovery:", err)
+  })
 }
 
 export function getMinimumCooldownSeconds(accounts: Array<Account>): number {

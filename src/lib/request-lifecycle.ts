@@ -109,12 +109,10 @@ export function respondToKnownRouteError(
       type: details.type,
       message: details.message,
       retryAfterSeconds: details.retryAfterSeconds,
-      model: c.get("model" as never) as string | undefined,
-      accountId: c.get("accountId" as never) as string | undefined,
-      principal: c.get("protectedRouteGuardPrincipal" as never) as
-        | string
-        | undefined,
-      risk: c.get("protectedRouteGuardRisk" as never) as string | undefined,
+      model: c.get("model"),
+      accountId: c.get("accountId"),
+      principal: c.get("protectedRouteGuardPrincipal"),
+      risk: c.get("protectedRouteGuardRisk"),
     })}`,
   )
 

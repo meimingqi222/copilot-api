@@ -179,6 +179,7 @@ export const createMessages = async (
   // Strip only reasoning_effort; Anthropic-native fields such as thinking and
   // output_config must continue to pass through unchanged.
   const copilotPayload = translateToCopilotMessages(payload)
+  const requestBody = JSON.stringify(copilotPayload)
 
   const doRequest = async (requestAccount: typeof account) => {
     const headers: Record<string, string> = {
@@ -200,7 +201,7 @@ export const createMessages = async (
     const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
       method: "POST",
       headers,
-      body: JSON.stringify(copilotPayload),
+      body: requestBody,
       signal,
     })
 

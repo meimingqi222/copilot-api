@@ -1,3 +1,10 @@
+import type { Context } from "hono"
+
+import consola from "consola"
+import { streamSSE } from "hono/streaming"
+
+import { isAbortError } from "~/lib/utils"
+
 export interface SSEStream {
   writeSSE(message: { event?: string; data: string }): Promise<void>
   write?(input: string | Uint8Array): Promise<unknown>
@@ -52,4 +59,29 @@ export async function forwardSseEvent(
   }
 
   await writeSseEvent(stream, event.data, event.event)
+}
+
+export function handleSseStream(
+  c: Context,
+  run: (stream: SSEStream, signal: AbortSignal) => Promise<void>,
+  options?: { onAbort?: () => void; skipPing?: boolean },
+) {
+  return streamSSE(c, async (stream) => {
+    const pingInterval =
+      options?.skipPing ? undefined : createSsePingInterval(stream)
+    const signal = c.req.raw.signal
+
+    try {
+      await run(stream, signal)
+    } catch (error) {
+      if (isAbortError(error)) {
+        consola.debug("Stream aborted (client disconnected)")
+        options?.onAbort?.()
+        return
+      }
+      throw error
+    } finally {
+      if (pingInterval) clearInterval(pingInterval)
+    }
+  })
 }
