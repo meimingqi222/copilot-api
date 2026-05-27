@@ -1,12 +1,18 @@
 /**
- * Anthropic Messages 调度器(connection 路径)。
+ * Anthropic Messages 调度器(unified path)。
  */
 
+import type { RouteTarget } from "~/lib/provider-connections"
+
 import { HTTPError } from "~/lib/error"
-import { type ConnectionAdmission } from "~/lib/request-admission"
+import { type RequestAdmission } from "~/lib/request-admission"
 import { type AnthropicMessagesPayload } from "~/services/protocols"
 
-import { executeWithFailover } from "./failover"
+import {
+  executeWithFailover,
+  legacyPlaceholderConn,
+  legacyPlaceholderCred,
+} from "./failover"
 
 export interface MessagesDispatchResult {
   accountId: string
@@ -15,7 +21,7 @@ export interface MessagesDispatchResult {
 
 export async function dispatchMessages(
   payload: AnthropicMessagesPayload,
-  admission: ConnectionAdmission,
+  admission: RequestAdmission,
   signal?: AbortSignal,
   forwardedHeaders?: Record<string, string | undefined>,
 ): Promise<MessagesDispatchResult> {
@@ -25,22 +31,33 @@ export async function dispatchMessages(
     signal,
     routeKind: "messages",
     logPrefix: "[dispatch/messages]",
-    execute: async (adapter, current) => {
+    execute: (adapter, target: RouteTarget, current) => {
       if (!adapter?.createMessages) {
         throw new HTTPError(
-          `Protocol "${current.connection.protocol}" does not support /messages`,
+          `Protocol "${target.protocol}" does not support /messages`,
           new Response("Not Implemented", { status: 501 }),
         )
       }
-      const result = await adapter.createMessages(
-        current.target,
-        current.connection,
-        current.credential,
-        payload,
-        signal,
-        { forwardedHeaders, initiator: current.initiator },
-      )
-      return { accountId: result.credentialId, response: result.response }
+      const conn =
+        current.kind === "connection" ?
+          current.connection
+        : legacyPlaceholderConn(target)
+      const cred =
+        current.kind === "connection" ?
+          current.credential
+        : legacyPlaceholderCred(target)
+      return adapter
+        .createMessages(target, conn, cred, payload, signal, {
+          forwardedHeaders,
+          initiator: current.initiator,
+        })
+        .then(
+          (result) =>
+            ({
+              accountId: result.credentialId,
+              response: result.response,
+            }) as MessagesDispatchResult,
+        )
     },
   })
 }

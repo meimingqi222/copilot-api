@@ -1,0 +1,9 @@
+{
+  "semi": false,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "endOfLine": "auto",
+  "experimentalOperatorPosition": "start",
+  "experimentalTernaries": true,
+  "plugins": ["prettier-plugin-packagejson"]
+}

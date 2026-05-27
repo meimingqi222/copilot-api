@@ -1,3 +1,4 @@
+import consola from "consola"
 import { events } from "fetch-event-stream"
 
 import type { Account, AccountModel } from "~/lib/accounts"
@@ -23,7 +24,6 @@ import {
   translateResponsesToChatCompletion,
   translateToResponsesPayload,
 } from "~/services/copilot/responses-api"
-import { executeProviderRequestWithRetry } from "~/services/providers/execution"
 
 import type { ProviderRuntime } from "./runtime"
 
@@ -122,17 +122,55 @@ export const copilotProviderRuntime: ProviderRuntime = {
         JSON.stringify(translateToResponsesPayload(normalizedPayload))
       : ""
 
-    const doRequest = async (requestAccount: Account) => {
-      const headers: Record<string, string> = {
-        ...copilotHeaders(requestAccount, enableVision),
-        "editor-version": `vscode/${state.vsCodeVersion}`,
+    const headers: Record<string, string> = {
+      ...copilotHeaders(account, enableVision),
+      "editor-version": `vscode/${state.vsCodeVersion}`,
+    }
+
+    if (ctx?.initiator) {
+      headers["X-Initiator"] = ctx.initiator
+    }
+
+    let retryCount = 0
+    const maxRetries = 3
+    const maxDelayMs = 60_000
+
+    let response = await fetch(
+      `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`,
+      {
+        method: "POST",
+        headers,
+        body: useResponsesApi ? responsesBody : chatCompletionsBody,
+        signal,
+      },
+    )
+
+    while (!response.ok && response.status === 429 && retryCount < maxRetries) {
+      const retryAfterRaw = Number.parseInt(
+        response.headers.get("Retry-After") ?? "",
+        10,
+      )
+      const baseDelayMs =
+        Number.isNaN(retryAfterRaw) ?
+          Math.pow(2, retryCount) * 1000
+        : retryAfterRaw * 1000
+      const delayMs = Math.min(baseDelayMs, maxDelayMs)
+
+      consola.warn(
+        `Copilot API rate limited, retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`,
+      )
+
+      if (signal?.aborted) {
+        throw new HTTPError(
+          "Request aborted",
+          new Response("Aborted", { status: 499 }),
+        )
       }
 
-      if (ctx?.initiator) {
-        headers["X-Initiator"] = ctx.initiator
-      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      retryCount++
 
-      const response = await fetch(
+      response = await fetch(
         `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`,
         {
           method: "POST",
@@ -141,27 +179,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
           signal,
         },
       )
-
-      if (response.status === 429) {
-        const errorBody = await response.text().catch(() => "(unreadable)")
-        throw new HTTPError(
-          "Failed to create chat completions",
-          response,
-          errorBody,
-        )
-      }
-
-      return response
     }
-
-    const { account: usedAccount, result: response } =
-      await executeProviderRequestWithRetry({
-        account,
-        model: normalizedPayload.model,
-        signal,
-        execute: doRequest,
-        c: ctx?.c,
-      })
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => "(unreadable)")
@@ -177,7 +195,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
         import("~/services/copilot/create-chat-completions").CopilotStreamEvent
       >
       return {
-        accountId: usedAccount.id,
+        accountId: account.id,
         response:
           useResponsesApi ?
             (translateResponsesStreamToChatCompletions(
@@ -192,7 +210,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
 
     const responseBody = await response.json()
     return {
-      accountId: usedAccount.id,
+      accountId: account.id,
       response:
         useResponsesApi ?
           translateResponsesToChatCompletion(
@@ -235,37 +253,19 @@ export const copilotProviderRuntime: ProviderRuntime = {
       model: normalizedModel,
     })
 
-    const doRequest = async (requestAccount: Account) => {
-      const headers: Record<string, string> = {
-        ...copilotHeaders(requestAccount, enableVision),
-        "editor-version": `vscode/${state.vsCodeVersion}`,
-      }
-      if (ctx?.initiator) {
-        headers["X-Initiator"] = ctx.initiator
-      }
-      const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
-        method: "POST",
-        headers,
-        body: responsesBody,
-        signal,
-      })
-
-      if (response.status === 429) {
-        const errorBody = await response.text().catch(() => "(unreadable)")
-        throw new HTTPError("Failed to create responses", response, errorBody)
-      }
-
-      return response
+    const headers: Record<string, string> = {
+      ...copilotHeaders(account, enableVision),
+      "editor-version": `vscode/${state.vsCodeVersion}`,
     }
-
-    const { account: usedAccount, result: response } =
-      await executeProviderRequestWithRetry({
-        account,
-        model: normalizedModel,
-        signal,
-        execute: doRequest,
-        c: ctx?.c,
-      })
+    if (ctx?.initiator) {
+      headers["X-Initiator"] = ctx.initiator
+    }
+    const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
+      method: "POST",
+      headers,
+      body: responsesBody,
+      signal,
+    })
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => "(unreadable)")
@@ -274,7 +274,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
 
     if (payload.stream) {
       return {
-        accountId: usedAccount.id,
+        accountId: account.id,
         response: normalizeResponsesStreamIds(
           events(response) as unknown as AsyncIterable<
             import("~/services/copilot/responses-api").CopilotStreamEventLike
@@ -284,7 +284,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
     }
 
     return {
-      accountId: usedAccount.id,
+      accountId: account.id,
       response:
         (await response.json()) as import("~/services/copilot/responses-api").ResponsesResponse,
     }
@@ -299,36 +299,22 @@ export const copilotProviderRuntime: ProviderRuntime = {
       throw new Error("Copilot token not found")
     }
 
-    const { account: usedAccount, result: response } =
-      await executeProviderRequestWithRetry({
-        account,
-        model: payload.model,
-        signal,
-        execute: async (requestAccount) => {
-          const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
-            method: "POST",
-            headers: copilotHeaders(requestAccount),
-            body: JSON.stringify({
-              ...payload,
-              model: parseModelReference(payload.model).nativeModelId,
-            }),
-            signal,
-          })
-
-          if (response.status === 429) {
-            throw new HTTPError("Failed to create embeddings", response)
-          }
-
-          return response
-        },
-      })
+    const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
+      method: "POST",
+      headers: copilotHeaders(account),
+      body: JSON.stringify({
+        ...payload,
+        model: parseModelReference(payload.model).nativeModelId,
+      }),
+      signal,
+    })
 
     if (!response.ok) {
       throw new HTTPError("Failed to create embeddings", response)
     }
 
     return {
-      accountId: usedAccount.id,
+      accountId: account.id,
       response:
         (await response.json()) as import("~/services/copilot/create-embeddings").EmbeddingResponse,
     }

@@ -6,10 +6,8 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import {
-  prepareRequestAdmission,
-  requireLegacyAdmission,
-} from "~/lib/request-admission"
+import { HTTPError } from "~/lib/error"
+import { prepareRequestAdmission } from "~/lib/request-admission"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
@@ -181,19 +179,23 @@ async function executeResponseCreate(
   accountId: string
   response: ResponsesResponse | AsyncIterable<CopilotStreamEventLike>
 }> {
-  const admission = requireLegacyAdmission(
-    await prepareRequestAdmission(c, {
-      routeKind: "reasoning",
-      model: payload.model,
-      endpoint: "responses",
-      maxTokens:
-        typeof payload.max_output_tokens === "number" ?
-          payload.max_output_tokens
-        : undefined,
-      stream: payload.stream === true ? true : undefined,
-      inferredInitiator: inferInitiatorFromResponsesPayload(payload),
-    }),
-  )
+  const admission = await prepareRequestAdmission(c, {
+    routeKind: "reasoning",
+    model: payload.model,
+    endpoint: "responses",
+    maxTokens:
+      typeof payload.max_output_tokens === "number" ?
+        payload.max_output_tokens
+      : undefined,
+    stream: payload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+  })
+  if (admission.kind !== "legacy") {
+    throw new HTTPError(
+      "Responses API requires an Account-based admission",
+      new Response("Not Implemented", { status: 501 }),
+    )
+  }
 
   const result = await createResponses(payload, {
     signal,

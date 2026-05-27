@@ -8,11 +8,9 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
+import { HTTPError } from "~/lib/error"
 import { extractErrorMessage } from "~/lib/error-builder"
-import {
-  prepareRequestAdmission,
-  requireLegacyAdmission,
-} from "~/lib/request-admission"
+import { prepareRequestAdmission } from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
@@ -29,20 +27,24 @@ export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
   const messageContent = extractMessageContentFromResponsesPayload(payload)
-  const admission = requireLegacyAdmission(
-    await prepareRequestAdmission(c, {
-      routeKind: "reasoning",
-      model: payload.model,
-      endpoint: "responses",
-      maxTokens:
-        typeof payload.max_output_tokens === "number" ?
-          payload.max_output_tokens
-        : undefined,
-      stream: payload.stream === true ? true : undefined,
-      inferredInitiator: inferInitiatorFromResponsesPayload(payload),
-      messageContent,
-    }),
-  )
+  const admission = await prepareRequestAdmission(c, {
+    routeKind: "reasoning",
+    model: payload.model,
+    endpoint: "responses",
+    maxTokens:
+      typeof payload.max_output_tokens === "number" ?
+        payload.max_output_tokens
+      : undefined,
+    stream: payload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+    messageContent,
+  })
+  if (admission.kind !== "legacy") {
+    throw new HTTPError(
+      "Responses API requires an Account-based admission",
+      new Response("Not Implemented", { status: 501 }),
+    )
+  }
 
   if (payload.stream) {
     return streamSSE(c, async (stream) => {

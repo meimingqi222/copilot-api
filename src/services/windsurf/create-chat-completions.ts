@@ -19,7 +19,6 @@ import {
   getWindsurfJwt,
 } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { executeProviderRequestWithRetry } from "~/services/providers/execution"
 
 import { fetchWindsurfJwt } from "./auth"
 import {
@@ -907,31 +906,27 @@ export async function createWindsurfChatCompletions(options: {
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
-  const { account, payload, signal, ctx } = options
-  const { account: usedAccount, result } =
-    await executeProviderRequestWithRetry({
-      account,
-      model: payload.model,
-      signal,
-      execute: (requestAccount) =>
-        createWindsurfChatCompletionsOnce(requestAccount, payload, signal),
-      c: ctx?.c,
-    })
+  const { account, payload, signal } = options
+  const result = await createWindsurfChatCompletionsOnce(
+    account,
+    payload,
+    signal,
+  )
 
   if (isChatCompletionResponse(result)) {
     return {
-      accountId: usedAccount.id,
+      accountId: account.id,
       response: result,
     }
   }
 
   return {
-    accountId: usedAccount.id,
+    accountId: account.id,
     response: result,
   }
 }
 
-async function createWindsurfChatCompletionsOnce(
+export async function createWindsurfChatCompletionsOnce(
   account: Account,
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
