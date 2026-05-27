@@ -6,12 +6,15 @@
  * 兼容的服务商无需新增 TypeScript runtime 文件。
  */
 
+import type { Account } from "~/lib/accounts"
+
 export type ProviderProtocol =
   | "openai-compatible"
   | "anthropic-compatible"
   | "copilot-native"
   | "windsurf-native"
   | "codebuff-native"
+  | "mimo-native"
 
 export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "openai-compatible",
@@ -19,6 +22,7 @@ export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "copilot-native",
   "windsurf-native",
   "codebuff-native",
+  "mimo-native",
 ]
 
 export function isProviderProtocol(value: string): value is ProviderProtocol {
@@ -164,6 +168,8 @@ export interface ProviderConnection {
 /**
  * 调度单位:把 (connection, credential, model, endpoint) 展平为可路由的目标。
  * 选择器从所有候选 RouteTarget 中按优先级/权重挑选。
+ *
+ * 对于 Account 路径,account 字段承载 Account 引用,credentialId 等于 accountId。
  */
 export interface RouteTarget {
   connectionId: string
@@ -177,6 +183,8 @@ export interface RouteTarget {
   connectionWeight: number
   credentialPriority: number
   credentialWeight: number
+  /** Account-based target 携带 Account 引用。Connection-based target 不设置。 */
+  account?: Account
 }
 
 /**

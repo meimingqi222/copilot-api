@@ -2,10 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import type { Account } from "~/lib/accounts"
 
-import {
-  getAccountForModel,
-  switchToNextAccountForModel,
-} from "~/lib/account-selection"
+import { getAccountForModel } from "~/lib/account-selection"
 import { HTTPError } from "~/lib/error"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -34,18 +31,6 @@ test("getAccountForModel throws 429 when all compatible accounts are rate limite
   expect(() => {
     getAccountForModel("gpt-5-mini")
   }).toThrow(HTTPError)
-})
-
-test("switchToNextAccountForModel loops through capable accounts", () => {
-  const acc1 = createTestAccount("acc-1", 0)
-  const acc2 = createTestAccount("acc-2", 1)
-  state.accounts = [acc1, acc2]
-
-  const next = switchToNextAccountForModel(acc1, "gpt-5-mini")
-  expect(next?.id).toBe("acc-2")
-
-  const back = switchToNextAccountForModel(acc2, "gpt-5-mini")
-  expect(back?.id).toBe("acc-1")
 })
 
 function createTestAccount(id: string, priority: number): Account {

@@ -372,57 +372,6 @@ export function getAccountForModel(modelId: string): Account {
   return capable[0]
 }
 
-export function switchToNextAccountForModel(
-  currentAccount: Account,
-  modelId: string,
-): Account | null {
-  const reference = parseModelReference(modelId)
-  refreshAllAccountAvailability()
-
-  const sorted = sortAccounts(state.accounts)
-
-  const providerMatched =
-    reference.provider ?
-      sorted.filter(
-        (account) =>
-          isAccountAvailable(account)
-          && getAccountProvider(account) === reference.provider,
-      )
-    : []
-
-  const capablePool =
-    reference.provider ? providerMatched : (
-      sorted.filter((account) => isAccountAvailable(account))
-    )
-
-  const explicitCapable = capablePool.filter((account) =>
-    supportsModelExplicitly(account, reference.nativeModelId),
-  )
-  const fallbackCapable = capablePool.filter((account) =>
-    supportsModelWithFallback(account, reference.nativeModelId),
-  )
-  const capable = explicitCapable.length > 0 ? explicitCapable : fallbackCapable
-
-  if (capable.length === 0) {
-    return null
-  }
-
-  const currentIdx = capable.indexOf(currentAccount)
-  for (let i = 1; i < capable.length; i++) {
-    const idx = (currentIdx + i) % capable.length
-    const account = capable[idx]
-    if (account.id !== currentAccount.id) {
-      return account
-    }
-  }
-  // If currentAccount is not in capable list, return the first one with a different ID
-  if (currentIdx === -1 && capable.length > 0) {
-    const firstDifferent = capable.find((a) => a.id !== currentAccount.id)
-    return firstDifferent ?? null
-  }
-  return null
-}
-
 export function getActiveAccount(): Account {
   refreshAllAccountAvailability()
 

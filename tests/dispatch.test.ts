@@ -72,9 +72,9 @@ describe("dispatch-failover", () => {
         payload,
         admission,
         routeKind: "chat",
-        execute: (_adapter, current) => {
+        execute: (_adapter, currentTarget) => {
           executeCount++
-          if (current.target.connectionId === "conn-1") {
+          if (currentTarget.connectionId === "conn-1") {
             throw new HTTPError(
               "Bad Gateway",
               new Response("Bad Gateway", { status: 502 }),

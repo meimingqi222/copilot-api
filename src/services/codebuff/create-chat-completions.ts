@@ -11,8 +11,6 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
-import { executeProviderRequestWithRetry } from "~/services/providers/execution"
-
 interface CodebuffAgentRunResponse {
   runId?: string
 }
@@ -41,26 +39,22 @@ export async function createCodebuffChatCompletions(options: {
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
-  const { account, payload, signal, ctx } = options
-  const { account: usedAccount, result } =
-    await executeProviderRequestWithRetry({
-      account,
-      model: payload.model,
-      signal,
-      execute: (requestAccount) =>
-        createCodebuffChatCompletionsOnce(requestAccount, payload, signal),
-      c: ctx?.c,
-    })
+  const { account, payload, signal } = options
+  const result = await createCodebuffChatCompletionsOnce(
+    account,
+    payload,
+    signal,
+  )
 
   if (isChatCompletionResponse(result)) {
     return {
-      accountId: usedAccount.id,
+      accountId: account.id,
       response: result,
     }
   }
 
   return {
-    accountId: usedAccount.id,
+    accountId: account.id,
     response: result,
   }
 }

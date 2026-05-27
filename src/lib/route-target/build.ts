@@ -1,9 +1,13 @@
 /**
- * 把 ProviderConnection + ApiCredential + ModelMapping 展平为可调度的 RouteTarget。
+ * 把 ProviderConnection + ApiCredential + ModelMapping 和 legacy Account
+ * 展平为可调度的 RouteTarget。
  *
  * 输出按 (publicId, endpoint) 维度组织,选择器在此基础上做优先级与权重判定。
  */
 
+import type { Account, AccountModel } from "~/lib/accounts"
+
+import { isAccountAvailable } from "~/lib/account-availability"
 import {
   DEFAULTS,
   isCredentialAvailable,
@@ -12,9 +16,11 @@ import {
   type ApiCredential,
   type ModelEndpoint,
   type ModelMapping,
+  type ProviderProtocol,
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
+import { state } from "~/lib/state"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -57,6 +63,8 @@ export interface BuildRouteTargetsOptions {
   onlyAvailable?: boolean
   /** 自定义 connection 列表(供测试)。 */
   connections?: Array<ProviderConnection>
+  /** 自定义 account 列表(供测试);默认从 state.accounts 读取。 */
+  accounts?: Array<Account>
 }
 
 export function buildRouteTargets(
@@ -98,7 +106,107 @@ export function buildRouteTargets(
     }
   }
 
+  // Account candidates (legacy providers)
+  if (!options.connectionId) {
+    const accounts = options.accounts ?? state.accounts
+    for (const account of accounts) {
+      if (onlyAvailable && !isAccountAvailable(account)) continue
+
+      const protocol = accountProtocol(account.provider)
+      if (!protocol) continue
+
+      // availableModels === undefined：模型列表尚未加载，接受所有模型请求（与 account-selection.ts 保持一致）
+      // availableModels === []：已加载但为空，跳过此账户
+      if (
+        account.availableModels !== undefined
+        && account.availableModels.length === 0
+      ) {
+        continue
+      }
+
+      if (account.availableModels === undefined) {
+        // 尚未加载：为请求的模型生成通配 target（publicModelId 为空则不生成）
+        if (!options.publicModelId) continue
+        const ep =
+          options.endpoint ?
+            [options.endpoint]
+          : (["chat"] as Array<ModelEndpoint>)
+        for (const endpoint of ep) {
+          targets.push({
+            connectionId: account.id,
+            connectionName: account.label,
+            protocol,
+            credentialId: account.id,
+            publicModelId: options.publicModelId,
+            upstreamModelId: options.publicModelId,
+            endpoint,
+            connectionPriority: account.priority,
+            connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
+            credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
+            credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+            account,
+          })
+        }
+        continue
+      }
+
+      for (const model of account.availableModels) {
+        const endpoints = accountModelEndpoints(model)
+        const modelId = accountModelId(model)
+
+        if (!modelId) continue
+
+        if (
+          options.publicModelId
+          && modelId.toLowerCase() !== options.publicModelId.toLowerCase()
+        ) {
+          continue
+        }
+
+        const ep = resolveEndpoints(endpoints, options.endpoint)
+        if (!ep) continue
+        for (const endpoint of ep) {
+          targets.push({
+            connectionId: account.id,
+            connectionName: account.label,
+            protocol,
+            credentialId: account.id,
+            publicModelId: modelId,
+            upstreamModelId: modelId,
+            endpoint,
+            connectionPriority: account.priority,
+            connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
+            credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
+            credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+            account,
+          })
+        }
+      }
+    }
+  }
+
   return targets
+}
+
+/**
+ * 根据请求的 endpoint 从模型支持的 endpoint 列表中解析出实际执行的 endpoint 列表。
+ * responses/messages 不支持时可 fallback 到 chat（语义等价）；embeddings 不做 fallback。
+ * 返回 null 表示该模型不支持此 endpoint，应跳过。
+ */
+function resolveEndpoints(
+  supported: Array<ModelEndpoint>,
+  requested: ModelEndpoint | undefined,
+): Array<ModelEndpoint> | null {
+  if (!requested) return supported
+  if (supported.includes(requested)) return [requested]
+  // responses -> chat 是语义等价的 fallback（同为 chat completions 协议）
+  const fallbackMap: Partial<Record<ModelEndpoint, ModelEndpoint>> = {
+    responses: "chat",
+    messages: "chat",
+  }
+  const fallback = fallbackMap[requested]
+  if (fallback && supported.includes(fallback)) return [fallback]
+  return null
 }
 
 function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
@@ -157,4 +265,39 @@ export function listExposedPublicModels(
     }
   }
   return out
+}
+
+function accountProtocol(provider: string): ProviderProtocol | undefined {
+  switch (provider) {
+    case "copilot": {
+      return "copilot-native"
+    }
+    case "codebuff": {
+      return "codebuff-native"
+    }
+    case "windsurf": {
+      return "windsurf-native"
+    }
+    case "mimo-aistudio": {
+      return "mimo-native"
+    }
+    default: {
+      return undefined
+    }
+  }
+}
+
+function accountModelEndpoints(model: AccountModel): Array<ModelEndpoint> {
+  const eps: Array<ModelEndpoint> = []
+  for (const ep of model.supportedEndpoints) {
+    if (ep.includes("chat/completions")) eps.push("chat")
+    else if (ep.includes("messages")) eps.push("messages")
+    else if (ep.includes("responses")) eps.push("responses")
+    else if (ep.includes("embeddings")) eps.push("embeddings")
+  }
+  return eps.length > 0 ? eps : ["chat"]
+}
+
+function accountModelId(model: AccountModel): string {
+  return model.id
 }

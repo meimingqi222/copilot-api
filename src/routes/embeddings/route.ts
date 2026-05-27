@@ -1,10 +1,7 @@
 import { Hono } from "hono"
 
-import { forwardError } from "~/lib/error"
-import {
-  prepareRequestAdmission,
-  requireLegacyAdmission,
-} from "~/lib/request-admission"
+import { forwardError, HTTPError } from "~/lib/error"
+import { prepareRequestAdmission } from "~/lib/request-admission"
 import { recordUsage } from "~/lib/usage"
 import {
   createEmbeddings,
@@ -16,12 +13,16 @@ export const embeddingRoutes = new Hono()
 embeddingRoutes.post("/", async (c) => {
   try {
     const payload = await c.req.json<EmbeddingRequest>()
-    const admission = requireLegacyAdmission(
-      await prepareRequestAdmission(c, {
-        model: payload.model,
-        endpoint: "embeddings",
-      }),
-    )
+    const admission = await prepareRequestAdmission(c, {
+      model: payload.model,
+      endpoint: "embeddings",
+    })
+    if (admission.kind !== "legacy") {
+      throw new HTTPError(
+        "Embeddings API requires an Account-based admission",
+        new Response("Not Implemented", { status: 501 }),
+      )
+    }
     const result = await createEmbeddings(payload, {
       account: admission.account,
       signal: c.req.raw.signal,

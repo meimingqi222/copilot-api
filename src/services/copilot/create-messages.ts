@@ -18,8 +18,6 @@ import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
-import { executeProviderRequestWithRetry } from "~/services/providers/execution"
-
 interface CreateMessagesOptions {
   account: Account
   signal?: AbortSignal
@@ -181,46 +179,28 @@ export const createMessages = async (
   const copilotPayload = translateToCopilotMessages(payload)
   const requestBody = JSON.stringify(copilotPayload)
 
-  const doRequest = async (requestAccount: typeof account) => {
-    const headers: Record<string, string> = {
-      ...copilotHeaders(requestAccount, enableVision),
-      "editor-version": `vscode/${state.vsCodeVersion}`,
-      "X-Initiator": initiator,
-      ...(options.forwardedHeaders?.anthropicBeta ?
-        {
-          "anthropic-beta": options.forwardedHeaders.anthropicBeta,
-        }
-      : {}),
-      ...(options.forwardedHeaders?.anthropicVersion ?
-        {
-          "anthropic-version": options.forwardedHeaders.anthropicVersion,
-        }
-      : {}),
-    }
-
-    const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
-      method: "POST",
-      headers,
-      body: requestBody,
-      signal,
-    })
-
-    if (response.status === 429) {
-      const errorBody = await response.text().catch(() => "(unreadable)")
-      throw new HTTPError("Failed to create messages", response, errorBody)
-    }
-
-    return response
+  const headers: Record<string, string> = {
+    ...copilotHeaders(account, enableVision),
+    "editor-version": `vscode/${state.vsCodeVersion}`,
+    "X-Initiator": initiator,
+    ...(options.forwardedHeaders?.anthropicBeta ?
+      {
+        "anthropic-beta": options.forwardedHeaders.anthropicBeta,
+      }
+    : {}),
+    ...(options.forwardedHeaders?.anthropicVersion ?
+      {
+        "anthropic-version": options.forwardedHeaders.anthropicVersion,
+      }
+    : {}),
   }
 
-  const { account: usedAccount, result: response } =
-    await executeProviderRequestWithRetry({
-      account,
-      model: payload.model,
-      signal,
-      execute: doRequest,
-      c: options.c,
-    })
+  const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
+    method: "POST",
+    headers,
+    body: requestBody,
+    signal,
+  })
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")
@@ -229,7 +209,7 @@ export const createMessages = async (
 
   if (payload.stream) {
     return {
-      accountId: usedAccount.id,
+      accountId: account.id,
       response: events(
         response,
       ) as unknown as AsyncIterable<CopilotStreamEventLike>,
@@ -237,7 +217,7 @@ export const createMessages = async (
   }
 
   return {
-    accountId: usedAccount.id,
+    accountId: account.id,
     response: (await response.json()) as AnthropicResponse,
   }
 }

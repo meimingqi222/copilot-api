@@ -10,7 +10,6 @@ import type {
   RouteTarget,
 } from "~/lib/provider-connections"
 
-import { getAccountForModel } from "~/lib/account-selection"
 import { parseModelReference } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
@@ -32,15 +31,17 @@ import { isUserAllowedModel } from "~/lib/users"
 /**
  * 路由解析结果。
  *
- * - `kind: "legacy"`: 使用既有的 Account 路径,Copilot/Codebuff/Windsurf 等内置 provider。
- * - `kind: "connection"`: 使用 Provider Connection + Protocol Adapter 路径,
- *   通用 OpenAI/Anthropic-compatible 上游通过此路径调度。
+ * - `kind: "legacy"`: Account-based target (Copilot/Codebuff/Windsurf/Mimo native adapter)。
+ * - `kind: "connection"`: ProviderConnection-based target (OpenAI/Anthropic-compatible adapter)。
+ *
+ * 统一由 `buildRouteTargets` 生成候选池,`selectRouteTarget` 按优先级/权重选取。
  */
 export type RequestAdmission = LegacyAdmission | ConnectionAdmission
 
 export interface LegacyAdmission {
   kind: "legacy"
   account: Account
+  target: RouteTarget
   initiator?: "agent" | "user"
 }
 
@@ -101,101 +102,57 @@ export async function prepareRequestAdmission(
   )
   c.set("guardInitiator", initiator)
 
-  // 1) 尝试 Provider Connection 路径
-  const connectionResult = tryResolveConnection(options.model, options.endpoint)
-  if (connectionResult) {
-    if (state.manualApprove) {
-      await awaitApproval()
-    }
-    return { ...connectionResult, kind: "connection", initiator }
-  }
+  const ref = parseModelRef(options.model)
+  const candidates = buildRouteTargets({
+    connectionId: ref.connectionId,
+    publicModelId: ref.modelId,
+    endpoint: options.endpoint,
+  })
 
-  // 2) Fallback: legacy account 路径
-  let account: Account
-  try {
-    account = getAccountForModel(options.model)
-  } catch (error) {
-    if (error instanceof HTTPError) {
-      consola.warn(
-        `Request admission failed during account selection: ${JSON.stringify({
-          path: c.req.path,
-          model: options.model,
-          routeKind: options.routeKind,
-          maxTokens: options.maxTokens,
-          stream: options.stream ?? false,
-          status: error.response.status,
-          retryAfter: error.response.headers.get("Retry-After"),
-          message: error.message,
-        })}`,
-      )
-    }
-    throw error
+  const target = selectRouteTarget(candidates)
+  if (!target) {
+    throw new HTTPError(
+      "No available route for model",
+      new Response("Rate limited", { status: 429 }),
+    )
   }
 
   if (state.manualApprove) {
     await awaitApproval()
   }
 
-  return { kind: "legacy", account, initiator }
-}
-
-export function requireLegacyAdmission(
-  admission: RequestAdmission,
-): LegacyAdmission {
-  if (admission.kind !== "legacy") {
-    throw new HTTPError(
-      "Provider connections are not supported on this endpoint yet",
-      new Response("Not Implemented", { status: 501 }),
-    )
-  }
-  return admission
-}
-
-function tryResolveConnection(
-  modelId: string,
-  endpoint: ModelEndpoint,
-): {
-  target: RouteTarget
-  connection: ProviderConnection
-  credential: ApiCredential
-} | null {
-  const ref = parseModelRef(modelId)
-  if (ref.legacyProvider) {
-    // Explicit legacy provider prefix → skip connection routing
-    return null
-  }
-
-  const candidates = buildRouteTargets({
-    connectionId: ref.connectionId,
-    publicModelId: ref.modelId,
-    endpoint,
-  })
-
-  if (candidates.length > 0) {
-    const target = selectRouteTarget(candidates)
-    if (target) {
-      const connection = getProviderConnection(target.connectionId)
-      if (!connection) return null
-      const found = findCredential(target.connectionId, target.credentialId)
-      if (!found) return null
-      return { target, connection, credential: found.credential }
+  if (target.account) {
+    return {
+      kind: "legacy",
+      account: target.account,
+      target,
+      initiator,
     }
   }
 
-  // Check if any connection knows this model (ignoring availability)
-  const allTargets = buildRouteTargets({
-    connectionId: ref.connectionId,
-    publicModelId: ref.modelId,
-    endpoint,
-    onlyAvailable: false,
-  })
-  if (allTargets.length === 0) {
-    // No connection handles this model → fall through to legacy
-    return null
+  // 类型安全检查：确保 connectionId 和 credentialId 存在
+  if (!target.connectionId || !target.credentialId) {
+    throw new HTTPError(
+      "Invalid route target: missing connection or credential ID",
+      new Response("Bad Request", { status: 400 }),
+    )
   }
 
-  // Connections exist but all credentials are unavailable → fall through to legacy
-  return null
+  const connection = getProviderConnection(target.connectionId)
+  const found = findCredential(target.connectionId, target.credentialId)
+  if (!connection || !found) {
+    throw new HTTPError(
+      "Route target resolution failed",
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+  return {
+    kind: "connection",
+    target,
+    connection,
+    credential: found.credential,
+    initiator,
+  }
 }
 
 function enforceUserModelAccess(c: Context, model: string): void {
@@ -212,31 +169,34 @@ function enforceUserModelAccess(c: Context, model: string): void {
 
 /**
  * 在请求失败时尝试切换到下一个候选 RouteTarget。
- * 调用方传入已经尝试过的 (connectionId, credentialId) 集合。
+ * 支持 Connection 和 Account 两种 target。
  */
 export function switchToNextRouteTarget(
-  current: RouteTarget,
+  _current: RouteTarget,
   modelId: string,
   endpoint: ModelEndpoint,
   exclude: Set<string>,
-): {
-  target: RouteTarget
-  connection: ProviderConnection
-  credential: ApiCredential
-} | null {
+): RouteTarget | null {
   const ref = parseModelRef(modelId)
   const candidates = buildRouteTargets({
-    connectionId: ref.connectionId ?? current.connectionId,
     publicModelId: ref.modelId,
     endpoint,
   })
-  const target = selectRouteTarget(candidates, { exclude })
-  if (!target) return null
+  return selectRouteTarget(candidates, { exclude })
+}
+
+/**
+ * 把 RouteTarget 解析为 ConnectionAdmission 或 null (Account target)。
+ */
+export function resolveConnectionFromTarget(target: RouteTarget): {
+  connection: ProviderConnection
+  credential: ApiCredential
+} | null {
   const connection = getProviderConnection(target.connectionId)
   if (!connection) return null
   const found = findCredential(target.connectionId, target.credentialId)
   if (!found) return null
-  return { target, connection, credential: found.credential }
+  return { connection, credential: found.credential }
 }
 
 /** Infer provider ID from model name (for guard auto-detection exemption). */
