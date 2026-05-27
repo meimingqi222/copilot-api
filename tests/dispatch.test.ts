@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type {
   RouteTarget,
@@ -13,6 +13,12 @@ import { state } from "~/lib/state"
 import { executeWithFailover } from "~/services/dispatch/failover"
 
 afterEach(() => {
+  resetAdaptiveRateLimiterForTest()
+  state.accounts = []
+  state.activeAccountIndex = 0
+})
+
+beforeEach(() => {
   resetAdaptiveRateLimiterForTest()
   state.accounts = []
   state.activeAccountIndex = 0
