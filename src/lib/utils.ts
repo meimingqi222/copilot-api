@@ -367,41 +367,55 @@ export function isPrivateIp(ip: string): boolean {
   return false
 }
 
+function getIpFromProxyHeaders(c: Context): string | null {
+  const cfIp = c.req.header("cf-connecting-ip")
+  if (cfIp && isValidIp(cfIp) && !isPrivateIp(cfIp)) return cfIp
+
+  const forwarded = c.req.header("x-forwarded-for")
+  if (forwarded) {
+    const parts = forwarded.split(",").map((ip) => ip.trim())
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const ip = parts[i]
+      if (ip && isValidIp(ip) && !isPrivateIp(ip)) {
+        return ip
+      }
+    }
+    const rightmostIp = parts.at(-1)
+    if (rightmostIp && isValidIp(rightmostIp)) return rightmostIp
+  }
+
+  const realIp = c.req.header("x-real-ip")
+  if (realIp && isValidIp(realIp) && !isPrivateIp(realIp)) return realIp
+
+  return null
+}
+
 export function getClientIp(c: Context): string {
   const trustProxy =
     process.env.TRUST_PROXY === "true" || process.env.TRUST_PROXY === "1"
 
-  if (trustProxy) {
-    const cfIp = c.req.header("cf-connecting-ip")
-    if (cfIp && isValidIp(cfIp) && !isPrivateIp(cfIp)) return cfIp
-
-    const forwarded = c.req.header("x-forwarded-for")
-    if (forwarded) {
-      const parts = forwarded.split(",").map((ip) => ip.trim())
-      // 从右往左寻找第一个公网 IP
-      for (let i = parts.length - 1; i >= 0; i--) {
-        const ip = parts[i]
-        if (ip && isValidIp(ip) && !isPrivateIp(ip)) {
-          return ip
-        }
-      }
-      // 如果全都是私网 IP，退而求其次选择最右侧的
-      const rightmostIp = parts.at(-1)
-      if (rightmostIp && isValidIp(rightmostIp)) return rightmostIp
-    }
-
-    const realIp = c.req.header("x-real-ip")
-    if (realIp && isValidIp(realIp) && !isPrivateIp(realIp)) return realIp
-  }
-
+  let remoteAddress = "127.0.0.1"
   try {
     const connInfo = getConnInfo(c)
     if (connInfo.remote.address) {
-      return connInfo.remote.address
+      remoteAddress = connInfo.remote.address
     }
   } catch {
     // Ignore error
   }
 
-  return "127.0.0.1"
+  const isLocalConnection =
+    remoteAddress === "127.0.0.1"
+    || remoteAddress === "::1"
+    || remoteAddress === "::ffff:127.0.0.1"
+
+  // When behind a reverse proxy on the same machine (connection is from localhost),
+  // proxy headers are inherently trusted — the proxy is local and cannot be spoofed
+  // by external clients. This is the common case for nginx/Caddy/Traefik setups.
+  if (trustProxy || isLocalConnection) {
+    const proxyIp = getIpFromProxyHeaders(c)
+    if (proxyIp) return proxyIp
+  }
+
+  return remoteAddress
 }
