@@ -33,62 +33,70 @@ export const requestLogger = async (c: Context, next: Next) => {
   const clientIp = getClientIp(c)
   const userAgent = c.req.header("user-agent") || undefined
 
-  logStore.push({
-    timestamp: Date.now(),
-    level,
-    message: `${c.req.method} ${c.req.path} ${status}`,
-    userId: c.get("userId"),
-    username: c.get("username"),
-    accountId,
-    latencyMs,
-    statusCode: status,
-    path: c.req.path,
-    clientIp,
-    userAgent,
-  })
+  // Skip logging and guard tracking for localhost requests
+  const isLocalhost =
+    clientIp === "127.0.0.1"
+    || clientIp === "::1"
+    || clientIp === "::ffff:127.0.0.1"
 
-  // Feed guard snapshot tracking
-  const guardResult = recordGuardSnapshot({
-    ip: clientIp,
-    ua: userAgent,
-    username: c.get("username"),
-    path: c.req.path,
-    isError: shouldCountGuardError(c.req.path, status),
-    initiator: c.get("guardInitiator"),
-    statusCode: status,
-  })
+  if (!isLocalhost) {
+    logStore.push({
+      timestamp: Date.now(),
+      level,
+      message: `${c.req.method} ${c.req.path} ${status}`,
+      userId: c.get("userId"),
+      username: c.get("username"),
+      accountId,
+      latencyMs,
+      statusCode: status,
+      path: c.req.path,
+      clientIp,
+      userAgent,
+    })
 
-  const shouldCapturePreview = shouldCaptureGuardPreview(
-    c,
-    guardResult,
-    c.req.path,
-  )
+    // Feed guard snapshot tracking
+    const guardResult = recordGuardSnapshot({
+      ip: clientIp,
+      ua: userAgent,
+      username: c.get("username"),
+      path: c.req.path,
+      isError: shouldCountGuardError(c.req.path, status),
+      initiator: c.get("guardInitiator"),
+      statusCode: status,
+    })
 
-  if (shouldCapturePreview) {
-    const requestPreview = await captureRequestPreview(c)
-    if (requestPreview) {
-      recordRequestPreview({
-        ip: clientIp,
-        ua: userAgent,
-        path: c.req.path,
-        statusCode: status,
-        preview: requestPreview,
-      })
-    }
-  }
+    const shouldCapturePreview = shouldCaptureGuardPreview(
+      c,
+      guardResult,
+      c.req.path,
+    )
 
-  // Persist stats to SQLite for request counting
-  if (accountId) {
-    try {
-      if (status >= 400) {
-        // Atomically increment both requests and errors in a single SQL statement
-        statsStore.incrementRequestAndError(accountId)
-      } else {
-        statsStore.incrementRequests(accountId)
+    if (shouldCapturePreview) {
+      const requestPreview = await captureRequestPreview(c)
+      if (requestPreview) {
+        recordRequestPreview({
+          ip: clientIp,
+          ua: userAgent,
+          path: c.req.path,
+          statusCode: status,
+          preview: requestPreview,
+        })
       }
-    } catch {
-      // Stats persistence failure should not affect request flow
-      consola.debug("Failed to persist stats")
+    }
+
+    // Persist stats to SQLite for request counting
+    if (accountId) {
+      try {
+        if (status >= 400) {
+          // Atomically increment both requests and errors in a single SQL statement
+          statsStore.incrementRequestAndError(accountId)
+        } else {
+          statsStore.incrementRequests(accountId)
+        }
+      } catch {
+        // Stats persistence failure should not affect request flow
+        consola.debug("Failed to persist stats")
+      }
     }
   }
 }
