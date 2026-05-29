@@ -15,8 +15,16 @@ import { responsesRoutes } from "./routes/responses/route"
 import { tokenRoute } from "./routes/token/route"
 
 export const server = new Hono()
+const honoLogger = logger()
 
-server.use(logger())
+server.use("*", async (c, next) => {
+  if (c.req.path === "/ws/mimo") {
+    await next()
+    return
+  }
+
+  await honoLogger(c, next)
+})
 server.use(cors())
 server.use("*", requestLogger)
 server.use("*", guardMiddleware)

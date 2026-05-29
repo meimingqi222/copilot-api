@@ -8,8 +8,14 @@ import { getClientIp } from "~/lib/utils"
  * Should be placed early in the middleware chain (before auth).
  */
 export async function guardMiddleware(c: Context, next: Next) {
-  // Skip for admin panel so admins can always manage the blacklist
-  if (c.req.path.startsWith("/admin") || c.req.path === "/health") {
+  // Skip for admin panel so admins can always manage the blacklist.
+  // MiMo bridge WebSocket has its own high-entropy token check and can reconnect
+  // aggressively, so do not let global IP/UA blacklist state affect it.
+  if (
+    c.req.path.startsWith("/admin")
+    || c.req.path === "/health"
+    || c.req.path === "/ws/mimo"
+  ) {
     await next()
     return
   }

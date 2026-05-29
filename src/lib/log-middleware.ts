@@ -104,6 +104,7 @@ export const requestLogger = async (c: Context, next: Next) => {
 function shouldSkipRequestLog(path: string): boolean {
   return (
     path === "/health"
+    || path === "/ws/mimo"
     || path.startsWith("/admin")
     || path === "/favicon.ico"
     || path.startsWith("/static")
