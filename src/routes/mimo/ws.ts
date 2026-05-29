@@ -16,7 +16,7 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
   const accountId = c.req.query("accountId")
 
   if (!accountId) {
-    consola.warn("Rejecting Claw WS connection: missing accountId query param")
+    consola.debug("Rejecting Claw WS connection: missing accountId query param")
     return {}
   }
 
@@ -86,13 +86,13 @@ mimoWsRoute.get("/", async (c, next) => {
 
   const token = c.req.header("x-mimo-ws-token") ?? c.req.query("token")
   if (!isValidMimoWsToken(token)) {
-    consola.warn("Rejecting Claw WS connection: invalid token")
+    consola.debug("Rejecting Claw WS connection: invalid token")
     return c.text("Unauthorized", 401)
   }
 
   const account = state.accounts.find((item) => item.id === accountId)
   if (!account || !account.enabled || account.provider !== "mimo-aistudio") {
-    consola.warn(`Rejecting Claw WS connection: invalid account ${accountId}`)
+    consola.debug(`Rejecting Claw WS connection: invalid account ${accountId}`)
     return c.text("Forbidden", 403)
   }
 
