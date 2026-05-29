@@ -642,10 +642,15 @@ function getAutoBlockDuration(
   return AUTO_BLOCK_DURATION_MS
 }
 
+function isLocalhostAddress(ip: string): boolean {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1"
+}
+
 function checkAutoBlock(
   snap: ClientSnapshot,
   assessment: SuspiciousAssessment,
 ): void {
+  if (isLocalhostAddress(snap.key)) return
   if (!shouldAutoBlockGlobally(snap, assessment)) {
     return
   }
