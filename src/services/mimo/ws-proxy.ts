@@ -18,6 +18,9 @@ export interface ClawWs {
 
 const proxyAgents = new Map<string, HttpsProxyAgent<string>>()
 
+const MIMO_API_HOST = process.env.MIMO_API_HOST || "aistudio.xiaomimimo.com"
+const MIMO_API_ORIGIN = `https://${MIMO_API_HOST}`
+
 export function encodeWsFrame(data: Buffer): Buffer {
   const length = data.length
   const maskKey = crypto.randomBytes(4)
@@ -80,6 +83,195 @@ export function decodeWsFrame(data: Buffer): WsFrame {
   return { opcode, payload, remaining: data.subarray(offset + length) }
 }
 
+function performWsUpgrade(
+  tlsSock: TLSSocket,
+  urlObj: URL,
+  headers: Record<string, string>,
+  cleanup?: () => void,
+): Promise<ClawWs> {
+  return new Promise((resolve, reject) => {
+    let buf = Buffer.alloc(0)
+    const listeners: Record<
+      string,
+      Array<(...args: Array<unknown>) => void>
+    > = {
+      message: [],
+      error: [],
+      close: [],
+    }
+
+    const key = crypto.randomBytes(16).toString("base64")
+    const headerLines = [
+      `GET ${urlObj.pathname}${urlObj.search} HTTP/1.1`,
+      `Host: ${urlObj.hostname}`,
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Key: ${key}`,
+      "Sec-WebSocket-Version: 13",
+    ]
+    for (const [k, v] of Object.entries(headers)) {
+      headerLines.push(`${k}: ${v}`)
+    }
+    headerLines.push("", "")
+    tlsSock.write(headerLines.join("\r\n"))
+
+    tlsSock.on("data", function handler(data: Buffer) {
+      buf = Buffer.concat([buf, data])
+      const headerEnd = buf.indexOf("\r\n\r\n")
+      if (headerEnd === -1) return
+
+      const headerStr = buf.subarray(0, headerEnd).toString()
+      if (!headerStr.includes("101")) {
+        const body = buf.subarray(headerEnd + 4).toString()
+        reject(
+          new Error(
+            `WS upgrade failed: ${headerStr.slice(0, 100)} ${body.slice(0, 100)}`,
+          ),
+        )
+        return
+      }
+
+      // WS upgrade successful
+      let frameBuf = buf.subarray(headerEnd + 4)
+      buf = Buffer.alloc(0)
+
+      const messageBuffer: Array<string> = []
+
+      const wsHandle: ClawWs = {
+        send(data: string) {
+          if (!tlsSock.destroyed) {
+            tlsSock.write(encodeWsFrame(Buffer.from(data, "utf8")))
+          }
+        },
+        addEventListener(
+          event: string,
+          handler: (...args: Array<unknown>) => void,
+        ) {
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if (listeners[event]) {
+            listeners[event].push(handler)
+          }
+          if (event === "message" && messageBuffer.length > 0) {
+            const msgs = [...messageBuffer]
+            messageBuffer.length = 0
+            for (const msg of msgs) {
+              for (const h of listeners.message) {
+                h(msg)
+              }
+            }
+          }
+        },
+        close() {
+          try {
+            tlsSock.end()
+          } catch {
+            // ignore
+          }
+          cleanup?.()
+        },
+      }
+
+      function processWsFrames() {
+        const textFrames: Array<string> = []
+        let closePending = false
+        let closeCode = 1000
+        let closeReason = "Remote close"
+
+        while (frameBuf.length >= 2) {
+          try {
+            const frame = decodeWsFrame(frameBuf)
+            frameBuf = Buffer.from(frame.remaining)
+
+            switch (frame.opcode) {
+              case 0x01: {
+                textFrames.push(frame.payload.toString())
+
+                break
+              }
+              case 0x08: {
+                if (frame.payload.length >= 2) {
+                  closeCode = frame.payload.readUInt16BE(0)
+                  closeReason =
+                    frame.payload.length > 2
+                      ? frame.payload.subarray(2).toString()
+                      : "Remote close"
+                }
+                closePending = true
+
+                break
+              }
+              case 0x09: {
+                tlsSock.write(Buffer.from([0x8a, 0x00]))
+
+                break
+              }
+              // No default
+            }
+          } catch {
+            break
+          }
+        }
+
+        for (const text of textFrames) {
+          if (listeners.message.length > 0) {
+            for (const h of listeners.message) {
+              h(text)
+            }
+          } else {
+            messageBuffer.push(text)
+          }
+        }
+
+        if (closePending) {
+          for (const h of listeners.close) {
+            h(closeCode, closeReason)
+          }
+        }
+      }
+
+      // Start reading WS frames (remove upgrade-response listener first)
+      tlsSock.removeAllListeners("data")
+      tlsSock.on("data", (chunk: Buffer) => {
+        frameBuf = Buffer.concat([frameBuf, chunk])
+        processWsFrames()
+      })
+
+      // Process any frames that arrived in the same packet as the upgrade response
+      processWsFrames()
+
+      resolve(wsHandle)
+    })
+  })
+}
+
+export function connectWebSocketDirect(
+  wsUrl: string,
+  headers: Record<string, string>,
+): Promise<ClawWs> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl, { headers })
+
+    const timeout = setTimeout(() => {
+      reject(new Error("WebSocket connection timeout"))
+    }, 15000)
+
+    ws.onopen = () => {
+      clearTimeout(timeout)
+      resolve(ws as unknown as ClawWs)
+    }
+
+    ws.onerror = (e: Event) => {
+      clearTimeout(timeout)
+      reject(
+        new Error(
+          "WebSocket connection failed: " +
+            ((e as unknown as { message?: string }).message || "unknown"),
+        ),
+      )
+    }
+  })
+}
+
 export function connectWebSocketThroughProxy(
   wsUrl: string,
   headers: Record<string, string>,
@@ -94,155 +286,29 @@ export function connectWebSocketThroughProxy(
       proxyUrlObj.hostname,
       () => {
         sock.write(
-          `CONNECT ${urlObj.hostname}:443 HTTP/1.1\r\nHost: ${urlObj.hostname}:443\r\n\r\n`,
+          `CONNECT ${MIMO_API_HOST}:443 HTTP/1.1\r\nHost: ${urlObj.hostname}:443\r\n\r\n`,
         )
       },
     )
 
-    let connected = false
-    let tlsSock: TLSSocket | null = null
-    let buf = Buffer.alloc(0)
-    const listeners: Record<
-      string,
-      Array<(...args: Array<unknown>) => void>
-    > = {
-      message: [],
-      error: [],
-      close: [],
-    }
-
     sock.on("data", (data) => {
-      if (!connected) {
-        const msg = data.toString()
-        if (msg.includes("200")) {
-          connected = true
-          tlsSock = tls.connect({
-            socket: sock,
-            host: urlObj.hostname,
-            servername: urlObj.hostname,
-          })
+      const msg = data.toString()
+      if (msg.includes("200")) {
+        const tlsSock = tls.connect({
+          socket: sock,
+          host: MIMO_API_HOST,
+          servername: urlObj.hostname,
+        })
 
-          tlsSock.on("secureConnect", () => {
-            const key = crypto.randomBytes(16).toString("base64")
-            const headerLines = [
-              `GET ${urlObj.pathname}${urlObj.search} HTTP/1.1`,
-              `Host: ${urlObj.hostname}`,
-              "Upgrade: websocket",
-              "Connection: Upgrade",
-              `Sec-WebSocket-Key: ${key}`,
-              "Sec-WebSocket-Version: 13",
-            ]
-            for (const [k, v] of Object.entries(headers)) {
-              headerLines.push(`${k}: ${v}`)
-            }
-            headerLines.push("", "")
-            ;(tlsSock as TLSSocket).write(headerLines.join("\r\n"))
-          })
+        tlsSock.on("secureConnect", () => {
+          performWsUpgrade(tlsSock, urlObj, headers, () => sock.destroy())
+            .then(resolve)
+            .catch(reject)
+        })
 
-          tlsSock.on("data", (wsData) => {
-            buf = Buffer.concat([buf, wsData])
-            const headerEnd = buf.indexOf("\r\n\r\n")
-            if (headerEnd === -1) return
-
-            const headerStr = buf.subarray(0, headerEnd).toString()
-            if (!headerStr.includes("101")) {
-              const body = buf.subarray(headerEnd + 4).toString()
-              reject(
-                new Error(
-                  `WS upgrade failed: ${headerStr.slice(0, 100)} ${body.slice(0, 100)}`,
-                ),
-              )
-              return
-            }
-
-            // WS upgrade successful
-            let frameBuf = buf.subarray(headerEnd + 4)
-            buf = Buffer.alloc(0)
-
-            // Buffer messages until a listener is registered
-            const messageBuffer: Array<string> = []
-
-            const wsHandle: ClawWs = {
-              send(data: string) {
-                if (tlsSock && !tlsSock.destroyed) {
-                  tlsSock.write(encodeWsFrame(Buffer.from(data, "utf8")))
-                }
-              },
-              addEventListener(
-                event: string,
-                handler: (...args: Array<unknown>) => void,
-              ) {
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                if (listeners[event]) {
-                  listeners[event].push(handler)
-                }
-                if (event === "message" && messageBuffer.length > 0) {
-                  const msgs = [...messageBuffer]
-                  messageBuffer.length = 0
-                  for (const msg of msgs) {
-                    for (const h of listeners.message) {
-                      h(msg)
-                    }
-                  }
-                }
-              },
-              close() {
-                try {
-                  tlsSock?.end()
-                  sock.destroy()
-                } catch {
-                  // ignore
-                }
-              },
-            }
-
-            // Start reading WS frames (remove upgrade-response listener first)
-            ;(tlsSock as TLSSocket).removeAllListeners("data")
-            ;(tlsSock as TLSSocket).on("data", (chunk: Buffer) => {
-              frameBuf = Buffer.concat([frameBuf, chunk])
-              while (frameBuf.length >= 2) {
-                try {
-                  const frame = decodeWsFrame(frameBuf)
-                  frameBuf = Buffer.from(frame.remaining)
-                  switch (frame.opcode) {
-                    case 0x01: {
-                      const text = frame.payload.toString()
-                      if (listeners.message.length > 0) {
-                        for (const h of listeners.message) {
-                          h(text)
-                        }
-                      } else {
-                        messageBuffer.push(text)
-                      }
-
-                      break
-                    }
-                    case 0x08: {
-                      for (const h of listeners.close) {
-                        h(1000, "Remote close")
-                      }
-                      return
-                    }
-                    case 0x09: {
-                      tlsSock?.write(Buffer.from([0x8a, 0x00]))
-
-                      break
-                    }
-                    // No default
-                  }
-                } catch {
-                  break
-                }
-              }
-            })
-
-            resolve(wsHandle)
-          })
-
-          tlsSock.on("error", (err) => {
-            reject(err instanceof Error ? err : new Error(String(err)))
-          })
-        }
+        tlsSock.on("error", (err) => {
+          reject(err instanceof Error ? err : new Error(String(err)))
+        })
       }
     })
 
@@ -259,7 +325,24 @@ export function fetchWithProxy(
   options?: RequestInit,
   proxyUrl?: string,
 ): Promise<Response> {
+  // Bun fetch does not respect /etc/hosts, rewrite aistudio.xiaomimimo.com
   if (!proxyUrl) {
+    const u = new URL(url)
+    if (
+      u.hostname === "aistudio.xiaomimimo.com"
+      || u.hostname.endsWith(".aistudio.xiaomimimo.com")
+    ) {
+      u.hostname = MIMO_API_HOST
+      url = u.toString()
+      const opts = {
+        ...options,
+        headers: {
+          ...(options?.headers as Record<string, string> | undefined),
+          Host: "aistudio.xiaomimimo.com",
+        },
+      }
+      return fetch(url, opts)
+    }
     return fetch(url, options)
   }
   let agent = proxyAgents.get(proxyUrl)
