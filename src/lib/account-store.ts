@@ -45,9 +45,18 @@ function defaultProvider(provider?: AccountProvider): AccountProvider {
 
 export async function loadAccounts(): Promise<void> {
   clearAllAccountTimers()
-  try {
-    const raw = await readAccountsFile(PATHS.ACCOUNTS_PATH)
-    state.accounts = raw.map((account) => migrateAccount(account))
+  const rawAccounts = await tryReadAccountsFile()
+  if (rawAccounts.length > 0) {
+    state.accounts = []
+    for (const raw of rawAccounts) {
+      try {
+        state.accounts.push(migrateAccount(raw))
+      } catch (err) {
+        consola.warn(
+          `Skipping invalid account entry: ${(err as Error).message}`,
+        )
+      }
+    }
     for (const account of state.accounts) {
       if (typeof account.cooldownUntil === "number") {
         if (account.cooldownUntil <= Date.now()) {
@@ -61,8 +70,6 @@ export async function loadAccounts(): Promise<void> {
       syncLegacyExhaustedState(account)
     }
     return
-  } catch {
-    // File doesn't exist or is invalid — migrate from legacy token
   }
 
   try {
@@ -95,6 +102,14 @@ export async function loadAccounts(): Promise<void> {
   state.accounts = []
 }
 
+async function tryReadAccountsFile(): Promise<Array<Record<string, unknown>>> {
+  try {
+    return await readAccountsFile(PATHS.ACCOUNTS_PATH)
+  } catch {
+    return []
+  }
+}
+
 class Mutex {
   private queue: Promise<void> = Promise.resolve()
 
@@ -118,10 +133,10 @@ class Mutex {
 const fileMutex = new Mutex()
 
 export async function saveAccounts(): Promise<void> {
-  const sanitized = state.accounts.map((account) => serializeAccount(account))
   const targetPath = PATHS.ACCOUNTS_PATH
   const appDir = PATHS.APP_DIR
   return fileMutex.runExclusive(async () => {
+    const sanitized = state.accounts.map((account) => serializeAccount(account))
     const tmpPath = `${targetPath}.${process.pid}.tmp`
     try {
       await fs.mkdir(appDir, { recursive: true })
@@ -326,7 +341,7 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
   if (tokens && tokens.length > 0) {
     clearAllAccountTimers()
     const existing = await loadAccountsFile()
-    const newAccounts: Array<Account> = tokens.map((token, index) => {
+    const newCopilotAccounts: Array<Account> = tokens.map((token, index) => {
       const existingAccount = existing.find(
         (account) =>
           account.provider === "copilot" && getGitHubToken(account) === token,
@@ -351,7 +366,9 @@ export async function initAccounts(tokens?: Array<string>): Promise<void> {
       setupAccountPropertyProxies(acc)
       return acc
     })
-    state.accounts = newAccounts
+    // Preserve non-copilot accounts (Mimo, Codebuff, Windsurf etc.)
+    const nonCopilot = existing.filter((a) => a.provider !== "copilot")
+    state.accounts = [...newCopilotAccounts, ...nonCopilot]
     state.activeAccountIndex = 0
     await saveAccounts()
   } else {
