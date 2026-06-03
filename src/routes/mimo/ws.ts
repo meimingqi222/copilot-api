@@ -4,7 +4,6 @@ import { upgradeWebSocket } from "hono/bun"
 
 import { state } from "~/lib/state"
 import {
-  isValidMimoWsSecret,
   isValidMimoWsToken,
   type MimoMessage,
   mimoConnections,
@@ -85,12 +84,12 @@ mimoWsRoute.get("/", async (c, next) => {
     return c.text("Missing accountId", 400)
   }
 
-  // Accept either legacy token auth (header/query) or secret query param
-  // (matches mimo-claw's convention where bridge.py sends secret=)
-  const secret = c.req.query("secret")
+  // Accept token auth via header or query param
   const token = c.req.header("x-mimo-ws-token") ?? c.req.query("token")
-  if (!isValidMimoWsSecret(secret) && !isValidMimoWsToken(token)) {
-    consola.warn("Rejecting Claw WS connection: invalid secret/token")
+  if (!isValidMimoWsToken(token)) {
+    consola.warn(
+      `Rejecting Claw WS connection: invalid token for account ${accountId}`,
+    )
     return c.text("Unauthorized", 401)
   }
 
