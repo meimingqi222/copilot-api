@@ -405,22 +405,24 @@ def handle_request(ws, msg):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python bridge.py WS_URL [SECRET] [--account-id ID]")
+        print("Usage: python bridge.py WS_URL [TOKEN] [--account-id ID]")
         sys.exit(1)
 
     target = sys.argv[1]
-    secret = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else ""
+    token = ""
     account_id = ""
-    for i, arg in enumerate(sys.argv):
+    for i, arg in enumerate(sys.argv[2:], 2):
         if arg == "--account-id" and i + 1 < len(sys.argv):
             account_id = sys.argv[i + 1]
+        elif not arg.startswith("--") and i == 2:
+            token = arg
 
     parsed_target = urlparse(target)
-    # The manager already appends accountId and secret to the WS URL,
+    # The manager already appends accountId and token to the WS URL,
     # so we only need to add them if they are missing from the URL.
     query = [parsed_target.query] if parsed_target.query else []
-    if secret and "secret=" not in (parsed_target.query or ""):
-        query.append(f"secret={secret}")
+    if token and "token=" not in (parsed_target.query or ""):
+        query.append(f"token={token}")
     if account_id and "accountId=" not in (parsed_target.query or ""):
         query.append(f"accountId={account_id}")
 
