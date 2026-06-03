@@ -158,7 +158,8 @@ export function translateChunkToAnthropicEvents(
 ): Array<AnthropicStreamEventData> {
   const events: Array<AnthropicStreamEventData> = []
 
-  if (chunk.choices.length === 0) {
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!chunk.choices?.length) {
     return events
   }
 

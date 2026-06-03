@@ -42,19 +42,6 @@ function extractAccount(target: { account?: Account }): Account {
   return account
 }
 
-function parseStreamLines(body: string): Array<string> {
-  const results: Array<string> = []
-  const lines = body.split("\n")
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith("data: ")) continue
-    const dataStr = trimmed.slice(6).trim()
-    if (dataStr === "[DONE]") continue
-    results.push(dataStr)
-  }
-  return results
-}
-
 async function* streamResponse(
   conn: MimoConnection,
   reqId: string,
@@ -132,9 +119,8 @@ async function* streamResponse(
         yield { data: bodyStr }
         done = true
       } else if (msg.type === "stream_delta" && msg.chunk) {
-        for (const dataStr of parseStreamLines(msg.chunk)) {
-          yield { data: dataStr }
-        }
+        // Bridge.py already strips "data: " prefix, chunk is raw JSON
+        yield { data: msg.chunk }
       } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "error") {

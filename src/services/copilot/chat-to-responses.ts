@@ -240,7 +240,9 @@ function updateChatToResponsesStateFromChunk(
 
   updateResponsesUsage(state, chunk)
 
-  const delta = chunk.choices[0].delta
+  const delta = chunk.choices[0]?.delta
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!delta) return
   appendContentDelta(state, delta.content)
   appendReasoningDelta(state, delta)
   appendToolCallDeltas(state, delta.tool_calls)
@@ -429,7 +431,9 @@ function buildChunkEvents(
   state: ChatToResponsesStreamState,
   chunk: ChatCompletionChunk,
 ): Array<Record<string, unknown>> {
-  const delta = chunk.choices[0].delta
+  const delta = chunk.choices[0]?.delta
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!delta) return []
   return [
     ...buildReasoningEvents(state, delta),
     ...buildContentEvents(state, delta.content),
