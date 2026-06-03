@@ -4,6 +4,7 @@ import { upgradeWebSocket } from "hono/bun"
 
 import { state } from "~/lib/state"
 import {
+  isValidMimoWsSecret,
   isValidMimoWsToken,
   type MimoMessage,
   mimoConnections,
@@ -47,8 +48,8 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         }
         const msg = JSON.parse(dataStr) as MimoMessage
         const conn = mimoConnections.get(accountId)
-        if (conn && msg.req_id) {
-          const callback = conn.activeRequests.get(msg.req_id)
+        if (conn && msg.id) {
+          const callback = conn.activeRequests.get(msg.id)
           if (callback) {
             callback(msg)
           }
@@ -64,8 +65,8 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         for (const [reqId, callback] of conn.activeRequests.entries()) {
           callback({
             type: "error",
-            req_id: reqId,
-            body: "Node disconnected",
+            id: reqId,
+            error: "Node disconnected",
           })
         }
         mimoConnections.delete(accountId)
@@ -84,9 +85,12 @@ mimoWsRoute.get("/", async (c, next) => {
     return c.text("Missing accountId", 400)
   }
 
+  // Accept either legacy token auth (header/query) or secret query param
+  // (matches mimo-claw's convention where bridge.py sends secret=)
+  const secret = c.req.query("secret")
   const token = c.req.header("x-mimo-ws-token") ?? c.req.query("token")
-  if (!isValidMimoWsToken(token)) {
-    consola.debug("Rejecting Claw WS connection: invalid token")
+  if (!isValidMimoWsSecret(secret) && !isValidMimoWsToken(token)) {
+    consola.warn("Rejecting Claw WS connection: invalid secret/token")
     return c.text("Unauthorized", 401)
   }
 
