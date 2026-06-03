@@ -97,10 +97,13 @@ export const mimoProviderRuntime: ProviderRuntime = {
     }
 
     const wsPayload = {
-      req_id: reqId,
+      type: "request",
+      id: reqId,
       method: "POST",
       path: "/v1/chat/completions",
-      body: JSON.stringify(nativePayload),
+      body: nativePayload,
+      headers: {},
+      stream: payload.stream,
     }
 
     if (payload.stream) {
@@ -213,14 +216,23 @@ async function* streamResponse(
       const msg = queue.shift()
       if (!msg) continue
 
-      if (msg.type === "chunk" && msg.body) {
-        for (const dataStr of parseStreamLines(msg.body)) {
+      if (msg.type === "stream_start") {
+        // Ignore: status/headers already captured by bridge protocol.
+      } else if (msg.type === "response" && msg.body) {
+        // Non-SSE reply arrived while expecting a stream (e.g. upstream error).
+        const bodyStr = JSON.stringify(msg.body)
+        yield { data: bodyStr }
+        done = true
+      } else if (msg.type === "stream_delta" && msg.chunk) {
+        for (const dataStr of parseStreamLines(msg.chunk)) {
           yield { data: dataStr }
         }
-      } else if (msg.type === "finish") {
+      } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "error") {
-        throw new Error(msg.body || "Node returned an error")
+        throw new Error(
+          ((msg.error || msg.body) as string) || "Node returned an error",
+        )
       }
     }
     yield { data: "[DONE]" }
@@ -297,12 +309,18 @@ async function collectResponse(
       const msg = queue.shift()
       if (!msg) continue
 
-      if (msg.type === "chunk" && msg.body) {
-        accumulatedBody += msg.body
-      } else if (msg.type === "finish") {
+      if (msg.type === "stream_start") {
+        // Ignore: non-streaming path — status/headers not needed here.
+      } else if (msg.type === "stream_delta" && msg.chunk) {
+        accumulatedBody += msg.chunk
+      } else if (msg.type === "stream_end") {
         done = true
+      } else if (msg.type === "response" && msg.body) {
+        return msg.body as ChatCompletionResponse
       } else if (msg.type === "error") {
-        throw new Error(msg.body || "Node returned an error")
+        throw new Error(
+          ((msg.error || msg.body) as string) || "Node returned an error",
+        )
       }
     }
 

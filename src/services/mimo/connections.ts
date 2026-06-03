@@ -24,12 +24,37 @@ export function isValidMimoWsToken(token: string | undefined): boolean {
   }
 }
 
+/**
+ * Validate WS secret query param — follows mimo-claw's convention:
+ * - If MIMO_WS_SECRET is configured, the client must supply it exactly.
+ * - If MIMO_WS_SECRET is empty/unset, any secret (including none) is accepted.
+ */
+export function isValidMimoWsSecret(secret: string | undefined): boolean {
+  const expected = process.env.MIMO_WS_SECRET ?? ""
+  // No secret configured → open access (matches mimo-claw behavior)
+  if (!expected) return true
+  if (!secret) return false
+
+  try {
+    const secretBuffer = Buffer.from(secret)
+    const expectedBuffer = Buffer.from(expected)
+    return (
+      secretBuffer.length === expectedBuffer.length
+      && timingSafeEqual(secretBuffer, expectedBuffer)
+    )
+  } catch {
+    return false
+  }
+}
+
 export interface MimoMessage {
-  type: "start" | "chunk" | "finish" | "error"
-  req_id: string
+  type: "stream_start" | "stream_delta" | "stream_end" | "response" | "error"
+  id: string
   status?: number
   headers?: Record<string, string>
-  body?: string
+  body?: unknown
+  chunk?: string
+  error?: string
 }
 
 export interface MimoConnection {
