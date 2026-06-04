@@ -542,7 +542,7 @@ class NativeClawClient {
           }
         } else if (evt.event === "agent") {
           const p = evt.payload
-          consola.info(
+          consola.debug(
             `[Claw ${this.label}] agent event: stream=${p?.stream} phase=${p?.data?.phase} text=${(p?.data?.text || "").slice(0, 60)}`,
           )
           if (
@@ -662,9 +662,7 @@ class MimoAccountManager {
               `[MimoManager ${this.label}] Bridge already connected, reusing`,
             )
             await markAccountReady(this.accountId)
-            const ok = await this.watchdogSleep(
-              Math.max(60, remainSec - 120),
-            )
+            const ok = await this.watchdogSleep(Math.max(60, remainSec - 120))
             if (!ok) {
               await markAccountFailed(
                 this.accountId,
@@ -970,12 +968,12 @@ ${bridgeCode}
 
       if (mimoConnections.has(this.accountId)) {
         if (disconnectedSince !== 0) {
-          consola.info(`[MimoManager ${this.label}] Bridge reconnected`)
+          consola.debug(`[MimoManager ${this.label}] Bridge reconnected`)
         }
         disconnectedSince = 0
         const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
         if (Date.now() - lastHealthLog > 300_000) {
-          consola.info(
+          consola.debug(
             `[MimoManager ${this.label}] Bridge healthy, ${Math.floor(remaining / 60)}m remaining`,
           )
           lastHealthLog = Date.now()
