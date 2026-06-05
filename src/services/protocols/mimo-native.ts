@@ -11,11 +11,13 @@ import type { Account } from "~/lib/accounts"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { parseModelReference } from "~/lib/accounts"
+import { HTTPError } from "~/lib/error"
 import {
   type MimoMessage,
   type MimoConnection,
   mimoConnections,
 } from "~/services/mimo/connections"
+import { detectOpenAIStreamError } from "~/services/protocols/shared"
 
 import type { ProtocolAdapter } from "./types"
 
@@ -224,6 +226,40 @@ async function collectResponse(
   }
 }
 
+async function safeMimoStream(
+  gen: AsyncIterable<StreamChunk>,
+): Promise<AsyncIterable<StreamChunk>> {
+  const iterator = gen[Symbol.asyncIterator]()
+  let first: IteratorResult<StreamChunk>
+  try {
+    first = await iterator.next()
+  } catch (e) {
+    throw new HTTPError(
+      e instanceof Error ? e.message : "Mimo stream error",
+      new Response(null, { status: 503 }),
+    )
+  }
+  if (first.done) return gen
+
+  const streamError = detectOpenAIStreamError(first.value)
+  if (streamError) throw streamError
+
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<StreamChunk> {
+      let yielded = false
+      return {
+        async next(): Promise<IteratorResult<StreamChunk>> {
+          if (!yielded) {
+            yielded = true
+            return first
+          }
+          return iterator.next()
+        },
+      }
+    },
+  }
+}
+
 export const mimoNativeAdapter: ProtocolAdapter = {
   protocol: "mimo-native",
 
@@ -262,8 +298,9 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     }
 
     if (payload.stream) {
-      const response = streamResponse(conn, reqId, signal)
+      const gen = streamResponse(conn, reqId, signal)
       conn.ws.send(JSON.stringify(wsPayload))
+      const response = await safeMimoStream(gen)
       return {
         credentialId: account.id,
         response,

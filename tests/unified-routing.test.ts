@@ -4,6 +4,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { randomUUID } from "node:crypto"
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 
 import type { Account } from "~/lib/accounts"
 import type {
@@ -12,6 +16,7 @@ import type {
 } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
+import { PATHS } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
@@ -26,11 +31,28 @@ import {
 import { state } from "~/lib/state"
 import { executeWithFailover } from "~/services/dispatch/failover"
 
-afterEach(() => {
+const originalAccountsPath = PATHS.ACCOUNTS_PATH
+let tempAccountsPath: string
+
+beforeEach(() => {
+  tempAccountsPath = path.join(
+    os.tmpdir(),
+    `accounts-unified-test-${randomUUID()}.json`,
+  )
+  PATHS.ACCOUNTS_PATH = tempAccountsPath
+})
+
+afterEach(async () => {
+  PATHS.ACCOUNTS_PATH = originalAccountsPath
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
   resetAdaptiveRateLimiterForTest()
   state.accounts = []
+  try {
+    await fs.unlink(tempAccountsPath)
+  } catch {
+    // ignore cleanup errors
+  }
 })
 
 function createTestAccount(

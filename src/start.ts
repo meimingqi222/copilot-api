@@ -48,9 +48,6 @@ interface RunServerOptions {
   provider: "copilot" | "codebuff" | "windsurf"
   accountType: string
   manual: boolean
-  githubToken?: string
-  githubTokens?: string
-  tokensFile?: string
   claudeCode: boolean
   showToken: boolean
   proxyEnv: boolean
@@ -168,8 +165,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   for (const key of [
     "API_KEY",
     "ADMIN_PASSWORD",
-    "GITHUB_TOKEN",
-    "GITHUB_TOKENS",
   ]) {
     if (process.env[key]) {
       Reflect.deleteProperty(process.env, key)
@@ -179,92 +174,56 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await ensurePaths()
   await cacheVSCodeVersion()
 
-  {
-    // Collect GitHub tokens from CLI options
-    const allTokens: Array<string> = []
-    if (options.githubTokens) {
-      allTokens.push(
-        ...options.githubTokens
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean),
+  // Load accounts from disk (configure via Web UI)
+  await initAccounts()
+
+  await ensureDirectProviderAccounts()
+
+  // Load provider connections (generic OpenAI/Anthropic-compatible providers)
+  await initializeProviderConnections()
+  initializeProtocolAdapters()
+
+  // Refresh Copilot tokens for copilot accounts
+  for (const account of state.accounts) {
+    if (account.provider !== "copilot") {
+      continue
+    }
+
+    try {
+      await refreshCopilotToken(account)
+      // Sync legacy state.githubToken for backward compat services
+      if (account === state.accounts[state.activeAccountIndex]) {
+        state.githubToken =
+          account.credentials?.githubToken ?? account.githubToken
+      }
+    } catch (err) {
+      consola.debug(
+        `Failed to get Copilot token for account "${account.label}"`,
+        err,
       )
     }
-    if (options.tokensFile) {
-      try {
-        const fileContent = await fs.readFile(options.tokensFile, "utf8")
-        allTokens.push(
-          ...fileContent
-            .split("\n")
-            .map((t) => t.trim())
-            .filter(Boolean),
-        )
-      } catch (err) {
-        consola.warn("Failed to read tokens file:", err)
-      }
-    }
-    if (options.githubToken && !allTokens.includes(options.githubToken)) {
-      allTokens.unshift(options.githubToken)
-    }
+  }
 
-    if (allTokens.length > 0) {
-      consola.info(`Using ${allTokens.length} provided GitHub token(s)`)
-      // initAccounts will create account objects from tokens
-      await initAccounts(allTokens)
-    } else {
-      // No tokens provided — load from disk, skip device flow
-      // User can add accounts via Web UI later
-      await initAccounts()
-    }
+  // Start background quota refresh
+  scheduleQuotaRefresh()
 
-    await ensureDirectProviderAccounts()
+  cacheModels()
 
-    // Load provider connections (generic OpenAI/Anthropic-compatible providers)
-    await initializeProviderConnections()
-    initializeProtocolAdapters()
+  // Refresh models for all accounts and schedule periodic refresh
+  scheduleModelsRefresh()
+  scheduleConnectionModelDiscovery()
 
-    // Refresh Copilot tokens for copilot accounts
-    for (const account of state.accounts) {
-      if (account.provider !== "copilot") {
-        continue
-      }
+  // Start background MIMO manager
+  startMimoManager()
 
-      try {
-        await refreshCopilotToken(account)
-        // Sync legacy state.githubToken for backward compat services
-        if (account === state.accounts[state.activeAccountIndex]) {
-          state.githubToken =
-            account.credentials?.githubToken ?? account.githubToken
-        }
-      } catch (err) {
-        consola.debug(
-          `Failed to get Copilot token for account "${account.label}"`,
-          err,
-        )
-      }
-    }
-
-    // Start background quota refresh
-    scheduleQuotaRefresh()
-
-    cacheModels()
-
-    // Refresh models for all accounts and schedule periodic refresh
-    scheduleModelsRefresh()
-    scheduleConnectionModelDiscovery()
-
-    // Start background MIMO manager
-    startMimoManager()
-
-    if (state.models) {
-      consola.info(
-        `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
-      )
-    } else {
-      consola.warn(
-        "No models available — add a GitHub account via Web UI to get started",
-      )
-    }
+  if (state.models) {
+    consola.info(
+      `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
+    )
+  } else {
+    consola.warn(
+      "No models available — add a GitHub account via Web UI to get started",
+    )
   }
 
   // Load users
@@ -595,18 +554,15 @@ export const start = defineCommand({
     "github-token": {
       alias: "g",
       type: "string",
-      description:
-        "Provide GitHub token directly (must be generated using the `auth` subcommand)",
+      description: "(deprecated) Use the Web UI to configure accounts",
     },
     "github-tokens": {
       type: "string",
-      description:
-        "Comma-separated list of GitHub tokens for multi-account load balancing",
+      description: "(deprecated) Use the Web UI to configure accounts",
     },
     "tokens-file": {
       type: "string",
-      description:
-        "Path to a file with one GitHub token per line (for multi-account setup)",
+      description: "(deprecated) Use the Web UI to configure accounts",
     },
     "claude-code": {
       alias: "c",
@@ -711,9 +667,6 @@ export const start = defineCommand({
       provider,
       accountType: args["account-type"],
       manual: args.manual,
-      githubToken: args["github-token"],
-      githubTokens: args["github-tokens"] || process.env.GITHUB_TOKENS,
-      tokensFile: args["tokens-file"],
       claudeCode: args["claude-code"],
       showToken: args["show-token"],
       proxyEnv: args["proxy-env"],

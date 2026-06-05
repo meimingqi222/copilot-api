@@ -5,8 +5,6 @@
  * Embeddings)封装为 ProtocolAdapter,使 executeWithFailover 统一调度。
  */
 
-import { events } from "fetch-event-stream"
-
 import type { Account, CopilotAccount } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
@@ -27,6 +25,12 @@ import {
   translateResponsesToChatCompletion,
   translateToResponsesPayload,
 } from "~/services/copilot/responses-api"
+import {
+  detectAnthropicStreamError,
+  detectOpenAIStreamError,
+  detectResponsesStreamError,
+  safeSseStream,
+} from "~/services/protocols/shared"
 
 function extractAccount(target: { account?: Account }): Account {
   const account = target.account
@@ -127,18 +131,26 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     }
 
     if (normalizedPayload.stream) {
-      const stream = events(
+      if (useResponsesApi) {
+        const rawStream = (await safeSseStream(
+          response,
+          detectResponsesStreamError,
+        )) as unknown as AsyncIterable<CopilotStreamEvent>
+        return {
+          credentialId: account.id,
+          response: translateResponsesStreamToChatCompletions(
+            rawStream,
+            normalizedPayload.model,
+          ) as AsyncIterable<CopilotStreamEvent>,
+        }
+      }
+      const stream = (await safeSseStream(
         response,
-      ) as unknown as AsyncIterable<CopilotStreamEvent>
+        detectOpenAIStreamError,
+      )) as unknown as AsyncIterable<CopilotStreamEvent>
       return {
         credentialId: account.id,
-        response:
-          useResponsesApi ?
-            (translateResponsesStreamToChatCompletions(
-              stream,
-              normalizedPayload.model,
-            ) as AsyncIterable<CopilotStreamEvent>)
-          : stream,
+        response: stream,
       }
     }
 
@@ -196,9 +208,13 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     }
 
     if (anthropicPayload.stream) {
+      const stream = await safeSseStream(
+        response,
+        detectAnthropicStreamError,
+      )
       return {
         credentialId: account.id,
-        response: events(response) as unknown as AsyncIterable<unknown>,
+        response: stream as unknown as AsyncIterable<unknown>,
       }
     }
 

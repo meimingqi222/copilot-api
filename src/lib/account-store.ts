@@ -337,43 +337,8 @@ function clearAllAccountTimers(): void {
   }
 }
 
-export async function initAccounts(tokens?: Array<string>): Promise<void> {
-  if (tokens && tokens.length > 0) {
-    clearAllAccountTimers()
-    const existing = await loadAccountsFile()
-    const newCopilotAccounts: Array<Account> = tokens.map((token, index) => {
-      const existingAccount = existing.find(
-        (account) =>
-          account.provider === "copilot" && getGitHubToken(account) === token,
-      )
-      if (existingAccount) {
-        return existingAccount
-      }
-      const acc: Account = {
-        id: randomUUID(),
-        label: index === 0 ? "default" : `account-${index + 1}`,
-        provider: "copilot",
-        credentials: {
-          githubToken: token,
-        },
-        settings: {},
-        githubToken: token,
-        enabled: true,
-        priority: 0,
-        quotaState: "unknown",
-        createdAt: Date.now(),
-      }
-      setupAccountPropertyProxies(acc)
-      return acc
-    })
-    // Preserve non-copilot accounts (Mimo, Codebuff, Windsurf etc.)
-    const nonCopilot = existing.filter((a) => a.provider !== "copilot")
-    state.accounts = [...newCopilotAccounts, ...nonCopilot]
-    state.activeAccountIndex = 0
-    await saveAccounts()
-  } else {
-    await loadAccounts()
-  }
+export async function initAccounts(): Promise<void> {
+  await loadAccounts()
 
   const active = state.accounts[state.activeAccountIndex] as Account | undefined
   state.githubToken =
