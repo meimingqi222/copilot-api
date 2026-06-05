@@ -5,8 +5,6 @@
  * 使 executeWithFailover 统一调度。
  */
 
-import { events } from "fetch-event-stream"
-
 import type { Account, CodebuffAccount } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
@@ -17,6 +15,10 @@ import type {
 import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import {
+  detectOpenAIStreamError,
+  safeSseStream,
+} from "~/services/protocols/shared"
 
 import type { ProtocolAdapter } from "./types"
 
@@ -213,9 +215,10 @@ async function createCodebuffChatCompletionsOnce(
   }
 
   if (payload.stream) {
-    const stream = events(
+    const stream = (await safeSseStream(
       response,
-    ) as unknown as AsyncIterable<CopilotStreamEvent>
+      detectOpenAIStreamError,
+    )) as unknown as AsyncIterable<CopilotStreamEvent>
     return finalizeStream(stream, { settings, authToken, runId })
   }
 

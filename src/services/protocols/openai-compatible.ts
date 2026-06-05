@@ -6,13 +6,10 @@
  * 配置(baseUrl、headers)与 ApiCredential(authMode/value)构造请求。
  */
 
-import { events } from "fetch-event-stream"
-
 import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
-import type { EmbeddingResponse } from "~/services/copilot/create-embeddings"
 
 import {
   type ApiCredential,
@@ -21,8 +18,10 @@ import {
 } from "~/lib/provider-connections"
 import {
   buildBaseHeaders,
+  detectOpenAIStreamError,
   handleUpstreamFailure,
   joinUrl,
+  safeSseStream,
 } from "~/services/protocols/shared"
 
 import type {
@@ -122,12 +121,10 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     }
 
     if (payload.stream) {
-      const stream = events(
-        response,
-      ) as unknown as AsyncIterable<CopilotStreamEvent>
+      const stream = await safeSseStream(response, detectOpenAIStreamError)
       return {
         credentialId: credential.id,
-        response: stream,
+        response: stream as unknown as AsyncIterable<CopilotStreamEvent>,
       } satisfies AdapterChatResult
     }
 

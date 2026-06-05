@@ -6,8 +6,6 @@
  * 上层(`src/routes/messages/handler.ts`)在调用前已经处理了路径分支。
  */
 
-import { events } from "fetch-event-stream"
-
 import type {
   ApiCredential,
   ProviderConnection,
@@ -15,8 +13,10 @@ import type {
 
 import {
   buildBaseHeaders,
+  detectAnthropicStreamError,
   handleUpstreamFailure,
   joinUrl,
+  safeSseStream,
 } from "~/services/protocols/shared"
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
@@ -72,9 +72,10 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
     }
 
     if (isStream) {
+      const stream = await safeSseStream(response, detectAnthropicStreamError)
       return {
         credentialId: credential.id,
-        response: events(response) as unknown as AsyncIterable<unknown>,
+        response: stream as unknown as AsyncIterable<unknown>,
       } satisfies AdapterMessagesResult
     }
     const body = (await response.json()) as Record<string, unknown>
