@@ -696,45 +696,58 @@ class MimoAccountManager {
           )
         }
 
-        // Step 1: Destroy old container
-        consola.info(`[MimoManager ${this.label}] Destroying old container...`)
-        const destroyClient = new NativeClawClient(
-          this.accountId,
-          this.ph,
-          this.userId,
-          this.serviceToken,
-          this.label,
-          this.proxy,
-        )
-        await destroyClient.destroyClaw()
-        destroyClient.close()
-        await sleep(3000)
+        // Steps 1-2: Destroy and create (coordinated across accounts)
+        const releaseSlot =
+          await destroyCreateCoordinator.acquire(this.label)
+        try {
+          // Step 1: Destroy old container
+          consola.info(
+            `[MimoManager ${this.label}] Destroying old container...`,
+          )
+          const destroyClient = new NativeClawClient(
+            this.accountId,
+            this.ph,
+            this.userId,
+            this.serviceToken,
+            this.label,
+            this.proxy,
+          )
+          await destroyClient.destroyClaw()
+          destroyClient.close()
+          await sleep(3000)
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        if (!this.active) break
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if (!this.active) break
 
-        // Step 2: Create new container (only create, no WS connect yet)
-        consola.info(`[MimoManager ${this.label}] Creating new container...`)
-        const createClient = new NativeClawClient(
-          this.accountId,
-          this.ph,
-          this.userId,
-          this.serviceToken,
-          this.label,
-          this.proxy,
-        )
-        activeClient = createClient
+          // Step 2: Create new container (only create, no WS connect yet)
+          consola.info(
+            `[MimoManager ${this.label}] Creating new container...`,
+          )
+          const createClient = new NativeClawClient(
+            this.accountId,
+            this.ph,
+            this.userId,
+            this.serviceToken,
+            this.label,
+            this.proxy,
+          )
+          activeClient = createClient
 
-        if (!(await createClient.createAndWait())) {
-          consola.error(`[MimoManager ${this.label}] Container creation failed`)
-          createClient.close()
-          activeClient = null
-          await sleep(60_000)
-          continue
+          if (!(await createClient.createAndWait())) {
+            consola.error(
+              `[MimoManager ${this.label}] Container creation failed`,
+            )
+            createClient.close()
+            activeClient = null
+            await sleep(5 * 60_000)
+            continue
+          }
+          consola.info(
+            `[MimoManager ${this.label}] Container created and AVAILABLE`,
+          )
+        } finally {
+          releaseSlot()
         }
-        consola.info(
-          `[MimoManager ${this.label}] Container created and AVAILABLE`,
-        )
 
         // Step 3: Connect WS with retries (up to 5 attempts)
         consola.info(
@@ -1002,6 +1015,42 @@ ${bridgeCode}
 const activeManagers = new Map<string, MimoAccountManager>()
 
 const MIN_CLAW_CREATE_INTERVAL_MS = 600_000
+
+/**
+ * Cross-account coordination: ensures only one claw container is being
+ * destroyed or created at any time, with a minimum gap between operations.
+ * Prevents all accounts from being simultaneously unavailable during
+ * their independent lifecycle cycles.
+ */
+const destroyCreateCoordinator = (() => {
+  const GAP_MS = 5 * 60_000
+  let chain: Promise<void> = Promise.resolve()
+
+  return {
+    async acquire(label: string): Promise<() => void> {
+      const prev = chain
+      let release!: () => void
+      chain = new Promise<void>((resolve) => {
+        release = resolve
+      })
+
+      await prev
+      consola.info(
+        `[MimoLock] "${label}" acquired destroy/create slot`,
+      )
+
+      let released = false
+      return () => {
+        if (released) return
+        released = true
+        consola.info(
+          `[MimoLock] "${label}" releasing slot (next in ${GAP_MS / 1000}s)`,
+        )
+        setTimeout(release, GAP_MS)
+      }
+    },
+  }
+})()
 
 export function startMimoManager() {
   consola.info("🚀 Mimo AI Studio control engine (Manager) initialized.")
