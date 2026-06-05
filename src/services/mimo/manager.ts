@@ -321,8 +321,9 @@ class NativeClawClient {
 
   async uploadToFDS(filename: string, content: string): Promise<string | null> {
     const md5hex = createHash("md5").update(content).digest("hex")
-    const genURL = `https://aistudio.xiaomimimo.com/open-apis/resource/genUploadInfo?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
     const cookies = `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
+    const body = JSON.stringify({ fileName: filename, fileContentMd5: md5hex })
+    const genURL = `https://aistudio.xiaomimimo.com/open-apis/resource/genUploadInfo?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
 
     try {
       const genResp = await fetchWithProxy(
@@ -337,12 +338,9 @@ class NativeClawClient {
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           },
-          body: JSON.stringify({
-            fileName: filename,
-            fileContentMd5: md5hex,
-          }),
+          body,
         },
-        this.proxy,
+        undefined, // force DNS override via MIMO_API_HOST, bypass proxy
       )
       if (!genResp.ok) return null
       const genData = (await genResp.json()) as {
@@ -351,6 +349,7 @@ class NativeClawClient {
       }
       if (genData.code !== 0 || !genData.data?.uploadUrl) return null
 
+      // PUT the file — also bypass proxy so DNS override applies
       const putResp = await fetchWithProxy(
         genData.data.uploadUrl,
         {
@@ -363,7 +362,7 @@ class NativeClawClient {
           },
           body: content,
         },
-        this.proxy,
+        undefined,
       )
       if (!putResp.ok) return null
 
