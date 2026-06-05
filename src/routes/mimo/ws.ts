@@ -4,7 +4,7 @@ import { upgradeWebSocket } from "hono/bun"
 
 import { state } from "~/lib/state"
 import {
-  isValidMimoWsToken,
+  isValidMimoWsTokenForAccount,
   type MimoMessage,
   mimoConnections,
 } from "~/services/mimo/connections"
@@ -86,7 +86,7 @@ mimoWsRoute.get("/", async (c, next) => {
 
   // Accept token auth via header or query param
   const token = c.req.header("x-mimo-ws-token") ?? c.req.query("token")
-  if (!isValidMimoWsToken(token)) {
+  if (!isValidMimoWsTokenForAccount(accountId, token)) {
     consola.warn(
       `Rejecting Claw WS connection: invalid token for account ${accountId}`,
     )
