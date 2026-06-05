@@ -15,7 +15,7 @@ import {
   type Account,
 } from "~/lib/accounts"
 import { state } from "~/lib/state"
-import { getMimoWsToken, mimoConnections } from "~/services/mimo/connections"
+import { getMimoWsTokenForAccount, getOrCreateAccountWsToken, mimoConnections } from "~/services/mimo/connections"
 import {
   connectWebSocketDirect,
   connectWebSocketThroughProxy,
@@ -858,7 +858,9 @@ class MimoAccountManager {
           || `ws://localhost:${process.env.PORT || 4141}/ws/mimo`
         const delimiter = wsUrl.includes("?") ? "&" : "?"
         const finalWsUrl = `${wsUrl}${delimiter}accountId=${encodeURIComponent(this.accountId)}`
-        const token = getMimoWsToken()
+        // Ensure per-account WS token exists (generates if not present)
+        await getOrCreateAccountWsToken(this.accountId)
+        const token = getMimoWsTokenForAccount(this.accountId)
 
         let fdsUrl: string | null = null
         try {
