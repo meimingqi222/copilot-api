@@ -19,7 +19,11 @@ export const destroyCreateCoordinator = (() => {
         release = resolve
       })
 
-      await prev
+      try {
+        await prev
+      } catch {
+        // previous slot errored, proceed
+      }
       consola.info(`[MimoLock] "${label}" acquired destroy/create slot`)
 
       let released = false

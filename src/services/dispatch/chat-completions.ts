@@ -11,7 +11,7 @@ import type {
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
-import { dispatchRequest, type DispatchResult } from "./shared"
+import { dispatchRequest } from "./shared"
 
 export type ChatDispatchResult =
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
@@ -23,10 +23,13 @@ export async function dispatchChatCompletions(
   signal?: AbortSignal,
   c?: Context,
 ): Promise<ChatDispatchResult> {
-  const result: DispatchResult = await dispatchRequest(
+  const result = await dispatchRequest(
     { routeKind: "chat", payload, c },
     admission,
     signal,
   )
-  return result as unknown as ChatDispatchResult
+  return {
+    accountId: result.credentialId,
+    response: result.response,
+  } as ChatDispatchResult
 }

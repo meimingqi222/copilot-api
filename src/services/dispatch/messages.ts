@@ -5,7 +5,7 @@
 import type { RequestAdmission } from "~/lib/request-admission"
 import type { AnthropicMessagesPayload } from "~/services/protocols"
 
-import { dispatchRequest, type DispatchResult } from "./shared"
+import { dispatchRequest } from "./shared"
 
 export interface MessagesDispatchResult {
   accountId: string
@@ -18,10 +18,13 @@ export async function dispatchMessages(
   signal?: AbortSignal,
   forwardedHeaders?: Record<string, string | undefined>,
 ): Promise<MessagesDispatchResult> {
-  const result: DispatchResult = await dispatchRequest(
+  const result = await dispatchRequest(
     { routeKind: "messages", payload, forwardedHeaders },
     admission,
     signal,
   )
-  return result as unknown as MessagesDispatchResult
+  return {
+    accountId: result.credentialId,
+    response: result.response,
+  } as MessagesDispatchResult
 }
