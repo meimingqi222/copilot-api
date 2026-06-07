@@ -432,7 +432,8 @@ accountApiRoutes.post("/", async (c) => {
   let deviceCodeResponse: Awaited<ReturnType<typeof getDeviceCode>>
   try {
     deviceCodeResponse = await getDeviceCode()
-  } catch {
+  } catch (e: unknown) {
+    consola.error("Failed to initiate GitHub device flow:", e)
     return c.json({ error: "Failed to initiate GitHub device flow." }, 502)
   }
 
@@ -712,7 +713,8 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
     await saveAccounts()
     cacheModels()
     return c.json({ account: publicAccount(account) })
-  } catch {
+  } catch (e: unknown) {
+    consola.error("Failed to refresh account:", e)
     return c.json({ error: "Failed to refresh account." }, 502)
   }
 })

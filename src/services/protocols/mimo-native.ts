@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 /**
  * Mimo Native Protocol Adapter。
  *
@@ -17,6 +18,7 @@ import {
   type MimoConnection,
   mimoConnections,
 } from "~/services/mimo/connections"
+import { markAccountFailed } from "~/services/mimo/manager"
 import { detectOpenAIStreamError } from "~/services/protocols/shared"
 
 import type { ProtocolAdapter } from "./types"
@@ -126,9 +128,9 @@ async function* streamResponse(
       } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "error") {
-        throw new Error(
-          ((msg.error || msg.body) as string) || "Node returned an error",
-        )
+        const errorMsg =
+          (msg.error as string) || String(msg.body) || "Node returned an error"
+        throw new Error(errorMsg)
       }
     }
     yield { data: "[DONE]" }
@@ -214,9 +216,9 @@ async function collectResponse(
       } else if (msg.type === "response" && msg.body) {
         return msg.body as ChatCompletionResponse
       } else if (msg.type === "error") {
-        throw new Error(
-          ((msg.error || msg.body) as string) || "Node returned an error",
-        )
+        const errorMsg =
+          (msg.error as string) || String(msg.body) || "Node returned an error"
+        throw new Error(errorMsg)
       }
     }
 
@@ -275,8 +277,10 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     const account = extractAccount(target)
     const conn = mimoConnections.get(account.id)
     if (!conn) {
-      throw new Error(
+      markAccountFailed(account.id, "Claw node is offline or initializing")
+      throw new HTTPError(
         `Claw node for account "${account.label}" is offline or initializing. Please wait.`,
+        new Response(null, { status: 503 }),
       )
     }
 

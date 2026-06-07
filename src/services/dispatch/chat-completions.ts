@@ -4,20 +4,14 @@
 
 import type { Context } from "hono"
 
+import type { RequestAdmission } from "~/lib/request-admission"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
-import { HTTPError } from "~/lib/error"
-import { type RequestAdmission } from "~/lib/request-admission"
-
-import {
-  executeWithFailover,
-  legacyPlaceholderConn,
-  legacyPlaceholderCred,
-} from "./failover"
+import { dispatchRequest, type DispatchResult } from "./shared"
 
 export type ChatDispatchResult =
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
@@ -29,39 +23,10 @@ export async function dispatchChatCompletions(
   signal?: AbortSignal,
   c?: Context,
 ): Promise<ChatDispatchResult> {
-  return await executeWithFailover({
-    payload,
+  const result: DispatchResult = await dispatchRequest(
+    { routeKind: "chat", payload, c },
     admission,
     signal,
-    routeKind: "chat",
-    logPrefix: "[dispatch/chat]",
-    execute: (adapter, target, current) => {
-      if (!adapter?.createChatCompletions) {
-        throw new HTTPError(
-          `Protocol "${target.protocol}" does not support chat completions`,
-          new Response("Not Implemented", { status: 501 }),
-        )
-      }
-      const conn =
-        current.kind === "connection" ?
-          current.connection
-        : legacyPlaceholderConn(target)
-      const cred =
-        current.kind === "connection" ?
-          current.credential
-        : legacyPlaceholderCred(target)
-      return adapter
-        .createChatCompletions(target, conn, cred, payload, signal, {
-          initiator: current.initiator,
-          c,
-        })
-        .then(
-          (result) =>
-            ({
-              accountId: result.credentialId,
-              response: result.response,
-            }) as ChatDispatchResult,
-        )
-    },
-  })
+  )
+  return result as unknown as ChatDispatchResult
 }

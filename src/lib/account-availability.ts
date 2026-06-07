@@ -5,6 +5,14 @@ import type { Account, AccountQuotaState } from "~/lib/accounts"
 import { buildAccountDiagnosticSnapshot } from "~/lib/account-diagnostics"
 import { saveAccounts } from "~/lib/account-store"
 import {
+  findCredential,
+  isCredentialAvailable,
+  markCredentialCooldown,
+  refreshCredentialAvailability,
+  resetCredentialStatus,
+  type RateLimitInfo,
+} from "~/lib/provider-connections"
+import {
   getRemainingCooldownSeconds,
   reportUpstreamRateLimit,
   reportUpstreamSuccess,
@@ -32,9 +40,6 @@ export function refreshAccountRuntimeAvailability(account: Account): boolean {
     return false
   }
 
-  // Check if the account's cooldownUntil field is set but the rate-limit state
-  // indicates no active cooldown, which means the account's cooldown has expired
-  // and we need to clear the stale cooldownUntil timestamp.
   if (account.cooldownUntil && account.cooldownUntil < Date.now()) {
     account.cooldownUntil = undefined
     account.lastRateLimitReason = undefined
@@ -79,6 +84,26 @@ export function getAccountAvailability(account: Account): {
     return { available: false, reason: "quota", retryAfterSeconds: 0 }
   }
 
+  const credential = findCredentialForAccount(account)
+  if (credential && !isCredentialAvailable(credential)) {
+    if (credential.status === "cooldown" && credential.cooldownUntil) {
+      const remaining = Math.ceil(
+        (credential.cooldownUntil - Date.now()) / 1000,
+      )
+      return {
+        available: false,
+        reason: "cooldown",
+        retryAfterSeconds: Math.max(remaining, 0),
+      }
+    }
+    if (credential.status === "auth_error") {
+      return { available: false, reason: "error", retryAfterSeconds: 10 }
+    }
+    if (credential.status === "quota_exhausted") {
+      return { available: false, reason: "quota", retryAfterSeconds: 0 }
+    }
+  }
+
   return { available: true, reason: "available", retryAfterSeconds: 0 }
 }
 
@@ -103,12 +128,29 @@ export async function markAccountRateLimited(
   const account = state.accounts.find((candidate) => candidate.id === id)
   if (!account) return
 
+  const status = response.status
   const remainingCooldown = getRemainingCooldownSeconds(id)
   account.lastRateLimitAt = Date.now()
   account.cooldownUntil =
     remainingCooldown > 0 ? Date.now() + remainingCooldown * 1000 : undefined
-  account.lastRateLimitReason = "upstream_429"
+  account.lastRateLimitReason =
+    status === 429 ? "upstream_429" : `upstream_${status}`
   syncLegacyExhaustedState(account)
+
+  const credential = findCredentialForAccount(account)
+  if (credential) {
+    const retryAfterMs =
+      remainingCooldown > 0 ? remainingCooldown * 1000 : undefined
+    const info: RateLimitInfo = {
+      retryAfterMs,
+      reason: status === 429 ? "upstream_429" : `upstream_${status}`,
+    }
+    refreshCredentialAvailability(credential)
+    if (credential.status === "ready") {
+      markCredentialCooldown(credential, info)
+    }
+  }
+
   saveAccounts().catch((err: unknown) => {
     consola.error("Failed to auto-save accounts after rate limit:", err)
   })
@@ -128,6 +170,12 @@ export async function markAccountRateLimitRecovered(id: string): Promise<void> {
   if (!account) return
   refreshAccountRuntimeAvailability(account)
   syncLegacyExhaustedState(account)
+
+  const credential = findCredentialForAccount(account)
+  if (credential && credential.status !== "ready" && credential.enabled) {
+    resetCredentialStatus(credential)
+  }
+
   saveAccounts().catch((err: unknown) => {
     consola.error("Failed to auto-save accounts after recovery:", err)
   })
@@ -147,4 +195,11 @@ export function getMinimumCooldownSeconds(accounts: Array<Account>): number {
     }
   }
   return minCooldown
+}
+
+function findCredentialForAccount(
+  account: Account,
+): import("~/lib/provider-connections/types").ApiCredential | undefined {
+  const found = findCredential(account.id, account.id)
+  return found?.credential
 }

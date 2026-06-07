@@ -19,6 +19,7 @@ import {
   getWindsurfJwt,
 } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { isChatCompletionResponse } from "~/lib/utils"
 
 import { fetchWindsurfJwt } from "./auth"
 import {
@@ -984,10 +985,4 @@ export async function createWindsurfChatCompletionsOnce(
   }
 
   return await collectChatCompletion(response, model)
-}
-
-function isChatCompletionResponse(
-  response: AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse,
-): response is ChatCompletionResponse {
-  return Object.hasOwn(response, "choices")
 }

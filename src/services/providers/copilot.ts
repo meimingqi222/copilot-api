@@ -1,5 +1,4 @@
 import consola from "consola"
-import { events } from "fetch-event-stream"
 
 import type { Account, AccountModel } from "~/lib/accounts"
 
@@ -24,6 +23,11 @@ import {
   translateResponsesToChatCompletion,
   translateToResponsesPayload,
 } from "~/services/copilot/responses-api"
+import {
+  safeSseStream,
+  detectOpenAIStreamError,
+  detectResponsesStreamError,
+} from "~/services/protocols/shared"
 
 import type { ProviderRuntime } from "./runtime"
 
@@ -191,20 +195,22 @@ export const copilotProviderRuntime: ProviderRuntime = {
     }
 
     if (normalizedPayload.stream) {
-      const stream = events(response) as unknown as AsyncIterable<
-        import("~/services/copilot/create-chat-completions").CopilotStreamEvent
-      >
+      const stream = await safeSseStream(response, detectOpenAIStreamError)
       return {
         accountId: account.id,
         response:
           useResponsesApi ?
             (translateResponsesStreamToChatCompletions(
-              stream,
+              stream as unknown as AsyncIterable<
+                import("~/services/copilot/create-chat-completions").CopilotStreamEvent
+              >,
               normalizedPayload.model,
             ) as AsyncIterable<
               import("~/services/copilot/create-chat-completions").CopilotStreamEvent
             >)
-          : stream,
+          : (stream as unknown as AsyncIterable<
+              import("~/services/copilot/create-chat-completions").CopilotStreamEvent
+            >),
       }
     }
 
@@ -276,7 +282,10 @@ export const copilotProviderRuntime: ProviderRuntime = {
       return {
         accountId: account.id,
         response: normalizeResponsesStreamIds(
-          events(response) as unknown as AsyncIterable<
+          (await safeSseStream(
+            response,
+            detectResponsesStreamError,
+          )) as unknown as AsyncIterable<
             import("~/services/copilot/responses-api").CopilotStreamEventLike
           >,
         ),

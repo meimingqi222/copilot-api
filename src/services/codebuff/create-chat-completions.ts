@@ -1,5 +1,3 @@
-import { events } from "fetch-event-stream"
-
 import type { Account } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
@@ -11,6 +9,11 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { isChatCompletionResponse } from "~/lib/utils"
+import {
+  safeSseStream,
+  detectOpenAIStreamError,
+} from "~/services/protocols/shared"
 interface CodebuffAgentRunResponse {
   runId?: string
 }
@@ -110,9 +113,10 @@ async function createCodebuffChatCompletionsOnce(
   }
 
   if (payload.stream) {
-    const stream = events(
+    const stream = (await safeSseStream(
       response,
-    ) as unknown as AsyncIterable<CopilotStreamEvent>
+      detectOpenAIStreamError,
+    )) as unknown as AsyncIterable<CopilotStreamEvent>
     return finalizeStream(stream, { settings, authToken, runId })
   }
 
@@ -261,10 +265,4 @@ function genClientSessionId(): string {
     output += chars[idx] ?? ""
   }
   return output
-}
-
-function isChatCompletionResponse(
-  response: AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse,
-): response is ChatCompletionResponse {
-  return Object.hasOwn(response, "choices")
 }

@@ -208,10 +208,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     }
 
     if (anthropicPayload.stream) {
-      const stream = await safeSseStream(
-        response,
-        detectAnthropicStreamError,
-      )
+      const stream = await safeSseStream(response, detectAnthropicStreamError)
       return {
         credentialId: account.id,
         response: stream as unknown as AsyncIterable<unknown>,

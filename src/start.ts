@@ -162,10 +162,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   // Scrub sensitive values from process.env to reduce exposure in memory
-  for (const key of [
-    "API_KEY",
-    "ADMIN_PASSWORD",
-  ]) {
+  for (const key of ["API_KEY", "ADMIN_PASSWORD"]) {
     if (process.env[key]) {
       Reflect.deleteProperty(process.env, key)
     }
