@@ -1,7 +1,9 @@
 import type { WSContext } from "hono/ws"
 
+import consola from "consola"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 
+import { saveAccounts } from "~/lib/account-store"
 import {
   getMimoWsToken as getAccountWsTokenFromStore,
   setMimoWsToken as setAccountWsTokenInStore,
@@ -27,6 +29,9 @@ export function getOrCreateAccountWsToken(accountId: string): string {
 
   const newToken = randomBytes(32).toString("hex")
   setAccountWsTokenInStore(acc, newToken)
+  saveAccounts().catch((err: unknown) => {
+    consola.error("Failed to save accounts after generating WS token:", err)
+  })
   return newToken
 }
 

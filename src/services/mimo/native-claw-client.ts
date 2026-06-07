@@ -353,6 +353,8 @@ export class NativeClawClient {
       this.ws.addEventListener("error", (err: unknown) => {
         consola.error(`[Claw ${this.label}] WS error:`, err)
         this.connected = false
+        this.resolveConnected?.()
+        this.resolveConnected = null
         this.ws = null
       })
 
@@ -362,6 +364,8 @@ export class NativeClawClient {
           `[Claw ${this.label}] WS closed code=${ce.code} reason=${ce.reason}`,
         )
         this.connected = false
+        this.resolveConnected?.()
+        this.resolveConnected = null
         this.ws = null
       })
 
@@ -435,6 +439,9 @@ export class NativeClawClient {
       }
     } else if (data.type === "event") {
       this.events.push(data as ChatEvent)
+      if (this.events.length > 200) {
+        this.events = this.events.slice(-100)
+      }
     }
   }
 
@@ -458,7 +465,7 @@ export class NativeClawClient {
 
     for (let i = 0; i < timeout * 10; i++) {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (!this.ws) break
+      if (!this.ws || !this.connected) break
       for (const evt of this.events) {
         if (evt.event === "chat") {
           const msg = evt.payload?.message || {}
@@ -493,6 +500,7 @@ export class NativeClawClient {
       await new Promise((r) => setTimeout(r, 100))
     }
     this.events = []
+    if (!this.connected) return "(Send failed: WS disconnected)"
     return "(Wait for final reply timeout)"
   }
 

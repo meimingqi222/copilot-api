@@ -8,6 +8,7 @@ import {
   findCredential,
   isCredentialAvailable,
   markCredentialCooldown,
+  persistProviderConnections,
   refreshCredentialAvailability,
   resetCredentialStatus,
   type RateLimitInfo,
@@ -149,6 +150,12 @@ export async function markAccountRateLimited(
     if (credential.status === "ready") {
       markCredentialCooldown(credential, info)
     }
+    await persistProviderConnections().catch((err: unknown) => {
+      consola.error(
+        "Failed to persist provider connections after rate limit:",
+        err,
+      )
+    })
   }
 
   saveAccounts().catch((err: unknown) => {
@@ -174,6 +181,12 @@ export async function markAccountRateLimitRecovered(id: string): Promise<void> {
   const credential = findCredentialForAccount(account)
   if (credential && credential.status !== "ready" && credential.enabled) {
     resetCredentialStatus(credential)
+    await persistProviderConnections().catch((err: unknown) => {
+      consola.error(
+        "Failed to persist provider connections after recovery:",
+        err,
+      )
+    })
   }
 
   saveAccounts().catch((err: unknown) => {

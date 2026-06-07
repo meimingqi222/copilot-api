@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 import type { Account } from "./accounts"
 import type { State } from "./state"
 
+import { getCopilotToken } from "./accounts"
 import { state as globalState } from "./state"
 
 export const standardHeaders = () => ({
@@ -40,10 +41,7 @@ export const copilotHeaders = (
   const token =
     "accounts" in stateOrAccount ?
       (stateOrAccount as State & { copilotToken?: string }).copilotToken
-    : (stateOrAccount.runtimeState?.copilotToken
-      ?? ("copilotToken" in stateOrAccount ?
-        stateOrAccount.copilotToken
-      : undefined))
+    : getCopilotToken(stateOrAccount)
 
   const vsCodeVersion = globalState.vsCodeVersion
 
