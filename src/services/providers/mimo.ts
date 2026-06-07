@@ -1,5 +1,14 @@
 import type { AccountModel } from "~/lib/accounts"
 
+import { parseModelReference } from "~/lib/accounts"
+import { DEFAULTS } from "~/lib/provider-connections"
+import {
+  legacyPlaceholderConn,
+  legacyPlaceholderCred,
+} from "~/services/dispatch/failover"
+import { mimoNativeAdapter } from "~/services/protocols/mimo-native"
+
+import type { ProviderChatResult } from "./runtime"
 import type { ProviderRuntime } from "./runtime"
 
 const MIMO_MODELS = [
@@ -66,14 +75,36 @@ export const mimoProviderRuntime: ProviderRuntime = {
     account.availableModels = models
     return Promise.resolve(models)
   },
-  /**
-   * Chat completions for Mimo accounts are handled by the mimo-native
-   * protocol adapter (src/services/protocols/mimo-native.ts).
-   * This method exists only to satisfy the ProviderRuntime interface.
-   */
-  createChatCompletions(account, _payload, _signal, _ctx) {
-    throw new Error(
-      `Chat completions for Mimo account "${account.label}" must go through the mimo-native protocol adapter`,
+  async createChatCompletions(account, payload, signal, ctx) {
+    const nativeModelId = parseModelReference(payload.model).nativeModelId
+    const target = {
+      connectionId: account.id,
+      connectionName: account.label,
+      protocol: "mimo-native" as const,
+      credentialId: account.id,
+      publicModelId: payload.model,
+      upstreamModelId: nativeModelId,
+      endpoint: "chat" as const,
+      connectionPriority: account.priority,
+      connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
+      credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
+      credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+      account,
+    }
+    const conn = legacyPlaceholderConn(target)
+    const cred = legacyPlaceholderCred(target)
+    const result = await mimoNativeAdapter.createChatCompletions?.(
+      target,
+      conn,
+      cred,
+      payload,
+      signal,
+      ctx,
     )
+    if (!result) throw new Error("Mimo adapter not available")
+    return {
+      accountId: result.credentialId,
+      response: result.response,
+    } as ProviderChatResult
   },
 }

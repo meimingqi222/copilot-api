@@ -135,15 +135,10 @@ async function markCooldown(
         (err as Error).message,
       )
     })
-  } else if (status === 429) {
+  } else if (status === 429 || !isHttp) {
     await markAccountRateLimited(
       admission.account.id,
-      new Response(null, { status: 429 }),
-    )
-  } else if (!isHttp) {
-    await markAccountRateLimited(
-      admission.account.id,
-      new Response(null, { status: 503 }),
+      new Response(null, { status }),
     )
   }
 }

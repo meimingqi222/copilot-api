@@ -1,9 +1,11 @@
 import type { WSContext } from "hono/ws"
 
-import consola from "consola"
 import { randomBytes, timingSafeEqual } from "node:crypto"
 
-import { saveAccounts } from "~/lib/account-store"
+import {
+  getMimoWsToken as getAccountWsTokenFromStore,
+  setMimoWsToken as setAccountWsTokenInStore,
+} from "~/lib/accounts"
 import { state } from "~/lib/state"
 
 const generatedMimoWsToken = randomBytes(32).toString("hex")
@@ -12,7 +14,7 @@ const generatedMimoWsToken = randomBytes(32).toString("hex")
  * Returns the per-account WS token. If none exists, generates one
  * and persists it to the account's credentials.
  */
-export async function getOrCreateAccountWsToken(accountId: string): Promise<string> {
+export function getOrCreateAccountWsToken(accountId: string): string {
   // Check for globally-configured token first (backward compat)
   const globalToken = process.env.MIMO_WS_TOKEN
   if (globalToken) return globalToken
@@ -20,14 +22,11 @@ export async function getOrCreateAccountWsToken(accountId: string): Promise<stri
   const acc = state.accounts.find((a) => a.id === accountId)
   if (!acc) return fallbackToken()
 
-  const existing = acc.credentials?.mimoWsToken
+  const existing = getAccountWsTokenFromStore(acc)
   if (existing) return existing
 
   const newToken = randomBytes(32).toString("hex")
-  acc.credentials = { ...acc.credentials, mimoWsToken: newToken }
-  await saveAccounts().catch((e: unknown) => {
-    consola.warn("[Mimo WS] Failed to persist per-account token:", (e as Error).message)
-  })
+  setAccountWsTokenInStore(acc, newToken)
   return newToken
 }
 
@@ -37,7 +36,7 @@ export async function getOrCreateAccountWsToken(accountId: string): Promise<stri
  */
 export function getMimoWsTokenForAccount(accountId: string): string {
   const acc = state.accounts.find((a) => a.id === accountId)
-  return acc?.credentials?.mimoWsToken ?? getMimoWsToken()
+  return (acc && getAccountWsTokenFromStore(acc)) ?? fallbackToken()
 }
 
 function fallbackToken(): string {
@@ -71,7 +70,7 @@ export function isValidMimoWsTokenForAccount(
 
   // Check per-account token
   const acc = state.accounts.find((a) => a.id === accountId)
-  const accountToken = acc?.credentials?.mimoWsToken
+  const accountToken = acc && getAccountWsTokenFromStore(acc)
   if (!accountToken) return false
 
   return timingSafeEqualBuffer(token, accountToken)
@@ -80,7 +79,7 @@ export function isValidMimoWsTokenForAccount(
 /** @deprecated Use isValidMimoWsTokenForAccount() */
 export function isValidMimoWsToken(token: string | undefined): boolean {
   if (!token) return false
-  return timingSafeEqualBuffer(token, getMimoWsToken())
+  return timingSafeEqualBuffer(token, fallbackToken())
 }
 
 function timingSafeEqualBuffer(a: string, b: string): boolean {

@@ -1,6 +1,5 @@
-import { events } from "fetch-event-stream"
-
 import consola from "consola"
+import { events } from "fetch-event-stream"
 
 import { HTTPError } from "~/lib/error"
 import {
@@ -132,7 +131,7 @@ export async function safeSseStream<T>(
             yieldedFirst = true
             return first
           }
-          return iterator.next() as Promise<IteratorResult<T>>
+          return iterator.next()
         },
       }
     },

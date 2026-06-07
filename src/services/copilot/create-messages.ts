@@ -1,7 +1,5 @@
 import type { Context } from "hono"
 
-import { events } from "fetch-event-stream"
-
 import type { Account } from "~/lib/accounts"
 import type {
   AnthropicImageBlock,
@@ -18,6 +16,10 @@ import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
+import {
+  safeSseStream,
+  detectAnthropicStreamError,
+} from "~/services/protocols/shared"
 interface CreateMessagesOptions {
   account: Account
   signal?: AbortSignal
@@ -210,9 +212,10 @@ export const createMessages = async (
   if (payload.stream) {
     return {
       accountId: account.id,
-      response: events(
+      response: (await safeSseStream(
         response,
-      ) as unknown as AsyncIterable<CopilotStreamEventLike>,
+        detectAnthropicStreamError,
+      )) as unknown as AsyncIterable<CopilotStreamEventLike>,
     }
   }
 

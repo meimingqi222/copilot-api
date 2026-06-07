@@ -111,6 +111,7 @@ export interface MimoAccount extends BaseAccount, MimoAccountConfig {
   credentials?: {
     serviceToken?: string
     xiaomichatbotPh?: string
+    mimoWsToken?: string
   }
   settings?: {
     userId?: string
@@ -445,6 +446,26 @@ export function setMimoProxy(
   }
 }
 
+export function getMimoWsToken(account: Account): string | undefined {
+  if (account.provider !== "mimo-aistudio") {
+    return undefined
+  }
+  return account.credentials?.mimoWsToken
+}
+
+export function setMimoWsToken(
+  account: Account,
+  mimoWsToken: string | undefined,
+): void {
+  if (account.provider !== "mimo-aistudio") {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    mimoWsToken,
+  }
+}
+
 export function getMimoSettings(account: Account) {
   if (account.provider !== "mimo-aistudio") {
     return undefined
@@ -502,28 +523,6 @@ export function setupAccountPropertyProxies(account: Account): void {
         set(v: string | undefined) {
           if (!account.credentials) account.credentials = {}
           account.credentials.githubToken = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-      Object.defineProperty(account, "copilotToken", {
-        get() {
-          return account.runtimeState?.copilotToken
-        },
-        set(v: string | undefined) {
-          if (!account.runtimeState) account.runtimeState = {}
-          account.runtimeState.copilotToken = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-      Object.defineProperty(account, "copilotTokenExpiry", {
-        get() {
-          return account.runtimeState?.copilotTokenExpiry
-        },
-        set(v: number | undefined) {
-          if (!account.runtimeState) account.runtimeState = {}
-          account.runtimeState.copilotTokenExpiry = v
         },
         configurable: true,
         enumerable: true,

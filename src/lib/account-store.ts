@@ -219,6 +219,7 @@ function serializeAccount(account: Account): Record<string, unknown> {
     credentials: {
       serviceToken: getMimoServiceToken(account),
       xiaomichatbotPh: getMimoPh(account),
+      mimoWsToken: account.credentials?.mimoWsToken,
     },
     settings: account.settings ?? {
       userId: account.userId,
@@ -513,6 +514,7 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
       xiaomichatbotPh:
         (acc as Partial<MimoAccount>).credentials?.xiaomichatbotPh
         ?? xiaomichatbotPh,
+      mimoWsToken: (acc as Partial<MimoAccount>).credentials?.mimoWsToken,
     },
     settings: (acc as Partial<MimoAccount>).settings ?? {
       userId,
@@ -523,16 +525,6 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     quotaState: acc.quotaState,
     quotaExhaustedAt: acc.quotaExhaustedAt,
   } as MimoAccount
-}
-
-async function loadAccountsFile(): Promise<Array<Account>> {
-  try {
-    return (await readAccountsFile(PATHS.ACCOUNTS_PATH)).map((account) =>
-      migrateAccount(account),
-    )
-  } catch {
-    return []
-  }
 }
 
 async function readAccountsFile(

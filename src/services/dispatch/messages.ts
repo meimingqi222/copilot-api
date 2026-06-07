@@ -2,17 +2,10 @@
  * Anthropic Messages 调度器(unified path)。
  */
 
-import type { RouteTarget } from "~/lib/provider-connections"
+import type { RequestAdmission } from "~/lib/request-admission"
+import type { AnthropicMessagesPayload } from "~/services/protocols"
 
-import { HTTPError } from "~/lib/error"
-import { type RequestAdmission } from "~/lib/request-admission"
-import { type AnthropicMessagesPayload } from "~/services/protocols"
-
-import {
-  executeWithFailover,
-  legacyPlaceholderConn,
-  legacyPlaceholderCred,
-} from "./failover"
+import { dispatchRequest, type DispatchResult } from "./shared"
 
 export interface MessagesDispatchResult {
   accountId: string
@@ -25,39 +18,10 @@ export async function dispatchMessages(
   signal?: AbortSignal,
   forwardedHeaders?: Record<string, string | undefined>,
 ): Promise<MessagesDispatchResult> {
-  return await executeWithFailover({
-    payload,
+  const result: DispatchResult = await dispatchRequest(
+    { routeKind: "messages", payload, forwardedHeaders },
     admission,
     signal,
-    routeKind: "messages",
-    logPrefix: "[dispatch/messages]",
-    execute: (adapter, target: RouteTarget, current) => {
-      if (!adapter?.createMessages) {
-        throw new HTTPError(
-          `Protocol "${target.protocol}" does not support /messages`,
-          new Response("Not Implemented", { status: 501 }),
-        )
-      }
-      const conn =
-        current.kind === "connection" ?
-          current.connection
-        : legacyPlaceholderConn(target)
-      const cred =
-        current.kind === "connection" ?
-          current.credential
-        : legacyPlaceholderCred(target)
-      return adapter
-        .createMessages(target, conn, cred, payload, signal, {
-          forwardedHeaders,
-          initiator: current.initiator,
-        })
-        .then(
-          (result) =>
-            ({
-              accountId: result.credentialId,
-              response: result.response,
-            }) as MessagesDispatchResult,
-        )
-    },
-  })
+  )
+  return result as unknown as MessagesDispatchResult
 }

@@ -6,11 +6,8 @@
  */
 
 import type { Account } from "~/lib/accounts"
-import type {
-  ChatCompletionResponse,
-  CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
 
+import { isChatCompletionResponse } from "~/lib/utils"
 import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"
 
 import type { ProtocolAdapter } from "./types"
@@ -49,10 +46,4 @@ export const windsurfNativeAdapter: ProtocolAdapter = {
 
     return { credentialId: account.id, response: result }
   },
-}
-
-function isChatCompletionResponse(
-  response: AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse,
-): response is ChatCompletionResponse {
-  return Object.hasOwn(response, "choices")
 }

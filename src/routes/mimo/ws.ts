@@ -29,7 +29,7 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         ws,
         activeRequests: new Map(),
       })
-      void markAccountReady(accountId)
+      markAccountReady(accountId)
     },
     async onMessage(event, _ws) {
       try {
@@ -70,7 +70,7 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         }
         mimoConnections.delete(accountId)
       }
-      void markAccountFailed(accountId, "Bridge node disconnected")
+      markAccountFailed(accountId, "Bridge node disconnected")
     },
     onError(_event, _ws) {
       consola.error(`[Claw WS] Node error for account: ${accountId}`)

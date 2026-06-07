@@ -15,8 +15,10 @@ import type {
 import { getCodebuffSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { isChatCompletionResponse } from "~/lib/utils"
 import {
   detectOpenAIStreamError,
+  joinUrl,
   safeSseStream,
 } from "~/services/protocols/shared"
 
@@ -76,7 +78,7 @@ async function createAgentRun(
   signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetch(
-    resolveURL(settings.baseUrl, "/api/v1/agent-runs"),
+    joinUrl(settings.baseUrl, "/api/v1/agent-runs"),
     {
       method: "POST",
       headers: buildHeaders(authToken, settings.cliVersion),
@@ -112,7 +114,7 @@ async function finishAgentRun(
   runId: string,
 ): Promise<void> {
   const response = await fetch(
-    resolveURL(settings.baseUrl, "/api/v1/agent-runs"),
+    joinUrl(settings.baseUrl, "/api/v1/agent-runs"),
     {
       method: "POST",
       headers: buildHeaders(authToken, settings.cliVersion),
@@ -146,12 +148,6 @@ function buildHeaders(
     Authorization: `Bearer ${authToken}`,
     "User-Agent": `ai-sdk/openai-compatible/${cliVersion}/codebuff`,
   }
-}
-
-function resolveURL(baseUrl: string, pathname: string): string {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, "")
-  const path = pathname.startsWith("/") ? pathname : `/${pathname}`
-  return `${normalizedBaseUrl}${path}`
 }
 
 function genClientSessionId(): string {
@@ -195,7 +191,7 @@ async function createCodebuffChatCompletionsOnce(
   }
 
   const response = await fetch(
-    resolveURL(settings.baseUrl, "/api/v1/chat/completions"),
+    joinUrl(settings.baseUrl, "/api/v1/chat/completions"),
     {
       method: "POST",
       headers: buildHeaders(authToken, settings.cliVersion),
@@ -274,10 +270,4 @@ export const codebuffNativeAdapter: ProtocolAdapter = {
 
     return { credentialId: account.id, response: result }
   },
-}
-
-function isChatCompletionResponse(
-  response: AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse,
-): response is ChatCompletionResponse {
-  return Object.hasOwn(response, "choices")
 }

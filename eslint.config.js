@@ -8,6 +8,9 @@ export default config(
     },
   },
   {
+    ignores: ["tools/**"],
+  },
+  {
     files: ["pages/**/*.js"],
     rules: {
       // Disable TypeScript rules for frontend JS files
@@ -67,6 +70,15 @@ export default config(
       "max-lines-per-function": "off",
       "max-lines": "off",
       "@typescript-eslint/no-dynamic-delete": "off",
+    },
+  },
+  // Mimo native protocol adapter handles WebSocket messages with dynamic types
+  {
+    files: ["src/services/protocols/mimo-native.ts"],
+    rules: {
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-argument": "off",
     },
   },
 )

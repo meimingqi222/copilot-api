@@ -10,6 +10,7 @@ import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
+import type { EmbeddingResponse } from "~/services/copilot/create-embeddings"
 
 import {
   type ApiCredential,

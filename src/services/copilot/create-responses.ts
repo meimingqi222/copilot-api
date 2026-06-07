@@ -3,10 +3,8 @@ import type { Context } from "hono"
 import type { Account } from "~/lib/accounts"
 
 import { canonicalModelId } from "~/lib/accounts"
-import {
-  createChatCompletions,
-  type ChatCompletionResponse,
-} from "~/services/copilot/create-chat-completions"
+import { isChatCompletionResponse } from "~/lib/utils"
+import { createChatCompletions } from "~/services/copilot/create-chat-completions"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import {
   supportsResponsesApi,
@@ -99,10 +97,4 @@ function hasVisionInput(payload: ResponsesPayload): boolean {
       && Array.isArray(item.content)
       && item.content.some((content) => content.type === "input_image"),
   )
-}
-
-function isChatCompletionResponse(
-  response: AsyncIterable<CopilotStreamEventLike> | ChatCompletionResponse,
-): response is ChatCompletionResponse {
-  return Object.hasOwn(response, "choices")
 }
