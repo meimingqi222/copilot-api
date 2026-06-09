@@ -104,6 +104,19 @@ interface SimpleSseEvent {
   data?: string
 }
 
+interface JsonErrorPayload {
+  message?: string
+  code?: number | string
+  status_code?: number | string
+  status?: number | string
+  type?: string
+}
+
+interface JsonStreamEvent {
+  error?: JsonErrorPayload
+  type?: string
+}
+
 /**
  * Peek at the first SSE event from a streaming response to detect errors
  * that would otherwise bypass failover (HTTP 200 with error in SSE body).
@@ -138,6 +151,12 @@ export async function safeSseStream<T>(
   }
 }
 
+function parseStatusCode(raw: number | string | undefined): number {
+  if (typeof raw === "number") return raw
+  if (typeof raw === "string") return Number.parseInt(raw, 10) || 500
+  return 500
+}
+
 /**
  * Detect errors in OpenAI-compatible SSE streams.
  * Format: data={"error":{"message":"...","code":401}}
@@ -145,12 +164,11 @@ export async function safeSseStream<T>(
 export function detectOpenAIStreamError(e: SimpleSseEvent): HTTPError | null {
   if (!e.data) return null
   try {
-    const parsed = JSON.parse(e.data)
+    const parsed = JSON.parse(e.data) as JsonStreamEvent
     if (!parsed.error) return null
-    const code =
-      typeof parsed.error.code === "number" ? parsed.error.code
-      : typeof parsed.error.status === "number" ? parsed.error.status
-      : 500
+    const rawCode =
+      parsed.error.code ?? parsed.error.status_code ?? parsed.error.status
+    const code = parseStatusCode(rawCode)
     return new HTTPError(
       parsed.error.message ?? "upstream streaming error",
       new Response(null, { status: code }),
@@ -172,7 +190,7 @@ export function detectAnthropicStreamError(
     let message = "upstream streaming error"
     if (e.data) {
       try {
-        const parsed = JSON.parse(e.data)
+        const parsed = JSON.parse(e.data) as JsonStreamEvent
         message = parsed.error?.message ?? parsed.error?.type ?? message
       } catch {
         /* ignore parse errors */
@@ -186,7 +204,7 @@ export function detectAnthropicStreamError(
   }
   if (e.data) {
     try {
-      const parsed = JSON.parse(e.data)
+      const parsed = JSON.parse(e.data) as JsonStreamEvent
       if (parsed.type === "error") {
         return new HTTPError(
           parsed.error?.message ?? "upstream streaming error",
@@ -210,7 +228,7 @@ export function detectResponsesStreamError(
 ): HTTPError | null {
   if (!e.data) return null
   try {
-    const parsed = JSON.parse(e.data)
+    const parsed = JSON.parse(e.data) as JsonStreamEvent
     if (parsed.type === "response.failed" || parsed.type === "error") {
       return new HTTPError(
         parsed.error?.message ?? parsed.type,
