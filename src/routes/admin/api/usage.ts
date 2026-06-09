@@ -116,7 +116,10 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
 })
 
 function formatDate(date: Date): string {
-  return date.toISOString().split("T")[0] || ""
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, "0")
+  const d = String(date.getDate()).padStart(2, "0")
+  return `${y}-${m}-${d}`
 }
 
 // Resolve a date range from query params.
@@ -144,8 +147,8 @@ function resolveDateRange(opts: {
     const [yearStr, monthStr] = opts.month.split("-")
     const year = Number.parseInt(yearStr, 10)
     const monthIdx = Number.parseInt(monthStr, 10) - 1
-    const start = new Date(Date.UTC(year, monthIdx, 1))
-    const end = new Date(Date.UTC(year, monthIdx + 1, 0))
+    const start = new Date(year, monthIdx, 1)
+    const end = new Date(year, monthIdx + 1, 0)
     return { startDate: formatDate(start), endDate: formatDate(end) }
   }
 
@@ -158,35 +161,29 @@ function resolveDateRange(opts: {
       return { startDate: today, endDate: today }
     }
     case "week": {
-      // Current week starting Monday (UTC)
-      const day = now.getUTCDay() // 0=Sun..6=Sat
+      const day = now.getDay() // 0=Sun..6=Sat
       const offsetToMonday = (day + 6) % 7
       const monday = new Date(now)
-      monday.setUTCDate(now.getUTCDate() - offsetToMonday)
+      monday.setDate(now.getDate() - offsetToMonday)
       return { startDate: formatDate(monday), endDate: today }
     }
     case "month": {
-      // Current calendar month (1st → today)
-      const start = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-      )
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
       return { startDate: formatDate(start), endDate: today }
     }
     case "lastMonth": {
-      const start = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
-      )
-      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0))
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const end = new Date(now.getFullYear(), now.getMonth(), 0)
       return { startDate: formatDate(start), endDate: formatDate(end) }
     }
     case "last7d": {
       const ago = new Date(now)
-      ago.setUTCDate(now.getUTCDate() - 6)
+      ago.setDate(now.getDate() - 6)
       return { startDate: formatDate(ago), endDate: today }
     }
     case "last30d": {
       const ago = new Date(now)
-      ago.setUTCDate(now.getUTCDate() - 29)
+      ago.setDate(now.getDate() - 29)
       return { startDate: formatDate(ago), endDate: today }
     }
     case "all": {
