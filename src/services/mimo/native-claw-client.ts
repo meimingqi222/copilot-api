@@ -1,4 +1,3 @@
-/* eslint-disable max-depth */
 import consola from "consola"
 import { createHash, randomUUID } from "node:crypto"
 
@@ -78,6 +77,16 @@ export function withTimeout<T>(
   })
 }
 
+const BASE_URL = "https://aistudio.xiaomimimo.com"
+const WS_URL = "wss://aistudio.xiaomimimo.com"
+const COMMON_HEADERS = {
+  Accept: "*/*",
+  "Content-Type": "application/json",
+  Origin: BASE_URL,
+  Referer: `${BASE_URL}/`,
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+} as const
+
 export class NativeClawClient {
   private accountId: string
   private ph: string
@@ -108,33 +117,37 @@ export class NativeClawClient {
     this.proxy = proxy
   }
 
+  private get cookies(): string {
+    return `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
+  }
+
+  private get phParam(): string {
+    return `xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
+  }
+
+  private checkAuth(resp: { status: number }): void {
+    if (resp.status === 401) {
+      markAccountFailed(this.accountId, "Xiaomi credentials expired (401)")
+    }
+  }
+
+  private apiHeaders(): Record<string, string> {
+    return { Cookie: this.cookies, ...COMMON_HEADERS }
+  }
+
   async destroyClaw(): Promise<boolean> {
-    const url = `https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/destroy?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
-    const cookies = `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
+    const url = `${BASE_URL}/open-apis/user/mimo-claw/destroy?${this.phParam}`
     try {
       const resp = await fetchWithProxy(
         url,
-        {
-          method: "POST",
-          headers: {
-            Cookie: cookies,
-            Accept: "*/*",
-            "Content-Type": "application/json",
-            Origin: "https://aistudio.xiaomimimo.com",
-            Referer: "https://aistudio.xiaomimimo.com/",
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          },
-        },
+        { method: "POST", headers: this.apiHeaders() },
         this.proxy,
       )
       const text = await resp.text()
       consola.info(
         `[Claw ${this.label}] Destroy response: ${resp.status} ${text.slice(0, 100)}`,
       )
-      if (resp.status === 401) {
-        markAccountFailed(this.accountId, "Xiaomi credentials expired (401)")
-      }
+      this.checkAuth(resp)
       return resp.ok
     } catch (e) {
       consola.error(`[Claw ${this.label}] Destroy claw error:`, e)
@@ -143,19 +156,10 @@ export class NativeClawClient {
   }
 
   async createAndWait(): Promise<boolean> {
-    const urlAgree = `https://aistudio.xiaomimimo.com/open-apis/agreement/user/mimo-claw?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
-    const urlCreate = `https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/create?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
-    const urlStatus = `https://aistudio.xiaomimimo.com/open-apis/user/mimo-claw/status`
-    const cookies = `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
-    const headers = {
-      Cookie: cookies,
-      Accept: "*/*",
-      "Content-Type": "application/json",
-      Origin: "https://aistudio.xiaomimimo.com",
-      Referer: "https://aistudio.xiaomimimo.com/",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    }
+    const headers = this.apiHeaders()
+    const urlAgree = `${BASE_URL}/open-apis/agreement/user/mimo-claw?${this.phParam}`
+    const urlCreate = `${BASE_URL}/open-apis/user/mimo-claw/create?${this.phParam}`
+    const urlStatus = `${BASE_URL}/open-apis/user/mimo-claw/status`
 
     try {
       await fetchWithProxy(
@@ -175,9 +179,7 @@ export class NativeClawClient {
       consola.info(
         `[Claw ${this.label}] Create response: ${createResp.status} ${createText.slice(0, 100)}`,
       )
-      if (createResp.status === 401) {
-        markAccountFailed(this.accountId, "Xiaomi credentials expired (401)")
-      }
+      this.checkAuth(createResp)
       if (!createResp.ok) return false
 
       const deadline = Date.now() + 120_000
@@ -188,13 +190,12 @@ export class NativeClawClient {
           { method: "GET", headers },
           this.proxy,
         )
-        if (statusResp.status === 401) {
-          markAccountFailed(this.accountId, "Xiaomi credentials expired (401)")
-        }
+        this.checkAuth(statusResp)
         if (!statusResp.ok) {
-          await new Promise((r) => setTimeout(r, 2000))
+          await sleep(2000)
           continue
         }
+
         const data = (await statusResp.json()) as StatusResponse
         const status = data.data?.status || ""
         if (status !== lastStatus) {
@@ -209,7 +210,7 @@ export class NativeClawClient {
         ) {
           return false
         }
-        await new Promise((r) => setTimeout(r, 2000))
+        await sleep(2000)
       }
     } catch (e) {
       consola.error(`[Claw ${this.label}] Create claw error:`, e)
@@ -218,8 +219,7 @@ export class NativeClawClient {
   }
 
   async getTicket(): Promise<string> {
-    const url = `https://aistudio.xiaomimimo.com/open-apis/user/ws/ticket?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
-    const cookies = `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
+    const url = `${BASE_URL}/open-apis/user/ws/ticket?${this.phParam}`
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         const resp = await withTimeout(
@@ -227,11 +227,11 @@ export class NativeClawClient {
             url,
             {
               headers: {
-                Cookie: cookies,
+                Cookie: this.cookies,
                 Accept: "*/*",
                 "User-Agent": "Mozilla/5.0",
-                Origin: "https://aistudio.xiaomimimo.com",
-                Referer: "https://aistudio.xiaomimimo.com/",
+                Origin: BASE_URL,
+                Referer: `${BASE_URL}/`,
               },
             },
             this.proxy,
@@ -239,9 +239,7 @@ export class NativeClawClient {
           10_000,
           "getTicket",
         )
-        if (resp.status === 401) {
-          markAccountFailed(this.accountId, "Xiaomi credentials expired (401)")
-        }
+        this.checkAuth(resp)
         const data = (await resp.json()) as TicketResponse
         const ticket = data.data?.ticket
         if (ticket) return ticket
@@ -257,9 +255,8 @@ export class NativeClawClient {
 
   async uploadToFDS(filename: string, content: string): Promise<string | null> {
     const md5hex = createHash("md5").update(content).digest("hex")
-    const cookies = `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
     const body = JSON.stringify({ fileName: filename, fileContentMd5: md5hex })
-    const genURL = `https://aistudio.xiaomimimo.com/open-apis/resource/genUploadInfo?xiaomichatbot_ph=${encodeURIComponent(this.ph)}`
+    const genURL = `${BASE_URL}/open-apis/resource/genUploadInfo?${this.phParam}`
 
     try {
       const genResp = await fetchWithProxy(
@@ -267,10 +264,10 @@ export class NativeClawClient {
         {
           method: "POST",
           headers: {
-            Cookie: cookies,
+            Cookie: this.cookies,
             "Content-Type": "application/json",
-            Origin: "https://aistudio.xiaomimimo.com",
-            Referer: "https://aistudio.xiaomimimo.com/",
+            Origin: BASE_URL,
+            Referer: `${BASE_URL}/`,
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
           },
@@ -285,7 +282,6 @@ export class NativeClawClient {
       }
       if (genData.code !== 0 || !genData.data?.uploadUrl) return null
 
-      // PUT the file — also bypass proxy so DNS override applies
       const putResp = await fetchWithProxy(
         genData.data.uploadUrl,
         {
@@ -293,8 +289,8 @@ export class NativeClawClient {
           headers: {
             "Content-Type": "application/octet-stream",
             "Content-MD5": md5hex,
-            Origin: "https://aistudio.xiaomimimo.com",
-            Referer: "https://aistudio.xiaomimimo.com/",
+            Origin: BASE_URL,
+            Referer: `${BASE_URL}/`,
           },
           body: content,
         },
@@ -318,12 +314,11 @@ export class NativeClawClient {
 
     try {
       const ticket = await this.getTicket()
-      const cookieStr = `serviceToken="${this.serviceToken}"; userId="${this.userId}"; xiaomichatbot_ph="${this.ph}"`
+      const wsUrl = `${WS_URL}/ws/proxy?ticket=${ticket}`
       const headers = {
-        Cookie: cookieStr,
-        Origin: "https://aistudio.xiaomimimo.com",
+        Cookie: this.cookies,
+        Origin: BASE_URL,
       }
-      const wsUrl = `wss://aistudio.xiaomimimo.com/ws/proxy?ticket=${ticket}`
 
       this.ws =
         this.proxy ?
@@ -331,23 +326,7 @@ export class NativeClawClient {
         : await connectWebSocketDirect(wsUrl, headers)
 
       this.ws.addEventListener("message", (rawData: unknown) => {
-        try {
-          // Native Bun WebSocket passes MessageEvent, proxy passes string
-          let raw: unknown = rawData
-          if (
-            typeof rawData !== "string"
-            && rawData
-            && typeof rawData === "object"
-            && "data" in rawData
-          ) {
-            raw = (rawData as { data: unknown }).data
-          }
-          const dataStr = typeof raw === "string" ? raw : String(raw)
-          const data = JSON.parse(dataStr) as WsMessage
-          this.handleWsMessage(data)
-        } catch (e) {
-          consola.error("WS parse error:", e)
-        }
+        this.handleRawWsMessage(rawData)
       })
 
       this.ws.addEventListener("error", (err: unknown) => {
@@ -369,8 +348,6 @@ export class NativeClawClient {
         this.ws = null
       })
 
-      // Wait for connect-challenge to complete (needed for both native and proxy WS)
-      // NOTE: connected is set to true in handleWsMessage when connect.ok is sent
       if (!this.connected) {
         const success = await new Promise<boolean>((resolve) => {
           if (this.connected) {
@@ -404,45 +381,69 @@ export class NativeClawClient {
     this.ws.send(JSON.stringify(payload))
   }
 
-  private handleWsMessage(data: WsMessage) {
-    if (data.type === "event" && data.event === "connect.challenge") {
-      const resp = {
-        type: "req",
-        id: randomUUID(),
-        method: "connect",
-        params: {
-          minProtocol: 3,
-          maxProtocol: 3,
-          client: {
-            id: "cli",
-            version: "mimo-claw-ui",
-            platform: "Win32",
-            mode: "cli",
-          },
-          role: "operator",
-          scopes: ["operator.admin", "operator.read", "operator.write"],
-          caps: ["tool-events"],
-          userAgent:
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-          locale: "zh-CN",
-        },
-      }
-      this.ws?.send(JSON.stringify(resp))
-    } else if (data.type === "res") {
-      if (data.id) this.responses.set(data.id, data)
-      if (data.ok && data.payload?.type === "hello-ok") {
-        this.connected = true
-        if (this.resolveConnected) {
-          this.resolveConnected()
-          this.resolveConnected = null
+  private handleRawWsMessage(rawData: unknown): void {
+    try {
+      const raw = parseWsRawData(rawData)
+      const data = JSON.parse(raw) as WsMessage
+      this.handleWsMessage(data)
+    } catch (e) {
+      consola.error("WS parse error:", e)
+    }
+  }
+
+  private handleWsMessage(data: WsMessage): void {
+    switch (data.type) {
+      case "event": {
+        if (data.event === "connect.challenge") {
+          this.handleConnectChallenge()
+          return
         }
+        this.events.push(data as ChatEvent)
+        if (this.events.length > 200) {
+          this.events = this.events.slice(-100)
+        }
+        return
       }
-    } else if (data.type === "event") {
-      this.events.push(data as ChatEvent)
-      if (this.events.length > 200) {
-        this.events = this.events.slice(-100)
+      case "res": {
+        if (data.id) this.responses.set(data.id, data)
+        if (data.ok && data.payload?.type === "hello-ok") {
+          this.connected = true
+          if (this.resolveConnected) {
+            this.resolveConnected()
+            this.resolveConnected = null
+          }
+        }
+        return
+      }
+      default: {
+        return
       }
     }
+  }
+
+  private handleConnectChallenge(): void {
+    const resp = {
+      type: "req",
+      id: randomUUID(),
+      method: "connect",
+      params: {
+        minProtocol: 3,
+        maxProtocol: 3,
+        client: {
+          id: "cli",
+          version: "mimo-claw-ui",
+          platform: "Win32",
+          mode: "cli",
+        },
+        role: "operator",
+        scopes: ["operator.admin", "operator.read", "operator.write"],
+        caps: ["tool-events"],
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+        locale: "zh-CN",
+      },
+    }
+    this.ws?.send(JSON.stringify(resp))
   }
 
   async sendMessage(text: string, timeout = 120): Promise<string> {
@@ -466,42 +467,48 @@ export class NativeClawClient {
     for (let i = 0; i < timeout * 10; i++) {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (!this.ws || !this.connected) break
-      for (const evt of this.events) {
-        if (evt.event === "chat") {
-          const msg = evt.payload?.message || {}
-          if (msg.role !== "assistant") continue
-
-          let reply = ""
-          const content = msg.content || []
-          for (const c of content) {
-            if (c.type === "text" && c.text) {
-              reply = c.text
-            }
-          }
-          if (evt.payload?.state === "final" && reply) {
-            this.events = []
-            return reply
-          }
-        } else if (evt.event === "agent") {
-          const p = evt.payload
-          consola.debug(
-            `[Claw ${this.label}] agent event: stream=${p?.stream} phase=${p?.data?.phase} text=${(p?.data?.text || "").slice(0, 60)}`,
-          )
-          if (
-            p?.stream === "messages"
-            && p.data?.phase === "end"
-            && p.data.text
-          ) {
-            this.events = []
-            return p.data.text
-          }
-        }
+      const reply = this.extractReplyFromEvents()
+      if (reply !== null) {
+        this.events = []
+        return reply
       }
       await new Promise((r) => setTimeout(r, 100))
     }
     this.events = []
     if (!this.connected) return "(Send failed: WS disconnected)"
     return "(Wait for final reply timeout)"
+  }
+
+  private extractReplyFromEvents(): string | null {
+    for (const evt of this.events) {
+      if (evt.event === "chat") {
+        const msg = evt.payload?.message || {}
+        if (msg.role !== "assistant") continue
+        const content = msg.content || []
+        let reply = ""
+        for (const c of content) {
+          if (c.type === "text" && c.text) {
+            reply = c.text
+          }
+        }
+        if (evt.payload?.state === "final" && reply) {
+          return reply
+        }
+      } else if (evt.event === "agent") {
+        const p = evt.payload
+        consola.debug(
+          `[Claw ${this.label}] agent event: stream=${p?.stream} phase=${p?.data?.phase} text=${(p?.data?.text || "").slice(0, 60)}`,
+        )
+        if (
+          p?.stream === "messages"
+          && p.data?.phase === "end"
+          && p.data.text
+        ) {
+          return p.data.text
+        }
+      }
+    }
+    return null
   }
 
   close() {
@@ -516,4 +523,17 @@ export class NativeClawClient {
       this.ws = null
     }
   }
+}
+
+function parseWsRawData(rawData: unknown): string {
+  let raw: unknown = rawData
+  if (
+    typeof rawData !== "string"
+    && rawData
+    && typeof rawData === "object"
+    && "data" in rawData
+  ) {
+    raw = (rawData as { data: unknown }).data
+  }
+  return typeof raw === "string" ? raw : String(raw)
 }
