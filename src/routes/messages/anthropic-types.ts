@@ -1,5 +1,7 @@
 // Anthropic API Types
 
+import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+
 export interface AnthropicMessagesPayload {
   model: string
   messages: Array<AnthropicMessage>
@@ -276,4 +278,28 @@ export function extractMessageContentFromAnthropicPayload(
   }
 
   return parts.join(" ")
+}
+
+// Shared streaming types
+export type CopilotStream = AsyncIterable<{ data?: string; event?: string }>
+
+export interface AnthropicStreamingUsage {
+  input_tokens?: number
+  output_tokens: number
+  cache_creation_input_tokens?: number
+  cache_read_input_tokens?: number
+}
+
+export function isAsyncIterable(
+  value: unknown,
+): value is AsyncIterable<unknown> {
+  return (
+    typeof value === "object" && value !== null && Symbol.asyncIterator in value
+  )
+}
+
+export function isDirectAnthropicResponse(
+  response: AsyncIterable<CopilotStreamEventLike> | AnthropicResponse,
+): response is AnthropicResponse {
+  return Object.hasOwn(response, "content") && Object.hasOwn(response, "usage")
 }
