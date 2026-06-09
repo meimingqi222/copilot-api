@@ -3,11 +3,6 @@ import type { Context } from "hono"
 import consola from "consola"
 
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
-import {
-  checkRateLimit,
-  getRemainingCooldownSeconds,
-  RateLimitQueueFullError,
-} from "~/lib/rate-limit"
 
 export class RouteRateLimitError extends Error {
   retryAfterSeconds: number
@@ -22,26 +17,6 @@ export class ClientAbortError extends Error {
   constructor() {
     super("Abort")
     this.name = "ClientAbortError"
-  }
-}
-
-export async function checkAccountRateLimitOrThrow(
-  accountId: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  try {
-    await checkRateLimit(accountId, signal)
-  } catch (error) {
-    if (error instanceof RateLimitQueueFullError) {
-      throw new RouteRateLimitError(
-        error.message,
-        getRemainingCooldownSeconds(accountId),
-      )
-    }
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new ClientAbortError()
-    }
-    throw error
   }
 }
 

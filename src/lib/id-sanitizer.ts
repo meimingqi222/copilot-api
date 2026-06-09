@@ -39,10 +39,3 @@ export function sanitizeId(id: string): string {
 
   return result
 }
-
-/**
- * Validates if an ID matches Anthropic's requirements
- */
-export function isValidAnthropicId(id: string): boolean {
-  return /^[\w-]+$/.test(id)
-}
