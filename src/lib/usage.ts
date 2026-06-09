@@ -51,7 +51,7 @@ export function recordUsage(input: UsageRecordInput): void {
       : 0
 
     statsStore.recordUsage({
-      date: new Date(now).toISOString().split("T")[0] ?? "",
+      date: statsStore.getDateString(now),
       accountId,
       userId: c.get("userId"),
       model,

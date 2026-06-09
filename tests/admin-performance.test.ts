@@ -111,7 +111,7 @@ test("GET /admin/api/usage/performance uses a weighted TPS average", async () =>
   })
 
   const response = await server.fetch(
-    new Request("http://localhost/admin/api/usage/performance?range=today"),
+    new Request("http://localhost/admin/api/usage/performance?range=all"),
   )
 
   expect(response.status).toBe(200)

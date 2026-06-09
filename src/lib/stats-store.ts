@@ -203,9 +203,12 @@ class StatsStore {
     this.ensureDb()
   }
 
-  private getDateString(timestamp = Date.now()): string {
+  getDateString(timestamp = Date.now()): string {
     const date = new Date(timestamp)
-    return date.toISOString().split("T")[0] ?? ""
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, "0")
+    const d = String(date.getDate()).padStart(2, "0")
+    return `${y}-${m}-${d}`
   }
 
   incrementRequests(accountId: string, timestamp?: number): void {
@@ -601,7 +604,7 @@ class StatsStore {
         SUM(CASE WHEN streaming = 0 AND tps > 0 THEN completion_tokens ELSE 0 END) * 1.0
           / NULLIF(SUM(CASE WHEN streaming = 0 AND tps > 0 THEN completion_tokens / tps ELSE 0 END), 0) as avg_nonstreaming_tps
       FROM usage_stats
-      WHERE ttft_ms IS NOT NULL OR tps IS NOT NULL
+      WHERE (ttft_ms IS NOT NULL OR tps IS NOT NULL)
     `
     const params: Array<string> = []
 
