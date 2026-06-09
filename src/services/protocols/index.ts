@@ -24,12 +24,7 @@ export function initializeProtocolAdapters(): void {
   initialized = true
 }
 
-export {
-  getProtocolAdapter,
-  listProtocolAdapters,
-  registerProtocolAdapter,
-  requireProtocolAdapter,
-} from "./registry"
+export { getProtocolAdapter, registerProtocolAdapter } from "./registry"
 export type {
   AdapterChatResult,
   AdapterEmbeddingsResult,

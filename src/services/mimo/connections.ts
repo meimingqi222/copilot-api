@@ -49,14 +49,6 @@ function fallbackToken(): string {
 }
 
 /**
- * Global fallback token (legacy, deprecated).
- * @deprecated Use per-account tokens via getOrCreateAccountWsToken()
- */
-export function getMimoWsToken(): string {
-  return process.env.MIMO_WS_TOKEN ?? generatedMimoWsToken
-}
-
-/**
  * Validate a WS token against a specific account.
  * Accepts the globally-configured MIMO_WS_TOKEN as a fallback
  * for backward compatibility.
@@ -79,12 +71,6 @@ export function isValidMimoWsTokenForAccount(
   if (!accountToken) return false
 
   return timingSafeEqualBuffer(token, accountToken)
-}
-
-/** @deprecated Use isValidMimoWsTokenForAccount() */
-export function isValidMimoWsToken(token: string | undefined): boolean {
-  if (!token) return false
-  return timingSafeEqualBuffer(token, fallbackToken())
 }
 
 function timingSafeEqualBuffer(a: string, b: string): boolean {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test"
 
-import { sanitizeId, isValidAnthropicId } from "~/lib/id-sanitizer"
+import { sanitizeId } from "~/lib/id-sanitizer"
 
 describe("ID Sanitizer", () => {
   describe("sanitizeId", () => {
@@ -50,7 +50,6 @@ describe("ID Sanitizer", () => {
       const result = sanitizeId("!!!@@@###")
       expect(result).toMatch(/^_+[a-z0-9]+$/)
       expect(result.length).toBeGreaterThan(0)
-      expect(isValidAnthropicId(result)).toBe(true)
     })
 
     it("should preserve empty string", () => {
@@ -61,26 +60,6 @@ describe("ID Sanitizer", () => {
       const first = sanitizeId("call:abc")
       const second = sanitizeId("call:abc")
       expect(first).toBe(second)
-    })
-  })
-
-  describe("isValidAnthropicId", () => {
-    it("should validate correct IDs", () => {
-      expect(isValidAnthropicId("valid-id")).toBe(true)
-      expect(isValidAnthropicId("valid_id")).toBe(true)
-      expect(isValidAnthropicId("valid123")).toBe(true)
-      expect(isValidAnthropicId("VALID_ID-123")).toBe(true)
-    })
-
-    it("should reject IDs with special characters", () => {
-      expect(isValidAnthropicId("call:abc")).toBe(false)
-      expect(isValidAnthropicId("call.abc")).toBe(false)
-      expect(isValidAnthropicId("call/abc")).toBe(false)
-      expect(isValidAnthropicId("call abc")).toBe(false)
-    })
-
-    it("should reject empty string", () => {
-      expect(isValidAnthropicId("")).toBe(false)
     })
   })
 
@@ -96,7 +75,7 @@ describe("ID Sanitizer", () => {
 
       for (const id of testIds) {
         const sanitized = sanitizeId(id)
-        expect(isValidAnthropicId(sanitized)).toBe(true)
+        expect(/^[\w-]+$/.test(sanitized)).toBe(true)
       }
     })
   })

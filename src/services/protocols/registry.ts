@@ -21,22 +21,3 @@ export function getProtocolAdapter(
 ): ProtocolAdapter | undefined {
   return registry.get(protocol)
 }
-
-export function requireProtocolAdapter(
-  protocol: ProviderProtocol,
-): ProtocolAdapter {
-  const adapter = registry.get(protocol)
-  if (!adapter) {
-    throw new Error(`No protocol adapter registered for "${protocol}"`)
-  }
-  return adapter
-}
-
-export function listProtocolAdapters(): Array<ProtocolAdapter> {
-  return [...registry.values()]
-}
-
-/** 仅供测试。 */
-export function __resetProtocolAdapterRegistryForTest(): void {
-  registry.clear()
-}

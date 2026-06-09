@@ -9,7 +9,7 @@
  * Prices stored in database are per 1K tokens, but this file uses per 1M
  * for better readability. Conversion happens in the API layer.
  */
-export const DEFAULT_MODEL_PRICES: Record<
+const DEFAULT_MODEL_PRICES: Record<
   string,
   {
     promptPricePer1m: number

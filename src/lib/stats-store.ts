@@ -298,18 +298,6 @@ class StatsStore {
     }
   }
 
-  // Clean up old data (keep last N days)
-  cleanup(daysToKeep = 30): void {
-    if (!this.db) return
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - daysToKeep)
-    const cutoffDate = cutoff.toISOString().split("T")[0] ?? ""
-    const stmt = this.db.prepare(`
-      DELETE FROM daily_stats WHERE date < ?
-    `)
-    stmt.run(cutoffDate)
-  }
-
   // Usage statistics methods
   recordUsage(stats: UsageStats): void {
     const db = this.ensureDb()
