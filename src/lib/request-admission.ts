@@ -31,22 +31,22 @@ import { isUserAllowedModel } from "~/lib/users"
 /**
  * 路由解析结果。
  *
- * - `kind: "legacy"`: Account-based target (Copilot/Codebuff/Windsurf/Mimo native adapter)。
- * - `kind: "connection"`: ProviderConnection-based target (OpenAI/Anthropic-compatible adapter)。
+ * - `kind: "account"`: Account-based target (Copilot/Codebuff/Windsurf/Mimo native adapter)。
+ * - `kind: "provider"`: ProviderConnection-based target (OpenAI/Anthropic-compatible adapter)。
  *
  * 统一由 `buildRouteTargets` 生成候选池,`selectRouteTarget` 按优先级/权重选取。
  */
-export type RequestAdmission = LegacyAdmission | ConnectionAdmission
+export type RequestAdmission = AccountAdmission | ProviderAdmission
 
-export interface LegacyAdmission {
-  kind: "legacy"
+export interface AccountAdmission {
+  kind: "account"
   account: Account
   target: RouteTarget
   initiator?: "agent" | "user"
 }
 
-export interface ConnectionAdmission {
-  kind: "connection"
+export interface ProviderAdmission {
+  kind: "provider"
   target: RouteTarget
   connection: ProviderConnection
   credential: ApiCredential
@@ -123,7 +123,7 @@ export async function prepareRequestAdmission(
 
   if (target.account) {
     return {
-      kind: "legacy",
+      kind: "account",
       account: target.account,
       target,
       initiator,
@@ -147,7 +147,7 @@ export async function prepareRequestAdmission(
     )
   }
   return {
-    kind: "connection",
+    kind: "provider",
     target,
     connection,
     credential: found.credential,
@@ -186,7 +186,7 @@ export function switchToNextRouteTarget(
 }
 
 /**
- * 把 RouteTarget 解析为 ConnectionAdmission 或 null (Account target)。
+ * 把 RouteTarget 解析为 ProviderAdmission 或 null (Account target)。
  */
 export function resolveConnectionFromTarget(target: RouteTarget): {
   connection: ProviderConnection

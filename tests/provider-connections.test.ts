@@ -91,6 +91,7 @@ describe("provider-connections state", () => {
       buildRouteTargets({
         publicModelId: "deepseek-chat",
         endpoint: "messages",
+        accounts: [],
       }),
     ).toHaveLength(1)
   })
@@ -237,6 +238,7 @@ describe("route-target build + select", () => {
     const targets = buildRouteTargets({
       publicModelId: "deepseek-chat",
       endpoint: "chat",
+      accounts: [],
     })
     expect(targets).toHaveLength(1)
     expect(targets[0].connectionId).toBe("deepseek")
@@ -247,6 +249,7 @@ describe("route-target build + select", () => {
     const targets = buildRouteTargets({
       publicModelId: "deepseek-v3",
       endpoint: "chat",
+      accounts: [],
     })
     expect(targets).toHaveLength(1)
   })
@@ -298,6 +301,7 @@ describe("route-target build + select", () => {
         publicModelId: "broken-chat",
         endpoint: "chat",
         connections: [connection],
+        accounts: [],
       }),
     ).toEqual([])
   })

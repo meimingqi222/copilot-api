@@ -39,7 +39,7 @@ import {
   scheduleModelsRefresh,
 } from "./lib/utils"
 import { server } from "./server"
-import { startMimoManager } from "./services/mimo/manager"
+import { startMimoManager, stopMimoManager } from "./services/mimo/manager"
 import { initializeProtocolAdapters } from "./services/protocols"
 
 interface RunServerOptions {
@@ -291,13 +291,21 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     )
   }
 
-  Bun.serve({
+  const bunServer = Bun.serve({
     fetch: server.fetch,
     websocket,
     port: options.port,
     hostname: process.env.HOST || undefined,
     idleTimeout: 0,
   })
+
+  const shutdown = () => {
+    consola.info("Shutting down...")
+    stopMimoManager()
+    void bunServer.stop()
+  }
+  process.on("SIGTERM", shutdown)
+  process.on("SIGINT", shutdown)
 }
 
 export async function ensureDirectProviderAccounts(): Promise<void> {

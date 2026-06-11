@@ -97,7 +97,7 @@ export async function executeWithFailover<
       const conn = resolveConnectionFromTarget(next)
       if (conn) {
         current = {
-          kind: "connection",
+          kind: "provider",
           target: next,
           connection: conn.connection,
           credential: conn.credential,
@@ -105,7 +105,7 @@ export async function executeWithFailover<
         }
       } else if (next.account) {
         current = {
-          kind: "legacy",
+          kind: "account",
           account: next.account,
           target: next,
           initiator: current.initiator,
@@ -125,7 +125,7 @@ async function markCooldown(
   const isHttp = error instanceof HTTPError
   const status = isHttp ? error.response.status : 503
 
-  if (admission.kind === "connection") {
+  if (admission.kind === "provider") {
     const retryAfterMs = resolveRetryAfterMs(isHttp, status)
     const reason = isHttp ? `upstream ${status}` : resolveNetworkError(error)
     markCredentialCooldown(admission.credential, { retryAfterMs, reason })

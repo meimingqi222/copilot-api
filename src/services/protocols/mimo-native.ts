@@ -261,6 +261,159 @@ async function safeMimoStream(
   }
 }
 
+/**
+ * Peek at the first stream chunk for Anthropic error format.
+ * Mimo bridge sends raw JSON in stream_delta.chunk.
+ * Anthropic error format: {"type":"error","error":{...}}
+ */
+function detectMimoAnthropicStreamError(chunk: StreamChunk): HTTPError | null {
+  if (!chunk.data) return null
+  try {
+    const parsed = JSON.parse(chunk.data) as {
+      type?: string
+      error?: { message?: string; type?: string }
+    }
+    if (parsed.type === "error") {
+      const err = parsed.error ?? {}
+      return new HTTPError(
+        err.message ?? err.type ?? "upstream streaming error",
+        new Response(null, { status: 500 }),
+        chunk.data,
+      )
+    }
+  } catch {
+    /* ignore parse errors */
+  }
+  return null
+}
+
+async function safeMimoMessagesStream(
+  gen: AsyncIterable<StreamChunk>,
+): Promise<AsyncIterable<StreamChunk>> {
+  const iterator = gen[Symbol.asyncIterator]()
+  let first: IteratorResult<StreamChunk>
+  try {
+    first = await iterator.next()
+  } catch (e) {
+    throw new HTTPError(
+      e instanceof Error ? e.message : "Mimo stream error",
+      new Response(null, { status: 503 }),
+    )
+  }
+  if (first.done) return gen
+
+  const streamError = detectMimoAnthropicStreamError(first.value)
+  if (streamError) throw streamError
+
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<StreamChunk> {
+      let yielded = false
+      return {
+        async next(): Promise<IteratorResult<StreamChunk>> {
+          if (!yielded) {
+            yielded = true
+            return first
+          }
+          return iterator.next()
+        },
+      }
+    },
+  }
+}
+
+/**
+ * Collect a non-streaming response for the messages endpoint.
+ * Handles both accumulated stream deltas and direct response messages.
+ */
+async function collectMessagesResponse(
+  conn: MimoConnection,
+  reqId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const queue: Array<MimoMessage> = []
+  let resolveNext: (() => void) | null = null
+  let done = false
+  let error: Error | null = null
+  let accumulatedBody = ""
+  let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+  const resetIdleTimer = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    idleTimeoutId = setTimeout(() => {
+      error = new Error(IDLE_TIMEOUT_MESSAGE)
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+    }, IDLE_TIMEOUT_MS)
+  }
+
+  const listener = (msg: MimoMessage) => {
+    queue.push(msg)
+    resetIdleTimer()
+    if (resolveNext) {
+      resolveNext()
+      resolveNext = null
+    }
+  }
+
+  conn.activeRequests.set(reqId, listener)
+
+  const cleanup = () => {
+    if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    conn.activeRequests.delete(reqId)
+  }
+
+  if (signal) {
+    signal.addEventListener("abort", () => {
+      error = new Error("Request aborted")
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+    })
+  }
+
+  resetIdleTimer()
+
+  try {
+    while (!done) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
+      if (error) throw error
+
+      if (queue.length === 0) {
+        await new Promise<void>((resolve) => {
+          resolveNext = resolve
+        })
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
+      if (error) throw error
+
+      const msg = queue.shift()
+      if (!msg) continue
+
+      if (msg.type === "stream_start") {
+        // Ignore
+      } else if (msg.type === "stream_delta" && msg.chunk) {
+        accumulatedBody += msg.chunk
+      } else if (msg.type === "stream_end") {
+        done = true
+      } else if (msg.type === "response" && msg.body) {
+        return msg.body as Record<string, unknown>
+      } else if (msg.type === "error") {
+        const errorMsg =
+          (msg.error as string) || String(msg.body) || "Node returned an error"
+        throw new Error(errorMsg)
+      }
+    }
+
+    return JSON.parse(accumulatedBody) as Record<string, unknown>
+  } finally {
+    cleanup()
+  }
+}
+
 export const mimoNativeAdapter: ProtocolAdapter = {
   protocol: "mimo-native",
 
@@ -311,6 +464,57 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     }
 
     const responsePromise = collectResponse(conn, reqId, signal)
+    conn.ws.send(JSON.stringify(wsPayload))
+    const response = await responsePromise
+    return {
+      credentialId: account.id,
+      response,
+    }
+  },
+
+  // eslint-disable-next-line max-params
+  async createMessages(
+    target,
+    _connection,
+    _credential,
+    payload,
+    signal,
+    _ctx,
+  ) {
+    const account = extractAccount(target)
+    const conn = mimoConnections.get(account.id)
+    if (!conn) {
+      markAccountFailed(account.id, "Claw node is offline or initializing")
+      throw new HTTPError(
+        `Claw node for account "${account.label}" is offline or initializing. Please wait.`,
+        new Response(null, { status: 503 }),
+      )
+    }
+
+    const reqId = randomUUID()
+
+    // Pass raw Anthropic payload as-is (Mimo API supports native Anthropic protocol)
+    const wsPayload = {
+      type: "request",
+      id: reqId,
+      method: "POST",
+      path: "/v1/messages",
+      body: payload,
+      headers: {},
+      stream: payload.stream,
+    }
+
+    if (payload.stream) {
+      const gen = streamResponse(conn, reqId, signal)
+      conn.ws.send(JSON.stringify(wsPayload))
+      const response = await safeMimoMessagesStream(gen)
+      return {
+        credentialId: account.id,
+        response,
+      }
+    }
+
+    const responsePromise = collectMessagesResponse(conn, reqId, signal)
     conn.ws.send(JSON.stringify(wsPayload))
     const response = await responsePromise
     return {

@@ -11,8 +11,8 @@ import path from "node:path"
 
 import type { Account } from "~/lib/accounts"
 import type {
-  ConnectionAdmission,
-  LegacyAdmission,
+  AccountAdmission,
+  ProviderAdmission,
 } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
@@ -269,8 +269,8 @@ describe("cross-system failover via executeWithFailover", () => {
     )
     expect(conn).not.toBeNull()
 
-    const admission: ConnectionAdmission = {
-      kind: "connection",
+    const admission: ProviderAdmission = {
+      kind: "provider",
       target: selected as NonNullable<typeof selected>,
       connection: conn as NonNullable<typeof conn>,
       credential: (conn as NonNullable<typeof conn>).credentials[0],
@@ -312,8 +312,8 @@ describe("cross-system failover via executeWithFailover", () => {
     expect(selected).not.toBeNull()
     expect(selected?.connectionId).toBe("acc")
 
-    const admission: LegacyAdmission = {
-      kind: "legacy",
+    const admission: AccountAdmission = {
+      kind: "account",
       account,
       target: selected as NonNullable<typeof selected>,
       initiator: "user",
@@ -358,8 +358,8 @@ describe("cross-system failover via executeWithFailover", () => {
     )
     expect(conn).not.toBeNull()
 
-    const admission: ConnectionAdmission = {
-      kind: "connection",
+    const admission: ProviderAdmission = {
+      kind: "provider",
       target: selected as NonNullable<typeof selected>,
       connection: conn as NonNullable<typeof conn>,
       credential: (conn as NonNullable<typeof conn>).credentials[0],
