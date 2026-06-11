@@ -50,11 +50,11 @@ export async function dispatchRequest(
     logPrefix: `[dispatch/${routeKind}]`,
     execute: (adapter, target: RouteTarget, current) => {
       const conn =
-        current.kind === "connection" ?
+        current.kind === "provider" ?
           current.connection
         : legacyPlaceholderConn(target)
       const cred =
-        current.kind === "connection" ?
+        current.kind === "provider" ?
           current.credential
         : legacyPlaceholderCred(target)
 

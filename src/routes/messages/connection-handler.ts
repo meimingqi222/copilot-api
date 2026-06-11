@@ -28,7 +28,7 @@ interface HandleAnthropicViaConnectionOpts {
   c: Context
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
-  admission: Extract<RequestAdmission, { kind: "connection" }>
+  admission: RequestAdmission
   anthropicBeta: string | undefined
   anthropicVersion: string | undefined
 }

@@ -14,6 +14,12 @@ import { handleCopilotApi } from "./copilot-handler"
 import { inferInitiatorFromAnthropicMessages } from "./initiator"
 import { handleMessagesApi } from "./messages-api-handler"
 
+/** Protocols whose adapter supports native Anthropic Messages passthrough. */
+const NATIVE_MESSAGES_PROTOCOLS = new Set([
+  "anthropic-compatible",
+  "mimo-native",
+])
+
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
@@ -45,31 +51,11 @@ export async function handleCompletion(c: Context) {
     )
   }
 
-  // Provider Connection 路径
-  if (admission.kind === "connection") {
-    if (admission.connection.protocol === "anthropic-compatible") {
-      return handleAnthropicViaConnection({
-        c,
-        anthropicPayload,
-        signal,
-        admission,
-        anthropicBeta,
-        anthropicVersion,
-      })
-    }
-    // openai-compatible 或其它:走 Anthropic -> OpenAI 翻译链路,
-    // 然后通过 dispatcher 调用对应 adapter。
-    return handleCopilotApi({
-      c,
-      anthropicPayload,
-      signal,
-      admission,
-    })
-  }
-
+  // Copilot Messages API (native Anthropic API passthrough)
   if (
-    supportsMessagesApi(anthropicPayload.model, admission.account)
+    admission.kind === "account"
     && admission.account.provider === "copilot"
+    && supportsMessagesApi(anthropicPayload.model, admission.account)
   ) {
     return handleMessagesApi({
       c,
@@ -82,6 +68,20 @@ export async function handleCompletion(c: Context) {
     })
   }
 
+  // Native Messages passthrough: if the upstream protocol supports
+  // Anthropic Messages natively, pass the payload through without translation.
+  if (NATIVE_MESSAGES_PROTOCOLS.has(admission.target.protocol)) {
+    return handleAnthropicViaConnection({
+      c,
+      anthropicPayload,
+      signal,
+      admission,
+      anthropicBeta,
+      anthropicVersion,
+    })
+  }
+
+  // Fallback: translate Anthropic → OpenAI and dispatch as chat completions
   return handleCopilotApi({
     c,
     anthropicPayload,

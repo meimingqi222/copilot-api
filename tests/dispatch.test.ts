@@ -5,7 +5,7 @@ import type {
   ProviderConnection,
   ApiCredential,
 } from "~/lib/provider-connections"
-import type { ConnectionAdmission } from "~/lib/request-admission"
+import type { ProviderAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
@@ -63,8 +63,8 @@ describe("dispatch-failover", () => {
       createdAt: Date.now(),
     }
 
-    const admission: ConnectionAdmission = {
-      kind: "connection",
+    const admission: ProviderAdmission = {
+      kind: "provider",
       target,
       connection,
       credential,

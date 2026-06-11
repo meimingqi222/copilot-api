@@ -12,13 +12,31 @@ import type { ProviderChatResult } from "./runtime"
 import type { ProviderRuntime } from "./runtime"
 
 const MIMO_MODELS = [
-  { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", vendor: "MiMo" },
-  { id: "mimo-v2.5", name: "MiMo V2.5", vendor: "MiMo" },
-  { id: "mimo-v2-pro", name: "MiMo V2 Pro", vendor: "MiMo" },
-  { id: "mimo-v2-flash", name: "MiMo V2 Flash", vendor: "MiMo" },
-  { id: "mimo-v2-omni", name: "MiMo V2 Omni", vendor: "MiMo" },
-  { id: "mimo-v2.5-tts", name: "MiMo V2.5 TTS", vendor: "MiMo" },
-  { id: "mimo-v2-tts", name: "MiMo V2 TTS", vendor: "MiMo" },
+  { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", vendor: "MiMo", tts: false },
+  { id: "mimo-v2.5", name: "MiMo V2.5", vendor: "MiMo", tts: false },
+  { id: "mimo-v2.5-tts", name: "MiMo V2.5 TTS", vendor: "MiMo", tts: true },
+  { id: "mimo-v2-pro", name: "MiMo V2 Pro", vendor: "MiMo", tts: false },
+  { id: "mimo-v2-flash", name: "MiMo V2 Flash", vendor: "MiMo", tts: false },
+  { id: "mimo-v2-omni", name: "MiMo V2 Omni", vendor: "MiMo", tts: false },
+  {
+    id: "mimo-v2.5-tts-voicedesign",
+    name: "MiMo V2.5 TTS VoiceDesign",
+    vendor: "MiMo",
+    tts: true,
+  },
+  {
+    id: "mimo-v2.5-tts-voiceclone",
+    name: "MiMo V2.5 TTS VoiceClone",
+    vendor: "MiMo",
+    tts: true,
+  },
+  { id: "mimo-v2-tts", name: "MiMo V2 TTS", vendor: "MiMo", tts: true },
+  {
+    id: "mimo-v2.5-pro-ultraspeed",
+    name: "MiMo V2.5 Pro UltraSpeed",
+    vendor: "MiMo",
+    tts: false,
+  },
 ]
 
 export const mimoProviderRuntime: ProviderRuntime = {
@@ -69,7 +87,8 @@ export const mimoProviderRuntime: ProviderRuntime = {
       name: m.name,
       vendor: m.vendor,
       pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
+      supportedEndpoints:
+        m.tts ? ["/chat/completions"] : ["/chat/completions", "/v1/messages"],
       provider: "mimo-aistudio",
     }))
     account.availableModels = models

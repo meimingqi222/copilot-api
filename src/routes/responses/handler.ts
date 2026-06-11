@@ -39,7 +39,7 @@ export async function handleResponses(c: Context) {
     inferredInitiator: inferInitiatorFromResponsesPayload(payload),
     messageContent,
   })
-  if (admission.kind !== "legacy") {
+  if (admission.kind !== "account") {
     throw new HTTPError(
       "Responses API requires an Account-based admission",
       new Response("Not Implemented", { status: 501 }),
