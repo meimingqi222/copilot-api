@@ -91,6 +91,8 @@ export function doneChunk(opts: {
     completion_tokens?: number
     total_tokens?: number
     cached_tokens?: number
+    cache_write_tokens?: number
+    cache_read_tokens?: number
   }
 }): string {
   const { requestId, model, finishReason, usage } = opts
@@ -114,7 +116,10 @@ export function doneChunk(opts: {
           completion_tokens: usage.completion_tokens ?? 0,
           total_tokens: usage.total_tokens ?? 0,
           prompt_tokens_details: {
-            cached_tokens: usage.cached_tokens ?? 0,
+            cached_tokens: usage.cache_read_tokens ?? usage.cached_tokens ?? 0,
+            ...(usage.cache_write_tokens ?
+              { cache_creation_input_tokens: usage.cache_write_tokens }
+            : {}),
           },
         },
       }
