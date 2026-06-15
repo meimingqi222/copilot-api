@@ -212,8 +212,20 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
       const cached = parseCachedTokensFromField28([
         { field: 28, wire: 2, sub: field28Nodes },
       ])
-      if (cached !== undefined && usage) {
-        usage.cached_tokens = Math.max(usage.cached_tokens, Math.round(cached))
+      if (cached !== undefined) {
+        if (!usage) {
+          usage = {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cached_tokens: Math.round(cached),
+          }
+        } else {
+          usage.cached_tokens = Math.max(
+            usage.cached_tokens,
+            Math.round(cached),
+          )
+        }
       }
     }
   }
