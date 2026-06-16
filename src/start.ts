@@ -92,7 +92,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   state.defaultProvider = options.provider
-  state.provider = options.provider
   state.accountType = options.accountType
   if (options.accountType !== "individual") {
     consola.info(`Using ${options.accountType} plan GitHub account`)
@@ -111,14 +110,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     options.codebuffCostMode ?? state.providerDefaults.codebuff.costMode
   state.providerDefaults.codebuff.allowFallbacks =
     options.codebuffAllowFallbacks
-
-  state.codebuffBaseUrl = state.providerDefaults.codebuff.baseUrl
-  state.codebuffAuthToken = state.providerDefaults.codebuff.authToken
-  state.codebuffCliVersion = state.providerDefaults.codebuff.cliVersion
-  state.codebuffAgentId = state.providerDefaults.codebuff.agentId
-  state.codebuffModel = state.providerDefaults.codebuff.model
-  state.codebuffCostMode = state.providerDefaults.codebuff.costMode
-  state.codebuffAllowFallbacks = state.providerDefaults.codebuff.allowFallbacks
 
   state.providerDefaults.windsurf.apiKey = options.windsurfApiKey
   state.providerDefaults.windsurf.baseUrl =
@@ -145,11 +136,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   state.manualApprove = options.manual
   state.showToken = options.showToken
-  state.apiKey = options.apiKey
   state.legacyApiKey = options.apiKey
   state.adminPassword = options.adminPassword ?? options.apiKey
 
-  if (state.apiKey) {
+  if (state.legacyApiKey) {
     consola.info("API key protection enabled")
     consola.warn(
       "⚠ Legacy API_KEY mode is deprecated. Use the admin panel to create per-user API keys for better security and auditability.",
@@ -188,11 +178,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
     try {
       await refreshCopilotToken(account)
-      // Sync legacy state.githubToken for backward compat services
-      if (account === state.accounts[state.activeAccountIndex]) {
-        state.githubToken =
-          account.credentials?.githubToken ?? account.githubToken
-      }
     } catch (err) {
       consola.debug(
         `Failed to get Copilot token for account "${account.label}"`,
@@ -281,7 +266,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     }
   }
 
-  if (state.apiKey) {
+  if (state.legacyApiKey) {
     consola.box(
       `🔐 API key protection is enabled.\nAdmin login: ${serverUrl}/admin/login\nAdmin password source: ADMIN_PASSWORD (or --admin-password). Fallback: API_KEY`,
     )
@@ -365,12 +350,6 @@ function applyCodebuffDefaults(account: CodebuffAccount): void {
     costMode: defaults.costMode,
     allowFallbacks: defaults.allowFallbacks,
   }
-  account.codebuffBaseUrl = defaults.baseUrl
-  account.codebuffCliVersion = defaults.cliVersion
-  account.codebuffAgentId = defaults.agentId
-  account.codebuffModel = defaults.model
-  account.codebuffCostMode = defaults.costMode
-  account.codebuffAllowFallbacks = defaults.allowFallbacks
 }
 
 function createCodebuffDefaultAccount() {
@@ -390,13 +369,6 @@ function createCodebuffDefaultAccount() {
       costMode: defaults.costMode,
       allowFallbacks: defaults.allowFallbacks,
     },
-    codebuffAuthToken: defaults.authToken,
-    codebuffBaseUrl: defaults.baseUrl,
-    codebuffCliVersion: defaults.cliVersion,
-    codebuffAgentId: defaults.agentId,
-    codebuffModel: defaults.model,
-    codebuffCostMode: defaults.costMode,
-    codebuffAllowFallbacks: defaults.allowFallbacks,
     enabled: true,
     priority: 0,
     quotaState: "unknown" as const,
@@ -450,11 +422,6 @@ function applyWindsurfDefaults(account: WindsurfAccount): void {
     defaultModel: defaults.defaultModel,
     clientName: defaults.clientName,
   }
-  account.windsurfBaseUrl = defaults.baseUrl
-  account.windsurfAppVersion = defaults.appVersion
-  account.windsurfLsVersion = defaults.lsVersion
-  account.windsurfDefaultModel = defaults.defaultModel
-  account.windsurfClientName = defaults.clientName
 }
 
 function createWindsurfDefaultAccount() {
@@ -473,12 +440,6 @@ function createWindsurfDefaultAccount() {
       defaultModel: defaults.defaultModel,
       clientName: defaults.clientName,
     },
-    windsurfApiKey: defaults.apiKey,
-    windsurfBaseUrl: defaults.baseUrl,
-    windsurfAppVersion: defaults.appVersion,
-    windsurfLsVersion: defaults.lsVersion,
-    windsurfDefaultModel: defaults.defaultModel,
-    windsurfClientName: defaults.clientName,
     enabled: true,
     priority: 0,
     quotaState: "unknown" as const,

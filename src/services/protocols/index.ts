@@ -29,6 +29,7 @@ export type {
   AdapterChatResult,
   AdapterEmbeddingsResult,
   AdapterMessagesResult,
+  AdapterResponsesResult,
   AnthropicMessagesPayload,
   ProtocolAdapter,
 } from "./types"

@@ -13,7 +13,7 @@ import { ensureDirectProviderAccounts } from "~/start"
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
 const originalModels = state.models
-const originalApiKey = state.apiKey
+const originalApiKey = state.legacyApiKey
 const originalProviderDefaults = structuredClone(state.providerDefaults)
 const originalAccountsPath = PATHS.ACCOUNTS_PATH
 const testAccountsPath = path.join(
@@ -26,7 +26,7 @@ beforeEach(() => {
   state.accounts = []
   state.activeAccountIndex = 0
   state.models = undefined
-  state.apiKey = undefined
+  state.legacyApiKey = undefined
   state.providerDefaults = structuredClone(originalProviderDefaults)
   PATHS.ACCOUNTS_PATH = testAccountsPath
 })
@@ -35,7 +35,7 @@ afterEach(async () => {
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
-  state.apiKey = originalApiKey
+  state.legacyApiKey = originalApiKey
   state.providerDefaults = structuredClone(originalProviderDefaults)
   PATHS.ACCOUNTS_PATH = originalAccountsPath
   resetAdaptiveRateLimiterForTest()
@@ -50,7 +50,6 @@ test("cacheModels keeps provider-qualified duplicates visible", () => {
       provider: "copilot",
       credentials: { githubToken: "gh-token" },
       settings: {},
-      githubToken: "gh-token",
       enabled: true,
       priority: 0,
       isExhausted: false,
@@ -72,7 +71,6 @@ test("cacheModels keeps provider-qualified duplicates visible", () => {
       provider: "windsurf",
       credentials: { apiKey: "ws-key" },
       settings: { defaultModel: "swe-1-6-fast" },
-      windsurfApiKey: "ws-key",
       enabled: true,
       priority: 1,
       isExhausted: false,
@@ -125,13 +123,6 @@ test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct acco
         costMode: "normal",
         allowFallbacks: true,
       },
-      codebuffAuthToken: "cb-token",
-      codebuffBaseUrl: "https://stale.example",
-      codebuffCliVersion: "0.0.1",
-      codebuffAgentId: "stale-agent",
-      codebuffModel: "stale-model",
-      codebuffCostMode: "normal",
-      codebuffAllowFallbacks: true,
     },
   ]
 

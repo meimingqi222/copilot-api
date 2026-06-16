@@ -22,6 +22,11 @@ import type {
   EmbeddingRequest,
   EmbeddingResponse,
 } from "~/services/copilot/create-embeddings"
+import type {
+  CopilotStreamEventLike,
+  ResponsesPayload,
+  ResponsesResponse,
+} from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 export type AdapterChatResult =
@@ -33,18 +38,15 @@ export type AdapterEmbeddingsResult = {
   response: EmbeddingResponse
 }
 
-/**
- * 通用 Anthropic Messages payload 占位类型(避免在此引入完整 schema)。
- * 真实路由路径会传入 `~/routes/messages` 处理过的对象。
- */
-export type AnthropicMessagesPayload = Record<string, unknown> & {
-  model: string
-  stream?: boolean
-}
+import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
 
 export type AdapterMessagesResult =
   | { credentialId: string; response: AsyncIterable<unknown> }
   | { credentialId: string; response: Record<string, unknown> }
+
+export type AdapterResponsesResult =
+  | { credentialId: string; response: AsyncIterable<CopilotStreamEventLike> }
+  | { credentialId: string; response: ResponsesResponse }
 
 export interface ProtocolAdapter {
   protocol: ProviderProtocol
@@ -74,6 +76,15 @@ export interface ProtocolAdapter {
     ctx?: RequestExecutionContext,
   ): Promise<AdapterMessagesResult>
 
+  createResponses?(
+    target: RouteTarget,
+    connection: ProviderConnection,
+    credential: ApiCredential,
+    payload: ResponsesPayload,
+    signal?: AbortSignal,
+    ctx?: RequestExecutionContext,
+  ): Promise<AdapterResponsesResult>
+
   createEmbeddings?(
     target: RouteTarget,
     connection: ProviderConnection,
@@ -82,3 +93,5 @@ export interface ProtocolAdapter {
     signal?: AbortSignal,
   ): Promise<AdapterEmbeddingsResult>
 }
+
+export { type AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"

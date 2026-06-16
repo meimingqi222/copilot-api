@@ -1,8 +1,8 @@
 import type { Account } from "~/lib/accounts"
 
 import { canonicalModelId } from "~/lib/accounts"
-import { initializeProviderRegistry } from "~/services/providers"
-import { getProviderRuntime } from "~/services/providers/registry"
+import { getAccountProtocol } from "~/lib/request-admission"
+import { delegateEmbeddingsToNativeAdapter } from "~/services/providers/delegate"
 
 interface CreateEmbeddingsOptions {
   account: Account
@@ -16,20 +16,17 @@ export const createEmbeddings = async (
   accountId: string
   response: EmbeddingResponse
 }> => {
-  initializeProviderRegistry()
   const routedPayload = {
     ...payload,
     model: canonicalModelId(payload.model),
   }
-  const account = options.account
-  const runtime = getProviderRuntime(account.provider)
-  if (!runtime.createEmbeddings) {
-    throw new Error(
-      `Model "${payload.model}" does not support embeddings on provider "${account.provider}"`,
-    )
-  }
 
-  return runtime.createEmbeddings(account, routedPayload, options.signal)
+  return delegateEmbeddingsToNativeAdapter(
+    options.account,
+    getAccountProtocol(options.account),
+    routedPayload,
+    options.signal,
+  )
 }
 
 export interface EmbeddingRequest {

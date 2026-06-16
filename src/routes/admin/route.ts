@@ -69,9 +69,7 @@ adminRoutes.use("/api/*", async (c, next) => {
   // Multi-user mode always requires auth
   const hasMultiUserMode = state.users.length > 0
   // Single-user mode requires auth if system-level auth is configured
-  const hasSystemAuth = Boolean(
-    state.apiKey || state.adminPassword || state.legacyApiKey,
-  )
+  const hasSystemAuth = Boolean(state.legacyApiKey || state.adminPassword)
   // Require auth in multi-user mode OR if system auth is configured
   if ((hasMultiUserMode || hasSystemAuth) && !hasAdminRole(c)) {
     return c.json(
@@ -144,9 +142,7 @@ adminRoutes.get("/", (c) => {
   // Multi-user mode always requires auth
   const hasMultiUserMode = state.users.length > 0
   // Single-user mode requires auth if system-level auth is configured
-  const hasSystemAuth = Boolean(
-    state.apiKey || state.adminPassword || state.legacyApiKey,
-  )
+  const hasSystemAuth = Boolean(state.legacyApiKey || state.adminPassword)
   // Require auth in multi-user mode OR if system auth is configured
   if ((hasMultiUserMode || hasSystemAuth) && !hasAdminRole(c)) {
     return c.redirect("/admin/login")
@@ -156,7 +152,7 @@ adminRoutes.get("/", (c) => {
 
 adminRoutes.get("/login", (c) => {
   const hasAdminPasswordConfigured = Boolean(
-    state.adminPassword ?? state.apiKey,
+    state.adminPassword ?? state.legacyApiKey,
   )
 
   if (hasAdminPasswordConfigured && isAuthorizedRequest(c)) {
@@ -172,7 +168,7 @@ adminRoutes.get("/login", (c) => {
 })
 
 adminRoutes.post("/login", async (c) => {
-  if (!state.adminPassword && !state.apiKey) {
+  if (!state.adminPassword && !state.legacyApiKey) {
     return c.json(
       {
         error:

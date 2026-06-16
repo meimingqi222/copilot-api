@@ -88,7 +88,7 @@ export async function requireApiKey(c: Context, next: Next) {
   }
 
   // No auth configured — allow all
-  if (!state.legacyApiKey && !state.apiKey) {
+  if (!state.legacyApiKey) {
     await next()
     return
   }
@@ -146,7 +146,7 @@ export function hasAdminRole(c: Context): boolean {
 }
 
 function hasValidLegacyApiKey(c: Context): boolean {
-  const configuredApiKey = state.legacyApiKey ?? state.apiKey
+  const configuredApiKey = state.legacyApiKey
   if (!configuredApiKey) return false
 
   const token = extractApiKey(c)
@@ -213,7 +213,7 @@ function hasValidAdminSession(c: Context): boolean {
 }
 
 function getAdminPassword(): string | undefined {
-  return state.adminPassword ?? state.apiKey
+  return state.adminPassword ?? state.legacyApiKey
 }
 
 /**

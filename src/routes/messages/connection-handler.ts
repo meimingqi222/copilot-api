@@ -52,10 +52,7 @@ export async function handleAnthropicViaConnection(
   if (!anthropicPayload.stream) {
     const nonStreamStart = Date.now()
     const result = await dispatchMessages(
-      anthropicPayload as unknown as Record<string, unknown> & {
-        model: string
-        stream?: boolean
-      },
+      anthropicPayload,
       admission,
       signal,
       forwarded,
@@ -86,10 +83,7 @@ export async function handleAnthropicViaConnection(
     try {
       streamStart = Date.now()
       const result = await dispatchMessages(
-        anthropicPayload as unknown as Record<string, unknown> & {
-          model: string
-          stream?: boolean
-        },
+        anthropicPayload,
         admission,
         sseSignal,
         forwarded,

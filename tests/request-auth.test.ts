@@ -3,20 +3,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { state } from "~/lib/state"
 import { server } from "~/server"
 
-const originalApiKey = state.apiKey
+const originalApiKey = state.legacyApiKey
 const originalAdminPassword = state.adminPassword
 const originalAdminSessionToken = state.adminSessionToken
 const originalAdminSessionExpiresAt = state.adminSessionExpiresAt
 
 beforeEach(() => {
-  state.apiKey = undefined
+  state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.adminSessionToken = undefined
   state.adminSessionExpiresAt = undefined
 })
 
 afterEach(() => {
-  state.apiKey = originalApiKey
+  state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.adminSessionToken = originalAdminSessionToken
   state.adminSessionExpiresAt = originalAdminSessionExpiresAt
@@ -24,7 +24,7 @@ afterEach(() => {
 
 describe("request auth", () => {
   test("returns 401 for protected routes without API key", async () => {
-    state.apiKey = "secret"
+    state.legacyApiKey = "secret"
 
     const response = await server.fetch(
       new Request("http://localhost/v1/models"),
@@ -42,7 +42,7 @@ describe("request auth", () => {
   })
 
   test("returns 400 when admin login body is malformed JSON", async () => {
-    state.apiKey = "secret"
+    state.legacyApiKey = "secret"
     state.adminPassword = "admin-secret"
 
     const response = await server.fetch(
@@ -63,7 +63,7 @@ describe("request auth", () => {
   })
 
   test("does not accept admin session cookie for API routes", async () => {
-    state.apiKey = "secret"
+    state.legacyApiKey = "secret"
     state.adminPassword = "admin-secret"
 
     const loginResponse = await server.fetch(
@@ -89,7 +89,7 @@ describe("request auth", () => {
   })
 
   test("does not expose admin password in session cookie", async () => {
-    state.apiKey = "secret"
+    state.legacyApiKey = "secret"
     state.adminPassword = "admin-secret"
 
     const loginResponse = await server.fetch(
@@ -107,7 +107,7 @@ describe("request auth", () => {
   })
 
   test("rejects expired admin session cookie", async () => {
-    state.apiKey = "secret"
+    state.legacyApiKey = "secret"
     state.adminSessionToken = "session-token"
     state.adminSessionExpiresAt = Date.now() - 1000
 

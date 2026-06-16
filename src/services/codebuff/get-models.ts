@@ -10,7 +10,7 @@ function resolveCodebuffConfig(account: Account): {
   const normalizedModel = account.availableModels?.[0]?.id ?? settings?.model
 
   return {
-    model: normalizedModel ?? state.codebuffModel,
+    model: normalizedModel ?? state.providerDefaults.codebuff.model,
   }
 }
 

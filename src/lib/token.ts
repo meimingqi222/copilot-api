@@ -37,11 +37,10 @@ export async function setupGitHubToken(
     const githubToken = await readGithubToken()
 
     if (githubToken && !options?.force) {
-      state.githubToken = githubToken
       if (state.showToken) {
         consola.info("GitHub token:", githubToken)
       }
-      await logUser()
+      await logUser(githubToken)
 
       return
     }
@@ -56,12 +55,11 @@ export async function setupGitHubToken(
 
     const token = await pollAccessToken(response)
     await writeGithubToken(token)
-    state.githubToken = token
 
     if (state.showToken) {
       consola.info("GitHub token:", token)
     }
-    await logUser()
+    await logUser(token)
   } catch (error) {
     if (error instanceof HTTPError) {
       consola.error("Failed to get GitHub token:", await error.response.json())
@@ -73,7 +71,7 @@ export async function setupGitHubToken(
   }
 }
 
-async function logUser() {
-  const user = await getGitHubUser()
+async function logUser(githubToken: string) {
+  const user = await getGitHubUser(githubToken)
   consola.info(`Logged in as ${user.login}`)
 }

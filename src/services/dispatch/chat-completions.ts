@@ -10,6 +10,7 @@ import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { dispatchRequest } from "./shared"
 
@@ -22,9 +23,10 @@ export async function dispatchChatCompletions(
   admission: RequestAdmission,
   signal?: AbortSignal,
   c?: Context,
+  executionContext?: RequestExecutionContext,
 ): Promise<ChatDispatchResult> {
   const result = await dispatchRequest(
-    { routeKind: "chat", payload, c },
+    { routeKind: "chat", payload, c, executionContext },
     admission,
     signal,
   )

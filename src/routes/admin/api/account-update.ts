@@ -10,7 +10,6 @@ import {
 } from "~/lib/accounts"
 import { refreshModelsForAccount } from "~/lib/utils"
 
-// eslint-disable-next-line complexity
 export async function updateProviderAccount(
   account: Account,
   body: {
@@ -40,31 +39,6 @@ export async function updateProviderAccount(
       ...account.settings,
       ...body.settings,
     }
-    const settings = account.settings
-    account.codebuffBaseUrl =
-      typeof settings.baseUrl === "string" ?
-        settings.baseUrl
-      : account.codebuffBaseUrl
-    account.codebuffCliVersion =
-      typeof settings.cliVersion === "string" ?
-        settings.cliVersion
-      : account.codebuffCliVersion
-    account.codebuffAgentId =
-      typeof settings.agentId === "string" ?
-        settings.agentId
-      : account.codebuffAgentId
-    account.codebuffModel =
-      typeof settings.model === "string" ?
-        settings.model
-      : account.codebuffModel
-    account.codebuffCostMode =
-      typeof settings.costMode === "string" ?
-        settings.costMode
-      : account.codebuffCostMode
-    account.codebuffAllowFallbacks =
-      typeof settings.allowFallbacks === "boolean" ?
-        settings.allowFallbacks
-      : account.codebuffAllowFallbacks
     await refreshModelsForAccount(account)
     return
   }
@@ -84,27 +58,6 @@ export async function updateProviderAccount(
       ...account.settings,
       ...body.settings,
     }
-    const settings = account.settings
-    account.windsurfBaseUrl =
-      typeof settings.baseUrl === "string" ?
-        settings.baseUrl
-      : account.windsurfBaseUrl
-    account.windsurfAppVersion =
-      typeof settings.appVersion === "string" ?
-        settings.appVersion
-      : account.windsurfAppVersion
-    account.windsurfLsVersion =
-      typeof settings.lsVersion === "string" ?
-        settings.lsVersion
-      : account.windsurfLsVersion
-    account.windsurfDefaultModel =
-      typeof settings.defaultModel === "string" ?
-        settings.defaultModel
-      : account.windsurfDefaultModel
-    account.windsurfClientName =
-      typeof settings.clientName === "string" ?
-        settings.clientName
-      : account.windsurfClientName
     await refreshModelsForAccount(account)
   }
 

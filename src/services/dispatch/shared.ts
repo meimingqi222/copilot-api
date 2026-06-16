@@ -10,6 +10,7 @@ import type {
   AdapterMessagesResult,
   AnthropicMessagesPayload,
 } from "~/services/protocols"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
 
@@ -23,6 +24,7 @@ export interface ChatDispatchOptions {
   routeKind: "chat"
   payload: ChatCompletionsPayload
   c?: import("hono").Context
+  executionContext?: RequestExecutionContext
 }
 
 export interface MessagesDispatchOptions {
@@ -69,6 +71,7 @@ export async function dispatchRequest(
           .createChatCompletions(target, conn, cred, payload, signal, {
             initiator: current.initiator,
             c: options.c,
+            ...options.executionContext,
           })
           .then((r) => r as unknown as DispatchResult)
       }

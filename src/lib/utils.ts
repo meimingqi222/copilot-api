@@ -241,36 +241,16 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
       error,
     )
 
-    if (account.provider === "codebuff") {
-      account.availableModels = [
-        {
-          id: state.codebuffModel,
-          name: state.codebuffModel,
-          vendor: "codebuff",
-          pickerEnabled: true,
-          supportedEndpoints: ["/chat/completions"],
-          provider: "codebuff",
-        },
-      ]
-      await saveAccounts()
-      cacheModels()
+    const fallbackModels = getProviderRuntime(
+      account.provider,
+    ).getFallbackModels?.(account)
+    if (!fallbackModels) {
       return
     }
 
-    if (account.provider === "windsurf") {
-      account.availableModels = [
-        {
-          id: state.providerDefaults.windsurf.defaultModel,
-          name: state.providerDefaults.windsurf.defaultModel,
-          vendor: "Windsurf",
-          pickerEnabled: true,
-          supportedEndpoints: ["/chat/completions", "/v1/messages"],
-          provider: "windsurf",
-        },
-      ]
-      await saveAccounts()
-      cacheModels()
-    }
+    account.availableModels = fallbackModels
+    await saveAccounts()
+    cacheModels()
   }
 }
 

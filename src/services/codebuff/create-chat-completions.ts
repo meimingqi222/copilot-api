@@ -6,10 +6,13 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { getCodebuffSettings } from "~/lib/accounts"
+import { parseModelReference } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { state } from "~/lib/state"
 import { isChatCompletionResponse } from "~/lib/utils"
+import {
+  type CodebuffRuntimeSettings,
+  resolveCodebuffRuntimeSettings,
+} from "~/services/codebuff/settings"
 import {
   safeSseStream,
   detectOpenAIStreamError,
@@ -62,12 +65,12 @@ export async function createCodebuffChatCompletions(options: {
   }
 }
 
-async function createCodebuffChatCompletionsOnce(
+export async function createCodebuffChatCompletionsOnce(
   account: Account,
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
-  const settings = resolveCodebuffSettings(account)
+  const settings = resolveCodebuffRuntimeSettings(account)
   const authToken = settings.authToken
   if (!authToken) {
     throw new Error(
@@ -77,7 +80,8 @@ async function createCodebuffChatCompletionsOnce(
 
   const runId = await createAgentRun(settings, authToken, signal)
   const clientId = genClientSessionId()
-  const model = payload.model || settings.defaultModel
+  const model =
+    parseModelReference(payload.model).nativeModelId || settings.defaultModel
   const requestPayload: CodebuffChatPayload = {
     ...payload,
     model,
@@ -230,31 +234,6 @@ function resolveCodebuffURL(baseUrl: string, pathname: string): string {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "")
   const path = pathname.startsWith("/") ? pathname : `/${pathname}`
   return `${normalizedBaseUrl}${path}`
-}
-
-interface CodebuffRuntimeSettings {
-  authToken?: string
-  baseUrl: string
-  cliVersion: string
-  agentId: string
-  defaultModel: string
-  costMode: string
-  allowFallbacks: boolean
-}
-
-function resolveCodebuffSettings(account: Account): CodebuffRuntimeSettings {
-  const settings = getCodebuffSettings(account)
-  const normalizedModel = account.availableModels?.[0]?.id ?? settings?.model
-
-  return {
-    authToken: settings?.authToken ?? state.codebuffAuthToken,
-    baseUrl: settings?.baseUrl ?? state.codebuffBaseUrl,
-    cliVersion: settings?.cliVersion ?? state.codebuffCliVersion,
-    agentId: settings?.agentId ?? state.codebuffAgentId,
-    defaultModel: normalizedModel ?? state.codebuffModel,
-    costMode: settings?.costMode ?? state.codebuffCostMode,
-    allowFallbacks: settings?.allowFallbacks ?? state.codebuffAllowFallbacks,
-  }
 }
 
 function genClientSessionId(): string {

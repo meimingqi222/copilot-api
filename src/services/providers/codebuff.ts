@@ -1,4 +1,3 @@
-import { createCodebuffChatCompletions } from "~/services/codebuff/create-chat-completions"
 import { getCodebuffModelsForAccount } from "~/services/codebuff/get-models"
 
 import type { ProviderRuntime } from "./runtime"
@@ -48,18 +47,7 @@ export const codebuffProviderRuntime: ProviderRuntime = {
     account.availableModels = models
     return Promise.resolve(models)
   },
-  createChatCompletions(account, payload, signal, ctx) {
-    return createCodebuffChatCompletions({
-      account,
-      payload: {
-        ...payload,
-        model:
-          payload.model.includes("/") ?
-            payload.model.split("/").slice(1).join("/")
-          : payload.model,
-      },
-      signal,
-      ctx,
-    })
+  getFallbackModels(account) {
+    return getCodebuffModelsForAccount(account)
   },
 }

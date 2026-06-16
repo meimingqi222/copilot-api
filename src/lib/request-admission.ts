@@ -2,11 +2,12 @@ import type { Context } from "hono"
 
 import consola from "consola"
 
-import type { Account } from "~/lib/accounts"
+import type { Account, AccountProvider } from "~/lib/accounts"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 import type {
   ApiCredential,
   ProviderConnection,
+  ProviderProtocol,
   RouteTarget,
 } from "~/lib/provider-connections"
 
@@ -51,6 +52,17 @@ export interface ProviderAdmission {
   connection: ProviderConnection
   credential: ApiCredential
   initiator?: "agent" | "user"
+}
+
+const ACCOUNT_PROTOCOLS: Record<AccountProvider, ProviderProtocol> = {
+  copilot: "copilot-native",
+  codebuff: "codebuff-native",
+  windsurf: "windsurf-native",
+  "mimo-aistudio": "mimo-native",
+}
+
+export function getAccountProtocol(account: Account): ProviderProtocol {
+  return ACCOUNT_PROTOCOLS[account.provider]
 }
 
 interface PrepareRequestAdmissionOptions {
