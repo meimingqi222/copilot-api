@@ -163,7 +163,6 @@ export async function pollAccountFlow(flowId: string): Promise<{
       githubToken: json.access_token,
     },
     settings: {},
-    githubToken: json.access_token,
     enabled: true,
     priority: 0,
     quotaState: "unknown",

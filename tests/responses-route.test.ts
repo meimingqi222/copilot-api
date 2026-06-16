@@ -9,11 +9,9 @@ const originalFetch = globalThis.fetch
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
 const originalModels = state.models
-const originalApiKey = state.apiKey
+const originalApiKey = state.legacyApiKey
 const originalVsCodeVersion = state.vsCodeVersion
 const originalAccountType = state.accountType
-const originalProvider = state.provider
-
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   resetProtectedRouteGuardForTest()
@@ -22,8 +20,8 @@ beforeEach(() => {
       id: "test-account-id",
       label: "test",
       provider: "copilot",
-      githubToken: "gh-test-token",
-      copilotToken: "test-token",
+      credentials: { githubToken: "gh-test-token" },
+      runtimeState: { copilotToken: "test-token" },
       enabled: true,
       priority: 0,
       isExhausted: false,
@@ -33,8 +31,7 @@ beforeEach(() => {
   state.activeAccountIndex = 0
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
-  state.apiKey = undefined
-  state.provider = "copilot"
+  state.legacyApiKey = undefined
 })
 
 afterEach(() => {
@@ -43,10 +40,9 @@ afterEach(() => {
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
-  state.apiKey = originalApiKey
+  state.legacyApiKey = originalApiKey
   state.vsCodeVersion = originalVsCodeVersion
   state.accountType = originalAccountType
-  state.provider = originalProvider
 })
 
 test("POST /v1/responses routes responses-capable models to upstream /responses", async () => {
@@ -297,13 +293,6 @@ test("POST /v1/responses keeps provider-qualified model bound during chat fallba
         costMode: "normal",
         allowFallbacks: false,
       },
-      codebuffAuthToken: "cb-token",
-      codebuffBaseUrl: "https://codebuff.example",
-      codebuffCliVersion: "0.0.44",
-      codebuffAgentId: "cb-agent",
-      codebuffModel: "gpt-chat",
-      codebuffCostMode: "normal",
-      codebuffAllowFallbacks: false,
       availableModels: [
         {
           id: "gpt-chat",
@@ -319,8 +308,8 @@ test("POST /v1/responses keeps provider-qualified model bound during chat fallba
       id: "copilot-account-id",
       label: "copilot",
       provider: "copilot",
-      githubToken: "gh-test-token",
-      copilotToken: "copilot-token",
+      credentials: { githubToken: "gh-test-token" },
+      runtimeState: { copilotToken: "copilot-token" },
       enabled: true,
       priority: 1,
       isExhausted: false,

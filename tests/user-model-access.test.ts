@@ -6,14 +6,14 @@ import { server } from "~/server"
 
 const originalUsers = state.users
 const originalModels = state.models
-const originalApiKey = state.apiKey
+const originalApiKey = state.legacyApiKey
 const originalAdminPassword = state.adminPassword
 
 let apiKey = ""
 
 beforeEach(() => {
   state.users = []
-  state.apiKey = undefined
+  state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.models = {
     object: "list",
@@ -25,7 +25,7 @@ beforeEach(() => {
 afterEach(() => {
   state.users = originalUsers
   state.models = originalModels
-  state.apiKey = originalApiKey
+  state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
 })
 

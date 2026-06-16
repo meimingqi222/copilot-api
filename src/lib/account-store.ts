@@ -25,9 +25,8 @@ import {
   getMimoPh,
   setCopilotToken,
   setCopilotTokenExpiry,
-  setupAccountPropertyProxies,
 } from "~/lib/accounts"
-import { GITHUB_API_BASE_URL, githubHeaders } from "~/lib/api-config"
+import { GITHUB_API_BASE_URL, githubApiHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { PATHS } from "~/lib/paths"
 import { isProviderId } from "~/lib/provider-config"
@@ -48,7 +47,11 @@ export async function loadAccounts(): Promise<void> {
   const rawAccounts = await tryReadAccountsFile()
   if (rawAccounts.length > 0) {
     state.accounts = []
+    let migratedLegacyShape = false
     for (const raw of rawAccounts) {
+      if (accountHasLegacyFlatFields(raw)) {
+        migratedLegacyShape = true
+      }
       try {
         state.accounts.push(migrateAccount(raw))
       } catch (err) {
@@ -69,6 +72,10 @@ export async function loadAccounts(): Promise<void> {
       account.lastRateLimitReason = undefined
       syncLegacyExhaustedState(account)
     }
+    if (migratedLegacyShape) {
+      await saveAccounts()
+      consola.info("Persisted migrated account schema to accounts.json")
+    }
     return
   }
 
@@ -83,7 +90,6 @@ export async function loadAccounts(): Promise<void> {
           githubToken: legacyToken.trim(),
         },
         settings: {},
-        githubToken: legacyToken.trim(),
         enabled: true,
         priority: 0,
         quotaState: "unknown",
@@ -187,14 +193,7 @@ function serializeAccount(account: Account): Record<string, unknown> {
       credentials: {
         authToken: getCodebuffAuthToken(account),
       },
-      settings: account.settings ?? {
-        baseUrl: account.codebuffBaseUrl,
-        cliVersion: account.codebuffCliVersion,
-        agentId: account.codebuffAgentId,
-        model: account.codebuffModel,
-        costMode: account.codebuffCostMode,
-        allowFallbacks: account.codebuffAllowFallbacks,
-      },
+      settings: account.settings ?? {},
     }
   }
 
@@ -204,13 +203,7 @@ function serializeAccount(account: Account): Record<string, unknown> {
       credentials: {
         apiKey: getWindsurfApiKey(account),
       },
-      settings: account.settings ?? {
-        baseUrl: account.windsurfBaseUrl,
-        appVersion: account.windsurfAppVersion,
-        lsVersion: account.windsurfLsVersion,
-        defaultModel: account.windsurfDefaultModel,
-        clientName: account.windsurfClientName,
-      },
+      settings: account.settings ?? {},
     }
   }
 
@@ -221,9 +214,7 @@ function serializeAccount(account: Account): Record<string, unknown> {
       xiaomichatbotPh: getMimoPh(account),
       mimoWsToken: account.credentials?.mimoWsToken,
     },
-    settings: account.settings ?? {
-      userId: account.userId,
-    },
+    settings: account.settings ?? {},
   }
 }
 
@@ -268,7 +259,7 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     `${GITHUB_API_BASE_URL}/copilot_internal/v2/token`,
     {
       headers: {
-        ...githubHeaders(state),
+        ...githubApiHeaders(),
         authorization: `token ${githubToken}`,
       },
     },
@@ -340,12 +331,6 @@ function clearAllAccountTimers(): void {
 
 export async function initAccounts(): Promise<void> {
   await loadAccounts()
-
-  const active = state.accounts[state.activeAccountIndex] as Account | undefined
-  state.githubToken =
-    active && getAccountProvider(active) === "copilot" ?
-      getGitHubToken(active)
-    : undefined
 }
 
 function migrateAccount(account: Record<string, unknown>): Account {
@@ -358,36 +343,110 @@ function migrateAccount(account: Record<string, unknown>): Account {
       acc.cooldownUntil = parsed
     }
   }
-  setupAccountPropertyProxies(acc)
   return acc
 }
 
-function migrateAccountInternal(account: Record<string, unknown>): Account {
-  const acc = account as Record<string, unknown>
-    & Partial<Account> & {
-      isActive?: boolean
-      enabled?: boolean
-      priority?: number
-      provider?: AccountProvider
-      githubToken?: string
-      copilotToken?: string
-      copilotTokenExpiry?: number
-      codebuffAuthToken?: string
-      codebuffBaseUrl?: string
-      codebuffCliVersion?: string
-      codebuffAgentId?: string
-      codebuffModel?: string
-      codebuffCostMode?: string
-      codebuffAllowFallbacks?: boolean
-      windsurfApiKey?: string
-      windsurfBaseUrl?: string
-      windsurfAppVersion?: string
-      windsurfLsVersion?: string
-      windsurfDefaultModel?: string
-      windsurfClientName?: string
-      quotaState?: AccountQuotaState
-      quotaExhaustedAt?: number
-    }
+type LegacyAccountRecord = Record<string, unknown> & {
+  isActive?: boolean
+  enabled?: boolean
+  priority?: number
+  provider?: AccountProvider
+  githubToken?: string
+  copilotToken?: string
+  copilotTokenExpiry?: number
+  codebuffAuthToken?: string
+  codebuffBaseUrl?: string
+  codebuffCliVersion?: string
+  codebuffAgentId?: string
+  codebuffModel?: string
+  codebuffCostMode?: string
+  codebuffAllowFallbacks?: boolean
+  windsurfApiKey?: string
+  windsurfBaseUrl?: string
+  windsurfAppVersion?: string
+  windsurfLsVersion?: string
+  windsurfDefaultModel?: string
+  windsurfClientName?: string
+  windsurfJwt?: string
+  windsurfJwtFetchedAt?: number
+  serviceToken?: string
+  xiaomichatbotPh?: string
+  mimoWsToken?: string
+  userId?: string
+  proxy?: string
+  quotaState?: AccountQuotaState
+  quotaExhaustedAt?: number
+}
+
+const LEGACY_FLAT_FIELD_KEYS = [
+  "githubToken",
+  "copilotToken",
+  "copilotTokenExpiry",
+  "codebuffAuthToken",
+  "codebuffBaseUrl",
+  "codebuffCliVersion",
+  "codebuffAgentId",
+  "codebuffModel",
+  "codebuffCostMode",
+  "codebuffAllowFallbacks",
+  "windsurfApiKey",
+  "windsurfBaseUrl",
+  "windsurfAppVersion",
+  "windsurfLsVersion",
+  "windsurfDefaultModel",
+  "windsurfClientName",
+  "windsurfJwt",
+  "windsurfJwtFetchedAt",
+  "serviceToken",
+  "xiaomichatbotPh",
+  "mimoWsToken",
+  "userId",
+  "proxy",
+] as const
+
+function accountHasLegacyFlatFields(account: Record<string, unknown>): boolean {
+  return LEGACY_FLAT_FIELD_KEYS.some((key) => key in account)
+}
+
+type MigratedAccountBase = Omit<
+  Account,
+  "provider" | "credentials" | "settings" | "runtimeState"
+>
+
+function pickString(primary: unknown, fallback: unknown): string | undefined {
+  if (typeof primary === "string") {
+    return primary
+  }
+  if (typeof fallback === "string") {
+    return fallback
+  }
+  return undefined
+}
+
+function pickNumber(primary: unknown, fallback: unknown): number | undefined {
+  if (typeof primary === "number") {
+    return primary
+  }
+  if (typeof fallback === "number") {
+    return fallback
+  }
+  return undefined
+}
+
+function pickBoolean(primary: unknown, fallback: unknown): boolean | undefined {
+  if (typeof primary === "boolean") {
+    return primary
+  }
+  if (typeof fallback === "boolean") {
+    return fallback
+  }
+  return undefined
+}
+
+function normalizeLegacyAccount(
+  account: Record<string, unknown>,
+): LegacyAccountRecord & Partial<Account> {
+  const acc = account as LegacyAccountRecord & Partial<Account>
 
   if (typeof acc.enabled !== "boolean" && typeof acc.isActive === "boolean") {
     acc.enabled = acc.isActive
@@ -416,115 +475,211 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     acc.quotaState = "unknown"
   }
 
-  delete acc.isActive
+  return acc
+}
 
+function buildMigratedAccountBase(
+  acc: LegacyAccountRecord & Partial<Account>,
+): MigratedAccountBase {
+  return {
+    id: String(acc.id),
+    label: String(acc.label),
+    enabled: acc.enabled ?? true,
+    priority: acc.priority ?? 0,
+    quotaState: acc.quotaState ?? "unknown",
+    quotaExhaustedAt: acc.quotaExhaustedAt,
+    availableModels: acc.availableModels,
+    quotaInfo: acc.quotaInfo,
+    cooldownUntil: acc.cooldownUntil,
+    isExhausted: acc.isExhausted,
+    exhaustedAt: acc.exhaustedAt,
+    lastRateLimitAt: acc.lastRateLimitAt,
+    lastRateLimitReason: acc.lastRateLimitReason,
+    createdAt: typeof acc.createdAt === "number" ? acc.createdAt : Date.now(),
+  }
+}
+
+function migrateCopilotAccount(
+  base: MigratedAccountBase,
+  acc: LegacyAccountRecord,
+  existingCredentials: Record<string, unknown> | undefined,
+  existingSettings: Record<string, unknown> | undefined,
+  existingRuntime: Account["runtimeState"],
+): CopilotAccount {
+  return {
+    ...base,
+    provider: "copilot",
+    credentials: {
+      githubToken: pickString(
+        existingCredentials?.githubToken,
+        acc.githubToken,
+      ),
+    },
+    settings: (existingSettings as CopilotAccount["settings"]) ?? {},
+    runtimeState: {
+      ...existingRuntime,
+      copilotToken: pickString(existingRuntime?.copilotToken, acc.copilotToken),
+      copilotTokenExpiry: pickNumber(
+        existingRuntime?.copilotTokenExpiry,
+        acc.copilotTokenExpiry,
+      ),
+    },
+  }
+}
+
+function migrateCodebuffAccount(
+  base: MigratedAccountBase,
+  acc: LegacyAccountRecord,
+  existingCredentials: Record<string, unknown> | undefined,
+  existingSettings: Record<string, unknown> | undefined,
+  existingRuntime: Account["runtimeState"],
+): CodebuffAccount {
+  return {
+    ...base,
+    provider: "codebuff",
+    credentials: {
+      authToken: pickString(
+        existingCredentials?.authToken,
+        acc.codebuffAuthToken,
+      ),
+    },
+    settings: {
+      baseUrl: pickString(existingSettings?.baseUrl, acc.codebuffBaseUrl),
+      cliVersion: pickString(
+        existingSettings?.cliVersion,
+        acc.codebuffCliVersion,
+      ),
+      agentId: pickString(existingSettings?.agentId, acc.codebuffAgentId),
+      model: pickString(existingSettings?.model, acc.codebuffModel),
+      costMode: pickString(existingSettings?.costMode, acc.codebuffCostMode),
+      allowFallbacks: pickBoolean(
+        existingSettings?.allowFallbacks,
+        acc.codebuffAllowFallbacks,
+      ),
+    },
+    runtimeState: existingRuntime,
+  }
+}
+
+function migrateWindsurfAccount(
+  base: MigratedAccountBase,
+  acc: LegacyAccountRecord,
+  existingCredentials: Record<string, unknown> | undefined,
+  existingSettings: Record<string, unknown> | undefined,
+  existingRuntime: Account["runtimeState"],
+): WindsurfAccount {
+  return {
+    ...base,
+    provider: "windsurf",
+    credentials: {
+      apiKey: pickString(existingCredentials?.apiKey, acc.windsurfApiKey),
+    },
+    settings: {
+      baseUrl: pickString(existingSettings?.baseUrl, acc.windsurfBaseUrl),
+      appVersion: pickString(
+        existingSettings?.appVersion,
+        acc.windsurfAppVersion,
+      ),
+      lsVersion: pickString(existingSettings?.lsVersion, acc.windsurfLsVersion),
+      defaultModel: pickString(
+        existingSettings?.defaultModel,
+        acc.windsurfDefaultModel,
+      ),
+      clientName: pickString(
+        existingSettings?.clientName,
+        acc.windsurfClientName,
+      ),
+    },
+    runtimeState: {
+      ...existingRuntime,
+      windsurfJwt: pickString(existingRuntime?.windsurfJwt, acc.windsurfJwt),
+      windsurfJwtFetchedAt: pickNumber(
+        existingRuntime?.windsurfJwtFetchedAt,
+        acc.windsurfJwtFetchedAt,
+      ),
+    },
+  }
+}
+
+function migrateMimoAccount(
+  base: MigratedAccountBase,
+  acc: LegacyAccountRecord,
+  existingCredentials: Record<string, unknown> | undefined,
+  existingSettings: Record<string, unknown> | undefined,
+  existingRuntime: Account["runtimeState"],
+): MimoAccount {
+  return {
+    ...base,
+    provider: "mimo-aistudio",
+    credentials: {
+      serviceToken: pickString(
+        existingCredentials?.serviceToken,
+        acc.serviceToken,
+      ),
+      xiaomichatbotPh: pickString(
+        existingCredentials?.xiaomichatbotPh,
+        acc.xiaomichatbotPh,
+      ),
+      mimoWsToken: pickString(
+        existingCredentials?.mimoWsToken,
+        acc.mimoWsToken,
+      ),
+    },
+    settings: {
+      userId: pickString(existingSettings?.userId, acc.userId),
+      proxy: pickString(existingSettings?.proxy, acc.proxy),
+    },
+    runtimeState: existingRuntime,
+  }
+}
+
+function migrateAccountInternal(account: Record<string, unknown>): Account {
+  const acc = normalizeLegacyAccount(account)
+  const base = buildMigratedAccountBase(acc)
+  const existingCredentials = acc.credentials as
+    | Record<string, unknown>
+    | undefined
+  const existingSettings = acc.settings as Record<string, unknown> | undefined
+  const existingRuntime = acc.runtimeState
   const provider = defaultProvider(acc.provider)
 
   if (provider === "copilot") {
-    const githubToken =
-      typeof acc.githubToken === "string" ? acc.githubToken : undefined
-    const copilotToken =
-      typeof acc.copilotToken === "string" ? acc.copilotToken : undefined
-    const copilotTokenExpiry =
-      typeof acc.copilotTokenExpiry === "number" ?
-        acc.copilotTokenExpiry
-      : undefined
-
-    return {
-      ...(acc as Partial<CopilotAccount>),
-      provider,
-      credentials: {
-        githubToken:
-          (acc as Partial<CopilotAccount>).credentials?.githubToken
-          ?? githubToken,
-      },
-      settings: (acc as Partial<CopilotAccount>).settings ?? {},
-      githubToken,
-      copilotToken,
-      copilotTokenExpiry,
-      runtimeState: {
-        ...acc.runtimeState,
-        copilotToken,
-        copilotTokenExpiry,
-      },
-      quotaState: acc.quotaState,
-      quotaExhaustedAt: acc.quotaExhaustedAt,
-    } as CopilotAccount
+    return migrateCopilotAccount(
+      base,
+      acc,
+      existingCredentials,
+      existingSettings,
+      existingRuntime,
+    )
   }
 
   if (provider === "codebuff") {
-    const authToken =
-      typeof acc.codebuffAuthToken === "string" ?
-        acc.codebuffAuthToken
-      : undefined
-    return {
-      ...(acc as Partial<CodebuffAccount>),
-      provider,
-      credentials: {
-        authToken:
-          (acc as Partial<CodebuffAccount>).credentials?.authToken ?? authToken,
-      },
-      settings: (acc as Partial<CodebuffAccount>).settings ?? {
-        baseUrl: acc.codebuffBaseUrl,
-        cliVersion: acc.codebuffCliVersion,
-        agentId: acc.codebuffAgentId,
-        model: acc.codebuffModel,
-        costMode: acc.codebuffCostMode,
-        allowFallbacks: acc.codebuffAllowFallbacks,
-      },
-      quotaState: acc.quotaState,
-      quotaExhaustedAt: acc.quotaExhaustedAt,
-    } as CodebuffAccount
+    return migrateCodebuffAccount(
+      base,
+      acc,
+      existingCredentials,
+      existingSettings,
+      existingRuntime,
+    )
   }
 
   if (provider === "windsurf") {
-    const apiKey =
-      typeof acc.windsurfApiKey === "string" ? acc.windsurfApiKey : undefined
-
-    return {
-      ...(acc as Partial<WindsurfAccount>),
-      provider,
-      credentials: {
-        apiKey: (acc as Partial<WindsurfAccount>).credentials?.apiKey ?? apiKey,
-      },
-      settings: (acc as Partial<WindsurfAccount>).settings ?? {
-        baseUrl: acc.windsurfBaseUrl,
-        appVersion: acc.windsurfAppVersion,
-        lsVersion: acc.windsurfLsVersion,
-        defaultModel: acc.windsurfDefaultModel,
-        clientName: acc.windsurfClientName,
-      },
-      quotaState: acc.quotaState,
-      quotaExhaustedAt: acc.quotaExhaustedAt,
-    } as WindsurfAccount
+    return migrateWindsurfAccount(
+      base,
+      acc,
+      existingCredentials,
+      existingSettings,
+      existingRuntime,
+    )
   }
 
-  const serviceToken =
-    typeof acc.serviceToken === "string" ? acc.serviceToken : undefined
-  const xiaomichatbotPh =
-    typeof acc.xiaomichatbotPh === "string" ? acc.xiaomichatbotPh : undefined
-  const userId = typeof acc.userId === "string" ? acc.userId : undefined
-
-  return {
-    ...(acc as Partial<MimoAccount>),
-    provider,
-    credentials: {
-      serviceToken:
-        (acc as Partial<MimoAccount>).credentials?.serviceToken ?? serviceToken,
-      xiaomichatbotPh:
-        (acc as Partial<MimoAccount>).credentials?.xiaomichatbotPh
-        ?? xiaomichatbotPh,
-      mimoWsToken: (acc as Partial<MimoAccount>).credentials?.mimoWsToken,
-    },
-    settings: (acc as Partial<MimoAccount>).settings ?? {
-      userId,
-    },
-    serviceToken,
-    xiaomichatbotPh,
-    userId,
-    quotaState: acc.quotaState,
-    quotaExhaustedAt: acc.quotaExhaustedAt,
-  } as MimoAccount
+  return migrateMimoAccount(
+    base,
+    acc,
+    existingCredentials,
+    existingSettings,
+    existingRuntime,
+  )
 }
 
 async function readAccountsFile(
@@ -603,7 +758,7 @@ async function getCopilotUsageForAccount(account: Account): Promise<{
 
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
     headers: {
-      ...githubHeaders(state),
+      ...githubApiHeaders(),
       authorization: `token ${githubToken}`,
     },
   })

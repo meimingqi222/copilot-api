@@ -1,4 +1,5 @@
-import { createWindsurfChatCompletions } from "~/services/windsurf/create-chat-completions"
+import { getWindsurfSettings } from "~/lib/accounts"
+import { state } from "~/lib/state"
 import {
   fallbackWindsurfModels,
   getWindsurfModelsForAccount,
@@ -27,17 +28,14 @@ export const windsurfProviderRuntime: ProviderRuntime = {
     return this.descriptor.features.includes(feature)
   },
   async refreshModels(account) {
-    try {
-      const models = await getWindsurfModelsForAccount(account)
-      account.availableModels = models
-      return models
-    } catch {
-      const defaults = fallbackWindsurfModels("swe-1-6-fast")
-      account.availableModels = defaults
-      return defaults
-    }
+    const models = await getWindsurfModelsForAccount(account)
+    account.availableModels = models
+    return models
   },
-  createChatCompletions(account, payload, signal, ctx) {
-    return createWindsurfChatCompletions({ account, payload, signal, ctx })
+  getFallbackModels(account) {
+    const defaultModel =
+      getWindsurfSettings(account)?.defaultModel
+      ?? state.providerDefaults.windsurf.defaultModel
+    return fallbackWindsurfModels(defaultModel)
   },
 }

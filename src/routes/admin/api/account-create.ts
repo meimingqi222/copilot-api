@@ -62,7 +62,6 @@ createAccountRoutes.post("/", async (c) => {
       settings: {
         ...body.settings,
       },
-      codebuffAuthToken: authToken,
     }
 
     addAccount(account)
@@ -99,7 +98,6 @@ createAccountRoutes.post("/", async (c) => {
       settings: {
         ...body.settings,
       },
-      windsurfApiKey: apiKey,
     }
 
     addAccount(account)
@@ -146,11 +144,12 @@ createAccountRoutes.post("/", async (c) => {
         serviceToken,
         xiaomichatbotPh,
       },
-      settings,
-      serviceToken,
-      xiaomichatbotPh,
-      userId: typeof settings.userId === "string" ? settings.userId : undefined,
-      proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
+      settings: {
+        ...settings,
+        userId:
+          typeof settings.userId === "string" ? settings.userId : undefined,
+        proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
+      },
     }
 
     addAccount(account)

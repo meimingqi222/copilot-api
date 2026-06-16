@@ -5,39 +5,23 @@ import { HTTPError } from "~/lib/error"
 
 import { fetchWindsurfJwt } from "./auth"
 import {
-  type ProtobufNode,
-  ProtobufEncoder,
-  parseMessage,
-  walkNodes,
-} from "./protobuf"
+  buildWindsurfClientMetadata,
+  wrapWindsurfMetadataMessage,
+} from "./metadata"
+import { type ProtobufNode, parseMessage, walkNodes } from "./protobuf"
 
 function buildGetUserStatusRequest(
   apiKey: string,
   jwt: string,
   settings: NonNullable<ReturnType<typeof getWindsurfSettings>>,
 ): Uint8Array {
-  const metadata = new ProtobufEncoder()
-  metadata.writeString(1, settings.clientName)
-  metadata.writeString(2, settings.appVersion)
-  metadata.writeString(3, apiKey)
-  metadata.writeString(4, "en")
-  metadata.writeString(
-    5,
-    JSON.stringify({
-      Os: process.platform === "win32" ? "windows" : process.platform,
-      Arch: process.arch,
-      Version: process.version,
-      ProductName: process.platform,
+  return wrapWindsurfMetadataMessage(
+    buildWindsurfClientMetadata({
+      apiKey,
+      settings,
+      jwt,
     }),
   )
-  metadata.writeString(7, settings.lsVersion)
-  metadata.writeString(12, settings.clientName)
-  metadata.writeString(21, jwt)
-  metadata.writeBytes(30, Uint8Array.from([0, 1]))
-
-  const request = new ProtobufEncoder()
-  request.writeMessage(1, metadata)
-  return request.toUint8Array()
 }
 
 const WINDSURF_SUPPORTED_ENDPOINTS = ["/chat/completions", "/v1/messages"]

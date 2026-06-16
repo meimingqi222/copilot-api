@@ -6,13 +6,10 @@ import { createEmbeddings } from "~/services/copilot/create-embeddings"
 const originalFetch = globalThis.fetch
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
-const originalProvider = state.provider
-
 afterEach(() => {
   globalThis.fetch = originalFetch
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
-  state.provider = originalProvider
 })
 
 test("strips copilot prefix before forwarding embeddings requests upstream", async () => {
@@ -21,8 +18,8 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
       id: "copilot-1",
       label: "copilot",
       provider: "copilot",
-      githubToken: "gh-test-token",
-      copilotToken: "copilot-test-token",
+      credentials: { githubToken: "gh-test-token" },
+      runtimeState: { copilotToken: "copilot-test-token" },
       enabled: true,
       priority: 0,
       isExhausted: false,
@@ -40,7 +37,6 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
     },
   ]
   state.activeAccountIndex = 0
-  state.provider = "copilot"
 
   const fetchMock = mock((url: string, options?: { body?: string }) => ({
     ok: true,

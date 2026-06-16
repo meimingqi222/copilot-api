@@ -8,16 +8,11 @@ import type {
 } from "~/lib/provider-config"
 import type {
   ChatCompletionResponse,
-  ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
-import type {
-  EmbeddingRequest,
-  EmbeddingResponse,
-} from "~/services/copilot/create-embeddings"
+import type { EmbeddingResponse } from "~/services/copilot/create-embeddings"
 import type {
   CopilotStreamEventLike,
-  ResponsesPayload,
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
@@ -41,6 +36,10 @@ export type ProviderEmbeddingsResult = {
   response: EmbeddingResponse
 }
 
+export type ProviderMessagesResult =
+  | { accountId: string; response: AsyncIterable<unknown> }
+  | { accountId: string; response: Record<string, unknown> }
+
 export interface ProviderRuntime {
   id: ProviderId
   descriptor: ProviderDescriptor
@@ -48,21 +47,5 @@ export interface ProviderRuntime {
   refreshModels(account: Account): Promise<Array<AccountModel>>
   refreshQuota?(account: Account): Promise<QuotaSnapshot | undefined>
   refreshAuth?(account: Account): Promise<void>
-  createChatCompletions(
-    account: Account,
-    payload: ChatCompletionsPayload,
-    signal?: AbortSignal,
-    ctx?: RequestExecutionContext,
-  ): Promise<ProviderChatResult>
-  createResponses?(
-    account: Account,
-    payload: ResponsesPayload,
-    signal?: AbortSignal,
-    ctx?: RequestExecutionContext,
-  ): Promise<ProviderResponsesResult>
-  createEmbeddings?(
-    account: Account,
-    payload: EmbeddingRequest,
-    signal?: AbortSignal,
-  ): Promise<ProviderEmbeddingsResult>
+  getFallbackModels?(account: Account): Array<AccountModel>
 }

@@ -6,7 +6,6 @@ import {
   isAccountAvailable,
   refreshAccountRuntimeAvailability,
 } from "~/lib/account-availability"
-import { getAccountProvider, getGitHubToken } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
@@ -100,10 +99,6 @@ export function switchToNextAccount(): Account | null {
     const account = sorted[idx]
     if (isAccountAvailable(account)) {
       state.activeAccountIndex = state.accounts.indexOf(account)
-      state.githubToken =
-        getAccountProvider(account) === "copilot" ?
-          getGitHubToken(account)
-        : undefined
       return account
     }
   }

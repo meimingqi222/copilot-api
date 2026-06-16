@@ -33,15 +33,8 @@ export const copilotBaseUrl = (state: State): string => {
   return url
 }
 
-export const copilotHeaders = (
-  stateOrAccount: State | Account,
-  vision: boolean = false,
-) => {
-  // Determine the token: Account has copilotToken, State has copilotToken (legacy)
-  const token =
-    "accounts" in stateOrAccount ?
-      (stateOrAccount as State & { copilotToken?: string }).copilotToken
-    : getCopilotToken(stateOrAccount)
+export const copilotHeaders = (account: Account, vision: boolean = false) => {
+  const token = getCopilotToken(account)
 
   const vsCodeVersion = globalState.vsCodeVersion
 
@@ -64,10 +57,9 @@ export const copilotHeaders = (
 }
 
 export const GITHUB_API_BASE_URL = "https://api.github.com"
-export const githubHeaders = (state: State) => ({
+export const githubApiHeaders = () => ({
   ...standardHeaders(),
-  authorization: `token ${state.githubToken}`,
-  "editor-version": `vscode/${state.vsCodeVersion}`,
+  "editor-version": `vscode/${globalState.vsCodeVersion}`,
   "editor-plugin-version": EDITOR_PLUGIN_VERSION,
   "user-agent": USER_AGENT,
   "x-github-api-version": API_VERSION,

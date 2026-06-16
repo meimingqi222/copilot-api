@@ -3,8 +3,10 @@ import type { Context } from "hono"
 import type { Account } from "~/lib/accounts"
 
 import { canonicalModelId } from "~/lib/accounts"
+import { getAccountProtocol } from "~/lib/request-admission"
 import { isChatCompletionResponse } from "~/lib/utils"
 import { createChatCompletions } from "~/services/copilot/create-chat-completions"
+import { hasVisionInput } from "~/services/copilot/create-responses-once"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import {
   supportsResponsesApi,
@@ -15,8 +17,7 @@ import {
   type ResponsesPayload,
   type ResponsesResponse,
 } from "~/services/copilot/responses-api"
-import { initializeProviderRegistry } from "~/services/providers"
-import { getProviderRuntime } from "~/services/providers/registry"
+import { delegateResponsesToNativeAdapter } from "~/services/providers/delegate"
 
 interface CreateResponsesOptions {
   account: Account
@@ -32,7 +33,6 @@ export const createResponses = async (
   | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
   | { accountId: string; response: ResponsesResponse }
 > => {
-  initializeProviderRegistry()
   const routedPayload = {
     ...payload,
     model: canonicalModelId(payload.model),
@@ -72,29 +72,15 @@ export const createResponses = async (
     options.initiatorOverride
     ?? inferInitiatorFromResponsesPayload(routedPayload)
 
-  const runtime = getProviderRuntime(account.provider)
-  if (!runtime.createResponses) {
-    throw new Error(
-      `Provider "${account.provider}" does not implement native responses`,
-    )
-  }
-
-  return runtime.createResponses(account, routedPayload, options.signal, {
-    initiator,
-    enableVision,
-    c: options.c,
-  })
-}
-
-function hasVisionInput(payload: ResponsesPayload): boolean {
-  if (typeof payload.input === "string") {
-    return false
-  }
-
-  return payload.input.some(
-    (item) =>
-      "role" in item
-      && Array.isArray(item.content)
-      && item.content.some((content) => content.type === "input_image"),
+  return delegateResponsesToNativeAdapter(
+    account,
+    getAccountProtocol(account),
+    routedPayload,
+    options.signal,
+    {
+      initiator,
+      enableVision,
+      c: options.c,
+    },
   )
 }

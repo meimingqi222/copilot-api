@@ -1,0 +1,101 @@
+import type { Account } from "~/lib/accounts"
+import type {
+  AnthropicMessagesPayload,
+  AnthropicResponse,
+} from "~/routes/messages/anthropic-types"
+import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
+
+import { getCopilotToken } from "~/lib/accounts"
+import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { HTTPError } from "~/lib/error"
+import { state } from "~/lib/state"
+import {
+  hoistToolResultImages,
+  translateToCopilotMessages,
+} from "~/services/copilot/create-messages-translate"
+import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
+import {
+  detectAnthropicStreamError,
+  safeSseStream,
+} from "~/services/protocols/shared"
+
+function resolveForwardedHeader(
+  forwarded: Record<string, string | undefined> | undefined,
+  camelKey: string,
+  headerKey: string,
+): string | undefined {
+  if (!forwarded) {
+    return undefined
+  }
+  const camel = forwarded[camelKey]
+  if (typeof camel === "string") {
+    return camel
+  }
+  const header = forwarded[headerKey]
+  return typeof header === "string" ? header : undefined
+}
+
+export async function createCopilotMessagesOnce(
+  account: Account,
+  payload: AnthropicMessagesPayload,
+  signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
+): Promise<AsyncIterable<CopilotStreamEventLike> | AnthropicResponse> {
+  if (!getCopilotToken(account)) {
+    throw new Error("Copilot token not found")
+  }
+
+  const hoistedMessages = hoistToolResultImages(payload.messages)
+  const enableVision =
+    ctx?.enableVision
+    ?? hoistedMessages.some(
+      (message) =>
+        Array.isArray(message.content)
+        && message.content.some((block) => block.type === "image"),
+    )
+  const initiator =
+    ctx?.initiator ?? inferInitiatorFromAnthropicPayload(payload)
+
+  const copilotPayload = translateToCopilotMessages(payload)
+  const forwarded = ctx?.forwardedHeaders
+  const anthropicBeta = resolveForwardedHeader(
+    forwarded,
+    "anthropicBeta",
+    "anthropic-beta",
+  )
+  const anthropicVersion = resolveForwardedHeader(
+    forwarded,
+    "anthropicVersion",
+    "anthropic-version",
+  )
+
+  const headers: Record<string, string> = {
+    ...copilotHeaders(account, enableVision),
+    "editor-version": `vscode/${state.vsCodeVersion}`,
+    "X-Initiator": initiator,
+    ...(anthropicBeta ? { "anthropic-beta": anthropicBeta } : {}),
+    ...(anthropicVersion ? { "anthropic-version": anthropicVersion } : {}),
+  }
+
+  const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(copilotPayload),
+    signal,
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "(unreadable)")
+    throw new HTTPError("Failed to create messages", response, errorBody)
+  }
+
+  if (payload.stream) {
+    return (await safeSseStream(
+      response,
+      detectAnthropicStreamError,
+    )) as unknown as AsyncIterable<CopilotStreamEventLike>
+  }
+
+  return (await response.json()) as AnthropicResponse
+}

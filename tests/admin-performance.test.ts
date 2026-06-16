@@ -19,11 +19,9 @@ type PerformanceResponse = {
 
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
-const originalApiKey = state.apiKey
+const originalApiKey = state.legacyApiKey
 const originalAdminPassword = state.adminPassword
 const originalUsers = state.users
-const originalProvider = state.provider
-
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   state.accounts = [
@@ -31,8 +29,8 @@ beforeEach(() => {
       id: "account-1",
       label: "default",
       provider: "copilot",
-      githubToken: "gh-test-token-1",
-      copilotToken: "copilot-token-1",
+      credentials: { githubToken: "gh-test-token-1" },
+      runtimeState: { copilotToken: "copilot-token-1" },
       enabled: true,
       priority: 0,
       isExhausted: false,
@@ -42,8 +40,8 @@ beforeEach(() => {
       id: "account-2",
       label: "edu",
       provider: "copilot",
-      githubToken: "gh-test-token-2",
-      copilotToken: "copilot-token-2",
+      credentials: { githubToken: "gh-test-token-2" },
+      runtimeState: { copilotToken: "copilot-token-2" },
       enabled: true,
       priority: 1,
       isExhausted: false,
@@ -51,20 +49,18 @@ beforeEach(() => {
     },
   ]
   state.activeAccountIndex = 0
-  state.apiKey = undefined
+  state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.users = []
-  state.provider = "copilot"
 })
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
-  state.apiKey = originalApiKey
+  state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.users = originalUsers
-  state.provider = originalProvider
 })
 
 test("GET /admin/api/usage/performance uses a weighted TPS average", async () => {

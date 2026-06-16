@@ -1,6 +1,9 @@
 # deps
 node_modules/
 
+# commandcode local config
+.commandcode/
+
 # local env
 *.local
 .env

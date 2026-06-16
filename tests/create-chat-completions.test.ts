@@ -14,8 +14,8 @@ const mockAccount = {
   id: "test-account-id",
   label: "test",
   provider: "copilot" as const,
-  githubToken: "gh-test-token",
-  copilotToken: "test-token",
+  credentials: { githubToken: "gh-test-token" },
+  runtimeState: { copilotToken: "test-token" },
   enabled: true,
   priority: 0,
   isExhausted: false,
@@ -23,12 +23,14 @@ const mockAccount = {
 }
 state.accounts = [mockAccount]
 state.activeAccountIndex = 0
-state.provider = "copilot"
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
 
+const originalProviderDefaults = structuredClone(state.providerDefaults)
+
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
+  state.providerDefaults = originalProviderDefaults
 })
 
 // Helper to mock fetch
@@ -221,8 +223,8 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
       id: "copilot-qualified-account",
       label: "copilot-qualified",
       provider: "copilot",
-      githubToken: "gh-test-token",
-      copilotToken: "test-token",
+      credentials: { githubToken: "gh-test-token" },
+      runtimeState: { copilotToken: "test-token" },
       enabled: true,
       priority: 0,
       isExhausted: false,
@@ -276,14 +278,13 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
 })
 
 test("codebuff account sends start/chat/finish workflow", async () => {
-  state.provider = "copilot"
-  state.codebuffBaseUrl = "https://www.codebuff.com"
-  state.codebuffAuthToken = "global-cb-token"
-  state.codebuffCliVersion = "0.0.33"
-  state.codebuffAgentId = "base"
-  state.codebuffModel = "z-ai/glm-5.1"
-  state.codebuffCostMode = "normal"
-  state.codebuffAllowFallbacks = true
+  state.providerDefaults.codebuff.baseUrl = "https://www.codebuff.com"
+  state.providerDefaults.codebuff.authToken = "global-cb-token"
+  state.providerDefaults.codebuff.cliVersion = "0.0.33"
+  state.providerDefaults.codebuff.agentId = "base"
+  state.providerDefaults.codebuff.model = "z-ai/glm-5.1"
+  state.providerDefaults.codebuff.costMode = "normal"
+  state.providerDefaults.codebuff.allowFallbacks = true
   state.accounts = [
     {
       id: "codebuff-account-id",
@@ -293,12 +294,14 @@ test("codebuff account sends start/chat/finish workflow", async () => {
       priority: 0,
       isExhausted: false,
       createdAt: Date.now(),
-      codebuffAuthToken: "cb-token",
-      codebuffBaseUrl: "https://www.codebuff.com",
-      codebuffCliVersion: "0.0.44",
-      codebuffAgentId: "cb-agent",
-      codebuffCostMode: "fast",
-      codebuffAllowFallbacks: false,
+      credentials: { authToken: "cb-token" },
+      settings: {
+        baseUrl: "https://www.codebuff.com",
+        cliVersion: "0.0.44",
+        agentId: "cb-agent",
+        costMode: "fast",
+        allowFallbacks: false,
+      },
       availableModels: [
         {
           id: "z-ai/glm-5.1",
@@ -388,21 +391,19 @@ test("codebuff account sends start/chat/finish workflow", async () => {
   expect(finishBody.action).toBe("FINISH")
   expect(finishBody.runId).toBe("run-123")
 
-  state.provider = "copilot"
   state.accounts = [mockAccount]
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch
 })
 
 test("codebuff streaming still triggers finish agent run", async () => {
-  state.provider = "copilot"
-  state.codebuffBaseUrl = "https://www.codebuff.com"
-  state.codebuffAuthToken = "global-cb-token"
-  state.codebuffCliVersion = "0.0.33"
-  state.codebuffAgentId = "base"
-  state.codebuffModel = "z-ai/glm-5.1"
-  state.codebuffCostMode = "normal"
-  state.codebuffAllowFallbacks = true
+  state.providerDefaults.codebuff.baseUrl = "https://www.codebuff.com"
+  state.providerDefaults.codebuff.authToken = "global-cb-token"
+  state.providerDefaults.codebuff.cliVersion = "0.0.33"
+  state.providerDefaults.codebuff.agentId = "base"
+  state.providerDefaults.codebuff.model = "z-ai/glm-5.1"
+  state.providerDefaults.codebuff.costMode = "normal"
+  state.providerDefaults.codebuff.allowFallbacks = true
   state.accounts = [
     {
       id: "codebuff-stream-account-id",
@@ -412,7 +413,7 @@ test("codebuff streaming still triggers finish agent run", async () => {
       priority: 0,
       isExhausted: false,
       createdAt: Date.now(),
-      codebuffAuthToken: "cb-token",
+      credentials: { authToken: "cb-token" },
       availableModels: [
         {
           id: "z-ai/glm-5.1",
@@ -494,7 +495,6 @@ test("codebuff streaming still triggers finish agent run", async () => {
   expect(finishBody.action).toBe("FINISH")
   expect(finishBody.runId).toBe("run-stream")
 
-  state.provider = "copilot"
   state.accounts = [mockAccount]
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch

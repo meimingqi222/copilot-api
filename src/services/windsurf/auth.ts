@@ -3,36 +3,11 @@ import type { Account } from "~/lib/accounts"
 import { getWindsurfApiKey, setWindsurfJwt } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 
-import { ProtobufEncoder, extractStrings } from "./protobuf"
-
-function buildAuthMetadata(opts: {
-  apiKey: string
-  appVersion: string
-  lsVersion: string
-  clientName: string
-}): Uint8Array {
-  const metadata = new ProtobufEncoder()
-  metadata.writeString(1, opts.clientName)
-  metadata.writeString(2, opts.appVersion)
-  metadata.writeString(3, opts.apiKey)
-  metadata.writeString(4, "en")
-  metadata.writeString(
-    5,
-    JSON.stringify({
-      Os: process.platform === "win32" ? "windows" : process.platform,
-      Arch: process.arch,
-      Version: process.version,
-      ProductName: process.platform,
-    }),
-  )
-  metadata.writeString(7, opts.lsVersion)
-  metadata.writeString(12, opts.clientName)
-  metadata.writeBytes(30, Uint8Array.from([0, 1]))
-
-  const outer = new ProtobufEncoder()
-  outer.writeMessage(1, metadata)
-  return outer.toUint8Array()
-}
+import {
+  buildWindsurfClientMetadata,
+  wrapWindsurfMetadataMessage,
+} from "./metadata"
+import { extractStrings } from "./protobuf"
 
 export async function fetchWindsurfJwt(
   account: Account,
@@ -59,12 +34,12 @@ export async function fetchWindsurfJwt(
         "User-Agent": "connect-go/1.18.1 (go1.26.1)",
         "Accept-Encoding": "gzip",
       },
-      body: buildAuthMetadata({
-        apiKey,
-        appVersion: settings.appVersion,
-        lsVersion: settings.lsVersion,
-        clientName: settings.clientName,
-      }),
+      body: wrapWindsurfMetadataMessage(
+        buildWindsurfClientMetadata({
+          apiKey,
+          settings,
+        }),
+      ),
     },
   )
 

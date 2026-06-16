@@ -9,10 +9,9 @@ const originalFetch = globalThis.fetch
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
 const originalModels = state.models
-const originalApiKey = state.apiKey
+const originalApiKey = state.legacyApiKey
 const originalVsCodeVersion = state.vsCodeVersion
 const originalAccountType = state.accountType
-const originalProvider = state.provider
 const originalUsers = state.users
 
 beforeEach(() => {
@@ -22,8 +21,8 @@ beforeEach(() => {
       id: "test-account-id",
       label: "test",
       provider: "copilot",
-      githubToken: "gh-test-token",
-      copilotToken: "test-token",
+      credentials: { githubToken: "gh-test-token" },
+      runtimeState: { copilotToken: "test-token" },
       enabled: true,
       priority: 0,
       isExhausted: false,
@@ -33,8 +32,7 @@ beforeEach(() => {
   state.activeAccountIndex = 0
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
-  state.apiKey = undefined
-  state.provider = "copilot"
+  state.legacyApiKey = undefined
   state.users = []
   state.models = {
     object: "list",
@@ -65,15 +63,14 @@ afterEach(() => {
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
-  state.apiKey = originalApiKey
+  state.legacyApiKey = originalApiKey
   state.vsCodeVersion = originalVsCodeVersion
   state.accountType = originalAccountType
-  state.provider = originalProvider
   state.users = originalUsers
 })
 
 test("WS /responses supports sequential response.create requests", async () => {
-  state.apiKey = "secret"
+  state.legacyApiKey = "secret"
 
   const fetchMock = mock((_url: string, opts: { body?: string }) => {
     const payload = JSON.parse(opts.body ?? "{}") as {
@@ -155,7 +152,7 @@ test("WS /responses supports sequential response.create requests", async () => {
 })
 
 test("WS /v1/responses handshake requires API key middleware", async () => {
-  state.apiKey = "secret"
+  state.legacyApiKey = "secret"
 
   const response = await server.fetch(
     new Request("http://localhost/v1/responses", {

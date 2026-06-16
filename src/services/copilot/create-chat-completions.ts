@@ -3,9 +3,9 @@ import type { Context } from "hono"
 import type { Account } from "~/lib/accounts"
 
 import { canonicalModelId } from "~/lib/accounts"
+import { getAccountProtocol } from "~/lib/request-admission"
 import { inferInitiatorFromChatMessages } from "~/services/copilot/initiator"
-import { initializeProviderRegistry } from "~/services/providers"
-import { getProviderRuntime } from "~/services/providers/registry"
+import { delegateChatToNativeAdapter } from "~/services/providers/delegate"
 
 interface CreateChatCompletionsOptions {
   account: Account
@@ -26,7 +26,6 @@ export const createChatCompletions = async (
     model: canonicalModelId(payload.model),
   }
 
-  initializeProviderRegistry()
   const initiator =
     options.initiatorOverride
     ?? inferInitiatorFromChatMessages(normalizedPayload.messages)
@@ -36,8 +35,9 @@ export const createChatCompletions = async (
       && message.content?.some((content) => content.type === "image_url"),
   )
 
-  return getProviderRuntime(options.account.provider).createChatCompletions(
+  return delegateChatToNativeAdapter(
     options.account,
+    getAccountProtocol(options.account),
     normalizedPayload,
     options.signal,
     {

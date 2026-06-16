@@ -23,32 +23,6 @@ export interface CopilotAccountSettings {
   accountType?: string
 }
 
-export interface CodebuffAccountConfig {
-  codebuffAuthToken?: string
-  codebuffBaseUrl?: string
-  codebuffCliVersion?: string
-  codebuffAgentId?: string
-  codebuffModel?: string
-  codebuffCostMode?: string
-  codebuffAllowFallbacks?: boolean
-}
-
-export interface WindsurfAccountConfig {
-  windsurfApiKey?: string
-  windsurfBaseUrl?: string
-  windsurfAppVersion?: string
-  windsurfLsVersion?: string
-  windsurfDefaultModel?: string
-  windsurfClientName?: string
-}
-
-export interface MimoAccountConfig {
-  userId?: string
-  serviceToken?: string
-  xiaomichatbotPh?: string
-  proxy?: string
-}
-
 export interface BaseAccount {
   id: string
   label: string
@@ -72,12 +46,9 @@ export interface CopilotAccount extends BaseAccount {
   provider: "copilot"
   credentials?: CopilotAccountCredentials
   settings?: CopilotAccountSettings
-  githubToken?: string
-  copilotToken?: string
-  copilotTokenExpiry?: number
 }
 
-export interface CodebuffAccount extends BaseAccount, CodebuffAccountConfig {
+export interface CodebuffAccount extends BaseAccount {
   provider: "codebuff"
   credentials?: {
     authToken?: string
@@ -92,7 +63,7 @@ export interface CodebuffAccount extends BaseAccount, CodebuffAccountConfig {
   }
 }
 
-export interface WindsurfAccount extends BaseAccount, WindsurfAccountConfig {
+export interface WindsurfAccount extends BaseAccount {
   provider: "windsurf"
   credentials?: {
     apiKey?: string
@@ -106,7 +77,7 @@ export interface WindsurfAccount extends BaseAccount, WindsurfAccountConfig {
   }
 }
 
-export interface MimoAccount extends BaseAccount, MimoAccountConfig {
+export interface MimoAccount extends BaseAccount {
   provider: "mimo-aistudio"
   credentials?: {
     serviceToken?: string
@@ -151,10 +122,6 @@ function defaultProvider(provider?: AccountProvider): AccountProvider {
   return provider ?? "copilot"
 }
 
-function getLegacyField(account: Account, key: string): unknown {
-  return (account as unknown as Record<string, unknown>)[key]
-}
-
 export function getAccountProvider(account: Account): AccountProvider {
   return defaultProvider(account.provider)
 }
@@ -163,11 +130,7 @@ export function getGitHubToken(account: Account): string | undefined {
   if (account.provider !== "copilot") {
     return undefined
   }
-  // Migration fallback: read the flat field from the object if it exists (e.g. legacy data)
-  return (
-    account.credentials?.githubToken
-    ?? (getLegacyField(account, "githubToken") as string | undefined)
-  )
+  return account.credentials?.githubToken
 }
 
 export function setGitHubToken(
@@ -187,10 +150,7 @@ export function getCopilotToken(account: Account): string | undefined {
   if (account.provider !== "copilot") {
     return undefined
   }
-  return (
-    account.runtimeState?.copilotToken
-    ?? (getLegacyField(account, "copilotToken") as string | undefined)
-  )
+  return account.runtimeState?.copilotToken
 }
 
 export function setCopilotToken(
@@ -210,10 +170,7 @@ export function getCopilotTokenExpiry(account: Account): number | undefined {
   if (account.provider !== "copilot") {
     return undefined
   }
-  return (
-    account.runtimeState?.copilotTokenExpiry
-    ?? (getLegacyField(account, "copilotTokenExpiry") as number | undefined)
-  )
+  return account.runtimeState?.copilotTokenExpiry
 }
 
 export function setCopilotTokenExpiry(
@@ -233,10 +190,7 @@ export function getCodebuffAuthToken(account: Account): string | undefined {
   if (account.provider !== "codebuff") {
     return undefined
   }
-  return (
-    account.credentials?.authToken
-    ?? (getLegacyField(account, "authToken") as string | undefined)
-  )
+  return account.credentials?.authToken
 }
 
 export function setCodebuffAuthToken(
@@ -256,10 +210,7 @@ export function getWindsurfApiKey(account: Account): string | undefined {
   if (account.provider !== "windsurf") {
     return undefined
   }
-  return (
-    account.credentials?.apiKey
-    ?? (getLegacyField(account, "apiKey") as string | undefined)
-  )
+  return account.credentials?.apiKey
 }
 
 export function setWindsurfApiKey(
@@ -279,10 +230,7 @@ export function getWindsurfJwt(account: Account): string | undefined {
   if (account.provider !== "windsurf") {
     return undefined
   }
-  return (
-    account.runtimeState?.windsurfJwt
-    ?? (getLegacyField(account, "windsurfJwt") as string | undefined)
-  )
+  return account.runtimeState?.windsurfJwt
 }
 
 export function setWindsurfJwt(
@@ -306,23 +254,12 @@ export function getCodebuffSettings(account: Account) {
   const defaults = state.providerDefaults.codebuff
   return {
     authToken: getCodebuffAuthToken(account) ?? defaults.authToken,
-    baseUrl:
-      account.settings?.baseUrl ?? account.codebuffBaseUrl ?? defaults.baseUrl,
-    cliVersion:
-      account.settings?.cliVersion
-      ?? account.codebuffCliVersion
-      ?? defaults.cliVersion,
-    agentId:
-      account.settings?.agentId ?? account.codebuffAgentId ?? defaults.agentId,
-    model: account.settings?.model ?? account.codebuffModel ?? defaults.model,
-    costMode:
-      account.settings?.costMode
-      ?? account.codebuffCostMode
-      ?? defaults.costMode,
-    allowFallbacks:
-      account.settings?.allowFallbacks
-      ?? account.codebuffAllowFallbacks
-      ?? defaults.allowFallbacks,
+    baseUrl: account.settings?.baseUrl ?? defaults.baseUrl,
+    cliVersion: account.settings?.cliVersion ?? defaults.cliVersion,
+    agentId: account.settings?.agentId ?? defaults.agentId,
+    model: account.settings?.model ?? defaults.model,
+    costMode: account.settings?.costMode ?? defaults.costMode,
+    allowFallbacks: account.settings?.allowFallbacks ?? defaults.allowFallbacks,
   }
 }
 
@@ -333,24 +270,11 @@ export function getWindsurfSettings(account: Account) {
   const defaults = state.providerDefaults.windsurf
   return {
     apiKey: getWindsurfApiKey(account) ?? defaults.apiKey,
-    baseUrl:
-      account.settings?.baseUrl ?? account.windsurfBaseUrl ?? defaults.baseUrl,
-    appVersion:
-      account.settings?.appVersion
-      ?? account.windsurfAppVersion
-      ?? defaults.appVersion,
-    lsVersion:
-      account.settings?.lsVersion
-      ?? account.windsurfLsVersion
-      ?? defaults.lsVersion,
-    defaultModel:
-      account.settings?.defaultModel
-      ?? account.windsurfDefaultModel
-      ?? defaults.defaultModel,
-    clientName:
-      account.settings?.clientName
-      ?? account.windsurfClientName
-      ?? defaults.clientName,
+    baseUrl: account.settings?.baseUrl ?? defaults.baseUrl,
+    appVersion: account.settings?.appVersion ?? defaults.appVersion,
+    lsVersion: account.settings?.lsVersion ?? defaults.lsVersion,
+    defaultModel: account.settings?.defaultModel ?? defaults.defaultModel,
+    clientName: account.settings?.clientName ?? defaults.clientName,
   }
 }
 
@@ -358,10 +282,7 @@ export function getMimoServiceToken(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return (
-    account.credentials?.serviceToken
-    ?? (getLegacyField(account, "serviceToken") as string | undefined)
-  )
+  return account.credentials?.serviceToken
 }
 
 export function setMimoServiceToken(
@@ -381,10 +302,7 @@ export function getMimoPh(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return (
-    account.credentials?.xiaomichatbotPh
-    ?? (getLegacyField(account, "xiaomichatbotPh") as string | undefined)
-  )
+  return account.credentials?.xiaomichatbotPh
 }
 
 export function setMimoPh(
@@ -404,10 +322,7 @@ export function getMimoUserId(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return (
-    account.settings?.userId
-    ?? (getLegacyField(account, "userId") as string | undefined)
-  )
+  return account.settings?.userId
 }
 
 export function setMimoUserId(
@@ -427,10 +342,7 @@ export function getMimoProxy(account: Account): string | undefined {
   if (account.provider !== "mimo-aistudio") {
     return undefined
   }
-  return (
-    account.settings?.proxy
-    ?? (getLegacyField(account, "proxy") as string | undefined)
-  )
+  return account.settings?.proxy
 }
 
 export function setMimoProxy(
@@ -513,106 +425,6 @@ export function parseModelReference(modelId: string): {
   }
 }
 
-export function setupAccountPropertyProxies(account: Account): void {
-  switch (account.provider) {
-    case "copilot": {
-      Object.defineProperty(account, "githubToken", {
-        get() {
-          return account.credentials?.githubToken
-        },
-        set(v: string | undefined) {
-          if (!account.credentials) account.credentials = {}
-          account.credentials.githubToken = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-
-      break
-    }
-    case "codebuff": {
-      Object.defineProperty(account, "codebuffAuthToken", {
-        get() {
-          return account.credentials?.authToken
-        },
-        set(v: string | undefined) {
-          if (!account.credentials) account.credentials = {}
-          account.credentials.authToken = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-
-      break
-    }
-    case "windsurf": {
-      Object.defineProperty(account, "windsurfApiKey", {
-        get() {
-          return account.credentials?.apiKey
-        },
-        set(v: string | undefined) {
-          if (!account.credentials) account.credentials = {}
-          account.credentials.apiKey = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-
-      break
-    }
-    case "mimo-aistudio": {
-      Object.defineProperty(account, "serviceToken", {
-        get() {
-          return account.credentials?.serviceToken
-        },
-        set(v: string | undefined) {
-          if (!account.credentials) account.credentials = {}
-          account.credentials.serviceToken = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-      Object.defineProperty(account, "xiaomichatbotPh", {
-        get() {
-          return account.credentials?.xiaomichatbotPh
-        },
-        set(v: string | undefined) {
-          if (!account.credentials) account.credentials = {}
-          account.credentials.xiaomichatbotPh = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-      Object.defineProperty(account, "userId", {
-        get() {
-          return account.settings?.userId
-        },
-        set(v: string | undefined) {
-          if (!account.settings) account.settings = {}
-          account.settings.userId = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-      Object.defineProperty(account, "proxy", {
-        get() {
-          return account.settings?.proxy
-        },
-        set(v: string | undefined) {
-          if (!account.settings) account.settings = {}
-          account.settings.proxy = v
-        },
-        configurable: true,
-        enumerable: true,
-      })
-
-      break
-    }
-    // No default
-  }
-}
-
 export function addAccount(account: Account): void {
-  setupAccountPropertyProxies(account)
   state.accounts.push(account)
 }
