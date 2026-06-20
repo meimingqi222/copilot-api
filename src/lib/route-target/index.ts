@@ -3,7 +3,12 @@ export {
   type BuildRouteTargetsOptions,
   listExposedPublicModels,
 } from "./build"
-export { type ParsedModelRef, parseModelRef } from "./model-reference"
+export {
+  type ParsedModelRef,
+  parseModelRef,
+  type ResolvedModelRouting,
+  resolveModelRouting,
+} from "./model-reference"
 export {
   __resetRouteTargetRoundRobin,
   selectRouteTarget,

@@ -1,6 +1,7 @@
-import type { Account } from "~/lib/accounts"
+import type { Account, OAuthAccount } from "~/lib/accounts"
 
 import {
+  isOAuthAccount,
   setCodebuffAuthToken,
   setWindsurfApiKey,
   setMimoServiceToken,
@@ -8,7 +9,33 @@ import {
   setMimoProxy,
   setMimoUserId,
 } from "~/lib/accounts"
+import { isOAuthProviderId } from "~/lib/provider-config"
 import { refreshModelsForAccount } from "~/lib/utils"
+
+async function updateOAuthAccountSettings(
+  account: OAuthAccount,
+  settings: Record<string, unknown>,
+): Promise<void> {
+  account.settings = {
+    ...account.settings,
+    ...(typeof settings.baseUrl === "string" ?
+      { baseUrl: settings.baseUrl.trim() || undefined }
+    : {}),
+    ...(typeof settings.proxyUrl === "string" ?
+      { proxyUrl: settings.proxyUrl.trim() || undefined }
+    : {}),
+    ...(typeof settings.modelPrefix === "string" ?
+      { modelPrefix: settings.modelPrefix.trim() || undefined }
+    : {}),
+    ...(typeof settings.tokenEndpoint === "string" ?
+      { tokenEndpoint: settings.tokenEndpoint.trim() || undefined }
+    : {}),
+    ...(typeof settings.redirectUri === "string" ?
+      { redirectUri: settings.redirectUri.trim() || undefined }
+    : {}),
+  }
+  await refreshModelsForAccount(account)
+}
 
 export async function updateProviderAccount(
   account: Account,
@@ -108,5 +135,10 @@ export async function updateProviderAccount(
     }
 
     await refreshModelsForAccount(account)
+    return
+  }
+
+  if (isOAuthAccount(account) && isOAuthProviderId(account.provider)) {
+    await updateOAuthAccountSettings(account, body.settings ?? {})
   }
 }

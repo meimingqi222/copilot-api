@@ -127,6 +127,8 @@ const API = {
     },
     import: (data) =>
       API.request("/accounts/import", { method: "POST", body: data }),
+    importCpa: (data) =>
+      API.request("/accounts/import-cpa", { method: "POST", body: data }),
   },
 
   providers: {
@@ -212,6 +214,19 @@ const API = {
   quota: {
     get: () => API.request("/quota"),
     refresh: () => API.request("/quota/refresh", { method: "POST" }),
+    refreshOne: (id) => API.request(`/quota/${id}/refresh`, { method: "POST" }),
+  },
+
+  oauth: {
+    start: (provider, data = {}) =>
+      API.request(`/oauth/${provider}/start`, { method: "POST", body: data }),
+    poll: (provider, flowId) =>
+      API.request(`/oauth/${provider}/poll/${flowId}`),
+    complete: (provider, data) =>
+      API.request(`/oauth/${provider}/complete`, {
+        method: "POST",
+        body: data,
+      }),
   },
 
   // Usage Statistics

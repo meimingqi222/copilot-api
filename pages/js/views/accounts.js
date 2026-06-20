@@ -7,6 +7,7 @@ function accountsView() {
     showImportModal: false,
     importFile: null,
     importSkipDuplicates: true,
+    importMode: "standard",
     defaultNewAccount() {
       return {
         label: "",
@@ -23,7 +24,9 @@ function accountsView() {
     },
     deviceFlowStep: "input",
     deviceFlowData: null,
+    oauthFlowData: null,
     pollTimer: null,
+    refreshingQuotaId: null,
     mimoCookieInput: "",
 
     parseMimoCookie() {
@@ -173,6 +176,7 @@ function accountsView() {
       this.newAccount = this.defaultNewAccount()
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
+      this.oauthFlowData = null
       this.showAddModal = true
       if (this.pollTimer) clearTimeout(this.pollTimer)
       this.pollTimer = null
@@ -183,6 +187,7 @@ function accountsView() {
       this.newAccount = this.defaultNewAccount()
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
+      this.oauthFlowData = null
       if (this.pollTimer) {
         clearTimeout(this.pollTimer)
         this.pollTimer = null
@@ -192,6 +197,12 @@ function accountsView() {
     async submitAccount() {
       this.pollTimer = null
       try {
+        const authMode = this.selectedProvider()?.authMode
+        if (authMode === "oauth") {
+          await this.startOAuthFlow()
+          return
+        }
+
         const provider = this.newAccount.provider || "copilot"
         const payload = {
           label: this.newAccount.label.trim() || undefined,
@@ -265,6 +276,89 @@ function accountsView() {
       }
 
       this.pollTimer = setTimeout(doPoll, pollInterval)
+    },
+
+    async startOAuthFlow() {
+      const provider = this.newAccount.provider
+      const proxyUrl = this.newAccount.settings?.proxyUrl?.trim()
+      const res = await API.oauth.start(provider, {
+        label: this.newAccount.label.trim() || undefined,
+        proxyUrl: proxyUrl || undefined,
+      })
+      if (!res?.flowId) {
+        throw new Error("Invalid OAuth flow response")
+      }
+      this.oauthFlowData = res
+      this.deviceFlowStep = "pending"
+      if (res.authUrl) {
+        globalThis.open(res.authUrl, "_blank", "noopener,noreferrer")
+      }
+      this.pollOAuthFlow()
+    },
+
+    pollOAuthFlow() {
+      const provider = this.newAccount.provider
+      const flowId = this.oauthFlowData?.flowId
+      let pollInterval = (this.oauthFlowData?.interval || 5) * 1000
+
+      const doPoll = async () => {
+        if (this.deviceFlowStep !== "pending" || !flowId) {
+          return
+        }
+        try {
+          const res = await API.oauth.poll(provider, flowId)
+          if (res.status === "complete") {
+            this.deviceFlowStep = "success"
+            await this.load()
+            return
+          }
+          if (res.status === "error") {
+            this.deviceFlowStep = "input"
+            this.showToast(res.error || I18n.t("accounts.oauth.error"), "error")
+            return
+          }
+          if (res.status === "expired") {
+            this.deviceFlowStep = "input"
+            this.showToast(I18n.t("accounts.oauth.expired"), "error")
+            return
+          }
+          if (res.interval) {
+            pollInterval = res.interval * 1000
+          }
+        } catch {
+          // Continue polling
+        }
+        this.pollTimer = setTimeout(doPoll, pollInterval)
+      }
+
+      this.pollTimer = setTimeout(doPoll, pollInterval)
+    },
+
+    formatQuotaSummary(account) {
+      return QuotaDisplay.formatSummary(account, (key, params) =>
+        this.t(key, params),
+      )
+    },
+
+    async refreshAccountQuota(account) {
+      if (!account?.id || account.supportsQuota === false) return
+      this.refreshingQuotaId = account.id
+      try {
+        const result = await API.quota.refreshOne(account.id)
+        const idx = this.accounts.findIndex((item) => item.id === account.id)
+        if (idx !== -1) {
+          this.accounts[idx] = {
+            ...this.accounts[idx],
+            quotaInfo: result.quotaInfo ?? this.accounts[idx].quotaInfo,
+            quotaState: result.quotaState ?? this.accounts[idx].quotaState,
+          }
+        }
+        this.showToast(I18n.t("accounts.quotaRefreshSuccess"), "success")
+      } catch {
+        this.showToast(I18n.t("accounts.quotaRefreshError"), "error")
+      } finally {
+        this.refreshingQuotaId = null
+      }
     },
 
     async toggleEnabled(account) {
@@ -359,6 +453,7 @@ function accountsView() {
     openImportModal() {
       this.importFile = null
       this.importSkipDuplicates = true
+      this.importMode = "standard"
       this.showImportModal = true
       this.$nextTick(() => {
         if (this.$refs.importFileInput) this.$refs.importFileInput.value = ""
@@ -387,17 +482,25 @@ function accountsView() {
         this.showToast(I18n.t("accounts.importInvalidFile"), "error")
         return
       }
-      // Support both { accounts: [...] } and plain array
-      const accounts = Array.isArray(parsed) ? parsed : parsed.accounts || []
-      if (accounts.length === 0) {
-        this.showToast(I18n.t("accounts.importInvalidFile"), "error")
-        return
+      if (this.importMode === "standard") {
+        const accounts = Array.isArray(parsed) ? parsed : parsed.accounts || []
+        if (accounts.length === 0) {
+          this.showToast(I18n.t("accounts.importInvalidFile"), "error")
+          return
+        }
       }
+
       try {
-        const result = await API.accounts.import({
-          accounts,
-          overwrite: !this.importSkipDuplicates,
-        })
+        const result =
+          this.importMode === "cpa" ?
+            await API.accounts.importCpa({
+              records: parsed,
+              overwrite: !this.importSkipDuplicates,
+            })
+          : await API.accounts.import({
+              accounts: Array.isArray(parsed) ? parsed : parsed.accounts || [],
+              overwrite: !this.importSkipDuplicates,
+            })
         let msg = I18n.t("accounts.importSuccess", { count: result.imported })
         if (result.skipped > 0)
           msg += I18n.t("accounts.importSkipped", { count: result.skipped })

@@ -85,11 +85,10 @@ export async function handleCompletion(c: Context) {
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
   )
-  const estimatedInputTokens = await calculateTokens(payload, selectedModel)
-
   payload = applyMaxTokens(payload, selectedModel)
 
   if (!payload.stream) {
+    const estimatedInputTokens = await calculateTokens(payload, selectedModel)
     const nonStreamStart = Date.now()
     const result = await dispatchChatCompletions(payload, admission, signal, c)
 
@@ -110,10 +109,13 @@ export async function handleCompletion(c: Context) {
     return handleStreamingResponse(c, result.response, estimatedInputTokens)
   }
 
+  const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+
   return handleStreamingCompletion(c, {
     payload,
     admission,
     signal,
+    selectedModel,
     estimatedInputTokens,
   })
 }
@@ -215,7 +217,6 @@ function handleStreamingResponse(
   let usageRecorded = false
   let firstChunkTs: number | undefined
   const streamStart = Date.now()
-  let streamFailed = false
 
   return handleSseStream(
     c,
@@ -233,20 +234,15 @@ function handleStreamingResponse(
             firstChunkTs = Date.now()
           }
 
-          const dataStr = rawEvent.data
-          const hasUsage = /"usage"\s*:/.test(dataStr)
-          const chunk = JSON.parse(dataStr) as ChatCompletionChunk
+          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
           if (consola.level >= 4) {
             consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
-          if (hasUsage) {
-            lastUsage = chunk.usage ?? lastUsage
+          if (chunk.usage) {
+            lastUsage = chunk.usage
           }
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
         }
-      } catch (error) {
-        streamFailed = true
-        throw error
       } finally {
         if (!usageRecorded) {
           usageRecorded = recordStreamingUsage({
@@ -255,7 +251,6 @@ function handleStreamingResponse(
             model,
             lastUsage,
             estimatedInputTokens,
-            onlyWhenUsageExists: streamFailed,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
@@ -273,7 +268,6 @@ function handleStreamingResponse(
           model,
           lastUsage,
           estimatedInputTokens,
-          onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,
@@ -345,6 +339,7 @@ interface StreamingCompletionOptions {
   payload: ChatCompletionsPayload
   admission: RequestAdmission
   signal: AbortSignal | undefined
+  selectedModel: CachedModel | undefined
   estimatedInputTokens: number
 }
 
@@ -357,8 +352,6 @@ function handleStreamingCompletion(
   let accountId: string | undefined
   let firstChunkTs: number | undefined
   let streamStart = 0
-  let streamFailed = false
-
   return handleSseStream(
     c,
     async (stream) => {
@@ -404,14 +397,12 @@ function handleStreamingCompletion(
             firstChunkTs = Date.now()
           }
 
-          const dataStr = rawEvent.data
-          const hasUsage = /"usage"\s*:/.test(dataStr)
-          const chunk = JSON.parse(dataStr) as ChatCompletionChunk
+          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
           if (consola.level >= 4) {
             consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
-          if (hasUsage) {
-            lastUsage = chunk.usage ?? lastUsage
+          if (chunk.usage) {
+            lastUsage = chunk.usage
           }
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
         }
@@ -421,7 +412,6 @@ function handleStreamingCompletion(
         if (knownError?.status === 499) {
           return
         }
-        streamFailed = true
         const errorMessage =
           knownError?.message
           ?? (error instanceof Error ? error.message : "Internal server error")
@@ -448,7 +438,6 @@ function handleStreamingCompletion(
             model,
             lastUsage,
             estimatedInputTokens,
-            onlyWhenUsageExists: streamFailed,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
@@ -466,7 +455,6 @@ function handleStreamingCompletion(
           model: options.payload.model,
           lastUsage,
           estimatedInputTokens: options.estimatedInputTokens,
-          onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,
