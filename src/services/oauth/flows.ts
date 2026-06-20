@@ -40,6 +40,7 @@ export interface OAuthPendingFlow {
 
 const pendingOAuthFlows = new Map<string, OAuthPendingFlow>()
 const oauthCallbackServers = new Map<string, Server>()
+const oauthFlowAbortControllers = new Map<string, AbortController>()
 
 export async function loadPendingOAuthFlows(): Promise<void> {
   try {
@@ -129,6 +130,22 @@ export function registerOAuthFlow(flow: OAuthPendingFlow): void {
   void savePendingOAuthFlows()
 }
 
+export function bindOAuthFlowAbortSignal(flowId: string): AbortSignal {
+  const existing = oauthFlowAbortControllers.get(flowId)
+  if (existing) {
+    existing.abort()
+  }
+  const controller = new AbortController()
+  oauthFlowAbortControllers.set(flowId, controller)
+  return controller.signal
+}
+
+export function getOAuthFlowAbortSignal(
+  flowId: string,
+): AbortSignal | undefined {
+  return oauthFlowAbortControllers.get(flowId)?.signal
+}
+
 export function getOAuthFlow(flowId: string): OAuthPendingFlow | undefined {
   return pendingOAuthFlows.get(flowId)
 }
@@ -189,6 +206,11 @@ export function tryBeginOAuthExchange(flowId: string): OAuthExchangeClaim {
 }
 
 export function removeOAuthFlow(flowId: string): void {
+  const controller = oauthFlowAbortControllers.get(flowId)
+  if (controller) {
+    controller.abort()
+    oauthFlowAbortControllers.delete(flowId)
+  }
   pendingOAuthFlows.delete(flowId)
   stopOAuthCallbackServer(flowId)
 }
@@ -421,7 +443,7 @@ export function pollOAuthFlow(flowId: string): {
 }
 
 export function resetOAuthFlowsForTest(): void {
-  for (const flowId of [...pendingOAuthFlows.keys()]) {
+  for (const flowId of pendingOAuthFlows.keys()) {
     removeOAuthFlow(flowId)
   }
 }

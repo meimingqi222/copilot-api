@@ -227,6 +227,11 @@ const API = {
         method: "POST",
         body: data,
       }),
+    cancel: (provider, data) =>
+      API.request(`/oauth/${provider}/cancel`, {
+        method: "POST",
+        body: data,
+      }),
   },
 
   // Usage Statistics
