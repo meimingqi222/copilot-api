@@ -459,9 +459,26 @@ const QuotaDisplay = {
       case "xai": {
         return "quota-card-xai"
       }
+      case "copilot": {
+        return "quota-card-copilot"
+      }
       default: {
         return ""
       }
     }
+  },
+
+  providerBadgeClass(provider) {
+    const cardClass = this.providerCardClass(provider)
+    if (!cardClass) return "quota-badge-copilot"
+    return cardClass.replace("quota-card-", "quota-badge-")
+  },
+
+  providerDisplayName(provider, t) {
+    const key = `accounts.provider.${provider}.name`
+    const translated = t ? t(key) : ""
+    if (translated && translated !== key) return translated
+    if (!provider) return "Copilot"
+    return provider.charAt(0).toUpperCase() + provider.slice(1)
   },
 }

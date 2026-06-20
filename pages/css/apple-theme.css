@@ -690,23 +690,117 @@ select.form-input {
   color: #7d3d9e;
 }
 
-/* OAuth provider quota accents */
-.quota-account-card.quota-card-claude {
-  border-left: 3px solid #d97757;
+/* Quota account cards */
+.quota-account-card {
+  background: var(--apple-bg);
+  border: 1px solid var(--apple-gray-5);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
 }
 
-.quota-account-card.quota-card-codex {
-  border-left: 3px solid #10a37f;
+.quota-account-card:hover {
+  border-color: var(--apple-gray-4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
-.quota-account-card.quota-card-antigravity {
-  border-left: 3px solid #4285f4;
+.quota-account-card .quota-card-accent {
+  height: 3px;
+  width: 100%;
+  flex-shrink: 0;
 }
 
-.quota-account-card.quota-card-kimi {
-  border-left: 3px solid #7c3aed;
+.quota-account-card.quota-card-copilot .quota-card-accent,
+.quota-account-card:not([class*="quota-card-"]) .quota-card-accent {
+  background: linear-gradient(90deg, #24292f, #57606a);
 }
 
-.quota-account-card.quota-card-xai {
-  border-left: 3px solid #111827;
+.quota-account-card.quota-card-claude .quota-card-accent {
+  background: linear-gradient(90deg, #d97757, #e8a87c);
+}
+
+.quota-account-card.quota-card-codex .quota-card-accent {
+  background: linear-gradient(90deg, #10a37f, #34d399);
+}
+
+.quota-account-card.quota-card-antigravity .quota-card-accent {
+  background: linear-gradient(90deg, #4285f4, #7baaf7);
+}
+
+.quota-account-card.quota-card-kimi .quota-card-accent {
+  background: linear-gradient(90deg, #7c3aed, #a78bfa);
+}
+
+.quota-account-card.quota-card-xai .quota-card-accent {
+  background: linear-gradient(90deg, #111827, #4b5563);
+}
+
+.quota-provider-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
+.quota-provider-badge.quota-badge-claude {
+  background: rgba(217, 119, 87, 0.12);
+  color: #b85c3f;
+}
+
+.quota-provider-badge.quota-badge-codex {
+  background: rgba(16, 163, 127, 0.12);
+  color: #0d8a6a;
+}
+
+.quota-provider-badge.quota-badge-antigravity {
+  background: rgba(66, 133, 244, 0.12);
+  color: #2b6fd6;
+}
+
+.quota-provider-badge.quota-badge-kimi {
+  background: rgba(124, 58, 237, 0.12);
+  color: #6d28d9;
+}
+
+.quota-provider-badge.quota-badge-xai {
+  background: rgba(17, 24, 39, 0.1);
+  color: #111827;
+}
+
+.quota-provider-badge.quota-badge-copilot {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--apple-blue);
+}
+
+.quota-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.quota-card-body {
+  padding: 14px 16px 16px;
+}
+
+.quota-card-summary {
+  background: var(--apple-bg-secondary);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.quota-card-inline .quota-account-card {
+  border-radius: 10px;
 }

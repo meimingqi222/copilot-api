@@ -25,6 +25,10 @@ import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
 import {
+  getOAuthAccountSubtitle,
+  upgradeOAuthAccountLabels,
+} from "~/services/oauth/account-label"
+import {
   cancelOAuthRefreshTimer,
   scheduleOAuthRefreshForAccount,
 } from "~/services/oauth/refresh-scheduler"
@@ -60,9 +64,12 @@ export function publicAccount(account: Account) {
   initializeProviderRegistry()
   const runtime = getProviderRuntime(account.provider)
   const availability = getAccountAvailability(account)
+  const subtitle =
+    isOAuthAccount(account) ? getOAuthAccountSubtitle(account) : undefined
   return {
     id: account.id,
     label: account.label,
+    subtitle,
     provider: account.provider,
     availableModels: account.availableModels,
     enabled: account.enabled,
@@ -90,7 +97,10 @@ accountApiRoutes.route("/", createAccountRoutes)
 accountApiRoutes.route("/", importAccountRoutes)
 accountFlowApiRoutes.route("/", deviceFlowRoutes)
 
-accountApiRoutes.get("/", (c) => {
+accountApiRoutes.get("/", async (c) => {
+  if (upgradeOAuthAccountLabels(state.accounts)) {
+    await saveAccounts()
+  }
   return c.json({
     accounts: state.accounts.map((account) => publicAccount(account)),
   })
