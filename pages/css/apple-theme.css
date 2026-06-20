@@ -689,3 +689,24 @@ select.form-input {
   background: rgba(175, 82, 222, 0.1);
   color: #7d3d9e;
 }
+
+/* OAuth provider quota accents */
+.quota-account-card.quota-card-claude {
+  border-left: 3px solid #d97757;
+}
+
+.quota-account-card.quota-card-codex {
+  border-left: 3px solid #10a37f;
+}
+
+.quota-account-card.quota-card-antigravity {
+  border-left: 3px solid #4285f4;
+}
+
+.quota-account-card.quota-card-kimi {
+  border-left: 3px solid #7c3aed;
+}
+
+.quota-account-card.quota-card-xai {
+  border-left: 3px solid #111827;
+}

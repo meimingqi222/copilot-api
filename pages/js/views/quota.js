@@ -2,6 +2,7 @@ function quotaView() {
   return {
     loading: false,
     refreshing: false,
+    refreshingAccountId: null,
     accounts: [],
     users: [],
     dateRange: "today",
@@ -352,6 +353,52 @@ function quotaView() {
       } finally {
         this.refreshing = false
       }
+    },
+
+    async refreshAccountQuota(account) {
+      if (!account?.id) return
+      this.refreshingAccountId = account.id
+      try {
+        const result = await API.quota.refreshOne(account.id)
+        const idx = this.accounts.findIndex((item) => item.id === account.id)
+        if (idx !== -1) {
+          this.accounts[idx] = {
+            ...this.accounts[idx],
+            quotaInfo: result.quotaInfo ?? this.accounts[idx].quotaInfo,
+            quotaState: result.quotaState ?? this.accounts[idx].quotaState,
+          }
+        }
+        this.showToast(I18n.t("accounts.quotaRefreshSuccess"), "success")
+      } catch {
+        this.showToast(I18n.t("accounts.quotaRefreshError"), "error")
+      } finally {
+        this.refreshingAccountId = null
+        this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    isOAuthQuotaProvider(provider) {
+      return QuotaDisplay.isOAuthProvider(provider)
+    },
+
+    getQuotaRows(account) {
+      return QuotaDisplay.buildRows(account, (key, params) =>
+        this.t(key, params),
+      )
+    },
+
+    getQuotaBarColor(row) {
+      return QuotaDisplay.getBarColor(row?.remainingPercent)
+    },
+
+    getQuotaCardClass(provider) {
+      return QuotaDisplay.providerCardClass(provider)
+    },
+
+    formatQuotaSummary(account) {
+      return QuotaDisplay.formatSummary(account, (key, params) =>
+        this.t(key, params),
+      )
     },
 
     calculatePercent(remaining, total) {
