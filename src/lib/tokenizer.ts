@@ -53,7 +53,11 @@ const calculateContentPartsTokens = (
   let tokens = 0
   for (const part of contentParts) {
     if (part.type === "image_url") {
-      tokens += encoder.encode(part.image_url.url).length + 85
+      // Avoid BPE-encoding large base64 payloads; use a fixed image allowance.
+      tokens +=
+        part.image_url.url.startsWith("data:") ?
+          85
+        : encoder.encode(part.image_url.url).length + 85
     } else if (part.text) {
       tokens += encoder.encode(part.text).length
     }
