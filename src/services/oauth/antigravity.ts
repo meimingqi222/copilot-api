@@ -13,14 +13,16 @@ export function getAntigravityClientId(): string {
   return `${projectNumber}-${clientSuffix}.apps.googleusercontent.com`
 }
 
+// Base64-encoded Antigravity IDE Google OAuth client secret (same fixed value as CPA).
+const ANTIGRAVITY_CLIENT_SECRET_B64 =
+  "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY="
+
 export function getAntigravityClientSecret(): string {
-  const secret = process.env.ANTIGRAVITY_CLIENT_SECRET?.trim()
-  if (!secret) {
-    throw new Error(
-      "ANTIGRAVITY_CLIENT_SECRET is required for Antigravity OAuth token exchange",
-    )
+  const fromEnv = process.env.ANTIGRAVITY_CLIENT_SECRET?.trim()
+  if (fromEnv) {
+    return fromEnv
   }
-  return secret
+  return Buffer.from(ANTIGRAVITY_CLIENT_SECRET_B64, "base64").toString("utf8")
 }
 export const ANTIGRAVITY_CALLBACK_PORT = 51121
 export const ANTIGRAVITY_CALLBACK_PATH = "/oauth-callback"
