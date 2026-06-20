@@ -4,8 +4,10 @@ import type { Model } from "~/services/copilot/get-models"
 import {
   canonicalModelId,
   canonicalNativeModelId,
+  isOAuthAccount,
   parseModelReference,
 } from "~/lib/accounts"
+import { getOAuthProviderDescriptor } from "~/lib/provider-config"
 import { state } from "~/lib/state"
 
 const CHAT_COMPLETIONS_ENDPOINTS = ["/chat/completions", "/v1/chat/completions"]
@@ -197,7 +199,18 @@ export function supportsResponsesApi(
   modelId: string,
   account: Account,
 ): boolean {
+  if (oauthAccountSupportsNativeResponses(account)) {
+    return true
+  }
   return supportsAnyEndpoint(modelId, account, RESPONSES_ENDPOINTS)
+}
+
+function oauthAccountSupportsNativeResponses(account: Account): boolean {
+  if (!isOAuthAccount(account)) {
+    return false
+  }
+  const descriptor = getOAuthProviderDescriptor(account.provider)
+  return descriptor.features.includes("native_responses")
 }
 
 export function supportsMessagesApi(
