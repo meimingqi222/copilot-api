@@ -15,6 +15,13 @@ import { isProviderId } from "~/lib/provider-config"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
+import {
+  importCpaAuthRecords,
+  parseCpaAuthPayload,
+} from "~/services/oauth/cpa-import"
+import { scheduleOAuthRefreshForAccount } from "~/services/oauth/refresh-scheduler"
+import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 
 export const importAccountRoutes = new Hono()
 
@@ -176,7 +183,6 @@ importAccountRoutes.post("/import", async (c) => {
       continue
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (provider === "mimo-aistudio") {
       const serviceToken =
         typeof raw.credentials?.serviceToken === "string" ?
@@ -236,4 +242,67 @@ importAccountRoutes.post("/import", async (c) => {
     failed: failed.length,
     details: { imported, skipped, failed },
   })
+})
+
+importAccountRoutes.post("/import-cpa", async (c) => {
+  let body: { records?: unknown; overwrite?: boolean }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "Invalid JSON payload." }, 400)
+  }
+
+  try {
+    const records = parseCpaAuthPayload(body.records)
+    if (records.length === 0) {
+      return c.json({ error: "No CPA auth records provided." }, 400)
+    }
+
+    const result = importCpaAuthRecords(records, {
+      overwrite: body.overwrite === true,
+      existingAccounts: state.accounts,
+      onAccount: (account) => {
+        scheduleOAuthRefreshForAccount(account)
+        void refreshModelsForAccount(account).catch((err: unknown) => {
+          consola.warn(
+            `CPA import: failed to refresh models for "${account.label}":`,
+            err,
+          )
+        })
+        const runtime = getProviderRuntime(account.provider)
+        if (runtime.refreshQuota) {
+          void runtime.refreshQuota(account).catch((err: unknown) => {
+            consola.warn(
+              `CPA import: failed to refresh quota for "${account.label}":`,
+              err,
+            )
+          })
+        }
+      },
+    })
+
+    if (result.imported.length > 0) {
+      initializeProviderRegistry()
+      await saveAccounts()
+      consola.info(
+        `Imported ${result.imported.length} CPA auth account(s): ${result.imported.join(", ")}`,
+      )
+    }
+
+    return c.json({
+      ok: true,
+      imported: result.imported.length,
+      skipped: result.skipped.length,
+      failed: result.failed.length,
+      details: result,
+    })
+  } catch (error) {
+    return c.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to import CPA auth",
+      },
+      400,
+    )
+  }
 })
