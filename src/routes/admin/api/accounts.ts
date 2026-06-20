@@ -14,13 +14,20 @@ import {
 import {
   getCodebuffAuthToken,
   getGitHubToken,
+  getOAuthAccessToken,
+  getOAuthApiKey,
   getWindsurfApiKey,
   getMimoServiceToken,
   getMimoPh,
+  isOAuthAccount,
 } from "~/lib/accounts"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
+import {
+  cancelOAuthRefreshTimer,
+  scheduleOAuthRefreshForAccount,
+} from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
@@ -41,6 +48,9 @@ function getHasCredentials(account: Account): boolean {
   }
   if (account.provider === "windsurf") {
     return Boolean(getWindsurfApiKey(account))
+  }
+  if (isOAuthAccount(account)) {
+    return Boolean(getOAuthAccessToken(account) || getOAuthApiKey(account))
   }
   return Boolean(getMimoServiceToken(account) && getMimoPh(account))
 }
@@ -63,6 +73,8 @@ export function publicAccount(account: Account) {
     availabilityReason: availability.reason,
     retryAfterSeconds: availability.retryAfterSeconds || null,
     quotaState: account.quotaState ?? "unknown",
+    quotaInfo: account.quotaInfo ?? null,
+    supportsQuota: runtime.supports(account, "quota"),
     createdAt: account.createdAt,
     settings: account.settings ?? {},
     providerFeatures: runtime.descriptor.features,
@@ -117,6 +129,9 @@ accountApiRoutes.put("/:id", async (c) => {
     account.enabled = body.enabled
     if (!account.enabled) {
       cancelTokenRefreshTimer(account.id)
+      cancelOAuthRefreshTimer(account.id)
+    } else {
+      scheduleOAuthRefreshForAccount(account)
     }
     consola.info(
       `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
@@ -143,6 +158,7 @@ accountApiRoutes.delete("/:id", async (c) => {
 
   // Cancel any pending token refresh timer to prevent leaks
   cancelTokenRefreshTimer(id)
+  cancelOAuthRefreshTimer(id)
 
   // Clear rate limit state for this account
   clearAccountRateLimitState(id)

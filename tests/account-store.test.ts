@@ -273,4 +273,41 @@ describe("account-store", () => {
     expect(state.accounts).toHaveLength(1)
     expect(state.accounts[0].cooldownUntil).toBeUndefined()
   })
+
+  test("loadAccounts preserves OAuth tokenEndpoint and redirectUri", async () => {
+    state.accounts = [
+      {
+        id: "xai-1",
+        label: "xai-account",
+        provider: "xai",
+        enabled: true,
+        priority: 0,
+        quotaState: "unknown",
+        createdAt: Date.now(),
+        credentials: {
+          accessToken: "xai-access",
+          refreshToken: "xai-refresh",
+        },
+        settings: {
+          tokenEndpoint: "https://auth.x.ai/oauth/token",
+          redirectUri: "http://127.0.0.1:56121/callback",
+          proxyUrl: "http://127.0.0.1:7890",
+        },
+      },
+    ]
+    await saveAccounts()
+
+    state.accounts = []
+    await loadAccounts()
+
+    expect(state.accounts).toHaveLength(1)
+    const loaded = state.accounts[0]
+    expect(loaded.provider).toBe("xai")
+    if (loaded.provider !== "xai") {
+      return
+    }
+    expect(loaded.settings?.tokenEndpoint).toBe("https://auth.x.ai/oauth/token")
+    expect(loaded.settings?.redirectUri).toBe("http://127.0.0.1:56121/callback")
+    expect(loaded.settings?.proxyUrl).toBe("http://127.0.0.1:7890")
+  })
 })
