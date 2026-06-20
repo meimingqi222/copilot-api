@@ -152,8 +152,39 @@ const i18n = {
       "accounts.oauth.authorize": "开始授权",
       "accounts.oauth.instruction":
         "请在浏览器中完成授权，完成后将自动添加账户。",
+      "accounts.oauth.manualInstruction":
+        "请在浏览器中完成授权，然后将回调地址或授权码粘贴到下方。",
       "accounts.oauth.openAuth": "打开授权页面",
+      "accounts.oauth.openVerification": "打开验证页面",
       "accounts.oauth.waiting": "等待授权完成...",
+      "accounts.oauth.callbackLabel": "回调地址或授权码",
+      "accounts.oauth.callbackPlaceholder":
+        "http://127.0.0.1:56121/callback?code=...&state=...",
+      "accounts.oauth.callbackHint":
+        "可粘贴完整回调 URL、查询参数，或页面显示的授权码。",
+      "accounts.oauth.callbackSubmit": "提交授权码",
+      "accounts.oauth.callbackSubmitting": "提交中...",
+      "accounts.oauth.callbackRequired": "请粘贴回调地址或授权码。",
+      "accounts.oauth.xaiCallbackLabel": "xAI 授权码",
+      "accounts.oauth.xaiCallbackPlaceholder": "code: xai_... 或直接粘贴授权码",
+      "accounts.oauth.xaiCallbackHint":
+        "xAI 授权完成后会在页面显示授权码，请复制后粘贴到这里。",
+      "accounts.oauth.xaiCallbackRequired": "请粘贴 xAI 授权码。",
+      "accounts.oauth.claudeCallbackLabel": "Claude 回调地址",
+      "accounts.oauth.claudeCallbackPlaceholder":
+        "http://localhost:54545/callback?code=...&state=...",
+      "accounts.oauth.claudeCallbackHint":
+        "授权后浏览器会跳转到 localhost，复制完整地址粘贴到这里。",
+      "accounts.oauth.codexCallbackLabel": "Codex 回调地址",
+      "accounts.oauth.codexCallbackPlaceholder":
+        "http://localhost:1455/auth/callback?code=...&state=...",
+      "accounts.oauth.codexCallbackHint":
+        "授权后浏览器会跳转到 localhost，复制完整地址粘贴到这里。",
+      "accounts.oauth.antigravityCallbackLabel": "Antigravity 回调地址",
+      "accounts.oauth.antigravityCallbackPlaceholder":
+        "http://localhost:51121/oauth-callback?code=...&state=...",
+      "accounts.oauth.antigravityCallbackHint":
+        "Google 授权后复制浏览器地址栏的完整回调 URL。",
       "accounts.oauth.success": "OAuth 账户添加成功！",
       "accounts.oauth.error": "OAuth 授权失败",
       "accounts.oauth.expired": "OAuth 授权已过期，请重试。",
@@ -625,8 +656,41 @@ const i18n = {
       "accounts.oauth.authorize": "Start Authorization",
       "accounts.oauth.instruction":
         "Complete authorization in your browser. The account will be added automatically.",
+      "accounts.oauth.manualInstruction":
+        "Complete authorization in your browser, then paste the callback URL or authorization code below.",
       "accounts.oauth.openAuth": "Open authorization page",
+      "accounts.oauth.openVerification": "Open verification page",
       "accounts.oauth.waiting": "Waiting for authorization...",
+      "accounts.oauth.callbackLabel": "Callback URL or authorization code",
+      "accounts.oauth.callbackPlaceholder":
+        "http://127.0.0.1:56121/callback?code=...&state=...",
+      "accounts.oauth.callbackHint":
+        "Paste the full callback URL, query string, or the code shown on the provider page.",
+      "accounts.oauth.callbackSubmit": "Submit authorization code",
+      "accounts.oauth.callbackSubmitting": "Submitting...",
+      "accounts.oauth.callbackRequired":
+        "Paste the callback URL or authorization code.",
+      "accounts.oauth.xaiCallbackLabel": "xAI authorization code",
+      "accounts.oauth.xaiCallbackPlaceholder":
+        "code: xai_... or paste the code directly",
+      "accounts.oauth.xaiCallbackHint":
+        "After xAI authorization, copy the code shown on the page and paste it here.",
+      "accounts.oauth.xaiCallbackRequired": "Paste the xAI authorization code.",
+      "accounts.oauth.claudeCallbackLabel": "Claude callback URL",
+      "accounts.oauth.claudeCallbackPlaceholder":
+        "http://localhost:54545/callback?code=...&state=...",
+      "accounts.oauth.claudeCallbackHint":
+        "After authorization, copy the full localhost callback URL from your browser.",
+      "accounts.oauth.codexCallbackLabel": "Codex callback URL",
+      "accounts.oauth.codexCallbackPlaceholder":
+        "http://localhost:1455/auth/callback?code=...&state=...",
+      "accounts.oauth.codexCallbackHint":
+        "After authorization, copy the full localhost callback URL from your browser.",
+      "accounts.oauth.antigravityCallbackLabel": "Antigravity callback URL",
+      "accounts.oauth.antigravityCallbackPlaceholder":
+        "http://localhost:51121/oauth-callback?code=...&state=...",
+      "accounts.oauth.antigravityCallbackHint":
+        "After Google authorization, paste the full callback URL from your browser.",
       "accounts.oauth.success": "OAuth account added successfully!",
       "accounts.oauth.error": "OAuth authorization failed",
       "accounts.oauth.expired":

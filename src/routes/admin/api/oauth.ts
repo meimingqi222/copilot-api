@@ -16,6 +16,7 @@ import {
   createAntigravityOAuthStart,
   exchangeAntigravityCodeForTokens,
 } from "~/services/oauth/antigravity"
+import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
 import {
   applyClaudeOAuthBundle,
   createClaudeOAuthStart,
@@ -27,10 +28,12 @@ import {
   exchangeCodexCodeForTokens,
 } from "~/services/oauth/codex"
 import {
+  bindOAuthFlowAbortSignal,
   getOAuthFlow,
   hasActiveOAuthFlowForProvider,
   pollOAuthFlow,
   registerOAuthFlow,
+  removeOAuthFlow,
   startAntigravityCallbackServer,
   startClaudeCallbackServer,
   startCodexCallbackServer,
@@ -296,6 +299,7 @@ async function exchangeKimiProviderTokens(
   deviceCode: Parameters<typeof pollKimiDeviceAuthorization>[0],
   deviceId: string,
   label: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const claim = tryBeginOAuthExchange(flowId)
   if (claim.kind === "complete") {
@@ -307,11 +311,10 @@ async function exchangeKimiProviderTokens(
 
   const flow = getOAuthFlow(flowId)
   const fetchOptions = flow ? flowFetchOptions(flow) : undefined
-  const bundle = await pollKimiDeviceAuthorization(
-    deviceCode,
-    deviceId,
-    fetchOptions,
-  )
+  const bundle = await pollKimiDeviceAuthorization(deviceCode, deviceId, {
+    ...fetchOptions,
+    signal,
+  })
   const account = createOAuthAccount("kimi", label)
   if (flow) {
     applyFlowSettingsToAccount(account, flow)
@@ -331,12 +334,14 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
   }
 
-  let body: { label?: string; proxyUrl?: string }
+  let body: { label?: string; proxyUrl?: string; manual?: boolean }
   try {
     body = await c.req.json()
   } catch {
     body = {}
   }
+
+  const manualCompletion = body.manual === true
 
   if (hasActiveOAuthFlowForProvider(provider)) {
     return c.json(
@@ -370,11 +375,21 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
       deviceId,
       proxyUrl,
     })
+    const abortSignal = bindOAuthFlowAbortSignal(flowId)
 
     void (async () => {
       try {
-        await exchangeKimiProviderTokens(flowId, deviceCode, deviceId, label)
+        await exchangeKimiProviderTokens(
+          flowId,
+          deviceCode,
+          deviceId,
+          label,
+          abortSignal,
+        )
       } catch (error: unknown) {
+        if (abortSignal.aborted) {
+          return
+        }
         updateOAuthFlow(flowId, {
           status: "error",
           error: error instanceof Error ? error.message : String(error),
@@ -406,28 +421,31 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
       proxyUrl,
     })
 
-    void (async () => {
-      try {
-        const callback = await startAntigravityCallbackServer(
-          flowId,
-          start.state,
-        )
-        if (!getOAuthFlow(flowId)) {
-          throw new Error("OAuth flow disappeared before token exchange")
+    if (!manualCompletion) {
+      void (async () => {
+        try {
+          const callback = await startAntigravityCallbackServer(
+            flowId,
+            start.state,
+          )
+          if (!getOAuthFlow(flowId)) {
+            throw new Error("OAuth flow disappeared before token exchange")
+          }
+          await exchangeAntigravityProviderTokens(callback.code, flowId)
+        } catch (error: unknown) {
+          updateOAuthFlow(flowId, {
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          })
         }
-        await exchangeAntigravityProviderTokens(callback.code, flowId)
-      } catch (error: unknown) {
-        updateOAuthFlow(flowId, {
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    })()
+      })()
+    }
 
     return c.json({
       flowId,
       status: "pending_auth",
       authUrl: start.authUrl,
+      manualCompletion,
       expiresIn: Math.floor(FLOW_TIMEOUT_MS / 1000),
     })
   }
@@ -490,25 +508,28 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     proxyUrl,
   })
 
-  void (async () => {
-    try {
-      const callback = await waitForPkceCallback(provider, flowId, oauthState)
-      if (!getOAuthFlow(flowId)) {
-        throw new Error("OAuth flow disappeared before token exchange")
+  if (!manualCompletion) {
+    void (async () => {
+      try {
+        const callback = await waitForPkceCallback(provider, flowId, oauthState)
+        if (!getOAuthFlow(flowId)) {
+          throw new Error("OAuth flow disappeared before token exchange")
+        }
+        await exchangePkceProviderTokens(provider, callback.code, flowId)
+      } catch (error: unknown) {
+        updateOAuthFlow(flowId, {
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        })
       }
-      await exchangePkceProviderTokens(provider, callback.code, flowId)
-    } catch (error: unknown) {
-      updateOAuthFlow(flowId, {
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  })()
+    })()
+  }
 
   return c.json({
     flowId,
     status: "pending_auth",
     authUrl,
+    manualCompletion,
     expiresIn: Math.floor(FLOW_TIMEOUT_MS / 1000),
   })
 })
@@ -525,7 +546,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
     )
   }
 
-  let body: { flowId?: string; code?: string }
+  let body: { flowId?: string; code?: string; callback?: string }
   try {
     body = await c.req.json()
   } catch {
@@ -533,9 +554,17 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
   }
 
   const flowId = body.flowId?.trim()
-  const code = body.code?.trim()
-  if (!flowId || !code) {
-    return c.json({ error: "flowId and code are required." }, 400)
+  const callbackInput = body.callback?.trim() || body.code?.trim()
+  if (!flowId || !callbackInput) {
+    return c.json({ error: "flowId and code (or callback) are required." }, 400)
+  }
+
+  const code = parseOAuthAuthorizationCode(callbackInput)
+  if (!code) {
+    return c.json(
+      { error: "Could not parse authorization code from callback input." },
+      400,
+    )
   }
 
   const flow = getOAuthFlow(flowId)
@@ -596,6 +625,37 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
     })
     return c.json({ error: message }, 502)
   }
+})
+
+oauthApiRoutes.post("/:provider/cancel", async (c) => {
+  const provider = c.req.param("provider")
+  if (!isOAuthProviderId(provider)) {
+    return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
+  }
+
+  let body: { flowId?: string }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "Invalid JSON payload." }, 400)
+  }
+
+  const flowId = body.flowId?.trim()
+  if (!flowId) {
+    return c.json({ error: "flowId is required." }, 400)
+  }
+
+  const flow = getOAuthFlow(flowId)
+  if (!flow || flow.provider !== provider) {
+    return c.json({ error: `Unknown ${provider} OAuth flow.` }, 404)
+  }
+
+  if (flow.status === "complete") {
+    return c.json({ status: "complete", accountId: flow.accountId })
+  }
+
+  removeOAuthFlow(flowId)
+  return c.json({ status: "cancelled" })
 })
 
 oauthApiRoutes.get("/:provider/poll/:flowId", (c) => {

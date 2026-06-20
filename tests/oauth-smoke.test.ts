@@ -6,8 +6,8 @@ import type { OAuthAccount } from "~/lib/accounts"
 
 import { isOAuthAccount } from "~/lib/accounts"
 import { PATHS } from "~/lib/paths"
-import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
+import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { state } from "~/lib/state"
 import { server } from "~/server"
 import { resetOAuthFlowsForTest } from "~/services/oauth/flows"
@@ -21,17 +21,23 @@ const testDir = path.join(process.cwd(), ".tmp-oauth-smoke")
 const testAccountsPath = path.join(testDir, "accounts.json")
 const testOAuthFlowsPath = path.join(testDir, "pending_oauth_flows.json")
 
-async function adminJson(
-  url: string,
-  init?: RequestInit,
-): Promise<Response> {
+function fetchTarget(url: string | URL | Request): string {
+  if (typeof url === "string") {
+    return url
+  }
+  if (url instanceof URL) {
+    return url.toString()
+  }
+  return url.url
+}
+
+async function adminJson(url: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  headers.set("content-type", "application/json")
   return await server.fetch(
     new Request(url, {
       ...init,
-      headers: {
-        "content-type": "application/json",
-        ...init?.headers,
-      },
+      headers,
     }),
   )
 }
@@ -93,7 +99,7 @@ describe("OAuth smoke — admin API", () => {
 
   test("POST /admin/api/oauth/kimi/start accepts proxyUrl and returns device flow", async () => {
     globalThis.fetch = ((url: string | URL | Request) => {
-      const target = String(url)
+      const target = fetchTarget(url)
       if (target.includes("device_authorization")) {
         return Promise.resolve(
           new Response(
@@ -144,7 +150,7 @@ describe("OAuth smoke — admin API", () => {
 
   test("POST /admin/api/oauth/:provider/start rejects concurrent same-provider flow", async () => {
     globalThis.fetch = ((url: string | URL | Request) => {
-      const target = String(url)
+      const target = fetchTarget(url)
       if (target.includes("device_authorization")) {
         return Promise.resolve(
           new Response(
@@ -161,10 +167,9 @@ describe("OAuth smoke — admin API", () => {
       }
       if (target.includes("token")) {
         return Promise.resolve(
-          new Response(
-            JSON.stringify({ error: "authorization_pending" }),
-            { status: 200 },
-          ),
+          new Response(JSON.stringify({ error: "authorization_pending" }), {
+            status: 200,
+          }),
         )
       }
       return Promise.resolve(new Response("{}", { status: 404 }))
@@ -210,6 +215,212 @@ describe("OAuth smoke — admin API", () => {
     expect(mismatch.status).toBe(404)
   })
 
+  test("POST /admin/api/oauth/xai/start with manual=true skips duplicate flow lock after cancel", async () => {
+    globalThis.fetch = ((url: string | URL | Request) => {
+      const target = fetchTarget(url)
+      if (target.includes(".well-known/openid-configuration")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              authorization_endpoint: "https://auth.x.ai/oauth/authorize",
+              token_endpoint: "https://auth.x.ai/oauth/token",
+            }),
+            { status: 200 },
+          ),
+        )
+      }
+      return Promise.resolve(new Response("{}", { status: 404 }))
+    }) as unknown as typeof fetch
+
+    const start = await adminJson(
+      "http://localhost/admin/api/oauth/xai/start",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          label: "xai-smoke",
+          manual: true,
+        }),
+      },
+    )
+    expect(start.status).toBe(200)
+    const body = (await start.json()) as {
+      flowId: string
+      manualCompletion: boolean
+      authUrl: string
+    }
+    expect(body.manualCompletion).toBe(true)
+    expect(body.authUrl).toContain("auth.x.ai")
+
+    const duplicate = await adminJson(
+      "http://localhost/admin/api/oauth/xai/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ label: "xai-smoke-2", manual: true }),
+      },
+    )
+    expect(duplicate.status).toBe(409)
+
+    const cancel = await adminJson(
+      "http://localhost/admin/api/oauth/xai/cancel",
+      {
+        method: "POST",
+        body: JSON.stringify({ flowId: body.flowId }),
+      },
+    )
+    expect(cancel.status).toBe(200)
+
+    const restart = await adminJson(
+      "http://localhost/admin/api/oauth/xai/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ label: "xai-smoke-3", manual: true }),
+      },
+    )
+    expect(restart.status).toBe(200)
+  })
+
+  test("POST /admin/api/oauth/claude/complete exchanges manual callback", async () => {
+    globalThis.fetch = ((url: string | URL | Request) => {
+      const target = fetchTarget(url)
+      if (target.includes("anthropic.com/v1/oauth/token")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "claude-access",
+              refresh_token: "claude-refresh",
+              expires_in: 3600,
+            }),
+            { status: 200 },
+          ),
+        )
+      }
+      return Promise.resolve(new Response("{}", { status: 404 }))
+    }) as unknown as typeof fetch
+
+    const start = await adminJson(
+      "http://localhost/admin/api/oauth/claude/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ label: "claude-complete", manual: true }),
+      },
+    )
+    const { flowId } = (await start.json()) as { flowId: string }
+
+    const complete = await adminJson(
+      "http://localhost/admin/api/oauth/claude/complete",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          flowId,
+          callback:
+            "http://localhost:54545/callback?code=claude-code-1&state=state-1",
+        }),
+      },
+    )
+    expect(complete.status).toBe(200)
+    const body = (await complete.json()) as { status: string }
+    expect(body.status).toBe("complete")
+    expect(state.accounts).toHaveLength(1)
+    expect(state.accounts[0]?.provider).toBe("claude")
+  })
+
+  test("POST /admin/api/oauth/codex/complete exchanges manual callback", async () => {
+    globalThis.fetch = ((url: string | URL | Request) => {
+      const target = fetchTarget(url)
+      if (target.includes("auth.openai.com/oauth/token")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "codex-access",
+              refresh_token: "codex-refresh",
+              expires_in: 3600,
+            }),
+            { status: 200 },
+          ),
+        )
+      }
+      return Promise.resolve(new Response("{}", { status: 404 }))
+    }) as unknown as typeof fetch
+
+    const start = await adminJson(
+      "http://localhost/admin/api/oauth/codex/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ label: "codex-complete", manual: true }),
+      },
+    )
+    const { flowId } = (await start.json()) as { flowId: string }
+
+    const complete = await adminJson(
+      "http://localhost/admin/api/oauth/codex/complete",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          flowId,
+          callback:
+            "http://localhost:1455/auth/callback?code=codex-code-1&state=state-1",
+        }),
+      },
+    )
+    expect(complete.status).toBe(200)
+    expect(state.accounts[0]?.provider).toBe("codex")
+  })
+
+  test("POST /admin/api/oauth/kimi/cancel allows restarting device flow", async () => {
+    globalThis.fetch = ((url: string | URL | Request) => {
+      const target = fetchTarget(url)
+      if (target.includes("device_authorization")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              device_code: "device-cancel-1",
+              user_code: "KIMI-1234",
+              verification_uri_complete: "https://auth.kimi.com/device",
+              expires_in: 600,
+              interval: 5,
+            }),
+            { status: 200 },
+          ),
+        )
+      }
+      if (target.includes("auth.kimi.com/api/oauth/token")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: "authorization_pending" }), {
+            status: 200,
+          }),
+        )
+      }
+      return Promise.resolve(new Response("{}", { status: 404 }))
+    }) as unknown as typeof fetch
+
+    const start = await adminJson(
+      "http://localhost/admin/api/oauth/kimi/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ label: "kimi-cancel" }),
+      },
+    )
+    const { flowId } = (await start.json()) as { flowId: string }
+
+    const cancel = await adminJson(
+      "http://localhost/admin/api/oauth/kimi/cancel",
+      {
+        method: "POST",
+        body: JSON.stringify({ flowId }),
+      },
+    )
+    expect(cancel.status).toBe(200)
+
+    const restart = await adminJson(
+      "http://localhost/admin/api/oauth/kimi/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ label: "kimi-cancel-2" }),
+      },
+    )
+    expect(restart.status).toBe(200)
+  })
+
   test("POST /admin/api/oauth/claude/start returns auth URL", async () => {
     const response = await adminJson(
       "http://localhost/admin/api/oauth/claude/start",
@@ -235,7 +446,9 @@ describe("OAuth smoke — admin API", () => {
 
   test("POST /admin/api/accounts/import-cpa imports OAuth account", async () => {
     globalThis.fetch = (() =>
-      Promise.resolve(new Response("{}", { status: 404 }))) as unknown as typeof fetch
+      Promise.resolve(
+        new Response("{}", { status: 404 }),
+      )) as unknown as typeof fetch
 
     const response = await adminJson(
       "http://localhost/admin/api/accounts/import-cpa",
@@ -258,14 +471,14 @@ describe("OAuth smoke — admin API", () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as {
       imported: number
-      details: { imported: string[] }
+      details: { imported: Array<string> }
     }
     expect(body.imported).toBe(1)
     expect(state.accounts).toHaveLength(1)
 
-    const account = state.accounts[0]
-    expect(account?.provider).toBe("claude")
-    expect(isOAuthAccount(account!) && account.settings?.proxyUrl).toBe(
+    const [account] = state.accounts
+    expect(account.provider).toBe("claude")
+    expect(isOAuthAccount(account) && account.settings?.proxyUrl).toBe(
       "http://127.0.0.1:7890",
     )
     expect(
@@ -275,7 +488,9 @@ describe("OAuth smoke — admin API", () => {
 
   test("PUT /admin/api/accounts/:id updates OAuth proxyUrl", async () => {
     globalThis.fetch = (() =>
-      Promise.resolve(new Response("{}", { status: 404 }))) as unknown as typeof fetch
+      Promise.resolve(
+        new Response("{}", { status: 404 }),
+      )) as unknown as typeof fetch
 
     await adminJson("http://localhost/admin/api/accounts/import-cpa", {
       method: "POST",
@@ -299,7 +514,7 @@ describe("OAuth smoke — admin API", () => {
 
     expect(response.status).toBe(200)
     const updated = state.accounts[0]
-    expect(isOAuthAccount(updated!) && updated.settings?.proxyUrl).toBe(
+    expect(isOAuthAccount(updated) && updated.settings?.proxyUrl).toBe(
       "http://127.0.0.1:8888",
     )
   })

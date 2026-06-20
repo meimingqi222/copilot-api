@@ -769,18 +769,44 @@
               <div class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-6"></div>
               <template x-if="oauthFlowData?.authUrl">
                 <div>
-                  <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.oauth.instruction')"></p>
+                  <p class="text-body text-[var(--apple-text-secondary)] mb-4"
+                     x-text="needsManualOAuthCallback() ? t('accounts.oauth.manualInstruction') : t('accounts.oauth.instruction')"></p>
                   <a :href="oauthFlowData.authUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary inline-flex items-center gap-2">
                     <i data-lucide="external-link" class="w-4 h-4"></i>
                     <span x-text="t('accounts.oauth.openAuth')"></span>
                   </a>
-                  <p class="text-caption text-[var(--apple-text-secondary)] mt-6" x-text="t('accounts.oauth.waiting')"></p>
+                  <template x-if="needsManualOAuthCallback()">
+                    <div class="mt-6 text-left space-y-3">
+                      <div>
+                        <label class="form-label" x-text="oauthCallbackLabel()"></label>
+                        <input
+                          x-model="oauthCallbackInput"
+                          type="text"
+                          class="form-input font-mono text-sm"
+                          :placeholder="oauthCallbackPlaceholder()"
+                        >
+                        <p class="text-caption text-[var(--apple-text-secondary)] mt-2" x-text="oauthCallbackHint()"></p>
+                      </div>
+                      <button
+                        @click="submitOAuthCallback()"
+                        class="btn btn-primary w-full"
+                        :disabled="oauthCallbackSubmitting || !oauthCallbackInput.trim()"
+                        x-text="oauthCallbackSubmitting ? t('accounts.oauth.callbackSubmitting') : t('accounts.oauth.callbackSubmit')"
+                      ></button>
+                    </div>
+                  </template>
+                  <p class="text-caption text-[var(--apple-text-secondary)] mt-6"
+                     x-show="!needsManualOAuthCallback()"
+                     x-text="t('accounts.oauth.waiting')"></p>
                 </div>
               </template>
               <template x-if="!oauthFlowData?.authUrl">
                 <div>
                   <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.deviceFlow.instruction')"></p>
-                  <a :href="(oauthFlowData?.verificationUri || deviceFlowData?.verificationUri)" target="_blank" class="text-[var(--apple-blue)] hover:underline text-body" x-text="(oauthFlowData?.verificationUri || deviceFlowData?.verificationUri)"></a>
+                  <a :href="(oauthFlowData?.verificationUri || deviceFlowData?.verificationUri)" target="_blank" rel="noopener noreferrer" class="btn btn-secondary inline-flex items-center gap-2">
+                    <i data-lucide="external-link" class="w-4 h-4"></i>
+                    <span x-text="t('accounts.oauth.openVerification')"></span>
+                  </a>
                   <p class="text-3xl font-mono font-bold my-6 tracking-widest" x-text="(oauthFlowData?.userCode || deviceFlowData?.userCode)"></p>
                   <p class="text-caption text-[var(--apple-text-secondary)]" x-text="t('accounts.deviceFlow.waiting')"></p>
                 </div>

@@ -1,3 +1,10 @@
+const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
+  "claude",
+  "codex",
+  "xai",
+  "antigravity",
+])
+
 function accountsView() {
   return {
     loading: false,
@@ -25,6 +32,8 @@ function accountsView() {
     deviceFlowStep: "input",
     deviceFlowData: null,
     oauthFlowData: null,
+    oauthCallbackInput: "",
+    oauthCallbackSubmitting: false,
     pollTimer: null,
     refreshingQuotaId: null,
     mimoCookieInput: "",
@@ -172,22 +181,65 @@ function accountsView() {
       }
     },
 
+    needsManualOAuthCallback(provider = this.newAccount.provider) {
+      return MANUAL_OAUTH_CALLBACK_PROVIDERS.has(provider)
+    },
+
+    oauthCallbackLabel() {
+      const provider = this.newAccount.provider
+      const key = `accounts.oauth.${provider}CallbackLabel`
+      return I18n.t(key) || I18n.t("accounts.oauth.callbackLabel")
+    },
+
+    oauthCallbackPlaceholder() {
+      const provider = this.newAccount.provider
+      const key = `accounts.oauth.${provider}CallbackPlaceholder`
+      return I18n.t(key) || I18n.t("accounts.oauth.callbackPlaceholder")
+    },
+
+    oauthCallbackHint() {
+      const provider = this.newAccount.provider
+      const key = `accounts.oauth.${provider}CallbackHint`
+      return I18n.t(key) || I18n.t("accounts.oauth.callbackHint")
+    },
+
+    async cancelOAuthFlow() {
+      const provider = this.newAccount.provider
+      const flowId = this.oauthFlowData?.flowId
+      if (!flowId || this.selectedProvider()?.authMode !== "oauth") {
+        return
+      }
+      try {
+        await API.oauth.cancel(provider, { flowId })
+      } catch {
+        // Ignore cancel errors.
+      }
+    },
+
     openAddModal() {
       this.newAccount = this.defaultNewAccount()
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
       this.oauthFlowData = null
+      this.oauthCallbackInput = ""
+      this.oauthCallbackSubmitting = false
       this.showAddModal = true
       if (this.pollTimer) clearTimeout(this.pollTimer)
       this.pollTimer = null
     },
 
-    closeAddModal() {
+    async closeAddModal() {
+      if (this.deviceFlowStep === "pending") {
+        await this.cancelOAuthFlow()
+      }
+
       this.showAddModal = false
       this.newAccount = this.defaultNewAccount()
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
       this.oauthFlowData = null
+      this.oauthCallbackInput = ""
+      this.oauthCallbackSubmitting = false
       if (this.pollTimer) {
         clearTimeout(this.pollTimer)
         this.pollTimer = null
@@ -199,7 +251,13 @@ function accountsView() {
       try {
         const authMode = this.selectedProvider()?.authMode
         if (authMode === "oauth") {
-          await this.startOAuthFlow()
+          try {
+            await this.startOAuthFlow()
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : I18n.t("error.create")
+            this.showToast(message, "error")
+          }
           return
         }
 
@@ -281,19 +339,61 @@ function accountsView() {
     async startOAuthFlow() {
       const provider = this.newAccount.provider
       const proxyUrl = this.newAccount.settings?.proxyUrl?.trim()
+      const manual = this.needsManualOAuthCallback(provider)
       const res = await API.oauth.start(provider, {
         label: this.newAccount.label.trim() || undefined,
         proxyUrl: proxyUrl || undefined,
+        manual,
       })
       if (!res?.flowId) {
         throw new Error("Invalid OAuth flow response")
       }
       this.oauthFlowData = res
+      this.oauthCallbackInput = ""
       this.deviceFlowStep = "pending"
       if (res.authUrl) {
         globalThis.open(res.authUrl, "_blank", "noopener,noreferrer")
+      } else if (res.verificationUri) {
+        globalThis.open(res.verificationUri, "_blank", "noopener,noreferrer")
       }
       this.pollOAuthFlow()
+    },
+
+    async submitOAuthCallback() {
+      const provider = this.newAccount.provider
+      const flowId = this.oauthFlowData?.flowId
+      const callback = this.oauthCallbackInput.trim()
+      if (!flowId || !callback) {
+        this.showToast(
+          provider === "xai" ?
+            I18n.t("accounts.oauth.xaiCallbackRequired")
+          : I18n.t("accounts.oauth.callbackRequired"),
+          "error",
+        )
+        return
+      }
+
+      this.oauthCallbackSubmitting = true
+      try {
+        const res = await API.oauth.complete(provider, {
+          flowId,
+          callback,
+        })
+        if (res.status === "complete") {
+          this.deviceFlowStep = "success"
+          await this.load()
+          return
+        }
+        throw new Error(res.error || "OAuth completion failed")
+      } catch (error) {
+        const message =
+          error instanceof Error ?
+            error.message
+          : I18n.t("accounts.oauth.error")
+        this.showToast(message, "error")
+      } finally {
+        this.oauthCallbackSubmitting = false
+      }
     },
 
     pollOAuthFlow() {
@@ -313,12 +413,16 @@ function accountsView() {
             return
           }
           if (res.status === "error") {
+            await this.cancelOAuthFlow()
             this.deviceFlowStep = "input"
+            this.oauthFlowData = null
             this.showToast(res.error || I18n.t("accounts.oauth.error"), "error")
             return
           }
           if (res.status === "expired") {
+            await this.cancelOAuthFlow()
             this.deviceFlowStep = "input"
+            this.oauthFlowData = null
             this.showToast(I18n.t("accounts.oauth.expired"), "error")
             return
           }
