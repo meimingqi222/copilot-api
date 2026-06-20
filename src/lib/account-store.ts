@@ -8,6 +8,7 @@ import type {
   AccountQuotaState,
   CodebuffAccount,
   CopilotAccount,
+  OAuthAccount,
   WindsurfAccount,
   MimoAccount,
 } from "~/lib/accounts"
@@ -29,8 +30,12 @@ import {
 import { GITHUB_API_BASE_URL, githubApiHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { PATHS } from "~/lib/paths"
-import { isProviderId } from "~/lib/provider-config"
+import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import { state } from "~/lib/state"
+import {
+  cancelAllOAuthRefreshTimers,
+  scheduleOAuthRefreshForAllAccounts,
+} from "~/services/oauth/refresh-scheduler"
 
 const QUOTA_EXHAUSTION_THRESHOLD = 5
 const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
@@ -44,6 +49,7 @@ function defaultProvider(provider?: AccountProvider): AccountProvider {
 
 export async function loadAccounts(): Promise<void> {
   clearAllAccountTimers()
+  cancelAllOAuthRefreshTimers()
   const rawAccounts = await tryReadAccountsFile()
   if (rawAccounts.length > 0) {
     state.accounts = []
@@ -76,6 +82,7 @@ export async function loadAccounts(): Promise<void> {
       await saveAccounts()
       consola.info("Persisted migrated account schema to accounts.json")
     }
+    scheduleOAuthRefreshForAllAccounts()
     return
   }
 
@@ -207,14 +214,25 @@ function serializeAccount(account: Account): Record<string, unknown> {
     }
   }
 
+  if (isOAuthProviderId(account.provider)) {
+    const oauthAccount = account as OAuthAccount
+    return {
+      ...base,
+      credentials: oauthAccount.credentials ?? {},
+      settings: oauthAccount.settings ?? {},
+      cpaMetadata: oauthAccount.cpaMetadata,
+    }
+  }
+
+  const mimoAccount = account as MimoAccount
   return {
     ...base,
     credentials: {
-      serviceToken: getMimoServiceToken(account),
-      xiaomichatbotPh: getMimoPh(account),
-      mimoWsToken: account.credentials?.mimoWsToken,
+      serviceToken: getMimoServiceToken(mimoAccount),
+      xiaomichatbotPh: getMimoPh(mimoAccount),
+      mimoWsToken: mimoAccount.credentials?.mimoWsToken,
     },
-    settings: account.settings ?? {},
+    settings: mimoAccount.settings ?? {},
   }
 }
 
@@ -633,6 +651,51 @@ function migrateMimoAccount(
   }
 }
 
+interface MigrateOAuthAccountInput {
+  base: MigratedAccountBase
+  provider: OAuthAccount["provider"]
+  existingCredentials?: Record<string, unknown>
+  existingSettings?: Record<string, unknown>
+  existingRuntime?: Account["runtimeState"]
+  cpaMetadata?: Record<string, unknown>
+}
+
+function migrateOAuthAccount(input: MigrateOAuthAccountInput): OAuthAccount {
+  const {
+    base,
+    provider,
+    existingCredentials,
+    existingSettings,
+    existingRuntime,
+    cpaMetadata,
+  } = input
+  return {
+    ...base,
+    provider,
+    credentials: {
+      accessToken: pickString(existingCredentials?.accessToken, undefined),
+      refreshToken: pickString(existingCredentials?.refreshToken, undefined),
+      idToken: pickString(existingCredentials?.idToken, undefined),
+      expiresAt: pickNumber(existingCredentials?.expiresAt, undefined),
+      accountId: pickString(existingCredentials?.accountId, undefined),
+      projectId: pickString(existingCredentials?.projectId, undefined),
+      deviceId: pickString(existingCredentials?.deviceId, undefined),
+      apiKey: pickString(existingCredentials?.apiKey, undefined),
+      email: pickString(existingCredentials?.email, undefined),
+    },
+    settings: {
+      baseUrl: pickString(existingSettings?.baseUrl, undefined),
+      proxyUrl: pickString(existingSettings?.proxyUrl, undefined),
+      modelPrefix: pickString(existingSettings?.modelPrefix, undefined),
+      cpaSourcePath: pickString(existingSettings?.cpaSourcePath, undefined),
+      tokenEndpoint: pickString(existingSettings?.tokenEndpoint, undefined),
+      redirectUri: pickString(existingSettings?.redirectUri, undefined),
+    },
+    runtimeState: existingRuntime,
+    cpaMetadata,
+  }
+}
+
 function migrateAccountInternal(account: Record<string, unknown>): Account {
   const acc = normalizeLegacyAccount(account)
   const base = buildMigratedAccountBase(acc)
@@ -671,6 +734,17 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
       existingSettings,
       existingRuntime,
     )
+  }
+
+  if (isOAuthProviderId(provider)) {
+    return migrateOAuthAccount({
+      base,
+      provider,
+      existingCredentials,
+      existingSettings,
+      existingRuntime,
+      cpaMetadata: acc.cpaMetadata as Record<string, unknown> | undefined,
+    })
   }
 
   return migrateMimoAccount(

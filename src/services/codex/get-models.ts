@@ -1,0 +1,86 @@
+import type { Account, AccountModel } from "~/lib/accounts"
+
+import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
+import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
+import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
+
+import { buildCodexHeaders } from "./headers"
+
+interface CodexModelPayload {
+  slug?: string
+  id?: string
+  model?: string
+  name?: string
+  display_name?: string
+  displayName?: string
+}
+
+function parseCodexModelId(entry: CodexModelPayload): string | undefined {
+  const candidate = entry.slug ?? entry.id ?? entry.model
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    return undefined
+  }
+  return canonicalNativeModelId(candidate.trim())
+}
+
+export async function getCodexModelsForAccount(
+  account: Account,
+  signal?: AbortSignal,
+): Promise<Array<AccountModel>> {
+  if (!isOAuthAccount(account) || account.provider !== "codex") {
+    return []
+  }
+
+  const accessToken = account.credentials?.accessToken
+  if (!accessToken) {
+    return []
+  }
+
+  const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/models`)
+  url.searchParams.set("client_version", "0.135.0")
+
+  const response = await executeUpstreamProxyCall(account, {
+    method: "GET",
+    url: url.toString(),
+    headers: buildCodexHeaders(account, accessToken),
+    signal,
+  })
+
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(
+      `Codex models request failed (${response.statusCode}): ${response.body.slice(0, 200)}`,
+    )
+  }
+
+  let payload: { models?: Array<CodexModelPayload> }
+  try {
+    payload = JSON.parse(response.body) as { models?: Array<CodexModelPayload> }
+  } catch {
+    throw new Error("Codex models response was not valid JSON")
+  }
+
+  const seen = new Set<string>()
+  const models: Array<AccountModel> = []
+  for (const entry of payload.models ?? []) {
+    const id = parseCodexModelId(entry)
+    if (!id || seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+    models.push({
+      id,
+      name: entry.display_name ?? entry.displayName ?? entry.name ?? id,
+      vendor: "openai",
+      pickerEnabled: true,
+      supportedEndpoints: ["/v1/responses"],
+      provider: "codex",
+    })
+  }
+
+  if (models.length === 0) {
+    throw new Error("Codex models response did not include any models")
+  }
+
+  return models
+}

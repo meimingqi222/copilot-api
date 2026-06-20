@@ -41,7 +41,10 @@ export async function delegateChatToNativeAdapter(
     throw new Error(`Protocol "${protocol}" does not support chat completions`)
   }
 
-  const nativeModelId = parseModelReference(payload.model).nativeModelId
+  const nativeModelId = parseModelReference(
+    payload.model,
+    account,
+  ).nativeModelId
   const target: RouteTarget = {
     connectionId: account.id,
     connectionName: account.label,
@@ -85,7 +88,10 @@ export async function delegateResponsesToNativeAdapter(
     throw new Error(`Protocol "${protocol}" does not support responses`)
   }
 
-  const nativeModelId = parseModelReference(payload.model).nativeModelId
+  const nativeModelId = parseModelReference(
+    payload.model,
+    account,
+  ).nativeModelId
   const target: RouteTarget = {
     connectionId: account.id,
     connectionName: account.label,
@@ -128,7 +134,10 @@ export async function delegateEmbeddingsToNativeAdapter(
     throw new Error(`Protocol "${protocol}" does not support embeddings`)
   }
 
-  const nativeModelId = parseModelReference(payload.model).nativeModelId
+  const nativeModelId = parseModelReference(
+    payload.model,
+    account,
+  ).nativeModelId
   const target: RouteTarget = {
     connectionId: account.id,
     connectionName: account.label,
@@ -171,7 +180,10 @@ export async function delegateMessagesToNativeAdapter(
     throw new Error(`Protocol "${protocol}" does not support messages`)
   }
 
-  const nativeModelId = parseModelReference(payload.model).nativeModelId
+  const nativeModelId = parseModelReference(
+    payload.model,
+    account,
+  ).nativeModelId
   const target: RouteTarget = {
     connectionId: account.id,
     connectionName: account.label,

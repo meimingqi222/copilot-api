@@ -1,6 +1,6 @@
-import type { ProviderId } from "~/lib/provider-config"
+import type { OAuthProviderId, ProviderId } from "~/lib/provider-config"
 
-import { isProviderId } from "~/lib/provider-config"
+import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import { state } from "~/lib/state"
 
 export type AccountProvider = ProviderId
@@ -13,6 +13,8 @@ export interface AccountRuntimeState {
   windsurfJwtFetchedAt?: number
   authStatus?: "ready" | "pending" | "error"
   lastError?: string
+  lastRefreshAt?: number
+  planType?: string
 }
 
 export interface CopilotAccountCredentials {
@@ -90,11 +92,40 @@ export interface MimoAccount extends BaseAccount {
   }
 }
 
+export interface OAuthAccountCredentials {
+  accessToken?: string
+  refreshToken?: string
+  idToken?: string
+  expiresAt?: number
+  accountId?: string
+  projectId?: string
+  deviceId?: string
+  apiKey?: string
+  email?: string
+}
+
+export interface OAuthAccountSettings {
+  baseUrl?: string
+  proxyUrl?: string
+  modelPrefix?: string
+  cpaSourcePath?: string
+  tokenEndpoint?: string
+  redirectUri?: string
+}
+
+export interface OAuthAccount extends BaseAccount {
+  provider: OAuthProviderId
+  credentials?: OAuthAccountCredentials
+  settings?: OAuthAccountSettings
+  cpaMetadata?: Record<string, unknown>
+}
+
 export type Account =
   | CopilotAccount
   | CodebuffAccount
   | WindsurfAccount
   | MimoAccount
+  | OAuthAccount
 
 export interface AccountModel {
   id: string
@@ -116,6 +147,8 @@ export interface QuotaSnapshot {
   completionsRemaining?: number
   completionsTotal?: number
   unlimited: boolean
+  provider?: OAuthProviderId | "copilot"
+  details?: Record<string, unknown>
 }
 
 function defaultProvider(provider?: AccountProvider): AccountProvider {
@@ -390,11 +423,43 @@ export function getMimoSettings(account: Account) {
   }
 }
 
-export function canonicalModelId(modelId: string): string {
-  const parsed = parseModelReference(modelId)
-  return parsed.provider ?
-      `${parsed.provider}/${parsed.nativeModelId}`
-    : parsed.nativeModelId
+export function getAccountModelPrefix(account: Account): string {
+  if (isOAuthAccount(account)) {
+    const custom = account.settings?.modelPrefix?.trim()
+    if (custom) {
+      return custom
+    }
+    return account.provider
+  }
+  return account.provider
+}
+
+export function buildAccountModelAliases(
+  account: Account,
+  nativeModelId: string,
+): Array<string> {
+  const prefix = getAccountModelPrefix(account)
+  const aliases = [nativeModelId, `${prefix}/${nativeModelId}`]
+  if (isOAuthAccount(account) && prefix !== account.provider) {
+    aliases.push(`${account.provider}/${nativeModelId}`)
+  }
+  return aliases
+}
+
+export function canonicalModelId(modelId: string, account?: Account): string {
+  const trimmed = modelId.trim()
+  const parsed = parseModelReference(trimmed, account)
+  const slashIndex = trimmed.indexOf("/")
+  if (account && slashIndex > 0) {
+    const prefix = trimmed.slice(0, slashIndex)
+    if (getAccountModelPrefix(account).toLowerCase() === prefix.toLowerCase()) {
+      return `${getAccountModelPrefix(account)}/${parsed.nativeModelId}`
+    }
+  }
+  if (parsed.provider) {
+    return `${parsed.provider}/${parsed.nativeModelId}`
+  }
+  return parsed.nativeModelId
 }
 
 export function canonicalNativeModelId(modelId: string): string {
@@ -405,24 +470,103 @@ export function canonicalNativeModelId(modelId: string): string {
   return normalized
 }
 
-export function parseModelReference(modelId: string): {
+export function parseModelReference(
+  modelId: string,
+  account?: Account,
+): {
   provider?: AccountProvider
   nativeModelId: string
 } {
   const trimmed = modelId.trim()
   const slashIndex = trimmed.indexOf("/")
   if (slashIndex > 0) {
-    const maybeProvider = trimmed.slice(0, slashIndex).toLowerCase()
+    const prefix = trimmed.slice(0, slashIndex)
+    const rest = trimmed.slice(slashIndex + 1)
+    const maybeProvider = prefix.toLowerCase()
     if (isProviderId(maybeProvider)) {
       return {
         provider: maybeProvider,
-        nativeModelId: canonicalNativeModelId(trimmed.slice(slashIndex + 1)),
+        nativeModelId: canonicalNativeModelId(rest),
+      }
+    }
+    if (
+      account
+      && getAccountModelPrefix(account).toLowerCase() === maybeProvider
+    ) {
+      return {
+        nativeModelId: canonicalNativeModelId(rest),
       }
     }
   }
   return {
     nativeModelId: canonicalNativeModelId(trimmed),
   }
+}
+
+export function isOAuthAccount(account: Account): account is OAuthAccount {
+  return isOAuthProviderId(account.provider)
+}
+
+export function getOAuthAccessToken(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.credentials?.accessToken
+}
+
+export function getOAuthRefreshToken(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.credentials?.refreshToken
+}
+
+export function getOAuthApiKey(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.credentials?.apiKey
+}
+
+export function getOAuthProxyUrl(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.settings?.proxyUrl
+}
+
+export function getOAuthDeviceId(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.credentials?.deviceId
+}
+
+export function getOAuthAccountId(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.credentials?.accountId
+}
+
+export function setOAuthCredentials(
+  account: Account,
+  patch: Partial<NonNullable<OAuthAccount["credentials"]>>,
+): void {
+  if (!isOAuthAccount(account)) {
+    return
+  }
+  account.credentials = {
+    ...account.credentials,
+    ...patch,
+  }
+}
+
+export function getOAuthProjectId(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) {
+    return undefined
+  }
+  return account.credentials?.projectId
 }
 
 export function addAccount(account: Account): void {

@@ -84,19 +84,19 @@ export const requestLogger = async (c: Context, next: Next) => {
       }
     }
 
-    // Persist stats to SQLite for request counting
+    // Persist stats to SQLite after the response is sent.
     if (accountId) {
-      try {
-        if (status >= 400) {
-          // Atomically increment both requests and errors in a single SQL statement
-          statsStore.incrementRequestAndError(accountId)
-        } else {
-          statsStore.incrementRequests(accountId)
+      queueMicrotask(() => {
+        try {
+          if (status >= 400) {
+            statsStore.incrementRequestAndError(accountId)
+          } else {
+            statsStore.incrementRequests(accountId)
+          }
+        } catch {
+          consola.debug("Failed to persist stats")
         }
-      } catch {
-        // Stats persistence failure should not affect request flow
-        consola.debug("Failed to persist stats")
-      }
+      })
     }
   }
 }

@@ -74,3 +74,43 @@ quotaApiRoutes.post("/refresh", async (c) => {
     errors: errors.length > 0 ? errors : undefined,
   })
 })
+
+quotaApiRoutes.post("/:id/refresh", async (c) => {
+  initializeProviderRegistry()
+  const id = c.req.param("id")
+  const account = state.accounts.find((item) => item.id === id)
+  if (!account) {
+    return c.json({ error: "Account not found." }, 404)
+  }
+
+  const runtime = getProviderRuntime(account.provider)
+  if (!runtime.supports(account, "quota")) {
+    return c.json({ error: "Quota is not supported for this provider." }, 400)
+  }
+
+  try {
+    if (runtime.refreshQuota) {
+      await runtime.refreshQuota(account)
+    } else if (account.provider === "copilot") {
+      await refreshQuotaForAccount(account)
+    } else {
+      return c.json({ error: "Quota refresh is not available." }, 400)
+    }
+    consola.info(`Quota refreshed for account "${account.label}"`)
+    return c.json({
+      success: true,
+      id: account.id,
+      quotaInfo: account.quotaInfo ?? null,
+      quotaState: account.quotaState ?? "unknown",
+    })
+  } catch (err) {
+    consola.warn(`Failed to refresh quota for account "${account.label}":`, err)
+    return c.json(
+      {
+        error: "Failed to refresh quota.",
+        details: String(err),
+      },
+      502,
+    )
+  }
+})

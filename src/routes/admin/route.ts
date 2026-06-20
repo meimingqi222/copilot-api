@@ -15,6 +15,7 @@ import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
 import { dashboardApiRoutes } from "./api/dashboard"
 import { guardApiRoutes } from "./api/guard"
 import { logApiRoutes } from "./api/logs"
+import { oauthApiRoutes } from "./api/oauth"
 import { providerConnectionApiRoutes } from "./api/provider-connections"
 import { providerApiRoutes } from "./api/providers"
 import { quotaApiRoutes } from "./api/quota"
@@ -80,6 +81,7 @@ adminRoutes.use("/api/*", async (c, next) => {
   await next()
 })
 
+adminRoutes.route("/api/oauth", oauthApiRoutes)
 adminRoutes.route("/api/accounts", accountApiRoutes)
 adminRoutes.route("/api/account-flows", accountFlowApiRoutes)
 adminRoutes.route("/api/providers", providerApiRoutes)

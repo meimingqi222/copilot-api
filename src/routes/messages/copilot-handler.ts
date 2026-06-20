@@ -7,7 +7,12 @@ import type { RequestAdmission } from "~/lib/request-admission"
 import { HTTPError } from "~/lib/error"
 import { buildAnthropicContextWindowError } from "~/lib/error-builder"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
-import { handleSseStream, type SSEStream, writeSseEvent } from "~/lib/sse"
+import {
+  handleSseStream,
+  type SSEStream,
+  writeSseEvent,
+  writeSseEvents,
+} from "~/lib/sse"
 import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -66,10 +71,8 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
 
   logDuplicateToolCallIds(openAIPayload.messages)
 
-  // Pre-calculate input token count so message_start carries meaningful input_tokens for models that lack upstream usage in early streaming chunks.
-  const estimatedInputTokens = await estimateInputTokens(openAIPayload)
-
   if (!anthropicPayload.stream) {
+    const estimatedInputTokens = await estimateInputTokens(openAIPayload)
     const nonStreamStart = Date.now()
     let result
     try {
@@ -130,10 +133,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
         return
       }
       if (error instanceof HTTPError && isContextWindowError(error)) {
-        consola.warn(
-          "Context window exceeded (estimated input tokens: %d)",
-          estimatedInputTokens,
-        )
+        consola.warn("Context window exceeded")
         const errPayload = buildAnthropicContextWindowError(error)
         await writeSseEvent(stream, JSON.stringify(errPayload), "error")
         return
@@ -156,7 +156,6 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       clientSignal: sseSignal,
       c,
       accountId: result.accountId,
-      estimatedInputTokens,
       skipPing: true,
       streamStartTs,
     })
@@ -166,18 +165,27 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
 function logDuplicateToolCallIds(
   messages: Array<{ role: string; tool_calls?: Array<{ id: string }> }>,
 ): void {
-  const allToolCallIds = messages.flatMap((message) =>
-    message.tool_calls ? message.tool_calls.map((toolCall) => toolCall.id) : [],
-  )
-  const duplicateIds = allToolCallIds.filter(
-    (id, index) => allToolCallIds.indexOf(id) !== index,
-  )
+  const seen = new Set<string>()
+  const duplicateIds = new Set<string>()
 
-  if (duplicateIds.length === 0) {
+  for (const message of messages) {
+    if (!message.tool_calls) {
+      continue
+    }
+    for (const toolCall of message.tool_calls) {
+      if (seen.has(toolCall.id)) {
+        duplicateIds.add(toolCall.id)
+      } else {
+        seen.add(toolCall.id)
+      }
+    }
+  }
+
+  if (duplicateIds.size === 0) {
     return
   }
 
-  consola.error("Duplicate tool_call ids detected:", duplicateIds)
+  consola.error("Duplicate tool_call ids detected:", [...duplicateIds])
   consola.error(
     "Messages with tool_calls:",
     JSON.stringify(
@@ -275,12 +283,22 @@ async function handleStreamingResponse({
         consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       }
       lastUsage = chunk.usage ?? lastUsage
-      for (const event of translateChunkToAnthropicEvents(chunk, streamState)) {
-        if (consola.level >= 4) {
+      const translatedEvents = translateChunkToAnthropicEvents(
+        chunk,
+        streamState,
+      )
+      if (consola.level >= 4) {
+        for (const event of translatedEvents) {
           consola.debug("Translated Anthropic event:", JSON.stringify(event))
         }
-        await writeSseEvent(stream, JSON.stringify(event), event.type)
       }
+      await writeSseEvents(
+        stream,
+        translatedEvents.map((event) => ({
+          data: JSON.stringify(event),
+          event: event.type,
+        })),
+      )
     }
 
     await sendSyntheticErrorIfNeeded(

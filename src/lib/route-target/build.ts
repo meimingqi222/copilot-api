@@ -6,8 +6,10 @@
  */
 
 import type { Account, AccountModel } from "~/lib/accounts"
+import type { ProviderId } from "~/lib/provider-config"
 
 import { isAccountAvailable } from "~/lib/account-availability"
+import { buildAccountModelAliases, getAccountModelPrefix } from "~/lib/accounts"
 import {
   DEFAULTS,
   isCredentialAvailable,
@@ -65,6 +67,10 @@ export interface BuildRouteTargetsOptions {
   connections?: Array<ProviderConnection>
   /** 自定义 account 列表(供测试);默认从 state.accounts 读取。 */
   accounts?: Array<Account>
+  /** 仅匹配指定 legacy provider 的账户。 */
+  legacyProvider?: ProviderId
+  /** 仅匹配指定 modelPrefix 的账户。 */
+  accountPrefix?: string
 }
 
 export function buildRouteTargets(
@@ -111,6 +117,18 @@ export function buildRouteTargets(
     const accounts = options.accounts ?? state.accounts
     for (const account of accounts) {
       if (onlyAvailable && !isAccountAvailable(account)) continue
+      if (
+        options.legacyProvider
+        && account.provider !== options.legacyProvider
+      ) {
+        continue
+      }
+      if (options.accountPrefix) {
+        const prefix = getAccountModelPrefix(account).toLowerCase()
+        if (prefix !== options.accountPrefix.toLowerCase()) {
+          continue
+        }
+      }
 
       const protocol = accountProtocol(account.provider)
       if (!protocol) continue
@@ -158,7 +176,7 @@ export function buildRouteTargets(
 
         if (
           options.publicModelId
-          && modelId.toLowerCase() !== options.publicModelId.toLowerCase()
+          && !matchesAccountModel(account, model, options.publicModelId)
         ) {
           continue
         }
@@ -171,7 +189,7 @@ export function buildRouteTargets(
             connectionName: account.label,
             protocol,
             credentialId: account.id,
-            publicModelId: modelId,
+            publicModelId: options.publicModelId ?? modelId,
             upstreamModelId: modelId,
             endpoint,
             connectionPriority: account.priority,
@@ -281,6 +299,21 @@ function accountProtocol(provider: string): ProviderProtocol | undefined {
     case "mimo-aistudio": {
       return "mimo-native"
     }
+    case "codex": {
+      return "codex-native"
+    }
+    case "claude": {
+      return "claude-native"
+    }
+    case "antigravity": {
+      return "antigravity-native"
+    }
+    case "kimi": {
+      return "kimi-native"
+    }
+    case "xai": {
+      return "xai-native"
+    }
     default: {
       return undefined
     }
@@ -300,4 +333,15 @@ function accountModelEndpoints(model: AccountModel): Array<ModelEndpoint> {
 
 function accountModelId(model: AccountModel): string {
   return model.id
+}
+
+function matchesAccountModel(
+  account: Account,
+  model: AccountModel,
+  requestedId: string,
+): boolean {
+  const nativeId = accountModelId(model)
+  const aliases = buildAccountModelAliases(account, nativeId)
+  const normalized = requestedId.toLowerCase()
+  return aliases.some((alias) => alias.toLowerCase() === normalized)
 }
