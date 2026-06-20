@@ -50,6 +50,37 @@ export async function writeSseEvent(
   })
 }
 
+function formatSseFrame(data: string, event?: string): string {
+  const eventLine = event ? `event: ${event}\n` : ""
+  return `${eventLine}data: ${data}\n\n`
+}
+
+export async function writeSseEvents(
+  stream: SSEStream,
+  events: Array<{ data: string; event?: string }>,
+): Promise<void> {
+  if (events.length === 0) {
+    return
+  }
+
+  if (events.length === 1) {
+    await writeSseEvent(stream, events[0].data, events[0].event)
+    return
+  }
+
+  if (stream.write) {
+    const batch = events
+      .map((item) => formatSseFrame(item.data, item.event))
+      .join("")
+    await stream.write(batch)
+    return
+  }
+
+  for (const item of events) {
+    await writeSseEvent(stream, item.data, item.event)
+  }
+}
+
 export async function forwardSseEvent(
   stream: SSEStream,
   event: SSEEventLike,
