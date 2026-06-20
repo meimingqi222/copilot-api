@@ -11,6 +11,7 @@ import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
+import { upgradeOAuthAccountLabelIfNeeded } from "~/services/oauth/account-label"
 import {
   applyAntigravityOAuthBundle,
   createAntigravityOAuthStart,
@@ -151,6 +152,7 @@ function removeOAuthAccountFromState(accountId: string): void {
 }
 
 async function finalizeOAuthAccount(account: OAuthAccount): Promise<void> {
+  upgradeOAuthAccountLabelIfNeeded(account)
   addAccount(account)
   scheduleOAuthRefreshForAccount(account)
   try {

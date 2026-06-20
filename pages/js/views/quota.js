@@ -395,6 +395,14 @@ function quotaView() {
       return QuotaDisplay.providerCardClass(provider)
     },
 
+    getQuotaBadgeClass(provider) {
+      return QuotaDisplay.providerBadgeClass(provider)
+    },
+
+    getProviderDisplayName(provider) {
+      return QuotaDisplay.providerDisplayName(provider, (key) => this.t(key))
+    },
+
     formatQuotaSummary(account) {
       return QuotaDisplay.formatSummary(account, (key, params) =>
         this.t(key, params),

@@ -566,10 +566,11 @@
                 <div class="flex items-center gap-3">
                   <i :data-lucide="providerIcon(account.provider || 'copilot')" class="w-8 h-8"></i>
                   <div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
                       <p class="font-medium" x-text="account.label || providerLabel(account.provider || 'copilot')"></p>
                       <span class="badge badge-info uppercase" x-text="account.provider || 'copilot'"></span>
                     </div>
+                    <p x-show="account.subtitle" class="text-xs text-[var(--apple-text-tertiary)] truncate max-w-[220px]" :title="account.subtitle" x-text="account.subtitle"></p>
                     <input
                       x-show="editingLabel === account.id"
                       x-model="editLabelValue"
@@ -601,7 +602,10 @@
                 </template>
               </div>
               <!-- Quota Summary -->
-              <div x-show="account.supportsQuota" class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg quota-account-card" :class="QuotaDisplay.providerCardClass(account.provider)">
+              <div x-show="account.supportsQuota" class="mb-4 quota-card-inline">
+                <div class="quota-account-card" :class="QuotaDisplay.providerCardClass(account.provider)">
+                  <div class="quota-card-accent"></div>
+                  <div class="quota-card-body !py-3 !px-3">
                 <div class="flex items-center justify-between gap-2 mb-1">
                   <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.quota')"></span>
                   <button
@@ -613,6 +617,8 @@
                   </button>
                 </div>
                 <p class="text-sm font-medium" x-text="formatQuotaSummary(account)"></p>
+                  </div>
+                </div>
               </div>
               <!-- Priority Setting -->
               <div class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg">
@@ -1387,84 +1393,86 @@
           <div class="card p-6">
             <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotasAll')"></h3>
             <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasAllDesc')"></p>
-            <div class="space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               <template x-for="account in accounts" :key="account.id">
-                <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0 quota-account-card" :class="getQuotaCardClass(account.provider)">
-                  <div class="flex items-center gap-3 mb-4 flex-wrap">
-                    <i data-lucide="git-branch" class="w-5 h-5"></i>
-                    <span class="font-medium text-body" x-text="account.label"></span>
-                    <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-[var(--apple-blue)] text-white uppercase" x-text="account.provider || 'copilot'"></span>
-                    <!-- 优先级 -->
-                    <span class="px-2 py-0.5 text-xs font-medium rounded-full bg-[var(--apple-purple)] text-white">
-                      <span x-text="t('accounts.priority') + ': ' + (account.priority ?? 0)"></span>
-                    </span>
-                    <!-- 启用状态 -->
-                    <span class="px-2 py-0.5 text-xs font-medium rounded-full"
-                          :class="account.enabled ? 'bg-[var(--apple-green)] text-white' : 'bg-gray-400 text-white'"
-                          x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
-                    </span>
-                    <!-- 配额耗尽状态 -->
-                    <span x-show="account.isExhausted" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-red)] text-white rounded-full" x-text="t('accounts.status.exhausted')"></span>
-                    <button
-                      x-show="account.supportsQuota !== false"
-                      @click="refreshAccountQuota(account)"
-                      class="btn btn-small btn-secondary ml-auto"
-                      :class="{ 'opacity-75': refreshingAccountId === account.id }"
-                      :title="t('quota.refreshAccount')">
-                      <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingAccountId === account.id }"></i>
-                    </button>
-                  </div>
-
-                  <div x-show="account.supportsQuota === false" class="text-sm text-[var(--apple-text-tertiary)] mb-3" x-text="t('quota.unavailable')"></div>
-
-                  <div x-show="account.supportsQuota !== false && !account.quotaInfo" class="text-sm text-[var(--apple-text-tertiary)] mb-3" x-text="t('quota.noData')"></div>
-
-                  <div x-show="account.supportsQuota !== false && account.quotaInfo?.unlimited" class="text-sm text-[var(--apple-green)] mb-3" x-text="t('quota.unlimited')"></div>
-
-                  <template x-for="row in getQuotaRows(account)" :key="row.id">
-                    <div class="mb-3">
-                      <div class="flex justify-between items-center mb-1 gap-3">
-                        <span class="text-sm text-[var(--apple-text-secondary)]" x-text="row.label"></span>
-                        <div class="text-sm font-medium text-right">
-                          <span x-text="row.valueText"></span>
-                          <span x-show="row.resetText" class="block text-xs text-[var(--apple-text-tertiary)] font-normal" x-text="row.resetText"></span>
+                <div class="quota-account-card flex flex-col h-full" :class="getQuotaCardClass(account.provider)">
+                  <div class="quota-card-accent"></div>
+                  <div class="quota-card-body flex flex-col flex-1">
+                    <div class="flex items-start gap-3 mb-3">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 flex-wrap mb-1">
+                          <span class="quota-provider-badge" :class="getQuotaBadgeClass(account.provider)" x-text="getProviderDisplayName(account.provider || 'copilot')"></span>
+                          <span x-show="account.isActive" class="quota-status-pill bg-[var(--apple-blue)] text-white" x-text="t('accounts.status.current')"></span>
                         </div>
+                        <p class="font-medium text-body truncate" :title="account.label" x-text="account.label"></p>
+                        <p x-show="account.subtitle" class="text-xs text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
                       </div>
-                      <div class="progress-bar" x-show="!row.hideBar && row.remainingPercent !== undefined">
-                        <div class="progress-fill"
-                             :class="getQuotaBarColor(row)"
-                             :style="`width: ${row.remainingPercent || 0}%`"></div>
-                      </div>
+                      <button
+                        x-show="account.supportsQuota !== false"
+                        @click="refreshAccountQuota(account)"
+                        class="btn-icon shrink-0"
+                        :class="{ 'opacity-75': refreshingAccountId === account.id }"
+                        :title="t('quota.refreshAccount')">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingAccountId === account.id }"></i>
+                      </button>
                     </div>
-                  </template>
 
-                  <!-- Account Model Usage -->
-                  <div class="mt-4 pt-4 border-t border-[var(--apple-gray-5)]">
-                    <h4 class="text-sm font-medium text-[var(--apple-text-secondary)] mb-3" x-text="t('quota.accountModelUsage')"></h4>
-                    <div class="space-y-2">
-                      <template x-for="(modelData, modelName) in (usageSummary.byAccount[account.id]?.models || {})" :key="modelName">
-                        <div class="flex items-center justify-between text-sm">
-                          <span class="font-mono text-[var(--apple-blue)]" x-text="modelName"></span>
-                          <div class="flex items-center gap-4">
-                            <span class="text-[var(--apple-text-secondary)]">
-                              <span x-text="modelData.requests"></span>
-                              <span class="ml-1" x-text="t('quota.requests')"></span>
-                            </span>
-                            <span class="w-24 text-right">
-                              <span x-text="formatTokens(modelData.totalTokens)"></span>
-                            </span>
-                            <span class="w-20 text-right text-[var(--apple-text-secondary)]">
-                              <span x-text="'$' + (modelData.cost || 0).toFixed(4)"></span>
-                            </span>
+                    <div class="flex flex-wrap gap-1.5 mb-3">
+                      <span class="quota-status-pill bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]">
+                        <span x-text="t('accounts.priority') + ' ' + (account.priority ?? 0)"></span>
+                      </span>
+                      <span class="quota-status-pill"
+                            :class="account.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[#248a3d]' : 'bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]'"
+                            x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
+                      </span>
+                      <span x-show="account.isExhausted" class="quota-status-pill bg-[rgba(255,59,48,0.12)] text-[#c41c14]" x-text="t('accounts.status.exhausted')"></span>
+                    </div>
+
+                    <div class="quota-card-summary flex-1">
+                      <div x-show="account.supportsQuota === false" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('quota.unavailable')"></div>
+
+                      <div x-show="account.supportsQuota !== false && !account.quotaInfo" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('quota.noData')"></div>
+
+                      <div x-show="account.supportsQuota !== false && account.quotaInfo?.unlimited" class="text-sm text-[var(--apple-green)] font-medium" x-text="t('quota.unlimited')"></div>
+
+                      <template x-for="row in getQuotaRows(account)" :key="row.id">
+                        <div class="mb-2.5 last:mb-0">
+                          <div class="flex justify-between items-start gap-2 mb-1">
+                            <span class="text-xs text-[var(--apple-text-secondary)] leading-snug" x-text="row.label"></span>
+                            <div class="text-xs font-medium text-right shrink-0">
+                              <span x-text="row.valueText"></span>
+                              <span x-show="row.resetText" class="block text-[10px] text-[var(--apple-text-tertiary)] font-normal mt-0.5" x-text="row.resetText"></span>
+                            </div>
+                          </div>
+                          <div class="progress-bar h-1.5" x-show="!row.hideBar && row.remainingPercent !== undefined">
+                            <div class="progress-fill"
+                                 :class="getQuotaBarColor(row)"
+                                 :style="`width: ${row.remainingPercent || 0}%`"></div>
                           </div>
                         </div>
                       </template>
-                      <div x-show="!usageSummary.byAccount[account.id]?.models || Object.keys(usageSummary.byAccount[account.id]?.models || {}).length === 0" class="text-sm text-[var(--apple-text-tertiary)] text-center py-2" x-text="t('quota.noUsageData')"></div>
+                    </div>
+
+                    <div class="mt-3 pt-3 border-t border-[var(--apple-gray-5)]">
+                      <h4 class="text-xs font-medium text-[var(--apple-text-tertiary)] mb-2 uppercase tracking-wide" x-text="t('quota.accountModelUsage')"></h4>
+                      <div class="space-y-1.5 max-h-28 overflow-y-auto">
+                        <template x-for="(modelData, modelName) in (usageSummary.byAccount[account.id]?.models || {})" :key="modelName">
+                          <div class="flex items-center justify-between gap-2 text-xs">
+                            <span class="font-mono text-[var(--apple-blue)] truncate min-w-0" :title="modelName" x-text="modelName"></span>
+                            <div class="flex items-center gap-2 shrink-0 text-[var(--apple-text-secondary)]">
+                              <span x-text="modelData.requests + ' ' + t('quota.requests')"></span>
+                              <span class="w-14 text-right" x-text="formatTokens(modelData.totalTokens)"></span>
+                              <span class="w-14 text-right" x-text="'$' + (modelData.cost || 0).toFixed(2)"></span>
+                            </div>
+                          </div>
+                        </template>
+                        <div x-show="!usageSummary.byAccount[account.id]?.models || Object.keys(usageSummary.byAccount[account.id]?.models || {}).length === 0" class="text-xs text-[var(--apple-text-tertiary)] text-center py-2" x-text="t('quota.noUsageData')"></div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </template>
-              <div x-show="!accounts.length" class="empty-state">
+              <div x-show="!accounts.length" class="empty-state col-span-full">
                 <i data-lucide="git-branch" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
               </div>

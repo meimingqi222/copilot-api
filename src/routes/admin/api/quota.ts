@@ -2,21 +2,32 @@ import consola from "consola"
 import { Hono } from "hono"
 
 import { getAccountAvailability } from "~/lib/account-availability"
-import { refreshQuotaForAccount } from "~/lib/account-store"
+import { refreshQuotaForAccount, saveAccounts } from "~/lib/account-store"
+import { isOAuthAccount } from "~/lib/accounts"
 import { state } from "~/lib/state"
+import {
+  getOAuthAccountSubtitle,
+  upgradeOAuthAccountLabels,
+} from "~/services/oauth/account-label"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
 export const quotaApiRoutes = new Hono()
 
-quotaApiRoutes.get("/", (c) => {
+quotaApiRoutes.get("/", async (c) => {
   initializeProviderRegistry()
+  if (upgradeOAuthAccountLabels(state.accounts)) {
+    await saveAccounts()
+  }
   const accounts = state.accounts.map((account, idx) => {
     const availability = getAccountAvailability(account)
+    const subtitle =
+      isOAuthAccount(account) ? getOAuthAccountSubtitle(account) : undefined
     return {
       availability,
       id: account.id,
       label: account.label,
+      subtitle,
       provider: account.provider,
       enabled: account.enabled,
       priority: account.priority,
