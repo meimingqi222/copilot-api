@@ -23,7 +23,7 @@ import {
 } from "~/lib/provider-connections"
 import {
   buildRouteTargets,
-  parseModelRef,
+  resolveModelRouting,
   selectRouteTarget,
 } from "~/lib/route-target"
 import { state } from "~/lib/state"
@@ -59,6 +59,11 @@ const ACCOUNT_PROTOCOLS: Record<AccountProvider, ProviderProtocol> = {
   codebuff: "codebuff-native",
   windsurf: "windsurf-native",
   "mimo-aistudio": "mimo-native",
+  codex: "codex-native",
+  claude: "claude-native",
+  antigravity: "antigravity-native",
+  kimi: "kimi-native",
+  xai: "xai-native",
 }
 
 export function getAccountProtocol(account: Account): ProviderProtocol {
@@ -114,10 +119,12 @@ export async function prepareRequestAdmission(
   )
   c.set("guardInitiator", initiator)
 
-  const ref = parseModelRef(options.model)
+  const routing = resolveModelRouting(options.model)
   const candidates = buildRouteTargets({
-    connectionId: ref.connectionId,
-    publicModelId: ref.modelId,
+    connectionId: routing.connectionId,
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
     endpoint: options.endpoint,
   })
 
@@ -189,9 +196,11 @@ export function switchToNextRouteTarget(
   endpoint: ModelEndpoint,
   exclude: Set<string>,
 ): RouteTarget | null {
-  const ref = parseModelRef(modelId)
+  const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
-    publicModelId: ref.modelId,
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
     endpoint,
   })
   return selectRouteTarget(candidates, { exclude })

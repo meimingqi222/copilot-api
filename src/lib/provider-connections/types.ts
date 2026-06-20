@@ -15,6 +15,11 @@ export type ProviderProtocol =
   | "windsurf-native"
   | "codebuff-native"
   | "mimo-native"
+  | "codex-native"
+  | "claude-native"
+  | "antigravity-native"
+  | "kimi-native"
+  | "xai-native"
 
 export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "openai-compatible",
@@ -23,6 +28,11 @@ export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "windsurf-native",
   "codebuff-native",
   "mimo-native",
+  "codex-native",
+  "claude-native",
+  "antigravity-native",
+  "kimi-native",
+  "xai-native",
 ]
 
 export function isProviderProtocol(value: string): value is ProviderProtocol {
