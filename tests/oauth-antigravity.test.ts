@@ -17,6 +17,7 @@ import {
   applyAntigravityOAuthBundle,
   buildAntigravityAuthUrl,
   exchangeAntigravityCodeForTokens,
+  getAntigravityClientSecret,
   refreshAntigravityTokens,
 } from "~/services/oauth/antigravity"
 import { generateOAuthState } from "~/services/oauth/pkce"
@@ -24,24 +25,21 @@ import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
 
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
-const originalAntigravitySecret = process.env.ANTIGRAVITY_CLIENT_SECRET
 
 beforeEach(() => {
   state.accounts = []
-  process.env.ANTIGRAVITY_CLIENT_SECRET = "test-antigravity-secret"
 })
 
 afterEach(() => {
   state.accounts = originalAccounts
   globalThis.fetch = originalFetch
-  if (originalAntigravitySecret === undefined) {
-    delete process.env.ANTIGRAVITY_CLIENT_SECRET
-  } else {
-    process.env.ANTIGRAVITY_CLIENT_SECRET = originalAntigravitySecret
-  }
 })
 
 describe("Antigravity OAuth", () => {
+  test("getAntigravityClientSecret decodes embedded credential", () => {
+    expect(getAntigravityClientSecret()).toMatch(/^GOCSPX-/)
+  })
+
   test("buildAntigravityAuthUrl includes Google OAuth params", () => {
     const url = new URL(buildAntigravityAuthUrl("state-123"))
     expect(url.searchParams.get("state")).toBe("state-123")
