@@ -6,7 +6,7 @@ import { getConnInfo } from "hono/bun"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { saveAccounts } from "~/lib/account-store"
-import { canonicalNativeModelId } from "~/lib/accounts"
+import { canonicalNativeModelId, getAccountModelPrefix } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { listExposedPublicModels } from "~/lib/route-target/build"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
@@ -85,8 +85,10 @@ export function cacheModels(): void {
     for (const entry of accountModels) {
       const providerId = entry.model.provider ?? entry.account.provider
       const nativeModelId = canonicalNativeModelId(entry.model.id)
+      const prefix = getAccountModelPrefix(entry.account)
       const publicIds = [
         entry.model.id,
+        `${prefix}/${entry.model.id}`,
         ...((duplicateCounts.get(nativeModelId) ?? 0) > 1 ?
           [`${providerId}/${entry.model.id}`]
         : []),

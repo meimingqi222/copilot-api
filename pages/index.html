@@ -11,6 +11,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="/admin/static/js/i18n.js"></script>
   <script src="/admin/static/js/api.js"></script>
+  <script src="/admin/static/js/quota-display.js"></script>
 </head>
 <body x-data="adminApp()" x-init="init()" x-cloak>
   <!-- Toast Notifications -->
@@ -599,6 +600,20 @@
                   <span class="tag tag-sm tag-muted" x-text="feature"></span>
                 </template>
               </div>
+              <!-- Quota Summary -->
+              <div x-show="account.supportsQuota" class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg quota-account-card" :class="QuotaDisplay.providerCardClass(account.provider)">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.quota')"></span>
+                  <button
+                    @click="refreshAccountQuota(account)"
+                    class="btn-icon"
+                    :title="t('accounts.quotaRefresh')"
+                    :class="{ 'opacity-75': refreshingQuotaId === account.id }">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingQuotaId === account.id }"></i>
+                  </button>
+                </div>
+                <p class="text-sm font-medium" x-text="formatQuotaSummary(account)"></p>
+              </div>
               <!-- Priority Setting -->
               <div class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg">
                 <div class="flex items-center justify-between">
@@ -689,7 +704,7 @@
         <div x-show="showAddModal" class="modal-overlay" @click.self="closeAddModal()" x-cloak>
           <div class="modal">
             <div class="modal-header">
-              <h3 class="text-title-3" x-text="t('accounts.deviceFlow.title')"></h3>
+              <h3 class="text-title-3" x-text="selectedProvider()?.authMode === 'oauth' ? t('accounts.oauth.title') : t('accounts.deviceFlow.title')"></h3>
               <button @click="closeAddModal()" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div x-show="deviceFlowStep === 'input'" class="modal-body space-y-4">
@@ -747,21 +762,35 @@
               </div>
               <div class="modal-footer">
                 <button @click="closeAddModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
-                <button @click="submitAccount()" class="btn btn-primary" x-text="selectedProvider()?.authMode === 'device_flow' ? t('accounts.deviceFlow.step2') : t('create')"></button>
+                <button @click="submitAccount()" class="btn btn-primary" x-text="selectedProvider()?.authMode === 'oauth' ? t('accounts.oauth.authorize') : (selectedProvider()?.authMode === 'device_flow' ? t('accounts.deviceFlow.step2') : t('create'))"></button>
               </div>
             </div>
             <div x-show="deviceFlowStep === 'pending'" class="modal-body text-center py-6">
               <div class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-6"></div>
-              <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.deviceFlow.instruction')"></p>
-              <a :href="deviceFlowData?.verificationUri" target="_blank" class="text-[var(--apple-blue)] hover:underline text-body" x-text="deviceFlowData?.verificationUri"></a>
-              <p class="text-3xl font-mono font-bold my-6 tracking-widest" x-text="deviceFlowData?.userCode"></p>
-              <p class="text-caption text-[var(--apple-text-secondary)]" x-text="t('accounts.deviceFlow.waiting')"></p>
+              <template x-if="oauthFlowData?.authUrl">
+                <div>
+                  <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.oauth.instruction')"></p>
+                  <a :href="oauthFlowData.authUrl" target="_blank" rel="noopener noreferrer" class="btn btn-secondary inline-flex items-center gap-2">
+                    <i data-lucide="external-link" class="w-4 h-4"></i>
+                    <span x-text="t('accounts.oauth.openAuth')"></span>
+                  </a>
+                  <p class="text-caption text-[var(--apple-text-secondary)] mt-6" x-text="t('accounts.oauth.waiting')"></p>
+                </div>
+              </template>
+              <template x-if="!oauthFlowData?.authUrl">
+                <div>
+                  <p class="text-body text-[var(--apple-text-secondary)] mb-4" x-text="t('accounts.deviceFlow.instruction')"></p>
+                  <a :href="(oauthFlowData?.verificationUri || deviceFlowData?.verificationUri)" target="_blank" class="text-[var(--apple-blue)] hover:underline text-body" x-text="(oauthFlowData?.verificationUri || deviceFlowData?.verificationUri)"></a>
+                  <p class="text-3xl font-mono font-bold my-6 tracking-widest" x-text="(oauthFlowData?.userCode || deviceFlowData?.userCode)"></p>
+                  <p class="text-caption text-[var(--apple-text-secondary)]" x-text="t('accounts.deviceFlow.waiting')"></p>
+                </div>
+              </template>
             </div>
             <div x-show="deviceFlowStep === 'success'" class="modal-body text-center py-6">
               <div class="w-14 h-14 bg-[var(--apple-green)] rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <i data-lucide="check" class="w-7 h-7 text-white"></i>
               </div>
-              <h4 class="text-title-3 mb-2" x-text="t('accounts.deviceFlow.success')"></h4>
+              <h4 class="text-title-3 mb-2" x-text="oauthFlowData ? t('accounts.oauth.success') : t('accounts.deviceFlow.success')"></h4>
               <button @click="closeAddModal(); load()" class="btn btn-primary mt-4" x-text="t('done')"></button>
             </div>
           </div>
@@ -775,7 +804,23 @@
               <button @click="closeImportModal()" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div class="modal-body space-y-4">
-              <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.importDesc')"></p>
+              <p class="text-sm text-[var(--apple-text-secondary)]" x-text="importMode === 'cpa' ? t('accounts.importCpaDesc') : t('accounts.importDesc')"></p>
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  class="btn btn-secondary text-sm"
+                  :class="{ 'btn-primary': importMode === 'standard' }"
+                  @click="importMode = 'standard'"
+                  x-text="t('accounts.importModeStandard')"
+                ></button>
+                <button
+                  type="button"
+                  class="btn btn-secondary text-sm"
+                  :class="{ 'btn-primary': importMode === 'cpa' }"
+                  @click="importMode = 'cpa'"
+                  x-text="t('accounts.importModeCpa')"
+                ></button>
+              </div>
               <div>
                 <label class="form-label" x-text="t('accounts.importFile')"></label>
                 <input
@@ -1314,11 +1359,11 @@
 
           <!-- GitHub Account Quotas (Original Content) -->
           <div class="card p-6">
-            <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotas')"></h3>
-            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasDesc')"></p>
+            <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotasAll')"></h3>
+            <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasAllDesc')"></p>
             <div class="space-y-6">
               <template x-for="account in accounts" :key="account.id">
-                <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
+                <div class="pb-6 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0 quota-account-card" :class="getQuotaCardClass(account.provider)">
                   <div class="flex items-center gap-3 mb-4 flex-wrap">
                     <i data-lucide="git-branch" class="w-5 h-5"></i>
                     <span class="font-medium text-body" x-text="account.label"></span>
@@ -1334,41 +1379,38 @@
                     </span>
                     <!-- 配额耗尽状态 -->
                     <span x-show="account.isExhausted" class="px-2 py-0.5 text-xs font-medium bg-[var(--apple-red)] text-white rounded-full" x-text="t('accounts.status.exhausted')"></span>
+                    <button
+                      x-show="account.supportsQuota !== false"
+                      @click="refreshAccountQuota(account)"
+                      class="btn btn-small btn-secondary ml-auto"
+                      :class="{ 'opacity-75': refreshingAccountId === account.id }"
+                      :title="t('quota.refreshAccount')">
+                      <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingAccountId === account.id }"></i>
+                    </button>
                   </div>
 
                   <div x-show="account.supportsQuota === false" class="text-sm text-[var(--apple-text-tertiary)] mb-3" x-text="t('quota.unavailable')"></div>
 
-                  <!-- Premium Interactions -->
-                  <div class="mb-3" x-show="account.supportsQuota !== false">
-                    <div class="flex justify-between items-center mb-1">
-                      <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.premium')"></span>
-                      <span class="text-sm font-medium">
-                        <span x-text="account.quotaInfo?.premiumInteractionsRemaining ?? 'N/A'"></span>
-                        <span class="text-[var(--apple-text-secondary)]">/ <span x-text="account.quotaInfo?.premiumInteractionsTotal ?? 'N/A'"></span></span>
-                      </span>
-                    </div>
-                    <div class="progress-bar" x-show="account.quotaInfo?.premiumInteractionsTotal">
-                      <div class="progress-fill"
-                           :class="getUsageColor(account.quotaInfo?.premiumInteractionsRemaining, account.quotaInfo?.premiumInteractionsTotal)"
-                           :style="`width: ${(account.quotaInfo?.premiumInteractionsRemaining || 0) / (account.quotaInfo?.premiumInteractionsTotal || 1) * 100}%`"></div>
-                    </div>
-                  </div>
+                  <div x-show="account.supportsQuota !== false && !account.quotaInfo" class="text-sm text-[var(--apple-text-tertiary)] mb-3" x-text="t('quota.noData')"></div>
 
-                  <!-- Chat -->
-                  <div class="flex justify-between items-center py-1" x-show="account.supportsQuota !== false">
-                    <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.chat')"></span>
-                    <span class="text-sm">
-                      <span x-text="account.quotaInfo?.unlimited ? t('quota.unlimited') : (account.quotaInfo?.chatRemaining ?? 'N/A')"></span>
-                    </span>
-                  </div>
+                  <div x-show="account.supportsQuota !== false && account.quotaInfo?.unlimited" class="text-sm text-[var(--apple-green)] mb-3" x-text="t('quota.unlimited')"></div>
 
-                  <!-- Completions -->
-                  <div class="flex justify-between items-center py-1" x-show="account.supportsQuota !== false">
-                    <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.completions')"></span>
-                    <span class="text-sm">
-                      <span x-text="account.quotaInfo?.unlimited ? t('quota.unlimited') : (account.quotaInfo?.completionsRemaining ?? 'N/A')"></span>
-                    </span>
-                  </div>
+                  <template x-for="row in getQuotaRows(account)" :key="row.id">
+                    <div class="mb-3">
+                      <div class="flex justify-between items-center mb-1 gap-3">
+                        <span class="text-sm text-[var(--apple-text-secondary)]" x-text="row.label"></span>
+                        <div class="text-sm font-medium text-right">
+                          <span x-text="row.valueText"></span>
+                          <span x-show="row.resetText" class="block text-xs text-[var(--apple-text-tertiary)] font-normal" x-text="row.resetText"></span>
+                        </div>
+                      </div>
+                      <div class="progress-bar" x-show="!row.hideBar && row.remainingPercent !== undefined">
+                        <div class="progress-fill"
+                             :class="getQuotaBarColor(row)"
+                             :style="`width: ${row.remainingPercent || 0}%`"></div>
+                      </div>
+                    </div>
+                  </template>
 
                   <!-- Account Model Usage -->
                   <div class="mt-4 pt-4 border-t border-[var(--apple-gray-5)]">

@@ -10,18 +10,31 @@
  * (保留 `copilot/` `windsurf/` `codebuff/` 兼容)。
  */
 
+import type { Account } from "~/lib/accounts"
+
+import { getAccountModelPrefix } from "~/lib/accounts"
 import { isProviderId, type ProviderId } from "~/lib/provider-config"
 import {
   getProviderConnection,
   listProviderConnections,
 } from "~/lib/provider-connections"
+import { state } from "~/lib/state"
 
 export interface ParsedModelRef {
   /** 命中已注册 connection 时的 connection id;否则 undefined。 */
   connectionId?: string
   /** 命中 legacy provider id 时填充(用于兼容现有 account 路由)。 */
   legacyProvider?: ProviderId
+  /** 命中账户自定义 modelPrefix 时填充。 */
+  accountPrefix?: string
   /** 去掉 provider 前缀后的模型名(可能仍包含厂商前缀如 `anthropic/claude-...`)。 */
+  modelId: string
+}
+
+export interface ResolvedModelRouting {
+  connectionId?: string
+  legacyProvider?: ProviderId
+  accountPrefix?: string
   modelId: string
 }
 
@@ -54,4 +67,38 @@ export function parseModelRef(modelId: string): ParsedModelRef {
 
   // 3) 都不匹配:视为模型名整体(可能是 `anthropic/claude-*` 之类的厂商前缀)
   return { modelId: trimmed }
+}
+
+export function resolveModelRouting(
+  modelId: string,
+  accounts: Array<Account> = state.accounts,
+): ResolvedModelRouting {
+  const ref = parseModelRef(modelId)
+  if (ref.connectionId || ref.legacyProvider) {
+    return {
+      connectionId: ref.connectionId,
+      legacyProvider: ref.legacyProvider,
+      modelId: ref.modelId,
+    }
+  }
+
+  const slashIndex = modelId.indexOf("/")
+  if (slashIndex > 0) {
+    const prefix = modelId.slice(0, slashIndex)
+    const rest = modelId.slice(slashIndex + 1).trim()
+    if (rest) {
+      for (const account of accounts) {
+        if (
+          getAccountModelPrefix(account).toLowerCase() === prefix.toLowerCase()
+        ) {
+          return {
+            accountPrefix: prefix,
+            modelId: rest,
+          }
+        }
+      }
+    }
+  }
+
+  return { modelId: ref.modelId }
 }
