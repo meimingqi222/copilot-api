@@ -10,6 +10,23 @@ import type {
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectFrame } from "./protobuf"
 
+// ── ChatMessageRequestType enum ───────────────────────────────────────────────
+// Extracted from language_server_windows_x64.exe
+// Source: exa.api_server_pb.ChatMessageRequestType
+
+const ChatMessageRequestType = {
+  UNSPECIFIED: 0,
+  GENERAL: 1,
+  CONTEXT_CHECK: 2,
+  PLAN: 3,
+  COMMAND: 4,
+  CASCADE: 5,
+  EVAL: 6,
+  WINDSURF_REVIEW: 7,
+  VIBE_AND_REPLACE: 8,
+  DEEPWIKI: 9,
+} as const
+
 const DEFAULT_WINDSURF_SYSTEM_PROMPT =
   "You are Cascade, a powerful coding assistant."
 
@@ -265,6 +282,7 @@ export function buildRequest(opts: {
 
   request.writeMessage(15, buildTraceInfo())
   request.writeString(16, randomUUID()) // per-request ID (always fresh)
+  request.writeVarint(20, ChatMessageRequestType.GENERAL) // request type
   request.writeString(21, requestModel)
   request.writeString(22, deriveSessionId(requestModel, payload)) // stable session → KV cache
   return encodeConnectFrame(request.toUint8Array(), true)
