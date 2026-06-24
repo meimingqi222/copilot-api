@@ -12,21 +12,47 @@ import { state } from "~/lib/state"
 
 describe("account-store", () => {
   const originalPath = PATHS.ACCOUNTS_PATH
+  const originalGitHubTokenPath = PATHS.GITHUB_TOKEN_PATH
   let tempAccountsPath: string
+  let tempGitHubTokenPath: string
 
   beforeEach(() => {
     tempAccountsPath = path.join(
       os.tmpdir(),
       `accounts-test-${randomUUID()}.json`,
     )
+    tempGitHubTokenPath = path.join(
+      os.tmpdir(),
+      `github-token-test-${randomUUID()}`,
+    )
     PATHS.ACCOUNTS_PATH = tempAccountsPath
+    PATHS.GITHUB_TOKEN_PATH = tempGitHubTokenPath
     state.accounts = []
   })
 
   afterEach(async () => {
     PATHS.ACCOUNTS_PATH = originalPath
+    PATHS.GITHUB_TOKEN_PATH = originalGitHubTokenPath
+    for (const filePath of [
+      tempAccountsPath,
+      `${tempAccountsPath}.bak`,
+      tempGitHubTokenPath,
+    ]) {
+      try {
+        await fs.unlink(filePath)
+      } catch {
+        // ignore
+      }
+    }
+    const tempDir = path.dirname(tempAccountsPath)
+    const tempBase = path.basename(tempAccountsPath)
     try {
-      await fs.unlink(tempAccountsPath)
+      const entries = await fs.readdir(tempDir)
+      await Promise.all(
+        entries
+          .filter((entry) => entry.startsWith(`${tempBase}.corrupt.`))
+          .map((entry) => fs.unlink(path.join(tempDir, entry))),
+      )
     } catch {
       // ignore
     }
@@ -272,6 +298,37 @@ describe("account-store", () => {
 
     expect(state.accounts).toHaveLength(1)
     expect(state.accounts[0].cooldownUntil).toBeUndefined()
+  })
+
+  test("loadAccounts preserves an intentionally empty accounts file", async () => {
+    await fs.writeFile(tempAccountsPath, "[]", "utf8")
+    await fs.writeFile(tempGitHubTokenPath, "legacy-token", "utf8")
+
+    await loadAccounts()
+
+    expect(state.accounts).toHaveLength(0)
+    const saved = JSON.parse(
+      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+    ) as Array<Record<string, unknown>>
+    expect(saved).toEqual([])
+  })
+
+  test("loadAccounts does not overwrite corrupt accounts with legacy default", async () => {
+    await fs.writeFile(tempAccountsPath, "not-json", "utf8")
+    await fs.writeFile(tempGitHubTokenPath, "legacy-token", "utf8")
+
+    let thrown: unknown
+    try {
+      await loadAccounts()
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain("Could not recover accounts")
+
+    expect(state.accounts).toHaveLength(0)
+    expect(await fs.readFile(tempAccountsPath, "utf8")).toBe("not-json")
   })
 
   test("loadAccounts preserves OAuth tokenEndpoint and redirectUri", async () => {
