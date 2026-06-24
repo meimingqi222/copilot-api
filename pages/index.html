@@ -1436,28 +1436,32 @@
                       <div x-show="account.supportsQuota !== false && account.quotaInfo?.unlimited" class="text-sm text-[var(--apple-green)] font-medium" x-text="t('quota.unlimited')"></div>
 
                       <template x-for="row in getQuotaRows(account)" :key="row.id">
-                        <div class="mb-2.5 last:mb-0">
-                          <div class="flex justify-between items-start gap-2 mb-1">
-                            <span class="text-xs leading-snug"
-                                  :class="row.hideBar ? 'text-[var(--apple-text-tertiary)]' : 'text-[var(--apple-text-secondary)]'"
+                        <div class="quota-meter-row" :class="row.hideBar ? 'quota-meter-row-meta' : ''">
+                          <div class="quota-meter-head">
+                            <span class="quota-meter-label"
+                                  :class="row.hideBar ? 'quota-meter-label-meta' : ''"
                                   x-text="row.label"></span>
-                            <div class="text-xs font-medium text-right shrink-0">
-                              <span x-text="row.valueText"></span>
-                              <span x-show="row.resetText" class="block text-[10px] text-[var(--apple-text-tertiary)] font-normal mt-0.5" x-text="row.resetText"></span>
+                            <div class="quota-meter-values">
+                              <span class="quota-meter-percent"
+                                    x-show="row.valueText"
+                                    x-text="row.valueText"></span>
+                              <span class="quota-meter-amount"
+                                    x-show="row.amountText"
+                                    x-text="row.amountText"></span>
+                              <span class="quota-meter-reset"
+                                    x-show="row.resetText"
+                                    x-text="row.resetText"></span>
                             </div>
                           </div>
-                          <div class="progress-bar h-1.5" x-show="!row.hideBar && row.remainingPercent !== undefined">
+                          <div class="progress-bar quota-meter-bar"
+                               x-show="!row.hideBar && row.remainingPercent !== undefined">
                             <div class="progress-fill"
                                  :class="getQuotaBarColor(row)"
                                  :style="`width: ${row.remainingPercent || 0}%`"></div>
                           </div>
-                          <div x-show="row.cycleUsageText"
-                               class="mt-1 text-[10px] text-[var(--apple-text-tertiary)] leading-snug">
-                            <span x-text="row.cycleUsageText"></span>
-                            <span x-show="row.cycleUsageHint"
-                                  class="block text-[9px] opacity-80"
-                                  x-text="row.cycleUsageHint"></span>
-                          </div>
+                          <div class="quota-meter-cycle"
+                               x-show="row.cycleUsageText"
+                               x-text="row.cycleUsageText"></div>
                         </div>
                       </template>
                     </div>
