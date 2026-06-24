@@ -31,6 +31,7 @@ export interface KimiLimitItem {
   name?: string
   title?: string
   detail?: KimiUsageDetail
+  window?: Record<string, unknown>
   used?: number
   limit?: number
   remaining?: number
@@ -70,6 +71,10 @@ export interface CodexUsageWindow {
   usedPercent?: number | string
   limit_window_seconds?: number | string
   limitWindowSeconds?: number | string
+  reset_after_seconds?: number | string
+  resetAfterSeconds?: number | string
+  reset_at?: number | string
+  resetAt?: number | string
 }
 
 export interface CodexRateLimitInfo {
@@ -83,8 +88,17 @@ export interface CodexRateLimitInfo {
 }
 
 export interface CodexAdditionalRateLimit {
+  limit_name?: string
+  limitName?: string
+  metered_feature?: string
+  meteredFeature?: string
   rate_limit?: CodexRateLimitInfo | null
   rateLimit?: CodexRateLimitInfo | null
+}
+
+export interface CodexRateLimitResetCredits {
+  available_count?: number | string
+  availableCount?: number | string
 }
 
 export interface CodexUsagePayload {
@@ -96,6 +110,8 @@ export interface CodexUsagePayload {
   codeReviewRateLimit?: CodexRateLimitInfo | null
   additional_rate_limits?: Array<CodexAdditionalRateLimit> | null
   additionalRateLimits?: Array<CodexAdditionalRateLimit> | null
+  rate_limit_reset_credits?: CodexRateLimitResetCredits | null
+  rateLimitResetCredits?: CodexRateLimitResetCredits | null
 }
 
 export interface XaiBillingCent {

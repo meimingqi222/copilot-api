@@ -25,6 +25,8 @@ export const KIMI_REQUEST_HEADERS = {
 } as const
 
 export const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+export const CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL =
+  "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 export const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
 
 export const CODEX_REQUEST_HEADERS = {

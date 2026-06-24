@@ -3,12 +3,14 @@ function quotaView() {
     loading: false,
     refreshing: false,
     refreshingAccountId: null,
+    resettingAccountId: null,
     accounts: [],
     users: [],
     dateRange: "today",
     selectedMonth: "", // YYYY-MM, set when dateRange === "custom"
     showPricingModal: false,
     modelPrices: {},
+    pricingSources: {},
     usageSummary: {
       totals: {
         requests: 0,
@@ -110,6 +112,7 @@ function quotaView() {
         const data = await API.usage.getPricing()
         // Convert from $/1K to $/1M for display (multiply by 1000)
         this.modelPrices = {}
+        this.pricingSources = data.sources || {}
         for (const [model, price] of Object.entries(data.pricing || {})) {
           this.modelPrices[model] = {
             promptPricePer1m: price.promptPricePer1k * 1000,
@@ -121,6 +124,10 @@ function quotaView() {
       } catch (e) {
         console.error("Failed to load model pricing:", e)
       }
+    },
+
+    isPricingUnmatched(model) {
+      return this.pricingSources[model] === "unmatched"
     },
 
     async saveModelPricing(model) {
@@ -352,6 +359,37 @@ function quotaView() {
         this.showToast(I18n.t("quota.refreshError"), "error")
       } finally {
         this.refreshing = false
+      }
+    },
+
+    canResetCodexQuota(account) {
+      return QuotaDisplay.canResetCodexQuota(account)
+    },
+
+    async resetAccountQuota(account) {
+      if (!account?.id || !this.canResetCodexQuota(account)) return
+      const confirmed = globalThis.confirm(
+        this.t("quota.oauth.codex.resetConfirm", { name: account.label }),
+      )
+      if (!confirmed) return
+
+      this.resettingAccountId = account.id
+      try {
+        const result = await API.quota.resetOne(account.id)
+        const idx = this.accounts.findIndex((item) => item.id === account.id)
+        if (idx !== -1) {
+          this.accounts[idx] = {
+            ...this.accounts[idx],
+            quotaInfo: result.quotaInfo ?? this.accounts[idx].quotaInfo,
+            quotaState: result.quotaState ?? this.accounts[idx].quotaState,
+          }
+        }
+        this.showToast(I18n.t("quota.oauth.codex.resetSuccess"), "success")
+      } catch {
+        this.showToast(I18n.t("quota.oauth.codex.resetError"), "error")
+      } finally {
+        this.resettingAccountId = null
+        this.$nextTick(() => lucide.createIcons())
       }
     },
 

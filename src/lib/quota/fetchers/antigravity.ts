@@ -6,6 +6,7 @@ import {
   ANTIGRAVITY_QUOTA_URLS,
   ANTIGRAVITY_REQUEST_HEADERS,
 } from "~/lib/quota/constants"
+import { enrichQuotaDetails } from "~/lib/quota/cycles"
 import {
   parseAntigravityQuotaPayload,
   summarizeAntigravityQuota,
@@ -59,7 +60,10 @@ export async function fetchAntigravityQuota(
       provider: "antigravity" satisfies OAuthProviderId,
       unlimited: summary.unlimited,
       premiumInteractionsRemaining: remainingPercent,
-      details: payload as unknown as Record<string, unknown>,
+      details: enrichQuotaDetails(
+        "antigravity",
+        payload as unknown as Record<string, unknown>,
+      ),
     }
   }
 

@@ -20,3 +20,4 @@ dist/
 .playwright-mcp
 opencode.json
 temp/
+agent-tools/

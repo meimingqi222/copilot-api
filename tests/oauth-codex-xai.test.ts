@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
   parseCodexUsagePayload,
   parseXaiBillingPayload,
@@ -15,6 +16,10 @@ import {
   exchangeCodexCodeForTokens,
   refreshCodexTokens,
 } from "~/services/oauth/codex"
+import {
+  extractCodexPlanTypeFromIdToken,
+  extractCodexSubscriptionActiveUntilFromIdToken,
+} from "~/services/oauth/jwt"
 import { generatePkceCodes } from "~/services/oauth/pkce"
 import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
 import {
@@ -28,10 +33,29 @@ import { collectResponsesFromSseText } from "~/services/responses/sse-collector"
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 
-const CODEX_ID_TOKEN =
-  "eyJhbGciOiJIUzI1NiJ9."
-  + "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdC0xMjMifSwiZW1haWwiOiJ1c2VyQGV4YW1wbGUuY29tIn0."
-  + "sig"
+function toBase64UrlForTest(value: string): string {
+  return Buffer.from(value, "utf8")
+    .toString("base64")
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll(/=+$/g, "")
+}
+
+/** Synthetic JWT for unit tests only — not a real credential. */
+function buildFakeJwtForTest(payload: Record<string, unknown>): string {
+  const header = toBase64UrlForTest(
+    JSON.stringify({ alg: "TEST", typ: "JWT", purpose: "unit-test-only" }),
+  )
+  const body = toBase64UrlForTest(JSON.stringify(payload))
+  return `${header}.${body}.test-signature-not-valid`
+}
+
+const CODEX_ID_TOKEN = buildFakeJwtForTest({
+  "https://api.openai.com/auth": {
+    chatgpt_account_id: "acct-test-123",
+  },
+  email: "test-user@example.invalid",
+})
 
 beforeEach(() => {
   state.accounts = []
@@ -72,8 +96,8 @@ describe("Codex OAuth", () => {
     const bundle = await exchangeCodexCodeForTokens("code-1", pkce)
     expect(bundle.accessToken).toBe("codex-access")
     expect(bundle.refreshToken).toBe("codex-refresh")
-    expect(bundle.accountId).toBe("acct-123")
-    expect(bundle.email).toBe("user@example.com")
+    expect(bundle.accountId).toBe("acct-test-123")
+    expect(bundle.email).toBe("test-user@example.invalid")
     expect(bundle.expiresAt).toBeGreaterThan(Date.now())
   })
 
@@ -212,6 +236,87 @@ describe("Codex and xAI quota parsers", () => {
     const summary = summarizeCodexQuota(payload)
     expect(summary.remainingPercent).toBe(15)
     expect(summary.unlimited).toBe(false)
+  })
+
+  test("buildCodexQuotaWindows classifies 5-hour and weekly windows", () => {
+    const payload = parseCodexUsagePayload({
+      plan_type: "team",
+      rate_limit: {
+        primary_window: {
+          used_percent: 93,
+          limit_window_seconds: 18000,
+          reset_at: 1_751_300_000,
+        },
+        secondary_window: {
+          used_percent: 69,
+          limit_window_seconds: 604800,
+          reset_after_seconds: 3600,
+        },
+      },
+      rate_limit_reset_credits: {
+        available_count: 1,
+      },
+    })
+    if (!payload) {
+      throw new Error("expected Codex usage payload")
+    }
+
+    const windows = buildCodexQuotaWindows(payload)
+    expect(windows).toHaveLength(2)
+    expect(windows[0]?.labelKey).toBe("quota.oauth.codex.fiveHour")
+    expect(windows[0]?.usedPercent).toBe(93)
+    expect(windows[0]?.resetAtSeconds).toBe(1_751_300_000)
+    expect(windows[1]?.labelKey).toBe("quota.oauth.codex.weekly")
+    expect(windows[1]?.usedPercent).toBe(69)
+    expect(windows[1]?.resetAtSeconds).toBeGreaterThan(
+      Math.floor(Date.now() / 1000),
+    )
+  })
+
+  test("buildCodexQuotaMeta includes reset credits and plan type", () => {
+    const account: OAuthAccount = {
+      id: "acct-codex-meta",
+      label: "Codex Meta",
+      provider: "codex",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "token",
+        idToken: CODEX_ID_TOKEN,
+      },
+    }
+    const payload = parseCodexUsagePayload({
+      plan_type: "team",
+      rate_limit: {
+        primary_window: { used_percent: 10, limit_window_seconds: 18000 },
+        secondary_window: { used_percent: 20, limit_window_seconds: 604800 },
+      },
+      rate_limit_reset_credits: { available_count: 2 },
+    })
+    if (!payload) {
+      throw new Error("expected Codex usage payload")
+    }
+
+    const meta = buildCodexQuotaMeta(account, payload)
+    expect(meta.planType).toBe("team")
+    expect(meta.rateLimitResetCreditsAvailableCount).toBe(2)
+    expect(meta.windows).toHaveLength(2)
+  })
+
+  test("extractCodexPlanTypeFromIdToken reads chatgpt plan type", () => {
+    const token = buildFakeJwtForTest({
+      "https://api.openai.com/auth": {
+        chatgpt_plan_type: "team",
+        chatgpt_subscription_active_until: 1_751_300_000,
+      },
+      email: "test-user@example.invalid",
+    })
+    expect(extractCodexPlanTypeFromIdToken(token)).toBe("team")
+    expect(extractCodexSubscriptionActiveUntilFromIdToken(token)).toBe(
+      1_751_300_000,
+    )
   })
 
   test("summarizeXaiQuota computes remaining credits", () => {

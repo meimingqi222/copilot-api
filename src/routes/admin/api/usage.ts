@@ -1,6 +1,5 @@
 import { Hono } from "hono"
 
-import { getDefaultModelPrice } from "~/lib/default-prices"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 
@@ -43,8 +42,6 @@ usageApiRoutes.get("/", (c) => {
 
 // Get model pricing
 usageApiRoutes.get("/pricing", (c) => {
-  const pricingArray = statsStore.getAllModelPricing()
-  // Convert array to object format for frontend
   const pricing: Record<
     string,
     {
@@ -54,33 +51,45 @@ usageApiRoutes.get("/pricing", (c) => {
       cacheWritePricePer1k: number
     }
   > = {}
+  const sources: Record<string, "manual" | "models-dev" | "unmatched"> = {}
 
-  for (const item of pricingArray) {
+  for (const item of statsStore.getAllModelPricing()) {
     pricing[item.model] = {
       promptPricePer1k: item.promptPricePer1k,
       completionPricePer1k: item.completionPricePer1k,
       cacheReadPricePer1k: item.cacheReadPricePer1k,
       cacheWritePricePer1k: item.cacheWritePricePer1k,
     }
+    sources[item.model] = "manual"
   }
 
-  // Ensure all known models are in the list (even without pricing)
   if (state.models?.data) {
     for (const model of state.models.data) {
-      if (!Object.hasOwn(pricing, model.id)) {
-        // Use default price if available
-        const defaultPrice = getDefaultModelPrice(model.id)
-        pricing[model.id] = {
-          promptPricePer1k: defaultPrice?.promptPricePer1k ?? 0,
-          completionPricePer1k: defaultPrice?.completionPricePer1k ?? 0,
-          cacheReadPricePer1k: defaultPrice?.cacheReadPricePer1k ?? 0,
-          cacheWritePricePer1k: defaultPrice?.cacheWritePricePer1k ?? 0,
-        }
+      if (Object.hasOwn(pricing, model.id)) {
+        continue
       }
+      const resolved = statsStore.resolveModelPricing(model.id)
+      if (resolved) {
+        pricing[model.id] = {
+          promptPricePer1k: resolved.promptPricePer1k,
+          completionPricePer1k: resolved.completionPricePer1k,
+          cacheReadPricePer1k: resolved.cacheReadPricePer1k,
+          cacheWritePricePer1k: resolved.cacheWritePricePer1k,
+        }
+        sources[model.id] = resolved.source
+        continue
+      }
+      pricing[model.id] = {
+        promptPricePer1k: 0,
+        completionPricePer1k: 0,
+        cacheReadPricePer1k: 0,
+        cacheWritePricePer1k: 0,
+      }
+      sources[model.id] = "unmatched"
     }
   }
 
-  return c.json({ pricing })
+  return c.json({ pricing, sources })
 })
 
 // Update model pricing

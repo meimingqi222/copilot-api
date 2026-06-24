@@ -3,6 +3,7 @@ import type { OAuthProviderId } from "~/lib/provider-config"
 
 import { isOAuthAccount } from "~/lib/accounts"
 import { CLAUDE_REQUEST_HEADERS, CLAUDE_USAGE_URL } from "~/lib/quota/constants"
+import { enrichQuotaDetails } from "~/lib/quota/cycles"
 import {
   parseClaudeUsagePayload,
   summarizeClaudeQuota,
@@ -46,6 +47,9 @@ export async function fetchClaudeQuota(
     provider: "claude" satisfies OAuthProviderId,
     unlimited: summary.unlimited,
     premiumInteractionsRemaining: remainingPercent,
-    details: payload as unknown as Record<string, unknown>,
+    details: enrichQuotaDetails(
+      "claude",
+      payload as unknown as Record<string, unknown>,
+    ),
   }
 }

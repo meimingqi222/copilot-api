@@ -4,6 +4,17 @@ import { Hono } from "hono"
 import { getAccountAvailability } from "~/lib/account-availability"
 import { refreshQuotaForAccount, saveAccounts } from "~/lib/account-store"
 import { isOAuthAccount } from "~/lib/accounts"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import {
+  canResetCodexQuota,
+  resetCodexQuota,
+  buildCodexQuotaMeta,
+} from "~/lib/quota/codex"
+import {
+  enrichQuotaDetails,
+  enrichQuotaInfoForResponse,
+} from "~/lib/quota/cycles"
+import { summarizeCodexQuota } from "~/lib/quota/parsers"
 import { state } from "~/lib/state"
 import {
   getOAuthAccountSubtitle,
@@ -35,7 +46,11 @@ quotaApiRoutes.get("/", async (c) => {
       isExhausted:
         availability.reason === "cooldown" || availability.reason === "quota",
       quotaState: account.quotaState ?? "unknown",
-      quotaInfo: account.quotaInfo ?? null,
+      quotaInfo: enrichQuotaInfoForResponse(
+        account.id,
+        account.provider,
+        account.quotaInfo ?? null,
+      ),
       supportsQuota: getProviderRuntime(account.provider).supports(
         account,
         "quota",
@@ -111,7 +126,11 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
     return c.json({
       success: true,
       id: account.id,
-      quotaInfo: account.quotaInfo ?? null,
+      quotaInfo: enrichQuotaInfoForResponse(
+        account.id,
+        account.provider,
+        account.quotaInfo ?? null,
+      ),
       quotaState: account.quotaState ?? "unknown",
     })
   } catch (err) {
@@ -119,6 +138,78 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
     return c.json(
       {
         error: "Failed to refresh quota.",
+        details: String(err),
+      },
+      502,
+    )
+  }
+})
+
+quotaApiRoutes.post("/:id/reset", async (c) => {
+  initializeProviderRegistry()
+  const id = c.req.param("id")
+  const account = state.accounts.find((item) => item.id === id)
+  if (!account) {
+    return c.json({ error: "Account not found." }, 404)
+  }
+
+  if (!isOAuthAccount(account) || account.provider !== "codex") {
+    return c.json(
+      { error: "Quota reset is only supported for Codex accounts." },
+      400,
+    )
+  }
+
+  const runtime = getProviderRuntime(account.provider)
+  if (!runtime.supports(account, "quota")) {
+    return c.json({ error: "Quota is not supported for this provider." }, 400)
+  }
+
+  const existingMeta = account.quotaInfo?.details?._codexMeta as
+    | ReturnType<typeof buildCodexQuotaMeta>
+    | undefined
+  if (!canResetCodexQuota(existingMeta)) {
+    return c.json(
+      { error: "No manual reset credits available for this account." },
+      400,
+    )
+  }
+
+  try {
+    const payload = await resetCodexQuota(account)
+    const summary = summarizeCodexQuota(payload)
+    const meta = buildCodexQuotaMeta(account, payload)
+    const snapshot = {
+      fetchedAt: Date.now(),
+      provider: "codex" as const,
+      unlimited: summary.unlimited,
+      premiumInteractionsRemaining: summary.remainingPercent,
+      details: enrichQuotaDetails("codex", {
+        ...(payload as unknown as Record<string, unknown>),
+        _codexMeta: meta,
+      }),
+    }
+    applyOAuthQuotaSnapshot(account, snapshot)
+    await saveAccounts()
+    consola.info(`Codex quota reset for account "${account.label}"`)
+    return c.json({
+      success: true,
+      id: account.id,
+      quotaInfo: enrichQuotaInfoForResponse(
+        account.id,
+        account.provider,
+        account.quotaInfo ?? null,
+      ),
+      quotaState: account.quotaState ?? "unknown",
+    })
+  } catch (err) {
+    consola.warn(
+      `Failed to reset Codex quota for account "${account.label}":`,
+      err,
+    )
+    return c.json(
+      {
+        error: "Failed to reset Codex quota.",
         details: String(err),
       },
       502,

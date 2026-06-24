@@ -1,0 +1,157 @@
+// ========================================================================
+// Windsurf / Copilot API Protobuf Definitions
+// ========================================================================
+// Source:  language_server_windows_x64.exe binary analysis
+//          + live traffic captures from GetChatMessage endpoint
+//          + copilot-api source code (src/services/windsurf/)
+//
+// Protocol: application/connect+proto  (Connect-Protocol v1)
+// Wire:     5-byte frame header (1b flags + 4B big-endian length) + payload
+// ========================================================================
+
+syntax = "proto3";
+
+package exa;
+
+// ========================================================================
+// Common Types (codeium_common_pb)
+// ========================================================================
+
+message Metadata {
+  string client_name        = 1;   // "windsurf-next"
+  string app_version        = 2;   // "2026.8.1009"
+  string api_key_or_jwt     = 3;   // API key or devin-session-token
+  string language           = 4;   // "en"
+  string system_info_json   = 5;   // JSON {Os, Arch, Version, ...}
+  string ls_version         = 7;   // language server version
+  string hardware_json      = 8;   // JSON {NumCores, Memory, ...}
+  string client_name_2      = 12;  // duplicate client name
+  string jwt                = 21;  // JWT auth token
+  bytes  platform_id        = 30;  // [0, 1]
+}
+
+message ChatToolCall {
+  string id              = 1;
+  string function_name   = 2;
+  string arguments_json  = 3;
+}
+
+// ========================================================================
+// Chat Messages (chat_pb)
+// ========================================================================
+
+message ChatMessage {
+  int32  role                  = 2;  // 1=user, 2=assistant, 4=tool
+  string content               = 3;
+  repeated ChatToolCall tool_calls = 6;
+  string tool_call_id          = 7;  // tool result correlation
+  string reasoning_text        = 11; // thinking (assistant only)
+}
+
+// ========================================================================
+// Request Components
+// ========================================================================
+
+enum ChatMessageRequestType {
+  CHAT_MESSAGE_REQUEST_TYPE_UNSPECIFIED     = 0;
+  CHAT_MESSAGE_REQUEST_TYPE_GENERAL         = 1;
+  CHAT_MESSAGE_REQUEST_TYPE_CONTEXT_CHECK   = 2;
+  CHAT_MESSAGE_REQUEST_TYPE_PLAN            = 3;
+  CHAT_MESSAGE_REQUEST_TYPE_COMMAND         = 4;
+  CHAT_MESSAGE_REQUEST_TYPE_CASCADE         = 5;
+  CHAT_MESSAGE_REQUEST_TYPE_EVAL            = 6;
+  CHAT_MESSAGE_REQUEST_TYPE_WINDSURF_REVIEW = 7;
+  CHAT_MESSAGE_REQUEST_TYPE_VIBE_AND_REPLACE = 8;
+  CHAT_MESSAGE_REQUEST_TYPE_DEEPWIKI        = 9;
+}
+
+message ToolDefinition {
+  string name             = 1;
+  string description      = 2;
+  string parameters_json  = 3;
+}
+
+message SamplingConfig {
+  int32  mode                = 1;  // 1
+  int32  max_context_tokens  = 2;  // 64000
+  int32  max_tokens          = 3;
+  double temperature         = 5;
+  double top_p               = 6;
+  int32  top_k               = 7;  // 50
+  double repetition_penalty  = 8;  // 1.0
+  repeated string special_tokens = 9;
+  double frequency_penalty   = 11; // 1.0
+}
+
+message TraceInfo {
+  string trace_id = 1;   // UUID v4
+  int32  f2       = 2;   // 5
+  int32  f3       = 3;   // 4
+  int32  f4       = 4;   // 23
+}
+
+// ========================================================================
+// Requests
+// ========================================================================
+
+// Endpoint: POST /exa.api_server_pb.ApiServerService/GetChatMessage
+message GetChatMessageRequest {
+  Metadata                  metadata       = 1;
+  string                    system_prompt  = 2;
+  repeated ChatMessage      messages       = 3;
+  int32                     mode           = 7;   // 5=native slug, 15=enum ID
+  SamplingConfig            sampling       = 8;
+  repeated ToolDefinition   tools          = 10;
+  TraceInfo                 trace_info     = 15;
+  string                    request_id     = 16;
+  ChatMessageRequestType    request_type   = 20;  // default: GENERAL=1
+  string                    model          = 21;
+  string                    session_id     = 22;  // stable UUID for KV cache
+}
+
+// Endpoint: /exa.language_server_pb.LanguageServerService/RawGetChatMessage
+message RawGetChatMessageRequest {
+  Metadata                       metadata      = 1;
+  repeated ChatMessagePrompt     chat_messages = 2;
+}
+
+message ChatMessagePrompt {
+  ChatMessage message = 1;
+}
+
+// ========================================================================
+// Response (server-streaming)
+// ========================================================================
+
+// Each frame = one RawChatMessage delta
+// Parsed by: src/services/windsurf/response-parsers.ts
+message RawChatMessage {
+  string         content         = 3;   // text delta
+  int32          status          = 5;   // 2=text_done, 10=tool_calls_done
+  ChatToolCall   tool_call       = 6;   // tool call delta
+  UsageMetadata  usage           = 7;   // token usage
+  string         reasoning_text  = 9;   // thinking delta
+  repeated Section sections      = 28;  // perf / KV-cache sections
+  int32          cached_tokens   = 33;  // KV cache hits
+}
+
+message UsageMetadata {
+  int32 prompt_tokens      = 2;
+  int32 completion_tokens  = 3;
+  int32 cache_write_tokens = 4;
+  int32 cache_read_tokens  = 5;
+}
+
+message Section {
+  string         section_name = 1;   // e.g. "Token Usage"
+  SectionValue   value        = 2;
+  string         f5           = 5;   // e.g. "cached_input_tokens"
+  SectionValue   value2       = 4;
+}
+
+message SectionValue {
+  string label        = 1;
+  float  float_value  = 2;   // wire type 5 (float32)
+  string unit_single  = 3;
+  string unit_plural  = 4;
+}
