@@ -66,6 +66,66 @@ const XAI_CATALOG: Array<CatalogEntry> = [
     vendor: "xai",
     supportedEndpoints: ["/v1/responses"],
   },
+  {
+    id: "grok-4.20-0309-reasoning",
+    name: "Grok 4.20 0309 Reasoning",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-4.20-0309-non-reasoning",
+    name: "Grok 4.20 0309 Non Reasoning",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-4.20-multi-agent-0309",
+    name: "Grok 4.20 Multi Agent 0309",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-3-mini",
+    name: "Grok 3 Mini",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-3-mini-fast",
+    name: "Grok 3 Mini Fast",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-composer-2.5-fast",
+    name: "Composer 2.5 Fast",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-imagine-image",
+    name: "Grok Imagine Image",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/images/generations"],
+  },
+  {
+    id: "grok-imagine-image-quality",
+    name: "Grok Imagine Image Quality",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/images/generations"],
+  },
+  {
+    id: "grok-imagine-video",
+    name: "Grok Imagine Video",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/videos/generations"],
+  },
+  {
+    id: "grok-imagine-video-1.5-preview",
+    name: "Grok Imagine Video 1.5 Preview",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/videos/generations"],
+  },
 ]
 
 const CODEX_CATALOG: Array<CatalogEntry> = [

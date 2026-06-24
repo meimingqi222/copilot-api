@@ -8,11 +8,13 @@ import { requireApiKey } from "./lib/request-auth"
 import { adminRoutes } from "./routes/admin/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
+import { imageRoutes } from "./routes/images/route"
 import { messageRoutes } from "./routes/messages/route"
 import { mimoWsRoute } from "./routes/mimo/ws"
 import { modelRoutes } from "./routes/models/route"
 import { responsesRoutes } from "./routes/responses/route"
 import { tokenRoute } from "./routes/token/route"
+import { videoRoutes } from "./routes/videos/route"
 
 export const server = new Hono()
 const honoLogger = logger()
@@ -48,6 +50,8 @@ server.route("/v1/chat/completions", completionRoutes)
 server.route("/v1/responses", responsesRoutes)
 server.route("/v1/models", modelRoutes)
 server.route("/v1/embeddings", embeddingRoutes)
+server.route("/v1/images", imageRoutes)
+server.route("/v1/videos", videoRoutes)
 
 // Anthropic compatible endpoints
 server.route("/v1/messages", messageRoutes)

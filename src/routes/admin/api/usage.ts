@@ -20,6 +20,22 @@ type UsageSeriesEntry = UsageMetrics & {
   models: Record<string, UsageMetrics>
 }
 
+type ModelPricingEntry = {
+  promptPricePer1k: number
+  completionPricePer1k: number
+  cacheReadPricePer1k: number
+  cacheWritePricePer1k: number
+}
+
+function samePricing(a: ModelPricingEntry, b: ModelPricingEntry): boolean {
+  return (
+    a.promptPricePer1k === b.promptPricePer1k
+    && a.completionPricePer1k === b.completionPricePer1k
+    && a.cacheReadPricePer1k === b.cacheReadPricePer1k
+    && a.cacheWritePricePer1k === b.cacheWritePricePer1k
+  )
+}
+
 // Get usage statistics with date range
 usageApiRoutes.get("/", (c) => {
   const accountId = c.req.query("accountId")
@@ -89,24 +105,20 @@ usageApiRoutes.get("/pricing", (c) => {
     }
   }
 
-  // Deduplicate: if a bare model id and a provider-prefixed id resolve
-  // to the exact same price, keep only the provider-prefixed one.
+  // Deduplicate pricing entries: when a bare model id (e.g. "gpt-5.1-codex")
+  // and a provider-prefixed id (e.g. "windsurf/gpt-5.1-codex") resolve to the
+  // exact same price AND source, the bare id is redundant — keep only the
+  // prefixed one so the admin UI doesn't show duplicate rows.
+  // Manual entries are always preserved (a user may have set a bare-id price
+  // intentionally), so we only collapse when both sides share the same source.
   const toRemove = new Set<string>()
   for (const id of Object.keys(pricing)) {
     if (id.includes("/")) continue
     for (const otherId of Object.keys(pricing)) {
       if (otherId === id) continue
       if (!otherId.endsWith(`/${id}`)) continue
-      const samePrice =
-        pricing[id].promptPricePer1k === pricing[otherId].promptPricePer1k
-        && pricing[id].completionPricePer1k
-          === pricing[otherId].completionPricePer1k
-        && pricing[id].cacheReadPricePer1k
-          === pricing[otherId].cacheReadPricePer1k
-        && pricing[id].cacheWritePricePer1k
-          === pricing[otherId].cacheWritePricePer1k
-      const sameSource = sources[id] === sources[otherId]
-      if (samePrice && sameSource) {
+      if (sources[id] !== sources[otherId]) continue
+      if (samePricing(pricing[id], pricing[otherId])) {
         toRemove.add(id)
         break
       }

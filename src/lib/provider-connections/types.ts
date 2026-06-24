@@ -39,13 +39,21 @@ export function isProviderProtocol(value: string): value is ProviderProtocol {
   return PROVIDER_PROTOCOLS.includes(value as ProviderProtocol)
 }
 
-export type ModelEndpoint = "chat" | "responses" | "messages" | "embeddings"
+export type ModelEndpoint =
+  | "chat"
+  | "responses"
+  | "messages"
+  | "embeddings"
+  | "images"
+  | "videos"
 
 export const MODEL_ENDPOINTS: ReadonlyArray<ModelEndpoint> = [
   "chat",
   "responses",
   "messages",
   "embeddings",
+  "images",
+  "videos",
 ]
 
 export function isModelEndpoint(value: string): value is ModelEndpoint {

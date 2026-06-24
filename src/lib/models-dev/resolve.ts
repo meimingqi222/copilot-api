@@ -16,22 +16,35 @@ import {
 } from "~/lib/models-dev/normalize"
 import { MODELS_DEV_PROVIDER_PRIORITY } from "~/lib/models-dev/provider-map"
 
+/**
+ * Windsurf "fast" variant pricing multipliers.
+ *
+ * Source: Windsurf pricing documentation — fast variants trade latency
+ * for a per-token surcharge on top of the base model price.
+ *   - OpenAI GPT-5.x fast: 2x base price
+ *   - Claude Opus 4.8 fast: 2x base price (newer tier)
+ *   - Older Claude (4.1/4.6/4.7) fast: 6x base price (legacy tier)
+ * Other vendors (Google, xAI, etc.) currently have no documented fast
+ * surcharge and fall through to 1x.
+ */
+const FAST_MULTIPLIER_OPENAI = 2
+const FAST_MULTIPLIER_CLAUDE_NEW = 2
+const FAST_MULTIPLIER_CLAUDE_LEGACY = 6
+const CLAUDE_NEW_FAST_PATTERNS = ["claude-opus-4-8", "claude-opus-4.8"]
+
 function inferFastMultiplier(modelId: string): number {
   const id = modelId.toLowerCase()
   const buckets = inferWindsurfVendorBucket(modelId)
 
   if (buckets.includes("openai")) {
-    // GPT-5.2, GPT-5.3, GPT-5.4 fast = 2x per Windsurf docs
-    return 2
+    return FAST_MULTIPLIER_OPENAI
   }
 
   if (buckets.includes("anthropic")) {
-    // Claude Opus 4.8 fast = 2x per Windsurf docs
-    if (id.includes("claude-opus-4-8") || id.includes("claude-opus-4.8")) {
-      return 2
+    if (CLAUDE_NEW_FAST_PATTERNS.some((p) => id.includes(p))) {
+      return FAST_MULTIPLIER_CLAUDE_NEW
     }
-    // Older Claude fast variants (4.1, 4.6, 4.7) = 6x
-    return 6
+    return FAST_MULTIPLIER_CLAUDE_LEGACY
   }
 
   return 1

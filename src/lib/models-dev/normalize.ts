@@ -72,11 +72,17 @@ function applyAliases(modelId: string): Array<string> {
   return Array.from(candidates)
 }
 
+// Cap the number of stripped variants to avoid combinatorial blow-up on
+// pathological model ids. Real model names have at most a handful of
+// suffixes (e.g. "gpt-5-codex-low-max-fast" → 2^3 = 8 variants), so 32
+// is a generous safety net.
+const MAX_STRIPPED_VARIANTS = 32
+
 function generateStrippedVariants(modelId: string): Array<string> {
   const seen = new Set<string>()
   const queue = [modelId]
 
-  while (queue.length > 0) {
+  while (queue.length > 0 && seen.size < MAX_STRIPPED_VARIANTS) {
     const current = queue.shift()
     if (!current || seen.has(current)) continue
     seen.add(current)

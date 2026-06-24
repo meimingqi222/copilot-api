@@ -327,6 +327,8 @@ function accountModelEndpoints(model: AccountModel): Array<ModelEndpoint> {
     else if (ep.includes("messages")) eps.push("messages")
     else if (ep.includes("responses")) eps.push("responses")
     else if (ep.includes("embeddings")) eps.push("embeddings")
+    else if (ep.includes("images")) eps.push("images")
+    else if (ep.includes("videos")) eps.push("videos")
   }
   return eps.length > 0 ? eps : ["chat"]
 }
