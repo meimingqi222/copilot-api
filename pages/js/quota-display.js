@@ -84,13 +84,14 @@ const QuotaDisplay = {
     return rows.map((row) => {
       if (row.hideBar) return row
       const usage = usageMap.get(row.id)
-      if (!usage) return row
+      if (!usage || !Number.isFinite(usage.cost) || usage.cost <= 0) {
+        return row
+      }
       return {
         ...row,
         cycleUsageText: t("quota.oauth.cycleUsage", {
           cost: this.formatCycleUsageCost(usage.cost),
         }),
-        cycleUsageHint: t("quota.oauth.cycleUsageHint"),
       }
     })
   },
@@ -441,9 +442,7 @@ const QuotaDisplay = {
             : undefined,
           valueText:
             fraction !== undefined ?
-              fraction >= 0.999 ?
-                t("quota.oauth.antigravity.available")
-              : `${Math.round(fraction * 100)}%`
+              `${Math.round(Math.max(0, Math.min(100, fraction * 100)))}%`
             : "N/A",
           resetText: this.formatResetTime(
             bucket.resetTime ?? bucket.reset_time,
@@ -520,6 +519,13 @@ const QuotaDisplay = {
         monthlyLimit !== undefined && used !== undefined ?
           Math.max(0, monthlyLimit - used)
         : undefined
+      const remainingPercent =
+        monthlyLimit && monthlyLimit > 0 && used !== undefined ?
+          Math.max(
+            0,
+            Math.min(100, ((monthlyLimit - used) / monthlyLimit) * 100),
+          )
+        : undefined
       rows.push({
         id: "monthly-credits",
         label: t("quota.oauth.xai.monthlyCredits"),
@@ -527,16 +533,14 @@ const QuotaDisplay = {
         totalCents: monthlyLimit,
         usedCents: used,
         valueText:
+          remainingPercent !== undefined ?
+            `${Math.round(remainingPercent)}%`
+          : "--",
+        amountText:
           monthlyLimit !== undefined ?
             `${this.formatUsdFromCents(remaining)} / ${this.formatUsdFromCents(monthlyLimit)}`
           : this.formatUsdFromCents(remaining),
-        remainingPercent:
-          monthlyLimit && monthlyLimit > 0 && used !== undefined ?
-            Math.max(
-              0,
-              Math.min(100, ((monthlyLimit - used) / monthlyLimit) * 100),
-            )
-          : undefined,
+        remainingPercent,
         resetText: this.formatResetTime(
           config.billingPeriodEnd ?? config.billing_period_end,
           t,
