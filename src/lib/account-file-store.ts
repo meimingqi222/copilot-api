@@ -10,6 +10,11 @@ export function getAccountsBackupPath(): string {
 function getAccountsCorruptPath(): string {
   return `${PATHS.ACCOUNTS_PATH}.corrupt`
 }
+// EPERM/EBUSY are almost always transient file locks on Windows
+// (antivirus scan, another reader holding the handle). EACCES can be
+// either a transient lock or a genuine permission problem — we still
+// retry it but log a warning so persistent permission issues are visible.
+const RENAME_RETRYABLE_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
 const RENAME_RETRY_COUNT = 3
 const RENAME_RETRY_DELAY_MS = 200
 
@@ -94,9 +99,15 @@ async function retryRename(source: string, target: string): Promise<void> {
     } catch (error) {
       lastError = error
       const code = (error as NodeJS.ErrnoException).code
-      // Retry on Windows EPERM/EBUSY/EACCES (file locked by AV/reader)
-      if (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES") {
+      if (!code || !RENAME_RETRYABLE_CODES.has(code)) {
+        // Non-retryable error (e.g. ENOENT, ENOSPC) — fail fast.
         throw error
+      }
+      if (code === "EACCES") {
+        consola.warn(
+          `EACCES renaming ${source} → ${target} (attempt ${attempt + 1}/${RENAME_RETRY_COUNT}); `
+            + `may be a transient lock or a persistent permission issue`,
+        )
       }
       if (attempt < RENAME_RETRY_COUNT - 1) {
         await new Promise((resolve) =>
