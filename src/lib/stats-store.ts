@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs"
 import path from "node:path"
 
 import type { ResolvedModelPricing } from "~/lib/models-dev"
+import type { ProviderId } from "~/lib/provider-config"
 
 import { resolveModelsDevPriceDetailed } from "~/lib/models-dev"
 import { PATHS } from "~/lib/paths"
@@ -791,7 +792,10 @@ class StatsStore {
     }
   }
 
-  resolveModelPricing(model: string): ResolvedModelPricing | null {
+  resolveModelPricing(
+    model: string,
+    provider?: ProviderId,
+  ): ResolvedModelPricing | null {
     const manual = this.getManualModelPricing(model)
     if (manual) {
       return {
@@ -799,7 +803,7 @@ class StatsStore {
         source: "manual",
       }
     }
-    return resolveModelsDevPriceDetailed(model)
+    return resolveModelsDevPriceDetailed(model, provider)
   }
 
   getModelPricing(model: string): {

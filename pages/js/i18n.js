@@ -288,6 +288,8 @@ const i18n = {
       "quota.accountQuotasAll": "账户配额",
       "quota.accountQuotasAllDesc":
         "各账户的上游配额状态（Copilot 与 OAuth 供应商）",
+      "quota.group.quotaEnabled": "配额监控账号",
+      "quota.group.general": "常规中转账号",
       "quota.refreshAccount": "刷新此账户配额",
       "quota.oauth.resetAvailable": "已可刷新",
       "quota.oauth.resetInDays": "{days} 天 {hours} 小时后重置",
@@ -826,6 +828,8 @@ const i18n = {
       "quota.accountQuotasAll": "Account Quotas",
       "quota.accountQuotasAllDesc":
         "Upstream quota status for each account (Copilot and OAuth providers)",
+      "quota.group.quotaEnabled": "Quota-Enabled Accounts",
+      "quota.group.general": "General Accounts",
       "quota.refreshAccount": "Refresh account quota",
       "quota.oauth.resetAvailable": "Reset available",
       "quota.oauth.resetInDays": "Resets in {days}d {hours}h",

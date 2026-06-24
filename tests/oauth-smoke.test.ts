@@ -518,6 +518,126 @@ describe("OAuth smoke — admin API", () => {
       "http://127.0.0.1:8888",
     )
   })
+
+  test("POST /admin/api/accounts/import imports OAuth accounts from standard export format", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response("{}", { status: 404 }),
+      )) as unknown as typeof fetch
+
+    const response = await adminJson(
+      "http://localhost/admin/api/accounts/import",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          accounts: [
+            {
+              label: "codex-export",
+              provider: "codex",
+              credentials: {
+                accessToken: "codex-access",
+                refreshToken: "codex-refresh",
+                idToken: "codex-id",
+                accountId: "codex-account",
+              },
+              settings: { proxyUrl: "http://127.0.0.1:7890" },
+            },
+            {
+              label: "xai-export",
+              provider: "xai",
+              credentials: {
+                accessToken: "xai-access",
+                refreshToken: "xai-refresh",
+              },
+              settings: { proxyUrl: "http://127.0.0.1:7891" },
+            },
+            {
+              label: "antigravity-export",
+              provider: "antigravity",
+              credentials: { apiKey: "antigravity-key" },
+              settings: { proxyUrl: "http://127.0.0.1:7892" },
+            },
+          ],
+        }),
+      },
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      imported: number
+      skipped: number
+      failed: number
+      details: { imported: Array<string>; failed: Array<{ label: string }> }
+    }
+    expect(body.imported).toBe(3)
+    expect(body.skipped).toBe(0)
+    expect(body.failed).toBe(0)
+    expect(state.accounts).toHaveLength(3)
+
+    const codex = state.accounts.find((a) => a.label === "codex-export")
+    expect(codex?.provider).toBe("codex")
+    if (!codex) throw new Error("codex account missing")
+    expect(isOAuthAccount(codex) && codex.credentials?.accessToken).toBe(
+      "codex-access",
+    )
+    expect(isOAuthAccount(codex) && codex.credentials?.accountId).toBe(
+      "codex-account",
+    )
+    expect(isOAuthAccount(codex) && codex.settings?.proxyUrl).toBe(
+      "http://127.0.0.1:7890",
+    )
+
+    const xai = state.accounts.find((a) => a.label === "xai-export")
+    expect(xai?.provider).toBe("xai")
+    if (!xai) throw new Error("xai account missing")
+    expect(isOAuthAccount(xai) && xai.credentials?.accessToken).toBe(
+      "xai-access",
+    )
+    expect(isOAuthAccount(xai) && xai.settings?.proxyUrl).toBe(
+      "http://127.0.0.1:7891",
+    )
+
+    const antigravity = state.accounts.find(
+      (a) => a.label === "antigravity-export",
+    )
+    expect(antigravity?.provider).toBe("antigravity")
+    if (!antigravity) throw new Error("antigravity account missing")
+    expect(isOAuthAccount(antigravity) && antigravity.credentials?.apiKey).toBe(
+      "antigravity-key",
+    )
+  })
+
+  test("POST /admin/api/accounts/import reports OAuth account missing token", async () => {
+    const response = await adminJson(
+      "http://localhost/admin/api/accounts/import",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          accounts: [
+            {
+              label: "xai-missing-token",
+              provider: "xai",
+              credentials: {},
+              settings: {},
+            },
+          ],
+        }),
+      },
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      imported: number
+      failed: number
+      details: { failed: Array<{ label: string; reason: string }> }
+    }
+    expect(body.imported).toBe(0)
+    expect(body.failed).toBe(1)
+    expect(body.details.failed[0]?.label).toBe("xai-missing-token")
+    expect(body.details.failed[0]?.reason).toContain(
+      "Missing accessToken or apiKey",
+    )
+  })
 })
 
 describe("OAuth smoke — routing", () => {

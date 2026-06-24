@@ -2,7 +2,7 @@ import consola from "consola"
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
-import type { Account, AccountProvider } from "~/lib/accounts"
+import type { Account, AccountProvider, OAuthAccount } from "~/lib/accounts"
 
 import {
   refreshCopilotToken,
@@ -11,7 +11,7 @@ import {
 } from "~/lib/account-store"
 import { cancelTokenRefreshTimer } from "~/lib/account-store"
 import { setGitHubToken, addAccount } from "~/lib/accounts"
-import { isProviderId } from "~/lib/provider-config"
+import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
@@ -35,7 +35,74 @@ interface ImportAccountPayload {
   xiaomichatbotPh?: string
   credentials?: Record<string, unknown>
   settings?: Record<string, unknown>
+  cpaMetadata?: Record<string, unknown>
   createdAt?: number
+}
+
+function buildOAuthAccountFromImportPayload(
+  raw: ImportAccountPayload,
+  label: string,
+  provider: OAuthAccount["provider"],
+): OAuthAccount | null {
+  const accessToken =
+    typeof raw.credentials?.accessToken === "string" ?
+      raw.credentials.accessToken.trim()
+    : undefined
+  const apiKey =
+    typeof raw.credentials?.apiKey === "string" ?
+      raw.credentials.apiKey.trim()
+    : undefined
+
+  if (!accessToken && !apiKey) {
+    return null
+  }
+
+  const pickCredentialString = (key: string): string | undefined => {
+    const value = raw.credentials?.[key]
+    return typeof value === "string" ? value.trim() : undefined
+  }
+
+  const pickSettingString = (key: string): string | undefined => {
+    const value = raw.settings?.[key]
+    return typeof value === "string" ? value.trim() : undefined
+  }
+
+  return {
+    id: randomUUID(),
+    label,
+    provider,
+    enabled: raw.enabled ?? true,
+    priority: raw.priority ?? 0,
+    quotaState: "unknown",
+    createdAt: raw.createdAt ?? Date.now(),
+    credentials: {
+      accessToken,
+      apiKey,
+      refreshToken: pickCredentialString("refreshToken"),
+      idToken: pickCredentialString("idToken"),
+      expiresAt:
+        typeof raw.credentials?.expiresAt === "number" ?
+          raw.credentials.expiresAt
+        : undefined,
+      accountId: pickCredentialString("accountId"),
+      projectId: pickCredentialString("projectId"),
+      deviceId: pickCredentialString("deviceId"),
+      email: pickCredentialString("email"),
+    },
+    settings: {
+      baseUrl: pickSettingString("baseUrl"),
+      proxyUrl: pickSettingString("proxyUrl"),
+      modelPrefix: pickSettingString("modelPrefix"),
+      cpaSourcePath: pickSettingString("cpaSourcePath"),
+      tokenEndpoint: pickSettingString("tokenEndpoint"),
+      redirectUri: pickSettingString("redirectUri"),
+    },
+    cpaMetadata:
+      raw.cpaMetadata && typeof raw.cpaMetadata === "object" ?
+        raw.cpaMetadata
+      : undefined,
+    runtimeState: { authStatus: "ready" },
+  }
 }
 
 // Import accounts from exported JSON
@@ -224,6 +291,36 @@ importAccountRoutes.post("/import", async (c) => {
       refreshModelsForAccount(mimoAccount).catch((err: unknown) => {
         consola.warn(`Import: failed to init account "${label}":`, err)
       })
+      continue
+    }
+
+    if (isOAuthProviderId(provider)) {
+      const oauthAccount = buildOAuthAccountFromImportPayload(
+        raw,
+        label,
+        provider,
+      )
+      if (!oauthAccount) {
+        failed.push({
+          label,
+          reason: "Missing accessToken or apiKey in credentials.",
+        })
+        continue
+      }
+
+      addAccount(oauthAccount)
+      imported.push(label)
+
+      scheduleOAuthRefreshForAccount(oauthAccount)
+      refreshModelsForAccount(oauthAccount).catch((err: unknown) => {
+        consola.warn(`Import: failed to init models for "${label}":`, err)
+      })
+      const runtime = getProviderRuntime(oauthAccount.provider)
+      if (runtime.refreshQuota) {
+        runtime.refreshQuota(oauthAccount).catch((err: unknown) => {
+          consola.warn(`Import: failed to init quota for "${label}":`, err)
+        })
+      }
       continue
     }
   }

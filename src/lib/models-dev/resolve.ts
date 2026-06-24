@@ -2,6 +2,7 @@ import type {
   ModelPricingPer1k,
   ResolvedModelPricing,
 } from "~/lib/models-dev/types"
+import type { ProviderId } from "~/lib/provider-config"
 
 import { parseModelReference } from "~/lib/accounts"
 import {
@@ -14,6 +15,44 @@ import {
   inferWindsurfVendorBucket,
 } from "~/lib/models-dev/normalize"
 import { MODELS_DEV_PROVIDER_PRIORITY } from "~/lib/models-dev/provider-map"
+
+function inferFastMultiplier(modelId: string): number {
+  const id = modelId.toLowerCase()
+  const buckets = inferWindsurfVendorBucket(modelId)
+
+  if (buckets.includes("openai")) {
+    // GPT-5.2, GPT-5.3, GPT-5.4 fast = 2x per Windsurf docs
+    return 2
+  }
+
+  if (buckets.includes("anthropic")) {
+    // Claude Opus 4.8 fast = 2x per Windsurf docs
+    if (id.includes("claude-opus-4-8") || id.includes("claude-opus-4.8")) {
+      return 2
+    }
+    // Older Claude fast variants (4.1, 4.6, 4.7) = 6x
+    return 6
+  }
+
+  return 1
+}
+
+function applyFastMultiplier(
+  basePricing: ModelPricingPer1k,
+  modelId: string,
+): ModelPricingPer1k {
+  const multiplier = inferFastMultiplier(modelId)
+  if (multiplier === 1) {
+    return basePricing
+  }
+
+  return {
+    promptPricePer1k: basePricing.promptPricePer1k * multiplier,
+    completionPricePer1k: basePricing.completionPricePer1k * multiplier,
+    cacheReadPricePer1k: basePricing.cacheReadPricePer1k * multiplier,
+    cacheWritePricePer1k: basePricing.cacheWritePricePer1k * multiplier,
+  }
+}
 
 function lookupCandidates(
   providerIds: Array<string>,
@@ -62,6 +101,7 @@ export function resolveModelsDevPrice(
 
 export function resolveModelsDevPriceDetailed(
   modelId: string,
+  providerHint?: ProviderId,
 ): ResolvedModelPricing | null {
   const indexes = getModelsDevIndexes()
   if (!indexes) {
@@ -69,7 +109,7 @@ export function resolveModelsDevPriceDetailed(
   }
 
   const parsed = parseModelReference(modelId)
-  const provider = parsed.provider
+  const provider = parsed.provider ?? providerHint
   const candidates = buildPricingLookupCandidates(
     parsed.nativeModelId,
     provider,
@@ -96,8 +136,17 @@ export function resolveModelsDevPriceDetailed(
     return null
   }
 
+  const hasFast = parsed.nativeModelId.toLowerCase().endsWith("-fast")
+  const isWindsurfLike =
+    provider === "windsurf"
+    || (!provider && inferWindsurfVendorBucket(parsed.nativeModelId).length > 0)
+  const resolvedPricing =
+    hasFast && isWindsurfLike ?
+      applyFastMultiplier(pricing, parsed.nativeModelId)
+    : pricing
+
   return {
-    ...pricing,
+    ...resolvedPricing,
     source: "models-dev",
   }
 }

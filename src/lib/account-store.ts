@@ -18,6 +18,10 @@ import {
   setAccountQuotaState,
 } from "~/lib/account-availability"
 import {
+  tryReadAccountsFile,
+  writeAccountsFile,
+} from "~/lib/account-file-store"
+import {
   getAccountProvider,
   getCodebuffAuthToken,
   getGitHubToken,
@@ -50,8 +54,9 @@ function defaultProvider(provider?: AccountProvider): AccountProvider {
 export async function loadAccounts(): Promise<void> {
   clearAllAccountTimers()
   cancelAllOAuthRefreshTimers()
-  const rawAccounts = await tryReadAccountsFile()
-  if (rawAccounts.length > 0) {
+  const accountFile = await tryReadAccountsFile()
+  if (accountFile.status === "found") {
+    const rawAccounts = accountFile.accounts
     state.accounts = []
     let migratedLegacyShape = false
     for (const raw of rawAccounts) {
@@ -115,14 +120,6 @@ export async function loadAccounts(): Promise<void> {
   state.accounts = []
 }
 
-async function tryReadAccountsFile(): Promise<Array<Record<string, unknown>>> {
-  try {
-    return await readAccountsFile(PATHS.ACCOUNTS_PATH)
-  } catch {
-    return []
-  }
-}
-
 class Mutex {
   private queue: Promise<void> = Promise.resolve()
 
@@ -146,19 +143,9 @@ class Mutex {
 const fileMutex = new Mutex()
 
 export async function saveAccounts(): Promise<void> {
-  const targetPath = PATHS.ACCOUNTS_PATH
-  const appDir = PATHS.APP_DIR
   return fileMutex.runExclusive(async () => {
     const sanitized = state.accounts.map((account) => serializeAccount(account))
-    const tmpPath = `${targetPath}.${process.pid}.tmp`
-    try {
-      await fs.mkdir(appDir, { recursive: true })
-      await fs.writeFile(tmpPath, JSON.stringify(sanitized, null, 2), "utf8")
-      await fs.rename(tmpPath, targetPath)
-    } catch (error) {
-      await fs.unlink(tmpPath).catch(() => {})
-      throw error
-    }
+    await writeAccountsFile(sanitized)
   })
 }
 
@@ -754,15 +741,6 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     existingSettings,
     existingRuntime,
   )
-}
-
-async function readAccountsFile(
-  path: string,
-): Promise<Array<Record<string, unknown>>> {
-  return fileMutex.runExclusive(async () => {
-    const data = await fs.readFile(path)
-    return JSON.parse(data.toString("utf8")) as Array<Record<string, unknown>>
-  })
 }
 
 export function scheduleQuotaRefresh(): void {

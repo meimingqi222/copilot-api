@@ -704,7 +704,38 @@ select.form-input {
 
 .quota-account-card:hover {
   border-color: var(--apple-gray-4);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.quota-account-card.quota-card-claude:hover {
+  border-color: rgba(217, 119, 87, 0.35);
+  box-shadow: 0 6px 20px rgba(217, 119, 87, 0.08);
+}
+
+.quota-account-card.quota-card-codex:hover {
+  border-color: rgba(16, 163, 127, 0.35);
+  box-shadow: 0 6px 20px rgba(16, 163, 127, 0.08);
+}
+
+.quota-account-card.quota-card-antigravity:hover {
+  border-color: rgba(66, 133, 244, 0.35);
+  box-shadow: 0 6px 20px rgba(66, 133, 244, 0.08);
+}
+
+.quota-account-card.quota-card-kimi:hover {
+  border-color: rgba(124, 58, 237, 0.35);
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.08);
+}
+
+.quota-account-card.quota-card-xai:hover {
+  border-color: rgba(17, 24, 39, 0.3);
+  box-shadow: 0 6px 20px rgba(17, 24, 39, 0.06);
+}
+
+.quota-account-card.quota-card-copilot:hover,
+.quota-account-card:not([class*="quota-card-"]):hover {
+  border-color: rgba(0, 122, 255, 0.35);
+  box-shadow: 0 6px 20px rgba(0, 122, 255, 0.08);
 }
 
 .quota-account-card .quota-card-accent {
@@ -797,12 +828,13 @@ select.form-input {
 
 .quota-card-summary {
   background: var(--apple-bg-secondary);
-  border-radius: 10px;
+  border: 1px solid var(--apple-gray-6);
+  border-radius: 12px;
   padding: 12px 14px;
 }
 
 .quota-meter-row {
-  margin-bottom: 0.875rem;
+  margin-bottom: 0.75rem;
 }
 
 .quota-meter-row:last-child {
@@ -818,7 +850,7 @@ select.form-input {
 }
 
 .quota-meter-label {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   line-height: 1.4;
   color: var(--apple-text-secondary);
   min-width: 0;
@@ -839,27 +871,29 @@ select.form-input {
 
 .quota-meter-percent,
 .quota-meter-amount {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 0.875rem;
+  font-weight: 700;
   line-height: 1.3;
   color: var(--apple-text);
   font-variant-numeric: tabular-nums;
 }
 
 .quota-meter-row-meta .quota-meter-percent {
-  font-size: 0.875rem;
-  font-weight: 500;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .quota-meter-reset {
-  font-size: 0.875rem;
+  font-size: 10px;
   line-height: 1.35;
   color: var(--apple-text-tertiary);
   font-weight: 400;
+  margin-top: 2px;
 }
 
 .quota-meter-bar {
-  height: 0.625rem;
+  height: 6px;
+  background: var(--apple-gray-6);
 }
 
 .quota-meter-cycle {

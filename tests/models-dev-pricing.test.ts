@@ -62,6 +62,10 @@ const TEST_CATALOG: ModelsDevCatalog = {
         id: "claude-sonnet-4.6",
         cost: { input: 3, output: 15, cache_read: 0.3 },
       },
+      "claude-opus-4.8": {
+        id: "claude-opus-4.8",
+        cost: { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+      },
     },
   },
 }
@@ -160,6 +164,65 @@ describe("models.dev pricing resolver", () => {
   test("leaves windsurf proprietary swe models unmatched", () => {
     expect(resolveModelsDevPrice("windsurf/swe-1-6-fast")).toBeNull()
     expect(buildPricingLookupCandidates("swe-1-6-fast", "windsurf")).toEqual([])
+  })
+
+  test("normalizes windsurf claude -max suffix (intensity, no price change)", () => {
+    const resolved = resolveModelsDevPriceDetailed(
+      "windsurf/claude-opus-4-8-max",
+    )
+    expect(resolved?.source).toBe("models-dev")
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.005, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.025, 10)
+  })
+
+  test("applies 2x fast multiplier for claude-opus-4.8", () => {
+    const resolved = resolveModelsDevPriceDetailed(
+      "windsurf/claude-opus-4-8-max-fast",
+    )
+    expect(resolved?.source).toBe("models-dev")
+    // base: 5/1000 = 0.005, fast 2x => 0.01
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.01, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.05, 10)
+    expect(resolved?.cacheReadPricePer1k).toBeCloseTo(0.001, 10)
+    expect(resolved?.cacheWritePricePer1k).toBeCloseTo(0.0125, 10)
+  })
+
+  test("applies 6x fast multiplier for older claude-opus-4.7", () => {
+    const resolved = resolveModelsDevPriceDetailed(
+      "windsurf/claude-opus-4-7-fast",
+    )
+    expect(resolved?.source).toBe("models-dev")
+    // base: 5/1000 = 0.005, fast 6x => 0.03
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.03, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.15, 10)
+  })
+
+  test("applies 2x fast multiplier for openai models", () => {
+    const resolved = resolveModelsDevPriceDetailed(
+      "windsurf/gpt-5.1-codex-low-fast",
+    )
+    expect(resolved?.source).toBe("models-dev")
+    // base: 1.25/1000 = 0.00125, fast 2x => 0.0025
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.0025, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.02, 10)
+  })
+
+  test("matches bare claude-opus-4-8-max-fast with provider hint", () => {
+    const resolved = resolveModelsDevPriceDetailed(
+      "claude-opus-4-8-max-fast",
+      "windsurf",
+    )
+    expect(resolved?.source).toBe("models-dev")
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.01, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.05, 10)
+  })
+
+  test("matches bare claude-opus-4-8-max-fast without provider hint (inferred windsurf)", () => {
+    const resolved = resolveModelsDevPriceDetailed("claude-opus-4-8-max-fast")
+    expect(resolved?.source).toBe("models-dev")
+    // Inferred as windsurf-like because vendor bucket is non-empty
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.01, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.05, 10)
   })
 
   test("prefers manual DB pricing over models.dev", () => {

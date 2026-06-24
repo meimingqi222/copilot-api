@@ -89,7 +89,37 @@ usageApiRoutes.get("/pricing", (c) => {
     }
   }
 
-  return c.json({ pricing, sources })
+  // Deduplicate: if a bare model id and a provider-prefixed id resolve
+  // to the exact same price, keep only the provider-prefixed one.
+  const toRemove = new Set<string>()
+  for (const id of Object.keys(pricing)) {
+    if (id.includes("/")) continue
+    for (const otherId of Object.keys(pricing)) {
+      if (otherId === id) continue
+      if (!otherId.endsWith(`/${id}`)) continue
+      const samePrice =
+        pricing[id].promptPricePer1k === pricing[otherId].promptPricePer1k
+        && pricing[id].completionPricePer1k
+          === pricing[otherId].completionPricePer1k
+        && pricing[id].cacheReadPricePer1k
+          === pricing[otherId].cacheReadPricePer1k
+        && pricing[id].cacheWritePricePer1k
+          === pricing[otherId].cacheWritePricePer1k
+      const sameSource = sources[id] === sources[otherId]
+      if (samePrice && sameSource) {
+        toRemove.add(id)
+        break
+      }
+    }
+  }
+  const filteredPricing = Object.fromEntries(
+    Object.entries(pricing).filter(([id]) => !toRemove.has(id)),
+  )
+  const filteredSources = Object.fromEntries(
+    Object.entries(sources).filter(([id]) => !toRemove.has(id)),
+  )
+
+  return c.json({ pricing: filteredPricing, sources: filteredSources })
 })
 
 // Update model pricing
