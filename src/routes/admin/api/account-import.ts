@@ -123,6 +123,8 @@ importAccountRoutes.post("/import", async (c) => {
   const skipped: Array<string> = []
   const failed: Array<{ label: string; reason: string }> = []
 
+  initializeProviderRegistry()
+
   for (const raw of body.accounts) {
     const label = raw.label ?? `imported-${imported.length + 1}`
     const providerStr = raw.provider ?? "copilot"
