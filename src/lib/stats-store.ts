@@ -2,7 +2,9 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 
-import { getDefaultModelPrice } from "~/lib/default-prices"
+import type { ResolvedModelPricing } from "~/lib/models-dev"
+
+import { resolveModelsDevPriceDetailed } from "~/lib/models-dev"
 import { PATHS } from "~/lib/paths"
 
 export interface DailyStats {
@@ -53,6 +55,17 @@ type UsageDayStats = {
 
 export type UsageIntervalStats = {
   slotTs: number
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  cost: number
+  models: Record<string, UsageModelStats>
+}
+
+export type TimestampRangeUsage = {
   requests: number
   promptTokens: number
   completionTokens: number
@@ -480,6 +493,73 @@ class StatsStore {
     this.useTestDb()
   }
 
+  getUsageByTimestampRange(
+    accountId: string,
+    startMs: number,
+    endMs: number,
+  ): TimestampRangeUsage {
+    const db = this.ensureDb()
+    const effectiveEndMs = Math.max(startMs, endMs)
+    const stmt = db.prepare(`
+      SELECT
+        model,
+        COUNT(*) as requests,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(completion_tokens) as completion_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_write_tokens) as cache_write_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost) as cost
+      FROM usage_stats
+      WHERE account_id = ?
+        AND timestamp >= ?
+        AND timestamp <= ?
+      GROUP BY model
+    `)
+    const rows = stmt.all(accountId, startMs, effectiveEndMs) as Array<{
+      model: string
+      requests: number
+      prompt_tokens: number
+      completion_tokens: number
+      cache_read_tokens: number
+      cache_write_tokens: number
+      total_tokens: number
+      cost: number
+    }>
+
+    const summary: TimestampRangeUsage = {
+      requests: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalTokens: 0,
+      cost: 0,
+      models: {},
+    }
+
+    for (const row of rows) {
+      summary.requests += row.requests
+      summary.promptTokens += row.prompt_tokens
+      summary.completionTokens += row.completion_tokens
+      summary.cacheReadTokens += row.cache_read_tokens
+      summary.cacheWriteTokens += row.cache_write_tokens
+      summary.totalTokens += row.total_tokens
+      summary.cost += row.cost
+      summary.models[row.model] = {
+        requests: row.requests,
+        promptTokens: row.prompt_tokens,
+        completionTokens: row.completion_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+        cacheWriteTokens: row.cache_write_tokens,
+        totalTokens: row.total_tokens,
+        cost: row.cost,
+      }
+    }
+
+    return summary
+  }
+
   getUsageStatsByInterval(
     intervalMinutes: number,
     accountId?: string,
@@ -672,7 +752,15 @@ class StatsStore {
     )
   }
 
-  getModelPricing(model: string): {
+  hasManualModelPricing(model: string): boolean {
+    const db = this.ensureDb()
+    const stmt = db.prepare(`
+      SELECT 1 FROM model_pricing WHERE model = ? LIMIT 1
+    `)
+    return stmt.get(model) !== undefined
+  }
+
+  getManualModelPricing(model: string): {
     promptPricePer1k: number
     completionPricePer1k: number
     cacheReadPricePer1k: number
@@ -692,16 +780,6 @@ class StatsStore {
       | undefined
 
     if (!row) {
-      // Return default price if no custom price set
-      const defaultPrice = getDefaultModelPrice(model)
-      if (defaultPrice) {
-        return {
-          promptPricePer1k: defaultPrice.promptPricePer1k,
-          completionPricePer1k: defaultPrice.completionPricePer1k,
-          cacheReadPricePer1k: defaultPrice.cacheReadPricePer1k,
-          cacheWritePricePer1k: defaultPrice.cacheWritePricePer1k,
-        }
-      }
       return null
     }
 
@@ -710,6 +788,35 @@ class StatsStore {
       completionPricePer1k: row.completion_price_per_1k,
       cacheReadPricePer1k: row.cache_read_price_per_1k,
       cacheWritePricePer1k: row.cache_write_price_per_1k,
+    }
+  }
+
+  resolveModelPricing(model: string): ResolvedModelPricing | null {
+    const manual = this.getManualModelPricing(model)
+    if (manual) {
+      return {
+        ...manual,
+        source: "manual",
+      }
+    }
+    return resolveModelsDevPriceDetailed(model)
+  }
+
+  getModelPricing(model: string): {
+    promptPricePer1k: number
+    completionPricePer1k: number
+    cacheReadPricePer1k: number
+    cacheWritePricePer1k: number
+  } | null {
+    const resolved = this.resolveModelPricing(model)
+    if (!resolved) {
+      return null
+    }
+    return {
+      promptPricePer1k: resolved.promptPricePer1k,
+      completionPricePer1k: resolved.completionPricePer1k,
+      cacheReadPricePer1k: resolved.cacheReadPricePer1k,
+      cacheWritePricePer1k: resolved.cacheWritePricePer1k,
     }
   }
 

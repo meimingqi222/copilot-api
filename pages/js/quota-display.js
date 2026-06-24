@@ -1,6 +1,7 @@
 // Provider-aware quota display helpers for the admin dashboard.
 const QuotaDisplay = {
   OAUTH_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi", "xai"]),
+  CYCLE_USAGE_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi"]),
 
   isOAuthProvider(provider) {
     return this.OAUTH_PROVIDERS.has(provider)
@@ -50,6 +51,142 @@ const QuotaDisplay = {
     }).format(cents / 100)
   },
 
+  formatCycleUsageCost(cost) {
+    if (cost === undefined || cost === null || !Number.isFinite(cost)) {
+      return "$0.00"
+    }
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(cost)
+  },
+
+  getCycleUsageMap(details) {
+    if (!details || typeof details !== "object") return new Map()
+    const windows = details._quotaWindows
+    if (!Array.isArray(windows)) return new Map()
+    const map = new Map()
+    for (const window of windows) {
+      if (!window || typeof window !== "object" || !window.id) continue
+      const usage = window.cycleUsage
+      if (!usage || typeof usage !== "object") continue
+      map.set(window.id, usage)
+    }
+    return map
+  },
+
+  attachCycleUsageToRows(rows, details, provider, t) {
+    if (!this.CYCLE_USAGE_PROVIDERS.has(provider)) return rows
+    const usageMap = this.getCycleUsageMap(details)
+    if (usageMap.size === 0) return rows
+    return rows.map((row) => {
+      if (row.hideBar) return row
+      const usage = usageMap.get(row.id)
+      if (!usage) return row
+      return {
+        ...row,
+        cycleUsageText: t("quota.oauth.cycleUsage", {
+          cost: this.formatCycleUsageCost(usage.cost),
+        }),
+        cycleUsageHint: t("quota.oauth.cycleUsageHint"),
+      }
+    })
+  },
+
+  formatUnixSeconds(value) {
+    if (!value) return ""
+    const date = new Date(value * 1000)
+    if (Number.isNaN(date.getTime())) return ""
+    return date.toLocaleString(undefined, {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+  },
+
+  formatDateTimeValue(value) {
+    if (value === undefined || value === null) return ""
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return this.formatUnixSeconds(value)
+    }
+    const date = new Date(String(value))
+    if (Number.isNaN(date.getTime())) return String(value)
+    return date.toLocaleString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+  },
+
+  formatCodexResetLabel(resetAtSeconds) {
+    if (!resetAtSeconds) return ""
+    return this.formatUnixSeconds(resetAtSeconds)
+  },
+
+  getCodexMeta(details) {
+    if (!details || typeof details !== "object") return null
+    const meta = details._codexMeta
+    if (!meta || typeof meta !== "object") return null
+    return meta
+  },
+
+  formatCodexPlanType(planType, t) {
+    const normalized =
+      typeof planType === "string" ? planType.trim().toLowerCase() : ""
+    if (!normalized) return null
+    const key = `quota.oauth.codex.plan.${normalized.replaceAll("-", "")}`
+    const translated = t(key)
+    if (translated && translated !== key) return translated
+    return planType
+  },
+
+  canResetCodexQuota(account) {
+    const meta = this.getCodexMeta(account?.quotaInfo?.details)
+    return (meta?.rateLimitResetCreditsAvailableCount ?? 0) > 0
+  },
+
+  getCodexPlanRows(account, t) {
+    const meta = this.getCodexMeta(account?.quotaInfo?.details)
+    if (!meta) return []
+    const rows = []
+    const planLabel = this.formatCodexPlanType(meta.planType, t)
+    if (planLabel) {
+      rows.push({
+        id: "plan",
+        label: t("quota.oauth.codex.planLabel"),
+        valueText: planLabel,
+        hideBar: true,
+      })
+    }
+    if (meta.subscriptionActiveUntil) {
+      rows.push({
+        id: "subscription-expiry",
+        label: t("quota.oauth.codex.expiresLabel"),
+        valueText: this.formatDateTimeValue(meta.subscriptionActiveUntil),
+        hideBar: true,
+      })
+    }
+    if (
+      meta.rateLimitResetCreditsAvailableCount !== null
+      && meta.rateLimitResetCreditsAvailableCount !== undefined
+    ) {
+      rows.push({
+        id: "reset-credits",
+        label: t("quota.oauth.codex.resetCreditsLabel"),
+        valueText: String(meta.rateLimitResetCreditsAvailableCount),
+        hideBar: true,
+      })
+    }
+    return rows
+  },
+
   formatResetTime(resetAt, t) {
     if (!resetAt) return ""
     const resetMs = new Date(resetAt).getTime()
@@ -83,22 +220,42 @@ const QuotaDisplay = {
     const info = account.quotaInfo
     if (!info) return []
 
-    if (provider === "claude") {
-      return this.buildClaudeRows(info.details, t)
+    let rows
+    switch (provider) {
+      case "claude": {
+        rows = this.buildClaudeRows(info.details, t)
+
+        break
+      }
+      case "codex": {
+        rows = [
+          ...this.getCodexPlanRows(account, t),
+          ...this.buildCodexRows(info.details, t),
+        ]
+
+        break
+      }
+      case "antigravity": {
+        rows = this.buildAntigravityRows(info.details, t)
+
+        break
+      }
+      case "kimi": {
+        rows = this.buildKimiRows(info.details, t)
+
+        break
+      }
+      case "xai": {
+        rows = this.buildXaiRows(info.details, t)
+
+        break
+      }
+      default: {
+        rows = this.buildCopilotRows(info, t)
+      }
     }
-    if (provider === "codex") {
-      return this.buildCodexRows(info.details, t)
-    }
-    if (provider === "antigravity") {
-      return this.buildAntigravityRows(info.details, t)
-    }
-    if (provider === "kimi") {
-      return this.buildKimiRows(info.details, t)
-    }
-    if (provider === "xai") {
-      return this.buildXaiRows(info.details, t)
-    }
-    return this.buildCopilotRows(info, t)
+
+    return this.attachCycleUsageToRows(rows, info.details, provider, t)
   },
 
   buildClaudeRows(details, t) {
@@ -110,6 +267,7 @@ const QuotaDisplay = {
       ["seven_day_oauth_apps", "quota.oauth.claude.sevenDayOAuth"],
       ["seven_day_opus", "quota.oauth.claude.sevenDayOpus"],
       ["seven_day_sonnet", "quota.oauth.claude.sevenDaySonnet"],
+      ["seven_day_cowork", "quota.oauth.claude.sevenDayCowork"],
     ]
 
     for (const [key, labelKey] of windows) {
@@ -154,20 +312,50 @@ const QuotaDisplay = {
     return windows
   },
 
+  buildCodexRowsFromMeta(meta, t) {
+    if (!meta?.windows?.length) return []
+    return meta.windows.map((window) => {
+      const used = window.usedPercent
+      const clampedUsed =
+        used === null || used === undefined ?
+          null
+        : Math.max(0, Math.min(100, used))
+      const remaining =
+        clampedUsed === null ? undefined : (
+          Math.max(0, Math.min(100, 100 - clampedUsed))
+        )
+      const label =
+        window.labelKey ? t(window.labelKey, window.labelParams) : window.label
+      const resetText = this.formatCodexResetLabel(window.resetAtSeconds)
+      return {
+        id: window.id,
+        label,
+        remainingPercent: remaining,
+        valueText: remaining === undefined ? "--" : `${Math.round(remaining)}%`,
+        resetText,
+      }
+    })
+  },
+
   buildCodexRows(details, t) {
     if (!details || typeof details !== "object") return []
+    const meta = this.getCodexMeta(details)
+    if (meta?.windows?.length) {
+      return this.buildCodexRowsFromMeta(meta, t)
+    }
+
     const rows = []
     const sources = [
       {
         info: details.rate_limit ?? details.rateLimit,
-        primaryKey: "quota.oauth.codex.primary",
-        secondaryKey: "quota.oauth.codex.secondary",
+        primaryKey: "quota.oauth.codex.fiveHour",
+        secondaryKey: "quota.oauth.codex.weekly",
         prefix: "code",
       },
       {
         info: details.code_review_rate_limit ?? details.codeReviewRateLimit,
-        primaryKey: "quota.oauth.codex.codeReviewPrimary",
-        secondaryKey: "quota.oauth.codex.codeReviewSecondary",
+        primaryKey: "quota.oauth.codex.codeReviewFiveHour",
+        secondaryKey: "quota.oauth.codex.codeReviewWeekly",
         prefix: "review",
       },
     ]
@@ -204,8 +392,8 @@ const QuotaDisplay = {
         ?? `additional-${index + 1}`
       for (const entry of this.collectCodexWindows(
         limitInfo,
-        "quota.oauth.codex.additionalPrimary",
-        "quota.oauth.codex.additionalSecondary",
+        "quota.oauth.codex.additionalFiveHour",
+        "quota.oauth.codex.additionalWeekly",
       )) {
         const usedPercent = this.normalizeNumber(
           entry.window.used_percent ?? entry.window.usedPercent,
@@ -237,14 +425,15 @@ const QuotaDisplay = {
         const fraction = this.normalizeFraction(
           bucket.remainingFraction ?? bucket.remaining_fraction,
         )
+        const bucketId =
+          bucket.bucketId ?? bucket.bucket_id ?? bucket.window ?? "bucket"
         const bucketLabel =
           bucket.displayName
           ?? bucket.display_name
-          ?? bucket.bucketId
-          ?? bucket.bucket_id
+          ?? bucketId
           ?? t("quota.oauth.antigravity.bucket")
         rows.push({
-          id: `${groupLabel}-${bucketLabel}`,
+          id: `${groupLabel}-${bucketId}`,
           label: `${groupLabel}: ${bucketLabel}`,
           remainingPercent:
             fraction !== undefined ?
@@ -272,12 +461,13 @@ const QuotaDisplay = {
     const items = [...(details.limits ?? [])]
     if (details.usage) {
       items.unshift({
+        id: "summary",
         title: t("quota.oauth.kimi.usage"),
         detail: details.usage,
       })
     }
 
-    for (const item of items) {
+    for (const [index, item] of items.entries()) {
       const data = item.detail ?? item
       const limit = this.normalizeNumber(data.limit)
       const remaining = this.normalizeNumber(data.remaining)
@@ -287,8 +477,13 @@ const QuotaDisplay = {
           Math.max(0, limit - remaining)
         : undefined)
       if (remaining === undefined && used === undefined) continue
+      const rowId =
+        item.id
+        ?? (details.usage && index === 0 ?
+          "summary"
+        : `limit-${details.usage ? index - 1 : index}`)
       rows.push({
-        id: item.name ?? item.title ?? String(rows.length),
+        id: rowId,
         label: item.title ?? item.name ?? t("quota.oauth.kimi.limit"),
         remaining,
         total: limit,

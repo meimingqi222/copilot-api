@@ -3,6 +3,7 @@ import type { OAuthProviderId } from "~/lib/provider-config"
 
 import { isOAuthAccount } from "~/lib/accounts"
 import { KIMI_REQUEST_HEADERS, KIMI_USAGE_URL } from "~/lib/quota/constants"
+import { enrichQuotaDetails } from "~/lib/quota/cycles"
 import { parseKimiUsagePayload, summarizeKimiQuota } from "~/lib/quota/parsers"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 
@@ -40,6 +41,9 @@ export async function fetchKimiQuota(
     unlimited: summary.unlimited,
     chatRemaining: summary.remaining,
     chatTotal: summary.total,
-    details: payload as unknown as Record<string, unknown>,
+    details: enrichQuotaDetails(
+      "kimi",
+      payload as unknown as Record<string, unknown>,
+    ),
   }
 }

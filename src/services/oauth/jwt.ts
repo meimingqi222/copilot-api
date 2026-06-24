@@ -58,3 +58,52 @@ export function extractEmailFromIdToken(
   const email = claims?.email
   return typeof email === "string" && email.trim() ? email.trim() : undefined
 }
+
+function resolveCodexAuthInfo(
+  idToken: string | undefined,
+): Record<string, unknown> | null {
+  if (!idToken) {
+    return null
+  }
+  const claims = parseJwtPayload(idToken)
+  if (!claims) {
+    return null
+  }
+  const authInfo = claims["https://api.openai.com/auth"]
+  if (authInfo && typeof authInfo === "object" && !Array.isArray(authInfo)) {
+    return authInfo as Record<string, unknown>
+  }
+  return claims
+}
+
+export function extractCodexPlanTypeFromIdToken(
+  idToken: string | undefined,
+): string | undefined {
+  const authInfo = resolveCodexAuthInfo(idToken)
+  if (!authInfo) {
+    return undefined
+  }
+  const planType = authInfo.chatgpt_plan_type ?? authInfo.chatgptPlanType
+  return typeof planType === "string" && planType.trim() ?
+      planType.trim().toLowerCase()
+    : undefined
+}
+
+export function extractCodexSubscriptionActiveUntilFromIdToken(
+  idToken: string | undefined,
+): string | number | undefined {
+  const authInfo = resolveCodexAuthInfo(idToken)
+  if (!authInfo) {
+    return undefined
+  }
+  const value =
+    authInfo.chatgpt_subscription_active_until
+    ?? authInfo.chatgptSubscriptionActiveUntil
+  if (typeof value === "number" && Number.isFinite(value) && value !== 0) {
+    return value
+  }
+  if (typeof value === "string" && value.trim() && value.trim() !== "0") {
+    return value.trim()
+  }
+  return undefined
+}

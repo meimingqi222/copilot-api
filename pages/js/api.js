@@ -215,6 +215,7 @@ const API = {
     get: () => API.request("/quota"),
     refresh: () => API.request("/quota/refresh", { method: "POST" }),
     refreshOne: (id) => API.request(`/quota/${id}/refresh`, { method: "POST" }),
+    resetOne: (id) => API.request(`/quota/${id}/reset`, { method: "POST" }),
   },
 
   oauth: {

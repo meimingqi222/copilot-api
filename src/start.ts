@@ -217,6 +217,9 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // Initialize stats store
   statsStore.init()
 
+  const { initModelsDevPricing } = await import("~/lib/models-dev")
+  initModelsDevPricing()
+
   const serverUrl = `http://localhost:${options.port}`
 
   if (options.claudeCode) {
