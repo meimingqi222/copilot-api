@@ -20,22 +20,6 @@ type UsageSeriesEntry = UsageMetrics & {
   models: Record<string, UsageMetrics>
 }
 
-type ModelPricingEntry = {
-  promptPricePer1k: number
-  completionPricePer1k: number
-  cacheReadPricePer1k: number
-  cacheWritePricePer1k: number
-}
-
-function samePricing(a: ModelPricingEntry, b: ModelPricingEntry): boolean {
-  return (
-    a.promptPricePer1k === b.promptPricePer1k
-    && a.completionPricePer1k === b.completionPricePer1k
-    && a.cacheReadPricePer1k === b.cacheReadPricePer1k
-    && a.cacheWritePricePer1k === b.cacheWritePricePer1k
-  )
-}
-
 // Get usage statistics with date range
 usageApiRoutes.get("/", (c) => {
   const accountId = c.req.query("accountId")
@@ -105,23 +89,23 @@ usageApiRoutes.get("/pricing", (c) => {
     }
   }
 
-  // Deduplicate pricing entries: when a bare model id (e.g. "gpt-5.1-codex")
-  // and a provider-prefixed id (e.g. "windsurf/gpt-5.1-codex") resolve to the
-  // exact same price AND source, the bare id is redundant — keep only the
-  // prefixed one so the admin UI doesn't show duplicate rows.
-  // Manual entries are always preserved (a user may have set a bare-id price
-  // intentionally), so we only collapse when both sides share the same source.
+  // Deduplicate pricing entries: a bare model id is redundant when a
+  // provider-prefixed version exists. The prefixed id is more specific
+  // and should take precedence. We keep the bare id only when it is
+  // a manual entry and the prefixed version is not (user may have set
+  // the bare-id price intentionally).
   const toRemove = new Set<string>()
   for (const id of Object.keys(pricing)) {
     if (id.includes("/")) continue
     for (const otherId of Object.keys(pricing)) {
       if (otherId === id) continue
       if (!otherId.endsWith(`/${id}`)) continue
-      if (sources[id] !== sources[otherId]) continue
-      if (samePricing(pricing[id], pricing[otherId])) {
-        toRemove.add(id)
-        break
+      // Bare id is a manual entry but prefixed is not — keep the manual one.
+      if (sources[id] === "manual" && sources[otherId] !== "manual") {
+        continue
       }
+      toRemove.add(id)
+      break
     }
   }
   const filteredPricing = Object.fromEntries(

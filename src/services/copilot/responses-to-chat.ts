@@ -480,20 +480,10 @@ function translateUsage(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: usage.total_tokens ?? promptTokens + completionTokens,
-    ...((
-      usage.input_tokens_details?.cached_tokens !== undefined
-      || usage.input_tokens_details?.cache_creation_input_tokens !== undefined
-    ) ?
+    ...(usage.input_tokens_details?.cached_tokens !== undefined ?
       {
         prompt_tokens_details: {
-          ...(usage.input_tokens_details.cached_tokens !== undefined && {
-            cached_tokens: usage.input_tokens_details.cached_tokens,
-          }),
-          ...(usage.input_tokens_details.cache_creation_input_tokens
-            !== undefined && {
-            cache_creation_input_tokens:
-              usage.input_tokens_details.cache_creation_input_tokens,
-          }),
+          cached_tokens: usage.input_tokens_details.cached_tokens,
         },
       }
     : {}),

@@ -169,9 +169,11 @@ function handleNonStreamingResponse(
   const accountId = c.get("accountId")
 
   if (usage && model && accountId) {
+    // OpenAI Chat Completions API only reports cache reads via
+    // `prompt_tokens_details.cached_tokens`. There is no cache-creation field
+    // (that is an Anthropic-only concept).
     const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
-    const cacheWriteTokens =
-      usage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
+    const cacheWriteTokens = 0
     const tps =
       elapsedMs && elapsedMs > 0 ?
         usage.completion_tokens / (elapsedMs / 1000)
@@ -295,8 +297,7 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
 
   if (lastUsage) {
     const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
-    const cacheWriteTokens =
-      lastUsage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
+    const cacheWriteTokens = 0
     recordUsage({
       c,
       accountId,
