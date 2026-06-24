@@ -477,6 +477,14 @@ function quotaView() {
       return numericTokens.toString()
     },
 
+    getQuotaAccounts() {
+      return (this.accounts || []).filter((a) => a.supportsQuota !== false)
+    },
+
+    getGeneralAccounts() {
+      return (this.accounts || []).filter((a) => a.supportsQuota === false)
+    },
+
     showToast(msg, type) {
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) Alpine.$data(app).showToast(msg, type)

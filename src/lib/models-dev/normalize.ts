@@ -1,6 +1,8 @@
 import type { ProviderId } from "~/lib/provider-config"
 
 const TIER_SUFFIXES = ["-low", "-medium", "-high"] as const
+const INTENSITY_SUFFIXES = ["-max", "-mini", "-nano"] as const
+const SPEED_SUFFIX = "-fast"
 
 const MODEL_ID_ALIASES: Record<string, string> = {
   "gemini-3-flash": "gemini-3-flash-preview",
@@ -45,6 +47,22 @@ function stripTierSuffix(modelId: string): string | undefined {
   return undefined
 }
 
+function stripIntensitySuffix(modelId: string): string | undefined {
+  for (const suffix of INTENSITY_SUFFIXES) {
+    if (modelId.endsWith(suffix) && modelId.length > suffix.length) {
+      return modelId.slice(0, -suffix.length)
+    }
+  }
+  return undefined
+}
+
+function stripSpeedSuffix(modelId: string): string | undefined {
+  if (modelId.endsWith(SPEED_SUFFIX) && modelId.length > SPEED_SUFFIX.length) {
+    return modelId.slice(0, -SPEED_SUFFIX.length)
+  }
+  return undefined
+}
+
 function applyAliases(modelId: string): Array<string> {
   const candidates = new Set<string>([modelId])
   const alias = MODEL_ID_ALIASES[modelId]
@@ -52,6 +70,28 @@ function applyAliases(modelId: string): Array<string> {
     candidates.add(alias)
   }
   return Array.from(candidates)
+}
+
+function generateStrippedVariants(modelId: string): Array<string> {
+  const seen = new Set<string>()
+  const queue = [modelId]
+
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || seen.has(current)) continue
+    seen.add(current)
+
+    const withoutSpeed = stripSpeedSuffix(current)
+    if (withoutSpeed) queue.push(withoutSpeed)
+
+    const withoutIntensity = stripIntensitySuffix(current)
+    if (withoutIntensity) queue.push(withoutIntensity)
+
+    const withoutTier = stripTierSuffix(current)
+    if (withoutTier) queue.push(withoutTier)
+  }
+
+  return Array.from(seen)
 }
 
 export function buildPricingLookupCandidates(
@@ -69,33 +109,21 @@ export function buildPricingLookupCandidates(
     }
   }
 
-  add(nativeModelId)
+  if (
+    provider === "windsurf"
+    && (/^swe-/i.test(nativeModelId) || /^model_private_/i.test(nativeModelId))
+  ) {
+    return []
+  }
 
-  if (provider === "windsurf") {
-    if (
-      /^swe-/i.test(nativeModelId)
-      || /^model_private_/i.test(nativeModelId)
-    ) {
-      return []
-    }
+  for (const variant of generateStrippedVariants(nativeModelId)) {
+    add(variant)
+  }
 
-    const decoded = decodeOpaqueModelToken(nativeModelId)
-    if (decoded) {
-      add(decoded)
-    }
-
-    const withoutTier = stripTierSuffix(nativeModelId)
-    if (withoutTier) {
-      add(withoutTier)
-    }
-  } else {
-    const withoutTier = stripTierSuffix(nativeModelId)
-    if (withoutTier) {
-      add(withoutTier)
-    }
-    const decoded = decodeOpaqueModelToken(nativeModelId)
-    if (decoded) {
-      add(decoded)
+  const decoded = decodeOpaqueModelToken(nativeModelId)
+  if (decoded) {
+    for (const variant of generateStrippedVariants(decoded)) {
+      add(variant)
     }
   }
 
