@@ -38,14 +38,28 @@ export async function createCodexResponsesOnce(
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
 
+  // Codex /responses rejects many standard Responses API parameters with
+  // "Unsupported parameter: <name>". Strip them out before forwarding.
+  // See CLIProxyAPI codex_openai-responses_request.go for the reference set.
   const upstreamBody = {
     ...payload,
     model,
     stream: true,
+    store: false,
+    parallel_tool_calls: true,
+    include: ["reasoning.encrypted_content"],
+    // Unsupported parameters — must be stripped
     previous_response_id: undefined,
     prompt_cache_retention: undefined,
     safety_identifier: undefined,
     stream_options: undefined,
+    max_output_tokens: undefined,
+    max_completion_tokens: undefined,
+    temperature: undefined,
+    top_p: undefined,
+    truncation: undefined,
+    user: undefined,
+    context_management: undefined,
   }
 
   const response = await fetchWithOAuthProxy(account, url, {

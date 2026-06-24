@@ -11,6 +11,7 @@ import type {
   RouteTarget,
 } from "~/lib/provider-connections"
 
+import { getAccountAvailability } from "~/lib/account-availability"
 import { parseModelReference } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
@@ -19,6 +20,7 @@ import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import {
   findCredential,
   getProviderConnection,
+  isCredentialAvailable,
   type ModelEndpoint,
 } from "~/lib/provider-connections"
 import {
@@ -130,9 +132,14 @@ export async function prepareRequestAdmission(
 
   const target = selectRouteTarget(candidates)
   if (!target) {
+    const diagnostic = diagnoseRouteFailure(options)
+    const headers: Record<string, string> = {}
+    if (diagnostic.retryAfterSeconds > 0) {
+      headers["Retry-After"] = String(diagnostic.retryAfterSeconds)
+    }
     throw new HTTPError(
-      "No available route for model",
-      new Response("Rate limited", { status: 429 }),
+      diagnostic.message,
+      new Response(diagnostic.message, { status: 429, headers }),
     )
   }
 
@@ -171,6 +178,221 @@ export async function prepareRequestAdmission(
     connection,
     credential: found.credential,
     initiator,
+  }
+}
+
+type FailureReason = "disabled" | "cooldown" | "quota" | "auth" | "unknown"
+
+interface RouteFailureDiagnostic {
+  message: string
+  retryAfterSeconds: number
+}
+
+function diagnoseRouteFailure(
+  options: PrepareRequestAdmissionOptions,
+): RouteFailureDiagnostic {
+  const routing = resolveModelRouting(options.model)
+  const allCandidates = buildRouteTargets({
+    connectionId: routing.connectionId,
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
+    endpoint: options.endpoint,
+    onlyAvailable: false,
+  })
+
+  if (allCandidates.length === 0) {
+    return {
+      message: `No available route for model "${options.model}": model is not configured or not supported by any enabled provider`,
+      retryAfterSeconds: 0,
+    }
+  }
+
+  const { reasons, retryAfterSeconds } = analyzeCandidateReasons(allCandidates)
+
+  if (reasons.size === 0) {
+    // All candidates report available, yet selectRouteTarget returned null.
+    // This is defensive and should be rare.
+    return {
+      message: `No available route for model "${options.model}": all candidates were filtered out by routing rules`,
+      retryAfterSeconds: 0,
+    }
+  }
+
+  if (reasons.size === 1) {
+    const reason = [...reasons][0]
+    if (reason === "quota") {
+      return {
+        message: `No available route for model "${options.model}": quota exhausted for all providers`,
+        retryAfterSeconds: 0,
+      }
+    }
+    if (reason === "cooldown") {
+      return {
+        message: `No available route for model "${options.model}": all providers are temporarily rate-limited`,
+        retryAfterSeconds,
+      }
+    }
+    if (reason === "auth") {
+      return {
+        message: `No available route for model "${options.model}": authentication failed for all providers`,
+        retryAfterSeconds: 0,
+      }
+    }
+    if (reason === "disabled") {
+      return {
+        message: `No available route for model "${options.model}": all providers are disabled`,
+        retryAfterSeconds: 0,
+      }
+    }
+  }
+
+  const reasonLabels = [...reasons]
+    .map((r) => {
+      switch (r) {
+        case "quota": {
+          return "quota exhausted"
+        }
+        case "cooldown": {
+          return "rate-limited"
+        }
+        case "auth": {
+          return "auth failed"
+        }
+        case "disabled": {
+          return "disabled"
+        }
+        default: {
+          return "unavailable"
+        }
+      }
+    })
+    .join(", ")
+
+  return {
+    message: `No available route for model "${options.model}": all providers are unavailable (${reasonLabels})`,
+    retryAfterSeconds,
+  }
+}
+
+function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
+  reasons: Set<FailureReason>
+  retryAfterSeconds: number
+} {
+  const reasons = new Set<FailureReason>()
+  let retryAfterSeconds = 0
+
+  for (const candidate of candidates) {
+    if (candidate.account) {
+      const availability = getAccountAvailability(candidate.account)
+      if (!availability.available) {
+        const reason = mapAccountReason(availability.reason)
+        reasons.add(reason)
+        if (
+          reason === "cooldown"
+          && availability.retryAfterSeconds > retryAfterSeconds
+        ) {
+          retryAfterSeconds = availability.retryAfterSeconds
+        }
+      }
+      continue
+    }
+
+    if (candidate.connectionId && candidate.credentialId) {
+      const diagnostic = getCredentialFailureDiagnostic(
+        candidate.connectionId,
+        candidate.credentialId,
+      )
+      if (diagnostic) {
+        reasons.add(diagnostic.reason)
+        if (diagnostic.retryAfterSeconds > retryAfterSeconds) {
+          retryAfterSeconds = diagnostic.retryAfterSeconds
+        }
+      }
+    }
+  }
+
+  return { reasons, retryAfterSeconds }
+}
+
+function getCredentialFailureDiagnostic(
+  connectionId: string,
+  credentialId: string,
+): { reason: FailureReason; retryAfterSeconds: number } | null {
+  const connection = getProviderConnection(connectionId)
+  if (!connection) return null
+
+  // Connection-level disable takes precedence.
+  if (!connection.enabled) {
+    return { reason: "disabled", retryAfterSeconds: 0 }
+  }
+
+  const credential = connection.credentials.find((c) => c.id === credentialId)
+  if (!credential) return null
+
+  // Credential is available — no failure to report. This happens because
+  // buildRouteTargets is called with onlyAvailable: false for diagnosis,
+  // so the candidate list includes both available and unavailable entries.
+  if (isCredentialAvailable(credential)) {
+    return null
+  }
+
+  const reason = mapCredentialReason(credential.status)
+  let retryAfterSeconds = 0
+  if (
+    reason === "cooldown"
+    && credential.cooldownUntil
+    && credential.cooldownUntil > Date.now()
+  ) {
+    retryAfterSeconds = Math.ceil(
+      (credential.cooldownUntil - Date.now()) / 1000,
+    )
+  }
+  return { reason, retryAfterSeconds }
+}
+
+function mapAccountReason(
+  reason: "available" | "disabled" | "cooldown" | "quota" | "error",
+): FailureReason {
+  switch (reason) {
+    case "disabled": {
+      return "disabled"
+    }
+    case "cooldown": {
+      return "cooldown"
+    }
+    case "quota": {
+      return "quota"
+    }
+    case "error": {
+      return "auth"
+    }
+    case "available": {
+      return "unknown"
+    }
+    default: {
+      return "unknown"
+    }
+  }
+}
+
+function mapCredentialReason(status: string | undefined): FailureReason {
+  switch (status) {
+    case "disabled": {
+      return "disabled"
+    }
+    case "cooldown": {
+      return "cooldown"
+    }
+    case "quota_exhausted": {
+      return "quota"
+    }
+    case "auth_error": {
+      return "auth"
+    }
+    default: {
+      return "unknown"
+    }
   }
 }
 
