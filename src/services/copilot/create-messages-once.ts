@@ -8,6 +8,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { getCopilotToken } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { getStableSessionId } from "~/lib/cache/session-id-cache"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 import {
@@ -77,6 +78,13 @@ export async function createCopilotMessagesOnce(
     ...(anthropicBeta ? { "anthropic-beta": anthropicBeta } : {}),
     ...(anthropicVersion ? { "anthropic-version": anthropicVersion } : {}),
   }
+  // Forward Claude Code session ID for prompt cache reuse.
+  // If not provided by the client, use a stable persisted session ID.
+  const claudeSessionId = forwarded?.["x-claude-code-session-id"]
+  headers["X-Claude-Code-Session-Id"] =
+    typeof claudeSessionId === "string" && claudeSessionId.trim() ?
+      claudeSessionId.trim()
+    : await getStableSessionId(account.id)
 
   const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
     method: "POST",

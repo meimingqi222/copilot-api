@@ -22,10 +22,15 @@ export const codexNativeAdapter: ProtocolAdapter = {
     _credential,
     payload,
     signal,
-    _ctx,
+    ctx,
   ) {
     const account = extractAccount(target)
-    const response = await createCodexResponsesOnce(account, payload, signal)
+    const response = await createCodexResponsesOnce(
+      account,
+      payload,
+      signal,
+      ctx,
+    )
     return { credentialId: account.id, response } as AdapterResponsesResult
   },
 }

@@ -4,6 +4,7 @@ import type {
   ResponsesPayload,
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
@@ -19,9 +20,38 @@ import { collectResponsesFromSseResponse } from "~/services/responses/sse-collec
 
 import { buildXaiHeaders } from "./headers"
 
-function resolveXaiSessionId(payload: ResponsesPayload): string | undefined {
-  const cacheKey = payload.metadata?.prompt_cache_key
-  return typeof cacheKey === "string" ? cacheKey : undefined
+/**
+ * Resolves the xAI conversation/session ID for the upstream request.
+ *
+ * Priority:
+ *   1. `prompt_cache_key` from the request body top-level field
+ *      (matches CPA's xaiExecutionSessionID which checks req.Payload first).
+ *   2. `prompt_cache_key` from `metadata.prompt_cache_key`
+ *      (legacy OpenAI Responses API metadata location).
+ *   3. `x-grok-conv-id` from forwarded headers (if a downstream client set it).
+ *
+ * The xAI backend uses `x-grok-conv-id` to group requests within a
+ * conversation and reuse cached prompt prefixes.
+ */
+function resolveXaiSessionId(
+  payload: ResponsesPayload,
+  ctx?: RequestExecutionContext,
+): string | undefined {
+  const bodyCacheKey = (payload as unknown as { prompt_cache_key?: unknown })
+    .prompt_cache_key
+  if (typeof bodyCacheKey === "string" && bodyCacheKey.trim()) {
+    return bodyCacheKey.trim()
+  }
+  const metadataCacheKey = payload.metadata?.prompt_cache_key
+  if (typeof metadataCacheKey === "string" && metadataCacheKey.trim()) {
+    return metadataCacheKey.trim()
+  }
+  const forwarded = ctx?.forwardedHeaders
+  const headerConvId = forwarded?.["x-grok-conv-id"]
+  if (typeof headerConvId === "string" && headerConvId.trim()) {
+    return headerConvId.trim()
+  }
+  return undefined
 }
 
 /**
@@ -90,6 +120,7 @@ export async function createXaiResponsesOnce(
   account: Account,
   payload: ResponsesPayload,
   signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
   if (!isOAuthAccount(account) || account.provider !== "xai") {
     throw new Error("xAI responses requires an xAI OAuth account")
@@ -104,7 +135,7 @@ export async function createXaiResponsesOnce(
   const baseUrl = account.settings?.baseUrl ?? XAI_API_BASE_URL
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
-  const sessionId = resolveXaiSessionId(payload)
+  const sessionId = resolveXaiSessionId(payload, ctx)
 
   const baseBody: Record<string, unknown> = {
     ...payload,
@@ -114,6 +145,11 @@ export async function createXaiResponsesOnce(
     prompt_cache_retention: undefined,
     safety_identifier: undefined,
     stream_options: undefined,
+  }
+  // Ensure prompt_cache_key is set in the body when we have a session ID,
+  // matching CPA's behavior of mirroring the session ID into the body.
+  if (sessionId && !baseBody.prompt_cache_key) {
+    baseBody.prompt_cache_key = sessionId
   }
   const upstreamBody = normalizeXaiToolChoiceForTools(
     sanitizeXaiReasoningEffort(baseBody, model),

@@ -28,6 +28,28 @@ import { normalizeChunk, normalizeResponse } from "./normalize"
 type CopilotStream = AsyncIterable<{ data?: string }>
 type CachedModel = NonNullable<typeof state.models>["data"][number]
 
+/**
+ * Extracts session-related headers from the incoming request for forwarding
+ * to upstream providers. Different providers use different session header
+ * conventions:
+ * - Antigravity/Gemini: `session_id`, `x-antigravity-session-id`
+ * - Windsurf: `x-windsurf-session-id`, `session_id`
+ * - xAI: `x-grok-conv-id`
+ * - Claude (via chat→messages translation): `x-claude-code-session-id`
+ */
+function extractChatForwardedHeaders(
+  c: Context,
+): Record<string, string | undefined> {
+  return {
+    session_id: c.req.header("session_id") ?? c.req.header("session-id"),
+    "x-antigravity-session-id": c.req.header("x-antigravity-session-id"),
+    "x-windsurf-session-id": c.req.header("x-windsurf-session-id"),
+    "x-grok-conv-id": c.req.header("x-grok-conv-id"),
+    "x-claude-code-session-id": c.req.header("x-claude-code-session-id"),
+    prompt_cache_key: c.req.header("prompt_cache_key"),
+  }
+}
+
 interface UsageInfo {
   prompt_tokens: number
   completion_tokens: number
@@ -90,7 +112,13 @@ export async function handleCompletion(c: Context) {
   if (!payload.stream) {
     const estimatedInputTokens = await calculateTokens(payload, selectedModel)
     const nonStreamStart = Date.now()
-    const result = await dispatchChatCompletions(payload, admission, signal, c)
+    const result = await dispatchChatCompletions(
+      payload,
+      admission,
+      signal,
+      c,
+      { forwardedHeaders: extractChatForwardedHeaders(c) },
+    )
 
     c.set("accountId", result.accountId)
     c.set("model", payload.model)
@@ -366,6 +394,7 @@ function handleStreamingCompletion(
           admission,
           signal,
           c,
+          { forwardedHeaders: extractChatForwardedHeaders(c) },
         )
         accountId = result.accountId
 

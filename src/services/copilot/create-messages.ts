@@ -18,10 +18,7 @@ export {
 interface CreateMessagesOptions {
   account: Account
   signal?: AbortSignal
-  forwardedHeaders?: {
-    anthropicBeta?: string
-    anthropicVersion?: string
-  }
+  forwardedHeaders?: Record<string, string | undefined>
   initiatorOverride?: "agent" | "user"
   c?: Context
 }

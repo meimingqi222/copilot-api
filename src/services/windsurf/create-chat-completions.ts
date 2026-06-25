@@ -245,11 +245,12 @@ export async function createWindsurfChatCompletions(options: {
   | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { accountId: string; response: ChatCompletionResponse }
 > {
-  const { account, payload, signal } = options
+  const { account, payload, signal, ctx } = options
   const result = await createWindsurfChatCompletionsOnce(
     account,
     payload,
     signal,
+    ctx,
   )
 
   if (isChatCompletionResponse(result)) {
@@ -269,6 +270,7 @@ export async function createWindsurfChatCompletionsOnce(
   account: Account,
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
   const settings = getWindsurfSettings(account)
   if (!settings) {
@@ -284,12 +286,23 @@ export async function createWindsurfChatCompletionsOnce(
     getWindsurfJwt(account) ?? (await fetchWindsurfJwt(account, settings))
   const model = canonicalNativeModelId(payload.model)
   const requestModel = resolveWindsurfRequestModel(account, payload.model)
+  // Forward session ID from incoming request headers for prompt cache reuse.
+  // Falls back to deriveSessionId's content-hash-based stable ID.
+  const forwarded = ctx?.forwardedHeaders
+  const sessionIdOverride =
+    forwarded?.["x-windsurf-session-id"]
+    ?? forwarded?.["session_id"]
+    ?? forwarded?.["session-id"]
   const requestBody = buildRequest({
     payload: { ...payload, model },
     settings,
     apiKey,
     jwt,
     requestModel,
+    sessionIdOverride:
+      typeof sessionIdOverride === "string" && sessionIdOverride.trim() ?
+        sessionIdOverride.trim()
+      : undefined,
   })
 
   const response = await fetch(

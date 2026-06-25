@@ -6,6 +6,53 @@ import type {
 
 const FUNCTION_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
 
+/**
+ * Pre-resolved signature map: thinkingText → cached signature.
+ * Populated by `preResolveSignatures` before translation.
+ */
+interface SignatureRegistry {
+  get(text: string): string
+}
+
+function createSignatureRegistry(
+  entries: Array<[string, string]>,
+): SignatureRegistry {
+  const map = new Map(entries)
+  return {
+    get(text: string): string {
+      return map.get(text) ?? FUNCTION_THOUGHT_SIGNATURE
+    },
+  }
+}
+
+/**
+ * Pre-resolves cached thoughtSignatures for all assistant thinking text in
+ * the message history. Returns a registry that the synchronous translation
+ * functions use to look up signatures.
+ */
+export async function preResolveSignatures(
+  modelName: string,
+  messages: Array<Message>,
+): Promise<SignatureRegistry> {
+  const { getCachedSignature } = await import("~/lib/cache/signature-cache")
+  const entries: Array<[string, string]> = []
+
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    // Only use reasoning_text for signature lookup — the signature cache is
+    // keyed by thinking text, not response content.
+    const reasoningText = message.reasoning_text
+    if (typeof reasoningText === "string" && reasoningText.trim()) {
+      const sig = await getCachedSignature(modelName, reasoningText)
+      if (sig) {
+        entries.push([reasoningText, sig])
+      }
+    }
+  }
+
+  return createSignatureRegistry(entries)
+}
+
 export interface AntigravityGeminiPart {
   text?: string
   thought?: boolean
@@ -87,6 +134,7 @@ function messageText(content: Message["content"]): string {
 
 function buildUserParts(
   content: Message["content"],
+  sigReg?: SignatureRegistry,
 ): Array<AntigravityGeminiPart> {
   if (typeof content === "string") {
     return content ? [{ text: content }] : []
@@ -111,7 +159,8 @@ function buildUserParts(
             mimeType: inline.mimeType,
             data: inline.data,
           },
-          thoughtSignature: FUNCTION_THOUGHT_SIGNATURE,
+          thoughtSignature:
+            sigReg?.get(part.image_url.url) ?? FUNCTION_THOUGHT_SIGNATURE,
         })
       }
     }
@@ -166,6 +215,7 @@ function buildAssistantContent(
   message: Message,
   toolResponses: Map<string, string>,
   toolCallMap: Map<string, string>,
+  sigReg?: SignatureRegistry,
 ): Array<AntigravityGeminiContent> {
   const contents: Array<AntigravityGeminiContent> = []
   const modelParts: Array<AntigravityGeminiPart> = []
@@ -175,6 +225,12 @@ function buildAssistantContent(
     modelParts.push({ text })
   }
 
+  // Use cached signature for reasoning text if available
+  const reasoningSig =
+    message.reasoning_text && sigReg ?
+      sigReg.get(message.reasoning_text)
+    : FUNCTION_THOUGHT_SIGNATURE
+
   const toolCallIds: Array<string> = []
   for (const toolCall of message.tool_calls ?? []) {
     modelParts.push({
@@ -183,7 +239,7 @@ function buildAssistantContent(
         name: sanitizeFunctionName(toolCall.function.name),
         args: parseFunctionArgs(toolCall.function.arguments),
       },
-      thoughtSignature: FUNCTION_THOUGHT_SIGNATURE,
+      thoughtSignature: reasoningSig,
     })
     toolCallIds.push(toolCall.id)
   }
@@ -240,11 +296,13 @@ function buildTools(
 export function translateOpenAiChatToAntigravity(
   payload: ChatCompletionsPayload,
   projectId: string,
+  signatureRegistry?: SignatureRegistry,
 ): AntigravityUpstreamBody {
   const model = payload.model
   const messages = payload.messages
   const toolCallMap = buildToolCallMap(messages)
   const toolResponses = buildToolResponses(messages)
+  const sigReg = signatureRegistry ?? createSignatureRegistry([])
 
   const body: AntigravityUpstreamBody = {
     project: projectId,
@@ -274,7 +332,7 @@ export function translateOpenAiChatToAntigravity(
 
     if (message.role === "assistant") {
       body.request.contents.push(
-        ...buildAssistantContent(message, toolResponses, toolCallMap),
+        ...buildAssistantContent(message, toolResponses, toolCallMap, sigReg),
       )
     }
   }

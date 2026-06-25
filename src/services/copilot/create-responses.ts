@@ -23,6 +23,7 @@ interface CreateResponsesOptions {
   account: Account
   signal?: AbortSignal
   initiatorOverride?: "agent" | "user"
+  forwardedHeaders?: Record<string, string | undefined>
   c?: Context
 }
 
@@ -80,6 +81,7 @@ export const createResponses = async (
     {
       initiator,
       enableVision,
+      forwardedHeaders: options.forwardedHeaders,
       c: options.c,
     },
   )

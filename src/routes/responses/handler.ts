@@ -46,6 +46,25 @@ export async function handleResponses(c: Context) {
     )
   }
 
+  // Forward session_id, thread_id, and provider-specific headers from the
+  // incoming request so that upstream providers can reuse cached prompt
+  // prefixes across turns within the same session. Without a stable
+  // session_id, the backend treats every request as a new session and
+  // prompt cache hit rate drops to near zero.
+  const forwardedHeaders: Record<string, string | undefined> = {
+    session_id: c.req.header("session_id") ?? c.req.header("session-id"),
+    thread_id: c.req.header("thread_id") ?? c.req.header("thread-id"),
+    "x-codex-turn-metadata": c.req.header("x-codex-turn-metadata"),
+    "x-codex-window-id": c.req.header("x-codex-window-id"),
+    "x-codex-beta-features": c.req.header("x-codex-beta-features"),
+    version: c.req.header("version"),
+    originator: c.req.header("originator"),
+    // xAI conversation ID for prompt cache grouping
+    "x-grok-conv-id": c.req.header("x-grok-conv-id"),
+    // Claude Code session ID (when responses→messages translation occurs)
+    "x-claude-code-session-id": c.req.header("x-claude-code-session-id"),
+  }
+
   if (payload.stream) {
     return streamSSE(c, async (stream) => {
       const pingInterval = createSsePingInterval(stream)
@@ -59,6 +78,7 @@ export async function handleResponses(c: Context) {
           signal,
           initiatorOverride: admission.initiator,
           account: admission.account,
+          forwardedHeaders,
           c,
         })
         accountId = result.accountId
@@ -143,6 +163,7 @@ export async function handleResponses(c: Context) {
     signal,
     initiatorOverride: admission.initiator,
     account: admission.account,
+    forwardedHeaders,
     c,
   })
   c.set("accountId", result.accountId)
