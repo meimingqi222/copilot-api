@@ -85,16 +85,13 @@ export async function cacheReasoningReplayItems(
   const items: Array<ReasoningItem> = []
   for (const item of output) {
     if (typeof item !== "object" || item === null) continue
-    const type = (item as Record<string, unknown>).type
-    if (
-      type === "reasoning"
-      || type === "function_call"
-      || type === "custom_tool_call"
-    ) {
-      // Normalize reasoning items to minimal shape.
-      if (type === "reasoning") {
-        const encryptedContent = (item as Record<string, unknown>)
-          .encrypted_content
+    const obj = item as Record<string, unknown>
+    const type = obj.type
+
+    switch (type) {
+      case "reasoning": {
+        // Normalize reasoning items to minimal shape.
+        const encryptedContent = obj.encrypted_content
         if (typeof encryptedContent === "string" && encryptedContent.trim()) {
           items.push({
             type: "reasoning",
@@ -106,12 +103,52 @@ export async function cacheReasoningReplayItems(
             }),
           })
         }
-      } else {
-        items.push({
-          type: type as ReasoningItem["type"],
-          raw: JSON.stringify(item),
-        })
+
+        break
       }
+      case "function_call": {
+        // Normalize function_call items — validate required fields.
+        const callId = typeof obj.call_id === "string" ? obj.call_id.trim() : ""
+        const name = typeof obj.name === "string" ? obj.name.trim() : ""
+        const arguments_ = obj.arguments
+        if (callId && name && typeof arguments_ === "string") {
+          items.push({
+            type: "function_call",
+            raw: JSON.stringify({
+              type: "function_call",
+              call_id: callId,
+              name,
+              arguments: arguments_,
+            }),
+          })
+        }
+
+        break
+      }
+      case "custom_tool_call": {
+        // Normalize custom_tool_call items — validate required fields.
+        const callId = typeof obj.call_id === "string" ? obj.call_id.trim() : ""
+        const name = typeof obj.name === "string" ? obj.name.trim() : ""
+        const input = obj.input
+        if (callId && name && input !== undefined) {
+          const normalized: Record<string, unknown> = {
+            type: "custom_tool_call",
+            status: "completed",
+          }
+          const status = typeof obj.status === "string" ? obj.status.trim() : ""
+          if (status) normalized.status = status
+          normalized.call_id = callId
+          normalized.name = name
+          normalized.input = input
+          items.push({
+            type: "custom_tool_call",
+            raw: JSON.stringify(normalized),
+          })
+        }
+
+        break
+      }
+      // No default
     }
   }
 

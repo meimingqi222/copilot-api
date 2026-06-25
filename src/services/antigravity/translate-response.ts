@@ -351,7 +351,7 @@ async function cacheResponseSignatures(
 
     // Accumulate thinking text across stream chunks
     const text = getString(part.text)
-    if (text && part.thought === true) {
+    if (text && part.thought) {
       state.accumulatedThinkingText += text
     }
 

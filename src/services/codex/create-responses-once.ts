@@ -271,11 +271,14 @@ async function* wrapCodexStream(
       continue
     }
 
-    // Cache reasoning items on response.completed.
+    // Cache reasoning items on response.completed events.
     if (replaySessionKey && data.includes('"response.completed"')) {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
-        void cacheReasoningReplayItems(model, replaySessionKey, parsed)
+        // Only cache if this is actually a response.completed event.
+        if (parsed.type === "response.completed") {
+          void cacheReasoningReplayItems(model, replaySessionKey, parsed)
+        }
       } catch {
         // Best-effort caching.
       }
