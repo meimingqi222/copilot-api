@@ -73,6 +73,7 @@ export async function handleUpstreamFailure(
       markCredentialQuotaExhausted(
         credential,
         `HTTP ${response.status}: ${body.slice(0, 200)}`,
+        classified.retryAfterMs,
       )
       break
     }
@@ -110,11 +111,14 @@ interface JsonErrorPayload {
   status_code?: number | string
   status?: number | string
   type?: string
+  resets_at?: number
+  resets_in_seconds?: number
 }
 
 interface JsonStreamEvent {
   error?: JsonErrorPayload
   type?: string
+  response?: { error?: JsonErrorPayload }
 }
 
 /**
@@ -222,6 +226,12 @@ export function detectAnthropicStreamError(
 /**
  * Detect errors in Copilot Responses API SSE streams.
  * Format: data={"type":"response.failed","error":{...}}
+ *         data={"type":"error","error":{...}}
+ *
+ * Codex usage_limit_reached errors (plan quota depleted) are promoted to
+ * HTTP 429 so that downstream classifyUpstreamError/shouldFailover handle
+ * them correctly — quota exhaustion must NOT trigger failover.
+ * Mirrors CPA's codexTerminalStreamErr → newCodexStatusErr promotion.
  */
 export function detectResponsesStreamError(
   e: SimpleSseEvent,
@@ -229,13 +239,35 @@ export function detectResponsesStreamError(
   if (!e.data) return null
   try {
     const parsed = JSON.parse(e.data) as JsonStreamEvent
-    if (parsed.type === "response.failed" || parsed.type === "error") {
+    if (parsed.type !== "response.failed" && parsed.type !== "error") {
+      return null
+    }
+
+    // Extract the error payload — response.failed uses response.error,
+    // error uses top-level error.
+    const errorPayload =
+      parsed.type === "response.failed" ?
+        (parsed.response?.error ?? parsed.error)
+      : parsed.error
+
+    // Promote usage_limit_reached to 429 (quota exhaustion, not retryable)
+    if (errorPayload?.type === "usage_limit_reached") {
+      const headers = new Headers()
+      if (typeof errorPayload.resets_in_seconds === "number") {
+        headers.set("Retry-After", String(errorPayload.resets_in_seconds))
+      }
       return new HTTPError(
-        parsed.error?.message ?? parsed.type,
-        new Response(null, { status: 500 }),
+        errorPayload.message ?? "usage limit reached",
+        new Response(null, { status: 429, headers }),
         e.data,
       )
     }
+
+    return new HTTPError(
+      errorPayload?.message ?? parsed.type,
+      new Response(null, { status: 500 }),
+      e.data,
+    )
   } catch {
     /* ignore parse errors */
   }

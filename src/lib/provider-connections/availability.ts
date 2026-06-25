@@ -166,6 +166,16 @@ export function classifyUpstreamError(input: {
     return { kind: "network_error" }
   }
 
+  // Codex returns 429 with error.type == "usage_limit_reached" when a
+  // credential's plan quota is depleted. This is distinct from transient
+  // per-minute rate limits (rate_limit_error/rate_limit_exceeded) and
+  // carries reset timing in resets_at/resets_in_seconds.
+  // Mirrors CPA's isCodexUsageLimitError + parseCodexRetryAfter.
+  const usageLimitRetryMs = parseCodexUsageLimitRetryAfter(body)
+  if (usageLimitRetryMs !== undefined) {
+    return { kind: "quota_exhausted", retryAfterMs: usageLimitRetryMs }
+  }
+
   if (status === 429) {
     if (body && /quota|insufficient|balance|exhaust/i.test(body)) {
       return { kind: "quota_exhausted" }
@@ -195,10 +205,72 @@ export function classifyUpstreamError(input: {
   }
 
   if (status >= 400) {
+    // Codex may return 400 with usage_limit_reached in the body (stream
+    // terminal errors). CPA promotes these to 429; we do the same.
+    if (body && isCodexUsageLimitError(body)) {
+      const retryMs = parseCodexUsageLimitRetryAfter(body)
+      return { kind: "quota_exhausted", retryAfterMs: retryMs }
+    }
     return { kind: "client_error" }
   }
 
   return { kind: "unknown" }
+}
+
+/**
+ * Detects Codex usage_limit_reached errors in a response body.
+ * Mirrors CPA's isCodexUsageLimitError — checks error.type and top-level type.
+ */
+function isCodexUsageLimitError(body: string): boolean {
+  if (!body) return false
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    const errorType = (parsed.error as Record<string, unknown> | undefined)
+      ?.type
+    const topLevelType = parsed.type
+    return (
+      errorType === "usage_limit_reached"
+      || topLevelType === "usage_limit_reached"
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Parses resets_at / resets_in_seconds from a Codex usage_limit_reached error
+ * body and returns the retry-after duration in milliseconds.
+ * Mirrors CPA's parseCodexRetryAfter.
+ */
+function parseCodexUsageLimitRetryAfter(body?: string): number | undefined {
+  if (!body) return undefined
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    const error = parsed.error as Record<string, unknown> | undefined
+    if (!error) return undefined
+    if (error.type !== "usage_limit_reached") return undefined
+
+    // resets_at — Unix timestamp (seconds)
+    const resetsAt = error.resets_at
+    if (typeof resetsAt === "number" && resetsAt > 0) {
+      const resetMs = resetsAt * 1000
+      const diff = resetMs - Date.now()
+      if (diff > 0) {
+        return Math.min(diff, MAX_RETRY_AFTER_MS)
+      }
+    }
+
+    // resets_in_seconds — duration in seconds
+    const resetsInSeconds = error.resets_in_seconds
+    if (typeof resetsInSeconds === "number" && resetsInSeconds > 0) {
+      return Math.min(resetsInSeconds * 1000, MAX_RETRY_AFTER_MS)
+    }
+
+    // No reset timing — use default quota cooldown
+    return DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+  } catch {
+    return undefined
+  }
 }
 
 const MAX_RETRY_AFTER_MS = DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS

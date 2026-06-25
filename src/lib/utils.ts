@@ -297,11 +297,37 @@ export function isChatCompletionResponse(
 export function shouldFailover(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return false
   const status = error.response.status
+  // Codex usage_limit_reached = plan quota depleted. Failover to another
+  // account would break the current conversation's cache affinity and
+  // the new account likely has no context. Let the client handle it.
+  // Mirrors CPA: usage_limit_reached is NOT a failover-eligible error.
+  if (isCodexUsageLimitError(error)) return false
   if (status === 401 || status === 402 || status === 403 || status === 429) {
     return true
   }
   if (status >= 500) return true
   return false
+}
+
+/**
+ * Checks if an HTTPError body contains a Codex usage_limit_reached error.
+ * This is a quota exhaustion signal, not a transient rate limit.
+ */
+function isCodexUsageLimitError(error: HTTPError): boolean {
+  const body = error.responseBody
+  if (!body) return false
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    const errorObj = parsed.error as Record<string, unknown> | undefined
+    const errorType = errorObj?.type
+    const topLevelType = parsed.type
+    return (
+      errorType === "usage_limit_reached"
+      || topLevelType === "usage_limit_reached"
+    )
+  } catch {
+    return false
+  }
 }
 
 export function isValidIp(ip: string): boolean {
