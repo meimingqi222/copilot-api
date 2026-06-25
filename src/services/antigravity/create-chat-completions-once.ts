@@ -4,6 +4,7 @@ import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import {
   canonicalNativeModelId,
@@ -21,7 +22,10 @@ import {
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 
 import { buildAntigravityHeaders } from "./headers"
-import { translateOpenAiChatToAntigravity } from "./translate-request"
+import {
+  preResolveSignatures,
+  translateOpenAiChatToAntigravity,
+} from "./translate-request"
 import {
   convertAntigravityNonStreamResponse,
   convertAntigravityStreamChunk,
@@ -170,6 +174,7 @@ export async function createAntigravityChatCompletionsOnce(
   account: Account,
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
   if (!isOAuthAccount(account) || account.provider !== "antigravity") {
     throw new Error("Antigravity chat requires an Antigravity OAuth account")
@@ -190,11 +195,26 @@ export async function createAntigravityChatCompletionsOnce(
   }
 
   const model = canonicalNativeModelId(payload.model)
+  // Pre-resolve cached thoughtSignatures for assistant messages in history.
+  const signatureRegistry = await preResolveSignatures(model, payload.messages)
   const upstreamBody = translateOpenAiChatToAntigravity(
     { ...payload, model },
     projectId,
+    signatureRegistry,
   )
   const stream = payload.stream === true
+
+  // Forward session ID from incoming request headers so the Antigravity
+  // (Gemini) backend can reuse cached prompt prefixes across turns.
+  const forwarded = ctx?.forwardedHeaders
+  const sessionId =
+    forwarded?.["x-antigravity-session-id"]
+    ?? forwarded?.["session_id"]
+    ?? forwarded?.["session-id"]
+  if (typeof sessionId === "string" && sessionId.trim()) {
+    ;(upstreamBody.request as Record<string, unknown>).sessionId =
+      sessionId.trim()
+  }
 
   const response = await postAntigravityRequest(
     account,

@@ -5,12 +5,16 @@ import type {
   ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
 
+import { cacheSignature } from "~/lib/cache/signature-cache"
+
 export interface AntigravityStreamState {
   created: number
   responseId: string
   functionIndex: number
   sawToolCall: boolean
   upstreamFinishReason: string
+  /** Accumulated thinking text across stream chunks for signature caching. */
+  accumulatedThinkingText: string
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {
@@ -101,6 +105,7 @@ export function createAntigravityStreamState(
     functionIndex: 0,
     sawToolCall: false,
     upstreamFinishReason: "",
+    accumulatedThinkingText: "",
   }
 }
 
@@ -109,6 +114,8 @@ export function convertAntigravityStreamChunk(
   model: string,
   state: AntigravityStreamState,
 ): Array<ChatCompletionChunk> {
+  // Cache thoughtSignatures from response parts for replay in future turns.
+  void cacheResponseSignatures(event, model, state)
   const response = getRecord(event.response)
   if (!response) {
     return []
@@ -207,6 +214,14 @@ export function convertAntigravityNonStreamResponse(
   event: Record<string, unknown>,
   model: string,
 ): ChatCompletionResponse {
+  // Cache thoughtSignatures from response parts for replay in future turns.
+  // Non-stream: use a temporary state since all parts are in one event.
+  void cacheResponseSignatures(
+    event,
+    model,
+    createAntigravityStreamState(model),
+  )
+
   const response = getRecord(event.response) ?? event
   const modelVersion = getString(response.modelVersion) ?? model
   const responseId =
@@ -311,5 +326,44 @@ export function convertAntigravityNonStreamResponse(
       },
     ],
     ...(usage ? { usage } : {}),
+  }
+}
+
+/**
+ * Extracts thoughtSignature + thinking text pairs from an Antigravity
+ * response event and caches them for replay in future requests.
+ */
+async function cacheResponseSignatures(
+  event: Record<string, unknown>,
+  model: string,
+  state: AntigravityStreamState,
+): Promise<void> {
+  const response = getRecord(event.response) ?? event
+  const candidates = getArray(response.candidates)
+  const candidate = getRecord(candidates?.[0])
+  if (!candidate) return
+  const parts = getArray(getRecord(candidate.content)?.parts)
+  if (!parts) return
+
+  for (const rawPart of parts) {
+    const part = getRecord(rawPart)
+    if (!part) continue
+
+    // Accumulate thinking text across stream chunks
+    const text = getString(part.text)
+    if (text && part.thought === true) {
+      state.accumulatedThinkingText += text
+    }
+
+    // Cache signature when we have both accumulated text and signature
+    const sig = getString(part.thoughtSignature ?? part.thought_signature)
+    if (
+      sig
+      && sig !== "skip_thought_signature_validator"
+      && state.accumulatedThinkingText
+    ) {
+      await cacheSignature(model, state.accumulatedThinkingText, sig)
+      state.accumulatedThinkingText = "" // Reset after caching
+    }
   }
 }

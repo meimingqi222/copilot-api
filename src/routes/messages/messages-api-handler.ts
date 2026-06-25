@@ -24,6 +24,7 @@ interface HandleMessagesApiOpts {
   initiator: "agent" | "user" | undefined
   anthropicBeta: string | undefined
   anthropicVersion: string | undefined
+  forwardedHeaders?: Record<string, string | undefined>
 }
 
 export async function handleMessagesApi(opts: HandleMessagesApiOpts) {
@@ -35,14 +36,27 @@ export async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     initiator,
     anthropicBeta,
     anthropicVersion,
+    forwardedHeaders,
   } = opts
+  // Merge forwarded headers — forwardedHeaders already contains
+  // anthropic-beta/anthropic-version from the handler, so just use it
+  // directly and fill in any missing fields.
+  const mergedForwardedHeaders: Record<string, string | undefined> = {
+    "anthropic-version": anthropicVersion,
+    ...forwardedHeaders,
+  }
+  // Only set anthropic-beta if not already in forwardedHeaders (avoid
+  // undefined overwriting a valid value from the spread).
+  if (anthropicBeta && !mergedForwardedHeaders["anthropic-beta"]) {
+    mergedForwardedHeaders["anthropic-beta"] = anthropicBeta
+  }
   if (!anthropicPayload.stream) {
     const nonStreamStart = Date.now()
     const result = await createMessages(anthropicPayload, {
       account,
       signal,
       initiatorOverride: initiator,
-      forwardedHeaders: { anthropicBeta, anthropicVersion },
+      forwardedHeaders: mergedForwardedHeaders,
       c,
     })
 
@@ -65,7 +79,7 @@ export async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         account,
         signal: sseSignal,
         initiatorOverride: initiator,
-        forwardedHeaders: { anthropicBeta, anthropicVersion },
+        forwardedHeaders: mergedForwardedHeaders,
         c,
       })
 

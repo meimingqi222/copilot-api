@@ -22,13 +22,14 @@ export const antigravityNativeAdapter: ProtocolAdapter = {
     _credential,
     payload,
     signal,
-    _ctx,
+    ctx,
   ) {
     const account = extractAccount(target)
     const response = await createAntigravityChatCompletionsOnce(
       account,
       payload,
       signal,
+      ctx,
     )
     return { credentialId: account.id, response } as AdapterChatResult
   },

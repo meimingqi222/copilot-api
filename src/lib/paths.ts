@@ -17,10 +17,12 @@ export const PATHS = {
   GUARD_PATH: path.join(APP_DIR, "guard.json"),
   PROVIDER_CONNECTIONS_PATH: path.join(APP_DIR, "provider-connections.json"),
   MODELS_DEV_CACHE_PATH: path.join(APP_DIR, "models-dev.json"),
+  CACHE_DIR: path.join(APP_DIR, "cache"),
 }
 
 export async function ensurePaths(): Promise<void> {
   await fs.mkdir(PATHS.APP_DIR, { recursive: true })
+  await fs.mkdir(PATHS.CACHE_DIR, { recursive: true })
   await ensureFile(PATHS.GITHUB_TOKEN_PATH)
 }
 

@@ -19,10 +19,7 @@ export async function createClaudeMessagesOnce(
   payload: AnthropicMessagesPayload,
   signal?: AbortSignal,
   ctx?: {
-    forwardedHeaders?: {
-      anthropicBeta?: string
-      anthropicVersion?: string
-    }
+    forwardedHeaders?: Record<string, string | undefined>
   },
 ): Promise<AsyncIterable<unknown> | Record<string, unknown>> {
   if (!isOAuthAccount(account) || account.provider !== "claude") {
@@ -43,13 +40,20 @@ export async function createClaudeMessagesOnce(
   }
   const isStream = Boolean(payload.stream)
 
+  const forwarded = ctx?.forwardedHeaders
+  const anthropicBeta = forwarded?.["anthropic-beta"]
+  const anthropicVersion = forwarded?.["anthropic-version"]
+  const sessionId = forwarded?.["x-claude-code-session-id"]
+
   const response = await fetchWithOAuthProxy(account, CLAUDE_MESSAGES_URL, {
     method: "POST",
-    headers: buildClaudeOAuthHeaders({
+    headers: await buildClaudeOAuthHeaders({
       accessToken,
       stream: isStream,
-      anthropicBeta: ctx?.forwardedHeaders?.anthropicBeta,
-      anthropicVersion: ctx?.forwardedHeaders?.anthropicVersion,
+      anthropicBeta,
+      anthropicVersion,
+      sessionId,
+      credentialKey: account.id,
     }),
     body: JSON.stringify(upstreamPayload),
     signal,

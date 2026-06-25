@@ -29,13 +29,14 @@ export const windsurfNativeAdapter: ProtocolAdapter = {
     _credential,
     payload,
     signal,
-    _ctx,
+    ctx,
   ) {
     const account = extractAccount(target)
     const response = await createWindsurfChatCompletionsOnce(
       account,
       payload,
       signal,
+      ctx,
     )
     return { credentialId: account.id, response } as AdapterChatResult
   },

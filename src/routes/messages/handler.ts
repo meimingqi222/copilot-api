@@ -44,11 +44,20 @@ export async function handleCompletion(c: Context) {
   })
 
   const anthropicVersion = c.req.header("anthropic-version")
+  const claudeSessionId = c.req.header("x-claude-code-session-id")
   if (consola.level >= 4) {
     consola.debug(
       "Anthropic request payload:",
       JSON.stringify(anthropicPayload),
     )
+  }
+
+  // Forward session-related headers so upstream providers can reuse cached
+  // prompt prefixes across turns within the same session.
+  const forwardedHeaders: Record<string, string | undefined> = {
+    "anthropic-beta": anthropicBeta,
+    "anthropic-version": anthropicVersion,
+    "x-claude-code-session-id": claudeSessionId,
   }
 
   // Copilot Messages API (native Anthropic API passthrough)
@@ -65,6 +74,7 @@ export async function handleCompletion(c: Context) {
       initiator: admission.initiator,
       anthropicBeta,
       anthropicVersion,
+      forwardedHeaders,
     })
   }
 
@@ -78,6 +88,7 @@ export async function handleCompletion(c: Context) {
       admission,
       anthropicBeta,
       anthropicVersion,
+      forwardedHeaders,
     })
   }
 

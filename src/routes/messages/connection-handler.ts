@@ -31,6 +31,7 @@ interface HandleAnthropicViaConnectionOpts {
   admission: RequestAdmission
   anthropicBeta: string | undefined
   anthropicVersion: string | undefined
+  forwardedHeaders?: Record<string, string | undefined>
 }
 
 export async function handleAnthropicViaConnection(
@@ -43,10 +44,16 @@ export async function handleAnthropicViaConnection(
     admission,
     anthropicBeta,
     anthropicVersion,
+    forwardedHeaders,
   } = opts
+  // Merge forwarded headers — forwardedHeaders already contains
+  // anthropic-beta/anthropic-version from the handler.
   const forwarded: Record<string, string | undefined> = {
-    "anthropic-beta": anthropicBeta,
     "anthropic-version": anthropicVersion,
+    ...forwardedHeaders,
+  }
+  if (anthropicBeta && !forwarded["anthropic-beta"]) {
+    forwarded["anthropic-beta"] = anthropicBeta
   }
 
   if (!anthropicPayload.stream) {

@@ -252,6 +252,7 @@ export function buildRequest(opts: {
   apiKey: string
   jwt: string
   requestModel: string
+  sessionIdOverride?: string
 }): Uint8Array {
   const { payload, settings, apiKey, jwt, requestModel } = opts
   const slugModel = isSlugModelId(requestModel)
@@ -284,6 +285,11 @@ export function buildRequest(opts: {
   request.writeString(16, randomUUID()) // per-request ID (always fresh)
   request.writeVarint(20, ChatMessageRequestType.GENERAL) // request type
   request.writeString(21, requestModel)
-  request.writeString(22, deriveSessionId(requestModel, payload)) // stable session → KV cache
+  // Stable session → KV cache: prefer forwarded session ID, fall back to
+  // content-hash-derived stable ID for cache prefix reuse.
+  request.writeString(
+    22,
+    opts.sessionIdOverride ?? deriveSessionId(requestModel, payload),
+  )
   return encodeConnectFrame(request.toUint8Array(), true)
 }
