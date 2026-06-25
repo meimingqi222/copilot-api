@@ -182,6 +182,7 @@ export class PersistentTTLMap<V> {
   }
 
   private scheduleFlush(): void {
+    this.dirty = true
     if (this.flushTimer) return
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined
@@ -190,7 +191,12 @@ export class PersistentTTLMap<V> {
     this.flushTimer.unref()
   }
 
+  private flushing = false
+  private dirty = false
+
   private async flush(): Promise<void> {
+    if (this.flushing) return
+    this.flushing = true
     try {
       const now = Date.now()
       const serializable: Record<string, Entry<V>> = {}
@@ -204,6 +210,13 @@ export class PersistentTTLMap<V> {
       })
     } catch {
       // Best-effort persistence; ignore write errors.
+    } finally {
+      this.flushing = false
+      // If new writes arrived during flush, schedule another flush.
+      if (!this.flushTimer && this.dirty) {
+        this.dirty = false
+        this.scheduleFlush()
+      }
     }
   }
 

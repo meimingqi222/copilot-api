@@ -225,7 +225,23 @@ function buildAssistantContent(
     modelParts.push({ text })
   }
 
-  // Use cached signature for reasoning text if available
+  // Include reasoning text as a thought part so Gemini can continue the
+  // chain-of-thought. Attach the cached signature for replay validation.
+  if (
+    typeof message.reasoning_text === "string"
+    && message.reasoning_text.trim()
+  ) {
+    const reasoningSig =
+      sigReg ? sigReg.get(message.reasoning_text) : FUNCTION_THOUGHT_SIGNATURE
+    modelParts.push({
+      text: message.reasoning_text,
+      thought: true,
+      thoughtSignature: reasoningSig,
+    })
+  }
+
+  // Use cached signature for tool calls (same signature as reasoning, since
+  // Gemini associates the signature with the thinking that preceded the call).
   const reasoningSig =
     message.reasoning_text && sigReg ?
       sigReg.get(message.reasoning_text)
@@ -323,7 +339,7 @@ export function translateOpenAiChatToAntigravity(
     }
 
     if (message.role === "user") {
-      const parts = buildUserParts(message.content)
+      const parts = buildUserParts(message.content, sigReg)
       if (parts.length > 0) {
         body.request.contents.push({ role: "user", parts })
       }

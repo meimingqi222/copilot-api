@@ -61,37 +61,72 @@ function deterministicUuid(
 }
 
 /**
- * Parses the `x-codex-turn-metadata` header/body field (semicolon-delimited
- * key=value pairs) and remaps known turn IDs to per-account confused UUIDs.
+ * Parses the `x-codex-turn-metadata` header/body field (JSON object) and
+ * remaps known turn IDs to per-account confused UUIDs.
+ *
+ * The turn metadata is a JSON string like:
+ *   {"prompt_cache_key":"cache-1","turn_id":"turn-1","window_id":"cache-1:0"}
+ *
+ * Mirrors CPA's applyCodexTurnMetadataIdentityConfuse.
  */
 function confuseTurnMetadata(
   raw: string,
   authId: string,
   state: IdentityConfuseState,
 ): string {
-  const parts = raw
-    .split(";")
-    .map((p) => p.trim())
-    .filter(Boolean)
-  const result: Array<string> = []
-  for (const part of parts) {
-    const eq = part.indexOf("=")
-    if (eq === -1) {
-      result.push(part)
-      continue
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    // Not valid JSON — try string replacement as fallback.
+    if (state.promptCacheKey && state.originalPromptCacheKey) {
+      return raw.replaceAll(state.originalPromptCacheKey, state.promptCacheKey)
     }
-    const key = part.slice(0, eq).trim()
-    const value = part.slice(eq + 1).trim()
-    // Remap turn_id and prompt_cache_key fields within turn metadata.
-    if (key === "turn_id" || key === "prompt_cache_key") {
-      const confused = deterministicUuid(authId, "turn", value)
-      state.turnIds.push({ original: value, confused })
-      result.push(`${key}=${confused}`)
-    } else {
-      result.push(part)
+    return raw
+  }
+
+  let modified = false
+
+  // Remap prompt_cache_key
+  if (state.promptCacheKey && typeof parsed.prompt_cache_key === "string") {
+    parsed.prompt_cache_key = state.promptCacheKey
+    modified = true
+  } else if (state.promptCacheKey && state.originalPromptCacheKey) {
+    // If prompt_cache_key field doesn't exist, do string replacement
+    const raw2 = JSON.stringify(parsed)
+    if (raw2.includes(state.originalPromptCacheKey)) {
+      parsed = JSON.parse(
+        raw2.replaceAll(state.originalPromptCacheKey, state.promptCacheKey),
+      ) as Record<string, unknown>
+      modified = true
     }
   }
-  return result.join(";")
+
+  // Remap turn_id (with dedup check, matching CPA's confuseTurnID)
+  const turnId = typeof parsed.turn_id === "string" ? parsed.turn_id.trim() : ""
+  if (turnId) {
+    // Check if we've already confused this turn_id (or if the input is
+    // already a confused value). This prevents duplicate entries when
+    // both body and headers carry the same turn metadata.
+    const existing = state.turnIds.find(
+      (r) => r.original === turnId || r.confused === turnId,
+    )
+    const confused =
+      existing ? existing.confused : deterministicUuid(authId, "turn", turnId)
+    if (!existing) {
+      state.turnIds.push({ original: turnId, confused })
+    }
+    parsed.turn_id = confused
+    modified = true
+  }
+
+  // Remap window_id
+  if (state.promptCacheKey && typeof parsed.window_id === "string") {
+    parsed.window_id = `${state.promptCacheKey}:0`
+    modified = true
+  }
+
+  return modified ? JSON.stringify(parsed) : raw
 }
 
 /**
@@ -194,12 +229,18 @@ export function applyIdentityConfuseHeaders(
 
   if (!state.promptCacheKey) return
 
-  // Overwrite the same keys that buildCodexHeaders sets (lowercase).
-  headers["session_id"] = state.promptCacheKey
-  headers["session-id"] = state.promptCacheKey
+  // Overwrite session headers. CPA's setCodexSessionHeaderCasePreserved
+  // removes all variants (session_id, session-id) and keeps only one
+  // (preferring underscore). We do the same to avoid sending duplicates.
+  const hasUnderscoreKey = "session_id" in headers
+  delete headers["session_id"]
+  delete headers["session-id"]
+  headers[hasUnderscoreKey ? "session_id" : "session-id"] = state.promptCacheKey
+
   if (headers["Conversation_id"] || headers["conversation_id"]) {
+    delete headers["Conversation_id"]
+    delete headers["conversation_id"]
     headers["Conversation_id"] = state.promptCacheKey
-    headers["conversation_id"] = state.promptCacheKey
   }
   headers["x-client-request-id"] = state.promptCacheKey
   headers["thread-id"] = state.promptCacheKey
