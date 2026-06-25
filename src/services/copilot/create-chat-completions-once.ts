@@ -82,6 +82,20 @@ export async function createCopilotChatCompletionsOnce(
   })
 
   while (!response.ok && response.status === 429 && retryCount < maxRetries) {
+    // Codex usage_limit_reached = plan quota depleted, not a transient rate
+    // limit. Retrying is pointless — the quota won't reset within seconds.
+    // Break out and let the error propagate to the client.
+    const errorBody = await response
+      .clone()
+      .text()
+      .catch(() => "")
+    if (errorBody.includes("usage_limit_reached")) {
+      consola.warn(
+        "Copilot API usage_limit_reached — quota exhausted, not retrying",
+      )
+      break
+    }
+
     const retryAfterRaw = Number.parseInt(
       response.headers.get("Retry-After") ?? "",
       10,

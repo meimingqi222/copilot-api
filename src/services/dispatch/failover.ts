@@ -10,7 +10,9 @@ import { markAccountRateLimited } from "~/lib/account-availability"
 import { HTTPError } from "~/lib/error"
 import {
   DEFAULTS,
+  classifyUpstreamError,
   markCredentialCooldown,
+  markCredentialQuotaExhausted,
   persistProviderConnections,
 } from "~/lib/provider-connections"
 import {
@@ -63,7 +65,13 @@ export async function executeWithFailover<
 
       tried.add(targetKey(current.target))
 
-      if (error instanceof HTTPError && !shouldFailover(error)) throw error
+      if (error instanceof HTTPError && !shouldFailover(error)) {
+        // Non-failover errors (e.g. usage_limit_reached) still need to
+        // mark the credential as exhausted so it's not selected again
+        // for subsequent requests until the quota resets.
+        await markCooldown(current, error, logPrefix)
+        throw error
+      }
 
       // 添加详细的错误日志记录
       if (error instanceof HTTPError) {
@@ -126,6 +134,29 @@ async function markCooldown(
   const status = isHttp ? error.response.status : 503
 
   if (admission.kind === "provider") {
+    if (isHttp && error.responseBody) {
+      // Use classifyUpstreamError for accurate categorization, especially
+      // for Codex usage_limit_reached which needs quota_exhausted treatment.
+      const classified = classifyUpstreamError({
+        status,
+        retryAfterHeader: error.response.headers.get("retry-after"),
+        body: error.responseBody,
+      })
+      if (classified.kind === "quota_exhausted") {
+        markCredentialQuotaExhausted(
+          admission.credential,
+          `upstream ${status}: ${error.responseBody.slice(0, 200)}`,
+          classified.retryAfterMs,
+        )
+        await persistProviderConnections().catch((err: unknown) => {
+          consola.warn(
+            `${logPrefix} failed to persist credential status:`,
+            (err as Error).message,
+          )
+        })
+        return
+      }
+    }
     const retryAfterMs = resolveRetryAfterMs(isHttp, status)
     const reason = isHttp ? `upstream ${status}` : resolveNetworkError(error)
     markCredentialCooldown(admission.credential, { retryAfterMs, reason })
