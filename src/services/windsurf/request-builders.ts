@@ -190,24 +190,22 @@ function buildDoNotCallTool(): ProtobufEncoder {
 
 function buildMetadata(
   apiKey: string,
-  jwt: string,
   settings: NonNullable<ReturnType<typeof getWindsurfSettings>>,
 ): ProtobufEncoder {
   return buildWindsurfClientMetadata({
     apiKey,
     settings,
-    jwt,
-    includeHardware: true,
-    useDetailedSystemInfo: true,
   })
 }
 
 function buildTraceInfo(): ProtobufEncoder {
+  // Field layout verified from live GetChatMessage capture:
+  //   field[1]=trace_id UUID, field[3]=4, field[4]=14
+  // Note: real client does NOT send field[2].
   const trace = new ProtobufEncoder()
   trace.writeString(1, randomUUID())
-  trace.writeVarint(2, 5)
   trace.writeVarint(3, 4)
-  trace.writeVarint(4, 23)
+  trace.writeVarint(4, 14)
   return trace
 }
 
@@ -227,13 +225,16 @@ function buildSamplingBlock(
   payload: ChatCompletionsPayload,
   slugModel: boolean,
 ): ProtobufEncoder {
+  // Field layout verified from live GetChatMessage capture:
+  //   field[1]=1, field[2]=64000, field[3]=max_tokens,
+  //   field[5]=temperature, field[7]=top_k(40), field[8]=repetition_penalty
+  // Note: real client does NOT send field[6] (top_p).
   const sampling = new ProtobufEncoder()
   sampling.writeVarint(1, 1)
   sampling.writeVarint(2, 64000)
   sampling.writeVarint(3, payload.max_tokens ?? 1024)
   sampling.writeDouble(5, payload.temperature ?? 0.4)
-  sampling.writeDouble(6, payload.top_p ?? 0.4)
-  sampling.writeVarint(7, 50)
+  sampling.writeVarint(7, 40)
   sampling.writeDouble(8, 1.0)
   if (slugModel) {
     for (const tok of SWE_SPECIAL_TOKENS) {
@@ -250,15 +251,14 @@ export function buildRequest(opts: {
   payload: ChatCompletionsPayload
   settings: NonNullable<ReturnType<typeof getWindsurfSettings>>
   apiKey: string
-  jwt: string
   requestModel: string
   sessionIdOverride?: string
 }): Uint8Array {
-  const { payload, settings, apiKey, jwt, requestModel } = opts
+  const { payload, settings, apiKey, requestModel } = opts
   const slugModel = isSlugModelId(requestModel)
   const request = new ProtobufEncoder()
 
-  request.writeMessage(1, buildMetadata(apiKey, jwt, settings))
+  request.writeMessage(1, buildMetadata(apiKey, settings))
   request.writeString(2, resolveSystemPrompt(payload))
 
   for (const message of payload.messages) {

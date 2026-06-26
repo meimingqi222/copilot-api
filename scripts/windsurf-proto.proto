@@ -20,14 +20,14 @@ package exa;
 message Metadata {
   string client_name        = 1;   // "windsurf-next"
   string app_version        = 2;   // "2026.8.1009"
-  string api_key_or_jwt     = 3;   // API key or devin-session-token
+  string api_key_or_jwt     = 3;   // API key or devin-session-token$<jwt>
   string language           = 4;   // "en"
-  string system_info_json   = 5;   // JSON {Os, Arch, Version, ...}
+  string os_label           = 5;   // "windows" / "macos" / "linux" (NOT JSON)
   string ls_version         = 7;   // language server version
-  string hardware_json      = 8;   // JSON {NumCores, Memory, ...}
   string client_name_2      = 12;  // duplicate client name
-  string jwt                = 21;  // JWT auth token
-  bytes  platform_id        = 30;  // [0, 1]
+  // field 8  (hardware_json) — NOT sent by real client
+  // field 21 (jwt)           — NOT sent (credential goes in field 3)
+  // field 30 (platform_id)   — NOT sent by real client
 }
 
 message ChatToolCall {
@@ -41,6 +41,7 @@ message ChatToolCall {
 // ========================================================================
 
 message ChatMessage {
+  string message_id            = 1;  // UUID (present in real captures)
   int32  role                  = 2;  // 1=user, 2=assistant, 4=tool
   string content               = 3;
   repeated ChatToolCall tool_calls = 6;
@@ -76,8 +77,8 @@ message SamplingConfig {
   int32  max_context_tokens  = 2;  // 64000
   int32  max_tokens          = 3;
   double temperature         = 5;
-  double top_p               = 6;
-  int32  top_k               = 7;  // 50
+  // field 6 (top_p) is NOT sent by real client
+  int32  top_k               = 7;  // 40
   double repetition_penalty  = 8;  // 1.0
   repeated string special_tokens = 9;
   double frequency_penalty   = 11; // 1.0
@@ -85,9 +86,9 @@ message SamplingConfig {
 
 message TraceInfo {
   string trace_id = 1;   // UUID v4
-  int32  f2       = 2;   // 5
+  // field 2 is NOT sent by real client
   int32  f3       = 3;   // 4
-  int32  f4       = 4;   // 23
+  int32  f4       = 4;   // 14
 }
 
 // ========================================================================
@@ -136,10 +137,13 @@ message RawChatMessage {
 }
 
 message UsageMetadata {
-  int32 prompt_tokens      = 2;
-  int32 completion_tokens  = 3;
-  int32 cache_write_tokens = 4;
-  int32 cache_read_tokens  = 5;
+  int32 prompt_tokens      = 1;  // input tokens
+  int32 completion_tokens  = 2;  // output tokens
+  int32 cached_tokens      = 3;  // KV cache hits (treated as cache_read_tokens)
+  // field 6 = ? (always 4 in captures, flag/enum)
+  // field 7 = upstream message id (string, e.g. "msg_01XQT3XhcxVkvWxgtvF47jY9")
+  // field 8 = repeated response headers (Date, Request-Id, …)
+  // field 9 = actual_model_uid (e.g. "MODEL_PRIVATE_11")
 }
 
 message Section {

@@ -9,15 +9,10 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import {
-  canonicalNativeModelId,
-  getWindsurfSettings,
-  getWindsurfJwt,
-} from "~/lib/accounts"
+import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { isChatCompletionResponse } from "~/lib/utils"
 
-import { fetchWindsurfJwt } from "./auth"
 import {
   chunkFromText,
   chunkFromToolCallInit,
@@ -282,8 +277,6 @@ export async function createWindsurfChatCompletionsOnce(
     throw new Error(`Windsurf API key missing for account "${account.label}"`)
   }
 
-  const jwt =
-    getWindsurfJwt(account) ?? (await fetchWindsurfJwt(account, settings))
   const model = canonicalNativeModelId(payload.model)
   const requestModel = resolveWindsurfRequestModel(account, payload.model)
   // Forward session ID from incoming request headers for prompt cache reuse.
@@ -297,7 +290,6 @@ export async function createWindsurfChatCompletionsOnce(
     payload: { ...payload, model },
     settings,
     apiKey,
-    jwt,
     requestModel,
     sessionIdOverride:
       typeof sessionIdOverride === "string" && sessionIdOverride.trim() ?
