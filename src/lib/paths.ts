@@ -18,6 +18,7 @@ export const PATHS = {
   PROVIDER_CONNECTIONS_PATH: path.join(APP_DIR, "provider-connections.json"),
   MODELS_DEV_CACHE_PATH: path.join(APP_DIR, "models-dev.json"),
   CACHE_DIR: path.join(APP_DIR, "cache"),
+  LOG_FILE: path.join(APP_DIR, "server.log"),
 }
 
 export async function ensurePaths(): Promise<void> {

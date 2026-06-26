@@ -103,3 +103,137 @@ describe("parseChatStreamFrame - UsageMetadata field mapping", () => {
     expect(subVarints).toContain(6)
   })
 })
+
+// ── field[28] "Token Usage" section ──────────────────────────────────────────
+//
+// Captured responses (e.g. D:\code\copilot-refs\data\GetChatMessage-res) carry
+// the authoritative usage numbers in a field[28] sub-message titled "Token Usage".
+// Inside it are three named sections (field[2] with field[5]=name, field[4]
+// containing a float32 value in sub-field[2] wire=5):
+//   - "input_tokens"         → real prompt size
+//   - "output_tokens"        → real completion size
+//   - "cached_input_tokens"  → KV cache hits
+// For models that report usage only via field[28] (no usable field[7]), the
+// parser MUST extract all three — otherwise prompt_tokens stays 0 and the
+// dashboard shows nonsense like "input=0, cacheHitRate=100%".
+
+function encodeFloat32(value: number): Buffer {
+  const buf = Buffer.alloc(4)
+  new DataView(buf.buffer, buf.byteOffset, buf.byteLength).setFloat32(
+    0,
+    value,
+    true,
+  )
+  return buf
+}
+
+// Build a field[4] value block: { field[1]: "label", field[2] float32: value, field[3]: " unit", field[4]: " units" }
+function buildValueBlock(label: string, value: number): Buffer {
+  return Buffer.concat([
+    encodeLengthDelimited(1, Buffer.from(label)),
+    Buffer.concat([encodeTag(2, 5), encodeFloat32(value)]),
+    encodeLengthDelimited(3, Buffer.from(" token")),
+    encodeLengthDelimited(4, Buffer.from(" tokens")),
+  ])
+}
+
+// Build one field[2] section inside Token Usage: { field[5]=name, field[4]=valueBlock }
+function buildTokenSection(name: string, value: number): Buffer {
+  return Buffer.concat([
+    encodeLengthDelimited(5, Buffer.from(name)),
+    encodeLengthDelimited(4, buildValueBlock(name, value)),
+  ])
+}
+
+function buildTokenUsageField28(): Buffer {
+  const titleField = encodeLengthDelimited(1, Buffer.from("Token Usage"))
+  const inputSection = encodeLengthDelimited(
+    2,
+    buildTokenSection("input_tokens", 3223),
+  )
+  const outputSection = encodeLengthDelimited(
+    2,
+    buildTokenSection("output_tokens", 122),
+  )
+  const cachedSection = encodeLengthDelimited(
+    2,
+    buildTokenSection("cached_input_tokens", 0),
+  )
+  return encodeLengthDelimited(
+    28,
+    Buffer.concat([titleField, inputSection, outputSection, cachedSection]),
+  )
+}
+
+describe("parseChatStreamFrame - field[28] Token Usage", () => {
+  test("parses input_tokens / output_tokens / cached_input_tokens from field[28]", () => {
+    const frame = new Uint8Array(buildTokenUsageField28())
+    const parsed = parseChatStreamFrame(frame)
+    const usage = parsed.usage
+
+    expect(usage).toBeDefined()
+    expect(usage?.prompt_tokens).toBe(3223)
+    expect(usage?.completion_tokens).toBe(122)
+    expect(usage?.total_tokens).toBe(3345)
+    expect(usage?.cached_tokens).toBe(0)
+    expect(usage?.cache_read_tokens).toBe(0)
+  })
+
+  test("field[28] takes precedence over field[7] when both are present", () => {
+    // Simulate the GLM-5-2 scenario: field[7] reports prompt_tokens=0 (because
+    // the upstream didn't fill it), and field[28] carries the real numbers.
+    const field28 = buildTokenUsageField28()
+    // Override field[7] usage to simulate the bug: prompt=0, completion=131560
+    const buggyMetadata = Buffer.concat([
+      encodeVarintField(1, 0), // prompt_tokens = 0 (bug)
+      encodeVarintField(2, 131560), // completion_tokens
+      encodeVarintField(3, 2997), // cached_tokens
+    ])
+    const field7Buggy = encodeLengthDelimited(7, buggyMetadata)
+    const frame = new Uint8Array(Buffer.concat([field7Buggy, field28]))
+    const parsed = parseChatStreamFrame(frame)
+    const usage = parsed.usage
+
+    expect(usage).toBeDefined()
+    // field[28] should override the buggy field[7] prompt_tokens=0
+    // prompt_tokens = input(3223) + cached(0) = 3223 (OpenAI semantic, includes cache)
+    expect(usage?.prompt_tokens).toBe(3223)
+    expect(usage?.completion_tokens).toBe(122)
+  })
+
+  test("field[28] prompt_tokens includes cached_input_tokens (OpenAI semantic)", () => {
+    // Windsurf input_tokens EXCLUDES cache, but OpenAI prompt_tokens INCLUDES cache.
+    // mergeField28Usage must convert: prompt_tokens = input + cached.
+    // This ensures total_tokens includes cache and handler.ts prompt-cached
+    // subtraction yields the correct non-cached input.
+    const titleField = encodeLengthDelimited(1, Buffer.from("Token Usage"))
+    const inputSection = encodeLengthDelimited(
+      2,
+      buildTokenSection("input_tokens", 2973),
+    )
+    const outputSection = encodeLengthDelimited(
+      2,
+      buildTokenSection("output_tokens", 3516),
+    )
+    const cachedSection = encodeLengthDelimited(
+      2,
+      buildTokenSection("cached_input_tokens", 136991),
+    )
+    const field28 = encodeLengthDelimited(
+      28,
+      Buffer.concat([titleField, inputSection, outputSection, cachedSection]),
+    )
+    const frame = new Uint8Array(field28)
+    const parsed = parseChatStreamFrame(frame)
+    const usage = parsed.usage
+
+    expect(usage).toBeDefined()
+    // prompt_tokens = input(2973) + cached(136991) = 139964 (OpenAI semantic)
+    expect(usage?.prompt_tokens).toBe(139964)
+    expect(usage?.completion_tokens).toBe(3516)
+    // total = prompt(139964) + completion(3516) = 143480 (includes cache)
+    expect(usage?.total_tokens).toBe(143480)
+    expect(usage?.cached_tokens).toBe(136991)
+    expect(usage?.cache_read_tokens).toBe(136991)
+  })
+})

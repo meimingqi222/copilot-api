@@ -1,3 +1,4 @@
+import consola from "consola"
 import { randomUUID } from "node:crypto"
 
 import type { Account } from "~/lib/accounts"
@@ -11,6 +12,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { fileLogger } from "~/lib/file-logger"
 import { isChatCompletionResponse } from "~/lib/utils"
 
 import {
@@ -120,9 +122,57 @@ async function* streamToOpenAI(
     }
 
     if (parsed.toolCallsDone) finishReason = "tool_calls"
-    usage = parsed.usage ?? usage
+    if (parsed.usage) {
+      const incomingMeta = {
+        req: requestId,
+        model,
+        provider: "windsurf",
+        usage: parsed.usage,
+      }
+      consola.debug(
+        `[windsurf-usage] req=${requestId} INCOMING usage=${JSON.stringify(parsed.usage)}`,
+      )
+      fileLogger.debug("usage frame incoming", incomingMeta)
+      if (usage) {
+        // Merge across frames: field[7] (prompt/completion) and field[33]/field[28]
+        // (cache hits) often arrive in separate frames. The `??` operator would
+        // let a late cache-only frame overwrite real completion_tokens with 0.
+        const prev = usage
+        usage = {
+          prompt_tokens: parsed.usage.prompt_tokens || prev.prompt_tokens,
+          completion_tokens:
+            parsed.usage.completion_tokens || prev.completion_tokens,
+          total_tokens: parsed.usage.total_tokens || prev.total_tokens,
+          cached_tokens: Math.max(
+            parsed.usage.cached_tokens,
+            prev.cached_tokens,
+          ),
+          cache_read_tokens: Math.max(
+            parsed.usage.cache_read_tokens ?? 0,
+            prev.cache_read_tokens ?? 0,
+          ),
+        }
+        const mergedMeta = {
+          req: requestId,
+          model,
+          provider: "windsurf",
+          usage,
+        }
+        consola.debug(
+          `[windsurf-usage] req=${requestId} MERGED usage=${JSON.stringify(usage)}`,
+        )
+        fileLogger.debug("usage frame merged", mergedMeta)
+      } else {
+        usage = parsed.usage
+      }
+    }
   }
 
+  const finalMeta = { req: requestId, model, provider: "windsurf", usage }
+  consola.info(
+    `[windsurf-usage] req=${requestId} FINAL usage=${JSON.stringify(usage)}`,
+  )
+  fileLogger.info("usage final", finalMeta)
   yield { data: doneChunk({ requestId, model, finishReason, usage }) }
   yield { data: "[DONE]" }
 }
@@ -306,7 +356,7 @@ export async function createWindsurfChatCompletionsOnce(
         "Connect-Protocol-Version": "1",
         "Connect-Accept-Encoding": "gzip",
         "Connect-Content-Encoding": "gzip",
-        "Connect-Timeout-Ms": "30000",
+        "Connect-Timeout-Ms": "600000",
         "User-Agent": "connect-go/1.18.1 (go1.26.1)",
         "Accept-Encoding": "identity",
       },
