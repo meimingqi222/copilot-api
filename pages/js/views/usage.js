@@ -1,16 +1,14 @@
-function quotaView() {
+function usageView() {
   return {
     loading: false,
     refreshing: false,
-    refreshingAccountId: null,
-    resettingAccountId: null,
-    accounts: [],
-    users: [],
     dateRange: "today",
-    selectedMonth: "", // YYYY-MM, set when dateRange === "custom"
+    selectedMonth: "",
     showPricingModal: false,
     modelPrices: {},
     pricingSources: {},
+    modelViewMode: "aggregate",
+    expandedAccounts: {},
     usageSummary: {
       totals: {
         requests: 0,
@@ -18,6 +16,7 @@ function quotaView() {
         completionTokens: 0,
         totalTokens: 0,
         cost: 0,
+        cacheHitRate: null,
       },
       byAccount: {},
       byUser: {},
@@ -29,9 +28,6 @@ function quotaView() {
     chartRenderToken: 0,
 
     init() {
-      // Patch Chart.js bug #11743: destroy() doesn't cancel pending rAF,
-      // so clear/draw can fire on a null canvas after destroy.
-      // This only needs to run once.
       if (typeof Chart !== "undefined" && !Chart._patchedNullCanvas) {
         Chart._patchedNullCanvas = true
         const origClear = Chart.prototype.clear
@@ -46,16 +42,13 @@ function quotaView() {
         }
       }
 
-      // Initial load
       this.load()
-      // Reload when view becomes active (switched back to quota)
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) {
         Alpine.$data(app).$watch("currentView", (view) => {
-          if (view === "quota") {
+          if (view === "usage") {
             this.load()
           } else {
-            // Destroy chart when leaving quota view to prevent canvas errors
             this.destroyChart()
           }
         })
@@ -88,12 +81,23 @@ function quotaView() {
       })
     },
 
+    setModelViewMode(mode) {
+      this.modelViewMode = mode
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    toggleAccountExpanded(accountId) {
+      this.expandedAccounts[accountId] = !this.expandedAccounts[accountId]
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    isAccountExpanded(accountId) {
+      return Boolean(this.expandedAccounts[accountId])
+    },
+
     async load() {
       this.loading = true
       try {
-        const data = await API.quota.get()
-        this.accounts = data.accounts || []
-        this.users = data.users || []
         await this.loadUsageStats()
         await this.loadModelPricing()
       } catch {
@@ -110,7 +114,6 @@ function quotaView() {
     async loadModelPricing() {
       try {
         const data = await API.usage.getPricing()
-        // Convert from $/1K to $/1M for display (multiply by 1000)
         this.modelPrices = {}
         this.pricingSources = data.sources || {}
         for (const [model, price] of Object.entries(data.pricing || {})) {
@@ -133,7 +136,6 @@ function quotaView() {
     async saveModelPricing(model) {
       try {
         const price = this.modelPrices[model]
-        // Convert from $/1M to $/1K for storage (divide by 1000)
         await API.usage.updatePricing(model, {
           promptPricePer1k:
             (Number.parseFloat(price.promptPricePer1m) || 0) / 1000,
@@ -144,9 +146,9 @@ function quotaView() {
           cacheWritePricePer1k:
             (Number.parseFloat(price.cacheWritePricePer1m) || 0) / 1000,
         })
-        this.showToast("模型价格已保存", "success")
+        this.showToast(this.t("usage.pricingSaved"), "success")
       } catch (e) {
-        this.showToast("保存失败：" + e.message, "error")
+        this.showToast(this.t("usage.pricingSaveError") + e.message, "error")
       }
     },
 
@@ -160,22 +162,33 @@ function quotaView() {
         this.usageSummary = data
       } catch (e) {
         console.error("Failed to load usage stats:", e)
+        throw e
+      }
+    },
+
+    async refresh() {
+      this.refreshing = true
+      try {
+        await this.loadUsageStats()
+        await this.loadModelPricing()
+        this.showToast(this.t("usage.refreshSuccess"), "success")
+        this.$nextTick(() => this.renderChart())
+      } catch {
+        this.showToast(this.t("usage.refreshError"), "error")
+      } finally {
+        this.refreshing = false
       }
     },
 
     renderChart() {
-      // Increment token so any pending retries from a previous call become stale
       const token = ++this.chartRenderToken
 
       if (typeof Chart === "undefined") return
 
       const attempt = (retryCount = 0) => {
-        // Bail out if a newer renderChart() call has started
         if (token !== this.chartRenderToken) return
 
         const canvas = document.querySelector("#usageTrendChart")
-        // Check that canvas exists AND is actually visible (offsetParent is null
-        // when the element or any ancestor has display:none)
         if (!canvas || canvas.offsetParent === null) {
           if (retryCount < 30) {
             setTimeout(() => attempt(retryCount + 1), 150)
@@ -183,9 +196,6 @@ function quotaView() {
           return
         }
 
-        // Destroy existing chart but do NOT replace the canvas element.
-        // Replacing the canvas causes Chart.js's internal rAF callbacks to
-        // hold a stale reference → "Cannot read properties of null (reading 'getContext')".
         if (this.usageChart) {
           this.usageChart.destroy()
           this.usageChart = null
@@ -197,12 +207,10 @@ function quotaView() {
         const intervalSeries = this.usageSummary.intervalSeries || []
         const timeSeries = this.usageSummary.timeSeries || []
 
-        // Server returns intervalSeries only when range is a single day
         const useInterval = intervalSeries.length > 0
         const hasDailyData = timeSeries.length > 0
         if (!useInterval && !hasDailyData) return
 
-        // Get CSS variables for colors
         const root = getComputedStyle(document.documentElement)
         const blueColor =
           root.getPropertyValue("--apple-blue")?.trim() || "#007AFF"
@@ -231,7 +239,6 @@ function quotaView() {
 
         let labels, sortedData
         if (useInterval) {
-          // 15-min slots: sort by slotTs, format as HH:MM
           sortedData = [...intervalSeries].sort((a, b) => a.slotTs - b.slotTs)
           labels = sortedData.map((d) => {
             const date = new Date(d.slotTs)
@@ -240,7 +247,6 @@ function quotaView() {
             return `${hh}:${mm}`
           })
         } else {
-          // Daily: sort by date ascending
           sortedData = [...timeSeries].sort((a, b) =>
             a.date.localeCompare(b.date),
           )
@@ -252,7 +258,7 @@ function quotaView() {
 
         const datasets = [
           {
-            label: this.t("quota.tokens.total"),
+            label: this.t("usage.tokens.total"),
             data: sortedData.map((d) => d.totalTokens),
             borderColor: blueColor,
             backgroundColor: blueColor + "20",
@@ -343,128 +349,44 @@ function quotaView() {
       )
     },
 
+    get sortedAccountUsage() {
+      return Object.entries(this.usageSummary.byAccount || {})
+        .filter(([, data]) => (data.requests || 0) > 0)
+        .sort(([, left], [, right]) => {
+          return (right.totalTokens || 0) - (left.totalTokens || 0)
+        })
+    },
+
+    sortedAccountModels(models) {
+      return Object.entries(models || {}).sort(([, left], [, right]) => {
+        return (right.totalTokens || 0) - (left.totalTokens || 0)
+      })
+    },
+
     getModelShare(tokens) {
       const totalTokens = this.usageSummary?.totals?.totalTokens || 0
       if (!totalTokens) return 0
       return Math.min(tokens / totalTokens, 1)
     },
 
-    async refresh() {
-      this.refreshing = true
-      try {
-        await API.quota.refresh()
-        this.showToast(I18n.t("quota.refreshSuccess"), "success")
-        await this.load()
-      } catch {
-        this.showToast(I18n.t("quota.refreshError"), "error")
-      } finally {
-        this.refreshing = false
-      }
-    },
-
-    canResetCodexQuota(account) {
-      return QuotaDisplay.canResetCodexQuota(account)
-    },
-
-    async resetAccountQuota(account) {
-      if (!account?.id || !this.canResetCodexQuota(account)) return
-      const confirmed = globalThis.confirm(
-        this.t("quota.oauth.codex.resetConfirm", { name: account.label }),
-      )
-      if (!confirmed) return
-
-      this.resettingAccountId = account.id
-      try {
-        const result = await API.quota.resetOne(account.id)
-        const idx = this.accounts.findIndex((item) => item.id === account.id)
-        if (idx !== -1) {
-          this.accounts[idx] = {
-            ...this.accounts[idx],
-            quotaInfo: result.quotaInfo ?? this.accounts[idx].quotaInfo,
-            quotaState: result.quotaState ?? this.accounts[idx].quotaState,
-          }
-        }
-        this.showToast(I18n.t("quota.oauth.codex.resetSuccess"), "success")
-      } catch {
-        this.showToast(I18n.t("quota.oauth.codex.resetError"), "error")
-      } finally {
-        this.resettingAccountId = null
-        this.$nextTick(() => lucide.createIcons())
-      }
-    },
-
-    async refreshAccountQuota(account) {
-      if (!account?.id) return
-      this.refreshingAccountId = account.id
-      try {
-        const result = await API.quota.refreshOne(account.id)
-        const idx = this.accounts.findIndex((item) => item.id === account.id)
-        if (idx !== -1) {
-          this.accounts[idx] = {
-            ...this.accounts[idx],
-            quotaInfo: result.quotaInfo ?? this.accounts[idx].quotaInfo,
-            quotaState: result.quotaState ?? this.accounts[idx].quotaState,
-          }
-        }
-        this.showToast(I18n.t("accounts.quotaRefreshSuccess"), "success")
-      } catch {
-        this.showToast(I18n.t("accounts.quotaRefreshError"), "error")
-      } finally {
-        this.refreshingAccountId = null
-        this.$nextTick(() => lucide.createIcons())
-      }
-    },
-
-    isOAuthQuotaProvider(provider) {
-      return QuotaDisplay.isOAuthProvider(provider)
-    },
-
-    getQuotaRows(account) {
-      return QuotaDisplay.buildRows(account, (key, params) =>
-        this.t(key, params),
-      )
-    },
-
-    getQuotaBarColor(row) {
-      return QuotaDisplay.getBarColor(row?.remainingPercent)
-    },
-
-    getQuotaCardClass(provider) {
-      return QuotaDisplay.providerCardClass(provider)
-    },
-
-    getQuotaBadgeClass(provider) {
-      return QuotaDisplay.providerBadgeClass(provider)
-    },
-
-    getProviderDisplayName(provider) {
-      return QuotaDisplay.providerDisplayName(provider, (key) => this.t(key))
-    },
-
-    formatQuotaSummary(account) {
-      return QuotaDisplay.formatSummary(account, (key, params) =>
-        this.t(key, params),
-      )
-    },
-
-    calculatePercent(remaining, total) {
-      if (!total) return 0
-      return Math.min(((total - (remaining || 0)) / total) * 100, 100)
-    },
-
-    getUsageColor(remaining, limit) {
-      if (!limit) return "bg-[var(--apple-green)]"
-      const pct = (remaining || 0) / limit
-      if (pct < 0.2) return "bg-[var(--apple-red)]"
-      if (pct < 0.5) return "bg-[var(--apple-orange)]"
-      return "bg-[var(--apple-green)]"
-    },
-
     formatPercent(value) {
       return (value * 100).toFixed(1) + "%"
     },
 
-    // Format token count with appropriate unit (K, M, or raw)
+    formatCacheHitRate(rate) {
+      if (rate === null || rate === undefined) return "—"
+      return this.formatPercent(rate)
+    },
+
+    getCacheHitRateClass(rate) {
+      if (rate === null || rate === undefined) {
+        return "text-[var(--apple-text-tertiary)]"
+      }
+      if (rate >= 0.5) return "text-[var(--apple-green)]"
+      if (rate >= 0.2) return "text-[var(--apple-blue)]"
+      return "text-[var(--apple-orange)]"
+    },
+
     formatTokens(tokens) {
       const numericTokens = Number(tokens || 0)
       if (numericTokens === 0) return "0"
@@ -477,33 +399,15 @@ function quotaView() {
       return numericTokens.toString()
     },
 
-    getQuotaAccounts() {
-      return (this.accounts || []).filter((a) => a.supportsQuota !== false)
-    },
-
-    getGeneralAccounts() {
-      return (this.accounts || []).filter((a) => a.supportsQuota === false)
-    },
-
-    isUniqueSubtitle(subtitle) {
-      if (!subtitle) return false
-      return (
-        (this.accounts || []).filter((a) => a.subtitle === subtitle).length
-        === 1
-      )
-    },
-
     showToast(msg, type) {
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) Alpine.$data(app).showToast(msg, type)
     },
+
     t(key, params) {
-      // Access parent lang to establish reactive dependency
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) void Alpine.$data(app).lang
       return I18n.t(key, params)
     },
   }
 }
-
-// Guard View Component

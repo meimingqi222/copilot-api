@@ -98,7 +98,8 @@ echo "==> PR5 quota admin UI"
 git checkout -B feat/oauth/pr5-quota-ui
 copy_paths \
   pages/css/apple-theme.css \
-  pages/js/views/quota.js \
+  pages/js/views/usage.js \
+  pages/js/views/quotas.js \
   pages/js/quota-display.js \
   pages/js/i18n.js \
   pages/index.html
