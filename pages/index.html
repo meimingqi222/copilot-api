@@ -570,7 +570,7 @@
                       <p class="font-medium" x-text="account.label || providerLabel(account.provider || 'copilot')"></p>
                       <span class="badge badge-info uppercase" x-text="account.provider || 'copilot'"></span>
                     </div>
-                    <p x-show="account.subtitle" class="text-xs text-[var(--apple-text-tertiary)] truncate max-w-[220px]" :title="account.subtitle" x-text="account.subtitle"></p>
+                    <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-xs text-[var(--apple-text-tertiary)] truncate max-w-[220px]" :title="account.subtitle" x-text="account.subtitle"></p>
                     <input
                       x-show="editingLabel === account.id"
                       x-model="editLabelValue"
@@ -1420,7 +1420,7 @@
                             <span x-show="account.isActive" class="quota-status-pill bg-[var(--apple-blue)] text-white" x-text="t('accounts.status.current')"></span>
                           </div>
                           <p class="font-bold text-[16px] text-[var(--apple-text)] tracking-tight truncate" :title="account.label" x-text="account.label"></p>
-                          <p x-show="account.subtitle" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
+                          <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
                         </div>
                         <button
                           x-show="account.supportsQuota !== false"
@@ -1540,7 +1540,7 @@
                             <span x-show="account.isActive" class="quota-status-pill bg-[var(--apple-blue)] text-white" x-text="t('accounts.status.current')"></span>
                           </div>
                           <p class="font-bold text-[16px] text-[var(--apple-text)] tracking-tight truncate" :title="account.label" x-text="account.label"></p>
-                          <p x-show="account.subtitle" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
+                          <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
                         </div>
                       </div>
 

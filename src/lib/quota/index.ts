@@ -10,7 +10,8 @@ import { fetchCodexQuota } from "./fetchers/codex"
 import { fetchKimiQuota } from "./fetchers/kimi"
 import { fetchXaiQuota } from "./fetchers/xai"
 
-const QUOTA_EXHAUSTION_THRESHOLD = 5
+const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
+const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
 
 export async function fetchOAuthProviderQuota(
   account: Account,
@@ -49,15 +50,14 @@ export function applyOAuthQuotaSnapshot(
   account.quotaInfo = snapshot
 
   const provider = snapshot.provider as OAuthProviderId | undefined
-  const remaining =
-    snapshot.premiumInteractionsRemaining
-    ?? snapshot.chatRemaining
-    ?? (snapshot.unlimited ? Infinity : undefined)
 
   const exhausted =
     !snapshot.unlimited
-    && remaining !== undefined
-    && remaining <= QUOTA_EXHAUSTION_THRESHOLD
+    && ((snapshot.premiumInteractionsRemaining !== undefined
+      && snapshot.premiumInteractionsRemaining
+        <= PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD)
+      || (snapshot.chatRemaining !== undefined
+        && snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD))
 
   setAccountQuotaState(account, exhausted ? "exhausted" : "available")
   void provider
