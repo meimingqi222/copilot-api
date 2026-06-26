@@ -79,31 +79,61 @@ function parseUsageFromMeta(
   }
 }
 
-function findCachedInputTokens(
+interface Field28TokenUsage {
+  inputTokens?: number
+  outputTokens?: number
+  cachedInputTokens?: number
+}
+
+// field[28] "Token Usage" section contains three named metrics:
+//   - "input_tokens"         (float32, real prompt size)
+//   - "output_tokens"        (float32, real completion size)
+//   - "cached_input_tokens"  (float32, KV cache hits)
+// Earlier code only extracted cached_input_tokens and discarded the other
+// two, which is why prompt_tokens showed as 0 for models that report usage
+// exclusively via field[28] (e.g. Claude Haiku via Windsurf, and GLM-5-2
+// when field[7] prompt_tokens is 0).
+function findTokenUsageFromField28(
   sections: Array<ProtobufNode>,
-): number | undefined {
-  let foundSection = false
+): Field28TokenUsage {
+  const result: Field28TokenUsage = {}
   for (const section of sections) {
     if (section.field !== 2 || !section.sub) continue
 
     const nameNode = section.sub.find((n) => n.field === 5)
     if (!nameNode?.raw) continue
     const name = new TextDecoder().decode(nameNode.raw)
-    if (name !== "cached_input_tokens") continue
 
-    foundSection = true
     const valueBlock = section.sub.find((n) => n.field === 4)?.sub
     if (!valueBlock) continue
-
     const valueField = valueBlock.find((n) => n.field === 2 && n.wire === 5)
-    if (valueField?.raw) return parseFloat32(valueField.raw)
+    if (!valueField?.raw) continue
+
+    const value = parseFloat32(valueField.raw)
+    switch (name) {
+      case "input_tokens": {
+        result.inputTokens = value
+        break
+      }
+      case "output_tokens": {
+        result.outputTokens = value
+        break
+      }
+      case "cached_input_tokens": {
+        result.cachedInputTokens = value
+        break
+      }
+      default: {
+        break
+      }
+    }
   }
-  return foundSection ? 0 : undefined
+  return result
 }
 
-function parseCachedTokensFromField28(
+function parseTokenUsageFromField28(
   nodes: Array<ProtobufNode>,
-): number | undefined {
+): Field28TokenUsage | undefined {
   for (const node of nodes) {
     if (node.field !== 28 || !node.sub) continue
 
@@ -112,9 +142,62 @@ function parseCachedTokensFromField28(
     const titleStr = new TextDecoder().decode(title.raw)
     if (!titleStr.includes("Token Usage")) continue
 
-    return findCachedInputTokens(node.sub)
+    return findTokenUsageFromField28(node.sub)
   }
   return undefined
+}
+
+// field[28] carries the authoritative full usage (input/output/cached).
+// Windsurf semantics: input_tokens EXCLUDES cached_input_tokens (unlike
+// OpenAI where prompt_tokens includes cached_tokens). Convert to OpenAI
+// semantics here so downstream code (handler.ts prompt-cached subtraction,
+// dashboard totalTokens) works correctly:
+//   prompt_tokens (OpenAI) = input_tokens + cached_input_tokens
+//   total_tokens           = prompt_tokens + completion_tokens (includes cache)
+function mergeField28Usage(
+  usage: ChatStreamFrame["usage"] | undefined,
+  tokenUsage: Field28TokenUsage,
+): ChatStreamFrame["usage"] | undefined {
+  const inputTokens = Math.round(tokenUsage.inputTokens ?? 0)
+  const outputTokens = Math.round(tokenUsage.outputTokens ?? 0)
+  const cachedTokens = Math.round(tokenUsage.cachedInputTokens ?? 0)
+
+  // Only apply if we got at least one meaningful value or input_tokens was present
+  const hasValue =
+    inputTokens > 0
+    || outputTokens > 0
+    || cachedTokens > 0
+    || tokenUsage.inputTokens !== undefined
+  if (!hasValue) return usage
+
+  // OpenAI-semantic prompt_tokens = non-cached input + cached input
+  const promptTokensOpenAI = inputTokens + cachedTokens
+
+  if (!usage) {
+    return {
+      prompt_tokens: promptTokensOpenAI,
+      completion_tokens: outputTokens,
+      total_tokens: promptTokensOpenAI + outputTokens,
+      cached_tokens: cachedTokens,
+      cache_read_tokens: cachedTokens,
+    }
+  }
+
+  if (tokenUsage.inputTokens !== undefined) {
+    usage.prompt_tokens = promptTokensOpenAI
+  }
+  if (tokenUsage.outputTokens !== undefined) {
+    usage.completion_tokens = outputTokens
+  }
+  if (tokenUsage.cachedInputTokens !== undefined) {
+    usage.cached_tokens = Math.max(usage.cached_tokens, cachedTokens)
+    usage.cache_read_tokens = Math.max(
+      usage.cache_read_tokens ?? 0,
+      cachedTokens,
+    )
+  }
+  usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
+  return usage
 }
 
 // ── Tool call delta parsing ───────────────────────────────────────────────────
@@ -192,12 +275,17 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
 
     if (node.field === 33 && node.wire === 0 && node.varint !== undefined) {
+      // field[33] = KV cache hits (large value, e.g. 50654). This IS the real
+      // cache_read_tokens. Must set it on creation, otherwise cross-frame merge
+      // in create-chat-completions.ts would only see `cached_tokens` and lose
+      // the value when chunk-builders.ts prefers `cache_read_tokens`.
       if (!usage) {
         usage = {
           prompt_tokens: 0,
           completion_tokens: 0,
           total_tokens: 0,
           cached_tokens: node.varint,
+          cache_read_tokens: node.varint,
         }
       } else {
         usage.cache_read_tokens = (usage.cache_read_tokens ?? 0) + node.varint
@@ -208,23 +296,11 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
 
     if (node.field === 28 && node.wire === 2 && node.raw) {
       const field28Nodes = parseMessage(node.raw, 0, 6)
-      const cached = parseCachedTokensFromField28([
+      const tokenUsage = parseTokenUsageFromField28([
         { field: 28, wire: 2, sub: field28Nodes },
       ])
-      if (cached !== undefined) {
-        if (!usage) {
-          usage = {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-            cached_tokens: Math.round(cached),
-          }
-        } else {
-          usage.cached_tokens = Math.max(
-            usage.cached_tokens,
-            Math.round(cached),
-          )
-        }
+      if (tokenUsage) {
+        usage = mergeField28Usage(usage, tokenUsage)
       }
     }
   }
