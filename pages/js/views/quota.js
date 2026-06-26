@@ -485,6 +485,14 @@ function quotaView() {
       return (this.accounts || []).filter((a) => a.supportsQuota === false)
     },
 
+    isUniqueSubtitle(subtitle) {
+      if (!subtitle) return false
+      return (
+        (this.accounts || []).filter((a) => a.subtitle === subtitle).length
+        === 1
+      )
+    },
+
     showToast(msg, type) {
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) Alpine.$data(app).showToast(msg, type)

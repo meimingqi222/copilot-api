@@ -639,6 +639,14 @@ function accountsView() {
         )
       })
     },
+
+    isUniqueSubtitle(subtitle) {
+      if (!subtitle) return false
+      return (
+        (this.accounts || []).filter((a) => a.subtitle === subtitle).length
+        === 1
+      )
+    },
   }
 }
 
