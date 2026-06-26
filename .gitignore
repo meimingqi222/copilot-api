@@ -22,3 +22,4 @@ opencode.json
 temp/
 temp_*.js
 agent-tools/
+.tmp-*

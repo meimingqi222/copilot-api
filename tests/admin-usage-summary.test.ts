@@ -12,6 +12,8 @@ type UsageMetrics = {
   cacheWriteTokens: number
   totalTokens: number
   cost: number
+  inputTokens: number
+  cacheHitRate: number | null
 }
 
 type UsageSummaryResponse = {
@@ -148,6 +150,8 @@ test("GET /admin/api/usage/summary returns per-model request counts and time ser
     cacheWriteTokens: 100,
     totalTokens: 3850,
     cost: 2.9,
+    inputTokens: 2750,
+    cacheHitRate: 250 / 2750,
   })
 
   expect(body.byModel["claude-sonnet-4.6"]).toMatchObject({
@@ -156,6 +160,8 @@ test("GET /admin/api/usage/summary returns per-model request counts and time ser
     completionTokens: 700,
     cacheReadTokens: 250,
     totalTokens: 2950,
+    inputTokens: 2250,
+    cacheHitRate: 250 / 2250,
   })
   expect(body.byModel["claude-sonnet-4.6"].cost).toBeCloseTo(2.1, 10)
   expect(body.byModel["gpt-5.4"]).toMatchObject({
@@ -176,6 +182,8 @@ test("GET /admin/api/usage/summary returns per-model request counts and time ser
     {
       requests: 2,
       totalTokens: 2600,
+      inputTokens: 2000,
+      cacheHitRate: 0.1,
     },
   )
   expect(body.byAccount["account-2"].models["gpt-5.4"]).toMatchObject({
@@ -201,5 +209,37 @@ test("GET /admin/api/usage/summary returns per-model request counts and time ser
   expect(body.timeSeries[1].models["gpt-5.4"]).toMatchObject({
     requests: 1,
     totalTokens: 900,
+    inputTokens: 500,
+    cacheHitRate: 0,
   })
+})
+
+test("GET /admin/api/usage/summary returns null cacheHitRate when no input tokens", async () => {
+  const timestamp = new Date("2026-03-10T08:00:00.000Z").getTime()
+
+  statsStore.recordUsage({
+    date: "2026-03-10",
+    accountId: "account-1",
+    model: "gpt-5.4",
+    promptTokens: 0,
+    completionTokens: 120,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 120,
+    cost: 0.1,
+    timestamp,
+  })
+
+  const response = await server.fetch(
+    new Request(
+      "http://localhost/admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10",
+    ),
+  )
+
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as UsageSummaryResponse
+
+  expect(body.totals.cacheHitRate).toBeNull()
+  expect(body.totals.inputTokens).toBe(0)
+  expect(body.byModel["gpt-5.4"].cacheHitRate).toBeNull()
 })

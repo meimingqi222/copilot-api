@@ -5,7 +5,7 @@ import { statsStore } from "~/lib/stats-store"
 
 export const usageApiRoutes = new Hono()
 
-type UsageMetrics = {
+type UsageMetricsBase = {
   requests: number
   promptTokens: number
   completionTokens: number
@@ -15,9 +15,14 @@ type UsageMetrics = {
   cost: number
 }
 
-type UsageSeriesEntry = UsageMetrics & {
+type UsageMetrics = UsageMetricsBase & {
+  inputTokens: number
+  cacheHitRate: number | null
+}
+
+type UsageSeriesEntryBase = UsageMetricsBase & {
   date: string
-  models: Record<string, UsageMetrics>
+  models: Record<string, UsageMetricsBase>
 }
 
 // Get usage statistics with date range
@@ -230,7 +235,7 @@ function resolveDateRange(opts: {
   }
 }
 
-function createUsageMetrics(): UsageMetrics {
+function createUsageMetrics(): UsageMetricsBase {
   return {
     requests: 0,
     promptTokens: 0,
@@ -242,7 +247,32 @@ function createUsageMetrics(): UsageMetrics {
   }
 }
 
-function mergeUsageMetrics(target: UsageMetrics, source: UsageMetrics): void {
+function enrichUsageMetrics(metrics: UsageMetricsBase): UsageMetrics {
+  const inputTokens = metrics.promptTokens + metrics.cacheReadTokens
+  const cacheHitRate =
+    inputTokens > 0 ? metrics.cacheReadTokens / inputTokens : null
+
+  return {
+    ...metrics,
+    inputTokens,
+    cacheHitRate,
+  }
+}
+
+function enrichMetricsMap(
+  metricsMap: Record<string, UsageMetricsBase>,
+): Record<string, UsageMetrics> {
+  const enriched: Record<string, UsageMetrics> = {}
+  for (const [key, metrics] of Object.entries(metricsMap)) {
+    enriched[key] = enrichUsageMetrics(metrics)
+  }
+  return enriched
+}
+
+function mergeUsageMetrics(
+  target: UsageMetricsBase,
+  source: UsageMetricsBase,
+): void {
   target.requests += source.requests
   target.promptTokens += source.promptTokens
   target.completionTokens += source.completionTokens
@@ -252,7 +282,7 @@ function mergeUsageMetrics(target: UsageMetrics, source: UsageMetrics): void {
   target.cost += source.cost
 }
 
-function createUsageSeriesEntry(date: string): UsageSeriesEntry {
+function createUsageSeriesEntry(date: string): UsageSeriesEntryBase {
   return {
     date,
     ...createUsageMetrics(),
@@ -261,9 +291,9 @@ function createUsageSeriesEntry(date: string): UsageSeriesEntry {
 }
 
 function getOrCreateSeriesEntry(
-  timeSeriesMap: Record<string, UsageSeriesEntry>,
+  timeSeriesMap: Record<string, UsageSeriesEntryBase>,
   date: string,
-): UsageSeriesEntry {
+): UsageSeriesEntryBase {
   if (date in timeSeriesMap) {
     return timeSeriesMap[date]
   }
@@ -272,9 +302,9 @@ function getOrCreateSeriesEntry(
 }
 
 function getOrCreateMetrics(
-  metricsMap: Record<string, UsageMetrics>,
+  metricsMap: Record<string, UsageMetricsBase>,
   key: string,
-): UsageMetrics {
+): UsageMetricsBase {
   if (key in metricsMap) {
     return metricsMap[key]
   }
@@ -283,8 +313,8 @@ function getOrCreateMetrics(
 }
 
 function aggregateModelUsage(
-  target: Record<string, UsageMetrics>,
-  source: Record<string, UsageMetrics>,
+  target: Record<string, UsageMetricsBase>,
+  source: Record<string, UsageMetricsBase>,
 ): void {
   for (const [model, usage] of Object.entries(source)) {
     const summary = getOrCreateMetrics(target, model)
@@ -296,8 +326,8 @@ function aggregateModelUsage(
 // Helper: Aggregate usage statistics
 function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
   const totals = createUsageMetrics()
-  const timeSeriesMap: Record<string, UsageSeriesEntry> = {}
-  const byModel: Record<string, UsageMetrics> = {}
+  const timeSeriesMap: Record<string, UsageSeriesEntryBase> = {}
+  const byModel: Record<string, UsageMetricsBase> = {}
 
   for (const stat of allStats) {
     mergeUsageMetrics(totals, stat)
@@ -309,11 +339,18 @@ function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
     aggregateModelUsage(byModel, stat.models)
   }
 
-  const timeSeries = Object.values(timeSeriesMap).sort((a, b) =>
-    b.date.localeCompare(a.date),
-  )
+  const timeSeries = Object.values(timeSeriesMap)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((entry) => ({
+      ...enrichUsageMetrics(entry),
+      models: enrichMetricsMap(entry.models),
+    }))
 
-  return { totals, timeSeries, byModel }
+  return {
+    totals: enrichUsageMetrics(totals),
+    timeSeries,
+    byModel: enrichMetricsMap(byModel),
+  }
 }
 
 // Helper: Aggregate by account
@@ -333,7 +370,7 @@ function aggregateByAccount(startDate: string, endDate: string) {
       endDate,
     )
     const totals = createUsageMetrics()
-    const models: Record<string, UsageMetrics> = {}
+    const models: Record<string, UsageMetricsBase> = {}
 
     for (const stat of accountStats) {
       mergeUsageMetrics(totals, stat)
@@ -342,8 +379,8 @@ function aggregateByAccount(startDate: string, endDate: string) {
 
     byAccount[account.id] = {
       label: account.label,
-      ...totals,
-      models,
+      ...enrichUsageMetrics(totals),
+      models: enrichMetricsMap(models),
     }
   }
 
@@ -366,7 +403,7 @@ function aggregateByUser(startDate: string, endDate: string) {
       endDate,
     )
     const totals = createUsageMetrics()
-    const models: Record<string, UsageMetrics> = {}
+    const models: Record<string, UsageMetricsBase> = {}
 
     for (const stat of userStats) {
       mergeUsageMetrics(totals, stat)
@@ -375,12 +412,26 @@ function aggregateByUser(startDate: string, endDate: string) {
 
     byUser[user.id] = {
       username: user.username,
-      ...totals,
-      models,
+      ...enrichUsageMetrics(totals),
+      models: enrichMetricsMap(models),
     }
   }
 
   return byUser
+}
+
+function enrichIntervalSeries(
+  series: ReturnType<typeof statsStore.getUsageStatsByInterval> | null,
+) {
+  if (!series) {
+    return null
+  }
+
+  return series.map((slot) => ({
+    slotTs: slot.slotTs,
+    ...enrichUsageMetrics(slot),
+    models: enrichMetricsMap(slot.models),
+  }))
 }
 
 // Get summary statistics
@@ -402,10 +453,11 @@ usageApiRoutes.get("/summary", (c) => {
   const byUser = aggregateByUser(startDate, endDate)
 
   // Only show 15-minute interval breakdown when the range is a single day
-  const intervalSeries =
+  const intervalSeries = enrichIntervalSeries(
     startDate === endDate ?
       statsStore.getUsageStatsByInterval(15, undefined, startDate)
-    : null
+    : null,
+  )
 
   return c.json({
     totals,

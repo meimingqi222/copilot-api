@@ -1190,14 +1190,14 @@
         </div>
       </div>
 
-      <!-- Quota View -->
-      <div x-show="currentView === 'quota'" x-data="quotaView()" x-init="init()" style="display: none;">
+      <!-- Usage View -->
+      <div x-show="currentView === 'usage'" x-data="usageView()" x-init="init()" style="display: none;">
         <header class="flex justify-between items-center mb-8">
-          <h2 class="text-headline" x-text="t('quota.title')"></h2>
+          <h2 class="text-headline" x-text="t('usage.title')"></h2>
           <div class="flex items-center gap-4">
             <button @click="showPricingModal = true" class="btn btn-secondary">
               <i data-lucide="settings" class="w-4 h-4"></i>
-              <span x-text="t('quota.modelPricing')"></span>
+              <span x-text="t('usage.modelPricing')"></span>
             </button>
             <button @click="refresh()" class="btn btn-secondary" :class="{ 'opacity-75': refreshing }">
               <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': refreshing }"></i>
@@ -1214,45 +1214,45 @@
           <!-- Usage Statistics Summary -->
           <div class="mb-8">
             <div class="flex items-start justify-between mb-2 gap-3 flex-wrap">
-              <h3 class="text-title-2" x-text="t('quota.usageStats')"></h3>
+              <h3 class="text-title-2" x-text="t('usage.usageStats')"></h3>
               <!-- Date Range Selector -->
               <div class="flex flex-wrap items-center gap-2 justify-end">
-                <button @click="setRange('today')" class="btn btn-small" :class="dateRange === 'today' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.today')"></button>
-                <button @click="setRange('week')" class="btn btn-small" :class="dateRange === 'week' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.week')"></button>
-                <button @click="setRange('month')" class="btn btn-small" :class="dateRange === 'month' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.month')"></button>
-                <button @click="setRange('lastMonth')" class="btn btn-small" :class="dateRange === 'lastMonth' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.lastMonth')"></button>
-                <button @click="setRange('last30d')" class="btn btn-small" :class="dateRange === 'last30d' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.last30d')"></button>
-                <button @click="setRange('all')" class="btn btn-small" :class="dateRange === 'all' ? 'btn-primary' : 'btn-secondary'" x-text="t('quota.all')"></button>
+                <button @click="setRange('today')" class="btn btn-small" :class="dateRange === 'today' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.today')"></button>
+                <button @click="setRange('week')" class="btn btn-small" :class="dateRange === 'week' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.week')"></button>
+                <button @click="setRange('month')" class="btn btn-small" :class="dateRange === 'month' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.month')"></button>
+                <button @click="setRange('lastMonth')" class="btn btn-small" :class="dateRange === 'lastMonth' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.lastMonth')"></button>
+                <button @click="setRange('last30d')" class="btn btn-small" :class="dateRange === 'last30d' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.last30d')"></button>
+                <button @click="setRange('all')" class="btn btn-small" :class="dateRange === 'all' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.all')"></button>
                 <input
                   type="month"
                   class="input input-small"
                   :value="selectedMonth"
                   @change="setMonth($event.target.value)"
-                  :title="t('quota.pickMonth')" />
+                  :title="t('usage.pickMonth')" />
               </div>
             </div>
             <p class="text-xs text-[var(--apple-text-secondary)] mb-4" x-show="usageSummary?.period?.startDate">
-              <span x-text="t('quota.period')"></span>:
+              <span x-text="t('usage.period')"></span>:
               <span x-text="usageSummary.period.startDate"></span>
               →
               <span x-text="usageSummary.period.endDate"></span>
             </p>
 
             <!-- Stats Cards -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
               <div class="card p-4">
-                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.requestsInRange')"></p>
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.requestsInRange')"></p>
                 <p class="text-2xl font-bold" x-text="usageSummary.totals.requests || 0"></p>
               </div>
               <div class="card p-4">
-                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.tokens.total')"></p>
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.tokens.total')"></p>
                 <p class="text-2xl font-bold" x-text="formatTokens(usageSummary.totals.totalTokens || 0)"></p>
               </div>
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1">
-                  <span x-text="t('quota.tokens.prompt')"></span>
+                  <span x-text="t('usage.tokens.prompt')"></span>
                   <span class="text-xs"> / </span>
-                  <span x-text="t('quota.tokens.completion')"></span>
+                  <span x-text="t('usage.tokens.completion')"></span>
                 </p>
                 <p class="text-lg font-bold">
                   <span x-text="formatTokens(usageSummary.totals.promptTokens || 0)"></span>
@@ -1260,45 +1260,51 @@
                   <span x-text="formatTokens(usageSummary.totals.completionTokens || 0)"></span>
                 </p>
                 <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-show="(usageSummary.totals.cacheReadTokens || 0) + (usageSummary.totals.cacheWriteTokens || 0) > 0">
-                  <span x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(usageSummary.totals.cacheReadTokens || 0)"></span>
+                  <span x-text="t('usage.tokens.cacheRead') + ': ' + formatTokens(usageSummary.totals.cacheReadTokens || 0)"></span>
                   <span class="mx-1">·</span>
-                  <span x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(usageSummary.totals.cacheWriteTokens || 0)"></span>
+                  <span x-text="t('usage.tokens.cacheWrite') + ': ' + formatTokens(usageSummary.totals.cacheWriteTokens || 0)"></span>
                 </p>
               </div>
               <div class="card p-4">
-                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('quota.cost')"></p>
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.cacheHitRate')"></p>
+                <p class="text-2xl font-bold" :class="getCacheHitRateClass(usageSummary.totals.cacheHitRate)" x-text="formatCacheHitRate(usageSummary.totals.cacheHitRate)"></p>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('usage.cacheHitRateDesc')"></p>
+              </div>
+              <div class="card p-4">
+                <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.cost')"></p>
                 <p class="text-2xl font-bold" x-text="'$' + (usageSummary.totals.cost || 0).toFixed(4)"></p>
               </div>
             </div>
           </div>
 
-          <!-- Two Column Layout -->
+          <!-- Model Analysis + User Usage -->
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-            <!-- Model Usage -->
+            <!-- Model Analysis -->
             <div class="card p-6">
-              <div class="flex items-start justify-between gap-4 mb-4">
+              <div class="flex items-start justify-between gap-4 mb-4 flex-wrap">
                 <div>
-                  <h3 class="text-title-2 mb-1" x-text="t('quota.modelUsage')"></h3>
-                  <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.modelUsageDesc')"></p>
+                  <h3 class="text-title-2 mb-1" x-text="t('usage.modelAnalysis')"></h3>
+                  <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('usage.modelUsageDesc')"></p>
                 </div>
-                <div class="text-right text-xs text-[var(--apple-text-secondary)]" x-show="usageSummary.totals.totalTokens > 0">
-                  <p>
-                    <span x-text="t('quota.tokens.total')"></span>
-                    <span class="mx-1">·</span>
-                    <span x-text="formatTokens(usageSummary.totals.totalTokens || 0)"></span>
-                  </p>
+                <div class="flex items-center gap-1 p-1 bg-[var(--apple-bg-secondary)] rounded-xl border border-[var(--apple-gray-5)]">
+                  <button @click="setModelViewMode('aggregate')" class="btn btn-small" :class="modelViewMode === 'aggregate' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.viewAggregate')"></button>
+                  <button @click="setModelViewMode('byAccount')" class="btn btn-small" :class="modelViewMode === 'byAccount' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.viewByAccount')"></button>
                 </div>
               </div>
-              <div class="space-y-4" x-show="Object.keys(usageSummary.byModel).length">
+
+              <!-- Aggregate View -->
+              <div class="space-y-4" x-show="modelViewMode === 'aggregate' && Object.keys(usageSummary.byModel).length">
                 <template x-for="([model, data]) in sortedModelUsage" :key="model">
                   <div class="rounded-2xl border border-[var(--apple-gray-5)] p-4 bg-[var(--apple-bg-secondary)]">
                     <div class="flex justify-between items-start gap-3 mb-3">
                       <div>
                         <span class="text-sm font-medium break-all" x-text="model"></span>
                         <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
-                          <span x-text="t('quota.modelUsageCount') + ': ' + (data.requests || 0)"></span>
+                          <span x-text="t('usage.modelUsageCount') + ': ' + (data.requests || 0)"></span>
                           <span class="mx-1">·</span>
-                          <span x-text="t('quota.modelShare') + ': ' + formatPercent(getModelShare(data.totalTokens))"></span>
+                          <span x-text="t('usage.modelShare') + ': ' + formatPercent(getModelShare(data.totalTokens))"></span>
+                          <span class="mx-1">·</span>
+                          <span :class="getCacheHitRateClass(data.cacheHitRate)" x-text="t('usage.cacheHitRate') + ': ' + formatCacheHitRate(data.cacheHitRate)"></span>
                         </p>
                       </div>
                       <div class="text-right shrink-0">
@@ -1316,23 +1322,68 @@
                            :style="`width: ${getModelShare(data.totalTokens) * 100}%`"></div>
                     </div>
                     <div class="flex flex-wrap gap-3 text-xs text-[var(--apple-text-tertiary)]">
-                      <span x-text="t('quota.tokens.prompt') + ': ' + formatTokens(data.promptTokens || 0)"></span>
-                      <span x-text="t('quota.tokens.completion') + ': ' + formatTokens(data.completionTokens || 0)"></span>
-                      <span x-show="(data.cacheReadTokens || 0) > 0" x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(data.cacheReadTokens || 0)"></span>
-                      <span x-show="(data.cacheWriteTokens || 0) > 0" x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(data.cacheWriteTokens || 0)"></span>
+                      <span x-text="t('usage.tokens.prompt') + ': ' + formatTokens(data.promptTokens || 0)"></span>
+                      <span x-text="t('usage.tokens.completion') + ': ' + formatTokens(data.completionTokens || 0)"></span>
+                      <span x-show="(data.cacheReadTokens || 0) > 0" x-text="t('usage.tokens.cacheRead') + ': ' + formatTokens(data.cacheReadTokens || 0)"></span>
+                      <span x-show="(data.cacheWriteTokens || 0) > 0" x-text="t('usage.tokens.cacheWrite') + ': ' + formatTokens(data.cacheWriteTokens || 0)"></span>
                     </div>
                   </div>
                 </template>
               </div>
-              <div x-show="!Object.keys(usageSummary.byModel).length" class="empty-state">
+              <div x-show="modelViewMode === 'aggregate' && !Object.keys(usageSummary.byModel).length" class="empty-state">
                 <i data-lucide="cpu" class="empty-state-icon"></i>
-                <p class="text-body text-[var(--apple-text-secondary)]">暂无模型使用数据</p>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('usage.noModelData')"></p>
+              </div>
+
+              <!-- By Account View -->
+              <div class="space-y-4" x-show="modelViewMode === 'byAccount' && sortedAccountUsage.length">
+                <template x-for="([accountId, data]) in sortedAccountUsage" :key="accountId">
+                  <div class="rounded-2xl border border-[var(--apple-gray-5)] p-4 bg-[var(--apple-bg-secondary)]">
+                    <button type="button" @click="toggleAccountExpanded(accountId)" class="w-full text-left">
+                      <div class="flex justify-between items-start gap-3">
+                        <div class="min-w-0">
+                          <span class="text-sm font-semibold truncate block" :title="data.label" x-text="data.label"></span>
+                          <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
+                            <span x-text="(data.requests || 0) + ' ' + t('usage.requests')"></span>
+                            <span class="mx-1">·</span>
+                            <span x-text="formatTokens(data.totalTokens)"></span>
+                            <span class="mx-1">·</span>
+                            <span :class="getCacheHitRateClass(data.cacheHitRate)" x-text="t('usage.cacheHitRate') + ': ' + formatCacheHitRate(data.cacheHitRate)"></span>
+                          </p>
+                        </div>
+                        <div class="text-right shrink-0">
+                          <p class="text-xs text-[var(--apple-blue)]" x-text="'$' + (data.cost || 0).toFixed(4)"></p>
+                          <i data-lucide="chevron-down" class="w-4 h-4 mt-1 text-[var(--apple-text-tertiary)] transition-transform" :class="{ 'rotate-180': isAccountExpanded(accountId) }"></i>
+                        </div>
+                      </div>
+                    </button>
+                    <div x-show="isAccountExpanded(accountId)" class="mt-3 pt-3 border-t border-[var(--apple-gray-5)]">
+                      <p class="text-xs font-medium text-[var(--apple-text-tertiary)] mb-2 uppercase tracking-wide" x-text="t('usage.modelDetails')"></p>
+                      <div class="space-y-2">
+                        <template x-for="([modelName, modelData]) in sortedAccountModels(data.models)" :key="modelName">
+                          <div class="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-[var(--apple-gray-6)] last:border-0">
+                            <span class="font-mono text-[var(--apple-blue)] truncate min-w-0" :title="modelName" x-text="modelName"></span>
+                            <div class="flex items-center gap-2 shrink-0 text-[var(--apple-text-secondary)]">
+                              <span x-text="formatTokens(modelData.totalTokens)"></span>
+                              <span :class="getCacheHitRateClass(modelData.cacheHitRate)" x-text="formatCacheHitRate(modelData.cacheHitRate)"></span>
+                              <span x-text="'$' + (modelData.cost || 0).toFixed(2)"></span>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div x-show="modelViewMode === 'byAccount' && !sortedAccountUsage.length" class="empty-state">
+                <i data-lucide="git-branch" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('usage.noAccountData')"></p>
               </div>
             </div>
 
             <!-- User Usage -->
             <div class="card p-6">
-              <h3 class="text-title-2 mb-4" x-text="t('quota.userUsage')"></h3>
+              <h3 class="text-title-2 mb-4" x-text="t('usage.userUsage')"></h3>
               <div class="space-y-4" x-show="Object.keys(usageSummary.byUser || {}).length">
                 <template x-for="(data, userId) in usageSummary.byUser" :key="userId">
                   <div class="pb-4 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
@@ -1353,50 +1404,115 @@
               </div>
               <div x-show="!Object.keys(usageSummary.byUser || {}).length" class="empty-state">
                 <i data-lucide="users" class="empty-state-icon"></i>
-                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('quota.noUsageData')"></p>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('usage.noUsageData')"></p>
               </div>
             </div>
           </div>
 
-          <!-- Account Usage -->
+          <!-- Usage Trend Chart -->
           <div class="card p-6 mb-8">
-              <h3 class="text-title-2 mb-4" x-text="t('quota.accountUsage')"></h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" x-show="Object.keys(usageSummary.byAccount).length">
-                <template x-for="(data, accountId) in usageSummary.byAccount" :key="accountId">
-                  <div class="bg-[var(--apple-bg-secondary)] border border-[var(--apple-gray-5)] rounded-xl p-4 flex flex-col justify-between hover:border-[var(--apple-blue)] transition-colors">
-                    <!-- Top: Label & Total Tokens & Requests -->
-                    <div class="flex justify-between items-start mb-3">
-                      <div class="min-w-0 flex-1 mr-2">
-                        <span class="font-semibold text-sm truncate block" :title="data.label" x-text="data.label"></span>
-                        <span class="text-[10px] text-[var(--apple-text-tertiary)]" x-text="data.requests + ' requests'"></span>
-                      </div>
-                      <div class="text-right shrink-0">
-                        <span class="text-sm font-bold text-[var(--apple-blue)] block" x-text="formatTokens(data.totalTokens)"></span>
-                        <span class="text-[10px] text-[var(--apple-text-secondary)] block" x-text="'$' + (data.cost || 0).toFixed(4)"></span>
-                      </div>
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-title-2 mb-1" x-text="t('usage.usageTrend')"></h3>
+                <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('usage.usageTrendDesc')"></p>
+              </div>
+            </div>
+            <div class="relative h-80">
+              <canvas id="usageTrendChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Pricing Modal -->
+        <div x-show="showPricingModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" x-cloak>
+          <div class="modal-content p-0 w-full max-w-6xl max-h-[85vh] overflow-hidden flex flex-col" @click.away="showPricingModal = false">
+            <div class="flex justify-between items-center p-6 border-b border-[var(--apple-gray-5)] bg-gradient-to-r from-[var(--apple-bg-secondary)] to-[var(--apple-bg)]">
+              <div>
+                <h3 class="text-title-2 mb-1" x-text="t('usage.modelPricing')"></h3>
+                <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('usage.pricingModalDesc')"></p>
+              </div>
+              <button @click="showPricingModal = false" class="text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)] transition-colors p-2 hover:bg-[var(--apple-gray-3)] rounded-lg">
+                <i data-lucide="x" class="w-5 h-5"></i>
+              </button>
+            </div>
+            <div class="overflow-y-auto flex-1 p-6">
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <template x-for="(price, model) in modelPrices" :key="model">
+                  <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 border border-[var(--apple-gray-5)] hover:border-[var(--apple-blue)] transition-colors">
+                    <div class="flex items-start justify-between mb-3">
+                      <h4 class="font-medium text-sm text-[var(--apple-text)] truncate flex-1 mr-2" :title="model" x-text="model"></h4>
+                      <button @click="saveModelPricing(model)" class="btn btn-primary btn-small px-3 py-1 text-xs shrink-0">
+                        <i data-lucide="check" class="w-3.5 h-3.5 mr-1"></i>
+                        <span x-text="t('usage.save')"></span>
+                      </button>
                     </div>
-                    
-                    <!-- Bottom: Prompt / Completion details -->
-                    <div class="grid grid-cols-2 gap-2 text-xs border-t border-[var(--apple-gray-6)] pt-2.5">
+                    <p x-show="isPricingUnmatched(model)"
+                       class="mb-3 text-[10px] leading-snug text-[var(--apple-orange)]"
+                       x-text="t('usage.pricingUnmatched')"></p>
+                    <div class="grid grid-cols-2 gap-3">
                       <div>
-                        <span class="text-[var(--apple-text-tertiary)] block text-[10px] uppercase">Prompt</span>
-                        <span class="font-medium text-[var(--apple-text-secondary)]" x-text="formatTokens(data.promptTokens)"></span>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1"><span x-text="t('usage.pricingLabelPrompt')"></span> <span class="text-[10px] opacity-70" x-text="t('usage.pricingPer1m')"></span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.promptPricePer1m"
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
                       </div>
                       <div>
-                        <span class="text-[var(--apple-text-tertiary)] block text-[10px] uppercase">Completion</span>
-                        <span class="font-medium text-[var(--apple-text-secondary)]" x-text="formatTokens(data.completionTokens)"></span>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1"><span x-text="t('usage.pricingLabelCompletion')"></span> <span class="text-[10px] opacity-70" x-text="t('usage.pricingPer1m')"></span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.completionPricePer1m"
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1"><span x-text="t('usage.pricingLabelCacheRead')"></span> <span class="text-[10px] opacity-70" x-text="t('usage.pricingPer1m')"></span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.cacheReadPricePer1m"
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
+                      </div>
+                      <div>
+                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1"><span x-text="t('usage.pricingLabelCacheWrite')"></span> <span class="text-[10px] opacity-70" x-text="t('usage.pricingPer1m')"></span></label>
+                        <div class="relative">
+                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
+                          <input type="number" step="0.01" x-model="price.cacheWritePricePer1m"
+                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
+                        </div>
                       </div>
                     </div>
                   </div>
                 </template>
               </div>
-              <div x-show="!Object.keys(usageSummary.byAccount).length" class="empty-state">
-                <i data-lucide="git-branch" class="empty-state-icon"></i>
-                <p class="text-body text-[var(--apple-text-secondary)]">暂无账户使用数据</p>
+              <div x-show="Object.keys(modelPrices).length === 0" class="empty-state py-16">
+                <i data-lucide="cpu" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)] mt-3" x-text="t('usage.noPricingData')"></p>
               </div>
             </div>
+            <div class="flex justify-end gap-3 p-4 border-t border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
+              <button @click="showPricingModal = false" class="btn btn-secondary px-6" x-text="t('close')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-          <!-- GitHub Account Quotas (Grouped and Beautified) -->
+      <!-- Quotas View -->
+      <div x-show="currentView === 'quotas'" x-data="quotasView()" x-init="init()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('quota.title')"></h2>
+          <button @click="refresh()" class="btn btn-secondary" :class="{ 'opacity-75': refreshing }">
+            <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': refreshing }"></i>
+            <span x-text="t('refresh')"></span>
+          </button>
+        </header>
+
+        <div x-show="loading" class="flex justify-center py-20">
+          <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+        </div>
+
+        <div x-show="!loading">
           <div class="card p-6">
             <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotasAll')"></h3>
             <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasAllDesc')"></p>
@@ -1492,29 +1608,6 @@
                           <span x-text="t('quota.oauth.codex.resetButton')"></span>
                         </button>
                       </div>
-
-                      <div class="mt-3 pt-3 border-t border-[var(--apple-gray-5)]"
-                           x-show="usageSummary.byAccount[account.id]?.models && Object.keys(usageSummary.byAccount[account.id].models).length > 0">
-                        <h4 class="text-xs font-medium text-[var(--apple-text-tertiary)] mb-2 uppercase tracking-wide" x-text="t('quota.accountModelUsage')"></h4>
-                        <div class="space-y-1.5 max-h-28 overflow-y-auto">
-                          <template x-for="(modelData, modelName) in (usageSummary.byAccount[account.id]?.models || {})" :key="modelName">
-                            <div class="pb-1.5 mb-1.5 border-b border-[var(--apple-gray-6)] last:border-0 last:pb-0 last:mb-0">
-                              <div class="flex items-center justify-between gap-2 text-xs">
-                                <span class="font-mono text-[var(--apple-blue)] truncate min-w-0" :title="modelName" x-text="modelName"></span>
-                                <div class="flex items-center gap-2 shrink-0 text-[var(--apple-text-secondary)]">
-                                  <span x-text="modelData.requests + ' ' + t('quota.requests')"></span>
-                                  <span class="w-14 text-right" x-text="formatTokens(modelData.totalTokens)"></span>
-                                  <span class="w-14 text-right" x-text="'$' + (modelData.cost || 0).toFixed(2)"></span>
-                                </div>
-                              </div>
-                              <div class="flex gap-2 text-[10px] text-[var(--apple-text-tertiary)] mt-0.5" x-show="(modelData.cacheReadTokens || 0) + (modelData.cacheWriteTokens || 0) > 0">
-                                <span x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(modelData.cacheReadTokens || 0)"></span>
-                                <span x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(modelData.cacheWriteTokens || 0)"></span>
-                              </div>
-                            </div>
-                          </template>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </template>
@@ -1553,29 +1646,6 @@
                               x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
                         </span>
                       </div>
-
-                      <div class="mt-3 pt-3 border-t border-[var(--apple-gray-5)]"
-                           x-show="usageSummary.byAccount[account.id]?.models && Object.keys(usageSummary.byAccount[account.id].models).length > 0">
-                        <h4 class="text-xs font-medium text-[var(--apple-text-tertiary)] mb-2 uppercase tracking-wide" x-text="t('quota.accountModelUsage')"></h4>
-                        <div class="space-y-1.5 max-h-28 overflow-y-auto">
-                          <template x-for="(modelData, modelName) in (usageSummary.byAccount[account.id]?.models || {})" :key="modelName">
-                            <div class="pb-1.5 mb-1.5 border-b border-[var(--apple-gray-6)] last:border-0 last:pb-0 last:mb-0">
-                              <div class="flex items-center justify-between gap-2 text-xs">
-                                <span class="font-mono text-[var(--apple-blue)] truncate min-w-0" :title="modelName" x-text="modelName"></span>
-                                <div class="flex items-center gap-2 shrink-0 text-[var(--apple-text-secondary)]">
-                                  <span x-text="modelData.requests + ' ' + t('quota.requests')"></span>
-                                  <span class="w-14 text-right" x-text="formatTokens(modelData.totalTokens)"></span>
-                                  <span class="w-14 text-right" x-text="'$' + (modelData.cost || 0).toFixed(2)"></span>
-                                </div>
-                              </div>
-                              <div class="flex gap-2 text-[10px] text-[var(--apple-text-tertiary)] mt-0.5" x-show="(modelData.cacheReadTokens || 0) + (modelData.cacheWriteTokens || 0) > 0">
-                                <span x-text="t('quota.tokens.cacheRead') + ': ' + formatTokens(modelData.cacheReadTokens || 0)"></span>
-                                <span x-text="t('quota.tokens.cacheWrite') + ': ' + formatTokens(modelData.cacheWriteTokens || 0)"></span>
-                              </div>
-                            </div>
-                          </template>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </template>
@@ -1586,103 +1656,6 @@
             <div x-show="!accounts.length" class="empty-state">
               <i data-lucide="git-branch" class="empty-state-icon"></i>
               <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
-            </div>
-          </div>
-
-          <!-- Usage Trend Chart -->
-          <div class="card p-6 mt-8">
-            <div class="flex items-center justify-between mb-4">
-              <div>
-                <h3 class="text-title-2 mb-1" x-text="t('quota.usageTrend')"></h3>
-                <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('quota.usageTrendDesc')"></p>
-              </div>
-            </div>
-            <div class="relative h-80">
-              <canvas id="usageTrendChart"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <!-- Model Pricing Modal -->
-        <div x-show="showPricingModal" class="fixed inset-0 modal-backdrop flex items-center justify-center z-50" x-cloak>
-          <div class="modal-content p-0 w-full max-w-6xl max-h-[85vh] overflow-hidden flex flex-col" @click.away="showPricingModal = false">
-            <!-- Header -->
-            <div class="flex justify-between items-center p-6 border-b border-[var(--apple-gray-5)] bg-gradient-to-r from-[var(--apple-bg-secondary)] to-[var(--apple-bg)]">
-              <div>
-                <h3 class="text-title-2 mb-1" x-text="t('quota.modelPricing')"></h3>
-                <p class="text-sm text-[var(--apple-text-secondary)]">配置每个模型的价格（每 1M tokens，USD）</p>
-              </div>
-              <button @click="showPricingModal = false" class="text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)] transition-colors p-2 hover:bg-[var(--apple-gray-3)] rounded-lg">
-                <i data-lucide="x" class="w-5 h-5"></i>
-              </button>
-            </div>
-            
-            <!-- Scrollable Content -->
-            <div class="overflow-y-auto flex-1 p-6">
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <template x-for="(price, model) in modelPrices" :key="model">
-                  <div class="bg-[var(--apple-bg-secondary)] rounded-xl p-4 border border-[var(--apple-gray-5)] hover:border-[var(--apple-blue)] transition-colors">
-                    <!-- Model Name -->
-                    <div class="flex items-start justify-between mb-3">
-                      <h4 class="font-medium text-sm text-[var(--apple-text)] truncate flex-1 mr-2" :title="model" x-text="model"></h4>
-                      <button @click="saveModelPricing(model)" class="btn btn-primary btn-small px-3 py-1 text-xs shrink-0">
-                        <i data-lucide="check" class="w-3.5 h-3.5 mr-1"></i>
-                        保存
-                      </button>
-                    </div>
-                    
-                    <p x-show="isPricingUnmatched(model)"
-                       class="mb-3 text-[10px] leading-snug text-[var(--apple-orange)]"
-                       x-text="t('quota.pricingUnmatched')"></p>
-
-                    <!-- Price Inputs Grid -->
-                    <div class="grid grid-cols-2 gap-3">
-                      <div>
-                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">Prompt <span class="text-[10px] opacity-70">($/1M)</span></label>
-                        <div class="relative">
-                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
-                          <input type="number" step="0.01" x-model="price.promptPricePer1m" 
-                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
-                        </div>
-                      </div>
-                      <div>
-                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">Completion <span class="text-[10px] opacity-70">($/1M)</span></label>
-                        <div class="relative">
-                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
-                          <input type="number" step="0.01" x-model="price.completionPricePer1m" 
-                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
-                        </div>
-                      </div>
-                      <div>
-                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">缓存读取 <span class="text-[10px] opacity-70">($/1M)</span></label>
-                        <div class="relative">
-                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
-                          <input type="number" step="0.01" x-model="price.cacheReadPricePer1m" 
-                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
-                        </div>
-                      </div>
-                      <div>
-                        <label class="block text-xs text-[var(--apple-text-secondary)] mb-1">缓存写入 <span class="text-[10px] opacity-70">($/1M)</span></label>
-                        <div class="relative">
-                          <span class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-[var(--apple-text-tertiary)]">$</span>
-                          <input type="number" step="0.01" x-model="price.cacheWritePricePer1m" 
-                                 class="input w-full pl-5 py-1.5 text-sm text-right" placeholder="0.00">
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </div>
-              
-              <div x-show="Object.keys(modelPrices).length === 0" class="empty-state py-16">
-                <i data-lucide="cpu" class="empty-state-icon"></i>
-                <p class="text-body text-[var(--apple-text-secondary)] mt-3">暂无模型价格配置</p>
-              </div>
-            </div>
-
-            <!-- Footer -->
-            <div class="flex justify-end gap-3 p-4 border-t border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
-              <button @click="showPricingModal = false" class="btn btn-secondary px-6" x-text="t('close')"></button>
             </div>
           </div>
         </div>
@@ -2249,7 +2222,8 @@
   <script src="/admin/static/js/views/users.js"></script>
   <script src="/admin/static/js/views/accounts.js"></script>
   <script src="/admin/static/js/views/connections.js"></script>
-  <script src="/admin/static/js/views/quota.js"></script>
+  <script src="/admin/static/js/views/usage.js"></script>
+  <script src="/admin/static/js/views/quotas.js"></script>
   <script src="/admin/static/js/views/performance.js"></script>
   <script src="/admin/static/js/views/guard.js"></script>
   <script src="/admin/static/js/views/logs.js"></script>

@@ -1,28 +1,48 @@
 function adminApp() {
   return {
     currentView: "dashboard",
+    validViews: [
+      "accounts",
+      "connections",
+      "dashboard",
+      "guard",
+      "logs",
+      "performance",
+      "quotas",
+      "usage",
+      "users",
+    ],
     initialized: false,
     toasts: [],
     lang: I18n.currentLang(),
     sidebarOpen: false,
 
+    resolveHashView(hash) {
+      if (hash === "quota" || hash === "quota-usage") {
+        return { view: "usage", canonical: "usage" }
+      }
+      if (hash === "quota-accounts" || hash === "account-quota") {
+        return { view: "quotas", canonical: "quotas" }
+      }
+      if (hash && this.validViews.includes(hash)) {
+        return { view: hash, canonical: hash }
+      }
+      return null
+    },
+
+    applyHashView(hash) {
+      const resolved = this.resolveHashView(hash)
+      if (!resolved) return
+      this.currentView = resolved.view
+      if (globalThis.location.hash.slice(1) !== resolved.canonical) {
+        globalThis.location.hash = resolved.canonical
+      }
+    },
+
     async init() {
       // Restore view from URL hash or default to dashboard
       const hash = globalThis.location.hash.slice(1)
-      if (
-        hash
-        && [
-          "accounts",
-          "dashboard",
-          "guard",
-          "logs",
-          "performance",
-          "quota",
-          "users",
-        ].includes(hash)
-      ) {
-        this.currentView = hash
-      }
+      this.applyHashView(hash)
 
       await this.checkAuth()
       this.initialized = true
@@ -32,21 +52,7 @@ function adminApp() {
 
       // Listen for hash changes
       globalThis.addEventListener("hashchange", () => {
-        const hash = globalThis.location.hash.slice(1)
-        if (
-          hash
-          && [
-            "accounts",
-            "dashboard",
-            "guard",
-            "logs",
-            "performance",
-            "quota",
-            "users",
-          ].includes(hash)
-        ) {
-          this.currentView = hash
-        }
+        this.applyHashView(globalThis.location.hash.slice(1))
       })
 
       // Update hash when currentView changes
@@ -110,7 +116,8 @@ function adminApp() {
         { id: "users", icon: "key", label: this.t("nav.users") },
         { id: "accounts", icon: "users", label: this.t("nav.accounts") },
         { id: "connections", icon: "plug", label: this.t("nav.connections") },
-        { id: "quota", icon: "bar-chart-3", label: this.t("nav.quota") },
+        { id: "usage", icon: "bar-chart-3", label: this.t("nav.usage") },
+        { id: "quotas", icon: "battery-charging", label: this.t("nav.quotas") },
         { id: "performance", icon: "gauge", label: this.t("nav.performance") },
         { id: "guard", icon: "shield", label: this.t("nav.guard") },
         { id: "logs", icon: "scroll-text", label: this.t("nav.logs") },
