@@ -51,21 +51,21 @@ function parseFloat32(raw: Uint8Array): number {
 function parseUsageFromMeta(
   nodes: Array<ProtobufNode>,
 ): ChatStreamFrame["usage"] | undefined {
+  // UsageMetadata field mapping (verified from live GetChatMessage captures):
+  //   field[1] = prompt_tokens
+  //   field[2] = completion_tokens
+  //   field[3] = cached_tokens (KV cache hits, treated as cache_read_tokens)
   let promptTokens = 0
   let completionTokens = 0
-  let cacheWriteTokens: number | undefined
   let cacheReadTokens: number | undefined
   for (const node of nodes) {
-    if (node.field === 2 && node.wire === 0 && node.varint !== undefined) {
+    if (node.field === 1 && node.wire === 0 && node.varint !== undefined) {
       promptTokens = node.varint
     }
-    if (node.field === 3 && node.wire === 0 && node.varint !== undefined) {
+    if (node.field === 2 && node.wire === 0 && node.varint !== undefined) {
       completionTokens = node.varint
     }
-    if (node.field === 4 && node.wire === 0 && node.varint !== undefined) {
-      cacheWriteTokens = node.varint
-    }
-    if (node.field === 5 && node.wire === 0 && node.varint !== undefined) {
+    if (node.field === 3 && node.wire === 0 && node.varint !== undefined) {
       cacheReadTokens = node.varint
     }
   }
@@ -74,8 +74,7 @@ function parseUsageFromMeta(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: promptTokens + completionTokens,
-    cached_tokens: cacheReadTokens ?? cacheWriteTokens ?? 0,
-    cache_write_tokens: cacheWriteTokens,
+    cached_tokens: cacheReadTokens ?? 0,
     cache_read_tokens: cacheReadTokens,
   }
 }

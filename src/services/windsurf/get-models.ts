@@ -3,7 +3,6 @@ import type { Account, AccountModel } from "~/lib/accounts"
 import { getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 
-import { fetchWindsurfJwt } from "./auth"
 import {
   buildWindsurfClientMetadata,
   wrapWindsurfMetadataMessage,
@@ -12,14 +11,12 @@ import { type ProtobufNode, parseMessage, walkNodes } from "./protobuf"
 
 function buildGetUserStatusRequest(
   apiKey: string,
-  jwt: string,
   settings: NonNullable<ReturnType<typeof getWindsurfSettings>>,
 ): Uint8Array {
   return wrapWindsurfMetadataMessage(
     buildWindsurfClientMetadata({
       apiKey,
       settings,
-      jwt,
     }),
   )
 }
@@ -237,7 +234,6 @@ export async function getWindsurfModelsForAccount(
     return fallbackWindsurfModels(settings.defaultModel)
   }
 
-  const jwt = await fetchWindsurfJwt(account, settings)
   const response = await fetch(
     `${settings.baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
     {
@@ -249,7 +245,7 @@ export async function getWindsurfModelsForAccount(
         "Accept-Encoding": "gzip",
         "Connect-Timeout-Ms": "5000",
       },
-      body: buildGetUserStatusRequest(apiKey, jwt, settings),
+      body: buildGetUserStatusRequest(apiKey, settings),
     },
   )
 
