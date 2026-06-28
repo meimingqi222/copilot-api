@@ -237,6 +237,14 @@ describe("models.dev pricing resolver", () => {
     expect(resolved?.source).toBe("manual")
     expect(resolved?.promptPricePer1k).toBe(0.99)
   })
+
+  test("falls back to builtin prices when models.dev has no match", () => {
+    stopModelsDevPricingForTest()
+    const resolved = statsStore.resolveModelPricing("claude-sonnet-4.6")
+    expect(resolved?.source).toBe("builtin")
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.003, 10)
+    expect(resolved?.completionPricePer1k).toBeCloseTo(0.015, 10)
+  })
 })
 
 describe("GET /admin/api/usage/pricing", () => {

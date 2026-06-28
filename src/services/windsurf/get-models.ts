@@ -16,7 +16,13 @@ function buildGetUserStatusRequest(
   return wrapWindsurfMetadataMessage(
     buildWindsurfClientMetadata({
       apiKey,
-      settings,
+      settings: {
+        clientName: settings.clientName ?? "",
+        appVersion: settings.appVersion ?? "",
+        lsVersion: settings.lsVersion ?? "",
+        extensionName: settings.extensionName,
+        ideType: settings.ideType,
+      },
     }),
   )
 }
@@ -231,7 +237,7 @@ export async function getWindsurfModelsForAccount(
   }
   const apiKey = settings.apiKey
   if (!apiKey) {
-    return fallbackWindsurfModels(settings.defaultModel)
+    return fallbackWindsurfModels(settings.defaultModel ?? "")
   }
 
   const response = await fetch(
@@ -262,7 +268,7 @@ export async function getWindsurfModelsForAccount(
   )
   return models.length > 0 ?
       models
-    : fallbackWindsurfModels(settings.defaultModel)
+    : fallbackWindsurfModels(settings.defaultModel ?? "")
 }
 
 export function fallbackWindsurfModels(

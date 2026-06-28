@@ -1,6 +1,7 @@
 import type { OAuthProviderId, ProviderId } from "~/lib/provider-config"
 
-import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
+import { isOAuthProviderId } from "~/lib/provider-config"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 
 export type AccountProvider = ProviderId
@@ -17,6 +18,10 @@ export interface AccountRuntimeState {
   planType?: string
 }
 
+// ── Provider-specific credentials & settings types ──────────────
+// 保留类型定义供 isOAuthAccount 类型守卫和 as 强转使用。
+// Account 本身为扁平结构,credentials/settings 为通用 record。
+
 export interface CopilotAccountCredentials {
   githubToken?: string
 }
@@ -25,71 +30,38 @@ export interface CopilotAccountSettings {
   accountType?: string
 }
 
-export interface BaseAccount {
-  id: string
-  label: string
-  provider: AccountProvider
-  quotaInfo?: QuotaSnapshot
-  quotaState?: AccountQuotaState
-  quotaExhaustedAt?: number
-  availableModels?: Array<AccountModel>
-  enabled: boolean
-  priority: number
-  isExhausted?: boolean
-  exhaustedAt?: number
-  cooldownUntil?: number
-  lastRateLimitAt?: number
-  lastRateLimitReason?: string
-  createdAt: number
-  runtimeState?: AccountRuntimeState
+export interface CodebuffAccountSettings {
+  // authToken 在 credentials 中,这里保留用于 legacy 代码访问
+  authToken?: string
+  baseUrl?: string
+  cliVersion?: string
+  agentId?: string
+  model?: string
+  costMode?: string
+  allowFallbacks?: boolean
 }
 
-export interface CopilotAccount extends BaseAccount {
-  provider: "copilot"
-  credentials?: CopilotAccountCredentials
-  settings?: CopilotAccountSettings
+export interface WindsurfAccountSettings {
+  // apiKey 在 credentials 中,这里保留用于 legacy 代码访问
+  apiKey?: string
+  baseUrl?: string
+  appVersion?: string
+  lsVersion?: string
+  defaultModel?: string
+  clientName?: string
+  extensionName?: string
+  ideType?: string
 }
 
-export interface CodebuffAccount extends BaseAccount {
-  provider: "codebuff"
-  credentials?: {
-    authToken?: string
-  }
-  settings?: {
-    baseUrl?: string
-    cliVersion?: string
-    agentId?: string
-    model?: string
-    costMode?: string
-    allowFallbacks?: boolean
-  }
+export interface MimoAccountCredentials {
+  serviceToken?: string
+  xiaomichatbotPh?: string
+  mimoWsToken?: string
 }
 
-export interface WindsurfAccount extends BaseAccount {
-  provider: "windsurf"
-  credentials?: {
-    apiKey?: string
-  }
-  settings?: {
-    baseUrl?: string
-    appVersion?: string
-    lsVersion?: string
-    defaultModel?: string
-    clientName?: string
-  }
-}
-
-export interface MimoAccount extends BaseAccount {
-  provider: "mimo-aistudio"
-  credentials?: {
-    serviceToken?: string
-    xiaomichatbotPh?: string
-    mimoWsToken?: string
-  }
-  settings?: {
-    userId?: string
-    proxy?: string
-  }
+export interface MimoAccountSettings {
+  userId?: string
+  proxy?: string
 }
 
 export interface OAuthAccountCredentials {
@@ -113,19 +85,33 @@ export interface OAuthAccountSettings {
   redirectUri?: string
 }
 
-export interface OAuthAccount extends BaseAccount {
-  provider: OAuthProviderId
-  credentials?: OAuthAccountCredentials
-  settings?: OAuthAccountSettings
+// ── Flat Account type ───────────────────────────────────────────
+// Account 不再是联合类型,而是扁平结构。
+// provider-specific 数据通过 credentials/settings 通用 record 承载。
+// 使用 isOAuthAccount 类型守卫或 account.provider === "xxx" 窄化。
+
+export interface Account {
+  id: string
+  label: string
+  provider: AccountProvider
+  credentials?: Record<string, unknown>
+  settings?: Record<string, unknown>
+  runtimeState?: AccountRuntimeState
+  quotaState?: AccountQuotaState
+  quotaInfo?: QuotaSnapshot
+  quotaExhaustedAt?: number
+  availableModels?: Array<AccountModel>
+  enabled: boolean
+  priority: number
+  isExhausted?: boolean
+  exhaustedAt?: number
+  cooldownUntil?: number
+  lastRateLimitAt?: number
+  lastRateLimitReason?: string
+  createdAt: number
+  /** OAuth-specific metadata(cpaMetadata) */
   cpaMetadata?: Record<string, unknown>
 }
-
-export type Account =
-  | CopilotAccount
-  | CodebuffAccount
-  | WindsurfAccount
-  | MimoAccount
-  | OAuthAccount
 
 export interface AccountModel {
   id: string
@@ -151,284 +137,65 @@ export interface QuotaSnapshot {
   details?: Record<string, unknown>
 }
 
-function defaultProvider(provider?: AccountProvider): AccountProvider {
-  return provider ?? "copilot"
+// ── Type guards ─────────────────────────────────────────────────
+
+/**
+ * OAuth account 类型守卫。
+ * 窄化后的类型可以安全访问 OAuth credentials/settings 字段。
+ */
+export function isOAuthAccount(account: Account): account is OAuthAccount {
+  return isOAuthProviderId(account.provider)
 }
+
+// ── Provider-specific type aliases ──────────────────────────────
+// 这些类型别名是 Account 的窄化视图,用于类型安全地访问 provider-specific 字段。
+// Account 本身是扁平的联合 interface,这些别名不引入新的运行时分支。
+
+export type CopilotAccount = Account & {
+  provider: "copilot"
+  credentials?: CopilotAccountCredentials
+  settings?: CopilotAccountSettings
+}
+
+export type CodebuffAccount = Account & {
+  provider: "codebuff"
+  credentials?: { authToken?: string }
+  settings?: CodebuffAccountSettings
+}
+
+export type WindsurfAccount = Account & {
+  provider: "windsurf"
+  credentials?: { apiKey?: string }
+  settings?: WindsurfAccountSettings
+}
+
+export type MimoAccount = Account & {
+  provider: "mimo-aistudio"
+  credentials?: MimoAccountCredentials
+  settings?: MimoAccountSettings
+}
+
+export type OAuthAccount = Account & {
+  provider: OAuthProviderId
+  credentials?: OAuthAccountCredentials
+  settings?: OAuthAccountSettings
+  cpaMetadata?: Record<string, unknown>
+}
+
+// ── Utility functions ───────────────────────────────────────────
 
 export function getAccountProvider(account: Account): AccountProvider {
-  return defaultProvider(account.provider)
-}
-
-export function getGitHubToken(account: Account): string | undefined {
-  if (account.provider !== "copilot") {
-    return undefined
-  }
-  return account.credentials?.githubToken
-}
-
-export function setGitHubToken(
-  account: Account,
-  githubToken: string | undefined,
-): void {
-  if (account.provider !== "copilot") {
-    return
-  }
-  account.credentials = {
-    ...account.credentials,
-    githubToken,
-  }
-}
-
-export function getCopilotToken(account: Account): string | undefined {
-  if (account.provider !== "copilot") {
-    return undefined
-  }
-  return account.runtimeState?.copilotToken
-}
-
-export function setCopilotToken(
-  account: Account,
-  copilotToken: string | undefined,
-): void {
-  if (account.provider !== "copilot") {
-    return
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    copilotToken,
-  }
-}
-
-export function getCopilotTokenExpiry(account: Account): number | undefined {
-  if (account.provider !== "copilot") {
-    return undefined
-  }
-  return account.runtimeState?.copilotTokenExpiry
-}
-
-export function setCopilotTokenExpiry(
-  account: Account,
-  expiry: number | undefined,
-): void {
-  if (account.provider !== "copilot") {
-    return
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    copilotTokenExpiry: expiry,
-  }
-}
-
-export function getCodebuffAuthToken(account: Account): string | undefined {
-  if (account.provider !== "codebuff") {
-    return undefined
-  }
-  return account.credentials?.authToken
-}
-
-export function setCodebuffAuthToken(
-  account: Account,
-  authToken: string | undefined,
-): void {
-  if (account.provider !== "codebuff") {
-    return
-  }
-  account.credentials = {
-    ...account.credentials,
-    authToken,
-  }
-}
-
-export function getWindsurfApiKey(account: Account): string | undefined {
-  if (account.provider !== "windsurf") {
-    return undefined
-  }
-  return account.credentials?.apiKey
-}
-
-export function setWindsurfApiKey(
-  account: Account,
-  apiKey: string | undefined,
-): void {
-  if (account.provider !== "windsurf") {
-    return
-  }
-  account.credentials = {
-    ...account.credentials,
-    apiKey,
-  }
-}
-
-export function getWindsurfJwt(account: Account): string | undefined {
-  if (account.provider !== "windsurf") {
-    return undefined
-  }
-  return account.runtimeState?.windsurfJwt
-}
-
-export function setWindsurfJwt(
-  account: Account,
-  jwt: string | undefined,
-): void {
-  if (account.provider !== "windsurf") {
-    return
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    windsurfJwt: jwt,
-    windsurfJwtFetchedAt: jwt ? Date.now() : undefined,
-  }
-}
-
-export function getCodebuffSettings(account: Account) {
-  if (account.provider !== "codebuff") {
-    return undefined
-  }
-  const defaults = state.providerDefaults.codebuff
-  return {
-    authToken: getCodebuffAuthToken(account) ?? defaults.authToken,
-    baseUrl: account.settings?.baseUrl ?? defaults.baseUrl,
-    cliVersion: account.settings?.cliVersion ?? defaults.cliVersion,
-    agentId: account.settings?.agentId ?? defaults.agentId,
-    model: account.settings?.model ?? defaults.model,
-    costMode: account.settings?.costMode ?? defaults.costMode,
-    allowFallbacks: account.settings?.allowFallbacks ?? defaults.allowFallbacks,
-  }
-}
-
-export function getWindsurfSettings(account: Account) {
-  if (account.provider !== "windsurf") {
-    return undefined
-  }
-  const defaults = state.providerDefaults.windsurf
-  return {
-    apiKey: getWindsurfApiKey(account) ?? defaults.apiKey,
-    baseUrl: account.settings?.baseUrl ?? defaults.baseUrl,
-    appVersion: account.settings?.appVersion ?? defaults.appVersion,
-    lsVersion: account.settings?.lsVersion ?? defaults.lsVersion,
-    defaultModel: account.settings?.defaultModel ?? defaults.defaultModel,
-    clientName: account.settings?.clientName ?? defaults.clientName,
-  }
-}
-
-export function getMimoServiceToken(account: Account): string | undefined {
-  if (account.provider !== "mimo-aistudio") {
-    return undefined
-  }
-  return account.credentials?.serviceToken
-}
-
-export function setMimoServiceToken(
-  account: Account,
-  serviceToken: string | undefined,
-): void {
-  if (account.provider !== "mimo-aistudio") {
-    return
-  }
-  account.credentials = {
-    ...account.credentials,
-    serviceToken,
-  }
-}
-
-export function getMimoPh(account: Account): string | undefined {
-  if (account.provider !== "mimo-aistudio") {
-    return undefined
-  }
-  return account.credentials?.xiaomichatbotPh
-}
-
-export function setMimoPh(
-  account: Account,
-  xiaomichatbotPh: string | undefined,
-): void {
-  if (account.provider !== "mimo-aistudio") {
-    return
-  }
-  account.credentials = {
-    ...account.credentials,
-    xiaomichatbotPh,
-  }
-}
-
-export function getMimoUserId(account: Account): string | undefined {
-  if (account.provider !== "mimo-aistudio") {
-    return undefined
-  }
-  return account.settings?.userId
-}
-
-export function setMimoUserId(
-  account: Account,
-  userId: string | undefined,
-): void {
-  if (account.provider !== "mimo-aistudio") {
-    return
-  }
-  account.settings = {
-    ...account.settings,
-    userId,
-  }
-}
-
-export function getMimoProxy(account: Account): string | undefined {
-  if (account.provider !== "mimo-aistudio") {
-    return undefined
-  }
-  return account.settings?.proxy
-}
-
-export function setMimoProxy(
-  account: Account,
-  proxy: string | undefined,
-): void {
-  if (account.provider !== "mimo-aistudio") {
-    return
-  }
-  account.settings = {
-    ...account.settings,
-    proxy,
-  }
-}
-
-export function getMimoWsToken(account: Account): string | undefined {
-  if (account.provider !== "mimo-aistudio") {
-    return undefined
-  }
-  return account.credentials?.mimoWsToken
-}
-
-export function setMimoWsToken(
-  account: Account,
-  mimoWsToken: string | undefined,
-): void {
-  if (account.provider !== "mimo-aistudio") {
-    return
-  }
-  account.credentials = {
-    ...account.credentials,
-    mimoWsToken,
-  }
-}
-
-export function getMimoSettings(account: Account) {
-  if (account.provider !== "mimo-aistudio") {
-    return undefined
-  }
-  return {
-    serviceToken: getMimoServiceToken(account),
-    xiaomichatbotPh: getMimoPh(account),
-    userId: getMimoUserId(account),
-    proxy: getMimoProxy(account),
-  }
+  return account.provider
 }
 
 export function getAccountModelPrefix(account: Account): string {
   if (isOAuthAccount(account)) {
-    const custom = account.settings?.modelPrefix?.trim()
-    if (custom) {
-      return custom
-    }
+    const settings = account.settings
+    const custom =
+      typeof settings?.modelPrefix === "string" ?
+        settings.modelPrefix.trim()
+      : undefined
+    if (custom) return custom
     return account.provider
   }
   return account.provider
@@ -462,113 +229,247 @@ export function canonicalModelId(modelId: string, account?: Account): string {
   return parsed.nativeModelId
 }
 
-export function canonicalNativeModelId(modelId: string): string {
-  const normalized = modelId.trim().toLowerCase()
-  if (normalized === "z-ai/glm5" || normalized === "glm5") {
-    return "z-ai/glm-5.1"
-  }
-  return normalized
+export function addAccount(account: Account): void {
+  state.accounts.push(account)
 }
 
-export function parseModelReference(
-  modelId: string,
-  account?: Account,
-): {
-  provider?: AccountProvider
-  nativeModelId: string
-} {
-  const trimmed = modelId.trim()
-  const slashIndex = trimmed.indexOf("/")
-  if (slashIndex > 0) {
-    const prefix = trimmed.slice(0, slashIndex)
-    const rest = trimmed.slice(slashIndex + 1)
-    const maybeProvider = prefix.toLowerCase()
-    if (isProviderId(maybeProvider)) {
-      return {
-        provider: maybeProvider,
-        nativeModelId: canonicalNativeModelId(rest),
-      }
-    }
-    if (
-      account
-      && getAccountModelPrefix(account).toLowerCase() === maybeProvider
-    ) {
-      return {
-        nativeModelId: canonicalNativeModelId(rest),
-      }
-    }
+// ── Provider-specific getter/setter compatibility layer ─────────
+// 这些函数是扁平 Account interface 之上的薄封装,提供向后兼容的访问接口。
+// 它们不引入新的运行时分支,只是类型安全的字段访问器。
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function writeCredentialField(
+  account: Account,
+  key: string,
+  value: string | undefined,
+): void {
+  const current = account.credentials ?? {}
+  account.credentials =
+    value === undefined ?
+      Object.fromEntries(Object.entries(current).filter(([k]) => k !== key))
+    : { ...current, [key]: value }
+}
+
+function writeSettingsField(
+  account: Account,
+  key: string,
+  value: string | undefined,
+): void {
+  const current = account.settings ?? {}
+  account.settings =
+    value === undefined ?
+      Object.fromEntries(Object.entries(current).filter(([k]) => k !== key))
+    : { ...current, [key]: value }
+}
+
+// Copilot
+export function getGitHubToken(account: Account): string | undefined {
+  return readString(account.credentials?.githubToken)
+}
+
+export function setGitHubToken(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeCredentialField(account, "githubToken", value)
+}
+
+export function getCopilotToken(account: Account): string | undefined {
+  return account.runtimeState?.copilotToken
+}
+
+export function setCopilotToken(
+  account: Account,
+  value: string | undefined,
+): void {
+  account.runtimeState = {
+    ...account.runtimeState,
+    copilotToken: value,
   }
+}
+
+export function setCopilotTokenExpiry(
+  account: Account,
+  value: number | undefined,
+): void {
+  account.runtimeState = {
+    ...account.runtimeState,
+    copilotTokenExpiry: value,
+  }
+}
+
+// Codebuff
+export function getCodebuffAuthToken(account: Account): string | undefined {
+  return readString(account.credentials?.authToken)
+}
+
+export function setCodebuffAuthToken(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeCredentialField(account, "authToken", value)
+}
+
+export function getCodebuffSettings(
+  account: Account,
+): CodebuffAccountSettings | undefined {
+  if (account.provider !== "codebuff") return undefined
+  // 合并 credentials.authToken 到 settings 视图(legacy 访问路径)
   return {
-    nativeModelId: canonicalNativeModelId(trimmed),
+    ...(account.settings as CodebuffAccountSettings | undefined),
+    authToken: readString(account.credentials?.authToken),
   }
 }
 
-export function isOAuthAccount(account: Account): account is OAuthAccount {
-  return isOAuthProviderId(account.provider)
+// Windsurf
+export function getWindsurfApiKey(account: Account): string | undefined {
+  return readString(account.credentials?.apiKey)
 }
 
+export function setWindsurfApiKey(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeCredentialField(account, "apiKey", value)
+}
+
+export function getWindsurfSettings(
+  account: Account,
+): WindsurfAccountSettings | undefined {
+  if (account.provider !== "windsurf") return undefined
+  const defaults = state.providerDefaults.windsurf
+  const settings = account.settings as WindsurfAccountSettings | undefined
+  // 逐字段用 providerDefaults 兜底 — 不能用对象展开,否则 account.settings 里
+  // 显式 undefined 的字段会覆盖 defaults(admin UI 导入的账号常出现此情况)。
+  return {
+    apiKey: readString(account.credentials?.apiKey) ?? defaults.apiKey,
+    baseUrl: settings?.baseUrl ?? defaults.baseUrl,
+    appVersion: settings?.appVersion ?? defaults.appVersion,
+    lsVersion: settings?.lsVersion ?? defaults.lsVersion,
+    defaultModel: settings?.defaultModel ?? defaults.defaultModel,
+    clientName: settings?.clientName ?? defaults.clientName,
+    extensionName: settings?.extensionName ?? defaults.extensionName,
+    ideType: settings?.ideType ?? defaults.ideType,
+  }
+}
+
+// Mimo
+export function getMimoServiceToken(account: Account): string | undefined {
+  return readString(account.credentials?.serviceToken)
+}
+
+export function setMimoServiceToken(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeCredentialField(account, "serviceToken", value)
+}
+
+export function getMimoPh(account: Account): string | undefined {
+  return readString(account.credentials?.xiaomichatbotPh)
+}
+
+export function setMimoPh(account: Account, value: string | undefined): void {
+  writeCredentialField(account, "xiaomichatbotPh", value)
+}
+
+export function getMimoWsToken(account: Account): string | undefined {
+  return readString(account.credentials?.mimoWsToken)
+}
+
+export function setMimoWsToken(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeCredentialField(account, "mimoWsToken", value)
+}
+
+export function getMimoUserId(account: Account): string | undefined {
+  return readString(account.settings?.userId)
+}
+
+export function setMimoUserId(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeSettingsField(account, "userId", value)
+}
+
+export function getMimoProxy(account: Account): string | undefined {
+  return readString(account.settings?.proxy)
+}
+
+export function setMimoProxy(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeSettingsField(account, "proxy", value)
+}
+
+// OAuth
 export function getOAuthAccessToken(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.credentials?.accessToken
+  return isOAuthAccount(account) ?
+      readString(account.credentials?.accessToken)
+    : undefined
 }
 
 export function getOAuthRefreshToken(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.credentials?.refreshToken
+  return isOAuthAccount(account) ?
+      readString(account.credentials?.refreshToken)
+    : undefined
 }
 
 export function getOAuthApiKey(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.credentials?.apiKey
-}
-
-export function getOAuthProxyUrl(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.settings?.proxyUrl
-}
-
-export function getOAuthDeviceId(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.credentials?.deviceId
+  return isOAuthAccount(account) ?
+      readString(account.credentials?.apiKey)
+    : undefined
 }
 
 export function getOAuthAccountId(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.credentials?.accountId
+  return isOAuthAccount(account) ?
+      readString(account.credentials?.accountId)
+    : undefined
+}
+
+export function getOAuthProjectId(account: Account): string | undefined {
+  return isOAuthAccount(account) ?
+      readString(account.credentials?.projectId)
+    : undefined
+}
+
+export function getOAuthDeviceId(account: Account): string | undefined {
+  return isOAuthAccount(account) ?
+      readString(account.credentials?.deviceId)
+    : undefined
+}
+
+export function getOAuthProxyUrl(account: Account): string | undefined {
+  return isOAuthAccount(account) ?
+      readString(account.settings?.proxyUrl)
+    : undefined
 }
 
 export function setOAuthCredentials(
   account: Account,
-  patch: Partial<NonNullable<OAuthAccount["credentials"]>>,
+  patch: Partial<OAuthAccountCredentials>,
 ): void {
-  if (!isOAuthAccount(account)) {
-    return
+  if (!isOAuthAccount(account)) return
+  let credentials: Record<string, unknown> = { ...account.credentials }
+  for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+    credentials =
+      value === undefined ?
+        Object.fromEntries(
+          Object.entries(credentials).filter(([k]) => k !== key),
+        )
+      : { ...credentials, [key]: value }
   }
-  account.credentials = {
-    ...account.credentials,
-    ...patch,
-  }
+  account.credentials = credentials
 }
 
-export function getOAuthProjectId(account: Account): string | undefined {
-  if (!isOAuthAccount(account)) {
-    return undefined
-  }
-  return account.credentials?.projectId
-}
-
-export function addAccount(account: Account): void {
-  state.accounts.push(account)
-}
+export {
+  canonicalNativeModelId,
+  parseModelReference,
+} from "~/lib/route-target/model-reference"

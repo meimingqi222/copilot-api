@@ -5,9 +5,9 @@
  * 与 legacy `accounts` API 并存,不互相干扰。
  */
 
-import consola from "consola"
 import { Hono } from "hono"
 
+import { logger } from "~/lib/logger"
 import {
   addCredential,
   addModel,
@@ -209,7 +209,11 @@ providerConnectionApiRoutes.post("/:id/refresh-models", async (c) => {
       discovered: discovered.length,
     })
   } catch (error) {
-    await setDiscoveryError(id, (error as Error).message).catch(() => {})
+    await setDiscoveryError(id, (error as Error).message).catch(
+      (err: unknown) => {
+        logger.debug(`Failed to set discovery error: ${(err as Error).message}`)
+      },
+    )
     return c.json({ error: (error as Error).message }, 502)
   }
 })
@@ -474,7 +478,7 @@ providerConnectionApiRoutes.post(
       return c.json({ credential: sanitizeCredential(found.credential) })
     } catch (error) {
       Object.assign(found.credential, previous)
-      consola.error("Failed to persist credential enable:", error)
+      logger.error("Failed to persist credential enable:", error)
       return c.json({ error: "Failed to persist credential state" }, 500)
     }
   },
@@ -492,7 +496,7 @@ providerConnectionApiRoutes.post(
       return c.json({ credential: sanitizeCredential(found.credential) })
     } catch (error) {
       Object.assign(found.credential, previous)
-      consola.error("Failed to persist credential disable:", error)
+      logger.error("Failed to persist credential disable:", error)
       return c.json({ error: "Failed to persist credential state" }, 500)
     }
   },
@@ -510,7 +514,7 @@ providerConnectionApiRoutes.post(
       return c.json({ credential: sanitizeCredential(found.credential) })
     } catch (error) {
       Object.assign(found.credential, previous)
-      consola.error("Failed to persist credential status reset:", error)
+      logger.error("Failed to persist credential status reset:", error)
       return c.json({ error: "Failed to persist credential state" }, 500)
     }
   },

@@ -1,5 +1,3 @@
-import consola from "consola"
-
 import type { Account } from "~/lib/accounts"
 
 import { saveAccounts } from "~/lib/account-store"
@@ -11,6 +9,7 @@ import {
   isOAuthAccount,
   setOAuthCredentials,
 } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 
 import {
@@ -89,7 +88,7 @@ function scheduleOAuthRefreshAttempt(
         try {
           await refreshOAuthAccountToken(account, reason)
         } catch (error: unknown) {
-          consola.warn(
+          logger.warn(
             `OAuth refresh failed for "${account.label}", retrying in ${RETRY_DELAY_MS / 1000}s:`,
             error,
           )
@@ -191,7 +190,7 @@ export async function refreshOAuthAccountToken(
       }
     }
 
-    consola.debug(
+    logger.debug(
       `OAuth refresh succeeded for "${account.label}" (${account.provider}, ${reason})`,
     )
     scheduleOAuthRefreshForAccount(account)

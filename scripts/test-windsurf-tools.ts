@@ -19,10 +19,12 @@ import { ProtobufEncoder, extractStrings } from "~/services/windsurf/protobuf"
 
 state.providerDefaults.windsurf = {
   baseUrl: "https://server.self-serve.windsurf.com",
-  appVersion: "1.48.2",
-  lsVersion: "2.0.1050",
+  appVersion: "2026.8.1009",
+  lsVersion: "2026.8.1009",
   defaultModel: "swe-1-6-fast",
   clientName: "windsurf-next",
+  extensionName: "windsurf",
+  ideType: "windsurf",
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────

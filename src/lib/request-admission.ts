@@ -1,8 +1,6 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
-import type { Account, AccountProvider } from "~/lib/accounts"
+import type { Account } from "~/lib/accounts"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 import type {
   ApiCredential,
@@ -11,12 +9,14 @@ import type {
   RouteTarget,
 } from "~/lib/provider-connections"
 
+import { accountToConnection } from "~/lib/account-adapter"
 import { getAccountAvailability } from "~/lib/account-availability"
-import { parseModelReference } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
+import { logger } from "~/lib/logger"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
+import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import {
   findCredential,
   getProviderConnection,
@@ -28,48 +28,47 @@ import {
   resolveModelRouting,
   selectRouteTarget,
 } from "~/lib/route-target"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 import { isUserAllowedModel } from "~/lib/users"
 
 /**
- * 路由解析结果。
+ * 统一路由解析结果。
  *
- * - `kind: "account"`: Account-based target (Copilot/Codebuff/Windsurf/Mimo native adapter)。
- * - `kind: "provider"`: ProviderConnection-based target (OpenAI/Anthropic-compatible adapter)。
+ * 由 `prepareRequestAdmission` 生成,基于 `buildRouteTargets` 候选池 +
+ * `selectRouteTarget` 优先级/权重选择。
  *
- * 统一由 `buildRouteTargets` 生成候选池,`selectRouteTarget` 按优先级/权重选取。
+ * - `connection`/`credential`: 始终填充。account-backed 路径下由
+ *   `accountToConnection(account)` 生成虚拟 ProviderConnection/ApiCredential。
+ * - `account`: 仅 account-backed 路径下填充(用于 native adapter 读取
+ *   provider-specific 状态,如 cpaMetadata、settings.baseUrl 等)。
  */
-export type RequestAdmission = AccountAdmission | ProviderAdmission
-
-export interface AccountAdmission {
-  kind: "account"
-  account: Account
-  target: RouteTarget
-  initiator?: "agent" | "user"
-}
-
 export interface ProviderAdmission {
-  kind: "provider"
   target: RouteTarget
   connection: ProviderConnection
   credential: ApiCredential
+  /**
+   * 仅在 target 来自 state.accounts(虚拟 connection)时填充。
+   * 用于 native adapter 读取 account 的 provider-specific 状态字段。
+   */
+  account?: Account
   initiator?: "agent" | "user"
 }
 
-const ACCOUNT_PROTOCOLS: Record<AccountProvider, ProviderProtocol> = {
-  copilot: "copilot-native",
-  codebuff: "codebuff-native",
-  windsurf: "windsurf-native",
-  "mimo-aistudio": "mimo-native",
-  codex: "codex-native",
-  claude: "claude-native",
-  antigravity: "antigravity-native",
-  kimi: "kimi-native",
-  xai: "xai-native",
-}
+/**
+ * 兼容别名 —— Step B 之后所有 admission 都是 ProviderAdmission。
+ * 保留导出便于渐进式迁移调用点。
+ */
+export type RequestAdmission = ProviderAdmission
 
+/**
+ * 从 PROVIDER_PROTOCOL_MAP 获取 account 对应的协议。
+ *
+ * 纯数据表查询,无 services 依赖,测试环境也无需初始化 registry。
+ * 新增 provider 时只需在 provider-config.ts 的 PROVIDER_PROTOCOL_MAP 追加一行。
+ */
 export function getAccountProtocol(account: Account): ProviderProtocol {
-  return ACCOUNT_PROTOCOLS[account.provider]
+  return PROVIDER_PROTOCOL_MAP[account.provider]
 }
 
 interface PrepareRequestAdmissionOptions {
@@ -100,7 +99,7 @@ export async function prepareRequestAdmission(
     })
   } catch (error) {
     if (error instanceof Error) {
-      consola.warn(
+      logger.warn(
         `Request admission failed before selection: ${JSON.stringify({
           path: c.req.path,
           model: options.model,
@@ -147,11 +146,14 @@ export async function prepareRequestAdmission(
     await awaitApproval()
   }
 
+  // account-backed 虚拟 connection:用 accountToConnection 构造 ProviderConnection/ApiCredential
   if (target.account) {
+    const virtualConnection = accountToConnection(target.account)
     return {
-      kind: "account",
-      account: target.account,
       target,
+      connection: virtualConnection,
+      credential: virtualConnection.credentials[0],
+      account: target.account,
       initiator,
     }
   }
@@ -173,7 +175,6 @@ export async function prepareRequestAdmission(
     )
   }
   return {
-    kind: "provider",
     target,
     connection,
     credential: found.credential,
@@ -429,12 +430,27 @@ export function switchToNextRouteTarget(
 }
 
 /**
- * 把 RouteTarget 解析为 ProviderAdmission 或 null (Account target)。
+ * 把 RouteTarget 解析为 ProviderAdmission 信息。
+ *
+ * - account-backed target:通过 accountToConnection 构造虚拟 connection/credential,
+ *   并附带 account 字段。
+ * - 普通 target:从 providerConnections 注册表查找真实 connection/credential。
+ *
+ * 返回 null 表示无法解析(调用方应抛出原始错误)。
  */
 export function resolveConnectionFromTarget(target: RouteTarget): {
   connection: ProviderConnection
   credential: ApiCredential
+  account?: Account
 } | null {
+  if (target.account) {
+    const virtualConnection = accountToConnection(target.account)
+    return {
+      connection: virtualConnection,
+      credential: virtualConnection.credentials[0],
+      account: target.account,
+    }
+  }
   const connection = getProviderConnection(target.connectionId)
   if (!connection) return null
   const found = findCredential(target.connectionId, target.credentialId)

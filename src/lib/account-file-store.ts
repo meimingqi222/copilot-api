@@ -1,7 +1,8 @@
-import consola from "consola"
 import fs from "node:fs/promises"
 
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
+import { Repository } from "~/lib/repository"
 
 export function getAccountsBackupPath(): string {
   return `${PATHS.ACCOUNTS_PATH}.bak`
@@ -10,13 +11,10 @@ export function getAccountsBackupPath(): string {
 function getAccountsCorruptPath(): string {
   return `${PATHS.ACCOUNTS_PATH}.corrupt`
 }
-// EPERM/EBUSY are almost always transient file locks on Windows
-// (antivirus scan, another reader holding the handle). EACCES can be
-// either a transient lock or a genuine permission problem — we still
-// retry it but log a warning so persistent permission issues are visible.
-const RENAME_RETRYABLE_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
-const RENAME_RETRY_COUNT = 3
-const RENAME_RETRY_DELAY_MS = 200
+
+function getAccountsEmptyArchivePath(): string {
+  return `${PATHS.ACCOUNTS_PATH}.empty-${Date.now()}.bak`
+}
 
 type ReadResult =
   | { status: "ok"; accounts: Array<Record<string, unknown>> }
@@ -57,91 +55,156 @@ export type AccountsFileReadResult =
   | { status: "found"; accounts: Array<Record<string, unknown>> }
   | { status: "missing" }
 
+export interface WriteAccountsFileOptions {
+  /** Allow persisting an empty list (e.g. user deleted the last account). */
+  allowEmpty?: boolean
+  /** Allow reducing account count on disk (e.g. user deleted several accounts). */
+  allowShrink?: boolean
+}
+
+async function countAccountsAtPath(filePath: string): Promise<number> {
+  const result = await readAccountsFileWithStatus(filePath)
+  return result.status === "ok" ? result.accounts.length : 0
+}
+
+/** True when backup exists and contains at least one account entry. */
+export async function accountsBackupHasEntries(): Promise<boolean> {
+  const backup = await readAccountsFileWithStatus(getAccountsBackupPath())
+  return backup.status === "ok" && backup.accounts.length > 0
+}
+
+/** True when disk already has a non-empty accounts snapshot worth protecting. */
+export async function accountsDiskHasRecoverableData(): Promise<boolean> {
+  if (await accountsBackupHasEntries()) return true
+  const primary = await readAccountsFileWithStatus(PATHS.ACCOUNTS_PATH)
+  return primary.status === "ok" && primary.accounts.length > 0
+}
+
+async function recoverFromBackup(
+  reason: string,
+  corruptPath?: string,
+): Promise<AccountsFileReadResult | null> {
+  const backup = await readAccountsFileWithStatus(getAccountsBackupPath())
+  if (backup.status !== "ok" || backup.accounts.length === 0) {
+    return null
+  }
+
+  logger.warn(`${reason} — recovering from accounts.json.bak`)
+  if (corruptPath) {
+    const archivePath =
+      corruptPath === PATHS.ACCOUNTS_PATH ?
+        getAccountsEmptyArchivePath()
+      : `${getAccountsCorruptPath()}.${Date.now()}`
+    await fs.copyFile(corruptPath, archivePath).catch((error: unknown) => {
+      logger.debug(
+        `Failed to archive corrupt file: ${(error as Error).message}`,
+      )
+    })
+  }
+
+  try {
+    await fs.copyFile(getAccountsBackupPath(), PATHS.ACCOUNTS_PATH)
+  } catch {
+    // Best-effort restore of primary file; in-memory load still uses backup data.
+  }
+
+  logger.info(
+    `Recovered ${backup.accounts.length} account(s) from accounts.json.bak`,
+  )
+  return { status: "found", accounts: backup.accounts }
+}
+
 /**
  * Read accounts.json with corruption detection and .bak fallback.
- * Corrupt files are recovered from .bak when possible. If neither file is
+ * Corrupt/empty files are recovered from .bak when possible. If neither file is
  * readable, throw instead of returning an empty list that could overwrite data.
  */
 export async function tryReadAccountsFile(): Promise<AccountsFileReadResult> {
   const result = await readAccountsFileWithStatus(PATHS.ACCOUNTS_PATH)
   if (result.status === "ok") {
+    if (result.accounts.length === 0) {
+      const recovered = await recoverFromBackup(
+        "accounts.json is an empty array",
+        PATHS.ACCOUNTS_PATH,
+      )
+      if (recovered) return recovered
+      return { status: "found", accounts: result.accounts }
+    }
     return { status: "found", accounts: result.accounts }
   }
   if (result.status === "corrupt") {
-    consola.warn(
+    logger.warn(
       `accounts.json at ${result.path} is corrupt or empty — attempting .bak fallback`,
     )
-    const backup = await readAccountsFileWithStatus(getAccountsBackupPath())
-    if (backup.status === "ok") {
-      consola.info("Recovered accounts from accounts.json.bak")
-      return { status: "found", accounts: backup.accounts }
-    }
+    const recovered = await recoverFromBackup(
+      "accounts.json is corrupt or empty",
+      result.path,
+    )
+    if (recovered) return recovered
     const corruptDest = `${getAccountsCorruptPath()}.${Date.now()}`
-    await fs.copyFile(result.path, corruptDest).catch(() => {})
+    await fs.copyFile(result.path, corruptDest).catch((error: unknown) => {
+      logger.debug(
+        `Failed to preserve corrupt file: ${(error as Error).message}`,
+      )
+    })
     throw new Error(
       `Could not recover accounts from ${result.path}; corrupt file preserved at ${corruptDest}`,
     )
   }
-  const backup = await readAccountsFileWithStatus(getAccountsBackupPath())
-  if (backup.status === "ok") {
-    consola.info("accounts.json missing — recovered from accounts.json.bak")
-    return { status: "found", accounts: backup.accounts }
-  }
+  const recovered = await recoverFromBackup("accounts.json is missing")
+  if (recovered) return recovered
   return { status: "missing" }
 }
 
-async function retryRename(source: string, target: string): Promise<void> {
-  let lastError: unknown
-  for (let attempt = 0; attempt < RENAME_RETRY_COUNT; attempt++) {
-    try {
-      await fs.rename(source, target)
-      return
-    } catch (error) {
-      lastError = error
-      const code = (error as NodeJS.ErrnoException).code
-      if (!code || !RENAME_RETRYABLE_CODES.has(code)) {
-        // Non-retryable error (e.g. ENOENT, ENOSPC) — fail fast.
-        throw error
-      }
-      if (code === "EACCES") {
-        consola.warn(
-          `EACCES renaming ${source} → ${target} (attempt ${attempt + 1}/${RENAME_RETRY_COUNT}); `
-            + `may be a transient lock or a persistent permission issue`,
-        )
-      }
-      if (attempt < RENAME_RETRY_COUNT - 1) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, RENAME_RETRY_DELAY_MS * (attempt + 1)),
-        )
-      }
-    }
-  }
-  throw lastError
-}
+const accountsWriteRepo = new Repository<Array<Record<string, unknown>>>({
+  filePath: () => PATHS.ACCOUNTS_PATH,
+  serialize: (data) => JSON.stringify(data, null, 2),
+  deserialize: (raw) => JSON.parse(raw) as Array<Record<string, unknown>>,
+  corruptMessage: "accounts.json is corrupt",
+  shouldCreateBackup: async (filePath) => {
+    const primaryCount = await countAccountsAtPath(filePath)
+    const backupCount = await countAccountsAtPath(getAccountsBackupPath())
+    return primaryCount > 0 && primaryCount >= backupCount
+  },
+})
 
 /**
  * Atomically write the serialized accounts array to accounts.json.
- * Before replacing the existing file, copies it to accounts.json.bak
- * so we can recover if the rename is interrupted or the new file is bad.
- * Retries the rename on Windows lock errors (EPERM/EBUSY/EACCES).
+ * Uses Repository for tmp + .bak + rename (Windows retry).
  */
 export async function writeAccountsFile(
   sanitized: Array<Record<string, unknown>>,
-): Promise<void> {
-  const targetPath = PATHS.ACCOUNTS_PATH
-  const appDir = PATHS.APP_DIR
-  const tmpPath = `${targetPath}.${process.pid}.tmp`
-  try {
-    await fs.mkdir(appDir, { recursive: true })
-    await fs.writeFile(tmpPath, JSON.stringify(sanitized, null, 2), "utf8")
-    try {
-      await fs.copyFile(targetPath, getAccountsBackupPath())
-    } catch {
-      // No existing file yet — that's fine
-    }
-    await retryRename(tmpPath, targetPath)
-  } catch (error) {
-    await fs.unlink(tmpPath).catch(() => {})
-    throw error
+  options: WriteAccountsFileOptions = {},
+): Promise<boolean> {
+  const newCount = sanitized.length
+  const primaryCount = await countAccountsAtPath(PATHS.ACCOUNTS_PATH)
+  const backupCount = await countAccountsAtPath(getAccountsBackupPath())
+
+  if (
+    newCount === 0
+    && !options.allowEmpty
+    && (primaryCount > 0 || backupCount > 0)
+  ) {
+    logger.warn(
+      "Refusing to write empty accounts.json while recoverable data exists on disk",
+    )
+    return false
   }
+
+  if (
+    !options.allowEmpty
+    && !options.allowShrink
+    && primaryCount >= 3
+    && newCount > 0
+    && newCount <= 1
+    && newCount < primaryCount
+  ) {
+    logger.warn(
+      `Refusing to shrink accounts snapshot from ${primaryCount} to ${newCount}`,
+    )
+    return false
+  }
+
+  await accountsWriteRepo.save(sanitized)
+  return true
 }

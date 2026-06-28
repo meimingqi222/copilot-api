@@ -1,9 +1,21 @@
+function encodeVarintBytes(value: number): Uint8Array {
+  const bytes: Array<number> = []
+  let remaining = value >>> 0
+  while (remaining >= 0x80) {
+    bytes.push((remaining & 0x7f) | 0x80)
+    remaining >>>= 7
+  }
+  bytes.push(remaining)
+  return Uint8Array.from(bytes)
+}
+
 export class ProtobufEncoder {
-  private chunks: Array<number> = []
+  private readonly parts: Array<Uint8Array> = []
+  private totalLength = 0
 
   writeVarint(fieldNumber: number, value: number): void {
     this.writeTag(fieldNumber, 0)
-    this.pushVarint(value)
+    this.appendPart(encodeVarintBytes(value))
   }
 
   writeString(fieldNumber: number, value: string): void {
@@ -12,36 +24,42 @@ export class ProtobufEncoder {
 
   writeBytes(fieldNumber: number, value: Uint8Array): void {
     this.writeTag(fieldNumber, 2)
-    this.pushVarint(value.length)
-    this.chunks.push(...value)
+    this.appendPart(encodeVarintBytes(value.length))
+    this.appendPart(value)
   }
 
   writeMessage(fieldNumber: number, other: ProtobufEncoder): void {
-    this.writeBytes(fieldNumber, other.toUint8Array())
+    this.writeTag(fieldNumber, 2)
+    this.appendPart(encodeVarintBytes(other.totalLength))
+    for (const part of other.parts) {
+      this.appendPart(part)
+    }
   }
 
   writeDouble(fieldNumber: number, value: number): void {
     this.writeTag(fieldNumber, 1)
     const bytes = new Uint8Array(8)
     new DataView(bytes.buffer).setFloat64(0, value, true)
-    this.chunks.push(...bytes)
+    this.appendPart(bytes)
   }
 
   toUint8Array(): Uint8Array {
-    return Uint8Array.from(this.chunks)
+    const out = new Uint8Array(this.totalLength)
+    let offset = 0
+    for (const part of this.parts) {
+      out.set(part, offset)
+      offset += part.length
+    }
+    return out
   }
 
   private writeTag(fieldNumber: number, wireType: number): void {
-    this.pushVarint((fieldNumber << 3) | wireType)
+    this.appendPart(encodeVarintBytes((fieldNumber << 3) | wireType))
   }
 
-  private pushVarint(value: number): void {
-    let remaining = value >>> 0
-    while (remaining >= 0x80) {
-      this.chunks.push((remaining & 0x7f) | 0x80)
-      remaining >>>= 7
-    }
-    this.chunks.push(remaining)
+  private appendPart(part: Uint8Array): void {
+    this.parts.push(part)
+    this.totalLength += part.length
   }
 }
 
@@ -61,6 +79,11 @@ export function encodeConnectFrame(
   return framed
 }
 
+/** 单个 Connect 帧声明的最大 payload(防御畸形 length 头)。 */
+const MAX_FRAME_PAYLOAD = 64 * 1024 * 1024 // 64MB
+/** 跨帧累积 buffer 的上限(完整帧会持续被消费,正常情况远低于此)。 */
+const MAX_BUFFER_BYTES = 128 * 1024 * 1024 // 128MB
+
 export async function* decodeConnectFrames(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<Uint8Array> {
@@ -74,6 +97,16 @@ export async function* decodeConnectFrames(
     }
 
     buffer = concat(buffer, value)
+
+    // 防御:若 buffer 持续累积却无法凑齐一个完整帧(畸形 length 头或
+    // 非 Connect 帧数据),直接抛错而非无限 concat,避免 O(n²) 内存膨胀。
+    if (buffer.length > MAX_BUFFER_BYTES) {
+      throw new Error(
+        `decodeConnectFrames: buffer overflow (${buffer.length} bytes) — `
+          + `stream did not produce a complete frame within ${MAX_BUFFER_BYTES} bytes`,
+      )
+    }
+
     while (buffer.length >= 5) {
       const flags = buffer[0]
       const length = new DataView(
@@ -81,6 +114,13 @@ export async function* decodeConnectFrames(
         buffer.byteOffset + 1,
         4,
       ).getUint32(0, false)
+      // 畸形 length 头(声明远超合理上限的 payload):立即拒绝,
+      // 否则 buffer 会一直累积直到凑齐该 length 才消费。
+      if (length > MAX_FRAME_PAYLOAD) {
+        throw new Error(
+          `decodeConnectFrames: declared frame length ${length} exceeds limit ${MAX_FRAME_PAYLOAD}`,
+        )
+      }
       if (buffer.length < 5 + length) {
         break
       }

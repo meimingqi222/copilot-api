@@ -205,4 +205,7 @@ test("resolveWindsurfRequestModel uses upstream ids and keeps fast models intact
   expect(resolveWindsurfRequestModel(account, "swe-1-6-fast")).toBe(
     "swe-1-6-fast",
   )
+  expect(resolveWindsurfRequestModel(account, "MODEL_PRIVATE_9")).toBe(
+    "MODEL_PRIVATE_9",
+  )
 })

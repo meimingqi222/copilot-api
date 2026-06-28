@@ -1,9 +1,10 @@
-import consola from "consola"
 import fs from "node:fs/promises"
-import path from "node:path"
 
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
+import { Repository } from "~/lib/repository"
 
+import type { CredentialRefresherType } from "./credential-refresher"
 import type { ApiCredential, ProviderConnection } from "./types"
 
 import { DEFAULTS, isProviderProtocol } from "./types"
@@ -17,44 +18,55 @@ const FILE_VERSION = 1
 
 /**
  * 从磁盘加载 Provider Connection 配置。文件不存在时返回空数组。
- * 损坏或格式不兼容时记录警告并返回空数组(避免阻塞启动)。
+ * 主文件或 .bak 存在但无法解析时抛出错误(与 accounts.json 恢复契约对齐)。
  */
+const repo = new Repository<PersistedFile>({
+  filePath: () => PATHS.PROVIDER_CONNECTIONS_PATH,
+  serialize: (data) => JSON.stringify(data, null, 2),
+  deserialize: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (
+      typeof parsed !== "object"
+      || parsed === null
+      || (parsed as Record<string, unknown>).version !== FILE_VERSION
+      || !Array.isArray((parsed as Record<string, unknown>).connections)
+    ) {
+      throw new Error("provider-connections.json has unexpected shape")
+    }
+    return parsed as PersistedFile
+  },
+})
+
+async function providerConnectionsRecoverableOnDisk(): Promise<boolean> {
+  for (const filePath of [
+    PATHS.PROVIDER_CONNECTIONS_PATH,
+    `${PATHS.PROVIDER_CONNECTIONS_PATH}.bak`,
+  ]) {
+    try {
+      const raw = await fs.readFile(filePath, "utf8")
+      if (raw.trim().length > 0) {
+        return true
+      }
+    } catch {
+      // missing or unreadable — try next path
+    }
+  }
+  return false
+}
+
 export async function loadProviderConnections(): Promise<
   Array<ProviderConnection>
 > {
-  let raw: string
-  try {
-    raw = await fs.readFile(PATHS.PROVIDER_CONNECTIONS_PATH, "utf8")
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return []
+  const file = await repo.load()
+  if (!file) {
+    if (await providerConnectionsRecoverableOnDisk()) {
+      throw new Error(
+        "Could not load provider-connections.json: recoverable data exists on disk but is corrupt or unreadable. Restore from backup or remove the file to start fresh.",
+      )
     }
-    consola.warn(
-      `Failed to read provider-connections.json: ${(error as Error).message}`,
-    )
     return []
   }
-
-  if (raw.trim() === "") {
-    return []
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (error) {
-    consola.warn(
-      `provider-connections.json is not valid JSON: ${(error as Error).message}`,
-    )
-    return []
-  }
-
-  if (!isPersistedFile(parsed)) {
-    consola.warn("provider-connections.json has unexpected shape, ignoring.")
-    return []
-  }
-
-  return parsed.connections
+  return file.connections
     .map((c) => normalizeConnection(c))
     .filter((c): c is ProviderConnection => c !== null)
 }
@@ -62,30 +74,10 @@ export async function loadProviderConnections(): Promise<
 export async function saveProviderConnections(
   connections: Array<ProviderConnection>,
 ): Promise<void> {
-  const payload: PersistedFile = {
+  await repo.save({
     version: FILE_VERSION,
     connections,
-  }
-  await fs.mkdir(PATHS.APP_DIR, { recursive: true })
-  const tmpPath = path.join(
-    PATHS.APP_DIR,
-    `.${path.basename(PATHS.PROVIDER_CONNECTIONS_PATH)}.${process.pid}.tmp`,
-  )
-  try {
-    await fs.writeFile(tmpPath, JSON.stringify(payload, null, 2), {
-      encoding: "utf8",
-      mode: 0o600,
-    })
-    await fs.rename(tmpPath, PATHS.PROVIDER_CONNECTIONS_PATH)
-    try {
-      await fs.chmod(PATHS.PROVIDER_CONNECTIONS_PATH, 0o600)
-    } catch {
-      // chmod 在某些平台(Windows)上会失败,忽略
-    }
-  } catch (error) {
-    await fs.unlink(tmpPath).catch(() => {})
-    throw error
-  }
+  })
 }
 
 /**
@@ -126,14 +118,6 @@ export type SanitizedCredential = Omit<ApiCredential, "value"> & {
 
 export type SanitizedConnection = Omit<ProviderConnection, "credentials"> & {
   credentials: Array<SanitizedCredential>
-}
-
-function isPersistedFile(value: unknown): value is PersistedFile {
-  if (typeof value !== "object" || value === null) return false
-  const obj = value as Record<string, unknown>
-  if (obj.version !== FILE_VERSION) return false
-  if (!Array.isArray(obj.connections)) return false
-  return true
 }
 
 function normalizeConnection(value: unknown): ProviderConnection | null {
@@ -202,7 +186,7 @@ function normalizeCredential(value: unknown): ApiCredential | null {
   const legacyAuthMode =
     obj.authMode === "api-key-header" || obj.authMode === "custom-header"
   if (legacyAuthMode) {
-    consola.warn(
+    logger.warn(
       `[provider-connections] credential "${obj.id}" uses deprecated authMode "${String(obj.authMode)}", normalizing to "header"`,
     )
   }
@@ -237,5 +221,13 @@ function normalizeCredential(value: unknown): ApiCredential | null {
     lastError: typeof obj.lastError === "string" ? obj.lastError : undefined,
     createdAt: typeof obj.createdAt === "number" ? obj.createdAt : Date.now(),
     updatedAt: typeof obj.updatedAt === "number" ? obj.updatedAt : undefined,
+    refresherType:
+      typeof obj.refresherType === "string" ?
+        (obj.refresherType as CredentialRefresherType)
+      : undefined,
+    context:
+      obj.context && typeof obj.context === "object" ?
+        (obj.context as Record<string, unknown>)
+      : undefined,
   }
 }

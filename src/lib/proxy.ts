@@ -1,6 +1,7 @@
-import consola from "consola"
 import { getProxyForUrl } from "proxy-from-env"
 import { Agent, ProxyAgent, setGlobalDispatcher, Dispatcher } from "undici"
+
+import { logger } from "~/lib/logger"
 
 class EnvProxyAgent extends Dispatcher {
   private direct = new Agent()
@@ -21,7 +22,7 @@ class EnvProxyAgent extends Dispatcher {
       const proxyUrl = raw && raw.length > 0 ? raw : undefined
 
       if (!proxyUrl) {
-        consola.debug(`HTTP proxy bypass: ${origin.hostname}`)
+        logger.debug(`HTTP proxy bypass: ${origin.hostname}`)
         return this.direct.dispatch(options, handler)
       }
 
@@ -39,7 +40,7 @@ class EnvProxyAgent extends Dispatcher {
         /* noop */
       }
 
-      consola.debug(`HTTP proxy route: ${origin.hostname} via ${label}`)
+      logger.debug(`HTTP proxy route: ${origin.hostname} via ${label}`)
       return agent.dispatch(options, handler)
     } catch {
       return this.direct.dispatch(options, handler)
@@ -68,8 +69,8 @@ export function initProxyFromEnv(): void {
 
   try {
     setGlobalDispatcher(new EnvProxyAgent())
-    consola.debug("HTTP proxy configured from environment (per-URL)")
+    logger.debug("HTTP proxy configured from environment (per-URL)")
   } catch (err) {
-    consola.debug("Proxy setup skipped:", err)
+    logger.debug("Proxy setup skipped:", err)
   }
 }

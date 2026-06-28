@@ -1,4 +1,3 @@
-import consola from "consola"
 import { Hono } from "hono"
 
 import type { Account } from "~/lib/accounts"
@@ -21,9 +20,10 @@ import {
   getMimoPh,
   isOAuthAccount,
 } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
-import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
+import { refreshModelsForAccount } from "~/lib/utils"
 import {
   getOAuthAccountSubtitle,
   upgradeOAuthAccountLabels,
@@ -37,7 +37,7 @@ import { getProviderRuntime } from "~/services/providers/registry"
 
 import { createAccountRoutes } from "./account-create"
 import { importAccountRoutes } from "./account-import"
-import { updateProviderAccount } from "./account-update"
+import { type UpdateAccountBody, updateProviderAccount } from "./account-update"
 import { pollAccountFlow, deviceFlowRoutes } from "./device-flow"
 
 export const accountApiRoutes = new Hono()
@@ -119,45 +119,28 @@ accountApiRoutes.put("/:id", async (c) => {
   const account = state.accounts.find((a) => a.id === id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
-  let body: {
-    label?: string
-    enabled?: boolean
-    priority?: number
-    authToken?: string
-    apiKey?: string
-    credentials?: Record<string, unknown>
-    settings?: Record<string, unknown>
-  }
+  let body: UpdateAccountBody
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
 
-  if (body.label) account.label = body.label
-  if (typeof body.enabled === "boolean") {
-    account.enabled = body.enabled
+  const prevEnabled = account.enabled
+  await updateProviderAccount(account, body)
+  if (typeof body.enabled === "boolean" && body.enabled !== prevEnabled) {
     if (!account.enabled) {
       cancelTokenRefreshTimer(account.id)
       cancelOAuthRefreshTimer(account.id)
     } else {
       scheduleOAuthRefreshForAccount(account)
     }
-    consola.info(
+    logger.info(
       `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
     )
   }
-  if (typeof body.priority === "number") {
-    account.priority = Math.max(0, Math.min(100, body.priority))
-    consola.info(
-      `Account "${account.label}" priority set to ${account.priority}`,
-    )
-  }
-
-  await updateProviderAccount(account, body)
 
   await saveAccounts()
-  cacheModels()
   return c.json({ account: publicAccount(account) })
 })
 
@@ -189,7 +172,10 @@ accountApiRoutes.delete("/:id", async (c) => {
   } else if (state.activeAccountIndex >= state.accounts.length) {
     state.activeAccountIndex = Math.max(0, state.accounts.length - 1)
   }
-  await saveAccounts()
+  await saveAccounts({
+    allowEmpty: state.accounts.length === 0,
+    allowShrink: true,
+  })
   return c.json({ ok: true })
 })
 
@@ -212,10 +198,9 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
       await refreshQuotaForAccount(account)
     }
     await saveAccounts()
-    cacheModels()
     return c.json({ account: publicAccount(account) })
   } catch (e: unknown) {
-    consola.error("Failed to refresh account:", e)
+    logger.error("Failed to refresh account:", e)
     return c.json({ error: "Failed to refresh account." }, 502)
   }
 })
@@ -236,7 +221,7 @@ accountApiRoutes.post("/:id/activate", async (c) => {
   account.priority = Math.max(0, minPriority - 1)
   await saveAccounts()
 
-  consola.info(
+  logger.info(
     `Account "${account.label}" set to highest priority (${account.priority})`,
   )
 

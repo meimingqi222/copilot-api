@@ -1,11 +1,10 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { canonicalModelId } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
@@ -73,8 +72,8 @@ interface StreamUsageInput {
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
   let payload = await c.req.json<ChatCompletionsPayload>()
-  if (consola.level >= 4) {
-    consola.debug("Request payload:", JSON.stringify(payload).slice(-400))
+  if (logger.level >= 4) {
+    logger.debug("Request payload:", JSON.stringify(payload).slice(-400))
   }
 
   // Normalize model name (e.g., "z-ai/glm5" -> "z-ai/glm-5.1")
@@ -154,15 +153,17 @@ async function calculateTokens(
 ): Promise<number> {
   try {
     if (!selectedModel) {
-      consola.warn("No model selected, skipping token count calculation")
+      logger.warn("No model selected, skipping token count calculation")
       return 0
     }
 
     const tokenCount = await getTokenCount(payload, selectedModel)
-    consola.info("Current token count:", tokenCount)
-    return tokenCount.input + tokenCount.output
+    logger.info(
+      `Estimated input tokens: ${tokenCount.input} (history: ${tokenCount.output})`,
+    )
+    return tokenCount.input
   } catch (error) {
-    consola.warn("Failed to calculate token count:", error)
+    logger.warn("Failed to calculate token count:", error)
     return 0
   }
 }
@@ -176,7 +177,7 @@ function applyMaxTokens(
       ...payload,
       max_tokens: selectedModel?.capabilities.limits?.max_output_tokens,
     }
-    consola.debug("Set max_tokens to:", JSON.stringify(newPayload.max_tokens))
+    logger.debug("Set max_tokens to:", JSON.stringify(newPayload.max_tokens))
     return newPayload
   }
   return payload
@@ -188,8 +189,8 @@ function handleNonStreamingResponse(
   estimatedInputTokens: number,
   elapsedMs?: number,
 ): void {
-  if (consola.level >= 4) {
-    consola.debug("Non-streaming response:", JSON.stringify(response))
+  if (logger.level >= 4) {
+    logger.debug("Non-streaming response:", JSON.stringify(response))
   }
   const normalized = normalizeResponse(response)
   const usage = normalized.usage
@@ -239,7 +240,7 @@ function handleStreamingResponse(
   response: CopilotStream,
   estimatedInputTokens: number,
 ) {
-  consola.debug("Streaming response")
+  logger.debug("Streaming response")
   const model = c.get("model")
   const accountId = c.get("accountId")
 
@@ -265,8 +266,8 @@ function handleStreamingResponse(
           }
 
           const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-          if (consola.level >= 4) {
-            consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+          if (logger.level >= 4) {
+            logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
           if (chunk.usage) {
             lastUsage = chunk.usage
@@ -281,6 +282,7 @@ function handleStreamingResponse(
             model,
             lastUsage,
             estimatedInputTokens,
+            onlyWhenUsageExists: true,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
@@ -298,6 +300,7 @@ function handleStreamingResponse(
           model,
           lastUsage,
           estimatedInputTokens,
+          onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,
@@ -428,8 +431,8 @@ function handleStreamingCompletion(
           }
 
           const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-          if (consola.level >= 4) {
-            consola.debug("Streaming raw event:", JSON.stringify(rawEvent))
+          if (logger.level >= 4) {
+            logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
           if (chunk.usage) {
             lastUsage = chunk.usage
@@ -437,7 +440,7 @@ function handleStreamingCompletion(
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
         }
       } catch (error) {
-        consola.error("Streaming error:", error)
+        logger.error("Streaming error:", error)
         const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
         if (knownError?.status === 499) {
           return
@@ -468,6 +471,7 @@ function handleStreamingCompletion(
             model,
             lastUsage,
             estimatedInputTokens,
+            onlyWhenUsageExists: true,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
@@ -485,6 +489,7 @@ function handleStreamingCompletion(
           model: options.payload.model,
           lastUsage,
           estimatedInputTokens: options.estimatedInputTokens,
+          onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,

@@ -190,7 +190,7 @@ async function executeResponseCreate(
     stream: payload.stream === true ? true : undefined,
     inferredInitiator: inferInitiatorFromResponsesPayload(payload),
   })
-  if (admission.kind !== "account") {
+  if (!admission.account) {
     throw new HTTPError(
       "Responses API requires an Account-based admission",
       new Response("Not Implemented", { status: 501 }),

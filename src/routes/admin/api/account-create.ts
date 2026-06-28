@@ -1,4 +1,3 @@
-import consola from "consola"
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
@@ -6,6 +5,7 @@ import type { Account, AccountProvider } from "~/lib/accounts"
 
 import { saveAccounts } from "~/lib/account-store"
 import { addAccount } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { isProviderId } from "~/lib/provider-config"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
@@ -167,7 +167,7 @@ createAccountRoutes.post("/", async (c) => {
   try {
     deviceCodeResponse = await getDeviceCode()
   } catch (e: unknown) {
-    consola.error("Failed to initiate GitHub device flow:", e)
+    logger.error("Failed to initiate GitHub device flow:", e)
     return c.json({ error: "Failed to initiate GitHub device flow." }, 502)
   }
 

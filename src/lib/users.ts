@@ -1,8 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 import { randomUUID } from "node:crypto"
-import fs from "node:fs/promises"
 
 import { PATHS } from "~/lib/paths"
+import { Repository } from "~/lib/repository"
 import { state } from "~/lib/state"
 
 export interface User {
@@ -37,17 +37,15 @@ const keysMatch = (raw: string, hashed: string): boolean => {
   }
 }
 
+const usersRepository = new Repository<Array<User>>({
+  filePath: () => PATHS.USERS_PATH,
+  serialize: (data) => JSON.stringify(data, null, 2),
+  deserialize: (raw) => JSON.parse(raw) as Array<User>,
+})
+
 export async function loadUsers(): Promise<void> {
-  // Start with persisted users if file exists
-  try {
-    // eslint-disable-next-line unicorn/prefer-json-parse-buffer
-    const data = await fs.readFile(PATHS.USERS_PATH, "utf8")
-    const parsed = JSON.parse(data) as Array<User>
-    state.users = parsed.map((user) => normalizeUser(user))
-  } catch {
-    // File doesn't exist — start with empty array
-    state.users = []
-  }
+  const rawUsers = await usersRepository.load()
+  state.users = rawUsers ? rawUsers.map((user) => normalizeUser(user)) : []
 
   // If a legacy API key is configured, ensure the in-memory admin user exists.
   // This keeps --api-key functional even after users.json is created/modified.
@@ -82,7 +80,7 @@ export async function loadUsers(): Promise<void> {
 }
 
 export async function saveUsers(): Promise<void> {
-  await fs.writeFile(PATHS.USERS_PATH, JSON.stringify(state.users, null, 2))
+  await usersRepository.save(state.users)
 }
 
 export function createUserSync(

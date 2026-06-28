@@ -1,11 +1,10 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
 import { buildAnthropicContextWindowError } from "~/lib/error-builder"
+import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   handleSseStream,
@@ -62,8 +61,8 @@ interface HandleCopilotApiOpts {
 export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   const { c, anthropicPayload, signal, admission } = opts
   const openAIPayload = translateToOpenAI(anthropicPayload)
-  if (consola.level >= 4) {
-    consola.debug(
+  if (logger.level >= 4) {
+    logger.debug(
       "Translated OpenAI request payload:",
       JSON.stringify(openAIPayload),
     )
@@ -84,7 +83,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       )
     } catch (error) {
       if (error instanceof HTTPError && isContextWindowError(error)) {
-        consola.warn(
+        logger.warn(
           "Context window exceeded (estimated input tokens: %d)",
           estimatedInputTokens,
         )
@@ -133,7 +132,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
         return
       }
       if (error instanceof HTTPError && isContextWindowError(error)) {
-        consola.warn("Context window exceeded")
+        logger.warn("Context window exceeded")
         const errPayload = buildAnthropicContextWindowError(error)
         await writeSseEvent(stream, JSON.stringify(errPayload), "error")
         return
@@ -185,8 +184,8 @@ function logDuplicateToolCallIds(
     return
   }
 
-  consola.error("Duplicate tool_call ids detected:", [...duplicateIds])
-  consola.error(
+  logger.error("Duplicate tool_call ids detected:", [...duplicateIds])
+  logger.error(
     "Messages with tool_calls:",
     JSON.stringify(
       messages
@@ -205,15 +204,15 @@ function handleNonStreamingResponse(
   response: ChatCompletionResponse,
   elapsedMs?: number,
 ) {
-  if (consola.level >= 4) {
-    consola.debug(
+  if (logger.level >= 4) {
+    logger.debug(
       "Non-streaming response from Copilot:",
       JSON.stringify(response).slice(-400),
     )
   }
   const anthropicResponse = translateToAnthropic(response)
-  if (consola.level >= 4) {
-    consola.debug(
+  if (logger.level >= 4) {
+    logger.debug(
       "Translated Anthropic response:",
       JSON.stringify(anthropicResponse),
     )
@@ -279,17 +278,17 @@ async function handleStreamingResponse({
       }
 
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      if (consola.level >= 4) {
-        consola.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
+      if (logger.level >= 4) {
+        logger.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
       }
       lastUsage = chunk.usage ?? lastUsage
       const translatedEvents = translateChunkToAnthropicEvents(
         chunk,
         streamState,
       )
-      if (consola.level >= 4) {
+      if (logger.level >= 4) {
         for (const event of translatedEvents) {
-          consola.debug("Translated Anthropic event:", JSON.stringify(event))
+          logger.debug("Translated Anthropic event:", JSON.stringify(event))
         }
       }
       await writeSseEvents(
@@ -343,7 +342,7 @@ async function handleStreamingError(input: {
   const { error, clientSignal, stream, streamState } = input
   if (error instanceof DOMException && error.name === "AbortError") {
     if (clientSignal.aborted) {
-      consola.debug("Stream aborted (client disconnected)")
+      logger.debug("Stream aborted (client disconnected)")
       return true
     }
 
@@ -356,7 +355,7 @@ async function handleStreamingError(input: {
       return true
     }
 
-    consola.warn("Stream aborted unexpectedly before first response event")
+    logger.warn("Stream aborted unexpectedly before first response event")
     return true
   }
 
@@ -377,7 +376,7 @@ async function sendSyntheticErrorIfNeeded(
     return false
   }
 
-  consola.warn(`${reason}, sending error event`)
+  logger.warn(`${reason}, sending error event`)
   const errorEvent = translateErrorToAnthropicErrorEvent()
   await writeSseEvent(stream, JSON.stringify(errorEvent), errorEvent.type)
   return true

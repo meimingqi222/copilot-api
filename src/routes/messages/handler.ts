@@ -1,7 +1,6 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
+import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { supportsMessagesApi } from "~/services/copilot/responses-api"
 
@@ -45,11 +44,8 @@ export async function handleCompletion(c: Context) {
 
   const anthropicVersion = c.req.header("anthropic-version")
   const claudeSessionId = c.req.header("x-claude-code-session-id")
-  if (consola.level >= 4) {
-    consola.debug(
-      "Anthropic request payload:",
-      JSON.stringify(anthropicPayload),
-    )
+  if (logger.level >= 4) {
+    logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
   }
 
   // Forward session-related headers so upstream providers can reuse cached
@@ -62,7 +58,7 @@ export async function handleCompletion(c: Context) {
 
   // Copilot Messages API (native Anthropic API passthrough)
   if (
-    admission.kind === "account"
+    admission.account
     && admission.account.provider === "copilot"
     && supportsMessagesApi(anthropicPayload.model, admission.account)
   ) {

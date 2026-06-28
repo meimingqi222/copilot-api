@@ -18,12 +18,16 @@ export const PATHS = {
   PROVIDER_CONNECTIONS_PATH: path.join(APP_DIR, "provider-connections.json"),
   MODELS_DEV_CACHE_PATH: path.join(APP_DIR, "models-dev.json"),
   CACHE_DIR: path.join(APP_DIR, "cache"),
-  LOG_FILE: path.join(APP_DIR, "server.log"),
+  /** Rotated diagnostic logs: `server-YYYY-MM-DD.log` (+ optional `.N` segments). */
+  LOG_DIR: path.join(APP_DIR, "logs"),
+  /** Active log file path (resolved at runtime; see `~/lib/log-rotation`). */
+  LOG_FILE: path.join(APP_DIR, "logs", "server.log"),
 }
 
 export async function ensurePaths(): Promise<void> {
   await fs.mkdir(PATHS.APP_DIR, { recursive: true })
   await fs.mkdir(PATHS.CACHE_DIR, { recursive: true })
+  await fs.mkdir(PATHS.LOG_DIR, { recursive: true })
   await ensureFile(PATHS.GITHUB_TOKEN_PATH)
 }
 

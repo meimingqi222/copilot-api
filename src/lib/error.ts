@@ -1,7 +1,7 @@
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 
-import consola from "consola"
+import { logger } from "~/lib/logger"
 
 export class HTTPError extends Error {
   response: Response
@@ -15,7 +15,7 @@ export class HTTPError extends Error {
 }
 
 export function forwardError(c: Context, error: unknown) {
-  consola.error("Error occurred:", error)
+  logger.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {
     // Prefer error.message over responseBody for locally-generated errors
@@ -27,7 +27,7 @@ export function forwardError(c: Context, error: unknown) {
     } catch {
       errorJson = errorText
     }
-    consola.error("HTTP error:", errorJson)
+    logger.error("HTTP error:", errorJson)
     const status = error.response.status as ContentfulStatusCode
     const retryAfter = error.response.headers.get("Retry-After")
     if (retryAfter) {

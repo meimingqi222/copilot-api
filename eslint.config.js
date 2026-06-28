@@ -81,4 +81,33 @@ export default config(
       "@typescript-eslint/no-unsafe-argument": "off",
     },
   },
+  // Stats store is a large database class with many methods; line limit is impractical
+  {
+    files: ["src/lib/stats-store.ts"],
+    rules: {
+      "max-lines": "off",
+    },
+  },
+  // Unified logger: disallow direct consola / legacy file-logger imports.
+  {
+    files: ["src/**/*.ts"],
+    ignores: ["src/lib/logger.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "consola",
+              message: 'Use `import { logger } from "~/lib/logger"` instead.',
+            },
+            {
+              name: "~/lib/file-logger",
+              message: 'Use `import { logger } from "~/lib/logger"` instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 )

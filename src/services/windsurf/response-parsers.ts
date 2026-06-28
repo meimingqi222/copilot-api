@@ -8,7 +8,7 @@ export type ChatStreamDelta =
   | { kind: "content"; text: string }
   | { kind: "reasoning_text"; text: string }
   | { kind: "tool_call_init"; callId: string; toolName: string }
-  | { kind: "tool_call_args"; args: string }
+  | { kind: "tool_call_args"; args: string; callId?: string }
 
 export interface ChatStreamFrame {
   deltas: Array<ChatStreamDelta>
@@ -51,22 +51,21 @@ function parseFloat32(raw: Uint8Array): number {
 function parseUsageFromMeta(
   nodes: Array<ProtobufNode>,
 ): ChatStreamFrame["usage"] | undefined {
-  // UsageMetadata field mapping (verified from live GetChatMessage captures):
-  //   field[1] = prompt_tokens
-  //   field[2] = completion_tokens
-  //   field[3] = cached_tokens (KV cache hits, treated as cache_read_tokens)
+  // UsageMetadata field mapping (verified against field[28] in GetChatMessage-res):
+  //   field[2] = input_tokens  (prompt)
+  //   field[3] = output_tokens (completion)
+  //   field[1] = auxiliary slice (e.g. uncached portion) — not used for totals
+  // Cache is authoritative from field[33] and field[28] cached_input_tokens only.
+  // Commit 07043c3 misread field[3] as cache; it is output_tokens, which made
+  // cache_read_tokens mirror completion_tokens in stats.
   let promptTokens = 0
   let completionTokens = 0
-  let cacheReadTokens: number | undefined
   for (const node of nodes) {
-    if (node.field === 1 && node.wire === 0 && node.varint !== undefined) {
+    if (node.field === 2 && node.wire === 0 && node.varint !== undefined) {
       promptTokens = node.varint
     }
-    if (node.field === 2 && node.wire === 0 && node.varint !== undefined) {
-      completionTokens = node.varint
-    }
     if (node.field === 3 && node.wire === 0 && node.varint !== undefined) {
-      cacheReadTokens = node.varint
+      completionTokens = node.varint
     }
   }
   if (promptTokens === 0 && completionTokens === 0) return undefined
@@ -74,8 +73,7 @@ function parseUsageFromMeta(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: promptTokens + completionTokens,
-    cached_tokens: cacheReadTokens ?? 0,
-    cache_read_tokens: cacheReadTokens,
+    cached_tokens: 0,
   }
 }
 
@@ -216,7 +214,13 @@ function parseToolCallDelta(sub: Array<ProtobufNode>): Array<ChatStreamDelta> {
     }
     if (f3?.raw) {
       const args = decodeFrameText(f3.raw)
-      if (args) deltas.push({ kind: "tool_call_args", args })
+      if (args) {
+        deltas.push({
+          kind: "tool_call_args",
+          args,
+          callId: callId ?? undefined,
+        })
+      }
     }
   } else if (f3?.raw) {
     const args = decodeFrameText(f3.raw)
@@ -265,8 +269,10 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
       if (metaUsage) {
         if (usage) {
           const prevCached = usage.cached_tokens
+          const prevCacheRead = usage.cache_read_tokens
           usage = { ...usage, ...metaUsage }
-          usage.cached_tokens = Math.max(prevCached, metaUsage.cached_tokens)
+          usage.cached_tokens = prevCached
+          usage.cache_read_tokens = prevCacheRead
         } else {
           usage = metaUsage
         }
@@ -306,6 +312,103 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
   }
 
   return { deltas, textDone, toolCallsDone, usage }
+}
+
+// ── Raw usage signals (cache debug) ───────────────────────────────────────────
+
+export interface WindsurfRawUsageSignals {
+  field7?: { f1?: number; f2?: number; f3?: number }
+  field33?: number
+  field28?: {
+    inputTokens?: number
+    outputTokens?: number
+    cachedInputTokens?: number
+  }
+}
+
+function readField7Varints(
+  sub: Array<ProtobufNode>,
+): WindsurfRawUsageSignals["field7"] | undefined {
+  const out: NonNullable<WindsurfRawUsageSignals["field7"]> = {}
+  for (const node of sub) {
+    if (node.wire !== 0 || node.varint === undefined) continue
+    if (node.field === 1) out.f1 = node.varint
+    if (node.field === 2) out.f2 = node.varint
+    if (node.field === 3) out.f3 = node.varint
+  }
+  if (out.f1 === undefined && out.f2 === undefined && out.f3 === undefined) {
+    return undefined
+  }
+  return out
+}
+
+/** Extract unmerged protobuf usage fields for cache diagnostics. */
+export function extractRawUsageSignals(
+  frame: Uint8Array,
+): WindsurfRawUsageSignals | undefined {
+  const nodes = parseMessage(frame, 0, 3)
+  const signals: WindsurfRawUsageSignals = {}
+  let hasSignal = false
+
+  for (const node of nodes) {
+    if (node.field === 7 && node.wire === 2 && node.sub) {
+      const field7 = readField7Varints(node.sub)
+      if (field7) {
+        signals.field7 = field7
+        hasSignal = true
+      }
+    }
+    if (node.field === 33 && node.wire === 0 && node.varint !== undefined) {
+      signals.field33 = node.varint
+      hasSignal = true
+    }
+    if (node.field === 28 && node.wire === 2 && node.raw) {
+      const field28Nodes = parseMessage(node.raw, 0, 6)
+      const tokenUsage = parseTokenUsageFromField28([
+        { field: 28, wire: 2, sub: field28Nodes },
+      ])
+      if (tokenUsage) {
+        signals.field28 = {
+          inputTokens: tokenUsage.inputTokens,
+          outputTokens: tokenUsage.outputTokens,
+          cachedInputTokens: tokenUsage.cachedInputTokens,
+        }
+        hasSignal = true
+      }
+    }
+  }
+
+  return hasSignal ? signals : undefined
+}
+
+export function mergeRawUsageSignals(
+  prev: WindsurfRawUsageSignals | undefined,
+  next: WindsurfRawUsageSignals,
+): WindsurfRawUsageSignals {
+  if (!prev) return { ...next }
+
+  const merged: WindsurfRawUsageSignals = { ...prev }
+
+  if (next.field7) {
+    merged.field7 = { ...merged.field7, ...next.field7 }
+  }
+  if (next.field33 !== undefined) {
+    merged.field33 = Math.max(merged.field33 ?? 0, next.field33)
+  }
+  if (next.field28) {
+    merged.field28 = { ...merged.field28, ...next.field28 }
+    if (
+      next.field28.cachedInputTokens !== undefined
+      && merged.field28.cachedInputTokens !== undefined
+    ) {
+      merged.field28.cachedInputTokens = Math.max(
+        merged.field28.cachedInputTokens,
+        next.field28.cachedInputTokens,
+      )
+    }
+  }
+
+  return merged
 }
 
 // ── Error frame detection ─────────────────────────────────────────────────────

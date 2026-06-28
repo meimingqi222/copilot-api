@@ -10,11 +10,9 @@ import os from "node:os"
 import path from "node:path"
 
 import type { Account } from "~/lib/accounts"
-import type {
-  AccountAdmission,
-  ProviderAdmission,
-} from "~/lib/request-admission"
+import type { ProviderAdmission } from "~/lib/request-admission"
 
+import { accountToConnection } from "~/lib/account-adapter"
 import { HTTPError } from "~/lib/error"
 import { PATHS } from "~/lib/paths"
 import {
@@ -270,7 +268,6 @@ describe("cross-system failover via executeWithFailover", () => {
     expect(conn).not.toBeNull()
 
     const admission: ProviderAdmission = {
-      kind: "provider",
       target: selected as NonNullable<typeof selected>,
       connection: conn as NonNullable<typeof conn>,
       credential: (conn as NonNullable<typeof conn>).credentials[0],
@@ -312,10 +309,16 @@ describe("cross-system failover via executeWithFailover", () => {
     expect(selected).not.toBeNull()
     expect(selected?.connectionId).toBe("acc")
 
-    const admission: AccountAdmission = {
-      kind: "account",
-      account,
+    // Step B: account-backed 路径用 accountToConnection 构造虚拟 ProviderConnection
+    const virtualConnection = accountToConnection(account)
+    const virtualCredential = virtualConnection.credentials[0]
+    expect(virtualCredential).toBeDefined()
+
+    const admission: ProviderAdmission = {
       target: selected as NonNullable<typeof selected>,
+      connection: virtualConnection,
+      credential: virtualCredential,
+      account,
       initiator: "user",
     }
 
@@ -359,7 +362,6 @@ describe("cross-system failover via executeWithFailover", () => {
     expect(conn).not.toBeNull()
 
     const admission: ProviderAdmission = {
-      kind: "provider",
       target: selected as NonNullable<typeof selected>,
       connection: conn as NonNullable<typeof conn>,
       credential: (conn as NonNullable<typeof conn>).credentials[0],

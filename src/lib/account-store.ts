@@ -1,4 +1,3 @@
-import consola from "consola"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
@@ -6,18 +5,16 @@ import type {
   Account,
   AccountProvider,
   AccountQuotaState,
-  CodebuffAccount,
-  CopilotAccount,
-  OAuthAccount,
-  WindsurfAccount,
-  MimoAccount,
+  AccountRuntimeState,
 } from "~/lib/accounts"
+import type { OAuthProviderId } from "~/lib/provider-config"
 
 import {
   syncLegacyExhaustedState,
   setAccountQuotaState,
 } from "~/lib/account-availability"
 import {
+  accountsDiskHasRecoverableData,
   tryReadAccountsFile,
   writeAccountsFile,
 } from "~/lib/account-file-store"
@@ -25,17 +22,19 @@ import {
   getAccountProvider,
   getCodebuffAuthToken,
   getGitHubToken,
-  getWindsurfApiKey,
-  getMimoServiceToken,
   getMimoPh,
-  setCopilotToken,
-  setCopilotTokenExpiry,
+  getMimoServiceToken,
+  getWindsurfApiKey,
 } from "~/lib/accounts"
 import { GITHUB_API_BASE_URL, githubApiHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
+import { Mutex } from "~/lib/repository"
 import { state } from "~/lib/state"
+import { emitStateChange } from "~/lib/state-events"
+import { globalTimers } from "~/lib/timer-registry"
 import {
   cancelAllOAuthRefreshTimers,
   scheduleOAuthRefreshForAllAccounts,
@@ -46,30 +45,50 @@ const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
 const TOKEN_REFRESH_RETRY_DELAY_MS = 60_000
 
 const tokenRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const accountsLifecycleMutex = new Mutex()
+
+export interface SaveAccountsOptions {
+  /** Allow persisting an empty list (e.g. user deleted the last account). */
+  allowEmpty?: boolean
+  /** Allow reducing the number of accounts on disk (e.g. user deleted accounts). */
+  allowShrink?: boolean
+}
 
 function defaultProvider(provider?: AccountProvider): AccountProvider {
   return provider ?? "copilot"
 }
 
 export async function loadAccounts(): Promise<void> {
+  return accountsLifecycleMutex.runExclusive(async () => {
+    await loadAccountsUnlocked()
+  })
+}
+
+async function loadAccountsUnlocked(): Promise<void> {
   clearAllAccountTimers()
   cancelAllOAuthRefreshTimers()
   const accountFile = await tryReadAccountsFile()
   if (accountFile.status === "found") {
     const rawAccounts = accountFile.accounts
-    state.accounts = []
+    const loadedAccounts: Array<Account> = []
     let migratedLegacyShape = false
     for (const raw of rawAccounts) {
       if (accountHasLegacyFlatFields(raw)) {
         migratedLegacyShape = true
       }
       try {
-        state.accounts.push(migrateAccount(raw))
+        loadedAccounts.push(migrateAccount(raw))
       } catch (err) {
-        consola.warn(
-          `Skipping invalid account entry: ${(err as Error).message}`,
-        )
+        logger.warn(`Skipping invalid account entry: ${(err as Error).message}`)
       }
+    }
+    state.accounts = loadedAccounts
+    if (loadedAccounts.length === 0) {
+      logger.warn("No accounts loaded from disk")
+    } else {
+      logger.info(
+        `Loaded ${loadedAccounts.length} account(s) from disk: ${loadedAccounts.map((account) => account.label).join(", ")}`,
+      )
     }
     for (const account of state.accounts) {
       if (typeof account.cooldownUntil === "number") {
@@ -84,8 +103,8 @@ export async function loadAccounts(): Promise<void> {
       syncLegacyExhaustedState(account)
     }
     if (migratedLegacyShape) {
-      await saveAccounts()
-      consola.info("Persisted migrated account schema to accounts.json")
+      await saveAccountsUnlocked()
+      logger.info("Persisted migrated account schema to accounts.json")
     }
     scheduleOAuthRefreshForAllAccounts()
     return
@@ -109,8 +128,8 @@ export async function loadAccounts(): Promise<void> {
       }
       state.accounts = [account]
       state.activeAccountIndex = 0
-      await saveAccounts()
-      consola.info("Migrated legacy GitHub token to accounts.json")
+      await saveAccountsUnlocked()
+      logger.info("Migrated legacy GitHub token to accounts.json")
       return
     }
   } catch {
@@ -120,33 +139,45 @@ export async function loadAccounts(): Promise<void> {
   state.accounts = []
 }
 
-class Mutex {
-  private queue: Promise<void> = Promise.resolve()
-
-  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    let resolve: (() => void) | undefined
-    const next = new Promise<void>((r) => {
-      resolve = r
-    })
-    const prev = this.queue
-    this.queue = next
-
-    try {
-      await prev
-      return await fn()
-    } finally {
-      resolve?.()
-    }
-  }
+export async function saveAccounts(
+  options: SaveAccountsOptions = {},
+): Promise<void> {
+  return accountsLifecycleMutex.runExclusive(async () => {
+    await saveAccountsUnlocked(options)
+  })
 }
 
-const fileMutex = new Mutex()
-
-export async function saveAccounts(): Promise<void> {
-  return fileMutex.runExclusive(async () => {
+/** Flush in-memory accounts on shutdown (waits for in-flight saves). */
+export async function flushAccountsOnShutdown(): Promise<void> {
+  return accountsLifecycleMutex.runExclusive(async () => {
+    if (state.accounts.length === 0) return
     const sanitized = state.accounts.map((account) => serializeAccount(account))
-    await writeAccountsFile(sanitized)
+    if (!(await writeAccountsFile(sanitized, { allowShrink: true }))) {
+      logger.error("Shutdown account flush skipped by write guards")
+    }
   })
+}
+
+async function saveAccountsUnlocked(
+  options: SaveAccountsOptions = {},
+): Promise<void> {
+  if (state.accounts.length === 0 && !options.allowEmpty) {
+    const diskHasData = await accountsDiskHasRecoverableData()
+    if (diskHasData) {
+      logger.warn(
+        "Refusing to persist empty accounts snapshot while existing accounts data is on disk",
+      )
+      return
+    }
+  }
+
+  const sanitized = state.accounts.map((account) => serializeAccount(account))
+  await writeAccountsFile(sanitized, {
+    allowEmpty: options.allowEmpty,
+    allowShrink: options.allowShrink,
+  })
+  // 持久化完成后通知 models-stale,触发 cacheModels() 重建缓存
+  emitStateChange("models-stale")
 }
 
 export function serializeAccountForExport(
@@ -157,7 +188,7 @@ export function serializeAccountForExport(
 
 function serializeAccount(account: Account): Record<string, unknown> {
   syncLegacyExhaustedState(account)
-  const base = {
+  const base: Record<string, unknown> = {
     id: account.id,
     label: account.label,
     provider: account.provider,
@@ -171,6 +202,8 @@ function serializeAccount(account: Account): Record<string, unknown> {
     cooldownUntil: account.cooldownUntil,
   }
 
+  // Never persist runtimeState — short-lived tokens (copilotToken,
+  // windsurfJwt, authStatus) stay in memory only.
   if (account.provider === "copilot") {
     return {
       ...base,
@@ -202,24 +235,22 @@ function serializeAccount(account: Account): Record<string, unknown> {
   }
 
   if (isOAuthProviderId(account.provider)) {
-    const oauthAccount = account as OAuthAccount
     return {
       ...base,
-      credentials: oauthAccount.credentials ?? {},
-      settings: oauthAccount.settings ?? {},
-      cpaMetadata: oauthAccount.cpaMetadata,
+      credentials: account.credentials ?? {},
+      settings: account.settings ?? {},
+      ...(account.cpaMetadata ? { cpaMetadata: account.cpaMetadata } : {}),
     }
   }
 
-  const mimoAccount = account as MimoAccount
   return {
     ...base,
     credentials: {
-      serviceToken: getMimoServiceToken(mimoAccount),
-      xiaomichatbotPh: getMimoPh(mimoAccount),
-      mimoWsToken: mimoAccount.credentials?.mimoWsToken,
+      serviceToken: getMimoServiceToken(account),
+      xiaomichatbotPh: getMimoPh(account),
+      mimoWsToken: account.credentials?.mimoWsToken,
     },
-    settings: mimoAccount.settings ?? {},
+    settings: account.settings ?? {},
   }
 }
 
@@ -229,7 +260,7 @@ function scheduleTokenRefreshRetry(accountId: string): void {
     tokenRefreshTimers.delete(accountId)
     return
   }
-  consola.warn(
+  logger.warn(
     `Scheduling token refresh retry for account "${accountId}" in ${TOKEN_REFRESH_RETRY_DELAY_MS / 1000}s`,
   )
   const retryTimerId = setTimeout(() => {
@@ -239,7 +270,7 @@ function scheduleTokenRefreshRetry(accountId: string): void {
       return
     }
     refreshCopilotToken(currentAccount).catch((error: unknown) => {
-      consola.error(
+      logger.error(
         `Token refresh retry failed for "${currentAccount.label}":`,
         error,
       )
@@ -254,7 +285,8 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     return
   }
 
-  const githubToken = getGitHubToken(account)
+  const githubToken =
+    (account.credentials?.githubToken as string | undefined) ?? undefined
   if (!githubToken) {
     // No token yet — account can be added later via Web UI
     return
@@ -285,11 +317,14 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     refresh_in: number
   }
 
-  setCopilotToken(account, data.token)
-  setCopilotTokenExpiry(account, data.expires_at * 1000)
+  account.runtimeState = {
+    ...account.runtimeState,
+    copilotToken: data.token,
+    copilotTokenExpiry: data.expires_at * 1000,
+  }
 
   if (state.showToken) {
-    consola.info(`Copilot token for "${account.label}":`, data.token)
+    logger.info(`Copilot token for "${account.label}":`, data.token)
   }
 
   const refreshInterval = Math.max((data.refresh_in - 60) * 1000, 60_000)
@@ -306,9 +341,9 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
       return
     }
 
-    consola.debug(`Refreshing Copilot token for "${currentAccount.label}"`)
+    logger.debug(`Refreshing Copilot token for "${currentAccount.label}"`)
     refreshCopilotToken(currentAccount).catch((error: unknown) => {
-      consola.error(
+      logger.error(
         `Failed to refresh Copilot token for "${currentAccount.label}":`,
         error,
       )
@@ -324,7 +359,7 @@ export function cancelTokenRefreshTimer(accountId: string): void {
   if (timerId) {
     clearTimeout(timerId)
     tokenRefreshTimers.delete(accountId)
-    consola.debug(`Cancelled token refresh timer for account "${accountId}"`)
+    logger.debug(`Cancelled token refresh timer for account "${accountId}"`)
   }
 }
 
@@ -455,7 +490,7 @@ function normalizeLegacyAccount(
 
   if (typeof acc.enabled !== "boolean" && typeof acc.isActive === "boolean") {
     acc.enabled = acc.isActive
-    consola.debug(
+    logger.debug(
       `Migrated account "${acc.label}" isActive → enabled: ${acc.enabled}`,
     )
   }
@@ -509,8 +544,8 @@ function migrateCopilotAccount(
   acc: LegacyAccountRecord,
   existingCredentials: Record<string, unknown> | undefined,
   existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: Account["runtimeState"],
-): CopilotAccount {
+  existingRuntime: AccountRuntimeState | undefined,
+): Account {
   return {
     ...base,
     provider: "copilot",
@@ -520,7 +555,7 @@ function migrateCopilotAccount(
         acc.githubToken,
       ),
     },
-    settings: (existingSettings as CopilotAccount["settings"]) ?? {},
+    settings: existingSettings ?? {},
     runtimeState: {
       ...existingRuntime,
       copilotToken: pickString(existingRuntime?.copilotToken, acc.copilotToken),
@@ -537,8 +572,8 @@ function migrateCodebuffAccount(
   acc: LegacyAccountRecord,
   existingCredentials: Record<string, unknown> | undefined,
   existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: Account["runtimeState"],
-): CodebuffAccount {
+  existingRuntime: AccountRuntimeState | undefined,
+): Account {
   return {
     ...base,
     provider: "codebuff",
@@ -571,8 +606,8 @@ function migrateWindsurfAccount(
   acc: LegacyAccountRecord,
   existingCredentials: Record<string, unknown> | undefined,
   existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: Account["runtimeState"],
-): WindsurfAccount {
+  existingRuntime: AccountRuntimeState | undefined,
+): Account {
   return {
     ...base,
     provider: "windsurf",
@@ -611,8 +646,8 @@ function migrateMimoAccount(
   acc: LegacyAccountRecord,
   existingCredentials: Record<string, unknown> | undefined,
   existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: Account["runtimeState"],
-): MimoAccount {
+  existingRuntime: AccountRuntimeState | undefined,
+): Account {
   return {
     ...base,
     provider: "mimo-aistudio",
@@ -640,14 +675,14 @@ function migrateMimoAccount(
 
 interface MigrateOAuthAccountInput {
   base: MigratedAccountBase
-  provider: OAuthAccount["provider"]
+  provider: OAuthProviderId
   existingCredentials?: Record<string, unknown>
   existingSettings?: Record<string, unknown>
-  existingRuntime?: Account["runtimeState"]
+  existingRuntime?: AccountRuntimeState
   cpaMetadata?: Record<string, unknown>
 }
 
-function migrateOAuthAccount(input: MigrateOAuthAccountInput): OAuthAccount {
+function migrateOAuthAccount(input: MigrateOAuthAccountInput): Account {
   const {
     base,
     provider,
@@ -686,10 +721,8 @@ function migrateOAuthAccount(input: MigrateOAuthAccountInput): OAuthAccount {
 function migrateAccountInternal(account: Record<string, unknown>): Account {
   const acc = normalizeLegacyAccount(account)
   const base = buildMigratedAccountBase(acc)
-  const existingCredentials = acc.credentials as
-    | Record<string, unknown>
-    | undefined
-  const existingSettings = acc.settings as Record<string, unknown> | undefined
+  const existingCredentials = acc.credentials
+  const existingSettings = acc.settings
   const existingRuntime = acc.runtimeState
   const provider = defaultProvider(acc.provider)
 
@@ -730,7 +763,7 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
       existingCredentials,
       existingSettings,
       existingRuntime,
-      cpaMetadata: acc.cpaMetadata as Record<string, unknown> | undefined,
+      cpaMetadata: acc.cpaMetadata,
     })
   }
 
@@ -745,7 +778,7 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
 
 export function scheduleQuotaRefresh(): void {
   void refreshAllQuotas()
-  setInterval(() => {
+  globalTimers.interval(() => {
     void refreshAllQuotas()
   }, QUOTA_RECHECK_INTERVAL_MS)
 }
@@ -767,11 +800,11 @@ export async function refreshQuotaForAccount(
   if (exhausted) {
     if (account.quotaState !== "exhausted") {
       setAccountQuotaState(account, "exhausted")
-      consola.warn(`Account "${account.label}" quota exhausted`)
+      logger.warn(`Account "${account.label}" quota exhausted`)
     }
   } else {
     if (account.quotaState === "exhausted") {
-      consola.info(`Account "${account.label}" quota refreshed — re-activating`)
+      logger.info(`Account "${account.label}" quota refreshed — re-activating`)
     }
     setAccountQuotaState(account, "available")
   }
@@ -786,7 +819,7 @@ async function refreshAllQuotas(): Promise<void> {
   )
   for (const result of results) {
     if (result.status === "rejected") {
-      consola.warn("Failed to refresh quota for account:", result.reason)
+      logger.warn("Failed to refresh quota for account:", result.reason)
     }
   }
   await saveAccounts()
@@ -803,7 +836,8 @@ async function getCopilotUsageForAccount(account: Account): Promise<{
     completions?: { remaining: number; entitlement: number; unlimited: boolean }
   }
 }> {
-  const githubToken = getGitHubToken(account)
+  const githubToken =
+    (account.credentials?.githubToken as string | undefined) ?? undefined
   if (!githubToken) {
     throw new Error(`GitHub token missing for account "${account.label}"`)
   }

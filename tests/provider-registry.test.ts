@@ -3,12 +3,12 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import { PATHS } from "~/lib/paths"
+import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { cacheModels } from "~/lib/utils"
 import { server } from "~/server"
 import { initializeProviderRegistry } from "~/services/providers"
-import { ensureDirectProviderAccounts } from "~/start"
 
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex

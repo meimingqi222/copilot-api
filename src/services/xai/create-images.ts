@@ -1,9 +1,8 @@
-import consola from "consola"
-
 import type { Account, OAuthAccount } from "~/lib/accounts"
 
 import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 import { XAI_API_BASE_URL } from "~/services/oauth/xai"
@@ -115,7 +114,7 @@ export async function createXaiImageGeneration(
 
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "(unreadable)")
-    consola.warn(
+    logger.warn(
       `xAI image generation failed for account "${account.label}" model "${model}": ${response.status} ${response.statusText}`,
     )
     throw new HTTPError(
@@ -176,7 +175,7 @@ export async function createXaiImageEdit(
 
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "(unreadable)")
-    consola.warn(
+    logger.warn(
       `xAI image edit failed for account "${account.label}" model "${model}": ${response.status} ${response.statusText}`,
     )
     throw new HTTPError("Failed to create xAI image edit", response, bodyText)

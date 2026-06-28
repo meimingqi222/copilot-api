@@ -3,11 +3,16 @@
  * 展平为可调度的 RouteTarget。
  *
  * 输出按 (publicId, endpoint) 维度组织,选择器在此基础上做优先级与权重判定。
+ *
+ * Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
+ * 注入到 connections 候选池中。account 循环分支已删除,但生成的虚拟 connection target
+ * 仍携带 `account` 字段,prepareRequestAdmission 的 `target.account` 分支仍可工作。
  */
 
 import type { Account, AccountModel } from "~/lib/accounts"
 import type { ProviderId } from "~/lib/provider-config"
 
+import { accountToConnection } from "~/lib/account-adapter"
 import { isAccountAvailable } from "~/lib/account-availability"
 import { buildAccountModelAliases, getAccountModelPrefix } from "~/lib/accounts"
 import {
@@ -18,7 +23,6 @@ import {
   type ApiCredential,
   type ModelEndpoint,
   type ModelMapping,
-  type ProviderProtocol,
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
@@ -77,133 +81,183 @@ export function buildRouteTargets(
   options: BuildRouteTargetsOptions = {},
 ): Array<RouteTarget> {
   const onlyAvailable = options.onlyAvailable ?? true
-  const connections = options.connections ?? listProviderConnections()
+  const baseConnections = options.connections ?? listProviderConnections()
+  const accounts = options.accounts ?? state.accounts
+
+  // Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
+  // 合并到 connections 候选池。account 循环分支已删除,但虚拟 connection target
+  // 仍携带 account 字段,prepareRequestAdmission 的 target.account 分支仍可工作。
+  // 同时保留对 account 的可用性/legacyProvider/accountPrefix 过滤。
+  const virtualConnections: Array<{
+    connection: ProviderConnection
+    account: Account
+  }> = []
+  for (const account of accounts) {
+    if (onlyAvailable && !isAccountAvailable(account)) {
+      continue
+    }
+    if (options.legacyProvider && account.provider !== options.legacyProvider) {
+      continue
+    }
+    if (options.accountPrefix) {
+      const prefix = getAccountModelPrefix(account).toLowerCase()
+      if (prefix !== options.accountPrefix.toLowerCase()) continue
+    }
+    // availableModels === []：已加载但为空,跳过此账户
+    if (
+      account.availableModels !== undefined
+      && account.availableModels.length === 0
+    ) {
+      continue
+    }
+    virtualConnections.push({
+      connection: accountToConnection(account),
+      account,
+    })
+  }
+
+  // 合并:先普通 connection,再虚拟 connection(account-backed)
+  // connectionId 过滤时虚拟 connection 也要参与
+  const allConnections: Array<{
+    connection: ProviderConnection
+    account?: Account
+  }> = [
+    ...baseConnections.map((connection) => ({
+      connection,
+      account: undefined as Account | undefined,
+    })),
+    ...virtualConnections.map(({ connection, account }) => ({
+      connection,
+      account,
+    })),
+  ]
 
   const targets: Array<RouteTarget> = []
 
-  for (const connection of connections) {
-    if (options.connectionId && connection.id !== options.connectionId) {
-      continue
-    }
+  for (const { connection, account } of allConnections) {
+    if (options.connectionId && connection.id !== options.connectionId) continue
     if (onlyAvailable && !connection.enabled) continue
+
     const credentials = safeCredentials(connection)
     refreshConnectionAvailability({ ...connection, credentials })
+
+    // account-backed 虚拟 connection 特殊处理:availableModels === undefined 生成通配 target
+    if (account && account.availableModels === undefined) {
+      // 尚未加载:为请求的模型生成通配 target(publicModelId 为空则不生成)
+      if (!options.publicModelId) continue
+      const ep: Array<ModelEndpoint> =
+        options.endpoint ?
+          [options.endpoint]
+        : (["chat"] as Array<ModelEndpoint>)
+      for (const endpoint of ep) {
+        if (options.connectionId && connection.id !== options.connectionId)
+          continue
+        targets.push({
+          connectionId: connection.id,
+          connectionName: connection.name,
+          protocol: connection.protocol,
+          credentialId: credentials[0]?.id ?? connection.id,
+          publicModelId: options.publicModelId,
+          upstreamModelId: options.publicModelId,
+          endpoint,
+          connectionPriority: connection.priority,
+          connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
+          credentialPriority:
+            credentials[0]?.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
+          credentialWeight:
+            credentials[0]?.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
+          account,
+        })
+      }
+      continue
+    }
 
     const models = connection.models ?? []
     for (const model of models) {
       if (!model.enabled) continue
-      if (options.endpoint && !model.endpoints.includes(options.endpoint)) {
-        continue
-      }
-      if (
-        options.publicModelId
-        && !matchesPublicModelId(model, options.publicModelId)
+      // account-backed 虚拟 connection 走 resolveEndpoints(支持 responses/messages → chat fallback);
+      // 普通 connection 直接用 endpoint 包含关系过滤(无 fallback)。
+      if (account) {
+        const ep = resolveEndpoints(model.endpoints, options.endpoint)
+        if (!ep) continue
+      } else if (
+        options.endpoint
+        && !model.endpoints.includes(options.endpoint)
       ) {
         continue
+      }
+      if (options.publicModelId) {
+        // 对 account-backed 虚拟 connection,使用 account 别名匹配;
+        // 对普通 connection,使用 connection 别名匹配
+        const matched =
+          account ?
+            matchesAccountModel(
+              account,
+              modelToAccountModel(model),
+              options.publicModelId,
+            )
+          : matchesPublicModelId(model, options.publicModelId)
+        if (!matched) continue
       }
 
       for (const credential of credentials) {
         if (onlyAvailable && !isCredentialAvailable(credential)) continue
 
-        const endpoints =
-          options.endpoint ? [options.endpoint] : model.endpoints
-        pushEndpointTargets(targets, endpoints, model, connection, credential)
-      }
-    }
-  }
-
-  // Account candidates (legacy providers)
-  if (!options.connectionId) {
-    const accounts = options.accounts ?? state.accounts
-    for (const account of accounts) {
-      if (onlyAvailable && !isAccountAvailable(account)) continue
-      if (
-        options.legacyProvider
-        && account.provider !== options.legacyProvider
-      ) {
-        continue
-      }
-      if (options.accountPrefix) {
-        const prefix = getAccountModelPrefix(account).toLowerCase()
-        if (prefix !== options.accountPrefix.toLowerCase()) {
-          continue
-        }
-      }
-
-      const protocol = accountProtocol(account.provider)
-      if (!protocol) continue
-
-      // availableModels === undefined：模型列表尚未加载，接受所有模型请求（与 account-selection.ts 保持一致）
-      // availableModels === []：已加载但为空，跳过此账户
-      if (
-        account.availableModels !== undefined
-        && account.availableModels.length === 0
-      ) {
-        continue
-      }
-
-      if (account.availableModels === undefined) {
-        // 尚未加载：为请求的模型生成通配 target（publicModelId 为空则不生成）
-        if (!options.publicModelId) continue
-        const ep =
-          options.endpoint ?
-            [options.endpoint]
-          : (["chat"] as Array<ModelEndpoint>)
-        for (const endpoint of ep) {
-          targets.push({
-            connectionId: account.id,
-            connectionName: account.label,
-            protocol,
-            credentialId: account.id,
-            publicModelId: options.publicModelId,
-            upstreamModelId: options.publicModelId,
-            endpoint,
-            connectionPriority: account.priority,
-            connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
-            credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
-            credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
-            account,
-          })
-        }
-        continue
-      }
-
-      for (const model of account.availableModels) {
-        const endpoints = accountModelEndpoints(model)
-        const modelId = accountModelId(model)
-
-        if (!modelId) continue
-
-        if (
-          options.publicModelId
-          && !matchesAccountModel(account, model, options.publicModelId)
-        ) {
-          continue
-        }
-
-        const ep = resolveEndpoints(endpoints, options.endpoint)
-        if (!ep) continue
-        for (const endpoint of ep) {
-          targets.push({
-            connectionId: account.id,
-            connectionName: account.label,
-            protocol,
-            credentialId: account.id,
-            publicModelId: options.publicModelId ?? modelId,
-            upstreamModelId: modelId,
-            endpoint,
-            connectionPriority: account.priority,
-            connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
-            credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
-            credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
-            account,
-          })
+        // account-backed 虚拟 connection:保留请求时的 publicModelId(可能带 provider/自定义前缀),
+        // upstreamModelId 用 model.upstreamId(已剥离前缀),并支持 responses/messages → chat fallback
+        if (account) {
+          const ep = resolveEndpoints(model.endpoints, options.endpoint)
+          if (!ep) continue
+          for (const endpoint of ep) {
+            targets.push({
+              connectionId: connection.id,
+              connectionName: connection.name,
+              protocol: connection.protocol,
+              credentialId: credential.id,
+              publicModelId: options.publicModelId ?? model.publicId,
+              upstreamModelId: model.upstreamId,
+              endpoint,
+              connectionPriority: connection.priority,
+              connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
+              credentialPriority:
+                credential.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
+              credentialWeight: credential.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
+              account,
+            })
+          }
+        } else {
+          const endpoints =
+            options.endpoint ? [options.endpoint] : model.endpoints
+          pushEndpointTargets(targets, endpoints, model, connection, credential)
         }
       }
     }
   }
 
   return targets
+}
+
+/** 将 ModelMapping 转回 AccountModel 形态(仅用于 matchesAccountModel 的别名匹配)。 */
+function modelToAccountModel(model: ModelMapping): AccountModel {
+  // AccountModel.id 与 ModelMapping.publicId 对应;
+  // supportedEndpoints 用空数组占位,matchesAccountModel 只用 id/buildAccountModelAliases
+  return {
+    id: model.publicId,
+    name: model.name ?? model.publicId,
+    vendor: model.vendor ?? "unknown",
+    pickerEnabled: model.pickerEnabled ?? true,
+    pickerCategory: model.pickerCategory,
+    supportedEndpoints: [],
+  }
+}
+
+function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
+  const normalized = requested.toLowerCase()
+  if (model.publicId.toLowerCase() === normalized) return true
+  if (model.aliases?.some((alias) => alias.toLowerCase() === normalized)) {
+    return true
+  }
+  return false
 }
 
 /**
@@ -225,15 +279,6 @@ function resolveEndpoints(
   const fallback = fallbackMap[requested]
   if (fallback && supported.includes(fallback)) return [fallback]
   return null
-}
-
-function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
-  const normalized = requested.toLowerCase()
-  if (model.publicId.toLowerCase() === normalized) return true
-  if (model.aliases?.some((alias) => alias.toLowerCase() === normalized)) {
-    return true
-  }
-  return false
 }
 
 /**
@@ -283,54 +328,6 @@ export function listExposedPublicModels(
     }
   }
   return out
-}
-
-function accountProtocol(provider: string): ProviderProtocol | undefined {
-  switch (provider) {
-    case "copilot": {
-      return "copilot-native"
-    }
-    case "codebuff": {
-      return "codebuff-native"
-    }
-    case "windsurf": {
-      return "windsurf-native"
-    }
-    case "mimo-aistudio": {
-      return "mimo-native"
-    }
-    case "codex": {
-      return "codex-native"
-    }
-    case "claude": {
-      return "claude-native"
-    }
-    case "antigravity": {
-      return "antigravity-native"
-    }
-    case "kimi": {
-      return "kimi-native"
-    }
-    case "xai": {
-      return "xai-native"
-    }
-    default: {
-      return undefined
-    }
-  }
-}
-
-function accountModelEndpoints(model: AccountModel): Array<ModelEndpoint> {
-  const eps: Array<ModelEndpoint> = []
-  for (const ep of model.supportedEndpoints) {
-    if (ep.includes("chat/completions")) eps.push("chat")
-    else if (ep.includes("messages")) eps.push("messages")
-    else if (ep.includes("responses")) eps.push("responses")
-    else if (ep.includes("embeddings")) eps.push("embeddings")
-    else if (ep.includes("images")) eps.push("images")
-    else if (ep.includes("videos")) eps.push("videos")
-  }
-  return eps.length > 0 ? eps : ["chat"]
 }
 
 function accountModelId(model: AccountModel): string {

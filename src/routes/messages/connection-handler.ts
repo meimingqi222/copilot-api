@@ -1,9 +1,8 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
 import type { RequestAdmission } from "~/lib/request-admission"
 
+import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { forwardSseEvent, handleSseStream, writeSseEvent } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
@@ -191,7 +190,7 @@ export async function handleDirectStreamingResponse({
     }
 
     if (!receivedMessageStop) {
-      consola.warn(
+      logger.warn(
         "Direct streaming: upstream closed without message_stop, sending synthetic error",
       )
       const errPayload = {

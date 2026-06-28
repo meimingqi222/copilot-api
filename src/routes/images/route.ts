@@ -19,7 +19,7 @@ imageRoutes.post("/generations", async (c) => {
       model: payload.model,
       endpoint: "images",
     })
-    if (admission.kind !== "account") {
+    if (!admission.account) {
       throw new HTTPError(
         "Images API requires an Account-based admission",
         new Response("Not Implemented", { status: 501 }),
@@ -55,7 +55,7 @@ imageRoutes.post("/edits", async (c) => {
       model: payload.model,
       endpoint: "images",
     })
-    if (admission.kind !== "account") {
+    if (!admission.account) {
       throw new HTTPError(
         "Images API requires an Account-based admission",
         new Response("Not Implemented", { status: 501 }),

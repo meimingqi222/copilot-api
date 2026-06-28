@@ -1,6 +1,6 @@
 import type { Context, Next } from "hono"
 
-import consola from "consola"
+import { logger } from "~/lib/logger"
 
 import {
   recordRequest as recordGuardSnapshot,
@@ -94,7 +94,7 @@ export const requestLogger = async (c: Context, next: Next) => {
             statsStore.incrementRequests(accountId)
           }
         } catch {
-          consola.debug("Failed to persist stats")
+          logger.debug("Failed to persist stats")
         }
       })
     }

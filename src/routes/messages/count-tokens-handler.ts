@@ -1,7 +1,6 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
+import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 
@@ -25,7 +24,7 @@ export async function handleCountTokens(c: Context) {
     )
 
     if (!selectedModel) {
-      consola.warn("Model not found, returning default token count")
+      logger.warn("Model not found, returning default token count")
       return c.json({
         input_tokens: 1,
       })
@@ -57,13 +56,13 @@ export async function handleCountTokens(c: Context) {
       finalTokenCount = Math.round(finalTokenCount * 1.03)
     }
 
-    consola.info("Token count:", finalTokenCount)
+    logger.info("Token count:", finalTokenCount)
 
     return c.json({
       input_tokens: finalTokenCount,
     })
   } catch (error) {
-    consola.error("Error counting tokens:", error)
+    logger.error("Error counting tokens:", error)
     return c.json({
       input_tokens: 1,
     })

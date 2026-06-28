@@ -1,5 +1,5 @@
-import consola from "consola"
-
+import { logger } from "~/lib/logger"
+import { parseRetryAfterMs } from "~/lib/retry-after"
 import { state as globalState } from "~/lib/state"
 
 import { sleep } from "./utils"
@@ -9,6 +9,14 @@ const DEFAULT_BURST = 8
 const MAX_BACKOFF_MS = 60_000
 const BASE_BACKOFF_MS = 1_000
 const MAX_QUEUE_SIZE = 100
+
+/**
+ * Windsurf per-model message-rate quotas reset in multi-hour windows
+ * (e.g. "Resets in: 3h0m0s"). The default MAX_BACKOFF_MS (60s) is far too
+ * short and causes immediate retry → re-trigger. This ceiling applies only
+ * to the windsurf-aware `reportUpstreamRateLimitMs` path.
+ */
+const MAX_WINDSURF_COOLDOWN_MS = 4 * 60 * 60 * 1_000
 
 interface AccountRateLimitState {
   limiterLock: Promise<void>
@@ -55,7 +63,23 @@ export class RateLimitQueueFullError extends Error {
   }
 }
 
-export async function checkRateLimit(accountId: string, signal?: AbortSignal) {
+/**
+ * Check rate limit for an account.
+ *
+ * @param accountId Account ID to gate.
+ * @param signal Optional abort signal.
+ * @param opts Optional override for interval/burst. Used by providers that
+ *   need stricter pacing (e.g. Windsurf's per-model message-rate quota is
+ *   far more sensitive than GitHub Copilot's per-minute 429). When omitted,
+ *   uses the global defaults (250ms / 8 burst).
+ */
+export async function checkRateLimit(
+  accountId: string,
+  signal?: AbortSignal,
+  opts?: { intervalMs?: number; burst?: number },
+) {
+  const intervalMs = opts?.intervalMs ?? DEFAULT_INTERVAL_MS
+  const burst = opts?.burst ?? DEFAULT_BURST
   const state = getAccountState(accountId)
   const waitTimeMs = await withLimiterLock(
     state,
@@ -63,18 +87,18 @@ export async function checkRateLimit(accountId: string, signal?: AbortSignal) {
       const now = Date.now()
       const allowedAt = Math.max(
         state.cooldownUntilMs,
-        state.theoreticalArrivalMs - (DEFAULT_BURST - 1) * DEFAULT_INTERVAL_MS,
+        state.theoreticalArrivalMs - (burst - 1) * intervalMs,
       )
 
       if (now < allowedAt) {
         const waitMs = Math.ceil(allowedAt - now)
         state.theoreticalArrivalMs =
-          Math.max(state.theoreticalArrivalMs, allowedAt) + DEFAULT_INTERVAL_MS
+          Math.max(state.theoreticalArrivalMs, allowedAt) + intervalMs
         return waitMs
       }
 
       state.theoreticalArrivalMs =
-        Math.max(now, state.theoreticalArrivalMs) + DEFAULT_INTERVAL_MS
+        Math.max(now, state.theoreticalArrivalMs) + intervalMs
       return 0
     },
     signal,
@@ -82,7 +106,7 @@ export async function checkRateLimit(accountId: string, signal?: AbortSignal) {
 
   if (waitTimeMs <= 0) return
 
-  consola.warn(
+  logger.warn(
     `Adaptive rate limiter waiting ${toWaitSeconds(waitTimeMs)} seconds before sending request: ${JSON.stringify(
       {
         accountId,
@@ -117,9 +141,54 @@ export async function reportUpstreamRateLimit(
     )
   })
 
-  consola.warn(
+  logger.warn(
     `Upstream returned 429 for account "${accountId}": ${JSON.stringify({
       retryAfterHeader: response.headers.get("retry-after"),
+      retryAfterMs,
+      appliedCooldownMs,
+      state: getAccountRateLimitSnapshot(accountId),
+    })}`,
+  )
+}
+
+/**
+ * Like `reportUpstreamRateLimit` but accepts an explicit `retryAfterMs`
+ * (parsed from a response body rather than a Retry-After header).
+ *
+ * Used by the Windsurf path: Windsurf returns in-stream JSON error frames
+ * such as {"error":{"code":"Permission denied","message":"...Resets in:
+ * 3h0m0s..."}} after a 200 OK — no Retry-After header, the duration is
+ * embedded in the natural-language message. This applies the real upstream
+ * cooldown window (up to MAX_WINDSURF_COOLDOWN_MS) instead of the default
+ * 60s exponential backoff.
+ */
+export async function reportUpstreamRateLimitMs(
+  accountId: string,
+  retryAfterMs?: number,
+): Promise<void> {
+  const state = getAccountState(accountId)
+  let appliedCooldownMs = 0
+
+  await withLimiterLock(state, () => {
+    state.consecutive429Count += 1
+
+    const adaptivePenaltyMs =
+      retryAfterMs ?? computeBackoffMs(state.consecutive429Count)
+    appliedCooldownMs = Math.min(
+      MAX_WINDSURF_COOLDOWN_MS,
+      Math.max(1, adaptivePenaltyMs),
+    )
+    const cooldownUntil = Date.now() + appliedCooldownMs
+
+    state.cooldownUntilMs = Math.max(state.cooldownUntilMs, cooldownUntil)
+    state.theoreticalArrivalMs = Math.max(
+      state.theoreticalArrivalMs,
+      state.cooldownUntilMs,
+    )
+  })
+
+  logger.warn(
+    `Windsurf upstream rate-limited account "${accountId}": ${JSON.stringify({
       retryAfterMs,
       appliedCooldownMs,
       state: getAccountRateLimitSnapshot(accountId),
@@ -141,7 +210,7 @@ export async function reportUpstreamSuccess(accountId: string) {
   })
 
   if (hadRateLimitPressure === true) {
-    consola.info(
+    logger.info(
       `Adaptive rate limiter recovered for account "${accountId}": ${JSON.stringify(
         {
           accountId,
@@ -280,20 +349,6 @@ function onceAbort(signal: AbortSignal): Promise<never> {
       once: true,
     })
   })
-}
-
-function parseRetryAfterMs(retryAfterValue: string | null): number | undefined {
-  if (!retryAfterValue) return undefined
-
-  const retryAfterSeconds = Number.parseFloat(retryAfterValue)
-  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0) {
-    return Math.round(retryAfterSeconds * 1000)
-  }
-
-  const retryAfterDateMs = Date.parse(retryAfterValue)
-  if (Number.isNaN(retryAfterDateMs)) return undefined
-
-  return Math.max(0, retryAfterDateMs - Date.now())
 }
 
 function computeBackoffMs(consecutive429: number): number {

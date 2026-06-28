@@ -1,7 +1,7 @@
-import consola from "consola"
-import fs from "node:fs/promises"
-
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
+import { Repository } from "~/lib/repository"
+import { globalTimers } from "~/lib/timer-registry"
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -159,7 +159,7 @@ let persistenceEnabled = true
 
 function ensureCleanup() {
   if (cleanupTimer) return
-  cleanupTimer = setInterval(() => {
+  cleanupTimer = globalTimers.interval(() => {
     const cutoff = Date.now() - SNAPSHOT_WINDOW_MS
     for (const [key, snap] of ipSnapshots) {
       if (snap.lastSeenAt < cutoff) ipSnapshots.delete(key)
@@ -173,9 +173,6 @@ function ensureCleanup() {
       void saveGuard()
     }
   }, CLEANUP_INTERVAL_MS)
-  if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) {
-    cleanupTimer.unref()
-  }
 }
 
 // ── Blacklist operations ───────────────────────────────────────
@@ -671,7 +668,7 @@ function checkAutoBlock(
 
   ipBlacklist.set(snap.key, entry)
   snap.blocked = true
-  consola.warn(
+  logger.warn(
     `⚠ Guard auto-blocked IP ${snap.key}: score=${assessment.score}, reasons=${triggerReasons.join(", ")}, expires=${new Date(expiresAt).toISOString()}`,
   )
   void saveGuard()
@@ -789,10 +786,17 @@ export async function removeUaWhitelistPattern(
 
 // ── Persistence ────────────────────────────────────────────────
 
+const guardRepository = new Repository<GuardPersistence>({
+  filePath: () => PATHS.GUARD_PATH,
+  serialize: (data) => JSON.stringify(data, null, 2),
+  deserialize: (raw) => JSON.parse(raw) as GuardPersistence,
+  corruptMessage: "guard.json is corrupt",
+})
+
 export async function loadGuard(): Promise<void> {
   try {
-    const raw = await fs.readFile(PATHS.GUARD_PATH)
-    const data = JSON.parse(raw.toString("utf8")) as GuardPersistence
+    const data = await guardRepository.load()
+    if (!data) return
     for (const entry of data.blacklist || []) {
       if (isExpired(entry)) continue
       const map = entry.type === "ip" ? ipBlacklist : uaBlacklist
@@ -803,7 +807,7 @@ export async function loadGuard(): Promise<void> {
         customUaWhitelist.push(pattern)
       }
     }
-    consola.info(
+    logger.info(
       `Guard loaded: ${ipBlacklist.size} blocked IPs, ${uaBlacklist.size} blocked UAs, ${customUaWhitelist.length} custom UA patterns`,
     )
   } catch {
@@ -832,11 +836,10 @@ function isExpired(entry: BlacklistEntry): boolean {
 
 async function saveGuard(): Promise<void> {
   if (!persistenceEnabled) return
-  const data: GuardPersistence = {
+  await guardRepository.save({
     blacklist: getBlacklist(),
     uaWhitelist: [...customUaWhitelist],
-  }
-  await fs.writeFile(PATHS.GUARD_PATH, JSON.stringify(data, null, 2))
+  })
 }
 
 export function resetGuardForTest(): void {

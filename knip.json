@@ -1,0 +1,15 @@
+{
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.git/**",
+    "**/scripts/**",
+    "**/tools/**",
+    "**/tests/**",
+    "**/pages/**"
+  ],
+  "ignoreDependencies": [
+    "zod",
+    "prettier-plugin-packagejson"
+  ]
+}

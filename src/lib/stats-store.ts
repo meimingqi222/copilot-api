@@ -5,6 +5,7 @@ import path from "node:path"
 import type { ResolvedModelPricing } from "~/lib/models-dev"
 import type { ProviderId } from "~/lib/provider-config"
 
+import { getDefaultModelPrice } from "~/lib/default-prices"
 import { resolveModelsDevPriceDetailed } from "~/lib/models-dev"
 import { PATHS } from "~/lib/paths"
 
@@ -174,6 +175,32 @@ class StatsStore {
         updated_at INTEGER NOT NULL
       )
     `)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS stats_migrations (
+        name TEXT PRIMARY KEY,
+        applied_at INTEGER NOT NULL
+      )
+    `)
+    this.migrateSwe16UsageLabels(db)
+  }
+
+  /** One-time: drop obvious junk swe-1-6-fast test rows (tiny input, zero output). */
+  private migrateSwe16UsageLabels(db: Database): void {
+    const applied = db
+      .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
+      .get("swe-1-6-fast-junk-cleanup") as { ok: number } | undefined
+    if (applied) return
+
+    db.run(`
+      DELETE FROM usage_stats
+      WHERE model = 'swe-1-6-fast'
+        AND completion_tokens = 0
+        AND prompt_tokens < 200
+    `)
+    db.run("INSERT INTO stats_migrations (name, applied_at) VALUES (?, ?)", [
+      "swe-1-6-fast-junk-cleanup",
+      Date.now(),
+    ])
   }
 
   private ensureColumn(
@@ -803,7 +830,20 @@ class StatsStore {
         source: "manual",
       }
     }
-    return resolveModelsDevPriceDetailed(model, provider)
+    const fromModelsDev = resolveModelsDevPriceDetailed(model, provider)
+    if (fromModelsDev) {
+      return fromModelsDev
+    }
+
+    const builtin = getDefaultModelPrice(model)
+    if (builtin) {
+      return {
+        ...builtin,
+        source: "builtin",
+      }
+    }
+
+    return null
   }
 
   getModelPricing(model: string): {

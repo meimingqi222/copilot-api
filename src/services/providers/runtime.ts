@@ -15,6 +15,7 @@ import type {
   CopilotStreamEventLike,
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
+import type { ProtocolAdapter } from "~/services/protocols/types"
 
 export interface RequestExecutionContext {
   initiator?: "agent" | "user"
@@ -43,6 +44,8 @@ export type ProviderMessagesResult =
 export interface ProviderRuntime {
   id: ProviderId
   descriptor: ProviderDescriptor
+  /** 对应的协议适配器。用于消除 provider↔protocol 手动映射表。 */
+  adapter?: ProtocolAdapter
   supports(account: Account, feature: ProviderFeature): boolean
   refreshModels(account: Account): Promise<Array<AccountModel>>
   refreshQuota?(account: Account): Promise<QuotaSnapshot | undefined>

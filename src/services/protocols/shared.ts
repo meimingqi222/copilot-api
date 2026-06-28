@@ -1,7 +1,7 @@
-import consola from "consola"
 import { events } from "fetch-event-stream"
 
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import {
   classifyUpstreamError,
   markCredentialAuthError,
@@ -90,7 +90,7 @@ export async function handleUpstreamFailure(
   }
 
   await persistProviderConnections().catch((err: unknown) => {
-    consola.warn(
+    logger.warn(
       `[${adapterName}] failed to persist credential status:`,
       (err as Error).message,
     )

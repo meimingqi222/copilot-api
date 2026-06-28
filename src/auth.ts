@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { defineCommand } from "citty"
-import consola from "consola"
+
+import { initLogger, logger } from "~/lib/logger"
 
 import { PATHS, ensurePaths } from "./lib/paths"
 import { state } from "./lib/state"
@@ -13,16 +14,15 @@ interface RunAuthOptions {
 }
 
 export async function runAuth(options: RunAuthOptions): Promise<void> {
-  if (options.verbose) {
-    consola.level = 5
-    consola.info("Verbose logging enabled")
-  }
-
   state.showToken = options.showToken
 
   await ensurePaths()
+  initLogger({ verbose: options.verbose })
+  if (options.verbose) {
+    logger.info("Verbose logging enabled")
+  }
   await setupGitHubToken({ force: true })
-  consola.success("GitHub token written to", PATHS.GITHUB_TOKEN_PATH)
+  logger.success("GitHub token written to", PATHS.GITHUB_TOKEN_PATH)
 }
 
 export const auth = defineCommand({

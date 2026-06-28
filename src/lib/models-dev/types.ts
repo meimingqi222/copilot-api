@@ -26,7 +26,11 @@ export interface ModelPricingPer1k {
   cacheWritePricePer1k: number
 }
 
-export type ModelPricingSource = "manual" | "models-dev" | "unmatched"
+export type ModelPricingSource =
+  | "manual"
+  | "models-dev"
+  | "builtin"
+  | "unmatched"
 
 export interface ResolvedModelPricing extends ModelPricingPer1k {
   source: ModelPricingSource

@@ -1,13 +1,14 @@
-import consola from "consola"
+import type { RouteTarget } from "~/lib/provider-connections"
 
-import type {
-  ApiCredential,
-  ProviderConnection,
-  RouteTarget,
-} from "~/lib/provider-connections"
-
-import { markAccountRateLimited } from "~/lib/account-availability"
+import {
+  markAccountRateLimited,
+  markAccountRateLimitedMs,
+  setAccountQuotaState,
+  syncLegacyExhaustedState,
+} from "~/lib/account-availability"
+import { saveAccounts } from "~/lib/account-store"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import {
   DEFAULTS,
   classifyUpstreamError,
@@ -26,6 +27,7 @@ import {
   getProtocolAdapter,
   initializeProtocolAdapters,
 } from "~/services/protocols"
+import { WindsurfUpstreamError } from "~/services/windsurf/error-classifier"
 
 export interface FailoverOptions<TPayload, TResult> {
   payload: TPayload
@@ -65,6 +67,17 @@ export async function executeWithFailover<
 
       tried.add(targetKey(current.target))
 
+      // Windsurf in-stream error frames (rate-limit / quota / auth).
+      // quota_exhausted does NOT failover (preserves cache affinity, like
+      // the HTTPError path above); other kinds failover to another account.
+      if (
+        error instanceof WindsurfUpstreamError
+        && error.kind === "quota_exhausted"
+      ) {
+        await markCooldown(current, error, logPrefix)
+        throw error
+      }
+
       if (error instanceof HTTPError && !shouldFailover(error)) {
         // Non-failover errors (e.g. usage_limit_reached) still need to
         // mark the credential as exhausted so it's not selected again
@@ -74,8 +87,18 @@ export async function executeWithFailover<
       }
 
       // 添加详细的错误日志记录
-      if (error instanceof HTTPError) {
-        consola.warn(
+      if (error instanceof WindsurfUpstreamError) {
+        logger.warn(
+          `${logPrefix} Windsurf upstream error: ${JSON.stringify({
+            target: targetKey(current.target),
+            kind: error.kind,
+            code: error.code,
+            retryAfterMs: error.retryAfterMs,
+            message: error.message,
+          })}`,
+        )
+      } else if (error instanceof HTTPError) {
+        logger.warn(
           `${logPrefix} Request failed during execution: ${JSON.stringify({
             target: targetKey(current.target),
             status: error.response.status,
@@ -84,7 +107,7 @@ export async function executeWithFailover<
           })}`,
         )
       } else {
-        consola.warn(
+        logger.warn(
           `${logPrefix} Unexpected error during execution: ${JSON.stringify({
             target: targetKey(current.target),
             error: error instanceof Error ? error.message : String(error),
@@ -102,24 +125,14 @@ export async function executeWithFailover<
       )
       if (!next) throw error
 
-      const conn = resolveConnectionFromTarget(next)
-      if (conn) {
-        current = {
-          kind: "provider",
-          target: next,
-          connection: conn.connection,
-          credential: conn.credential,
-          initiator: current.initiator,
-        }
-      } else if (next.account) {
-        current = {
-          kind: "account",
-          account: next.account,
-          target: next,
-          initiator: current.initiator,
-        }
-      } else {
-        throw error
+      const resolved = resolveConnectionFromTarget(next)
+      if (!resolved) throw error
+      current = {
+        target: next,
+        connection: resolved.connection,
+        credential: resolved.credential,
+        account: resolved.account,
+        initiator: current.initiator,
       }
     }
   }
@@ -133,45 +146,101 @@ async function markCooldown(
   const isHttp = error instanceof HTTPError
   const status = isHttp ? error.response.status : 503
 
-  if (admission.kind === "provider") {
+  // account-backed 路径:写入 state.accounts + 持久化 accounts.json
+  if (admission.account) {
+    // Windsurf in-stream / HTTP error frames carry the parsed kind +
+    // retryAfterMs (e.g. "Resets in: 3h0m0s" → 10800000ms). Apply the real
+    // cooldown instead of the default 60s exponential backoff.
+    if (error instanceof WindsurfUpstreamError) {
+      if (error.kind === "quota_exhausted") {
+        setAccountQuotaState(admission.account, "exhausted")
+        if (error.retryAfterMs) {
+          admission.account.cooldownUntil = Date.now() + error.retryAfterMs
+        }
+        syncLegacyExhaustedState(admission.account)
+        await saveAccounts().catch((err: unknown) => {
+          logger.warn(
+            `${logPrefix} failed to persist account quota state:`,
+            (err as Error).message,
+          )
+        })
+        return
+      }
+      // rate_limited / server_error / auth_error → rate-limit cooldown
+      // with the real upstream retryAfterMs (up to 4h for windsurf).
+      await markAccountRateLimitedMs(
+        admission.account.id,
+        error.retryAfterMs,
+        `upstream_windsurf_${error.kind}`,
+      )
+      return
+    }
+
     if (isHttp && error.responseBody) {
-      // Use classifyUpstreamError for accurate categorization, especially
-      // for Codex usage_limit_reached which needs quota_exhausted treatment.
       const classified = classifyUpstreamError({
         status,
         retryAfterHeader: error.response.headers.get("retry-after"),
         body: error.responseBody,
       })
       if (classified.kind === "quota_exhausted") {
-        markCredentialQuotaExhausted(
-          admission.credential,
-          `upstream ${status}: ${error.responseBody.slice(0, 200)}`,
-          classified.retryAfterMs,
-        )
-        await persistProviderConnections().catch((err: unknown) => {
-          consola.warn(
-            `${logPrefix} failed to persist credential status:`,
+        setAccountQuotaState(admission.account, "exhausted")
+        if (classified.retryAfterMs) {
+          admission.account.cooldownUntil = Date.now() + classified.retryAfterMs
+        }
+        syncLegacyExhaustedState(admission.account)
+        await saveAccounts().catch((err: unknown) => {
+          logger.warn(
+            `${logPrefix} failed to persist account quota state:`,
             (err as Error).message,
           )
         })
         return
       }
     }
-    const retryAfterMs = resolveRetryAfterMs(isHttp, status)
-    const reason = isHttp ? `upstream ${status}` : resolveNetworkError(error)
-    markCredentialCooldown(admission.credential, { retryAfterMs, reason })
-    await persistProviderConnections().catch((err: unknown) => {
-      consola.warn(
-        `${logPrefix} failed to persist credential status:`,
-        (err as Error).message,
+
+    // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 account
+    if (status === 429 || !isHttp) {
+      await markAccountRateLimited(
+        admission.account.id,
+        new Response(null, { status }),
       )
-    })
-  } else if (status === 429 || !isHttp) {
-    await markAccountRateLimited(
-      admission.account.id,
-      new Response(null, { status }),
-    )
+    }
+    return
   }
+
+  // 纯 provider 路径:标记 credential cooldown / quota_exhausted
+  if (isHttp && error.responseBody) {
+    // Use classifyUpstreamError for accurate categorization, especially
+    // for Codex usage_limit_reached which needs quota_exhausted treatment.
+    const classified = classifyUpstreamError({
+      status,
+      retryAfterHeader: error.response.headers.get("retry-after"),
+      body: error.responseBody,
+    })
+    if (classified.kind === "quota_exhausted") {
+      markCredentialQuotaExhausted(
+        admission.credential,
+        `upstream ${status}: ${error.responseBody.slice(0, 200)}`,
+        classified.retryAfterMs,
+      )
+      await persistProviderConnections().catch((err: unknown) => {
+        logger.warn(
+          `${logPrefix} failed to persist credential status:`,
+          (err as Error).message,
+        )
+      })
+      return
+    }
+  }
+  const retryAfterMs = resolveRetryAfterMs(isHttp, status)
+  const reason = isHttp ? `upstream ${status}` : resolveNetworkError(error)
+  markCredentialCooldown(admission.credential, { retryAfterMs, reason })
+  await persistProviderConnections().catch((err: unknown) => {
+    logger.warn(
+      `${logPrefix} failed to persist credential status:`,
+      (err as Error).message,
+    )
+  })
 }
 
 function resolveRetryAfterMs(isHttp: boolean, status: number): number {
@@ -183,33 +252,4 @@ function resolveRetryAfterMs(isHttp: boolean, status: number): number {
 function resolveNetworkError(error: unknown): string {
   if (error instanceof Error) return error.message
   return "network error"
-}
-
-/**
- * Legacy account 路径下，ProtocolAdapter 签名要求传入 ProviderConnection，
- * 但原生适配器（copilot-native、mimo-native 等）不使用这两个参数（标记为 _connection/_credential）。
- * 这里构造最小占位对象仅用于满足类型签名。
- */
-export function legacyPlaceholderConn(target: RouteTarget): ProviderConnection {
-  return {
-    id: target.connectionId,
-    name: target.connectionName,
-    protocol: target.protocol,
-    baseUrl: "",
-    enabled: true,
-    priority: 1,
-    credentials: [],
-    createdAt: Date.now(),
-  }
-}
-
-export function legacyPlaceholderCred(target: RouteTarget): ApiCredential {
-  return {
-    id: target.credentialId,
-    authMode: "bearer",
-    value: "",
-    enabled: true,
-    status: "ready",
-    createdAt: Date.now(),
-  }
 }

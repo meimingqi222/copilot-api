@@ -1,4 +1,3 @@
-import consola from "consola"
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
@@ -16,9 +15,9 @@ import {
   GITHUB_CLIENT_ID,
   standardHeaders,
 } from "~/lib/api-config"
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
-import { state } from "~/lib/state"
-import { cacheModels, refreshModelsForAccount } from "~/lib/utils"
+import { refreshModelsForAccount } from "~/lib/utils"
 
 // Persisted map of pending device-code flows: deviceCode → pollState
 export interface PollState {
@@ -45,7 +44,7 @@ export async function loadPendingFlows(): Promise<void> {
         pendingFlows.set(key, value)
       }
     }
-    consola.debug("Loaded pending device flows:", pendingFlows.size)
+    logger.debug("Loaded pending device flows:", pendingFlows.size)
   } catch {
     // File doesn't exist or is invalid, start with empty map
   }
@@ -110,7 +109,7 @@ export async function pollAccountFlow(flowId: string): Promise<{
   })
 
   if (!response.ok) {
-    consola.debug(`Poll device flow: GitHub returned ${response.status}`)
+    logger.debug(`Poll device flow: GitHub returned ${response.status}`)
     return { status: "pending" }
   }
 
@@ -122,9 +121,9 @@ export async function pollAccountFlow(flowId: string): Promise<{
   }
   try {
     json = (await response.json()) as typeof json
-    consola.debug("Poll device flow: GitHub response:", json)
+    logger.debug("Poll device flow: GitHub response:", json)
   } catch (e) {
-    consola.error("Poll device flow: Failed to parse GitHub response:", e)
+    logger.error("Poll device flow: Failed to parse GitHub response:", e)
     return { status: "pending" }
   }
 
@@ -138,7 +137,7 @@ export async function pollAccountFlow(flowId: string): Promise<{
       typeof json.interval === "number" ? json.interval : flow.interval + 5
     flow.interval = newInterval
     await savePendingFlows()
-    consola.debug(
+    logger.debug(
       `Poll device flow: slow_down received, increasing interval to ${newInterval}s`,
     )
     return { status: "pending", interval: newInterval }
@@ -177,28 +176,18 @@ export async function pollAccountFlow(flowId: string): Promise<{
     .then(() => refreshQuotaForAccount(account))
     .then(() => refreshModelsForAccount(account))
     .then(() => {
-      consola.info(`GitHub account added: ${account.label}`)
+      logger.info(`GitHub account added: ${account.label}`)
     })
     .catch((err: unknown) => {
-      consola.warn(`Failed to initialize account "${account.label}":`, err)
+      logger.warn(`Failed to initialize account "${account.label}":`, err)
     })
 
   flow.status = "complete"
   flow.accountId = account.id
   await savePendingFlows()
 
-  // Refresh models cache if this is the first account
-  if (state.accounts.length === 1) {
-    consola.info("First account added — refreshing models cache")
-    // Wait a bit for copilot token to be ready
-    setTimeout(() => {
-      try {
-        cacheModels()
-      } catch (err: unknown) {
-        consola.warn("Failed to refresh models after adding account:", err)
-      }
-    }, 2000)
-  }
+  // 模型缓存由 saveAccounts / refreshModelsForAccount 内部的
+  // emitStateChange("models-stale") 自动触发,无需手动调用 cacheModels()。
 
   return { status: "complete", accountId: account.id }
 }

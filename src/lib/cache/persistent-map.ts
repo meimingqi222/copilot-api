@@ -12,10 +12,11 @@
  */
 
 import { createHash } from "node:crypto"
-import { readFile, writeFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import path from "node:path"
 
 import { PATHS } from "~/lib/paths"
+import { Repository } from "~/lib/repository"
 
 interface Entry<V> {
   value: V
@@ -24,6 +25,13 @@ interface Entry<V> {
 
 const FLUSH_DEBOUNCE_MS = 2_000
 const CLEANUP_INTERVAL_MS = 15 * 60_000
+
+const registeredMaps = new Set<PersistentTTLMap<unknown>>()
+
+/** Flush all registered persistent maps (call before process exit). */
+export async function flushAllPersistentMaps(): Promise<void> {
+  await Promise.all([...registeredMaps].map((map) => map.flushNow()))
+}
 
 /**
  * SHA-256 hex digest used for stable cache keys (mirrors CPA's HashKeyPart).
@@ -37,6 +45,7 @@ export class PersistentTTLMap<V> {
   private flushTimer: ReturnType<typeof setTimeout> | undefined
   private cleanupTimer: ReturnType<typeof setInterval> | undefined
   private readonly filePath: string
+  private readonly repo: Repository<Record<string, Entry<V>>>
 
   constructor(
     name: string,
@@ -45,9 +54,15 @@ export class PersistentTTLMap<V> {
     evictBatch = 128,
   ) {
     this.filePath = path.join(PATHS.CACHE_DIR, `${name}.json`)
+    this.repo = new Repository<Record<string, Entry<V>>>({
+      filePath: () => this.filePath,
+      serialize: (data) => JSON.stringify(data),
+      deserialize: (raw) => JSON.parse(raw) as Record<string, Entry<V>>,
+    })
     this.ttlMs = ttlMs
     this.maxEntries = maxEntries
     this.evictBatch = evictBatch
+    registeredMaps.add(this as PersistentTTLMap<unknown>)
   }
   private readonly ttlMs: number
   private readonly maxEntries: number
@@ -147,6 +162,19 @@ export class PersistentTTLMap<V> {
     return this.store.size
   }
 
+  /**
+   * Cancel any pending debounced flush and persist immediately.
+   * Used on graceful shutdown so recent writes are not lost.
+   */
+  async flushNow(): Promise<void> {
+    if (this.flushTimer !== undefined) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = undefined
+    }
+    this.dirty = true
+    await this.flush()
+  }
+
   // ── Internal ─────────────────────────────────────────────────────────
 
   private enforceMaxEntries(): void {
@@ -205,9 +233,7 @@ export class PersistentTTLMap<V> {
           serializable[key] = entry
         }
       }
-      await writeFile(this.filePath, JSON.stringify(serializable), {
-        encoding: "utf8",
-      })
+      await this.repo.save(serializable)
     } catch {
       // Best-effort persistence; ignore write errors.
     } finally {

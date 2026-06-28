@@ -56,7 +56,10 @@ usageApiRoutes.get("/pricing", (c) => {
       cacheWritePricePer1k: number
     }
   > = {}
-  const sources: Record<string, "manual" | "models-dev" | "unmatched"> = {}
+  const sources: Record<
+    string,
+    "manual" | "models-dev" | "builtin" | "unmatched"
+  > = {}
 
   for (const item of statsStore.getAllModelPricing()) {
     pricing[item.model] = {

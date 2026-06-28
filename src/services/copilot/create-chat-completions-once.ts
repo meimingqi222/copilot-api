@@ -1,5 +1,3 @@
-import consola from "consola"
-
 import type { Account, CopilotAccount } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
@@ -11,6 +9,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { getCopilotToken, parseModelReference } from "~/lib/accounts"
 import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import {
   shouldUseResponsesApi,
@@ -90,7 +89,7 @@ export async function createCopilotChatCompletionsOnce(
       .text()
       .catch(() => "")
     if (errorBody.includes("usage_limit_reached")) {
-      consola.warn(
+      logger.warn(
         "Copilot API usage_limit_reached — quota exhausted, not retrying",
       )
       break
@@ -106,7 +105,7 @@ export async function createCopilotChatCompletionsOnce(
       : retryAfterRaw * 1000
     const delayMs = Math.min(baseDelayMs, maxDelayMs)
 
-    consola.warn(
+    logger.warn(
       `Copilot API rate limited, retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`,
     )
 

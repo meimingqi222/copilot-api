@@ -1,9 +1,9 @@
-import consola from "consola"
 import { Hono } from "hono"
 
 import { getAccountAvailability } from "~/lib/account-availability"
 import { refreshQuotaForAccount, saveAccounts } from "~/lib/account-store"
 import { isOAuthAccount } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import {
   canResetCodexQuota,
@@ -76,9 +76,9 @@ quotaApiRoutes.post("/refresh", async (c) => {
         await refreshQuotaForAccount(account)
       }
       results.push({ id: account.id, label: account.label, success: true })
-      consola.info(`Quota refreshed for account "${account.label}"`)
+      logger.info(`Quota refreshed for account "${account.label}"`)
     } catch (err) {
-      consola.warn(
+      logger.warn(
         `Failed to refresh quota for account "${account.label}":`,
         err,
       )
@@ -122,7 +122,7 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
     } else {
       return c.json({ error: "Quota refresh is not available." }, 400)
     }
-    consola.info(`Quota refreshed for account "${account.label}"`)
+    logger.info(`Quota refreshed for account "${account.label}"`)
     return c.json({
       success: true,
       id: account.id,
@@ -134,7 +134,7 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
       quotaState: account.quotaState ?? "unknown",
     })
   } catch (err) {
-    consola.warn(`Failed to refresh quota for account "${account.label}":`, err)
+    logger.warn(`Failed to refresh quota for account "${account.label}":`, err)
     return c.json(
       {
         error: "Failed to refresh quota.",
@@ -191,7 +191,7 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
     }
     applyOAuthQuotaSnapshot(account, snapshot)
     await saveAccounts()
-    consola.info(`Codex quota reset for account "${account.label}"`)
+    logger.info(`Codex quota reset for account "${account.label}"`)
     return c.json({
       success: true,
       id: account.id,
@@ -203,7 +203,7 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
       quotaState: account.quotaState ?? "unknown",
     })
   } catch (err) {
-    consola.warn(
+    logger.warn(
       `Failed to reset Codex quota for account "${account.label}":`,
       err,
     )

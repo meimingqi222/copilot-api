@@ -1,8 +1,8 @@
 import type { Context } from "hono"
 
-import consola from "consola"
 import { streamSSE } from "hono/streaming"
 
+import { logger } from "~/lib/logger"
 import { isAbortError } from "~/lib/utils"
 
 export interface SSEStream {
@@ -106,7 +106,7 @@ export function handleSseStream(
       await run(stream, signal)
     } catch (error) {
       if (isAbortError(error)) {
-        consola.debug("Stream aborted (client disconnected)")
+        logger.debug("Stream aborted (client disconnected)")
         options?.onAbort?.()
         return
       }

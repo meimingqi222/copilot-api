@@ -1,10 +1,10 @@
 import type { Server } from "bun"
 
-import consola from "consola"
 import fs from "node:fs/promises"
 
 import type { AccountProvider } from "~/lib/accounts"
 
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 
 import type { PkceCodes } from "./pkce"
@@ -54,7 +54,7 @@ export async function loadPendingOAuthFlows(): Promise<void> {
         pendingOAuthFlows.set(key, value)
       }
     }
-    consola.debug("Loaded pending OAuth flows:", pendingOAuthFlows.size)
+    logger.debug("Loaded pending OAuth flows:", pendingOAuthFlows.size)
   } catch {
     // File missing or invalid
   }

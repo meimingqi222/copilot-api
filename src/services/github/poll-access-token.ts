@@ -1,10 +1,9 @@
-import consola from "consola"
-
 import {
   GITHUB_BASE_URL,
   GITHUB_CLIENT_ID,
   standardHeaders,
 } from "~/lib/api-config"
+import { logger } from "~/lib/logger"
 import { sleep } from "~/lib/utils"
 
 import type { DeviceCodeResponse } from "./get-device-code"
@@ -15,7 +14,7 @@ export async function pollAccessToken(
   // Interval is in seconds, we need to multiply by 1000 to get milliseconds
   // I'm also adding another second, just to be safe
   const sleepDuration = (deviceCode.interval + 1) * 1000
-  consola.debug(`Polling access token with interval of ${sleepDuration}ms`)
+  logger.debug(`Polling access token with interval of ${sleepDuration}ms`)
 
   const FATAL_ERRORS = new Set([
     "access_denied",
@@ -41,7 +40,7 @@ export async function pollAccessToken(
 
     if (!response.ok) {
       const errorText = await response.text()
-      consola.error("Failed to poll access token:", errorText)
+      logger.error("Failed to poll access token:", errorText)
       await sleep(sleepDuration)
       continue
     }
@@ -49,7 +48,7 @@ export async function pollAccessToken(
     const json = (await response.json()) as AccessTokenResponse & {
       error?: string
     }
-    consola.debug("Polling access token response:", json)
+    logger.debug("Polling access token response:", json)
 
     if (json.error) {
       if (FATAL_ERRORS.has(json.error)) {

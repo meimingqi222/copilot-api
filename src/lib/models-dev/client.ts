@@ -1,9 +1,9 @@
-import consola from "consola"
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
 import type { ModelsDevCatalog } from "~/lib/models-dev/types"
 
+import { logger } from "~/lib/logger"
 import {
   buildModelsDevPriceIndexes,
   type ModelsDevPriceIndexes,
@@ -108,17 +108,17 @@ export async function refreshModelsDevCatalog(force = false): Promise<void> {
     try {
       const fetched = await fetchCatalogFromNetwork()
       setCatalog(fetched)
-      consola.info(
+      logger.info(
         `models.dev catalog refreshed (${Object.keys(fetched).length} providers)`,
       )
     } catch (error) {
       const cached = loadCatalogFromDisk()
       if (cached) {
         setCatalog(cached)
-        consola.warn("models.dev fetch failed; using cached catalog", error)
+        logger.warn("models.dev fetch failed; using cached catalog", error)
         return
       }
-      consola.warn("models.dev fetch failed with no cache available", error)
+      logger.warn("models.dev fetch failed with no cache available", error)
     }
   })().finally(() => {
     refreshInFlight = null

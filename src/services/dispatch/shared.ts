@@ -14,11 +14,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
 
-import {
-  executeWithFailover,
-  legacyPlaceholderConn,
-  legacyPlaceholderCred,
-} from "./failover"
+import { executeWithFailover } from "./failover"
 
 export interface ChatDispatchOptions {
   routeKind: "chat"
@@ -51,14 +47,9 @@ export async function dispatchRequest(
     routeKind,
     logPrefix: `[dispatch/${routeKind}]`,
     execute: (adapter, target: RouteTarget, current) => {
-      const conn =
-        current.kind === "provider" ?
-          current.connection
-        : legacyPlaceholderConn(target)
-      const cred =
-        current.kind === "provider" ?
-          current.credential
-        : legacyPlaceholderCred(target)
+      // Step B 后 admission 始终携带 connection/credential;
+      // account-backed 路径下由 accountToConnection 构造虚拟对象。
+      const { connection: conn, credential: cred } = current
 
       if (routeKind === "chat") {
         if (!adapter?.createChatCompletions) {

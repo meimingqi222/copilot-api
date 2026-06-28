@@ -8,6 +8,8 @@
 
 import type { Account } from "~/lib/accounts"
 
+import type { CredentialRefresherType } from "./credential-refresher"
+
 export type ProviderProtocol =
   | "openai-compatible"
   | "anthropic-compatible"
@@ -124,6 +126,10 @@ export interface ApiCredential {
   lastError?: string
   createdAt: number
   updatedAt?: number
+  /** 凭据刷新器类型。用于动态 token 刷新(Copilot/OAuth)。 */
+  refresherType?: CredentialRefresherType
+  /** 刷新所需的源材料(githubToken / refreshToken 等)。不对外暴露。 */
+  context?: Record<string, unknown>
 }
 
 export interface ModelMapping {
@@ -181,6 +187,8 @@ export interface ProviderConnection {
   lastModelDiscoveryError?: string
   createdAt: number
   updatedAt?: number
+  /** 扩展元数据。用于 account→connection 适配时承载 provider-specific 字段(cpaMetadata, proxyUrl 等)。 */
+  metadata?: Record<string, unknown>
 }
 
 /**
