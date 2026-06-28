@@ -1,10 +1,28 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
+import { canonicalModelId, canonicalNativeModelId } from "~/lib/accounts"
 import { logStore } from "~/lib/log-store"
+import { logger } from "~/lib/logger"
+import { parseModelReference } from "~/lib/route-target/model-reference"
+import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
+
+/** Map request model id to the account catalog public id when possible. */
+export function resolveUsageModelId(accountId: string, model: string): string {
+  const account = state.accounts.find((entry) => entry.id === accountId)
+  if (!account) return model
+
+  const native = canonicalNativeModelId(
+    parseModelReference(model, account).nativeModelId,
+  )
+  const matched = account.availableModels?.find(
+    (entry) => canonicalNativeModelId(entry.id) === native,
+  )
+  if (matched) return matched.id
+
+  return canonicalModelId(model, account)
+}
 
 export interface UsageRecordInput {
   c: Context
@@ -41,7 +59,8 @@ export function recordUsage(input: UsageRecordInput): void {
 
   try {
     const now = timestamp ?? Date.now()
-    const pricing = statsStore.getModelPricing(model)
+    const usageModel = resolveUsageModelId(accountId, model)
+    const pricing = statsStore.getModelPricing(usageModel)
     const cost =
       pricing ?
         (promptTokens / 1000) * pricing.promptPricePer1k
@@ -54,7 +73,7 @@ export function recordUsage(input: UsageRecordInput): void {
       date: statsStore.getDateString(now),
       accountId,
       userId: c.get("userId"),
-      model,
+      model: usageModel,
       promptTokens,
       completionTokens,
       totalTokens,
@@ -69,11 +88,11 @@ export function recordUsage(input: UsageRecordInput): void {
     logStore.push({
       timestamp: now,
       level: "info",
-      message: `Usage recorded for ${model}`,
+      message: `Usage recorded for ${usageModel}`,
       userId: c.get("userId"),
       username: c.get("username"),
       accountId,
-      model,
+      model: usageModel,
       promptTokens,
       completionTokens,
       path: c.req.path,
@@ -82,11 +101,11 @@ export function recordUsage(input: UsageRecordInput): void {
       generationTps: tps,
       streaming,
     })
-    consola.debug(
-      `Recorded usage: ${model} - ${totalTokens} tokens ($${cost.toFixed(4)})`,
+    logger.info(
+      `Token usage: ${promptTokens} in + ${completionTokens} out = ${totalTokens} total (model: ${usageModel})`,
     )
   } catch (error) {
-    consola.warn("Failed to record usage:", error)
+    logger.warn("Failed to record usage:", error)
   }
 }
 
@@ -102,8 +121,8 @@ async function trackUserTokenUsage(c: Context, tokens: number): Promise<void> {
 
   try {
     await incrementUserTokens(userId, tokens)
-    consola.debug(`Tracked ${tokens} tokens for user ${userId}`)
+    logger.debug(`Tracked ${tokens} tokens for user ${userId}`)
   } catch (error) {
-    consola.warn("Failed to track user token usage:", error)
+    logger.warn("Failed to track user token usage:", error)
   }
 }

@@ -18,7 +18,7 @@ videoRoutes.post("/generations", async (c) => {
       model: payload.model,
       endpoint: "videos",
     })
-    if (admission.kind !== "account") {
+    if (!admission.account) {
       throw new HTTPError(
         "Videos API requires an Account-based admission",
         new Response("Not Implemented", { status: 501 }),
@@ -59,7 +59,7 @@ videoRoutes.get("/:requestId", async (c) => {
       model: "grok-imagine-video",
       endpoint: "videos",
     })
-    if (admission.kind !== "account") {
+    if (!admission.account) {
       throw new HTTPError(
         "Videos API requires an Account-based admission",
         new Response("Not Implemented", { status: 501 }),

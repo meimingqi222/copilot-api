@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import type { getWindsurfSettings } from "~/lib/accounts"
 import type {
@@ -111,50 +111,6 @@ export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
   return texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
 }
 
-function deriveSessionId(
-  model: string,
-  payload: ChatCompletionsPayload,
-): string {
-  const systemText = payload.messages
-    .filter((m) => m.role === "system")
-    .map((m) => serializeMessageContent(m.content))
-    .join("\n")
-
-  const firstUserMsg = payload.messages.find(
-    (m) => m.role === "user" || m.role === "developer",
-  )
-  const firstUserContent =
-    firstUserMsg ? serializeMessageContent(firstUserMsg.content) : ""
-
-  const toolSignature = stableStringify(payload.tools ?? [])
-
-  const seed = `${model}\x00${firstUserContent}\x00${systemText}\x00${toolSignature}`
-  const hex = createHash("sha256").update(seed).digest("hex")
-
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `5${hex.slice(13, 16)}`,
-    ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)
-      + hex.slice(17, 20),
-    hex.slice(20, 32),
-  ].join("-")
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`
-  }
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>
-    return `{${Object.keys(record)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
-      .join(",")}}`
-  }
-  return JSON.stringify(value)
-}
-
 // ── Tool-definition builder ────────────────────────────────────────────────────
 
 const DO_NOT_CALL_TOOL_SCHEMA = JSON.stringify({
@@ -164,10 +120,18 @@ const DO_NOT_CALL_TOOL_SCHEMA = JSON.stringify({
   type: "object",
 })
 
+/** Cloud rejects tool descriptions ≥7000 chars with a misleading MCP error. */
+const MAX_TOOL_DESC_LEN = 6998
+
 function buildToolDef(tool: Tool): ProtobufEncoder {
+  const rawDesc = tool.function.description ?? ""
+  const desc =
+    rawDesc.length > MAX_TOOL_DESC_LEN ?
+      `${rawDesc.slice(0, MAX_TOOL_DESC_LEN - 24)}\n…(truncated for cloud)`
+    : rawDesc
   const t = new ProtobufEncoder()
   t.writeString(1, tool.function.name)
-  t.writeString(2, tool.function.description ?? "")
+  t.writeString(2, desc)
   t.writeString(3, JSON.stringify(tool.function.parameters))
   return t
 }
@@ -188,13 +152,29 @@ function buildDoNotCallTool(): ProtobufEncoder {
 
 // ── Metadata & sampling ────────────────────────────────────────────────────────
 
-function buildMetadata(
-  apiKey: string,
-  settings: NonNullable<ReturnType<typeof getWindsurfSettings>>,
-): ProtobufEncoder {
+function buildMetadata(opts: {
+  apiKey: string
+  settings: NonNullable<ReturnType<typeof getWindsurfSettings>>
+  sessionId: string
+  userJwt?: string
+  requestId: number
+  triggerId: string
+  workspaceFingerprint?: string
+}): ProtobufEncoder {
   return buildWindsurfClientMetadata({
-    apiKey,
-    settings,
+    apiKey: opts.apiKey,
+    settings: {
+      clientName: opts.settings.clientName ?? "",
+      appVersion: opts.settings.appVersion ?? "",
+      lsVersion: opts.settings.lsVersion ?? "",
+      extensionName: opts.settings.extensionName,
+      ideType: opts.settings.ideType,
+    },
+    sessionId: opts.sessionId,
+    userJwt: opts.userJwt,
+    requestId: opts.requestId,
+    triggerId: opts.triggerId,
+    workspaceFingerprint: opts.workspaceFingerprint,
   })
 }
 
@@ -219,6 +199,13 @@ const SWE_SPECIAL_TOKENS = [
 
 function isSlugModelId(modelId: string): boolean {
   return !/^MODEL(?:_PRIVATE)?_/i.test(modelId)
+}
+
+/** Real LS capture uses mode=5 even for MODEL_PRIVATE_* upstream IDs. */
+function resolveChatMode(requestModel: string): number {
+  if (isSlugModelId(requestModel)) return 5
+  if (/^MODEL_PRIVATE_/i.test(requestModel)) return 5
+  return 15
 }
 
 function buildSamplingBlock(
@@ -252,13 +239,35 @@ export function buildRequest(opts: {
   settings: NonNullable<ReturnType<typeof getWindsurfSettings>>
   apiKey: string
   requestModel: string
-  sessionIdOverride?: string
+  /** Stable cascade_id (field 16) — reuse across turns for prompt cache. */
+  cascadeId: string
+  /** Metadata session_id (field 10). */
+  cloudSessionId: string
+  /** Fresh per request (field 22). Defaults to a new UUID. */
+  promptId?: string
+  userJwt?: string
+  /** Stable per conversation (metadata field 31). */
+  workspaceFingerprint?: string
 }): Uint8Array {
-  const { payload, settings, apiKey, requestModel } = opts
+  const { payload, settings, apiKey, requestModel, cascadeId, cloudSessionId } =
+    opts
+  const promptId = opts.promptId ?? randomUUID()
   const slugModel = isSlugModelId(requestModel)
+  const chatMode = resolveChatMode(requestModel)
   const request = new ProtobufEncoder()
 
-  request.writeMessage(1, buildMetadata(apiKey, settings))
+  request.writeMessage(
+    1,
+    buildMetadata({
+      apiKey,
+      settings,
+      sessionId: cloudSessionId,
+      userJwt: opts.userJwt,
+      requestId: Date.now(),
+      triggerId: randomUUID(),
+      workspaceFingerprint: opts.workspaceFingerprint,
+    }),
+  )
   request.writeString(2, resolveSystemPrompt(payload))
 
   for (const message of payload.messages) {
@@ -267,8 +276,8 @@ export function buildRequest(opts: {
     if (encoded) request.writeMessage(3, encoded)
   }
 
-  // field 7: mode — 5 for native Windsurf slug models, 15 for upstream enum IDs
-  request.writeVarint(7, slugModel ? 5 : 15)
+  // field 7: mode — real LS capture uses 5 for slug + MODEL_PRIVATE_* models
+  request.writeVarint(7, chatMode)
   request.writeMessage(8, buildSamplingBlock(payload, slugModel))
 
   // field 10: tool definitions (repeated)
@@ -282,14 +291,11 @@ export function buildRequest(opts: {
   }
 
   request.writeMessage(15, buildTraceInfo())
-  request.writeString(16, randomUUID()) // per-request ID (always fresh)
+  // field 16: stable cascade_id (opencode cloud-direct pattern)
+  request.writeString(16, cascadeId)
   request.writeVarint(20, ChatMessageRequestType.GENERAL) // request type
   request.writeString(21, requestModel)
-  // Stable session → KV cache: prefer forwarded session ID, fall back to
-  // content-hash-derived stable ID for cache prefix reuse.
-  request.writeString(
-    22,
-    opts.sessionIdOverride ?? deriveSessionId(requestModel, payload),
-  )
+  // field 22: fresh prompt_id per request (opencode cloud-direct pattern)
+  request.writeString(22, promptId)
   return encodeConnectFrame(request.toUint8Array(), true)
 }

@@ -1,8 +1,8 @@
-import consola from "consola"
 import { createHash, randomUUID } from "node:crypto"
 
 import type { ClawWs } from "~/services/mimo/ws-proxy"
 
+import { logger } from "~/lib/logger"
 import { sleep } from "~/lib/utils"
 import { markAccountFailed } from "~/services/mimo/manager"
 import {
@@ -144,13 +144,13 @@ export class NativeClawClient {
         this.proxy,
       )
       const text = await resp.text()
-      consola.info(
+      logger.info(
         `[Claw ${this.label}] Destroy response: ${resp.status} ${text.slice(0, 100)}`,
       )
       this.checkAuth(resp)
       return resp.ok
     } catch (e) {
-      consola.error(`[Claw ${this.label}] Destroy claw error:`, e)
+      logger.error(`[Claw ${this.label}] Destroy claw error:`, e)
       return false
     }
   }
@@ -176,7 +176,7 @@ export class NativeClawClient {
         this.proxy,
       )
       const createText = await createResp.text()
-      consola.info(
+      logger.info(
         `[Claw ${this.label}] Create response: ${createResp.status} ${createText.slice(0, 100)}`,
       )
       this.checkAuth(createResp)
@@ -199,7 +199,7 @@ export class NativeClawClient {
         const data = (await statusResp.json()) as StatusResponse
         const status = data.data?.status || ""
         if (status !== lastStatus) {
-          consola.info(`[Claw ${this.label}] Status: ${status}`)
+          logger.info(`[Claw ${this.label}] Status: ${status}`)
           lastStatus = status
         }
         if (status === "AVAILABLE") return true
@@ -213,7 +213,7 @@ export class NativeClawClient {
         await sleep(2000)
       }
     } catch (e) {
-      consola.error(`[Claw ${this.label}] Create claw error:`, e)
+      logger.error(`[Claw ${this.label}] Create claw error:`, e)
     }
     return false
   }
@@ -244,7 +244,7 @@ export class NativeClawClient {
         const ticket = data.data?.ticket
         if (ticket) return ticket
       } catch (e) {
-        consola.warn(
+        logger.warn(
           `[Claw ${this.label}] Ticket fetch failed: ${e instanceof Error ? e.message : String(e)}`,
         )
       }
@@ -306,7 +306,7 @@ export class NativeClawClient {
 
   async connect(waitAvailable = true): Promise<boolean> {
     if (waitAvailable) {
-      consola.info(
+      logger.info(
         `[Claw ${this.label}] Creating instance and waiting for availability...`,
       )
       if (!(await this.createAndWait())) return false
@@ -330,7 +330,7 @@ export class NativeClawClient {
       })
 
       this.ws.addEventListener("error", (err: unknown) => {
-        consola.error(`[Claw ${this.label}] WS error:`, err)
+        logger.error(`[Claw ${this.label}] WS error:`, err)
         this.connected = false
         this.resolveConnected?.()
         this.resolveConnected = null
@@ -339,7 +339,7 @@ export class NativeClawClient {
 
       this.ws.addEventListener("close", (e: unknown) => {
         const ce = e as CloseEvent
-        consola.info(
+        logger.info(
           `[Claw ${this.label}] WS closed code=${ce.code} reason=${ce.reason}`,
         )
         this.connected = false
@@ -364,7 +364,7 @@ export class NativeClawClient {
       }
       return this.connected
     } catch (e) {
-      consola.error(`[Claw ${this.label}] WS connection error:`, e)
+      logger.error(`[Claw ${this.label}] WS connection error:`, e)
       return false
     }
   }
@@ -387,7 +387,7 @@ export class NativeClawClient {
       const data = JSON.parse(raw) as WsMessage
       this.handleWsMessage(data)
     } catch (e) {
-      consola.error("WS parse error:", e)
+      logger.error("WS parse error:", e)
     }
   }
 
@@ -496,7 +496,7 @@ export class NativeClawClient {
         }
       } else if (evt.event === "agent") {
         const p = evt.payload
-        consola.debug(
+        logger.debug(
           `[Claw ${this.label}] agent event: stream=${p?.stream} phase=${p?.data?.phase} text=${(p?.data?.text || "").slice(0, 60)}`,
         )
         if (

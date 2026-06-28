@@ -1,4 +1,3 @@
-import consola from "consola"
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
@@ -7,6 +6,7 @@ import type { OAuthFetchOptions } from "~/services/oauth/fetch"
 
 import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { addAccount } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -162,7 +162,7 @@ async function finalizeOAuthAccount(account: OAuthAccount): Promise<void> {
     const runtime = getProviderRuntime(account.provider)
     if (runtime.refreshQuota) {
       void runtime.refreshQuota(account).catch((error: unknown) => {
-        consola.warn(`Failed to refresh quota for "${account.label}":`, error)
+        logger.warn(`Failed to refresh quota for "${account.label}":`, error)
       })
     }
   } catch (error: unknown) {

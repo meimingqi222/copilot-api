@@ -1,21 +1,12 @@
-import consola from "consola"
-
 import type { Account, AccountQuotaState } from "~/lib/accounts"
 
 import { buildAccountDiagnosticSnapshot } from "~/lib/account-diagnostics"
 import { saveAccounts } from "~/lib/account-store"
-import {
-  findCredential,
-  isCredentialAvailable,
-  markCredentialCooldown,
-  persistProviderConnections,
-  refreshCredentialAvailability,
-  resetCredentialStatus,
-  type RateLimitInfo,
-} from "~/lib/provider-connections"
+import { logger } from "~/lib/logger"
 import {
   getRemainingCooldownSeconds,
   reportUpstreamRateLimit,
+  reportUpstreamRateLimitMs,
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -45,7 +36,7 @@ export function refreshAccountRuntimeAvailability(account: Account): boolean {
     account.cooldownUntil = undefined
     account.lastRateLimitReason = undefined
     syncLegacyExhaustedState(account)
-    consola.info(
+    logger.info(
       `Account cooldown expired — re-activating: ${JSON.stringify(
         buildAccountDiagnosticSnapshot(account),
       )}`,
@@ -85,26 +76,6 @@ export function getAccountAvailability(account: Account): {
     return { available: false, reason: "quota", retryAfterSeconds: 0 }
   }
 
-  const credential = findCredentialForAccount(account)
-  if (credential && !isCredentialAvailable(credential)) {
-    if (credential.status === "cooldown" && credential.cooldownUntil) {
-      const remaining = Math.ceil(
-        (credential.cooldownUntil - Date.now()) / 1000,
-      )
-      return {
-        available: false,
-        reason: "cooldown",
-        retryAfterSeconds: Math.max(remaining, 0),
-      }
-    }
-    if (credential.status === "auth_error") {
-      return { available: false, reason: "error", retryAfterSeconds: 10 }
-    }
-    if (credential.status === "quota_exhausted") {
-      return { available: false, reason: "quota", retryAfterSeconds: 0 }
-    }
-  }
-
   return { available: true, reason: "available", retryAfterSeconds: 0 }
 }
 
@@ -138,34 +109,49 @@ export async function markAccountRateLimited(
     status === 429 ? "upstream_429" : `upstream_${status}`
   syncLegacyExhaustedState(account)
 
-  const credential = findCredentialForAccount(account)
-  if (credential) {
-    const retryAfterMs =
-      remainingCooldown > 0 ? remainingCooldown * 1000 : undefined
-    const info: RateLimitInfo = {
-      retryAfterMs,
-      reason: status === 429 ? "upstream_429" : `upstream_${status}`,
-    }
-    refreshCredentialAvailability(credential)
-    if (credential.status === "ready") {
-      markCredentialCooldown(credential, info)
-    }
-    await persistProviderConnections().catch((err: unknown) => {
-      consola.error(
-        "Failed to persist provider connections after rate limit:",
-        err,
-      )
-    })
-  }
-
   saveAccounts().catch((err: unknown) => {
-    consola.error("Failed to auto-save accounts after rate limit:", err)
+    logger.error("Failed to auto-save accounts after rate limit:", err)
   })
 
   const cooldownInfo =
     remainingCooldown > 0 ? ` (cooldown: ${remainingCooldown}s remaining)` : ""
-  consola.warn(
+  logger.warn(
     `Account "${account.label}" marked unavailable due to upstream rate limit${cooldownInfo}: ${JSON.stringify(
+      buildAccountDiagnosticSnapshot(account),
+    )}`,
+  )
+}
+
+/**
+ * Like `markAccountRateLimited` but accepts an explicit `retryAfterMs`
+ * (parsed from a response body, e.g. Windsurf's "Resets in: 3h0m0s").
+ * Used by the Windsurf path where the cooldown duration is in the message
+ * body, not a Retry-After header.
+ */
+export async function markAccountRateLimitedMs(
+  id: string,
+  retryAfterMs?: number,
+  reason = "upstream_windsurf_rate_limit",
+): Promise<void> {
+  await reportUpstreamRateLimitMs(id, retryAfterMs)
+  const account = state.accounts.find((candidate) => candidate.id === id)
+  if (!account) return
+
+  const remainingCooldown = getRemainingCooldownSeconds(id)
+  account.lastRateLimitAt = Date.now()
+  account.cooldownUntil =
+    remainingCooldown > 0 ? Date.now() + remainingCooldown * 1000 : undefined
+  account.lastRateLimitReason = reason
+  syncLegacyExhaustedState(account)
+
+  saveAccounts().catch((err: unknown) => {
+    logger.error("Failed to auto-save accounts after rate limit:", err)
+  })
+
+  const cooldownInfo =
+    remainingCooldown > 0 ? ` (cooldown: ${remainingCooldown}s remaining)` : ""
+  logger.warn(
+    `Account "${account.label}" marked unavailable due to Windsurf rate limit${cooldownInfo}: ${JSON.stringify(
       buildAccountDiagnosticSnapshot(account),
     )}`,
   )
@@ -178,19 +164,8 @@ export async function markAccountRateLimitRecovered(id: string): Promise<void> {
   refreshAccountRuntimeAvailability(account)
   syncLegacyExhaustedState(account)
 
-  const credential = findCredentialForAccount(account)
-  if (credential && credential.status !== "ready" && credential.enabled) {
-    resetCredentialStatus(credential)
-    await persistProviderConnections().catch((err: unknown) => {
-      consola.error(
-        "Failed to persist provider connections after recovery:",
-        err,
-      )
-    })
-  }
-
   saveAccounts().catch((err: unknown) => {
-    consola.error("Failed to auto-save accounts after recovery:", err)
+    logger.error("Failed to auto-save accounts after recovery:", err)
   })
 }
 
@@ -208,11 +183,4 @@ export function getMinimumCooldownSeconds(accounts: Array<Account>): number {
     }
   }
   return minCooldown
-}
-
-function findCredentialForAccount(
-  account: Account,
-): import("~/lib/provider-connections/types").ApiCredential | undefined {
-  const found = findCredential(account.id, account.id)
-  return found?.credential
 }

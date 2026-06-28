@@ -7,7 +7,8 @@
  * - 判断 credential / connection 是否可参与调度。
  */
 
-import consola from "consola"
+import { logger } from "~/lib/logger"
+import { parseRetryAfterMs } from "~/lib/retry-after"
 
 import type { ApiCredential, ProviderConnection } from "./types"
 
@@ -79,7 +80,7 @@ export function markCredentialCooldown(
   credential.lastRateLimitAt = now
   credential.lastError = info.reason
   credential.lastErrorAt = now
-  consola.warn(
+  logger.warn(
     `[provider-connections] credential ${credential.id} cooldown for ${cooldownMs}ms reason=${
       info.reason ?? "unknown"
     }`,
@@ -95,7 +96,7 @@ export function markCredentialAuthError(
   credential.status = "auth_error"
   credential.lastError = reason
   credential.lastErrorAt = now
-  consola.warn(
+  logger.warn(
     `[provider-connections] credential ${credential.id} auth_error reason=${
       reason ?? "unknown"
     }`,
@@ -113,7 +114,7 @@ export function markCredentialQuotaExhausted(
   credential.cooldownUntil = now + recoveryMs
   credential.lastError = reason
   credential.lastErrorAt = now
-  consola.warn(
+  logger.warn(
     `[provider-connections] credential ${credential.id} quota_exhausted reason=${
       reason ?? "unknown"
     }`,
@@ -160,7 +161,10 @@ export function classifyUpstreamError(input: {
   body?: string
 }): { kind: UpstreamErrorKind; retryAfterMs?: number } {
   const { status, body } = input
-  const retryAfterMs = parseRetryAfter(input.retryAfterHeader)
+  const retryAfterMs = parseRetryAfterMs(
+    input.retryAfterHeader,
+    DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+  )
 
   if (status === undefined) {
     return { kind: "network_error" }
@@ -221,7 +225,7 @@ export function classifyUpstreamError(input: {
  * Detects Codex usage_limit_reached errors in a response body.
  * Mirrors CPA's isCodexUsageLimitError — checks error.type and top-level type.
  */
-function isCodexUsageLimitError(body: string): boolean {
+export function isCodexUsageLimitError(body: string): boolean {
   if (!body) return false
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>
@@ -242,7 +246,9 @@ function isCodexUsageLimitError(body: string): boolean {
  * body and returns the retry-after duration in milliseconds.
  * Mirrors CPA's parseCodexRetryAfter.
  */
-function parseCodexUsageLimitRetryAfter(body?: string): number | undefined {
+export function parseCodexUsageLimitRetryAfter(
+  body?: string,
+): number | undefined {
   if (!body) return undefined
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>
@@ -256,14 +262,17 @@ function parseCodexUsageLimitRetryAfter(body?: string): number | undefined {
       const resetMs = resetsAt * 1000
       const diff = resetMs - Date.now()
       if (diff > 0) {
-        return Math.min(diff, MAX_RETRY_AFTER_MS)
+        return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
       }
     }
 
     // resets_in_seconds — duration in seconds
     const resetsInSeconds = error.resets_in_seconds
     if (typeof resetsInSeconds === "number" && resetsInSeconds > 0) {
-      return Math.min(resetsInSeconds * 1000, MAX_RETRY_AFTER_MS)
+      return Math.min(
+        resetsInSeconds * 1000,
+        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
     }
 
     // No reset timing — use default quota cooldown
@@ -271,23 +280,4 @@ function parseCodexUsageLimitRetryAfter(body?: string): number | undefined {
   } catch {
     return undefined
   }
-}
-
-const MAX_RETRY_AFTER_MS = DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-
-function parseRetryAfter(
-  header: string | null | undefined,
-): number | undefined {
-  if (!header) return undefined
-  const trimmed = header.trim()
-  const asNumber = Number(trimmed)
-  if (Number.isFinite(asNumber) && asNumber >= 0) {
-    return Math.min(Math.round(asNumber * 1000), MAX_RETRY_AFTER_MS)
-  }
-  const asDate = Date.parse(trimmed)
-  if (!Number.isNaN(asDate)) {
-    const delta = asDate - Date.now()
-    return Math.min(Math.max(delta, 0), MAX_RETRY_AFTER_MS)
-  }
-  return undefined
 }

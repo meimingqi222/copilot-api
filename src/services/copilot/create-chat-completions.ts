@@ -187,6 +187,8 @@ export interface ChatCompletionsPayload {
     | { type: "function"; function: { name: string } }
     | null
   user?: string | null
+  /** OpenAI/Codex cache routing key — also used for Windsurf conversation buckets. */
+  prompt_cache_key?: string | null
   reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | null
   reasoning?: Record<string, unknown> | null
   thinking?:

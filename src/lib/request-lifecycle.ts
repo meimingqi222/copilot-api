@@ -1,7 +1,6 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
+import { logger } from "~/lib/logger"
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
 
 export class RouteRateLimitError extends Error {
@@ -75,7 +74,7 @@ export function respondToKnownRouteError(
     c.header("Retry-After", String(details.retryAfterSeconds))
   }
 
-  consola.warn(
+  logger.warn(
     `Known route error response: ${JSON.stringify({
       source: getKnownRouteErrorSource(error),
       path: c.req.path,

@@ -1,7 +1,6 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
+import { logger } from "~/lib/logger"
 import { recordUsage } from "~/lib/usage"
 
 import type {
@@ -150,7 +149,7 @@ export function updateLastUsage(
       }
     }
   } catch (error) {
-    consola.warn("Failed to parse streaming event data:", error)
+    logger.warn("Failed to parse streaming event data:", error)
   }
   return lastUsage
 }

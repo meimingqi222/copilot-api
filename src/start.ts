@@ -2,36 +2,33 @@
 
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
-import consola from "consola"
 import { websocket } from "hono/bun"
-import { createHash, randomUUID } from "node:crypto"
-import fs from "node:fs/promises"
-import { resolve } from "node:path"
 import invariant from "tiny-invariant"
 
+import { flushAllPersistentMaps } from "~/lib/cache/persistent-map"
+import { initLogger, logger } from "~/lib/logger"
+
 import {
+  flushAccountsOnShutdown,
   initAccounts,
   refreshCopilotToken,
-  saveAccounts,
   scheduleQuotaRefresh,
 } from "./lib/account-store"
-import {
-  type CodebuffAccount,
-  type WindsurfAccount,
-  getCodebuffAuthToken,
-  getWindsurfApiKey,
-  addAccount,
-} from "./lib/accounts"
+import { hashAdminPasswordInEnv } from "./lib/admin-password"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
+import { acquireServerLock, releaseServerLock } from "./lib/process-lock"
 import {
   initializeProviderConnections,
   scheduleConnectionModelDiscovery,
 } from "./lib/provider-connections"
+import { initializeCredentialRefreshers } from "./lib/provider-connections/refresher-impls"
+import { ensureDirectProviderAccounts } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { statsStore } from "./lib/stats-store"
+import { globalTimers } from "./lib/timer-registry"
 import { loadUsers } from "./lib/users"
 import {
   cacheModels,
@@ -79,22 +76,17 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       // Client disconnected, normal behavior
       return
     }
-    consola.error("Unhandled rejection:", reason)
+    logger.error("Unhandled rejection:", reason)
   })
 
   if (options.proxyEnv) {
     initProxyFromEnv()
   }
 
-  if (options.verbose) {
-    consola.level = 5
-    consola.info("Verbose logging enabled")
-  }
-
   state.defaultProvider = options.provider
   state.accountType = options.accountType
   if (options.accountType !== "individual") {
-    consola.info(`Using ${options.accountType} plan GitHub account`)
+    logger.info(`Using ${options.accountType} plan GitHub account`)
   }
 
   state.providerDefaults.codebuff.baseUrl =
@@ -124,12 +116,12 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     options.windsurfClientName ?? state.providerDefaults.windsurf.clientName
 
   if (options.provider === "codebuff") {
-    consola.info(
+    logger.info(
       `Using codebuff defaults: ${state.providerDefaults.codebuff.baseUrl}`,
     )
   }
   if (options.provider === "windsurf") {
-    consola.info(
+    logger.info(
       `Using windsurf defaults: ${state.providerDefaults.windsurf.baseUrl}`,
     )
   }
@@ -140,14 +132,14 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.adminPassword = options.adminPassword ?? options.apiKey
 
   if (state.legacyApiKey) {
-    consola.info("API key protection enabled")
-    consola.warn(
+    logger.info("API key protection enabled")
+    logger.warn(
       "⚠ Legacy API_KEY mode is deprecated. Use the admin panel to create per-user API keys for better security and auditability.",
     )
   }
 
   if (state.adminPassword) {
-    consola.info("Admin login password is configured")
+    logger.info("Admin login password is configured")
     await hashAdminPasswordInEnv(state.adminPassword)
   }
 
@@ -159,6 +151,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
 
   await ensurePaths()
+  await acquireServerLock()
+  initLogger({ verbose: options.verbose })
+  if (options.verbose) {
+    logger.info("Verbose logging enabled")
+  }
   await cacheVSCodeVersion()
 
   // Load accounts from disk (configure via Web UI)
@@ -169,6 +166,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // Load provider connections (generic OpenAI/Anthropic-compatible providers)
   await initializeProviderConnections()
   initializeProtocolAdapters()
+  initializeCredentialRefreshers()
 
   // Refresh Copilot tokens for copilot accounts
   for (const account of state.accounts) {
@@ -179,7 +177,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     try {
       await refreshCopilotToken(account)
     } catch (err) {
-      consola.debug(
+      logger.debug(
         `Failed to get Copilot token for account "${account.label}"`,
         err,
       )
@@ -199,11 +197,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   startMimoManager()
 
   if (state.models) {
-    consola.info(
+    logger.info(
       `Available models: \n${state.models.data.map((model) => `- ${model.id}`).join("\n")}`,
     )
   } else {
-    consola.warn(
+    logger.warn(
       "No models available — add a GitHub account via Web UI to get started",
     )
   }
@@ -228,7 +226,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       "No models available. Add a GitHub account via Web UI first, or provide a token via --github-token",
     )
 
-    const selectedModel = await consola.prompt(
+    const selectedModel = await logger.prompt(
       "Select a model to use with Claude Code",
       {
         type: "select",
@@ -236,7 +234,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       },
     )
 
-    const selectedSmallModel = await consola.prompt(
+    const selectedSmallModel = await logger.prompt(
       "Select a small model to use with Claude Code",
       {
         type: "select",
@@ -260,21 +258,21 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
     try {
       clipboard.writeSync(command)
-      consola.success("Copied Claude Code command to clipboard!")
+      logger.success("Copied Claude Code command to clipboard!")
     } catch {
-      consola.warn(
+      logger.warn(
         "Failed to copy to clipboard. Here is the Claude Code command:",
       )
-      consola.log(command)
+      logger.log(command)
     }
   }
 
   if (state.legacyApiKey) {
-    consola.box(
+    logger.box(
       `🔐 API key protection is enabled.\nAdmin login: ${serverUrl}/admin/login\nAdmin password source: ADMIN_PASSWORD (or --admin-password). Fallback: API_KEY`,
     )
   } else {
-    consola.box(
+    logger.box(
       `🌐 Admin Dashboard: ${serverUrl}/admin\n(Or add API key to require authentication)`,
     )
   }
@@ -287,167 +285,31 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     idleTimeout: 0,
   })
 
-  const shutdown = () => {
-    consola.info("Shutting down...")
+  let shuttingDown = false
+  const shutdown = async () => {
+    if (shuttingDown) return
+    shuttingDown = true
+    logger.info("Shutting down...")
+    try {
+      await flushAllPersistentMaps()
+      await flushAccountsOnShutdown()
+    } catch (error) {
+      logger.warn("Failed to flush state on shutdown", {
+        error: (error as Error).message,
+      })
+    }
+    globalTimers.clearAll()
     stopMimoManager()
+    await releaseServerLock()
     void bunServer.stop()
+    process.exit(0)
   }
-  process.on("SIGTERM", shutdown)
-  process.on("SIGINT", shutdown)
-}
-
-export async function ensureDirectProviderAccounts(): Promise<void> {
-  let changed = false
-  changed = syncCodebuffDefaultAccount() || changed
-  changed = syncWindsurfDefaultAccount() || changed
-
-  if (changed) {
-    await saveAccounts()
-  }
-}
-
-function syncCodebuffDefaultAccount(): boolean {
-  let changed = false
-  const defaults = state.providerDefaults.codebuff
-  const existingAccount = state.accounts.find(
-    (account): account is CodebuffAccount =>
-      isCodebuffManagedDefaultAccount(account)
-      && getCodebuffAuthToken(account) === defaults.authToken,
-  )
-
-  if (existingAccount) {
-    applyCodebuffDefaults(existingAccount)
-    changed = true
-  }
-
-  if (
-    defaults.authToken
-    && !state.accounts.some(
-      (account) =>
-        account.provider === "codebuff"
-        && getCodebuffAuthToken(account) === defaults.authToken,
-    )
-  ) {
-    addAccount(createCodebuffDefaultAccount())
-    changed = true
-  }
-
-  return changed
-}
-
-function isCodebuffManagedDefaultAccount(account: {
-  provider: string
-  label: string
-}): account is CodebuffAccount {
-  return account.provider === "codebuff" && account.label === "codebuff-default"
-}
-
-function applyCodebuffDefaults(account: CodebuffAccount): void {
-  const defaults = state.providerDefaults.codebuff
-  account.settings = {
-    ...account.settings,
-    baseUrl: defaults.baseUrl,
-    cliVersion: defaults.cliVersion,
-    agentId: defaults.agentId,
-    model: defaults.model,
-    costMode: defaults.costMode,
-    allowFallbacks: defaults.allowFallbacks,
-  }
-}
-
-function createCodebuffDefaultAccount() {
-  const defaults = state.providerDefaults.codebuff
-  return {
-    id: randomUUID(),
-    label: "codebuff-default",
-    provider: "codebuff" as const,
-    credentials: {
-      authToken: defaults.authToken,
-    },
-    settings: {
-      baseUrl: defaults.baseUrl,
-      cliVersion: defaults.cliVersion,
-      agentId: defaults.agentId,
-      model: defaults.model,
-      costMode: defaults.costMode,
-      allowFallbacks: defaults.allowFallbacks,
-    },
-    enabled: true,
-    priority: 0,
-    quotaState: "unknown" as const,
-    createdAt: Date.now(),
-  }
-}
-
-function syncWindsurfDefaultAccount(): boolean {
-  let changed = false
-  const defaults = state.providerDefaults.windsurf
-  const existingAccount = state.accounts.find(
-    (account): account is WindsurfAccount =>
-      isWindsurfManagedDefaultAccount(account)
-      && getWindsurfApiKey(account) === defaults.apiKey,
-  )
-
-  if (existingAccount) {
-    applyWindsurfDefaults(existingAccount)
-    changed = true
-  }
-
-  if (
-    defaults.apiKey
-    && !state.accounts.some(
-      (account) =>
-        account.provider === "windsurf"
-        && getWindsurfApiKey(account) === defaults.apiKey,
-    )
-  ) {
-    addAccount(createWindsurfDefaultAccount())
-    changed = true
-  }
-
-  return changed
-}
-
-function isWindsurfManagedDefaultAccount(account: {
-  provider: string
-  label: string
-}): account is WindsurfAccount {
-  return account.provider === "windsurf" && account.label === "windsurf-default"
-}
-
-function applyWindsurfDefaults(account: WindsurfAccount): void {
-  const defaults = state.providerDefaults.windsurf
-  account.settings = {
-    ...account.settings,
-    baseUrl: defaults.baseUrl,
-    appVersion: defaults.appVersion,
-    lsVersion: defaults.lsVersion,
-    defaultModel: defaults.defaultModel,
-    clientName: defaults.clientName,
-  }
-}
-
-function createWindsurfDefaultAccount() {
-  const defaults = state.providerDefaults.windsurf
-  return {
-    id: randomUUID(),
-    label: "windsurf-default",
-    provider: "windsurf" as const,
-    credentials: {
-      apiKey: defaults.apiKey,
-    },
-    settings: {
-      baseUrl: defaults.baseUrl,
-      appVersion: defaults.appVersion,
-      lsVersion: defaults.lsVersion,
-      defaultModel: defaults.defaultModel,
-      clientName: defaults.clientName,
-    },
-    enabled: true,
-    priority: 0,
-    quotaState: "unknown" as const,
-    createdAt: Date.now(),
-  }
+  process.on("SIGTERM", () => {
+    void shutdown()
+  })
+  process.on("SIGINT", () => {
+    void shutdown()
+  })
 }
 
 function resolveProvider(
@@ -456,34 +318,6 @@ function resolveProvider(
   if (provider === "codebuff") return "codebuff"
   if (provider === "windsurf") return "windsurf"
   return "copilot"
-}
-
-/**
- * If the admin password is plaintext (not sha256: prefixed),
- * hash it in-place and rewrite the .env file so the secret
- * is never stored in cleartext on disk after first boot.
- */
-async function hashAdminPasswordInEnv(password: string): Promise<void> {
-  if (password.startsWith("sha256:")) return
-
-  const hashed = `sha256:${createHash("sha256").update(password).digest("hex")}`
-  state.adminPassword = hashed
-
-  // Attempt to rewrite .env — best-effort, non-fatal
-  const envPath = resolve(process.cwd(), ".env")
-  try {
-    const content = await fs.readFile(envPath, "utf8")
-    const updated = content.replace(
-      /^ADMIN_PASSWORD=.+$/m,
-      `ADMIN_PASSWORD=${hashed}`,
-    )
-    if (updated !== content) {
-      await fs.writeFile(envPath, updated, "utf8")
-      consola.success("ADMIN_PASSWORD in .env has been auto-hashed (sha256)")
-    }
-  } catch {
-    // .env may not exist (password via CLI flag) — that's fine
-  }
 }
 
 export const start = defineCommand({
@@ -615,7 +449,8 @@ export const start = defineCommand({
     "windsurf-ls-version": {
       type: "string",
       default: process.env.WINDSURF_LS_VERSION ?? "2.0.1050",
-      description: "Windsurf language-server version",
+      description:
+        "Windsurf client LS version string (metadata protobuf field 7)",
     },
     "windsurf-model": {
       type: "string",

@@ -1,7 +1,7 @@
-import consola from "consola"
 import { Hono } from "hono"
 import { upgradeWebSocket } from "hono/bun"
 
+import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import {
   isValidMimoWsTokenForAccount,
@@ -16,13 +16,13 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
   const accountId = c.req.query("accountId")
 
   if (!accountId) {
-    consola.debug("Rejecting Claw WS connection: missing accountId query param")
+    logger.debug("Rejecting Claw WS connection: missing accountId query param")
     return {}
   }
 
   return {
     onOpen(_event, ws) {
-      consola.info(`[Claw WS] Node connected for account: ${accountId}`)
+      logger.info(`[Claw WS] Node connected for account: ${accountId}`)
 
       mimoConnections.set(accountId, {
         accountId,
@@ -54,11 +54,11 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
           }
         }
       } catch (e) {
-        consola.error("[Claw WS] Error parsing incoming message:", e)
+        logger.error("[Claw WS] Error parsing incoming message:", e)
       }
     },
     onClose(_event, _ws) {
-      consola.info(`[Claw WS] Node disconnected for account: ${accountId}`)
+      logger.info(`[Claw WS] Node disconnected for account: ${accountId}`)
       const conn = mimoConnections.get(accountId)
       if (conn) {
         for (const [reqId, callback] of conn.activeRequests.entries()) {
@@ -73,7 +73,7 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
       markAccountFailed(accountId, "Bridge node disconnected")
     },
     onError(_event, _ws) {
-      consola.error(`[Claw WS] Node error for account: ${accountId}`)
+      logger.error(`[Claw WS] Node error for account: ${accountId}`)
     },
   }
 })
@@ -87,7 +87,7 @@ mimoWsRoute.get("/", async (c, next) => {
   // Accept token auth via header or query param
   const token = c.req.header("x-mimo-ws-token") ?? c.req.query("token")
   if (!isValidMimoWsTokenForAccount(accountId, token)) {
-    consola.warn(
+    logger.warn(
       `Rejecting Claw WS connection: invalid token for account ${accountId}`,
     )
     return c.text("Unauthorized", 401)
@@ -95,7 +95,7 @@ mimoWsRoute.get("/", async (c, next) => {
 
   const account = state.accounts.find((item) => item.id === accountId)
   if (!account || !account.enabled || account.provider !== "mimo-aistudio") {
-    consola.debug(`Rejecting Claw WS connection: invalid account ${accountId}`)
+    logger.debug(`Rejecting Claw WS connection: invalid account ${accountId}`)
     return c.text("Forbidden", 403)
   }
 

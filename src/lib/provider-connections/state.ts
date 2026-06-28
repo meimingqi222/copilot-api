@@ -6,8 +6,10 @@
  * - 提供按 id / credential 维度的查询。
  */
 
-import consola from "consola"
 import { randomUUID } from "node:crypto"
+
+import { logger } from "~/lib/logger"
+import { emitStateChange } from "~/lib/state-events"
 
 import { loadProviderConnections, saveProviderConnections } from "./store"
 import {
@@ -39,12 +41,12 @@ export async function initializeProviderConnections(): Promise<void> {
   try {
     stateRoot.connections = await loadProviderConnections()
     stateRoot.loaded = true
-    consola.info(
+    logger.info(
       `[provider-connections] loaded ${stateRoot.connections.length} connection(s)`,
     )
   } catch (error) {
     stateRoot.loaded = false
-    consola.error(
+    logger.error(
       `[provider-connections] init failed: ${(error as Error).message}`,
     )
     throw error
@@ -84,7 +86,11 @@ function cloneConnections(): Array<ProviderConnection> {
 async function withMutation<T>(operation: () => T | Promise<T>): Promise<T> {
   const previous = cloneConnections()
   const run = mutationQueue
-    .catch(() => {})
+    .catch((error: unknown) => {
+      logger.warn(
+        `[provider-connections] mutation queue error: ${(error as Error).message}`,
+      )
+    })
     .then(async () => {
       try {
         const result = await operation()
@@ -97,7 +103,11 @@ async function withMutation<T>(operation: () => T | Promise<T>): Promise<T> {
     })
   mutationQueue = run.then(
     () => undefined,
-    () => undefined,
+    (error: unknown) => {
+      logger.warn(
+        `[provider-connections] mutation cleanup error: ${(error as Error).message}`,
+      )
+    },
   )
   return run
 }
@@ -417,15 +427,25 @@ export async function deleteModel(
 /** 持久化当前内存状态(供 availability / discovery 运行时改动后调用)。 */
 export async function persistProviderConnections(): Promise<void> {
   const run = mutationQueue
-    .catch(() => {})
+    .catch((error: unknown) => {
+      logger.warn(
+        `[provider-connections] persist queue error: ${(error as Error).message}`,
+      )
+    })
     .then(async () => {
       await persist()
     })
   mutationQueue = run.then(
     () => undefined,
-    () => undefined,
+    (error: unknown) => {
+      logger.warn(
+        `[provider-connections] persist cleanup error: ${(error as Error).message}`,
+      )
+    },
   )
   await run
+  // 持久化完成后通知 models-stale,触发 cacheModels() 重建缓存
+  emitStateChange("models-stale")
 }
 
 function createCredentialObject(input: CreateCredentialInput): ApiCredential {

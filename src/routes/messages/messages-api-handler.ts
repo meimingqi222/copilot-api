@@ -1,11 +1,10 @@
 import type { Context } from "hono"
 
-import consola from "consola"
-
 import type { Account } from "~/lib/accounts"
 
 import { HTTPError } from "~/lib/error"
 import { buildAnthropicUpstreamError } from "~/lib/error-builder"
+import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { createMessages } from "~/services/copilot/create-messages"
@@ -119,7 +118,7 @@ export async function handleMessagesApi(opts: HandleMessagesApiOpts) {
         return
       }
       if (error instanceof HTTPError) {
-        consola.error(
+        logger.error(
           "Messages API upstream error",
           error.response.status,
           error.responseBody,

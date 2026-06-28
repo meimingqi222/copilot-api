@@ -9,12 +9,9 @@ import type { EmbeddingRequest } from "~/services/copilot/create-embeddings"
 import type { ResponsesPayload } from "~/services/copilot/responses-api"
 import type { AnthropicMessagesPayload } from "~/services/protocols"
 
+import { accountToConnection } from "~/lib/account-adapter"
 import { parseModelReference } from "~/lib/accounts"
 import { DEFAULTS } from "~/lib/provider-connections"
-import {
-  legacyPlaceholderConn,
-  legacyPlaceholderCred,
-} from "~/services/dispatch/failover"
 import {
   getProtocolAdapter,
   initializeProtocolAdapters,
@@ -27,6 +24,44 @@ import type {
   ProviderResponsesResult,
   RequestExecutionContext,
 } from "./runtime"
+
+/**
+ * 为 account-backed 路径构造虚拟 ProviderConnection/ApiCredential。
+ *
+ * Step B 之前用 legacyPlaceholderConn/legacyPlaceholderCred 生成最小占位对象,
+ * 现在统一通过 accountToConnection 生成真实虚拟对象(包含 credential.value、
+ * context、metadata 等),让 native adapter 能读取 token 与上游配置。
+ */
+function buildVirtualConnectionParts(account: Account): {
+  connection: import("~/lib/provider-connections").ProviderConnection
+  credential: import("~/lib/provider-connections").ApiCredential
+} {
+  const connection = accountToConnection(account)
+  return { connection, credential: connection.credentials[0] }
+}
+
+function buildAccountTarget(
+  account: Account,
+  protocol: ProviderProtocol,
+  payloadModel: string,
+  nativeModelId: string,
+  endpoint: ModelEndpoint,
+): RouteTarget {
+  return {
+    connectionId: account.id,
+    connectionName: account.label,
+    protocol,
+    credentialId: account.id,
+    publicModelId: payloadModel,
+    upstreamModelId: nativeModelId,
+    endpoint,
+    connectionPriority: account.priority,
+    connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
+    credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
+    credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+    account,
+  }
+}
 
 export async function delegateChatToNativeAdapter(
   account: Account,
@@ -45,25 +80,19 @@ export async function delegateChatToNativeAdapter(
     payload.model,
     account,
   ).nativeModelId
-  const target: RouteTarget = {
-    connectionId: account.id,
-    connectionName: account.label,
-    protocol,
-    credentialId: account.id,
-    publicModelId: payload.model,
-    upstreamModelId: nativeModelId,
-    endpoint: "chat",
-    connectionPriority: account.priority,
-    connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
-    credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
-    credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+  const target = buildAccountTarget(
     account,
-  }
+    protocol,
+    payload.model,
+    nativeModelId,
+    "chat",
+  )
+  const { connection, credential } = buildVirtualConnectionParts(account)
 
   const result = await adapter.createChatCompletions(
     target,
-    legacyPlaceholderConn(target),
-    legacyPlaceholderCred(target),
+    connection,
+    credential,
     payload,
     signal,
     ctx,
@@ -92,25 +121,19 @@ export async function delegateResponsesToNativeAdapter(
     payload.model,
     account,
   ).nativeModelId
-  const target: RouteTarget = {
-    connectionId: account.id,
-    connectionName: account.label,
-    protocol,
-    credentialId: account.id,
-    publicModelId: payload.model,
-    upstreamModelId: nativeModelId,
-    endpoint: "responses" satisfies ModelEndpoint,
-    connectionPriority: account.priority,
-    connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
-    credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
-    credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+  const target = buildAccountTarget(
     account,
-  }
+    protocol,
+    payload.model,
+    nativeModelId,
+    "responses" satisfies ModelEndpoint,
+  )
+  const { connection, credential } = buildVirtualConnectionParts(account)
 
   const result = await adapter.createResponses(
     target,
-    legacyPlaceholderConn(target),
-    legacyPlaceholderCred(target),
+    connection,
+    credential,
     payload,
     signal,
     ctx,
@@ -138,25 +161,19 @@ export async function delegateEmbeddingsToNativeAdapter(
     payload.model,
     account,
   ).nativeModelId
-  const target: RouteTarget = {
-    connectionId: account.id,
-    connectionName: account.label,
-    protocol,
-    credentialId: account.id,
-    publicModelId: payload.model,
-    upstreamModelId: nativeModelId,
-    endpoint: "embeddings" satisfies ModelEndpoint,
-    connectionPriority: account.priority,
-    connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
-    credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
-    credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+  const target = buildAccountTarget(
     account,
-  }
+    protocol,
+    payload.model,
+    nativeModelId,
+    "embeddings" satisfies ModelEndpoint,
+  )
+  const { connection, credential } = buildVirtualConnectionParts(account)
 
   const result = await adapter.createEmbeddings(
     target,
-    legacyPlaceholderConn(target),
-    legacyPlaceholderCred(target),
+    connection,
+    credential,
     payload,
     signal,
   )
@@ -184,25 +201,19 @@ export async function delegateMessagesToNativeAdapter(
     payload.model,
     account,
   ).nativeModelId
-  const target: RouteTarget = {
-    connectionId: account.id,
-    connectionName: account.label,
-    protocol,
-    credentialId: account.id,
-    publicModelId: payload.model,
-    upstreamModelId: nativeModelId,
-    endpoint: "messages" satisfies ModelEndpoint,
-    connectionPriority: account.priority,
-    connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
-    credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
-    credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
+  const target = buildAccountTarget(
     account,
-  }
+    protocol,
+    payload.model,
+    nativeModelId,
+    "messages" satisfies ModelEndpoint,
+  )
+  const { connection, credential } = buildVirtualConnectionParts(account)
 
   const result = await adapter.createMessages(
     target,
-    legacyPlaceholderConn(target),
-    legacyPlaceholderCred(target),
+    connection,
+    credential,
     payload,
     signal,
     ctx,

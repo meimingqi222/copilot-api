@@ -5,9 +5,8 @@
  * 并按 mode (merge / replace / manual-only) 合并到 connection.models。
  */
 
-import consola from "consola"
-
-import { cacheModels } from "~/lib/utils"
+import { logger } from "~/lib/logger"
+import { globalTimers } from "~/lib/timer-registry"
 import { getProtocolAdapter } from "~/services/protocols/registry"
 
 import { listProviderConnections, persistProviderConnections } from "./state"
@@ -15,7 +14,7 @@ import { DEFAULTS, type ModelMapping, type ProviderConnection } from "./types"
 
 const DEFAULT_CHECK_INTERVAL_MS = 60 * 1000 // 每分钟扫描一次,看哪些 connection 需要刷新
 
-let intervalHandle: ReturnType<typeof setInterval> | undefined
+let intervalHandle: ReturnType<typeof globalTimers.interval> | undefined
 const inFlightConnections = new Set<string>()
 
 export async function refreshConnectionModels(
@@ -75,14 +74,17 @@ async function refreshConnectionModelsUnsafe(
     connection.lastModelDiscoveryAt = Date.now()
     connection.lastModelDiscoveryError = undefined
     await persistProviderConnections()
-    cacheModels()
-    consola.info(
+    logger.info(
       `[provider-connections] discovered ${discovered.length} model(s) for "${connection.name}"`,
     )
   } catch (error) {
     connection.lastModelDiscoveryError = (error as Error).message
-    await persistProviderConnections().catch(() => {})
-    consola.warn(
+    await persistProviderConnections().catch((err: unknown) => {
+      logger.debug(
+        `Failed to persist discovery error: ${(err as Error).message}`,
+      )
+    })
+    logger.warn(
       `[provider-connections] discovery failed for "${connection.name}": ${(error as Error).message}`,
     )
   }
@@ -157,9 +159,13 @@ export async function refreshAllConnectionModels(
 export function scheduleConnectionModelDiscovery(): void {
   if (intervalHandle) return
   // 启动时执行一次
-  void refreshAllConnectionModels().catch(() => {})
+  void refreshAllConnectionModels().catch((err: unknown) => {
+    logger.debug(
+      `Failed to refresh all connection models on startup: ${(err as Error).message}`,
+    )
+  })
 
-  intervalHandle = setInterval(() => {
+  intervalHandle = globalTimers.interval(() => {
     const now = Date.now()
     for (const connection of listProviderConnections()) {
       const cfg = connection.modelDiscovery
@@ -168,7 +174,11 @@ export function scheduleConnectionModelDiscovery(): void {
       const interval = cfg.intervalMs ?? DEFAULTS.MODEL_DISCOVERY_INTERVAL_MS
       const last = connection.lastModelDiscoveryAt ?? 0
       if (now - last >= interval) {
-        void refreshConnectionModels(connection).catch(() => {})
+        void refreshConnectionModels(connection).catch((err: unknown) => {
+          logger.debug(
+            `Failed to refresh connection models: ${(err as Error).message}`,
+          )
+        })
       }
     }
   }, DEFAULT_CHECK_INTERVAL_MS)
@@ -176,7 +186,7 @@ export function scheduleConnectionModelDiscovery(): void {
 
 export function stopConnectionModelDiscovery(): void {
   if (intervalHandle) {
-    clearInterval(intervalHandle)
+    globalTimers.clearInterval(intervalHandle)
     intervalHandle = undefined
   }
 }

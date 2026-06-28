@@ -39,12 +39,13 @@ export async function handleResponses(c: Context) {
     inferredInitiator: inferInitiatorFromResponsesPayload(payload),
     messageContent,
   })
-  if (admission.kind !== "account") {
+  if (!admission.account) {
     throw new HTTPError(
       "Responses API requires an Account-based admission",
       new Response("Not Implemented", { status: 501 }),
     )
   }
+  const account = admission.account
 
   // Forward session_id, thread_id, and provider-specific headers from the
   // incoming request so that upstream providers can reuse cached prompt
@@ -77,7 +78,7 @@ export async function handleResponses(c: Context) {
         const result = await createResponses(payload, {
           signal,
           initiatorOverride: admission.initiator,
-          account: admission.account,
+          account,
           forwardedHeaders,
           c,
         })
@@ -162,7 +163,7 @@ export async function handleResponses(c: Context) {
   const result = await createResponses(payload, {
     signal,
     initiatorOverride: admission.initiator,
-    account: admission.account,
+    account,
     forwardedHeaders,
     c,
   })

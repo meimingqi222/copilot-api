@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import { extractWindsurfModelsFromPayload } from "~/services/windsurf/get-models"
 import {
@@ -18,25 +18,21 @@ const CLIENT_NAME = "windsurf-next"
 
 // ── Protobuf helpers ─────────────────────────────────────────────────────
 
-function buildMetadata(apiKey: string, jwt?: string): ProtobufEncoder {
+function buildMetadata(
+  apiKey: string,
+  cloudSessionId?: string,
+  jwt?: string,
+): ProtobufEncoder {
   const m = new ProtobufEncoder()
   m.writeString(1, CLIENT_NAME)
   m.writeString(2, APP_VERSION)
   m.writeString(3, apiKey)
   m.writeString(4, "en")
-  m.writeString(
-    5,
-    JSON.stringify({
-      Os: "linux",
-      Arch: "x64",
-      Version: "1.0.0",
-      ProductName: "linux",
-    }),
-  )
+  m.writeString(5, "windows")
   m.writeString(7, LS_VERSION)
+  if (cloudSessionId) m.writeString(10, cloudSessionId)
   m.writeString(12, CLIENT_NAME)
   if (jwt) m.writeString(21, jwt)
-  m.writeBytes(30, Uint8Array.from([0, 1]))
   return m
 }
 
@@ -80,24 +76,6 @@ function buildDoNotCall(): ProtobufEncoder {
   return t
 }
 
-/** Matches the logic in create-chat-completions.ts deriveSessionId */
-function deriveSessionId(
-  modelId: string,
-  systemPrompt: string,
-  firstUserMsg: string,
-): string {
-  const seed = `${modelId}\x00${firstUserMsg}\x00${systemPrompt}\x00[]`
-  const hex = createHash("sha256").update(seed).digest("hex")
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `5${hex.slice(13, 16)}`,
-    ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)
-      + hex.slice(17, 20),
-    hex.slice(20, 32),
-  ].join("-")
-}
-
 // ── Request builder ──────────────────────────────────────────────────────
 
 type ChatMessage = { role: "user" | "assistant"; content: string }
@@ -105,17 +83,26 @@ type ChatMessage = { role: "user" | "assistant"; content: string }
 interface RunTurnOptions {
   apiKey: string
   messages: Array<ChatMessage>
-  sessionId: string
+  cloudSessionId: string
+  cascadeId: string
   upstreamId: string
   isSlugModel: boolean
   jwt: string
 }
 
 function buildChatRequest(opts: RunTurnOptions): Uint8Array {
-  const { apiKey, messages, sessionId, upstreamId, isSlugModel, jwt } = opts
+  const {
+    apiKey,
+    messages,
+    cloudSessionId,
+    cascadeId,
+    upstreamId,
+    isSlugModel,
+    jwt,
+  } = opts
   const systemPrompt = "You are a helpful assistant. Be concise."
   const req = new ProtobufEncoder()
-  req.writeMessage(1, buildMetadata(apiKey, jwt))
+  req.writeMessage(1, buildMetadata(apiKey, cloudSessionId, jwt))
   req.writeString(2, systemPrompt)
 
   for (const msg of messages) {
@@ -136,9 +123,9 @@ function buildChatRequest(opts: RunTurnOptions): Uint8Array {
   trace.writeVarint(4, 23)
   req.writeMessage(15, trace)
 
-  req.writeString(16, randomUUID())
+  req.writeString(16, cascadeId)
   req.writeString(21, upstreamId)
-  req.writeString(22, sessionId)
+  req.writeString(22, randomUUID())
 
   return encodeConnectFrame(req.toUint8Array(), true)
 }
@@ -371,7 +358,6 @@ async function discoverModel(
 
 // ── Conversation turns ──────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = "You are a helpful assistant. Be concise."
 const USER_MSG_1 = "Write a short poem about programming in Python."
 const ASSISTANT_1 =
   "In Python's realm, where indents reign,\nWhitespace both pleasure and a pain.\nWith lists, dicts, and functions too,\nA coder's dreams can all come true."
@@ -402,7 +388,7 @@ const TURN_4: Array<ChatMessage> = TURN_3.concat([
 
 // ── Tests ───────────────────────────────────────────────────────────────
 
-describe("Windsurf KV cache with stable session UUID", () => {
+describe("Windsurf KV cache with stable cascade/session ids", () => {
   test.skipIf(!API_KEY)(
     "cached_input_tokens grows across multi-turn conversation",
     async () => {
@@ -410,11 +396,8 @@ describe("Windsurf KV cache with stable session UUID", () => {
       const jwt = await fetchJwt(apiKey)
       const model = await discoverModel(apiKey, jwt)
 
-      const stableId = deriveSessionId(
-        model.upstreamId,
-        SYSTEM_PROMPT,
-        USER_MSG_1,
-      )
+      const cloudSessionId = randomUUID()
+      const cascadeId = randomUUID()
 
       const turns: Array<{ label: string; messages: Array<ChatMessage> }> = [
         { label: "Turn 1 (1 msg)", messages: TURN_1 },
@@ -424,7 +407,8 @@ describe("Windsurf KV cache with stable session UUID", () => {
       ]
 
       console.log(`\nModel: ${model.id}  (upstream: ${model.upstreamId})
-Session UUID (stable): ${stableId}
+Cloud session (stable #10): ${cloudSessionId}
+Cascade id (stable #16): ${cascadeId}
 `)
 
       const results: Array<TurnResult & { label: string }> = []
@@ -432,7 +416,8 @@ Session UUID (stable): ${stableId}
         const r = await runTurn({
           apiKey,
           messages: turn.messages,
-          sessionId: stableId,
+          cloudSessionId,
+          cascadeId,
           upstreamId: model.upstreamId,
           isSlugModel: model.isSlugModel,
           jwt,
@@ -472,27 +457,26 @@ Session UUID (stable): ${stableId}
   )
 
   test.skipIf(!API_KEY)(
-    "stable UUID caches better than random UUID",
+    "stable cascade/session caches better than fresh ids each turn",
     async () => {
       const apiKey = API_KEY as string
       const jwt = await fetchJwt(apiKey)
       const model = await discoverModel(apiKey, jwt)
 
-      const stableId = deriveSessionId(
-        model.upstreamId,
-        SYSTEM_PROMPT,
-        USER_MSG_1,
-      )
+      const cloudSessionId = randomUUID()
+      const cascadeId = randomUUID()
 
       const stableResults: Array<number> = []
       const randomResults: Array<number> = []
 
-      console.log(`\nStable session UUID: ${stableId}`)
+      console.log(`\nStable cloud session: ${cloudSessionId}`)
+      console.log(`Stable cascade id: ${cascadeId}`)
       for (let i = 0; i < 3; i++) {
         const r = await runTurn({
           apiKey,
           messages: TURN_2,
-          sessionId: stableId,
+          cloudSessionId,
+          cascadeId,
           upstreamId: model.upstreamId,
           isSlugModel: model.isSlugModel,
           jwt,
@@ -501,12 +485,13 @@ Session UUID (stable): ${stableId}
         console.log(`  Stable run ${i + 1}: cached=${r.cachedTokens}`)
       }
 
-      console.log(`\nRandom session UUID (fresh each turn):`)
+      console.log(`\nFresh cascade/session ids each turn:`)
       for (let i = 0; i < 3; i++) {
         const r = await runTurn({
           apiKey,
           messages: TURN_2,
-          sessionId: randomUUID(),
+          cloudSessionId: randomUUID(),
+          cascadeId: randomUUID(),
           upstreamId: model.upstreamId,
           isSlugModel: model.isSlugModel,
           jwt,

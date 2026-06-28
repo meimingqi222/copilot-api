@@ -6,7 +6,7 @@ import path from "node:path"
 
 import type { Account } from "~/lib/accounts"
 
-import { saveAccounts, loadAccounts } from "~/lib/account-store"
+import { loadAccounts, saveAccounts } from "~/lib/account-store"
 import { PATHS } from "~/lib/paths"
 import { state } from "~/lib/state"
 
@@ -366,5 +366,78 @@ describe("account-store", () => {
     expect(loaded.settings?.tokenEndpoint).toBe("https://auth.x.ai/oauth/token")
     expect(loaded.settings?.redirectUri).toBe("http://127.0.0.1:56121/callback")
     expect(loaded.settings?.proxyUrl).toBe("http://127.0.0.1:7890")
+  })
+
+  test("saveAccounts refuses empty snapshot when .bak has accounts", async () => {
+    const acc: Account = {
+      id: "1",
+      label: "ws",
+      provider: "windsurf",
+      credentials: { apiKey: "key" },
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+    }
+    state.accounts = [acc]
+    await saveAccounts()
+
+    state.accounts = []
+    await saveAccounts()
+
+    const saved = JSON.parse(
+      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+    ) as Array<Record<string, unknown>>
+    expect(saved).toHaveLength(1)
+  })
+
+  test("saveAccounts does not persist runtimeState tokens", async () => {
+    const acc: Account = {
+      id: "1",
+      label: "acc-1",
+      provider: "copilot",
+      credentials: { githubToken: "token-1" },
+      runtimeState: {
+        copilotToken: "secret-cp-token",
+        copilotTokenExpiry: 9999999999,
+      },
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+    }
+    state.accounts = [acc]
+    await saveAccounts()
+
+    const saved = JSON.parse(
+      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+    ) as Array<Record<string, unknown>>
+    expect(saved[0]).not.toHaveProperty("runtimeState")
+    const credentials = saved[0]?.credentials as Record<string, unknown>
+    expect(credentials.githubToken).toBe("token-1")
+    expect(credentials.copilotToken).toBeUndefined()
+  })
+
+  test("saveAccounts allowEmpty persists cleared account list", async () => {
+    const acc: Account = {
+      id: "1",
+      label: "ws",
+      provider: "windsurf",
+      credentials: { apiKey: "key" },
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+    }
+    state.accounts = [acc]
+    await saveAccounts()
+
+    state.accounts = []
+    await saveAccounts({ allowEmpty: true })
+
+    const saved = JSON.parse(
+      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+    ) as Array<Record<string, unknown>>
+    expect(saved).toEqual([])
   })
 })

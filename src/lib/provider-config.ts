@@ -1,3 +1,5 @@
+import type { ProviderProtocol } from "~/lib/provider-connections/types"
+
 export const PROVIDER_IDS = [
   "copilot",
   "codebuff",
@@ -11,6 +13,27 @@ export const PROVIDER_IDS = [
 ] as const
 
 export type ProviderId = (typeof PROVIDER_IDS)[number]
+
+/**
+ * Provider → Protocol 纯数据映射表(lib 级,无 services 依赖)。
+ *
+ * 供 lib 层(request-admission / account-adapter 等)查询 account.provider
+ * 对应的协议,避免 lib → services/providers/registry 的反向依赖。
+ *
+ * 与 services/providers/index.ts 注册 ProtocolAdapter 时使用的 protocol
+ * 保持一致:新增 provider 时只需在此表追加一行。
+ */
+export const PROVIDER_PROTOCOL_MAP: Record<ProviderId, ProviderProtocol> = {
+  copilot: "copilot-native",
+  codebuff: "codebuff-native",
+  windsurf: "windsurf-native",
+  "mimo-aistudio": "mimo-native",
+  codex: "codex-native",
+  claude: "claude-native",
+  antigravity: "antigravity-native",
+  kimi: "kimi-native",
+  xai: "xai-native",
+}
 
 export const OAUTH_PROVIDER_IDS = [
   "codex",

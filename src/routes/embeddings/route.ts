@@ -17,7 +17,7 @@ embeddingRoutes.post("/", async (c) => {
       model: payload.model,
       endpoint: "embeddings",
     })
-    if (admission.kind !== "account") {
+    if (!admission.account) {
       throw new HTTPError(
         "Embeddings API requires an Account-based admission",
         new Response("Not Implemented", { status: 501 }),

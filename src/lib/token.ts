@@ -1,8 +1,8 @@
-import consola from "consola"
 import fs from "node:fs/promises"
 
 import { getActiveAccount } from "~/lib/account-selection"
 import { refreshCopilotToken } from "~/lib/account-store"
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
@@ -23,7 +23,7 @@ const writeGithubToken = (token: string) =>
 export const setupCopilotToken = async () => {
   const account = getActiveAccount()
   await refreshCopilotToken(account)
-  consola.debug("GitHub Copilot Token fetched successfully!")
+  logger.debug("GitHub Copilot Token fetched successfully!")
 }
 
 interface SetupGitHubTokenOptions {
@@ -38,18 +38,18 @@ export async function setupGitHubToken(
 
     if (githubToken && !options?.force) {
       if (state.showToken) {
-        consola.info("GitHub token:", githubToken)
+        logger.info("GitHub token:", githubToken)
       }
       await logUser(githubToken)
 
       return
     }
 
-    consola.info("Not logged in, getting new access token")
+    logger.info("Not logged in, getting new access token")
     const response = await getDeviceCode()
-    consola.debug("Device code response:", response)
+    logger.debug("Device code response:", response)
 
-    consola.info(
+    logger.info(
       `Please enter the code "${response.user_code}" in ${response.verification_uri}`,
     )
 
@@ -57,21 +57,21 @@ export async function setupGitHubToken(
     await writeGithubToken(token)
 
     if (state.showToken) {
-      consola.info("GitHub token:", token)
+      logger.info("GitHub token:", token)
     }
     await logUser(token)
   } catch (error) {
     if (error instanceof HTTPError) {
-      consola.error("Failed to get GitHub token:", await error.response.json())
+      logger.error("Failed to get GitHub token:", await error.response.json())
       throw error
     }
 
-    consola.error("Failed to get GitHub token:", error)
+    logger.error("Failed to get GitHub token:", error)
     throw error
   }
 }
 
 async function logUser(githubToken: string) {
   const user = await getGitHubUser(githubToken)
-  consola.info(`Logged in as ${user.login}`)
+  logger.info(`Logged in as ${user.login}`)
 }

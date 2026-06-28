@@ -1,11 +1,10 @@
-import consola from "consola"
-
 import {
   getMimoPh,
   getMimoProxy,
   getMimoServiceToken,
   getMimoUserId,
 } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import { sleep } from "~/lib/utils"
 import { MimoAccountManager } from "~/services/mimo/account-lifecycle"
@@ -77,7 +76,7 @@ class MimoRotator {
     if (this.running) return
     this.running = true
     this.run().catch((e: unknown) => {
-      consola.error("[MimoRotator] Fatal rotator error:", e)
+      logger.error("[MimoRotator] Fatal rotator error:", e)
     })
   }
 
@@ -107,7 +106,7 @@ class MimoRotator {
       const ph = getMimoPh(account)
       const userId = getMimoUserId(account)
       if (!serviceToken || !ph || !userId) {
-        consola.warn(
+        logger.warn(
           `[MimoRotator] Account "${account.label}" missing credentials, skipping`,
         )
         continue
@@ -134,13 +133,13 @@ class MimoRotator {
   }
 
   private async run() {
-    consola.info("[MimoRotator] Round-robin rotation engine started")
+    logger.info("[MimoRotator] Round-robin rotation engine started")
 
     while (this.running) {
       this.refreshSlots()
 
       if (this.slots.length === 0) {
-        consola.info("[MimoRotator] No enabled Mimo accounts, waiting...")
+        logger.info("[MimoRotator] No enabled Mimo accounts, waiting...")
         await sleep(30_000)
         continue
       }
@@ -148,7 +147,7 @@ class MimoRotator {
       // Single account: just run it continuously (no rotation needed)
       if (this.slots.length === 1) {
         const slot = this.slots[0]
-        consola.info(
+        logger.info(
           `[MimoRotator] Single account "${slot.label}" — running continuously`,
         )
         const mgr = new MimoAccountManager(
@@ -172,12 +171,12 @@ class MimoRotator {
       const slot = this.slots[idx]
       this.currentIdx = (idx + 1) % this.slots.length
 
-      consola.info(
+      logger.info(
         `[MimoRotator] Round-robin: "${slot.label}" (${idx + 1}/${this.slots.length})`,
       )
 
       if (slot.consecutiveFailures >= 3) {
-        consola.warn(
+        logger.warn(
           `[MimoRotator] "${slot.label}" has ${slot.consecutiveFailures} consecutive failures, cooling down ${COOLDOWN_ON_FAILURE_MS / 60000}min`,
         )
         markAccountFailed(
@@ -204,23 +203,23 @@ class MimoRotator {
       this.activeManager = null
 
       if (result.ok) {
-        consola.info(
+        logger.info(
           `[MimoRotator] "${slot.label}" cycle completed successfully`,
         )
         markAccountResting(slot.accountId)
         slot.consecutiveFailures = 0
       } else if (result.reason === "stopped") {
-        consola.info(`[MimoRotator] "${slot.label}" stopped, exiting rotation`)
+        logger.info(`[MimoRotator] "${slot.label}" stopped, exiting rotation`)
         markAccountResting(slot.accountId)
         break
       } else {
-        consola.warn(
+        logger.warn(
           `[MimoRotator] "${slot.label}" cycle failed: ${result.reason}`,
         )
         slot.consecutiveFailures++
 
         if (result.reason.includes("create failed")) {
-          consola.warn(
+          logger.warn(
             `[MimoRotator] "${slot.label}" create failed (possible rate limit), rotating to next`,
           )
           markAccountFailed(
@@ -239,7 +238,7 @@ class MimoRotator {
 const rotator = new MimoRotator()
 
 export function startMimoManager() {
-  consola.info("🚀 Mimo AI Studio control engine (Manager) initialized.")
+  logger.info("🚀 Mimo AI Studio control engine (Manager) initialized.")
 
   // Reset stale error states from previous runs
   for (const account of state.accounts) {

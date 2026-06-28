@@ -1,4 +1,4 @@
-import consola from "consola"
+import { logger } from "~/lib/logger"
 
 /**
  * Cross-account coordination: ensures only one claw container is being
@@ -24,13 +24,13 @@ export const destroyCreateCoordinator = (() => {
       } catch {
         // previous slot errored, proceed
       }
-      consola.info(`[MimoLock] "${label}" acquired destroy/create slot`)
+      logger.info(`[MimoLock] "${label}" acquired destroy/create slot`)
 
       let released = false
       return () => {
         if (released) return
         released = true
-        consola.info(
+        logger.info(
           `[MimoLock] "${label}" releasing slot (next in ${GAP_MS / 1000}s)`,
         )
         setTimeout(release, GAP_MS)

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
 import { defineCommand } from "citty"
-import consola from "consola"
 import fs from "node:fs/promises"
 import os from "node:os"
 
-import { PATHS } from "./lib/paths"
+import { initLogger, logger } from "~/lib/logger"
+
+import { PATHS, ensurePaths } from "./lib/paths"
 
 interface DebugInfo {
   version: string
@@ -18,6 +19,7 @@ interface DebugInfo {
   paths: {
     APP_DIR: string
     GITHUB_TOKEN_PATH: string
+    LOG_DIR: string
   }
   tokenExists: boolean
 }
@@ -75,13 +77,14 @@ async function getDebugInfo(): Promise<DebugInfo> {
     paths: {
       APP_DIR: PATHS.APP_DIR,
       GITHUB_TOKEN_PATH: PATHS.GITHUB_TOKEN_PATH,
+      LOG_DIR: PATHS.LOG_DIR,
     },
     tokenExists,
   }
 }
 
 function printDebugInfoPlain(info: DebugInfo): void {
-  consola.info(`copilot-api debug
+  logger.info(`copilot-api debug
 
 Version: ${info.version}
 Runtime: ${info.runtime.name} ${info.runtime.version} (${info.runtime.platform} ${info.runtime.arch})
@@ -89,6 +92,7 @@ Runtime: ${info.runtime.name} ${info.runtime.version} (${info.runtime.platform} 
 Paths:
 - APP_DIR: ${info.paths.APP_DIR}
 - GITHUB_TOKEN_PATH: ${info.paths.GITHUB_TOKEN_PATH}
+- LOG_DIR: ${info.paths.LOG_DIR}
 
 Token exists: ${info.tokenExists ? "Yes" : "No"}`)
 }
@@ -98,6 +102,8 @@ function printDebugInfoJson(info: DebugInfo): void {
 }
 
 export async function runDebug(options: RunDebugOptions): Promise<void> {
+  await ensurePaths()
+  initLogger()
   const debugInfo = await getDebugInfo()
 
   if (options.json) {

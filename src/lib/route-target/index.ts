@@ -4,8 +4,10 @@ export {
   listExposedPublicModels,
 } from "./build"
 export {
+  canonicalNativeModelId,
   type ParsedModelRef,
   parseModelRef,
+  parseModelReference,
   type ResolvedModelRouting,
   resolveModelRouting,
 } from "./model-reference"

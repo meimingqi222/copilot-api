@@ -9,7 +9,7 @@ import {
   toPublicUser,
   updateUser,
 } from "~/lib/users"
-import { cacheModels, refreshModelsForAllAccounts } from "~/lib/utils"
+import { refreshModelsForAllAccounts } from "~/lib/utils"
 
 export const userApiRoutes = new Hono()
 
@@ -22,7 +22,6 @@ userApiRoutes.get("/", (c) => {
 userApiRoutes.get("/models", async (c) => {
   if (!state.models) {
     await refreshModelsForAllAccounts()
-    cacheModels()
   }
 
   const models = state.models?.data ?? []

@@ -1,12 +1,13 @@
 import type { Context } from "hono"
 
-import consola from "consola"
 import { createHash } from "node:crypto"
 
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { getProtectedRouteKind } from "~/lib/protected-routes"
+import { globalTimers } from "~/lib/timer-registry"
 import { getClientIp } from "~/lib/utils"
 
 type BehaviorEventType = "request" | "upstream_429" | "error" | "success"
@@ -573,7 +574,7 @@ function enforceProbeDetection(input: {
 
   state.blockedUntil = now + TEMPORARY_BLOCK_MS
 
-  consola.warn(
+  logger.warn(
     `Probe request detected and blocked: ${JSON.stringify({
       principal,
       pattern: matchedPattern.source,
@@ -611,13 +612,9 @@ function ensureCleanup(): void {
     return
   }
 
-  cleanupTimer = setInterval(() => {
+  cleanupTimer = globalTimers.interval(() => {
     cleanupIdleState(Date.now())
   }, CLEANUP_INTERVAL_MS)
-
-  if (typeof cleanupTimer === "object" && "unref" in cleanupTimer) {
-    cleanupTimer.unref()
-  }
 }
 
 function pruneState(state: PrincipalGuardState, now: number): void {
@@ -661,7 +658,7 @@ function emitSuspiciousWarning(
   const ip = getClientIpFromRequest(c)
   const ua = c.req.header("user-agent") || "unknown"
 
-  consola.warn(
+  logger.warn(
     `Suspicious activity detected: ${JSON.stringify({
       principal: data.principal,
       behavior,
@@ -720,7 +717,7 @@ function logGuardRejection(input: {
     Math.ceil(((state.blockedUntil ?? 0) - now) / 1000),
   )
 
-  consola.warn(
+  logger.warn(
     `Protected route guard rejected request: ${JSON.stringify({
       reason,
       path: c.req.path,

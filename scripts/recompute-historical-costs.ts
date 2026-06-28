@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Recompute the `cost` column of every row in `usage_stats` using the
- * current pricing (default-prices.ts + any DB overrides in `model_pricing`).
+ * current pricing (models.dev cache + builtin default-prices + DB overrides).
  *
  * Use this after correcting model prices to bring historical totals in line
  * with the new pricing. The script prints a per-model summary of the changes

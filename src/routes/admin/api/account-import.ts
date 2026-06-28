@@ -1,4 +1,3 @@
-import consola from "consola"
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
@@ -11,6 +10,7 @@ import {
 } from "~/lib/account-store"
 import { cancelTokenRefreshTimer } from "~/lib/account-store"
 import { setGitHubToken, addAccount } from "~/lib/accounts"
+import { logger } from "~/lib/logger"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -22,7 +22,6 @@ import {
 import { scheduleOAuthRefreshForAccount } from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
-
 export const importAccountRoutes = new Hono()
 
 interface ImportAccountPayload {
@@ -122,7 +121,6 @@ importAccountRoutes.post("/import", async (c) => {
   const imported: Array<string> = []
   const skipped: Array<string> = []
   const failed: Array<{ label: string; reason: string }> = []
-
   initializeProviderRegistry()
 
   for (const raw of body.accounts) {
@@ -187,7 +185,7 @@ importAccountRoutes.post("/import", async (c) => {
         .then(() => refreshQuotaForAccount(account))
         .then(() => refreshModelsForAccount(account))
         .catch((err: unknown) => {
-          consola.warn(`Import: failed to init account "${label}":`, err)
+          logger.warn(`Import: failed to init account "${label}":`, err)
         })
       continue
     }
@@ -217,7 +215,7 @@ importAccountRoutes.post("/import", async (c) => {
       addAccount(account)
       imported.push(label)
       refreshModelsForAccount(account).catch((err: unknown) => {
-        consola.warn(`Import: failed to init account "${label}":`, err)
+        logger.warn(`Import: failed to init account "${label}":`, err)
       })
       continue
     }
@@ -247,7 +245,7 @@ importAccountRoutes.post("/import", async (c) => {
       addAccount(windsurfAccount)
       imported.push(label)
       refreshModelsForAccount(windsurfAccount).catch((err: unknown) => {
-        consola.warn(`Import: failed to init account "${label}":`, err)
+        logger.warn(`Import: failed to init account "${label}":`, err)
       })
       continue
     }
@@ -291,7 +289,7 @@ importAccountRoutes.post("/import", async (c) => {
       addAccount(mimoAccount)
       imported.push(label)
       refreshModelsForAccount(mimoAccount).catch((err: unknown) => {
-        consola.warn(`Import: failed to init account "${label}":`, err)
+        logger.warn(`Import: failed to init account "${label}":`, err)
       })
       continue
     }
@@ -315,12 +313,12 @@ importAccountRoutes.post("/import", async (c) => {
 
       scheduleOAuthRefreshForAccount(oauthAccount)
       refreshModelsForAccount(oauthAccount).catch((err: unknown) => {
-        consola.warn(`Import: failed to init models for "${label}":`, err)
+        logger.warn(`Import: failed to init models for "${label}":`, err)
       })
       const runtime = getProviderRuntime(oauthAccount.provider)
       if (runtime.refreshQuota) {
         runtime.refreshQuota(oauthAccount).catch((err: unknown) => {
-          consola.warn(`Import: failed to init quota for "${label}":`, err)
+          logger.warn(`Import: failed to init quota for "${label}":`, err)
         })
       }
       continue
@@ -329,7 +327,7 @@ importAccountRoutes.post("/import", async (c) => {
 
   if (imported.length > 0) {
     await saveAccounts()
-    consola.info(
+    logger.info(
       `Imported ${imported.length} account(s): ${imported.join(", ")}`,
     )
   }
@@ -363,7 +361,7 @@ importAccountRoutes.post("/import-cpa", async (c) => {
       onAccount: (account) => {
         scheduleOAuthRefreshForAccount(account)
         void refreshModelsForAccount(account).catch((err: unknown) => {
-          consola.warn(
+          logger.warn(
             `CPA import: failed to refresh models for "${account.label}":`,
             err,
           )
@@ -371,7 +369,7 @@ importAccountRoutes.post("/import-cpa", async (c) => {
         const runtime = getProviderRuntime(account.provider)
         if (runtime.refreshQuota) {
           void runtime.refreshQuota(account).catch((err: unknown) => {
-            consola.warn(
+            logger.warn(
               `CPA import: failed to refresh quota for "${account.label}":`,
               err,
             )
@@ -383,7 +381,7 @@ importAccountRoutes.post("/import-cpa", async (c) => {
     if (result.imported.length > 0) {
       initializeProviderRegistry()
       await saveAccounts()
-      consola.info(
+      logger.info(
         `Imported ${result.imported.length} CPA auth account(s): ${result.imported.join(", ")}`,
       )
     }

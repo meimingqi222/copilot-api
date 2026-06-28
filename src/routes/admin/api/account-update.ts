@@ -1,56 +1,63 @@
-import type { Account, OAuthAccount } from "~/lib/accounts"
+import type { Account } from "~/lib/accounts"
 
 import {
+  type AccountConnectionPatch,
+  applyConnectionPatchToAccount,
+  patchRequiresModelRefresh,
+} from "~/lib/account-adapter"
+import { refreshCopilotToken } from "~/lib/account-store"
+import {
+  getGitHubToken,
   isOAuthAccount,
-  setCodebuffAuthToken,
-  setWindsurfApiKey,
-  setMimoServiceToken,
-  setMimoPh,
-  setMimoProxy,
-  setMimoUserId,
+  setCopilotToken,
+  setCopilotTokenExpiry,
 } from "~/lib/accounts"
 import { isOAuthProviderId } from "~/lib/provider-config"
 import { refreshModelsForAccount } from "~/lib/utils"
 
-async function updateOAuthAccountSettings(
-  account: OAuthAccount,
-  settings: Record<string, unknown>,
-): Promise<void> {
-  account.settings = {
-    ...account.settings,
-    ...(typeof settings.baseUrl === "string" ?
-      { baseUrl: settings.baseUrl.trim() || undefined }
-    : {}),
-    ...(typeof settings.proxyUrl === "string" ?
-      { proxyUrl: settings.proxyUrl.trim() || undefined }
-    : {}),
-    ...(typeof settings.modelPrefix === "string" ?
-      { modelPrefix: settings.modelPrefix.trim() || undefined }
-    : {}),
-    ...(typeof settings.tokenEndpoint === "string" ?
-      { tokenEndpoint: settings.tokenEndpoint.trim() || undefined }
-    : {}),
-    ...(typeof settings.redirectUri === "string" ?
-      { redirectUri: settings.redirectUri.trim() || undefined }
-    : {}),
-  }
-  await refreshModelsForAccount(account)
+export interface UpdateAccountBody {
+  label?: string
+  enabled?: boolean
+  priority?: number
+  authToken?: string
+  apiKey?: string
+  githubToken?: string
+  serviceToken?: string
+  xiaomichatbotPh?: string
+  credentials?: Record<string, unknown>
+  settings?: Record<string, unknown>
 }
 
-export async function updateProviderAccount(
+/**
+ * 将 admin 请求体解析为 connection 级别的补丁。
+ * provider-specific 的字段提取(body.authToken / body.apiKey / body.serviceToken 等)
+ * 集中在此函数内,后续 applyConnectionPatchToAccount 只需处理通用补丁。
+ */
+export function parseBodyToPatch(
   account: Account,
-  body: {
-    label?: string
-    enabled?: boolean
-    priority?: number
-    authToken?: string
-    apiKey?: string
-    serviceToken?: string
-    xiaomichatbotPh?: string
-    credentials?: Record<string, unknown>
-    settings?: Record<string, unknown>
-  },
-): Promise<void> {
+  body: UpdateAccountBody,
+): AccountConnectionPatch {
+  const patch: AccountConnectionPatch = {
+    label: body.label,
+    enabled: body.enabled,
+    priority: body.priority,
+    settings: body.settings,
+  }
+
+  if (account.provider === "copilot") {
+    const githubToken =
+      typeof body.credentials?.githubToken === "string" ?
+        body.credentials.githubToken
+      : body.githubToken
+    if (
+      Object.hasOwn(body, "githubToken")
+      || Object.hasOwn(body.credentials ?? {}, "githubToken")
+    ) {
+      patch.credentialValue = githubToken ?? ""
+    }
+    return patch
+  }
+
   if (account.provider === "codebuff") {
     const authToken =
       typeof body.credentials?.authToken === "string" ?
@@ -60,14 +67,9 @@ export async function updateProviderAccount(
       Object.hasOwn(body, "authToken")
       || Object.hasOwn(body.credentials ?? {}, "authToken")
     ) {
-      setCodebuffAuthToken(account, authToken?.trim() || undefined)
+      patch.credentialValue = authToken ?? ""
     }
-    account.settings = {
-      ...account.settings,
-      ...body.settings,
-    }
-    await refreshModelsForAccount(account)
-    return
+    return patch
   }
 
   if (account.provider === "windsurf") {
@@ -79,13 +81,9 @@ export async function updateProviderAccount(
       Object.hasOwn(body, "apiKey")
       || Object.hasOwn(body.credentials ?? {}, "apiKey")
     ) {
-      setWindsurfApiKey(account, apiKey?.trim() || undefined)
+      patch.credentialValue = apiKey ?? ""
     }
-    account.settings = {
-      ...account.settings,
-      ...body.settings,
-    }
-    await refreshModelsForAccount(account)
+    return patch
   }
 
   if (account.provider === "mimo-aistudio") {
@@ -104,41 +102,63 @@ export async function updateProviderAccount(
           body.settings.xiaomichatbotPh
         : undefined))
 
+    const extras: Record<string, string | undefined> = {}
     if (
       Object.hasOwn(body, "serviceToken")
       || Object.hasOwn(body.credentials ?? {}, "serviceToken")
       || Object.hasOwn(body.settings ?? {}, "serviceToken")
     ) {
-      setMimoServiceToken(account, serviceToken?.trim() || undefined)
+      patch.credentialValue = serviceToken ?? ""
     }
     if (
       Object.hasOwn(body, "xiaomichatbotPh")
       || Object.hasOwn(body.credentials ?? {}, "xiaomichatbotPh")
       || Object.hasOwn(body.settings ?? {}, "xiaomichatbotPh")
     ) {
-      setMimoPh(account, xiaomichatbotPh?.trim() || undefined)
+      extras.xiaomichatbotPh = xiaomichatbotPh
     }
-
-    account.settings = {
-      ...account.settings,
-      ...body.settings,
+    // userId 和 proxy 走 settings,但需要 trim/clear 语义,放到 extras 处理
+    if (body.settings && typeof body.settings.userId === "string") {
+      extras.userId = body.settings.userId
     }
-    const settings = account.settings
-    const userId =
-      typeof settings.userId === "string" ? settings.userId : undefined
-    setMimoUserId(account, userId?.trim() || undefined)
-
     if (Object.hasOwn(body.settings ?? {}, "proxy")) {
       const proxy =
-        typeof settings.proxy === "string" ? settings.proxy : undefined
-      setMimoProxy(account, proxy?.trim() || undefined)
+        typeof body.settings?.proxy === "string" ?
+          body.settings.proxy
+        : undefined
+      extras.proxy = proxy
     }
-
-    await refreshModelsForAccount(account)
-    return
+    if (Object.keys(extras).length > 0) {
+      patch.credentialExtras = extras
+    }
+    return patch
   }
 
   if (isOAuthAccount(account) && isOAuthProviderId(account.provider)) {
-    await updateOAuthAccountSettings(account, body.settings ?? {})
+    // OAuth 暂无 credentialValue 更新(accessToken 通过刷新流程获取)
+    // settings 补丁直接传递
+    return patch
+  }
+
+  return patch
+}
+
+export async function updateProviderAccount(
+  account: Account,
+  body: UpdateAccountBody,
+): Promise<void> {
+  const patch = parseBodyToPatch(account, body)
+  const copilotTokenRotated =
+    account.provider === "copilot" && patch.credentialValue !== undefined
+  applyConnectionPatchToAccount(account, patch)
+  if (copilotTokenRotated) {
+    setCopilotToken(account, undefined)
+    setCopilotTokenExpiry(account, undefined)
+    if (getGitHubToken(account)) {
+      await refreshCopilotToken(account)
+    }
+  }
+  if (patchRequiresModelRefresh(patch)) {
+    await refreshModelsForAccount(account)
   }
 }

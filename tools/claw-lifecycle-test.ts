@@ -61,7 +61,7 @@ async function mimoFetch(url: string, opts?: RequestInit & { timeout?: number })
       if (PROXY_URL) {
         nodeOpts.agent = new HttpsProxyAgent(PROXY_URL)
       }
-      const req = require("node:https").request(nodeOpts, (res: any) => {
+      const req = require("node:https").request(nodeOpts, (res: typeof import("http").IncomingMessage) => {
         let body = ""
         res.on("data", (c: Buffer) => body += c)
         res.on("end", () => resolve(new Response(body, { status: res.statusCode, statusText: res.statusMessage })))
@@ -118,8 +118,8 @@ async function getWsTicket(): Promise<string> {
       const ticket = data?.data?.ticket as string | undefined
       if (ticket) { log(`ticket: ${ticket.slice(0, 16)}...`); return ticket }
       log(`ticket attempt ${i + 1}: code=${data?.code}`)
-    } catch (e: any) {
-      log(`ticket attempt ${i + 1}: ${e.message}`)
+    } catch (e: unknown) {
+      log(`ticket attempt ${i + 1}: ${(e as Error).message}`)
     }
     await sleep(3000)
   }
@@ -128,7 +128,7 @@ async function getWsTicket(): Promise<string> {
 
 // ── WebSocket client (raw TLS) ───────────────────────────────────────
 class ClawWsClient {
-  private sock: any = null
+  private sock: typeof import("net").Socket | null = null
   private buf = Buffer.alloc(0)
   connected = false
 
@@ -290,8 +290,8 @@ async function uploadToFDS(filename: string, content: string): Promise<string | 
     const putResp = await mimoFetch(genData.data.uploadUrl, { method: "PUT", headers: { "Content-Type": "application/octet-stream", "Content-MD5": md5hex }, body: content, timeout: 15_000 })
     if (!putResp.ok) { log(`FDS PUT failed: ${putResp.status}`); return null }
     return genData.data.resourceUrl || null
-  } catch (e: any) {
-    log(`FDS upload error: ${e.message}`)
+  } catch (e: unknown) {
+    log(`FDS upload error: ${(e as Error).message}`)
     return null
   }
 }

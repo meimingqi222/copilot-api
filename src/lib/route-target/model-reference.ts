@@ -69,6 +69,47 @@ export function parseModelRef(modelId: string): ParsedModelRef {
   return { modelId: trimmed }
 }
 
+export function canonicalNativeModelId(modelId: string): string {
+  const normalized = modelId.trim().toLowerCase()
+  if (normalized === "z-ai/glm5" || normalized === "glm5") {
+    return "z-ai/glm-5.1"
+  }
+  return normalized
+}
+
+export function parseModelReference(
+  modelId: string,
+  account?: Account,
+): {
+  provider?: ProviderId
+  nativeModelId: string
+} {
+  const trimmed = modelId.trim()
+  const slashIndex = trimmed.indexOf("/")
+  if (slashIndex > 0) {
+    const prefix = trimmed.slice(0, slashIndex)
+    const rest = trimmed.slice(slashIndex + 1)
+    const maybeProvider = prefix.toLowerCase()
+    if (isProviderId(maybeProvider)) {
+      return {
+        provider: maybeProvider,
+        nativeModelId: canonicalNativeModelId(rest),
+      }
+    }
+    if (
+      account
+      && getAccountModelPrefix(account).toLowerCase() === maybeProvider
+    ) {
+      return {
+        nativeModelId: canonicalNativeModelId(rest),
+      }
+    }
+  }
+  return {
+    nativeModelId: canonicalNativeModelId(trimmed),
+  }
+}
+
 export function resolveModelRouting(
   modelId: string,
   accounts: Array<Account> = state.accounts,

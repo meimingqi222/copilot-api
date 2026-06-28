@@ -1,14 +1,18 @@
 import type { Context } from "hono"
 
-import consola from "consola"
 import { getConnInfo } from "hono/bun"
 
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { saveAccounts } from "~/lib/account-store"
-import { canonicalNativeModelId, getAccountModelPrefix } from "~/lib/accounts"
+import { getAccountModelPrefix } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
+import { classifyUpstreamError } from "~/lib/provider-connections"
 import { listExposedPublicModels } from "~/lib/route-target/build"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import { onStateChange } from "~/lib/state-events"
+import { globalTimers } from "~/lib/timer-registry"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
@@ -135,6 +139,10 @@ export function cacheModels(): void {
   }
 }
 
+// 注册 models-stale 监听:saveAccounts / persistProviderConnections 完成后
+// 自动触发 cacheModels() 重建缓存,消除调用方的手动 cacheModels() 调用。
+onStateChange("models-stale", cacheModels)
+
 function endpointToSupported(endpoint: string): string {
   switch (endpoint) {
     case "chat": {
@@ -232,13 +240,12 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
     account.availableModels = await getProviderRuntime(
       account.provider,
     ).refreshModels(account)
-    consola.debug(
+    logger.debug(
       `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
     )
     await saveAccounts()
-    cacheModels()
   } catch (error) {
-    consola.warn(
+    logger.warn(
       `Failed to refresh models for account "${account.label}":`,
       error,
     )
@@ -252,7 +259,6 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
 
     account.availableModels = fallbackModels
     await saveAccounts()
-    cacheModels()
   }
 }
 
@@ -262,14 +268,14 @@ export async function refreshModelsForAllAccounts(): Promise<void> {
   )
   for (const result of results) {
     if (result.status === "rejected") {
-      consola.warn("Failed to refresh models for account:", result.reason)
+      logger.warn("Failed to refresh models for account:", result.reason)
     }
   }
 }
 
 export function scheduleModelsRefresh(): void {
   void refreshModelsForAllAccounts()
-  setInterval(() => {
+  globalTimers.interval(() => {
     void refreshModelsForAllAccounts()
   }, MODELS_REFRESH_INTERVAL_MS)
 }
@@ -278,7 +284,7 @@ export const cacheVSCodeVersion = async () => {
   const response = await getVSCodeVersion()
   state.vsCodeVersion = response
 
-  consola.info(`Using VSCode version: ${response}`)
+  logger.info(`Using VSCode version: ${response}`)
 }
 
 export function isAbortError(error: unknown): boolean {
@@ -296,38 +302,24 @@ export function isChatCompletionResponse(
 
 export function shouldFailover(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return false
-  const status = error.response.status
-  // Codex usage_limit_reached = plan quota depleted. Failover to another
-  // account would break the current conversation's cache affinity and
-  // the new account likely has no context. Let the client handle it.
-  // Mirrors CPA: usage_limit_reached is NOT a failover-eligible error.
-  if (isCodexUsageLimitError(error)) return false
-  if (status === 401 || status === 402 || status === 403 || status === 429) {
-    return true
-  }
-  if (status >= 500) return true
-  return false
-}
-
-/**
- * Checks if an HTTPError body contains a Codex usage_limit_reached error.
- * This is a quota exhaustion signal, not a transient rate limit.
- */
-function isCodexUsageLimitError(error: HTTPError): boolean {
-  const body = error.responseBody
-  if (!body) return false
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>
-    const errorObj = parsed.error as Record<string, unknown> | undefined
-    const errorType = errorObj?.type
-    const topLevelType = parsed.type
-    return (
-      errorType === "usage_limit_reached"
-      || topLevelType === "usage_limit_reached"
-    )
-  } catch {
+  const classified = classifyUpstreamError({
+    status: error.response.status,
+    retryAfterHeader: error.response.headers.get("retry-after"),
+    body: error.responseBody,
+  })
+  // quota_exhausted (incl. Codex usage_limit_reached) should NOT
+  // failover: the credential's plan quota is depleted, and switching
+  // accounts breaks cache affinity. Let the client handle it.
+  // NOTE: 402 (Payment Required) is classified as quota_exhausted but
+  // historically triggered failover. Preserve that behavior.
+  if (classified.kind === "quota_exhausted") {
+    if (error.response.status === 402) return true
     return false
   }
+  if (classified.kind === "auth_error") return true
+  if (classified.kind === "rate_limited") return true
+  if (classified.kind === "server_error") return true
+  return false
 }
 
 export function isValidIp(ip: string): boolean {

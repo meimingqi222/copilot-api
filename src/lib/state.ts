@@ -20,6 +20,8 @@ interface WindsurfProviderDefaults {
   lsVersion: string
   defaultModel: string
   clientName: string
+  extensionName: string
+  ideType: string
 }
 
 export interface State {
@@ -66,11 +68,13 @@ export const state: State = {
       allowFallbacks: true,
     },
     windsurf: {
-      baseUrl: "https://server.self-serve.windsurf.com",
-      appVersion: "1.48.2",
-      lsVersion: "2.0.1050",
+      baseUrl: "https://server.codeium.com",
+      appVersion: "2026.8.1009",
+      lsVersion: "2026.8.1009",
       defaultModel: "swe-1-6-fast",
       clientName: "windsurf-next",
+      extensionName: "chisel",
+      ideType: "windsurf",
     },
   },
   manualApprove: false,

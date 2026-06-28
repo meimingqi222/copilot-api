@@ -243,3 +243,50 @@ test("GET /admin/api/usage/summary returns null cacheHitRate when no input token
   expect(body.totals.inputTokens).toBe(0)
   expect(body.byModel["gpt-5.4"].cacheHitRate).toBeNull()
 })
+
+test("GET /admin/api/usage/summary keeps swe-1-6 and swe-1-6-fast separate", async () => {
+  const timestamp = new Date("2026-06-27T08:00:00.000Z").getTime()
+
+  statsStore.recordUsage({
+    date: "2026-06-27",
+    accountId: "account-1",
+    model: "swe-1-6",
+    promptTokens: 5000,
+    completionTokens: 200,
+    totalTokens: 5200,
+    cost: 0.5,
+    timestamp,
+  })
+  statsStore.recordUsage({
+    date: "2026-06-27",
+    accountId: "account-1",
+    model: "swe-1-6-fast",
+    promptTokens: 100,
+    completionTokens: 10,
+    totalTokens: 110,
+    cost: 0.01,
+    timestamp: timestamp + 1,
+  })
+
+  const response = await server.fetch(
+    new Request(
+      "http://localhost/admin/api/usage/summary?startDate=2026-06-27&endDate=2026-06-27",
+    ),
+  )
+
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as UsageSummaryResponse
+
+  expect(body.byModel["swe-1-6"]).toMatchObject({
+    requests: 1,
+    promptTokens: 5000,
+    completionTokens: 200,
+    totalTokens: 5200,
+  })
+  expect(body.byModel["swe-1-6-fast"]).toMatchObject({
+    requests: 1,
+    promptTokens: 100,
+    completionTokens: 10,
+    totalTokens: 110,
+  })
+})

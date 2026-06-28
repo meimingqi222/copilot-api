@@ -1,5 +1,4 @@
-import consola from "consola"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import type { Account } from "~/lib/accounts"
 import type {
@@ -12,8 +11,10 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { fileLogger } from "~/lib/file-logger"
-import { isChatCompletionResponse } from "~/lib/utils"
+import { logger } from "~/lib/logger"
+import { checkRateLimit } from "~/lib/rate-limit"
+import { state } from "~/lib/state"
+import { isAbortError, isChatCompletionResponse, sleep } from "~/lib/utils"
 
 import {
   chunkFromText,
@@ -21,13 +22,27 @@ import {
   chunkFromToolCallArgs,
   doneChunk,
 } from "./chunk-builders"
+import { acquireWindsurfSlot, releaseWindsurfSlot } from "./concurrency-limiter"
+import {
+  WindsurfUpstreamError,
+  classifyWindsurfErrorText,
+  classifyWindsurfFrameError,
+} from "./error-classifier"
 import { decodeConnectFrames } from "./protobuf"
 import { buildRequest } from "./request-builders"
+import { fingerprintWindsurfRequest } from "./request-fingerprint"
 import {
   type ChatStreamFrame,
+  extractRawUsageSignals,
+  mergeRawUsageSignals,
+  type WindsurfRawUsageSignals,
   parseChatStreamFrame,
-  parseWindsurfFrameError,
 } from "./response-parsers"
+import {
+  getOrAllocateCloudSessionIds,
+  resolveWindsurfConversationKey,
+} from "./session-cache"
+import { getCachedUserJwt } from "./user-jwt"
 
 // ── Model resolution ───────────────────────────────────────────────────────────
 
@@ -45,25 +60,140 @@ export function resolveWindsurfRequestModel(
     : canonicalNativeModelId(upstreamId)
 }
 
+// ── Fetch-level retry for transient errors ────────────────────────────────────
+// Mirrors the Devin CLI's Tower `retry::budget` + `ExponentialBackoff`:
+// transient network/5xx errors get retried on the same account (preserving
+// session/cache affinity) before escalating to application-level failover.
+
+const FETCH_MAX_ATTEMPTS = 5
+export { FETCH_MAX_ATTEMPTS }
+const FETCH_BASE_DELAY_MS = 1_000
+const FETCH_MAX_DELAY_MS = 5_000
+
+function isTransientFetchError(error: unknown): boolean {
+  // Network errors (fetch throws TypeError before we get a Response)
+  if (!(error instanceof HTTPError)) return true
+  const status = error.response.status
+  return status >= 500 || status === 429
+}
+
+function computeRetryDelayMs(attempt: number): number {
+  const base = FETCH_BASE_DELAY_MS * 2 ** (attempt - 1)
+  const capped = Math.min(base, FETCH_MAX_DELAY_MS)
+  // ±25% jitter to avoid thundering herd
+  const jitter = capped * (0.75 + Math.random() * 0.5)
+  return Math.round(jitter)
+}
+
+interface FetchOptions {
+  url: string
+  headers: Record<string, string>
+  body: Uint8Array
+  signal?: AbortSignal
+  accountLabel: string
+}
+
+export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= FETCH_MAX_ATTEMPTS; attempt++) {
+    let response: Response
+    try {
+      response = await fetch(opts.url, {
+        method: "POST",
+        headers: opts.headers,
+        body: opts.body,
+        signal: opts.signal,
+      })
+    } catch (error) {
+      if (isAbortError(error)) throw error
+      // Network error (TypeError from fetch) — transient, retry
+      lastError = error
+      if (attempt < FETCH_MAX_ATTEMPTS) {
+        const delayMs = computeRetryDelayMs(attempt)
+        logger.warn(
+          `[windsurf] network error for ${opts.accountLabel}, retry ${attempt}/${FETCH_MAX_ATTEMPTS - 1} in ${delayMs}ms`,
+        )
+        await sleep(delayMs, opts.signal)
+        continue
+      }
+      throw lastError
+    }
+
+    if (response.ok) return response
+
+    // Read body once for both retry-decision and error reporting
+    const errorBody = await response.text().catch(() => "(unreadable)")
+    const httpError = new HTTPError(
+      "Failed to create Windsurf chat completion",
+      response,
+      errorBody,
+    )
+
+    // Non-transient (4xx except 429) — return for caller to handle/classify.
+    // We stash the parsed body on a clone so the caller can re-read it.
+    if (!isTransientFetchError(httpError)) {
+      return new Response(errorBody, {
+        status: response.status,
+        headers: response.headers,
+      })
+    }
+
+    // Transient (5xx/429) — retry if attempts remain
+    lastError = httpError
+    if (attempt < FETCH_MAX_ATTEMPTS) {
+      const delayMs = computeRetryDelayMs(attempt)
+      logger.warn(
+        `[windsurf] HTTP ${response.status} for ${opts.accountLabel}, retry ${attempt}/${FETCH_MAX_ATTEMPTS - 1} in ${delayMs}ms`,
+      )
+      await sleep(delayMs, opts.signal)
+      continue
+    }
+    throw lastError
+  }
+  throw lastError
+}
+
 // ── Streaming → OpenAI SSE ─────────────────────────────────────────────────────
+
+export interface WindsurfCacheDebugContext {
+  conversationKey: string
+  sessionId: string
+  cascadeId: string
+  promptId: string
+}
 
 async function* streamToOpenAI(
   response: Response,
   model: string,
+  cacheDebug?: WindsurfCacheDebugContext,
 ): AsyncIterable<CopilotStreamEvent> {
   const stream = response.body
   if (!stream) throw new Error("Windsurf response body is empty")
 
   const requestId = `chatcmpl-${randomUUID().replaceAll("-", "")}`
   let usage: ChatStreamFrame["usage"] | undefined
+  let rawUsage: WindsurfRawUsageSignals | undefined
   let finishReason: "stop" | "tool_calls" = "stop"
   let currentToolCallIndex = -1
+  const toolIdToIndex = new Map<string, number>()
+  let lastToolCallId: string | undefined
 
   for await (const frame of decodeConnectFrames(stream)) {
-    const frameError = parseWindsurfFrameError(frame)
-    if (frameError) throw new Error(`Windsurf upstream error: ${frameError}`)
+    const classified = classifyWindsurfFrameError(frame)
+    if (classified) throw new WindsurfUpstreamError(classified, frame)
 
     const parsed = parseChatStreamFrame(frame)
+    const rawFrame = extractRawUsageSignals(frame)
+    if (rawFrame) {
+      rawUsage = mergeRawUsageSignals(rawUsage, rawFrame)
+      logger.debug("[windsurf] cache raw frame", {
+        req: requestId,
+        model,
+        ...cacheDebug,
+        raw: rawFrame,
+        parsedUsage: parsed.usage,
+      })
+    }
 
     for (const delta of parsed.deltas) {
       switch (delta.kind) {
@@ -91,6 +221,8 @@ async function* streamToOpenAI(
         }
         case "tool_call_init": {
           currentToolCallIndex++
+          toolIdToIndex.set(delta.callId, currentToolCallIndex)
+          lastToolCallId = delta.callId
           yield {
             data: chunkFromToolCallInit({
               requestId,
@@ -103,15 +235,16 @@ async function* streamToOpenAI(
           break
         }
         case "tool_call_args": {
-          if (currentToolCallIndex >= 0) {
-            yield {
-              data: chunkFromToolCallArgs({
-                requestId,
-                model,
-                toolIndex: currentToolCallIndex,
-                args: delta.args,
-              }),
-            }
+          if (currentToolCallIndex < 0 || !lastToolCallId) break
+          const routeKey = delta.callId ?? lastToolCallId
+          const toolIndex = toolIdToIndex.get(routeKey) ?? currentToolCallIndex
+          yield {
+            data: chunkFromToolCallArgs({
+              requestId,
+              model,
+              toolIndex,
+              args: delta.args,
+            }),
           }
           break
         }
@@ -129,10 +262,7 @@ async function* streamToOpenAI(
         provider: "windsurf",
         usage: parsed.usage,
       }
-      consola.debug(
-        `[windsurf-usage] req=${requestId} INCOMING usage=${JSON.stringify(parsed.usage)}`,
-      )
-      fileLogger.debug("usage frame incoming", incomingMeta)
+      logger.debug("usage frame incoming", incomingMeta)
       if (usage) {
         // Merge across frames: field[7] (prompt/completion) and field[33]/field[28]
         // (cache hits) often arrive in separate frames. The `??` operator would
@@ -158,10 +288,7 @@ async function* streamToOpenAI(
           provider: "windsurf",
           usage,
         }
-        consola.debug(
-          `[windsurf-usage] req=${requestId} MERGED usage=${JSON.stringify(usage)}`,
-        )
-        fileLogger.debug("usage frame merged", mergedMeta)
+        logger.debug("usage frame merged", mergedMeta)
       } else {
         usage = parsed.usage
       }
@@ -169,10 +296,22 @@ async function* streamToOpenAI(
   }
 
   const finalMeta = { req: requestId, model, provider: "windsurf", usage }
-  consola.info(
-    `[windsurf-usage] req=${requestId} FINAL usage=${JSON.stringify(usage)}`,
-  )
-  fileLogger.info("usage final", finalMeta)
+  logger.debug("usage final", finalMeta)
+  if (cacheDebug) {
+    logger.debug("[windsurf] cache summary", {
+      req: requestId,
+      model,
+      ...cacheDebug,
+      rawUsage,
+      parsedUsage: usage,
+      cacheHitPct:
+        usage && usage.prompt_tokens > 0 ?
+          Math.round(
+            ((usage.cache_read_tokens ?? 0) / usage.prompt_tokens) * 1000,
+          ) / 10
+        : null,
+    })
+  }
   yield { data: doneChunk({ requestId, model, finishReason, usage }) }
   yield { data: "[DONE]" }
 }
@@ -204,6 +343,7 @@ function updateToolCalls(
 async function collectChatCompletion(
   response: Response,
   model: string,
+  cacheDebug?: WindsurfCacheDebugContext,
 ): Promise<ChatCompletionResponse> {
   let text = ""
   let reasoningText = ""
@@ -215,7 +355,7 @@ async function collectChatCompletion(
     { id: string; name: string; arguments: string }
   >()
 
-  for await (const event of streamToOpenAI(response, model)) {
+  for await (const event of streamToOpenAI(response, model, cacheDebug)) {
     if (!event.data || event.data === "[DONE]") continue
 
     const chunk = JSON.parse(event.data) as {
@@ -256,6 +396,17 @@ async function collectChatCompletion(
           function: { name: tc.name, arguments: tc.arguments },
         }))
     : []
+
+  const textLen = text.length
+  const toolCallsLen = toolCalls.length
+  logger.info(
+    `[windsurf] collect result for ${model}: textLen=${textLen} toolCalls=${toolCallsLen} finishReason=${finishReason} usage=${JSON.stringify(usage)}`,
+  )
+  if (textLen === 0 && toolCallsLen === 0) {
+    logger.warn(
+      `[windsurf] EMPTY response for ${model} finishReason=${finishReason}`,
+    )
+  }
 
   return {
     id: `chatcmpl-${randomUUID().replaceAll("-", "")}`,
@@ -329,28 +480,103 @@ export async function createWindsurfChatCompletionsOnce(
 
   const model = canonicalNativeModelId(payload.model)
   const requestModel = resolveWindsurfRequestModel(account, payload.model)
-  // Forward session ID from incoming request headers for prompt cache reuse.
-  // Falls back to deriveSessionId's content-hash-based stable ID.
-  const forwarded = ctx?.forwardedHeaders
-  const sessionIdOverride =
-    forwarded?.["x-windsurf-session-id"]
-    ?? forwarded?.["session_id"]
-    ?? forwarded?.["session-id"]
+  const baseUrl = settings.baseUrl ?? state.providerDefaults.windsurf.baseUrl
+  const clientUserId = ctx?.c?.get("userId")
+  const conversationKey = await resolveWindsurfConversationKey({
+    forwardedHeaders: ctx?.forwardedHeaders,
+    promptCacheKey:
+      payload.prompt_cache_key ?? ctx?.forwardedHeaders?.prompt_cache_key,
+    user: payload.user,
+    clientUserId,
+    accountId: account.id,
+  })
+  const cloudIds = await getOrAllocateCloudSessionIds({
+    host: baseUrl,
+    apiKey,
+    conversationKey,
+  })
+
+  const promptId = randomUUID()
+  const cacheDebug: WindsurfCacheDebugContext = {
+    conversationKey,
+    sessionId: cloudIds.sessionId,
+    cascadeId: cloudIds.cascadeId,
+    promptId,
+  }
+
+  logger.debug("[windsurf] cloud-direct request", {
+    account: account.label,
+    accountId: account.id,
+    model: requestModel,
+    conversationKey,
+    sessionId: cloudIds.sessionId,
+    cascadeId: cloudIds.cascadeId,
+    promptId,
+    hasTools: (payload.tools?.length ?? 0) > 0,
+  })
+
+  const userJwt = await getCachedUserJwt(
+    apiKey,
+    baseUrl,
+    {
+      clientName: settings.clientName ?? "",
+      appVersion: settings.appVersion ?? "",
+      lsVersion: settings.lsVersion ?? "",
+    },
+    cloudIds.sessionId,
+    signal,
+  )
+  const workspaceFingerprint = createHash("sha256")
+    .update(conversationKey)
+    .digest("hex")
+
   const requestBody = buildRequest({
     payload: { ...payload, model },
     settings,
     apiKey,
     requestModel,
-    sessionIdOverride:
-      typeof sessionIdOverride === "string" && sessionIdOverride.trim() ?
-        sessionIdOverride.trim()
-      : undefined,
+    cascadeId: cloudIds.cascadeId,
+    cloudSessionId: cloudIds.sessionId,
+    promptId,
+    userJwt,
+    workspaceFingerprint,
   })
 
-  const response = await fetch(
-    `${settings.baseUrl}/exa.api_server_pb.ApiServerService/GetChatMessage`,
-    {
-      method: "POST",
+  const protoFingerprint = fingerprintWindsurfRequest(requestBody)
+  logger.debug("[windsurf] proto fingerprint", {
+    conversationKey,
+    sessionId: cloudIds.sessionId,
+    cascadeId: cloudIds.cascadeId,
+    promptId,
+    upstreamModel: protoFingerprint.model,
+    mode: protoFingerprint.mode,
+    requestType: protoFingerprint.requestType,
+    toolCount: protoFingerprint.toolCount,
+    messageCount: protoFingerprint.messageCount,
+    metadataFields: protoFingerprint.metadataFields,
+    metadata: protoFingerprint.metadata,
+    samplingFields: protoFingerprint.samplingFields,
+  })
+
+  // Proactive rate-limit gate — stricter than the global default.
+  // Windsurf's per-model "message rate limit" triggers far more easily than
+  // GitHub Copilot's 429. Production data shows ~60 requests in 3.5 min
+  // triggers a 3h cooldown, while the Devin CLI (32 req/min with natural
+  // tool-execution gaps) does not. copilot-api's multi-subagent fan-out
+  // removes those natural gaps, so we enforce a 4s interval (2 burst) to
+  // cap at ~15 req/min — half of Devin's rate.
+  await checkRateLimit(account.id, signal, {
+    intervalMs: 4_000,
+    burst: 2,
+  })
+  // Per-account concurrency cap (Devin CLI's "LLM semaphore"). Limits
+  // concurrent in-flight upstream fetches to 1 by default.
+  await acquireWindsurfSlot(account.id, signal)
+
+  let response: Response
+  try {
+    response = await fetchWithRetry({
+      url: `${baseUrl}/exa.api_server_pb.ApiServerService/GetChatMessage`,
       headers: {
         "Content-Type": "application/connect+proto",
         "Connect-Protocol-Version": "1",
@@ -362,20 +588,42 @@ export async function createWindsurfChatCompletionsOnce(
       },
       body: requestBody,
       signal,
-    },
-  )
+      accountLabel: account.label,
+    })
+  } catch (err) {
+    releaseWindsurfSlot(account.id)
+    throw err
+  }
+  // Slot released after the fetch resolves — stream consumption does not
+  // hold the concurrency gate (it gates fetch dispatch, not body reads).
+  releaseWindsurfSlot(account.id)
 
   if (!response.ok) {
+    const errorBody = await response.text().catch(() => "(unreadable)")
+    logger.error(
+      `[windsurf] HTTP ${response.status} for ${account.label} model=${requestModel}`,
+    )
+    // HTTP error responses may carry the same {error:{code,message}} body
+    // as in-stream frames. Classify so cooldown uses the real "Resets in"
+    // duration instead of the default 60s backoff.
+    const classified = classifyWindsurfErrorText(undefined, errorBody)
+    if (classified.kind !== "unknown") {
+      throw new WindsurfUpstreamError(classified, new Uint8Array())
+    }
     throw new HTTPError(
       "Failed to create Windsurf chat completion",
       response,
-      await response.text().catch(() => "(unreadable)"),
+      errorBody,
     )
   }
 
+  logger.info(
+    `[windsurf] HTTP ${response.status} for ${account.label} model=${requestModel} stream=${payload.stream}`,
+  )
+
   if (payload.stream) {
-    return streamToOpenAI(response, model)
+    return streamToOpenAI(response, model, cacheDebug)
   }
 
-  return await collectChatCompletion(response, model)
+  return await collectChatCompletion(response, model, cacheDebug)
 }
