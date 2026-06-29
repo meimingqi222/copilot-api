@@ -9,6 +9,12 @@ import {
   setAdminSession,
   verifyAdminPassword,
 } from "~/lib/request-auth"
+import { getClientIp } from "~/lib/utils"
+import {
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from "~/lib/login-protection"
 import { state } from "~/lib/state"
 
 import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
@@ -180,30 +186,50 @@ adminRoutes.post("/login", async (c) => {
     )
   }
 
+  const clientIp = getClientIp(c)
+
+  const protection = checkLoginAllowed(clientIp)
+  if (!protection.allowed) {
+    if (protection.retryAfterSeconds) {
+      c.header("Retry-After", String(protection.retryAfterSeconds))
+    }
+    return c.json({ error: protection.reason ?? "Too many login attempts." }, 429)
+  }
+
   let password: string | undefined
+  let remember = false
 
   try {
-    const contentType = c.req.header("content-type") || ""
+    const contentType = c.req.header("content-type") ?? ""
 
     if (contentType.includes("application/x-www-form-urlencoded")) {
       // Handle form data from login.html
       const body = await c.req.text()
       const params = new URLSearchParams(body)
       password = params.get("password") || undefined
+      remember = params.get("remember") === "on" || params.get("remember") === "true"
     } else {
       // Handle JSON from API
-      const payload = await c.req.json<{ password?: string }>()
+      const payload = await c.req.json<{ password?: string, remember?: boolean }>()
       password = payload.password
+      remember = Boolean(payload.remember)
     }
   } catch {
     return c.json({ error: "Invalid request payload." }, 400)
   }
 
   if (!password || !verifyAdminPassword(password)) {
-    return c.json({ error: "Invalid management password." }, 401)
+    const failResult = await recordLoginFailure(clientIp)
+    if (!failResult.allowed && failResult.retryAfterSeconds) {
+      c.header("Retry-After", String(failResult.retryAfterSeconds))
+    }
+    const errorMsg = failResult.reason ?? "Invalid management password."
+    const status = failResult.allowed ? 401 : 429
+    return c.json({ error: errorMsg }, status)
   }
 
-  setAdminSession(c)
+  recordLoginSuccess(clientIp)
+  setAdminSession(c, remember)
   return c.json({ ok: true })
 })
 

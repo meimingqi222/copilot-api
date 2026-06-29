@@ -166,7 +166,22 @@ async function markCooldown(
         })
         return
       }
-      // rate_limited / server_error / auth_error → rate-limit cooldown
+      if (error.kind === "auth_error") {
+        admission.account.runtimeState = {
+          ...admission.account.runtimeState,
+          authStatus: "error",
+          lastError: error.message,
+        }
+        syncLegacyExhaustedState(admission.account)
+        await saveAccounts().catch((err: unknown) => {
+          logger.warn(
+            `${logPrefix} failed to persist account auth error state:`,
+            (err as Error).message,
+          )
+        })
+        return
+      }
+      // rate_limited / server_error → rate-limit cooldown
       // with the real upstream retryAfterMs (up to 4h for windsurf).
       await markAccountRateLimitedMs(
         admission.account.id,

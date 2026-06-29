@@ -13,14 +13,6 @@ export interface WindsurfClientSettings {
 export interface WindsurfMetadataOptions {
   apiKey: string
   settings: WindsurfClientSettings
-  /** Stable per-conversation session (metadata field 10). */
-  sessionId?: string
-  /** Short-lived JWT from GetUserJwt (metadata field 21). */
-  userJwt?: string
-  /** Monotonic request id (metadata field 9). */
-  requestId?: number
-  /** Per-RPC trigger id (metadata field 25). */
-  triggerId?: string
   /** Workspace/repo fingerprint (metadata field 31) — stable per conversation. */
   workspaceFingerprint?: string
 }
@@ -33,21 +25,18 @@ function getOsLabel(): string {
   return process.platform
 }
 
-function buildTimestampMessage(): ProtobufEncoder {
-  const now = Date.now()
-  const seconds = Math.floor(now / 1000)
-  const nanos = (now % 1000) * 1_000_000
-  const ts = new ProtobufEncoder()
-  ts.writeVarint(1, seconds)
-  if (nanos > 0) ts.writeVarint(2, nanos)
-  return ts
-}
-
+// Devin CLI metadata layout (verified from live GetChatMessage capture):
+//   f1=clientName  f2=appVersion  f3=apiKey  f4="en"  f5=OS label
+//   f7=lsVersion   f12=extensionName  f28=ideType  f31=workspaceFingerprint
+// Deliberately omits f9(requestId), f10(sessionId), f16(timestamp),
+// f21(userJwt), f25(triggerId), f26 — the Windsurf IDE client sends those,
+// but the Devin CLI does not, and the extra fields create an anomalous
+// fingerprint that can trigger per-model rate limits.
 export function buildWindsurfClientMetadata(
   opts: WindsurfMetadataOptions,
 ): ProtobufEncoder {
   const extensionName = opts.settings.extensionName ?? "chisel"
-  const ideType = opts.settings.ideType ?? "windsurf"
+  const ideType = opts.settings.ideType ?? "chisel"
   const metadata = new ProtobufEncoder()
   metadata.writeString(1, opts.settings.clientName)
   metadata.writeString(2, opts.settings.appVersion)
@@ -55,24 +44,10 @@ export function buildWindsurfClientMetadata(
   metadata.writeString(4, "en")
   metadata.writeString(5, getOsLabel())
   metadata.writeString(7, opts.settings.lsVersion)
-  if (opts.requestId !== undefined) {
-    metadata.writeVarint(9, opts.requestId)
-  }
-  if (opts.sessionId) {
-    metadata.writeString(10, opts.sessionId)
-  }
   metadata.writeString(12, extensionName)
-  metadata.writeMessage(16, buildTimestampMessage())
-  if (opts.triggerId) {
-    metadata.writeString(25, opts.triggerId)
-  }
-  metadata.writeString(26, "Unset")
   metadata.writeString(28, ideType)
   if (opts.workspaceFingerprint) {
     metadata.writeString(31, opts.workspaceFingerprint)
-  }
-  if (opts.userJwt) {
-    metadata.writeString(21, opts.userJwt)
   }
   return metadata
 }

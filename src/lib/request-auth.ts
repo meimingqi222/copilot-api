@@ -7,6 +7,7 @@ import { state } from "./state"
 import { verifyApiKey } from "./users"
 
 const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
+const REMEMBER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 
 // Paths that are explicitly public and require no API key.
@@ -164,14 +165,17 @@ function hasValidLegacyApiKey(c: Context): boolean {
   }
 }
 
-export function setAdminSession(c: Context) {
+export function setAdminSession(c: Context, remember = false) {
   const configuredAdminPassword = getAdminPassword()
   if (!configuredAdminPassword) return
 
+  const maxAgeSeconds = remember
+    ? REMEMBER_SESSION_MAX_AGE_SECONDS
+    : ADMIN_SESSION_MAX_AGE_SECONDS
+
   const sessionToken = createSessionToken()
   state.adminSessionToken = sessionToken
-  state.adminSessionExpiresAt =
-    Date.now() + ADMIN_SESSION_MAX_AGE_SECONDS * 1000
+  state.adminSessionExpiresAt = Date.now() + maxAgeSeconds * 1000
 
   const isHttps =
     c.req.url.startsWith("https://")
@@ -189,7 +193,7 @@ export function setAdminSession(c: Context) {
     sameSite: "Lax",
     secure,
     path: "/",
-    maxAge: ADMIN_SESSION_MAX_AGE_SECONDS,
+    maxAge: maxAgeSeconds,
   })
 }
 

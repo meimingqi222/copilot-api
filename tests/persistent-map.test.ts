@@ -32,7 +32,7 @@ describe("PersistentTTLMap", () => {
     await flushAllPersistentMaps()
 
     const filePath = path.join(tempCacheDir, "test-flush.json")
-    const raw = await fs.readFile(filePath)
+    const raw = await fs.readFile(filePath, "utf8")
     const parsed = JSON.parse(raw) as Record<string, { value: string }>
     expect(parsed.key.value).toBe("value")
   })
