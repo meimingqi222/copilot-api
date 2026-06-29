@@ -46,6 +46,7 @@
           <input
             type="checkbox"
             id="remember-me"
+            x-model="remember"
             class="w-4 h-4 rounded border-[var(--apple-border)] text-[var(--apple-blue)] focus:ring-[var(--apple-blue)]"
           >
           <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('login.rememberMe')"></span>
@@ -107,6 +108,7 @@
         loading: false,
         error: null,
         lang: 'zh',
+        remember: false,
 
         init() {
           // Detect browser language
@@ -139,13 +141,17 @@
             const res = await fetch('/admin/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({ password: this.password })
+              body: new URLSearchParams({
+                password: this.password,
+                remember: this.remember ? 'on' : ''
+              })
             });
 
             if (res.ok) {
               window.location.href = '/admin';
             } else {
-              this.error = this.t('login.error');
+              const data = await res.json().catch(() => ({}));
+              this.error = data.error || this.t('login.error');
             }
           } catch (e) {
             this.error = 'Network error';

@@ -74,7 +74,7 @@ export const state: State = {
       defaultModel: "swe-1-6-fast",
       clientName: "windsurf-next",
       extensionName: "chisel",
-      ideType: "windsurf",
+      ideType: "chisel",
     },
   },
   manualApprove: false,

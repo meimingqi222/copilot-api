@@ -155,10 +155,6 @@ function buildDoNotCallTool(): ProtobufEncoder {
 function buildMetadata(opts: {
   apiKey: string
   settings: NonNullable<ReturnType<typeof getWindsurfSettings>>
-  sessionId: string
-  userJwt?: string
-  requestId: number
-  triggerId: string
   workspaceFingerprint?: string
 }): ProtobufEncoder {
   return buildWindsurfClientMetadata({
@@ -170,10 +166,6 @@ function buildMetadata(opts: {
       extensionName: opts.settings.extensionName,
       ideType: opts.settings.ideType,
     },
-    sessionId: opts.sessionId,
-    userJwt: opts.userJwt,
-    requestId: opts.requestId,
-    triggerId: opts.triggerId,
     workspaceFingerprint: opts.workspaceFingerprint,
   })
 }
@@ -241,17 +233,10 @@ export function buildRequest(opts: {
   requestModel: string
   /** Stable cascade_id (field 16) — reuse across turns for prompt cache. */
   cascadeId: string
-  /** Metadata session_id (field 10). */
-  cloudSessionId: string
-  /** Fresh per request (field 22). Defaults to a new UUID. */
-  promptId?: string
-  userJwt?: string
   /** Stable per conversation (metadata field 31). */
   workspaceFingerprint?: string
 }): Uint8Array {
-  const { payload, settings, apiKey, requestModel, cascadeId, cloudSessionId } =
-    opts
-  const promptId = opts.promptId ?? randomUUID()
+  const { payload, settings, apiKey, requestModel, cascadeId } = opts
   const slugModel = isSlugModelId(requestModel)
   const chatMode = resolveChatMode(requestModel)
   const request = new ProtobufEncoder()
@@ -261,10 +246,6 @@ export function buildRequest(opts: {
     buildMetadata({
       apiKey,
       settings,
-      sessionId: cloudSessionId,
-      userJwt: opts.userJwt,
-      requestId: Date.now(),
-      triggerId: randomUUID(),
       workspaceFingerprint: opts.workspaceFingerprint,
     }),
   )
@@ -291,11 +272,11 @@ export function buildRequest(opts: {
   }
 
   request.writeMessage(15, buildTraceInfo())
-  // field 16: stable cascade_id (opencode cloud-direct pattern)
+  // field 16: stable cascade_id (Devin CLI pattern)
   request.writeString(16, cascadeId)
   request.writeVarint(20, ChatMessageRequestType.GENERAL) // request type
   request.writeString(21, requestModel)
-  // field 22: fresh prompt_id per request (opencode cloud-direct pattern)
-  request.writeString(22, promptId)
-  return encodeConnectFrame(request.toUint8Array(), true)
+  // Devin CLI does NOT send field 22 (prompt_id).
+  // Frame is sent uncompressed to match Devin CLI capture (flags=0).
+  return encodeConnectFrame(request.toUint8Array(), false)
 }

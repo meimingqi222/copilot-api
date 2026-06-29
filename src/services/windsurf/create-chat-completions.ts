@@ -12,7 +12,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { checkRateLimit } from "~/lib/rate-limit"
+import { checkRateLimit, getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { isAbortError, isChatCompletionResponse, sleep } from "~/lib/utils"
 
@@ -42,7 +42,6 @@ import {
   getOrAllocateCloudSessionIds,
   resolveWindsurfConversationKey,
 } from "./session-cache"
-import { getCachedUserJwt } from "./user-jwt"
 
 // ── Model resolution ───────────────────────────────────────────────────────────
 
@@ -64,17 +63,35 @@ export function resolveWindsurfRequestModel(
 // Mirrors the Devin CLI's Tower `retry::budget` + `ExponentialBackoff`:
 // transient network/5xx errors get retried on the same account (preserving
 // session/cache affinity) before escalating to application-level failover.
-
-const FETCH_MAX_ATTEMPTS = 5
+// Windsurf's per-model message quota counts every HTTP request, so retries
+// compound the violation. Keep attempts low (2) — one initial try + one
+// retry for genuine transients. Higher counts amplify a rate limit event.
+const FETCH_MAX_ATTEMPTS = 2
 export { FETCH_MAX_ATTEMPTS }
 const FETCH_BASE_DELAY_MS = 1_000
 const FETCH_MAX_DELAY_MS = 5_000
 
 function isTransientFetchError(error: unknown): boolean {
-  // Network errors (fetch throws TypeError before we get a Response)
   if (!(error instanceof HTTPError)) return true
   const status = error.response.status
-  return status >= 500 || status === 429
+  // Windsurf rate limits come as in-stream error frames (200 OK), not HTTP
+  // 429. If a genuine HTTP 429 arrives, retrying would compound the rate
+  // limit violation — each retry counts as another "message" toward the
+  // per-model message quota that triggered the limit.
+  if (status === 429) {
+    const body = error.responseBody.toLowerCase()
+    if (
+      body.includes("windsurf")
+      || body.includes("message rate limit")
+      || body.includes("resets in")
+      || body.includes("codeium")
+    ) {
+      return false
+    }
+    // Unknown 429 — don't retry either. The cooldown mechanism handles this.
+    return false
+  }
+  return status >= 500
 }
 
 function computeRetryDelayMs(attempt: number): number {
@@ -159,7 +176,6 @@ export interface WindsurfCacheDebugContext {
   conversationKey: string
   sessionId: string
   cascadeId: string
-  promptId: string
 }
 
 async function* streamToOpenAI(
@@ -478,6 +494,22 @@ export async function createWindsurfChatCompletionsOnce(
     throw new Error(`Windsurf API key missing for account "${account.label}"`)
   }
 
+  // Pre-check account cooldown: skip the rate-limiter gate + request
+  // build if WindSurf already returned a 3h cooldown. This avoids
+  // wasting client wait time and prevents unnecessary messages from
+  // counting toward the quota while the cooldown is still active.
+  const cooldownSeconds = getRemainingCooldownSeconds(account.id)
+  if (cooldownSeconds > 0) {
+    throw new WindsurfUpstreamError(
+      {
+        kind: "rate_limited",
+        retryAfterMs: cooldownSeconds * 1000,
+        message: `Account cooldown active. Try again in ${cooldownSeconds}s.`,
+      },
+      new Uint8Array(),
+    )
+  }
+
   const model = canonicalNativeModelId(payload.model)
   const requestModel = resolveWindsurfRequestModel(account, payload.model)
   const baseUrl = settings.baseUrl ?? state.providerDefaults.windsurf.baseUrl
@@ -496,12 +528,10 @@ export async function createWindsurfChatCompletionsOnce(
     conversationKey,
   })
 
-  const promptId = randomUUID()
   const cacheDebug: WindsurfCacheDebugContext = {
     conversationKey,
     sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
-    promptId,
   }
 
   logger.debug("[windsurf] cloud-direct request", {
@@ -511,21 +541,9 @@ export async function createWindsurfChatCompletionsOnce(
     conversationKey,
     sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
-    promptId,
     hasTools: (payload.tools?.length ?? 0) > 0,
   })
 
-  const userJwt = await getCachedUserJwt(
-    apiKey,
-    baseUrl,
-    {
-      clientName: settings.clientName ?? "",
-      appVersion: settings.appVersion ?? "",
-      lsVersion: settings.lsVersion ?? "",
-    },
-    cloudIds.sessionId,
-    signal,
-  )
   const workspaceFingerprint = createHash("sha256")
     .update(conversationKey)
     .digest("hex")
@@ -536,9 +554,6 @@ export async function createWindsurfChatCompletionsOnce(
     apiKey,
     requestModel,
     cascadeId: cloudIds.cascadeId,
-    cloudSessionId: cloudIds.sessionId,
-    promptId,
-    userJwt,
     workspaceFingerprint,
   })
 
@@ -547,7 +562,6 @@ export async function createWindsurfChatCompletionsOnce(
     conversationKey,
     sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
-    promptId,
     upstreamModel: protoFingerprint.model,
     mode: protoFingerprint.mode,
     requestType: protoFingerprint.requestType,
@@ -563,11 +577,15 @@ export async function createWindsurfChatCompletionsOnce(
   // GitHub Copilot's 429. Production data shows ~60 requests in 3.5 min
   // triggers a 3h cooldown, while the Devin CLI (32 req/min with natural
   // tool-execution gaps) does not. copilot-api's multi-subagent fan-out
-  // removes those natural gaps, so we enforce a 4s interval (2 burst) to
-  // cap at ~15 req/min — half of Devin's rate.
+  // removes those natural gaps, so we enforce a 5s interval (1 burst) to
+  // cap at ~12 req/min — well below the observed trigger threshold.
+  //
+  // burst=1 matches the Devin CLI's strictly sequential execution model
+  // (single "LLM semaphore" — one request at a time). Higher burst values
+  // allow concurrent dispatches that look anomalous to the rate limiter.
   await checkRateLimit(account.id, signal, {
-    intervalMs: 4_000,
-    burst: 2,
+    intervalMs: 5_000,
+    burst: 1,
   })
   // Per-account concurrency cap (Devin CLI's "LLM semaphore"). Limits
   // concurrent in-flight upstream fetches to 1 by default.

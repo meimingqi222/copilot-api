@@ -68,7 +68,7 @@ describe("Windsurf proto — capture vs buildRequest", () => {
     expect(capture.samplingFields).toEqual([1, 2, 3, 5, 7, 8])
   })
 
-  test("buildRequest shares core fields with capture; documents deltas", () => {
+  test("buildRequest matches Devin CLI capture exactly", () => {
     const capturePayload = loadCapturePayload()
     if (!capturePayload) return
 
@@ -95,15 +95,12 @@ describe("Windsurf proto — capture vs buildRequest", () => {
         clientName: "windsurf-next",
         appVersion: "2026.8.1009",
         lsVersion: "2026.8.1009",
-        extensionName: "windsurf",
-        ideType: "windsurf",
+        extensionName: "chisel",
+        ideType: "chisel",
       },
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
       cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
-      cloudSessionId: "session-stable-1",
-      promptId: "prompt-stable-1",
-      userJwt: "eyJhbG.test.token",
       workspaceFingerprint: "abc123",
     })
 
@@ -117,30 +114,31 @@ describe("Windsurf proto — capture vs buildRequest", () => {
       metadataFields(builtPayload),
     )
 
-    // Core LS-style envelope: metadata, system, messages, mode, sampling, tools, trace, cascade, type, model.
+    // Top-level fields match exactly: no extra fields in built.
     for (const field of [1, 2, 3, 7, 8, 10, 15, 16, 20, 21]) {
       expect(topDiff.shared).toContain(field)
     }
-    // Capture omits empty prompt_id; we always send a fresh UUID (field 22).
-    expect(topDiff.onlyInBuilt).toContain(22)
+    expect(topDiff.onlyInBuilt).toEqual([])
+    expect(topDiff.onlyInCapture).toEqual([])
 
-    // Real Chisel capture omits session/JWT/timestamp fields; built adds them.
-    const expectedOnlyInBuilt = [9, 10, 16, 21, 25, 26]
-    for (const field of expectedOnlyInBuilt) {
-      expect(metaDiff.onlyInBuilt).toContain(field)
-    }
-    const expectedShared = [1, 2, 3, 4, 5, 7, 12, 28, 31]
-    for (const field of expectedShared) {
+    // Metadata fields match exactly: Devin CLI sends only
+    // f1, f2, f3, f4, f5, f7, f12, f28, f31.
+    for (const field of [1, 2, 3, 4, 5, 7, 12, 28, 31]) {
       expect(metaDiff.shared).toContain(field)
     }
+    expect(metaDiff.onlyInBuilt).toEqual([])
+    expect(metaDiff.onlyInCapture).toEqual([])
 
     const fingerprint = fingerprintWindsurfRequest(built)
     expect(fingerprint.mode).toBe(5)
     expect(fingerprint.requestType).toBe(1)
     expect(fingerprint.model).toBe("MODEL_PRIVATE_11")
-    expect(fingerprint.metadata.f12).toBe("windsurf")
-    expect(fingerprint.metadata.f28).toBe("windsurf")
+    expect(fingerprint.metadata.f12).toBe("chisel")
+    expect(fingerprint.metadata.f28).toBe("chisel")
     expect(fingerprint.metadata.f31).toBe("abc123")
-    expect(fingerprint.metadata.f10).toBe("session-stable-1")
+    expect(fingerprint.metadata.f10).toBeUndefined()
+    expect(fingerprint.metadata.f9).toBeUndefined()
+    expect(fingerprint.metadata.f21).toBeUndefined()
+    expect(fingerprint.metadata.f25).toBeUndefined()
   })
 })

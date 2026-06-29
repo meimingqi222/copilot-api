@@ -16,10 +16,17 @@ import { logger } from "~/lib/logger"
 
 const DEFAULT_MAX_CONCURRENT = 1
 
+interface WaiterEntry {
+  resolve: () => void
+  reject: (e: Error) => void
+  abortListener?: () => void
+  signal?: AbortSignal
+}
+
 interface SlotState {
   inFlight: number
   max: number
-  waiters: Array<{ resolve: () => void; reject: (e: Error) => void }>
+  waiters: Array<WaiterEntry>
 }
 
 const slots = new Map<string, SlotState>()
@@ -49,7 +56,7 @@ export function acquireWindsurfSlot(
   }
 
   return new Promise<void>((resolve, reject) => {
-    const entry = { resolve, reject }
+    const entry: WaiterEntry = { resolve, reject }
     slot.waiters.push(entry)
 
     if (signal) {
@@ -58,15 +65,14 @@ export function acquireWindsurfSlot(
         reject(makeAbortError(signal))
         return
       }
-      signal.addEventListener(
-        "abort",
-        () => {
-          if (removeFromWaiters(slot, entry)) {
-            reject(makeAbortError(signal))
-          }
-        },
-        { once: true },
-      )
+      const abortListener = () => {
+        if (removeFromWaiters(slot, entry)) {
+          reject(makeAbortError(signal))
+        }
+      }
+      entry.abortListener = abortListener
+      entry.signal = signal
+      signal.addEventListener("abort", abortListener, { once: true })
     }
   })
 }
@@ -85,7 +91,10 @@ export function releaseWindsurfSlot(accountId: string): void {
 
   const next = slot.waiters.shift()
   if (next) {
-    // Hand off directly — inFlight stays the same
+    // Clean up abort listener before handing off to avoid listener leak
+    if (next.signal && next.abortListener) {
+      next.signal.removeEventListener("abort", next.abortListener)
+    }
     next.resolve()
     return
   }
@@ -109,11 +118,14 @@ export function resetWindsurfSlotsForTest(): void {
 
 function removeFromWaiters(
   slot: SlotState,
-  entry: { resolve: () => void; reject: (e: Error) => void },
+  entry: WaiterEntry,
 ): boolean {
   const idx = slot.waiters.indexOf(entry)
   if (idx === -1) return false
   slot.waiters.splice(idx, 1)
+  if (entry.signal && entry.abortListener) {
+    entry.signal.removeEventListener("abort", entry.abortListener)
+  }
   return true
 }
 
