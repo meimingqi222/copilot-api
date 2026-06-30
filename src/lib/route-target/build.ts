@@ -262,8 +262,14 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
 
 /**
  * 根据请求的 endpoint 从模型支持的 endpoint 列表中解析出实际执行的 endpoint 列表。
- * responses/messages 不支持时可 fallback 到 chat（语义等价）；embeddings 不做 fallback。
+ * 不支持时可 fallback 到语义等价的 endpoint；embeddings 不做 fallback。
  * 返回 null 表示该模型不支持此 endpoint，应跳过。
+ *
+ * fallback 映射：
+ * - responses → chat：上游只支持 chat completions 但客户端用 responses API
+ * - messages  → chat：上游只支持 chat completions 但客户端用 anthropic messages API
+ * - chat      → responses：上游只支持 responses API（如 xAI/Codex native_responses），
+ *   由 protocol adapter 的 createChatViaResponses 自动转换
  */
 function resolveEndpoints(
   supported: Array<ModelEndpoint>,
@@ -271,10 +277,10 @@ function resolveEndpoints(
 ): Array<ModelEndpoint> | null {
   if (!requested) return supported
   if (supported.includes(requested)) return [requested]
-  // responses -> chat 是语义等价的 fallback（同为 chat completions 协议）
   const fallbackMap: Partial<Record<ModelEndpoint, ModelEndpoint>> = {
     responses: "chat",
     messages: "chat",
+    chat: "responses",
   }
   const fallback = fallbackMap[requested]
   if (fallback && supported.includes(fallback)) return [fallback]

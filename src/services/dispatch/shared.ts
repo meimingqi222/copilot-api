@@ -59,10 +59,17 @@ export async function dispatchRequest(
           )
         }
         return adapter
-          .createChatCompletions(target, conn, cred, payload, signal, {
-            initiator: current.initiator,
-            c: options.c,
-            ...options.executionContext,
+          .createChatCompletions({
+            target,
+            connection: conn,
+            credential: cred,
+            payload,
+            signal,
+            ctx: {
+              initiator: current.initiator,
+              c: options.c,
+              ...options.executionContext,
+            },
           })
           .then((r) => r as unknown as DispatchResult)
       }
@@ -74,9 +81,16 @@ export async function dispatchRequest(
         )
       }
       return adapter
-        .createMessages(target, conn, cred, payload, signal, {
-          forwardedHeaders: options.forwardedHeaders,
-          initiator: current.initiator,
+        .createMessages({
+          target,
+          connection: conn,
+          credential: cred,
+          payload,
+          signal,
+          ctx: {
+            forwardedHeaders: options.forwardedHeaders,
+            initiator: current.initiator,
+          },
         })
         .then((r) => r as unknown as DispatchResult)
     },

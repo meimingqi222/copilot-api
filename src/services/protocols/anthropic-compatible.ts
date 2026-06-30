@@ -42,8 +42,14 @@ function buildHeaders(
 export const anthropicCompatibleAdapter: ProtocolAdapter = {
   protocol: "anthropic-compatible",
 
-  // eslint-disable-next-line max-params
-  async createMessages(target, connection, credential, payload, signal, ctx) {
+  async createMessages({
+    target,
+    connection,
+    credential,
+    payload,
+    signal,
+    ctx,
+  }) {
     const upstreamPayload = {
       ...payload,
       model: target.upstreamModelId,
@@ -85,7 +91,7 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
     } satisfies AdapterMessagesResult
   },
 
-  async discoverModels(connection, credential, signal) {
+  async discoverModels({ connection, credential, signal }) {
     // Anthropic 没有统一模型发现端点;只有当用户配置了自定义 endpoint 才尝试。
     if (!connection.modelDiscovery?.endpoint) return []
     const endpoint = connection.modelDiscovery.endpoint

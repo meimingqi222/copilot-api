@@ -15,15 +15,7 @@ function extractAccount(target: { account?: Account }): Account {
 export const kimiNativeAdapter: ProtocolAdapter = {
   protocol: "kimi-native",
 
-  // eslint-disable-next-line max-params
-  async createChatCompletions(
-    target,
-    _connection,
-    _credential,
-    payload,
-    signal,
-    _ctx,
-  ) {
+  async createChatCompletions({ target, payload, signal }) {
     const account = extractAccount(target)
     const response = await createKimiChatCompletionsOnce(
       account,

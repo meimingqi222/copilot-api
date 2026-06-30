@@ -71,6 +71,7 @@ class MimoRotator {
   private currentIdx = 0
   private lastAccountRefresh = 0
   private activeManager: MimoAccountManager | null = null
+  private lastEmptyLogged = false
 
   start() {
     if (this.running) return
@@ -130,6 +131,10 @@ class MimoRotator {
     if (this.slots.length > 0 && this.currentIdx >= this.slots.length) {
       this.currentIdx = 0
     }
+    // Reset empty log flag when slots become available
+    if (this.slots.length > 0) {
+      this.lastEmptyLogged = false
+    }
   }
 
   private async run() {
@@ -139,10 +144,15 @@ class MimoRotator {
       this.refreshSlots()
 
       if (this.slots.length === 0) {
-        logger.info("[MimoRotator] No enabled Mimo accounts, waiting...")
+        if (!this.lastEmptyLogged) {
+          logger.info("[MimoRotator] No enabled Mimo accounts, waiting...")
+          this.lastEmptyLogged = true
+        }
         await sleep(30_000)
         continue
       }
+
+      this.lastEmptyLogged = false
 
       // Single account: just run it continuously (no rotation needed)
       if (this.slots.length === 1) {
@@ -150,14 +160,14 @@ class MimoRotator {
         logger.info(
           `[MimoRotator] Single account "${slot.label}" — running continuously`,
         )
-        const mgr = new MimoAccountManager(
-          slot.accountId,
-          slot.label,
-          slot.userId,
-          slot.serviceToken,
-          slot.ph,
-          slot.proxy,
-        )
+        const mgr = new MimoAccountManager({
+          accountId: slot.accountId,
+          label: slot.label,
+          userId: slot.userId,
+          serviceToken: slot.serviceToken,
+          ph: slot.ph,
+          proxy: slot.proxy,
+        })
         // Use runLifecycle for single account (continuous loop mode)
         this.activeManager = mgr
         await mgr.runLifecycle()
@@ -189,14 +199,14 @@ class MimoRotator {
         continue
       }
 
-      const mgr = new MimoAccountManager(
-        slot.accountId,
-        slot.label,
-        slot.userId,
-        slot.serviceToken,
-        slot.ph,
-        slot.proxy,
-      )
+      const mgr = new MimoAccountManager({
+        accountId: slot.accountId,
+        label: slot.label,
+        userId: slot.userId,
+        serviceToken: slot.serviceToken,
+        ph: slot.ph,
+        proxy: slot.proxy,
+      })
       this.activeManager = mgr
 
       const result = await mgr.runSingleCycle(RUN_DURATION_MS)

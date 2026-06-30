@@ -47,7 +47,7 @@ function classifyDiscoveredModelEndpoints(
 export const openAICompatibleAdapter: ProtocolAdapter = {
   protocol: "openai-compatible",
 
-  async discoverModels(connection, credential, signal) {
+  async discoverModels({ connection, credential, signal }) {
     const endpoint =
       connection.modelDiscovery?.endpoint
       ?? joinUrl(connection.baseUrl, "/models")
@@ -88,15 +88,13 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       }))
   },
 
-  // eslint-disable-next-line max-params
-  async createChatCompletions(
+  async createChatCompletions({
     target,
     connection,
     credential,
     payload,
     signal,
-    _ctx,
-  ) {
+  }) {
     const upstreamPayload = {
       ...payload,
       model: target.upstreamModelId,
@@ -136,7 +134,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     } satisfies AdapterChatResult
   },
 
-  async createEmbeddings(target, connection, credential, payload, signal) {
+  async createEmbeddings({ target, connection, credential, payload, signal }) {
     const upstreamPayload = {
       ...payload,
       model: target.upstreamModelId,

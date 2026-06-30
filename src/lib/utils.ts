@@ -90,11 +90,21 @@ export function cacheModels(): void {
       const providerId = entry.model.provider ?? entry.account.provider
       const nativeModelId = canonicalNativeModelId(entry.model.id)
       const prefix = getAccountModelPrefix(entry.account)
+      const isDuplicate = (duplicateCounts.get(nativeModelId) ?? 0) > 1
+      // Bare id is always exposed (auto-LB across providers).
+      // Prefixed ids (prefix/model and provider/model) are only exposed when
+      // multiple providers serve the same native model, letting the client
+      // target a specific provider. With a single provider the prefixed id
+      // is redundant — routing still works via buildAccountModelAliases.
       const publicIds = [
         entry.model.id,
-        `${prefix}/${entry.model.id}`,
-        ...((duplicateCounts.get(nativeModelId) ?? 0) > 1 ?
-          [`${providerId}/${entry.model.id}`]
+        ...(isDuplicate ?
+          [
+            `${prefix}/${entry.model.id}`,
+            ...(prefix !== providerId ?
+              [`${providerId}/${entry.model.id}`]
+            : []),
+          ]
         : []),
       ]
 
