@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomBytes, randomUUID } from "node:crypto"
 
 import type { Account } from "~/lib/accounts"
 import type {
@@ -544,9 +544,12 @@ export async function createWindsurfChatCompletionsOnce(
     hasTools: (payload.tools?.length ?? 0) > 0,
   })
 
-  const workspaceFingerprint = createHash("sha256")
-    .update(conversationKey)
-    .digest("hex")
+  // f31 (workspaceFingerprint): Devin CLI sends a 732-hex-char (366-byte)
+  // encrypted payload that is unique per request. We cannot reproduce the
+  // encryption (key is baked into devin.exe), but we match the length and
+  // per-request uniqueness so the server's length / replay checks pass.
+  // See scripts/capture/f31_value_analysis.txt for binary analysis.
+  const workspaceFingerprint = randomBytes(366).toString("hex")
 
   const requestBody = buildRequest({
     payload: { ...payload, model },
@@ -554,6 +557,7 @@ export async function createWindsurfChatCompletionsOnce(
     apiKey,
     requestModel,
     cascadeId: cloudIds.cascadeId,
+    promptId: cloudIds.promptId,
     workspaceFingerprint,
   })
 

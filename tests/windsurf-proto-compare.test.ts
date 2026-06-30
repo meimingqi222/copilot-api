@@ -61,10 +61,8 @@ describe("Windsurf proto — capture vs buildRequest", () => {
     expect(capture.mode).toBe(5)
     expect(capture.requestType).toBe(1)
     expect(capture.model).toBe("MODEL_PRIVATE_11")
-    expect(capture.metadata.f1).toBe("windsurf-next")
+    // Old capture used windsurf-next; new Devin CLI (2026.5.5-0) uses "chisel".
     expect(capture.metadata.f12).toBe("chisel")
-    expect(capture.metadata.f28).toBe("chisel")
-    expect(capture.metadata.f2).toBe("2026.8.1009")
     expect(capture.samplingFields).toEqual([1, 2, 3, 5, 7, 8])
   })
 
@@ -92,9 +90,9 @@ describe("Windsurf proto — capture vs buildRequest", () => {
       payload,
       settings: {
         apiKey: "test-key",
-        clientName: "windsurf-next",
-        appVersion: "2026.8.1009",
-        lsVersion: "2026.8.1009",
+        clientName: "chisel",
+        appVersion: "2026.5.5-0",
+        lsVersion: "2026.5.5-0",
         extensionName: "chisel",
         ideType: "chisel",
       },
@@ -114,31 +112,71 @@ describe("Windsurf proto — capture vs buildRequest", () => {
       metadataFields(builtPayload),
     )
 
-    // Top-level fields match exactly: no extra fields in built.
+    // Top-level fields: built should NOT add fields absent from capture.
+    // This capture file is a subagent-style request (no f22); built omits
+    // promptId here so onlyInBuilt stays empty. Devin CLI sends f22 only on
+    // primary conversation turns (17/141 captured requests).
     for (const field of [1, 2, 3, 7, 8, 10, 15, 16, 20, 21]) {
       expect(topDiff.shared).toContain(field)
     }
     expect(topDiff.onlyInBuilt).toEqual([])
-    expect(topDiff.onlyInCapture).toEqual([])
 
-    // Metadata fields match exactly: Devin CLI sends only
-    // f1, f2, f3, f4, f5, f7, f12, f28, f31.
-    for (const field of [1, 2, 3, 4, 5, 7, 12, 28, 31]) {
+    // Metadata fields: Devin CLI (2026.5.5-0) sends only
+    // f1, f2, f3, f4, f5, f7, f12, f31 — NO f28.
+    // Old capture may still have f28; built must NOT add it.
+    for (const field of [1, 2, 3, 4, 5, 7, 12, 31]) {
       expect(metaDiff.shared).toContain(field)
     }
     expect(metaDiff.onlyInBuilt).toEqual([])
-    expect(metaDiff.onlyInCapture).toEqual([])
 
     const fingerprint = fingerprintWindsurfRequest(built)
     expect(fingerprint.mode).toBe(5)
     expect(fingerprint.requestType).toBe(1)
     expect(fingerprint.model).toBe("MODEL_PRIVATE_11")
+    expect(fingerprint.metadata.f1).toBe("chisel")
     expect(fingerprint.metadata.f12).toBe("chisel")
-    expect(fingerprint.metadata.f28).toBe("chisel")
     expect(fingerprint.metadata.f31).toBe("abc123")
+    expect(fingerprint.metadata.f28).toBeUndefined()
     expect(fingerprint.metadata.f10).toBeUndefined()
     expect(fingerprint.metadata.f9).toBeUndefined()
     expect(fingerprint.metadata.f21).toBeUndefined()
     expect(fingerprint.metadata.f25).toBeUndefined()
+  })
+
+  test("buildRequest sends f22 (prompt_id) when promptId is provided", () => {
+    const payload: ChatCompletionsPayload = {
+      model: "swe-1-6",
+      messages: [{ role: "user", content: "hello" }],
+      stream: true,
+    }
+
+    const built = buildRequest({
+      payload,
+      settings: {
+        apiKey: "test-key",
+        clientName: "chisel",
+        appVersion: "2026.5.5-0",
+        lsVersion: "2026.5.5-0",
+        extensionName: "chisel",
+        ideType: "chisel",
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+      workspaceFingerprint: "abc123",
+      promptId: "b0f93684-49e4-4b6a-b5ed-02242d37b9ba",
+    })
+
+    const builtPayload = decodeFramedPayload(built)
+    const fields = topLevelFields(builtPayload)
+    expect(fields).toContain(22)
+
+    // Verify the f22 value matches what was passed in.
+    const f22Node = parseMessage(builtPayload, 0, 1).find((n) => n.field === 22)
+    expect(f22Node?.raw).toBeDefined()
+    const f22Value = Buffer.from(f22Node?.raw ?? new Uint8Array()).toString(
+      "utf8",
+    )
+    expect(f22Value).toBe("b0f93684-49e4-4b6a-b5ed-02242d37b9ba")
   })
 })

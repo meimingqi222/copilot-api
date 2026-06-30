@@ -1,20 +1,18 @@
 /**
  * Per-account concurrency limiter for Windsurf inference requests.
  *
- * Mirrors the Devin CLI's internal "LLM semaphore" (confirmed via binary
- * analysis: `Failed to acquire LLM semaphore` + tokio `semaphore.rs`). The
- * CLI is interactive so typically only one inference is in flight at a time;
- * copilot-api can fan out concurrent requests from multiple clients, which
- * spikes request density and trips Windsurf's per-model message-rate quota.
+ * Mirrors the Devin CLI's internal "LLM semaphore". Live capture analysis
+ * (scripts/capture/concurrency_analysis.txt) shows the CLI peaks at 6
+ * simultaneous in-flight GetChatMessage calls (1 main turn + 5 subagents).
+ * Default is 8 to match that observed headroom.
  *
- * This gate caps concurrent in-flight fetches per account. Default is 1
- * (matching CLI behavior). Stream consumption (reading the response body)
- * does NOT hold the slot — only the initial upstream fetch is gated.
+ * Stream consumption (reading the response body) does NOT hold the slot —
+ * only the initial upstream fetch is gated.
  */
 
 import { logger } from "~/lib/logger"
 
-const DEFAULT_MAX_CONCURRENT = 1
+const DEFAULT_MAX_CONCURRENT = 8
 
 interface WaiterEntry {
   resolve: () => void
@@ -116,10 +114,7 @@ export function resetWindsurfSlotsForTest(): void {
   slots.clear()
 }
 
-function removeFromWaiters(
-  slot: SlotState,
-  entry: WaiterEntry,
-): boolean {
+function removeFromWaiters(slot: SlotState, entry: WaiterEntry): boolean {
   const idx = slot.waiters.indexOf(entry)
   if (idx === -1) return false
   slot.waiters.splice(idx, 1)
