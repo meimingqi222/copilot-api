@@ -173,10 +173,7 @@ export async function refreshOAuthAccountToken(
         break
       }
       case "xai": {
-        const tokenEndpoint = getXaiTokenEndpoint(account)
-        if (!tokenEndpoint) {
-          throw new Error("xAI OAuth account is missing token endpoint")
-        }
+        const tokenEndpoint = getXaiTokenEndpoint(account) ?? ""
         const bundle = await refreshXaiTokens(
           refreshToken,
           tokenEndpoint,
