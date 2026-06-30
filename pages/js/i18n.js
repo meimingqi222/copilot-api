@@ -437,6 +437,27 @@ const i18n = {
       "connections.testSuccess": "连通正常",
       "connections.testFailed": "连通失败",
       "connections.testAll": "批量测试",
+      "connections.batchAddModel": "批量添加模型",
+      "connections.batchPasteLabel": "粘贴模型清单",
+      "connections.batchPastePlaceholder":
+        "Model\tModel ID\nGLM-5.2\tcline-pass/glm-5.2\nDeepSeek V4 Flash\tcline-pass/deepseek-v4-flash\n...\n\n或每行一个 model id",
+      "connections.batchParseHint":
+        "支持 markdown 表格、制表符分隔、YAML、纯 ID 列表。含 provider/ 前缀会自动拆分为 vendor + publicId + upstreamId。",
+      "connections.batchParse": "正则解析",
+      "connections.batchAiParse": "AI 智能解析",
+      "connections.batchAiParsing": "AI 解析中…",
+      "connections.batchSelectAll": "全选/反选",
+      "connections.batchSave": "批量保存",
+      "connections.batchModelPublicIdPh": "对外模型 ID",
+      "connections.batchModelUpstreamIdPh": "上游 ID（留空同对外）",
+      "connections.batchModelNamePh": "显示名称",
+      "connections.batchModelVendorPh": "厂商前缀",
+      "connections.modelPublicIdRenameHint":
+        "修改对外模型 ID 将重命名,客户端需用新 ID 调用。",
+      "connections.batchPromptTitle":
+        "AI 提示词（复制到任意 LLM 自动生成清单）",
+      "connections.batchPromptBody":
+        '提示词：请按 "显示名<TAB>model-id" 格式列出所有可用模型，每行一个，含 provider 前缀（如 vendor/model-name）。默认勾选 deepseek-v4-flash，可手工选择全部。',
       "connections.credBulkHint": "每行一个 API Key，支持批量粘贴",
       "connections.apiKey": "API Key",
 
@@ -1030,6 +1051,27 @@ const i18n = {
       "connections.testSuccess": "Connected",
       "connections.testFailed": "Failed",
       "connections.testAll": "Test All",
+      "connections.batchAddModel": "Batch Add Models",
+      "connections.batchPasteLabel": "Paste model list",
+      "connections.batchPastePlaceholder":
+        "Model\tModel ID\nGLM-5.2\tcline-pass/glm-5.2\nDeepSeek V4 Flash\tcline-pass/deepseek-v4-flash\n...\n\nor one model id per line",
+      "connections.batchParseHint":
+        "Supports markdown tables, tab-separated, YAML, or plain ID lists. Provider/ prefix is auto-split into vendor + publicId + upstreamId.",
+      "connections.batchParse": "Regex Parse",
+      "connections.batchAiParse": "AI Parse",
+      "connections.batchAiParsing": "Parsing…",
+      "connections.batchSelectAll": "Toggle All",
+      "connections.batchSave": "Batch Save",
+      "connections.batchModelPublicIdPh": "Public Model ID",
+      "connections.batchModelUpstreamIdPh": "Upstream ID (blank = same)",
+      "connections.batchModelNamePh": "Display Name",
+      "connections.batchModelVendorPh": "Vendor prefix",
+      "connections.modelPublicIdRenameHint":
+        "Changing the public model ID renames it; clients must use the new ID.",
+      "connections.batchPromptTitle":
+        "AI Prompt (copy to any LLM to auto-generate list)",
+      "connections.batchPromptBody":
+        'Prompt: List all available models in "Display Name<TAB>model-id" format, one per line, including provider prefix (e.g. vendor/model-name). deepseek-v4-flash is selected by default; you can manually select all.',
       "connections.credBulkHint": "One API Key per line, supports bulk paste",
       "connections.apiKey": "API Key",
 

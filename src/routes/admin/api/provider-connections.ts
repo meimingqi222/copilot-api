@@ -22,9 +22,13 @@ import {
   isModelEndpoint,
   isProviderProtocol,
   listProviderConnections,
+  type ApiCredential,
   type ModelEndpoint,
+  type ModelMapping,
   persistProviderConnections,
+  type ProviderConnection,
   resetCredentialStatus,
+  type RouteTarget,
   sanitizeConnection,
   sanitizeCredential,
   setCredentialEnabled,
@@ -33,6 +37,15 @@ import {
   updateCredential,
   updateModel,
 } from "~/lib/provider-connections"
+import { isCredentialAvailable } from "~/lib/provider-connections/availability"
+import {
+  extractJsonArray,
+  firstEnabledChatModel,
+  modelToTestTarget,
+  pickTestModel,
+  probeModelsEndpoint,
+  testViaAdapter,
+} from "~/routes/admin/api/provider-connections-helpers"
 import {
   getProtocolAdapter,
   initializeProtocolAdapters,
@@ -222,6 +235,14 @@ providerConnectionApiRoutes.post("/:id/refresh-models", async (c) => {
 })
 
 // 测试 API 连通性
+//
+// 优先顺序:
+// 1. 请求体指定 `modelId` → 直接用该模型发最小 chat / messages 请求
+// 2. 否则先尝试 `discoverModels`(对支持 /models 的 provider 最经济)
+// 3. discovery 失败时,若 connection 已有手工配置的模型,回退用第一个
+//    enabled chat/messages 模型发真实最小请求 — 解决无自动发现能力
+//    provider(如 Cline)的连通性测试问题
+// 4. 都不可行时,fallback 到 plain HTTP probe /models
 providerConnectionApiRoutes.post("/:id/test", async (c) => {
   initializeProtocolAdapters()
   const connection = getProviderConnection(c.req.param("id"))
@@ -239,45 +260,132 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
   if (!credential)
     return c.json({ ok: false, error: "No enabled credentials" }, 400)
 
+  const requestedModelId =
+    typeof body.modelId === "string" && body.modelId ? body.modelId : undefined
+
   const adapter = getProtocolAdapter(connection.protocol)
   const start = Date.now()
+  const timeoutSignal = AbortSignal.timeout(15_000)
 
-  try {
-    if (adapter?.discoverModels) {
-      await adapter.discoverModels({ connection, credential })
+  // ── 路径 1: 用户指定了 modelId,直接发 chat 测试 ─────────────────────
+  if (requestedModelId && adapter) {
+    const target = pickTestModel(connection, requestedModelId)
+    if (!target) {
+      return c.json(
+        { ok: false, error: `Model "${requestedModelId}" not found` },
+        400,
+      )
+    }
+    try {
+      const method = await testViaAdapter(
+        adapter,
+        connection,
+        credential,
+        target,
+        timeoutSignal,
+      )
+      return c.json({
+        ok: true,
+        latencyMs: Date.now() - start,
+        method,
+        modelId: target.publicModelId,
+      })
+    } catch (error) {
+      return c.json(
+        {
+          ok: false,
+          error: (error as Error).message,
+          latencyMs: Date.now() - start,
+          method: "chat",
+          modelId: target.publicModelId,
+        },
+        502,
+      )
+    }
+  }
+
+  // ── 路径 2: 先试 discoverModels ──────────────────────────────────────
+  if (adapter?.discoverModels) {
+    try {
+      await adapter.discoverModels({
+        connection,
+        credential,
+        signal: timeoutSignal,
+      })
       return c.json({
         ok: true,
         latencyMs: Date.now() - start,
         method: "model-list",
       })
+    } catch (discoveryError) {
+      // ── 路径 3: discovery 失败,回退到第一个手工模型发 chat ──────────
+      const fallbackTarget = firstEnabledChatModel(connection)
+      if (fallbackTarget) {
+        try {
+          const method = await testViaAdapter(
+            adapter,
+            connection,
+            credential,
+            fallbackTarget,
+            timeoutSignal,
+          )
+          return c.json({
+            ok: true,
+            latencyMs: Date.now() - start,
+            method,
+            modelId: fallbackTarget.publicModelId,
+            discoveryError: (discoveryError as Error).message,
+          })
+        } catch (error) {
+          return c.json(
+            {
+              ok: false,
+              error: (error as Error).message,
+              latencyMs: Date.now() - start,
+              method: fallbackTarget.endpoint,
+              modelId: fallbackTarget.publicModelId,
+              discoveryError: (discoveryError as Error).message,
+            },
+            502,
+          )
+        }
+      }
+
+      // ── 路径 4: 没有手工模型,走 plain HTTP probe ────────────────────
+      const probeResult = await probeModelsEndpoint(
+        connection,
+        credential,
+        timeoutSignal,
+      )
+      return c.json(
+        {
+          ok: probeResult.ok,
+          status: probeResult.status,
+          error: probeResult.error ?? (discoveryError as Error).message,
+          latencyMs: Date.now() - start,
+          method: "http-probe",
+        },
+        probeResult.ok ? 200 : 502,
+      )
     }
-    // fallback: plain HTTP probe
-    const testUrl = `${connection.baseUrl}/models`
-    const headers: Record<string, string> = {}
-    if (credential.authMode === "header") {
-      headers[credential.headerName ?? "Authorization"] = credential.value
-    } else {
-      headers["Authorization"] = `Bearer ${credential.value}`
-    }
-    const res = await fetch(testUrl, {
-      headers,
-      signal: AbortSignal.timeout(10_000),
-    })
-    return c.json({
-      ok: res.ok,
-      status: res.status,
-      latencyMs: Date.now() - start,
-    })
-  } catch (error) {
-    return c.json(
-      {
-        ok: false,
-        error: (error as Error).message,
-        latencyMs: Date.now() - start,
-      },
-      502,
-    )
   }
+
+  // ── 路径 4(adapter 无 discoverModels): plain HTTP probe ──────────────
+  const probeResult = await probeModelsEndpoint(
+    connection,
+    credential,
+    timeoutSignal,
+  )
+  return c.json(
+    {
+      ok: probeResult.ok,
+      status: probeResult.status,
+      error: probeResult.error,
+      latencyMs: Date.now() - start,
+      method: "http-probe",
+    },
+    probeResult.ok ? 200 : 502,
+  )
 })
 
 // 手动添加模型
@@ -332,6 +440,220 @@ providerConnectionApiRoutes.post("/:id/models", async (c) => {
   }
 })
 
+// 批量添加模型
+//
+// 请求体: { models: Array<{ publicId, upstreamId?, name?, vendor?, endpoints?, enabled? }> }
+// 行为: 已存在的 publicId 跳过(不报错),返回 added / skipped 列表。
+// 便于从粘贴的模型清单一次性导入。
+providerConnectionApiRoutes.post("/:id/models/batch", async (c) => {
+  const connection = getProviderConnection(c.req.param("id"))
+  if (!connection) return c.json({ error: "Not found" }, 404)
+
+  let payload: Record<string, unknown>
+  try {
+    payload = await c.req.json()
+  } catch {
+    return c.json({ error: "Invalid JSON" }, 400)
+  }
+
+  const input = Array.isArray(payload.models) ? payload.models : []
+  if (input.length === 0) {
+    return c.json({ error: "`models` array is required" }, 400)
+  }
+
+  const existing = new Set((connection.models ?? []).map((m) => m.publicId))
+  const added: Array<ModelMapping> = []
+  const skipped: Array<{ publicId: string; reason: string }> = []
+
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue
+    const item = raw as Record<string, unknown>
+    const publicId =
+      typeof item.publicId === "string" ? item.publicId.trim() : ""
+    if (!publicId) {
+      skipped.push({ publicId: "", reason: "missing publicId" })
+      continue
+    }
+    if (existing.has(publicId)) {
+      skipped.push({ publicId, reason: "already exists" })
+      continue
+    }
+
+    const rawEndpoints =
+      Array.isArray(item.endpoints) ?
+        (item.endpoints as Array<string>).filter((e): e is ModelEndpoint =>
+          isModelEndpoint(e),
+        )
+      : []
+    const model: ModelMapping = {
+      publicId,
+      upstreamId:
+        typeof item.upstreamId === "string" && item.upstreamId ?
+          item.upstreamId
+        : publicId,
+      name: typeof item.name === "string" && item.name ? item.name : undefined,
+      vendor:
+        typeof item.vendor === "string" && item.vendor ?
+          item.vendor
+        : undefined,
+      endpoints:
+        rawEndpoints.length > 0 ?
+          rawEndpoints
+        : (["chat"] as Array<ModelEndpoint>),
+      enabled: typeof item.enabled === "boolean" ? item.enabled : true,
+    }
+    try {
+      await addModel(c.req.param("id"), model)
+      existing.add(publicId)
+      added.push(model)
+    } catch (error) {
+      skipped.push({
+        publicId,
+        reason: (error as Error).message,
+      })
+    }
+  }
+
+  return c.json(
+    {
+      connection: sanitizeConnection(connection),
+      added,
+      skipped,
+    },
+    201,
+  )
+})
+
+// AI 智能解析模型清单
+//
+// 请求体: { text: string, connectionId?: string, modelId?: string }
+// 行为: 用任意一个可用的 chat connection(account/credential)调用 LLM,
+//       把用户粘贴的任意格式文本解析为结构化模型列表。
+// 返回: { models: Array<{ publicId, upstreamId, name, vendor }> }
+//
+// 选择调用源的优先级:
+// 1. 请求体指定 connectionId + modelId
+// 2. 遍历所有 provider connections,取第一个 enabled + 可用 credential + 有 chat 模型的
+providerConnectionApiRoutes.post("/parse-models", async (c) => {
+  const body = (await c.req
+    .json()
+    .catch(() => ({}) as Record<string, unknown>)) as Record<string, unknown>
+  const text = typeof body.text === "string" ? body.text : ""
+  if (!text.trim()) {
+    return c.json({ error: "`text` is required" }, 400)
+  }
+
+  initializeProtocolAdapters()
+
+  // 找一个可用的 chat 调用源
+  const connections = listProviderConnections()
+  let target: RouteTarget | undefined
+  let connection: ProviderConnection | undefined
+  let credential: ApiCredential | undefined
+
+  const requestedConnId =
+    typeof body.connectionId === "string" ? body.connectionId : undefined
+  const requestedModelId =
+    typeof body.modelId === "string" ? body.modelId : undefined
+
+  if (requestedConnId) {
+    const conn = connections.find((cn) => cn.id === requestedConnId)
+    if (conn) {
+      const cred =
+        conn.credentials.find(
+          (cr) => cr.id !== requestedConnId && isCredentialAvailable(cr),
+        ) ?? conn.credentials.find((cr) => isCredentialAvailable(cr))
+      const model =
+        requestedModelId ?
+          conn.models?.find((m) => m.publicId === requestedModelId && m.enabled)
+        : conn.models?.find((m) => m.enabled && m.endpoints.includes("chat"))
+      if (cred && model) {
+        connection = conn
+        credential = cred
+        target = modelToTestTarget(conn, model)
+        target.credentialId = cred.id
+      }
+    }
+  }
+
+  if (!target) {
+    for (const conn of connections) {
+      if (!conn.enabled) continue
+      const cred = conn.credentials.find((cr) => isCredentialAvailable(cr))
+      if (!cred) continue
+      const model = conn.models?.find(
+        (m) => m.enabled && m.endpoints.includes("chat"),
+      )
+      if (!model) continue
+      connection = conn
+      credential = cred
+      target = modelToTestTarget(conn, model)
+      target.credentialId = cred.id
+      break
+    }
+  }
+
+  if (!target || !connection || !credential) {
+    return c.json(
+      {
+        error:
+          "No available chat connection found. Please configure and enable a provider connection with a chat model first.",
+      },
+      400,
+    )
+  }
+
+  const adapter = getProtocolAdapter(connection.protocol)
+  if (!adapter?.createChatCompletions) {
+    return c.json(
+      { error: `Protocol ${connection.protocol} has no chat capability` },
+      400,
+    )
+  }
+
+  const systemPrompt = `You are a model list parser. Extract all AI/LLM models from the user's text and return ONLY a JSON array (no markdown, no explanation). Each element must be an object: {"publicId": string, "upstreamId": string, "name": string, "vendor": string | null}. Rules:
+1. "name" = human-friendly display name (e.g. "DeepSeek V4 Flash"). Use "" if not apparent.
+2. "upstreamId" = the full model id exactly as written in the text (e.g. "cline-pass/glm-5.2").
+3. If the id contains a "/", split it: prefix -> "vendor", suffix -> "publicId" (e.g. "cline-pass/glm-5.2" => vendor="cline-pass", publicId="glm-5.2", upstreamId="cline-pass/glm-5.2").
+4. If no "/", "vendor" = null and "publicId" = "upstreamId" = the id.
+5. Return [] if no models are found.
+Output format: [{"publicId":"...","upstreamId":"...","name":"...","vendor":"..."}]`
+
+  try {
+    const result = await adapter.createChatCompletions({
+      target,
+      connection,
+      credential,
+      payload: {
+        model: target.upstreamModelId,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: text },
+        ],
+        max_tokens: 2000,
+        temperature: 0,
+        stream: false,
+      },
+      signal: AbortSignal.timeout(30_000),
+    })
+
+    if (!("response" in result)) {
+      return c.json({ error: "Unexpected adapter response (stream)" }, 500)
+    }
+    const resp = result.response as {
+      choices?: Array<{ message?: { content?: string } }>
+    }
+    const content = resp.choices?.[0]?.message?.content ?? ""
+    const models = extractJsonArray(content)
+    return c.json({ models })
+  } catch (error) {
+    return c.json(
+      { error: `AI parse failed: ${(error as Error).message}` },
+      502,
+    )
+  }
+})
+
 // 更新模型
 providerConnectionApiRoutes.put("/:id/models/:publicId", async (c) => {
   const connection = getProviderConnection(c.req.param("id"))
@@ -347,6 +669,8 @@ providerConnectionApiRoutes.put("/:id/models/:publicId", async (c) => {
   }
 
   const patch: Parameters<typeof updateModel>[2] = {}
+  if (typeof payload.publicId === "string" && payload.publicId)
+    patch.publicId = payload.publicId.trim()
   if (typeof payload.upstreamId === "string" && payload.upstreamId)
     patch.upstreamId = payload.upstreamId
   if (typeof payload.name === "string") patch.name = payload.name || undefined
