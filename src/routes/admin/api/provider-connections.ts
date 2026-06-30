@@ -559,10 +559,7 @@ providerConnectionApiRoutes.post("/parse-models", async (c) => {
   if (requestedConnId) {
     const conn = connections.find((cn) => cn.id === requestedConnId)
     if (conn) {
-      const cred =
-        conn.credentials.find(
-          (cr) => cr.id !== requestedConnId && isCredentialAvailable(cr),
-        ) ?? conn.credentials.find((cr) => isCredentialAvailable(cr))
+      const cred = conn.credentials.find((cr) => isCredentialAvailable(cr))
       const model =
         requestedModelId ?
           conn.models?.find((m) => m.publicId === requestedModelId && m.enabled)
