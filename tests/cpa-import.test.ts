@@ -47,7 +47,7 @@ describe("CPA auth import", () => {
     })
 
     expect(account.provider).toBe("xai")
-    expect(account.settings?.tokenEndpoint).toContain("/oauth/token")
+    expect(account.settings?.tokenEndpoint).toContain("/oauth2/token")
   })
 
   test("strips tokens from cpaMetadata", () => {
