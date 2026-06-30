@@ -3,7 +3,9 @@
  *
  * Stable cascade_id (proto field #16) and metadata session_id (field #10)
  * across turns improve server-side prompt-cache hit rate.
- * Field #22 prompt_id is minted fresh per request in request-builders.ts.
+ * Field #22 prompt_id is also stable per conversation — verified from live
+ * Devin CLI capture where the same f22 UUID is reused across 7-8 primary
+ * conversation turns (17/141 requests carry f22; 124 subagent calls omit it).
  *
  * Conversation keys are resolved automatically when clients omit session headers
  * (same idea as Claude's getStableSessionId / Codex prompt_cache_key).
@@ -17,6 +19,7 @@ import { getStableSessionId } from "~/lib/cache/session-id-cache"
 export interface CloudSessionIds {
   sessionId: string
   cascadeId: string
+  promptId: string
 }
 
 /** Legacy sentinel — only used in tests; production always resolves a stable key. */
@@ -46,6 +49,7 @@ const CLOUD_SESSION_TTL_MS = 60 * 60_000 // 1 hour, matches Claude session-id ca
 interface StoredCloudSessionIds {
   sessionId: string
   cascadeId: string
+  promptId: string
   conversationKey: string
 }
 
@@ -133,6 +137,7 @@ export async function getOrAllocateCloudSessionIds(
     stored = {
       sessionId: randomUUID(),
       cascadeId: opts.cascadeIdOverride ?? randomUUID(),
+      promptId: randomUUID(),
       conversationKey,
     }
     stored = persistedSessions.setNX(key, stored)
@@ -152,6 +157,7 @@ export async function getOrAllocateCloudSessionIds(
   return {
     sessionId: stored.sessionId,
     cascadeId: stored.cascadeId,
+    promptId: stored.promptId,
   }
 }
 

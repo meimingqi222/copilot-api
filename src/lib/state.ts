@@ -69,10 +69,10 @@ export const state: State = {
     },
     windsurf: {
       baseUrl: "https://server.codeium.com",
-      appVersion: "2026.8.1009",
-      lsVersion: "2026.8.1009",
+      appVersion: "2026.5.5-0",
+      lsVersion: "2026.5.5-0",
       defaultModel: "swe-1-6-fast",
-      clientName: "windsurf-next",
+      clientName: "chisel",
       extensionName: "chisel",
       ideType: "chisel",
     },

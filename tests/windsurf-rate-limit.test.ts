@@ -168,22 +168,25 @@ describe("windsurf concurrency limiter", () => {
     releaseWindsurfSlot("acct-1")
   })
 
-  test("blocks second acquire until first releases", async () => {
-    await acquireWindsurfSlot("acct-2")
+  test("blocks acquire when slot cap is reached", async () => {
+    // Default cap is 8 — fill all slots, then verify the 9th blocks.
+    for (let i = 0; i < 8; i++) {
+      await acquireWindsurfSlot("acct-cap")
+    }
 
-    let secondAcquired = false
-    const secondPromise = acquireWindsurfSlot("acct-2").then(() => {
-      secondAcquired = true
+    let extraAcquired = false
+    const extraPromise = acquireWindsurfSlot("acct-cap").then(() => {
+      extraAcquired = true
     })
 
-    // Give it a tick to potentially resolve (it shouldn't)
     await new Promise((r) => setTimeout(r, 20))
-    expect(secondAcquired).toBe(false)
+    expect(extraAcquired).toBe(false)
 
-    releaseWindsurfSlot("acct-2")
-    await secondPromise
-    expect(secondAcquired).toBe(true)
-    releaseWindsurfSlot("acct-2")
+    releaseWindsurfSlot("acct-cap")
+    await extraPromise
+    expect(extraAcquired).toBe(true)
+    // Drain remaining slots
+    for (let i = 0; i < 8; i++) releaseWindsurfSlot("acct-cap")
   })
 
   test("isolates slots per account", async () => {
@@ -194,7 +197,10 @@ describe("windsurf concurrency limiter", () => {
   })
 
   test("rejects on abort signal while waiting", async () => {
-    await acquireWindsurfSlot("acct-abort")
+    // Fill all 8 slots so the 9th acquires waits.
+    for (let i = 0; i < 8; i++) {
+      await acquireWindsurfSlot("acct-abort")
+    }
     const controller = new AbortController()
     const promise = acquireWindsurfSlot("acct-abort", controller.signal)
     controller.abort()
@@ -205,7 +211,7 @@ describe("windsurf concurrency limiter", () => {
       threw = true
     }
     expect(threw).toBe(true)
-    releaseWindsurfSlot("acct-abort")
+    for (let i = 0; i < 8; i++) releaseWindsurfSlot("acct-abort")
   })
 })
 

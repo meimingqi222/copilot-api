@@ -235,8 +235,15 @@ export function buildRequest(opts: {
   cascadeId: string
   /** Stable per conversation (metadata field 31). */
   workspaceFingerprint?: string
+  /**
+   * Stable per-conversation prompt_id (field 22). Devin CLI sends this for
+   * primary conversation turns (17/141 captured requests); subagent calls
+   * omit it. copilot-api forwards external client requests which are always
+   * primary turns, so we send it on every request.
+   */
+  promptId?: string
 }): Uint8Array {
-  const { payload, settings, apiKey, requestModel, cascadeId } = opts
+  const { payload, settings, apiKey, requestModel, cascadeId, promptId } = opts
   const slugModel = isSlugModelId(requestModel)
   const chatMode = resolveChatMode(requestModel)
   const request = new ProtobufEncoder()
@@ -276,7 +283,12 @@ export function buildRequest(opts: {
   request.writeString(16, cascadeId)
   request.writeVarint(20, ChatMessageRequestType.GENERAL) // request type
   request.writeString(21, requestModel)
-  // Devin CLI does NOT send field 22 (prompt_id).
+  // Field 22 (prompt_id): stable per conversation. Devin CLI sends it for
+  // primary conversation turns; copilot-api treats every external request as
+  // a primary turn, so we always send it when promptId is provided.
+  if (promptId) {
+    request.writeString(22, promptId)
+  }
   // Frame is sent uncompressed to match Devin CLI capture (flags=0).
   return encodeConnectFrame(request.toUint8Array(), false)
 }

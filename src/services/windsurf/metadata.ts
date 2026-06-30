@@ -25,18 +25,18 @@ function getOsLabel(): string {
   return process.platform
 }
 
-// Devin CLI metadata layout (verified from live GetChatMessage capture):
+// Devin CLI metadata layout (verified from live GetChatMessage capture —
+// 140 requests, all identical 8-field set):
 //   f1=clientName  f2=appVersion  f3=apiKey  f4="en"  f5=OS label
-//   f7=lsVersion   f12=extensionName  f28=ideType  f31=workspaceFingerprint
+//   f7=lsVersion   f12=extensionName  f31=workspaceFingerprint
 // Deliberately omits f9(requestId), f10(sessionId), f16(timestamp),
-// f21(userJwt), f25(triggerId), f26 — the Windsurf IDE client sends those,
-// but the Devin CLI does not, and the extra fields create an anomalous
-// fingerprint that can trigger per-model rate limits.
+// f21(userJwt), f25(triggerId), f26, f28(ideType) — the Windsurf IDE client
+// sends those, but the Devin CLI does not, and the extra fields create an
+// anomalous fingerprint that can trigger per-model rate limits.
 export function buildWindsurfClientMetadata(
   opts: WindsurfMetadataOptions,
 ): ProtobufEncoder {
   const extensionName = opts.settings.extensionName ?? "chisel"
-  const ideType = opts.settings.ideType ?? "chisel"
   const metadata = new ProtobufEncoder()
   metadata.writeString(1, opts.settings.clientName)
   metadata.writeString(2, opts.settings.appVersion)
@@ -45,7 +45,6 @@ export function buildWindsurfClientMetadata(
   metadata.writeString(5, getOsLabel())
   metadata.writeString(7, opts.settings.lsVersion)
   metadata.writeString(12, extensionName)
-  metadata.writeString(28, ideType)
   if (opts.workspaceFingerprint) {
     metadata.writeString(31, opts.workspaceFingerprint)
   }
