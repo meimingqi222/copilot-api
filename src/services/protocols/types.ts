@@ -48,49 +48,43 @@ export type AdapterResponsesResult =
   | { credentialId: string; response: AsyncIterable<CopilotStreamEventLike> }
   | { credentialId: string; response: ResponsesResponse }
 
+/** Shared parameters for all adapter create* methods. */
+interface AdapterParams<TPayload> {
+  target: RouteTarget
+  connection: ProviderConnection
+  credential: ApiCredential
+  payload: TPayload
+  signal?: AbortSignal
+  ctx?: RequestExecutionContext
+}
+
+/** Parameters for discoverModels (no target/payload). */
+interface DiscoverModelsParams {
+  connection: ProviderConnection
+  credential: ApiCredential
+  signal?: AbortSignal
+}
+
 export interface ProtocolAdapter {
   protocol: ProviderProtocol
 
   /** 自动发现模型(可选)。返回上游模型映射,调用方按 mode 合并到 connection.models。 */
-  discoverModels?(
-    connection: ProviderConnection,
-    credential: ApiCredential,
-    signal?: AbortSignal,
-  ): Promise<Array<ModelMapping>>
+  discoverModels?(params: DiscoverModelsParams): Promise<Array<ModelMapping>>
 
   createChatCompletions?(
-    target: RouteTarget,
-    connection: ProviderConnection,
-    credential: ApiCredential,
-    payload: ChatCompletionsPayload,
-    signal?: AbortSignal,
-    ctx?: RequestExecutionContext,
+    params: AdapterParams<ChatCompletionsPayload>,
   ): Promise<AdapterChatResult>
 
   createMessages?(
-    target: RouteTarget,
-    connection: ProviderConnection,
-    credential: ApiCredential,
-    payload: AnthropicMessagesPayload,
-    signal?: AbortSignal,
-    ctx?: RequestExecutionContext,
+    params: AdapterParams<AnthropicMessagesPayload>,
   ): Promise<AdapterMessagesResult>
 
   createResponses?(
-    target: RouteTarget,
-    connection: ProviderConnection,
-    credential: ApiCredential,
-    payload: ResponsesPayload,
-    signal?: AbortSignal,
-    ctx?: RequestExecutionContext,
+    params: AdapterParams<ResponsesPayload>,
   ): Promise<AdapterResponsesResult>
 
   createEmbeddings?(
-    target: RouteTarget,
-    connection: ProviderConnection,
-    credential: ApiCredential,
-    payload: EmbeddingRequest,
-    signal?: AbortSignal,
+    params: Omit<AdapterParams<EmbeddingRequest>, "ctx">,
   ): Promise<AdapterEmbeddingsResult>
 }
 

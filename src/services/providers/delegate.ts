@@ -89,14 +89,14 @@ export async function delegateChatToNativeAdapter(
   )
   const { connection, credential } = buildVirtualConnectionParts(account)
 
-  const result = await adapter.createChatCompletions(
+  const result = await adapter.createChatCompletions({
     target,
     connection,
     credential,
     payload,
     signal,
     ctx,
-  )
+  })
 
   return {
     accountId: result.credentialId,
@@ -130,14 +130,14 @@ export async function delegateResponsesToNativeAdapter(
   )
   const { connection, credential } = buildVirtualConnectionParts(account)
 
-  const result = await adapter.createResponses(
+  const result = await adapter.createResponses({
     target,
     connection,
     credential,
     payload,
     signal,
     ctx,
-  )
+  })
 
   return {
     accountId: result.credentialId,
@@ -170,13 +170,13 @@ export async function delegateEmbeddingsToNativeAdapter(
   )
   const { connection, credential } = buildVirtualConnectionParts(account)
 
-  const result = await adapter.createEmbeddings(
+  const result = await adapter.createEmbeddings({
     target,
     connection,
     credential,
     payload,
     signal,
-  )
+  })
 
   return {
     accountId: result.credentialId,
@@ -210,14 +210,14 @@ export async function delegateMessagesToNativeAdapter(
   )
   const { connection, credential } = buildVirtualConnectionParts(account)
 
-  const result = await adapter.createMessages(
+  const result = await adapter.createMessages({
     target,
     connection,
     credential,
     payload,
     signal,
     ctx,
-  )
+  })
 
   return {
     accountId: result.credentialId,

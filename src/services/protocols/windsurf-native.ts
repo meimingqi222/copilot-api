@@ -22,15 +22,7 @@ function extractAccount(target: { account?: Account }): Account {
 export const windsurfNativeAdapter: ProtocolAdapter = {
   protocol: "windsurf-native",
 
-  // eslint-disable-next-line max-params
-  async createChatCompletions(
-    target,
-    _connection,
-    _credential,
-    payload,
-    signal,
-    ctx,
-  ) {
+  async createChatCompletions({ target, payload, signal, ctx }) {
     const account = extractAccount(target)
     const response = await createWindsurfChatCompletionsOnce(
       account,

@@ -4,6 +4,8 @@ import { createXaiResponsesOnce } from "~/services/xai/create-responses-once"
 
 import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
 
+import { createChatViaResponses } from "./chat-via-responses"
+
 function extractAccount(target: { account?: Account }): Account {
   const account = target.account
   if (!account) {
@@ -15,15 +17,40 @@ function extractAccount(target: { account?: Account }): Account {
 export const xaiNativeAdapter: ProtocolAdapter = {
   protocol: "xai-native",
 
-  // eslint-disable-next-line max-params
-  async createResponses(
+  async createChatCompletions({
     target,
-    _connection,
-    _credential,
+    connection,
+    credential,
     payload,
     signal,
     ctx,
-  ) {
+  }) {
+    return createChatViaResponses({
+      target,
+      connection,
+      credential,
+      payload,
+      signal,
+      ctx,
+      responsesExecutor: async ({
+        target: tgt,
+        payload: responsesPayload,
+        signal: sig,
+        ctx: context,
+      }) => {
+        const account = extractAccount(tgt)
+        const response = await createXaiResponsesOnce(
+          account,
+          responsesPayload,
+          sig,
+          context,
+        )
+        return { credentialId: account.id, response } as AdapterResponsesResult
+      },
+    })
+  },
+
+  async createResponses({ target, payload, signal, ctx }) {
     const account = extractAccount(target)
     const response = await createXaiResponsesOnce(account, payload, signal, ctx)
     return { credentialId: account.id, response } as AdapterResponsesResult

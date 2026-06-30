@@ -417,15 +417,7 @@ async function collectMessagesResponse(
 export const mimoNativeAdapter: ProtocolAdapter = {
   protocol: "mimo-native",
 
-  // eslint-disable-next-line max-params
-  async createChatCompletions(
-    target,
-    _connection,
-    _credential,
-    payload,
-    signal,
-    _ctx,
-  ) {
+  async createChatCompletions({ target, payload, signal }) {
     const account = extractAccount(target)
     const conn = mimoConnections.get(account.id)
     if (!conn) {
@@ -472,15 +464,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     }
   },
 
-  // eslint-disable-next-line max-params
-  async createMessages(
-    target,
-    _connection,
-    _credential,
-    payload,
-    signal,
-    _ctx,
-  ) {
+  async createMessages({ target, payload, signal }) {
     const account = extractAccount(target)
     const conn = mimoConnections.get(account.id)
     if (!conn) {

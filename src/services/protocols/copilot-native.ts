@@ -27,15 +27,7 @@ function extractAccount(target: { account?: Account }): Account {
 export const copilotNativeAdapter: ProtocolAdapter = {
   protocol: "copilot-native",
 
-  // eslint-disable-next-line max-params
-  async createChatCompletions(
-    target,
-    _connection,
-    _credential,
-    payload,
-    signal,
-    ctx,
-  ) {
+  async createChatCompletions({ target, payload, signal, ctx }) {
     const account = extractAccount(target)
     const response = await createCopilotChatCompletionsOnce(
       account,
@@ -46,15 +38,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     return { credentialId: account.id, response } as AdapterChatResult
   },
 
-  // eslint-disable-next-line max-params
-  async createResponses(
-    target,
-    _connection,
-    _credential,
-    payload,
-    signal,
-    ctx,
-  ) {
+  async createResponses({ target, payload, signal, ctx }) {
     const account = extractAccount(target)
     const response = await createCopilotResponsesOnce(
       account,
@@ -65,8 +49,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     return { credentialId: account.id, response } as AdapterResponsesResult
   },
 
-  // eslint-disable-next-line max-params
-  async createMessages(target, _connection, _credential, payload, signal, ctx) {
+  async createMessages({ target, payload, signal, ctx }) {
     const account = extractAccount(target)
     const response = await createCopilotMessagesOnce(
       account,
@@ -77,7 +60,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     return { credentialId: account.id, response } as AdapterMessagesResult
   },
 
-  async createEmbeddings(target, _connection, _credential, payload, signal) {
+  async createEmbeddings({ target, payload, signal }) {
     const account = extractAccount(target)
     const response = await createCopilotEmbeddingsOnce(account, payload, signal)
     return {

@@ -325,8 +325,8 @@ describe("OpenAI-compatible model discovery", () => {
     )
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    const models = await openAICompatibleAdapter.discoverModels?.(
-      {
+    const models = await openAICompatibleAdapter.discoverModels?.({
+      connection: {
         id: "openai",
         name: "OpenAI",
         protocol: "openai-compatible",
@@ -336,7 +336,7 @@ describe("OpenAI-compatible model discovery", () => {
         credentials: [],
         createdAt: Date.now(),
       },
-      {
+      credential: {
         id: "cred-a",
         authMode: "bearer",
         value: "sk-test",
@@ -344,7 +344,7 @@ describe("OpenAI-compatible model discovery", () => {
         status: "ready",
         createdAt: Date.now(),
       },
-    )
+    })
 
     expect(models).toEqual([
       expect.objectContaining({ publicId: "gpt-4o-mini", endpoints: ["chat"] }),

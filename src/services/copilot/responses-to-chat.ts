@@ -134,6 +134,15 @@ export async function* translateResponsesStreamToChatCompletions(
   const state = createStreamingState(model)
 
   for await (const rawEvent of response) {
+    // Upstream [DONE] signals end-of-stream — yield immediately and return.
+    // parseStreamRecord returns undefined for [DONE], which would otherwise
+    // be skipped by the !parsed check below, causing the generator to hang
+    // if the upstream keeps the SSE connection open after sending [DONE].
+    if (rawEvent.data === "[DONE]") {
+      yield { data: "[DONE]" }
+      return
+    }
+
     const parsed = parseStreamRecord(rawEvent.data)
     if (!parsed) {
       continue

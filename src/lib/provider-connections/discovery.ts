@@ -57,11 +57,11 @@ async function refreshConnectionModelsUnsafe(
   }
 
   try {
-    const discovered = await adapter.discoverModels(
+    const discovered = await adapter.discoverModels({
       connection,
       credential,
       signal,
-    )
+    })
     connection.models = mergeModels(
       connection.models ?? [],
       discovered,

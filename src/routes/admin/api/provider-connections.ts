@@ -199,7 +199,10 @@ providerConnectionApiRoutes.post("/:id/refresh-models", async (c) => {
   }
 
   try {
-    const discovered = await adapter.discoverModels(connection, usable)
+    const discovered = await adapter.discoverModels({
+      connection,
+      credential: usable,
+    })
     const mode = connection.modelDiscovery?.mode ?? "merge"
     await applyDiscoveredModels(id, discovered, mode)
     const updated = getProviderConnection(id)
@@ -241,7 +244,7 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
 
   try {
     if (adapter?.discoverModels) {
-      await adapter.discoverModels(connection, credential)
+      await adapter.discoverModels({ connection, credential })
       return c.json({
         ok: true,
         latencyMs: Date.now() - start,

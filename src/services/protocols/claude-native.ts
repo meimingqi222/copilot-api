@@ -15,8 +15,7 @@ function extractAccount(target: { account?: Account }): Account {
 export const claudeNativeAdapter: ProtocolAdapter = {
   protocol: "claude-native",
 
-  // eslint-disable-next-line max-params
-  async createMessages(target, _connection, _credential, payload, signal, ctx) {
+  async createMessages({ target, payload, signal, ctx }) {
     const account = extractAccount(target)
     const response = await createClaudeMessagesOnce(
       account,

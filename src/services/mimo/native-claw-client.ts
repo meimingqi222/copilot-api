@@ -100,21 +100,20 @@ export class NativeClawClient {
   private responses = new Map<string, WsMessage>()
   private resolveConnected: (() => void) | null = null
 
-  // eslint-disable-next-line max-params
-  constructor(
-    accountId: string,
-    ph: string,
-    userId: string,
-    serviceToken: string,
-    label: string,
-    proxy?: string,
-  ) {
-    this.accountId = accountId
-    this.ph = ph
-    this.userId = userId
-    this.serviceToken = serviceToken
-    this.label = label
-    this.proxy = proxy
+  constructor(params: {
+    accountId: string
+    ph: string
+    userId: string
+    serviceToken: string
+    label: string
+    proxy?: string
+  }) {
+    this.accountId = params.accountId
+    this.ph = params.ph
+    this.userId = params.userId
+    this.serviceToken = params.serviceToken
+    this.label = params.label
+    this.proxy = params.proxy
   }
 
   private get cookies(): string {

@@ -39,21 +39,20 @@ export class MimoAccountManager {
   private proxy: string | undefined
   private active = true
 
-  // eslint-disable-next-line max-params
-  constructor(
-    accountId: string,
-    label: string,
-    userId: string,
-    serviceToken: string,
-    ph: string,
-    proxy?: string,
-  ) {
-    this.accountId = accountId
-    this.label = label
-    this.userId = userId
-    this.serviceToken = serviceToken
-    this.ph = ph
-    this.proxy = proxy
+  constructor(params: {
+    accountId: string
+    label: string
+    userId: string
+    serviceToken: string
+    ph: string
+    proxy?: string
+  }) {
+    this.accountId = params.accountId
+    this.label = params.label
+    this.userId = params.userId
+    this.serviceToken = params.serviceToken
+    this.ph = params.ph
+    this.proxy = params.proxy
   }
 
   stop() {
@@ -81,14 +80,14 @@ export class MimoAccountManager {
       try {
         // Step 1: Destroy old container
         logger.info(`[MimoManager ${this.label}] Destroying old container...`)
-        const destroyClient = new NativeClawClient(
-          this.accountId,
-          this.ph,
-          this.userId,
-          this.serviceToken,
-          this.label,
-          this.proxy,
-        )
+        const destroyClient = new NativeClawClient({
+          accountId: this.accountId,
+          ph: this.ph,
+          userId: this.userId,
+          serviceToken: this.serviceToken,
+          label: this.label,
+          proxy: this.proxy,
+        })
         await destroyClient.destroyClaw()
         destroyClient.close()
         await sleep(3000)
@@ -99,14 +98,14 @@ export class MimoAccountManager {
 
         // Step 2: Create new container
         logger.info(`[MimoManager ${this.label}] Creating new container...`)
-        const createClient = new NativeClawClient(
-          this.accountId,
-          this.ph,
-          this.userId,
-          this.serviceToken,
-          this.label,
-          this.proxy,
-        )
+        const createClient = new NativeClawClient({
+          accountId: this.accountId,
+          ph: this.ph,
+          userId: this.userId,
+          serviceToken: this.serviceToken,
+          label: this.label,
+          proxy: this.proxy,
+        })
         activeClient = createClient
 
         if (!(await createClient.createAndWait())) {
@@ -129,14 +128,14 @@ export class MimoAccountManager {
       activeClient = null
 
       for (let attempt = 1; attempt <= 5; attempt++) {
-        const tryClient = new NativeClawClient(
-          this.accountId,
-          this.ph,
-          this.userId,
-          this.serviceToken,
-          this.label,
-          this.proxy,
-        )
+        const tryClient = new NativeClawClient({
+          accountId: this.accountId,
+          ph: this.ph,
+          userId: this.userId,
+          serviceToken: this.serviceToken,
+          label: this.label,
+          proxy: this.proxy,
+        })
         if (await tryClient.connect(false)) {
           wsClient = tryClient
           activeClient = tryClient
@@ -186,14 +185,14 @@ export class MimoAccountManager {
       activeClient = null
 
       for (let attempt = 1; attempt <= 5; attempt++) {
-        const tryClient = new NativeClawClient(
-          this.accountId,
-          this.ph,
-          this.userId,
-          this.serviceToken,
-          this.label,
-          this.proxy,
-        )
+        const tryClient = new NativeClawClient({
+          accountId: this.accountId,
+          ph: this.ph,
+          userId: this.userId,
+          serviceToken: this.serviceToken,
+          label: this.label,
+          proxy: this.proxy,
+        })
         if (await tryClient.connect(false)) {
           reconnectClient = tryClient
           activeClient = tryClient
@@ -304,14 +303,14 @@ ${bridgeCode}
       logger.info(
         `[MimoManager ${this.label}] Run complete, destroying container to rest...`,
       )
-      const finalDestroyClient = new NativeClawClient(
-        this.accountId,
-        this.ph,
-        this.userId,
-        this.serviceToken,
-        this.label,
-        this.proxy,
-      )
+      const finalDestroyClient = new NativeClawClient({
+        accountId: this.accountId,
+        ph: this.ph,
+        userId: this.userId,
+        serviceToken: this.serviceToken,
+        label: this.label,
+        proxy: this.proxy,
+      })
       await finalDestroyClient.destroyClaw()
       finalDestroyClient.close()
 
@@ -353,14 +352,14 @@ ${bridgeCode}
         try {
           // Step 1: Destroy old container
           logger.info(`[MimoManager ${this.label}] Destroying old container...`)
-          const destroyClient = new NativeClawClient(
-            this.accountId,
-            this.ph,
-            this.userId,
-            this.serviceToken,
-            this.label,
-            this.proxy,
-          )
+          const destroyClient = new NativeClawClient({
+            accountId: this.accountId,
+            ph: this.ph,
+            userId: this.userId,
+            serviceToken: this.serviceToken,
+            label: this.label,
+            proxy: this.proxy,
+          })
           await destroyClient.destroyClaw()
           destroyClient.close()
           await sleep(3000)
@@ -370,14 +369,14 @@ ${bridgeCode}
 
           // Step 2: Create new container (only create, no WS connect yet)
           logger.info(`[MimoManager ${this.label}] Creating new container...`)
-          const createClient = new NativeClawClient(
-            this.accountId,
-            this.ph,
-            this.userId,
-            this.serviceToken,
-            this.label,
-            this.proxy,
-          )
+          const createClient = new NativeClawClient({
+            accountId: this.accountId,
+            ph: this.ph,
+            userId: this.userId,
+            serviceToken: this.serviceToken,
+            label: this.label,
+            proxy: this.proxy,
+          })
           activeClient = createClient
 
           if (!(await createClient.createAndWait())) {
@@ -405,14 +404,14 @@ ${bridgeCode}
         activeClient = null
 
         for (let attempt = 1; attempt <= 5; attempt++) {
-          const tryClient = new NativeClawClient(
-            this.accountId,
-            this.ph,
-            this.userId,
-            this.serviceToken,
-            this.label,
-            this.proxy,
-          )
+          const tryClient = new NativeClawClient({
+            accountId: this.accountId,
+            ph: this.ph,
+            userId: this.userId,
+            serviceToken: this.serviceToken,
+            label: this.label,
+            proxy: this.proxy,
+          })
           if (await tryClient.connect(false)) {
             wsClient = tryClient
             activeClient = tryClient
@@ -468,14 +467,14 @@ ${bridgeCode}
         activeClient = null
 
         for (let attempt = 1; attempt <= 5; attempt++) {
-          const tryClient = new NativeClawClient(
-            this.accountId,
-            this.ph,
-            this.userId,
-            this.serviceToken,
-            this.label,
-            this.proxy,
-          )
+          const tryClient = new NativeClawClient({
+            accountId: this.accountId,
+            ph: this.ph,
+            userId: this.userId,
+            serviceToken: this.serviceToken,
+            label: this.label,
+            proxy: this.proxy,
+          })
           if (await tryClient.connect(false)) {
             reconnectClient = tryClient
             activeClient = tryClient
