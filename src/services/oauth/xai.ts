@@ -16,7 +16,7 @@ export const XAI_REDIRECT_HOST = "127.0.0.1"
 export const XAI_CALLBACK_PORT = 56121
 export const XAI_REDIRECT_PATH = "/callback"
 export const XAI_REDIRECT_URI = `http://${XAI_REDIRECT_HOST}:${XAI_CALLBACK_PORT}${XAI_REDIRECT_PATH}`
-export const XAI_DEFAULT_TOKEN_ENDPOINT = `${XAI_ISSUER}/oauth/token`
+export const XAI_DEFAULT_TOKEN_ENDPOINT = `${XAI_ISSUER}/oauth2/token`
 
 interface XaiDiscovery {
   authorization_endpoint: string
@@ -183,8 +183,9 @@ export async function refreshXaiTokens(
   tokenEndpoint: string,
   options?: OAuthFetchOptions,
 ): Promise<XaiOAuthBundle> {
+  const endpoint = await resolveTokenEndpoint(tokenEndpoint, options)
   const token = await postXaiTokenForm(
-    tokenEndpoint,
+    endpoint,
     new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
@@ -196,9 +197,26 @@ export async function refreshXaiTokens(
   return {
     ...bundle,
     refreshToken: bundle.refreshToken ?? refreshToken,
-    tokenEndpoint,
+    tokenEndpoint: endpoint,
     redirectUri: XAI_REDIRECT_URI,
   }
+}
+
+/**
+ * Resolve the token endpoint. If the provided endpoint is empty or the
+ * refresh request fails with 404, fall back to OIDC discovery so we
+ * always use the current xAI token URL.
+ */
+async function resolveTokenEndpoint(
+  tokenEndpoint: string,
+  options?: OAuthFetchOptions,
+): Promise<string> {
+  const trimmed = tokenEndpoint.trim()
+  if (trimmed) {
+    return trimmed
+  }
+  const discovery = await discoverXaiOAuthEndpoints(options)
+  return discovery.token_endpoint
 }
 
 export function applyXaiOAuthBundle(
