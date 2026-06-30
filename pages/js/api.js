@@ -181,15 +181,32 @@ const API = {
         `/provider-connections/${connectionId}/credentials/${credentialId}/reset-status`,
         { method: "POST" },
       ),
-    testConnection: (id, credentialId) =>
+    testConnection: (id, credentialId, modelId) =>
       API.request(`/provider-connections/${id}/test`, {
         method: "POST",
-        body: credentialId ? { credentialId } : undefined,
+        body: {
+          ...(credentialId ? { credentialId } : {}),
+          ...(modelId ? { modelId } : {}),
+        },
       }),
     addModel: (id, data) =>
       API.request(`/provider-connections/${id}/models`, {
         method: "POST",
         body: data,
+      }),
+    batchAddModels: (id, models) =>
+      API.request(`/provider-connections/${id}/models/batch`, {
+        method: "POST",
+        body: { models },
+      }),
+    parseModelsWithAI: (text, connectionId, modelId) =>
+      API.request(`/provider-connections/parse-models`, {
+        method: "POST",
+        body: {
+          text,
+          ...(connectionId ? { connectionId } : {}),
+          ...(modelId ? { modelId } : {}),
+        },
       }),
     updateModel: (id, publicId, data) =>
       API.request(

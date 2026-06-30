@@ -1036,10 +1036,17 @@
                     <span class="text-xs font-semibold text-[var(--apple-text-tertiary)] uppercase tracking-wider" x-text="t('connections.models')"></span>
                     <span class="tag tag-sm tag-muted" x-text="conn.models?.length || 0"></span>
                   </div>
-                  <button @click="openAddModel(conn)" class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:12px">
-                    <i data-lucide="plus" class="w-3 h-3"></i>
-                    <span x-text="t('connections.addModel')"></span>
-                  </button>
+                  <div class="flex items-center gap-1">
+                    <button @click="openBatchAddModel(conn)" class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:12px"
+                            :title="t('connections.batchAddModel')">
+                      <i data-lucide="clipboard-list" class="w-3 h-3"></i>
+                      <span x-text="t('connections.batchAddModel')"></span>
+                    </button>
+                    <button @click="openAddModel(conn)" class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:12px">
+                      <i data-lucide="plus" class="w-3 h-3"></i>
+                      <span x-text="t('connections.addModel')"></span>
+                    </button>
+                  </div>
                 </div>
                 <div class="flex flex-wrap gap-1">
                   <template x-for="m in (conn.models || []).slice(0, 20)" :key="m.publicId">
@@ -1172,8 +1179,10 @@
             <div class="modal-body space-y-4">
               <div>
                 <label class="form-label" x-text="t('connections.modelPublicId')"></label>
-                <input type="text" x-model="modelForm.publicId" class="form-input" placeholder="deepseek-chat"
-                       :disabled="!!modelForm.originalPublicId">
+                <input type="text" x-model="modelForm.publicId" class="form-input" placeholder="deepseek-chat">
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+                   x-show="modelForm.originalPublicId && modelForm.publicId !== modelForm.originalPublicId"
+                   x-text="t('connections.modelPublicIdRenameHint')"></p>
               </div>
               <div>
                 <label class="form-label" x-text="t('connections.modelUpstreamId')"></label>
@@ -1185,6 +1194,74 @@
             <div class="modal-footer">
               <button @click="showModelModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
               <button @click="saveModel()" class="btn btn-primary" x-text="t('save')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Batch Add Models Modal -->
+        <div x-show="showBatchModal" class="modal-overlay" @click.self="showBatchModal = false" style="display: none;">
+          <div class="modal" style="max-width: 640px;">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('connections.batchAddModel')"></h3>
+              <button @click="showBatchModal = false" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="modal-body space-y-4">
+              <!-- 粘贴区 -->
+              <div>
+                <label class="form-label" x-text="t('connections.batchPasteLabel')"></label>
+                <textarea x-model="batchForm.rawText" class="form-input font-mono" rows="8"
+                          :placeholder="t('connections.batchPastePlaceholder')"></textarea>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1.5" x-text="t('connections.batchParseHint')"></p>
+              </div>
+
+              <!-- 内置提示词使用说明 -->
+              <div class="rounded-lg bg-[var(--apple-gray-6)] px-3 py-2 text-xs text-[var(--apple-text-secondary)] space-y-1">
+                <div class="font-semibold" x-text="t('connections.batchPromptTitle')"></div>
+                <div x-text="t('connections.batchPromptBody')"></div>
+              </div>
+
+              <div class="flex items-center gap-2 flex-wrap">
+                <button @click="parseBatchModels()" class="btn btn-secondary btn-sm">
+                  <i data-lucide="list" class="w-3.5 h-3.5"></i>
+                  <span x-text="t('connections.batchParse')"></span>
+                </button>
+                <button @click="aiParseBatchModels()" class="btn btn-primary btn-sm" :disabled="batchParsing">
+                  <i data-lucide="sparkles" class="w-3.5 h-3.5" :class="{ 'animate-spin': batchParsing }"></i>
+                  <span x-text="batchParsing ? t('connections.batchAiParsing') : t('connections.batchAiParse')"></span>
+                </button>
+                <button @click="selectAllBatchModels()" class="btn btn-ghost btn-sm" x-show="batchForm.models.length > 0">
+                  <span x-text="t('connections.batchSelectAll')"></span>
+                </button>
+                <span class="text-xs text-[var(--apple-text-tertiary)]" x-show="batchForm.models.length > 0"
+                      x-text="batchForm.models.filter(m => m.selected).length + ' / ' + batchForm.models.length + ' selected'"></span>
+              </div>
+
+              <!-- 解析结果勾选列表(可编辑) -->
+              <div x-show="batchForm.models.length > 0" class="border border-[var(--apple-gray-5)] rounded-lg max-h-80 overflow-y-auto">
+                <template x-for="(m, idx) in batchForm.models" :key="idx">
+                  <div class="px-3 py-2 border-b border-[var(--apple-gray-5)] last:border-b-0 hover:bg-[var(--apple-gray-6)]">
+                    <div class="flex items-center gap-2 mb-1.5">
+                      <input type="checkbox" :checked="m.selected" @change="toggleBatchModel(m)" class="form-checkbox">
+                      <input type="text" x-model="m.publicId" class="form-input flex-1 font-mono text-sm font-semibold"
+                             :placeholder="t('connections.batchModelPublicIdPh')">
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 pl-7">
+                      <input type="text" x-model="m.upstreamId" class="form-input text-xs"
+                             :placeholder="t('connections.batchModelUpstreamIdPh')">
+                      <input type="text" x-model="m.name" class="form-input text-xs"
+                             :placeholder="t('connections.batchModelNamePh')">
+                      <input type="text" x-model="m.vendor" class="form-input text-xs"
+                             :placeholder="t('connections.batchModelVendorPh')">
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button @click="showBatchModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="saveBatchModels()" class="btn btn-primary"
+                      :disabled="batchForm.models.filter(m => m.selected).length === 0"
+                      x-text="t('connections.batchSave')"></button>
             </div>
           </div>
         </div>

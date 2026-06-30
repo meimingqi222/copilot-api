@@ -30,6 +30,13 @@ function connectionsView() {
       publicId: "",
       upstreamId: "",
     },
+    showBatchModal: false,
+    batchForm: {
+      connectionId: null,
+      rawText: "",
+      models: [], // parsed: [{ publicId, upstreamId, name, vendor, selected }]
+    },
+    batchParsing: false,
     testing: {},
     revealedCreds: {},
 
@@ -309,10 +316,14 @@ function connectionsView() {
         )
         const ms = res.latencyMs ?? 0
         if (res.ok) {
-          this.showToast(
-            this.t("connections.testSuccess") + ` (${ms}ms)`,
-            "success",
-          )
+          const detail =
+            res.method === "chat" || res.method === "messages" ?
+              res.modelId ?
+                ` (${res.method}: ${res.modelId}, ${ms}ms)`
+              : ` (${res.method}, ${ms}ms)`
+            : res.method === "model-list" ? ` (models, ${ms}ms)`
+            : ` (${ms}ms)`
+          this.showToast(this.t("connections.testSuccess") + detail, "success")
         } else {
           this.showToast(
             this.t("connections.testFailed")
@@ -423,6 +434,200 @@ function connectionsView() {
         model.enabled = !model.enabled
       } catch (e) {
         this.showToast(e.message || "Toggle failed", "error")
+      }
+    },
+
+    // ── 批量添加模型 ──────────────────────────────────────────────
+
+    openBatchAddModel(conn) {
+      this.batchForm = {
+        connectionId: conn.id,
+        rawText: "",
+        models: [],
+      }
+      this.showBatchModal = true
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    /**
+     * 解析粘贴的模型清单文本。
+     * 支持格式:
+     *  - Markdown 表格: | Model | Model ID |
+     *  - 制表符/多空格分隔: Name<TAB>model-id
+     *  - YAML-like: - name: id
+     *  - "Name: ID" 单行
+     *  - 纯 ID 列表(每行一个)
+     *
+     * 若第二列含 `/` 前缀(如 cline-pass/glm-5.2),自动拆分:
+     *  - 前缀 → vendor
+     *  - 后段 → publicId
+     *  - 完整字符串 → upstreamId
+     *
+     * 默认勾选 publicId 匹配 "deepseek-v4-flash" 的项。
+     */
+    parseBatchModels() {
+      const text = this.batchForm.rawText || ""
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+      const models = []
+
+      // 表头关键词,跳过
+      const HEADER_RE = /^(?:model|model\s*id|name|id|模型|名称|编号)$/i
+
+      for (const rawLine of lines) {
+        // 去除 markdown 表格装饰 | ... |
+        let line = rawLine
+        if (line.startsWith("|")) line = line.slice(1)
+        if (line.endsWith("|")) line = line.slice(0, -1)
+
+        // 跳过 markdown 分隔行 |---|---|
+        if (/^[\s|:-]+$/.test(line)) continue
+
+        // 按制表符或 2+ 空格分列
+        let parts = line.split(/\t/)
+        if (parts.length === 1) {
+          parts = line.split(/\s{2,}/)
+        }
+        // YAML-like "- name: id"
+        if (parts.length === 1 && /^[-*]\s+/.test(parts[0])) {
+          const rest = parts[0].replace(/^[-*]\s+/, "")
+          parts =
+            rest.includes(":") ?
+              rest
+                .split(/:(.*)/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+            : [rest]
+        }
+        // "Name: ID" 单行
+        if (parts.length === 1 && parts[0].includes(":")) {
+          const idx = parts[0].indexOf(":")
+          const head = parts[0].slice(0, idx).trim()
+          const tail = parts[0].slice(idx + 1).trim()
+          if (head && tail && !head.includes("://")) {
+            parts = [head, tail]
+          }
+        }
+
+        parts = parts.map((p) => p.trim()).filter(Boolean)
+        if (parts.length === 0) continue
+
+        let name = ""
+        let idStr
+        if (parts.length >= 2) {
+          name = parts[0]
+          idStr = parts[1]
+        } else {
+          idStr = parts[0]
+        }
+
+        if (HEADER_RE.test(name) || HEADER_RE.test(idStr)) continue
+
+        // 拆分 provider 前缀: "cline-pass/glm-5.2" → vendor="cline-pass", publicId="glm-5.2"
+        let publicId = idStr
+        let upstreamId = idStr
+        let vendor = undefined
+        const slashIdx = idStr.lastIndexOf("/")
+        if (slashIdx > 0 && slashIdx < idStr.length - 1) {
+          vendor = idStr.slice(0, slashIdx)
+          publicId = idStr.slice(slashIdx + 1)
+          upstreamId = idStr
+        }
+
+        models.push({
+          publicId,
+          upstreamId,
+          name: name || undefined,
+          vendor,
+          selected: publicId === "deepseek-v4-flash",
+        })
+      }
+
+      this.batchForm.models = models
+      if (models.length === 0) {
+        this.showToast("No models parsed", "error")
+      } else {
+        this.showToast(
+          `Parsed ${models.length} model(s), ${models.filter((m) => m.selected).length} selected`,
+          "success",
+        )
+      }
+    },
+
+    /** 调用 LLM 智能解析粘贴文本,适配任意格式。 */
+    async aiParseBatchModels() {
+      const text = (this.batchForm.rawText || "").trim()
+      if (!text) {
+        this.showToast("Please paste model list text first", "error")
+        return
+      }
+      this.batchParsing = true
+      try {
+        const res = await API.providerConnections.parseModelsWithAI(text)
+        const raw = Array.isArray(res.models) ? res.models : []
+        if (raw.length === 0) {
+          this.showToast("AI found no models", "error")
+          return
+        }
+        const models = raw
+          .map((m) => ({
+            publicId: String(m.publicId || "").trim(),
+            upstreamId: String(m.upstreamId || m.publicId || "").trim(),
+            name: m.name ? String(m.name) : undefined,
+            vendor: m.vendor ? String(m.vendor) : undefined,
+            selected: String(m.publicId || "") === "deepseek-v4-flash",
+          }))
+          .filter((m) => m.publicId)
+        this.batchForm.models = models
+        this.showToast(
+          `AI parsed ${models.length} model(s), ${models.filter((m) => m.selected).length} selected`,
+          "success",
+        )
+      } catch (e) {
+        this.showToast(e.message || "AI parse failed", "error")
+      } finally {
+        this.batchParsing = false
+      }
+    },
+
+    toggleBatchModel(m) {
+      m.selected = !m.selected
+    },
+
+    selectAllBatchModels() {
+      const allSelected = this.batchForm.models.every((m) => m.selected)
+      for (const m of this.batchForm.models) m.selected = !allSelected
+    },
+
+    async saveBatchModels() {
+      const selected = this.batchForm.models.filter((m) => m.selected)
+      if (selected.length === 0) {
+        this.showToast("No models selected", "error")
+        return
+      }
+      const payload = selected.map((m) => ({
+        publicId: m.publicId,
+        upstreamId: m.upstreamId,
+        name: m.name,
+        vendor: m.vendor,
+        endpoints: ["chat"],
+        enabled: true,
+      }))
+      try {
+        const res = await API.providerConnections.batchAddModels(
+          this.batchForm.connectionId,
+          payload,
+        )
+        this.showBatchModal = false
+        await this.load()
+        const msg =
+          `Added ${res.added?.length || 0}`
+          + (res.skipped?.length ? `, skipped ${res.skipped.length}` : "")
+        this.showToast(msg, "success")
+      } catch (e) {
+        this.showToast(e.message || "Batch add failed", "error")
       }
     },
 

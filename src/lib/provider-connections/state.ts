@@ -389,7 +389,7 @@ export async function updateModel(
   patch: Partial<
     Pick<
       ModelMapping,
-      "upstreamId" | "name" | "vendor" | "endpoints" | "enabled"
+      "publicId" | "upstreamId" | "name" | "vendor" | "endpoints" | "enabled"
     >
   >,
 ): Promise<ModelMapping> {
@@ -398,6 +398,17 @@ export async function updateModel(
     if (!connection) throw new Error(`Connection not found: ${connectionId}`)
     const model = connection.models?.find((m) => m.publicId === publicId)
     if (!model) throw new Error(`Model "${publicId}" not found`)
+    // 重命名 publicId: 校验非空 + 不与同 connection 内其他模型冲突
+    if (patch.publicId !== undefined && patch.publicId !== publicId) {
+      const newId = patch.publicId.trim()
+      if (!newId) throw new Error("publicId must not be empty")
+      const dup = connection.models?.find(
+        (m) => m.publicId === newId && m !== model,
+      )
+      if (dup)
+        throw new Error(`Model "${newId}" already exists in this connection`)
+      model.publicId = newId
+    }
     if (patch.upstreamId !== undefined) model.upstreamId = patch.upstreamId
     if (patch.name !== undefined) model.name = patch.name
     if (patch.vendor !== undefined) model.vendor = patch.vendor
