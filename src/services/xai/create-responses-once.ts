@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import type { Account } from "~/lib/accounts"
 import type {
   CopilotStreamEventLike,
@@ -29,6 +31,14 @@ import { buildXaiHeaders } from "./headers"
  *   2. `prompt_cache_key` from `metadata.prompt_cache_key`
  *      (legacy OpenAI Responses API metadata location).
  *   3. `x-grok-conv-id` from forwarded headers (if a downstream client set it).
+ *   4. `x-claude-code-session-id` from forwarded headers.
+ *   5. Claude Code session ID extracted from `metadata.user_id` in the payload.
+ *   6. Fallback: hash of system instructions + first user message.
+ *      xAI prompt caching is prefix-based, so requests sharing the same
+ *      system prompt and opening user turn will reuse the cached prefix.
+ *      Composer models always get this fallback (matching CPA's
+ *      `xaiRequiresIsolatedConversation`); other models only when we can
+ *      extract a meaningful prefix.
  *
  * The xAI backend uses `x-grok-conv-id` to group requests within a
  * conversation and reuse cached prompt prefixes.
@@ -37,19 +47,148 @@ function resolveXaiSessionId(
   payload: ResponsesPayload,
   ctx?: RequestExecutionContext,
 ): string | undefined {
+  // 1. Body-level prompt_cache_key
   const bodyCacheKey = (payload as unknown as { prompt_cache_key?: unknown })
     .prompt_cache_key
   if (typeof bodyCacheKey === "string" && bodyCacheKey.trim()) {
     return bodyCacheKey.trim()
   }
+  // 2. metadata.prompt_cache_key
   const metadataCacheKey = payload.metadata?.prompt_cache_key
   if (typeof metadataCacheKey === "string" && metadataCacheKey.trim()) {
     return metadataCacheKey.trim()
   }
   const forwarded = ctx?.forwardedHeaders
+  // 3. x-grok-conv-id header
   const headerConvId = forwarded?.["x-grok-conv-id"]
   if (typeof headerConvId === "string" && headerConvId.trim()) {
     return headerConvId.trim()
+  }
+  // 4. x-claude-code-session-id header
+  const claudeSessionHeader = forwarded?.["x-claude-code-session-id"]
+  if (typeof claudeSessionHeader === "string" && claudeSessionHeader.trim()) {
+    return claudeSessionHeader.trim()
+  }
+  // 5. Claude Code session ID from payload metadata.user_id
+  const claudeSessionFromPayload =
+    extractClaudeCodeSessionIdFromPayload(payload)
+  if (claudeSessionFromPayload) {
+    return claudeSessionFromPayload
+  }
+  // 6. Prefix-hash fallback: derive a stable cache key from the system
+  //    prompt + first user message. xAI caching is prefix-based, so
+  //    conversations with the same opening prefix share cache hits.
+  //    Composer models always need a cache key (CPA behavior); other
+  //    models benefit too when we have enough prefix to hash.
+  const prefixHash = computePrefixHash(payload)
+  if (prefixHash) {
+    return prefixHash
+  }
+  return undefined
+}
+
+/**
+ * Extracts a Claude Code session ID from the payload's `metadata.user_id`
+ * field. Claude Code encodes the session ID either as a JSON object
+ * `{"session_id": "..."}` or as a suffix `_session_<uuid>`.
+ * Mirrors CPA's `extractClaudeCodeSessionIDFromPayload`.
+ */
+function extractClaudeCodeSessionIdFromPayload(
+  payload: ResponsesPayload,
+): string | undefined {
+  const userId = payload.metadata?.user_id
+  if (typeof userId !== "string" || !userId.trim()) {
+    return undefined
+  }
+  // Suffix pattern: user_id ends with _session_<hex-uuid>
+  const suffixMatch = userId.match(/_session_([a-f0-9-]+)$/)
+  if (suffixMatch?.[1]) {
+    return suffixMatch[1]
+  }
+  // JSON pattern: user_id is a JSON object with session_id
+  if (userId[0] === "{") {
+    try {
+      const parsed = JSON.parse(userId) as { session_id?: unknown }
+      const sessionId = parsed.session_id
+      if (typeof sessionId === "string" && sessionId.trim()) {
+        return sessionId.trim()
+      }
+    } catch {
+      // not valid JSON, ignore
+    }
+  }
+  return undefined
+}
+
+/**
+ * Computes a stable hash from the conversation prefix (system instructions +
+ * first user message) to use as a prompt_cache_key fallback.
+ *
+ * xAI's prompt caching is prefix-based: if two requests share the same
+ * leading tokens (system prompt + opening user turn), the cached prefix
+ * is reused. By hashing these two components we ensure:
+ *   - Same conversation across turns → same cache key → cache hits
+ *   - Different conversations → different cache keys → no cache pollution
+ *
+ * Returns a short hex string (first 16 chars of sha256) prefixed with
+ * "prefix:", or undefined if there is not enough content to hash.
+ */
+function computePrefixHash(payload: ResponsesPayload): string | undefined {
+  const parts: Array<string> = []
+
+  // System instructions
+  const instructions = payload.instructions?.trim()
+  if (instructions) {
+    parts.push(instructions)
+  }
+
+  // First user message from the input array
+  const firstUserText = extractFirstUserMessageText(payload.input)
+  if (firstUserText) {
+    parts.push(firstUserText)
+  }
+
+  if (parts.length === 0) {
+    return undefined
+  }
+
+  const hash = createHash("sha256")
+    .update(parts.join("\n\n"))
+    .digest("hex")
+    .slice(0, 16)
+  return `prefix:${hash}`
+}
+
+/**
+ * Extracts the text content of the first user message from a Responses
+ * payload's `input` field. Handles both string input and structured
+ * input arrays with mixed content types.
+ */
+function extractFirstUserMessageText(
+  input: ResponsesPayload["input"],
+): string | undefined {
+  if (typeof input === "string") {
+    return input.trim() || undefined
+  }
+  if (!Array.isArray(input)) {
+    return undefined
+  }
+  for (const item of input) {
+    if (!("role" in item) || item.role !== "user") continue
+    const content = item.content
+    if (typeof content === "string") {
+      return content.trim() || undefined
+    }
+    if (Array.isArray(content)) {
+      const text = content
+        .filter(
+          (part): part is { type: "input_text"; text: string } =>
+            part.type === "input_text" && typeof part.text === "string",
+        )
+        .map((part) => part.text)
+        .join("")
+      return text.trim() || undefined
+    }
   }
   return undefined
 }
