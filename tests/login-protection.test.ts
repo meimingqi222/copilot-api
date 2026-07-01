@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
+import { resetGuardForTest } from "~/lib/guard"
 import {
   checkLoginAllowed,
   recordLoginFailure,
   recordLoginSuccess,
   resetLoginProtectionForTest,
 } from "~/lib/login-protection"
-import { resetGuardForTest } from "~/lib/guard"
 import { state } from "~/lib/state"
-import { server } from "~/server"
+import { statsStore } from "~/lib/stats-store"
 import { sleep } from "~/lib/utils"
+import { server } from "~/server"
 
 const TEST_IP = "203.0.113.50"
 const originalAdminPassword = state.adminPassword
@@ -18,6 +19,7 @@ const originalLegacyApiKey = state.legacyApiKey
 beforeEach(() => {
   resetLoginProtectionForTest()
   resetGuardForTest()
+  statsStore.clearUsageStatsForTest()
   state.adminPassword = "test-admin-pass"
   state.legacyApiKey = undefined
 })
@@ -66,7 +68,9 @@ describe("login-protection", () => {
   })
 
   test("escalates lock to 24h and adds to guard blacklist after 15 failures", async () => {
-    let result: Awaited<ReturnType<typeof recordLoginFailure>> = { allowed: true }
+    let result: Awaited<ReturnType<typeof recordLoginFailure>> = {
+      allowed: true,
+    }
     for (let i = 0; i < 15; i++) {
       result = await recordLoginFailure(TEST_IP)
     }
