@@ -169,9 +169,8 @@ export function setAdminSession(c: Context, remember = false) {
   const configuredAdminPassword = getAdminPassword()
   if (!configuredAdminPassword) return
 
-  const maxAgeSeconds = remember
-    ? REMEMBER_SESSION_MAX_AGE_SECONDS
-    : ADMIN_SESSION_MAX_AGE_SECONDS
+  const maxAgeSeconds =
+    remember ? REMEMBER_SESSION_MAX_AGE_SECONDS : ADMIN_SESSION_MAX_AGE_SECONDS
 
   const sessionToken = createSessionToken()
   state.adminSessionToken = sessionToken

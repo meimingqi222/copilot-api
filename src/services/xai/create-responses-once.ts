@@ -10,6 +10,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
@@ -194,6 +195,73 @@ function extractFirstUserMessageText(
 }
 
 /**
+ * Computes a short hash of a string for cache-prefix diagnostics.
+ * Returns the first 12 hex chars of a sha256, enough to spot changes.
+ */
+function shortHash(s: string): string {
+  return createHash("sha256").update(s).digest("hex").slice(0, 12)
+}
+
+/**
+ * Logs a cache-prefix diagnostic for xAI Responses requests. By comparing
+ * the instructions hash, tools hash, and input-prefix hash across requests
+ * within the same session (prompt_cache_key), you can identify which
+ * component is breaking the cache prefix.
+ *
+ * Format:
+ *   [xAI cache-diag] session=xxx instr=abc12345(8192) tools=def67890(4096)
+ *   input_prefix=ghi13579 types=[user,reasoning,function_call,...] input_count=15
+ *
+ * If `instr` or `tools` hash changes between turns of the same session,
+ * the system prompt or tool definitions are not stable — this is the
+ * primary cause of cache misses.
+ */
+function logCachePrefixDiag(
+  sessionId: string | undefined,
+  payload: ResponsesPayload,
+): void {
+  const instructions = payload.instructions ?? ""
+  const instrHash = instructions ? shortHash(instructions) : "(none)"
+  const instrLen = instructions.length
+
+  const toolsJson = payload.tools ? JSON.stringify(payload.tools) : ""
+  const toolsHash = toolsJson ? shortHash(toolsJson) : "(none)"
+  const toolsLen = toolsJson.length
+
+  // Summarize the input array: item types and a hash of the first ~2KB
+  // of the serialized input (the prefix that should be cached).
+  let inputCount = 0
+  let inputTypes: Array<string> = []
+  let inputPrefixHash = "(none)"
+  if (typeof payload.input === "string") {
+    inputCount = 1
+    inputTypes = ["string"]
+    inputPrefixHash = shortHash(payload.input.slice(0, 2048))
+  } else if (Array.isArray(payload.input)) {
+    inputCount = payload.input.length
+    inputTypes = payload.input.slice(0, 20).map((item) => {
+      if (typeof item === "string") return "string"
+      if ("type" in item) return item.type
+      if ("role" in item) return item.role
+      return "unknown"
+    })
+    // Hash the serialized first 4KB of the input array for prefix comparison.
+    const inputPrefix = JSON.stringify(payload.input.slice(0, 10)).slice(
+      0,
+      4096,
+    )
+    inputPrefixHash = shortHash(inputPrefix)
+  }
+
+  logger.info(
+    `[xAI cache-diag] session=${sessionId ?? "(none)"} `
+      + `instr=${instrHash}(${instrLen}) tools=${toolsHash}(${toolsLen}) `
+      + `input_prefix=${inputPrefixHash} `
+      + `types=[${inputTypes.join(",")}] input_count=${inputCount}`,
+  )
+}
+
+/**
  * xAI only accepts `reasoning.effort` on a subset of reasoning-capable models.
  * Forwarding it to other models triggers an upstream rejection. The set below
  * mirrors `xaiSupportsReasoningEffort` in CLIProxyAPI/xai_executor.go.
@@ -275,6 +343,11 @@ export async function createXaiResponsesOnce(
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
   const sessionId = resolveXaiSessionId(payload, ctx)
+
+  // Log cache-prefix diagnostic so we can compare prefix stability across
+  // turns within the same session. If instr/tools hash changes between
+  // requests with the same session ID, the cache prefix is broken.
+  logCachePrefixDiag(sessionId, payload)
 
   const baseBody: Record<string, unknown> = {
     ...payload,
