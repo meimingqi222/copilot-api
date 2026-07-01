@@ -6,6 +6,7 @@ import { PATHS } from "~/lib/paths"
 import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { cacheModels } from "~/lib/utils"
 import { server } from "~/server"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -23,6 +24,7 @@ const testAccountsPath = path.join(
 
 beforeEach(() => {
   initializeProviderRegistry()
+  statsStore.clearUsageStatsForTest()
   state.accounts = []
   state.activeAccountIndex = 0
   state.models = undefined

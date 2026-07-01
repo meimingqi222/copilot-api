@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { createUserSync } from "~/lib/users"
 import { server } from "~/server"
 
@@ -12,6 +13,7 @@ const originalAdminPassword = state.adminPassword
 let apiKey = ""
 
 beforeEach(() => {
+  statsStore.clearUsageStatsForTest()
   state.users = []
   state.legacyApiKey = undefined
   state.adminPassword = undefined

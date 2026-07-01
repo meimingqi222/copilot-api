@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
 const originalApiKey = state.legacyApiKey
@@ -9,6 +10,7 @@ const originalAdminSessionToken = state.adminSessionToken
 const originalAdminSessionExpiresAt = state.adminSessionExpiresAt
 
 beforeEach(() => {
+  statsStore.clearUsageStatsForTest()
   state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.adminSessionToken = undefined
