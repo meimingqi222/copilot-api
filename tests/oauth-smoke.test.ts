@@ -9,6 +9,7 @@ import { PATHS } from "~/lib/paths"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 import { resetOAuthFlowsForTest } from "~/services/oauth/flows"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -48,6 +49,7 @@ beforeEach(async () => {
   PATHS.PENDING_OAUTH_FLOWS_PATH = testOAuthFlowsPath
   await fs.writeFile(testOAuthFlowsPath, "{}")
   initializeProviderRegistry()
+  statsStore.clearUsageStatsForTest()
   state.accounts = []
   state.legacyApiKey = undefined
   state.adminPassword = undefined

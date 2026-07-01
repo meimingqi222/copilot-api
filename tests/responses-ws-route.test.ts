@@ -3,6 +3,7 @@ import { websocket } from "hono/bun"
 
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
+import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
 const originalFetch = globalThis.fetch
@@ -16,6 +17,7 @@ const originalUsers = state.users
 
 beforeEach(() => {
   resetProtectedRouteGuardForTest()
+  statsStore.clearUsageStatsForTest()
   state.accounts = [
     {
       id: "test-account-id",
