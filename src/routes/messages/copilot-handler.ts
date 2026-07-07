@@ -37,6 +37,7 @@ import {
 import {
   translateChunkToAnthropicEvents,
   translateErrorToAnthropicErrorEvent,
+  translateStreamEndEvents,
 } from "./stream-translation"
 import { recordStreamingUsage, type UsageInfo } from "./usage-recorder"
 
@@ -108,6 +109,8 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     }
   }
 
+  const estimatedInputTokens = await estimateInputTokens(openAIPayload)
+
   return handleSseStream(c, async (stream, sseSignal) => {
     const streamStartTs = Date.now()
     let result
@@ -155,6 +158,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       clientSignal: sseSignal,
       c,
       accountId: result.accountId,
+      estimatedInputTokens,
       skipPing: true,
       streamStartTs,
     })
@@ -294,6 +298,17 @@ async function handleStreamingResponse({
       await writeSseEvents(
         stream,
         translatedEvents.map((event) => ({
+          data: JSON.stringify(event),
+          event: event.type,
+        })),
+      )
+    }
+
+    const endEvents = translateStreamEndEvents(streamState)
+    if (endEvents.length > 0) {
+      await writeSseEvents(
+        stream,
+        endEvents.map((event) => ({
           data: JSON.stringify(event),
           event: event.type,
         })),

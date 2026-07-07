@@ -6,9 +6,27 @@ import type {
   ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
 
-import { createInitialStreamState } from "~/routes/messages/anthropic-types"
+import {
+  createInitialStreamState,
+  type AnthropicStreamEventData,
+} from "~/routes/messages/anthropic-types"
 import { translateToAnthropic } from "~/routes/messages/non-stream-translation"
-import { translateChunkToAnthropicEvents } from "~/routes/messages/stream-translation"
+import {
+  translateChunkToAnthropicEvents,
+  translateStreamEndEvents,
+} from "~/routes/messages/stream-translation"
+
+function translateFullStream(
+  openAIStream: Array<ChatCompletionChunk>,
+  estimatedInputTokens = 0,
+): Array<AnthropicStreamEventData> {
+  const streamState = createInitialStreamState()
+  streamState.estimatedInputTokens = estimatedInputTokens
+  const events = openAIStream.flatMap((chunk) =>
+    translateChunkToAnthropicEvents(chunk, streamState),
+  )
+  return [...events, ...translateStreamEndEvents(streamState)]
+}
 
 const anthropicUsageSchema = z.object({
   input_tokens: z.number().int(),
@@ -530,10 +548,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    const streamState = createInitialStreamState()
-    const translatedStream = openAIStream.flatMap((chunk) =>
-      translateChunkToAnthropicEvents(chunk, streamState),
-    )
+    const translatedStream = translateFullStream(openAIStream)
 
     for (const event of translatedStream) {
       expect(isValidAnthropicStreamEvent(event)).toBe(true)
@@ -624,15 +639,136 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    // Streaming translation requires state
-    const streamState = createInitialStreamState()
-    const translatedStream = openAIStream.flatMap((chunk) =>
-      translateChunkToAnthropicEvents(chunk, streamState),
-    )
+    const translatedStream = translateFullStream(openAIStream)
 
     for (const event of translatedStream) {
       expect(isValidAnthropicStreamEvent(event)).toBe(true)
     }
+  })
+
+  test("should defer message_delta until usage arrives after finish_reason", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-usage-late",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gpt-4o-2024-05-13",
+        choices: [
+          {
+            index: 0,
+            delta: { role: "assistant", content: "Hi" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-usage-late",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gpt-4o-2024-05-13",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+      },
+      {
+        id: "cmpl-usage-late",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gpt-4o-2024-05-13",
+        choices: [],
+        usage: {
+          prompt_tokens: 120,
+          completion_tokens: 8,
+          total_tokens: 128,
+          prompt_tokens_details: {
+            cached_tokens: 100,
+          },
+        },
+      },
+    ]
+
+    const streamState = createInitialStreamState()
+    const finishChunkEvents = translateChunkToAnthropicEvents(
+      openAIStream[1],
+      streamState,
+    )
+    expect(
+      finishChunkEvents.some((event) => event.type === "message_delta"),
+    ).toBe(false)
+
+    const usageChunkEvents = translateChunkToAnthropicEvents(
+      openAIStream[2],
+      streamState,
+    )
+    const messageDelta = usageChunkEvents.find(
+      (event) => event.type === "message_delta",
+    )
+    expect(messageDelta).toMatchObject({
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: {
+        input_tokens: 20,
+        output_tokens: 8,
+        cache_read_input_tokens: 100,
+      },
+    })
+    expect(
+      usageChunkEvents.some((event) => event.type === "message_stop"),
+    ).toBe(true)
+  })
+
+  test("should fall back to estimated input tokens when stream ends without usage", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-estimate",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gpt-4o-2024-05-13",
+        choices: [
+          {
+            index: 0,
+            delta: { role: "assistant", content: "Hi" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-estimate",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "gpt-4o-2024-05-13",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+      },
+    ]
+
+    const translatedStream = translateFullStream(openAIStream, 42_000)
+    const messageStart = translatedStream.find(
+      (event) => event.type === "message_start",
+    )
+    const messageDelta = translatedStream.find(
+      (event) => event.type === "message_delta",
+    )
+
+    expect(messageStart).toMatchObject({
+      type: "message_start",
+      message: {
+        usage: {
+          input_tokens: 42_000,
+          output_tokens: 0,
+        },
+      },
+    })
+    expect(messageDelta).toMatchObject({
+      type: "message_delta",
+      usage: {
+        input_tokens: 42_000,
+        output_tokens: 0,
+      },
+    })
   })
 })
 
@@ -703,11 +839,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const streamState = createInitialStreamState()
-
-    const translatedStream = openAIStream.flatMap((chunk) =>
-      translateChunkToAnthropicEvents(chunk, streamState),
-    )
+    const translatedStream = translateFullStream(openAIStream)
 
     const hasThinkingStart = translatedStream.some(
       (event) =>
@@ -791,11 +923,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const streamState = createInitialStreamState()
-
-    const translatedStream = openAIStream.flatMap((chunk) =>
-      translateChunkToAnthropicEvents(chunk, streamState),
-    )
+    const translatedStream = translateFullStream(openAIStream)
 
     const hasThinkingEvent = translatedStream.some(
       (event) =>
@@ -866,11 +994,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const streamState = createInitialStreamState()
-
-    const translatedStream = openAIStream.flatMap((chunk) =>
-      translateChunkToAnthropicEvents(chunk, streamState),
-    )
+    const translatedStream = translateFullStream(openAIStream)
 
     expect(translatedStream).toEqual([
       {
@@ -1003,11 +1127,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const streamState = createInitialStreamState()
-
-    const translatedStream = openAIStream.flatMap((chunk) =>
-      translateChunkToAnthropicEvents(chunk, streamState),
-    )
+    const translatedStream = translateFullStream(openAIStream)
 
     const thinkingEvents = translatedStream.filter(
       (event) =>
