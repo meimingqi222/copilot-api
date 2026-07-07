@@ -12,6 +12,7 @@ import { copilotNativeAdapter } from "./copilot-native"
 import { kimiNativeAdapter } from "./kimi-native"
 import { mimoNativeAdapter } from "./mimo-native"
 import { openAICompatibleAdapter } from "./openai-compatible"
+import { openAIResponsesCompatibleAdapter } from "./openai-responses"
 import { registerProtocolAdapter } from "./registry"
 import { windsurfNativeAdapter } from "./windsurf-native"
 import { xaiNativeAdapter } from "./xai-native"
@@ -21,6 +22,7 @@ let initialized = false
 export function initializeProtocolAdapters(): void {
   if (initialized) return
   registerProtocolAdapter(openAICompatibleAdapter)
+  registerProtocolAdapter(openAIResponsesCompatibleAdapter)
   registerProtocolAdapter(anthropicCompatibleAdapter)
   registerProtocolAdapter(copilotNativeAdapter)
   registerProtocolAdapter(codebuffNativeAdapter)

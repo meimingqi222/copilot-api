@@ -49,7 +49,7 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
     console.log("reasoning_effort:", openAIPayload.reasoning_effort)
     console.log("temperature:", openAIPayload.temperature)
 
-    expect(openAIPayload.reasoning_effort).toBe("medium")
+    expect(openAIPayload.reasoning_effort).toBe("high")
     expect(openAIPayload.temperature).toBe(1)
   })
 

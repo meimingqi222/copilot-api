@@ -82,6 +82,7 @@ function connectionsView() {
     protocolColor(protocol) {
       const colors = {
         "openai-compatible": "#10a37f",
+        "openai-responses-compatible": "#0a6cff",
         "anthropic-compatible": "#c96442",
         "copilot-native": "#0071e3",
         "windsurf-native": "#7c3aed",

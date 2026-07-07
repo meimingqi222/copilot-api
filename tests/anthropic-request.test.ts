@@ -324,7 +324,7 @@ describe("Anthropic thinking and model mapping", () => {
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 
-    expect(openAIPayload.reasoning_effort).toBe("high")
+    expect(openAIPayload.reasoning_effort).toBe("auto")
     expect(openAIPayload.temperature).toBe(1)
     expect(openAIPayload.thinking).toBeUndefined()
     expect(openAIPayload.reasoning).toBeUndefined()
@@ -332,15 +332,15 @@ describe("Anthropic thinking and model mapping", () => {
 
   test("should handle boundary values for budget_tokens in OpenAI translation", () => {
     const testCases = [
-      { budget: 0, expected: "minimal" },
-      { budget: 1023, expected: "minimal" },
+      { budget: 0, expected: "none" },
+      { budget: 512, expected: "minimal" },
+      { budget: 513, expected: "low" },
       { budget: 1024, expected: "low" },
-      { budget: 8191, expected: "low" },
+      { budget: 1025, expected: "medium" },
       { budget: 8192, expected: "medium" },
-      { budget: 24575, expected: "medium" },
+      { budget: 8193, expected: "high" },
       { budget: 24576, expected: "high" },
-      { budget: 32767, expected: "high" },
-      { budget: 32768, expected: "xhigh" },
+      { budget: 24577, expected: "xhigh" },
       { budget: 100000, expected: "xhigh" },
     ]
 
@@ -357,7 +357,7 @@ describe("Anthropic thinking and model mapping", () => {
 
       const openAIPayload = translateToOpenAI(anthropicPayload)
       expect(openAIPayload.reasoning_effort).toBe(
-        expected as "minimal" | "low" | "medium" | "high" | "xhigh",
+        expected as "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
       )
     }
   })

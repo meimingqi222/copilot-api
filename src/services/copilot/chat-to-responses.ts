@@ -91,7 +91,7 @@ export function translateToResponsesPayload(
         tool_choice: translateToolChoice(payload.tool_choice),
       }
     : {}),
-    ...(payload.reasoning_effort ?
+    ...(payload.reasoning_effort && payload.reasoning_effort !== "none" ?
       {
         reasoning: {
           effort: normalizeReasoningEffort(payload.reasoning_effort),
@@ -583,7 +583,8 @@ function normalizeReasoningEffort(
       return "low"
     }
     case "high":
-    case "xhigh": {
+    case "xhigh":
+    case "auto": {
       return "high"
     }
     default: {

@@ -4,6 +4,8 @@ import type {
   Tool,
 } from "~/services/copilot/create-chat-completions"
 
+import { LEVEL_TO_BUDGET, geminiSupportsLevelFormat } from "~/lib/thinking"
+
 const FUNCTION_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
 
 /**
@@ -309,6 +311,46 @@ function buildTools(
   return [{ functionDeclarations: declarations }]
 }
 
+/**
+ * Builds the Gemini thinkingConfig from a reasoning_effort level.
+ *
+ * Gemini 2.x models only support `thinkingBudget` (numeric), while Gemini 3+
+ * supports `thinkingLevel` (string). This function selects the correct format
+ * based on the target model, matching CPA's Gemini applier behavior.
+ */
+function buildGeminiThinkingConfig(
+  effort: string,
+  model: string,
+): Record<string, unknown> {
+  const level = effort.toLowerCase()
+
+  // auto → thinkingBudget=-1 (both Gemini 2.5 and 3 support this)
+  if (level === "auto") {
+    return { thinkingBudget: -1, includeThoughts: true }
+  }
+
+  // none → disable thinking
+  if (level === "none") {
+    return { thinkingBudget: 0, includeThoughts: false }
+  }
+
+  if (geminiSupportsLevelFormat(model)) {
+    // Gemini 3+: use thinkingLevel string format
+    return { thinkingLevel: level, includeThoughts: true }
+  }
+
+  // Gemini 2.x: convert level string to thinkingBudget numeric format
+  if (level in LEVEL_TO_BUDGET) {
+    return {
+      thinkingBudget: LEVEL_TO_BUDGET[level],
+      includeThoughts: LEVEL_TO_BUDGET[level] > 0,
+    }
+  }
+
+  // Unknown level: use thinkingLevel as fallback (let upstream validate)
+  return { thinkingLevel: level, includeThoughts: true }
+}
+
 export function translateOpenAiChatToAntigravity(
   payload: ChatCompletionsPayload,
   projectId: string,
@@ -371,17 +413,10 @@ export function translateOpenAiChatToAntigravity(
     generationConfig.maxOutputTokens = payload.max_tokens
   }
   if (payload.reasoning_effort) {
-    const effort = payload.reasoning_effort.toLowerCase()
-    generationConfig.thinkingConfig =
-      effort === "auto" ?
-        {
-          thinkingBudget: -1,
-          includeThoughts: true,
-        }
-      : {
-          thinkingLevel: effort,
-          includeThoughts: effort !== "none",
-        }
+    generationConfig.thinkingConfig = buildGeminiThinkingConfig(
+      payload.reasoning_effort,
+      payload.model,
+    )
   }
   if (Object.keys(generationConfig).length > 0) {
     body.request.generationConfig = generationConfig

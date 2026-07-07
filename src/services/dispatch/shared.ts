@@ -1,13 +1,15 @@
 /**
- * Shared dispatch logic for chat-completions and messages routes.
+ * Shared dispatch logic for chat-completions, messages, and responses routes.
  */
 
 import type { RouteTarget } from "~/lib/provider-connections"
 import type { RequestAdmission } from "~/lib/request-admission"
 import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
+import type { ResponsesPayload } from "~/services/copilot/responses-api"
 import type {
   AdapterChatResult,
   AdapterMessagesResult,
+  AdapterResponsesResult,
   AnthropicMessagesPayload,
 } from "~/services/protocols"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
@@ -29,9 +31,22 @@ export interface MessagesDispatchOptions {
   forwardedHeaders?: Record<string, string | undefined>
 }
 
-export type DispatchOptions = ChatDispatchOptions | MessagesDispatchOptions
+export interface ResponsesDispatchOptions {
+  routeKind: "responses"
+  payload: ResponsesPayload
+  c?: import("hono").Context
+  executionContext?: RequestExecutionContext
+}
 
-export type DispatchResult = AdapterChatResult | AdapterMessagesResult
+export type DispatchOptions =
+  | ChatDispatchOptions
+  | MessagesDispatchOptions
+  | ResponsesDispatchOptions
+
+export type DispatchResult =
+  | AdapterChatResult
+  | AdapterMessagesResult
+  | AdapterResponsesResult
 
 export async function dispatchRequest(
   options: DispatchOptions,
@@ -60,6 +75,29 @@ export async function dispatchRequest(
         }
         return adapter
           .createChatCompletions({
+            target,
+            connection: conn,
+            credential: cred,
+            payload,
+            signal,
+            ctx: {
+              initiator: current.initiator,
+              c: options.c,
+              ...options.executionContext,
+            },
+          })
+          .then((r) => r as unknown as DispatchResult)
+      }
+
+      if (routeKind === "responses") {
+        if (!adapter?.createResponses) {
+          throw new HTTPError(
+            `Protocol "${target.protocol}" does not support /responses`,
+            new Response("Not Implemented", { status: 501 }),
+          )
+        }
+        return adapter
+          .createResponses({
             target,
             connection: conn,
             credential: cred,
