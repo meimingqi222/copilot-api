@@ -5,10 +5,73 @@ import {
 } from "~/services/copilot/create-chat-completions"
 
 import {
+  type AnthropicMessageDeltaEvent,
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "./anthropic-types"
 import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
+
+type OpenAIStreamUsage = NonNullable<ChatCompletionChunk["usage"]>
+
+function buildAnthropicStreamUsage(
+  usage: OpenAIStreamUsage | undefined,
+  estimatedInputTokens: number,
+): NonNullable<AnthropicMessageDeltaEvent["usage"]> {
+  if (!usage) {
+    return {
+      input_tokens: estimatedInputTokens,
+      output_tokens: 0,
+    }
+  }
+
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
+  return {
+    input_tokens: Math.max(0, usage.prompt_tokens - cachedTokens),
+    output_tokens: usage.completion_tokens,
+    ...(cachedTokens !== 0 && {
+      cache_read_input_tokens: cachedTokens,
+    }),
+    ...(usage.prompt_tokens_details?.cache_creation_input_tokens
+      !== undefined && {
+      cache_creation_input_tokens:
+        usage.prompt_tokens_details.cache_creation_input_tokens,
+    }),
+  }
+}
+
+function tryEmitDeferredMessageDelta(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+  usage?: OpenAIStreamUsage,
+): void {
+  if (!state.pendingFinishReason || state.messageDeltaSent) {
+    return
+  }
+
+  const resolvedUsage = usage ?? state.lastSeenUsage
+  if (!resolvedUsage) {
+    return
+  }
+
+  events.push(
+    {
+      type: "message_delta",
+      delta: {
+        stop_reason: state.pendingFinishReason,
+        stop_sequence: null,
+      },
+      usage: buildAnthropicStreamUsage(
+        resolvedUsage,
+        state.estimatedInputTokens,
+      ),
+    },
+    {
+      type: "message_stop",
+    },
+  )
+  state.messageDeltaSent = true
+  state.messageStopSent = true
+}
 
 function isToolBlockOpen(state: AnthropicStreamState): boolean {
   if (!state.contentBlockOpen) {
@@ -158,8 +221,14 @@ export function translateChunkToAnthropicEvents(
 ): Array<AnthropicStreamEventData> {
   const events: Array<AnthropicStreamEventData> = []
 
+  if (chunk.usage) {
+    state.lastSeenUsage = chunk.usage
+  }
+
+  // Usage-only chunks (common after Responses API finish) may have no choices.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!chunk.choices?.length) {
+    tryEmitDeferredMessageDelta(state, events, chunk.usage)
     return events
   }
 
@@ -344,36 +413,47 @@ export function translateChunkToAnthropicEvents(
       stopCurrentContentBlock(state, events, false)
     }
 
-    events.push(
-      {
-        type: "message_delta",
-        delta: {
-          stop_reason: mapOpenAIStopReasonToAnthropic(choice.finish_reason),
-          stop_sequence: null,
-        },
-        usage: {
-          input_tokens:
-            (chunk.usage?.prompt_tokens ?? 0)
-            - (chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0),
-          output_tokens: chunk.usage?.completion_tokens ?? 0,
-          ...((chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0)
-            !== 0 && {
-            cache_read_input_tokens:
-              chunk.usage?.prompt_tokens_details?.cached_tokens,
-          }),
-          ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
-            !== undefined && {
-            cache_creation_input_tokens:
-              chunk.usage.prompt_tokens_details.cache_creation_input_tokens,
-          }),
-        },
-      },
-      {
-        type: "message_stop",
-      },
+    state.pendingFinishReason = mapOpenAIStopReasonToAnthropic(
+      choice.finish_reason,
     )
-    state.messageStopSent = true
   }
+
+  tryEmitDeferredMessageDelta(state, events, chunk.usage)
+
+  return events
+}
+
+export function translateStreamEndEvents(
+  state: AnthropicStreamState,
+): Array<AnthropicStreamEventData> {
+  const events: Array<AnthropicStreamEventData> = []
+
+  if (!state.pendingFinishReason || state.messageDeltaSent) {
+    return events
+  }
+
+  if (state.contentBlockOpen) {
+    stopCurrentContentBlock(state, events, false)
+  }
+
+  events.push(
+    {
+      type: "message_delta",
+      delta: {
+        stop_reason: state.pendingFinishReason,
+        stop_sequence: null,
+      },
+      usage: buildAnthropicStreamUsage(
+        state.lastSeenUsage,
+        state.estimatedInputTokens,
+      ),
+    },
+    {
+      type: "message_stop",
+    },
+  )
+  state.messageDeltaSent = true
+  state.messageStopSent = true
 
   return events
 }

@@ -30,11 +30,22 @@ export interface AnthropicMessagesPayload {
         type: "adaptive"
         display?: "summarized" | "omitted"
       }
+    | {
+        type: "disabled"
+      }
   output_config?: {
     effort?: "low" | "medium" | "high" | null
   }
   service_tier?: "auto" | "standard_only"
-  reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | null
+  reasoning_effort?:
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "none"
+    | "auto"
+    | null
 }
 
 export interface AnthropicTextBlock {
@@ -211,6 +222,7 @@ export type AnthropicStreamEventData =
 export interface AnthropicStreamState {
   messageStartSent: boolean
   messageStopSent: boolean
+  messageDeltaSent: boolean
   contentBlockIndex: number
   contentBlockOpen: boolean
   currentContentBlockType?: "text" | "thinking" | "tool_use"
@@ -232,6 +244,17 @@ export interface AnthropicStreamState {
   // API) does not include usage data until the final streaming chunk, which
   // would otherwise cause message_start to report input_tokens = 0.
   estimatedInputTokens: number
+  // Set when finish_reason arrives; message_delta is deferred until usage is
+  // available or the stream ends (matching CPA behavior).
+  pendingFinishReason?: AnthropicResponse["stop_reason"]
+  lastSeenUsage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    prompt_tokens_details?: {
+      cached_tokens?: number
+      cache_creation_input_tokens?: number
+    }
+  }
 }
 
 /** Factory to create a fresh AnthropicStreamState with all fields at their default values. */
@@ -239,6 +262,7 @@ export function createInitialStreamState(): AnthropicStreamState {
   return {
     messageStartSent: false,
     messageStopSent: false,
+    messageDeltaSent: false,
     contentBlockIndex: 0,
     contentBlockOpen: false,
     currentContentBlockType: undefined,
@@ -246,6 +270,8 @@ export function createInitialStreamState(): AnthropicStreamState {
     suppressLateThinking: false,
     toolCalls: {},
     estimatedInputTokens: 0,
+    pendingFinishReason: undefined,
+    lastSeenUsage: undefined,
   }
 }
 
