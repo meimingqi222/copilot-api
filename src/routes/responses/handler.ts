@@ -8,7 +8,6 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
-import { HTTPError } from "~/lib/error"
 import { extractErrorMessage } from "~/lib/error-builder"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
@@ -22,6 +21,11 @@ import { isAbortError } from "~/lib/utils"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { dispatchResponses } from "~/services/dispatch/responses"
+
+type ResponsesExecutionResult =
+  | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
+  | { accountId: string; response: ResponsesResponse }
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
@@ -39,13 +43,6 @@ export async function handleResponses(c: Context) {
     inferredInitiator: inferInitiatorFromResponsesPayload(payload),
     messageContent,
   })
-  if (!admission.account) {
-    throw new HTTPError(
-      "Responses API requires an Account-based admission",
-      new Response("Not Implemented", { status: 501 }),
-    )
-  }
-  const account = admission.account
 
   // Forward session_id, thread_id, and provider-specific headers from the
   // incoming request so that upstream providers can reuse cached prompt
@@ -66,6 +63,25 @@ export async function handleResponses(c: Context) {
     "x-claude-code-session-id": c.req.header("x-claude-code-session-id"),
   }
 
+  // Account-backed 路径走 legacy createResponses(支持 responses↔chat 自动翻译、
+  // native provider 特性);普通 Provider Connection 路径走 dispatchResponses,
+  // 直接调用 adapter.createResponses。
+  const executeRequest = (): Promise<ResponsesExecutionResult> => {
+    if (admission.account) {
+      return createResponses(payload, {
+        signal,
+        initiatorOverride: admission.initiator,
+        account: admission.account,
+        forwardedHeaders,
+        c,
+      }) as Promise<ResponsesExecutionResult>
+    }
+    return dispatchResponses(payload, admission, signal, c, {
+      initiator: admission.initiator,
+      forwardedHeaders,
+    }) as Promise<ResponsesExecutionResult>
+  }
+
   if (payload.stream) {
     return streamSSE(c, async (stream) => {
       const pingInterval = createSsePingInterval(stream)
@@ -75,13 +91,7 @@ export async function handleResponses(c: Context) {
       const streamStartTs = Date.now()
 
       try {
-        const result = await createResponses(payload, {
-          signal,
-          initiatorOverride: admission.initiator,
-          account,
-          forwardedHeaders,
-          c,
-        })
+        const result = await executeRequest()
         accountId = result.accountId
         c.set("accountId", result.accountId)
         c.set("model", payload.model)
@@ -160,13 +170,7 @@ export async function handleResponses(c: Context) {
   }
 
   const nonStreamStart = Date.now()
-  const result = await createResponses(payload, {
-    signal,
-    initiatorOverride: admission.initiator,
-    account,
-    forwardedHeaders,
-    c,
-  })
+  const result = await executeRequest()
   c.set("accountId", result.accountId)
   c.set("model", payload.model)
   if (!isNonStreaming(result.response)) {

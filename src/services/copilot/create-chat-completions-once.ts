@@ -31,6 +31,19 @@ function hasImageContent(payload: ChatCompletionsPayload): boolean {
   )
 }
 
+/**
+ * Strips non-standard reasoning_effort values that the Copilot API does not
+ * accept. "none" and "auto" are intermediate values used by the translation
+ * pipeline (e.g. Antigravity thinkingConfig); Copilot only accepts
+ * minimal/low/medium/high/xhigh.
+ */
+function sanitizeReasoningEffortForCopilot(
+  effort: ChatCompletionsPayload["reasoning_effort"],
+): ChatCompletionsPayload["reasoning_effort"] {
+  if (effort === "none" || effort === "auto") return undefined
+  return effort
+}
+
 export async function createCopilotChatCompletionsOnce(
   account: Account,
   payload: ChatCompletionsPayload,
@@ -45,6 +58,12 @@ export async function createCopilotChatCompletionsOnce(
   const normalizedPayload: ChatCompletionsPayload = {
     ...payload,
     model: parseModelReference(payload.model).nativeModelId,
+    // Copilot API only accepts standard reasoning_effort values (minimal-xhigh).
+    // Strip non-standard intermediate values ("none"/"auto") so upstream
+    // doesn't reject the request.
+    reasoning_effort: sanitizeReasoningEffortForCopilot(
+      payload.reasoning_effort,
+    ),
   }
   const useResponsesApi = shouldUseResponsesApi(
     normalizedPayload.model,

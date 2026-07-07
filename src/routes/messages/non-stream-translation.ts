@@ -1,4 +1,5 @@
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { budgetToLevel } from "~/lib/thinking"
 import {
   type ChatCompletionReasoningDetail,
   type ChatCompletionResponse,
@@ -33,6 +34,8 @@ export function translateToOpenAI(
   const reasoningEffort =
     payload.reasoning_effort
     ?? translateAnthropicThinkingToReasoningEffort(payload.thinking)
+  const isReasoningEnabled =
+    reasoningEffort !== undefined && reasoningEffort !== "none"
   return {
     model: translateModelName(payload.model),
     messages: translateAnthropicMessagesToOpenAI(
@@ -43,7 +46,7 @@ export function translateToOpenAI(
     stop: payload.stop_sequences,
     stream: payload.stream,
     // Copilot requires temperature=1 when reasoning is enabled
-    temperature: reasoningEffort !== undefined ? 1 : payload.temperature,
+    temperature: isReasoningEnabled ? 1 : payload.temperature,
     top_p: payload.top_p,
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
@@ -257,31 +260,36 @@ function translateAnthropicToolsToOpenAI(
 // Maps Anthropic thinking config to Copilot's reasoning_effort parameter.
 // Copilot proxy (api.githubcopilot.com) uses OpenAI-compatible format with
 // reasoning_effort instead of Anthropic's budget_tokens.
-// Budget mapping:
-// - minimal: 512 (低成本推理)
-// - low: 1024 (快速推理)
-// - medium: 8192 (默认推理深度)
-// - high: 24576 (深度推理)
-// - xhigh: 32768 (更深推理)
+// Uses shared budgetToLevel from ~/lib/thinking for consistent thresholds.
 function translateAnthropicThinkingToReasoningEffort(
   thinking: AnthropicMessagesPayload["thinking"],
-): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
+):
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "none"
+  | "auto"
+  | undefined {
   if (!thinking) {
     return undefined
   }
 
-  if (thinking.type === "enabled") {
-    const budget = thinking.budget_tokens ?? 8192 // default to medium
-    // Map budget_tokens to effort levels
-    if (budget >= 32768) return "xhigh"
-    if (budget >= 24576) return "high"
-    if (budget >= 8192) return "medium"
-    if (budget >= 1024) return "low"
-    return "minimal"
+  if (thinking.type === "disabled") {
+    return "none"
   }
 
-  // adaptive: let the model decide, default to high
-  return "high"
+  if (thinking.type === "enabled") {
+    const budget = thinking.budget_tokens
+    // No budget specified → let the model decide (Copilot default)
+    if (budget === undefined) return undefined
+    // Use shared conversion function (single source of truth for thresholds)
+    return budgetToLevel(budget) ?? undefined
+  }
+
+  // adaptive: let the model decide dynamically
+  return "auto"
 }
 
 function translateAnthropicToolChoiceToOpenAI(

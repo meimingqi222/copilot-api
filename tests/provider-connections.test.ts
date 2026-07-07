@@ -11,6 +11,7 @@ import {
   createConnection,
   getProviderConnection,
   isCredentialAvailable,
+  isProviderProtocol,
   listProviderConnections,
   markCredentialAuthError,
   markCredentialCooldown,
@@ -31,6 +32,7 @@ import {
   targetKey,
 } from "~/lib/route-target"
 import { openAICompatibleAdapter } from "~/services/protocols/openai-compatible"
+import { openAIResponsesCompatibleAdapter } from "~/services/protocols/openai-responses"
 
 const originalFetch = globalThis.fetch
 
@@ -357,6 +359,169 @@ describe("OpenAI-compatible model discovery", () => {
         endpoints: ["embeddings"],
       }),
     ])
+  })
+})
+
+describe("OpenAI Responses-compatible protocol", () => {
+  beforeEach(() => {
+    __resetProviderConnectionsForTest()
+    __resetRouteTargetRoundRobin()
+  })
+
+  test("isProviderProtocol recognizes openai-responses-compatible", () => {
+    expect(isProviderProtocol("openai-responses-compatible")).toBe(true)
+  })
+
+  test("adapter is registered under correct protocol id", () => {
+    expect(openAIResponsesCompatibleAdapter.protocol).toBe(
+      "openai-responses-compatible",
+    )
+  })
+
+  test("switching to openai-responses-compatible migrates messages endpoints to chat", async () => {
+    await createConnection({
+      id: "openai-rs",
+      name: "OpenAI Responses",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://api.openai.com/v1",
+      credentials: [{ id: "cred-a", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "gpt-4o",
+          upstreamId: "gpt-4o",
+          endpoints: ["messages"],
+          enabled: true,
+        },
+      ],
+    })
+
+    await updateConnection("openai-rs", {
+      protocol: "openai-responses-compatible",
+    })
+
+    const conn = getProviderConnection("openai-rs")
+    expect(conn?.protocol).toBe("openai-responses-compatible")
+    expect(conn?.models?.[0].endpoints).toEqual(["chat"])
+  })
+
+  test("discoverModels classifies chat models with both chat and responses endpoints", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              { id: "gpt-4o", owned_by: "openai" },
+              { id: "text-embedding-3-small", owned_by: "openai" },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const models = await openAIResponsesCompatibleAdapter.discoverModels?.({
+      connection: {
+        id: "openai",
+        name: "OpenAI",
+        protocol: "openai-responses-compatible",
+        baseUrl: "https://api.openai.com/v1",
+        enabled: true,
+        priority: 10,
+        credentials: [],
+        createdAt: Date.now(),
+      },
+      credential: {
+        id: "cred-a",
+        authMode: "bearer",
+        value: "sk-test",
+        enabled: true,
+        status: "ready",
+        createdAt: Date.now(),
+      },
+    })
+
+    expect(models).toEqual([
+      expect.objectContaining({
+        publicId: "gpt-4o",
+        endpoints: ["chat", "responses"],
+      }),
+      expect.objectContaining({
+        publicId: "text-embedding-3-small",
+        endpoints: ["embeddings"],
+      }),
+    ])
+  })
+
+  test("createResponses posts to /responses endpoint with upstream model id", async () => {
+    let capturedUrl = ""
+    let capturedBody: unknown = null
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ id: "resp_1", model: "gpt-4o" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    await openAIResponsesCompatibleAdapter.createResponses?.({
+      target: {
+        connectionId: "openai",
+        connectionName: "OpenAI",
+        protocol: "openai-responses-compatible",
+        credentialId: "cred-a",
+        publicModelId: "gpt-4o",
+        upstreamModelId: "gpt-4o-2024-08-06",
+        endpoint: "responses",
+        connectionPriority: 10,
+        connectionWeight: 1,
+        credentialPriority: 0,
+        credentialWeight: 1,
+      },
+      connection: {
+        id: "openai",
+        name: "OpenAI",
+        protocol: "openai-responses-compatible",
+        baseUrl: "https://api.openai.com/v1",
+        enabled: true,
+        priority: 10,
+        credentials: [],
+        createdAt: Date.now(),
+      },
+      credential: {
+        id: "cred-a",
+        authMode: "bearer",
+        value: "sk-test",
+        enabled: true,
+        status: "ready",
+        createdAt: Date.now(),
+      },
+      payload: {
+        model: "gpt-4o",
+        input: "hello",
+        stream: false,
+      },
+    })
+
+    const calls = fetchMock.mock.calls as unknown as Array<
+      [string, RequestInit]
+    >
+    for (const [req, init] of calls) {
+      if (req.endsWith("/responses")) {
+        capturedUrl = req
+        capturedBody = JSON.parse(init.body as string)
+        break
+      }
+    }
+    expect(capturedUrl).toBe("https://api.openai.com/v1/responses")
+    expect(capturedBody).toEqual(
+      expect.objectContaining({
+        model: "gpt-4o-2024-08-06",
+        input: "hello",
+      }),
+    )
   })
 })
 

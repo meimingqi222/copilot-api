@@ -12,6 +12,7 @@ import type { CredentialRefresherType } from "./credential-refresher"
 
 export type ProviderProtocol =
   | "openai-compatible"
+  | "openai-responses-compatible"
   | "anthropic-compatible"
   | "copilot-native"
   | "windsurf-native"
@@ -25,6 +26,7 @@ export type ProviderProtocol =
 
 export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "openai-compatible",
+  "openai-responses-compatible",
   "anthropic-compatible",
   "copilot-native",
   "windsurf-native",

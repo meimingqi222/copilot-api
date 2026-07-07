@@ -240,7 +240,10 @@ function normalizeEndpointsForProtocol(
       ),
     )
   }
-  if (protocol === "openai-compatible") {
+  if (
+    protocol === "openai-compatible"
+    || protocol === "openai-responses-compatible"
+  ) {
     return uniqueEndpoints(
       endpoints.map((endpoint) =>
         endpoint === "messages" ? "chat" : endpoint,
