@@ -514,8 +514,21 @@ const QuotaDisplay = {
     )
     const rows = []
 
+    const creditUsagePercent = this.normalizeNumber(config.creditUsagePercent)
+    const currentPeriod =
+      config.currentPeriod && typeof config.currentPeriod === "object" ?
+        config.currentPeriod
+      : null
+    const monthlyPeriodEnd =
+      config.monthlyBillingPeriodEnd
+      ?? config.monthly_billing_period_end
+      ?? config.billingPeriodEnd
+      ?? config.billing_period_end
+    const weeklyPeriodEnd =
+      currentPeriod?.end ?? config.billingPeriodEnd ?? config.billing_period_end
+
     if (monthlyLimit !== undefined || used !== undefined) {
-      const remaining =
+      const remainingCents =
         monthlyLimit !== undefined && used !== undefined ?
           Math.max(0, monthlyLimit - used)
         : undefined
@@ -529,7 +542,7 @@ const QuotaDisplay = {
       rows.push({
         id: "monthly-credits",
         label: t("quota.oauth.xai.monthlyCredits"),
-        remainingCents: remaining,
+        remainingCents,
         totalCents: monthlyLimit,
         usedCents: used,
         valueText:
@@ -537,14 +550,26 @@ const QuotaDisplay = {
             `${Math.round(remainingPercent)}%`
           : "--",
         amountText:
-          monthlyLimit !== undefined ?
-            `${this.formatUsdFromCents(remaining)} / ${this.formatUsdFromCents(monthlyLimit)}`
-          : this.formatUsdFromCents(remaining),
+          monthlyLimit !== undefined && remainingCents !== undefined ?
+            `${this.formatUsdFromCents(remainingCents)} / ${this.formatUsdFromCents(monthlyLimit)}`
+          : this.formatUsdFromCents(remainingCents),
         remainingPercent,
-        resetText: this.formatResetTime(
-          config.billingPeriodEnd ?? config.billing_period_end,
-          t,
-        ),
+        resetText: this.formatResetTime(monthlyPeriodEnd, t),
+      })
+    }
+
+    if (creditUsagePercent !== undefined) {
+      const usedPercent = Math.max(0, Math.min(100, creditUsagePercent))
+      const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+      rows.push({
+        id: "weekly-credits",
+        label: t("quota.oauth.xai.weeklyCredits"),
+        valueText: `${Math.round(remainingPercent)}%`,
+        amountText: t("quota.oauth.xai.usedPercent", {
+          percent: usedPercent.toFixed(1),
+        }),
+        remainingPercent,
+        resetText: this.formatResetTime(weeklyPeriodEnd, t),
       })
     }
 
@@ -623,6 +648,9 @@ const QuotaDisplay = {
     if (provider === "xai") {
       if (info.chatRemaining !== undefined && info.chatTotal !== undefined) {
         return `${this.formatUsdFromCents(info.chatRemaining)} / ${this.formatUsdFromCents(info.chatTotal)}`
+      }
+      if (info.premiumInteractionsRemaining !== undefined) {
+        return `${Math.round(info.premiumInteractionsRemaining)}%`
       }
       return t("quota.noData")
     }

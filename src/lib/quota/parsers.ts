@@ -118,12 +118,40 @@ export interface XaiBillingCent {
   val?: number | string
 }
 
+export interface XaiBillingPeriod {
+  type?: string
+  start?: string
+  end?: string
+}
+
+export interface XaiProductUsage {
+  product?: string
+  usagePercent?: number
+}
+
 export interface XaiBillingConfig {
   monthlyLimit?: XaiBillingCent | number | string | null
   monthly_limit?: XaiBillingCent | number | string | null
   used?: XaiBillingCent | number | string | null
   onDemandCap?: XaiBillingCent | number | string | null
   on_demand_cap?: XaiBillingCent | number | string | null
+  onDemandUsed?: XaiBillingCent | number | string | null
+  on_demand_used?: XaiBillingCent | number | string | null
+  currentPeriod?: XaiBillingPeriod | null
+  creditUsagePercent?: number
+  productUsage?: Array<XaiProductUsage>
+  isUnifiedBillingUser?: boolean
+  prepaidBalance?: XaiBillingCent | number | string | null
+  topUpMethod?: string
+  billingPeriodStart?: string
+  billing_period_start?: string
+  billingPeriodEnd?: string
+  billing_period_end?: string
+  // Preserved base (monthly) billing period when weekly credits payload overwrites it
+  monthlyBillingPeriodStart?: string
+  monthly_billing_period_start?: string
+  monthlyBillingPeriodEnd?: string
+  monthly_billing_period_end?: string
 }
 
 export interface XaiBillingPayload {
@@ -438,32 +466,42 @@ export function summarizeXaiQuota(payload: XaiBillingPayload): {
   )
   const usedCents = normalizeXaiCentValue(config.used)
 
-  if (monthlyLimitCents === undefined && usedCents === undefined) {
-    return {
-      remainingPercent: undefined,
-      remainingCents: undefined,
-      totalCents: undefined,
-      unlimited: true,
-    }
-  }
+  let remainingCents: number | undefined
+  let totalCents: number | undefined
+  let minRemainingPercent: number | undefined
 
-  const remainingCents =
-    monthlyLimitCents !== undefined && usedCents !== undefined ?
-      Math.max(0, monthlyLimitCents - usedCents)
-    : undefined
-  const remainingPercent =
-    (
+  if (monthlyLimitCents !== undefined || usedCents !== undefined) {
+    remainingCents =
+      monthlyLimitCents !== undefined && usedCents !== undefined ?
+        Math.max(0, monthlyLimitCents - usedCents)
+      : undefined
+    totalCents = monthlyLimitCents
+    if (
       monthlyLimitCents !== undefined
       && monthlyLimitCents > 0
       && usedCents !== undefined
-    ) ?
-      Math.max(0, Math.round((1 - usedCents / monthlyLimitCents) * 100))
-    : undefined
+    ) {
+      minRemainingPercent = Math.max(
+        0,
+        Math.round((1 - usedCents / monthlyLimitCents) * 100),
+      )
+    }
+  }
+
+  if (config.creditUsagePercent !== undefined) {
+    const usedPercent = Math.max(0, Math.min(100, config.creditUsagePercent))
+    const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+    minRemainingPercent =
+      minRemainingPercent === undefined ? remainingPercent : (
+        Math.min(minRemainingPercent, remainingPercent)
+      )
+  }
 
   return {
-    remainingPercent,
+    remainingPercent: minRemainingPercent,
     remainingCents,
-    totalCents: monthlyLimitCents,
-    unlimited: remainingPercent === undefined && remainingCents === undefined,
+    totalCents,
+    unlimited:
+      minRemainingPercent === undefined && remainingCents === undefined,
   }
 }
