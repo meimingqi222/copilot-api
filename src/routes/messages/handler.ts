@@ -26,6 +26,19 @@ export async function handleCompletion(c: Context) {
     extractMessageContentFromAnthropicPayload(anthropicPayload)
 
   const anthropicBeta = c.req.header("anthropic-beta")
+  const anthropicVersion = c.req.header("anthropic-version")
+  const claudeSessionId = c.req.header("x-claude-code-session-id")
+  // Forward session-related headers so upstream providers can reuse cached
+  // prompt prefixes across turns within the same session.
+  const forwardedHeaders: Record<string, string | undefined> = {
+    "anthropic-beta": anthropicBeta,
+    "anthropic-version": anthropicVersion,
+    "x-claude-code-session-id": claudeSessionId,
+    session_id: c.req.header("session_id") ?? c.req.header("session-id"),
+    "x-session-id": c.req.header("x-session-id"),
+    prompt_cache_key: c.req.header("prompt_cache_key"),
+  }
+
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: anthropicPayload.model,
@@ -40,20 +53,12 @@ export async function handleCompletion(c: Context) {
       anthropicBeta,
     ),
     messageContent,
+    sessionHeaders: forwardedHeaders,
+    sessionPayload: anthropicPayload,
   })
 
-  const anthropicVersion = c.req.header("anthropic-version")
-  const claudeSessionId = c.req.header("x-claude-code-session-id")
   if (logger.level >= 4) {
     logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
-  }
-
-  // Forward session-related headers so upstream providers can reuse cached
-  // prompt prefixes across turns within the same session.
-  const forwardedHeaders: Record<string, string | undefined> = {
-    "anthropic-beta": anthropicBeta,
-    "anthropic-version": anthropicVersion,
-    "x-claude-code-session-id": claudeSessionId,
   }
 
   // Copilot Messages API (native Anthropic API passthrough)

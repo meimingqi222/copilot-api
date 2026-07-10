@@ -22,6 +22,7 @@ import {
   type RequestAdmission,
 } from "~/lib/request-admission"
 import { targetKey } from "~/lib/route-target"
+import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { isAbortError, shouldFailover } from "~/lib/utils"
 import {
   getProtocolAdapter,
@@ -122,6 +123,10 @@ export async function executeWithFailover<
         payload.model,
         routeKind,
         tried,
+        {
+          sessionId: current.sessionId,
+          fallbackSessionId: current.fallbackSessionId,
+        },
       )
       if (!next) throw error
 
@@ -133,6 +138,10 @@ export async function executeWithFailover<
         credential: resolved.credential,
         account: resolved.account,
         initiator: current.initiator,
+        // Keep L0 session binding context so subsequent failovers rebind
+        // the same conversation to the newly selected credential.
+        sessionId: current.sessionId,
+        fallbackSessionId: current.fallbackSessionId,
       }
     }
   }
@@ -145,6 +154,7 @@ async function markCooldown(
 ): Promise<void> {
   const isHttp = error instanceof HTTPError
   const status = isHttp ? error.response.status : 503
+  const authKey = affinityAuthKey(admission.target)
 
   // account-backed 路径:写入 state.accounts + 持久化 accounts.json
   if (admission.account) {
@@ -153,6 +163,7 @@ async function markCooldown(
     // cooldown instead of the default 60s exponential backoff.
     if (error instanceof WindsurfUpstreamError) {
       if (error.kind === "quota_exhausted") {
+        invalidateSessionAffinityAuth(authKey)
         setAccountQuotaState(admission.account, "exhausted")
         if (error.retryAfterMs) {
           admission.account.cooldownUntil = Date.now() + error.retryAfterMs
@@ -167,6 +178,7 @@ async function markCooldown(
         return
       }
       if (error.kind === "auth_error") {
+        invalidateSessionAffinityAuth(authKey)
         admission.account.runtimeState = {
           ...admission.account.runtimeState,
           authStatus: "error",
@@ -183,6 +195,7 @@ async function markCooldown(
       }
       // rate_limited / server_error → rate-limit cooldown
       // with the real upstream retryAfterMs (up to 4h for windsurf).
+      invalidateSessionAffinityAuth(authKey)
       await markAccountRateLimitedMs(
         admission.account.id,
         error.retryAfterMs,
@@ -198,6 +211,7 @@ async function markCooldown(
         body: error.responseBody,
       })
       if (classified.kind === "quota_exhausted") {
+        invalidateSessionAffinityAuth(authKey)
         setAccountQuotaState(admission.account, "exhausted")
         if (classified.retryAfterMs) {
           admission.account.cooldownUntil = Date.now() + classified.retryAfterMs
@@ -213,8 +227,9 @@ async function markCooldown(
       }
     }
 
-    // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 account
+    // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 account、不打散 affinity
     if (status === 429 || !isHttp) {
+      invalidateSessionAffinityAuth(authKey)
       await markAccountRateLimited(
         admission.account.id,
         new Response(null, { status }),
@@ -224,6 +239,7 @@ async function markCooldown(
   }
 
   // 纯 provider 路径:标记 credential cooldown / quota_exhausted
+  invalidateSessionAffinityAuth(authKey)
   if (isHttp && error.responseBody) {
     // Use classifyUpstreamError for accurate categorization, especially
     // for Codex usage_limit_reached which needs quota_exhausted treatment.

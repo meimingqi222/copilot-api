@@ -408,6 +408,8 @@ async function estimateInputTokens(
     return 0
   }
   try {
+    // Full local prompt estimate (all messages + tools), including assistant
+    // history already present in the request.
     const tokenCount = await getTokenCount(payload, selectedModel)
     return tokenCount.input
   } catch {

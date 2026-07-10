@@ -1,23 +1,22 @@
 /**
- * Identity Confuse — per-account deterministic prompt_cache_key remapping.
+ * L1 Codex-only: per-account deterministic prompt_cache_key remapping.
  *
- * When multiple upstream accounts are used with session affinity or
- * fill-first routing, the same client-side `prompt_cache_key` may be routed
- * to different accounts. Each account has its own cache namespace, so a
- * cache key from account A won't hit on account B.
+ * Must never be called for Claude / Antigravity / xAI / Windsurf / etc.
+ * (CPA: `codex.identity-confuse` lives only in the Codex executor.)
  *
- * Identity Confuse solves this by generating a deterministic per-account
- * UUID from the original cache key:
- *   confused = uuidV5("copilot-api:codex:identity-confuse:{kind}:{authId}:{value}")
+ * Enabled only when `state.routing.identityConfuse` is true AND
+ * (session-affinity OR fill-first) is active.
  *
- * The confused key is sent upstream. When the response comes back, the
- * confused key is replaced with the original key so the client sees
- * consistent identifiers.
- *
- * Mirrors CPA's codex_identity_confuse.go.
+ * Does **not** improve cache hit rate by itself — L0 affinity / fill-first
+ * do. This mainly remaps identifiers per credential for multi-auth isolation.
  */
 
 import { createHash } from "node:crypto"
+
+import {
+  isCodexIdentityConfuseEnabled,
+  providerHasCacheFeature,
+} from "~/lib/routing"
 
 // UUID v5 namespace (OID namespace from RFC 4122)
 const NAMESPACE_OID = "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
@@ -139,16 +138,21 @@ export function applyIdentityConfuseBody(
   upstreamBody: Record<string, unknown>,
 ): IdentityConfuseState {
   const state: IdentityConfuseState = {
-    enabled: true,
+    enabled: false,
     authId: authId.trim(),
     originalPromptCacheKey: "",
     promptCacheKey: "",
     turnIds: [],
   }
-  if (!authId.trim()) {
-    state.enabled = false
+  // L1 Codex only + flag + (affinity | fill-first)
+  if (
+    !providerHasCacheFeature("codex", "codex-identity-confuse")
+    || !isCodexIdentityConfuseEnabled()
+    || !authId.trim()
+  ) {
     return state
   }
+  state.enabled = true
 
   // Remap prompt_cache_key
   const promptCacheKey = readString(userPayload, "prompt_cache_key")

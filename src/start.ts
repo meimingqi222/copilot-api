@@ -50,6 +50,12 @@ interface RunServerOptions {
   proxyEnv: boolean
   apiKey?: string
   adminPassword?: string
+  /** fill-first (default, best cache) | round-robin */
+  routingStrategy?: string
+  /** Stick session → credential for prompt-cache hits (default true). */
+  sessionAffinity?: boolean
+  /** Codex-only identity confuse; requires affinity or fill-first. */
+  identityConfuse?: boolean
   codebuffBaseUrl?: string
   codebuffAuthToken?: string
   codebuffCliVersion?: string
@@ -130,6 +136,24 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.showToken = options.showToken
   state.legacyApiKey = options.apiKey
   state.adminPassword = options.adminPassword ?? options.apiKey
+
+  // L0 routing defaults maximize prompt-cache utilization (fill-first + affinity).
+  const strategyRaw = (options.routingStrategy ?? "fill-first")
+    .trim()
+    .toLowerCase()
+  state.routing.strategy =
+    strategyRaw === "round-robin" || strategyRaw === "rr" ?
+      "round-robin"
+    : "fill-first"
+  if (options.sessionAffinity !== undefined) {
+    state.routing.sessionAffinity = options.sessionAffinity
+  }
+  if (options.identityConfuse !== undefined) {
+    state.routing.identityConfuse = options.identityConfuse
+  }
+  logger.info(
+    `Cache routing (L0): strategy=${state.routing.strategy}, session-affinity=${state.routing.sessionAffinity}, ttlMs=${state.routing.sessionAffinityTtlMs}, identity-confuse=${state.routing.identityConfuse} (Codex L1 only)`,
+  )
 
   if (state.legacyApiKey) {
     logger.info("API key protection enabled")
@@ -462,6 +486,25 @@ export const start = defineCommand({
       default: process.env.WINDSURF_CLIENT_NAME ?? "windsurf-next",
       description: "Windsurf client name",
     },
+    "routing-strategy": {
+      type: "string",
+      // fill-first maximizes cache hits: new sessions land on one credential.
+      default: process.env.ROUTING_STRATEGY ?? "fill-first",
+      description:
+        "Credential selection: fill-first (default, best cache) or round-robin",
+    },
+    "session-affinity": {
+      type: "boolean",
+      default: process.env.SESSION_AFFINITY !== "false",
+      description:
+        "Stick sessions to the same credential for prompt-cache hits (default true)",
+    },
+    "identity-confuse": {
+      type: "boolean",
+      default: process.env.IDENTITY_CONFUSE === "true",
+      description:
+        "Codex L1 only: remap prompt_cache_key per account (default false; needs affinity or fill-first)",
+    },
   },
   run({ args }) {
     const provider = resolveProvider(args.provider)
@@ -476,6 +519,9 @@ export const start = defineCommand({
       proxyEnv: args["proxy-env"],
       apiKey: args["api-key"] || process.env.API_KEY,
       adminPassword: args["admin-password"] || process.env.ADMIN_PASSWORD,
+      routingStrategy: args["routing-strategy"],
+      sessionAffinity: args["session-affinity"],
+      identityConfuse: args["identity-confuse"],
       codebuffBaseUrl: args["codebuff-base-url"],
       codebuffAuthToken: args["codebuff-auth-token"],
       codebuffCliVersion: args["codebuff-cli-version"],

@@ -14,12 +14,20 @@ import { logger } from "~/lib/logger"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { resolveXaiModelId } from "~/services/oauth/model-catalog"
 import { XAI_API_BASE_URL } from "~/services/oauth/xai"
 import {
   detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
 import { collectResponsesFromSseResponse } from "~/services/responses/sse-collector"
+import {
+  applyXaiWebsocketHeaders,
+  isAbortLikeError,
+  isUpstreamWsTransportError,
+  openUpstreamResponsesWebsocketTurn,
+  shouldUseUpstreamResponsesWebsocket,
+} from "~/services/responses/upstream-ws"
 
 import { buildXaiHeaders } from "./headers"
 
@@ -34,12 +42,9 @@ import { buildXaiHeaders } from "./headers"
  *   3. `x-grok-conv-id` from forwarded headers (if a downstream client set it).
  *   4. `x-claude-code-session-id` from forwarded headers.
  *   5. Claude Code session ID extracted from `metadata.user_id` in the payload.
- *   6. Fallback: hash of system instructions + first user message.
- *      xAI prompt caching is prefix-based, so requests sharing the same
- *      system prompt and opening user turn will reuse the cached prefix.
- *      Composer models always get this fallback (matching CPA's
- *      `xaiRequiresIsolatedConversation`); other models only when we can
- *      extract a meaningful prefix.
+ *   6. L1 xAI prefix-hash fallback (system + first user). Always applied
+ *      when possible for max cache utilization; Composer models especially
+ *      need a stable key (CPA `xaiRequiresIsolatedConversation`).
  *
  * The xAI backend uses `x-grok-conv-id` to group requests within a
  * conversation and reuse cached prompt prefixes.
@@ -253,7 +258,7 @@ function logCachePrefixDiag(
     inputPrefixHash = shortHash(inputPrefix)
   }
 
-  logger.info(
+  logger.debug(
     `[xAI cache-diag] session=${sessionId ?? "(none)"} `
       + `instr=${instrHash}(${instrLen}) tools=${toolsHash}(${toolsLen}) `
       + `input_prefix=${inputPrefixHash} `
@@ -338,16 +343,25 @@ export async function createXaiResponsesOnce(
     throw new Error(`xAI access token missing for account "${account.label}"`)
   }
 
-  const model = canonicalNativeModelId(payload.model)
+  const model = resolveXaiModelId(canonicalNativeModelId(payload.model))
   const baseUrl = account.settings?.baseUrl ?? XAI_API_BASE_URL
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
+  const useUpstreamWs = shouldUseUpstreamResponsesWebsocket(account, "xai", ctx)
   const sessionId = resolveXaiSessionId(payload, ctx)
 
   // Log cache-prefix diagnostic so we can compare prefix stability across
   // turns within the same session. If instr/tools hash changes between
   // requests with the same session ID, the cache prefix is broken.
   logCachePrefixDiag(sessionId, payload)
+
+  // previous_response_id is WS-only (xAI WS Mode + CPA). HTTP strips it.
+  const previousResponseIdRaw = (payload as { previous_response_id?: unknown })
+    .previous_response_id
+  const previousResponseId =
+    typeof previousResponseIdRaw === "string" ?
+      previousResponseIdRaw.trim() || undefined
+    : undefined
 
   const baseBody: Record<string, unknown> = {
     ...payload,
@@ -367,9 +381,48 @@ export async function createXaiResponsesOnce(
     sanitizeXaiReasoningEffort(baseBody, model),
   )
 
+  // ── Upstream WebSocket path (CPA XAIWebsocketsExecutor) ──────────────
+  if (useUpstreamWs) {
+    const headers = applyXaiWebsocketHeaders(
+      buildXaiHeaders(accessToken, true, sessionId),
+    )
+    const executionSessionId =
+      ctx?.executionSessionId?.trim() || sessionId || account.id
+    const wsBody: Record<string, unknown> = {
+      ...upstreamBody,
+      previous_response_id: previousResponseId,
+    }
+    try {
+      // Eager open+send so handshake failures hit this catch (streaming-safe).
+      const wsStream = await openUpstreamResponsesWebsocketTurn({
+        provider: "xai",
+        account,
+        httpResponsesUrl: url,
+        headers,
+        body: wsBody,
+        executionSessionId,
+        signal,
+      })
+      const normalized = normalizeResponsesStreamIds(wsStream)
+      if (clientStream) {
+        return normalized
+      }
+      return await collectResponsesFromWsStream(normalized)
+    } catch (error) {
+      if (isAbortLikeError(error) || signal?.aborted) throw error
+      if (!isUpstreamWsTransportError(error)) throw error
+      logger.warn(
+        `xai websockets: falling back to HTTP: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+  }
+
   const response = await fetchWithOAuthProxy(account, url, {
     method: "POST",
     headers: buildXaiHeaders(accessToken, true, sessionId),
+    // HTTP: no previous_response_id
     body: JSON.stringify(upstreamBody),
     signal,
   })
@@ -390,4 +443,29 @@ export async function createXaiResponsesOnce(
   }
 
   return collectResponsesFromSseResponse(response, model)
+}
+
+async function collectResponsesFromWsStream(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+): Promise<ResponsesResponse> {
+  let completed: ResponsesResponse | undefined
+  for await (const event of stream) {
+    if (!event.data || event.data === "[DONE]") continue
+    try {
+      const parsed = JSON.parse(event.data) as Record<string, unknown>
+      if (
+        parsed.type === "response.completed"
+        && parsed.response
+        && typeof parsed.response === "object"
+      ) {
+        completed = parsed.response as ResponsesResponse
+      }
+    } catch {
+      // ignore
+    }
+  }
+  if (!completed) {
+    throw new Error("xAI websockets: missing response.completed event")
+  }
+  return completed
 }

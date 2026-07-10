@@ -9,6 +9,7 @@ interface CatalogEntry {
   vendor: string
   supportedEndpoints: Array<string>
   pickerEnabled?: boolean
+  upstreamId?: string
 }
 
 const CLAUDE_CATALOG: Array<CatalogEntry> = [
@@ -55,14 +56,14 @@ const KIMI_CATALOG: Array<CatalogEntry> = [
 
 const XAI_CATALOG: Array<CatalogEntry> = [
   {
-    id: "grok-4.3",
-    name: "Grok 4.3",
+    id: "grok-4.5",
+    name: "Grok 4.5",
     vendor: "xai",
     supportedEndpoints: ["/v1/responses"],
   },
   {
-    id: "grok-build-0.1",
-    name: "Grok Build 0.1",
+    id: "grok-4.3",
+    name: "Grok 4.3",
     vendor: "xai",
     supportedEndpoints: ["/v1/responses"],
   },
@@ -82,6 +83,19 @@ const XAI_CATALOG: Array<CatalogEntry> = [
     id: "grok-4.20-multi-agent-0309",
     name: "Grok 4.20 Multi Agent 0309",
     vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-build-0.1",
+    name: "Grok Build 0.1",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
+    id: "grok-build",
+    name: "Grok Build",
+    vendor: "xai",
+    upstreamId: "grok-build-0.1",
     supportedEndpoints: ["/v1/responses"],
   },
   {
@@ -189,7 +203,50 @@ function toAccountModels(
     pickerEnabled: entry.pickerEnabled ?? true,
     supportedEndpoints: entry.supportedEndpoints,
     provider,
+    upstreamId:
+      entry.upstreamId ? canonicalNativeModelId(entry.upstreamId) : undefined,
   }))
+}
+
+function compareVersionArrays(a: Array<number>, b: Array<number>): number {
+  const maxLength = Math.max(a.length, b.length)
+  for (let i = 0; i < maxLength; i++) {
+    const av = a[i] ?? 0
+    const bv = b[i] ?? 0
+    if (av !== bv) return av - bv
+  }
+  return 0
+}
+
+function parseVersionArray(version: string): Array<number> {
+  return version
+    .split(".")
+    .map(Number)
+    .filter((value) => Number.isFinite(value))
+}
+
+function resolveLatestGrokBuildModelId(): string {
+  let latest: string = "grok-build-0.1"
+  let latestVersion: Array<number> = [0, 1]
+  for (const entry of XAI_CATALOG) {
+    if (!entry.id.startsWith("grok-build-")) continue
+    const versionPart = entry.id.slice("grok-build-".length)
+    const version = parseVersionArray(versionPart)
+    if (version.length === 0) continue
+    if (compareVersionArrays(version, latestVersion) > 0) {
+      latestVersion = version
+      latest = entry.id
+    }
+  }
+  return latest
+}
+
+export function resolveXaiModelId(modelId: string): string {
+  const normalized = modelId.trim().toLowerCase()
+  if (normalized === "grok-build") {
+    return resolveLatestGrokBuildModelId()
+  }
+  return modelId
 }
 
 export function getOAuthFallbackModels(

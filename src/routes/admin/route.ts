@@ -3,19 +3,19 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import {
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from "~/lib/login-protection"
+import {
   clearAdminSession,
   hasAdminRole,
   isAuthorizedRequest,
   setAdminSession,
   verifyAdminPassword,
 } from "~/lib/request-auth"
-import { getClientIp } from "~/lib/utils"
-import {
-  checkLoginAllowed,
-  recordLoginFailure,
-  recordLoginSuccess,
-} from "~/lib/login-protection"
 import { state } from "~/lib/state"
+import { getClientIp } from "~/lib/utils"
 
 import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
 import { dashboardApiRoutes } from "./api/dashboard"
@@ -193,11 +193,14 @@ adminRoutes.post("/login", async (c) => {
     if (protection.retryAfterSeconds) {
       c.header("Retry-After", String(protection.retryAfterSeconds))
     }
-    return c.json({ error: protection.reason ?? "Too many login attempts." }, 429)
+    return c.json(
+      { error: protection.reason ?? "Too many login attempts." },
+      429,
+    )
   }
 
   let password: string | undefined
-  let remember = false
+  let remember: boolean
 
   try {
     const contentType = c.req.header("content-type") ?? ""
@@ -207,10 +210,14 @@ adminRoutes.post("/login", async (c) => {
       const body = await c.req.text()
       const params = new URLSearchParams(body)
       password = params.get("password") || undefined
-      remember = params.get("remember") === "on" || params.get("remember") === "true"
+      remember =
+        params.get("remember") === "on" || params.get("remember") === "true"
     } else {
       // Handle JSON from API
-      const payload = await c.req.json<{ password?: string, remember?: boolean }>()
+      const payload = await c.req.json<{
+        password?: string
+        remember?: boolean
+      }>()
       password = payload.password
       remember = Boolean(payload.remember)
     }

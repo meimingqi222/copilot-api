@@ -3,6 +3,8 @@ import type { ProviderId } from "~/lib/provider-config"
 import type { User } from "~/lib/users"
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
+import { CACHE_UTILIZATION_DEFAULTS } from "~/lib/routing/provider-cache"
+
 interface CodebuffProviderDefaults {
   authToken?: string
   baseUrl: string
@@ -22,6 +24,20 @@ interface WindsurfProviderDefaults {
   clientName: string
   extensionName: string
   ideType: string
+}
+
+/**
+ * L0 multi-account routing (CPA routing + codex.identity-confuse gate).
+ *
+ * Defaults target maximum prompt-cache utilization (see CACHE_UTILIZATION_DEFAULTS).
+ * L1 provider rewrites are NOT configured here — they live in services/<provider>/.
+ */
+export interface RoutingConfig {
+  strategy: "round-robin" | "fill-first" | "fillfirst" | "ff"
+  sessionAffinity: boolean
+  sessionAffinityTtlMs: number
+  /** Codex-only L1. Requires sessionAffinity or fill-first. */
+  identityConfuse: boolean
 }
 
 export interface State {
@@ -45,6 +61,8 @@ export interface State {
   }
 
   defaultProvider?: ProviderId
+
+  routing: RoutingConfig
 
   manualApprove: boolean
   showToken: boolean
@@ -77,6 +95,8 @@ export const state: State = {
       ideType: "chisel",
     },
   },
+  // Max prompt-cache utilization defaults (fill-first + session affinity).
+  routing: { ...CACHE_UTILIZATION_DEFAULTS },
   manualApprove: false,
   showToken: false,
 }

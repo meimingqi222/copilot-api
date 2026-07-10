@@ -29,6 +29,7 @@ import {
   selectRouteTarget,
 } from "~/lib/route-target"
 import { parseModelReference } from "~/lib/route-target/model-reference"
+import { extractSessionIds } from "~/lib/routing"
 import { state } from "~/lib/state"
 import { isUserAllowedModel } from "~/lib/users"
 
@@ -53,6 +54,12 @@ export interface ProviderAdmission {
    */
   account?: Account
   initiator?: "agent" | "user"
+  /**
+   * L0 session ids used for affinity (also needed on failover rebind so
+   * the new credential sticks for the rest of the conversation).
+   */
+  sessionId?: string
+  fallbackSessionId?: string
 }
 
 /**
@@ -79,6 +86,16 @@ interface PrepareRequestAdmissionOptions {
   stream?: boolean
   inferredInitiator?: "agent" | "user"
   messageContent?: string
+  /**
+   * Incoming request headers used for session-affinity extraction
+   * (session_id, prompt_cache_key, x-claude-code-session-id, …).
+   */
+  sessionHeaders?: Record<string, string | undefined>
+  /**
+   * Request body used for session-affinity extraction
+   * (metadata.user_id, prompt_cache_key, messages hash, …).
+   */
+  sessionPayload?: unknown
 }
 
 export async function prepareRequestAdmission(
@@ -129,7 +146,15 @@ export async function prepareRequestAdmission(
     endpoint: options.endpoint,
   })
 
-  const target = selectRouteTarget(candidates)
+  const sessionIds = extractSessionIds({
+    headers: options.sessionHeaders,
+    payload: options.sessionPayload,
+  })
+
+  const target = selectRouteTarget(candidates, {
+    sessionId: sessionIds.primaryId || undefined,
+    fallbackSessionId: sessionIds.fallbackId || undefined,
+  })
   if (!target) {
     const diagnostic = diagnoseRouteFailure(options)
     const headers: Record<string, string> = {}
@@ -146,6 +171,11 @@ export async function prepareRequestAdmission(
     await awaitApproval()
   }
 
+  const sessionFields = {
+    sessionId: sessionIds.primaryId || undefined,
+    fallbackSessionId: sessionIds.fallbackId || undefined,
+  }
+
   // account-backed 虚拟 connection:用 accountToConnection 构造 ProviderConnection/ApiCredential
   if (target.account) {
     const virtualConnection = accountToConnection(target.account)
@@ -155,6 +185,7 @@ export async function prepareRequestAdmission(
       credential: virtualConnection.credentials[0],
       account: target.account,
       initiator,
+      ...sessionFields,
     }
   }
 
@@ -179,6 +210,7 @@ export async function prepareRequestAdmission(
     connection,
     credential: found.credential,
     initiator,
+    ...sessionFields,
   }
 }
 
@@ -412,12 +444,16 @@ function enforceUserModelAccess(c: Context, model: string): void {
 /**
  * 在请求失败时尝试切换到下一个候选 RouteTarget。
  * 支持 Connection 和 Account 两种 target。
+ *
+ * When session affinity is enabled, the rebinding options force a new pick
+ * and update the session → credential map (CPA failover behavior).
  */
 export function switchToNextRouteTarget(
   _current: RouteTarget,
   modelId: string,
   endpoint: ModelEndpoint,
   exclude: Set<string>,
+  session?: { sessionId?: string; fallbackSessionId?: string },
 ): RouteTarget | null {
   const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
@@ -426,7 +462,12 @@ export function switchToNextRouteTarget(
     publicModelId: routing.modelId,
     endpoint,
   })
-  return selectRouteTarget(candidates, { exclude })
+  return selectRouteTarget(candidates, {
+    exclude,
+    sessionId: session?.sessionId,
+    fallbackSessionId: session?.fallbackSessionId,
+    rebindAffinity: true,
+  })
 }
 
 /**

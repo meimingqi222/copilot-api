@@ -25,6 +25,10 @@ interface CreateResponsesOptions {
   initiatorOverride?: "agent" | "user"
   forwardedHeaders?: Record<string, string | undefined>
   c?: Context
+  /** Client used Responses WebSocket transport. */
+  downstreamWebsocket?: boolean
+  /** Sticky key for upstream WS connection reuse. */
+  executionSessionId?: string
 }
 
 export const createResponses = async (
@@ -83,6 +87,8 @@ export const createResponses = async (
       enableVision,
       forwardedHeaders: options.forwardedHeaders,
       c: options.c,
+      downstreamWebsocket: options.downstreamWebsocket,
+      executionSessionId: options.executionSessionId,
     },
   )
 }

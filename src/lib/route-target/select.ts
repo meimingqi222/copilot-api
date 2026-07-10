@@ -2,12 +2,24 @@
  * RouteTarget 选择算法。
  *
  * 1. 按 connectionPriority 找到最低数字层(优先级最高)。
- * 2. 在该层内按 connectionWeight 做 weighted round-robin 选 connection。
+ * 2. 在该层内按 strategy:
+ *    - fill-first (default): 固定选排序后第一个 (CPA FillFirstSelector, best cache)
+ *    - round-robin: connectionWeight weighted RR
  * 3. 在选中 connection 的 credential 中,按 credentialPriority + weight 同理选 credential。
- * 4. 调用方在请求失败时可调用 `selectNext()` 跳到下一个候选。
+ * 4. 可选 session affinity: 同一 session 粘到同一 connection/credential。
+ * 5. 调用方在请求失败时可调用 `selectNext()` 跳到下一个候选。
  */
 
 import type { RouteTarget } from "~/lib/provider-connections"
+
+import {
+  affinityAuthKey,
+  affinityCacheKey,
+  getSessionAffinity,
+  isFillFirstEnabled,
+  isSessionAffinityEnabled,
+  setSessionAffinity,
+} from "~/lib/routing"
 
 interface RoundRobinState {
   cursors: Map<string, number>
@@ -39,13 +51,47 @@ function pickWeighted<T>(
   return expanded[cursor]
 }
 
+/** Stable fill-first: sort by id then take the first. */
+function pickFillFirst(targets: Array<RouteTarget>): RouteTarget {
+  const sorted = [...targets].sort((a, b) => {
+    const conn = a.connectionId.localeCompare(b.connectionId)
+    if (conn !== 0) return conn
+    return a.credentialId.localeCompare(b.credentialId)
+  })
+  return sorted[0]
+}
+
+function findByAuthKey(
+  pool: Array<RouteTarget>,
+  authKey: string,
+): RouteTarget | undefined {
+  return pool.find((t) => affinityAuthKey(t) === authKey)
+}
+
+export interface SelectRouteTargetOptions {
+  exclude?: Set<string>
+  /**
+   * Primary session id for affinity (from extractSessionIds).
+   * When affinity is enabled and this is set, selection sticks to the
+   * previously bound connection/credential.
+   */
+  sessionId?: string
+  /** Fallback session id (short message hash) for turn-1 inheritance. */
+  fallbackSessionId?: string
+  /**
+   * When true, force a fresh pick and rebind affinity (used after failover
+   * when the bound credential is in the exclude set).
+   */
+  rebindAffinity?: boolean
+}
+
 /**
  * 从候选 RouteTarget 中按优先级 + 权重选择一个。
  * 排除集合(已尝试过的 connection/credential 组合)用于 failover。
  */
 export function selectRouteTarget(
   candidates: Array<RouteTarget>,
-  options: { exclude?: Set<string> } = {},
+  options: SelectRouteTargetOptions = {},
 ): RouteTarget | null {
   const exclude = options.exclude ?? new Set<string>()
   const pool = candidates.filter((t) => !exclude.has(targetKey(t)))
@@ -55,7 +101,69 @@ export function selectRouteTarget(
   const minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))
   const topConn = pool.filter((t) => t.connectionPriority === minConnPrio)
 
-  // 2) 在该 priority 层内按 connectionWeight 选 connection
+  const modelId = topConn[0]?.publicModelId ?? ""
+  const protocol = topConn[0]?.protocol
+
+  // Session affinity: try primary, then fallback inheritance
+  if (
+    isSessionAffinityEnabled()
+    && options.sessionId
+    && !options.rebindAffinity
+  ) {
+    const primaryKey = affinityCacheKey(options.sessionId, modelId, protocol)
+    const bound = getSessionAffinity(primaryKey)
+    if (bound) {
+      const hit = findByAuthKey(topConn, bound) ?? findByAuthKey(pool, bound)
+      if (hit) return hit
+      // Bound auth unavailable — fall through to reselect + rebind
+    }
+
+    if (
+      options.fallbackSessionId
+      && options.fallbackSessionId !== options.sessionId
+    ) {
+      const fallbackKey = affinityCacheKey(
+        options.fallbackSessionId,
+        modelId,
+        protocol,
+      )
+      const fallbackBound = getSessionAffinity(fallbackKey, { refresh: false })
+      if (fallbackBound) {
+        const hit =
+          findByAuthKey(topConn, fallbackBound)
+          ?? findByAuthKey(pool, fallbackBound)
+        if (hit) {
+          setSessionAffinity(primaryKey, affinityAuthKey(hit))
+          return hit
+        }
+      }
+    }
+  }
+
+  const chosen = pickFromPriorityPool(topConn, minConnPrio)
+
+  // Record affinity binding for this session
+  if (isSessionAffinityEnabled() && options.sessionId) {
+    const primaryKey = affinityCacheKey(
+      options.sessionId,
+      chosen.publicModelId,
+      chosen.protocol,
+    )
+    setSessionAffinity(primaryKey, affinityAuthKey(chosen))
+  }
+
+  return chosen
+}
+
+function pickFromPriorityPool(
+  topConn: Array<RouteTarget>,
+  minConnPrio: number,
+): RouteTarget {
+  if (isFillFirstEnabled()) {
+    return pickFillFirst(topConn)
+  }
+
+  // Weighted RR on connections, then credentials
   const connByConnId = new Map<string, RouteTarget>()
   for (const t of topConn) {
     if (!connByConnId.has(t.connectionId)) connByConnId.set(t.connectionId, t)
@@ -67,18 +175,16 @@ export function selectRouteTarget(
     rrCursorKey("conn", `${minConnPrio}`),
   )
 
-  // 3) 在该 connection 中按 credential priority + weight 选 credential
   const credPool = topConn.filter(
     (t) => t.connectionId === chosenConn.connectionId,
   )
   const minCredPrio = Math.min(...credPool.map((t) => t.credentialPriority))
   const topCreds = credPool.filter((t) => t.credentialPriority === minCredPrio)
-  const chosen = pickWeighted(
+  return pickWeighted(
     topCreds,
     (t) => t.credentialWeight,
     rrCursorKey("cred", `${chosenConn.connectionId}:${minCredPrio}`),
   )
-  return chosen
 }
 
 /** 用作 exclude 集合的键。 */
