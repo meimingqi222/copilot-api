@@ -1,5 +1,6 @@
 // Anthropic API Types
 
+import type { ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
 export interface AnthropicMessagesPayload {
@@ -247,14 +248,7 @@ export interface AnthropicStreamState {
   // Set when finish_reason arrives; message_delta is deferred until usage is
   // available or the stream ends (matching CPA behavior).
   pendingFinishReason?: AnthropicResponse["stop_reason"]
-  lastSeenUsage?: {
-    prompt_tokens?: number
-    completion_tokens?: number
-    prompt_tokens_details?: {
-      cached_tokens?: number
-      cache_creation_input_tokens?: number
-    }
-  }
+  lastSeenUsage?: NonNullable<ChatCompletionChunk["usage"]>
 }
 
 /** Factory to create a fresh AnthropicStreamState with all fields at their default values. */

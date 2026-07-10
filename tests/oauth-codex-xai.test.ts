@@ -334,6 +334,51 @@ describe("Codex and xAI quota parsers", () => {
     expect(summary.remainingPercent).toBe(75)
     expect(summary.unlimited).toBe(false)
   })
+
+  test("summarizeXaiQuota computes remaining from weekly creditUsagePercent", () => {
+    const payload = parseXaiBillingPayload({
+      config: {
+        currentPeriod: {
+          type: "USAGE_PERIOD_TYPE_WEEKLY",
+          start: "2026-07-04T21:56:51.039287+00:00",
+          end: "2026-07-11T21:56:51.039287+00:00",
+        },
+        creditUsagePercent: 100,
+        onDemandCap: { val: 0 },
+        onDemandUsed: { val: 0 },
+        billingPeriodEnd: "2026-07-11T21:56:51.039287+00:00",
+      },
+    })
+    if (!payload) {
+      throw new Error("expected xAI billing payload")
+    }
+    const summary = summarizeXaiQuota(payload)
+    expect(summary.remainingCents).toBeUndefined()
+    expect(summary.totalCents).toBeUndefined()
+    expect(summary.remainingPercent).toBe(0)
+    expect(summary.unlimited).toBe(false)
+  })
+
+  test("summarizeXaiQuota uses stricter remaining between monthly and weekly", () => {
+    const payload = parseXaiBillingPayload({
+      config: {
+        monthly_limit: { val: 1000 },
+        used: { val: 100 },
+        currentPeriod: {
+          type: "USAGE_PERIOD_TYPE_WEEKLY",
+          end: "2026-07-11T21:56:51.039287+00:00",
+        },
+        creditUsagePercent: 100,
+      },
+    })
+    if (!payload) {
+      throw new Error("expected xAI billing payload")
+    }
+    const summary = summarizeXaiQuota(payload)
+    expect(summary.remainingCents).toBe(900)
+    expect(summary.remainingPercent).toBe(0)
+    expect(summary.unlimited).toBe(false)
+  })
 })
 
 describe("supportsResponsesApi", () => {
