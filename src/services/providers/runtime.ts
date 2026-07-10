@@ -22,6 +22,17 @@ export interface RequestExecutionContext {
   enableVision?: boolean
   forwardedHeaders?: Record<string, string | undefined>
   c?: Context
+  /**
+   * True when the client connected via Responses WebSocket
+   * (`GET /v1/responses` upgrade). Enables upstream WS for Codex/xAI
+   * (CPA DownstreamWebsocket + websockets executor).
+   */
+  downstreamWebsocket?: boolean
+  /**
+   * Sticky id for reusing one upstream WS connection across multi-turn
+   * `response.create` on the same client socket (CPA execution session).
+   */
+  executionSessionId?: string
 }
 
 export type ProviderChatResult =

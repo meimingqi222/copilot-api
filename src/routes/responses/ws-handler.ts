@@ -1,5 +1,7 @@
 import type { Context } from "hono"
 
+import { randomUUID } from "node:crypto"
+
 import type {
   ResponsesPayload,
   ResponsesResponse,
@@ -7,6 +9,7 @@ import type {
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import {
   ClientAbortError,
@@ -15,6 +18,8 @@ import {
 import { isAbortError } from "~/lib/utils"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
+import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { closeUpstreamWebsocketSessionsByExecutionId } from "~/services/responses/upstream-ws"
 
 import {
   createResponsesErrorPayload,
@@ -38,6 +43,12 @@ const WS_READY_STATE_OPEN = 1
 export function createResponsesWebSocketSession(c: Context) {
   let inFlight = false
   let activeController: AbortController | undefined
+  // Sticky id for upstream WS connection reuse across multi-turn creates
+  // on this client socket (CPA execution session / passthroughSessionID).
+  const executionSessionId = randomUUID()
+  logger.info(
+    `responses websocket: client session opened id=${executionSessionId}`,
+  )
 
   const endActiveRequest = () => {
     inFlight = false
@@ -91,17 +102,35 @@ export function createResponsesWebSocketSession(c: Context) {
         ws,
         payload,
         signal: controller.signal,
+        executionSessionId,
       }).finally(endActiveRequest)
     },
 
     onClose() {
+      logger.info(
+        `responses websocket: client session closed id=${executionSessionId}`,
+      )
       activeController?.abort()
       endActiveRequest()
+      // Tear down sticky upstream Codex/xAI sockets for this client session.
+      const closed = closeUpstreamWebsocketSessionsByExecutionId(
+        executionSessionId,
+        "client_disconnect",
+      )
+      if (closed > 0) {
+        logger.info(
+          `responses websocket: closed ${closed} upstream session(s) for id=${executionSessionId}`,
+        )
+      }
     },
 
     onError() {
       activeController?.abort()
       endActiveRequest()
+      closeUpstreamWebsocketSessionsByExecutionId(
+        executionSessionId,
+        "client_error",
+      )
     },
   }
 }
@@ -137,17 +166,23 @@ interface ProcessResponseCreateOptions {
   ws: WebSocketSendTarget
   payload: ResponsesPayload
   signal: AbortSignal
+  executionSessionId: string
 }
 
 async function processResponseCreate(
   options: ProcessResponseCreateOptions,
 ): Promise<void> {
-  const { c, ws, payload, signal } = options
+  const { c, ws, payload, signal, executionSessionId } = options
   let accountId: string | undefined
   let completedResponse: ResponsesResponse | undefined
 
   try {
-    const result = await executeResponseCreate(c, payload, signal)
+    const result = await executeResponseCreate(
+      c,
+      payload,
+      signal,
+      executionSessionId,
+    )
     accountId = result.accountId
 
     if (isNonStreaming(result.response)) {
@@ -171,14 +206,34 @@ async function processResponseCreate(
   }
 }
 
+function extractResponsesSessionHeaders(
+  c: Context,
+): Record<string, string | undefined> {
+  return {
+    session_id: c.req.header("session_id") ?? c.req.header("session-id"),
+    thread_id: c.req.header("thread_id") ?? c.req.header("thread-id"),
+    "x-codex-turn-metadata": c.req.header("x-codex-turn-metadata"),
+    "x-codex-window-id": c.req.header("x-codex-window-id"),
+    "x-codex-beta-features": c.req.header("x-codex-beta-features"),
+    version: c.req.header("version"),
+    originator: c.req.header("originator"),
+    "x-grok-conv-id": c.req.header("x-grok-conv-id"),
+    "x-claude-code-session-id": c.req.header("x-claude-code-session-id"),
+    prompt_cache_key: c.req.header("prompt_cache_key"),
+  }
+}
+
 async function executeResponseCreate(
   c: Context,
   payload: ResponsesPayload,
   signal: AbortSignal,
+  executionSessionId: string,
 ): Promise<{
   accountId: string
   response: ResponsesResponse | AsyncIterable<CopilotStreamEventLike>
 }> {
+  const sessionHeaders = extractResponsesSessionHeaders(c)
+  const messageContent = extractMessageContentFromResponsesPayload(payload)
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
@@ -187,8 +242,12 @@ async function executeResponseCreate(
       typeof payload.max_output_tokens === "number" ?
         payload.max_output_tokens
       : undefined,
-    stream: payload.stream === true ? true : undefined,
+    // WS responses are always event-streamed on the client socket.
+    stream: true,
     inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+    messageContent,
+    sessionHeaders,
+    sessionPayload: payload,
   })
   if (!admission.account) {
     throw new HTTPError(
@@ -201,6 +260,10 @@ async function executeResponseCreate(
     signal,
     initiatorOverride: admission.initiator,
     account: admission.account,
+    forwardedHeaders: sessionHeaders,
+    c,
+    downstreamWebsocket: true,
+    executionSessionId,
   })
   c.set("accountId" as never, result.accountId)
 

@@ -32,7 +32,8 @@ describe("PersistentTTLMap", () => {
     await flushAllPersistentMaps()
 
     const filePath = path.join(tempCacheDir, "test-flush.json")
-    const raw = await fs.readFile(filePath, "utf8")
+    const raw = await fs.readFile(filePath)
+    // @ts-expect-error JSON.parse() can actually parse buffers
     const parsed = JSON.parse(raw) as Record<string, { value: string }>
     expect(parsed.key.value).toBe("value")
   })

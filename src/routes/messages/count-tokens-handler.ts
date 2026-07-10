@@ -32,6 +32,9 @@ export async function handleCountTokens(c: Context) {
 
     const tokenCount = await getTokenCount(openAIPayload, selectedModel)
 
+    // `tokenCount.input` is already the full prompt estimate (all messages +
+    // tools), including assistant history.
+    let finalTokenCount = tokenCount.input
     if (anthropicPayload.tools && anthropicPayload.tools.length > 0) {
       let mcpToolExist = false
       if (hasClaudeCodeBeta(anthropicBeta)) {
@@ -42,14 +45,13 @@ export async function handleCountTokens(c: Context) {
       if (!mcpToolExist) {
         if (anthropicPayload.model.startsWith("claude")) {
           // https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview#pricing
-          tokenCount.input = tokenCount.input + 346
+          finalTokenCount += 346
         } else if (anthropicPayload.model.startsWith("grok")) {
-          tokenCount.input = tokenCount.input + 480
+          finalTokenCount += 480
         }
       }
     }
 
-    let finalTokenCount = tokenCount.input + tokenCount.output
     if (anthropicPayload.model.startsWith("claude")) {
       finalTokenCount = Math.round(finalTokenCount * 1.15)
     } else if (anthropicPayload.model.startsWith("grok")) {

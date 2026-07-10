@@ -3,6 +3,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
+  Message,
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
@@ -13,6 +14,7 @@ import {
 } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
+import { generateAntigravityStableSessionId } from "~/lib/routing"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
   ANTIGRAVITY_API_BASE_URL,
@@ -204,16 +206,21 @@ export async function createAntigravityChatCompletionsOnce(
   )
   const stream = payload.stream === true
 
-  // Forward session ID from incoming request headers so the Antigravity
-  // (Gemini) backend can reuse cached prompt prefixes across turns.
+  // L1 Antigravity only: request.sessionId (CPA generateStableSessionID).
+  // Do not reuse Codex Session_id / Claude session header formats here.
+  // Priority: client headers → first-user content hash → omit.
   const forwarded = ctx?.forwardedHeaders
-  const sessionId =
+  const headerSession =
     forwarded?.["x-antigravity-session-id"]
     ?? forwarded?.["session_id"]
     ?? forwarded?.["session-id"]
-  if (typeof sessionId === "string" && sessionId.trim()) {
-    ;(upstreamBody.request as Record<string, unknown>).sessionId =
-      sessionId.trim()
+  const sessionId =
+    (typeof headerSession === "string" && headerSession.trim() ?
+      headerSession.trim()
+    : undefined)
+    ?? resolveAntigravityStableSessionFromMessages(payload.messages)
+  if (sessionId) {
+    ;(upstreamBody.request as Record<string, unknown>).sessionId = sessionId
   }
 
   const response = await postAntigravityRequest(
@@ -236,4 +243,38 @@ export async function createAntigravityChatCompletionsOnce(
     )
   }
   return body
+}
+
+/**
+ * CPA-compatible stable session id from the first user message text.
+ * Format: "-<positive-int64-decimal>" from sha256 of the text.
+ */
+function resolveAntigravityStableSessionFromMessages(
+  messages: Array<Message> | undefined,
+): string | undefined {
+  if (!messages?.length) return undefined
+  for (const message of messages) {
+    if (message.role !== "user") continue
+    const text = extractOpenAiMessageText(message.content)
+    if (text) return generateAntigravityStableSessionId(text)
+  }
+  return undefined
+}
+
+function extractOpenAiMessageText(content: Message["content"]): string {
+  if (typeof content === "string") return content.trim()
+  if (!Array.isArray(content)) return ""
+  const parts: Array<string> = []
+  for (const part of content) {
+    if (
+      typeof part === "object"
+      && "type" in part
+      && part.type === "text"
+      && "text" in part
+      && typeof part.text === "string"
+    ) {
+      parts.push(part.text)
+    }
+  }
+  return parts.join("").trim()
 }

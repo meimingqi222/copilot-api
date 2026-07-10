@@ -89,6 +89,7 @@ export async function handleCompletion(c: Context) {
 
   const messageContent =
     extractMessageContentFromChatCompletionsPayload(payload)
+  const sessionHeaders = extractChatForwardedHeaders(c)
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
@@ -101,6 +102,8 @@ export async function handleCompletion(c: Context) {
       c.req.header("user-agent"),
     ),
     messageContent,
+    sessionHeaders,
+    sessionPayload: payload,
   })
 
   const selectedModel = state.models?.data.find(
@@ -116,7 +119,7 @@ export async function handleCompletion(c: Context) {
       admission,
       signal,
       c,
-      { forwardedHeaders: extractChatForwardedHeaders(c) },
+      { forwardedHeaders: sessionHeaders },
     )
 
     c.set("accountId", result.accountId)
@@ -158,8 +161,11 @@ async function calculateTokens(
     }
 
     const tokenCount = await getTokenCount(payload, selectedModel)
+    // Local estimate only — not upstream billing. `input` includes all
+    // messages (assistant history included); `history` is the assistant
+    // subset of that total.
     logger.info(
-      `Estimated input tokens: ${tokenCount.input} (history: ${tokenCount.output})`,
+      `Estimated input tokens: ${tokenCount.input} (history: ${tokenCount.history})`,
     )
     return tokenCount.input
   } catch (error) {

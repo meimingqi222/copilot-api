@@ -35,7 +35,8 @@ export async function buildClaudeOAuthHeaders(options: {
   const mergedBeta =
     beta.includes("oauth-2025-04-20") ? beta : `${beta},oauth-2025-04-20`
 
-  // Resolve session ID: forwarded > stable persisted > random
+  // L1 Claude: X-Claude-Code-Session-Id (CPA CachedSessionID).
+  // Priority: client header → per-credential stable UUID → random last resort.
   let sessionId = options.sessionId?.trim()
   if (!sessionId && options.credentialKey) {
     sessionId = await getStableSessionId(options.credentialKey)

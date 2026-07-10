@@ -31,19 +31,6 @@ export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await c.req.json<ResponsesPayload>()
   const messageContent = extractMessageContentFromResponsesPayload(payload)
-  const admission = await prepareRequestAdmission(c, {
-    routeKind: "reasoning",
-    model: payload.model,
-    endpoint: "responses",
-    maxTokens:
-      typeof payload.max_output_tokens === "number" ?
-        payload.max_output_tokens
-      : undefined,
-    stream: payload.stream === true ? true : undefined,
-    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
-    messageContent,
-  })
-
   // Forward session_id, thread_id, and provider-specific headers from the
   // incoming request so that upstream providers can reuse cached prompt
   // prefixes across turns within the same session. Without a stable
@@ -61,7 +48,23 @@ export async function handleResponses(c: Context) {
     "x-grok-conv-id": c.req.header("x-grok-conv-id"),
     // Claude Code session ID (when responses→messages translation occurs)
     "x-claude-code-session-id": c.req.header("x-claude-code-session-id"),
+    prompt_cache_key: c.req.header("prompt_cache_key"),
   }
+
+  const admission = await prepareRequestAdmission(c, {
+    routeKind: "reasoning",
+    model: payload.model,
+    endpoint: "responses",
+    maxTokens:
+      typeof payload.max_output_tokens === "number" ?
+        payload.max_output_tokens
+      : undefined,
+    stream: payload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+    messageContent,
+    sessionHeaders: forwardedHeaders,
+    sessionPayload: payload,
+  })
 
   // Account-backed 路径走 legacy createResponses(支持 responses↔chat 自动翻译、
   // native provider 特性);普通 Provider Connection 路径走 dispatchResponses,

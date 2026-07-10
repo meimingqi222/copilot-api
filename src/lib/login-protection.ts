@@ -91,7 +91,9 @@ export function recordLoginSuccess(ip: string): void {
   attempts.delete(ip)
 }
 
-export async function recordLoginFailure(ip: string): Promise<LoginProtectionResult> {
+export async function recordLoginFailure(
+  ip: string,
+): Promise<LoginProtectionResult> {
   if (isLocalhost(ip)) return { allowed: true }
 
   ensureCleanup()
@@ -162,11 +164,16 @@ export async function recordLoginFailure(ip: string): Promise<LoginProtectionRes
   const remaining = MAX_ATTEMPTS_BEFORE_LOCK - entry.failedAttempts
   return {
     allowed: true,
-    reason: remaining > 0 ? `${remaining} attempts remaining before lockout` : undefined,
+    reason:
+      remaining > 0 ?
+        `${remaining} attempts remaining before lockout`
+      : undefined,
   }
 }
 
-export function getLoginProtectionState(ip: string): LoginAttemptState | undefined {
+export function getLoginProtectionState(
+  ip: string,
+): LoginAttemptState | undefined {
   return attempts.get(ip)
 }
 

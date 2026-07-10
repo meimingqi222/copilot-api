@@ -20,7 +20,9 @@ import {
   injectReasoningReplayItems,
 } from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
+import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
@@ -29,6 +31,13 @@ import {
   safeSseStream,
 } from "~/services/protocols/shared"
 import { collectResponsesFromSseResponse } from "~/services/responses/sse-collector"
+import {
+  applyCodexWebsocketHeaders,
+  isAbortLikeError,
+  isUpstreamWsTransportError,
+  openUpstreamResponsesWebsocketTurn,
+  shouldUseUpstreamResponsesWebsocket,
+} from "~/services/responses/upstream-ws"
 
 import { buildCodexHeaders } from "./headers"
 
@@ -41,40 +50,51 @@ import { buildCodexHeaders } from "./headers"
  *      mechanism the official codex CLI uses (it sends prompt_cache_key in
  *      the body, and CPA/CLIProxyAPI mirrors it into the Session_id header).
  *   2. `session_id` / `session-id` from the forwarded incoming request header.
- *   3. Random UUID fallback (breaks prefix caching — only used when neither
- *      the body nor the header provides a stable identifier).
+ *   3. Content-hash fallback via extractSessionIds + resolveStableSessionId
+ *      (prefers turn-1 short hash so multi-turn Session_id stays stable).
  *
  * Priority for thread_id (sent as x-client-request-id):
  *   1. `thread_id` / `thread-id` from the forwarded incoming request header.
- *   2. Random UUID fallback.
+ *   2. Random UUID fallback (handled by header builder when omitted).
  */
 function resolveCodexSessionHeaders(
   payload: ResponsesPayload,
   ctx?: RequestExecutionContext,
 ): { sessionId?: string; threadId?: string } {
+  const forwarded = ctx?.forwardedHeaders
+  const threadIdRaw = forwarded?.["thread_id"] ?? forwarded?.["thread-id"]
+  const threadId =
+    typeof threadIdRaw === "string" && threadIdRaw.trim() ?
+      threadIdRaw.trim()
+    : undefined
+
   // 1. prompt_cache_key from body (highest priority — matches codex CLI + CPA)
   const bodyCacheKey = (payload as unknown as { prompt_cache_key?: unknown })
     .prompt_cache_key
   if (typeof bodyCacheKey === "string" && bodyCacheKey.trim()) {
-    const forwarded = ctx?.forwardedHeaders
-    const threadId = forwarded?.["thread_id"] ?? forwarded?.["thread-id"]
-    return {
-      sessionId: bodyCacheKey.trim(),
-      threadId: typeof threadId === "string" ? threadId : undefined,
-    }
+    return { sessionId: bodyCacheKey.trim(), threadId }
   }
 
   // 2. session_id from forwarded headers
-  const forwarded = ctx?.forwardedHeaders
-  if (!forwarded) {
-    return {}
+  const headerSession = forwarded?.["session_id"] ?? forwarded?.["session-id"]
+  if (typeof headerSession === "string" && headerSession.trim()) {
+    return { sessionId: headerSession.trim(), threadId }
   }
-  const sessionId = forwarded["session_id"] ?? forwarded["session-id"]
-  const threadId = forwarded["thread_id"] ?? forwarded["thread-id"]
-  return {
-    sessionId: typeof sessionId === "string" ? sessionId : undefined,
-    threadId: typeof threadId === "string" ? threadId : undefined,
+
+  // 3. L1 Codex content-hash fallback (stable Session_id across turns).
+  //    Prefer short (turn-1) hash over full multi-turn hash so upstream
+  //    cache is not broken when the client omits prompt_cache_key.
+  //    Only used on the Codex path — never write this into Claude/AG.
+  const extracted = extractSessionIds({
+    headers: forwarded,
+    payload,
+  })
+  const stableId = resolveStableSessionId(extracted)
+  if (stableId) {
+    return { sessionId: stableId, threadId }
   }
+
+  return { threadId }
 }
 
 /**
@@ -124,8 +144,21 @@ export async function createCodexResponsesOnce(
   const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
+  const useUpstreamWs = shouldUseUpstreamResponsesWebsocket(
+    account,
+    "codex",
+    ctx,
+  )
   const { sessionId, threadId } = resolveCodexSessionHeaders(payload, ctx)
   const extraHeaders = resolveCodexExtraHeaders(ctx)
+
+  // previous_response_id is WS-only (CPA). HTTP body always strips it.
+  const previousResponseIdRaw = (payload as { previous_response_id?: unknown })
+    .previous_response_id
+  const previousResponseId =
+    typeof previousResponseIdRaw === "string" ?
+      previousResponseIdRaw.trim() || undefined
+    : undefined
 
   // Codex /responses rejects many standard Responses API parameters with
   // "Unsupported parameter: <name>". Strip them out before forwarding.
@@ -140,7 +173,7 @@ export async function createCodexResponsesOnce(
     // Normalize instructions: null → "" for consistent cache keys
     instructions:
       typeof payload.instructions === "string" ? payload.instructions : "",
-    // Unsupported parameters — must be stripped
+    // HTTP default: strip previous_response_id (WS path clones with it)
     previous_response_id: undefined,
     prompt_cache_retention: undefined,
     safety_identifier: undefined,
@@ -183,8 +216,8 @@ export async function createCodexResponsesOnce(
     }
   }
 
-  // ── Build headers ────────────────────────────────────────────────────
-  const headers: Record<string, string> = {
+  // ── Build headers (HTTP-safe base; WS path clones + rewrites) ────────
+  const httpHeaders: Record<string, string> = {
     ...buildCodexHeaders(account, accessToken, true, {
       sessionId,
       threadId,
@@ -192,11 +225,61 @@ export async function createCodexResponsesOnce(
     ...extraHeaders,
   }
   // Apply identity confuse to headers (remaps Session_id, turn metadata, etc.)
-  applyIdentityConfuseHeaders(headers, identityState)
+  applyIdentityConfuseHeaders(httpHeaders, identityState)
+
+  // ── Upstream WebSocket path (CPA CodexWebsocketsExecutor) ────────────
+  if (useUpstreamWs) {
+    const executionSessionId =
+      ctx?.executionSessionId?.trim()
+      || sessionId
+      || replaySessionKey
+      || account.id
+    const wsBody: Record<string, unknown> = {
+      ...upstreamBody,
+      previous_response_id: previousResponseId,
+    }
+    const wsHeaders = applyCodexWebsocketHeaders({ ...httpHeaders })
+    try {
+      // Eager open+send so handshake failures hit this catch (streaming-safe).
+      const wsStream = await openUpstreamResponsesWebsocketTurn({
+        provider: "codex",
+        account,
+        httpResponsesUrl: url,
+        headers: wsHeaders,
+        body: wsBody,
+        executionSessionId,
+        signal,
+      })
+      const normalized = normalizeResponsesStreamIds(wsStream)
+      if (clientStream) {
+        return wrapCodexStream(
+          normalized,
+          model,
+          replaySessionKey,
+          identityState,
+        )
+      }
+      return await collectResponsesFromWsStream(
+        wrapCodexStream(normalized, model, replaySessionKey, identityState),
+        model,
+        identityState,
+      )
+    } catch (error) {
+      if (isAbortLikeError(error) || signal?.aborted) throw error
+      // Application errors from upstream WS (response.failed) — do not re-POST.
+      if (!isUpstreamWsTransportError(error)) throw error
+      logger.warn(
+        `codex websockets: falling back to HTTP: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+  }
 
   const response = await fetchWithOAuthProxy(account, url, {
     method: "POST",
-    headers,
+    headers: httpHeaders,
+    // HTTP path: no previous_response_id (already stripped on upstreamBody)
     body: JSON.stringify(upstreamBody),
     signal,
   })
@@ -251,6 +334,40 @@ export async function createCodexResponsesOnce(
     return JSON.parse(restored) as ResponsesResponse
   }
   return result
+}
+
+async function collectResponsesFromWsStream(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+  _model: string,
+  identityState: IdentityConfuseState,
+): Promise<ResponsesResponse> {
+  let completed: ResponsesResponse | undefined
+  for await (const event of stream) {
+    if (!event.data || event.data === "[DONE]") continue
+    try {
+      const parsed = JSON.parse(event.data) as Record<string, unknown>
+      if (
+        parsed.type === "response.completed"
+        && parsed.response
+        && typeof parsed.response === "object"
+      ) {
+        completed = parsed.response as ResponsesResponse
+      }
+    } catch {
+      // ignore partial frames
+    }
+  }
+  if (!completed) {
+    throw new Error("Codex websockets: missing response.completed event")
+  }
+  if (identityState.enabled) {
+    const restored = restoreIdentityConfuseResponse(
+      JSON.stringify(completed),
+      identityState,
+    )
+    return JSON.parse(restored) as ResponsesResponse
+  }
+  return completed
 }
 
 /**

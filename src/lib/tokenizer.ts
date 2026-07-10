@@ -101,26 +101,6 @@ const calculateMessageTokens = (
 }
 
 /**
- * Calculate tokens using custom algorithm
- */
-const calculateTokens = (
-  messages: Array<Message>,
-  encoder: Encoder,
-  constants: ReturnType<typeof getModelConstants>,
-): number => {
-  if (messages.length === 0) {
-    return 0
-  }
-  let numTokens = 0
-  for (const message of messages) {
-    numTokens += calculateMessageTokens(message, encoder, constants)
-  }
-  // every reply is primed with <|start|>assistant<|message|>
-  numTokens += 3
-  return numTokens
-}
-
-/**
  * Get the corresponding encoder module based on encoding type
  */
 const getEncodeChatFunction = async (encoding: string): Promise<Encoder> => {
@@ -318,35 +298,43 @@ export const numTokensForTools = (
 }
 
 /**
- * Calculate the token count of messages, supporting multiple GPT encoders
+ * Local token estimate for a chat completions payload.
+ *
+ * - `input`: full estimated prompt tokens (all messages + tools).
+ * - `history`: estimated tokens from assistant messages only (prior turns
+ *   already in the request). This is a subset of `input`, not a separate
+ *   "output" total.
  */
 export const getTokenCount = async (
   payload: ChatCompletionsPayload,
   model: Model,
-): Promise<{ input: number; output: number }> => {
-  // Get tokenizer string
+): Promise<{ input: number; history: number }> => {
   const tokenizer = getTokenizerFromModel(model)
-
-  // Get corresponding encoder module
   const encoder = await getEncodeChatFunction(tokenizer)
-
-  const simplifiedMessages = payload.messages
-  const inputMessages = simplifiedMessages.filter(
-    (msg) => msg.role !== "assistant",
-  )
-  const outputMessages = simplifiedMessages.filter(
-    (msg) => msg.role === "assistant",
-  )
-
   const constants = getModelConstants(model)
-  let inputTokens = calculateTokens(inputMessages, encoder, constants)
-  if (payload.tools && payload.tools.length > 0) {
-    inputTokens += numTokensForTools(payload.tools, encoder, constants)
+
+  let history = 0
+  let messagesTokens = 0
+  for (const message of payload.messages) {
+    const tokens = calculateMessageTokens(message, encoder, constants)
+    messagesTokens += tokens
+    if (message.role === "assistant") {
+      history += tokens
+    }
   }
-  const outputTokens = calculateTokens(outputMessages, encoder, constants)
+
+  // every reply is primed with <|start|>assistant<|message|>
+  if (payload.messages.length > 0) {
+    messagesTokens += 3
+  }
+
+  let input = messagesTokens
+  if (payload.tools && payload.tools.length > 0) {
+    input += numTokensForTools(payload.tools, encoder, constants)
+  }
 
   return {
-    input: inputTokens,
-    output: outputTokens,
+    input,
+    history,
   }
 }
