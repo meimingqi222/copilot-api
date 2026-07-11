@@ -1,5 +1,6 @@
 import { sanitizeId } from "~/lib/id-sanitizer"
 import { budgetToLevel } from "~/lib/thinking"
+import { openAIUsageToAnthropic } from "~/lib/usage-translation"
 import {
   type ChatCompletionReasoningDetail,
   type ChatCompletionResponse,
@@ -348,24 +349,11 @@ export function translateToAnthropic(
     content: [...contentBlocks, ...toolUseBlocks],
     stop_reason: mapOpenAIStopReasonToAnthropic(primaryChoice.finish_reason),
     stop_sequence: null,
-    usage: {
-      input_tokens: Math.max(
-        0,
-        (response.usage?.prompt_tokens ?? 0)
-          - (response.usage?.prompt_tokens_details?.cached_tokens ?? 0),
-      ),
-      output_tokens: response.usage?.completion_tokens ?? 0,
-      ...(response.usage?.prompt_tokens_details?.cached_tokens
-        !== undefined && {
-        cache_read_input_tokens:
-          response.usage.prompt_tokens_details.cached_tokens,
-      }),
-      ...(response.usage?.prompt_tokens_details?.cache_creation_input_tokens
-        !== undefined && {
-        cache_creation_input_tokens:
-          response.usage.prompt_tokens_details.cache_creation_input_tokens,
-      }),
-    },
+    usage: openAIUsageToAnthropic({
+      prompt_tokens: response.usage?.prompt_tokens ?? 0,
+      completion_tokens: response.usage?.completion_tokens ?? 0,
+      prompt_tokens_details: response.usage?.prompt_tokens_details,
+    }),
   }
 }
 

@@ -485,14 +485,20 @@ function translateUsage(
 
   const promptTokens = usage.input_tokens ?? 0
   const completionTokens = usage.output_tokens ?? 0
+  const cachedTokens = usage.input_tokens_details?.cached_tokens
+  const cacheCreationTokens =
+    usage.input_tokens_details?.cache_creation_input_tokens
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: usage.total_tokens ?? promptTokens + completionTokens,
-    ...(usage.input_tokens_details?.cached_tokens !== undefined ?
+    ...(cachedTokens !== undefined || cacheCreationTokens !== undefined ?
       {
         prompt_tokens_details: {
-          cached_tokens: usage.input_tokens_details.cached_tokens,
+          ...(cachedTokens !== undefined && { cached_tokens: cachedTokens }),
+          ...(cacheCreationTokens !== undefined && {
+            cache_creation_input_tokens: cacheCreationTokens,
+          }),
         },
       }
     : {}),

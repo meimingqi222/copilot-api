@@ -1,4 +1,5 @@
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { openAIUsageToAnthropic } from "~/lib/usage-translation"
 import {
   type ChatCompletionChunk,
   type ChatCompletionReasoningDetail,
@@ -24,19 +25,7 @@ function buildAnthropicStreamUsage(
     }
   }
 
-  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
-  return {
-    input_tokens: Math.max(0, usage.prompt_tokens - cachedTokens),
-    output_tokens: usage.completion_tokens,
-    ...(cachedTokens !== 0 && {
-      cache_read_input_tokens: cachedTokens,
-    }),
-    ...(usage.prompt_tokens_details?.cache_creation_input_tokens
-      !== undefined && {
-      cache_creation_input_tokens:
-        usage.prompt_tokens_details.cache_creation_input_tokens,
-    }),
-  }
+  return openAIUsageToAnthropic(usage)
 }
 
 function tryEmitDeferredMessageDelta(
@@ -240,11 +229,10 @@ export function translateChunkToAnthropicEvents(
     // only arrives in the final response.completed chunk, so the first
     // streaming chunk has no usage.  Fall back to the pre-calculated estimate
     // so message_start carries a meaningful input_tokens value from the start.
-    const cachedTokens = chunk.usage?.prompt_tokens_details?.cached_tokens ?? 0
-    const inputTokens =
+    const usage =
       chunk.usage ?
-        chunk.usage.prompt_tokens - cachedTokens
-      : state.estimatedInputTokens
+        openAIUsageToAnthropic(chunk.usage)
+      : { input_tokens: state.estimatedInputTokens, output_tokens: 0 }
 
     events.push({
       type: "message_start",
@@ -257,16 +245,8 @@ export function translateChunkToAnthropicEvents(
         stop_reason: null,
         stop_sequence: null,
         usage: {
-          input_tokens: inputTokens,
+          ...usage,
           output_tokens: 0, // Will be updated in message_delta when finished
-          ...(cachedTokens !== 0 && {
-            cache_read_input_tokens: cachedTokens,
-          }),
-          ...(chunk.usage?.prompt_tokens_details?.cache_creation_input_tokens
-            !== undefined && {
-            cache_creation_input_tokens:
-              chunk.usage.prompt_tokens_details.cache_creation_input_tokens,
-          }),
         },
       },
     })
