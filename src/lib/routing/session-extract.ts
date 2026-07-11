@@ -3,7 +3,7 @@
  *
  * Mirrors CPA's extractSessionIDs (sdk/cliproxy/auth/selector.go):
  *   1. metadata.user_id Claude Code session format
- *   2. X-Session-ID / session_id / Session_id headers (not x-client-request-id)
+ *   2. X-Session-ID / session_id / session-id headers (not x-client-request-id)
  *   3. prompt_cache_key (body or header)
  *   4. conversation_id
  *   5. Message-prefix hash (system + first user [+ first assistant])

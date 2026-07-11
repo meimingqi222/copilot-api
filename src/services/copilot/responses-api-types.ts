@@ -23,6 +23,9 @@ export interface ResponsesUsage {
   input_tokens?: number
   input_tokens_details?: {
     cached_tokens?: number
+    // Anthropic-only concept smuggled through the OpenAI/Responses usage
+    // shape. See docs/refactor-usage-translation.md.
+    cache_creation_input_tokens?: number
   }
   output_tokens?: number
   output_tokens_details?: {
