@@ -4,30 +4,25 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { loadProviderConnections } from "~/lib/provider-connections/store"
 
 describe("loadProviderConnections", () => {
-  const originalPath = PATHS.PROVIDER_CONNECTIONS_PATH
+  const isolationRoot = PATHS.APP_DIR
+  let tempAppDir: string
   let tempPath: string
 
-  beforeEach(() => {
-    tempPath = path.join(
-      os.tmpdir(),
-      `provider-connections-${randomUUID()}.json`,
+  beforeEach(async () => {
+    tempAppDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `provider-connections-${randomUUID()}-`),
     )
-    PATHS.PROVIDER_CONNECTIONS_PATH = tempPath
+    redirectPathsToDir(tempAppDir)
+    tempPath = PATHS.PROVIDER_CONNECTIONS_PATH
   })
 
   afterEach(async () => {
-    PATHS.PROVIDER_CONNECTIONS_PATH = originalPath
-    for (const filePath of [tempPath, `${tempPath}.bak`]) {
-      try {
-        await fs.unlink(filePath)
-      } catch {
-        // ignore
-      }
-    }
+    redirectPathsToDir(isolationRoot)
+    await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
   })
 
   test("returns empty array when file is missing", async () => {

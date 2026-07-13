@@ -114,6 +114,44 @@ export function recordAnthropicUsage(
   })
 }
 
+/**
+ * Prefer a later positive count over an earlier 0/undefined placeholder.
+ * Gateways such as Volcengine Ark (glm-5.2) emit `input_tokens: 0` on
+ * `message_start` and only report the real input count on the final
+ * `message_delta`.
+ */
+function pickPositiveTokenCount(
+  previous: number | undefined,
+  next: number | undefined,
+): number {
+  if (typeof next === "number" && Number.isFinite(next) && next > 0) {
+    return next
+  }
+  if (typeof previous === "number" && Number.isFinite(previous)) {
+    return previous
+  }
+  if (typeof next === "number" && Number.isFinite(next)) {
+    return next
+  }
+  return 0
+}
+
+function pickOptionalTokenCount(
+  previous: number | undefined,
+  next: number | undefined,
+): number | undefined {
+  if (typeof next === "number" && Number.isFinite(next) && next > 0) {
+    return next
+  }
+  if (typeof previous === "number" && Number.isFinite(previous)) {
+    return previous
+  }
+  if (typeof next === "number" && Number.isFinite(next)) {
+    return next
+  }
+  return undefined
+}
+
 export function updateLastUsage(
   eventData: string,
   lastUsage: AnthropicStreamingUsage | undefined,
@@ -127,25 +165,64 @@ export function updateLastUsage(
       message?: {
         usage?: {
           input_tokens?: number
+          output_tokens?: number
           cache_read_input_tokens?: number
           cache_creation_input_tokens?: number
         }
       }
-      usage?: { output_tokens: number }
+      usage?: {
+        input_tokens?: number
+        output_tokens?: number
+        cache_read_input_tokens?: number
+        cache_creation_input_tokens?: number
+      }
     }
     if (parsed.type === "message_start" && parsed.message?.usage) {
       const msgUsage = parsed.message.usage
       return {
-        input_tokens: msgUsage.input_tokens ?? 0,
-        output_tokens: lastUsage?.output_tokens ?? 0,
-        cache_read_input_tokens: msgUsage.cache_read_input_tokens,
-        cache_creation_input_tokens: msgUsage.cache_creation_input_tokens,
+        // Prefer a later non-zero input count (some gateways stub 0 here and
+        // only report real input_tokens on the final message_delta).
+        input_tokens: pickPositiveTokenCount(
+          lastUsage?.input_tokens,
+          msgUsage.input_tokens,
+        ),
+        output_tokens: pickPositiveTokenCount(
+          lastUsage?.output_tokens,
+          msgUsage.output_tokens,
+        ),
+        cache_read_input_tokens: pickOptionalTokenCount(
+          lastUsage?.cache_read_input_tokens,
+          msgUsage.cache_read_input_tokens,
+        ),
+        cache_creation_input_tokens: pickOptionalTokenCount(
+          lastUsage?.cache_creation_input_tokens,
+          msgUsage.cache_creation_input_tokens,
+        ),
       }
     }
     if (parsed.type === "message_delta" && parsed.usage) {
+      // Anthropic official streams usually only put output_tokens on
+      // message_delta. Some Anthropic-compatible gateways (e.g. Volcengine
+      // Ark glm-5.2) put the real input_tokens / cache_* counts here instead
+      // of message_start — merge every present usage field.
+      const deltaUsage = parsed.usage
       return {
-        ...(lastUsage ?? { input_tokens: 0, output_tokens: 0 }),
-        output_tokens: parsed.usage.output_tokens,
+        input_tokens: pickPositiveTokenCount(
+          lastUsage?.input_tokens,
+          deltaUsage.input_tokens,
+        ),
+        output_tokens: pickPositiveTokenCount(
+          lastUsage?.output_tokens,
+          deltaUsage.output_tokens,
+        ),
+        cache_read_input_tokens: pickOptionalTokenCount(
+          lastUsage?.cache_read_input_tokens,
+          deltaUsage.cache_read_input_tokens,
+        ),
+        cache_creation_input_tokens: pickOptionalTokenCount(
+          lastUsage?.cache_creation_input_tokens,
+          deltaUsage.cache_creation_input_tokens,
+        ),
       }
     }
   } catch (error) {

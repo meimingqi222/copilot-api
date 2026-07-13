@@ -16,7 +16,7 @@ import {
   standardHeaders,
 } from "~/lib/api-config"
 import { logger } from "~/lib/logger"
-import { PATHS } from "~/lib/paths"
+import { assertWritableDataPath, PATHS } from "~/lib/paths"
 import { refreshModelsForAccount } from "~/lib/utils"
 
 // Persisted map of pending device-code flows: deviceCode → pollState
@@ -52,6 +52,7 @@ export async function loadPendingFlows(): Promise<void> {
 
 // Save pending flows to disk
 export async function savePendingFlows(): Promise<void> {
+  assertWritableDataPath(PATHS.PENDING_FLOWS_PATH)
   const obj = Object.fromEntries(pendingFlows.entries())
   await fs.writeFile(PATHS.PENDING_FLOWS_PATH, JSON.stringify(obj, null, 2))
 }

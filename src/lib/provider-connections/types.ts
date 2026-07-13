@@ -65,6 +65,24 @@ export function isModelEndpoint(value: string): value is ModelEndpoint {
 }
 
 /**
+ * 根据 protocol 返回默认的 model endpoints。
+ *
+ * 当用户通过 admin API 添加模型但未显式指定 endpoints 时使用此函数,
+ * 确保默认 endpoint 与 protocol adapter 实际支持的能力匹配。
+ *
+ * - `anthropic-compatible` / `claude-native`: adapter 只实现 createMessages → `["messages"]`
+ * - 其他所有 protocol: adapter 至少实现 createChatCompletions → `["chat"]`
+ */
+export function defaultEndpointsForProtocol(
+  protocol: ProviderProtocol,
+): Array<ModelEndpoint> {
+  if (protocol === "anthropic-compatible" || protocol === "claude-native") {
+    return ["messages"]
+  }
+  return ["chat"]
+}
+
+/**
  * 凭据鉴权模式。
  *
  * - `bearer`: `Authorization: Bearer <value>`(默认)。
@@ -170,8 +188,11 @@ export interface ProviderConnection {
   name: string
   protocol: ProviderProtocol
   /**
-   * 上游 API 根地址(通常需要带版本前缀,如 `https://api.deepseek.com/v1`)。
-   * Adapter 在该路径上拼接 `/chat/completions`、`/models` 等子路径。
+   * 上游 API 根地址。
+   * 可写带版本前缀(如 `https://api.deepseek.com/v1`)，也可写到服务根
+   * (如 `https://ark.cn-beijing.volces.com/api/coding`)：
+   * 对 `/messages`、`/chat/completions` 等标准路径，adapter 会在缺少
+   * `/v1` 时自动补上。
    */
   baseUrl: string
   enabled: boolean

@@ -14,7 +14,7 @@ import type { ProviderAdmission } from "~/lib/request-admission"
 
 import { accountToConnection } from "~/lib/account-adapter"
 import { HTTPError } from "~/lib/error"
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
@@ -29,28 +29,23 @@ import {
 import { state } from "~/lib/state"
 import { executeWithFailover } from "~/services/dispatch/failover"
 
-const originalAccountsPath = PATHS.ACCOUNTS_PATH
-let tempAccountsPath: string
+const isolationRoot = PATHS.APP_DIR
+let tempAppDir: string
 
-beforeEach(() => {
-  tempAccountsPath = path.join(
-    os.tmpdir(),
-    `accounts-unified-test-${randomUUID()}.json`,
+beforeEach(async () => {
+  tempAppDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), `accounts-unified-test-${randomUUID()}-`),
   )
-  PATHS.ACCOUNTS_PATH = tempAccountsPath
+  redirectPathsToDir(tempAppDir)
 })
 
 afterEach(async () => {
-  PATHS.ACCOUNTS_PATH = originalAccountsPath
+  redirectPathsToDir(isolationRoot)
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
   resetAdaptiveRateLimiterForTest()
   state.accounts = []
-  try {
-    await fs.unlink(tempAccountsPath)
-  } catch {
-    // ignore cleanup errors
-  }
+  await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
 })
 
 function createTestAccount(

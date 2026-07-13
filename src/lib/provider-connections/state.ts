@@ -157,7 +157,10 @@ export async function createConnection(
       weight: input.weight ?? DEFAULTS.CONNECTION_WEIGHT,
       headers: input.headers,
       modelDiscovery: input.modelDiscovery,
-      models: input.models,
+      models:
+        input.models ?
+          normalizeModelEndpointsForProtocol(input.models, input.protocol)
+        : input.models,
       credentials: (input.credentials ?? []).map((c) =>
         createCredentialObject(c),
       ),

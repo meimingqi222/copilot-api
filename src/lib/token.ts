@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import { getActiveAccount } from "~/lib/account-selection"
 import { refreshCopilotToken } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
-import { PATHS } from "~/lib/paths"
+import { assertWritableDataPath, PATHS } from "~/lib/paths"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
 import { pollAccessToken } from "~/services/github/poll-access-token"
@@ -13,8 +13,10 @@ import { state } from "./state"
 
 const readGithubToken = () => fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
 
-const writeGithubToken = (token: string) =>
-  fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
+const writeGithubToken = (token: string) => {
+  assertWritableDataPath(PATHS.GITHUB_TOKEN_PATH)
+  return fs.writeFile(PATHS.GITHUB_TOKEN_PATH, token)
+}
 
 /**
  * Refresh the Copilot token for the active account.

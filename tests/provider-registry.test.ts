@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -16,13 +16,12 @@ const originalActiveAccountIndex = state.activeAccountIndex
 const originalModels = state.models
 const originalApiKey = state.legacyApiKey
 const originalProviderDefaults = structuredClone(state.providerDefaults)
-const originalAccountsPath = PATHS.ACCOUNTS_PATH
-const testAccountsPath = path.join(
-  process.cwd(),
-  ".tmp-provider-registry-accounts.json",
-)
+const isolationRoot = PATHS.APP_DIR
+const testDir = path.join(process.cwd(), ".tmp-provider-registry")
 
-beforeEach(() => {
+beforeEach(async () => {
+  await fs.mkdir(testDir, { recursive: true })
+  redirectPathsToDir(testDir)
   initializeProviderRegistry()
   statsStore.clearUsageStatsForTest()
   state.accounts = []
@@ -30,7 +29,6 @@ beforeEach(() => {
   state.models = undefined
   state.legacyApiKey = undefined
   state.providerDefaults = structuredClone(originalProviderDefaults)
-  PATHS.ACCOUNTS_PATH = testAccountsPath
 })
 
 afterEach(async () => {
@@ -39,9 +37,9 @@ afterEach(async () => {
   state.models = originalModels
   state.legacyApiKey = originalApiKey
   state.providerDefaults = structuredClone(originalProviderDefaults)
-  PATHS.ACCOUNTS_PATH = originalAccountsPath
+  redirectPathsToDir(isolationRoot)
   resetAdaptiveRateLimiterForTest()
-  await fs.rm(testAccountsPath, { force: true }).catch(() => undefined)
+  await fs.rm(testDir, { recursive: true, force: true }).catch(() => undefined)
 })
 
 test("cacheModels keeps provider-qualified duplicates visible", () => {

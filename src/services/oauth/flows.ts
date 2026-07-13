@@ -5,7 +5,7 @@ import fs from "node:fs/promises"
 import type { AccountProvider } from "~/lib/accounts"
 
 import { logger } from "~/lib/logger"
-import { PATHS } from "~/lib/paths"
+import { assertWritableDataPath, PATHS } from "~/lib/paths"
 
 import type { PkceCodes } from "./pkce"
 
@@ -84,6 +84,7 @@ export async function savePendingOAuthFlows(): Promise<void> {
       .map(([id, flow]) => [id, flowForPersistence(flow)]),
   )
   await fs.mkdir(PATHS.APP_DIR, { recursive: true })
+  assertWritableDataPath(PATHS.PENDING_OAUTH_FLOWS_PATH)
   await fs.writeFile(
     PATHS.PENDING_OAUTH_FLOWS_PATH,
     JSON.stringify(serializable, null, 2),
