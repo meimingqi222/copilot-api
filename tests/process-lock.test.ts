@@ -3,21 +3,21 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { acquireServerLock, releaseServerLock } from "~/lib/process-lock"
 
 describe("process-lock", () => {
-  const originalAppDir = PATHS.APP_DIR
+  const isolationRoot = PATHS.APP_DIR
   let tempAppDir: string
 
   beforeEach(async () => {
     tempAppDir = path.join(os.tmpdir(), `process-lock-test-${process.pid}`)
     await fs.mkdir(tempAppDir, { recursive: true })
-    PATHS.APP_DIR = tempAppDir
+    redirectPathsToDir(tempAppDir)
   })
 
   afterEach(async () => {
-    PATHS.APP_DIR = originalAppDir
+    redirectPathsToDir(isolationRoot)
     await releaseServerLock().catch(() => {})
     await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
   })

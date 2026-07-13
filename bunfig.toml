@@ -1,0 +1,3 @@
+[test]
+# Isolate all PATHS writes away from ~/.local/share/copilot-api
+preload = ["./tests/setup/isolate-data-dir.ts"]

@@ -7,55 +7,24 @@ import path from "node:path"
 import type { Account } from "~/lib/accounts"
 
 import { loadAccounts, saveAccounts } from "~/lib/account-store"
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { state } from "~/lib/state"
 
 describe("account-store", () => {
-  const originalPath = PATHS.ACCOUNTS_PATH
-  const originalGitHubTokenPath = PATHS.GITHUB_TOKEN_PATH
-  let tempAccountsPath: string
-  let tempGitHubTokenPath: string
+  const isolationRoot = PATHS.APP_DIR
+  let tempAppDir: string
 
-  beforeEach(() => {
-    tempAccountsPath = path.join(
-      os.tmpdir(),
-      `accounts-test-${randomUUID()}.json`,
+  beforeEach(async () => {
+    tempAppDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `accounts-store-test-${randomUUID()}-`),
     )
-    tempGitHubTokenPath = path.join(
-      os.tmpdir(),
-      `github-token-test-${randomUUID()}`,
-    )
-    PATHS.ACCOUNTS_PATH = tempAccountsPath
-    PATHS.GITHUB_TOKEN_PATH = tempGitHubTokenPath
+    redirectPathsToDir(tempAppDir)
     state.accounts = []
   })
 
   afterEach(async () => {
-    PATHS.ACCOUNTS_PATH = originalPath
-    PATHS.GITHUB_TOKEN_PATH = originalGitHubTokenPath
-    for (const filePath of [
-      tempAccountsPath,
-      `${tempAccountsPath}.bak`,
-      tempGitHubTokenPath,
-    ]) {
-      try {
-        await fs.unlink(filePath)
-      } catch {
-        // ignore
-      }
-    }
-    const tempDir = path.dirname(tempAccountsPath)
-    const tempBase = path.basename(tempAccountsPath)
-    try {
-      const entries = await fs.readdir(tempDir)
-      await Promise.all(
-        entries
-          .filter((entry) => entry.startsWith(`${tempBase}.corrupt.`))
-          .map((entry) => fs.unlink(path.join(tempDir, entry))),
-      )
-    } catch {
-      // ignore
-    }
+    redirectPathsToDir(isolationRoot)
+    await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
   })
 
   test("saveAccounts uses Promise queue lock to serialize writes", async () => {
@@ -87,7 +56,7 @@ describe("account-store", () => {
 
     await Promise.all([p1, p2])
 
-    const fileContent = await fs.readFile(tempAccountsPath)
+    const fileContent = await fs.readFile(PATHS.ACCOUNTS_PATH)
     const parsed = JSON.parse(fileContent as unknown as string) as Array<
       Record<string, unknown>
     >
@@ -158,12 +127,16 @@ describe("account-store", () => {
         createdAt: 3000,
       },
     ]
-    await fs.writeFile(tempAccountsPath, JSON.stringify(legacyAccounts), "utf8")
+    await fs.writeFile(
+      PATHS.ACCOUNTS_PATH,
+      JSON.stringify(legacyAccounts),
+      "utf8",
+    )
 
     await loadAccounts()
 
     const savedAfterLoad = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(savedAfterLoad[0]).not.toHaveProperty("githubToken")
 
@@ -207,7 +180,7 @@ describe("account-store", () => {
 
     await saveAccounts()
     const saved = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(saved[0]).not.toHaveProperty("githubToken")
     expect(saved[0]).not.toHaveProperty("copilotToken")
@@ -242,7 +215,11 @@ describe("account-store", () => {
         createdAt: 2000,
       },
     ]
-    await fs.writeFile(tempAccountsPath, JSON.stringify(legacyAccounts), "utf8")
+    await fs.writeFile(
+      PATHS.ACCOUNTS_PATH,
+      JSON.stringify(legacyAccounts),
+      "utf8",
+    )
 
     await loadAccounts()
 
@@ -267,7 +244,7 @@ describe("account-store", () => {
 
     await saveAccounts()
     const saved = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(saved[0]).not.toHaveProperty("serviceToken")
     expect(saved[0]).not.toHaveProperty("xiaomichatbotPh")
@@ -301,21 +278,21 @@ describe("account-store", () => {
   })
 
   test("loadAccounts preserves an intentionally empty accounts file", async () => {
-    await fs.writeFile(tempAccountsPath, "[]", "utf8")
-    await fs.writeFile(tempGitHubTokenPath, "legacy-token", "utf8")
+    await fs.writeFile(PATHS.ACCOUNTS_PATH, "[]", "utf8")
+    await fs.writeFile(PATHS.GITHUB_TOKEN_PATH, "legacy-token", "utf8")
 
     await loadAccounts()
 
     expect(state.accounts).toHaveLength(0)
     const saved = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(saved).toEqual([])
   })
 
   test("loadAccounts does not overwrite corrupt accounts with legacy default", async () => {
-    await fs.writeFile(tempAccountsPath, "not-json", "utf8")
-    await fs.writeFile(tempGitHubTokenPath, "legacy-token", "utf8")
+    await fs.writeFile(PATHS.ACCOUNTS_PATH, "not-json", "utf8")
+    await fs.writeFile(PATHS.GITHUB_TOKEN_PATH, "legacy-token", "utf8")
 
     let thrown: unknown
     try {
@@ -328,7 +305,7 @@ describe("account-store", () => {
     expect((thrown as Error).message).toContain("Could not recover accounts")
 
     expect(state.accounts).toHaveLength(0)
-    expect(await fs.readFile(tempAccountsPath, "utf8")).toBe("not-json")
+    expect(await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")).toBe("not-json")
   })
 
   test("loadAccounts preserves OAuth tokenEndpoint and redirectUri", async () => {
@@ -386,7 +363,7 @@ describe("account-store", () => {
     await saveAccounts()
 
     const saved = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(saved).toHaveLength(1)
   })
@@ -410,7 +387,7 @@ describe("account-store", () => {
     await saveAccounts()
 
     const saved = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(saved[0]).not.toHaveProperty("runtimeState")
     const credentials = saved[0]?.credentials as Record<string, unknown>
@@ -436,7 +413,7 @@ describe("account-store", () => {
     await saveAccounts({ allowEmpty: true })
 
     const saved = JSON.parse(
-      (await fs.readFile(tempAccountsPath)).toString("utf8"),
+      (await fs.readFile(PATHS.ACCOUNTS_PATH)).toString("utf8"),
     ) as Array<Record<string, unknown>>
     expect(saved).toEqual([])
   })

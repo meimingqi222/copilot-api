@@ -613,7 +613,6 @@ function connectionsView() {
         upstreamId: m.upstreamId,
         name: m.name,
         vendor: m.vendor,
-        endpoints: ["chat"],
         enabled: true,
       }))
       try {

@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import { logger } from "~/lib/logger"
+import { assertWritableDataPath } from "~/lib/paths"
 
 // ── Mutex ─────────────────────────────────────────────────────────
 
@@ -150,7 +151,12 @@ export class Repository<T> {
       const backupPath = getBackupPath(filePath)
       try {
         raw = await fs.readFile(backupPath, "utf8")
-        await fs.copyFile(backupPath, filePath)
+        try {
+          assertWritableDataPath(filePath, "recover")
+          await fs.copyFile(backupPath, filePath)
+        } catch {
+          // Skip restoring onto a blocked path (e.g. production during tests).
+        }
         logger.warn(`Recovered ${path.basename(filePath)} from .bak backup.`)
       } catch {
         return null
@@ -167,7 +173,12 @@ export class Repository<T> {
       try {
         const backupRaw = await fs.readFile(backupPath, "utf8")
         const result = this.config.deserialize(backupRaw)
-        await fs.copyFile(backupPath, filePath)
+        try {
+          assertWritableDataPath(filePath, "recover")
+          await fs.copyFile(backupPath, filePath)
+        } catch {
+          // Skip restoring onto a blocked path (e.g. production during tests).
+        }
         logger.warn(
           `Recovered ${path.basename(filePath)} from .bak backup (corrupt).`,
         )
@@ -184,6 +195,7 @@ export class Repository<T> {
   /** tmp file + copyFile(.bak) + retryRename。来自 account-file-store 基线。 */
   private async atomicWrite(content: string): Promise<void> {
     const filePath = this.getFilePath()
+    assertWritableDataPath(filePath)
     const tmpPath = filePath + `.tmp.${process.pid}`
 
     await fs.mkdir(path.dirname(filePath), { recursive: true })

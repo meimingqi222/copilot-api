@@ -8,20 +8,25 @@ import {
   flushAllPersistentMaps,
   PersistentTTLMap,
 } from "~/lib/cache/persistent-map"
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 
 describe("PersistentTTLMap", () => {
-  const originalCacheDir = PATHS.CACHE_DIR
+  const isolationRoot = PATHS.APP_DIR
+  let tempAppDir: string
   let tempCacheDir: string
 
-  beforeEach(() => {
-    tempCacheDir = path.join(os.tmpdir(), `persistent-map-${randomUUID()}`)
-    PATHS.CACHE_DIR = tempCacheDir
+  beforeEach(async () => {
+    tempAppDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `persistent-map-${randomUUID()}-`),
+    )
+    redirectPathsToDir(tempAppDir)
+    tempCacheDir = PATHS.CACHE_DIR
+    await fs.mkdir(tempCacheDir, { recursive: true })
   })
 
   afterEach(async () => {
-    PATHS.CACHE_DIR = originalCacheDir
-    await fs.rm(tempCacheDir, { recursive: true, force: true }).catch(() => {})
+    redirectPathsToDir(isolationRoot)
+    await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
   })
 
   test("flushNow persists without waiting for debounce", async () => {

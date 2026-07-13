@@ -8,33 +8,24 @@ import {
   tryReadAccountsFile,
   writeAccountsFile,
 } from "~/lib/account-file-store"
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 
 describe("tryReadAccountsFile", () => {
-  const originalPath = PATHS.ACCOUNTS_PATH
+  const isolationRoot = PATHS.APP_DIR
+  let tempAppDir: string
   let tempAccountsPath: string
 
-  beforeEach(() => {
-    tempAccountsPath = path.join(
-      os.tmpdir(),
-      `accounts-file-test-${randomUUID()}.json`,
+  beforeEach(async () => {
+    tempAppDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), `accounts-file-test-${randomUUID()}-`),
     )
-    PATHS.ACCOUNTS_PATH = tempAccountsPath
+    redirectPathsToDir(tempAppDir)
+    tempAccountsPath = PATHS.ACCOUNTS_PATH
   })
 
   afterEach(async () => {
-    PATHS.ACCOUNTS_PATH = originalPath
-    for (const filePath of [
-      tempAccountsPath,
-      `${tempAccountsPath}.bak`,
-      `${tempAccountsPath}.empty-1.bak`,
-    ]) {
-      try {
-        await fs.unlink(filePath)
-      } catch {
-        // ignore
-      }
-    }
+    redirectPathsToDir(isolationRoot)
+    await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
   })
 
   test("refuses writing empty array when .bak has accounts", async () => {

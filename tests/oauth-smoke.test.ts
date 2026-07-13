@@ -5,7 +5,7 @@ import path from "node:path"
 import type { OAuthAccount } from "~/lib/accounts"
 
 import { isOAuthAccount } from "~/lib/accounts"
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { state } from "~/lib/state"
@@ -16,11 +16,8 @@ import { initializeProviderRegistry } from "~/services/providers"
 
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
-const originalAccountsPath = PATHS.ACCOUNTS_PATH
-const originalOAuthFlowsPath = PATHS.PENDING_OAUTH_FLOWS_PATH
+const isolationRoot = PATHS.APP_DIR
 const testDir = path.join(process.cwd(), ".tmp-oauth-smoke")
-const testAccountsPath = path.join(testDir, "accounts.json")
-const testOAuthFlowsPath = path.join(testDir, "pending_oauth_flows.json")
 
 function fetchTarget(url: string | URL | Request): string {
   if (typeof url === "string") {
@@ -45,12 +42,12 @@ async function adminJson(url: string, init?: RequestInit): Promise<Response> {
 
 beforeEach(async () => {
   await fs.mkdir(testDir, { recursive: true })
-  PATHS.ACCOUNTS_PATH = testAccountsPath
-  PATHS.PENDING_OAUTH_FLOWS_PATH = testOAuthFlowsPath
-  await fs.writeFile(testOAuthFlowsPath, "{}")
+  redirectPathsToDir(testDir)
+  await fs.writeFile(PATHS.PENDING_OAUTH_FLOWS_PATH, "{}")
   initializeProviderRegistry()
   statsStore.clearUsageStatsForTest()
   state.accounts = []
+  state.users = []
   state.legacyApiKey = undefined
   state.adminPassword = undefined
 })
@@ -59,8 +56,7 @@ afterEach(async () => {
   resetOAuthFlowsForTest()
   state.accounts = originalAccounts
   globalThis.fetch = originalFetch
-  PATHS.ACCOUNTS_PATH = originalAccountsPath
-  PATHS.PENDING_OAUTH_FLOWS_PATH = originalOAuthFlowsPath
+  redirectPathsToDir(isolationRoot)
   resetAdaptiveRateLimiterForTest()
   await fs.rm(testDir, { recursive: true, force: true }).catch(() => undefined)
 })

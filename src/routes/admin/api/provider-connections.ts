@@ -13,6 +13,7 @@ import {
   addModel,
   applyDiscoveredModels,
   createConnection,
+  defaultEndpointsForProtocol,
   deleteConnection,
   deleteCredential,
   deleteModel,
@@ -428,7 +429,7 @@ providerConnectionApiRoutes.post("/:id/models", async (c) => {
     endpoints:
       rawEndpoints.length > 0 ?
         rawEndpoints
-      : (["chat"] as Array<ModelEndpoint>),
+      : defaultEndpointsForProtocol(connection.protocol),
     enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
   }
 
@@ -499,7 +500,7 @@ providerConnectionApiRoutes.post("/:id/models/batch", async (c) => {
       endpoints:
         rawEndpoints.length > 0 ?
           rawEndpoints
-        : (["chat"] as Array<ModelEndpoint>),
+        : defaultEndpointsForProtocol(connection.protocol),
       enabled: typeof item.enabled === "boolean" ? item.enabled : true,
     }
     try {

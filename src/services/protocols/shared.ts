@@ -13,9 +13,58 @@ import {
   type ProviderConnection,
 } from "~/lib/provider-connections"
 
+/**
+ * Standard OpenAI / Anthropic-compatible resource paths that live under `/v1`.
+ * Relative discovery endpoints outside this set are joined as-is.
+ */
+const VERSIONED_API_PATHS = new Set([
+  "/messages",
+  "/chat/completions",
+  "/embeddings",
+  "/models",
+  "/responses",
+])
+
+/** True when the URL path already ends with an API version segment (`/v1`, `/v1beta`, …). */
+const API_VERSION_SUFFIX = /\/v\d+(?:[a-z][\w.]*)?$/i
+
+/**
+ * Join an upstream base URL with a relative API path.
+ *
+ * Many providers document a "root" like `https://ark.../api/coding` while the
+ * real endpoints live at `.../api/coding/v1/messages`. Users often paste the
+ * root without `/v1`. When the path is a known v1 resource and the base has no
+ * version suffix, `/v1` is inserted automatically:
+ *
+ *   joinUrl("https://host/api/coding", "/messages")
+ *     → "https://host/api/coding/v1/messages"
+ *   joinUrl("https://host/api/coding/v1", "/messages")
+ *     → "https://host/api/coding/v1/messages"
+ *   joinUrl("https://host/custom", "/list-models")
+ *     → "https://host/custom/list-models"   (unchanged — not a standard path)
+ */
 export function joinUrl(baseUrl: string, path: string): string {
-  const trimmedBase = baseUrl.replace(/\/+$/, "")
-  const trimmedPath = path.startsWith("/") ? path : `/${path}`
+  const trimmedBase = baseUrl.trim().replace(/\/+$/, "")
+  let trimmedPath = path.trim()
+  if (!trimmedPath.startsWith("/")) {
+    trimmedPath = `/${trimmedPath}`
+  }
+
+  // Absolute override (rare for discovery endpoints).
+  if (/^https?:\/\//i.test(trimmedPath)) {
+    return trimmedPath
+  }
+
+  const pathOnly = trimmedPath.split("?")[0] ?? trimmedPath
+  const shouldInjectV1 =
+    VERSIONED_API_PATHS.has(pathOnly)
+    && !API_VERSION_SUFFIX.test(trimmedBase)
+    && !/^\/v\d+(?:\/|$)/i.test(trimmedPath)
+
+  if (shouldInjectV1) {
+    trimmedPath = `/v1${trimmedPath}`
+  }
+
   return `${trimmedBase}${trimmedPath}`
 }
 

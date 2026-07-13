@@ -1,7 +1,12 @@
 import fs from "node:fs/promises"
 
 import { logger } from "~/lib/logger"
-import { PATHS } from "~/lib/paths"
+import {
+  assertWritableDataPath,
+  isProductionDataPath,
+  isTestDataIsolationEnabled,
+  PATHS,
+} from "~/lib/paths"
 import { Repository } from "~/lib/repository"
 
 export function getAccountsBackupPath(): string {
@@ -90,6 +95,16 @@ async function recoverFromBackup(
   }
 
   logger.warn(`${reason} — recovering from accounts.json.bak`)
+  // Never mutate production data files while tests are isolated.
+  if (
+    isTestDataIsolationEnabled()
+    && isProductionDataPath(PATHS.ACCOUNTS_PATH)
+  ) {
+    logger.warn(
+      "Skipping accounts.json recovery write — production path blocked during tests",
+    )
+    return { status: "found", accounts: backup.accounts }
+  }
   if (corruptPath) {
     const archivePath =
       corruptPath === PATHS.ACCOUNTS_PATH ?
@@ -103,6 +118,7 @@ async function recoverFromBackup(
   }
 
   try {
+    assertWritableDataPath(PATHS.ACCOUNTS_PATH, "recover")
     await fs.copyFile(getAccountsBackupPath(), PATHS.ACCOUNTS_PATH)
   } catch {
     // Best-effort restore of primary file; in-memory load still uses backup data.
@@ -176,6 +192,7 @@ export async function writeAccountsFile(
   sanitized: Array<Record<string, unknown>>,
   options: WriteAccountsFileOptions = {},
 ): Promise<boolean> {
+  assertWritableDataPath(PATHS.ACCOUNTS_PATH)
   const newCount = sanitized.length
   const primaryCount = await countAccountsAtPath(PATHS.ACCOUNTS_PATH)
   const backupCount = await countAccountsAtPath(getAccountsBackupPath())
