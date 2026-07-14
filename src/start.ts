@@ -25,7 +25,10 @@ import {
 import { initializeCredentialRefreshers } from "./lib/provider-connections/refresher-impls"
 import { ensureDirectProviderAccounts } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
-import { loadAdminPasswordFromDb } from "./lib/request-auth"
+import {
+  loadAdminPasswordFromDb,
+  saveAdminPasswordToDb,
+} from "./lib/request-auth"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { statsStore } from "./lib/stats-store"
@@ -156,7 +159,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   if (state.adminPassword) {
     logger.info("Admin login password is configured")
-    await hashAdminPasswordInEnv(state.adminPassword)
+    const plaintextPassword = state.adminPassword
+    await hashAdminPasswordInEnv(plaintextPassword)
+    saveAdminPasswordToDb(plaintextPassword)
+    logger.info("Admin password synchronized to database")
   } else {
     loadAdminPasswordFromDb()
     if (state.adminPassword) {
