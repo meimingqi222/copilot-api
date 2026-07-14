@@ -18,12 +18,7 @@ interface CodebuffProviderDefaults {
 interface WindsurfProviderDefaults {
   apiKey?: string
   baseUrl: string
-  appVersion: string
-  lsVersion: string
   defaultModel: string
-  clientName: string
-  extensionName: string
-  ideType: string
 }
 
 /**
@@ -87,12 +82,7 @@ export const state: State = {
     },
     windsurf: {
       baseUrl: "https://server.codeium.com",
-      appVersion: "2026.5.5-0",
-      lsVersion: "2026.5.5-0",
       defaultModel: "swe-1-6-fast",
-      clientName: "chisel",
-      extensionName: "chisel",
-      ideType: "chisel",
     },
   },
   // Max prompt-cache utilization defaults (fill-first + session affinity).

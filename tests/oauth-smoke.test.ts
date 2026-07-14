@@ -14,6 +14,13 @@ import { server } from "~/server"
 import { resetOAuthFlowsForTest } from "~/services/oauth/flows"
 import { initializeProviderRegistry } from "~/services/providers"
 
+import {
+  adminHeaders,
+  clearAdminAuth,
+  clearAdminPasswordConfig,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 const isolationRoot = PATHS.APP_DIR
@@ -30,7 +37,7 @@ function fetchTarget(url: string | URL | Request): string {
 }
 
 async function adminJson(url: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers)
+  const headers = adminHeaders(init?.headers)
   headers.set("content-type", "application/json")
   return await server.fetch(
     new Request(url, {
@@ -50,6 +57,8 @@ beforeEach(async () => {
   state.users = []
   state.legacyApiKey = undefined
   state.adminPassword = undefined
+  clearAdminPasswordConfig()
+  setupAdminAuth()
 })
 
 afterEach(async () => {
@@ -58,6 +67,8 @@ afterEach(async () => {
   globalThis.fetch = originalFetch
   redirectPathsToDir(isolationRoot)
   resetAdaptiveRateLimiterForTest()
+  clearAdminAuth()
+  clearAdminPasswordConfig()
   await fs.rm(testDir, { recursive: true, force: true }).catch(() => undefined)
 })
 

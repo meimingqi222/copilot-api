@@ -403,10 +403,7 @@ type LegacyAccountRecord = Record<string, unknown> & {
   codebuffAllowFallbacks?: boolean
   windsurfApiKey?: string
   windsurfBaseUrl?: string
-  windsurfAppVersion?: string
-  windsurfLsVersion?: string
   windsurfDefaultModel?: string
-  windsurfClientName?: string
   windsurfJwt?: string
   windsurfJwtFetchedAt?: number
   serviceToken?: string
@@ -431,10 +428,7 @@ const LEGACY_FLAT_FIELD_KEYS = [
   "codebuffAllowFallbacks",
   "windsurfApiKey",
   "windsurfBaseUrl",
-  "windsurfAppVersion",
-  "windsurfLsVersion",
   "windsurfDefaultModel",
-  "windsurfClientName",
   "windsurfJwt",
   "windsurfJwtFetchedAt",
   "serviceToken",
@@ -616,18 +610,9 @@ function migrateWindsurfAccount(
     },
     settings: {
       baseUrl: pickString(existingSettings?.baseUrl, acc.windsurfBaseUrl),
-      appVersion: pickString(
-        existingSettings?.appVersion,
-        acc.windsurfAppVersion,
-      ),
-      lsVersion: pickString(existingSettings?.lsVersion, acc.windsurfLsVersion),
       defaultModel: pickString(
         existingSettings?.defaultModel,
         acc.windsurfDefaultModel,
-      ),
-      clientName: pickString(
-        existingSettings?.clientName,
-        acc.windsurfClientName,
       ),
     },
     runtimeState: {

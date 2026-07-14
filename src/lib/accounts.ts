@@ -45,12 +45,7 @@ export interface WindsurfAccountSettings {
   // apiKey 在 credentials 中,这里保留用于 legacy 代码访问
   apiKey?: string
   baseUrl?: string
-  appVersion?: string
-  lsVersion?: string
   defaultModel?: string
-  clientName?: string
-  extensionName?: string
-  ideType?: string
 }
 
 export interface MimoAccountCredentials {
@@ -347,12 +342,7 @@ export function getWindsurfSettings(
   return {
     apiKey: readString(account.credentials?.apiKey) ?? defaults.apiKey,
     baseUrl: settings?.baseUrl ?? defaults.baseUrl,
-    appVersion: settings?.appVersion ?? defaults.appVersion,
-    lsVersion: settings?.lsVersion ?? defaults.lsVersion,
     defaultModel: settings?.defaultModel ?? defaults.defaultModel,
-    clientName: settings?.clientName ?? defaults.clientName,
-    extensionName: settings?.extensionName ?? defaults.extensionName,
-    ideType: settings?.ideType ?? defaults.ideType,
   }
 }
 

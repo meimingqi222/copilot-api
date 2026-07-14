@@ -160,6 +160,15 @@ class StatsStore {
       CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage_stats(timestamp)
     `)
 
+    // Application configuration (e.g. admin password hash)
+    db.run(`
+      CREATE TABLE IF NOT EXISTS app_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `)
+
     // Add performance columns to usage_stats (migration for existing DBs)
     this.ensureColumn(db, "usage_stats", "ttft_ms", "REAL")
     this.ensureColumn(db, "usage_stats", "tps", "REAL")
@@ -893,6 +902,30 @@ class StatsStore {
       cacheWritePricePer1k: row.cache_write_price_per_1k,
       updatedAt: row.updated_at,
     }))
+  }
+
+  getConfig(key: string): string | undefined {
+    const db = this.ensureDb()
+    const stmt = db.prepare("SELECT value FROM app_config WHERE key = ?")
+    const row = stmt.get(key) as { value: string } | undefined
+    return row?.value
+  }
+
+  setConfig(key: string, value: string): void {
+    const db = this.ensureDb()
+    const stmt = db.prepare(`
+      INSERT INTO app_config (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `)
+    stmt.run(key, value, Date.now())
+  }
+
+  deleteConfig(key: string): void {
+    const db = this.ensureDb()
+    db.prepare("DELETE FROM app_config WHERE key = ?").run(key)
   }
 }
 

@@ -10,11 +10,12 @@ import {
 import {
   clearAdminSession,
   hasAdminRole,
+  isAdminPasswordConfigured,
   isAuthorizedRequest,
+  saveAdminPasswordToDb,
   setAdminSession,
   verifyAdminPassword,
 } from "~/lib/request-auth"
-import { state } from "~/lib/state"
 import { getClientIp } from "~/lib/utils"
 
 import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
@@ -73,12 +74,10 @@ adminRoutes.get("/static/*", (c) => {
 
 // Protect all /api/* routes with admin role check
 adminRoutes.use("/api/*", async (c, next) => {
-  // Multi-user mode always requires auth
-  const hasMultiUserMode = state.users.length > 0
-  // Single-user mode requires auth if system-level auth is configured
-  const hasSystemAuth = Boolean(state.legacyApiKey || state.adminPassword)
-  // Require auth in multi-user mode OR if system auth is configured
-  if ((hasMultiUserMode || hasSystemAuth) && !hasAdminRole(c)) {
+  // Admin routes must never be publicly accessible, even when no system-level
+  // password has been configured yet. If no admin password is set, the login
+  // page explains how to configure one.
+  if (!hasAdminRole(c)) {
     return c.json(
       { error: "Forbidden. Admin role required to access this resource." },
       403,
@@ -135,53 +134,43 @@ function serveSPA(): string {
 }
 
 // Serve the login page
-function serveLoginPage(message?: string): string {
-  let html = serveFile("login.html")
-  // If there's a message, inject it as a hidden element for the app to read
-  if (message) {
-    const injection = `<div id="server-message" data-message="${encodeURIComponent(message)}" style="display:none"></div>`
-    html = html.replace("</body>", `${injection}</body>`)
-  }
-  return html
+function serveLoginPage(): string {
+  return serveFile("login.html")
+}
+
+// Serve the initial setup page
+function serveSetupPage(): string {
+  return serveFile("setup.html")
 }
 
 // Route handlers
 adminRoutes.get("/", (c) => {
-  // Multi-user mode always requires auth
-  const hasMultiUserMode = state.users.length > 0
-  // Single-user mode requires auth if system-level auth is configured
-  const hasSystemAuth = Boolean(state.legacyApiKey || state.adminPassword)
-  // Require auth in multi-user mode OR if system auth is configured
-  if ((hasMultiUserMode || hasSystemAuth) && !hasAdminRole(c)) {
-    return c.redirect("/admin/login")
+  // The admin dashboard must always require authentication. Allowing public
+  // access just because ADMIN_PASSWORD is not configured is a security risk.
+  if (!hasAdminRole(c)) {
+    return c.redirect(
+      isAdminPasswordConfigured() ? "/admin/login" : "/admin/setup",
+    )
   }
   return c.html(serveSPA())
 })
 
 adminRoutes.get("/login", (c) => {
-  const hasAdminPasswordConfigured = Boolean(
-    state.adminPassword ?? state.legacyApiKey,
-  )
+  if (!isAdminPasswordConfigured()) {
+    return c.redirect("/admin/setup")
+  }
 
-  if (hasAdminPasswordConfigured && isAuthorizedRequest(c)) {
+  if (isAuthorizedRequest(c)) {
     return c.redirect("/admin")
   }
 
-  const message =
-    hasAdminPasswordConfigured ? undefined : (
-      "No management password configured. Set ADMIN_PASSWORD (or --admin-password)."
-    )
-
-  return c.html(serveLoginPage(message))
+  return c.html(serveLoginPage())
 })
 
 adminRoutes.post("/login", async (c) => {
-  if (!state.adminPassword && !state.legacyApiKey) {
+  if (!isAdminPasswordConfigured()) {
     return c.json(
-      {
-        error:
-          "Admin password is not configured. Set ADMIN_PASSWORD (or --admin-password).",
-      },
+      { error: "Admin password is not configured. Use /admin/setup first." },
       400,
     )
   }
@@ -237,6 +226,48 @@ adminRoutes.post("/login", async (c) => {
 
   recordLoginSuccess(clientIp)
   setAdminSession(c, remember)
+  return c.json({ ok: true })
+})
+
+adminRoutes.get("/setup", (c) => {
+  if (isAdminPasswordConfigured()) {
+    return c.redirect("/admin/login")
+  }
+  return c.html(serveSetupPage())
+})
+
+adminRoutes.post("/setup", async (c) => {
+  if (isAdminPasswordConfigured()) {
+    return c.json({ error: "Admin password is already configured." }, 400)
+  }
+
+  let password: string | undefined
+
+  try {
+    const contentType = c.req.header("content-type") ?? ""
+
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+      const body = await c.req.text()
+      const params = new URLSearchParams(body)
+      password = params.get("password") || undefined
+    } else {
+      const payload = await c.req.json<{ password?: string }>()
+      password = payload.password
+    }
+  } catch {
+    return c.json({ error: "Invalid request payload." }, 400)
+  }
+
+  if (!password || password.length < 6) {
+    return c.json(
+      { error: "Password must be at least 6 characters long." },
+      400,
+    )
+  }
+
+  saveAdminPasswordToDb(password)
+  recordLoginSuccess(getClientIp(c))
+  setAdminSession(c, true)
   return c.json({ ok: true })
 })
 

@@ -4,6 +4,13 @@ import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
+import {
+  adminRequest,
+  clearAdminAuth,
+  clearAdminPasswordConfig,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
 type PerformanceRow = {
   model: string
   requests: number
@@ -52,6 +59,8 @@ beforeEach(() => {
   state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.users = []
+  clearAdminPasswordConfig()
+  setupAdminAuth()
 })
 
 afterEach(() => {
@@ -61,6 +70,8 @@ afterEach(() => {
   state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.users = originalUsers
+  clearAdminAuth()
+  clearAdminPasswordConfig()
 })
 
 test("GET /admin/api/usage/performance uses a weighted TPS average", async () => {
@@ -107,7 +118,7 @@ test("GET /admin/api/usage/performance uses a weighted TPS average", async () =>
   })
 
   const response = await server.fetch(
-    new Request("http://localhost/admin/api/usage/performance?range=all"),
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
   )
 
   expect(response.status).toBe(200)

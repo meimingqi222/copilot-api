@@ -13,6 +13,13 @@ import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
+import {
+  adminRequest,
+  clearAdminAuth,
+  clearAdminPasswordConfig,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
 const TEST_CATALOG: ModelsDevCatalog = {
   xiaomi: {
     id: "xiaomi",
@@ -75,6 +82,8 @@ const originalModels = state.models
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   setModelsDevCatalogForTest(TEST_CATALOG)
+  clearAdminPasswordConfig()
+  setupAdminAuth()
   state.models = {
     object: "list",
     data: [
@@ -121,6 +130,8 @@ afterEach(() => {
   stopModelsDevPricingForTest()
   setModelsDevCatalogForTest(null)
   state.models = originalModels
+  clearAdminAuth()
+  clearAdminPasswordConfig()
 })
 
 describe("models.dev pricing resolver", () => {
@@ -250,7 +261,7 @@ describe("models.dev pricing resolver", () => {
 describe("GET /admin/api/usage/pricing", () => {
   test("returns models.dev and unmatched pricing sources", async () => {
     const response = await server.fetch(
-      new Request("http://localhost/admin/api/usage/pricing"),
+      adminRequest("http://localhost/admin/api/usage/pricing"),
     )
     expect(response.status).toBe(200)
 

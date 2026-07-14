@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
-import type { getWindsurfSettings } from "~/lib/accounts"
 import type {
   ChatCompletionsPayload,
   Message,
@@ -10,9 +9,16 @@ import type {
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectFrame } from "./protobuf"
 
-// ── ChatMessageRequestType enum ───────────────────────────────────────────────
-// Extracted from language_server_windows_x64.exe
-// Source: exa.api_server_pb.ChatMessageRequestType
+// ── Enum constants (aligned with oh-my-pi generated protobuf) ──────────────────
+
+const ChatMessageSource = {
+  UNSPECIFIED: 0,
+  USER: 1,
+  SYSTEM: 2,
+  UNKNOWN: 3,
+  TOOL: 4,
+  SYSTEM_PROMPT: 5,
+} as const
 
 const ChatMessageRequestType = {
   UNSPECIFIED: 0,
@@ -27,86 +33,184 @@ const ChatMessageRequestType = {
   DEEPWIKI: 9,
 } as const
 
+const ConversationalPlannerMode = {
+  UNSPECIFIED: 0,
+  DEFAULT: 1,
+  READ_ONLY: 2,
+  NO_TOOL: 3,
+  EXPLORE: 4,
+  PLANNING: 5,
+  AUTO: 6,
+} as const
+
+const CacheControlType = {
+  UNSPECIFIED: 0,
+  EPHEMERAL: 1,
+} as const
+
 const DEFAULT_WINDSURF_SYSTEM_PROMPT =
   "You are Cascade, a powerful coding assistant."
 
+const DEVIN_DEFAULT_STOP_PATTERNS = [
+  "<|user|>",
+  "<|bot|>",
+  "<|context_request|>",
+  "<|endoftext|>",
+  "<|end_of_turn|>",
+]
+
+// ── Deterministic message ids (mirrors oh-my-pi) ───────────────────────────────
+
+function deterministicUuid(seed: string): string {
+  const hash = createHash("sha256").update(seed).digest("hex")
+  return [
+    hash.slice(0, 8),
+    hash.slice(8, 12),
+    `4${hash.slice(13, 16)}`,
+    `${["8", "9", "a", "b"][Number.parseInt(hash.slice(16, 17), 16) % 4]}${hash.slice(17, 20)}`,
+    hash.slice(20, 32),
+  ].join("-")
+}
+
 // ── Message content serialisation ────────────────────────────────────────────
 
-function serializeMessageContent(content: Message["content"]): string {
-  if (typeof content === "string") return content
-  return (content ?? [])
-    .map((item) => {
-      switch (item.type) {
-        case "text": {
-          return item.text
-        }
-        case "image_url": {
-          return "[Image]"
-        }
-        default: {
-          return `[${item.type}]`
-        }
+function extractImageBase64(url: string): string | undefined {
+  const match = url.match(/^data:[^;]+;base64,(.+)$/)
+  return match?.[1]
+}
+
+function extractImageMimeType(url: string): string | undefined {
+  const match = url.match(/^data:([^;]+);base64,/)
+  return match?.[1]
+}
+
+function serializeMessageContent(content: Message["content"]): {
+  text: string
+  images: Array<{ base64: string; mimeType: string }>
+} {
+  if (typeof content === "string") return { text: content, images: [] }
+
+  const parts = content ?? []
+  let text = ""
+  const images: Array<{ base64: string; mimeType: string }> = []
+
+  for (const item of parts) {
+    switch (item.type) {
+      case "text":
+      case "output_text": {
+        text += item.text
+        break
       }
-    })
-    .join("\n")
+      case "image_url": {
+        const base64 = extractImageBase64(item.image_url.url)
+        if (base64) {
+          images.push({
+            base64,
+            mimeType: extractImageMimeType(item.image_url.url) ?? "image/png",
+          })
+        }
+        break
+      }
+      case "reasoning":
+      case "thinking": {
+        // reasoning/thinking parts are handled separately for assistant messages
+        break
+      }
+      default: {
+        break
+      }
+    }
+  }
+  return { text, images }
 }
 
 // ── Request-side message builders ─────────────────────────────────────────────
 
-function buildConvMessage(message: Message): ProtobufEncoder | null {
-  const msg = new ProtobufEncoder()
+function buildChatMessagePrompt(opts: {
+  message: Message
+  index: number
+  cascadeId: string
+}): ProtobufEncoder | null {
+  const { message, index, cascadeId } = opts
+  const prompt = new ProtobufEncoder()
 
-  switch (message.role) {
-    case "user":
-    case "developer": {
-      const content = serializeMessageContent(message.content).trim()
-      if (!content) return null
-      msg.writeVarint(2, 1)
-      msg.writeString(3, content)
-      return msg
+  if (message.role === "user" || message.role === "developer") {
+    const { text, images } = serializeMessageContent(message.content)
+    const trimmed = text.trim()
+    if (!trimmed && images.length === 0) return null
+
+    prompt.writeString(
+      1,
+      deterministicUuid(`${cascadeId}\0${index}\0${message.role}`),
+    )
+    prompt.writeVarint(2, ChatMessageSource.USER)
+    if (trimmed) prompt.writeString(3, trimmed)
+    for (const image of images) {
+      const img = new ProtobufEncoder()
+      img.writeString(1, image.base64)
+      img.writeString(2, image.mimeType)
+      prompt.writeMessage(10, img)
     }
-
-    case "assistant": {
-      const content = serializeMessageContent(message.content).trim()
-      const toolCalls = message.tool_calls ?? []
-      if (!content && toolCalls.length === 0) return null
-
-      msg.writeVarint(2, 2)
-      if (content) msg.writeString(3, content)
-
-      for (const tc of toolCalls) {
-        const tcMsg = new ProtobufEncoder()
-        tcMsg.writeString(1, tc.id)
-        tcMsg.writeString(2, tc.function.name)
-        tcMsg.writeString(3, tc.function.arguments)
-        msg.writeMessage(6, tcMsg)
-      }
-
-      if (message.reasoning_text) {
-        msg.writeString(11, message.reasoning_text)
-      }
-      return msg
-    }
-
-    case "tool": {
-      const content = serializeMessageContent(message.content).trim()
-      if (!content || !message.tool_call_id) return null
-      msg.writeVarint(2, 4)
-      msg.writeString(3, content)
-      msg.writeString(7, message.tool_call_id)
-      return msg
-    }
-
-    default: {
-      return null
-    }
+    return prompt
   }
+
+  if (message.role === "assistant") {
+    const content = serializeMessageContent(message.content)
+    const toolCalls = message.tool_calls ?? []
+    if (!content.text.trim() && toolCalls.length === 0) return null
+
+    prompt.writeString(
+      1,
+      deterministicUuid(`${cascadeId}\0${index}\0assistant`),
+    )
+    prompt.writeVarint(2, ChatMessageSource.SYSTEM)
+    if (content.text.trim()) prompt.writeString(3, content.text.trim())
+
+    for (const tc of toolCalls) {
+      const tcMsg = new ProtobufEncoder()
+      tcMsg.writeString(1, tc.id)
+      tcMsg.writeString(2, tc.function.name)
+      tcMsg.writeString(3, tc.function.arguments)
+      prompt.writeMessage(6, tcMsg)
+    }
+
+    if (message.reasoning_text) {
+      prompt.writeString(11, message.reasoning_text)
+      prompt.writeString(18, "")
+    }
+    return prompt
+  }
+
+  if (message.role === "tool") {
+    const { text, images } = serializeMessageContent(message.content)
+    const trimmed = text.trim()
+    if (!trimmed || !message.tool_call_id) return null
+
+    prompt.writeString(
+      1,
+      deterministicUuid(
+        `${cascadeId}\0${index}\0tool\0${message.tool_call_id}`,
+      ),
+    )
+    prompt.writeVarint(2, ChatMessageSource.TOOL)
+    if (trimmed) prompt.writeString(3, trimmed)
+    prompt.writeString(7, message.tool_call_id)
+    for (const image of images) {
+      const img = new ProtobufEncoder()
+      img.writeString(1, image.base64)
+      img.writeString(2, image.mimeType)
+      prompt.writeMessage(10, img)
+    }
+    return prompt
+  }
+
+  return null
 }
 
 export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
   const texts = payload.messages
     .filter((m) => m.role === "system")
-    .map((m) => serializeMessageContent(m.content).trim())
+    .map((m) => serializeMessageContent(m.content).text.trim())
     .filter(Boolean)
   return texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
 }
@@ -133,6 +237,7 @@ function buildToolDef(tool: Tool): ProtobufEncoder {
   t.writeString(1, tool.function.name)
   t.writeString(2, desc)
   t.writeString(3, JSON.stringify(tool.function.parameters))
+  t.writeBool(12, false)
   return t
 }
 
@@ -150,125 +255,79 @@ function buildDoNotCallTool(): ProtobufEncoder {
   })
 }
 
-// ── Metadata & sampling ────────────────────────────────────────────────────────
+// ── Configuration block (oh-my-pi CompletionConfiguration) ─────────────────────
 
-function buildMetadata(opts: {
-  apiKey: string
-  settings: NonNullable<ReturnType<typeof getWindsurfSettings>>
-  workspaceFingerprint?: string
-}): ProtobufEncoder {
-  return buildWindsurfClientMetadata({
-    apiKey: opts.apiKey,
-    settings: {
-      clientName: opts.settings.clientName ?? "",
-      appVersion: opts.settings.appVersion ?? "",
-      lsVersion: opts.settings.lsVersion ?? "",
-      extensionName: opts.settings.extensionName,
-      ideType: opts.settings.ideType,
-    },
-    workspaceFingerprint: opts.workspaceFingerprint,
-  })
-}
-
-function buildTraceInfo(): ProtobufEncoder {
-  // Field layout verified from live GetChatMessage capture:
-  //   field[1]=trace_id UUID, field[3]=4, field[4]=14
-  // Note: real client does NOT send field[2].
-  const trace = new ProtobufEncoder()
-  trace.writeString(1, randomUUID())
-  trace.writeVarint(3, 4)
-  trace.writeVarint(4, 14)
-  return trace
-}
-
-const SWE_SPECIAL_TOKENS = [
-  "<|user|>",
-  "<|bot|>",
-  "<|context_request|>",
-  "",
-  "<|end_of_turn|>",
-]
-
-function isSlugModelId(modelId: string): boolean {
-  return !/^MODEL(?:_PRIVATE)?_/i.test(modelId)
-}
-
-/** Real LS capture uses mode=5 even for MODEL_PRIVATE_* upstream IDs. */
-function resolveChatMode(requestModel: string): number {
-  if (isSlugModelId(requestModel)) return 5
-  if (/^MODEL_PRIVATE_/i.test(requestModel)) return 5
-  return 15
-}
-
-function buildSamplingBlock(
-  payload: ChatCompletionsPayload,
-  slugModel: boolean,
-): ProtobufEncoder {
-  // Field layout verified from live GetChatMessage capture:
-  //   field[1]=1, field[2]=64000, field[3]=max_tokens,
-  //   field[5]=temperature, field[7]=top_k(40), field[8]=repetition_penalty
-  // Note: real client does NOT send field[6] (top_p).
-  const sampling = new ProtobufEncoder()
-  sampling.writeVarint(1, 1)
-  sampling.writeVarint(2, 64000)
-  sampling.writeVarint(3, payload.max_tokens ?? 1024)
-  sampling.writeDouble(5, payload.temperature ?? 0.4)
-  sampling.writeVarint(7, 40)
-  sampling.writeDouble(8, 1.0)
-  if (slugModel) {
-    for (const tok of SWE_SPECIAL_TOKENS) {
-      sampling.writeString(9, tok)
-    }
-    sampling.writeDouble(11, 1.0)
+function buildConfiguration(payload: ChatCompletionsPayload): ProtobufEncoder {
+  let stopPatterns: Array<string>
+  if (payload.stop && typeof payload.stop === "string") {
+    stopPatterns = [payload.stop, ...DEVIN_DEFAULT_STOP_PATTERNS]
+  } else if (Array.isArray(payload.stop) && payload.stop.length > 0) {
+    stopPatterns = [...payload.stop, ...DEVIN_DEFAULT_STOP_PATTERNS]
+  } else {
+    stopPatterns = DEVIN_DEFAULT_STOP_PATTERNS
   }
-  return sampling
+
+  const cfg = new ProtobufEncoder()
+  cfg.writeVarint(1, 1) // num_completions
+  cfg.writeVarint(2, payload.max_tokens ?? 64000) // max_tokens
+  cfg.writeVarint(3, 200) // max_newlines
+  cfg.writeDouble(5, payload.temperature ?? 0.4) // temperature
+  cfg.writeDouble(6, payload.temperature ?? 0.4) // first_temperature
+  cfg.writeVarint(7, 50) // top_k
+  cfg.writeDouble(8, payload.top_p ?? 1) // top_p
+  for (const pattern of stopPatterns) {
+    cfg.writeString(9, pattern)
+  }
+  cfg.writeDouble(11, 1) // fim_eot_prob_threshold
+  return cfg
+}
+
+function buildToolChoice(): ProtobufEncoder {
+  const choice = new ProtobufEncoder()
+  choice.writeString(1, "auto")
+  return choice
+}
+
+function buildSystemPromptCacheOptions(): ProtobufEncoder {
+  const opts = new ProtobufEncoder()
+  opts.writeVarint(1, CacheControlType.EPHEMERAL)
+  return opts
 }
 
 // ── Full request builder ───────────────────────────────────────────────────────
 
 export function buildRequest(opts: {
   payload: ChatCompletionsPayload
-  settings: NonNullable<ReturnType<typeof getWindsurfSettings>>
   apiKey: string
   requestModel: string
   /** Stable cascade_id (field 16) — reuse across turns for prompt cache. */
   cascadeId: string
-  /** Stable per conversation (metadata field 31). */
-  workspaceFingerprint?: string
-  /**
-   * Stable per-conversation prompt_id (field 22). Devin CLI sends this for
-   * primary conversation turns (17/141 captured requests); subagent calls
-   * omit it. copilot-api forwards external client requests which are always
-   * primary turns, so we send it on every request.
-   */
+  /** Stable per-conversation prompt_id (field 17). */
   promptId?: string
 }): Uint8Array {
-  const { payload, settings, apiKey, requestModel, cascadeId, promptId } = opts
-  const slugModel = isSlugModelId(requestModel)
-  const chatMode = resolveChatMode(requestModel)
+  const { payload, apiKey, requestModel, cascadeId, promptId } = opts
   const request = new ProtobufEncoder()
 
-  request.writeMessage(
-    1,
-    buildMetadata({
-      apiKey,
-      settings,
-      workspaceFingerprint: opts.workspaceFingerprint,
-    }),
-  )
+  request.writeMessage(1, buildWindsurfClientMetadata(apiKey))
   request.writeString(2, resolveSystemPrompt(payload))
 
+  let messageIndex = 0
   for (const message of payload.messages) {
     if (message.role === "system") continue
-    const encoded = buildConvMessage(message)
-    if (encoded) request.writeMessage(3, encoded)
+    const encoded = buildChatMessagePrompt({
+      message,
+      index: messageIndex,
+      cascadeId,
+    })
+    if (encoded) {
+      request.writeMessage(3, encoded)
+      messageIndex += 1
+    }
   }
 
-  // field 7: mode — real LS capture uses 5 for slug + MODEL_PRIVATE_* models
-  request.writeVarint(7, chatMode)
-  request.writeMessage(8, buildSamplingBlock(payload, slugModel))
+  request.writeVarint(7, ChatMessageRequestType.CASCADE)
+  request.writeMessage(8, buildConfiguration(payload))
 
-  // field 10: tool definitions (repeated)
   const tools = payload.tools?.filter(Boolean) ?? []
   if (tools.length > 0) {
     for (const tool of tools) {
@@ -278,17 +337,17 @@ export function buildRequest(opts: {
     request.writeMessage(10, buildDoNotCallTool())
   }
 
-  request.writeMessage(15, buildTraceInfo())
-  // field 16: stable cascade_id (Devin CLI pattern)
+  request.writeBool(11, true) // disable_parallel_tool_calls
+  request.writeMessage(12, buildToolChoice())
+  request.writeMessage(13, buildSystemPromptCacheOptions())
   request.writeString(16, cascadeId)
-  request.writeVarint(20, ChatMessageRequestType.GENERAL) // request type
-  request.writeString(21, requestModel)
-  // Field 22 (prompt_id): stable per conversation. Devin CLI sends it for
-  // primary conversation turns; copilot-api treats every external request as
-  // a primary turn, so we always send it when promptId is provided.
   if (promptId) {
-    request.writeString(22, promptId)
+    request.writeString(17, promptId)
   }
-  // Frame is sent uncompressed to match Devin CLI capture (flags=0).
-  return encodeConnectFrame(request.toUint8Array(), false)
+  request.writeVarint(20, ConversationalPlannerMode.DEFAULT)
+  request.writeString(21, requestModel)
+  request.writeString(22, randomUUID())
+
+  // Connect frame is gzip-compressed to match oh-my-pi.
+  return encodeConnectFrame(request.toUint8Array(), true)
 }

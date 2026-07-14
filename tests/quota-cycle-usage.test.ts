@@ -18,6 +18,13 @@ import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
+import {
+  adminRequest,
+  clearAdminAuth,
+  clearAdminPasswordConfig,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
 
@@ -28,12 +35,16 @@ beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   state.accounts = []
   state.activeAccountIndex = 0
+  clearAdminPasswordConfig()
+  setupAdminAuth()
 })
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
   state.accounts = originalAccounts
   state.activeAccountIndex = originalActiveAccountIndex
+  clearAdminAuth()
+  clearAdminPasswordConfig()
 })
 
 describe("quota cycle window resolution", () => {
@@ -326,7 +337,7 @@ describe("GET /admin/api/quota cycle usage", () => {
     })
 
     const response = await server.fetch(
-      new Request("http://localhost/admin/api/quota"),
+      adminRequest("http://localhost/admin/api/quota"),
     )
     expect(response.status).toBe(200)
 

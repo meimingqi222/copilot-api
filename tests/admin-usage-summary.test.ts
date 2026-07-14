@@ -4,6 +4,13 @@ import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
+import {
+  adminRequest,
+  clearAdminAuth,
+  clearAdminPasswordConfig,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
 type UsageMetrics = {
   requests: number
   promptTokens: number
@@ -69,6 +76,8 @@ beforeEach(() => {
   state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.users = []
+  clearAdminPasswordConfig()
+  setupAdminAuth()
 })
 
 afterEach(() => {
@@ -78,6 +87,8 @@ afterEach(() => {
   state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.users = originalUsers
+  clearAdminAuth()
+  clearAdminPasswordConfig()
 })
 
 test("GET /admin/api/usage/summary returns per-model request counts and time series token breakdown", async () => {
@@ -134,7 +145,7 @@ test("GET /admin/api/usage/summary returns per-model request counts and time ser
   })
 
   const response = await server.fetch(
-    new Request(
+    adminRequest(
       "http://localhost/admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-11",
     ),
   )
@@ -231,7 +242,7 @@ test("GET /admin/api/usage/summary returns null cacheHitRate when no input token
   })
 
   const response = await server.fetch(
-    new Request(
+    adminRequest(
       "http://localhost/admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10",
     ),
   )
@@ -269,7 +280,7 @@ test("GET /admin/api/usage/summary keeps swe-1-6 and swe-1-6-fast separate", asy
   })
 
   const response = await server.fetch(
-    new Request(
+    adminRequest(
       "http://localhost/admin/api/usage/summary?startDate=2026-06-27&endDate=2026-06-27",
     ),
   )
