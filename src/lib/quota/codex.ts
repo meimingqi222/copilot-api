@@ -8,6 +8,7 @@ import type {
 import { getOAuthAccountId, isOAuthAccount } from "~/lib/accounts"
 import {
   CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL,
+  CODEX_RATE_LIMIT_RESET_CREDITS_URL,
   CODEX_REQUEST_HEADERS,
   CODEX_USAGE_URL,
 } from "~/lib/quota/constants"
@@ -41,10 +42,19 @@ export interface CodexQuotaWindowEntry {
   windowEndMs: number | null
 }
 
+export interface CodexResetCreditDetail {
+  id: string
+  status: string
+  grantedAt: string
+  expiresAt: string
+}
+
 export interface CodexQuotaMeta {
   planType: string | null
   subscriptionActiveUntil: string | number | null
   rateLimitResetCreditsAvailableCount: number | null
+  rateLimitResetCredits: Array<CodexResetCreditDetail>
+  rateLimitResetCreditsError: string | null
   windows: Array<CodexQuotaWindowEntry>
 }
 
@@ -381,21 +391,90 @@ export function resolveCodexPlanType(
   return extractCodexPlanTypeFromIdToken(account.credentials?.idToken) ?? null
 }
 
+function asTrimmedString(value: unknown): string {
+  if (typeof value === "string") return value.trim()
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value)
+  }
+  return ""
+}
+
+function normalizeCodexResetCreditDetail(
+  value: unknown,
+): CodexResetCreditDetail | null {
+  if (!value || typeof value !== "object") return null
+  const record = value as Record<string, unknown>
+  const resetType = asTrimmedString(
+    record.reset_type ?? record.resetType,
+  ).toLowerCase()
+  if (resetType && resetType !== "codex_rate_limits") return null
+  const status = asTrimmedString(record.status).toLowerCase()
+  if (status && status !== "available") return null
+  const expiresAt = asTrimmedString(record.expires_at ?? record.expiresAt)
+  if (!expiresAt) return null
+  return {
+    id: asTrimmedString(record.id),
+    status: status || "available",
+    grantedAt: asTrimmedString(record.granted_at ?? record.grantedAt),
+    expiresAt,
+  }
+}
+
+export function parseCodexResetCreditsPayload(payload: unknown): {
+  availableCount: number | null
+  credits: Array<CodexResetCreditDetail>
+} {
+  let parsed = payload
+  if (typeof payload === "string") {
+    try {
+      parsed = JSON.parse(payload.trim()) as unknown
+    } catch {
+      return { availableCount: null, credits: [] }
+    }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { availableCount: null, credits: [] }
+  }
+  const record = parsed as Record<string, unknown>
+  const credits =
+    Array.isArray(record.credits) ?
+      record.credits
+        .map((item) => normalizeCodexResetCreditDetail(item))
+        .filter((item): item is CodexResetCreditDetail => item !== null)
+    : []
+  const availableCount =
+    normalizeNumber(record.available_count ?? record.availableCount) ?? null
+  return { availableCount, credits }
+}
+
 export function buildCodexQuotaMeta(
   account: Account,
   payload: CodexUsagePayload,
+  resetCreditsDetails?: {
+    availableCount: number | null
+    credits: Array<CodexResetCreditDetail>
+    error: string | null
+  },
 ): CodexQuotaMeta {
   const resetCredits =
     payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits ?? null
-  const rateLimitResetCreditsAvailableCount =
+  const usageAvailableCount =
     normalizeNumber(
       resetCredits?.available_count ?? resetCredits?.availableCount,
     ) ?? null
+  const detailsCount =
+    resetCreditsDetails && resetCreditsDetails.credits.length > 0 ?
+      resetCreditsDetails.credits.length
+    : null
+  const rateLimitResetCreditsAvailableCount =
+    resetCreditsDetails?.availableCount ?? detailsCount ?? usageAvailableCount
 
   return {
     planType: resolveCodexPlanType(account, payload),
     subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(account),
     rateLimitResetCreditsAvailableCount,
+    rateLimitResetCredits: resetCreditsDetails?.credits ?? [],
+    rateLimitResetCreditsError: resetCreditsDetails?.error ?? null,
     windows: buildCodexQuotaWindows(payload),
   }
 }
@@ -418,6 +497,43 @@ function buildCodexRequestHeaders(account: Account): Record<string, string> {
     headers["Chatgpt-Account-Id"] = accountId
   }
   return headers
+}
+
+export async function fetchCodexResetCredits(
+  account: Account,
+  signal?: AbortSignal,
+): Promise<{
+  availableCount: number | null
+  credits: Array<CodexResetCreditDetail>
+  error: string | null
+}> {
+  try {
+    const response = await executeUpstreamProxyCall(account, {
+      method: "GET",
+      url: CODEX_RATE_LIMIT_RESET_CREDITS_URL,
+      headers: buildCodexRequestHeaders(account),
+      signal,
+    })
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return {
+        availableCount: null,
+        credits: [],
+        error: `HTTP ${response.statusCode}`,
+      }
+    }
+    const summary = parseCodexResetCreditsPayload(response.body)
+    return {
+      availableCount: summary.availableCount,
+      credits: summary.credits,
+      error: null,
+    }
+  } catch (error) {
+    return {
+      availableCount: null,
+      credits: [],
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
 }
 
 export async function consumeCodexRateLimitResetCredit(

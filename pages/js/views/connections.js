@@ -39,6 +39,9 @@ function connectionsView() {
     batchParsing: false,
     testing: {},
     revealedCreds: {},
+    showImportModal: false,
+    importFile: null,
+    importSkipDuplicates: true,
 
     t(key, params) {
       const app = document.querySelector("[x-data^=adminApp]")
@@ -325,6 +328,8 @@ function connectionsView() {
             : res.method === "model-list" ? ` (models, ${ms}ms)`
             : ` (${ms}ms)`
           this.showToast(this.t("connections.testSuccess") + detail, "success")
+          // Successful probe clears sticky 429/cooldown on the server; refresh UI.
+          await this.load()
         } else {
           this.showToast(
             this.t("connections.testFailed")
@@ -377,6 +382,110 @@ function connectionsView() {
         `${ok}/${allCreds.length} 连通正常`,
         ok === allCreds.length ? "success" : "error",
       )
+      await this.load()
+    },
+
+    async exportConnections() {
+      try {
+        const response = await API.providerConnections.export()
+        const blob = await response.blob()
+        const disposition = response.headers.get("Content-Disposition") || ""
+        const match = disposition.match(/filename="?([^"]+)"?/)
+        const filename =
+          match ? match[1] : "copilot-api-provider-connections.json"
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+        this.showToast(this.t("connections.exportSuccess"), "success")
+      } catch (e) {
+        this.showToast(e.message || this.t("error.load"), "error")
+      }
+    },
+
+    async exportOneConnection(conn) {
+      try {
+        const response = await API.providerConnections.exportOne(conn.id)
+        const blob = await response.blob()
+        const disposition = response.headers.get("Content-Disposition") || ""
+        const match = disposition.match(/filename="?([^"]+)"?/)
+        const filename =
+          match ? match[1] : `copilot-api-provider-connection-${conn.id}.json`
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+        this.showToast(this.t("connections.exportOneSuccess"), "success")
+      } catch (e) {
+        this.showToast(e.message || this.t("error.load"), "error")
+      }
+    },
+
+    openImportModal() {
+      this.importFile = null
+      this.importSkipDuplicates = true
+      this.showImportModal = true
+      this.$nextTick(() => {
+        if (this.$refs.connImportFileInput)
+          this.$refs.connImportFileInput.value = ""
+        lucide.createIcons()
+      })
+    },
+
+    closeImportModal() {
+      this.showImportModal = false
+      this.importFile = null
+    },
+
+    importFileSelected(event) {
+      this.importFile = event.target.files[0] || null
+    },
+
+    async submitImport() {
+      if (!this.importFile) {
+        this.showToast(this.t("connections.importNoFile"), "error")
+        return
+      }
+      let parsed
+      try {
+        const text = await this.importFile.text()
+        parsed = JSON.parse(text)
+      } catch {
+        this.showToast(this.t("connections.importInvalidFile"), "error")
+        return
+      }
+      const connections =
+        Array.isArray(parsed) ? parsed : (
+          parsed.connections || (parsed.baseUrl ? [parsed] : [])
+        )
+      if (!Array.isArray(connections) || connections.length === 0) {
+        this.showToast(this.t("connections.importInvalidFile"), "error")
+        return
+      }
+      try {
+        const result = await API.providerConnections.import({
+          connections,
+          overwrite: !this.importSkipDuplicates,
+        })
+        let msg = this.t("connections.importSuccess", {
+          count: result.imported,
+        })
+        if (result.skipped > 0) {
+          msg += this.t("connections.importSkipped", { count: result.skipped })
+        }
+        if (result.failed > 0) {
+          msg += this.t("connections.importFailed", { count: result.failed })
+        }
+        this.showToast(msg, result.imported > 0 ? "success" : "info")
+        this.closeImportModal()
+        await this.load()
+      } catch (e) {
+        this.showToast(e.message || this.t("error.create"), "error")
+      }
     },
 
     openAddModel(conn) {

@@ -12,7 +12,8 @@ function accountsView() {
     providers: [],
     showAddModal: false,
     showImportModal: false,
-    importFile: null,
+    /** @type {Array<File>} selected import files (CPA supports multi-select) */
+    importFiles: [],
     importSkipDuplicates: true,
     importMode: "standard",
     defaultNewAccount() {
@@ -111,6 +112,54 @@ function accountsView() {
         || I18n.t(`accounts.provider.${providerId}.name`)
         || providerId
       )
+    },
+
+    /**
+     * Preferred provider order for account sections. Keeps dense providers
+     * (xai/codex with many models) separate from sparse ones so card heights
+     * stay consistent within each group.
+     */
+    PROVIDER_ORDER: [
+      "copilot",
+      "codex",
+      "xai",
+      "claude",
+      "antigravity",
+      "kimi",
+      "windsurf",
+      "codebuff",
+      "mimo-aistudio",
+    ],
+
+    getAccountsByProvider(provider) {
+      return (this.accounts || []).filter(
+        (a) => (a.provider || "copilot") === provider,
+      )
+    },
+
+    /**
+     * Providers that currently have at least one account, sorted.
+     * Dense providers (many models / quota rows) use a wider grid.
+     */
+    getProviderGroups() {
+      const counts = new Map()
+      for (const account of this.accounts || []) {
+        const provider = account.provider || "copilot"
+        counts.set(provider, (counts.get(provider) || 0) + 1)
+      }
+      const known = this.PROVIDER_ORDER.filter((p) => counts.has(p))
+      const extras = [...counts.keys()]
+        .filter((p) => !this.PROVIDER_ORDER.includes(p))
+        .sort()
+      return [...known, ...extras].map((provider) => ({
+        provider,
+        count: counts.get(provider) || 0,
+        accounts: this.getAccountsByProvider(provider),
+        // Sparse providers (few models/features) use a denser grid.
+        dense: ["antigravity", "codebuff", "kimi", "mimo-aistudio"].includes(
+          provider,
+        ),
+      }))
     },
 
     selectedProvider() {
@@ -555,7 +604,7 @@ function accountsView() {
     },
 
     openImportModal() {
-      this.importFile = null
+      this.importFiles = []
       this.importSkipDuplicates = true
       this.importMode = "standard"
       this.showImportModal = true
@@ -566,45 +615,114 @@ function accountsView() {
 
     closeImportModal() {
       this.showImportModal = false
-      this.importFile = null
+      this.importFiles = []
     },
 
     importFileSelected(event) {
-      this.importFile = event.target.files[0] || null
+      const list = event.target.files
+      this.importFiles = list && list.length > 0 ? Array.from(list) : []
+    },
+
+    /** Collect CPA auth records from one or many JSON files (CPA auths/* style). */
+    async parseCpaImportFiles(files) {
+      const records = []
+      const parseErrors = []
+      for (const file of files) {
+        try {
+          const text = await file.text()
+          const parsed = JSON.parse(text)
+          if (Array.isArray(parsed)) {
+            records.push(...parsed)
+          } else if (parsed && typeof parsed === "object") {
+            if (Array.isArray(parsed.accounts)) {
+              records.push(...parsed.accounts)
+            } else if (Array.isArray(parsed.auths)) {
+              records.push(...parsed.auths)
+            } else {
+              // Single CPA auth object (typical auths/foo.json)
+              records.push(parsed)
+            }
+          } else {
+            parseErrors.push(file.name)
+          }
+        } catch {
+          parseErrors.push(file.name)
+        }
+      }
+      return { records, parseErrors }
+    },
+
+    async parseStandardImportFiles(files) {
+      const accounts = []
+      const parseErrors = []
+      for (const file of files) {
+        try {
+          const text = await file.text()
+          const parsed = JSON.parse(text)
+          if (Array.isArray(parsed)) {
+            accounts.push(...parsed)
+          } else if (parsed && Array.isArray(parsed.accounts)) {
+            accounts.push(...parsed.accounts)
+          } else {
+            parseErrors.push(file.name)
+          }
+        } catch {
+          parseErrors.push(file.name)
+        }
+      }
+      return { accounts, parseErrors }
     },
 
     async submitImport() {
-      if (!this.importFile) {
+      if (!this.importFiles || this.importFiles.length === 0) {
         this.showToast(I18n.t("accounts.importNoFile"), "error")
         return
       }
-      let parsed
-      try {
-        const text = await this.importFile.text()
-        parsed = JSON.parse(text)
-      } catch {
-        this.showToast(I18n.t("accounts.importInvalidFile"), "error")
-        return
-      }
-      if (this.importMode === "standard") {
-        const accounts = Array.isArray(parsed) ? parsed : parsed.accounts || []
-        if (accounts.length === 0) {
-          this.showToast(I18n.t("accounts.importInvalidFile"), "error")
-          return
-        }
-      }
 
       try {
-        const result =
-          this.importMode === "cpa" ?
-            await API.accounts.importCpa({
-              records: parsed,
-              overwrite: !this.importSkipDuplicates,
-            })
-          : await API.accounts.import({
-              accounts: Array.isArray(parsed) ? parsed : parsed.accounts || [],
-              overwrite: !this.importSkipDuplicates,
-            })
+        let result
+        if (this.importMode === "cpa") {
+          const { records, parseErrors } = await this.parseCpaImportFiles(
+            this.importFiles,
+          )
+          if (parseErrors.length > 0 && records.length === 0) {
+            this.showToast(I18n.t("accounts.importInvalidFile"), "error")
+            return
+          }
+          if (records.length === 0) {
+            this.showToast(I18n.t("accounts.importInvalidFile"), "error")
+            return
+          }
+          result = await API.accounts.importCpa({
+            records,
+            overwrite: !this.importSkipDuplicates,
+          })
+          if (parseErrors.length > 0) {
+            result = {
+              ...result,
+              failed: (result.failed || 0) + parseErrors.length,
+            }
+          }
+        } else {
+          const { accounts, parseErrors } = await this.parseStandardImportFiles(
+            this.importFiles,
+          )
+          if (accounts.length === 0) {
+            this.showToast(I18n.t("accounts.importInvalidFile"), "error")
+            return
+          }
+          result = await API.accounts.import({
+            accounts,
+            overwrite: !this.importSkipDuplicates,
+          })
+          if (parseErrors.length > 0) {
+            result = {
+              ...result,
+              failed: (result.failed || 0) + parseErrors.length,
+            }
+          }
+        }
+
         let msg = I18n.t("accounts.importSuccess", { count: result.imported })
         if (result.skipped > 0)
           msg += I18n.t("accounts.importSkipped", { count: result.skipped })

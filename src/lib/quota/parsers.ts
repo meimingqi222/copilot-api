@@ -99,6 +99,18 @@ export interface CodexAdditionalRateLimit {
 export interface CodexRateLimitResetCredits {
   available_count?: number | string
   availableCount?: number | string
+  credits?: Array<CodexRateLimitResetCreditItem> | null
+}
+
+export interface CodexRateLimitResetCreditItem {
+  id?: string
+  status?: string
+  granted_at?: string
+  grantedAt?: string
+  expires_at?: string
+  expiresAt?: string
+  reset_type?: string
+  resetType?: string
 }
 
 export interface CodexUsagePayload {
@@ -126,7 +138,8 @@ export interface XaiBillingPeriod {
 
 export interface XaiProductUsage {
   product?: string
-  usagePercent?: number
+  usagePercent?: number | string | null
+  usage_percent?: number | string | null
 }
 
 export interface XaiBillingConfig {
@@ -138,8 +151,11 @@ export interface XaiBillingConfig {
   onDemandUsed?: XaiBillingCent | number | string | null
   on_demand_used?: XaiBillingCent | number | string | null
   currentPeriod?: XaiBillingPeriod | null
-  creditUsagePercent?: number
-  productUsage?: Array<XaiProductUsage>
+  current_period?: XaiBillingPeriod | null
+  creditUsagePercent?: number | string | null
+  credit_usage_percent?: number | string | null
+  productUsage?: Array<XaiProductUsage> | null
+  product_usage?: Array<XaiProductUsage> | null
   isUnifiedBillingUser?: boolean
   prepaidBalance?: XaiBillingCent | number | string | null
   topUpMethod?: string
@@ -488,8 +504,11 @@ export function summarizeXaiQuota(payload: XaiBillingPayload): {
     }
   }
 
-  if (config.creditUsagePercent !== undefined) {
-    const usedPercent = Math.max(0, Math.min(100, config.creditUsagePercent))
+  const creditUsagePercent = normalizeNumber(
+    config.creditUsagePercent ?? config.credit_usage_percent,
+  )
+  if (creditUsagePercent !== undefined) {
+    const usedPercent = Math.max(0, Math.min(100, creditUsagePercent))
     const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
     minRemainingPercent =
       minRemainingPercent === undefined ? remainingPercent : (

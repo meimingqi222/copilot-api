@@ -189,6 +189,29 @@ const API = {
           ...(modelId ? { modelId } : {}),
         },
       }),
+    export: async () => {
+      const response = await fetch(`${API.baseUrl}/provider-connections/export`)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || `HTTP ${response.status}`)
+      }
+      return response
+    },
+    exportOne: async (id) => {
+      const response = await fetch(
+        `${API.baseUrl}/provider-connections/${id}/export`,
+      )
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || `HTTP ${response.status}`)
+      }
+      return response
+    },
+    import: (data) =>
+      API.request("/provider-connections/import", {
+        method: "POST",
+        body: data,
+      }),
     addModel: (id, data) =>
       API.request(`/provider-connections/${id}/models`, {
         method: "POST",

@@ -559,148 +559,175 @@
           <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
         </div>
 
-        <div x-show="!loading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <template x-for="account in accounts" :key="account.id">
-            <div class="card p-6">
-              <div class="flex items-start justify-between mb-4">
-                <div class="flex items-center gap-3">
-                  <i :data-lucide="providerIcon(account.provider || 'copilot')" class="w-8 h-8"></i>
-                  <div>
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <p class="font-medium" x-text="account.label || providerLabel(account.provider || 'copilot')"></p>
-                      <span class="badge badge-info uppercase" x-text="account.provider || 'copilot'"></span>
-                    </div>
-                    <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-xs text-[var(--apple-text-tertiary)] truncate max-w-[220px]" :title="account.subtitle" x-text="account.subtitle"></p>
-                    <input
-                      x-show="editingLabel === account.id"
-                      x-model="editLabelValue"
-                      @blur="saveLabel(account)"
-                      @keydown.enter="saveLabel(account)"
-                      @keydown.escape="editingLabel = null"
-                      class="input text-sm mt-1 p-1 h-8"
-                      x-ref="labelInput"
-                    >
-                    <p
-                      x-show="editingLabel !== account.id"
-                      @dblclick="startEditLabel(account)"
-                      class="text-sm text-[var(--apple-text-secondary)] cursor-pointer hover:underline"
-                      x-text="t('accounts.doubleClickEdit') || '双击编辑名称'"></p>
-                  </div>
-                </div>
-                <div class="flex flex-col items-end gap-1">
-                  <span class="badge" :class="account.enabled ? 'badge-success' : 'badge-gray'" x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"></span>
-                  <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
-                  <span class="badge" :class="account.authStatus === 'error' ? 'badge-danger' : account.authStatus === 'ready' ? 'badge-success' : 'badge-gray'"
-                        :title="account.authError || ''"
-                        :style="account.authError ? 'cursor:help' : ''"
-                        x-text="account.authStatus || 'ready'"></span>
-                </div>
-              </div>
-              <div x-show="account.providerFeatures && account.providerFeatures.length" class="mb-4 flex flex-wrap gap-1">
-                <template x-for="feature in account.providerFeatures" :key="feature">
-                  <span class="tag tag-sm tag-muted" x-text="feature"></span>
-                </template>
-              </div>
-              <!-- Quota Summary -->
-              <div x-show="account.supportsQuota" class="mb-4 quota-card-inline">
-                <div class="quota-account-card" :class="QuotaDisplay.providerCardClass(account.provider)">
-                  <div class="quota-card-accent"></div>
-                  <div class="quota-card-body !py-3 !px-3">
-                <div class="flex items-center justify-between gap-2 mb-1">
-                  <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.quota')"></span>
-                  <button
-                    @click="refreshAccountQuota(account)"
-                    class="btn-icon"
-                    :title="t('accounts.quotaRefresh')"
-                    :class="{ 'opacity-75': refreshingQuotaId === account.id }">
-                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingQuotaId === account.id }"></i>
-                  </button>
-                </div>
-                <p class="text-sm font-medium" x-text="formatQuotaSummary(account)"></p>
-                  </div>
-                </div>
-              </div>
-              <!-- Priority Setting -->
-              <div class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg">
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <i data-lucide="list-ordered" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
-                    <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.priority')"></span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <button @click="increasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
-                      <i data-lucide="plus" class="w-4 h-4"></i>
-                    </button>
-                    <input type="number" x-model.number="account.priority" @change="savePriority(account)"
-                           min="0" max="100" step="1"
-                           class="input w-16 text-center text-sm py-1 px-2 h-8"
-                           :disabled="!account.enabled">
-                    <button @click="decreasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
-                      <i data-lucide="minus" class="w-4 h-4"></i>
-                    </button>
-                  </div>
-                </div>
-                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('accounts.priorityHint')"></p>
-              </div>
-              <!-- Available Models -->
-              <div x-show="account.availableModels && account.availableModels.length" class="mb-4">
-                <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
-                <input type="text"
-                       x-model="modelSearch[account.id]"
-                       :placeholder="t('accounts.searchModels') || '搜索模型...'"
-                       class="input text-xs mb-2 py-1 px-2 h-7 w-full">
-                <div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
-                  <template x-for="model in getFilteredModels(account)" :key="model.id">
-                    <div class="flex items-center justify-between gap-1 text-xs px-1.5 py-1 rounded" style="background:rgba(0,113,227,0.07)">
-                      <div class="flex items-center gap-1 min-w-0">
-                        <span :title="model.pickerEnabled ? t('accounts.models.pickerOn') : t('accounts.models.pickerOff')"
-                              :class="model.pickerEnabled ? 'text-[var(--apple-green)]' : 'text-[var(--apple-text-tertiary)]'">
-                          <i :data-lucide="model.pickerEnabled ? 'eye' : 'eye-off'" class="w-3 h-3 inline-block"></i>
-                        </span>
+        <!-- Grouped by provider type so dense cards (xAI/Codex) don't stretch sparse ones (Antigravity) -->
+        <div x-show="!loading">
+          <template x-for="group in getProviderGroups()" :key="group.provider">
+            <div class="mb-8 last:mb-0">
+              <h4 class="text-sm font-semibold text-[var(--apple-text-secondary)] mb-4 flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full"
+                      :class="{
+                        'bg-[#10a37f]': group.provider === 'copilot',
+                        'bg-[#000000]': group.provider === 'codex',
+                        'bg-[#1a1a1a]': group.provider === 'xai',
+                        'bg-[#d97706]': group.provider === 'claude',
+                        'bg-[#6366f1]': group.provider === 'antigravity',
+                        'bg-[#0ea5e9]': group.provider === 'kimi',
+                        'bg-[var(--apple-blue)]': !['copilot','codex','xai','claude','antigravity','kimi'].includes(group.provider)
+                      }"></span>
+                <i :data-lucide="providerIcon(group.provider)" class="w-4 h-4"></i>
+                <span x-text="providerLabel(group.provider)"></span>
+                <span class="text-xs font-normal text-[var(--apple-text-tertiary)]"
+                      x-text="'(' + group.count + ')'"></span>
+              </h4>
+
+              <div class="grid gap-6"
+                   :class="group.dense
+                     ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                     : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'">
+                <template x-for="account in group.accounts" :key="account.id">
+                  <div class="card p-6 flex flex-col h-full">
+                    <div class="flex items-start justify-between mb-4">
+                      <div class="flex items-center gap-3 min-w-0">
+                        <i :data-lucide="providerIcon(account.provider || 'copilot')" class="w-8 h-8 shrink-0"></i>
                         <div class="min-w-0">
-                          <div class="truncate font-medium" style="color:var(--apple-blue)" x-text="model.name || model.id"></div>
-                          <div x-show="model.name && model.name !== model.id"
-                               class="truncate font-mono text-[10px] text-[var(--apple-text-tertiary)]"
-                               x-text="model.id"></div>
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <p class="font-medium truncate" x-text="account.label || providerLabel(account.provider || 'copilot')"></p>
+                          </div>
+                          <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-xs text-[var(--apple-text-tertiary)] truncate max-w-[220px]" :title="account.subtitle" x-text="account.subtitle"></p>
+                          <input
+                            x-show="editingLabel === account.id"
+                            x-model="editLabelValue"
+                            @blur="saveLabel(account)"
+                            @keydown.enter="saveLabel(account)"
+                            @keydown.escape="editingLabel = null"
+                            class="input text-sm mt-1 p-1 h-8"
+                            x-ref="labelInput"
+                          >
+                          <p
+                            x-show="editingLabel !== account.id"
+                            @dblclick="startEditLabel(account)"
+                            class="text-sm text-[var(--apple-text-secondary)] cursor-pointer hover:underline"
+                            x-text="t('accounts.doubleClickEdit') || '双击编辑名称'"></p>
                         </div>
                       </div>
-                      <div class="flex items-center gap-1 shrink-0">
-                        <span x-show="model.vendor" class="px-1 py-0.5 rounded text-[10px] bg-indigo-100 text-indigo-700" x-text="model.vendor"></span>
-                        <div class="flex gap-0.5 shrink-0">
-                          <template x-for="ep in (model.supportedEndpoints || [])" :key="ep">
-                            <span class="px-1 py-0.5 rounded text-[10px] font-medium"
-                                  :class="ep === '/v1/messages' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'"
-                                  x-text="ep === '/v1/messages' ? 'ANT' : ep === '/chat/completions' ? 'OAI' : ep === '/responses' ? 'RSP' : ep"></span>
-                          </template>
-                          <span x-show="!model.supportedEndpoints || !model.supportedEndpoints.length"
-                                class="px-1 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500">all</span>
+                      <div class="flex flex-col items-end gap-1 shrink-0">
+                        <span class="badge" :class="account.enabled ? 'badge-success' : 'badge-gray'" x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"></span>
+                        <span x-show="account.isExhausted" class="badge badge-danger" x-text="t('accounts.status.exhausted')"></span>
+                        <span class="badge" :class="account.authStatus === 'error' ? 'badge-danger' : account.authStatus === 'ready' ? 'badge-success' : 'badge-gray'"
+                              :title="account.authError || ''"
+                              :style="account.authError ? 'cursor:help' : ''"
+                              x-text="account.authStatus || 'ready'"></span>
+                      </div>
+                    </div>
+                    <div x-show="account.providerFeatures && account.providerFeatures.length" class="mb-4 flex flex-wrap gap-1">
+                      <template x-for="feature in account.providerFeatures" :key="feature">
+                        <span class="tag tag-sm tag-muted" x-text="feature"></span>
+                      </template>
+                    </div>
+                    <!-- Quota Summary -->
+                    <div x-show="account.supportsQuota" class="mb-4 quota-card-inline">
+                      <div class="quota-account-card" :class="QuotaDisplay.providerCardClass(account.provider)">
+                        <div class="quota-card-accent"></div>
+                        <div class="quota-card-body !py-3 !px-3">
+                          <div class="flex items-center justify-between gap-2 mb-1">
+                            <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.quota')"></span>
+                            <button
+                              @click="refreshAccountQuota(account)"
+                              class="btn-icon"
+                              :title="t('accounts.quotaRefresh')"
+                              :class="{ 'opacity-75': refreshingQuotaId === account.id }">
+                              <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingQuotaId === account.id }"></i>
+                            </button>
+                          </div>
+                          <p class="text-sm font-medium" x-text="formatQuotaSummary(account)"></p>
                         </div>
                       </div>
                     </div>
-                  </template>
-                  <p x-show="getFilteredModels(account).length === 0" class="text-xs text-[var(--apple-text-tertiary)] text-center py-2">
-                    <span x-text="t('accounts.noModelsFound') || '未找到匹配的模型'"></span>
-                  </p>
-                </div>
-              </div>
-              <div x-show="!account.availableModels || !account.availableModels.length" class="mb-4">
-                <p class="text-xs text-[var(--apple-text-secondary)] italic" x-text="t('accounts.modelsLoading')"></p>
-              </div>
-              <div class="flex items-center gap-1.5">
-                <button @click="toggleEnabled(account)" class="btn btn-sm flex-1"
-                        :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
-                        x-text="t(account.enabled ? 'accounts.disable' : 'accounts.enable')">
-                </button>
-                <button @click="exportOneAccount(account)" class="btn-icon" :title="t('accounts.exportOne')">
-                  <i data-lucide="download" class="w-4 h-4"></i>
-                </button>
-                <button @click="deleteAccount(account.id)" class="btn-icon" style="color:var(--apple-red)" :title="t('delete')">
-                  <i data-lucide="trash-2" class="w-4 h-4"></i>
-                </button>
+                    <!-- Priority Setting -->
+                    <div class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg">
+                      <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                          <i data-lucide="list-ordered" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                          <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.priority')"></span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <button @click="increasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                          </button>
+                          <input type="number" x-model.number="account.priority" @change="savePriority(account)"
+                                 min="0" max="100" step="1"
+                                 class="input w-16 text-center text-sm py-1 px-2 h-8"
+                                 :disabled="!account.enabled">
+                          <button @click="decreasePriority(account)" class="w-7 h-7 rounded flex items-center justify-center bg-[var(--apple-gray-4)] hover:bg-[var(--apple-gray-5)] transition-colors" :disabled="!account.enabled">
+                            <i data-lucide="minus" class="w-4 h-4"></i>
+                          </button>
+                        </div>
+                      </div>
+                      <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('accounts.priorityHint')"></p>
+                    </div>
+                    <!-- Available Models -->
+                    <div x-show="account.availableModels && account.availableModels.length" class="mb-4 flex-1">
+                      <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
+                      <input type="text"
+                             x-model="modelSearch[account.id]"
+                             :placeholder="t('accounts.searchModels') || '搜索模型...'"
+                             class="input text-xs mb-2 py-1 px-2 h-7 w-full">
+                      <div class="flex flex-col gap-1 max-h-48 overflow-y-auto">
+                        <template x-for="model in getFilteredModels(account)" :key="model.id">
+                          <div class="flex items-center justify-between gap-1 text-xs px-1.5 py-1 rounded" style="background:rgba(0,113,227,0.07)">
+                            <div class="flex items-center gap-1 min-w-0">
+                              <span :title="model.pickerEnabled ? t('accounts.models.pickerOn') : t('accounts.models.pickerOff')"
+                                    :class="model.pickerEnabled ? 'text-[var(--apple-green)]' : 'text-[var(--apple-text-tertiary)]'">
+                                <i :data-lucide="model.pickerEnabled ? 'eye' : 'eye-off'" class="w-3 h-3 inline-block"></i>
+                              </span>
+                              <div class="min-w-0">
+                                <div class="truncate font-medium" style="color:var(--apple-blue)" x-text="model.name || model.id"></div>
+                                <div x-show="model.name && model.name !== model.id"
+                                     class="truncate font-mono text-[10px] text-[var(--apple-text-tertiary)]"
+                                     x-text="model.id"></div>
+                              </div>
+                            </div>
+                            <div class="flex items-center gap-1 shrink-0">
+                              <span x-show="model.vendor" class="px-1 py-0.5 rounded text-[10px] bg-indigo-100 text-indigo-700" x-text="model.vendor"></span>
+                              <div class="flex gap-0.5 shrink-0">
+                                <template x-for="ep in (model.supportedEndpoints || [])" :key="ep">
+                                  <span class="px-1 py-0.5 rounded text-[10px] font-medium"
+                                        :class="ep === '/v1/messages' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'"
+                                        x-text="ep === '/v1/messages' ? 'ANT' : ep === '/chat/completions' ? 'OAI' : ep === '/responses' ? 'RSP' : ep"></span>
+                                </template>
+                                <span x-show="!model.supportedEndpoints || !model.supportedEndpoints.length"
+                                      class="px-1 py-0.5 rounded text-[10px] bg-gray-100 text-gray-500">all</span>
+                              </div>
+                            </div>
+                          </div>
+                        </template>
+                        <p x-show="getFilteredModels(account).length === 0" class="text-xs text-[var(--apple-text-tertiary)] text-center py-2">
+                          <span x-text="t('accounts.noModelsFound') || '未找到匹配的模型'"></span>
+                        </p>
+                      </div>
+                    </div>
+                    <div x-show="!account.availableModels || !account.availableModels.length" class="mb-4 flex-1">
+                      <p class="text-xs text-[var(--apple-text-secondary)] italic" x-text="t('accounts.modelsLoading')"></p>
+                    </div>
+                    <div class="flex items-center gap-1.5 mt-auto">
+                      <button @click="toggleEnabled(account)" class="btn btn-sm flex-1"
+                              :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
+                              x-text="t(account.enabled ? 'accounts.disable' : 'accounts.enable')">
+                      </button>
+                      <button @click="exportOneAccount(account)" class="btn-icon" :title="t('accounts.exportOne')">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                      </button>
+                      <button @click="deleteAccount(account.id)" class="btn-icon" style="color:var(--apple-red)" :title="t('delete')">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
           </template>
-          <div x-show="!accounts.length" class="col-span-full empty-state py-12">
+
+          <div x-show="!accounts.length" class="empty-state py-12">
             <i data-lucide="server" class="empty-state-icon"></i>
             <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('accounts.noAccounts')"></p>
           </div>
@@ -854,14 +881,19 @@
                 ></button>
               </div>
               <div>
-                <label class="form-label" x-text="t('accounts.importFile')"></label>
+                <label class="form-label" x-text="importMode === 'cpa' ? t('accounts.importFilesCpa') : t('accounts.importFile')"></label>
                 <input
                   type="file"
                   accept=".json,application/json"
+                  multiple
                   @change="importFileSelected($event)"
                   class="form-input text-sm"
                   x-ref="importFileInput"
                 >
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                   x-text="importMode === 'cpa' ? t('accounts.importFilesCpaHint') : t('accounts.importFilesStandardHint')"></p>
+                <p x-show="importFiles.length > 0" class="text-xs text-[var(--apple-text-secondary)] mt-1"
+                   x-text="t('accounts.importFilesSelected', { count: importFiles.length })"></p>
               </div>
               <div class="flex items-start gap-3">
                 <input
@@ -878,7 +910,7 @@
             </div>
             <div class="modal-footer">
               <button @click="closeImportModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
-              <button @click="submitImport()" class="btn btn-primary" :disabled="!importFile" :class="{ 'opacity-50 cursor-not-allowed': !importFile }">
+              <button @click="submitImport()" class="btn btn-primary" :disabled="importFiles.length === 0" :class="{ 'opacity-50 cursor-not-allowed': importFiles.length === 0 }">
                 <i data-lucide="upload" class="w-4 h-4"></i>
                 <span x-text="t('accounts.import')"></span>
               </button>
@@ -895,6 +927,14 @@
             <button @click="load()" class="btn btn-secondary" :class="{ 'opacity-60': loading }">
               <i data-lucide="refresh-cw" class="w-4 h-4" :class="{ 'animate-spin': loading }"></i>
               <span x-text="t('refresh')"></span>
+            </button>
+            <button @click="exportConnections()" class="btn btn-secondary">
+              <i data-lucide="download" class="w-4 h-4"></i>
+              <span x-text="t('connections.export')"></span>
+            </button>
+            <button @click="openImportModal()" class="btn btn-secondary">
+              <i data-lucide="upload" class="w-4 h-4"></i>
+              <span x-text="t('connections.import')"></span>
             </button>
             <button @click="testAllCreds()" class="btn btn-secondary">
               <i data-lucide="zap" class="w-4 h-4"></i>
@@ -959,6 +999,9 @@
                 <div class="flex items-center gap-1.5 flex-shrink-0">
                   <button @click="refreshModels(conn)" class="btn-icon" :title="t('connections.refreshModels')">
                     <i data-lucide="refresh-ccw" class="w-4 h-4"></i>
+                  </button>
+                  <button @click="exportOneConnection(conn)" class="btn-icon" :title="t('connections.exportOne')">
+                    <i data-lucide="download" class="w-4 h-4"></i>
                   </button>
                   <button @click="openEdit(conn)" class="btn-icon">
                     <i data-lucide="edit-2" class="w-4 h-4"></i>
@@ -1263,6 +1306,48 @@
               <button @click="saveBatchModels()" class="btn btn-primary"
                       :disabled="batchForm.models.filter(m => m.selected).length === 0"
                       x-text="t('connections.batchSave')"></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Provider Connections Import Modal -->
+        <div x-show="showImportModal" class="modal-overlay" @click.self="closeImportModal()" x-cloak>
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="t('connections.importTitle')"></h3>
+              <button @click="closeImportModal()" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="modal-body space-y-4">
+              <p class="text-sm text-[var(--apple-text-secondary)]" x-text="t('connections.importDesc')"></p>
+              <div>
+                <label class="form-label" x-text="t('connections.importFile')"></label>
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  @change="importFileSelected($event)"
+                  class="form-input text-sm"
+                  x-ref="connImportFileInput"
+                >
+              </div>
+              <div class="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="connImportSkipDuplicates"
+                  x-model="importSkipDuplicates"
+                  class="w-4 h-4 mt-0.5 accent-[var(--apple-blue)]"
+                >
+                <div>
+                  <label for="connImportSkipDuplicates" class="text-sm cursor-pointer" x-text="t('connections.importOverwrite')"></label>
+                  <p class="text-xs text-[var(--apple-text-tertiary)] mt-0.5" x-text="t('connections.importOverwriteHint')"></p>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button @click="closeImportModal()" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="submitImport()" class="btn btn-primary" :disabled="!importFile" :class="{ 'opacity-50 cursor-not-allowed': !importFile }">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                <span x-text="t('connections.import')"></span>
+              </button>
             </div>
           </div>
         </div>
@@ -1595,140 +1680,118 @@
             <h3 class="text-title-2 mb-2" x-text="t('quota.accountQuotasAll')"></h3>
             <p class="text-sm text-[var(--apple-text-secondary)] mb-6" x-text="t('quota.accountQuotasAllDesc')"></p>
 
-            <!-- Group 1: Quota-Enabled Accounts -->
-            <div x-show="getQuotaAccounts().length" class="mb-8">
-              <h4 class="text-sm font-semibold text-[var(--apple-text-secondary)] mb-4 flex items-center gap-2">
-                <span class="w-1.5 h-1.5 rounded-full bg-[var(--apple-blue)]"></span>
-                <span x-text="t('quota.group.quotaEnabled')"></span>
-                <span class="text-xs font-normal text-[var(--apple-text-tertiary)]" x-text="'(' + getQuotaAccounts().length + ')'"></span>
-              </h4>
-              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                <template x-for="account in getQuotaAccounts()" :key="account.id">
-                  <div class="quota-account-card flex flex-col h-full" :class="getQuotaCardClass(account.provider)">
-                    <div class="quota-card-accent"></div>
-                    <div class="quota-card-body flex flex-col flex-1">
-                      <div class="flex items-start gap-3 mb-3">
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-2 flex-wrap mb-1">
-                            <span class="quota-provider-badge" :class="getQuotaBadgeClass(account.provider)" x-text="getProviderDisplayName(account.provider || 'copilot')"></span>
-                            <span x-show="account.isActive" class="quota-status-pill bg-[var(--apple-blue)] text-white" x-text="t('accounts.status.current')"></span>
+            <!-- Grouped by provider type so dense cards (xAI/Codex) don't stretch sparse ones (Antigravity) -->
+            <template x-for="group in getProviderGroups()" :key="group.provider">
+              <div class="mb-8 last:mb-0">
+                <h4 class="text-sm font-semibold text-[var(--apple-text-secondary)] mb-4 flex items-center gap-2">
+                  <span class="w-1.5 h-1.5 rounded-full"
+                        :class="{
+                          'bg-[#10a37f]': group.provider === 'copilot',
+                          'bg-[#000000]': group.provider === 'codex',
+                          'bg-[#1a1a1a]': group.provider === 'xai',
+                          'bg-[#d97706]': group.provider === 'claude',
+                          'bg-[#6366f1]': group.provider === 'antigravity',
+                          'bg-[#0ea5e9]': group.provider === 'kimi',
+                          'bg-[var(--apple-blue)]': !['copilot','codex','xai','claude','antigravity','kimi'].includes(group.provider)
+                        }"></span>
+                  <span class="quota-provider-badge" :class="getQuotaBadgeClass(group.provider)"
+                        x-text="getProviderDisplayName(group.provider)"></span>
+                  <span class="text-xs font-normal text-[var(--apple-text-tertiary)]"
+                        x-text="'(' + group.count + ')'"></span>
+                </h4>
+
+                <div class="grid gap-4"
+                     :class="group.dense
+                       ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                       : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3'">
+                  <template x-for="account in group.accounts" :key="account.id">
+                    <div class="quota-account-card flex flex-col h-full" :class="getQuotaCardClass(account.provider)">
+                      <div class="quota-card-accent"></div>
+                      <div class="quota-card-body flex flex-col flex-1">
+                        <div class="flex items-start gap-3 mb-3">
+                          <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2 flex-wrap mb-1">
+                              <span x-show="account.isActive" class="quota-status-pill bg-[var(--apple-blue)] text-white" x-text="t('accounts.status.current')"></span>
+                            </div>
+                            <p class="font-bold text-[16px] text-[var(--apple-text)] tracking-tight truncate" :title="account.label" x-text="account.label"></p>
+                            <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
                           </div>
-                          <p class="font-bold text-[16px] text-[var(--apple-text)] tracking-tight truncate" :title="account.label" x-text="account.label"></p>
-                          <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
+                          <button
+                            x-show="account.supportsQuota !== false"
+                            @click="refreshAccountQuota(account)"
+                            class="btn-icon shrink-0"
+                            :class="{ 'opacity-75': refreshingAccountId === account.id }"
+                            :title="t('quota.refreshAccount')">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingAccountId === account.id }"></i>
+                          </button>
                         </div>
-                        <button
-                          x-show="account.supportsQuota !== false"
-                          @click="refreshAccountQuota(account)"
-                          class="btn-icon shrink-0"
-                          :class="{ 'opacity-75': refreshingAccountId === account.id }"
-                          :title="t('quota.refreshAccount')">
-                          <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="{ 'animate-spin': refreshingAccountId === account.id }"></i>
-                        </button>
-                      </div>
 
-                      <div class="flex flex-wrap gap-1.5 mb-3">
-                        <span class="quota-status-pill bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]">
-                          <span x-text="t('accounts.priority') + ' ' + (account.priority ?? 0)"></span>
-                        </span>
-                        <span class="quota-status-pill"
-                              :class="account.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[#248a3d]' : 'bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]'"
-                              x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
-                        </span>
-                        <span x-show="account.isExhausted" class="quota-status-pill bg-[rgba(255,59,48,0.12)] text-[#c41c14]" x-text="t('accounts.status.exhausted')"></span>
-                      </div>
+                        <div class="flex flex-wrap gap-1.5 mb-3">
+                          <span class="quota-status-pill bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]">
+                            <span x-text="t('accounts.priority') + ' ' + (account.priority ?? 0)"></span>
+                          </span>
+                          <span class="quota-status-pill"
+                                :class="account.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[#248a3d]' : 'bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]'"
+                                x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
+                          </span>
+                          <span x-show="account.isExhausted" class="quota-status-pill bg-[rgba(255,59,48,0.12)] text-[#c41c14]" x-text="t('accounts.status.exhausted')"></span>
+                        </div>
 
-                      <div class="quota-card-summary flex-1">
-                        <div x-show="account.supportsQuota === false" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('quota.unavailable')"></div>
+                        <div class="quota-card-summary flex-1">
+                          <div x-show="account.supportsQuota === false" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('quota.unavailable')"></div>
 
-                        <div x-show="account.supportsQuota !== false && !account.quotaInfo" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('quota.noData')"></div>
+                          <div x-show="account.supportsQuota !== false && !account.quotaInfo" class="text-sm text-[var(--apple-text-tertiary)]" x-text="t('quota.noData')"></div>
 
-                        <div x-show="account.supportsQuota !== false && account.quotaInfo?.unlimited" class="text-sm text-[var(--apple-green)] font-medium" x-text="t('quota.unlimited')"></div>
+                          <div x-show="account.supportsQuota !== false && account.quotaInfo?.unlimited" class="text-sm text-[var(--apple-green)] font-medium" x-text="t('quota.unlimited')"></div>
 
-                        <template x-for="row in getQuotaRows(account)" :key="row.id">
-                          <div class="quota-meter-row" :class="row.hideBar ? 'quota-meter-row-meta' : ''">
-                            <div class="quota-meter-head">
-                              <span class="quota-meter-label"
-                                    :class="row.hideBar ? 'quota-meter-label-meta' : ''"
-                                    x-text="row.label"></span>
-                              <div class="quota-meter-values">
-                                <span class="quota-meter-percent"
-                                      x-show="row.valueText"
-                                      x-text="row.valueText"></span>
-                                <span class="quota-meter-amount"
-                                      x-show="row.amountText"
-                                      x-text="row.amountText"></span>
-                                <span class="quota-meter-reset"
-                                      x-show="row.resetText"
-                                      x-text="row.resetText"></span>
+                          <template x-for="row in getQuotaRows(account)" :key="row.id">
+                            <div class="quota-meter-row" :class="row.hideBar ? 'quota-meter-row-meta' : ''">
+                              <div class="quota-meter-head">
+                                <span class="quota-meter-label"
+                                      :class="row.hideBar ? 'quota-meter-label-meta' : ''"
+                                      x-text="row.label"></span>
+                                <div class="quota-meter-values">
+                                  <span class="quota-meter-percent"
+                                        x-show="row.valueText"
+                                        x-text="row.valueText"></span>
+                                  <span class="quota-meter-amount"
+                                        x-show="row.amountText"
+                                        x-text="row.amountText"></span>
+                                  <span class="quota-meter-reset"
+                                        x-show="row.resetText"
+                                        x-text="row.resetText"></span>
+                                </div>
                               </div>
+                              <div class="progress-bar quota-meter-bar"
+                                   x-show="!row.hideBar && row.remainingPercent !== undefined">
+                                <div class="progress-fill"
+                                     :class="getQuotaBarColor(row)"
+                                     :style="`width: ${row.remainingPercent || 0}%`"></div>
+                              </div>
+                              <div class="quota-meter-cycle"
+                                   x-show="row.cycleUsageText"
+                                   x-text="row.cycleUsageText"></div>
                             </div>
-                            <div class="progress-bar quota-meter-bar"
-                                 x-show="!row.hideBar && row.remainingPercent !== undefined">
-                              <div class="progress-fill"
-                                   :class="getQuotaBarColor(row)"
-                                   :style="`width: ${row.remainingPercent || 0}%`"></div>
-                            </div>
-                            <div class="quota-meter-cycle"
-                                 x-show="row.cycleUsageText"
-                                 x-text="row.cycleUsageText"></div>
-                          </div>
-                        </template>
-                      </div>
+                          </template>
+                        </div>
 
-                      <div x-show="account.provider === 'codex' && canResetCodexQuota(account)"
-                           class="mt-3 flex flex-wrap gap-2 justify-center">
-                        <button
-                          @click="resetAccountQuota(account)"
-                          class="btn btn-secondary btn-small"
-                          :class="{ 'opacity-75': resettingAccountId === account.id }"
-                          :disabled="refreshingAccountId === account.id || resettingAccountId === account.id">
-                          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 inline-block mr-1" :class="{ 'animate-spin': resettingAccountId === account.id }"></i>
-                          <span x-text="t('quota.oauth.codex.resetButton')"></span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-
-            <!-- Group 2: General & Proxy Accounts -->
-            <div x-show="getGeneralAccounts().length">
-              <h4 class="text-sm font-semibold text-[var(--apple-text-secondary)] mb-4 flex items-center gap-2">
-                <span class="w-1.5 h-1.5 rounded-full bg-[var(--apple-gray-4)]"></span>
-                <span x-text="t('quota.group.general')"></span>
-                <span class="text-xs font-normal text-[var(--apple-text-tertiary)]" x-text="'(' + getGeneralAccounts().length + ')'"></span>
-              </h4>
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                <template x-for="account in getGeneralAccounts()" :key="account.id">
-                  <div class="quota-account-card flex flex-col h-full" :class="getQuotaCardClass(account.provider)">
-                    <div class="quota-card-accent"></div>
-                    <div class="quota-card-body flex flex-col flex-1">
-                      <div class="flex items-start gap-3 mb-3">
-                        <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-2 flex-wrap mb-1">
-                            <span class="quota-provider-badge" :class="getQuotaBadgeClass(account.provider)" x-text="getProviderDisplayName(account.provider || 'copilot')"></span>
-                            <span x-show="account.isActive" class="quota-status-pill bg-[var(--apple-blue)] text-white" x-text="t('accounts.status.current')"></span>
-                          </div>
-                          <p class="font-bold text-[16px] text-[var(--apple-text)] tracking-tight truncate" :title="account.label" x-text="account.label"></p>
-                          <p x-show="account.subtitle && isUniqueSubtitle(account.subtitle)" class="text-[11px] font-mono text-[var(--apple-text-tertiary)] truncate mt-0.5" :title="account.subtitle" x-text="account.subtitle"></p>
+                        <div x-show="account.provider === 'codex' && canResetCodexQuota(account)"
+                             class="mt-3 flex flex-wrap gap-2 justify-center">
+                          <button
+                            @click="resetAccountQuota(account)"
+                            class="btn btn-secondary btn-small"
+                            :class="{ 'opacity-75': resettingAccountId === account.id }"
+                            :disabled="refreshingAccountId === account.id || resettingAccountId === account.id">
+                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 inline-block mr-1" :class="{ 'animate-spin': resettingAccountId === account.id }"></i>
+                            <span x-text="t('quota.oauth.codex.resetButton')"></span>
+                          </button>
                         </div>
                       </div>
-
-                      <div class="flex flex-wrap gap-1.5 mb-1">
-                        <span class="quota-status-pill bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]">
-                          <span x-text="t('accounts.priority') + ' ' + (account.priority ?? 0)"></span>
-                        </span>
-                        <span class="quota-status-pill"
-                              :class="account.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[#248a3d]' : 'bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]'"
-                              x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')">
-                        </span>
-                      </div>
                     </div>
-                  </div>
-                </template>
+                  </template>
+                </div>
               </div>
-            </div>
+            </template>
 
             <!-- Empty state when no accounts at all -->
             <div x-show="!accounts.length" class="empty-state">

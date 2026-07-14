@@ -214,12 +214,19 @@ const i18n = {
       "accounts.exportOneSuccess": "账户导出成功",
       "accounts.import": "导入账户",
       "accounts.importTitle": "导入账户",
-      "accounts.importDesc": "从 JSON 文件导入账户，支持批量导入。",
+      "accounts.importDesc":
+        '从 JSON 文件批量导入账户。支持数组，或 { "accounts": [ ... ] }。一次可选多个账户。',
       "accounts.importCpaDesc":
-        "从 CPA (CLIProxyAPI) auths/*.json 导入 OAuth 账户，支持 codex、claude、antigravity、kimi、xai。",
-      "accounts.importModeStandard": "标准格式",
-      "accounts.importModeCpa": "CPA Auth",
+        "从 CPA (CLIProxyAPI) auths 导入 OAuth 账户。可一次多选多个 .json 文件（每个文件通常一条授权），也可选单个包含数组的文件。支持 codex、claude、antigravity、kimi、xai。",
+      "accounts.importModeStandard": "标准格式（批量）",
+      "accounts.importModeCpa": "CPA Auth（多文件）",
       "accounts.importFile": "选择 JSON 文件",
+      "accounts.importFilesCpa": "选择 CPA 授权文件（可多选）",
+      "accounts.importFilesCpaHint":
+        "可一次多选 auths 目录下多个 .json（每个文件一条授权）。也可选单个包含数组的文件。",
+      "accounts.importFilesStandardHint":
+        '可多选；每个文件应为账户数组或 { "accounts": [...] }。',
+      "accounts.importFilesSelected": "已选择 {count} 个文件",
       "accounts.importOverwrite": "跳过已存在的同名账户",
       "accounts.importOverwriteHint":
         "若关闭此选项，将覆盖同名账户（标签+供应商相同）",
@@ -373,6 +380,9 @@ const i18n = {
       "quota.oauth.codex.planLabel": "套餐",
       "quota.oauth.codex.expiresLabel": "续期时间",
       "quota.oauth.codex.resetCreditsLabel": "主动重置次数",
+      "quota.oauth.codex.resetCreditNumber": "重置次数 #{index}",
+      "quota.oauth.codex.resetCreditExpires": "过期时间",
+      "quota.oauth.codex.resetCreditsExpiryFailed": "重置次数明细获取失败",
       "quota.oauth.codex.resetButton": "重置额度",
       "quota.oauth.codex.resetConfirm":
         '将消耗 1 次主动重置次数来重置 "{name}" 的 Codex 额度。是否继续？',
@@ -390,8 +400,15 @@ const i18n = {
       "quota.oauth.kimi.usage": "总用量",
       "quota.oauth.kimi.limit": "限额",
       "quota.oauth.kimi.limitCycle": "{name}",
+      "quota.oauth.xai.planLabel": "套餐",
+      "quota.oauth.xai.planBasic": "Basic",
+      "quota.oauth.xai.planSuperGrok": "SuperGrok",
+      "quota.oauth.xai.planSuperGrokHeavy": "SuperGrok Heavy",
       "quota.oauth.xai.monthlyCredits": "月度额度",
       "quota.oauth.xai.weeklyCredits": "周额度",
+      "quota.oauth.xai.apiUsage": "API 用量",
+      "quota.oauth.xai.cliUsage": "Grok CLI 用量",
+      "quota.oauth.xai.productUsage": "{product} 用量",
       "quota.oauth.xai.usedPercent": "已用 {percent}%",
       "quota.oauth.xai.payAsYouGo": "按需付费",
       "quota.oauth.xai.payAsYouGoEnabled": "已启用（上限 {cap}）",
@@ -406,7 +423,7 @@ const i18n = {
       "connections.protocol": "协议",
       "connections.baseUrl": "Base URL",
       "connections.baseUrlHint":
-        "如需 /v1 前缀请包含在 URL 中（如 https://api.deepseek.com/v1）",
+        "可写服务根（如 https://ark.../api/coding），标准路径会自动补 /v1；也可直接写带 /v1 的完整根。",
       "connections.priority": "优先级",
       "connections.weight": "权重",
       "connections.modelDiscovery": "模型发现",
@@ -439,6 +456,23 @@ const i18n = {
       "connections.testSuccess": "连通正常",
       "connections.testFailed": "连通失败",
       "connections.testAll": "批量测试",
+      "connections.export": "导出连接",
+      "connections.exportSuccess": "Provider 连接导出成功",
+      "connections.exportOne": "导出此连接",
+      "connections.exportOneSuccess": "连接导出成功",
+      "connections.import": "导入连接",
+      "connections.importTitle": "导入 Provider 连接",
+      "connections.importDesc":
+        '从 JSON 批量导入外部 Provider。支持 { "connections": [...] }、数组，或单条连接对象。',
+      "connections.importFile": "选择 JSON 文件",
+      "connections.importOverwrite": "跳过已存在的同 ID 连接",
+      "connections.importOverwriteHint":
+        "若关闭此选项，将覆盖相同 id 的连接（含凭据）。",
+      "connections.importSuccess": "成功导入 {count} 个连接",
+      "connections.importSkipped": "，跳过 {count} 个（已存在）",
+      "connections.importFailed": "，{count} 个失败",
+      "connections.importNoFile": "请选择要导入的文件",
+      "connections.importInvalidFile": "文件格式无效，请选择正确的 JSON 文件",
       "connections.batchAddModel": "批量添加模型",
       "connections.batchPasteLabel": "粘贴模型清单",
       "connections.batchPastePlaceholder":
@@ -827,12 +861,18 @@ const i18n = {
       "accounts.import": "Import Accounts",
       "accounts.importTitle": "Import Accounts",
       "accounts.importDesc":
-        "Import accounts from a JSON file. Batch import is supported.",
+        'Batch-import accounts from a JSON file. Accepts an array or { "accounts": [ ... ] } with multiple entries.',
       "accounts.importCpaDesc":
-        "Import OAuth accounts from CPA (CLIProxyAPI) auths/*.json files. Supports codex, claude, antigravity, kimi, and xai.",
-      "accounts.importModeStandard": "Standard",
-      "accounts.importModeCpa": "CPA Auth",
+        "Import OAuth accounts from CPA (CLIProxyAPI) auths. Multi-select many .json files at once (one auth per file is typical), or one file containing an array. Supports codex, claude, antigravity, kimi, and xai.",
+      "accounts.importModeStandard": "Standard (batch)",
+      "accounts.importModeCpa": "CPA Auth (multi-file)",
       "accounts.importFile": "Select JSON file",
+      "accounts.importFilesCpa": "Select CPA auth files (multi-select)",
+      "accounts.importFilesCpaHint":
+        "You can multi-select many files from the auths folder (one JSON per account). A single file with an array also works.",
+      "accounts.importFilesStandardHint":
+        'Multi-select is supported; each file should be an account array or { "accounts": [...] }.',
+      "accounts.importFilesSelected": "{count} file(s) selected",
       "accounts.importOverwrite": "Skip accounts with duplicate label+provider",
       "accounts.importOverwriteHint":
         "When disabled, accounts with the same label and provider will be overwritten.",
@@ -989,6 +1029,10 @@ const i18n = {
       "quota.oauth.codex.planLabel": "Plan",
       "quota.oauth.codex.expiresLabel": "Renewal time",
       "quota.oauth.codex.resetCreditsLabel": "Manual resets",
+      "quota.oauth.codex.resetCreditNumber": "Reset credit #{index}",
+      "quota.oauth.codex.resetCreditExpires": "Expires",
+      "quota.oauth.codex.resetCreditsExpiryFailed":
+        "Failed to load reset credit details",
       "quota.oauth.codex.resetButton": "Reset quota",
       "quota.oauth.codex.resetConfirm":
         'This will consume 1 manual reset for "{name}". Continue?',
@@ -1006,6 +1050,13 @@ const i18n = {
       "quota.oauth.kimi.usage": "Total usage",
       "quota.oauth.kimi.limit": "Limit",
       "quota.oauth.kimi.limitCycle": "{name}",
+      "quota.oauth.xai.planLabel": "Plan",
+      "quota.oauth.xai.planBasic": "Basic",
+      "quota.oauth.xai.planSuperGrok": "SuperGrok",
+      "quota.oauth.xai.planSuperGrokHeavy": "SuperGrok Heavy",
+      "quota.oauth.xai.apiUsage": "API usage",
+      "quota.oauth.xai.cliUsage": "Grok CLI usage",
+      "quota.oauth.xai.productUsage": "{product} usage",
       "quota.oauth.xai.monthlyCredits": "Monthly credits",
       "quota.oauth.xai.weeklyCredits": "Weekly credits",
       "quota.oauth.xai.usedPercent": "Used {percent}%",
@@ -1022,7 +1073,7 @@ const i18n = {
       "connections.protocol": "Protocol",
       "connections.baseUrl": "Base URL",
       "connections.baseUrlHint":
-        "Include /v1 if your provider requires it (e.g. https://api.deepseek.com/v1).",
+        "You can paste the service root (e.g. https://ark.../api/coding); /v1 is auto-appended for standard paths. Full roots with /v1 also work.",
       "connections.priority": "Priority",
       "connections.weight": "Weight",
       "connections.modelDiscovery": "Model Discovery",
@@ -1055,6 +1106,25 @@ const i18n = {
       "connections.testSuccess": "Connected",
       "connections.testFailed": "Failed",
       "connections.testAll": "Test All",
+      "connections.export": "Export",
+      "connections.exportSuccess": "Provider connections exported",
+      "connections.exportOne": "Export this connection",
+      "connections.exportOneSuccess": "Connection exported",
+      "connections.import": "Import",
+      "connections.importTitle": "Import Provider Connections",
+      "connections.importDesc":
+        'Batch-import external providers from JSON. Accepts { "connections": [...] }, an array, or a single connection object.',
+      "connections.importFile": "Select JSON file",
+      "connections.importOverwrite": "Skip connections with the same id",
+      "connections.importOverwriteHint":
+        "When disabled, existing connections with the same id are overwritten (including credentials).",
+      "connections.importSuccess":
+        "Successfully imported {count} connection(s)",
+      "connections.importSkipped": ", skipped {count} (already exist)",
+      "connections.importFailed": ", {count} failed",
+      "connections.importNoFile": "Please select a file to import",
+      "connections.importInvalidFile":
+        "Invalid file format. Please select a valid JSON file.",
       "connections.batchAddModel": "Batch Add Models",
       "connections.batchPasteLabel": "Paste model list",
       "connections.batchPastePlaceholder":
