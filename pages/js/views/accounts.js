@@ -214,15 +214,14 @@ function accountsView() {
         this.editingLabel = null
         return
       }
+      const newLabel = this.editLabelValue.trim()
       try {
-        await API.accounts.update(account.id, {
-          label: this.editLabelValue.trim(),
-        })
+        await API.accounts.update(account.id, { label: newLabel })
         this.showToast(
           I18n.t("accounts.updateSuccess") || "Account name updated",
           "success",
         )
-        await this.load()
+        account.label = newLabel
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       } finally {
@@ -515,15 +514,16 @@ function accountsView() {
     },
 
     async toggleEnabled(account) {
+      const nextEnabled = !account.enabled
       try {
-        await API.accounts.update(account.id, { enabled: !account.enabled })
+        await API.accounts.update(account.id, { enabled: nextEnabled })
         this.showToast(
           account.enabled ?
             I18n.t("accounts.disableSuccess")
           : I18n.t("accounts.enableSuccess"),
           "success",
         )
-        await this.load()
+        account.enabled = nextEnabled
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       }
@@ -559,7 +559,7 @@ function accountsView() {
       try {
         await API.accounts.delete(id)
         this.showToast(I18n.t("accounts.deleteSuccess"), "success")
-        await this.load()
+        this.accounts = this.accounts.filter((item) => item.id !== id)
       } catch {
         this.showToast(I18n.t("error.delete"), "error")
       }

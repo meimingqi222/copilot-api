@@ -244,9 +244,12 @@ function hashAdminPassword(input: string): string {
 /**
  * Persist a hashed admin password to stats.db. Used by the initial setup flow.
  * Env/CLI provided passwords still take precedence at runtime.
+ * Accepts either a plaintext password or an already-hashed "sha256:<hex>" value.
  */
 export function saveAdminPasswordToDb(password: string): void {
-  statsStore.setConfig(ADMIN_PASSWORD_CONFIG_KEY, hashAdminPassword(password))
+  const normalized =
+    password.startsWith("sha256:") ? password : hashAdminPassword(password)
+  statsStore.setConfig(ADMIN_PASSWORD_CONFIG_KEY, normalized)
 }
 
 /**

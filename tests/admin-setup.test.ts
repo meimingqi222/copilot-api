@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 
+import { saveAdminPasswordToDb, verifyAdminPassword } from "~/lib/request-auth"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -139,5 +141,28 @@ describe("admin password setup flow", () => {
       adminRequest("http://localhost/admin/api/providers"),
     )
     expect(authed.status).toBe(200)
+  })
+
+  test("env/CLI password overrides previously stored database password", () => {
+    saveAdminPasswordToDb("old-db-password")
+    expect(verifyAdminPassword("old-db-password")).toBe(true)
+
+    state.adminPassword = "new-env-password"
+    saveAdminPasswordToDb("new-env-password")
+
+    expect(verifyAdminPassword("new-env-password")).toBe(true)
+    expect(verifyAdminPassword("old-db-password")).toBe(false)
+  })
+
+  test("saveAdminPasswordToDb does not double-hash already hashed passwords", () => {
+    const expectedHash = `sha256:${createHash("sha256").update("plain-password").digest("hex")}`
+
+    saveAdminPasswordToDb(expectedHash)
+    expect(verifyAdminPassword("plain-password")).toBe(true)
+
+    // Saving the same hash again must keep it unchanged so the original
+    // password keeps working.
+    saveAdminPasswordToDb(expectedHash)
+    expect(verifyAdminPassword("plain-password")).toBe(true)
   })
 })
