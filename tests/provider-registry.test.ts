@@ -11,6 +11,13 @@ import { cacheModels } from "~/lib/utils"
 import { server } from "~/server"
 import { initializeProviderRegistry } from "~/services/providers"
 
+import {
+  adminRequest,
+  clearAdminAuth,
+  clearAdminPasswordConfig,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
 const originalModels = state.models
@@ -29,6 +36,8 @@ beforeEach(async () => {
   state.models = undefined
   state.legacyApiKey = undefined
   state.providerDefaults = structuredClone(originalProviderDefaults)
+  clearAdminPasswordConfig()
+  setupAdminAuth()
 })
 
 afterEach(async () => {
@@ -39,6 +48,8 @@ afterEach(async () => {
   state.providerDefaults = structuredClone(originalProviderDefaults)
   redirectPathsToDir(isolationRoot)
   resetAdaptiveRateLimiterForTest()
+  clearAdminAuth()
+  clearAdminPasswordConfig()
   await fs.rm(testDir, { recursive: true, force: true }).catch(() => undefined)
 })
 
@@ -140,7 +151,7 @@ test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct acco
 
 test("GET /admin/api/providers returns registered provider descriptors", async () => {
   const response = await server.fetch(
-    new Request("http://localhost/admin/api/providers"),
+    adminRequest("http://localhost/admin/api/providers"),
   )
 
   expect(response.status).toBe(200)
@@ -158,7 +169,7 @@ test("GET /admin/api/providers returns registered provider descriptors", async (
 
 test("POST /admin/api/accounts creates a windsurf account with direct credentials", async () => {
   const response = await server.fetch(
-    new Request("http://localhost/admin/api/accounts", {
+    adminRequest("http://localhost/admin/api/accounts", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

@@ -4,15 +4,23 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 
 import { state } from "./state"
+import { statsStore } from "./stats-store"
 import { verifyApiKey } from "./users"
 
 const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
 const REMEMBER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
+const ADMIN_PASSWORD_CONFIG_KEY = "admin_password_hash"
 
 // Paths that are explicitly public and require no API key.
 // /admin route handler performs its own auth checks internally.
-const PUBLIC_PATHS = new Set(["/", "/admin/login", "/health", "/ws/mimo"])
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/admin/login",
+  "/admin/setup",
+  "/health",
+  "/ws/mimo",
+])
 const PUBLIC_PREFIXES = ["/admin"]
 
 export async function requireApiKey(c: Context, next: Next) {
@@ -216,7 +224,49 @@ function hasValidAdminSession(c: Context): boolean {
 }
 
 function getAdminPassword(): string | undefined {
-  return state.adminPassword ?? state.legacyApiKey
+  return (
+    state.adminPassword ?? state.legacyApiKey ?? loadAdminPasswordHashFromDb()
+  )
+}
+
+function loadAdminPasswordHashFromDb(): string | undefined {
+  try {
+    return statsStore.getConfig(ADMIN_PASSWORD_CONFIG_KEY)
+  } catch {
+    return undefined
+  }
+}
+
+function hashAdminPassword(input: string): string {
+  return `sha256:${createHash("sha256").update(input).digest("hex")}`
+}
+
+/**
+ * Persist a hashed admin password to stats.db. Used by the initial setup flow.
+ * Env/CLI provided passwords still take precedence at runtime.
+ */
+export function saveAdminPasswordToDb(password: string): void {
+  statsStore.setConfig(ADMIN_PASSWORD_CONFIG_KEY, hashAdminPassword(password))
+}
+
+/**
+ * Check whether an admin password is configured anywhere (env/CLI or database).
+ */
+export function isAdminPasswordConfigured(): boolean {
+  return Boolean(
+    state.adminPassword || state.legacyApiKey || loadAdminPasswordHashFromDb(),
+  )
+}
+
+/**
+ * Load admin password hash from stats.db into runtime state.
+ * Called once at startup when no env/CLI password was provided.
+ */
+export function loadAdminPasswordFromDb(): void {
+  const hash = loadAdminPasswordHashFromDb()
+  if (hash) {
+    state.adminPassword = hash
+  }
 }
 
 /**

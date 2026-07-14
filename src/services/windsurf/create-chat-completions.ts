@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import type { Account } from "~/lib/accounts"
 import type {
@@ -544,21 +544,12 @@ export async function createWindsurfChatCompletionsOnce(
     hasTools: (payload.tools?.length ?? 0) > 0,
   })
 
-  // f31 (workspaceFingerprint): Devin CLI sends a 732-hex-char (366-byte)
-  // encrypted payload that is unique per request. We cannot reproduce the
-  // encryption (key is baked into devin.exe), but we match the length and
-  // per-request uniqueness so the server's length / replay checks pass.
-  // See scripts/capture/f31_value_analysis.txt for binary analysis.
-  const workspaceFingerprint = randomBytes(366).toString("hex")
-
   const requestBody = buildRequest({
     payload: { ...payload, model },
-    settings,
     apiKey,
     requestModel,
     cascadeId: cloudIds.cascadeId,
     promptId: cloudIds.promptId,
-    workspaceFingerprint,
   })
 
   const protoFingerprint = fingerprintWindsurfRequest(requestBody)
@@ -567,13 +558,13 @@ export async function createWindsurfChatCompletionsOnce(
     sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
     upstreamModel: protoFingerprint.model,
-    mode: protoFingerprint.mode,
     requestType: protoFingerprint.requestType,
+    plannerMode: protoFingerprint.plannerMode,
     toolCount: protoFingerprint.toolCount,
     messageCount: protoFingerprint.messageCount,
     metadataFields: protoFingerprint.metadataFields,
     metadata: protoFingerprint.metadata,
-    samplingFields: protoFingerprint.samplingFields,
+    configurationFields: protoFingerprint.configurationFields,
   })
 
   // Proactive rate-limit gate — stricter than the global default.
@@ -605,7 +596,7 @@ export async function createWindsurfChatCompletionsOnce(
         "Connect-Accept-Encoding": "gzip",
         "Connect-Content-Encoding": "gzip",
         "Connect-Timeout-Ms": "600000",
-        "User-Agent": "connect-go/1.18.1 (go1.26.1)",
+        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
         "Accept-Encoding": "identity",
       },
       body: requestBody,

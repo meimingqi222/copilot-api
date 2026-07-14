@@ -25,6 +25,7 @@ import {
 import { initializeCredentialRefreshers } from "./lib/provider-connections/refresher-impls"
 import { ensureDirectProviderAccounts } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
+import { loadAdminPasswordFromDb } from "./lib/request-auth"
 import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { statsStore } from "./lib/stats-store"
@@ -65,10 +66,7 @@ interface RunServerOptions {
   codebuffAllowFallbacks: boolean
   windsurfApiKey?: string
   windsurfBaseUrl?: string
-  windsurfAppVersion?: string
-  windsurfLsVersion?: string
   windsurfModel?: string
-  windsurfClientName?: string
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
@@ -112,14 +110,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   state.providerDefaults.windsurf.apiKey = options.windsurfApiKey
   state.providerDefaults.windsurf.baseUrl =
     options.windsurfBaseUrl ?? state.providerDefaults.windsurf.baseUrl
-  state.providerDefaults.windsurf.appVersion =
-    options.windsurfAppVersion ?? state.providerDefaults.windsurf.appVersion
-  state.providerDefaults.windsurf.lsVersion =
-    options.windsurfLsVersion ?? state.providerDefaults.windsurf.lsVersion
   state.providerDefaults.windsurf.defaultModel =
     options.windsurfModel ?? state.providerDefaults.windsurf.defaultModel
-  state.providerDefaults.windsurf.clientName =
-    options.windsurfClientName ?? state.providerDefaults.windsurf.clientName
 
   if (options.provider === "codebuff") {
     logger.info(
@@ -165,6 +157,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   if (state.adminPassword) {
     logger.info("Admin login password is configured")
     await hashAdminPasswordInEnv(state.adminPassword)
+  } else {
+    loadAdminPasswordFromDb()
+    if (state.adminPassword) {
+      logger.info("Admin login password loaded from database")
+    }
   }
 
   // Scrub sensitive values from process.env to reduce exposure in memory
@@ -460,31 +457,13 @@ export const start = defineCommand({
     },
     "windsurf-base-url": {
       type: "string",
-      default:
-        process.env.WINDSURF_BASE_URL
-        ?? "https://server.self-serve.windsurf.com",
+      default: process.env.WINDSURF_BASE_URL ?? "https://server.codeium.com",
       description: "Windsurf API base URL",
-    },
-    "windsurf-app-version": {
-      type: "string",
-      default: process.env.WINDSURF_APP_VERSION ?? "1.48.2",
-      description: "Windsurf app version",
-    },
-    "windsurf-ls-version": {
-      type: "string",
-      default: process.env.WINDSURF_LS_VERSION ?? "2.0.1050",
-      description:
-        "Windsurf client LS version string (metadata protobuf field 7)",
     },
     "windsurf-model": {
       type: "string",
       default: process.env.WINDSURF_MODEL ?? "swe-1-6-fast",
       description: "Windsurf default model",
-    },
-    "windsurf-client-name": {
-      type: "string",
-      default: process.env.WINDSURF_CLIENT_NAME ?? "windsurf-next",
-      description: "Windsurf client name",
     },
     "routing-strategy": {
       type: "string",
@@ -531,10 +510,7 @@ export const start = defineCommand({
       codebuffAllowFallbacks: args["codebuff-allow-fallbacks"],
       windsurfApiKey: args["windsurf-api-key"],
       windsurfBaseUrl: args["windsurf-base-url"],
-      windsurfAppVersion: args["windsurf-app-version"],
-      windsurfLsVersion: args["windsurf-ls-version"],
       windsurfModel: args["windsurf-model"],
-      windsurfClientName: args["windsurf-client-name"],
     })
   },
 })

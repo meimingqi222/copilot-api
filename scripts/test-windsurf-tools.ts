@@ -1,7 +1,7 @@
 /**
  * Live test: verify tool call request/response round-trip
  */
-/* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/use-unknown-in-catch-callback-variable */
+/* eslint-disable @typescript-eslint/use-unknown-in-catch-callback-variable */
 import { Database } from "bun:sqlite"
 import { join } from "node:path"
 
@@ -15,24 +15,22 @@ import type {
 import { state } from "~/lib/state"
 import { createWindsurfChatCompletions } from "~/services/windsurf/create-chat-completions"
 import { extractWindsurfModelsFromPayload } from "~/services/windsurf/get-models"
-import { ProtobufEncoder, extractStrings } from "~/services/windsurf/protobuf"
+import {
+  buildWindsurfClientMetadata,
+  wrapWindsurfMetadataMessage,
+} from "~/services/windsurf/metadata"
 
 state.providerDefaults.windsurf = {
-  baseUrl: "https://server.self-serve.windsurf.com",
-  appVersion: "2026.8.1009",
-  lsVersion: "2026.8.1009",
+  baseUrl: "https://server.codeium.com",
   defaultModel: "swe-1-6-fast",
-  clientName: "windsurf-next",
-  extensionName: "windsurf",
-  ideType: "windsurf",
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
-const BASE_URL = "https://server.self-serve.windsurf.com"
+const BASE_URL = "https://server.codeium.com"
 const dbPath = join(
   process.env.APPDATA ?? "",
-  "Windsurf - Next",
+  "Windsurf",
   "User",
   "globalStorage",
   "state.vscdb",
@@ -44,45 +42,6 @@ const row = db
 if (!row) throw new Error("No windsurfAuthStatus")
 const apiKey = (JSON.parse(row.value) as { apiKey: string }).apiKey
 
-function buildMeta(jwt?: string): ProtobufEncoder {
-  const m = new ProtobufEncoder()
-  m.writeString(1, "windsurf-next")
-  m.writeString(2, "1.48.2")
-  m.writeString(3, apiKey)
-  m.writeString(4, "en")
-  m.writeString(
-    5,
-    JSON.stringify({
-      Os: "windows",
-      Arch: "amd64",
-      Version: "6.3",
-      ProductName: "Windows",
-    }),
-  )
-  m.writeString(7, "2.0.1050")
-  m.writeString(12, "windsurf-next")
-  if (jwt) m.writeString(21, jwt)
-  m.writeBytes(30, Uint8Array.from([0, 1]))
-  return m
-}
-
-const authReq = new ProtobufEncoder()
-authReq.writeMessage(1, buildMeta())
-const authResp = await fetch(`${BASE_URL}/exa.auth_pb.AuthService/GetUserJwt`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/proto",
-    "Connect-Protocol-Version": "1",
-    "User-Agent": "connect-go/1.18.1 (go1.26.1)",
-    "Accept-Encoding": "gzip",
-  },
-  body: authReq.toUint8Array(),
-})
-const authStrings = extractStrings(new Uint8Array(await authResp.arrayBuffer()))
-const jwt = authStrings.find((s) => s.startsWith("eyJ") && s.includes("."))!
-
-const statusReq = new ProtobufEncoder()
-statusReq.writeMessage(1, buildMeta(jwt))
 const statusResp = await fetch(
   `${BASE_URL}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
   {
@@ -90,10 +49,10 @@ const statusResp = await fetch(
     headers: {
       "Content-Type": "application/proto",
       "Connect-Protocol-Version": "1",
-      "User-Agent": "connect-go/1.18.1 (go1.26.1)",
+      "User-Agent": "connect-go/1.18.1 (go1.26.3)",
       "Accept-Encoding": "gzip",
     },
-    body: statusReq.toUint8Array(),
+    body: wrapWindsurfMetadataMessage(buildWindsurfClientMetadata(apiKey)),
   },
 )
 const models = extractWindsurfModelsFromPayload(
@@ -107,7 +66,6 @@ const account: Account = {
   provider: "windsurf",
   credentials: { apiKey },
   availableModels: models,
-  runtimeState: { windsurfJwt: jwt, windsurfJwtFetchedAt: Date.now() },
   enabled: true,
   priority: 0,
   isExhausted: false,

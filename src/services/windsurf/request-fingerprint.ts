@@ -1,22 +1,26 @@
 import { parseMessage } from "~/services/windsurf/protobuf"
 
-const METADATA_STRING_FIELDS = new Set([
-  1, 2, 4, 5, 7, 10, 12, 21, 25, 26, 28, 31,
-])
+const METADATA_STRING_FIELDS = new Set([1, 2, 3, 4, 7, 12])
 
 export interface WindsurfRequestFingerprint {
   metadataFields: Array<number>
   metadata: Record<string, string | number>
-  mode?: number
+  /** request_type (field 7) */
   requestType?: number
+  /** planner_mode (field 20) */
+  plannerMode?: number
   toolCount: number
   messageCount: number
+  /** chat_model_uid (field 21) */
   model?: string
+  /** cascade_id (field 16) */
   cascadeId?: string
+  /** prompt_id (field 17) */
   promptId?: string
+  /** execution_id (field 22) */
+  executionId?: string
   hasSystemPrompt: boolean
-  hasTrace: boolean
-  samplingFields: Array<number>
+  configurationFields: Array<number>
 }
 
 function decodeConnectPayload(framed: Uint8Array): Uint8Array {
@@ -49,9 +53,6 @@ export function fingerprintWindsurfRequest(
   const metadata: Record<string, string | number> = {}
 
   for (const sub of metadataNode?.sub ?? []) {
-    if (sub.varint !== undefined && sub.field === 9) {
-      metadata.request_id = sub.varint
-    }
     if (sub.raw && METADATA_STRING_FIELDS.has(sub.field)) {
       const value = new TextDecoder().decode(sub.raw)
       metadata[`f${sub.field}`] =
@@ -59,21 +60,22 @@ export function fingerprintWindsurfRequest(
     }
   }
 
-  const samplingNode = nodes.find((n) => n.field === 8 && n.sub)
+  const configurationNode = nodes.find((n) => n.field === 8 && n.sub)
   return {
     metadataFields,
     metadata,
-    mode: nodes.find((n) => n.field === 7)?.varint,
-    requestType: nodes.find((n) => n.field === 20)?.varint,
+    requestType: nodes.find((n) => n.field === 7)?.varint,
+    plannerMode: nodes.find((n) => n.field === 20)?.varint,
     toolCount: nodes.filter((n) => n.field === 10).length,
     messageCount: nodes.filter((n) => n.field === 3).length,
     model: readStringField(nodes, 21),
     cascadeId: readStringField(nodes, 16),
-    promptId: readStringField(nodes, 22),
+    promptId: readStringField(nodes, 17),
+    executionId: readStringField(nodes, 22),
     hasSystemPrompt: nodes.some((n) => n.field === 2 && n.raw),
-    hasTrace: nodes.some((n) => n.field === 15),
-    samplingFields:
-      samplingNode?.sub?.map((n) => n.field).sort((a, b) => a - b) ?? [],
+    configurationFields: [
+      ...new Set(configurationNode?.sub?.map((n) => n.field) ?? []),
+    ].sort((a, b) => a - b),
   }
 }
 

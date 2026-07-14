@@ -9,22 +9,8 @@ import {
 } from "./metadata"
 import { type ProtobufNode, parseMessage, walkNodes } from "./protobuf"
 
-function buildGetUserStatusRequest(
-  apiKey: string,
-  settings: NonNullable<ReturnType<typeof getWindsurfSettings>>,
-): Uint8Array {
-  return wrapWindsurfMetadataMessage(
-    buildWindsurfClientMetadata({
-      apiKey,
-      settings: {
-        clientName: settings.clientName ?? "",
-        appVersion: settings.appVersion ?? "",
-        lsVersion: settings.lsVersion ?? "",
-        extensionName: settings.extensionName,
-        ideType: settings.ideType,
-      },
-    }),
-  )
+function buildGetUserStatusRequest(apiKey: string): Uint8Array {
+  return wrapWindsurfMetadataMessage(buildWindsurfClientMetadata(apiKey))
 }
 
 const WINDSURF_SUPPORTED_ENDPOINTS = ["/chat/completions", "/v1/messages"]
@@ -247,11 +233,11 @@ export async function getWindsurfModelsForAccount(
       headers: {
         "Content-Type": "application/proto",
         "Connect-Protocol-Version": "1",
-        "User-Agent": "connect-go/1.18.1 (go1.26.1)",
+        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
         "Accept-Encoding": "gzip",
         "Connect-Timeout-Ms": "5000",
       },
-      body: buildGetUserStatusRequest(apiKey, settings),
+      body: buildGetUserStatusRequest(apiKey),
     },
   )
 

@@ -162,12 +162,7 @@ function applyWindsurfDefaultsIfChanged(account: WindsurfAccount): boolean {
   const nextSettings = {
     ...account.settings,
     baseUrl: defaults.baseUrl,
-    appVersion: defaults.appVersion,
-    lsVersion: defaults.lsVersion,
     defaultModel: defaults.defaultModel,
-    clientName: defaults.clientName,
-    extensionName: defaults.extensionName,
-    ideType: defaults.ideType,
   }
   if (settingsEqual(account.settings, nextSettings)) {
     return false
@@ -187,12 +182,7 @@ function createWindsurfDefaultAccount() {
     },
     settings: {
       baseUrl: defaults.baseUrl,
-      appVersion: defaults.appVersion,
-      lsVersion: defaults.lsVersion,
       defaultModel: defaults.defaultModel,
-      clientName: defaults.clientName,
-      extensionName: defaults.extensionName,
-      ideType: defaults.ideType,
     },
     enabled: true,
     priority: 0,

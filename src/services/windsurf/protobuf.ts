@@ -18,6 +18,10 @@ export class ProtobufEncoder {
     this.appendPart(encodeVarintBytes(value))
   }
 
+  writeBool(fieldNumber: number, value: boolean): void {
+    this.writeVarint(fieldNumber, value ? 1 : 0)
+  }
+
   writeString(fieldNumber: number, value: string): void {
     this.writeBytes(fieldNumber, new TextEncoder().encode(value))
   }
@@ -79,10 +83,48 @@ export function encodeConnectFrame(
   return framed
 }
 
-/** 单个 Connect 帧声明的最大 payload(防御畸形 length 头)。 */
-const MAX_FRAME_PAYLOAD = 64 * 1024 * 1024 // 64MB
+/** Connect 帧 flag 位定义。 */
+const CONNECT_COMPRESSED_FLAG = 0x01
+const CONNECT_END_STREAM_FLAG = 0x02
+
+/**
+ * 单个 Connect 帧声明的最大 payload。
+ * 参考 oh-my-pi 的 Devin provider,将上限从 64MB 收紧到 16MB:
+ * 足够覆盖任何合法 Cascade 响应,同时让畸形/攻击性的 length 头快速失败,
+ * 避免在 idle timeout 触发前缓冲数 GB 数据。
+ */
+const MAX_FRAME_PAYLOAD = 16 * 1024 * 1024 // 16MB
 /** 跨帧累积 buffer 的上限(完整帧会持续被消费,正常情况远低于此)。 */
 const MAX_BUFFER_BYTES = 128 * 1024 * 1024 // 128MB
+
+/**
+ * 解析 Connect end-of-stream JSON trailer。
+ * 当 trailer 携带 `{ error: { code, message } }` 时返回可读错误文本,
+ * 否则返回 undefined。输入来自服务器,用 guard 而非断言检查结构。
+ */
+function readConnectTrailerError(text: string): string | undefined {
+  if (text.length === 0) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  if (!parsed || typeof parsed !== "object" || !("error" in parsed)) {
+    return undefined
+  }
+  const err = parsed.error
+  if (!err || typeof err !== "object") return undefined
+  const code = "code" in err && typeof err.code === "string" ? err.code : ""
+  const message =
+    "message" in err && typeof err.message === "string" ? err.message : ""
+  if (!code && !message) return undefined
+  return `Windsurf stream error${code ? ` ${code}` : ""}: ${message}`
+}
+
+function decompressConnectPayload(payload: Uint8Array): Uint8Array {
+  return new Uint8Array(Bun.gunzipSync(Buffer.from(payload)))
+}
 
 export async function* decodeConnectFrames(
   stream: ReadableStream<Uint8Array>,
@@ -127,8 +169,25 @@ export async function* decodeConnectFrames(
 
       const payload = buffer.slice(5, 5 + length)
       buffer = buffer.slice(5 + length)
-      yield flags === 1 || flags === 3 ?
-        new Uint8Array(Bun.gunzipSync(Buffer.from(payload)))
+
+      // End-of-stream trailer: 不是 protobuf 消息,而是 JSON 元数据/错误。
+      // 参考 oh-my-pi 的处理,先解压再解析,携带错误时直接抛错。
+      if (flags & CONNECT_END_STREAM_FLAG) {
+        const raw =
+          flags & CONNECT_COMPRESSED_FLAG ?
+            decompressConnectPayload(payload)
+          : payload
+        const trailerError = readConnectTrailerError(
+          Buffer.from(raw).toString("utf8").trim(),
+        )
+        if (trailerError) {
+          throw new Error(trailerError)
+        }
+        continue
+      }
+
+      yield flags & CONNECT_COMPRESSED_FLAG ?
+        decompressConnectPayload(payload)
       : payload
     }
   }
