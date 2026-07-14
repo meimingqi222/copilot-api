@@ -39,7 +39,9 @@ import {
   updateModel,
 } from "~/lib/provider-connections"
 import { isCredentialAvailable } from "~/lib/provider-connections/availability"
+import { providerConnectionIoRoutes } from "~/routes/admin/api/provider-connection-io"
 import {
+  clearCredentialErrorStateAfterSuccessfulTest,
   extractJsonArray,
   firstEnabledChatModel,
   modelToTestTarget,
@@ -79,6 +81,9 @@ providerConnectionApiRoutes.get("/", (c) => {
     ),
   })
 })
+
+// Export / import (batch) — see provider-connection-io.ts
+providerConnectionApiRoutes.route("/", providerConnectionIoRoutes)
 
 providerConnectionApiRoutes.post("/", async (c) => {
   let payload: Record<string, unknown>
@@ -244,6 +249,9 @@ providerConnectionApiRoutes.post("/:id/refresh-models", async (c) => {
 //    enabled chat/messages 模型发真实最小请求 — 解决无自动发现能力
 //    provider(如 Cline)的连通性测试问题
 // 4. 都不可行时,fallback 到 plain HTTP probe /models
+//
+// 成功时会清除该 credential 上残留的 cooldown / lastError（例如历史 429），
+// 避免 WebUI 一直显示 upstream 429 警告色。
 providerConnectionApiRoutes.post("/:id/test", async (c) => {
   initializeProtocolAdapters()
   const connection = getProviderConnection(c.req.param("id"))
@@ -268,6 +276,16 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
   const start = Date.now()
   const timeoutSignal = AbortSignal.timeout(15_000)
 
+  const respondOk = async (payload: Record<string, unknown>) => {
+    await clearCredentialErrorStateAfterSuccessfulTest(credential)
+    return c.json({
+      ok: true,
+      latencyMs: Date.now() - start,
+      ...payload,
+      credential: sanitizeCredential(credential),
+    })
+  }
+
   // ── 路径 1: 用户指定了 modelId,直接发 chat 测试 ─────────────────────
   if (requestedModelId && adapter) {
     const target = pickTestModel(connection, requestedModelId)
@@ -285,9 +303,7 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
         target,
         timeoutSignal,
       )
-      return c.json({
-        ok: true,
-        latencyMs: Date.now() - start,
+      return await respondOk({
         method,
         modelId: target.publicModelId,
       })
@@ -313,11 +329,7 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
         credential,
         signal: timeoutSignal,
       })
-      return c.json({
-        ok: true,
-        latencyMs: Date.now() - start,
-        method: "model-list",
-      })
+      return await respondOk({ method: "model-list" })
     } catch (discoveryError) {
       // ── 路径 3: discovery 失败,回退到第一个手工模型发 chat ──────────
       const fallbackTarget = firstEnabledChatModel(connection)
@@ -330,9 +342,7 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
             fallbackTarget,
             timeoutSignal,
           )
-          return c.json({
-            ok: true,
-            latencyMs: Date.now() - start,
+          return await respondOk({
             method,
             modelId: fallbackTarget.publicModelId,
             discoveryError: (discoveryError as Error).message,
@@ -358,15 +368,21 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
         credential,
         timeoutSignal,
       )
+      if (probeResult.ok) {
+        return await respondOk({
+          status: probeResult.status,
+          method: "http-probe",
+        })
+      }
       return c.json(
         {
-          ok: probeResult.ok,
+          ok: false,
           status: probeResult.status,
           error: probeResult.error ?? (discoveryError as Error).message,
           latencyMs: Date.now() - start,
           method: "http-probe",
         },
-        probeResult.ok ? 200 : 502,
+        502,
       )
     }
   }
@@ -377,15 +393,21 @@ providerConnectionApiRoutes.post("/:id/test", async (c) => {
     credential,
     timeoutSignal,
   )
+  if (probeResult.ok) {
+    return await respondOk({
+      status: probeResult.status,
+      method: "http-probe",
+    })
+  }
   return c.json(
     {
-      ok: probeResult.ok,
+      ok: false,
       status: probeResult.status,
       error: probeResult.error,
       latencyMs: Date.now() - start,
       method: "http-probe",
     },
-    probeResult.ok ? 200 : 502,
+    502,
   )
 })
 

@@ -185,6 +185,32 @@ const QuotaDisplay = {
         hideBar: true,
       })
     }
+
+    // Per-credit expiry rows (CPA shows each available reset credit's deadline).
+    const credits =
+      Array.isArray(meta.rateLimitResetCredits) ?
+        meta.rateLimitResetCredits
+      : []
+    for (const [index, credit] of credits.entries()) {
+      if (!credit || typeof credit !== "object") continue
+      const expiresAt = credit.expiresAt || credit.expires_at
+      if (!expiresAt) continue
+      rows.push({
+        id: `reset-credit-expiry-${credit.id || index}`,
+        label: t("quota.oauth.codex.resetCreditNumber", { index: index + 1 }),
+        valueText: this.formatDateTimeValue(expiresAt),
+        amountText: t("quota.oauth.codex.resetCreditExpires"),
+        hideBar: true,
+      })
+    }
+    if (credits.length === 0 && meta.rateLimitResetCreditsError) {
+      rows.push({
+        id: "reset-credit-expiry-error",
+        label: t("quota.oauth.codex.resetCreditsExpiryFailed"),
+        valueText: String(meta.rateLimitResetCreditsError),
+        hideBar: true,
+      })
+    }
     return rows
   },
 
@@ -500,6 +526,60 @@ const QuotaDisplay = {
     return rows
   },
 
+  buildXaiProductUsageRows(config, t) {
+    const raw =
+      config.productUsage ?? config.product_usage ?? config.productUsages
+    if (!Array.isArray(raw)) return []
+    const rows = []
+    for (const [index, item] of raw.entries()) {
+      if (!item || typeof item !== "object") continue
+      const product =
+        typeof item.product === "string" && item.product.trim() ?
+          item.product.trim()
+        : `product-${index + 1}`
+      const usedPercent = this.normalizeNumber(
+        item.usagePercent ?? item.usage_percent,
+      )
+      if (usedPercent === undefined) continue
+      const clampedUsed = Math.max(0, Math.min(100, usedPercent))
+      const remainingPercent = Math.max(0, Math.min(100, 100 - clampedUsed))
+      // Friendly labels for common xAI product buckets (API vs Grok CLI).
+      const productKey = product.toLowerCase()
+      let label = t("quota.oauth.xai.productUsage", { product })
+      if (productKey.includes("api")) {
+        label = t("quota.oauth.xai.apiUsage")
+      } else if (
+        productKey.includes("cli")
+        || productKey.includes("grok")
+        || productKey.includes("shell")
+      ) {
+        label = t("quota.oauth.xai.cliUsage")
+      }
+      rows.push({
+        id: `xai-product-${productKey.replaceAll(/[^a-z0-9]+/g, "-")}`,
+        label,
+        valueText: t("quota.oauth.xai.usedPercent", {
+          percent: clampedUsed.toFixed(1),
+        }),
+        amountText: `${Math.round(remainingPercent)}%`,
+        remainingPercent,
+      })
+    }
+    return rows
+  },
+
+  resolveXaiPlanLabel(monthlyLimitCents, t) {
+    if (monthlyLimitCents === undefined || monthlyLimitCents === null) {
+      return null
+    }
+    // CPA maps monthly credit tiers to plan names.
+    const dollars = monthlyLimitCents / 100
+    if (dollars >= 200) return t("quota.oauth.xai.planSuperGrokHeavy")
+    if (dollars >= 30) return t("quota.oauth.xai.planSuperGrok")
+    if (dollars > 0) return t("quota.oauth.xai.planBasic")
+    return null
+  },
+
   buildXaiRows(details, t) {
     if (!details || typeof details !== "object") return []
     const config = details.config
@@ -512,13 +592,21 @@ const QuotaDisplay = {
     const onDemandCap = this.normalizeCentValue(
       config.onDemandCap ?? config.on_demand_cap,
     )
+    const onDemandUsed = this.normalizeCentValue(
+      config.onDemandUsed ?? config.on_demand_used,
+    )
     const rows = []
 
-    const creditUsagePercent = this.normalizeNumber(config.creditUsagePercent)
+    const creditUsagePercent = this.normalizeNumber(
+      config.creditUsagePercent ?? config.credit_usage_percent,
+    )
     const currentPeriod =
-      config.currentPeriod && typeof config.currentPeriod === "object" ?
+      (config.currentPeriod && typeof config.currentPeriod === "object" ?
         config.currentPeriod
-      : null
+      : null)
+      || (config.current_period && typeof config.current_period === "object" ?
+        config.current_period
+      : null)
     const monthlyPeriodEnd =
       config.monthlyBillingPeriodEnd
       ?? config.monthly_billing_period_end
@@ -526,6 +614,79 @@ const QuotaDisplay = {
       ?? config.billing_period_end
     const weeklyPeriodEnd =
       currentPeriod?.end ?? config.billingPeriodEnd ?? config.billing_period_end
+
+    const planLabel = this.resolveXaiPlanLabel(monthlyLimit, t)
+    if (planLabel) {
+      rows.push({
+        id: "xai-plan",
+        label: t("quota.oauth.xai.planLabel"),
+        valueText: planLabel,
+        hideBar: true,
+      })
+    }
+
+    // Weekly / rolling credits (Grok CLI style) first — matches CPA card order.
+    if (creditUsagePercent !== undefined) {
+      const usedPercent = Math.max(0, Math.min(100, creditUsagePercent))
+      const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+      rows.push({
+        id: "weekly-credits",
+        label: t("quota.oauth.xai.weeklyCredits"),
+        valueText: t("quota.oauth.xai.usedPercent", {
+          percent: usedPercent.toFixed(1),
+        }),
+        amountText: `${Math.round(remainingPercent)}%`,
+        remainingPercent,
+        resetText: this.formatResetTime(weeklyPeriodEnd, t),
+      })
+    }
+
+    // Per-product breakdown (API usage / Grok CLI usage, etc.)
+    rows.push(...this.buildXaiProductUsageRows(config, t))
+
+    // Pay-as-you-go with progress when cap is set.
+    if (onDemandCap !== undefined) {
+      if (onDemandCap > 0) {
+        const usedOnDemand =
+          onDemandUsed
+          ?? (monthlyLimit !== undefined && used !== undefined ?
+            Math.max(0, used - monthlyLimit)
+          : undefined)
+        const remainingOnDemand =
+          usedOnDemand !== undefined ?
+            Math.max(0, onDemandCap - usedOnDemand)
+          : undefined
+        const remainingPercent =
+          usedOnDemand !== undefined ?
+            Math.max(
+              0,
+              Math.min(100, ((onDemandCap - usedOnDemand) / onDemandCap) * 100),
+            )
+          : undefined
+        rows.push({
+          id: "pay-as-you-go",
+          label: t("quota.oauth.xai.payAsYouGo"),
+          valueText:
+            remainingPercent !== undefined ?
+              `${Math.round(remainingPercent)}%`
+            : t("quota.oauth.xai.payAsYouGoEnabled", {
+                cap: this.formatUsdFromCents(onDemandCap),
+              }),
+          amountText:
+            remainingOnDemand !== undefined ?
+              `${this.formatUsdFromCents(remainingOnDemand)} / ${this.formatUsdFromCents(onDemandCap)}`
+            : this.formatUsdFromCents(onDemandCap),
+          remainingPercent,
+        })
+      } else {
+        rows.push({
+          id: "pay-as-you-go",
+          label: t("quota.oauth.xai.payAsYouGo"),
+          valueText: t("quota.oauth.xai.payAsYouGoDisabled"),
+          hideBar: true,
+        })
+      }
+    }
 
     if (monthlyLimit !== undefined || used !== undefined) {
       const remainingCents =
@@ -555,35 +716,6 @@ const QuotaDisplay = {
           : this.formatUsdFromCents(remainingCents),
         remainingPercent,
         resetText: this.formatResetTime(monthlyPeriodEnd, t),
-      })
-    }
-
-    if (creditUsagePercent !== undefined) {
-      const usedPercent = Math.max(0, Math.min(100, creditUsagePercent))
-      const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
-      rows.push({
-        id: "weekly-credits",
-        label: t("quota.oauth.xai.weeklyCredits"),
-        valueText: `${Math.round(remainingPercent)}%`,
-        amountText: t("quota.oauth.xai.usedPercent", {
-          percent: usedPercent.toFixed(1),
-        }),
-        remainingPercent,
-        resetText: this.formatResetTime(weeklyPeriodEnd, t),
-      })
-    }
-
-    if (onDemandCap !== undefined) {
-      rows.push({
-        id: "pay-as-you-go",
-        label: t("quota.oauth.xai.payAsYouGo"),
-        valueText:
-          onDemandCap > 0 ?
-            t("quota.oauth.xai.payAsYouGoEnabled", {
-              cap: this.formatUsdFromCents(onDemandCap),
-            })
-          : t("quota.oauth.xai.payAsYouGoDisabled"),
-        hideBar: true,
       })
     }
 

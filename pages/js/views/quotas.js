@@ -127,6 +127,51 @@ function quotasView() {
       return (this.accounts || []).filter((a) => a.supportsQuota === false)
     },
 
+    /**
+     * Preferred provider order for quota sections. Keeps dense providers
+     * (xai/codex) separate from sparse ones (antigravity) so card heights
+     * stay consistent within each group.
+     */
+    PROVIDER_ORDER: [
+      "copilot",
+      "codex",
+      "xai",
+      "claude",
+      "antigravity",
+      "kimi",
+      "windsurf",
+      "codebuff",
+      "mimo-aistudio",
+    ],
+
+    getAccountsByProvider(provider) {
+      return (this.accounts || []).filter(
+        (a) => (a.provider || "copilot") === provider,
+      )
+    },
+
+    /** Providers that currently have at least one account, sorted. */
+    getProviderGroups() {
+      const counts = new Map()
+      for (const account of this.accounts || []) {
+        const provider = account.provider || "copilot"
+        counts.set(provider, (counts.get(provider) || 0) + 1)
+      }
+      const known = this.PROVIDER_ORDER.filter((p) => counts.has(p))
+      const extras = [...counts.keys()]
+        .filter((p) => !this.PROVIDER_ORDER.includes(p))
+        .sort()
+      return [...known, ...extras].map((provider) => ({
+        provider,
+        count: counts.get(provider) || 0,
+        accounts: this.getAccountsByProvider(provider),
+        // Sparse providers (few quota rows) use a denser grid.
+        dense: ["antigravity", "codebuff", "kimi", "mimo-aistudio"].includes(
+          provider,
+        ),
+      }))
+    },
+
     isUniqueSubtitle(subtitle) {
       if (!subtitle) return false
       return (

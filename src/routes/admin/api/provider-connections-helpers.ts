@@ -9,12 +9,15 @@
 
 import type { ProtocolAdapter } from "~/services/protocols/types"
 
+import { logger } from "~/lib/logger"
 import {
   type ApiCredential,
   type ModelEndpoint,
   type ModelMapping,
   type ProviderConnection,
   type RouteTarget,
+  persistProviderConnections,
+  resetCredentialStatus,
 } from "~/lib/provider-connections"
 import { listProviderConnections } from "~/lib/provider-connections"
 import { isCredentialAvailable } from "~/lib/provider-connections/availability"
@@ -191,5 +194,34 @@ export function extractJsonArray(
     )
   } catch {
     return []
+  }
+}
+
+/**
+ * Connectivity test succeeded → drop stale cooldown / lastError so the UI
+ * no longer shows an orange/red "upstream 429" badge after a healthy probe.
+ * Does not re-enable intentionally disabled credentials.
+ */
+export async function clearCredentialErrorStateAfterSuccessfulTest(
+  credential: ApiCredential,
+): Promise<void> {
+  const hadStickyError =
+    credential.status === "cooldown"
+    || credential.status === "quota_exhausted"
+    || credential.status === "auth_error"
+    || Boolean(credential.lastError)
+    || credential.cooldownUntil !== undefined
+    || credential.lastRateLimitAt !== undefined
+
+  if (!hadStickyError) return
+
+  resetCredentialStatus(credential)
+  try {
+    await persistProviderConnections()
+  } catch (error) {
+    logger.warn(
+      "Failed to persist credential recovery after successful connectivity test:",
+      error,
+    )
   }
 }

@@ -25,9 +25,12 @@ export const KIMI_REQUEST_HEADERS = {
 } as const
 
 export const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+export const CODEX_RATE_LIMIT_RESET_CREDITS_URL =
+  "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 export const CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL =
   "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 export const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
+export const XAI_GROK_CLIENT_VERSION = "0.2.91"
 
 export const CODEX_REQUEST_HEADERS = {
   Authorization: "Bearer $TOKEN$",
@@ -37,6 +40,10 @@ export const CODEX_REQUEST_HEADERS = {
 
 export const XAI_REQUEST_HEADERS = {
   Authorization: "Bearer $TOKEN$",
+  "x-xai-token-auth": "xai-grok-cli",
+  "x-grok-client-version": XAI_GROK_CLIENT_VERSION,
+  Accept: "*/*",
+  "User-Agent": `grok-pager/${XAI_GROK_CLIENT_VERSION} grok-shell/${XAI_GROK_CLIENT_VERSION} (macos; aarch64)`,
 } as const
 
 export const CLAUDE_USAGE_WINDOW_KEYS = [
