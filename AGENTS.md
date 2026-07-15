@@ -45,7 +45,10 @@ src/
 ├── debug.ts                # Debug command implementation
 ├── server.ts               # Hono server setup + routes
 ├── lib/                    # Core utilities and middleware
-│   ├── accounts.ts         # Multi-account management
+│   ├── accounts.ts         # Account types + getter/setter compat layer
+│   ├── account-store.ts    # Account persistence (delegates to provider-connections)
+│   ├── account-adapter.ts  # Account ↔ Connection bidirectional mapper
+│   ├── account-availability.ts # Account availability/cooldown checks
 │   ├── api-config.ts       # API configuration
 │   ├── approval.ts         # Manual approval logic
 │   ├── error.ts            # HTTPError class + forwardError handler
@@ -54,27 +57,60 @@ src/
 │   ├── log-middleware.ts   # Request logging
 │   ├── log-store.ts        # Log storage
 │   ├── paths.ts            # File paths (data directory)
+│   ├── provider-connections/ # Provider Connection system (new truth source)
+│   │   ├── types.ts        # ProviderConnection, ApiCredential, RouteTarget types
+│   │   ├── state.ts        # stateRoot.connections + mutation helpers
+│   │   ├── store.ts        # Disk persistence (provider-connections.json)
+│   │   ├── connection-to-account.ts # Connection → Account reverse mapper
+│   │   ├── connection-metadata.ts   # AccountLegacyMetadata typed readers/writers
+│   │   ├── migrate-from-accounts.ts # Account → Connection migration
+│   │   └── availability.ts # Credential availability checks
 │   ├── proxy.ts            # Proxy configuration
 │   ├── rate-limit.ts       # Adaptive rate limiter
+│   ├── request-admission.ts # Route target resolution + admission
 │   ├── request-auth.ts     # API key authentication
+│   ├── route-target/       # RouteTarget building + selection
+│   │   ├── build.ts        # buildRouteTargets (connections + virtual account connections)
+│   │   └── select.ts       # selectRouteTarget (priority/weight selection)
 │   ├── shell.ts            # Shell script generation
-│   ├── state.ts            # Global state management
+│   ├── state.ts            # Global state (state.accounts = cached from connections)
 │   ├── stats-store.ts      # Usage statistics
 │   ├── token.ts            # GitHub token management
 │   ├── tokenizer.ts        # Token counting
 │   ├── users.ts            # User management
 │   └── utils.ts            # Shared utilities
 ├── services/               # External API clients
-│   ├── github/             # GitHub auth flow
-│   └── copilot/            # Copilot API calls
+│   ├── protocols/          # Protocol adapters (copilot-native, claude-native, etc.)
+│   ├── copilot/            # Copilot API calls
+│   ├── dispatch/           # Request dispatch + failover
+│   └── providers/          # Provider registry + delegation
 └── routes/                 # API route handlers
     ├── chat-completions/   # OpenAI-compatible chat
     ├── messages/           # Anthropic-compatible messages
     ├── models/             # Model listing
     ├── embeddings/         # Embeddings endpoint
-    ├── token/              # Token retrieval
+    ├── responses/          # OpenAI Responses API
     └── admin/              # Admin dashboard API
 ```
+
+### Provider Connection Architecture (Step D refactor)
+
+The codebase is mid-refactor from an Account-centric model to a
+Provider Connection-centric model. Key concepts:
+
+- **ProviderConnection**: The truth source for upstream service configuration.
+  Stored in `provider-connections.json`. Each connection has protocol,
+  credentials, models, baseUrl, etc.
+- **state.accounts**: A cached array derived from `stateRoot.connections` via
+  `syncAccountsFromConnections()`. Still exists for backward compatibility
+  but is no longer the truth source. Mutations go through connection helpers
+  (`upsertProviderConnection`, `removeProviderConnection`).
+- **RouteTarget**: The dispatch unit. `RouteTarget.account` field was deleted
+  in T5.2.3. Protocol adapters derive Account from connection via
+  `connectionToAccount(connection)`.
+- **AccountLegacyMetadata**: Stored in `connection.metadata`, holds
+  account-specific fields during the transition. Typed readers/writers in
+  `connection-metadata.ts`.
 
 ## CLI Structure
 

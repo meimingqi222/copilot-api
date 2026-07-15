@@ -40,10 +40,9 @@ import { isUserAllowedModel } from "~/lib/users"
  * 由 `prepareRequestAdmission` 生成,基于 `buildRouteTargets` 候选池 +
  * `selectRouteTarget` 优先级/权重选择。
  *
- * - `connection`/`credential`: 始终填充。account-backed 路径下由
- *   `accountToConnection(account)` 生成虚拟 ProviderConnection/ApiCredential。
- * - `account`: 仅 account-backed 路径下填充(用于 native adapter 读取
- *   provider-specific 状态,如 cpaMetadata、settings.baseUrl 等)。
+ * - `connection`/`credential`: 始终填充。批次 3 后统一从 getProviderConnection 获取。
+ * - `account`: 仅 account-derived connection 路径下填充(通过 connectionToAccount
+ *   从 connection 派生，用于 native adapter 读取 provider-specific 状态)。
  */
 export interface ProviderAdmission {
   target: RouteTarget
@@ -471,9 +470,8 @@ export function switchToNextRouteTarget(
 /**
  * 把 RouteTarget 解析为 ProviderAdmission 信息。
  *
- * - account-backed target:通过 accountToConnection 构造虚拟 connection/credential,
- *   并附带 account 字段。
- * - 普通 target:从 providerConnections 注册表查找真实 connection/credential。
+ * 批次 3 后统一从 getProviderConnection 查找真实 connection/credential。
+ * account-derived connections 通过 connectionToAccount 派生 account 字段。
  *
  * 返回 null 表示无法解析(调用方应抛出原始错误)。
  */
