@@ -26,6 +26,7 @@ import {
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
+import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 import { state } from "~/lib/state"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
@@ -81,7 +82,13 @@ export function buildRouteTargets(
   options: BuildRouteTargetsOptions = {},
 ): Array<RouteTarget> {
   const onlyAvailable = options.onlyAvailable ?? true
-  const baseConnections = options.connections ?? listProviderConnections()
+  const rawConnections = options.connections ?? listProviderConnections()
+  // 批次 2：account-derived connections 已在 stateRoot.connections 中，
+  // 但它们也会通过 state.accounts → accountToConnection 作为虚拟 connection 加入。
+  // 为避免重复，从 baseConnections 中排除 account-derived connections。
+  const baseConnections = rawConnections.filter(
+    (conn) => !readAccountLegacyMetadata(conn),
+  )
   const accounts = options.accounts ?? state.accounts
 
   // Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,

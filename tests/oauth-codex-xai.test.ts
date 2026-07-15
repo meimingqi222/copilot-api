@@ -30,6 +30,8 @@ import {
 } from "~/services/oauth/xai"
 import { collectResponsesFromSseText } from "~/services/responses/sse-collector"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 
@@ -58,11 +60,11 @@ const CODEX_ID_TOKEN = buildFakeJwtForTest({
 })
 
 beforeEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 afterEach(() => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
 })
 
@@ -424,7 +426,7 @@ describe("OAuth refresh scheduler", () => {
         refreshToken: "codex-refresh",
       },
     }
-    state.accounts = [account]
+    setTestAccounts([account])
 
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -461,7 +463,7 @@ describe("OAuth refresh scheduler", () => {
         tokenEndpoint: "https://auth.x.ai/oauth/token",
       },
     }
-    state.accounts = [account]
+    setTestAccounts([account])
 
     globalThis.fetch = (() =>
       Promise.resolve(

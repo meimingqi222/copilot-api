@@ -5,6 +5,8 @@ import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalFetch = globalThis.fetch
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
@@ -15,7 +17,7 @@ const originalAccountType = state.accountType
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   resetProtectedRouteGuardForTest()
-  state.accounts = [
+  setTestAccounts([
     {
       id: "test-account-id",
       label: "test",
@@ -27,7 +29,7 @@ beforeEach(() => {
       isExhausted: false,
       createdAt: Date.now(),
     },
-  ]
+  ])
   state.activeAccountIndex = 0
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
@@ -37,7 +39,7 @@ beforeEach(() => {
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
   globalThis.fetch = originalFetch
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
   state.legacyApiKey = originalApiKey
@@ -275,7 +277,7 @@ test("POST /v1/responses falls back to chat completions when model lacks /respon
 })
 
 test("POST /v1/responses keeps provider-qualified model bound during chat fallback", async () => {
-  state.accounts = [
+  setTestAccounts([
     {
       id: "codebuff-account-id",
       label: "codebuff",
@@ -325,7 +327,7 @@ test("POST /v1/responses keeps provider-qualified model bound during chat fallba
         },
       ],
     },
-  ]
+  ])
   state.activeAccountIndex = 0
   state.models = {
     object: "list",

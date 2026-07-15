@@ -6,6 +6,8 @@ import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalFetch = globalThis.fetch
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
@@ -18,7 +20,7 @@ const originalUsers = state.users
 beforeEach(() => {
   resetProtectedRouteGuardForTest()
   statsStore.clearUsageStatsForTest()
-  state.accounts = [
+  setTestAccounts([
     {
       id: "test-account-id",
       label: "test",
@@ -30,7 +32,7 @@ beforeEach(() => {
       isExhausted: false,
       createdAt: Date.now(),
     },
-  ]
+  ])
   state.activeAccountIndex = 0
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
@@ -62,7 +64,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
   state.legacyApiKey = originalApiKey

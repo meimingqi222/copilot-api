@@ -13,15 +13,17 @@ import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { executeWithFailover } from "~/services/dispatch/failover"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 afterEach(() => {
   resetAdaptiveRateLimiterForTest()
-  state.accounts = []
+  setTestAccounts([])
   state.activeAccountIndex = 0
 })
 
 beforeEach(() => {
   resetAdaptiveRateLimiterForTest()
-  state.accounts = []
+  setTestAccounts([])
   state.activeAccountIndex = 0
 })
 
@@ -111,7 +113,7 @@ describe("dispatch-failover", () => {
       quotaState: "available",
       createdAt: Date.now(),
     }
-    state.accounts = [account]
+    setTestAccounts([account])
 
     const target: RouteTarget = {
       connectionId: account.id,

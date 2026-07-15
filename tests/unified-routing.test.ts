@@ -26,8 +26,9 @@ import {
   selectRouteTarget,
   targetKey,
 } from "~/lib/route-target"
-import { state } from "~/lib/state"
 import { executeWithFailover } from "~/services/dispatch/failover"
+
+import { setTestAccounts } from "./helpers/set-accounts"
 
 const isolationRoot = PATHS.APP_DIR
 let tempAppDir: string
@@ -44,7 +45,7 @@ afterEach(async () => {
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
   resetAdaptiveRateLimiterForTest()
-  state.accounts = []
+  setTestAccounts([])
   await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
 })
 
@@ -107,7 +108,7 @@ describe("unified buildRouteTargets", () => {
   test("returns both connection and account candidates for the same model", async () => {
     await setupConnection("deepseek", 0, "gpt-5-mini")
     const account = createTestAccount("copilot-acc", 1)
-    state.accounts = [account]
+    setTestAccounts([account])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -134,7 +135,7 @@ describe("unified buildRouteTargets", () => {
   test("account candidates carry correct priority from account.priority", async () => {
     await setupConnection("conn", 5, "model-x")
     const acc = createTestAccount("acc", 2, "model-x")
-    state.accounts = [acc]
+    setTestAccounts([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -151,7 +152,7 @@ describe("unified buildRouteTargets", () => {
   test("disabled account is excluded when onlyAvailable=true", () => {
     const acc = createTestAccount("disabled-acc", 0)
     acc.enabled = false
-    state.accounts = [acc]
+    setTestAccounts([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -163,7 +164,7 @@ describe("unified buildRouteTargets", () => {
   test("account in cooldown is excluded when onlyAvailable=true", () => {
     const acc = createTestAccount("cooldown-acc", 0)
     acc.cooldownUntil = Date.now() + 60_000
-    state.accounts = [acc]
+    setTestAccounts([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -174,7 +175,7 @@ describe("unified buildRouteTargets", () => {
 
   test("connectionId filter excludes account candidates", async () => {
     await setupConnection("deepseek", 0, "gpt-5-mini")
-    state.accounts = [createTestAccount("copilot-acc", 1)]
+    setTestAccounts([createTestAccount("copilot-acc", 1)])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -194,7 +195,7 @@ describe("unified selectRouteTarget", () => {
 
   test("picks highest priority from mixed pool", async () => {
     await setupConnection("conn", 0, "model-x")
-    state.accounts = [createTestAccount("acc", 5, "model-x")]
+    setTestAccounts([createTestAccount("acc", 5, "model-x")])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -207,7 +208,7 @@ describe("unified selectRouteTarget", () => {
 
   test("picks account when it has higher priority", async () => {
     await setupConnection("conn", 10, "model-x")
-    state.accounts = [createTestAccount("acc", 0, "model-x")]
+    setTestAccounts([createTestAccount("acc", 0, "model-x")])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -221,7 +222,7 @@ describe("unified selectRouteTarget", () => {
 
   test("exclude set skips tried targets across systems", async () => {
     await setupConnection("conn", 0, "model-x")
-    state.accounts = [createTestAccount("acc", 5, "model-x")]
+    setTestAccounts([createTestAccount("acc", 5, "model-x")])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -248,7 +249,7 @@ describe("cross-system failover via executeWithFailover", () => {
   test("fails over from connection to account when connection returns 502", async () => {
     await setupConnection("conn", 0, "model-x")
     const account = createTestAccount("acc", 5, "model-x")
-    state.accounts = [account]
+    setTestAccounts([account])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -294,7 +295,7 @@ describe("cross-system failover via executeWithFailover", () => {
   test("fails over from account to connection when account returns 429", async () => {
     await setupConnection("conn", 5, "model-x")
     const account = createTestAccount("acc", 0, "model-x")
-    state.accounts = [account]
+    setTestAccounts([account])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -342,7 +343,7 @@ describe("cross-system failover via executeWithFailover", () => {
   test("throws when all candidates exhausted", async () => {
     await setupConnection("conn", 0, "model-x")
     const account = createTestAccount("acc", 1, "model-x")
-    state.accounts = [account]
+    setTestAccounts([account])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -390,7 +391,7 @@ describe("account targetKey uniqueness", () => {
   test("account and connection targets produce different targetKeys", async () => {
     await setupConnection("conn", 0, "model-x")
     const acc = createTestAccount("acc", 0, "model-x")
-    state.accounts = [acc]
+    setTestAccounts([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
