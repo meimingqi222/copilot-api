@@ -97,13 +97,13 @@
 
 ### P5 消灭 Account 双模型（Step D）
 - [x] T5.1 [需人工确认] 产出 Step D 详细设计文档
-- [~] T5.2 [已批准 2026-07-15] 按 T5.1 批准后的设计实施
+- [~] T5.2 [已批准 2026-07-15] 按 T5.1 批准后的设计实施（⏸️ 暂停：当前版本可用，后续再进一步重构）
   - [x] T5.2.0 迁移基础设施（`migrate-from-accounts.ts` + `connection-to-account.ts` + `connection-metadata.ts` + round-trip 测试）
   - [x] T5.2.1 纯持久化格式换底（启动序列接入迁移 + `saveAccounts` 委托 `saveProviderConnections` + Account 保持内存真相）
-  - [ ] T5.2.2 内存模型翻转（admin 直写 connections + `state.accounts` 删除 + getter/setter 删除，可拆 a/b/c/d）
-  - [ ] T5.2.3 `RouteTarget.account` 特例删除 + protocols 层 `requireTargetAccount` 删除
-  - [ ] T5.2.4 清理与文档（删除 account-store/account-file-store/account-adapter 等无引用文件 + 更新 AGENTS.md）
-  - [ ] T5.2.5 Schema 终态归一化（`AccountLegacyMetadata` 承载区字段提升为类型化本体字段 + `FILE_VERSION` 1→2，见设计文档批次 5）
+  - [~] T5.2.2 内存模型翻转（admin 直写 connections + `state.accounts` 删除 + getter/setter 删除，可拆 a/b/c/d）— **部分完成**：a/b/c 子批次已提交（connection mutation helpers + state.accounts 改为派生缓存 + 生产 mutation 站点改 connection helpers），但 `state.accounts` **未删除**（仍作为从 `stateRoot.connections` 反构造的派生缓存保留），100+ 调用点仍直接引用 `state.accounts`，`accountToConnection` 仍被 27 处使用。设计目标的"消除双模型"未达成。⏸️ 暂停
+  - [x] T5.2.3 `RouteTarget.account` 特例删除 + protocols 层 `requireTargetAccount` 删除
+  - [~] T5.2.4 清理与文档（删除 account-store/account-file-store/account-adapter 等无引用文件 + 更新 AGENTS.md）— **部分完成**：仅更新注释 + AGENTS.md，7 个 `account-*.ts` 文件均未删除（仍有活跃引用）。⏸️ 暂停
+  - [ ] T5.2.5 Schema 终态归一化（`AccountLegacyMetadata` 承载区字段提升为类型化本体字段 + `FILE_VERSION` 1→2，见设计文档批次 5）— ⏸️ 暂停
 
 ### P6 翻译层规约
 - [x] T6.1 确立枢纽格式规约文档
@@ -588,3 +588,9 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | 2026-07-15 | T5.2.0 | ✅ 完成（评审补记） | commit `5006e7d`。新建 `connection-metadata.ts`（AccountLegacyMetadata 类型 + 类型化读取器 + `buildAccountLegacyMetadata`，含 per-provider 主 token 跳过表）、`connection-to-account.ts`（反向映射器）、`migrate-from-accounts.ts`（`accountToConnectionForPersistence` + 批量入口，id 原样保留 R5.9）。16 个新测试含 5 provider round-trip 深度相等 + metadata 完整性 + id 保留。三件套全绿：558 pass / 2 skip / 0 fail（基线 542 + 16）。**补记原因**：实施 commit 未同步更新本清单与日志（违反执行协议第 5 步），由人工评审于 2026-07-16 补记——后续任务的 commit 必须包含本文档更新。 |
 | 2026-07-16 | T5.2.1 | ✅ 完成（评审补记） | commit `d117943`。`loadAccountsUnlocked` 按设计 2.3 四规则重写（首次迁移 + rename .bak / connections 优先 + 警告 / `COPILOT_API_FORCE_REMIGRATE=1` 按 id 合并 / 空状态），加载后 `connectionToAccount` 反构造 `state.accounts`（Account 保持内存真相）。`saveAccountsUnlocked`/`flushAccountsOnShutdown` 委托 `persistAccountsAsConnections`（按 AccountLegacyMetadata 识别 account 来源 connection 做 id 合并，保留非 account 来源 connection，accounts.json 永不复活）。`store.ts:normalizeConnection` 修复 metadata 被剥离导致的 round-trip 丢失。account-store.test.ts / data-dir-isolation.test.ts 改造。三件套全绿：558 pass / 2 skip / 0 fail。 |
 | 2026-07-16 | T5.1 | 🔄 追加批次 5 | 应用户"按最佳设计给出实施方案"要求：现行 AccountLegacyMetadata 承载区被定性为**过渡态**（消除双模型但把 Account 换壳进无类型 metadata），设计文档新增**批次 5（T5.2.5）Schema 终态归一化**——调度语义字段提升为 credential/connection 类型化本体字段（quota/exhaustedAt/lastRateLimitReason/proxyUrl/modelPrefix），provider/quotaState/subtitle 改为派生不存储，credentialExtras 并入 credential.context，`FILE_VERSION` 1→2（v1 读时懒升级，旧二进制拒读 v2 安全降级）。不影响在途 T5.2.2–T5.2.4（其调用点届时统一走 connection-metadata 读取器，批次 5 只改读取器内部与 schema）。任务清单已同步。 |
+| 2026-07-16 | T5.2.2a | ✅ 完成（评审补记） | commit `3228a27`。`provider-connections/state.ts` 新增同步 mutation helpers：`upsertProviderConnection`（替代 `state.accounts.push`）、`removeProviderConnection`（替代 `state.accounts.splice`）、`getMutableProviderConnection`（替代 `state.accounts.find` 可变引用）。`connection-metadata.ts` 新增 connection 级写入器（`setConnectionCooldownUntil`/`setConnectionQuotaState`/`setConnectionExhausted`/`setConnectionRateLimitInfo`/`setConnectionAuthStatus`/`setCredentialValue`/`setCredentialContextField`/`setConnectionSetting`/`setConnectionCredentialExtra`）+ `ensureLegacyMetadata` + `syncAccountToConnection`。三件套全绿：558 pass / 2 skip / 0 fail。 |
+| 2026-07-16 | T5.2.2b | ✅ 完成（评审补记） | commit `397e32f`。`state.ts` 新增 `deriveAccountsFromConnections()` + `syncAccountsFromConnections()`，`state.accounts` 改为从 `stateRoot.connections` 反构造的派生缓存（仅 account-derived connections，通过 `readAccountLegacyMetadata` 识别）。**注意**：此实现偏离设计目标——设计要求**删除** `state.accounts`，实际改为保留为派生缓存。100+ 调用点仍直接引用 `state.accounts`，未改为 `listProviderConnections()`。三件套全绿：558 pass / 2 skip / 0 fail。 |
+| 2026-07-16 | T5.2.2c | ✅ 完成（评审补记） | commit `25ebafd`。生产 mutation 站点（`accounts.ts:addAccount`、`account-import.ts`、`oauth.ts:removeOAuthAccountFromState`、`accounts.ts` delete handler）从 `state.accounts.push/splice/filter` 改为 `upsertProviderConnection`/`removeProviderConnection` + 重建 `state.accounts`。三件套全绿：558 pass / 2 skip / 0 fail。 |
+| 2026-07-16 | T5.2.3 | ✅ 完成（评审补记） | commit `fe41582`。`RouteTarget.account` 字段从 `types.ts` 删除，`requireTargetAccount` 从 `protocols/shared.ts` 删除。9 个 `*-native.ts` protocol adapter 改为 `connectionToAccount(connection)`。`request-admission.ts` 统一走 `getProviderConnection` + `connectionToAccount` 派生 account。`route-target/build.ts` 删除 `target.account` 写入。`grep target\.account src` 仅剩注释。三件套全绿：558 pass / 2 skip / 0 fail。 |
+| 2026-07-16 | T5.2.4 | 🔄 部分完成（评审补记） | commit `6a3fef8`。仅更新注释 + `AGENTS.md` 代码组织章节。**未删除**任何 `account-*.ts` 文件（`account-store.ts`/`account-file-store.ts`/`account-adapter.ts`/`account-availability.ts`/`account-selection.ts`/`account-diagnostics.ts`/`account-legacy-migrator.ts` 均仍有活跃引用，因 T5.2.2 未完成导致无法删除）。三件套全绿：558 pass / 2 skip / 0 fail。 |
+| 2026-07-16 | T5.2 | ⏸️ 暂停 | 用户决定：当前版本可用（G2 三件套全绿：typecheck ✓ / lint:all ✓ / 558 pass / 2 skip / 0 fail），`state.accounts` 作为派生缓存与 connections 保持同步，双模型为内部技术债而非功能问题。暂停 T5.2.2/T5.2.4/T5.2.5 的进一步重构，后续再继续。任务清单与执行日志已同步补记所有已提交但未记录的子批次。 |
