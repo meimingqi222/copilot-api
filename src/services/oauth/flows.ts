@@ -6,15 +6,11 @@ import type { AccountProvider } from "~/lib/accounts"
 
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
+import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 
 import type { PkceCodes } from "./pkce"
 
-export type OAuthFlowProvider =
-  | "claude"
-  | "kimi"
-  | "codex"
-  | "xai"
-  | "antigravity"
+export type OAuthFlowProvider = OAuthProviderId
 
 export interface OAuthPendingFlow {
   id: string
@@ -450,14 +446,5 @@ export function resetOAuthFlowsForTest(): void {
 export function getOAuthFlowProvider(
   provider: AccountProvider,
 ): OAuthFlowProvider | undefined {
-  if (
-    provider === "claude"
-    || provider === "kimi"
-    || provider === "codex"
-    || provider === "xai"
-    || provider === "antigravity"
-  ) {
-    return provider
-  }
-  return undefined
+  return isOAuthProviderId(provider) ? provider : undefined
 }
