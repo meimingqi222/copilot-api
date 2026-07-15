@@ -338,3 +338,213 @@ export function buildAccountLegacyMetadata(
 
   return meta
 }
+
+// ── 批次 2：Connection 级别写入器（替代 Account in-place mutation） ──
+// 这些函数直接修改 ProviderConnection 的 metadata / credential 字段，
+// 替代原来对 Account 对象的 in-place mutation。
+// 调用方负责后续 persistProviderConnections() 持久化。
+
+/**
+ * 确保 connection.metadata 存在且包含 AccountLegacyMetadata 基础字段。
+ * 若 metadata 不存在，创建空壳。
+ */
+export function ensureLegacyMetadata(
+  conn: ProviderConnection,
+): AccountLegacyMetadata {
+  if (
+    !conn.metadata
+    || typeof conn.metadata !== "object"
+    || !("provider" in conn.metadata)
+  ) {
+    conn.metadata = {
+      provider: "copilot" as ProviderId,
+      quotaState: "unknown",
+      ...conn.metadata,
+    }
+  }
+  return conn.metadata as unknown as AccountLegacyMetadata
+}
+
+/** 设置 metadata.cooldownUntil + credential.cooldownUntil（同步）。 */
+export function setConnectionCooldownUntil(
+  conn: ProviderConnection,
+  value: number | undefined,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  meta.cooldownUntil = value
+  conn.credentials[0].cooldownUntil = value
+}
+
+/** 设置 metadata.quotaState + quotaExhaustedAt。 */
+export function setConnectionQuotaState(
+  conn: ProviderConnection,
+  quotaState: AccountQuotaState,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  meta.quotaState = quotaState
+  meta.quotaExhaustedAt = quotaState === "exhausted" ? Date.now() : undefined
+}
+
+/** 设置 metadata.isExhausted + exhaustedAt。 */
+export function setConnectionExhausted(
+  conn: ProviderConnection,
+  isExhausted: boolean,
+  exhaustedAt?: number,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  meta.isExhausted = isExhausted
+  meta.exhaustedAt =
+    !isExhausted ? undefined : (exhaustedAt ?? meta.exhaustedAt)
+}
+
+/** 设置 metadata.lastRateLimitAt + lastRateLimitReason。 */
+export function setConnectionRateLimitInfo(
+  conn: ProviderConnection,
+  at: number | undefined,
+  reason: string | undefined,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  meta.lastRateLimitAt = at
+  meta.lastRateLimitReason = reason
+}
+
+/** 设置 metadata.authStatus + authError。 */
+export function setConnectionAuthStatus(
+  conn: ProviderConnection,
+  status: string | undefined,
+  error?: string | null,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  meta.authStatus = status ?? "ready"
+  meta.authError = error ?? null
+  const cred = conn.credentials[0]
+  if (status === "error") {
+    cred.status = "auth_error"
+    cred.lastError = error ?? undefined
+  } else if (cred.status === "auth_error") {
+    cred.status = cred.enabled ? "ready" : "disabled"
+    cred.lastError = undefined
+  }
+}
+
+/** 设置 credential.value（运行时 token，如 copilotToken / accessToken）。 */
+export function setCredentialValue(
+  conn: ProviderConnection,
+  value: string | undefined,
+): void {
+  conn.credentials[0].value = value ?? ""
+}
+
+/** 设置 credential.context 中的字段。 */
+export function setCredentialContextField(
+  conn: ProviderConnection,
+  key: string,
+  value: string | number | undefined,
+): void {
+  const cred = conn.credentials[0]
+  if (!cred.context) cred.context = {}
+  if (value === undefined) {
+    cred.context = removeFromRecord(cred.context, key)
+  } else {
+    cred.context[key] = value
+  }
+}
+
+/** 设置 metadata.settings 中的字段。 */
+export function setConnectionSetting(
+  conn: ProviderConnection,
+  key: string,
+  value: string | undefined,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  if (!meta.settings) meta.settings = {}
+  if (value === undefined) {
+    meta.settings = removeFromRecord(meta.settings, key)
+  } else {
+    meta.settings[key] = value
+  }
+}
+
+/** 设置 metadata.credentialExtras 中的字段。 */
+export function setConnectionCredentialExtra(
+  conn: ProviderConnection,
+  key: string,
+  value: string | undefined,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  if (!meta.credentialExtras) meta.credentialExtras = {}
+  if (value === undefined) {
+    meta.credentialExtras = removeFromRecord(meta.credentialExtras, key)
+  } else {
+    meta.credentialExtras[key] = value
+  }
+}
+
+/** 从 record 中移除指定 key（避免 dynamic delete lint）。 */
+function removeFromRecord<T extends Record<string, unknown>>(
+  record: T,
+  key: string,
+): T {
+  const { [key]: _, ...rest } = record
+  return rest as T
+}
+
+/**
+ * 将 Account 的运行时状态同步回 connection（in-place mutation）。
+ * 用于 account-availability.ts 等模块在修改 Account 后同步到 connection。
+ */
+export function syncAccountToConnection(
+  conn: ProviderConnection,
+  account: Account,
+): void {
+  const meta = ensureLegacyMetadata(conn)
+  meta.quotaState = account.quotaState ?? "unknown"
+  meta.quotaInfo = account.quotaInfo ?? null
+  meta.quotaExhaustedAt = account.quotaExhaustedAt
+  meta.exhaustedAt = account.exhaustedAt
+  meta.isExhausted = account.isExhausted
+  meta.cooldownUntil = account.cooldownUntil
+  meta.lastRateLimitAt = account.lastRateLimitAt
+  meta.lastRateLimitReason = account.lastRateLimitReason
+  meta.authStatus = account.runtimeState?.authStatus ?? "ready"
+  meta.authError = account.runtimeState?.lastError ?? null
+  meta.settings = account.settings ?? {}
+
+  const cred = conn.credentials[0]
+  cred.enabled = account.enabled
+  cred.cooldownUntil = account.cooldownUntil
+  if (account.runtimeState?.authStatus === "error") {
+    cred.status = "auth_error"
+    cred.lastError = account.runtimeState.lastError
+  } else if (account.quotaState === "exhausted") {
+    cred.status = "quota_exhausted"
+  } else if (account.cooldownUntil && account.cooldownUntil > Date.now()) {
+    cred.status = "cooldown"
+  } else {
+    cred.status = account.enabled ? "ready" : "disabled"
+  }
+  // copilotToken → credential.value
+  if (account.provider === "copilot" && account.runtimeState?.copilotToken) {
+    cred.value = account.runtimeState.copilotToken
+  }
+  if (account.runtimeState?.copilotTokenExpiry !== undefined) {
+    if (!cred.context) cred.context = {}
+    cred.context.copilotTokenExpiry = account.runtimeState.copilotTokenExpiry
+  }
+  // windsurfJwt → credential.context
+  if (account.provider === "windsurf") {
+    if (account.runtimeState?.windsurfJwt !== undefined) {
+      if (!cred.context) cred.context = {}
+      cred.context.windsurfJwt = account.runtimeState.windsurfJwt
+    }
+    if (account.runtimeState?.windsurfJwtFetchedAt !== undefined) {
+      if (!cred.context) cred.context = {}
+      cred.context.windsurfJwtFetchedAt =
+        account.runtimeState.windsurfJwtFetchedAt
+    }
+  }
+
+  conn.name = account.label
+  conn.enabled = account.enabled
+  conn.priority = account.priority
+}

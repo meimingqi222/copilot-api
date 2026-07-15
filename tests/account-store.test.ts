@@ -18,7 +18,7 @@ async function readProviderConnectionsFile(): Promise<
   Array<Record<string, unknown>>
 > {
   const raw = await fs.readFile(PATHS.PROVIDER_CONNECTIONS_PATH)
-  const parsed = JSON.parse(raw) as {
+  const parsed = JSON.parse(raw.toString("utf8")) as {
     connections: Array<Record<string, unknown>>
   }
   return parsed.connections

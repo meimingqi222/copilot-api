@@ -512,3 +512,45 @@ export function __resetProviderConnectionsForTest(): void {
   mutationQueue = Promise.resolve()
   persistenceEnabled = false
 }
+
+// ── 批次 2：同步 mutation helpers（替代 state.accounts.push/splice） ──
+// 这些函数直接操作 stateRoot.connections，不经过 withMutation 串行化。
+// 调用方负责后续 persistProviderConnections() 持久化。
+// 用于 account-store.ts / admin routes 等需要在批量操作后统一持久化的场景。
+
+/**
+ * 按 id 插入或替换 connection（upsert）。
+ * 替代 state.accounts.push(account) + saveAccounts()。
+ */
+export function upsertProviderConnection(conn: ProviderConnection): void {
+  const idx = stateRoot.connections.findIndex((c) => c.id === conn.id)
+  if (idx !== -1) {
+    stateRoot.connections[idx] = conn
+  } else {
+    stateRoot.connections.push(conn)
+  }
+}
+
+/**
+ * 按 id 移除 connection。
+ * 替代 state.accounts.splice(idx, 1) + saveAccounts()。
+ * 返回被移除的 connection，或 undefined（不存在时）。
+ */
+export function removeProviderConnection(
+  id: string,
+): ProviderConnection | undefined {
+  const idx = stateRoot.connections.findIndex((c) => c.id === id)
+  if (idx === -1) return undefined
+  const [removed] = stateRoot.connections.splice(idx, 1)
+  return removed
+}
+
+/**
+ * 按 id 查找 connection 并返回可变引用（用于 in-place mutation）。
+ * 替代 state.accounts.find(a => a.id === id)。
+ */
+export function getMutableProviderConnection(
+  id: string,
+): ProviderConnection | undefined {
+  return stateRoot.connections.find((c) => c.id === id)
+}
