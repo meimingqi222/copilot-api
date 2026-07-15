@@ -38,7 +38,9 @@ export async function getCodexModelsForAccount(
 
   const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
   const url = new URL(`${baseUrl.replace(/\/$/, "")}/models`)
-  url.searchParams.set("client_version", "0.135.0")
+  // Upstream filters models by client_version. 0.135.0 omits gpt-5.6-*;
+  // 0.144.1 matches CPA fetch_codex_models and returns the current catalog.
+  url.searchParams.set("client_version", "0.144.1")
 
   const response = await executeUpstreamProxyCall(account, {
     method: "GET",
