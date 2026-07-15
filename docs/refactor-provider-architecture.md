@@ -89,7 +89,7 @@
 - [x] T3.1 删除 OAUTH_PROTOCOL_MAP
 - [x] T3.2 provider-cache 反向映射派生化
 - [x] T3.3 OAuthFlowProvider 类型统一
-- [ ] T3.4 protocols 层 extractAccount 去重
+- [x] T3.4 protocols 层 extractAccount 去重
 
 ### P4 收尾
 - [ ] T4.1 [调查先行] Provider*Result 与 Adapter*Result 类型合并
@@ -570,3 +570,4 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | 2026-07-15 | T3.1 | ✅ 完成 | 删除 `services/providers/index.ts` 中的 `OAUTH_PROTOCOL_MAP`（与 `lib/provider-config.ts` 的 `PROVIDER_PROTOCOL_MAP` OAuth 子集完全重复）。改为 import `PROVIDER_PROTOCOL_MAP` 并在 OAuth runtime 循环中用 `PROVIDER_PROTOCOL_MAP[providerId]`（`providerId` 是 `OAuthProviderId`，是 `ProviderId` 的子集，索引安全）。同时移除不再使用的 `OAuthProviderId` type import 和 `ProviderProtocol` type import。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`grep -rn "OAUTH_PROTOCOL_MAP" src` 无结果。 |
 | 2026-07-15 | T3.2 | ✅ 完成 | `provider-cache.ts` 的 `getProtocolCacheProfile` 9-case switch 替换为 `PROTOCOL_TO_PROVIDER` 反向映射派生表（由 `PROVIDER_PROTOCOL_MAP` 反推 `Object.fromEntries`）。`getProtocolCacheProfile` 改为：`anthropic-compatible` 保留内联特殊 profile（原样）；否则查 `PROTOCOL_TO_PROVIDER` 命中 → `PROVIDER_CACHE_PROFILES[provider]`；否则 → `GENERIC_CACHE_PROFILE`。无循环 import（`provider-config` 已被本文件 import）。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`getProtocolCacheProfile` 内无 switch。 |
 | 2026-07-15 | T3.3 | ✅ 完成 | `flows.ts` 的 `OAuthFlowProvider` 联合类型改为 `export type OAuthFlowProvider = OAuthProviderId`（保留导出名，G5）。`getOAuthFlowProvider` 的 5 分支 if 链改为 `return isOAuthProviderId(provider) ? provider : undefined`。新增 import `isOAuthProviderId` + `OAuthProviderId` from `~/lib/provider-config`。验收：三件套全绿（542 pass / 2 skip / 0 fail）。 |
+| 2026-07-15 | T3.4 | ✅ 完成 | `shared.ts` 新增 `requireTargetAccount(target, adapterName): Account`，判空抛 `` `${adapterName} adapter: target.account is required` ``（与原 9 个局部 `extractAccount` 文案一致）。9 个 `*-native.ts` 文件（xai/windsurf/mimo/kimi/copilot/codex/claude/codebuff/antigravity）删除局部 `extractAccount`，调用点改为 `requireTargetAccount(target, "<protocol-id>")`。mimo-native 已 import `shared`，追加 `requireTargetAccount`；其余 8 文件新增 `import { requireTargetAccount } from "./shared"`。所有文件中 `Account` type import 仅 `extractAccount` 使用，删除后一并移除。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`grep -rn "function extractAccount" src/services/protocols` 无结果。 |

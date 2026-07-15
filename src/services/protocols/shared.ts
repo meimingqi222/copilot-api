@@ -1,5 +1,7 @@
 import { events } from "fetch-event-stream"
 
+import type { Account } from "~/lib/accounts"
+
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
@@ -321,4 +323,18 @@ export function detectResponsesStreamError(
     /* ignore parse errors */
   }
   return null
+}
+
+/**
+ * Extract `target.account` or throw a descriptive error.
+ * Shared by all native protocol adapters to avoid duplicated local helpers.
+ */
+export function requireTargetAccount(
+  target: { account?: Account },
+  adapterName: string,
+): Account {
+  if (!target.account) {
+    throw new Error(`${adapterName} adapter: target.account is required`)
+  }
+  return target.account
 }

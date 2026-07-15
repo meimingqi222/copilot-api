@@ -5,25 +5,17 @@
  * 使 executeWithFailover 统一调度。
  */
 
-import type { Account } from "~/lib/accounts"
-
 import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
 
-function extractAccount(target: { account?: Account }): Account {
-  const account = target.account
-  if (!account) {
-    throw new Error("windsurf-native adapter: target.account is required")
-  }
-  return account
-}
+import { requireTargetAccount } from "./shared"
 
 export const windsurfNativeAdapter: ProtocolAdapter = {
   protocol: "windsurf-native",
 
   async createChatCompletions({ target, payload, signal, ctx }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "windsurf-native")
     const response = await createWindsurfChatCompletionsOnce(
       account,
       payload,

@@ -2,7 +2,6 @@
  * Copilot Native Protocol Adapter。
  */
 
-import type { Account } from "~/lib/accounts"
 import type {
   AdapterChatResult,
   AdapterEmbeddingsResult,
@@ -16,19 +15,13 @@ import { createCopilotEmbeddingsOnce } from "~/services/copilot/create-embedding
 import { createCopilotMessagesOnce } from "~/services/copilot/create-messages-once"
 import { createCopilotResponsesOnce } from "~/services/copilot/create-responses-once"
 
-function extractAccount(target: { account?: Account }): Account {
-  const account = target.account
-  if (!account) {
-    throw new Error("copilot-native adapter: target.account is required")
-  }
-  return account
-}
+import { requireTargetAccount } from "./shared"
 
 export const copilotNativeAdapter: ProtocolAdapter = {
   protocol: "copilot-native",
 
   async createChatCompletions({ target, payload, signal, ctx }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "copilot-native")
     const response = await createCopilotChatCompletionsOnce(
       account,
       payload,
@@ -39,7 +32,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
   },
 
   async createResponses({ target, payload, signal, ctx }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "copilot-native")
     const response = await createCopilotResponsesOnce(
       account,
       payload,
@@ -50,7 +43,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
   },
 
   async createMessages({ target, payload, signal, ctx }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "copilot-native")
     const response = await createCopilotMessagesOnce(
       account,
       payload,
@@ -61,7 +54,7 @@ export const copilotNativeAdapter: ProtocolAdapter = {
   },
 
   async createEmbeddings({ target, payload, signal }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "copilot-native")
     const response = await createCopilotEmbeddingsOnce(account, payload, signal)
     return {
       credentialId: account.id,
