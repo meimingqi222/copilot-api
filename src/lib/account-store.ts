@@ -1,13 +1,8 @@
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
-import type {
-  Account,
-  AccountProvider,
-  AccountQuotaState,
-  AccountRuntimeState,
-} from "~/lib/accounts"
-import type { OAuthProviderId } from "~/lib/provider-config"
+import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
   syncLegacyExhaustedState,
@@ -16,8 +11,8 @@ import {
 import {
   accountsDiskHasRecoverableData,
   tryReadAccountsFile,
-  writeAccountsFile,
 } from "~/lib/account-file-store"
+import { migrateAccount } from "~/lib/account-legacy-migrator"
 import {
   getAccountProvider,
   getCodebuffAuthToken,
@@ -30,7 +25,18 @@ import { GITHUB_API_BASE_URL, githubApiHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
-import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
+import { isOAuthProviderId } from "~/lib/provider-config"
+import {
+  connectionToAccount,
+  migrateAccountsToConnections,
+} from "~/lib/provider-connections"
+import {
+  initializeProviderConnections,
+  listProviderConnections,
+  saveProviderConnections,
+  setProviderConnectionsForMigration,
+} from "~/lib/provider-connections"
+import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 import { Mutex } from "~/lib/repository"
 import { state } from "~/lib/state"
 import { emitStateChange } from "~/lib/state-events"
@@ -54,10 +60,6 @@ export interface SaveAccountsOptions {
   allowShrink?: boolean
 }
 
-function defaultProvider(provider?: AccountProvider): AccountProvider {
-  return provider ?? "copilot"
-}
-
 export async function loadAccounts(): Promise<void> {
   return accountsLifecycleMutex.runExclusive(async () => {
     await loadAccountsUnlocked()
@@ -67,76 +69,213 @@ export async function loadAccounts(): Promise<void> {
 async function loadAccountsUnlocked(): Promise<void> {
   clearAllAccountTimers()
   cancelAllOAuthRefreshTimers()
+
+  // ── 批次 1：持久化格式换底 ──────────────────────────────────
+  // 先加载 provider-connections.json，再按 2.3 的 4 条规则检测迁移状态。
+  // accounts.json 永不复活——saveAccounts() 委托 saveProviderConnections()。
+  await initializeProviderConnections()
+  const existingConnections = listProviderConnections()
   const accountFile = await tryReadAccountsFile()
-  if (accountFile.status === "found") {
-    const rawAccounts = accountFile.accounts
-    const loadedAccounts: Array<Account> = []
-    let migratedLegacyShape = false
-    for (const raw of rawAccounts) {
-      if (accountHasLegacyFlatFields(raw)) {
-        migratedLegacyShape = true
-      }
-      try {
-        loadedAccounts.push(migrateAccount(raw))
-      } catch (err) {
-        logger.warn(`Skipping invalid account entry: ${(err as Error).message}`)
-      }
-    }
-    state.accounts = loadedAccounts
-    if (loadedAccounts.length === 0) {
-      logger.warn("No accounts loaded from disk")
+  const forceRemigrate = process.env.COPILOT_API_FORCE_REMIGRATE === "1"
+
+  if (accountFile.status === "found" && existingConnections.length === 0) {
+    // 规则 2：首次迁移——accounts.json 存在，connections 不存在
+    await performFirstMigration(accountFile.accounts)
+  } else if (accountFile.status === "found" && existingConnections.length > 0) {
+    // 规则 3：两者都存在——connections 优先
+    if (forceRemigrate) {
+      await performForceRemigration(accountFile.accounts, existingConnections)
     } else {
-      logger.info(
-        `Loaded ${loadedAccounts.length} account(s) from disk: ${loadedAccounts.map((account) => account.label).join(", ")}`,
+      logger.warn(
+        "accounts.json exists alongside provider-connections.json; ignoring accounts.json (already migrated). Set COPILOT_API_FORCE_REMIGRATE=1 to re-migrate from accounts.json.",
       )
+      // 用已加载的 connections 反构造 state.accounts
+      rebuildAccountsFromConnections()
     }
-    for (const account of state.accounts) {
-      if (typeof account.cooldownUntil === "number") {
-        if (account.cooldownUntil <= Date.now()) {
-          account.cooldownUntil = undefined
+  } else {
+    // 规则 1（connections 存在，accounts.json 不存在）或规则 4（都不存在）
+    rebuildAccountsFromConnections()
+  }
+
+  // 处理 legacy GitHub token 文件（仅在无 account 时）
+  if (state.accounts.length === 0) {
+    try {
+      const legacyToken = await fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
+      if (legacyToken.trim()) {
+        const account: Account = {
+          id: randomUUID(),
+          label: "default",
+          provider: "copilot",
+          credentials: {
+            githubToken: legacyToken.trim(),
+          },
+          settings: {},
+          enabled: true,
+          priority: 0,
+          quotaState: "unknown",
+          createdAt: Date.now(),
         }
-      } else {
-        account.cooldownUntil = undefined
+        state.accounts = [account]
+        state.activeAccountIndex = 0
+        await saveAccountsUnlocked()
+        logger.info("Migrated legacy GitHub token to provider-connections.json")
+        rebuildAccountsFromConnections()
+        return
       }
-      account.lastRateLimitAt = undefined
-      account.lastRateLimitReason = undefined
-      syncLegacyExhaustedState(account)
+    } catch {
+      // No legacy token file either
     }
-    if (migratedLegacyShape) {
-      await saveAccountsUnlocked()
-      logger.info("Persisted migrated account schema to accounts.json")
-    }
-    scheduleOAuthRefreshForAllAccounts()
-    return
   }
 
+  scheduleOAuthRefreshForAllAccounts()
+}
+
+/**
+ * 规则 2：首次迁移——将 accounts.json 逐条迁移为 connections，
+ * 写入 provider-connections.json，重命名 accounts.json 为备份。
+ */
+async function performFirstMigration(
+  rawAccounts: Array<Record<string, unknown>>,
+): Promise<void> {
+  const loadedAccounts = parseRawAccounts(rawAccounts)
+  state.accounts = loadedAccounts
+  for (const account of state.accounts) {
+    normalizeAccountRuntimeFields(account)
+  }
+  const migratedConnections = migrateAccountsToConnections(state.accounts)
+  setProviderConnectionsForMigration(migratedConnections)
+  await saveProviderConnections(migratedConnections)
+  await renameAccountsJsonToBackup()
+  logger.info(
+    `First migration: ${migratedConnections.length} account(s) migrated to provider-connections.json`,
+  )
+  if (loadedAccounts.length === 0) {
+    logger.warn("No accounts loaded from disk")
+  } else {
+    logger.info(
+      `Loaded ${loadedAccounts.length} account(s): ${loadedAccounts.map((account) => account.label).join(", ")}`,
+    )
+  }
+  // 反构造确保 state.accounts 与 connections 一致
+  rebuildAccountsFromConnections()
+}
+
+/**
+ * 规则 3 + COPILOT_API_FORCE_REMIGRATE=1：强制重迁移——
+ * 按 id 合并（accounts.json 迁移出的 connection 覆盖同名 connection，
+ * 其余 connection 保留），永不整体覆盖。
+ */
+async function performForceRemigration(
+  rawAccounts: Array<Record<string, unknown>>,
+  existingConnections: Array<ProviderConnection>,
+): Promise<void> {
+  const loadedAccounts = parseRawAccounts(rawAccounts)
+  state.accounts = loadedAccounts
+  for (const account of state.accounts) {
+    normalizeAccountRuntimeFields(account)
+  }
+  const migratedConnections = migrateAccountsToConnections(state.accounts)
+  const mergedConnections = mergeConnectionsById(
+    existingConnections,
+    migratedConnections,
+  )
+  setProviderConnectionsForMigration(mergedConnections)
+  await saveProviderConnections(mergedConnections)
+  await renameAccountsJsonToBackup()
+  logger.info(
+    `Force re-migration: ${migratedConnections.length} account(s) re-migrated and merged with ${existingConnections.length} existing connection(s)`,
+  )
+  rebuildAccountsFromConnections()
+}
+
+/**
+ * 将 accounts.json 重命名为 accounts.json.migrated-<timestamp>.bak（不删除，供回滚）。
+ */
+async function renameAccountsJsonToBackup(): Promise<void> {
   try {
-    const legacyToken = await fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
-    if (legacyToken.trim()) {
-      const account: Account = {
-        id: randomUUID(),
-        label: "default",
-        provider: "copilot",
-        credentials: {
-          githubToken: legacyToken.trim(),
-        },
-        settings: {},
-        enabled: true,
-        priority: 0,
-        quotaState: "unknown",
-        createdAt: Date.now(),
-      }
-      state.accounts = [account]
-      state.activeAccountIndex = 0
-      await saveAccountsUnlocked()
-      logger.info("Migrated legacy GitHub token to accounts.json")
-      return
-    }
-  } catch {
-    // No legacy token file either
+    const backupPath = `${PATHS.ACCOUNTS_PATH}.migrated-${Date.now()}.bak`
+    await fs.rename(PATHS.ACCOUNTS_PATH, backupPath)
+    logger.info(`Renamed accounts.json to ${backupPath}`)
+  } catch (error) {
+    logger.warn(
+      `Failed to rename accounts.json: ${(error as Error).message}. provider-connections.json is authoritative; accounts.json will be ignored on next startup.`,
+    )
   }
+}
 
-  state.accounts = []
+/**
+ * 从 raw accounts 数组解析为 Account 对象列表。
+ */
+function parseRawAccounts(
+  rawAccounts: Array<Record<string, unknown>>,
+): Array<Account> {
+  const loadedAccounts: Array<Account> = []
+  for (const raw of rawAccounts) {
+    try {
+      loadedAccounts.push(migrateAccount(raw))
+    } catch (err) {
+      logger.warn(`Skipping invalid account entry: ${(err as Error).message}`)
+    }
+  }
+  return loadedAccounts
+}
+
+/**
+ * 规范化 account 的运行时字段（cooldownUntil、lastRateLimit、exhaustedState）。
+ */
+function normalizeAccountRuntimeFields(account: Account): void {
+  if (typeof account.cooldownUntil === "number") {
+    if (account.cooldownUntil <= Date.now()) {
+      account.cooldownUntil = undefined
+    }
+  } else {
+    account.cooldownUntil = undefined
+  }
+  account.lastRateLimitAt = undefined
+  account.lastRateLimitReason = undefined
+  syncLegacyExhaustedState(account)
+}
+
+/**
+ * 从 stateRoot.connections 反构造 state.accounts。
+ * 仅处理 account-derived connections（有 AccountLegacyMetadata 的）。
+ */
+function rebuildAccountsFromConnections(): void {
+  const connections = listProviderConnections()
+  const accounts: Array<Account> = []
+  for (const conn of connections) {
+    // 仅反构造 account-derived connections（有 AccountLegacyMetadata 的）
+    if (!readAccountLegacyMetadata(conn)) continue
+    const account = connectionToAccount(conn)
+    normalizeAccountRuntimeFields(account)
+    accounts.push(account)
+  }
+  state.accounts = accounts
+  if (accounts.length === 0) {
+    logger.warn("No accounts loaded from connections")
+  } else {
+    logger.info(
+      `Loaded ${accounts.length} account(s) from connections: ${accounts.map((account) => account.label).join(", ")}`,
+    )
+  }
+}
+
+/**
+ * 按 id 合并 connections：account-derived connections 覆盖同名 connection，
+ * 其余 connection 保留。永不整体覆盖。
+ */
+function mergeConnectionsById(
+  existing: Array<ProviderConnection>,
+  migrated: Array<ProviderConnection>,
+): Array<ProviderConnection> {
+  const merged = new Map<string, ProviderConnection>()
+  for (const conn of existing) {
+    merged.set(conn.id, conn)
+  }
+  for (const conn of migrated) {
+    merged.set(conn.id, conn) // migrated 覆盖同名
+  }
+  return [...merged.values()]
 }
 
 export async function saveAccounts(
@@ -151,10 +290,7 @@ export async function saveAccounts(
 export async function flushAccountsOnShutdown(): Promise<void> {
   return accountsLifecycleMutex.runExclusive(async () => {
     if (state.accounts.length === 0) return
-    const sanitized = state.accounts.map((account) => serializeAccount(account))
-    if (!(await writeAccountsFile(sanitized, { allowShrink: true }))) {
-      logger.error("Shutdown account flush skipped by write guards")
-    }
+    await persistAccountsAsConnections({ allowShrink: true })
   })
 }
 
@@ -171,13 +307,45 @@ async function saveAccountsUnlocked(
     }
   }
 
-  const sanitized = state.accounts.map((account) => serializeAccount(account))
-  await writeAccountsFile(sanitized, {
-    allowEmpty: options.allowEmpty,
-    allowShrink: options.allowShrink,
-  })
+  await persistAccountsAsConnections(options)
   // 持久化完成后通知 models-stale,触发 cacheModels() 重建缓存
   emitStateChange("models-stale")
+}
+
+/**
+ * 批次 1：将 state.accounts 通过 accountToConnectionForPersistence 正向映射为
+ * connections，合并到 stateRoot.connections（按 id 覆盖 account 来源的
+ * connection，保留非 account 来源的 connection），再 saveProviderConnections()。
+ * 不再写 accounts.json（accounts.json 永不复活）。
+ */
+async function persistAccountsAsConnections(
+  options: SaveAccountsOptions = {},
+): Promise<void> {
+  const accountConnections = migrateAccountsToConnections(state.accounts)
+  const existingConnections = listProviderConnections()
+  // 先移除旧的 account-derived connections（有 AccountLegacyMetadata 的），
+  // 保留非 account 来源的 connection（如 openai-compatible），
+  // 再合并新的 account-derived connections。
+  const nonAccountConnections = existingConnections.filter(
+    (conn) => !readAccountLegacyMetadata(conn),
+  )
+  const mergedConnections = mergeConnectionsById(
+    nonAccountConnections,
+    accountConnections,
+  )
+  // allowEmpty 守卫：不允许清空且有旧数据时拒绝
+  if (
+    !options.allowEmpty
+    && accountConnections.length === 0
+    && existingConnections.length > 0
+  ) {
+    logger.warn(
+      "Refusing to persist empty accounts while connections exist on disk",
+    )
+    return
+  }
+  setProviderConnectionsForMigration(mergedConnections)
+  await saveProviderConnections(mergedConnections)
 }
 
 export function serializeAccountForExport(
@@ -371,394 +539,6 @@ function clearAllAccountTimers(): void {
 
 export async function initAccounts(): Promise<void> {
   await loadAccounts()
-}
-
-function migrateAccount(account: Record<string, unknown>): Account {
-  const acc = migrateAccountInternal(account)
-  if (typeof account.cooldownUntil === "number") {
-    acc.cooldownUntil = account.cooldownUntil
-  } else if (typeof account.cooldownUntil === "string") {
-    const parsed = Date.parse(account.cooldownUntil)
-    if (!Number.isNaN(parsed)) {
-      acc.cooldownUntil = parsed
-    }
-  }
-  return acc
-}
-
-type LegacyAccountRecord = Record<string, unknown> & {
-  isActive?: boolean
-  enabled?: boolean
-  priority?: number
-  provider?: AccountProvider
-  githubToken?: string
-  copilotToken?: string
-  copilotTokenExpiry?: number
-  codebuffAuthToken?: string
-  codebuffBaseUrl?: string
-  codebuffCliVersion?: string
-  codebuffAgentId?: string
-  codebuffModel?: string
-  codebuffCostMode?: string
-  codebuffAllowFallbacks?: boolean
-  windsurfApiKey?: string
-  windsurfBaseUrl?: string
-  windsurfDefaultModel?: string
-  windsurfJwt?: string
-  windsurfJwtFetchedAt?: number
-  serviceToken?: string
-  xiaomichatbotPh?: string
-  mimoWsToken?: string
-  userId?: string
-  proxy?: string
-  quotaState?: AccountQuotaState
-  quotaExhaustedAt?: number
-}
-
-const LEGACY_FLAT_FIELD_KEYS = [
-  "githubToken",
-  "copilotToken",
-  "copilotTokenExpiry",
-  "codebuffAuthToken",
-  "codebuffBaseUrl",
-  "codebuffCliVersion",
-  "codebuffAgentId",
-  "codebuffModel",
-  "codebuffCostMode",
-  "codebuffAllowFallbacks",
-  "windsurfApiKey",
-  "windsurfBaseUrl",
-  "windsurfDefaultModel",
-  "windsurfJwt",
-  "windsurfJwtFetchedAt",
-  "serviceToken",
-  "xiaomichatbotPh",
-  "mimoWsToken",
-  "userId",
-  "proxy",
-] as const
-
-function accountHasLegacyFlatFields(account: Record<string, unknown>): boolean {
-  return LEGACY_FLAT_FIELD_KEYS.some((key) => key in account)
-}
-
-type MigratedAccountBase = Omit<
-  Account,
-  "provider" | "credentials" | "settings" | "runtimeState"
->
-
-function pickString(primary: unknown, fallback: unknown): string | undefined {
-  if (typeof primary === "string") {
-    return primary
-  }
-  if (typeof fallback === "string") {
-    return fallback
-  }
-  return undefined
-}
-
-function pickNumber(primary: unknown, fallback: unknown): number | undefined {
-  if (typeof primary === "number") {
-    return primary
-  }
-  if (typeof fallback === "number") {
-    return fallback
-  }
-  return undefined
-}
-
-function pickBoolean(primary: unknown, fallback: unknown): boolean | undefined {
-  if (typeof primary === "boolean") {
-    return primary
-  }
-  if (typeof fallback === "boolean") {
-    return fallback
-  }
-  return undefined
-}
-
-function normalizeLegacyAccount(
-  account: Record<string, unknown>,
-): LegacyAccountRecord & Partial<Account> {
-  const acc = account as LegacyAccountRecord & Partial<Account>
-
-  if (typeof acc.enabled !== "boolean" && typeof acc.isActive === "boolean") {
-    acc.enabled = acc.isActive
-    logger.debug(
-      `Migrated account "${acc.label}" isActive → enabled: ${acc.enabled}`,
-    )
-  }
-
-  if (typeof acc.enabled !== "boolean") {
-    acc.enabled = true
-  }
-
-  if (typeof acc.priority !== "number") {
-    acc.priority = 0
-  }
-
-  if (!isProviderId(String(acc.provider))) {
-    acc.provider = "copilot"
-  }
-
-  if (
-    acc.quotaState !== "available"
-    && acc.quotaState !== "exhausted"
-    && acc.quotaState !== "unknown"
-  ) {
-    acc.quotaState = "unknown"
-  }
-
-  return acc
-}
-
-function buildMigratedAccountBase(
-  acc: LegacyAccountRecord & Partial<Account>,
-): MigratedAccountBase {
-  return {
-    id: String(acc.id),
-    label: String(acc.label),
-    enabled: acc.enabled ?? true,
-    priority: acc.priority ?? 0,
-    quotaState: acc.quotaState ?? "unknown",
-    quotaExhaustedAt: acc.quotaExhaustedAt,
-    availableModels: acc.availableModels,
-    quotaInfo: acc.quotaInfo,
-    cooldownUntil: acc.cooldownUntil,
-    isExhausted: acc.isExhausted,
-    exhaustedAt: acc.exhaustedAt,
-    lastRateLimitAt: acc.lastRateLimitAt,
-    lastRateLimitReason: acc.lastRateLimitReason,
-    createdAt: typeof acc.createdAt === "number" ? acc.createdAt : Date.now(),
-  }
-}
-
-function migrateCopilotAccount(
-  base: MigratedAccountBase,
-  acc: LegacyAccountRecord,
-  existingCredentials: Record<string, unknown> | undefined,
-  existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: AccountRuntimeState | undefined,
-): Account {
-  return {
-    ...base,
-    provider: "copilot",
-    credentials: {
-      githubToken: pickString(
-        existingCredentials?.githubToken,
-        acc.githubToken,
-      ),
-    },
-    settings: existingSettings ?? {},
-    runtimeState: {
-      ...existingRuntime,
-      copilotToken: pickString(existingRuntime?.copilotToken, acc.copilotToken),
-      copilotTokenExpiry: pickNumber(
-        existingRuntime?.copilotTokenExpiry,
-        acc.copilotTokenExpiry,
-      ),
-    },
-  }
-}
-
-function migrateCodebuffAccount(
-  base: MigratedAccountBase,
-  acc: LegacyAccountRecord,
-  existingCredentials: Record<string, unknown> | undefined,
-  existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: AccountRuntimeState | undefined,
-): Account {
-  return {
-    ...base,
-    provider: "codebuff",
-    credentials: {
-      authToken: pickString(
-        existingCredentials?.authToken,
-        acc.codebuffAuthToken,
-      ),
-    },
-    settings: {
-      baseUrl: pickString(existingSettings?.baseUrl, acc.codebuffBaseUrl),
-      cliVersion: pickString(
-        existingSettings?.cliVersion,
-        acc.codebuffCliVersion,
-      ),
-      agentId: pickString(existingSettings?.agentId, acc.codebuffAgentId),
-      model: pickString(existingSettings?.model, acc.codebuffModel),
-      costMode: pickString(existingSettings?.costMode, acc.codebuffCostMode),
-      allowFallbacks: pickBoolean(
-        existingSettings?.allowFallbacks,
-        acc.codebuffAllowFallbacks,
-      ),
-    },
-    runtimeState: existingRuntime,
-  }
-}
-
-function migrateWindsurfAccount(
-  base: MigratedAccountBase,
-  acc: LegacyAccountRecord,
-  existingCredentials: Record<string, unknown> | undefined,
-  existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: AccountRuntimeState | undefined,
-): Account {
-  return {
-    ...base,
-    provider: "windsurf",
-    credentials: {
-      apiKey: pickString(existingCredentials?.apiKey, acc.windsurfApiKey),
-    },
-    settings: {
-      baseUrl: pickString(existingSettings?.baseUrl, acc.windsurfBaseUrl),
-      defaultModel: pickString(
-        existingSettings?.defaultModel,
-        acc.windsurfDefaultModel,
-      ),
-    },
-    runtimeState: {
-      ...existingRuntime,
-      windsurfJwt: pickString(existingRuntime?.windsurfJwt, acc.windsurfJwt),
-      windsurfJwtFetchedAt: pickNumber(
-        existingRuntime?.windsurfJwtFetchedAt,
-        acc.windsurfJwtFetchedAt,
-      ),
-    },
-  }
-}
-
-function migrateMimoAccount(
-  base: MigratedAccountBase,
-  acc: LegacyAccountRecord,
-  existingCredentials: Record<string, unknown> | undefined,
-  existingSettings: Record<string, unknown> | undefined,
-  existingRuntime: AccountRuntimeState | undefined,
-): Account {
-  return {
-    ...base,
-    provider: "mimo-aistudio",
-    credentials: {
-      serviceToken: pickString(
-        existingCredentials?.serviceToken,
-        acc.serviceToken,
-      ),
-      xiaomichatbotPh: pickString(
-        existingCredentials?.xiaomichatbotPh,
-        acc.xiaomichatbotPh,
-      ),
-      mimoWsToken: pickString(
-        existingCredentials?.mimoWsToken,
-        acc.mimoWsToken,
-      ),
-    },
-    settings: {
-      userId: pickString(existingSettings?.userId, acc.userId),
-      proxy: pickString(existingSettings?.proxy, acc.proxy),
-    },
-    runtimeState: existingRuntime,
-  }
-}
-
-interface MigrateOAuthAccountInput {
-  base: MigratedAccountBase
-  provider: OAuthProviderId
-  existingCredentials?: Record<string, unknown>
-  existingSettings?: Record<string, unknown>
-  existingRuntime?: AccountRuntimeState
-  cpaMetadata?: Record<string, unknown>
-}
-
-function migrateOAuthAccount(input: MigrateOAuthAccountInput): Account {
-  const {
-    base,
-    provider,
-    existingCredentials,
-    existingSettings,
-    existingRuntime,
-    cpaMetadata,
-  } = input
-  return {
-    ...base,
-    provider,
-    credentials: {
-      accessToken: pickString(existingCredentials?.accessToken, undefined),
-      refreshToken: pickString(existingCredentials?.refreshToken, undefined),
-      idToken: pickString(existingCredentials?.idToken, undefined),
-      expiresAt: pickNumber(existingCredentials?.expiresAt, undefined),
-      accountId: pickString(existingCredentials?.accountId, undefined),
-      projectId: pickString(existingCredentials?.projectId, undefined),
-      deviceId: pickString(existingCredentials?.deviceId, undefined),
-      apiKey: pickString(existingCredentials?.apiKey, undefined),
-      email: pickString(existingCredentials?.email, undefined),
-    },
-    settings: {
-      baseUrl: pickString(existingSettings?.baseUrl, undefined),
-      proxyUrl: pickString(existingSettings?.proxyUrl, undefined),
-      modelPrefix: pickString(existingSettings?.modelPrefix, undefined),
-      cpaSourcePath: pickString(existingSettings?.cpaSourcePath, undefined),
-      tokenEndpoint: pickString(existingSettings?.tokenEndpoint, undefined),
-      redirectUri: pickString(existingSettings?.redirectUri, undefined),
-    },
-    runtimeState: existingRuntime,
-    cpaMetadata,
-  }
-}
-
-function migrateAccountInternal(account: Record<string, unknown>): Account {
-  const acc = normalizeLegacyAccount(account)
-  const base = buildMigratedAccountBase(acc)
-  const existingCredentials = acc.credentials
-  const existingSettings = acc.settings
-  const existingRuntime = acc.runtimeState
-  const provider = defaultProvider(acc.provider)
-
-  if (provider === "copilot") {
-    return migrateCopilotAccount(
-      base,
-      acc,
-      existingCredentials,
-      existingSettings,
-      existingRuntime,
-    )
-  }
-
-  if (provider === "codebuff") {
-    return migrateCodebuffAccount(
-      base,
-      acc,
-      existingCredentials,
-      existingSettings,
-      existingRuntime,
-    )
-  }
-
-  if (provider === "windsurf") {
-    return migrateWindsurfAccount(
-      base,
-      acc,
-      existingCredentials,
-      existingSettings,
-      existingRuntime,
-    )
-  }
-
-  if (isOAuthProviderId(provider)) {
-    return migrateOAuthAccount({
-      base,
-      provider,
-      existingCredentials,
-      existingSettings,
-      existingRuntime,
-      cpaMetadata: acc.cpaMetadata,
-    })
-  }
-
-  return migrateMimoAccount(
-    base,
-    acc,
-    existingCredentials,
-    existingSettings,
-    existingRuntime,
-  )
 }
 
 export function scheduleQuotaRefresh(): void {

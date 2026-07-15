@@ -173,6 +173,10 @@ function normalizeConnection(value: unknown): ProviderConnection | null {
       : undefined,
     createdAt: typeof obj.createdAt === "number" ? obj.createdAt : Date.now(),
     updatedAt: typeof obj.updatedAt === "number" ? obj.updatedAt : undefined,
+    metadata:
+      obj.metadata && typeof obj.metadata === "object" ?
+        (obj.metadata as Record<string, unknown>)
+      : undefined,
   }
 }
 

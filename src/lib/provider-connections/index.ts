@@ -19,12 +19,17 @@ export {
   setCredentialEnabled,
 } from "./availability"
 export type { RateLimitInfo, UpstreamErrorKind } from "./availability"
+export { connectionToAccount } from "./connection-to-account"
 export {
   refreshAllConnectionModels,
   refreshConnectionModels,
   scheduleConnectionModelDiscovery,
   stopConnectionModelDiscovery,
 } from "./discovery"
+export {
+  accountToConnectionForPersistence,
+  migrateAccountsToConnections,
+} from "./migrate-from-accounts"
 export {
   __resetProviderConnectionsForTest,
   addCredential,
@@ -40,6 +45,7 @@ export {
   listProviderConnections,
   persistProviderConnections,
   setDiscoveryError,
+  setProviderConnectionsForMigration,
   updateConnection,
   updateCredential,
   updateModel,

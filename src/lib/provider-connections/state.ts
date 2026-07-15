@@ -53,6 +53,20 @@ export async function initializeProviderConnections(): Promise<void> {
   }
 }
 
+/**
+ * 批次 1 过渡期：从 loadAccounts() 内部调用，设置 connections 内存状态。
+ *
+ * 当 loadAccounts() 执行首次迁移或强制重迁移后，需要将合并后的 connections
+ * 写入 stateRoot。此函数直接设置 stateRoot.connections + loaded 标志，
+ * 使后续的 initializeProviderConnections() 成为 no-op。
+ */
+export function setProviderConnectionsForMigration(
+  connections: Array<ProviderConnection>,
+): void {
+  stateRoot.connections = connections
+  stateRoot.loaded = true
+}
+
 export function listProviderConnections(): Array<ProviderConnection> {
   return stateRoot.connections
 }
