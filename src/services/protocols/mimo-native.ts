@@ -7,7 +7,6 @@
 
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "~/lib/accounts"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { parseModelReference } from "~/lib/accounts"
@@ -18,7 +17,10 @@ import {
   mimoConnections,
 } from "~/services/mimo/connections"
 import { markAccountFailed } from "~/services/mimo/manager"
-import { detectOpenAIStreamError } from "~/services/protocols/shared"
+import {
+  detectOpenAIStreamError,
+  requireTargetAccount,
+} from "~/services/protocols/shared"
 
 import type { ProtocolAdapter } from "./types"
 
@@ -36,14 +38,6 @@ const IDLE_TIMEOUT_MS = (() => {
     : DEFAULT_IDLE_TIMEOUT_MS
 })()
 const IDLE_TIMEOUT_MESSAGE = `Request timeout: No data received from Mimo node for ${Math.round(IDLE_TIMEOUT_MS / 1000)} seconds`
-
-function extractAccount(target: { account?: Account }): Account {
-  const account = target.account
-  if (!account) {
-    throw new Error("mimo-native adapter: target.account is required")
-  }
-  return account
-}
 
 async function* streamResponse(
   conn: MimoConnection,
@@ -418,7 +412,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
   protocol: "mimo-native",
 
   async createChatCompletions({ target, payload, signal }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "mimo-native")
     const conn = mimoConnections.get(account.id)
     if (!conn) {
       markAccountFailed(account.id, "Claw node is offline or initializing")
@@ -465,7 +459,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
   },
 
   async createMessages({ target, payload, signal }) {
-    const account = extractAccount(target)
+    const account = requireTargetAccount(target, "mimo-native")
     const conn = mimoConnections.get(account.id)
     if (!conn) {
       markAccountFailed(account.id, "Claw node is offline or initializing")
