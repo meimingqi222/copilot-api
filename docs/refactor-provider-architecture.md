@@ -87,7 +87,7 @@
 
 ### P3 注册表去重
 - [x] T3.1 删除 OAUTH_PROTOCOL_MAP
-- [ ] T3.2 provider-cache 反向映射派生化
+- [x] T3.2 provider-cache 反向映射派生化
 - [ ] T3.3 OAuthFlowProvider 类型统一
 - [ ] T3.4 protocols 层 extractAccount 去重
 
@@ -568,3 +568,4 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | 2026-07-15 | T2.2 | ✅ 完成 | `quota/index.ts` 的 `fetchOAuthProviderQuota` switch 替换为 `QUOTA_FETCHERS: Record<OAuthProviderId, (account, signal?) => Promise<QuotaSnapshot>>` 查表（穷尽 5 provider，G7）。`fetchOAuthProviderQuota` 收敛为 `isOAuthAccount` guard + `QUOTA_FETCHERS[account.provider](…)`。xai/antigravity/codex 保留自定义函数：xai 双请求（base + credits format）+ config 合并；antigravity POST + 多 URL fallback loop + projectId body；codex 双 fetch（usage + resetCredits）+ meta 构建——均非单次 GET 骨架，不 descriptor 化（spec 允许）。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`quota/index.ts` 无 `switch`。 |
 | 2026-07-15 | T2.3 | ✅ 完成 | `cycles.ts` 两处 switch（`resolveQuotaWindows` 约 348 行、`buildStoredQuotaWindows` 约 394 行）各含 codex/claude/antigravity/kimi 四个 case，case 内容均为纯函数调用（dispatch 到各自 `resolveXxxQuotaWindows`），无数据差异或无法数据化的逻辑。收敛为 `CYCLE_WINDOW_RESOLVERS: Partial<Record<OAuthProviderId, (details) => Array<QuotaWindowDescriptor>>>` 一张函数查表 + 单一实现（`resolver ? resolver(details) : []`）。两处 switch 均替换为查表。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`cycles.ts` 中 `case "` 出现次数为 0。 |
 | 2026-07-15 | T3.1 | ✅ 完成 | 删除 `services/providers/index.ts` 中的 `OAUTH_PROTOCOL_MAP`（与 `lib/provider-config.ts` 的 `PROVIDER_PROTOCOL_MAP` OAuth 子集完全重复）。改为 import `PROVIDER_PROTOCOL_MAP` 并在 OAuth runtime 循环中用 `PROVIDER_PROTOCOL_MAP[providerId]`（`providerId` 是 `OAuthProviderId`，是 `ProviderId` 的子集，索引安全）。同时移除不再使用的 `OAuthProviderId` type import 和 `ProviderProtocol` type import。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`grep -rn "OAUTH_PROTOCOL_MAP" src` 无结果。 |
+| 2026-07-15 | T3.2 | ✅ 完成 | `provider-cache.ts` 的 `getProtocolCacheProfile` 9-case switch 替换为 `PROTOCOL_TO_PROVIDER` 反向映射派生表（由 `PROVIDER_PROTOCOL_MAP` 反推 `Object.fromEntries`）。`getProtocolCacheProfile` 改为：`anthropic-compatible` 保留内联特殊 profile（原样）；否则查 `PROTOCOL_TO_PROVIDER` 命中 → `PROVIDER_CACHE_PROFILES[provider]`；否则 → `GENERIC_CACHE_PROFILE`。无循环 import（`provider-config` 已被本文件 import）。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`getProtocolCacheProfile` 内无 switch。 |

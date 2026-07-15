@@ -12,6 +12,9 @@
  */
 
 import type { ProviderId } from "~/lib/provider-config"
+import type { ProviderProtocol } from "~/lib/provider-connections/types"
+
+import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 
 /** L1 features that may be applied when talking to a given provider. */
 export type ProviderCacheFeature =
@@ -125,49 +128,34 @@ export function getProviderCacheProfile(
   return GENERIC_CACHE_PROFILE
 }
 
+/**
+ * Reverse of `PROVIDER_PROTOCOL_MAP`: protocol → provider id.
+ * Derived at module load so there is only one source of truth for the
+ * protocol↔provider mapping.
+ */
+const PROTOCOL_TO_PROVIDER: Partial<Record<ProviderProtocol, ProviderId>> =
+  Object.fromEntries(
+    Object.entries(PROVIDER_PROTOCOL_MAP).map(([p, proto]) => [proto, p]),
+  ) as Partial<Record<ProviderProtocol, ProviderId>>
+
 export function getProtocolCacheProfile(
   protocol?: string | null,
 ): ProviderCacheProfile {
-  switch (protocol) {
-    case "codex-native": {
-      return PROVIDER_CACHE_PROFILES.codex
-    }
-    case "claude-native": {
-      return PROVIDER_CACHE_PROFILES.claude
-    }
-    case "antigravity-native": {
-      return PROVIDER_CACHE_PROFILES.antigravity
-    }
-    case "xai-native": {
-      return PROVIDER_CACHE_PROFILES.xai
-    }
-    case "windsurf-native": {
-      return PROVIDER_CACHE_PROFILES.windsurf
-    }
-    case "copilot-native": {
-      return PROVIDER_CACHE_PROFILES.copilot
-    }
-    case "kimi-native": {
-      return PROVIDER_CACHE_PROFILES.kimi
-    }
-    case "codebuff-native": {
-      return PROVIDER_CACHE_PROFILES.codebuff
-    }
-    case "mimo-native": {
-      return PROVIDER_CACHE_PROFILES["mimo-aistudio"]
-    }
-    case "anthropic-compatible": {
-      return {
-        provider: "anthropic-compatible",
-        features: ["claude-session-header", "passthrough-client-session"],
-        // Compatible endpoints often accept Claude session header.
-        synthesizeStableSession: true,
-      }
-    }
-    default: {
-      return GENERIC_CACHE_PROFILE
+  if (protocol === "anthropic-compatible") {
+    return {
+      provider: "anthropic-compatible",
+      features: ["claude-session-header", "passthrough-client-session"],
+      // Compatible endpoints often accept Claude session header.
+      synthesizeStableSession: true,
     }
   }
+
+  const provider = PROTOCOL_TO_PROVIDER[protocol as ProviderProtocol]
+  if (provider && Object.hasOwn(PROVIDER_CACHE_PROFILES, provider)) {
+    return PROVIDER_CACHE_PROFILES[provider]
+  }
+
+  return GENERIC_CACHE_PROFILE
 }
 
 export function providerHasCacheFeature(
