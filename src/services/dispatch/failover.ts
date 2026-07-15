@@ -1,3 +1,4 @@
+import type { Account } from "~/lib/accounts"
 import type { RouteTarget } from "~/lib/provider-connections"
 
 import {
@@ -23,6 +24,7 @@ import {
 } from "~/lib/request-admission"
 import { targetKey } from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
+import { state } from "~/lib/state"
 import { isAbortError, shouldFailover } from "~/lib/utils"
 import {
   getProtocolAdapter,
@@ -147,6 +149,105 @@ export async function executeWithFailover<
   }
 }
 
+/**
+ * 批次 3：admission.account 是从 connection 派生的临时对象，
+ * 修改它不会写回 state.accounts。通过 id 查找 state.accounts 中的真实 account。
+ */
+function resolveStateAccount(id: string) {
+  return state.accounts.find((a) => a.id === id)
+}
+
+/**
+ * 批次 3：对 state.accounts 中的真实 account 执行冷却/配额/鉴权错误标记。
+ * 从 markCooldown 的 account-backed 分支提取，确保修改写回真实对象。
+ */
+async function markAccountCooldown(
+  account: Account,
+  error: unknown,
+  ctx: {
+    status: number
+    isHttp: boolean
+    authKey: string
+    logPrefix: string
+  },
+): Promise<void> {
+  const { status, isHttp, authKey, logPrefix } = ctx
+  // Windsurf in-stream / HTTP error frames carry the parsed kind +
+  // retryAfterMs (e.g. "Resets in: 3h0m0s" → 10800000ms). Apply the real
+  // cooldown instead of the default 60s exponential backoff.
+  if (error instanceof WindsurfUpstreamError) {
+    if (error.kind === "quota_exhausted") {
+      invalidateSessionAffinityAuth(authKey)
+      setAccountQuotaState(account, "exhausted")
+      if (error.retryAfterMs) {
+        account.cooldownUntil = Date.now() + error.retryAfterMs
+      }
+      syncLegacyExhaustedState(account)
+      await saveAccounts().catch((err: unknown) => {
+        logger.warn(
+          `${logPrefix} failed to persist account quota state:`,
+          (err as Error).message,
+        )
+      })
+      return
+    }
+    if (error.kind === "auth_error") {
+      invalidateSessionAffinityAuth(authKey)
+      account.runtimeState = {
+        ...account.runtimeState,
+        authStatus: "error",
+        lastError: error.message,
+      }
+      syncLegacyExhaustedState(account)
+      await saveAccounts().catch((err: unknown) => {
+        logger.warn(
+          `${logPrefix} failed to persist account auth error state:`,
+          (err as Error).message,
+        )
+      })
+      return
+    }
+    // rate_limited / server_error → rate-limit cooldown
+    // with the real upstream retryAfterMs (up to 4h for windsurf).
+    invalidateSessionAffinityAuth(authKey)
+    await markAccountRateLimitedMs(
+      account.id,
+      error.retryAfterMs,
+      `upstream_windsurf_${error.kind}`,
+    )
+    return
+  }
+
+  if (isHttp && error instanceof HTTPError && error.responseBody) {
+    const classified = classifyUpstreamError({
+      status,
+      retryAfterHeader: error.response.headers.get("retry-after"),
+      body: error.responseBody,
+    })
+    if (classified.kind === "quota_exhausted") {
+      invalidateSessionAffinityAuth(authKey)
+      setAccountQuotaState(account, "exhausted")
+      if (classified.retryAfterMs) {
+        account.cooldownUntil = Date.now() + classified.retryAfterMs
+      }
+      syncLegacyExhaustedState(account)
+      await saveAccounts().catch((err: unknown) => {
+        logger.warn(
+          `${logPrefix} failed to persist account quota state:`,
+          (err as Error).message,
+        )
+      })
+      return
+    }
+  }
+
+  // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 account、不打散 affinity
+  if (status === 429 || !isHttp) {
+    invalidateSessionAffinityAuth(authKey)
+    await markAccountRateLimited(account.id, new Response(null, { status }))
+  }
+}
+
 async function markCooldown(
   admission: RequestAdmission,
   error: unknown,
@@ -156,84 +257,17 @@ async function markCooldown(
   const status = isHttp ? error.response.status : 503
   const authKey = affinityAuthKey(admission.target)
 
-  // account-backed 路径:写入 state.accounts + 持久化 accounts.json
+  // account-backed 路径:写入 state.accounts + 持久化
   if (admission.account) {
-    // Windsurf in-stream / HTTP error frames carry the parsed kind +
-    // retryAfterMs (e.g. "Resets in: 3h0m0s" → 10800000ms). Apply the real
-    // cooldown instead of the default 60s exponential backoff.
-    if (error instanceof WindsurfUpstreamError) {
-      if (error.kind === "quota_exhausted") {
-        invalidateSessionAffinityAuth(authKey)
-        setAccountQuotaState(admission.account, "exhausted")
-        if (error.retryAfterMs) {
-          admission.account.cooldownUntil = Date.now() + error.retryAfterMs
-        }
-        syncLegacyExhaustedState(admission.account)
-        await saveAccounts().catch((err: unknown) => {
-          logger.warn(
-            `${logPrefix} failed to persist account quota state:`,
-            (err as Error).message,
-          )
-        })
-        return
-      }
-      if (error.kind === "auth_error") {
-        invalidateSessionAffinityAuth(authKey)
-        admission.account.runtimeState = {
-          ...admission.account.runtimeState,
-          authStatus: "error",
-          lastError: error.message,
-        }
-        syncLegacyExhaustedState(admission.account)
-        await saveAccounts().catch((err: unknown) => {
-          logger.warn(
-            `${logPrefix} failed to persist account auth error state:`,
-            (err as Error).message,
-          )
-        })
-        return
-      }
-      // rate_limited / server_error → rate-limit cooldown
-      // with the real upstream retryAfterMs (up to 4h for windsurf).
-      invalidateSessionAffinityAuth(authKey)
-      await markAccountRateLimitedMs(
-        admission.account.id,
-        error.retryAfterMs,
-        `upstream_windsurf_${error.kind}`,
-      )
-      return
-    }
-
-    if (isHttp && error.responseBody) {
-      const classified = classifyUpstreamError({
+    // 批次 3：admission.account 是派生对象，需要查找 state.accounts 中的真实 account
+    const stateAccount = resolveStateAccount(admission.account.id)
+    if (stateAccount) {
+      await markAccountCooldown(stateAccount, error, {
         status,
-        retryAfterHeader: error.response.headers.get("retry-after"),
-        body: error.responseBody,
+        isHttp,
+        authKey,
+        logPrefix,
       })
-      if (classified.kind === "quota_exhausted") {
-        invalidateSessionAffinityAuth(authKey)
-        setAccountQuotaState(admission.account, "exhausted")
-        if (classified.retryAfterMs) {
-          admission.account.cooldownUntil = Date.now() + classified.retryAfterMs
-        }
-        syncLegacyExhaustedState(admission.account)
-        await saveAccounts().catch((err: unknown) => {
-          logger.warn(
-            `${logPrefix} failed to persist account quota state:`,
-            (err as Error).message,
-          )
-        })
-        return
-      }
-    }
-
-    // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 account、不打散 affinity
-    if (status === 429 || !isHttp) {
-      invalidateSessionAffinityAuth(authKey)
-      await markAccountRateLimited(
-        admission.account.id,
-        new Response(null, { status }),
-      )
     }
     return
   }

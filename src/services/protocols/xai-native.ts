@@ -1,9 +1,9 @@
+import { connectionToAccount } from "~/lib/provider-connections"
 import { createXaiResponsesOnce } from "~/services/xai/create-responses-once"
 
 import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
 
 import { createChatViaResponses } from "./chat-via-responses"
-import { requireTargetAccount } from "./shared"
 
 export const xaiNativeAdapter: ProtocolAdapter = {
   protocol: "xai-native",
@@ -24,12 +24,12 @@ export const xaiNativeAdapter: ProtocolAdapter = {
       signal,
       ctx,
       responsesExecutor: async ({
-        target: tgt,
+        connection: conn,
         payload: responsesPayload,
         signal: sig,
         ctx: context,
       }) => {
-        const account = requireTargetAccount(tgt, "xai-native")
+        const account = connectionToAccount(conn)
         const response = await createXaiResponsesOnce(
           account,
           responsesPayload,
@@ -41,8 +41,8 @@ export const xaiNativeAdapter: ProtocolAdapter = {
     })
   },
 
-  async createResponses({ target, payload, signal, ctx }) {
-    const account = requireTargetAccount(target, "xai-native")
+  async createResponses({ connection, payload, signal, ctx }) {
+    const account = connectionToAccount(connection)
     const response = await createXaiResponsesOnce(account, payload, signal, ctx)
     return { credentialId: account.id, response } as AdapterResponsesResult
   },

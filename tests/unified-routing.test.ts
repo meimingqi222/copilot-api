@@ -121,14 +121,12 @@ describe("unified buildRouteTargets", () => {
     expect(connectionTarget).toBeDefined()
     if (connectionTarget) {
       expect(connectionTarget.protocol).toBe("openai-compatible")
-      expect(connectionTarget.account).toBeUndefined()
     }
 
     const accountTarget = targets.find((t) => t.connectionId === "copilot-acc")
     expect(accountTarget).toBeDefined()
     if (accountTarget) {
       expect(accountTarget.protocol).toBe("copilot-native")
-      expect(accountTarget.account).toBe(account)
     }
   })
 
@@ -217,7 +215,6 @@ describe("unified selectRouteTarget", () => {
     const selected = selectRouteTarget(targets)
     expect(selected).not.toBeNull()
     expect(selected?.connectionId).toBe("acc")
-    expect(selected?.account).toBeDefined()
   })
 
   test("exclude set skips tried targets across systems", async () => {

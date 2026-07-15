@@ -6,7 +6,7 @@
  *
  * Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
  * 注入到 connections 候选池中。account 循环分支已删除,但生成的虚拟 connection target
- * 仍携带 `account` 字段,prepareRequestAdmission 的 `target.account` 分支仍可工作。
+ * 仍携带 `account` 字段用于 build 时模型匹配,但 RouteTarget 不再包含 account 字段。
  */
 
 import type { Account, AccountModel } from "~/lib/accounts"
@@ -92,9 +92,8 @@ export function buildRouteTargets(
   const accounts = options.accounts ?? state.accounts
 
   // Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
-  // 合并到 connections 候选池。account 循环分支已删除,但虚拟 connection target
-  // 仍携带 account 字段,prepareRequestAdmission 的 target.account 分支仍可工作。
-  // 同时保留对 account 的可用性/legacyProvider/accountPrefix 过滤。
+  // 合并到 connections 候选池。批次 3：RouteTarget.account 已删除，
+  // account 仅在 build 时用于模型匹配/端点解析，不放入 RouteTarget。
   const virtualConnections: Array<{
     connection: ProviderConnection
     account: Account
@@ -173,7 +172,6 @@ export function buildRouteTargets(
             credentials[0]?.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
           credentialWeight:
             credentials[0]?.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
-          account,
         })
       }
       continue
@@ -229,7 +227,6 @@ export function buildRouteTargets(
               credentialPriority:
                 credential.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
               credentialWeight: credential.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
-              account,
             })
           }
         } else {

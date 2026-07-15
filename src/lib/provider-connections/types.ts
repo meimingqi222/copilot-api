@@ -6,8 +6,6 @@
  * 兼容的服务商无需新增 TypeScript runtime 文件。
  */
 
-import type { Account } from "~/lib/accounts"
-
 import type { CredentialRefresherType } from "./credential-refresher"
 
 export type ProviderProtocol =
@@ -218,7 +216,8 @@ export interface ProviderConnection {
  * 调度单位:把 (connection, credential, model, endpoint) 展平为可路由的目标。
  * 选择器从所有候选 RouteTarget 中按优先级/权重挑选。
  *
- * 对于 Account 路径,account 字段承载 Account 引用,credentialId 等于 accountId。
+ * 批次 3：account 字段已删除。protocol adapter 通过 connectionToAccount(connection)
+ * 从 connection 派生 Account。
  */
 export interface RouteTarget {
   connectionId: string
@@ -232,8 +231,6 @@ export interface RouteTarget {
   connectionWeight: number
   credentialPriority: number
   credentialWeight: number
-  /** Account-based target 携带 Account 引用。Connection-based target 不设置。 */
-  account?: Account
 }
 
 /**
