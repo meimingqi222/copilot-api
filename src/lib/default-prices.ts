@@ -209,6 +209,43 @@ const DEFAULT_MODEL_PRICES: Record<
     cacheReadPricePer1m: 0.5,
     cacheWritePricePer1m: 5.0,
   },
+  // GPT-5.6 Codex family (models.dev openai, 2026-07)
+  "gpt-5.6": {
+    promptPricePer1m: 5.0,
+    completionPricePer1m: 30.0,
+    cacheReadPricePer1m: 0.5,
+    cacheWritePricePer1m: 5.0,
+  },
+  "gpt-5.6-sol": {
+    promptPricePer1m: 5.0,
+    completionPricePer1m: 30.0,
+    cacheReadPricePer1m: 0.5,
+    cacheWritePricePer1m: 5.0,
+  },
+  "gpt-5.6-terra": {
+    promptPricePer1m: 2.5,
+    completionPricePer1m: 15.0,
+    cacheReadPricePer1m: 0.25,
+    cacheWritePricePer1m: 2.5,
+  },
+  "gpt-5.6-luna": {
+    promptPricePer1m: 1.0,
+    completionPricePer1m: 6.0,
+    cacheReadPricePer1m: 0.1,
+    cacheWritePricePer1m: 1.0,
+  },
+  "gpt-5.4-mini": {
+    promptPricePer1m: 0.75,
+    completionPricePer1m: 4.5,
+    cacheReadPricePer1m: 0.075,
+    cacheWritePricePer1m: 0.75,
+  },
+  "gpt-5.3-codex-spark": {
+    promptPricePer1m: 1.75,
+    completionPricePer1m: 14.0,
+    cacheReadPricePer1m: 0.175,
+    cacheWritePricePer1m: 1.75,
+  },
   "gpt-5-nano": {
     promptPricePer1m: 0.05,
     completionPricePer1m: 0.4,
