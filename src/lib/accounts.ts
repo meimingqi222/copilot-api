@@ -1,6 +1,10 @@
 import type { OAuthProviderId, ProviderId } from "~/lib/provider-config"
 
 import { isOAuthProviderId } from "~/lib/provider-config"
+import {
+  migrateAccountsToConnections,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 
@@ -225,7 +229,10 @@ export function canonicalModelId(modelId: string, account?: Account): string {
 }
 
 export function addAccount(account: Account): void {
-  state.accounts.push(account)
+  // 批次 2：通过 upsert connection + sync state.accounts
+  const conn = migrateAccountsToConnections([account])[0]
+  upsertProviderConnection(conn)
+  state.accounts = [...state.accounts, account]
 }
 
 // ── Provider-specific getter/setter compatibility layer ─────────

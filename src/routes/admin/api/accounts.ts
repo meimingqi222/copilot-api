@@ -21,6 +21,7 @@ import {
   isOAuthAccount,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
+import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
@@ -157,7 +158,9 @@ accountApiRoutes.delete("/:id", async (c) => {
   clearAccountRateLimitState(id)
 
   const wasActive = idx === state.activeAccountIndex
-  state.accounts.splice(idx, 1)
+  // 批次 2：通过 removeProviderConnection + 重建 state.accounts
+  removeProviderConnection(id)
+  state.accounts = state.accounts.filter((a) => a.id !== id)
   // Fix active index after deletion
   if (idx < state.activeAccountIndex) {
     // Deleted an account before the active one — shift index down
