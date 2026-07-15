@@ -1,33 +1,20 @@
 import type { Account } from "~/lib/accounts"
+import type { OAuthProviderId } from "~/lib/provider-config"
 
 import { saveAccounts } from "~/lib/account-store"
 import {
   getOAuthAccessToken,
-  getOAuthDeviceId,
   getOAuthProxyUrl,
   getOAuthRefreshToken,
   isOAuthAccount,
-  setOAuthCredentials,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 
 import {
-  applyAntigravityOAuthBundle,
-  refreshAntigravityTokens,
-} from "./antigravity"
-import { applyClaudeOAuthBundle, refreshClaudeTokens } from "./claude"
-import { applyCodexOAuthBundle, refreshCodexTokens } from "./codex"
-import {
-  applyKimiOAuthBundle,
-  createKimiDeviceId,
-  refreshKimiTokens,
-} from "./kimi"
-import {
-  applyXaiOAuthBundle,
-  getXaiTokenEndpoint,
-  refreshXaiTokens,
-} from "./xai"
+  OAUTH_REFRESH_LEAD_MS,
+  OAUTH_REFRESH_STRATEGIES,
+} from "./refresh-strategies"
 
 const DEFAULT_REFRESH_LEAD_MS = 5 * 60 * 1000
 const RETRY_DELAY_MS = 60_000
@@ -48,18 +35,8 @@ export function cancelAllOAuthRefreshTimers(): void {
   }
 }
 
-function getRefreshLeadMs(account: Account): number {
-  switch (account.provider) {
-    case "codex": {
-      return 5 * 24 * 60 * 60 * 1000
-    }
-    case "claude": {
-      return 4 * 60 * 60 * 1000
-    }
-    default: {
-      return DEFAULT_REFRESH_LEAD_MS
-    }
-  }
+function getRefreshLeadMs(provider: OAuthProviderId): number {
+  return OAUTH_REFRESH_LEAD_MS[provider] ?? DEFAULT_REFRESH_LEAD_MS
 }
 
 function getTokenExpiryMs(account: Account): number | undefined {
@@ -135,57 +112,11 @@ export async function refreshOAuthAccountToken(
   const fetchOptions = { proxyUrl: getOAuthProxyUrl(account) }
 
   try {
-    switch (account.provider) {
-      case "claude": {
-        const bundle = await refreshClaudeTokens(refreshToken, fetchOptions)
-        applyClaudeOAuthBundle(account, bundle)
-        break
-      }
-      case "kimi": {
-        const deviceId = createKimiDeviceId(getOAuthDeviceId(account))
-        const bundle = await refreshKimiTokens(
-          refreshToken,
-          deviceId,
-          fetchOptions,
-        )
-        applyKimiOAuthBundle(account, bundle)
-        if (!getOAuthDeviceId(account)) {
-          setOAuthCredentials(account, { deviceId })
-        }
-        break
-      }
-      case "codex": {
-        const bundle = await refreshCodexTokens(refreshToken, fetchOptions)
-        applyCodexOAuthBundle(account, bundle)
-        break
-      }
-      case "antigravity": {
-        const bundle = await refreshAntigravityTokens(
-          refreshToken,
-          fetchOptions,
-        )
-        applyAntigravityOAuthBundle(account, {
-          ...bundle,
-          redirectUri:
-            account.settings?.redirectUri
-            ?? "http://localhost:51121/oauth-callback",
-        })
-        break
-      }
-      case "xai": {
-        const tokenEndpoint = getXaiTokenEndpoint(account) ?? ""
-        const bundle = await refreshXaiTokens(
-          refreshToken,
-          tokenEndpoint,
-          fetchOptions,
-        )
-        applyXaiOAuthBundle(account, bundle)
-        break
-      }
-      default: {
-        throw new Error("Unhandled OAuth provider")
-      }
-    }
+    await OAUTH_REFRESH_STRATEGIES[account.provider](
+      account,
+      refreshToken,
+      fetchOptions,
+    )
 
     logger.debug(
       `OAuth refresh succeeded for "${account.label}" (${account.provider}, ${reason})`,
@@ -209,7 +140,7 @@ export function scheduleOAuthRefreshForAccount(account: Account): void {
   }
 
   const expiry = getTokenExpiryMs(account)
-  const lead = getRefreshLeadMs(account)
+  const lead = getRefreshLeadMs(account.provider)
   const refreshAt =
     expiry ?
       Math.max(expiry - lead, Date.now() + 1_000)
