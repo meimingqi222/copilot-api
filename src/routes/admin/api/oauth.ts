@@ -35,10 +35,7 @@ import {
   pollOAuthFlow,
   registerOAuthFlow,
   removeOAuthFlow,
-  startAntigravityCallbackServer,
-  startClaudeCallbackServer,
-  startCodexCallbackServer,
-  startXaiCallbackServer,
+  startProviderCallbackServer,
   tryBeginOAuthExchange,
   updateOAuthFlow,
   type OAuthFlowProvider,
@@ -176,20 +173,10 @@ async function waitForPkceCallback(
   flowId: string,
   oauthState: string,
 ): Promise<{ code: string }> {
-  switch (provider) {
-    case "claude": {
-      return startClaudeCallbackServer(flowId, oauthState)
-    }
-    case "codex": {
-      return startCodexCallbackServer(flowId, oauthState)
-    }
-    case "xai": {
-      return startXaiCallbackServer(flowId, oauthState)
-    }
-    default: {
-      throw new Error(`Provider "${provider}" does not use PKCE callback`)
-    }
+  if (!PKCE_PROVIDERS.has(provider)) {
+    throw new Error(`Provider "${provider}" does not use PKCE callback`)
   }
+  return startProviderCallbackServer(provider, flowId, oauthState)
 }
 
 async function exchangePkceProviderTokens(
@@ -426,7 +413,8 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     if (!manualCompletion) {
       void (async () => {
         try {
-          const callback = await startAntigravityCallbackServer(
+          const callback = await startProviderCallbackServer(
+            "antigravity",
             flowId,
             start.state,
           )
