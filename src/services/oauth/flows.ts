@@ -36,6 +36,14 @@ export interface OAuthPendingFlow {
   tokenEndpoint?: string
   redirectUri?: string
   proxyUrl?: string
+  /**
+   * In-memory only: device-code `expires_in` (seconds) returned by the
+   * device-authorization endpoint. Not persisted (excluded from
+   * `flowForPersistence`) so the persistence format stays unchanged.
+   * Used by the kimi strategy to bound the polling deadline to the
+   * device code's actual lifetime.
+   */
+  deviceExpiresIn?: number
 }
 
 const pendingOAuthFlows = new Map<string, OAuthPendingFlow>()
@@ -171,6 +179,7 @@ export function updateOAuthFlow(
     updated.deviceCode = undefined
     updated.deviceId = undefined
     updated.tokenEndpoint = undefined
+    updated.deviceExpiresIn = undefined
   }
   pendingOAuthFlows.set(flowId, updated)
   void savePendingOAuthFlows()

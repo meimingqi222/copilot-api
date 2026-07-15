@@ -78,7 +78,7 @@
 - [x] T1.1 统一 applyOAuthBundle
 - [x] T1.2 callback server 配置数据化
 - [x] T1.3 refresh 分发改为策略注册表
-- [ ] T1.4 admin OAuth 路由的 start/exchange 策略化
+- [x] T1.4 admin OAuth 路由的 start/exchange 策略化
 
 ### P2 Quota 层数据驱动
 - [ ] T2.1 通用 quota fetch 引擎（claude/kimi 先行）
@@ -563,3 +563,4 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | 2026-07-15 | T1.1 | ✅ 完成 | 新建 `src/services/oauth/apply-bundle.ts`，5 个 `applyXxxOAuthBundle` 改为薄包装。字段差异确认：claude→email；codex→idToken/accountId/email + settings.baseUrl；xai→idToken/email + settings(baseUrl/tokenEndpoint/redirectUri)；kimi→deviceId；antigravity→projectId/email + settings(baseUrl/redirectUri)。类型微调：extraCredentials 用 `OAuthAccountCredentials` 而非 spec 的 `Record<string, unknown>`（G7 类型收紧），内部用 record 视图遍历避免 per-field 类型窄化问题。验收：三件套全绿，5 文件中 applyBundle 内不再手写 runtimeState。 |
 | 2026-07-15 | T1.2 | ✅ 完成 | 新增 `OAUTH_CALLBACK_CONFIGS`（`Partial<Record<OAuthFlowProvider, OAuthCallbackConfig>>`）+ `startProviderCallbackServer`。删除 4 个 `startXxxCallbackServer`。`waitForPkceCallback` 的 switch 改为 `PKCE_PROVIDERS.has` + `startProviderCallbackServer`。antigravity 调用点改为 `startProviderCallbackServer("antigravity", …)`。类型注解用显式 `Partial<Record<…>>` 而非 `satisfies`（后者不产生可索引类型）。验收：三件套全绿，src 中无 `startXxxCallbackServer` 残留。 |
 | 2026-07-15 | T1.3 | ✅ 完成 | 新建 `src/services/oauth/refresh-strategies.ts`，含 `OAUTH_REFRESH_STRATEGIES: Record<OAuthProviderId, OAuthRefreshFn>`（穷尽 5 provider）和 `OAUTH_REFRESH_LEAD_MS: Partial<Record<OAuthProviderId, number>>`。`refresh-scheduler.ts` 的 switch 替换为 `OAUTH_REFRESH_STRATEGIES[account.provider](…)`，`getRefreshLeadMs` 改为查表（参数从 `Account` 收紧为 `OAuthProviderId`）。验收：三件套全绿，refresh-scheduler.ts 中无 `case "claude"` 等。 |
+| 2026-07-15 | T1.4 | ✅ 完成 | 新建 `src/services/oauth/provider-strategies.ts`，定义 `OAuthProviderStrategy` 接口（`flowType`/`start`/`exchange`）+ `OAUTH_PROVIDER_STRATEGIES: Record<OAuthProviderId, OAuthProviderStrategy>`（穷尽 5 provider，G7）。各 provider 的 start/exchange 差异点（PKCE 与否、device flow、xai endpoint 发现、antigravity redirectUri）原样搬入策略实现。`oauth.ts` 路由 handler 收敛为：解析请求 → 查策略 → 调用 → 序列化响应；`PKCE_PROVIDERS`/`CALLBACK_OAUTH_PROVIDERS` Set 改由策略 `flowType` 派生。`executeOAuthExchange` 通用包装：claim flow → 调策略 → finalize → mark complete。新增 `OAuthPendingFlow.deviceExpiresIn`（仅内存，`flowForPersistence` 排除，persistence 格式不变 G1）。响应字段按原 per-provider 分支条件性输出（kimi 不含 manualCompletion/authUrl；callback provider 含 manualCompletion），保持 G1。`oauth.ts` 686→391 行（< 400 目标达成）。验收：三件套全绿（542 pass / 2 skip / 0 fail）；`oauth.ts` 不再 import 任何 `createXxxOAuthStart`/`exchangeXxxCodeForTokens`/`applyXxxOAuthBundle`。 |
