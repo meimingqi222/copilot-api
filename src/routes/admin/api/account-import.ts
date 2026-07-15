@@ -12,6 +12,7 @@ import { cancelTokenRefreshTimer } from "~/lib/account-store"
 import { setGitHubToken, addAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
+import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
@@ -142,8 +143,10 @@ importAccountRoutes.post("/import", async (c) => {
       const existing = state.accounts[duplicateIndex]
       cancelTokenRefreshTimer(existing.id)
       clearAccountRateLimitState(existing.id)
-      state.accounts.splice(duplicateIndex, 1)
-      // Fix activeAccountIndex after splice (mirrors delete handler)
+      // 批次 2：通过 removeProviderConnection + 重建 state.accounts
+      removeProviderConnection(existing.id)
+      state.accounts = state.accounts.filter((a) => a.id !== existing.id)
+      // Fix activeAccountIndex after removal (mirrors delete handler)
       if (duplicateIndex < state.activeAccountIndex) {
         state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
       } else if (duplicateIndex === state.activeAccountIndex) {

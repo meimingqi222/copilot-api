@@ -7,6 +7,7 @@ import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { addAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
+import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
@@ -59,7 +60,9 @@ function removeOAuthAccountFromState(accountId: string): void {
   cancelTokenRefreshTimer(accountId)
   cancelOAuthRefreshTimer(accountId)
   clearAccountRateLimitState(accountId)
-  state.accounts.splice(idx, 1)
+  // 批次 2：通过 removeProviderConnection + 重建 state.accounts
+  removeProviderConnection(accountId)
+  state.accounts = state.accounts.filter((a) => a.id !== accountId)
 
   if (idx < state.activeAccountIndex) {
     state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
