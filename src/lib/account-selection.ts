@@ -6,12 +6,12 @@ import {
   isAccountAvailable,
   refreshAccountRuntimeAvailability,
 } from "~/lib/account-availability"
+import { listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { state } from "~/lib/state"
 
 function rateLimitedResponse(
   body: string,
-  accounts = state.accounts,
+  accounts: Array<Account> = listAccounts(),
 ): Response {
   const minCooldown = getMinimumCooldownSeconds(accounts)
   return new Response(body, {
@@ -21,7 +21,7 @@ function rateLimitedResponse(
 }
 
 function refreshAllAccountAvailability(): void {
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     refreshAccountRuntimeAvailability(account)
   }
 }
@@ -42,17 +42,12 @@ function sortAccounts(accounts: Array<Account>): Array<Account> {
 
 function getSortedAvailableAccounts(): Array<Account> {
   return sortAccounts(
-    state.accounts.filter((account) => isAccountAvailable(account)),
+    listAccounts().filter((account) => isAccountAvailable(account)),
   )
 }
 
 export function getActiveAccount(): Account {
   refreshAllAccountAvailability()
-
-  const configured = state.accounts.at(state.activeAccountIndex)
-  if (configured && isAccountAvailable(configured)) {
-    return configured
-  }
 
   const available = getSortedAvailableAccounts()
 
@@ -60,7 +55,8 @@ export function getActiveAccount(): Account {
     return available[0]
   }
 
-  const hasCooldownAccounts = state.accounts.some(
+  const allAccounts = listAccounts()
+  const hasCooldownAccounts = allAccounts.some(
     (account) =>
       account.enabled && getAccountAvailability(account).reason === "cooldown",
   )
@@ -71,7 +67,7 @@ export function getActiveAccount(): Account {
     )
   }
 
-  const hasQuotaExhaustedAccounts = state.accounts.some(
+  const hasQuotaExhaustedAccounts = allAccounts.some(
     (account) =>
       account.enabled && getAccountAvailability(account).reason === "quota",
   )
@@ -86,21 +82,4 @@ export function getActiveAccount(): Account {
     "No available accounts (all disabled or no accounts configured)",
     new Response("Service Unavailable", { status: 503 }),
   )
-}
-
-export function switchToNextAccount(): Account | null {
-  refreshAllAccountAvailability()
-
-  const sorted = sortAccounts(state.accounts)
-
-  const currentIdx = sorted.indexOf(state.accounts[state.activeAccountIndex])
-  for (let i = 1; i < sorted.length; i++) {
-    const idx = (currentIdx + i) % sorted.length
-    const account = sorted[idx]
-    if (isAccountAvailable(account)) {
-      state.activeAccountIndex = state.accounts.indexOf(account)
-      return account
-    }
-  }
-  return null
 }

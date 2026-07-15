@@ -14,7 +14,11 @@ import type { ProviderId } from "~/lib/provider-config"
 
 import { accountToConnection } from "~/lib/account-adapter"
 import { isAccountAvailable } from "~/lib/account-availability"
-import { buildAccountModelAliases, getAccountModelPrefix } from "~/lib/accounts"
+import {
+  buildAccountModelAliases,
+  getAccountModelPrefix,
+  listAccounts,
+} from "~/lib/accounts"
 import {
   DEFAULTS,
   isCredentialAvailable,
@@ -27,7 +31,6 @@ import {
   type RouteTarget,
 } from "~/lib/provider-connections"
 import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
-import { state } from "~/lib/state"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -89,7 +92,7 @@ export function buildRouteTargets(
   const baseConnections = rawConnections.filter(
     (conn) => !readAccountLegacyMetadata(conn),
   )
-  const accounts = options.accounts ?? state.accounts
+  const accounts = options.accounts ?? listAccounts()
 
   // Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
   // 合并到 connections 候选池。批次 3：RouteTarget.account 已删除，

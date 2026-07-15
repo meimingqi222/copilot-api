@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 
+import { listAccounts } from "~/lib/accounts"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -25,8 +26,7 @@ type PerformanceResponse = {
   performance: Array<PerformanceRow>
 }
 
-const originalAccounts = state.accounts
-const originalActiveAccountIndex = state.activeAccountIndex
+const originalAccounts = listAccounts()
 const originalApiKey = state.legacyApiKey
 const originalAdminPassword = state.adminPassword
 const originalUsers = state.users
@@ -56,7 +56,6 @@ beforeEach(() => {
       createdAt: Date.now(),
     },
   ])
-  state.activeAccountIndex = 0
   state.legacyApiKey = undefined
   state.adminPassword = undefined
   state.users = []
@@ -67,7 +66,6 @@ beforeEach(() => {
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
   setTestAccounts(originalAccounts)
-  state.activeAccountIndex = originalActiveAccountIndex
   state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.users = originalUsers

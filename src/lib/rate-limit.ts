@@ -1,6 +1,6 @@
+import { getAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { parseRetryAfterMs } from "~/lib/retry-after"
-import { state as globalState } from "~/lib/state"
 
 import { sleep } from "./utils"
 
@@ -238,7 +238,7 @@ export function getRemainingCooldownSeconds(accountId: string): number {
   const limiterState = getAccountState(accountId)
 
   if (limiterState.cooldownUntilMs <= Date.now()) {
-    const account = globalState.accounts.find((a) => a.id === accountId)
+    const account = getAccount(accountId)
     if (
       account
       && typeof account.cooldownUntil === "number"

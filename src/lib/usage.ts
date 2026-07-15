@@ -1,16 +1,19 @@
 import type { Context } from "hono"
 
-import { canonicalModelId, canonicalNativeModelId } from "~/lib/accounts"
+import {
+  canonicalModelId,
+  canonicalNativeModelId,
+  getAccount,
+} from "~/lib/accounts"
 import { logStore } from "~/lib/log-store"
 import { logger } from "~/lib/logger"
 import { parseModelReference } from "~/lib/route-target/model-reference"
-import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
 
 /** Map request model id to the account catalog public id when possible. */
 export function resolveUsageModelId(accountId: string, model: string): string {
-  const account = state.accounts.find((entry) => entry.id === accountId)
+  const account = getAccount(accountId)
   if (!account) return model
 
   const native = canonicalNativeModelId(

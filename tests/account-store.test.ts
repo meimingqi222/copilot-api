@@ -7,9 +7,9 @@ import path from "node:path"
 import type { Account } from "~/lib/accounts"
 
 import { loadAccounts, saveAccounts } from "~/lib/account-store"
+import { listAccounts } from "~/lib/accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
-import { state } from "~/lib/state"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -99,8 +99,8 @@ describe("account-store", () => {
     __resetProviderConnectionsForTest()
     await loadAccounts()
 
-    expect(state.accounts).toHaveLength(1)
-    expect(state.accounts[0].cooldownUntil).toBe(cooldownTime)
+    expect(listAccounts()).toHaveLength(1)
+    expect(listAccounts()[0].cooldownUntil).toBe(cooldownTime)
   })
 
   test("loadAccounts migrates legacy flat fields into credentials/settings", async () => {
@@ -161,15 +161,15 @@ describe("account-store", () => {
     }
     expect(accountsJsonExists).toBe(false)
 
-    expect(state.accounts).toHaveLength(3)
+    expect(listAccounts()).toHaveLength(3)
 
-    const copilot = state.accounts[0]
+    const copilot = listAccounts()[0]
     expect(copilot.provider).toBe("copilot")
     expect(copilot.credentials?.githubToken).toBe("gh-legacy")
     expect(copilot.runtimeState?.copilotToken).toBe("cp-legacy")
     expect(copilot.runtimeState?.copilotTokenExpiry).toBe(1234567890)
 
-    const codebuff = state.accounts[1]
+    const codebuff = listAccounts()[1]
     expect(codebuff.provider).toBe("codebuff")
     expect(codebuff.credentials?.authToken).toBe("cb-legacy")
     expect(codebuff.settings).toMatchObject({
@@ -181,7 +181,7 @@ describe("account-store", () => {
       allowFallbacks: false,
     })
 
-    const windsurf = state.accounts[2]
+    const windsurf = listAccounts()[2]
     expect(windsurf.provider).toBe("windsurf")
     expect(windsurf.credentials?.apiKey).toBe("ws-legacy")
     expect(windsurf.settings).toMatchObject({
@@ -229,7 +229,7 @@ describe("account-store", () => {
 
     await loadAccounts()
 
-    const mimo = state.accounts[0]
+    const mimo = listAccounts()[0]
     expect(mimo.provider).toBe("mimo-aistudio")
     expect(mimo.credentials?.serviceToken).toBe("svc-legacy")
     expect(mimo.credentials?.xiaomichatbotPh).toBe("ph-legacy")
@@ -239,7 +239,7 @@ describe("account-store", () => {
       proxy: "http://proxy.example:8080",
     })
 
-    const windsurf = state.accounts[1]
+    const windsurf = listAccounts()[1]
     expect(windsurf.provider).toBe("windsurf")
     expect(windsurf.runtimeState?.windsurfJwt).toBe("jwt-legacy")
     expect(windsurf.runtimeState?.windsurfJwtFetchedAt).toBe(9876543210)
@@ -269,8 +269,8 @@ describe("account-store", () => {
     __resetProviderConnectionsForTest()
     await loadAccounts()
 
-    expect(state.accounts).toHaveLength(1)
-    expect(state.accounts[0].cooldownUntil).toBeUndefined()
+    expect(listAccounts()).toHaveLength(1)
+    expect(listAccounts()[0].cooldownUntil).toBeUndefined()
   })
 
   test("loadAccounts preserves an intentionally empty accounts file", async () => {
@@ -281,8 +281,8 @@ describe("account-store", () => {
 
     // Empty accounts.json triggers first migration (0 accounts → 0 connections)
     // accounts.json is renamed, legacy token creates a copilot account
-    expect(state.accounts).toHaveLength(1)
-    expect(state.accounts[0].provider).toBe("copilot")
+    expect(listAccounts()).toHaveLength(1)
+    expect(listAccounts()[0].provider).toBe("copilot")
   })
 
   test("loadAccounts does not overwrite corrupt accounts with legacy default", async () => {
@@ -299,7 +299,7 @@ describe("account-store", () => {
     expect(thrown).toBeInstanceOf(Error)
     expect((thrown as Error).message).toContain("Could not recover accounts")
 
-    expect(state.accounts).toHaveLength(0)
+    expect(listAccounts()).toHaveLength(0)
   })
 
   test("loadAccounts preserves OAuth tokenEndpoint and redirectUri", async () => {
@@ -329,8 +329,8 @@ describe("account-store", () => {
     __resetProviderConnectionsForTest()
     await loadAccounts()
 
-    expect(state.accounts).toHaveLength(1)
-    const loaded = state.accounts[0]
+    expect(listAccounts()).toHaveLength(1)
+    const loaded = listAccounts()[0]
     expect(loaded.provider).toBe("xai")
     expect(loaded.settings?.tokenEndpoint).toBe("https://auth.x.ai/oauth/token")
     expect(loaded.settings?.redirectUri).toBe("http://127.0.0.1:56121/callback")

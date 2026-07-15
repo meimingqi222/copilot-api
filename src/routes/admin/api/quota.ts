@@ -2,8 +2,12 @@ import { Hono } from "hono"
 
 import { getAccountAvailability } from "~/lib/account-availability"
 import { refreshQuotaForAccount, saveAccounts } from "~/lib/account-store"
-import { isOAuthAccount } from "~/lib/accounts"
+import { getAccount, isOAuthAccount, listAccounts } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
+import {
+  getMutableProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import {
   canResetCodexQuota,
@@ -15,7 +19,6 @@ import {
   enrichQuotaInfoForResponse,
 } from "~/lib/quota/cycles"
 import { summarizeCodexQuota } from "~/lib/quota/parsers"
-import { state } from "~/lib/state"
 import {
   getOAuthAccountSubtitle,
   upgradeOAuthAccountLabels,
@@ -25,12 +28,29 @@ import { getProviderRuntime } from "~/services/providers/registry"
 
 export const quotaApiRoutes = new Hono()
 
+/**
+ * Derive the "active" account: the first enabled account by priority order.
+ * Replaces the legacy state.activeAccountIndex concept.
+ */
+function getActiveAccountId(): string | undefined {
+  const enabled = listAccounts()
+    .filter((a) => a.enabled)
+    .sort((a, b) => a.priority - b.priority)
+  return enabled[0]?.id
+}
+
 quotaApiRoutes.get("/", async (c) => {
   initializeProviderRegistry()
-  if (upgradeOAuthAccountLabels(state.accounts)) {
+  const accounts = listAccounts()
+  if (upgradeOAuthAccountLabels(accounts)) {
+    for (const account of accounts) {
+      const conn = getMutableProviderConnection(account.id)
+      if (conn) syncAccountToConnection(conn, account)
+    }
     await saveAccounts()
   }
-  const accounts = state.accounts.map((account, idx) => {
+  const activeAccountId = getActiveAccountId()
+  const response = accounts.map((account) => {
     const availability = getAccountAvailability(account)
     const subtitle =
       isOAuthAccount(account) ? getOAuthAccountSubtitle(account) : undefined
@@ -42,7 +62,7 @@ quotaApiRoutes.get("/", async (c) => {
       provider: account.provider,
       enabled: account.enabled,
       priority: account.priority,
-      isActive: idx === state.activeAccountIndex,
+      isActive: account.id === activeAccountId,
       isExhausted:
         availability.reason === "cooldown" || availability.reason === "quota",
       quotaState: account.quotaState ?? "unknown",
@@ -58,7 +78,7 @@ quotaApiRoutes.get("/", async (c) => {
     }
   })
 
-  return c.json({ accounts })
+  return c.json({ accounts: response })
 })
 
 // Force-refresh all account quotas from GitHub Copilot API
@@ -67,7 +87,7 @@ quotaApiRoutes.post("/refresh", async (c) => {
   const results = []
   const errors = []
 
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     try {
       const runtime = getProviderRuntime(account.provider)
       if (runtime.refreshQuota) {
@@ -104,7 +124,7 @@ quotaApiRoutes.post("/refresh", async (c) => {
 quotaApiRoutes.post("/:id/refresh", async (c) => {
   initializeProviderRegistry()
   const id = c.req.param("id")
-  const account = state.accounts.find((item) => item.id === id)
+  const account = getAccount(id)
   if (!account) {
     return c.json({ error: "Account not found." }, 404)
   }
@@ -148,7 +168,7 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
 quotaApiRoutes.post("/:id/reset", async (c) => {
   initializeProviderRegistry()
   const id = c.req.param("id")
-  const account = state.accounts.find((item) => item.id === id)
+  const account = getAccount(id)
   if (!account) {
     return c.json({ error: "Account not found." }, 404)
   }
@@ -190,6 +210,8 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
       }),
     }
     applyOAuthQuotaSnapshot(account, snapshot)
+    const conn = getMutableProviderConnection(account.id)
+    if (conn) syncAccountToConnection(conn, account)
     await saveAccounts()
     logger.info(`Codex quota reset for account "${account.label}"`)
     return c.json({

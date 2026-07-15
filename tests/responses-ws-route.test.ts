@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 import { websocket } from "hono/bun"
 
+import { listAccounts } from "~/lib/accounts"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -9,8 +10,7 @@ import { server } from "~/server"
 import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalFetch = globalThis.fetch
-const originalAccounts = state.accounts
-const originalActiveAccountIndex = state.activeAccountIndex
+const originalAccounts = listAccounts()
 const originalModels = state.models
 const originalApiKey = state.legacyApiKey
 const originalVsCodeVersion = state.vsCodeVersion
@@ -33,7 +33,6 @@ beforeEach(() => {
       createdAt: Date.now(),
     },
   ])
-  state.activeAccountIndex = 0
   state.vsCodeVersion = "1.0.0"
   state.accountType = "individual"
   state.legacyApiKey = undefined
@@ -65,7 +64,6 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch
   setTestAccounts(originalAccounts)
-  state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
   state.legacyApiKey = originalApiKey
   state.vsCodeVersion = originalVsCodeVersion

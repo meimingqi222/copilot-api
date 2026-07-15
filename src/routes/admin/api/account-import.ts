@@ -9,12 +9,11 @@ import {
   saveAccounts,
 } from "~/lib/account-store"
 import { cancelTokenRefreshTimer } from "~/lib/account-store"
-import { setGitHubToken, addAccount } from "~/lib/accounts"
+import { setGitHubToken, addAccount, listAccounts } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
 import {
   importCpaAuthRecords,
@@ -131,30 +130,19 @@ importAccountRoutes.post("/import", async (c) => {
       isProviderId(providerStr) ? providerStr : "copilot"
 
     // Check for existing account with matching label+provider
-    const duplicateIndex = state.accounts.findIndex(
+    const duplicate = listAccounts().find(
       (a) => a.label === label && a.provider === provider,
     )
-    if (duplicateIndex !== -1) {
+    if (duplicate) {
       if (!overwrite) {
         skipped.push(label)
         continue
       }
       // overwrite=true: remove existing account before importing new one
-      const existing = state.accounts[duplicateIndex]
-      cancelTokenRefreshTimer(existing.id)
-      clearAccountRateLimitState(existing.id)
+      cancelTokenRefreshTimer(duplicate.id)
+      clearAccountRateLimitState(duplicate.id)
       // 批次 2：通过 removeProviderConnection + 重建 state.accounts
-      removeProviderConnection(existing.id)
-      state.accounts = state.accounts.filter((a) => a.id !== existing.id)
-      // Fix activeAccountIndex after removal (mirrors delete handler)
-      if (duplicateIndex < state.activeAccountIndex) {
-        state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
-      } else if (duplicateIndex === state.activeAccountIndex) {
-        state.activeAccountIndex = Math.min(
-          duplicateIndex,
-          Math.max(0, state.accounts.length - 1),
-        )
-      }
+      removeProviderConnection(duplicate.id)
     }
 
     if (provider === "copilot") {
@@ -360,7 +348,7 @@ importAccountRoutes.post("/import-cpa", async (c) => {
 
     const result = importCpaAuthRecords(records, {
       overwrite: body.overwrite === true,
-      existingAccounts: state.accounts,
+      existingAccounts: listAccounts(),
       onAccount: (account) => {
         scheduleOAuthRefreshForAccount(account)
         void refreshModelsForAccount(account).catch((err: unknown) => {

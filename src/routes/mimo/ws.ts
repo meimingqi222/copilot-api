@@ -1,8 +1,8 @@
 import { Hono } from "hono"
 import { upgradeWebSocket } from "hono/bun"
 
+import { getAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
-import { state } from "~/lib/state"
 import {
   isValidMimoWsTokenForAccount,
   type MimoMessage,
@@ -93,7 +93,7 @@ mimoWsRoute.get("/", async (c, next) => {
     return c.text("Unauthorized", 401)
   }
 
-  const account = state.accounts.find((item) => item.id === accountId)
+  const account = getAccount(accountId)
   if (!account || !account.enabled || account.provider !== "mimo-aistudio") {
     logger.debug(`Rejecting Claw WS connection: invalid account ${accountId}`)
     return c.text("Forbidden", 403)

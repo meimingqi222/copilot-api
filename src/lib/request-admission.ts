@@ -10,6 +10,7 @@ import type {
 } from "~/lib/provider-connections"
 
 import { getAccountAvailability } from "~/lib/account-availability"
+import { getAccount } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
@@ -312,7 +313,7 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
 
   for (const candidate of candidates) {
     // 批次 3：RouteTarget.account 已删除，通过 connectionId 查找 account
-    const account = state.accounts.find((a) => a.id === candidate.connectionId)
+    const account = getAccount(candidate.connectionId)
     if (account) {
       const availability = getAccountAvailability(account)
       if (!availability.available) {

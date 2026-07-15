@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import type { Account } from "~/lib/accounts"
 
-import { state } from "~/lib/state"
+import { listAccounts } from "~/lib/accounts"
 import { resolveUsageModelId } from "~/lib/usage"
 
 import { setTestAccounts } from "./helpers/set-accounts"
@@ -43,7 +43,7 @@ function windsurfAccount(overrides?: Partial<Account>): Account {
 
 describe("resolveUsageModelId", () => {
   test("maps provider-prefixed request to catalog model id", () => {
-    const original = state.accounts
+    const original = listAccounts()
     setTestAccounts([windsurfAccount()])
 
     expect(resolveUsageModelId("ws-1", "windsurf/swe-1-6-fast")).toBe(
@@ -55,7 +55,7 @@ describe("resolveUsageModelId", () => {
   })
 
   test("keeps swe-1-6 and swe-1-6-fast as separate models", () => {
-    const original = state.accounts
+    const original = listAccounts()
     setTestAccounts([windsurfAccount()])
 
     expect(resolveUsageModelId("ws-1", "swe-1-6")).toBe("swe-1-6")

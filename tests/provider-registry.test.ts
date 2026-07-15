@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
+import { listAccounts } from "~/lib/accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
@@ -19,8 +20,7 @@ import {
 } from "./admin-test-utils"
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
-const originalActiveAccountIndex = state.activeAccountIndex
+const originalAccounts = listAccounts()
 const originalModels = state.models
 const originalApiKey = state.legacyApiKey
 const originalProviderDefaults = structuredClone(state.providerDefaults)
@@ -33,7 +33,6 @@ beforeEach(async () => {
   initializeProviderRegistry()
   statsStore.clearUsageStatsForTest()
   setTestAccounts([])
-  state.activeAccountIndex = 0
   state.models = undefined
   state.legacyApiKey = undefined
   state.providerDefaults = structuredClone(originalProviderDefaults)
@@ -43,7 +42,6 @@ beforeEach(async () => {
 
 afterEach(async () => {
   setTestAccounts(originalAccounts)
-  state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
   state.legacyApiKey = originalApiKey
   state.providerDefaults = structuredClone(originalProviderDefaults)
@@ -140,7 +138,7 @@ test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct acco
 
   await ensureDirectProviderAccounts()
 
-  expect(state.accounts[0]?.settings).toMatchObject({
+  expect(listAccounts()[0]?.settings).toMatchObject({
     baseUrl: "https://override.example",
     cliVersion: "9.9.9",
     agentId: "agent-override",
@@ -196,6 +194,6 @@ test("POST /admin/api/accounts creates a windsurf account with direct credential
   expect(body.account.provider).toBe("windsurf")
   expect(body.account.label).toBe("windsurf-main")
   expect(
-    state.accounts.some((account) => account.provider === "windsurf"),
+    listAccounts().some((account) => account.provider === "windsurf"),
   ).toBe(true)
 })

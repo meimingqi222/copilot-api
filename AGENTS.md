@@ -73,7 +73,7 @@ src/
 │   │   ├── build.ts        # buildRouteTargets (connections + virtual account connections)
 │   │   └── select.ts       # selectRouteTarget (priority/weight selection)
 │   ├── shell.ts            # Shell script generation
-│   ├── state.ts            # Global state (state.accounts = cached from connections)
+│   ├── state.ts            # Global state (no state.accounts — use listAccounts())
 │   ├── stats-store.ts      # Usage statistics
 │   ├── token.ts            # GitHub token management
 │   ├── tokenizer.ts        # Token counting
@@ -101,16 +101,24 @@ Provider Connection-centric model. Key concepts:
 - **ProviderConnection**: The truth source for upstream service configuration.
   Stored in `provider-connections.json`. Each connection has protocol,
   credentials, models, baseUrl, etc.
-- **state.accounts**: A cached array derived from `stateRoot.connections` via
-  `syncAccountsFromConnections()`. Still exists for backward compatibility
-  but is no longer the truth source. Mutations go through connection helpers
-  (`upsertProviderConnection`, `removeProviderConnection`).
+- **Account helpers** (`src/lib/accounts.ts`): `listAccounts()` and
+  `getAccount(id)` derive Account snapshots on-demand from
+  `listProviderConnections()` (filtered by `readAccountLegacyMetadata`).
+  `state.accounts` / `state.activeAccountIndex` fields were **deleted** in
+  T5.2.2d — all reads go through `listAccounts()`/`getAccount()`, all
+  mutations go through connection helpers (`upsertProviderConnection`,
+  `removeProviderConnection`, `getMutableProviderConnection`).
 - **RouteTarget**: The dispatch unit. `RouteTarget.account` field was deleted
   in T5.2.3. Protocol adapters derive Account from connection via
   `connectionToAccount(connection)`.
 - **AccountLegacyMetadata**: Stored in `connection.metadata`, holds
   account-specific fields during the transition. Typed readers/writers in
   `connection-metadata.ts`.
+- **Persistence**: `saveAccounts()` delegates to
+  `saveProviderConnections(listProviderConnections())`. `accounts.json` is
+  never revived — on startup, if `accounts.json` exists alongside
+  `provider-connections.json`, connections take priority (set
+  `COPILOT_API_FORCE_REMIGRATE=1` to re-migrate from accounts.json).
 
 ## CLI Structure
 

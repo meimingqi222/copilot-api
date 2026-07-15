@@ -4,7 +4,7 @@ import path from "node:path"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
-import { isOAuthAccount } from "~/lib/accounts"
+import { isOAuthAccount, listAccounts } from "~/lib/accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
@@ -22,7 +22,7 @@ import {
 } from "./admin-test-utils"
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
+const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
 const isolationRoot = PATHS.APP_DIR
 const testDir = path.join(process.cwd(), ".tmp-oauth-smoke")
@@ -330,8 +330,8 @@ describe("OAuth smoke — admin API", () => {
     expect(complete.status).toBe(200)
     const body = (await complete.json()) as { status: string }
     expect(body.status).toBe("complete")
-    expect(state.accounts).toHaveLength(1)
-    expect(state.accounts[0]?.provider).toBe("claude")
+    expect(listAccounts()).toHaveLength(1)
+    expect(listAccounts()[0]?.provider).toBe("claude")
   })
 
   test("POST /admin/api/oauth/codex/complete exchanges manual callback", async () => {
@@ -373,7 +373,7 @@ describe("OAuth smoke — admin API", () => {
       },
     )
     expect(complete.status).toBe(200)
-    expect(state.accounts[0]?.provider).toBe("codex")
+    expect(listAccounts()[0]?.provider).toBe("codex")
   })
 
   test("POST /admin/api/oauth/kimi/cancel allows restarting device flow", async () => {
@@ -484,9 +484,9 @@ describe("OAuth smoke — admin API", () => {
       details: { imported: Array<string> }
     }
     expect(body.imported).toBe(1)
-    expect(state.accounts).toHaveLength(1)
+    expect(listAccounts()).toHaveLength(1)
 
-    const [account] = state.accounts
+    const [account] = listAccounts()
     expect(account.provider).toBe("claude")
     expect(isOAuthAccount(account) && account.settings?.proxyUrl).toBe(
       "http://127.0.0.1:7890",
@@ -509,7 +509,7 @@ describe("OAuth smoke — admin API", () => {
       }),
     })
 
-    const accountId = state.accounts[0]?.id
+    const accountId = listAccounts()[0]?.id
     expect(accountId).toBeDefined()
 
     const response = await adminJson(
@@ -523,7 +523,7 @@ describe("OAuth smoke — admin API", () => {
     )
 
     expect(response.status).toBe(200)
-    const updated = state.accounts[0]
+    const updated = listAccounts()[0]
     expect(isOAuthAccount(updated) && updated.settings?.proxyUrl).toBe(
       "http://127.0.0.1:8888",
     )
@@ -582,9 +582,9 @@ describe("OAuth smoke — admin API", () => {
     expect(body.imported).toBe(3)
     expect(body.skipped).toBe(0)
     expect(body.failed).toBe(0)
-    expect(state.accounts).toHaveLength(3)
+    expect(listAccounts()).toHaveLength(3)
 
-    const codex = state.accounts.find((a) => a.label === "codex-export")
+    const codex = listAccounts().find((a) => a.label === "codex-export")
     expect(codex?.provider).toBe("codex")
     if (!codex) throw new Error("codex account missing")
     expect(isOAuthAccount(codex) && codex.credentials?.accessToken).toBe(
@@ -597,7 +597,7 @@ describe("OAuth smoke — admin API", () => {
       "http://127.0.0.1:7890",
     )
 
-    const xai = state.accounts.find((a) => a.label === "xai-export")
+    const xai = listAccounts().find((a) => a.label === "xai-export")
     expect(xai?.provider).toBe("xai")
     if (!xai) throw new Error("xai account missing")
     expect(isOAuthAccount(xai) && xai.credentials?.accessToken).toBe(
@@ -607,7 +607,7 @@ describe("OAuth smoke — admin API", () => {
       "http://127.0.0.1:7891",
     )
 
-    const antigravity = state.accounts.find(
+    const antigravity = listAccounts().find(
       (a) => a.label === "antigravity-export",
     )
     expect(antigravity?.provider).toBe("antigravity")

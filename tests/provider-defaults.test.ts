@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { getCodebuffAuthToken } from "~/lib/accounts"
+import { getCodebuffAuthToken, listAccounts } from "~/lib/accounts"
 import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
 import { state } from "~/lib/state"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
+const originalProviderDefaults = structuredClone(state.providerDefaults)
+
 afterEach(() => {
   setTestAccounts([])
+  state.providerDefaults = structuredClone(originalProviderDefaults)
 })
 
 describe("provider-defaults", () => {
@@ -35,7 +38,7 @@ describe("provider-defaults", () => {
 
     await ensureDirectProviderAccounts()
 
-    expect(state.accounts).toHaveLength(1)
-    expect(getCodebuffAuthToken(state.accounts[0])).toBe("new-token")
+    expect(listAccounts()).toHaveLength(1)
+    expect(getCodebuffAuthToken(listAccounts()[0])).toBe("new-token")
   })
 })

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { listAccounts } from "~/lib/accounts"
 import { buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
   attachCycleUsage,
@@ -14,7 +15,6 @@ import {
   supportsCycleUsage,
 } from "~/lib/quota/cycles"
 import { parseCodexUsagePayload } from "~/lib/quota/parsers"
-import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
@@ -26,8 +26,7 @@ import {
 } from "./admin-test-utils"
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
-const originalActiveAccountIndex = state.activeAccountIndex
+const originalAccounts = listAccounts()
 
 const FIVE_HOUR_MS = 5 * 3_600_000
 const SEVEN_DAY_MS = 7 * 86_400_000
@@ -35,7 +34,6 @@ const SEVEN_DAY_MS = 7 * 86_400_000
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   setTestAccounts([])
-  state.activeAccountIndex = 0
   clearAdminPasswordConfig()
   setupAdminAuth()
 })
@@ -43,7 +41,6 @@ beforeEach(() => {
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
   setTestAccounts(originalAccounts)
-  state.activeAccountIndex = originalActiveAccountIndex
   clearAdminAuth()
   clearAdminPasswordConfig()
 })

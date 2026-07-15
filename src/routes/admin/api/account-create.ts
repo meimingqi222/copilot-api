@@ -4,10 +4,9 @@ import { randomUUID } from "node:crypto"
 import type { Account, AccountProvider } from "~/lib/accounts"
 
 import { saveAccounts } from "~/lib/account-store"
-import { addAccount } from "~/lib/accounts"
+import { addAccount, listAccounts } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isProviderId } from "~/lib/provider-config"
-import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -37,7 +36,7 @@ createAccountRoutes.post("/", async (c) => {
 
   const provider =
     isProviderId(String(body.provider)) ? body.provider : "copilot"
-  const label = body.label ?? `account-${state.accounts.length + 1}`
+  const label = body.label ?? `account-${listAccounts().length + 1}`
 
   if (provider === "codebuff") {
     const authToken =

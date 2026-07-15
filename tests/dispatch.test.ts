@@ -8,9 +8,9 @@ import type {
 } from "~/lib/provider-connections"
 import type { ProviderAdmission } from "~/lib/request-admission"
 
+import { listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 import { executeWithFailover } from "~/services/dispatch/failover"
 
 import { setTestAccounts } from "./helpers/set-accounts"
@@ -18,13 +18,11 @@ import { setTestAccounts } from "./helpers/set-accounts"
 afterEach(() => {
   resetAdaptiveRateLimiterForTest()
   setTestAccounts([])
-  state.activeAccountIndex = 0
 })
 
 beforeEach(() => {
   resetAdaptiveRateLimiterForTest()
   setTestAccounts([])
-  state.activeAccountIndex = 0
 })
 
 describe("dispatch-failover", () => {
@@ -183,7 +181,7 @@ describe("dispatch-failover", () => {
       expect(error).toBeInstanceOf(HTTPError)
     }
 
-    expect(state.accounts[0]?.quotaState).toBe("exhausted")
-    expect(state.accounts[0]?.isExhausted).toBe(true)
+    expect(listAccounts()[0]?.quotaState).toBe("exhausted")
+    expect(listAccounts()[0]?.isExhausted).toBe(true)
   })
 })

@@ -14,6 +14,7 @@ import {
   refreshCopilotToken,
   scheduleQuotaRefresh,
 } from "./lib/account-store"
+import { listAccounts } from "./lib/accounts"
 import { hashAdminPasswordInEnv } from "./lib/admin-password"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
@@ -196,7 +197,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   initializeCredentialRefreshers()
 
   // Refresh Copilot tokens for copilot accounts
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     if (account.provider !== "copilot") {
       continue
     }

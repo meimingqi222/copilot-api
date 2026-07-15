@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 
+import { listAccounts } from "~/lib/accounts"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 
@@ -366,7 +367,7 @@ function aggregateByAccount(startDate: string, endDate: string) {
     }
   > = {}
 
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     const accountStats = statsStore.getUsageStats(
       account.id,
       startDate,

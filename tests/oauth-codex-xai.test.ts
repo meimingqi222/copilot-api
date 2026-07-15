@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { listAccounts } from "~/lib/accounts"
 import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
   parseCodexUsagePayload,
@@ -9,7 +10,6 @@ import {
   summarizeCodexQuota,
   summarizeXaiQuota,
 } from "~/lib/quota/parsers"
-import { state } from "~/lib/state"
 import { supportsResponsesApi } from "~/services/copilot/responses-api-types"
 import {
   buildCodexAuthUrl,
@@ -32,7 +32,7 @@ import { collectResponsesFromSseText } from "~/services/responses/sse-collector"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
+const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
 
 function toBase64UrlForTest(value: string): string {

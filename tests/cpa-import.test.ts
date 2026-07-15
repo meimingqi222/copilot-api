@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import { state } from "~/lib/state"
+import { listAccounts } from "~/lib/accounts"
 import {
   importCpaAuthRecords,
   mapCpaRecordToAccount,
@@ -13,7 +13,7 @@ import {
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
+const originalAccounts = listAccounts()
 
 beforeEach(() => {
   setTestAccounts([])
@@ -68,22 +68,22 @@ describe("CPA auth import", () => {
   test("overwrite replaces duplicate CPA account", () => {
     importCpaAuthRecords(
       [{ type: "claude", access_token: "claude-1", email: "a@example.com" }],
-      { existingAccounts: state.accounts },
+      { existingAccounts: listAccounts() },
     )
-    expect(state.accounts).toHaveLength(1)
-    const first = state.accounts[0] as {
+    expect(listAccounts()).toHaveLength(1)
+    const first = listAccounts()[0] as {
       credentials?: { accessToken?: string }
     }
     expect(first.credentials?.accessToken).toBe("claude-1")
 
     const result = importCpaAuthRecords(
       [{ type: "claude", access_token: "claude-2", email: "a@example.com" }],
-      { overwrite: true, existingAccounts: state.accounts },
+      { overwrite: true, existingAccounts: listAccounts() },
     )
 
     expect(result.imported).toHaveLength(1)
-    expect(state.accounts).toHaveLength(1)
-    const replaced = state.accounts[0] as {
+    expect(listAccounts()).toHaveLength(1)
+    const replaced = listAccounts()[0] as {
       credentials?: { accessToken?: string }
     }
     expect(replaced.credentials?.accessToken).toBe("claude-2")
@@ -95,18 +95,18 @@ describe("CPA auth import", () => {
         { type: "claude", access_token: "claude-1", email: "a@example.com" },
         { type: "kimi", access_token: "kimi-1", email: "b@example.com" },
       ],
-      { existingAccounts: state.accounts },
+      { existingAccounts: listAccounts() },
     )
 
     expect(result.imported).toHaveLength(2)
-    expect(state.accounts).toHaveLength(2)
+    expect(listAccounts()).toHaveLength(2)
 
     const skipped = importCpaAuthRecords(
       [{ type: "claude", access_token: "claude-2", email: "a@example.com" }],
-      { existingAccounts: state.accounts },
+      { existingAccounts: listAccounts() },
     )
     expect(skipped.skipped).toHaveLength(1)
-    expect(state.accounts).toHaveLength(2)
+    expect(listAccounts()).toHaveLength(2)
   })
 
   test("parses CPA payload variants", () => {
