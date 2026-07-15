@@ -6,6 +6,10 @@ import {
   getOAuthProviderDescriptor,
   type OAuthProviderId,
 } from "~/lib/provider-config"
+import {
+  getMutableProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot, fetchOAuthProviderQuota } from "~/lib/quota"
 import {
   discoverOAuthModels,
@@ -54,6 +58,8 @@ export function createOAuthProviderRuntime(
       }
 
       applyOAuthQuotaSnapshot(account, snapshot)
+      const conn = getMutableProviderConnection(account.id)
+      if (conn) syncAccountToConnection(conn, account)
       await saveAccounts()
       return snapshot
     },

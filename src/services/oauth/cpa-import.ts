@@ -5,8 +5,8 @@ import type { OAuthProviderId } from "~/lib/provider-config"
 
 import { cancelTokenRefreshTimer } from "~/lib/account-store"
 import { addAccount } from "~/lib/accounts"
+import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 import { cancelOAuthRefreshTimer } from "~/services/oauth/refresh-scheduler"
 import { XAI_DEFAULT_TOKEN_ENDPOINT } from "~/services/oauth/xai"
 
@@ -83,20 +83,8 @@ function removeDuplicateAccount(
   cancelTokenRefreshTimer(existing.id)
   cancelOAuthRefreshTimer(existing.id)
   clearAccountRateLimitState(existing.id)
+  removeProviderConnection(existing.id)
   accounts.splice(duplicateIndex, 1)
-
-  if (accounts !== state.accounts) {
-    return
-  }
-
-  if (duplicateIndex < state.activeAccountIndex) {
-    state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
-  } else if (duplicateIndex === state.activeAccountIndex) {
-    state.activeAccountIndex = Math.min(
-      duplicateIndex,
-      Math.max(0, state.accounts.length - 1),
-    )
-  }
 }
 
 export function mapCpaRecordToAccount(
@@ -192,9 +180,7 @@ export function importCpaAuthRecords(
       }
 
       addAccount(account)
-      if (existing !== state.accounts) {
-        existing.push(account)
-      }
+      existing.push(account)
       options?.onAccount?.(account)
       result.imported.push(account.label)
     } catch (error) {

@@ -2,7 +2,11 @@ import type { OAuthProviderId, ProviderId } from "~/lib/provider-config"
 
 import { isOAuthProviderId } from "~/lib/provider-config"
 import {
+  connectionToAccount,
+  getProviderConnection,
+  listProviderConnections,
   migrateAccountsToConnections,
+  readAccountLegacyMetadata,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { parseModelReference } from "~/lib/route-target/model-reference"
@@ -228,11 +232,30 @@ export function canonicalModelId(modelId: string, account?: Account): string {
   return parsed.nativeModelId
 }
 
+/**
+ * 列出所有 account-derived connections 反构造为 Account。
+ * 替代 state.accounts 读取。
+ */
+export function listAccounts(): Array<Account> {
+  return listProviderConnections()
+    .filter((c) => readAccountLegacyMetadata(c) !== undefined)
+    .map((c) => connectionToAccount(c))
+}
+
+/**
+ * 按 id 查找 Account（从 connection 反构造）。
+ * 替代 state.accounts.find(a => a.id === id)。
+ * 返回的是快照副本，修改不会反映到 connection。
+ */
+export function getAccount(id: string): Account | undefined {
+  const conn = getProviderConnection(id)
+  if (!conn || !readAccountLegacyMetadata(conn)) return undefined
+  return connectionToAccount(conn)
+}
+
 export function addAccount(account: Account): void {
-  // 批次 2：通过 upsert connection + sync state.accounts
   const conn = migrateAccountsToConnections([account])[0]
   upsertProviderConnection(conn)
-  state.accounts = [...state.accounts, account]
 }
 
 // ── Provider-specific getter/setter compatibility layer ─────────

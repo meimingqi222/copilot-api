@@ -3,7 +3,6 @@ import { Hono } from "hono"
 import type { Account } from "~/lib/accounts"
 
 import { getAccountAvailability } from "~/lib/account-availability"
-import { switchToNextAccount } from "~/lib/account-selection"
 import {
   cancelTokenRefreshTimer,
   refreshQuotaForAccount,
@@ -18,12 +17,17 @@ import {
   getWindsurfApiKey,
   getMimoServiceToken,
   getMimoPh,
+  getAccount,
   isOAuthAccount,
+  listAccounts,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
-import { removeProviderConnection } from "~/lib/provider-connections"
+import {
+  getMutableProviderConnection,
+  removeProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
 import {
   getOAuthAccountSubtitle,
@@ -60,6 +64,31 @@ function getHasCredentials(account: Account): boolean {
   return Boolean(getMimoServiceToken(account) && getMimoPh(account))
 }
 
+/**
+ * Derive the "active" account: the first enabled account by priority order.
+ * Replaces the legacy state.activeAccountIndex concept.
+ */
+function getActiveAccountId(): string | undefined {
+  const accounts = listAccounts()
+  const enabled = accounts
+    .filter((a) => a.enabled)
+    .sort((a, b) => a.priority - b.priority)
+  return enabled[0]?.id
+}
+
+/**
+ * Sync an Account's mutations back to its underlying connection, then persist.
+ * Receives the already-mutated Account snapshot so changes are not lost
+ * (getAccount(id) would return a fresh un-mutated snapshot from the connection).
+ */
+async function syncAndSave(account: Account): Promise<void> {
+  const conn = getMutableProviderConnection(account.id)
+  if (conn) {
+    syncAccountToConnection(conn, account)
+  }
+  await saveAccounts()
+}
+
 // Sanitize account for API response (omit sensitive tokens, compute isActive dynamically)
 export function publicAccount(account: Account) {
   initializeProviderRegistry()
@@ -89,7 +118,7 @@ export function publicAccount(account: Account) {
     authStatus: account.runtimeState?.authStatus ?? "ready",
     authError: account.runtimeState?.lastError ?? null,
     hasCredentials: getHasCredentials(account),
-    isActive: state.accounts.indexOf(account) === state.activeAccountIndex,
+    isActive: account.id === getActiveAccountId(),
   }
 }
 
@@ -99,11 +128,17 @@ accountApiRoutes.route("/", importAccountRoutes)
 accountFlowApiRoutes.route("/", deviceFlowRoutes)
 
 accountApiRoutes.get("/", async (c) => {
-  if (upgradeOAuthAccountLabels(state.accounts)) {
+  const accounts = listAccounts()
+  if (upgradeOAuthAccountLabels(accounts)) {
+    // Sync label changes back to connections
+    for (const account of accounts) {
+      const conn = getMutableProviderConnection(account.id)
+      if (conn) syncAccountToConnection(conn, account)
+    }
     await saveAccounts()
   }
   return c.json({
-    accounts: state.accounts.map((account) => publicAccount(account)),
+    accounts: accounts.map((account) => publicAccount(account)),
   })
 })
 
@@ -117,7 +152,7 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
 
 accountApiRoutes.put("/:id", async (c) => {
   const id = c.req.param("id")
-  const account = state.accounts.find((a) => a.id === id)
+  const account = getAccount(id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
   let body: UpdateAccountBody
@@ -141,14 +176,14 @@ accountApiRoutes.put("/:id", async (c) => {
     )
   }
 
-  await saveAccounts()
+  await syncAndSave(account)
   return c.json({ account: publicAccount(account) })
 })
 
 accountApiRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id")
-  const idx = state.accounts.findIndex((a) => a.id === id)
-  if (idx === -1) return c.json({ error: "Account not found." }, 404)
+  const account = getAccount(id)
+  if (!account) return c.json({ error: "Account not found." }, 404)
 
   // Cancel any pending token refresh timer to prevent leaks
   cancelTokenRefreshTimer(id)
@@ -157,26 +192,9 @@ accountApiRoutes.delete("/:id", async (c) => {
   // Clear rate limit state for this account
   clearAccountRateLimitState(id)
 
-  const wasActive = idx === state.activeAccountIndex
-  // 批次 2：通过 removeProviderConnection + 重建 state.accounts
   removeProviderConnection(id)
-  state.accounts = state.accounts.filter((a) => a.id !== id)
-  // Fix active index after deletion
-  if (idx < state.activeAccountIndex) {
-    // Deleted an account before the active one — shift index down
-    state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
-  } else if (wasActive) {
-    // Deleted the active account itself — clamp then find next available
-    state.activeAccountIndex = Math.min(
-      idx,
-      Math.max(0, state.accounts.length - 1),
-    )
-    switchToNextAccount()
-  } else if (state.activeAccountIndex >= state.accounts.length) {
-    state.activeAccountIndex = Math.max(0, state.accounts.length - 1)
-  }
   await saveAccounts({
-    allowEmpty: state.accounts.length === 0,
+    allowEmpty: listAccounts().length === 0,
     allowShrink: true,
   })
   return c.json({ ok: true })
@@ -185,7 +203,7 @@ accountApiRoutes.delete("/:id", async (c) => {
 accountApiRoutes.post("/:id/refresh", async (c) => {
   initializeProviderRegistry()
   const id = c.req.param("id")
-  const account = state.accounts.find((a) => a.id === id)
+  const account = getAccount(id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
   try {
@@ -200,7 +218,7 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
     } else if (account.provider === "copilot") {
       await refreshQuotaForAccount(account)
     }
-    await saveAccounts()
+    await syncAndSave(account)
     return c.json({ account: publicAccount(account) })
   } catch (e: unknown) {
     logger.error("Failed to refresh account:", e)
@@ -211,7 +229,7 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
 // Set account priority (formerly "activate" - now sets highest priority)
 accountApiRoutes.post("/:id/activate", async (c) => {
   const id = c.req.param("id")
-  const account = state.accounts.find((a) => a.id === id)
+  const account = getAccount(id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
   if (!account.enabled) {
@@ -219,10 +237,11 @@ accountApiRoutes.post("/:id/activate", async (c) => {
   }
 
   // Find minimum priority among all accounts
-  const minPriority = Math.min(...state.accounts.map((a) => a.priority))
+  const accounts = listAccounts()
+  const minPriority = Math.min(...accounts.map((a) => a.priority))
   // Set this account to highest priority (lower than current minimum)
   account.priority = Math.max(0, minPriority - 1)
-  await saveAccounts()
+  await syncAndSave(account)
 
   logger.info(
     `Account "${account.label}" set to highest priority (${account.priority})`,
@@ -236,7 +255,7 @@ accountApiRoutes.post("/:id/activate", async (c) => {
 
 // Export all accounts (includes credentials)
 accountApiRoutes.get("/export", (c) => {
-  const exported = state.accounts.map((account) =>
+  const exported = listAccounts().map((account) =>
     serializeAccountForExport(account),
   )
   const filename = `copilot-api-accounts-${new Date().toISOString().slice(0, 10)}.json`
@@ -248,7 +267,7 @@ accountApiRoutes.get("/export", (c) => {
 // Export a single account (includes credentials)
 accountApiRoutes.get("/:id/export", (c) => {
   const id = c.req.param("id")
-  const account = state.accounts.find((a) => a.id === id)
+  const account = getAccount(id)
   if (!account) return c.json({ error: "Account not found." }, 404)
 
   const exported = serializeAccountForExport(account)

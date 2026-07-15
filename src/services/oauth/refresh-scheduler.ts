@@ -7,9 +7,13 @@ import {
   getOAuthProxyUrl,
   getOAuthRefreshToken,
   isOAuthAccount,
+  listAccounts,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
-import { state } from "~/lib/state"
+import {
+  getMutableProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 
 import {
   OAUTH_REFRESH_LEAD_MS,
@@ -56,7 +60,7 @@ function scheduleOAuthRefreshAttempt(
   const timer = setTimeout(
     () => {
       void (async () => {
-        const account = state.accounts.find((item) => item.id === accountId)
+        const account = listAccounts().find((item) => item.id === accountId)
         if (!account || !account.enabled || !isOAuthAccount(account)) {
           cancelOAuthRefreshTimer(accountId)
           return
@@ -122,6 +126,8 @@ export async function refreshOAuthAccountToken(
       `OAuth refresh succeeded for "${account.label}" (${account.provider}, ${reason})`,
     )
     scheduleOAuthRefreshForAccount(account)
+    const conn = getMutableProviderConnection(account.id)
+    if (conn) syncAccountToConnection(conn, account)
     await saveAccounts()
   } catch (error: unknown) {
     account.runtimeState = {
@@ -129,6 +135,8 @@ export async function refreshOAuthAccountToken(
       authStatus: "error",
       lastError: error instanceof Error ? error.message : String(error),
     }
+    const conn = getMutableProviderConnection(account.id)
+    if (conn) syncAccountToConnection(conn, account)
     throw error
   }
 }
@@ -151,7 +159,7 @@ export function scheduleOAuthRefreshForAccount(account: Account): void {
 }
 
 export function scheduleOAuthRefreshForAllAccounts(): void {
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     if (isOAuthAccount(account)) {
       scheduleOAuthRefreshForAccount(account)
     }

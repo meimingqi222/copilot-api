@@ -4,12 +4,11 @@ import { randomUUID } from "node:crypto"
 import type { OAuthAccount } from "~/lib/accounts"
 
 import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
-import { addAccount } from "~/lib/accounts"
+import { addAccount, getAccount, listAccounts } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { upgradeOAuthAccountLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
@@ -43,7 +42,7 @@ const FLOW_TIMEOUT_MS = 15 * 60 * 1000
 
 function parseLabel(body: { label?: string }, provider: string): string {
   const trimmed = body.label?.trim()
-  return trimmed || `${provider}-${state.accounts.length + 1}`
+  return trimmed || `${provider}-${listAccounts().length + 1}`
 }
 
 function parseProxyUrl(body: { proxyUrl?: string }): string | undefined {
@@ -52,8 +51,7 @@ function parseProxyUrl(body: { proxyUrl?: string }): string | undefined {
 }
 
 function removeOAuthAccountFromState(accountId: string): void {
-  const idx = state.accounts.findIndex((item) => item.id === accountId)
-  if (idx === -1) {
+  if (!getAccount(accountId)) {
     return
   }
 
@@ -62,16 +60,6 @@ function removeOAuthAccountFromState(accountId: string): void {
   clearAccountRateLimitState(accountId)
   // 批次 2：通过 removeProviderConnection + 重建 state.accounts
   removeProviderConnection(accountId)
-  state.accounts = state.accounts.filter((a) => a.id !== accountId)
-
-  if (idx < state.activeAccountIndex) {
-    state.activeAccountIndex = Math.max(0, state.activeAccountIndex - 1)
-  } else if (idx === state.activeAccountIndex) {
-    state.activeAccountIndex = Math.min(
-      idx,
-      Math.max(0, state.accounts.length - 1),
-    )
-  }
 }
 
 async function finalizeOAuthAccount(account: OAuthAccount): Promise<void> {
@@ -293,7 +281,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
   }
 
   if (flow.status === "complete" && flow.accountId) {
-    const account = state.accounts.find((item) => item.id === flow.accountId)
+    const account = getAccount(flow.accountId)
     return c.json({
       status: "complete",
       accountId: flow.accountId,
@@ -303,7 +291,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
 
   try {
     const accountId = await executeOAuthExchange(provider, flowId, { code })
-    const account = state.accounts.find((item) => item.id === accountId)
+    const account = getAccount(accountId)
     return c.json({
       status: "complete",
       accountId,
@@ -314,9 +302,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
     if (message === "OAuth flow is not available for token exchange") {
       const current = getOAuthFlow(flowId)
       if (current?.status === "complete" && current.accountId) {
-        const account = state.accounts.find(
-          (item) => item.id === current.accountId,
-        )
+        const account = getAccount(current.accountId)
         return c.json({
           status: "complete",
           accountId: current.accountId,
@@ -383,7 +369,7 @@ oauthApiRoutes.get("/:provider/poll/:flowId", (c) => {
 
   const result = pollOAuthFlow(flowId)
   if (result.status === "complete" && result.accountId) {
-    const account = state.accounts.find((item) => item.id === result.accountId)
+    const account = getAccount(result.accountId)
     return c.json({
       ...result,
       account: account ? publicAccount(account) : undefined,

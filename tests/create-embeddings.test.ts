@@ -1,17 +1,15 @@
 import { afterEach, expect, mock, test } from "bun:test"
 
-import { state } from "~/lib/state"
+import { listAccounts } from "~/lib/accounts"
 import { createEmbeddings } from "~/services/copilot/create-embeddings"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalFetch = globalThis.fetch
-const originalAccounts = state.accounts
-const originalActiveAccountIndex = state.activeAccountIndex
+const originalAccounts = listAccounts()
 afterEach(() => {
   globalThis.fetch = originalFetch
   setTestAccounts(originalAccounts)
-  state.activeAccountIndex = originalActiveAccountIndex
 })
 
 test("strips copilot prefix before forwarding embeddings requests upstream", async () => {
@@ -38,8 +36,6 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
       ],
     },
   ])
-  state.activeAccountIndex = 0
-
   const fetchMock = mock((url: string, options?: { body?: string }) => ({
     ok: true,
     json: () => ({
@@ -52,7 +48,7 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
     options,
   }))
   globalThis.fetch = fetchMock as unknown as typeof fetch
-  const account = state.accounts.at(0)
+  const account = listAccounts().at(0)
   if (!account) {
     throw new Error("Expected at least one account in test state")
   }

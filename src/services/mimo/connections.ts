@@ -4,11 +4,15 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 
 import { saveAccounts } from "~/lib/account-store"
 import {
+  getAccount,
   getMimoWsToken as getAccountWsTokenFromStore,
   setMimoWsToken as setAccountWsTokenInStore,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
-import { state } from "~/lib/state"
+import {
+  getMutableProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 
 const generatedMimoWsToken = randomBytes(32).toString("hex")
 
@@ -21,7 +25,7 @@ export function getOrCreateAccountWsToken(accountId: string): string {
   const globalToken = process.env.MIMO_WS_TOKEN
   if (globalToken) return globalToken
 
-  const acc = state.accounts.find((a) => a.id === accountId)
+  const acc = getAccount(accountId)
   if (!acc) return fallbackToken()
 
   const existing = getAccountWsTokenFromStore(acc)
@@ -29,6 +33,8 @@ export function getOrCreateAccountWsToken(accountId: string): string {
 
   const newToken = randomBytes(32).toString("hex")
   setAccountWsTokenInStore(acc, newToken)
+  const conn = getMutableProviderConnection(acc.id)
+  if (conn) syncAccountToConnection(conn, acc)
   saveAccounts().catch((err: unknown) => {
     logger.error("Failed to save accounts after generating WS token:", err)
   })
@@ -40,7 +46,7 @@ export function getOrCreateAccountWsToken(accountId: string): string {
  * Returns the cached per-account token or generates a new one.
  */
 export function getMimoWsTokenForAccount(accountId: string): string {
-  const acc = state.accounts.find((a) => a.id === accountId)
+  const acc = getAccount(accountId)
   return (acc && getAccountWsTokenFromStore(acc)) ?? fallbackToken()
 }
 
@@ -66,7 +72,7 @@ export function isValidMimoWsTokenForAccount(
   }
 
   // Check per-account token
-  const acc = state.accounts.find((a) => a.id === accountId)
+  const acc = getAccount(accountId)
   const accountToken = acc && getAccountWsTokenFromStore(acc)
   if (!accountToken) return false
 

@@ -6,17 +6,17 @@ import {
   buildAccountModelAliases,
   canonicalModelId,
   getAccountModelPrefix,
+  listAccounts,
   parseModelReference,
 } from "~/lib/accounts"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
-import { state } from "~/lib/state"
 import { getCodexModelsForAccount } from "~/services/codex/get-models"
 import { getOAuthCatalogModels } from "~/services/oauth/discover-models"
 import { getOAuthFallbackModels } from "~/services/oauth/model-catalog"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
+const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {

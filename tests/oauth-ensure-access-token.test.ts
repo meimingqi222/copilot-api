@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
-import { state } from "~/lib/state"
+import { listAccounts } from "~/lib/accounts"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
+const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {

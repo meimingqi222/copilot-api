@@ -14,7 +14,13 @@ import {
   addAccount,
   getCodebuffAuthToken,
   getWindsurfApiKey,
+  listAccounts,
 } from "~/lib/accounts"
+import {
+  getMutableProviderConnection,
+  setCredentialValue,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 
 /**
@@ -36,7 +42,7 @@ function syncCodebuffDefaultAccount(): boolean {
   if (!defaults.authToken) return false
 
   let changed = false
-  const managedDefault = state.accounts.find((account) =>
+  const managedDefault = listAccounts().find((account) =>
     isCodebuffManagedDefaultAccount(account),
   )
 
@@ -50,10 +56,17 @@ function syncCodebuffDefaultAccount(): boolean {
       changed = true
     }
     changed = applyCodebuffDefaultsIfChanged(managedDefault) || changed
+    if (changed) {
+      const conn = getMutableProviderConnection(managedDefault.id)
+      if (conn) {
+        syncAccountToConnection(conn, managedDefault)
+        setCredentialValue(conn, getCodebuffAuthToken(managedDefault))
+      }
+    }
     return changed
   }
 
-  const hasTokenAccount = state.accounts.some(
+  const hasTokenAccount = listAccounts().some(
     (account) =>
       account.provider === "codebuff"
       && getCodebuffAuthToken(account) === defaults.authToken,
@@ -120,7 +133,7 @@ function syncWindsurfDefaultAccount(): boolean {
   if (!defaults.apiKey) return false
 
   let changed = false
-  const managedDefault = state.accounts.find((account) =>
+  const managedDefault = listAccounts().find((account) =>
     isWindsurfManagedDefaultAccount(account),
   )
 
@@ -134,10 +147,17 @@ function syncWindsurfDefaultAccount(): boolean {
       changed = true
     }
     changed = applyWindsurfDefaultsIfChanged(managedDefault) || changed
+    if (changed) {
+      const conn = getMutableProviderConnection(managedDefault.id)
+      if (conn) {
+        syncAccountToConnection(conn, managedDefault)
+        setCredentialValue(conn, getWindsurfApiKey(managedDefault))
+      }
+    }
     return changed
   }
 
-  const hasKeyAccount = state.accounts.some(
+  const hasKeyAccount = listAccounts().some(
     (account) =>
       account.provider === "windsurf"
       && getWindsurfApiKey(account) === defaults.apiKey,

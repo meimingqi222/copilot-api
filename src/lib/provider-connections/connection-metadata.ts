@@ -6,11 +6,23 @@
  * `AccountLegacyMetadata` 子结构。本模块提供类型安全的字段读取器，
  * 替代散装 `metadata.xxx as string` 强转。
  */
-import type { Account, AccountQuotaState, QuotaSnapshot } from "~/lib/accounts"
+import type {
+  Account,
+  AccountModel,
+  AccountQuotaState,
+  AccountRuntimeState,
+  QuotaSnapshot,
+} from "~/lib/accounts"
 
+import { isOAuthAccount } from "~/lib/accounts"
 import { isOAuthProviderId, type ProviderId } from "~/lib/provider-config"
 
-import type { ProviderConnection } from "./types"
+import type {
+  ApiCredential,
+  ModelEndpoint,
+  ModelMapping,
+  ProviderConnection,
+} from "./types"
 
 /**
  * 迁移后 provider-connections.json 中 migrated connection 的 metadata 形状。
@@ -490,61 +502,170 @@ function removeFromRecord<T extends Record<string, unknown>>(
 }
 
 /**
- * 将 Account 的运行时状态同步回 connection（in-place mutation）。
- * 用于 account-availability.ts 等模块在修改 Account 后同步到 connection。
+ * 将 Account 的完整状态同步回 connection（in-place mutation）。
+ *
+ * 这是 `accountToConnectionForPersistence` 的 in-place 等价物：将 Account 的
+ * 所有字段（含 credentialExtras、OAuth token、availableModels、cpaMetadata、
+ * routing 字段等）同步到现有 connection，确保后续 saveProviderConnections()
+ * 持久化的内容与 Account 完全一致。
+ *
+ * 调用方负责后续 saveAccounts() / saveProviderConnections() 持久化。
  */
 export function syncAccountToConnection(
   conn: ProviderConnection,
   account: Account,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
-  meta.quotaState = account.quotaState ?? "unknown"
-  meta.quotaInfo = account.quotaInfo ?? null
-  meta.quotaExhaustedAt = account.quotaExhaustedAt
-  meta.exhaustedAt = account.exhaustedAt
-  meta.isExhausted = account.isExhausted
-  meta.cooldownUntil = account.cooldownUntil
-  meta.lastRateLimitAt = account.lastRateLimitAt
-  meta.lastRateLimitReason = account.lastRateLimitReason
-  meta.authStatus = account.runtimeState?.authStatus ?? "ready"
-  meta.authError = account.runtimeState?.lastError ?? null
-  meta.settings = account.settings ?? {}
+  // ── metadata：用 buildAccountLegacyMetadata 重建，覆盖所有字段 ──
+  // 包括 credentialExtras、cpaMetadata、routing 字段（proxyUrl/modelPrefix/
+  // tokenEndpoint/redirectUri/proxy/userId）、settings、quotaState 等。
+  const newMeta = buildAccountLegacyMetadata(account)
+  // OAuth subtitle（buildAccountLegacyMetadata 不含 subtitle，需手动补充）
+  if (isOAuthAccount(account)) {
+    const subtitle = syncGetOAuthAccountSubtitle(account)
+    if (subtitle) {
+      newMeta.subtitle = subtitle
+    }
+  }
+  // 用新 metadata 替换旧 metadata（保留非 legacy 字段如有）
+  conn.metadata = newMeta as unknown as Record<string, unknown>
 
+  // ── credential：value / context / enabled / status / cooldownUntil ──
   const cred = conn.credentials[0]
+  cred.value = syncGetAccountTokenValue(account)
   cred.enabled = account.enabled
   cred.cooldownUntil = account.cooldownUntil
-  if (account.runtimeState?.authStatus === "error") {
-    cred.status = "auth_error"
-    cred.lastError = account.runtimeState.lastError
-  } else if (account.quotaState === "exhausted") {
-    cred.status = "quota_exhausted"
-  } else if (account.cooldownUntil && account.cooldownUntil > Date.now()) {
-    cred.status = "cooldown"
-  } else {
-    cred.status = account.enabled ? "ready" : "disabled"
-  }
-  // copilotToken → credential.value
-  if (account.provider === "copilot" && account.runtimeState?.copilotToken) {
-    cred.value = account.runtimeState.copilotToken
-  }
-  if (account.runtimeState?.copilotTokenExpiry !== undefined) {
-    if (!cred.context) cred.context = {}
-    cred.context.copilotTokenExpiry = account.runtimeState.copilotTokenExpiry
-  }
-  // windsurfJwt → credential.context
-  if (account.provider === "windsurf") {
-    if (account.runtimeState?.windsurfJwt !== undefined) {
-      if (!cred.context) cred.context = {}
-      cred.context.windsurfJwt = account.runtimeState.windsurfJwt
-    }
-    if (account.runtimeState?.windsurfJwtFetchedAt !== undefined) {
-      if (!cred.context) cred.context = {}
-      cred.context.windsurfJwtFetchedAt =
-        account.runtimeState.windsurfJwtFetchedAt
-    }
-  }
+  cred.status = syncMapQuotaStateToCredentialStatus(
+    account.quotaState,
+    account.cooldownUntil,
+    account.runtimeState?.authStatus,
+  )
+  cred.lastError =
+    account.runtimeState?.authStatus === "error" ?
+      account.runtimeState.lastError
+    : undefined
+  cred.context = syncGetAccountContext(account)
 
+  // ── connection 顶层字段 ──
   conn.name = account.label
   conn.enabled = account.enabled
   conn.priority = account.priority
+  conn.models =
+    account.availableModels ?
+      account.availableModels.map((m) => syncAccountModelToMapping(m))
+    : undefined
+}
+
+// ── syncAccountToConnection 辅助函数 ──────────────────────────────
+// 镜像 migrate-from-accounts.ts / account-adapter.ts 中的同名函数，
+// 因 connection-metadata.ts 不能导入它们（循环依赖）。
+
+function syncReadCredentialString(
+  account: Account,
+  key: string,
+): string | undefined {
+  const value = account.credentials?.[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function syncGetAccountTokenValue(account: Account): string {
+  if (account.provider === "copilot") {
+    return account.runtimeState?.copilotToken ?? ""
+  }
+  if (account.provider === "codebuff") {
+    return syncReadCredentialString(account, "authToken") ?? ""
+  }
+  if (account.provider === "windsurf") {
+    return syncReadCredentialString(account, "apiKey") ?? ""
+  }
+  if (account.provider === "mimo-aistudio") {
+    return syncReadCredentialString(account, "serviceToken") ?? ""
+  }
+  if (isOAuthAccount(account)) {
+    return syncReadCredentialString(account, "accessToken") ?? ""
+  }
+  return ""
+}
+
+function syncGetAccountContext(account: Account): Record<string, unknown> {
+  const base: Record<string, unknown> = { accountId: account.id }
+  if (account.provider === "copilot") {
+    return {
+      ...base,
+      githubToken: syncReadCredentialString(account, "githubToken"),
+      copilotTokenExpiry: account.runtimeState?.copilotTokenExpiry,
+    }
+  }
+  if (account.provider === "windsurf") {
+    return {
+      ...base,
+      windsurfJwt: account.runtimeState?.windsurfJwt,
+      windsurfJwtFetchedAt: account.runtimeState?.windsurfJwtFetchedAt,
+    }
+  }
+  if (isOAuthAccount(account)) {
+    return {
+      ...base,
+      accessToken: syncReadCredentialString(account, "accessToken"),
+      refreshToken: syncReadCredentialString(account, "refreshToken"),
+      expiresAt: account.credentials?.expiresAt,
+      idToken: syncReadCredentialString(account, "idToken"),
+      oauthAccountId: syncReadCredentialString(account, "accountId"),
+      projectId: syncReadCredentialString(account, "projectId"),
+      deviceId: syncReadCredentialString(account, "deviceId"),
+      apiKey: syncReadCredentialString(account, "apiKey"),
+    }
+  }
+  return base
+}
+
+function syncMapQuotaStateToCredentialStatus(
+  quotaState?: "unknown" | "available" | "exhausted",
+  cooldownUntil?: number,
+  authStatus?: AccountRuntimeState["authStatus"],
+): ApiCredential["status"] {
+  if (authStatus === "error") return "auth_error"
+  if (quotaState === "exhausted") return "quota_exhausted"
+  if (cooldownUntil && cooldownUntil > Date.now()) return "cooldown"
+  return "ready"
+}
+
+function syncAccountModelToMapping(model: AccountModel): ModelMapping {
+  const endpoints: Array<ModelEndpoint> = []
+  for (const ep of model.supportedEndpoints) {
+    if (ep.includes("chat/completions")) endpoints.push("chat")
+    else if (ep.includes("messages")) endpoints.push("messages")
+    else if (ep.includes("responses")) endpoints.push("responses")
+    else if (ep.includes("embeddings")) endpoints.push("embeddings")
+    else if (ep.includes("images")) endpoints.push("images")
+    else if (ep.includes("videos")) endpoints.push("videos")
+  }
+  if (endpoints.length === 0) endpoints.push("chat")
+
+  return {
+    publicId: model.id,
+    upstreamId: model.upstreamId ?? model.id,
+    name: model.name,
+    vendor: model.vendor,
+    endpoints,
+    enabled: true,
+    pickerEnabled: model.pickerEnabled,
+    pickerCategory: model.pickerCategory,
+  }
+}
+
+function syncGetOAuthAccountSubtitle(account: Account): string | undefined {
+  if (!isOAuthAccount(account)) return undefined
+  const email = account.credentials?.email?.trim()
+  if (email && email !== account.label) return email
+  const projectId = account.credentials?.projectId?.trim()
+  if (
+    account.provider === "antigravity"
+    && projectId
+    && projectId !== account.label
+  ) {
+    return projectId
+  }
+  const accountId = account.credentials?.accountId?.trim()
+  if (accountId && accountId !== account.label) return accountId
+  return undefined
 }

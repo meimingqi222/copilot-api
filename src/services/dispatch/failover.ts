@@ -8,14 +8,17 @@ import {
   syncLegacyExhaustedState,
 } from "~/lib/account-availability"
 import { saveAccounts } from "~/lib/account-store"
+import { getAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   DEFAULTS,
   classifyUpstreamError,
+  getMutableProviderConnection,
   markCredentialCooldown,
   markCredentialQuotaExhausted,
   persistProviderConnections,
+  syncAccountToConnection,
 } from "~/lib/provider-connections"
 import {
   switchToNextRouteTarget,
@@ -24,7 +27,6 @@ import {
 } from "~/lib/request-admission"
 import { targetKey } from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
-import { state } from "~/lib/state"
 import { isAbortError, shouldFailover } from "~/lib/utils"
 import {
   getProtocolAdapter,
@@ -154,7 +156,7 @@ export async function executeWithFailover<
  * 修改它不会写回 state.accounts。通过 id 查找 state.accounts 中的真实 account。
  */
 function resolveStateAccount(id: string) {
-  return state.accounts.find((a) => a.id === id)
+  return getAccount(id)
 }
 
 /**
@@ -183,6 +185,8 @@ async function markAccountCooldown(
         account.cooldownUntil = Date.now() + error.retryAfterMs
       }
       syncLegacyExhaustedState(account)
+      const conn = getMutableProviderConnection(account.id)
+      if (conn) syncAccountToConnection(conn, account)
       await saveAccounts().catch((err: unknown) => {
         logger.warn(
           `${logPrefix} failed to persist account quota state:`,
@@ -199,6 +203,8 @@ async function markAccountCooldown(
         lastError: error.message,
       }
       syncLegacyExhaustedState(account)
+      const authConn = getMutableProviderConnection(account.id)
+      if (authConn) syncAccountToConnection(authConn, account)
       await saveAccounts().catch((err: unknown) => {
         logger.warn(
           `${logPrefix} failed to persist account auth error state:`,
@@ -231,6 +237,8 @@ async function markAccountCooldown(
         account.cooldownUntil = Date.now() + classified.retryAfterMs
       }
       syncLegacyExhaustedState(account)
+      const quotaConn = getMutableProviderConnection(account.id)
+      if (quotaConn) syncAccountToConnection(quotaConn, account)
       await saveAccounts().catch((err: unknown) => {
         logger.warn(
           `${logPrefix} failed to persist account quota state:`,

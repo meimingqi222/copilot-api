@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
 import { isAccountAvailable } from "~/lib/account-availability"
+import { listAccounts } from "~/lib/accounts"
 import { logStore } from "~/lib/log-store"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -25,7 +26,7 @@ function aggregateQuotaInfo(): AggregatedQuota {
     totalPremiumTotal: 0,
   }
 
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     if (!account.enabled) continue
     const qi = account.quotaInfo
     if (!qi) continue
@@ -54,7 +55,10 @@ function aggregateQuotaInfo(): AggregatedQuota {
 
 // Get active account quota info
 function getActiveQuotaInfo() {
-  return state.accounts[state.activeAccountIndex]?.quotaInfo
+  const enabled = listAccounts()
+    .filter((a) => a.enabled)
+    .sort((a, b) => a.priority - b.priority)
+  return enabled[0]?.quotaInfo
 }
 
 // Build active account quota response
@@ -89,10 +93,11 @@ function buildDashboardResponse(aggregated: AggregatedQuota) {
   const activeUsers = state.users.filter((u) => u.enabled).length
   const totalUsers = state.users.length
   const totals = statsStore.getTodayTotals()
-  const activeAccounts = state.accounts.filter((account) =>
+  const accounts = listAccounts()
+  const activeAccounts = accounts.filter((account) =>
     isAccountAvailable(account),
   ).length
-  const totalAccounts = state.accounts.length
+  const totalAccounts = accounts.length
 
   return {
     activeUsers,

@@ -1,44 +1,65 @@
+import { saveAccounts } from "~/lib/account-store"
 import {
+  getAccount,
   getMimoPh,
   getMimoProxy,
   getMimoServiceToken,
   getMimoUserId,
+  listAccounts,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
-import { state } from "~/lib/state"
+import {
+  getMutableProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 import { sleep } from "~/lib/utils"
 import { MimoAccountManager } from "~/services/mimo/account-lifecycle"
 
 export function markAccountFailed(accountId: string, errorMsg: string) {
-  const acc = state.accounts.find((a) => a.id === accountId)
+  const acc = getAccount(accountId)
   if (acc) {
     acc.runtimeState = {
       ...acc.runtimeState,
       authStatus: "error",
       lastError: errorMsg,
     }
+    const conn = getMutableProviderConnection(acc.id)
+    if (conn) syncAccountToConnection(conn, acc)
+    saveAccounts().catch((err: unknown) => {
+      logger.error("Failed to save accounts after marking failed:", err)
+    })
   }
 }
 
 export function markAccountReady(accountId: string) {
-  const acc = state.accounts.find((a) => a.id === accountId)
+  const acc = getAccount(accountId)
   if (acc && acc.runtimeState?.authStatus !== "ready") {
     acc.runtimeState = {
       ...acc.runtimeState,
       authStatus: "ready",
       lastError: undefined,
     }
+    const conn = getMutableProviderConnection(acc.id)
+    if (conn) syncAccountToConnection(conn, acc)
+    saveAccounts().catch((err: unknown) => {
+      logger.error("Failed to save accounts after marking ready:", err)
+    })
   }
 }
 
 export function markAccountResting(accountId: string) {
-  const acc = state.accounts.find((a) => a.id === accountId)
+  const acc = getAccount(accountId)
   if (acc) {
     acc.runtimeState = {
       ...acc.runtimeState,
       authStatus: "pending",
       lastError: undefined,
     }
+    const conn = getMutableProviderConnection(acc.id)
+    if (conn) syncAccountToConnection(conn, acc)
+    saveAccounts().catch((err: unknown) => {
+      logger.error("Failed to save accounts after marking resting:", err)
+    })
   }
 }
 
@@ -100,7 +121,7 @@ class MimoRotator {
     this.lastAccountRefresh = now
 
     const newSlots: Array<RotatorSlot> = []
-    for (const account of state.accounts) {
+    for (const account of listAccounts()) {
       if (account.provider !== "mimo-aistudio" || !account.enabled) continue
 
       const serviceToken = getMimoServiceToken(account)
@@ -251,7 +272,8 @@ export function startMimoManager() {
   logger.info("🚀 Mimo AI Studio control engine (Manager) initialized.")
 
   // Reset stale error states from previous runs
-  for (const account of state.accounts) {
+  let changed = false
+  for (const account of listAccounts()) {
     if (
       account.provider === "mimo-aistudio"
       && account.enabled
@@ -261,7 +283,15 @@ export function startMimoManager() {
         ...account.runtimeState,
         authStatus: "pending",
       }
+      const conn = getMutableProviderConnection(account.id)
+      if (conn) syncAccountToConnection(conn, account)
+      changed = true
     }
+  }
+  if (changed) {
+    saveAccounts().catch((err: unknown) => {
+      logger.error("Failed to save accounts after resetting stale errors:", err)
+    })
   }
 
   rotator.start()

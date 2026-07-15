@@ -1,5 +1,7 @@
 import { afterEach, expect, mock, test } from "bun:test"
 
+import { listAccounts } from "~/lib/accounts"
+
 import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
@@ -23,7 +25,6 @@ const mockAccount = {
   createdAt: Date.now(),
 }
 setTestAccounts([mockAccount])
-state.activeAccountIndex = 0
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
 
@@ -31,7 +32,7 @@ const originalProviderDefaults = structuredClone(state.providerDefaults)
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
-  state.providerDefaults = originalProviderDefaults
+  state.providerDefaults = structuredClone(originalProviderDefaults)
 })
 
 // Helper to mock fetch
@@ -71,7 +72,7 @@ function createWithSelectedAccount(
     initiatorOverride?: "agent" | "user"
   },
 ) {
-  const account = state.accounts.at(0)
+  const account = listAccounts().at(0)
   if (!account) {
     throw new Error("Expected at least one account in test state")
   }
@@ -242,7 +243,6 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
       ],
     },
   ])
-  state.activeAccountIndex = 0
 
   const localFetchMock = mock((url: string, opts?: { body?: string }) => ({
     ok: true,
@@ -273,7 +273,6 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
   })
 
   setTestAccounts([mockAccount])
-  state.activeAccountIndex = 0
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch
 })
@@ -314,7 +313,6 @@ test("codebuff account sends start/chat/finish workflow", async () => {
       ],
     },
   ])
-  state.activeAccountIndex = 0
 
   const localFetchMock = mock((url: string, opts?: { body?: string }) => {
     if (url.endsWith("/api/v1/agent-runs")) {
@@ -426,7 +424,6 @@ test("codebuff streaming still triggers finish agent run", async () => {
       ],
     },
   ])
-  state.activeAccountIndex = 0
 
   const localFetchMock = mock((url: string, opts?: { body?: string }) => {
     if (url.endsWith("/api/v1/agent-runs")) {

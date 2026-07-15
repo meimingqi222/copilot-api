@@ -4,10 +4,7 @@ import fs from "node:fs/promises"
 import type { Account } from "~/lib/accounts"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import {
-  syncLegacyExhaustedState,
-  setAccountQuotaState,
-} from "~/lib/account-availability"
+import { syncLegacyExhaustedState } from "~/lib/account-availability"
 import {
   accountsDiskHasRecoverableData,
   tryReadAccountsFile,
@@ -20,23 +17,25 @@ import {
   getMimoPh,
   getMimoServiceToken,
   getWindsurfApiKey,
+  listAccounts,
 } from "~/lib/accounts"
 import { GITHUB_API_BASE_URL, githubApiHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { isOAuthProviderId } from "~/lib/provider-config"
-import { migrateAccountsToConnections } from "~/lib/provider-connections"
 import {
+  getMutableProviderConnection,
   initializeProviderConnections,
   listProviderConnections,
+  migrateAccountsToConnections,
   saveProviderConnections,
   setProviderConnectionsForMigration,
+  syncAccountToConnection,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
-import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 import { Mutex } from "~/lib/repository"
-import { state, syncAccountsFromConnections } from "~/lib/state"
+import { state } from "~/lib/state"
 import { emitStateChange } from "~/lib/state-events"
 import { globalTimers } from "~/lib/timer-registry"
 import {
@@ -68,7 +67,7 @@ async function loadAccountsUnlocked(): Promise<void> {
   clearAllAccountTimers()
   cancelAllOAuthRefreshTimers()
 
-  // ── 批次 1：持久化格式换底 ──────────────────────────────────
+  // ── 持久化格式换底 ──────────────────────────────────
   // 先加载 provider-connections.json，再按 2.3 的 4 条规则检测迁移状态。
   // accounts.json 永不复活——saveAccounts() 委托 saveProviderConnections()。
   await initializeProviderConnections()
@@ -87,16 +86,17 @@ async function loadAccountsUnlocked(): Promise<void> {
       logger.warn(
         "accounts.json exists alongside provider-connections.json; ignoring accounts.json (already migrated). Set COPILOT_API_FORCE_REMIGRATE=1 to re-migrate from accounts.json.",
       )
-      // 用已加载的 connections 反构造 state.accounts
-      rebuildAccountsFromConnections()
+      normalizeAllConnectionRuntimeFields()
+      logLoadedAccounts()
     }
   } else {
     // 规则 1（connections 存在，accounts.json 不存在）或规则 4（都不存在）
-    rebuildAccountsFromConnections()
+    normalizeAllConnectionRuntimeFields()
+    logLoadedAccounts()
   }
 
   // 处理 legacy GitHub token 文件（仅在无 account 时）
-  if (state.accounts.length === 0) {
+  if (listAccounts().length === 0) {
     try {
       const legacyToken = await fs.readFile(PATHS.GITHUB_TOKEN_PATH, "utf8")
       if (legacyToken.trim()) {
@@ -113,12 +113,9 @@ async function loadAccountsUnlocked(): Promise<void> {
           quotaState: "unknown",
           createdAt: Date.now(),
         }
-        // 批次 2：state.accounts 是 getter，通过 upsert connection 写入
         const conn = migrateAccountsToConnections([account])[0]
         upsertProviderConnection(conn)
-        state.activeAccountIndex = 0
         await saveAccountsUnlocked()
-        syncAccountsFromConnections()
         logger.info("Migrated legacy GitHub token to provider-connections.json")
         return
       }
@@ -155,8 +152,7 @@ async function performFirstMigration(
       `Loaded ${loadedAccounts.length} account(s): ${loadedAccounts.map((account) => account.label).join(", ")}`,
     )
   }
-  // 刷新 state.accounts 缓存
-  rebuildAccountsFromConnections()
+  logLoadedAccounts()
 }
 
 /**
@@ -183,8 +179,7 @@ async function performForceRemigration(
   logger.info(
     `Force re-migration: ${migratedConnections.length} account(s) re-migrated and merged with ${existingConnections.length} existing connection(s)`,
   )
-  // 刷新 state.accounts 缓存
-  rebuildAccountsFromConnections()
+  logLoadedAccounts()
 }
 
 /**
@@ -236,14 +231,50 @@ function normalizeAccountRuntimeFields(account: Account): void {
 }
 
 /**
- * 批次 2：刷新 state.accounts 缓存从 connections，规范化运行时字段，并输出日志。
+ * 规范化 connection 的运行时字段（cooldownUntil、lastRateLimit）。
+ * 镜像原 normalizeAccountRuntimeFields 的逻辑，但直接操作 connection。
  */
-function rebuildAccountsFromConnections(): void {
-  syncAccountsFromConnections()
-  for (const account of state.accounts) {
-    normalizeAccountRuntimeFields(account)
+function normalizeConnectionRuntimeFields(conn: ProviderConnection): void {
+  const now = Date.now()
+  const cred = conn.credentials[0]
+  if (typeof cred.cooldownUntil === "number") {
+    if (cred.cooldownUntil <= now) {
+      cred.cooldownUntil = undefined
+    }
+  } else {
+    cred.cooldownUntil = undefined
   }
-  const accounts = state.accounts
+  // Also normalize metadata.cooldownUntil (connectionToAccount falls back to it)
+  const meta = conn.metadata
+  if (meta) {
+    if (typeof meta.cooldownUntil === "number") {
+      if (meta.cooldownUntil <= now) {
+        meta.cooldownUntil = undefined
+      }
+    } else {
+      meta.cooldownUntil = undefined
+    }
+    delete meta.lastRateLimitAt
+    delete meta.lastRateLimitReason
+  }
+}
+
+/**
+ * 规范化所有 account-derived connections 的运行时字段。
+ */
+function normalizeAllConnectionRuntimeFields(): void {
+  for (const conn of listProviderConnections()) {
+    const meta = conn.metadata
+    if (!meta || !meta.provider) continue // skip non-account connections
+    normalizeConnectionRuntimeFields(conn)
+  }
+}
+
+/**
+ * 输出已加载账号列表的日志。
+ */
+function logLoadedAccounts(): void {
+  const accounts = listAccounts()
   if (accounts.length === 0) {
     logger.warn("No accounts loaded from connections")
   } else {
@@ -282,64 +313,31 @@ export async function saveAccounts(
 /** Flush in-memory accounts on shutdown (waits for in-flight saves). */
 export async function flushAccountsOnShutdown(): Promise<void> {
   return accountsLifecycleMutex.runExclusive(async () => {
-    if (state.accounts.length === 0) return
-    await persistAccountsAsConnections({ allowShrink: true })
+    if (listAccounts().length === 0) return
+    await saveProviderConnections(listProviderConnections())
   })
 }
 
 async function saveAccountsUnlocked(
   options: SaveAccountsOptions = {},
 ): Promise<void> {
-  if (state.accounts.length === 0 && !options.allowEmpty) {
-    const diskHasData = await accountsDiskHasRecoverableData()
+  const accountCount = listAccounts().length
+  if (accountCount === 0 && !options.allowEmpty) {
+    const diskHasData =
+      listProviderConnections().length > 0
+      || (await accountsDiskHasRecoverableData())
+      || (await connectionsDiskHasData())
     if (diskHasData) {
       logger.warn(
-        "Refusing to persist empty accounts snapshot while existing accounts data is on disk",
+        "Refusing to persist empty accounts snapshot while existing data is on disk",
       )
       return
     }
   }
 
-  await persistAccountsAsConnections(options)
+  await saveProviderConnections(listProviderConnections())
   // 持久化完成后通知 models-stale,触发 cacheModels() 重建缓存
   emitStateChange("models-stale")
-}
-
-/**
- * 批次 1：将 state.accounts 通过 accountToConnectionForPersistence 正向映射为
- * connections，合并到 stateRoot.connections（按 id 覆盖 account 来源的
- * connection，保留非 account 来源的 connection），再 saveProviderConnections()。
- * 不再写 accounts.json（accounts.json 永不复活）。
- */
-async function persistAccountsAsConnections(
-  options: SaveAccountsOptions = {},
-): Promise<void> {
-  const accountConnections = migrateAccountsToConnections(state.accounts)
-  const existingConnections = listProviderConnections()
-  // 先移除旧的 account-derived connections（有 AccountLegacyMetadata 的），
-  // 保留非 account 来源的 connection（如 openai-compatible），
-  // 再合并新的 account-derived connections。
-  const nonAccountConnections = existingConnections.filter(
-    (conn) => !readAccountLegacyMetadata(conn),
-  )
-  const mergedConnections = mergeConnectionsById(
-    nonAccountConnections,
-    accountConnections,
-  )
-  // allowEmpty 守卫：不允许清空且有旧数据时拒绝
-  // 检查内存 connections 和磁盘 connections
-  if (!options.allowEmpty && accountConnections.length === 0) {
-    const diskHasData =
-      existingConnections.length > 0 || (await connectionsDiskHasData())
-    if (diskHasData) {
-      logger.warn(
-        "Refusing to persist empty accounts while connections exist on disk",
-      )
-      return
-    }
-  }
-  setProviderConnectionsForMigration(mergedConnections)
-  await saveProviderConnections(mergedConnections)
 }
 
 /**
@@ -432,8 +430,8 @@ function serializeAccount(account: Account): Record<string, unknown> {
 }
 
 function scheduleTokenRefreshRetry(accountId: string): void {
-  const account = state.accounts.find((a) => a.id === accountId)
-  if (!account || !account.enabled) {
+  const conn = getMutableProviderConnection(accountId)
+  if (!conn || !conn.enabled) {
     tokenRefreshTimers.delete(accountId)
     return
   }
@@ -441,8 +439,13 @@ function scheduleTokenRefreshRetry(accountId: string): void {
     `Scheduling token refresh retry for account "${accountId}" in ${TOKEN_REFRESH_RETRY_DELAY_MS / 1000}s`,
   )
   const retryTimerId = setTimeout(() => {
-    const currentAccount = state.accounts.find((a) => a.id === accountId)
-    if (!currentAccount || !currentAccount.enabled) {
+    const currentConn = getMutableProviderConnection(accountId)
+    if (!currentConn || !currentConn.enabled) {
+      tokenRefreshTimers.delete(accountId)
+      return
+    }
+    const currentAccount = listAccounts().find((a) => a.id === accountId)
+    if (!currentAccount) {
       tokenRefreshTimers.delete(accountId)
       return
     }
@@ -462,8 +465,7 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     return
   }
 
-  const githubToken =
-    (account.credentials?.githubToken as string | undefined) ?? undefined
+  const githubToken = getGitHubToken(account)
   if (!githubToken) {
     // No token yet — account can be added later via Web UI
     return
@@ -494,10 +496,19 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
     refresh_in: number
   }
 
+  // Update account snapshot's runtimeState so subsequent syncAccountToConnection
+  // calls don't overwrite the new token with the stale value.
   account.runtimeState = {
     ...account.runtimeState,
     copilotToken: data.token,
     copilotTokenExpiry: data.expires_at * 1000,
+  }
+
+  // Sync the full account state (including new token) to the connection
+  const conn = getMutableProviderConnection(account.id)
+  if (conn) {
+    syncAccountToConnection(conn, account)
+    await saveProviderConnections(listProviderConnections())
   }
 
   if (state.showToken) {
@@ -512,8 +523,13 @@ export async function refreshCopilotToken(account: Account): Promise<void> {
 
   const accountId = account.id
   const timerId = setTimeout(() => {
-    const currentAccount = state.accounts.find((a) => a.id === accountId)
-    if (!currentAccount || !currentAccount.enabled) {
+    const currentConn = getMutableProviderConnection(accountId)
+    if (!currentConn || !currentConn.enabled) {
+      tokenRefreshTimers.delete(accountId)
+      return
+    }
+    const currentAccount = listAccounts().find((a) => a.id === accountId)
+    if (!currentAccount) {
       tokenRefreshTimers.delete(accountId)
       return
     }
@@ -541,7 +557,7 @@ export function cancelTokenRefreshTimer(accountId: string): void {
 }
 
 function clearAllAccountTimers(): void {
-  for (const account of state.accounts) {
+  for (const account of listAccounts()) {
     cancelTokenRefreshTimer(account.id)
   }
 }
@@ -566,30 +582,39 @@ export async function refreshQuotaForAccount(
   }
 
   const usage = await getCopilotUsageForAccount(account)
-  account.quotaInfo = snapshotFromUsage(usage)
-  const remaining = account.quotaInfo.premiumInteractionsRemaining ?? Infinity
-  const unlimited = account.quotaInfo.unlimited
+  const snapshot = snapshotFromUsage(usage)
+  const remaining = snapshot.premiumInteractionsRemaining ?? Infinity
+  const unlimited = snapshot.unlimited
   const exhausted = !unlimited && remaining <= QUOTA_EXHAUSTION_THRESHOLD
 
+  // Update account snapshot so callers see fresh values
+  account.quotaInfo = snapshot
   if (exhausted) {
     if (account.quotaState !== "exhausted") {
-      setAccountQuotaState(account, "exhausted")
+      account.quotaState = "exhausted"
+      account.quotaExhaustedAt = Date.now()
       logger.warn(`Account "${account.label}" quota exhausted`)
     }
   } else {
     if (account.quotaState === "exhausted") {
       logger.info(`Account "${account.label}" quota refreshed — re-activating`)
     }
-    setAccountQuotaState(account, "available")
+    account.quotaState = "available"
+    account.quotaExhaustedAt = undefined
   }
+
+  // Sync to connection
+  const conn = getMutableProviderConnection(account.id)
+  if (conn) syncAccountToConnection(conn, account)
   if (!skipSave) {
     await saveAccounts()
   }
 }
 
 async function refreshAllQuotas(): Promise<void> {
+  const accounts = listAccounts()
   const results = await Promise.allSettled(
-    state.accounts.map((account) => refreshQuotaForAccount(account, true)),
+    accounts.map((account) => refreshQuotaForAccount(account, true)),
   )
   for (const result of results) {
     if (result.status === "rejected") {
@@ -610,8 +635,7 @@ async function getCopilotUsageForAccount(account: Account): Promise<{
     completions?: { remaining: number; entitlement: number; unlimited: boolean }
   }
 }> {
-  const githubToken =
-    (account.credentials?.githubToken as string | undefined) ?? undefined
+  const githubToken = getGitHubToken(account)
   if (!githubToken) {
     throw new Error(`GitHub token missing for account "${account.label}"`)
   }

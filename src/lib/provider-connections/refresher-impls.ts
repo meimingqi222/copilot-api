@@ -1,6 +1,7 @@
 import type { ApiCredential } from "~/lib/provider-connections/types"
 
 import { refreshCopilotToken } from "~/lib/account-store"
+import { getAccount } from "~/lib/accounts"
 /**
  * CredentialRefresher 实现。
  *
@@ -13,7 +14,6 @@ import { refreshCopilotToken } from "~/lib/account-store"
  * credential.context.accountId 用于反查 state.accounts 中的 Account。
  */
 import { logger } from "~/lib/logger"
-import { state } from "~/lib/state"
 import {
   refreshOAuthAccountToken,
   scheduleOAuthRefreshForAccount,
@@ -28,7 +28,7 @@ import {
 const REFRESH_LEAD_MS = 5 * 60 * 1000
 
 function findAccountById(accountId: string) {
-  return state.accounts.find((a) => a.id === accountId)
+  return getAccount(accountId)
 }
 
 function getAccountId(credential: ApiCredential): string | undefined {

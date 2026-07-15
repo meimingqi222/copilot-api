@@ -12,13 +12,12 @@
 
 import type { Account } from "~/lib/accounts"
 
-import { getAccountModelPrefix } from "~/lib/accounts"
+import { getAccountModelPrefix, listAccounts } from "~/lib/accounts"
 import { isProviderId, type ProviderId } from "~/lib/provider-config"
 import {
   getProviderConnection,
   listProviderConnections,
 } from "~/lib/provider-connections"
-import { state } from "~/lib/state"
 
 export interface ParsedModelRef {
   /** 命中已注册 connection 时的 connection id;否则 undefined。 */
@@ -112,7 +111,7 @@ export function parseModelReference(
 
 export function resolveModelRouting(
   modelId: string,
-  accounts: Array<Account> = state.accounts,
+  accounts: Array<Account> = listAccounts(),
 ): ResolvedModelRouting {
   const ref = parseModelRef(modelId)
   if (ref.connectionId || ref.legacyProvider) {

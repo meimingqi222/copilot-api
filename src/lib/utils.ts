@@ -5,10 +5,15 @@ import { getConnInfo } from "hono/bun"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { saveAccounts } from "~/lib/account-store"
-import { getAccountModelPrefix } from "~/lib/accounts"
+import { getAccountModelPrefix, listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { classifyUpstreamError } from "~/lib/provider-connections"
+import {
+  classifyUpstreamError,
+  getProviderConnection,
+  migrateAccountsToConnections,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { listExposedPublicModels } from "~/lib/route-target/build"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { onStateChange } from "~/lib/state-events"
@@ -57,7 +62,7 @@ export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
 
 export function cacheModels(): void {
-  const accountModels = state.accounts
+  const accountModels = listAccounts()
     .map((account, originalIndex) => ({ account, originalIndex }))
     .sort((left, right) => {
       if (left.account.priority !== right.account.priority) {
@@ -253,7 +258,14 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
     logger.debug(
       `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
     )
-    await saveAccounts()
+    // Guard against background refresh re-adding accounts that were removed
+    // by test cleanup (setTestAccounts([]) / removeProviderConnection).
+    // Use migrateAccountsToConnections (accountToConnectionForPersistence)
+    // to preserve credentialExtras and all metadata fields.
+    if (getProviderConnection(account.id)) {
+      upsertProviderConnection(migrateAccountsToConnections([account])[0])
+      await saveAccounts()
+    }
   } catch (error) {
     logger.warn(
       `Failed to refresh models for account "${account.label}":`,
@@ -268,13 +280,16 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
     }
 
     account.availableModels = fallbackModels
-    await saveAccounts()
+    if (getProviderConnection(account.id)) {
+      upsertProviderConnection(migrateAccountsToConnections([account])[0])
+      await saveAccounts()
+    }
   }
 }
 
 export async function refreshModelsForAllAccounts(): Promise<void> {
   const results = await Promise.allSettled(
-    state.accounts.map((account) => refreshModelsForAccount(account)),
+    listAccounts().map((account) => refreshModelsForAccount(account)),
   )
   for (const result of results) {
     if (result.status === "rejected") {

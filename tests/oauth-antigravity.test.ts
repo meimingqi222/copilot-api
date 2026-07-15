@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { listAccounts } from "~/lib/accounts"
 import {
   parseAntigravityQuotaPayload,
   summarizeAntigravityQuota,
 } from "~/lib/quota/parsers"
-import { state } from "~/lib/state"
 import { translateOpenAiChatToAntigravity } from "~/services/antigravity/translate-request"
 import {
   convertAntigravityNonStreamResponse,
@@ -25,7 +25,7 @@ import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
-const originalAccounts = state.accounts
+const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {

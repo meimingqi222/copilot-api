@@ -2,14 +2,18 @@ import type { Account, AccountQuotaState } from "~/lib/accounts"
 
 import { buildAccountDiagnosticSnapshot } from "~/lib/account-diagnostics"
 import { saveAccounts } from "~/lib/account-store"
+import { getAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
+import {
+  getMutableProviderConnection,
+  syncAccountToConnection,
+} from "~/lib/provider-connections"
 import {
   getRemainingCooldownSeconds,
   reportUpstreamRateLimit,
   reportUpstreamRateLimitMs,
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 
 export function syncLegacyExhaustedState(account: Account): void {
   const remainingCooldown = getRemainingCooldownSeconds(account.id)
@@ -97,7 +101,7 @@ export async function markAccountRateLimited(
   response: Response,
 ): Promise<void> {
   await reportUpstreamRateLimit(id, response)
-  const account = state.accounts.find((candidate) => candidate.id === id)
+  const account = getAccount(id)
   if (!account) return
 
   const status = response.status
@@ -109,6 +113,8 @@ export async function markAccountRateLimited(
     status === 429 ? "upstream_429" : `upstream_${status}`
   syncLegacyExhaustedState(account)
 
+  const conn = getMutableProviderConnection(account.id)
+  if (conn) syncAccountToConnection(conn, account)
   saveAccounts().catch((err: unknown) => {
     logger.error("Failed to auto-save accounts after rate limit:", err)
   })
@@ -134,7 +140,7 @@ export async function markAccountRateLimitedMs(
   reason = "upstream_windsurf_rate_limit",
 ): Promise<void> {
   await reportUpstreamRateLimitMs(id, retryAfterMs)
-  const account = state.accounts.find((candidate) => candidate.id === id)
+  const account = getAccount(id)
   if (!account) return
 
   const remainingCooldown = getRemainingCooldownSeconds(id)
@@ -144,6 +150,8 @@ export async function markAccountRateLimitedMs(
   account.lastRateLimitReason = reason
   syncLegacyExhaustedState(account)
 
+  const conn = getMutableProviderConnection(account.id)
+  if (conn) syncAccountToConnection(conn, account)
   saveAccounts().catch((err: unknown) => {
     logger.error("Failed to auto-save accounts after rate limit:", err)
   })
@@ -159,11 +167,13 @@ export async function markAccountRateLimitedMs(
 
 export async function markAccountRateLimitRecovered(id: string): Promise<void> {
   await reportUpstreamSuccess(id)
-  const account = state.accounts.find((candidate) => candidate.id === id)
+  const account = getAccount(id)
   if (!account) return
   refreshAccountRuntimeAvailability(account)
   syncLegacyExhaustedState(account)
 
+  const conn = getMutableProviderConnection(account.id)
+  if (conn) syncAccountToConnection(conn, account)
   saveAccounts().catch((err: unknown) => {
     logger.error("Failed to auto-save accounts after recovery:", err)
   })
