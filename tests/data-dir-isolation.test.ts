@@ -15,7 +15,8 @@ import {
   redirectPathsToDir,
 } from "~/lib/paths"
 import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
-import { state } from "~/lib/state"
+
+import { setTestAccounts } from "./helpers/set-accounts"
 
 describe("test data-dir isolation", () => {
   const isolationDirAtLoad = PATHS.APP_DIR
@@ -83,7 +84,7 @@ describe("test data-dir isolation", () => {
       path.join(os.tmpdir(), "copilot-api-isolation-"),
     )
     redirectPathsToDir(tempDir)
-    state.accounts = [
+    setTestAccounts([
       {
         id: randomUUID(),
         label: "isolated-only",
@@ -95,7 +96,7 @@ describe("test data-dir isolation", () => {
         isExhausted: false,
         createdAt: Date.now(),
       },
-    ]
+    ])
 
     await saveAccounts()
 

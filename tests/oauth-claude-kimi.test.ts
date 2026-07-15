@@ -23,15 +23,17 @@ import {
 import { generatePkceCodes } from "~/services/oauth/pkce"
 import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 afterEach(() => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
 })
 
@@ -214,7 +216,7 @@ describe("OAuth refresh scheduler", () => {
         refreshToken: "refresh-token",
       },
     }
-    state.accounts = [account]
+    setTestAccounts([account])
 
     globalThis.fetch = (() =>
       Promise.resolve(

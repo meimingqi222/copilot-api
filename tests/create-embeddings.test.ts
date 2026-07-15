@@ -3,17 +3,19 @@ import { afterEach, expect, mock, test } from "bun:test"
 import { state } from "~/lib/state"
 import { createEmbeddings } from "~/services/copilot/create-embeddings"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalFetch = globalThis.fetch
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
 afterEach(() => {
   globalThis.fetch = originalFetch
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   state.activeAccountIndex = originalActiveAccountIndex
 })
 
 test("strips copilot prefix before forwarding embeddings requests upstream", async () => {
-  state.accounts = [
+  setTestAccounts([
     {
       id: "copilot-1",
       label: "copilot",
@@ -35,7 +37,7 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
         },
       ],
     },
-  ]
+  ])
   state.activeAccountIndex = 0
 
   const fetchMock = mock((url: string, options?: { body?: string }) => ({

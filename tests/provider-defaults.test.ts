@@ -4,14 +4,16 @@ import { getCodebuffAuthToken } from "~/lib/accounts"
 import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
 import { state } from "~/lib/state"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 afterEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 describe("provider-defaults", () => {
   test("updates managed default token instead of creating duplicate account", async () => {
     state.providerDefaults.codebuff.authToken = "new-token"
-    state.accounts = [
+    setTestAccounts([
       {
         id: "codebuff-default",
         label: "codebuff-default",
@@ -29,7 +31,7 @@ describe("provider-defaults", () => {
           allowFallbacks: state.providerDefaults.codebuff.allowFallbacks,
         },
       },
-    ]
+    ])
 
     await ensureDirectProviderAccounts()
 

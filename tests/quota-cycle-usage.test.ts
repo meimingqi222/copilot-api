@@ -24,6 +24,7 @@ import {
   clearAdminPasswordConfig,
   setupAdminAuth,
 } from "./admin-test-utils"
+import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
@@ -33,7 +34,7 @@ const SEVEN_DAY_MS = 7 * 86_400_000
 
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
-  state.accounts = []
+  setTestAccounts([])
   state.activeAccountIndex = 0
   clearAdminPasswordConfig()
   setupAdminAuth()
@@ -41,7 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   state.activeAccountIndex = originalActiveAccountIndex
   clearAdminAuth()
   clearAdminPasswordConfig()
@@ -312,7 +313,7 @@ describe("GET /admin/api/quota cycle usage", () => {
       },
     }
 
-    state.accounts = [codexAccount, xaiAccount]
+    setTestAccounts([codexAccount, xaiAccount])
 
     if (codexWindows.length === 0) {
       throw new Error("expected Codex window boundaries")

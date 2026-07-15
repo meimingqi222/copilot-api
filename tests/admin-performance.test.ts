@@ -10,6 +10,7 @@ import {
   clearAdminPasswordConfig,
   setupAdminAuth,
 } from "./admin-test-utils"
+import { setTestAccounts } from "./helpers/set-accounts"
 
 type PerformanceRow = {
   model: string
@@ -31,7 +32,7 @@ const originalAdminPassword = state.adminPassword
 const originalUsers = state.users
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
-  state.accounts = [
+  setTestAccounts([
     {
       id: "account-1",
       label: "default",
@@ -54,7 +55,7 @@ beforeEach(() => {
       isExhausted: false,
       createdAt: Date.now(),
     },
-  ]
+  ])
   state.activeAccountIndex = 0
   state.legacyApiKey = undefined
   state.adminPassword = undefined
@@ -65,7 +66,7 @@ beforeEach(() => {
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   state.activeAccountIndex = originalActiveAccountIndex
   state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword

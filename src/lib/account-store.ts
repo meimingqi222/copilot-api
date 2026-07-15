@@ -26,19 +26,17 @@ import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { isOAuthProviderId } from "~/lib/provider-config"
-import {
-  connectionToAccount,
-  migrateAccountsToConnections,
-} from "~/lib/provider-connections"
+import { migrateAccountsToConnections } from "~/lib/provider-connections"
 import {
   initializeProviderConnections,
   listProviderConnections,
   saveProviderConnections,
   setProviderConnectionsForMigration,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 import { Mutex } from "~/lib/repository"
-import { state } from "~/lib/state"
+import { state, syncAccountsFromConnections } from "~/lib/state"
 import { emitStateChange } from "~/lib/state-events"
 import { globalTimers } from "~/lib/timer-registry"
 import {
@@ -115,11 +113,13 @@ async function loadAccountsUnlocked(): Promise<void> {
           quotaState: "unknown",
           createdAt: Date.now(),
         }
-        state.accounts = [account]
+        // 批次 2：state.accounts 是 getter，通过 upsert connection 写入
+        const conn = migrateAccountsToConnections([account])[0]
+        upsertProviderConnection(conn)
         state.activeAccountIndex = 0
         await saveAccountsUnlocked()
+        syncAccountsFromConnections()
         logger.info("Migrated legacy GitHub token to provider-connections.json")
-        rebuildAccountsFromConnections()
         return
       }
     } catch {
@@ -138,11 +138,10 @@ async function performFirstMigration(
   rawAccounts: Array<Record<string, unknown>>,
 ): Promise<void> {
   const loadedAccounts = parseRawAccounts(rawAccounts)
-  state.accounts = loadedAccounts
-  for (const account of state.accounts) {
+  for (const account of loadedAccounts) {
     normalizeAccountRuntimeFields(account)
   }
-  const migratedConnections = migrateAccountsToConnections(state.accounts)
+  const migratedConnections = migrateAccountsToConnections(loadedAccounts)
   setProviderConnectionsForMigration(migratedConnections)
   await saveProviderConnections(migratedConnections)
   await renameAccountsJsonToBackup()
@@ -156,7 +155,7 @@ async function performFirstMigration(
       `Loaded ${loadedAccounts.length} account(s): ${loadedAccounts.map((account) => account.label).join(", ")}`,
     )
   }
-  // 反构造确保 state.accounts 与 connections 一致
+  // 刷新 state.accounts 缓存
   rebuildAccountsFromConnections()
 }
 
@@ -170,11 +169,10 @@ async function performForceRemigration(
   existingConnections: Array<ProviderConnection>,
 ): Promise<void> {
   const loadedAccounts = parseRawAccounts(rawAccounts)
-  state.accounts = loadedAccounts
-  for (const account of state.accounts) {
+  for (const account of loadedAccounts) {
     normalizeAccountRuntimeFields(account)
   }
-  const migratedConnections = migrateAccountsToConnections(state.accounts)
+  const migratedConnections = migrateAccountsToConnections(loadedAccounts)
   const mergedConnections = mergeConnectionsById(
     existingConnections,
     migratedConnections,
@@ -185,6 +183,7 @@ async function performForceRemigration(
   logger.info(
     `Force re-migration: ${migratedConnections.length} account(s) re-migrated and merged with ${existingConnections.length} existing connection(s)`,
   )
+  // 刷新 state.accounts 缓存
   rebuildAccountsFromConnections()
 }
 
@@ -237,20 +236,14 @@ function normalizeAccountRuntimeFields(account: Account): void {
 }
 
 /**
- * 从 stateRoot.connections 反构造 state.accounts。
- * 仅处理 account-derived connections（有 AccountLegacyMetadata 的）。
+ * 批次 2：刷新 state.accounts 缓存从 connections，规范化运行时字段，并输出日志。
  */
 function rebuildAccountsFromConnections(): void {
-  const connections = listProviderConnections()
-  const accounts: Array<Account> = []
-  for (const conn of connections) {
-    // 仅反构造 account-derived connections（有 AccountLegacyMetadata 的）
-    if (!readAccountLegacyMetadata(conn)) continue
-    const account = connectionToAccount(conn)
+  syncAccountsFromConnections()
+  for (const account of state.accounts) {
     normalizeAccountRuntimeFields(account)
-    accounts.push(account)
   }
-  state.accounts = accounts
+  const accounts = state.accounts
   if (accounts.length === 0) {
     logger.warn("No accounts loaded from connections")
   } else {
@@ -334,18 +327,32 @@ async function persistAccountsAsConnections(
     accountConnections,
   )
   // allowEmpty 守卫：不允许清空且有旧数据时拒绝
-  if (
-    !options.allowEmpty
-    && accountConnections.length === 0
-    && existingConnections.length > 0
-  ) {
-    logger.warn(
-      "Refusing to persist empty accounts while connections exist on disk",
-    )
-    return
+  // 检查内存 connections 和磁盘 connections
+  if (!options.allowEmpty && accountConnections.length === 0) {
+    const diskHasData =
+      existingConnections.length > 0 || (await connectionsDiskHasData())
+    if (diskHasData) {
+      logger.warn(
+        "Refusing to persist empty accounts while connections exist on disk",
+      )
+      return
+    }
   }
   setProviderConnectionsForMigration(mergedConnections)
   await saveProviderConnections(mergedConnections)
+}
+
+/**
+ * 检查 provider-connections.json 磁盘文件是否有数据。
+ */
+async function connectionsDiskHasData(): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(PATHS.PROVIDER_CONNECTIONS_PATH)
+    const parsed = JSON.parse(raw) as { connections?: Array<unknown> }
+    return (parsed.connections?.length ?? 0) > 0
+  } catch {
+    return false
+  }
 }
 
 export function serializeAccountForExport(

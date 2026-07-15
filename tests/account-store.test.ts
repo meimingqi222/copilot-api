@@ -11,6 +11,8 @@ import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 /**
  * 读取 provider-connections.json 并返回 connections 数组。
  */
@@ -33,7 +35,7 @@ describe("account-store", () => {
       path.join(os.tmpdir(), `accounts-store-test-${randomUUID()}-`),
     )
     redirectPathsToDir(tempAppDir)
-    state.accounts = []
+    setTestAccounts([])
     __resetProviderConnectionsForTest()
   })
 
@@ -65,9 +67,9 @@ describe("account-store", () => {
       createdAt: Date.now(),
     }
 
-    state.accounts = [acc1]
+    setTestAccounts([acc1])
     const p1 = saveAccounts()
-    state.accounts = [acc1, acc2]
+    setTestAccounts([acc1, acc2])
     const p2 = saveAccounts()
 
     await Promise.all([p1, p2])
@@ -90,10 +92,10 @@ describe("account-store", () => {
       createdAt: Date.now(),
       cooldownUntil: cooldownTime,
     }
-    state.accounts = [acc]
+    setTestAccounts([acc])
     await saveAccounts()
 
-    state.accounts = []
+    setTestAccounts([])
     __resetProviderConnectionsForTest()
     await loadAccounts()
 
@@ -260,10 +262,10 @@ describe("account-store", () => {
       createdAt: Date.now(),
       cooldownUntil: expiredCooldownTime,
     }
-    state.accounts = [acc]
+    setTestAccounts([acc])
     await saveAccounts()
 
-    state.accounts = []
+    setTestAccounts([])
     __resetProviderConnectionsForTest()
     await loadAccounts()
 
@@ -301,7 +303,7 @@ describe("account-store", () => {
   })
 
   test("loadAccounts preserves OAuth tokenEndpoint and redirectUri", async () => {
-    state.accounts = [
+    setTestAccounts([
       {
         id: "xai-1",
         label: "xai-account",
@@ -320,10 +322,10 @@ describe("account-store", () => {
           proxyUrl: "http://127.0.0.1:7890",
         },
       },
-    ]
+    ])
     await saveAccounts()
 
-    state.accounts = []
+    setTestAccounts([])
     __resetProviderConnectionsForTest()
     await loadAccounts()
 
@@ -346,10 +348,10 @@ describe("account-store", () => {
       quotaState: "unknown",
       createdAt: Date.now(),
     }
-    state.accounts = [acc]
+    setTestAccounts([acc])
     await saveAccounts()
 
-    state.accounts = []
+    setTestAccounts([])
     await saveAccounts()
 
     // Should refuse to persist empty (connections still has 1 entry)
@@ -372,7 +374,7 @@ describe("account-store", () => {
       quotaState: "unknown",
       createdAt: Date.now(),
     }
-    state.accounts = [acc]
+    setTestAccounts([acc])
     await saveAccounts()
 
     const connections = await readProviderConnectionsFile()
@@ -399,10 +401,10 @@ describe("account-store", () => {
       quotaState: "unknown",
       createdAt: Date.now(),
     }
-    state.accounts = [acc]
+    setTestAccounts([acc])
     await saveAccounts()
 
-    state.accounts = []
+    setTestAccounts([])
     await saveAccounts({ allowEmpty: true })
 
     const connections = await readProviderConnectionsFile()

@@ -5,15 +5,17 @@ import type { OAuthAccount } from "~/lib/accounts"
 import { state } from "~/lib/state"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 afterEach(() => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
 })
 
@@ -46,7 +48,7 @@ describe("ensureOAuthAccessToken", () => {
       },
       runtimeState: { authStatus: "ready" },
     }
-    state.accounts = [account]
+    setTestAccounts([account])
 
     const token = await ensureOAuthAccessToken(account)
     expect(token).toBe("fresh-access")

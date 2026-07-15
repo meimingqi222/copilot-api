@@ -11,14 +11,16 @@ import {
   substituteTokenInHeaders,
 } from "~/services/oauth/token-resolver"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalAccounts = state.accounts
 
 beforeEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 afterEach(() => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
 })
 
 describe("CPA auth import", () => {

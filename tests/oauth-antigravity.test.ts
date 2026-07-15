@@ -23,15 +23,17 @@ import {
 import { generateOAuthState } from "~/services/oauth/pkce"
 import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 afterEach(() => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
 })
 
@@ -233,7 +235,7 @@ describe("OAuth refresh scheduler", () => {
         redirectUri: "http://localhost:51121/oauth-callback",
       },
     }
-    state.accounts = [account]
+    setTestAccounts([account])
 
     globalThis.fetch = (() =>
       Promise.resolve(

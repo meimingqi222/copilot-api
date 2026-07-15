@@ -8,6 +8,7 @@ import type {
 import { state } from "../src/lib/state"
 import { statsStore } from "../src/lib/stats-store"
 import { createChatCompletions } from "../src/services/copilot/create-chat-completions"
+import { setTestAccounts } from "./helpers/set-accounts"
 
 // Mock state with an active account
 const mockAccount = {
@@ -21,7 +22,7 @@ const mockAccount = {
   isExhausted: false,
   createdAt: Date.now(),
 }
-state.accounts = [mockAccount]
+setTestAccounts([mockAccount])
 state.activeAccountIndex = 0
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
@@ -218,7 +219,7 @@ test("routes responses-only models to /responses", async () => {
 })
 
 test("strips copilot prefix before forwarding qualified chat models upstream", async () => {
-  state.accounts = [
+  setTestAccounts([
     {
       id: "copilot-qualified-account",
       label: "copilot-qualified",
@@ -240,7 +241,7 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
         },
       ],
     },
-  ]
+  ])
   state.activeAccountIndex = 0
 
   const localFetchMock = mock((url: string, opts?: { body?: string }) => ({
@@ -271,7 +272,7 @@ test("strips copilot prefix before forwarding qualified chat models upstream", a
     model: "gpt-test",
   })
 
-  state.accounts = [mockAccount]
+  setTestAccounts([mockAccount])
   state.activeAccountIndex = 0
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch
@@ -285,7 +286,7 @@ test("codebuff account sends start/chat/finish workflow", async () => {
   state.providerDefaults.codebuff.model = "z-ai/glm-5.1"
   state.providerDefaults.codebuff.costMode = "normal"
   state.providerDefaults.codebuff.allowFallbacks = true
-  state.accounts = [
+  setTestAccounts([
     {
       id: "codebuff-account-id",
       label: "codebuff",
@@ -312,7 +313,7 @@ test("codebuff account sends start/chat/finish workflow", async () => {
         },
       ],
     },
-  ]
+  ])
   state.activeAccountIndex = 0
 
   const localFetchMock = mock((url: string, opts?: { body?: string }) => {
@@ -391,7 +392,7 @@ test("codebuff account sends start/chat/finish workflow", async () => {
   expect(finishBody.action).toBe("FINISH")
   expect(finishBody.runId).toBe("run-123")
 
-  state.accounts = [mockAccount]
+  setTestAccounts([mockAccount])
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch
 })
@@ -404,7 +405,7 @@ test("codebuff streaming still triggers finish agent run", async () => {
   state.providerDefaults.codebuff.model = "z-ai/glm-5.1"
   state.providerDefaults.codebuff.costMode = "normal"
   state.providerDefaults.codebuff.allowFallbacks = true
-  state.accounts = [
+  setTestAccounts([
     {
       id: "codebuff-stream-account-id",
       label: "codebuff-stream",
@@ -424,7 +425,7 @@ test("codebuff streaming still triggers finish agent run", async () => {
         },
       ],
     },
-  ]
+  ])
   state.activeAccountIndex = 0
 
   const localFetchMock = mock((url: string, opts?: { body?: string }) => {
@@ -495,7 +496,7 @@ test("codebuff streaming still triggers finish agent run", async () => {
   expect(finishBody.action).toBe("FINISH")
   expect(finishBody.runId).toBe("run-stream")
 
-  state.accounts = [mockAccount]
+  setTestAccounts([mockAccount])
   ;(globalThis as unknown as { fetch: typeof fetch }).fetch =
     fetchMock as unknown as typeof fetch
 })

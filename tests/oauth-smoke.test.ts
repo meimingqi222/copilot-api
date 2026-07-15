@@ -20,6 +20,7 @@ import {
   clearAdminPasswordConfig,
   setupAdminAuth,
 } from "./admin-test-utils"
+import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
@@ -53,7 +54,7 @@ beforeEach(async () => {
   await fs.writeFile(PATHS.PENDING_OAUTH_FLOWS_PATH, "{}")
   initializeProviderRegistry()
   statsStore.clearUsageStatsForTest()
-  state.accounts = []
+  setTestAccounts([])
   state.users = []
   state.legacyApiKey = undefined
   state.adminPassword = undefined
@@ -63,7 +64,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   resetOAuthFlowsForTest()
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
   redirectPathsToDir(isolationRoot)
   resetAdaptiveRateLimiterForTest()
@@ -673,7 +674,7 @@ describe("OAuth smoke — routing", () => {
         },
       ],
     }
-    state.accounts = [claudeAccount]
+    setTestAccounts([claudeAccount])
 
     const routing = resolveModelRouting("work/claude-sonnet-4-6")
     expect(routing.accountPrefix).toBe("work")

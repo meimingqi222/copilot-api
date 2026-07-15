@@ -14,15 +14,17 @@ import { getCodexModelsForAccount } from "~/services/codex/get-models"
 import { getOAuthCatalogModels } from "~/services/oauth/discover-models"
 import { getOAuthFallbackModels } from "~/services/oauth/model-catalog"
 
+import { setTestAccounts } from "./helpers/set-accounts"
+
 const originalAccounts = state.accounts
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {
-  state.accounts = []
+  setTestAccounts([])
 })
 
 afterEach(() => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
 })
 
@@ -117,9 +119,9 @@ describe("OAuth provider routing", () => {
   })
 
   test("resolveModelRouting maps custom account prefix", () => {
-    state.accounts = [
+    setTestAccounts([
       createOAuthAccount("kimi", { settings: { modelPrefix: "lab" } }),
-    ]
+    ])
     const routing = resolveModelRouting("lab/kimi-k2.5")
     expect(routing.accountPrefix).toBe("lab")
     expect(routing.modelId).toBe("kimi-k2.5")
@@ -128,7 +130,7 @@ describe("OAuth provider routing", () => {
   test("buildRouteTargets filters by legacy provider prefix", () => {
     const claude = createOAuthAccount("claude")
     const kimi = createOAuthAccount("kimi", { id: "kimi-account" })
-    state.accounts = [claude, kimi]
+    setTestAccounts([claude, kimi])
 
     const targets = buildRouteTargets({
       legacyProvider: "claude",
@@ -142,7 +144,7 @@ describe("OAuth provider routing", () => {
   })
 
   test("buildRouteTargets matches prefixed model ids", () => {
-    state.accounts = [createOAuthAccount("codex")]
+    setTestAccounts([createOAuthAccount("codex")])
 
     const targets = buildRouteTargets({
       legacyProvider: "codex",
@@ -156,13 +158,13 @@ describe("OAuth provider routing", () => {
   })
 
   test("buildRouteTargets routes custom prefix only to matching account", () => {
-    state.accounts = [
+    setTestAccounts([
       createOAuthAccount("claude", {
         id: "work-claude",
         settings: { modelPrefix: "work" },
       }),
       createOAuthAccount("claude", { id: "personal-claude" }),
-    ]
+    ])
 
     const targets = buildRouteTargets({
       accountPrefix: "work",

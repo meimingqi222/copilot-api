@@ -17,6 +17,7 @@ import {
   clearAdminPasswordConfig,
   setupAdminAuth,
 } from "./admin-test-utils"
+import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalAccounts = state.accounts
 const originalActiveAccountIndex = state.activeAccountIndex
@@ -31,7 +32,7 @@ beforeEach(async () => {
   redirectPathsToDir(testDir)
   initializeProviderRegistry()
   statsStore.clearUsageStatsForTest()
-  state.accounts = []
+  setTestAccounts([])
   state.activeAccountIndex = 0
   state.models = undefined
   state.legacyApiKey = undefined
@@ -41,7 +42,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  state.accounts = originalAccounts
+  setTestAccounts(originalAccounts)
   state.activeAccountIndex = originalActiveAccountIndex
   state.models = originalModels
   state.legacyApiKey = originalApiKey
@@ -54,7 +55,7 @@ afterEach(async () => {
 })
 
 test("cacheModels keeps provider-qualified duplicates visible", () => {
-  state.accounts = [
+  setTestAccounts([
     {
       id: "copilot-1",
       label: "copilot",
@@ -97,7 +98,7 @@ test("cacheModels keeps provider-qualified duplicates visible", () => {
         },
       ],
     },
-  ]
+  ])
 
   cacheModels()
 
@@ -116,7 +117,7 @@ test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct acco
   state.providerDefaults.codebuff.costMode = "cheap"
   state.providerDefaults.codebuff.allowFallbacks = false
 
-  state.accounts = [
+  setTestAccounts([
     {
       id: "codebuff-default",
       label: "codebuff-default",
@@ -135,7 +136,7 @@ test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct acco
         allowFallbacks: true,
       },
     },
-  ]
+  ])
 
   await ensureDirectProviderAccounts()
 
