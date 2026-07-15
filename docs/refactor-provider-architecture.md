@@ -96,8 +96,14 @@
 - [x] T4.2 死代码与残留 switch 审计
 
 ### P5 消灭 Account 双模型（Step D）
-- [ ] T5.1 [需人工确认] 产出 Step D 详细设计文档
+- [x] T5.1 [需人工确认] 产出 Step D 详细设计文档
 - [ ] T5.2 [需人工确认] 按 T5.1 批准后的设计实施（后续拆分）
+  - [ ] T5.2.0 迁移基础设施（`migrate-from-accounts.ts` + `accountToConnectionForPersistence` + 单元测试）
+  - [ ] T5.2.1 启动序列接入迁移（`loadAccounts`/`initializeProviderConnections` 检测 + 迁移 + 重命名 accounts.json）
+  - [ ] T5.2.2 admin 反向映射改为 connection 直写（accounts/account-create/account-update/account-import/oauth/quota 路由）
+  - [ ] T5.2.3 `accounts.ts` getter/setter 兼容层删除（可拆 a/b/c/d）
+  - [ ] T5.2.4 `RouteTarget.account` 特例删除 + protocols 层 `requireTargetAccount` 删除
+  - [ ] T5.2.5 清理与文档（删除 account-store/account-file-store/account-adapter 等无引用文件 + 更新 AGENTS.md）
 
 ### P6 翻译层规约
 - [x] T6.1 确立枢纽格式规约文档
@@ -575,3 +581,5 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | 2026-07-15 | T4.2 | ✅ 完成（纯审计） | **knip 结果**：1 unused dependency（`undici`）、1 unlisted binary（`publish`）、242 unused exports、175 unused exported types。大部分 unused exports 是 `*ForTest` 后缀的测试钩子、barrel re-exports（`index.ts` 转发的类型/函数）、以及 CLI 入口函数（`runAuth`/`runDebug`/`runServer`）——均属合理保留（knip 不识别 `bun:test` 调用点与 barrel 转发语义）。**候选后续**：~~`undici` 可从 `package.json` 移除~~（勘误 2026-07-15：knip 误报，`src/lib/proxy.ts:2` 有运行时 import，**不可移除**）；少量非 test、非 barrel 的 unused exports（如 `accountsToConnections`、`buildAccountsDiagnosticSnapshot`、`adaptiveRateLimitDefaults`）可考虑清理。**残留 switch 审计**：`grep` 命中 2 处共 5 个 case——(1) `account-adapter.ts:394` `applyCredentialValue` 的 4-case switch（copilot/codebuff/windsurf/mimo-aistudio + default OAuth）：各 case 调用 `setCredentialField(account, "<fieldKey>", trimmed)`，字段名 per-provider 不同（`githubToken`/`authToken`/`apiKey`/`serviceToken`），是**语义分支非纯数据差异**（字段名是 Account credentials 联合类型的判别字段，无法简单查表），属**合理保留**；(2) `discover-models.ts:22` 的 2-case switch（codex/antigravity + default fallback）：各 case 调用不同 provider 的 `getXxxModelsForAccount`，是 per-provider model 发现 dispatch——**候选后续任务**：可收敛为 `Partial<Record<OAuthProviderId, (account, signal) => Promise<AccountModel[]>>>` 查表，但仅 2 个 case，收益有限。 |
 | 2026-07-15 | T5.1 | ⏸️ 等待人工批准 | spec 明确要求"未在执行日志看到用户明确批准 'approve T5.1' 之前不得开始"。T5.2 同理。 |
 | 2026-07-15 | T6.1 | ✅ 完成 | 新建 `docs/translation-conventions.md`，覆盖：(1) 声明枢纽格式为 OpenAI Chat Completions；(2) R1 规则：新增格式只允许 X↔枢纽翻译对，禁止两两直连；(3) R2 规则：stream/non-stream 必须共享事件级转换函数（参考 `refactor-usage-translation.md` 收口模式）；(4) R3 规则：usage 翻译收口于 `usage-translation.ts`；(5) 存量翻译对清单（9 对，标注"存量豁免，随缘收敛"）含 Chat↔Responses、Messages↔Chat（双文件）、Antigravity、Chat-via-Responses、Copilot Messages；(6) 辅助转换文件清单；(7) 新增格式检查清单。仓库根无 `CLAUDE.md`，未创建/修改。验收：三件套全绿（542 pass / 2 skip / 0 fail），无代码改动。 |
+| 2026-07-15 | T5.1 | ✅ 人工批准 | 2026-07-15 approve T5.1 — user。可开始 T5.1（产出 Step D 详细设计文档）。 |
+| 2026-07-15 | T5.1 | ✅ 完成 | 产出 `docs/refactor-step-d-account-elimination.md`，覆盖 spec 要求的 5 点：(1) Account→ProviderConnection/ApiCredential/metadata/context 逐字段映射表（以 `accountToConnection` 现有实现为事实依据，含 5 provider 的 value/refresherType/credentialExtras 差异 + 反向 patch 映射）；(2) 持久化迁移方案（accounts.json→provider-connections.json，扩展 metadata 为 account-legacy 承载区，4 种启动检测分支，手动回滚步骤，测试隔离兼容）；(3) 分批删除计划 6 批次（T5.2.0 迁移基础设施→T5.2.1 启动接入→T5.2.2 admin 反向映射→T5.2.3 accounts.ts getter/setter 删除[可拆 a/b/c/d]→T5.2.4 RouteTarget.account 删除→T5.2.5 清理文档），含依赖图与每批验收标准；(4) 受影响测试清单 29 文件分组（fixture 替换/state 断言替换/迁移测试新增/删除的测试）+ 改造策略；(5) 风险清单 8 项（Copilot token 刷新链、mimo ws token、CPA import、持久化数据完整性、activeAccountIndex 删除、admin API 响应形状不变 G1、测试隔离与生产数据安全、runtimeState 不持久化冷启动影响）+ 附录 A/B/C（accountToConnectionForPersistence 差异、执行顺序依赖图、验收基线）。验收：G2 三件套全绿（542 pass / 2 skip / 0 fail），无代码改动。**停止循环**等待人工评审 T5.1 设计文档，批准后进入 T5.2 分批实施。 |
