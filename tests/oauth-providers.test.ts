@@ -64,6 +64,22 @@ describe("OAuth model catalog", () => {
     const xai = getOAuthCatalogModels(createOAuthAccount("xai"))
     expect(xai.some((model) => model.id === "grok-4.3")).toBe(true)
     expect(xai[0]?.supportedEndpoints).toContain("/v1/responses")
+
+    const codex = getOAuthCatalogModels(createOAuthAccount("codex"))
+    const codexIds = codex.map((model) => model.id)
+    for (const id of [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4",
+      "gpt-5.4-mini",
+      "gpt-5.3-codex-spark",
+      "codex-auto-review",
+    ]) {
+      expect(codexIds).toContain(id)
+    }
+    expect(codex[0]?.supportedEndpoints).toContain("/v1/responses")
   })
 })
 
