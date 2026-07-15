@@ -3,6 +3,7 @@ import { hostname } from "node:os"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 export const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
@@ -223,19 +224,7 @@ export function applyKimiOAuthBundle(
   account: OAuthAccount,
   bundle: KimiOAuthBundle,
 ): void {
-  account.credentials = {
-    ...account.credentials,
-    accessToken: bundle.accessToken,
-    refreshToken: bundle.refreshToken ?? account.credentials?.refreshToken,
-    expiresAt: bundle.expiresAt ?? account.credentials?.expiresAt,
-    deviceId: bundle.deviceId,
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    authStatus: "ready",
-    lastRefreshAt: Date.now(),
-    lastError: undefined,
-  }
+  applyOAuthBundle(account, bundle, { deviceId: bundle.deviceId })
 }
 
 export function stripKimiModelPrefix(model: string): string {

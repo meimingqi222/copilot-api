@@ -1,5 +1,6 @@
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import {
   extractCodexAccountIdFromIdToken,
@@ -151,23 +152,13 @@ export function applyCodexOAuthBundle(
   account: OAuthAccount,
   bundle: CodexOAuthBundle,
 ): void {
-  account.credentials = {
-    ...account.credentials,
-    accessToken: bundle.accessToken,
-    refreshToken: bundle.refreshToken ?? account.credentials?.refreshToken,
-    idToken: bundle.idToken ?? account.credentials?.idToken,
-    expiresAt: bundle.expiresAt ?? account.credentials?.expiresAt,
-    accountId: bundle.accountId ?? account.credentials?.accountId,
-    email: bundle.email ?? account.credentials?.email,
-  }
+  applyOAuthBundle(account, bundle, {
+    idToken: bundle.idToken,
+    accountId: bundle.accountId,
+    email: bundle.email,
+  })
   account.settings = {
     ...account.settings,
     baseUrl: account.settings?.baseUrl ?? CODEX_API_BASE_URL,
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    authStatus: "ready",
-    lastRefreshAt: Date.now(),
-    lastError: undefined,
   }
 }

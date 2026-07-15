@@ -1,5 +1,6 @@
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState } from "./pkce"
 
@@ -350,23 +351,13 @@ export function applyAntigravityOAuthBundle(
   account: OAuthAccount,
   bundle: AntigravityOAuthBundle,
 ): void {
-  account.credentials = {
-    ...account.credentials,
-    accessToken: bundle.accessToken,
-    refreshToken: bundle.refreshToken ?? account.credentials?.refreshToken,
-    expiresAt: bundle.expiresAt ?? account.credentials?.expiresAt,
-    projectId: bundle.projectId ?? account.credentials?.projectId,
-    email: bundle.email ?? account.credentials?.email,
-  }
+  applyOAuthBundle(account, bundle, {
+    projectId: bundle.projectId,
+    email: bundle.email,
+  })
   account.settings = {
     ...account.settings,
     baseUrl: account.settings?.baseUrl ?? ANTIGRAVITY_API_BASE_URL,
     redirectUri: bundle.redirectUri,
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    authStatus: "ready",
-    lastRefreshAt: Date.now(),
-    lastError: undefined,
   }
 }

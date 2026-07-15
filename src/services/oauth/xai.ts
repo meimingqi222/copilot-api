@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { extractEmailFromIdToken } from "./jwt"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
@@ -223,25 +224,15 @@ export function applyXaiOAuthBundle(
   account: OAuthAccount,
   bundle: XaiOAuthBundle,
 ): void {
-  account.credentials = {
-    ...account.credentials,
-    accessToken: bundle.accessToken,
-    refreshToken: bundle.refreshToken ?? account.credentials?.refreshToken,
-    idToken: bundle.idToken ?? account.credentials?.idToken,
-    expiresAt: bundle.expiresAt ?? account.credentials?.expiresAt,
-    email: bundle.email ?? account.credentials?.email,
-  }
+  applyOAuthBundle(account, bundle, {
+    idToken: bundle.idToken,
+    email: bundle.email,
+  })
   account.settings = {
     ...account.settings,
     baseUrl: account.settings?.baseUrl ?? XAI_API_BASE_URL,
     tokenEndpoint: bundle.tokenEndpoint,
     redirectUri: bundle.redirectUri,
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    authStatus: "ready",
-    lastRefreshAt: Date.now(),
-    lastError: undefined,
   }
 }
 
