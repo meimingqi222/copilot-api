@@ -334,6 +334,18 @@ export function resolveKimiQuotaWindows(
   return windows
 }
 
+const CYCLE_WINDOW_RESOLVERS: Partial<
+  Record<
+    OAuthProviderId,
+    (details: Record<string, unknown>) => Array<QuotaWindowDescriptor>
+  >
+> = {
+  codex: resolveCodexQuotaWindows,
+  claude: resolveClaudeQuotaWindows,
+  antigravity: resolveAntigravityQuotaWindows,
+  kimi: resolveKimiQuotaWindows,
+}
+
 export function resolveQuotaWindows(
   provider: OAuthProviderId,
   details: Record<string, unknown> | undefined,
@@ -345,23 +357,8 @@ export function resolveQuotaWindows(
     return details._quotaWindows as Array<QuotaWindowDescriptor>
   }
 
-  switch (provider) {
-    case "codex": {
-      return resolveCodexQuotaWindows(details)
-    }
-    case "claude": {
-      return resolveClaudeQuotaWindows(details)
-    }
-    case "antigravity": {
-      return resolveAntigravityQuotaWindows(details)
-    }
-    case "kimi": {
-      return resolveKimiQuotaWindows(details)
-    }
-    default: {
-      return []
-    }
-  }
+  const resolver = CYCLE_WINDOW_RESOLVERS[provider]
+  return resolver ? resolver(details) : []
 }
 
 export function supportsCycleUsage(provider: string | undefined): boolean {
@@ -391,23 +388,8 @@ export function buildStoredQuotaWindows(
   provider: OAuthProviderId,
   details: Record<string, unknown>,
 ): Array<QuotaWindowDescriptor> {
-  switch (provider) {
-    case "codex": {
-      return resolveCodexQuotaWindows(details)
-    }
-    case "claude": {
-      return resolveClaudeQuotaWindows(details)
-    }
-    case "antigravity": {
-      return resolveAntigravityQuotaWindows(details)
-    }
-    case "kimi": {
-      return resolveKimiQuotaWindows(details)
-    }
-    default: {
-      return []
-    }
-  }
+  const resolver = CYCLE_WINDOW_RESOLVERS[provider]
+  return resolver ? resolver(details) : []
 }
 
 export function enrichQuotaDetails(
