@@ -139,7 +139,7 @@ describe("OAuth provider routing", () => {
     })
 
     expect(targets).toHaveLength(1)
-    expect(targets[0]?.account?.provider).toBe("claude")
+    expect(targets[0]?.protocol).toBe("claude-native")
     expect(targets[0]?.upstreamModelId).toBe("claude-sonnet-4-6")
   })
 
@@ -173,7 +173,7 @@ describe("OAuth provider routing", () => {
     })
 
     expect(targets).toHaveLength(1)
-    expect(targets[0]?.account?.id).toBe("work-claude")
+    expect(targets[0]?.connectionId).toBe("work-claude")
   })
 })
 

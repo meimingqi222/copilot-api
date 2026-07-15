@@ -9,7 +9,6 @@ import type {
   RouteTarget,
 } from "~/lib/provider-connections"
 
-import { accountToConnection } from "~/lib/account-adapter"
 import { getAccountAvailability } from "~/lib/account-availability"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
@@ -18,11 +17,13 @@ import { logger } from "~/lib/logger"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import {
+  connectionToAccount,
   findCredential,
   getProviderConnection,
   isCredentialAvailable,
   type ModelEndpoint,
 } from "~/lib/provider-connections"
+import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 import {
   buildRouteTargets,
   resolveModelRouting,
@@ -176,19 +177,8 @@ export async function prepareRequestAdmission(
     fallbackSessionId: sessionIds.fallbackId || undefined,
   }
 
-  // account-backed 虚拟 connection:用 accountToConnection 构造 ProviderConnection/ApiCredential
-  if (target.account) {
-    const virtualConnection = accountToConnection(target.account)
-    return {
-      target,
-      connection: virtualConnection,
-      credential: virtualConnection.credentials[0],
-      account: target.account,
-      initiator,
-      ...sessionFields,
-    }
-  }
-
+  // 批次 3：target.account 已删除，统一走 getProviderConnection。
+  // account-derived connections 已在 stateRoot.connections 中。
   // 类型安全检查：确保 connectionId 和 credentialId 存在
   if (!target.connectionId || !target.credentialId) {
     throw new HTTPError(
@@ -205,10 +195,16 @@ export async function prepareRequestAdmission(
       new Response("Service Unavailable", { status: 503 }),
     )
   }
+  // 批次 3：从 connection 派生 account（仅 account-derived connections）
+  const account =
+    readAccountLegacyMetadata(connection) ?
+      connectionToAccount(connection)
+    : undefined
   return {
     target,
     connection,
     credential: found.credential,
+    account,
     initiator,
     ...sessionFields,
   }
@@ -316,8 +312,10 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
   let retryAfterSeconds = 0
 
   for (const candidate of candidates) {
-    if (candidate.account) {
-      const availability = getAccountAvailability(candidate.account)
+    // 批次 3：RouteTarget.account 已删除，通过 connectionId 查找 account
+    const account = state.accounts.find((a) => a.id === candidate.connectionId)
+    if (account) {
+      const availability = getAccountAvailability(account)
       if (!availability.available) {
         const reason = mapAccountReason(availability.reason)
         reasons.add(reason)
@@ -484,19 +482,16 @@ export function resolveConnectionFromTarget(target: RouteTarget): {
   credential: ApiCredential
   account?: Account
 } | null {
-  if (target.account) {
-    const virtualConnection = accountToConnection(target.account)
-    return {
-      connection: virtualConnection,
-      credential: virtualConnection.credentials[0],
-      account: target.account,
-    }
-  }
+  // 批次 3：target.account 已删除，统一走 getProviderConnection
   const connection = getProviderConnection(target.connectionId)
   if (!connection) return null
   const found = findCredential(target.connectionId, target.credentialId)
   if (!found) return null
-  return { connection, credential: found.credential }
+  const account =
+    readAccountLegacyMetadata(connection) ?
+      connectionToAccount(connection)
+    : undefined
+  return { connection, credential: found.credential, account }
 }
 
 /** Infer provider ID from model name (for guard auto-detection exemption). */

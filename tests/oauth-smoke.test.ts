@@ -686,6 +686,6 @@ describe("OAuth smoke — routing", () => {
       endpoint: "messages",
     })
     expect(targets).toHaveLength(1)
-    expect(targets[0]?.account?.id).toBe("claude-smoke")
+    expect(targets[0]?.connectionId).toBe("claude-smoke")
   })
 })

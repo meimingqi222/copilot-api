@@ -11,16 +11,14 @@ import type { ChatCompletionResponse } from "~/services/copilot/create-chat-comp
 
 import { parseModelReference } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { connectionToAccount } from "~/lib/provider-connections"
 import {
   type MimoMessage,
   type MimoConnection,
   mimoConnections,
 } from "~/services/mimo/connections"
 import { markAccountFailed } from "~/services/mimo/manager"
-import {
-  detectOpenAIStreamError,
-  requireTargetAccount,
-} from "~/services/protocols/shared"
+import { detectOpenAIStreamError } from "~/services/protocols/shared"
 
 import type { ProtocolAdapter } from "./types"
 
@@ -411,8 +409,8 @@ async function collectMessagesResponse(
 export const mimoNativeAdapter: ProtocolAdapter = {
   protocol: "mimo-native",
 
-  async createChatCompletions({ target, payload, signal }) {
-    const account = requireTargetAccount(target, "mimo-native")
+  async createChatCompletions({ connection, payload, signal }) {
+    const account = connectionToAccount(connection)
     const conn = mimoConnections.get(account.id)
     if (!conn) {
       markAccountFailed(account.id, "Claw node is offline or initializing")
@@ -458,8 +456,8 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     }
   },
 
-  async createMessages({ target, payload, signal }) {
-    const account = requireTargetAccount(target, "mimo-native")
+  async createMessages({ connection, payload, signal }) {
+    const account = connectionToAccount(connection)
     const conn = mimoConnections.get(account.id)
     if (!conn) {
       markAccountFailed(account.id, "Claw node is offline or initializing")

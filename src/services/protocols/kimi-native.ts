@@ -1,14 +1,13 @@
+import { connectionToAccount } from "~/lib/provider-connections"
 import { createKimiChatCompletionsOnce } from "~/services/kimi/create-chat-completions-once"
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
 
-import { requireTargetAccount } from "./shared"
-
 export const kimiNativeAdapter: ProtocolAdapter = {
   protocol: "kimi-native",
 
-  async createChatCompletions({ target, payload, signal }) {
-    const account = requireTargetAccount(target, "kimi-native")
+  async createChatCompletions({ connection, payload, signal }) {
+    const account = connectionToAccount(connection)
     const response = await createKimiChatCompletionsOnce(
       account,
       payload,

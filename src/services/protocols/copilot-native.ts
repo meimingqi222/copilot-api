@@ -10,18 +10,17 @@ import type {
   ProtocolAdapter,
 } from "~/services/protocols/types"
 
+import { connectionToAccount } from "~/lib/provider-connections"
 import { createCopilotChatCompletionsOnce } from "~/services/copilot/create-chat-completions-once"
 import { createCopilotEmbeddingsOnce } from "~/services/copilot/create-embeddings-once"
 import { createCopilotMessagesOnce } from "~/services/copilot/create-messages-once"
 import { createCopilotResponsesOnce } from "~/services/copilot/create-responses-once"
 
-import { requireTargetAccount } from "./shared"
-
 export const copilotNativeAdapter: ProtocolAdapter = {
   protocol: "copilot-native",
 
-  async createChatCompletions({ target, payload, signal, ctx }) {
-    const account = requireTargetAccount(target, "copilot-native")
+  async createChatCompletions({ connection, payload, signal, ctx }) {
+    const account = connectionToAccount(connection)
     const response = await createCopilotChatCompletionsOnce(
       account,
       payload,
@@ -31,8 +30,8 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     return { credentialId: account.id, response } as AdapterChatResult
   },
 
-  async createResponses({ target, payload, signal, ctx }) {
-    const account = requireTargetAccount(target, "copilot-native")
+  async createResponses({ connection, payload, signal, ctx }) {
+    const account = connectionToAccount(connection)
     const response = await createCopilotResponsesOnce(
       account,
       payload,
@@ -42,8 +41,8 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     return { credentialId: account.id, response } as AdapterResponsesResult
   },
 
-  async createMessages({ target, payload, signal, ctx }) {
-    const account = requireTargetAccount(target, "copilot-native")
+  async createMessages({ connection, payload, signal, ctx }) {
+    const account = connectionToAccount(connection)
     const response = await createCopilotMessagesOnce(
       account,
       payload,
@@ -53,8 +52,8 @@ export const copilotNativeAdapter: ProtocolAdapter = {
     return { credentialId: account.id, response } as AdapterMessagesResult
   },
 
-  async createEmbeddings({ target, payload, signal }) {
-    const account = requireTargetAccount(target, "copilot-native")
+  async createEmbeddings({ connection, payload, signal }) {
+    const account = connectionToAccount(connection)
     const response = await createCopilotEmbeddingsOnce(account, payload, signal)
     return {
       credentialId: account.id,

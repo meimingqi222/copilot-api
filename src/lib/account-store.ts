@@ -348,7 +348,9 @@ async function persistAccountsAsConnections(
 async function connectionsDiskHasData(): Promise<boolean> {
   try {
     const raw = await fs.readFile(PATHS.PROVIDER_CONNECTIONS_PATH)
-    const parsed = JSON.parse(raw) as { connections?: Array<unknown> }
+    const parsed = JSON.parse(raw.toString("utf8")) as {
+      connections?: Array<unknown>
+    }
     return (parsed.connections?.length ?? 0) > 0
   } catch {
     return false

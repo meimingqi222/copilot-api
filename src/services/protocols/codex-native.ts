@@ -1,9 +1,9 @@
+import { connectionToAccount } from "~/lib/provider-connections"
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 
 import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
 
 import { createChatViaResponses } from "./chat-via-responses"
-import { requireTargetAccount } from "./shared"
 
 export const codexNativeAdapter: ProtocolAdapter = {
   protocol: "codex-native",
@@ -24,12 +24,12 @@ export const codexNativeAdapter: ProtocolAdapter = {
       signal,
       ctx,
       responsesExecutor: async ({
-        target: tgt,
+        connection: conn,
         payload: responsesPayload,
         signal: sig,
         ctx: context,
       }) => {
-        const account = requireTargetAccount(tgt, "codex-native")
+        const account = connectionToAccount(conn)
         const response = await createCodexResponsesOnce(
           account,
           responsesPayload,
@@ -41,8 +41,8 @@ export const codexNativeAdapter: ProtocolAdapter = {
     })
   },
 
-  async createResponses({ target, payload, signal, ctx }) {
-    const account = requireTargetAccount(target, "codex-native")
+  async createResponses({ connection, payload, signal, ctx }) {
+    const account = connectionToAccount(connection)
     const response = await createCodexResponsesOnce(
       account,
       payload,

@@ -59,7 +59,6 @@ function buildAccountTarget(
     connectionWeight: DEFAULTS.CONNECTION_WEIGHT,
     credentialPriority: DEFAULTS.CREDENTIAL_PRIORITY,
     credentialWeight: DEFAULTS.CREDENTIAL_WEIGHT,
-    account,
   }
 }
 
