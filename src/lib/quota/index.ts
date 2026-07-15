@@ -13,6 +13,17 @@ import { fetchXaiQuota } from "./fetchers/xai"
 const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
 const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
 
+const QUOTA_FETCHERS: Record<
+  OAuthProviderId,
+  (account: Account, signal?: AbortSignal) => Promise<QuotaSnapshot>
+> = {
+  antigravity: fetchAntigravityQuota,
+  claude: fetchClaudeQuota,
+  kimi: fetchKimiQuota,
+  codex: fetchCodexQuota,
+  xai: fetchXaiQuota,
+}
+
 export async function fetchOAuthProviderQuota(
   account: Account,
   signal?: AbortSignal,
@@ -21,26 +32,7 @@ export async function fetchOAuthProviderQuota(
     return undefined
   }
 
-  switch (account.provider) {
-    case "antigravity": {
-      return fetchAntigravityQuota(account, signal)
-    }
-    case "claude": {
-      return fetchClaudeQuota(account, signal)
-    }
-    case "kimi": {
-      return fetchKimiQuota(account, signal)
-    }
-    case "codex": {
-      return fetchCodexQuota(account, signal)
-    }
-    case "xai": {
-      return fetchXaiQuota(account, signal)
-    }
-    default: {
-      return undefined
-    }
-  }
+  return QUOTA_FETCHERS[account.provider](account, signal)
 }
 
 export function applyOAuthQuotaSnapshot(
