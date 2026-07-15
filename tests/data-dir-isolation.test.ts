@@ -14,6 +14,7 @@ import {
   PRODUCTION_APP_DIR,
   redirectPathsToDir,
 } from "~/lib/paths"
+import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 
 describe("test data-dir isolation", () => {
@@ -24,6 +25,7 @@ describe("test data-dir isolation", () => {
     if (!isProductionDataPath(isolationDirAtLoad)) {
       redirectPathsToDir(isolationDirAtLoad)
     }
+    __resetProviderConnectionsForTest()
   })
 
   test("preload enables isolation and points PATHS off production", () => {
@@ -97,12 +99,16 @@ describe("test data-dir isolation", () => {
 
     await saveAccounts()
 
-    const written = await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
+    // 批次 1：saveAccounts 写入 provider-connections.json（不再写 accounts.json）
+    const written = await fs.readFile(PATHS.PROVIDER_CONNECTIONS_PATH, "utf8")
     expect(written).toContain("isolated-only")
-    expect(isProductionDataPath(PATHS.ACCOUNTS_PATH)).toBe(false)
+    expect(isProductionDataPath(PATHS.PROVIDER_CONNECTIONS_PATH)).toBe(false)
 
     const productionRaw = await fs
-      .readFile(path.join(PRODUCTION_APP_DIR, "accounts.json"), "utf8")
+      .readFile(
+        path.join(PRODUCTION_APP_DIR, "provider-connections.json"),
+        "utf8",
+      )
       .catch(() => "")
     expect(productionRaw).not.toContain("isolated-only")
   })
