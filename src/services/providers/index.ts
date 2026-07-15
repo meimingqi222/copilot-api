@@ -1,7 +1,7 @@
-import type { OAuthProviderId } from "~/lib/provider-config"
-import type { ProviderProtocol } from "~/lib/provider-connections"
-
-import { OAUTH_PROVIDER_IDS } from "~/lib/provider-config"
+import {
+  OAUTH_PROVIDER_IDS,
+  PROVIDER_PROTOCOL_MAP,
+} from "~/lib/provider-config"
 import {
   getProtocolAdapter,
   initializeProtocolAdapters,
@@ -15,14 +15,6 @@ import { registerProvider } from "./registry"
 import { windsurfProviderRuntime } from "./windsurf"
 
 let initialized = false
-
-const OAUTH_PROTOCOL_MAP: Record<OAuthProviderId, ProviderProtocol> = {
-  codex: "codex-native",
-  claude: "claude-native",
-  antigravity: "antigravity-native",
-  kimi: "kimi-native",
-  xai: "xai-native",
-}
 
 export function initializeProviderRegistry(): void {
   if (initialized) {
@@ -45,7 +37,7 @@ export function initializeProviderRegistry(): void {
 
   for (const providerId of OAUTH_PROVIDER_IDS) {
     const runtime = createOAuthProviderRuntime(providerId)
-    runtime.adapter = getProtocolAdapter(OAUTH_PROTOCOL_MAP[providerId])
+    runtime.adapter = getProtocolAdapter(PROVIDER_PROTOCOL_MAP[providerId])
     registerProvider(runtime)
   }
   initialized = true
