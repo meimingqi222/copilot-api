@@ -1,6 +1,6 @@
 # Step D：消除 Account 双模型 — 详细设计文档
 
-状态：**待人工评审**（T5.1 产出）
+状态：**已批准实施中**（T5.2.0/T5.2.1 已完成；2026-07-16 追加批次 5 终态归一化）
 创建日期：2026-07-15
 关联 spec：`docs/refactor-provider-architecture.md` P5
 
@@ -156,7 +156,16 @@
 runtimeState 内存态等），这些字段当前不在 `ProviderConnection` 标准形状内。
 
 **方案：扩展 `ProviderConnection.metadata` 为规范化承载区**，并定义
-`metadata` 内的 account-legacy 子模式（key 前缀 `account:`）：
+`metadata` 内的 account-legacy 子模式（key 前缀 `account:`）。
+
+> **⚠️ 过渡态声明（2026-07-16 追加）**：`AccountLegacyMetadata` 是**过渡态
+> 而非终态**——它消除了双模型，但把 Account 的调度语义字段换壳藏进了
+> 无类型 metadata record。终态由**批次 5（T5.2.5，见 §3）**完成：把这些
+> 字段提升为 `ApiCredential`/`ProviderConnection` 的类型化本体字段，
+> metadata 只保留真正的 provider 杂项。批次 0–4 期间所有代码必须通过
+> `connection-metadata.ts` 的类型化读取器访问这些字段（禁止散装
+> `metadata.xxx as string`），这样批次 5 只需改读取器内部与 schema，
+> 调用点零改动。
 
 ```ts
 // provider-connections.json 中 migrated connection 的 metadata 形状
@@ -437,11 +446,80 @@ mutate `Account` 对象再 `saveAccounts()` 的，refresh 定时器还长期持�
 
 **任务 T5.2.4**：删除 `account-store.ts` / `account-file-store.ts` /
 `account-adapter.ts` / `account-availability.ts` / `account-selection.ts` /
-`account-diagnostics.ts` 等已无引用的文件；更新 `AGENTS.md` 的代码组织章节；
-更新 `docs/refactor-provider-architecture.md` 标记 P5 完成。
+`account-diagnostics.ts` 等已无引用的文件；更新 `AGENTS.md` 的代码组织章节。
+（P5 完成标记推迟到批次 5 之后。）
 
 - **验收**：G2 三件套；`bun run knip` 无新增 unused exports；
   `grep -rn "Account" src/lib/accounts.ts` 文件已删除或仅剩类型别名。
+
+### 批次 5：Schema 终态归一化（消除 AccountLegacyMetadata 承载区）
+
+**任务 T5.2.5**：把 metadata 承载区中的调度语义字段提升为类型化本体字段。
+
+**前置**：T5.2.4 完成（Account 模型与双向映射器已删除，此时
+`AccountLegacyMetadata` 是最后的残留；全部访问已收敛在
+`connection-metadata.ts` 读取器内——见 §2.2 过渡态声明）。
+
+**字段归宿判据**（本批次及未来所有 schema 决策的唯一原则）：
+
+| 字段性质 | 归宿 |
+| --- | --- |
+| 调度语义（状态、冷却、配额、优先级） | `ApiCredential` / `ProviderConnection` 类型化本体字段 |
+| 刷新/鉴权源材料 | `credential.context` |
+| 上游寻址（baseUrl、代理、模型前缀） | `ProviderConnection` 类型化本体字段 |
+| 真正的 provider 专属杂项配置 | `connection.metadata` |
+| 可由其他字段推导的视图值 | 不存储，序列化时派生 |
+
+**字段提升表**（`AccountLegacyMetadata` → 终态归宿）：
+
+| 现 metadata 字段 | 终态归宿 | 说明 |
+| --- | --- | --- |
+| `provider` | **删除** | 序列化时经 `PROTOCOL_TO_PROVIDER`（T3.2 已建）从 protocol 派生 |
+| `quotaState` | **删除** | 派生：`"exhausted"` ⇔ `credential.status === "quota_exhausted"`；`"unknown"` ⇔ `credential.quota === undefined`；否则 `"available"` |
+| `quotaInfo` | `credential.quota?: QuotaSnapshot`（新字段） | `QuotaSnapshot` 类型迁至 `src/lib/quota/types.ts`（避免 provider-connections 依赖已删除的 accounts.ts） |
+| `quotaExhaustedAt` / `exhaustedAt` | `credential.exhaustedAt?: number`（新字段，二合一） | 迁移取 `quotaExhaustedAt ?? exhaustedAt` |
+| `cooldownUntil` / `lastRateLimitAt` | **删除 metadata 副本** | `ApiCredential` 已有同名本体字段，消除双写 |
+| `lastRateLimitReason` | `credential.lastRateLimitReason?: string`（新字段） | |
+| `settings.baseUrl` | `connection.baseUrl` | 终态不再硬编码 `""` |
+| `settings.proxyUrl`（OAuth）/ `settings.proxy`（mimo） | `connection.proxyUrl?: string`（新字段） | |
+| `settings.modelPrefix` | `connection.modelPrefix?: string`（新字段） | |
+| `settings.tokenEndpoint` / `settings.redirectUri` | `credential.context.*` | 刷新材料归 context |
+| `settings` 其余（defaultModel、cliVersion、agentId、model、costMode、allowFallbacks、accountType、userId、cpaSourcePath） | 保留 `metadata.settings` | 真正的 provider 杂项 |
+| `credentialExtras` | `credential.context.*`（合并去重） | 与 context 现存字段重复者（refreshToken/idToken 等）以 context 为准，消除双份 secret 存储 |
+| `cpaMetadata` | 保留 `metadata.cpaMetadata` | |
+| `subtitle` | **删除** | 序列化时从 `context.email/projectId/oauthAccountId` 派生 |
+
+**文件版本升级**：`FILE_VERSION: 1 → 2`（`store.ts`）。
+
+- 读 v2 → 直接加载。
+- 读 v1 → 加载时执行 `upgradeConnectionV1ToV2()`（纯函数，按提升表搬字段，
+  幂等），下次保存以 v2 写回（懒升级，不强制立即重写文件）。
+- 其他版本 → 拒绝（现有行为）。
+- **降级语义**：旧二进制严格校验 `version !== 1` 即拒读（`store.ts:31`），
+  看到 v2 会安全地当作空状态而非误读——回滚按 §2.7 恢复备份。
+
+**实施步骤**：
+
+1. `types.ts` 追加可选字段（`credential.quota/exhaustedAt/lastRateLimitReason`、
+   `connection.proxyUrl/modelPrefix`）；`QuotaSnapshot` 迁址至
+   `lib/quota/types.ts`。
+2. `store.ts`：版本分派 + `upgradeConnectionV1ToV2()` 纯函数 + 单元测试
+   （构造 v1 形状 fixture → 升级 → 断言字段归位 **且** metadata 中被提升的
+   key 已消失）。
+3. `connection-metadata.ts` 读取器改为读类型化字段（先保留导出名、只改内部，
+   过 G2 后再把纯转发的读取器就地内联删除——两步分 commit）。
+4. 写入方改写类型化字段：quota fetcher 写 `credential.quota` + `status`；
+   availability/rate-limit 写 credential 本体字段；admin patch 写
+   `connection.proxyUrl/modelPrefix/baseUrl`。
+5. `publicAccount`/`publicConnection` 序列化改从类型化字段派生
+   （provider/quotaState/subtitle 按提升表的派生规则），**输出 JSON 形状
+   不变**（沿用批次 2 的双路径 `toEqual` 对比测试）。
+
+**验收**：G2 三件套；升级函数单测通过；
+`grep -n "quotaInfo\|quotaState\|credentialExtras\|subtitle\|\"provider\"" src/lib/provider-connections/connection-metadata.ts`
+中被提升字段的 metadata 读写为零（或该文件已删除）；真实数据演练：
+用 v1 provider-connections.json 副本启动 → 懒升级 → admin UI 账号列表/
+配额/模型与升级前一致。
 
 ---
 
@@ -659,11 +737,12 @@ metadata 里又养出一个平行模型副本，Step D 就白做了。`build.ts`
 ## 附录 B：执行顺序与依赖图
 
 ```
-T5.2.0 (迁移基础设施 + 反向映射器 + 类型化读取器 + round-trip 测试)
-  └─> T5.2.1 (纯持久化格式换底：Account 保持内存真相)
+T5.2.0 (迁移基础设施 + 反向映射器 + 类型化读取器 + round-trip 测试) ✅
+  └─> T5.2.1 (纯持久化格式换底：Account 保持内存真相) ✅
         └─> T5.2.2 (内存模型翻转：admin 直写 + state.accounts 删除 + getter/setter 删除) [可拆 a/b/c/d]
               └─> T5.2.3 (RouteTarget.account 删除)
-                    └─> T5.2.4 (清理与文档)
+                    └─> T5.2.4 (清理：account-*.ts 文件删除)
+                          └─> T5.2.5 (Schema 终态归一化：AccountLegacyMetadata 消除 + FILE_VERSION 2)
 ```
 
 每个批次依赖前一批次完成。批次 2 体量最大（合并了原设计的"admin 直写"
@@ -677,8 +756,14 @@ T5.2.0 (迁移基础设施 + 反向映射器 + 类型化读取器 + round-trip �
 - **基线**（T0.1 记录）：`bun test` 542 pass / 2 skip / 0 fail。
 - **每个批次**：`bun test` 不得低于 542 pass / 0 fail（新增测试允许 pass 数
   增加，但不得减少现有 pass 数或新增 fail）。
-- **最终**（T5.2.4 后）：`grep -rn "state\.accounts" src` 无结果；
+- **最终**（T5.2.5 后）：`grep -rn "state\.accounts" src` 无结果；
   `grep -rn "accountToConnection" src` 无结果；
   `grep -rn "target\.account" src` 无结果；
   `grep -rn "requireTargetAccount" src` 无结果；
+  `grep -rn "AccountLegacyMetadata" src` 无结果（或仅剩 v1→v2 升级函数内部）；
+  `connection.metadata` 中不再存在 provider/quotaState/quotaInfo/
+  quotaExhaustedAt/exhaustedAt/cooldownUntil/lastRateLimitAt/
+  credentialExtras/subtitle 键；
   `accounts.json` 不再被任何代码读写（仅迁移源读取）。
+- 外加一次**真实数据演练**（人工）：复制生产 accounts.json 到隔离目录 →
+  完整迁移 + v2 升级 → 核对 admin UI 账号列表/配额/模型与迁移前一致。

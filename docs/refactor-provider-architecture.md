@@ -97,12 +97,13 @@
 
 ### P5 消灭 Account 双模型（Step D）
 - [x] T5.1 [需人工确认] 产出 Step D 详细设计文档
-- [ ] T5.2 [需人工确认] 按 T5.1 批准后的设计实施（后续拆分）
-  - [ ] T5.2.0 迁移基础设施（`migrate-from-accounts.ts` + `connection-to-account.ts` + `connection-metadata.ts` + round-trip 测试）
-  - [ ] T5.2.1 纯持久化格式换底（启动序列接入迁移 + `saveAccounts` 委托 `saveProviderConnections` + Account 保持内存真相）
+- [~] T5.2 [已批准 2026-07-15] 按 T5.1 批准后的设计实施
+  - [x] T5.2.0 迁移基础设施（`migrate-from-accounts.ts` + `connection-to-account.ts` + `connection-metadata.ts` + round-trip 测试）
+  - [x] T5.2.1 纯持久化格式换底（启动序列接入迁移 + `saveAccounts` 委托 `saveProviderConnections` + Account 保持内存真相）
   - [ ] T5.2.2 内存模型翻转（admin 直写 connections + `state.accounts` 删除 + getter/setter 删除，可拆 a/b/c/d）
   - [ ] T5.2.3 `RouteTarget.account` 特例删除 + protocols 层 `requireTargetAccount` 删除
   - [ ] T5.2.4 清理与文档（删除 account-store/account-file-store/account-adapter 等无引用文件 + 更新 AGENTS.md）
+  - [ ] T5.2.5 Schema 终态归一化（`AccountLegacyMetadata` 承载区字段提升为类型化本体字段 + `FILE_VERSION` 1→2，见设计文档批次 5）
 
 ### P6 翻译层规约
 - [x] T6.1 确立枢纽格式规约文档
@@ -584,3 +585,6 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | 2026-07-15 | T5.1 | ✅ 完成 | 产出 `docs/refactor-step-d-account-elimination.md`，覆盖 spec 要求的 5 点：(1) Account→ProviderConnection/ApiCredential/metadata/context 逐字段映射表（以 `accountToConnection` 现有实现为事实依据，含 5 provider 的 value/refresherType/credentialExtras 差异 + 反向 patch 映射）；(2) 持久化迁移方案（accounts.json→provider-connections.json，扩展 metadata 为 account-legacy 承载区，4 种启动检测分支，手动回滚步骤，测试隔离兼容）；(3) 分批删除计划 6 批次（T5.2.0 迁移基础设施→T5.2.1 启动接入→T5.2.2 admin 反向映射→T5.2.3 accounts.ts getter/setter 删除[可拆 a/b/c/d]→T5.2.4 RouteTarget.account 删除→T5.2.5 清理文档），含依赖图与每批验收标准；(4) 受影响测试清单 29 文件分组（fixture 替换/state 断言替换/迁移测试新增/删除的测试）+ 改造策略；(5) 风险清单 8 项（Copilot token 刷新链、mimo ws token、CPA import、持久化数据完整性、activeAccountIndex 删除、admin API 响应形状不变 G1、测试隔离与生产数据安全、runtimeState 不持久化冷启动影响）+ 附录 A/B/C（accountToConnectionForPersistence 差异、执行顺序依赖图、验收基线）。验收：G2 三件套全绿（542 pass / 2 skip / 0 fail），无代码改动。**停止循环**等待人工评审 T5.1 设计文档，批准后进入 T5.2 分批实施。 |
 | 2026-07-15 | T5.1 | 🔄 修订 | 人工评审反馈 3 个必须修的问题 + 3 个建议补充，已全部修订：(1) 删除批次 1 的"双写"与 2.3 的 mtime 冲突检测——改为"accounts.json 永不复活"原则（saveAccounts 委托 saveProviderConnections），冲突检测改为 connections 优先 + 显式 `COPILOT_API_FORCE_REMIGRATE=1` 环境变量触发重迁移且按 id 合并永不整体覆盖，删除 mtime 启发式；(2) `connectionToAccount` 反向映射器加入 T5.2.0 交付物 + round-trip 测试（5 provider Account→Connection→Account 深度相等），同时兜住字段遗漏风险；(3) 消除批次 2 的 split-brain——admin 直写 connections 与 state.accounts 删除/getter/setter 删除合并为批次 2（内存模型翻转），批次 1 变为纯持久化格式换底（Account 保持内存真相）。建议补充：(a) 批次说明加"以 grep 实时结果为准，清单仅起点"；(b) 风险清单加 5.9 stats-store accountId 关联约束（迁移/去重绝不生成新 id）；(c) 附录 A availableModels 决策确认为"是"（删 metadata.availableModels，用 connection.models）+ 新增 connection-metadata.ts 类型化读取器要求。批次从 6 个压缩为 5 个（T5.2.0-T5.2.4），任务清单同步更新。验收：G2 三件套全绿（542 pass / 2 skip / 0 fail），无代码改动。**停止循环**等待人工再次评审修订版。 |
 | 2026-07-15 | T5.2 | ✅ 人工批准 | 2026-07-15 approve T5.2 — user。可开始 T5.2 分批实施（T5.2.0→T5.2.4）。 |
+| 2026-07-15 | T5.2.0 | ✅ 完成（评审补记） | commit `5006e7d`。新建 `connection-metadata.ts`（AccountLegacyMetadata 类型 + 类型化读取器 + `buildAccountLegacyMetadata`，含 per-provider 主 token 跳过表）、`connection-to-account.ts`（反向映射器）、`migrate-from-accounts.ts`（`accountToConnectionForPersistence` + 批量入口，id 原样保留 R5.9）。16 个新测试含 5 provider round-trip 深度相等 + metadata 完整性 + id 保留。三件套全绿：558 pass / 2 skip / 0 fail（基线 542 + 16）。**补记原因**：实施 commit 未同步更新本清单与日志（违反执行协议第 5 步），由人工评审于 2026-07-16 补记——后续任务的 commit 必须包含本文档更新。 |
+| 2026-07-16 | T5.2.1 | ✅ 完成（评审补记） | commit `d117943`。`loadAccountsUnlocked` 按设计 2.3 四规则重写（首次迁移 + rename .bak / connections 优先 + 警告 / `COPILOT_API_FORCE_REMIGRATE=1` 按 id 合并 / 空状态），加载后 `connectionToAccount` 反构造 `state.accounts`（Account 保持内存真相）。`saveAccountsUnlocked`/`flushAccountsOnShutdown` 委托 `persistAccountsAsConnections`（按 AccountLegacyMetadata 识别 account 来源 connection 做 id 合并，保留非 account 来源 connection，accounts.json 永不复活）。`store.ts:normalizeConnection` 修复 metadata 被剥离导致的 round-trip 丢失。account-store.test.ts / data-dir-isolation.test.ts 改造。三件套全绿：558 pass / 2 skip / 0 fail。 |
+| 2026-07-16 | T5.1 | 🔄 追加批次 5 | 应用户"按最佳设计给出实施方案"要求：现行 AccountLegacyMetadata 承载区被定性为**过渡态**（消除双模型但把 Account 换壳进无类型 metadata），设计文档新增**批次 5（T5.2.5）Schema 终态归一化**——调度语义字段提升为 credential/connection 类型化本体字段（quota/exhaustedAt/lastRateLimitReason/proxyUrl/modelPrefix），provider/quotaState/subtitle 改为派生不存储，credentialExtras 并入 credential.context，`FILE_VERSION` 1→2（v1 读时懒升级，旧二进制拒读 v2 安全降级）。不影响在途 T5.2.2–T5.2.4（其调用点届时统一走 connection-metadata 读取器，批次 5 只改读取器内部与 schema）。任务清单已同步。 |
