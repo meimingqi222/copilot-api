@@ -4,13 +4,11 @@ import type {
   UpstreamProxyResponse,
 } from "~/services/oauth/types"
 
-import { getOAuthProxyUrl } from "~/lib/accounts"
+import { getOAuthApiKey, getOAuthProxyUrl } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 import { oauthFetch, withProxyUrl } from "~/services/oauth/fetch"
-import {
-  resolveAccountAccessToken,
-  substituteTokenInHeaders,
-} from "~/services/oauth/token-resolver"
+import { substituteTokenInHeaders } from "~/services/oauth/token-resolver"
 
 export function withOAuthProxy(
   account: Account,
@@ -39,7 +37,11 @@ export async function executeUpstreamProxyCall(
   account: Account,
   request: Omit<UpstreamProxyRequest, "accountId">,
 ): Promise<UpstreamProxyResponse> {
-  const token = resolveAccountAccessToken(account)
+  // Prefer a static API key (never expires) when present; otherwise ensure the
+  // OAuth access token is fresh before sending, so quota/model requests don't
+  // fail with 401 after the scheduled refresh missed the expiry window.
+  const token =
+    getOAuthApiKey(account) ?? (await ensureOAuthAccessToken(account))
   const headers = substituteTokenInHeaders(request.headers, token)
 
   const init: RequestInit = {
