@@ -5,7 +5,7 @@ import type { Account } from "~/lib/accounts"
 import { getOAuthAccountId, isOAuthAccount } from "~/lib/accounts"
 
 const CODEX_USER_AGENT =
-  "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+  "codex-tui/0.144.1 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.144.1)"
 
 export interface CodexHeaderOptions {
   /**
