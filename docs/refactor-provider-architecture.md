@@ -76,7 +76,7 @@
 
 ### P1 OAuth 层策略化
 - [x] T1.1 统一 applyOAuthBundle
-- [ ] T1.2 callback server 配置数据化
+- [x] T1.2 callback server 配置数据化
 - [ ] T1.3 refresh 分发改为策略注册表
 - [ ] T1.4 admin OAuth 路由的 start/exchange 策略化
 
@@ -561,3 +561,4 @@ OAuth runtime 循环中使用 `PROVIDER_PROTOCOL_MAP[providerId]`。
 | --- | --- | --- | --- |
 | 2026-07-15 | T0.1 | ✅ 完成 | 基线：typecheck ✅ / lint ✅ / bun test 542 pass / 2 skip / 0 fail。工作区既有未提交改动 `M src/lib/quota/upstream-proxy.ts`（xai token 刷新修复，不属于本重构，后续 commit 不得纳入）。 |
 | 2026-07-15 | T1.1 | ✅ 完成 | 新建 `src/services/oauth/apply-bundle.ts`，5 个 `applyXxxOAuthBundle` 改为薄包装。字段差异确认：claude→email；codex→idToken/accountId/email + settings.baseUrl；xai→idToken/email + settings(baseUrl/tokenEndpoint/redirectUri)；kimi→deviceId；antigravity→projectId/email + settings(baseUrl/redirectUri)。类型微调：extraCredentials 用 `OAuthAccountCredentials` 而非 spec 的 `Record<string, unknown>`（G7 类型收紧），内部用 record 视图遍历避免 per-field 类型窄化问题。验收：三件套全绿，5 文件中 applyBundle 内不再手写 runtimeState。 |
+| 2026-07-15 | T1.2 | ✅ 完成 | 新增 `OAUTH_CALLBACK_CONFIGS`（`Partial<Record<OAuthFlowProvider, OAuthCallbackConfig>>`）+ `startProviderCallbackServer`。删除 4 个 `startXxxCallbackServer`。`waitForPkceCallback` 的 switch 改为 `PKCE_PROVIDERS.has` + `startProviderCallbackServer`。antigravity 调用点改为 `startProviderCallbackServer("antigravity", …)`。类型注解用显式 `Partial<Record<…>>` 而非 `satisfies`（后者不产生可索引类型）。验收：三件套全绿，src 中无 `startXxxCallbackServer` 残留。 |

@@ -338,65 +338,54 @@ export function stopAllOAuthCallbackServers(): void {
   }
 }
 
-export async function startClaudeCallbackServer(
-  flowId: string,
-  expectedState: string,
-  timeoutMs = 5 * 60 * 1000,
-): Promise<OAuthCallbackResult> {
-  return startOAuthCallbackServer({
-    flowId,
-    port: 54545,
-    callbackPath: "/callback",
-    expectedState,
-    timeoutMs,
-    providerLabel: "Claude",
-  })
+export interface OAuthCallbackConfig {
+  port: number
+  hostname?: string
+  callbackPath: string
+  providerLabel: string
 }
 
-export async function startCodexCallbackServer(
-  flowId: string,
-  expectedState: string,
-  timeoutMs = 5 * 60 * 1000,
-): Promise<OAuthCallbackResult> {
-  return startOAuthCallbackServer({
-    flowId,
+export const OAUTH_CALLBACK_CONFIGS: Partial<
+  Record<OAuthFlowProvider, OAuthCallbackConfig>
+> = {
+  claude: { port: 54545, callbackPath: "/callback", providerLabel: "Claude" },
+  codex: {
     port: 1455,
     callbackPath: "/auth/callback",
-    expectedState,
-    timeoutMs,
     providerLabel: "Codex",
-  })
-}
-
-export async function startXaiCallbackServer(
-  flowId: string,
-  expectedState: string,
-  timeoutMs = 5 * 60 * 1000,
-): Promise<OAuthCallbackResult> {
-  return startOAuthCallbackServer({
-    flowId,
+  },
+  xai: {
     port: 56121,
     hostname: "127.0.0.1",
     callbackPath: "/callback",
-    expectedState,
-    timeoutMs,
     providerLabel: "xAI",
-  })
+  },
+  antigravity: {
+    port: 51121,
+    hostname: "localhost",
+    callbackPath: "/oauth-callback",
+    providerLabel: "Antigravity",
+  },
 }
 
-export async function startAntigravityCallbackServer(
+export async function startProviderCallbackServer(
+  provider: OAuthFlowProvider,
   flowId: string,
   expectedState: string,
   timeoutMs = 5 * 60 * 1000,
 ): Promise<OAuthCallbackResult> {
+  const config = OAUTH_CALLBACK_CONFIGS[provider]
+  if (!config) {
+    throw new Error(`Provider "${provider}" does not use a callback server`)
+  }
   return startOAuthCallbackServer({
     flowId,
-    port: 51121,
-    hostname: "localhost",
-    callbackPath: "/oauth-callback",
+    port: config.port,
+    hostname: config.hostname,
+    callbackPath: config.callbackPath,
     expectedState,
     timeoutMs,
-    providerLabel: "Antigravity",
+    providerLabel: config.providerLabel,
   })
 }
 
