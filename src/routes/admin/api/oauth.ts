@@ -2,7 +2,6 @@ import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
 import type { OAuthAccount } from "~/lib/accounts"
-import type { OAuthFetchOptions } from "~/services/oauth/fetch"
 
 import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { addAccount } from "~/lib/accounts"
@@ -12,22 +11,7 @@ import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { upgradeOAuthAccountLabelIfNeeded } from "~/services/oauth/account-label"
-import {
-  applyAntigravityOAuthBundle,
-  createAntigravityOAuthStart,
-  exchangeAntigravityCodeForTokens,
-} from "~/services/oauth/antigravity"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
-import {
-  applyClaudeOAuthBundle,
-  createClaudeOAuthStart,
-  exchangeClaudeCodeForTokens,
-} from "~/services/oauth/claude"
-import {
-  applyCodexOAuthBundle,
-  createCodexOAuthStart,
-  exchangeCodexCodeForTokens,
-} from "~/services/oauth/codex"
 import {
   bindOAuthFlowAbortSignal,
   getOAuthFlow,
@@ -38,25 +22,15 @@ import {
   startProviderCallbackServer,
   tryBeginOAuthExchange,
   updateOAuthFlow,
-  type OAuthFlowProvider,
-  type OAuthPendingFlow,
 } from "~/services/oauth/flows"
 import {
-  applyKimiOAuthBundle,
-  createKimiDeviceId,
-  pollKimiDeviceAuthorization,
-  startKimiDeviceFlow,
-} from "~/services/oauth/kimi"
+  CALLBACK_OAUTH_PROVIDERS,
+  OAUTH_PROVIDER_STRATEGIES,
+} from "~/services/oauth/provider-strategies"
 import {
   cancelOAuthRefreshTimer,
   scheduleOAuthRefreshForAccount,
 } from "~/services/oauth/refresh-scheduler"
-import {
-  applyXaiOAuthBundle,
-  createXaiOAuthStart,
-  discoverXaiOAuthEndpoints,
-  exchangeXaiCodeForTokens,
-} from "~/services/oauth/xai"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
@@ -65,19 +39,6 @@ import { publicAccount } from "./accounts"
 export const oauthApiRoutes = new Hono()
 
 const FLOW_TIMEOUT_MS = 15 * 60 * 1000
-const PKCE_PROVIDERS = new Set<OAuthFlowProvider>(["claude", "codex", "xai"])
-const CALLBACK_OAUTH_PROVIDERS = new Set<OAuthFlowProvider>([
-  ...PKCE_PROVIDERS,
-  "antigravity",
-])
-
-function isPkceOAuthProvider(value: string): value is OAuthFlowProvider {
-  return PKCE_PROVIDERS.has(value as OAuthFlowProvider)
-}
-
-function isCallbackOAuthProvider(value: string): value is OAuthFlowProvider {
-  return CALLBACK_OAUTH_PROVIDERS.has(value as OAuthFlowProvider)
-}
 
 function parseLabel(body: { label?: string }, provider: string): string {
   const trimmed = body.label?.trim()
@@ -87,44 +48,6 @@ function parseLabel(body: { label?: string }, provider: string): string {
 function parseProxyUrl(body: { proxyUrl?: string }): string | undefined {
   const trimmed = body.proxyUrl?.trim()
   return trimmed || undefined
-}
-
-function flowFetchOptions(
-  flow: OAuthPendingFlow,
-): OAuthFetchOptions | undefined {
-  return flow.proxyUrl ? { proxyUrl: flow.proxyUrl } : undefined
-}
-
-function applyFlowSettingsToAccount(
-  account: OAuthAccount,
-  flow: OAuthPendingFlow,
-): void {
-  if (flow.proxyUrl) {
-    account.settings = {
-      ...account.settings,
-      proxyUrl: flow.proxyUrl,
-    }
-  }
-}
-
-function createOAuthAccount(
-  provider: OAuthProviderId,
-  label: string,
-): OAuthAccount {
-  return {
-    id: randomUUID(),
-    label,
-    provider,
-    enabled: true,
-    priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
-    credentials: {},
-    settings: {},
-    runtimeState: {
-      authStatus: "pending",
-    },
-  }
 }
 
 function removeOAuthAccountFromState(accountId: string): void {
@@ -168,21 +91,14 @@ async function finalizeOAuthAccount(account: OAuthAccount): Promise<void> {
   }
 }
 
-async function waitForPkceCallback(
-  provider: OAuthFlowProvider,
+/**
+ * Common exchange wrapper: claims the flow, delegates to the provider
+ * strategy, finalizes the account, and marks the flow complete.
+ */
+async function executeOAuthExchange(
+  provider: OAuthProviderId,
   flowId: string,
-  oauthState: string,
-): Promise<{ code: string }> {
-  if (!PKCE_PROVIDERS.has(provider)) {
-    throw new Error(`Provider "${provider}" does not use PKCE callback`)
-  }
-  return startProviderCallbackServer(provider, flowId, oauthState)
-}
-
-async function exchangePkceProviderTokens(
-  provider: OAuthFlowProvider,
-  code: string,
-  flowId: string,
+  exchangeInput: { code?: string; signal?: AbortSignal },
 ): Promise<string> {
   const claim = tryBeginOAuthExchange(flowId)
   if (claim.kind === "complete") {
@@ -192,123 +108,13 @@ async function exchangePkceProviderTokens(
     throw new Error("OAuth flow is not available for token exchange")
   }
 
-  const flow = claim.flow
-  if (!flow.pkce) {
-    throw new Error(`${provider} OAuth flow is missing PKCE codes`)
-  }
-
-  const account = createOAuthAccount(provider, flow.label)
-  applyFlowSettingsToAccount(account, flow)
-  const fetchOptions = flowFetchOptions(flow)
-
-  switch (provider) {
-    case "claude": {
-      if (!flow.state) {
-        throw new Error("Claude OAuth flow is missing state")
-      }
-      const bundle = await exchangeClaudeCodeForTokens(
-        code,
-        flow.state,
-        flow.pkce,
-        fetchOptions,
-      )
-      applyClaudeOAuthBundle(account, bundle)
-      break
-    }
-    case "codex": {
-      const bundle = await exchangeCodexCodeForTokens(
-        code,
-        flow.pkce,
-        fetchOptions,
-      )
-      applyCodexOAuthBundle(account, bundle)
-      break
-    }
-    case "xai": {
-      if (!flow.tokenEndpoint) {
-        throw new Error("xAI OAuth flow is missing token endpoint")
-      }
-      const bundle = await exchangeXaiCodeForTokens(
-        code,
-        flow.pkce,
-        flow.tokenEndpoint,
-        fetchOptions,
-      )
-      applyXaiOAuthBundle(account, bundle)
-      break
-    }
-    default: {
-      throw new Error(`Unsupported PKCE provider: ${provider}`)
-    }
-  }
-
-  await finalizeOAuthAccount(account)
-  updateOAuthFlow(flowId, {
-    status: "complete",
-    accountId: account.id,
+  const strategy = OAUTH_PROVIDER_STRATEGIES[provider]
+  const account = await strategy.exchange({
+    flow: claim.flow,
+    code: exchangeInput.code,
+    signal: exchangeInput.signal,
   })
-  return account.id
-}
 
-async function exchangeAntigravityProviderTokens(
-  code: string,
-  flowId: string,
-): Promise<string> {
-  const claim = tryBeginOAuthExchange(flowId)
-  if (claim.kind === "complete") {
-    return claim.accountId
-  }
-  if (claim.kind !== "claim") {
-    throw new Error("OAuth flow is not available for token exchange")
-  }
-
-  const flow = claim.flow
-  if (!flow.redirectUri) {
-    throw new Error("Antigravity OAuth flow is missing redirect URI")
-  }
-
-  const account = createOAuthAccount("antigravity", flow.label)
-  applyFlowSettingsToAccount(account, flow)
-  const bundle = await exchangeAntigravityCodeForTokens(
-    code,
-    flow.redirectUri,
-    flowFetchOptions(flow),
-  )
-  applyAntigravityOAuthBundle(account, bundle)
-  await finalizeOAuthAccount(account)
-  updateOAuthFlow(flowId, {
-    status: "complete",
-    accountId: account.id,
-  })
-  return account.id
-}
-
-async function exchangeKimiProviderTokens(
-  flowId: string,
-  deviceCode: Parameters<typeof pollKimiDeviceAuthorization>[0],
-  deviceId: string,
-  label: string,
-  signal?: AbortSignal,
-): Promise<string> {
-  const claim = tryBeginOAuthExchange(flowId)
-  if (claim.kind === "complete") {
-    return claim.accountId
-  }
-  if (claim.kind !== "claim") {
-    throw new Error("OAuth flow is not available for token exchange")
-  }
-
-  const flow = getOAuthFlow(flowId)
-  const fetchOptions = flow ? flowFetchOptions(flow) : undefined
-  const bundle = await pollKimiDeviceAuthorization(deviceCode, deviceId, {
-    ...fetchOptions,
-    signal,
-  })
-  const account = createOAuthAccount("kimi", label)
-  if (flow) {
-    applyFlowSettingsToAccount(account, flow)
-  }
-  applyKimiOAuthBundle(account, bundle)
   await finalizeOAuthAccount(account)
   updateOAuthFlow(flowId, {
     status: "complete",
@@ -343,38 +149,36 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
   const proxyUrl = parseProxyUrl(body)
   const flowId = randomUUID()
   const expiresAt = Date.now() + FLOW_TIMEOUT_MS
-  const loginFetchOptions = proxyUrl ? { proxyUrl } : undefined
 
-  if (provider === "kimi") {
-    const deviceId = createKimiDeviceId()
-    const deviceCode = await startKimiDeviceFlow(deviceId, loginFetchOptions)
-    const verificationUri =
-      deviceCode.verification_uri_complete || deviceCode.verification_uri || ""
+  const strategy = OAUTH_PROVIDER_STRATEGIES[provider]
+  const start = await strategy.start({ proxyUrl })
 
-    registerOAuthFlow({
-      id: flowId,
-      provider: "kimi",
-      label,
-      status: "pending",
-      expiresAt,
-      verificationUri,
-      userCode: deviceCode.user_code,
-      interval: deviceCode.interval ?? 5,
-      deviceCode: deviceCode.device_code,
-      deviceId,
-      proxyUrl,
-    })
+  registerOAuthFlow({
+    id: flowId,
+    provider,
+    label,
+    status: "pending",
+    expiresAt,
+    authUrl: start.authUrl,
+    state: start.state,
+    pkce: start.pkce,
+    tokenEndpoint: start.tokenEndpoint,
+    nonce: start.nonce,
+    redirectUri: start.redirectUri,
+    verificationUri: start.verificationUri,
+    userCode: start.userCode,
+    deviceCode: start.deviceCode,
+    deviceId: start.deviceId,
+    interval: start.interval,
+    deviceExpiresIn: start.deviceExpiresIn,
+    proxyUrl,
+  })
+
+  if (strategy.flowType === "device") {
     const abortSignal = bindOAuthFlowAbortSignal(flowId)
-
     void (async () => {
       try {
-        await exchangeKimiProviderTokens(
-          flowId,
-          deviceCode,
-          deviceId,
-          label,
-          abortSignal,
-        )
+        await executeOAuthExchange(provider, flowId, { signal: abortSignal })
       } catch (error: unknown) {
         if (abortSignal.aborted) {
           return
@@ -385,127 +189,25 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
         })
       }
     })()
-
-    return c.json({
-      flowId,
-      status: "pending_auth",
-      verificationUri,
-      userCode: deviceCode.user_code,
-      expiresIn: deviceCode.expires_in ?? Math.floor(FLOW_TIMEOUT_MS / 1000),
-      interval: deviceCode.interval ?? 5,
-    })
-  }
-
-  if (provider === "antigravity") {
-    const start = createAntigravityOAuthStart()
-    registerOAuthFlow({
-      id: flowId,
-      provider: "antigravity",
-      label,
-      status: "pending",
-      expiresAt,
-      authUrl: start.authUrl,
-      state: start.state,
-      redirectUri: start.redirectUri,
-      proxyUrl,
-    })
-
-    if (!manualCompletion) {
-      void (async () => {
-        try {
-          const callback = await startProviderCallbackServer(
-            "antigravity",
-            flowId,
-            start.state,
-          )
-          if (!getOAuthFlow(flowId)) {
-            throw new Error("OAuth flow disappeared before token exchange")
-          }
-          await exchangeAntigravityProviderTokens(callback.code, flowId)
-        } catch (error: unknown) {
-          updateOAuthFlow(flowId, {
-            status: "error",
-            error: error instanceof Error ? error.message : String(error),
-          })
-        }
-      })()
+  } else if (!manualCompletion) {
+    if (!start.state) {
+      return c.json(
+        { error: `${provider} OAuth start did not produce a state value` },
+        500,
+      )
     }
-
-    return c.json({
-      flowId,
-      status: "pending_auth",
-      authUrl: start.authUrl,
-      manualCompletion,
-      expiresIn: Math.floor(FLOW_TIMEOUT_MS / 1000),
-    })
-  }
-
-  if (!isPkceOAuthProvider(provider)) {
-    return c.json(
-      { error: `OAuth login not implemented for ${String(provider)}` },
-      501,
-    )
-  }
-
-  let authUrl = ""
-  let oauthState = ""
-  let pkce: OAuthPendingFlow["pkce"]
-  let tokenEndpoint: string | undefined
-  let nonce: string | undefined
-
-  switch (provider) {
-    case "claude": {
-      const start = createClaudeOAuthStart()
-      authUrl = start.authUrl
-      oauthState = start.state
-      pkce = start.pkce
-
-      break
-    }
-    case "codex": {
-      const start = createCodexOAuthStart()
-      authUrl = start.authUrl
-      oauthState = start.state
-      pkce = start.pkce
-
-      break
-    }
-    case "xai": {
-      const discovery = await discoverXaiOAuthEndpoints(loginFetchOptions)
-      const start = createXaiOAuthStart(discovery)
-      authUrl = start.authUrl
-      oauthState = start.state
-      pkce = start.pkce
-      tokenEndpoint = start.tokenEndpoint
-      nonce = start.nonce
-
-      break
-    }
-    // No default
-  }
-
-  registerOAuthFlow({
-    id: flowId,
-    provider,
-    label,
-    status: "pending",
-    expiresAt,
-    authUrl,
-    state: oauthState,
-    pkce,
-    tokenEndpoint,
-    nonce,
-    proxyUrl,
-  })
-
-  if (!manualCompletion) {
+    const expectedState = start.state
     void (async () => {
       try {
-        const callback = await waitForPkceCallback(provider, flowId, oauthState)
+        const callback = await startProviderCallbackServer(
+          provider,
+          flowId,
+          expectedState,
+        )
         if (!getOAuthFlow(flowId)) {
           throw new Error("OAuth flow disappeared before token exchange")
         }
-        await exchangePkceProviderTokens(provider, callback.code, flowId)
+        await executeOAuthExchange(provider, flowId, { code: callback.code })
       } catch (error: unknown) {
         updateOAuthFlow(flowId, {
           status: "error",
@@ -515,18 +217,35 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     })()
   }
 
-  return c.json({
+  const response: Record<string, unknown> = {
     flowId,
     status: "pending_auth",
-    authUrl,
-    manualCompletion,
-    expiresIn: Math.floor(FLOW_TIMEOUT_MS / 1000),
-  })
+    expiresIn: start.responseExpiresIn ?? Math.floor(FLOW_TIMEOUT_MS / 1000),
+  }
+  // manualCompletion is only meaningful for callback-based providers
+  // (the original per-provider branches omitted it for kimi's device
+  // flow). Keep the response shape unchanged per G1.
+  if (strategy.flowType !== "device") {
+    response.manualCompletion = manualCompletion
+  }
+  if (start.authUrl) {
+    response.authUrl = start.authUrl
+  }
+  if (start.verificationUri) {
+    response.verificationUri = start.verificationUri
+  }
+  if (start.userCode) {
+    response.userCode = start.userCode
+  }
+  if (start.interval) {
+    response.interval = start.interval
+  }
+  return c.json(response)
 })
 
 oauthApiRoutes.post("/:provider/complete", async (c) => {
   const provider = c.req.param("provider")
-  if (!isOAuthProviderId(provider) || !isCallbackOAuthProvider(provider)) {
+  if (!isOAuthProviderId(provider) || !CALLBACK_OAUTH_PROVIDERS.has(provider)) {
     return c.json(
       {
         error:
@@ -580,9 +299,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
   }
 
   try {
-    const accountId = await (provider === "antigravity" ?
-      exchangeAntigravityProviderTokens(code, flowId)
-    : exchangePkceProviderTokens(provider, code, flowId))
+    const accountId = await executeOAuthExchange(provider, flowId, { code })
     const account = state.accounts.find((item) => item.id === accountId)
     return c.json({
       status: "complete",
