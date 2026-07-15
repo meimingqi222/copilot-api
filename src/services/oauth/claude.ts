@@ -1,5 +1,6 @@
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
 import { parseExpiresAt } from "./token-resolver"
@@ -148,19 +149,7 @@ export function applyClaudeOAuthBundle(
   account: OAuthAccount,
   bundle: ClaudeOAuthBundle,
 ): void {
-  account.credentials = {
-    ...account.credentials,
-    accessToken: bundle.accessToken,
-    refreshToken: bundle.refreshToken ?? account.credentials?.refreshToken,
-    expiresAt: bundle.expiresAt ?? account.credentials?.expiresAt,
-    email: bundle.email ?? account.credentials?.email,
-  }
-  account.runtimeState = {
-    ...account.runtimeState,
-    authStatus: "ready",
-    lastRefreshAt: Date.now(),
-    lastError: undefined,
-  }
+  applyOAuthBundle(account, bundle, { email: bundle.email })
 }
 
 export function createClaudeOAuthStart(pkce = generatePkceCodes()): {
