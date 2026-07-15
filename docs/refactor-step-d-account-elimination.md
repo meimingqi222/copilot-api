@@ -191,23 +191,32 @@ interface AccountLegacyMetadata {
 
 ### 2.3 迁移触发时机
 
-在 `loadAccounts()` / `initializeProviderConnections()` 启动序列中检测：
+在 `loadAccounts()` / `initializeProviderConnections()` 启动序列中检测。
+**核心原则：迁移后 accounts.json 永不复活**——`saveAccounts()` 内部直接
+委托 `saveProviderConnections()`（见批次 1），不再写 accounts.json。这避免了
+"双写复活 accounts.json → 下次启动触发重迁移 → 覆盖用户通过 admin 直接创建
+的非 account 来源 connection（如 openai-compatible）"的死循环。
 
 1. 若 `provider-connections.json` 存在且 `accounts.json` 不存在 → 已迁移，
    正常加载 connections。
 2. 若 `accounts.json` 存在且 `provider-connections.json` 不存在 → **首次迁移**：
-   - 逐条 `accountToConnection(account)` 转换，但需扩展 `accountToConnection`
-     使 `metadata` 包含完整 `AccountLegacyMetadata`（当前实现只塞了部分字段）。
+   - 逐条 `accountToConnectionForPersistence(account)` 转换（见 2.4）。
    - 合并到 `stateRoot.connections`。
    - 调用 `saveProviderConnections()` 写入 `provider-connections.json`。
    - 将 `accounts.json` 重命名为 `accounts.json.migrated-<timestamp>.bak`
      （**不删除**，供回滚）。
    - 日志记录迁移条数。
-3. 若两者都存在 → **冲突检测**：
-   - 若 `accounts.json` 的 mtime 新于 `provider-connections.json`，可能用户手动
-     编辑了 accounts.json → 警告并**以 accounts.json 为准**重新迁移（覆盖
-     provider-connections.json），保留 accounts.json 备份。
-   - 否则 → 正常加载 connections，忽略 accounts.json（已迁移过）。
+3. 若两者都存在 → **connections 优先**：
+   - 正常加载 `provider-connections.json`，**忽略 accounts.json**。
+   - 打警告日志：`accounts.json exists alongside provider-connections.json;
+     ignoring accounts.json (already migrated). Set
+     COPILOT_API_FORCE_REMIGRATE=1 to re-migrate from accounts.json.`。
+   - **不使用 mtime 启发式**（备份恢复、Docker volume、rsync 等都会破坏 mtime，
+     不可靠）。
+   - **强制重迁移**仅在显式环境变量 `COPILOT_API_FORCE_REMIGRATE=1` 时触发，
+     且必须**按 connection.id 合并**（accounts.json 迁移出的 connection 按 id
+     覆盖同名 connection，其余 connection 保留），**永远不整体覆盖**
+     provider-connections.json。重迁移后同样重命名 accounts.json。
 4. 若都不存在 → 空状态，正常初始化。
 
 ### 2.4 迁移函数实现要点
@@ -231,7 +240,50 @@ export async function migrateAccountsToConnections(
   而非 githubToken，迁移后 value 为空，需在 context 中保留 githubToken，
   启动时 refreshCopilotToken 重新获取 copilotToken）。
 
-### 2.5 回滚步骤
+### 2.5 反向映射器 `connectionToAccount`
+
+新建 `src/lib/provider-connections/connection-to-account.ts`：
+
+```ts
+export function connectionToAccount(
+  connection: ProviderConnection,
+): Account
+```
+
+- `accountToConnectionForPersistence` 的逆函数：从 `ProviderConnection` +
+  `ApiCredential` + `metadata`（含 `AccountLegacyMetadata`）反构造 `Account`。
+- **过渡期承重墙**：批次 1 用它从 `stateRoot.connections` 反构造
+  `state.accounts`，使 Account 保持为内存真相（见批次 1 编排理由）。
+- **round-trip 测试**（批次 0 交付物）：对 5 个 provider 各构造一个
+  `Account` fixture → `accountToConnectionForPersistence` →
+  `connectionToAccount` → 与原 `Account` 深度相等（忽略 `runtimeState` 等
+  不持久化字段）。此测试同时兜住 5.4 节的"迁移字段遗漏"风险，比逐字段
+  断言更省力也更严。
+
+### 2.6 `AccountLegacyMetadata` 类型化读取器
+
+新建 `src/lib/provider-connections/connection-metadata.ts`：
+
+```ts
+export function readAccountLegacyMetadata(
+  connection: ProviderConnection,
+): AccountLegacyMetadata | undefined
+
+// 类型安全的字段读取器（替代散装 metadata.xxx as string 强转）
+export function getConnectionProvider(conn: ProviderConnection): ProviderId | undefined
+export function getConnectionQuotaState(conn: ProviderConnection): AccountQuotaState
+export function getConnectionQuotaInfo(conn: ProviderConnection): QuotaSnapshot | undefined
+export function getConnectionCredentialExtras(conn: ProviderConnection): Record<string, unknown> | undefined
+export function getConnectionSettings(conn: ProviderConnection): Record<string, unknown> | undefined
+// ... 其余 AccountLegacyMetadata 字段的读取器
+```
+
+- 批次 2 删除 `accounts.ts` 30+ getter/setter 后，各调用点改为通过这些
+  类型化读取器访问 `connection.metadata`，避免散装 `metadata.xxx as string`
+  强转（冗余换了个形态回来）。
+- 批次 0 交付此模块 + 单元测试。
+
+### 2.7 回滚步骤
 
 若迁移后出现问题，手动回滚：
 
@@ -245,7 +297,7 @@ export async function migrateAccountsToConnections(
 健康检查失败，自动恢复 accounts.json。但自动回滚风险高于手动，建议仅
 提供手动回滚文档。
 
-### 2.6 测试隔离兼容
+### 2.8 测试隔离兼容
 
 `tests/setup/isolate-data-dir.ts`（bunfig preload）将 PATHS 重定向到临时目录。
 迁移逻辑需在测试隔离下正常工作：
@@ -262,61 +314,68 @@ export async function migrateAccountsToConnections(
 
 每批一个可验收任务（后续追加到 `refactor-provider-architecture.md` 任务清单）。
 **每批必须过 G2 三件套**（typecheck / lint / bun test ≥ 542 pass / 0 fail）。
-**G1 行为不变**：HTTP 接口、SSE 输出、持久化文件格式、日志格式保持不变
-（持久化格式在迁移批次允许变更，见批次 2）。
+**G1 行为不变**：HTTP 接口、SSE 输出、日志格式保持不变
+（持久化格式在批次 1 允许变更）。
+
+> **文件清单说明**：以下各批次点名的文件仅是**起点**，不是穷尽清单。
+> 实施时必须以 `grep -rln "saveAccounts\|state\.accounts\|accountToConnection
+> \|target\.account\|requireTargetAccount" src` 的**实时结果**为准，
+> 逐文件改造直到 grep 无结果。
 
 ### 批次 0：迁移基础设施（无行为变更）
 
-**任务 T5.2.0**：新建迁移函数 + 增强 `accountToConnection` 的 persistence 变体
+**任务 T5.2.0**：新建迁移函数 + 反向映射器 + 类型化读取器 + round-trip 测试
 
 - 新建 `src/lib/provider-connections/migrate-from-accounts.ts`，实现
-  `migrateAccountsToConnections` + `accountToConnectionForPersistence`。
+  `migrateAccountsToConnections` + `accountToConnectionForPersistence`（见 2.4）。
+- 新建 `src/lib/provider-connections/connection-to-account.ts`，实现
+  `connectionToAccount`（见 2.5）。
+- 新建 `src/lib/provider-connections/connection-metadata.ts`，实现
+  `AccountLegacyMetadata` 类型 + 类型化读取器（见 2.6）。
 - 不接入启动序列，不改变任何运行时行为。
-- 新增单元测试：`tests/migrate-accounts-to-connections.test.ts`，覆盖 5 个
-  provider 的 Account → Connection 转换，断言 metadata 完整性。
-- **验收**：G2 三件套；新测试通过。
+- 新增测试 `tests/migrate-accounts-to-connections.test.ts`：
+  - **round-trip 测试**（核心）：对 5 个 provider 各构造一个 `Account` fixture →
+    `accountToConnectionForPersistence` → `connectionToAccount` → 与原 `Account`
+    深度相等（忽略 `runtimeState` 等不持久化字段）。此测试同时兜住字段遗漏风险。
+  - metadata 完整性断言：`AccountLegacyMetadata` 所有字段均存在且类型正确。
+- **验收**：G2 三件套；round-trip 测试通过。
 
-### 批次 1：启动序列接入迁移（持久化格式变更，G1 例外）
+### 批次 1：纯持久化格式换底（Account 保持内存真相）
 
-**任务 T5.2.1**：在 `loadAccounts` / `initializeProviderConnections` 中接入迁移
+**任务 T5.2.1**：启动序列接入迁移 + `saveAccounts` 委托 `saveProviderConnections`
+
+**编排理由**：批次 1–2 期间内存真相保持 `Account` 不变。现有代码是就地
+mutate `Account` 对象再 `saveAccounts()` 的，refresh 定时器还长期持有旧
+`Account` 对象引用（`state.accounts` 在 27 个文件里有 101 处引用，含
+`dispatch/failover.ts` 热路径、`mimo/connections.ts`、refresh 定时器）。
+若批次 1 就把 `state.accounts` 变成派生视图，这些引用会全部失效或丢失写入
+（split-brain）。因此批次 1 只换持久化格式，内存模型不动。
 
 - 修改启动序列（`src/start.ts` 或 `src/lib/account-store.ts:initAccounts`）：
   - 先 `loadProviderConnections()`。
-  - 若 connections 为空且 `accounts.json` 存在 → 调用
-    `migrateAccountsToConnections` + `saveProviderConnections` + 重命名
-    accounts.json。
-  - 若 connections 非空 → 正常加载，忽略 accounts.json（已迁移）。
-- `state.accounts` 保留为内存派生：从 `stateRoot.connections` 反向构造
-  `Array<Account>`（用 `connectionToAccount`，见批次 3），或直接让
-  `state.accounts` 成为 `stateRoot.connections` 的 view（getter）。
-- **此批次 `state.accounts` 仍存在但变为派生数据**，写入仍走 accounts.json
-  兼容路径（双写）直到批次 3 完成删除。
+  - 按 2.3 的 4 条规则检测：首次迁移 / connections 优先 / 强制重迁移 / 空状态。
+  - 若首次迁移：`migrateAccountsToConnections` + `saveProviderConnections` +
+    重命名 accounts.json。
+  - 加载 connections 后，用 `connectionToAccount` 反构造 `state.accounts`
+    （Account 保持为内存真相，runtime 继续读 `state.accounts`）。
+- `saveAccounts()` 内部改为委托 `saveProviderConnections()`：
+  - 将 `state.accounts` 通过 `accountToConnectionForPersistence` 正向映射为
+    connections，**合并**到 `stateRoot.connections`（按 id 覆盖 account 来源的
+    connection，保留非 account 来源的 connection），再 `persistProviderConnections()`。
+  - **不再写 accounts.json**（accounts.json 永不复活，见 2.3 核心原则）。
+- admin 继续走现有 `applyConnectionPatchToAccount` 路径（不变）。
+- `state.activeAccountIndex` 继续维护（不变）。
 - **验收**：G2 三件套；新增集成测试：写入 accounts.json → 启动 → 验证
-  provider-connections.json 生成 + accounts.json 重命名。
+  provider-connections.json 生成 + accounts.json 重命名 + `state.accounts`
+  从 connections 反构造正确。验证非 account 来源的 connection 不被覆盖。
 
-### 批次 2：admin 反向映射改为 connection 直写
+### 批次 2：内存模型翻转（admin 直写 connections + state.accounts 删除 + getter/setter 删除）
 
-**任务 T5.2.2**：admin account CRUD 路由改为操作 `stateRoot.connections`
+**任务 T5.2.2**：消除 `state.accounts`，所有读写改为操作 `stateRoot.connections`
 
-- `src/routes/admin/api/accounts.ts`：list/get/delete/update/priority/export
-  改为从 `listProviderConnections()` 读取，用 `publicAccount`（从 connection
-  派生，反向于 `accountToConnection`）序列化。
-- `src/routes/admin/api/account-create.ts`：创建改为 `createConnection` +
-  `addCredential`。
-- `src/routes/admin/api/account-update.ts`：`applyConnectionPatchToAccount`
-  改为 `applyConnectionPatchToConnection`（直接写 connection/credential
-  字段，不再经过 Account provider-specific 分支）。
-- `src/routes/admin/api/account-import.ts` / `cpa-import.ts`：import 改为
-  创建 connection。
-- `src/routes/admin/api/oauth.ts`：`finalizeOAuthAccount` 改为创建 connection。
-- `src/routes/admin/api/quota.ts`：quota refresh 改为操作 connection.metadata。
-- **此批次 `state.accounts` 仍存在但 admin 不再写入它**，仅由批次 1 的
-  派生层维护。
-- **验收**：G2 三件套；admin API 行为不变（响应 JSON 形状不变）。
-
-### 批次 3：`accounts.ts` getter/setter 兼容层删除
-
-**任务 T5.2.3**：删除 `state.accounts` + `accounts.ts` 30+ getter/setter
+此批次合并了原设计的"admin 直写"与"getter/setter 删除"两步，确保任何时刻
+只有一个内存真相。**体量最大**，允许拆成子 commit（T5.2.2a/b/c/d...），
+每个过 G2。
 
 - `state.accounts` 字段删除。所有 `state.accounts.find` / `state.accounts.map`
   调用点改为 `listProviderConnections()` + connection 查询。
@@ -324,7 +383,8 @@ export async function migrateAccountsToConnections(
   路径用 `selectRouteTarget`，activeAccountIndex 仅 legacy 单账户模式残留）。
 - `src/lib/accounts.ts` 的 getter/setter（`getGitHubToken` / `setCopilotToken` /
   `getOAuthAccessToken` / `setOAuthCredentials` / `getMimoWsToken` / ... 共 30+）
-  删除或改为 connection/credential 的薄包装。
+  删除，调用点改为通过 `connection-metadata.ts` 的类型化读取器访问
+  `connection.metadata` / `credential.context` / `credential.value`。
 - `src/lib/account-adapter.ts` 删除（`accountToConnection` /
   `applyConnectionPatchToAccount` / `accountsToConnections`）。
 - `src/lib/account-store.ts` 的 `serializeAccount` / `migrateAccount` /
@@ -333,13 +393,26 @@ export async function migrateAccountsToConnections(
   `refreshCredentialAvailability`（已存在于 provider-connections/availability.ts）。
 - `src/lib/account-selection.ts` 的 `getActiveAccount` / `switchToNextAccount`
   删除（被 `selectRouteTarget` + `switchToNextRouteTarget` 取代）。
-- **此批次体量最大**，允许拆成 3-4 个子 commit（T5.2.3a/b/c/d），每个过 G2。
+- admin account CRUD 路由改为操作 `stateRoot.connections`：
+  - `src/routes/admin/api/accounts.ts`：list/get/delete/update/priority/export
+    改为从 `listProviderConnections()` 读取，用 `publicAccount`（从 connection
+    派生）序列化。
+  - `src/routes/admin/api/account-create.ts`：创建改为 `createConnection` +
+    `addCredential`。
+  - `src/routes/admin/api/account-update.ts`：`applyConnectionPatchToAccount`
+    改为 `applyConnectionPatchToConnection`（直接写 connection/credential
+    字段）。
+  - `src/routes/admin/api/account-import.ts` / `cpa-import.ts`：import 改为
+    创建 connection。
+  - `src/routes/admin/api/oauth.ts`：`finalizeOAuthAccount` 改为创建 connection。
+  - `src/routes/admin/api/quota.ts`：quota refresh 改为操作 connection.metadata。
 - **验收**：G2 三件套；`grep -rn "state\.accounts" src` 无结果；
-  `grep -rn "accountToConnection" src` 无结果。
+  `grep -rn "accountToConnection" src` 无结果；
+  admin API 行为不变（响应 JSON 形状不变）。
 
-### 批次 4：`RouteTarget.account` 特例删除
+### 批次 3：`RouteTarget.account` 特例删除
 
-**任务 T5.2.4**：删除 `RouteTarget.account` 字段 + protocols 层
+**任务 T5.2.3**：删除 `RouteTarget.account` 字段 + protocols 层
 `requireTargetAccount`
 
 - `src/lib/provider-connections/types.ts`：`RouteTarget.account` 字段删除。
@@ -360,9 +433,9 @@ export async function migrateAccountsToConnections(
 - **验收**：G2 三件套；`grep -rn "target\.account" src` 无结果；
   `grep -rn "requireTargetAccount" src` 无结果。
 
-### 批次 5：清理与文档
+### 批次 4：清理与文档
 
-**任务 T5.2.5**：删除 `account-store.ts` / `account-file-store.ts` /
+**任务 T5.2.4**：删除 `account-store.ts` / `account-file-store.ts` /
 `account-adapter.ts` / `account-availability.ts` / `account-selection.ts` /
 `account-diagnostics.ts` 等已无引用的文件；更新 `AGENTS.md` 的代码组织章节；
 更新 `docs/refactor-provider-architecture.md` 标记 P5 完成。
@@ -380,9 +453,9 @@ export async function migrateAccountsToConnections(
 
 | 测试文件 | Account 用途 | 改造策略 |
 | --- | --- | --- |
-| `tests/account-adapter.test.ts` (70 matches) | 测试 `accountToConnection` / `applyConnectionPatchToAccount` | **批次 3 后删除**（被测函数已删除）；或改为测试 `connectionToAccount` / `applyConnectionPatchToConnection` 的等价语义 |
-| `tests/account-store.test.ts` (43 matches) | 测试 `loadAccounts` / `saveAccounts` / `serializeAccount` / `migrateAccount` | **批次 1/3 改造**：迁移测试改为验证 accounts.json→connections.json 迁移；持久化测试改为 `saveProviderConnections` |
-| `tests/account-file-store.test.ts` (20 matches) | 测试 `tryReadAccountsFile` / `writeAccountsFile` / .bak 恢复 | **批次 5 后删除**（文件已删除）；迁移测试中保留 1-2 个验证迁移源文件读取的用例 |
+| `tests/account-adapter.test.ts` (70 matches) | 测试 `accountToConnection` / `applyConnectionPatchToAccount` | **批次 2 后删除**（被测函数已删除）；或改为测试 `connectionToAccount` / `applyConnectionPatchToConnection` 的等价语义 |
+| `tests/account-store.test.ts` (43 matches) | 测试 `loadAccounts` / `saveAccounts` / `serializeAccount` / `migrateAccount` | **批次 1/2 改造**：迁移测试改为验证 accounts.json→connections.json 迁移；持久化测试改为 `saveProviderConnections` |
+| `tests/account-file-store.test.ts` (20 matches) | 测试 `tryReadAccountsFile` / `writeAccountsFile` / .bak 恢复 | **批次 4 后删除**（文件已删除）；迁移测试中保留 1-2 个验证迁移源文件读取的用例 |
 | `tests/account-update.test.ts` (10 matches) | 测试 `parseBodyToPatch` / `updateProviderAccount` | **批次 2 改造**：改为测试 connection 直写的 patch 解析 |
 | `tests/provider-defaults.test.ts` (2 matches) | 测试 managed default account 创建 | **批次 2 改造**：改为测试 managed default connection 创建 |
 
@@ -390,20 +463,20 @@ export async function migrateAccountsToConnections(
 
 | 测试文件 | 改造策略 |
 | --- | --- |
-| `tests/unified-routing.test.ts` (17 matches) | **批次 3/4 改造**：`buildRouteTargets` 入参从 accounts 改为 connections |
-| `tests/oauth-*.test.ts`（8 个文件，共 ~90 matches） | **批次 2/3 改造**：OAuth flow 测试的 `finalizeOAuthAccount` 改为创建 connection；`state.accounts.find` 改为 `getProviderConnection` |
+| `tests/unified-routing.test.ts` (17 matches) | **批次 2/3 改造**：`buildRouteTargets` 入参从 accounts 改为 connections |
+| `tests/oauth-*.test.ts`（8 个文件，共 ~90 matches） | **批次 2 改造**：OAuth flow 测试的 `finalizeOAuthAccount` 改为创建 connection；`state.accounts.find` 改为 `getProviderConnection` |
 | `tests/admin-*.test.ts`（3 个文件，共 ~30 matches） | **批次 2 改造**：admin API 测试改为验证 connection CRUD |
 | `tests/cpa-import.test.ts` (10 matches) | **批次 2 改造**：import 改为创建 connection |
-| `tests/dispatch.test.ts` (4 matches) | **批次 4 改造**：dispatch 测试的 `target.account` 改为纯 connection target |
-| `tests/responses-route.test.ts` / `messages-route.test.ts` / `create-chat-completions.test.ts` / `create-embeddings.test.ts` | **批次 4 改造**：route 测试的 fixture 从 Account 改为 ProviderConnection |
+| `tests/dispatch.test.ts` (4 matches) | **批次 3 改造**：dispatch 测试的 `target.account` 改为纯 connection target |
+| `tests/responses-route.test.ts` / `messages-route.test.ts` / `create-chat-completions.test.ts` / `create-embeddings.test.ts` | **批次 3 改造**：route 测试的 fixture 从 Account 改为 ProviderConnection |
 | `tests/data-dir-isolation.test.ts` (9 matches) | **批次 1 改造**：验证迁移在测试隔离下正确工作 |
-| `tests/upstream-ws.test.ts` / `responses-ws-route.test.ts` | **批次 4 改造**：ws 测试的 account fixture 改为 connection |
-| `tests/quota-cycle-usage.test.ts` (12 matches) | **批次 3 改造**：quota cycle 测试从 account.quotaInfo 改为 connection.metadata.quotaInfo |
-| `tests/usage-model-id.test.ts` / `admin-usage-summary.test.ts` / `admin-performance.test.ts` | **批次 3 改造**：usage 测试的 account 引用改为 connection |
-| `tests/provider-registry.test.ts` (8 matches) | **批次 3 改造**：provider registry 测试的 account fixture 改为 connection |
-| `tests/windsurf-models.test.ts` (2 matches) | **批次 3 改造**：windsurf model 测试 |
-| `tests/oauth-ensure-access-token.test.ts` (5 matches) | **批次 3 改造**：`ensureOAuthAccessToken` 改为从 credential.value + context 读取 |
-| `tests/oauth-refresh-proxy.test.ts` (7 matches) | **批次 3 改造**：refresh proxy 测试 |
+| `tests/upstream-ws.test.ts` / `responses-ws-route.test.ts` | **批次 3 改造**：ws 测试的 account fixture 改为 connection |
+| `tests/quota-cycle-usage.test.ts` (12 matches) | **批次 2 改造**：quota cycle 测试从 account.quotaInfo 改为 connection.metadata.quotaInfo |
+| `tests/usage-model-id.test.ts` / `admin-usage-summary.test.ts` / `admin-performance.test.ts` | **批次 2 改造**：usage 测试的 account 引用改为 connection |
+| `tests/provider-registry.test.ts` (8 matches) | **批次 2 改造**：provider registry 测试的 account fixture 改为 connection |
+| `tests/windsurf-models.test.ts` (2 matches) | **批次 2 改造**：windsurf model 测试 |
+| `tests/oauth-ensure-access-token.test.ts` (5 matches) | **批次 2 改造**：`ensureOAuthAccessToken` 改为从 credential.value + context 读取 |
+| `tests/oauth-refresh-proxy.test.ts` (7 matches) | **批次 2 改造**：refresh proxy 测试 |
 
 ### 4.3 改造策略总结
 
@@ -432,7 +505,7 @@ copilotTokenExpiry 存入 `credential.context`。
 
 **缓解**：
 - `refresher-impls.ts` 的 `copilotRefresher` 已实现从 `credential.context`
-  反查 account（`findAccountById`）并刷新。批次 3 改造时将 `findAccountById`
+  反查 account（`findAccountById`）并刷新。批次 2 改造时将 `findAccountById`
   改为 `findCredentialById` / `findConnectionById`，直接写
   `credential.value` + `credential.context.copilotTokenExpiry`。
 - `tokenRefreshTimers`（`account-store.ts:47`）改为以 `credentialId` 为 key，
@@ -496,7 +569,7 @@ idToken/expiresAt/accountId/projectId/deviceId/apiKey/email 等多字段。
 - 现状 `selectRouteTarget` 已基于 priority + weight 选择，不依赖
   `activeAccountIndex`。`activeAccountIndex` 仅在 `getActiveAccount`
   （legacy 路径）使用。
-- 批次 3 删除 `activeAccountIndex` 时，需确认所有调用点已迁移到
+- 批次 2 删除 `activeAccountIndex` 时，需确认所有调用点已迁移到
   `selectRouteTarget` 路径。`getActiveAccount` / `switchToNextAccount`
   若仍有调用点（如 `src/start.ts:199` 的启动日志），改为从
   `listProviderConnections()` 派生。
@@ -536,6 +609,24 @@ copilotToken/windsurfJwt 为空，需立即刷新。
 - 若迁移后发现冷启动 401 增加，可在批次 1 中加入"迁移后立即触发
   refreshCopilotToken for all copilot connections"的启动钩子。
 
+### 5.9 stats-store 的 accountId 关联约束
+
+**风险**：`stats-store.ts` 的 SQLite 统计按 `accountId` 记历史用量。
+设计 1.1 说"同一 id 复用"，这保住了历史统计的关联。但若迁移/去重逻辑
+在 CPA 去重或冲突合并时随手 `randomUUID()` 生成新 id，历史用量/统计
+会断链。
+
+**缓解**：
+- 迁移函数 `accountToConnectionForPersistence` 必须原样保留 `account.id`
+  作为 `connection.id` + `credential.id`，**绝不生成新 id**。
+- CPA import 的 `removeDuplicateAccount`（改为 `removeDuplicateConnection`
+  后）去重时，若发现已有同 label+protocol 的 connection，应**复用已有 id**
+  而非创建新 id（与现状 `removeDuplicateAccount` 行为一致）。
+- 2.3 规则 3 的强制重迁移（`COPILOT_API_FORCE_REMIGRATE=1`）按 id 合并时，
+  accounts.json 迁移出的 connection 必须按 id 匹配已有 connection，
+  **不生成新 id**。
+- 批次 0 的 round-trip 测试需断言 `connection.id === account.id`。
+
 ---
 
 ## 附录 A：`accountToConnectionForPersistence` 与 `accountToConnection` 的差异
@@ -555,25 +646,28 @@ copilotToken/windsurfJwt 为空，需立即刷新。
   xiaomichatbotPh/mimoWsToken。
 - `metadata.settings`：完整 settings record（已在现状中）。
 
-**决策点（T5.2 实施时确认）**：`availableModels` 是否在迁移后直接用
-`connection.models`（`ModelMapping[]`）替代，删除 `metadata.availableModels`？
-若是，`build.ts` 的 `matchesAccountModel` 需改为 `matchesPublicModelId`
-（批次 4 一并处理）。建议**是**，减少 metadata 冗余。
+**决策（已确认）**：`availableModels` 在迁移后直接用 `connection.models`
+（`ModelMapping[]`）替代，**删除 `metadata.availableModels`**。理由：否则
+metadata 里又养出一个平行模型副本，Step D 就白做了。`build.ts` 的
+`matchesAccountModel` 需改为 `matchesPublicModelId`（批次 3 一并处理）。
+`accountToConnectionForPersistence` 仍需把 `account.availableModels` 转换为
+`connection.models`（与现状 `accountToConnection` 的 `accountModelToMapping`
+逻辑一致），但不再在 metadata 里保留原始 `Array<AccountModel>`。
 
 ---
 
 ## 附录 B：执行顺序与依赖图
 
 ```
-T5.2.0 (迁移基础设施) 
-  └─> T5.2.1 (启动序列接入迁移)
-        └─> T5.2.2 (admin 反向映射改 connection 直写)
-              └─> T5.2.3 (accounts.ts getter/setter 删除) [可拆 a/b/c/d]
-                    └─> T5.2.4 (RouteTarget.account 删除)
-                          └─> T5.2.5 (清理与文档)
+T5.2.0 (迁移基础设施 + 反向映射器 + 类型化读取器 + round-trip 测试)
+  └─> T5.2.1 (纯持久化格式换底：Account 保持内存真相)
+        └─> T5.2.2 (内存模型翻转：admin 直写 + state.accounts 删除 + getter/setter 删除) [可拆 a/b/c/d]
+              └─> T5.2.3 (RouteTarget.account 删除)
+                    └─> T5.2.4 (清理与文档)
 ```
 
-每个批次依赖前一批次完成。批次 3 体量最大，允许拆分为多个子 commit。
+每个批次依赖前一批次完成。批次 2 体量最大（合并了原设计的"admin 直写"
+与"getter/setter 删除"两步），允许拆分为多个子 commit。
 **每个 commit 必须过 G2 三件套**。
 
 ---
@@ -583,7 +677,7 @@ T5.2.0 (迁移基础设施)
 - **基线**（T0.1 记录）：`bun test` 542 pass / 2 skip / 0 fail。
 - **每个批次**：`bun test` 不得低于 542 pass / 0 fail（新增测试允许 pass 数
   增加，但不得减少现有 pass 数或新增 fail）。
-- **最终**（T5.2.5 后）：`grep -rn "state\.accounts" src` 无结果；
+- **最终**（T5.2.4 后）：`grep -rn "state\.accounts" src` 无结果；
   `grep -rn "accountToConnection" src` 无结果；
   `grep -rn "target\.account" src` 无结果；
   `grep -rn "requireTargetAccount" src` 无结果；
