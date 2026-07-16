@@ -31,7 +31,7 @@
 | —（无对应） | `weight` | 默认 `DEFAULTS.CONNECTION_WEIGHT` | Account 无 weight 概念 |
 | —（无对应） | `headers` | 不设置 | Account 无 connection-level 固定 header |
 | —（无对应） | `modelDiscovery` | 不设置 | Account 路径的模型发现由 `refreshModelsForAccount` 驱动 |
-| `availableModels` | `models` | `account.availableModels.map(accountModelToMapping)` | undefined → undefined（通配 target 语义）；`AccountModel.id`→`publicId`，`upstreamId ?? id`→`upstreamId`，`supportedEndpoints`→`endpoints`（chat/messages/responses/embeddings/images/videos 映射） |
+| `availableModels` | `models` | `account.availableModels.map(accountModelToMapping)` | 三态保留：undefined → undefined（**通配 target 语义**），[] → []（跳过），非空 → 映射（详见附录 D）；`AccountModel.id`→`publicId`，`upstreamId ?? id`→`upstreamId`，`supportedEndpoints`→`endpoints`（chat/messages/responses/embeddings/images/videos 映射） |
 | `createdAt` | `createdAt` | 直接复制 | |
 | —（无对应） | `updatedAt` | 不设置 | Account 无 updatedAt |
 | 见 1.4 | `metadata` | `getAccountMetadata(account)` | provider-specific 字段塞入 metadata |
@@ -663,6 +663,47 @@ idToken/expiresAt/accountId/projectId/deviceId/apiKey/email 等多字段。
   `publicAccount` **字段完全一致**的 JSON。
 - 批次 2 的测试需断言 admin API 响应 JSON 深度相等。
 
+### 5.6.1 provider-connections API 与 account-managed connection 隔离
+
+**风险**：T5.2 后 account-managed connection（copilot/OAuth/windsurf/mimo
+等）存入 `stateRoot.connections`，与普通 provider connection 混在同一存储。
+`GET /admin/api/provider-connections` 返回 `listProviderConnections()` 的
+**全部** connection，导致导入的账号同时出现在"账号管理"和"外部 Provider"
+两个 WebUI 页面。用户在外部 Provider 页面误编辑 account-managed connection
+可能破坏 account 路径的 `AccountLegacyMetadata`。
+
+**判别器选择**：account-managed ⇔ `protocol ∈ PROVIDER_PROTOCOL_MAP` 值域
+（即 9 个 `*-native` protocol）。**不使用** `readAccountLegacyMetadata`，
+因为后者依赖 `metadata.provider`，而 T5.2.5 会删除该字段（§2.2 明确
+`AccountLegacyMetadata` 是过渡态）。protocol 是 `ProviderConnection` 的
+本体字段，不会被 Schema 归一化删除，因此此判别器在 T5.2.5 后仍然有效。
+protocol 空间天然二分：`*-native`（9 个，账号管理面）vs `*-compatible`
+（3 个，外部 Provider 管理面），无交叉。
+
+**缓解**（已实施）：
+- 新建单一谓词 `isAccountManagedConnection(conn)` / `isAccountManagedProtocol(protocol)`
+  （`src/lib/provider-connections/account-managed.ts`），从 `PROVIDER_PROTOCOL_MAP`
+  值域派生 `ACCOUNT_MANAGED_PROTOCOLS` Set。新增 provider 时自动覆盖。
+- `GET /admin/api/provider-connections` 过滤掉 account-managed connection，
+  与 `buildRouteTargets` 的 `baseConnections` 过滤逻辑保持一致。
+- `GET /admin/api/provider-connections/export` 同样过滤。
+- `/:id` 路由守卫（`src/routes/admin/api/provider-connection-guard.ts`）：
+  所有 `/:id` 和 `/:id/*` 路由通过 Hono `use` 中间件检查目标 connection
+  是否为 account-managed，若是则返回 403。
+- **写入不变量**：`POST /` 和 `PUT /:id` 拒绝 `*-native` protocol；
+  `POST /import`（`normalizeImportedConnection`）同样拒绝。这样
+  "native 协议 ⇔ 账号管理"成为写入时保证的不变量，读取端的过滤只是
+  防御性的第二道。
+- account-managed connection 只能通过 `/admin/api/accounts` 路径管理。
+- 测试：`tests/admin-provider-connections-filter.test.ts` 验证列表过滤、
+  export 过滤、`/:id` 守卫（GET/PUT/DELETE 返回 403）、写入不变量
+  （POST/PUT 拒绝 `*-native` protocol 返回 400）。
+
+**T5.2.5 依赖**：T5.2.5 删除 `metadata.provider` 时，无需修改本节的过滤/守卫
+逻辑——判别器已从 protocol 派生，不依赖 `AccountLegacyMetadata`。但 T5.2.5
+的步骤中需确认 `isAccountManagedConnection` 谓词仍正确工作（它只读
+`conn.protocol`，不受 metadata 归一化影响）。
+
 ### 5.7 测试隔离与生产数据安全
 
 **风险**：迁移在测试隔离下重命名 `accounts.json` 可能触发
@@ -686,6 +727,16 @@ copilotToken/windsurfJwt 为空，需立即刷新。
   也需如此，但当前 `initAccounts` 未自动触发——这是**现有行为**，迁移不改变）。
 - 若迁移后发现冷启动 401 增加，可在批次 1 中加入"迁移后立即触发
   refreshCopilotToken for all copilot connections"的启动钩子。
+- **通配 target 连锁风险**（T5.2 后修复）：若 Copilot token 刷新失败，
+  `refreshModelsForAccount` 无法加载模型 → `connection.models` 保持
+  `undefined`（尚未加载）→ 触发通配 target（附录 D）。通配 target 会匹配
+  任意请求模型，若不作为最低优先级兜底处理，会抢占本该路由到专用 provider
+  的请求（如 glm-5.2 应走火山引擎却被 copilot 账号抢走）。`copilot-native`
+  adapter 已加 `ensureCopilotToken` 惰性刷新兜底，避免通配 target 因 token
+  缺失失败后被 `markCooldown` 误判为 rate-limit 形成冷却翻倍恶性循环。
+  注意：若模型发现**已完成**但结果为空（`connection.models = []`），
+  则**不触发**通配 target（跳过该 connection），只有 `undefined`（尚未加载）
+  才触发通配（附录 D.3 规则 4）。
 
 ### 5.9 stats-store 的 accountId 关联约束
 
@@ -767,3 +818,100 @@ T5.2.0 (迁移基础设施 + 反向映射器 + 类型化读取器 + round-trip �
   `accounts.json` 不再被任何代码读写（仅迁移源读取）。
 - 外加一次**真实数据演练**（人工）：复制生产 accounts.json 到隔离目录 →
   完整迁移 + v2 升级 → 核对 admin UI 账号列表/配额/模型与迁移前一致。
+
+---
+
+## 附录 D：通配 target 调度语义
+
+### D.1 背景
+
+原始 `account-selection.ts` 的 `getCapableAccounts` 使用**两层过滤**：
+
+```ts
+function getCapableAccounts(accounts, nativeModelId) {
+  const explicitCapable = accounts.filter(a => supportsModelExplicitly(a, nativeModelId))
+  const fallbackCapable = accounts.filter(a => supportsModelWithFallback(a, nativeModelId))
+  return explicitCapable.length > 0 ? explicitCapable : fallbackCapable
+}
+```
+
+- **第一层（显式）**：`availableModels` 中明确列出了该模型的 account。
+- **第二层（兜底）**：`availableModels` 为 `undefined`（尚未加载）的 account，
+  匹配任意模型。**仅当第一层为空时才启用**。
+
+T5.2 重构把 account 候选和 connection 候选合并到 `buildRouteTargets` 的
+统一候选池。若不显式保留两层过滤语义，通配 target 会与专用 connection
+同层竞争，`account.priority` 通常为 0（最高），直接抢占 `priority=10`
+的专用 connection。
+
+### D.2 通配 target 的判定
+
+**规范性定义（用 connection 术语）**：
+
+- `conn.models === undefined`（或 `null`）→ 生成通配 target：
+  - 可匹配任意 `publicModelId`（请求什么模型都接受）。
+  - 标记 `RouteTarget.isWildcard = true`。
+- `conn.models === []`（已加载但为空）→ **跳过**，不生成任何 target。
+- `conn.models` 非空 → 生成专用 target（按 `publicId` 匹配）。
+
+> **当前实现路径**：`buildRouteTargets` 经 `listAccounts()` →
+> `connectionToAccount()` 绕道 Account 形状，`connectionModelsToAccountModels`
+> 把 `conn.models` 三态映射为 `account.availableModels` 三态
+>（`undefined` → `undefined`，`[]` → `[]`，非空 → `AccountModel[]`），
+> `buildRouteTargets` 再根据 `account.availableModels` 判定通配。
+> 批次 5 后 Account 形状退场，`buildRouteTargets` 将直接消费
+> `conn.models`，此绕道消除。**规范性规则不变**，只是实现路径简化。
+
+### D.3 调度规则（必须遵守）
+
+1. **两阶段过滤（层级判别）**：`selectRouteTarget` 优先选择专用
+   （非通配）target，仅当无专用 target 时才用通配。层级判别通过
+   `RouteTarget.isWildcard` 类型化字段完成，**不依赖 `connectionPriority`
+   标量编码**。`connectionPriority` 保留 `connection.priority` 原值，
+   仅在同一层级（专用或通配）内参与优先级比较。
+
+   > 旧方案用 `WILDCARD_PRIORITY_BASE = 1e15` 标量偏移使通配 target
+   > 的 `connectionPriority` 远大于专用 connection。新方案用 `isWildcard`
+   > 做两阶段过滤，消除了 1e15 魔数和"专用 priority 永远远小于 1e15"
+   > 的隐式不变量，日志/序列化中也不再出现 `1000000000000042` 这类数字。
+
+2. **保留 priority 相对顺序**：多个通配 target 之间仍按
+   `connection.priority` 区分——priority 越小（越高）的 connection
+   在通配池中排前面。两阶段过滤后通配池内用原始 `connection.priority`
+   比较，不需要偏移或反转。
+
+3. **session affinity 与两阶段过滤的交互**：`selectRouteTarget` 先做
+   两阶段过滤选出 `pool`（专用池或通配池），再在 `pool` 内查 affinity。
+   - 若 `pool` 是专用池：affinity 只在专用 target 中查找，通配 target
+     不参与，自然不会粘住通配。
+   - 若 `pool` 是通配池（无专用可用）：affinity 在通配 target 中正常生效。
+   旧的"通配不粘 affinity"守卫（`!hit.isWildcard || !pool.some(t => !t.isWildcard)`）
+   已由两阶段过滤在 pool 选择时完成，不再需要额外条件判断。
+
+4. **`conn.models === []` 不生成通配 target**：已加载但模型列表为空
+   的 connection 跳过（`buildRouteTargets` 的 `availableModels.length === 0`
+   检查），不参与路由。只有 `conn.models === undefined`（尚未加载/加载失败）
+   才生成通配 target。
+
+   > **三态语义保留**：`connectionModelsToAccountModels` 严格区分
+   > `undefined`（→ 通配）、`[]`（→ 跳过）、非空（→ 专用）。
+   > round-trip 测试（`tests/migrate-accounts-to-connections.test.ts`）
+   > 验证 `[]` 不会被坍缩为 `undefined`。
+
+### D.4 相关代码位置
+
+| 文件 | 作用 |
+| --- | --- |
+| `src/lib/route-target/build.ts` | 通配 target 生成（`isWildcard` 标记 + `connectionPriority` 保留原值） |
+| `src/lib/route-target/select.ts` | 两阶段过滤（`dedicatedPool` 非空则用之，否则用通配池）+ affinity 命中 |
+| `src/lib/provider-connections/types.ts` | `RouteTarget.isWildcard` 字段定义 |
+| `src/lib/provider-connections/connection-to-account.ts` | `connectionModelsToAccountModels`：`conn.models` 三态 → `availableModels` 三态 |
+| `src/services/protocols/copilot-native.ts` | `ensureCopilotToken` 惰性刷新兜底（防止通配 target 因 token 缺失失败触发恶性冷却） |
+
+### D.5 测试覆盖
+
+| 测试文件 | 用例 |
+| --- | --- |
+| `tests/unified-routing.test.ts` | 通配不抢占专用 connection；专用排除后通配兜底；多通配按 priority 排序 |
+| `tests/session-affinity.test.ts` | 通配 target 有专用可用时不粘 affinity；仅通配时正常粘 affinity |
+| `tests/migrate-accounts-to-connections.test.ts` | round-trip 保留 `[]`（不坍缩为 `undefined`）；round-trip 保留 `undefined` |

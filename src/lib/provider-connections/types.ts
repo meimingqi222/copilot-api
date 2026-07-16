@@ -231,6 +231,13 @@ export interface RouteTarget {
   connectionWeight: number
   credentialPriority: number
   credentialWeight: number
+  /**
+   * 通配 target 标志:由 availableModels === undefined 的 account 生成,
+   * 可匹配任意请求模型但优先级最低(仅作兜底)。
+   * session affinity 不应粘住通配 target —— 当专用 connection 可用时应
+   * 优先走专用,避免通配 account 抢占本该路由到专用 provider 的请求。
+   */
+  isWildcard?: boolean
 }
 
 /**

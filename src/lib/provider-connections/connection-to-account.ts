@@ -17,7 +17,7 @@ import type { ProviderProtocol } from "~/lib/provider-connections/types"
 import { isOAuthProviderId } from "~/lib/provider-config"
 import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 
-import type { ProviderConnection } from "./types"
+import type { ModelMapping, ProviderConnection } from "./types"
 
 import {
   getConnectionAuthStatus,
@@ -111,12 +111,25 @@ function mappingToAccountModel(
 
 /**
  * 从 connection.models 反构造 availableModels。
+ *
+ * 保留三态语义:
+ * - conn.models === undefined/null → undefined(尚未加载,触发通配 target)
+ * - conn.models === [](已加载但为空) → [](跳过,不生成通配 target)
+ * - conn.models 非空 → 映射后的 AccountModel[]
+ *
+ * 注意:[] 与 undefined 的区分是通配 target 判定的关键(见附录 D.3 规则 4)。
+ * 若把 [] 坍缩为 undefined,会导致"模型发现完成但结果为空"的 connection
+ * 生成通配 target,吞掉任意请求模型。
  */
 function connectionModelsToAccountModels(
   conn: ProviderConnection,
 ): Array<AccountModel> | undefined {
-  if (!conn.models || conn.models.length === 0) return undefined
-  return conn.models.map((m) =>
+  // conn.models 类型为 Array<ModelMapping> | undefined,
+  // 但 JSON 反序列化可能出现 null,用宽松检查防御。
+  const models = conn.models as Array<ModelMapping> | null | undefined
+  if (models === undefined || models === null) return undefined
+  if (models.length === 0) return []
+  return models.map((m) =>
     mappingToAccountModel({
       publicId: m.publicId,
       upstreamId: m.upstreamId,

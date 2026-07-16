@@ -245,6 +245,49 @@ describe("selectRouteTarget session affinity", () => {
     expect(again?.credentialId).toBe(next?.credentialId)
   })
 
+  test("wildcard target does not stick affinity when dedicated target available", () => {
+    // 复现 edu 场景:session 曾绑定到通配 copilot 账号,但专用 connection
+    // (如火山引擎)可用时,affinity 不应粘住通配 target。
+    // 两阶段过滤:selectRouteTarget 优先选专用池,通配 target 不参与。
+    const dedicated = makeTarget("volcengine", "volc-cred", 10)
+    const wildcard: RouteTarget = {
+      ...makeTarget("copilot-edu", "edu-cred", 0),
+      isWildcard: true,
+    }
+    const candidates = [dedicated, wildcard]
+
+    // 先模拟 session 绑定到通配 target(旧逻辑下可能发生)
+    setSessionAffinity(
+      `openai-compatible::sess-wild::gpt-test`,
+      "copilot-edu::edu-cred",
+    )
+
+    // 有专用 target 可用时,两阶段过滤选出专用池,affinity 在专用池中
+    // 找不到绑定,走正常 priority 选择,选中专用 connection。
+    const selected = selectRouteTarget(candidates, { sessionId: "sess-wild" })
+    expect(selected).not.toBeNull()
+    expect(selected?.connectionId).toBe("volcengine")
+    expect(selected?.isWildcard).toBeFalsy()
+  })
+
+  test("wildcard target sticks affinity when no dedicated target available", () => {
+    // 只有通配 target 时,affinity 正常粘住(兜底场景)
+    const wildcard: RouteTarget = {
+      ...makeTarget("copilot-edu", "edu-cred", 0),
+      isWildcard: true,
+    }
+    const candidates = [wildcard]
+
+    const first = selectRouteTarget(candidates, { sessionId: "sess-only-wild" })
+    expect(first?.connectionId).toBe("copilot-edu")
+
+    // 第二次同 session 应粘住同一个通配 target
+    const second = selectRouteTarget(candidates, {
+      sessionId: "sess-only-wild",
+    })
+    expect(second?.connectionId).toBe("copilot-edu")
+  })
+
   test("fallback session id inherits binding from turn-1 short hash", () => {
     const candidates = [
       makeTarget("conn-a", "cred-a"),

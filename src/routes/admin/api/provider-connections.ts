@@ -19,6 +19,8 @@ import {
   deleteModel,
   findCredential,
   getProviderConnection,
+  isAccountManagedConnection,
+  isAccountManagedProtocol,
   isCredentialAuthMode,
   isModelEndpoint,
   isProviderProtocol,
@@ -39,6 +41,7 @@ import {
   updateModel,
 } from "~/lib/provider-connections"
 import { isCredentialAvailable } from "~/lib/provider-connections/availability"
+import { mountConnectionGuard } from "~/routes/admin/api/provider-connection-guard"
 import { providerConnectionIoRoutes } from "~/routes/admin/api/provider-connection-io"
 import {
   clearCredentialErrorStateAfterSuccessfulTest,
@@ -75,15 +78,23 @@ function normalizeNullableArray(
 }
 
 providerConnectionApiRoutes.get("/", (c) => {
+  // 过滤 account-managed connection(*-native protocol):这些 connection
+  // 由账号管理路径(/admin/api/accounts)管理,不应出现在外部 provider 列表中,
+  // 避免用户在外部 provider 页面误编辑而破坏 account 路径的 metadata。
+  // 判别器用 protocol 派生,T5.2.5 后仍然有效。
   return c.json({
-    connections: listProviderConnections().map((conn) =>
-      sanitizeConnection(conn),
-    ),
+    connections: listProviderConnections()
+      .filter((conn) => !isAccountManagedConnection(conn))
+      .map((conn) => sanitizeConnection(conn)),
   })
 })
 
 // Export / import (batch) — see provider-connection-io.ts
 providerConnectionApiRoutes.route("/", providerConnectionIoRoutes)
+
+// 守卫:所有 /:id 路由拒绝 account-managed connection(*-native protocol)。
+// 详见 provider-connection-guard.ts。
+mountConnectionGuard(providerConnectionApiRoutes)
 
 providerConnectionApiRoutes.post("/", async (c) => {
   let payload: Record<string, unknown>
@@ -103,6 +114,16 @@ providerConnectionApiRoutes.post("/", async (c) => {
   if (!name) return c.json({ error: "`name` is required" }, 400)
   if (!protocol || !isProviderProtocol(protocol)) {
     return c.json({ error: "Invalid `protocol`" }, 400)
+  }
+  // 写入不变量:*-native protocol 只能由账号管理路径创建,
+  // 外部 provider API 不允许创建 account-managed connection。
+  if (isAccountManagedProtocol(protocol)) {
+    return c.json(
+      {
+        error: `Protocol "${protocol}" is account-managed. Use the accounts API to create this type of connection.`,
+      },
+      400,
+    )
   }
   if (!baseUrl) return c.json({ error: "`baseUrl` is required" }, 400)
 
@@ -158,6 +179,19 @@ providerConnectionApiRoutes.put("/:id", async (c) => {
       || !isProviderProtocol(payload.protocol))
   ) {
     return c.json({ error: "Invalid `protocol`" }, 400)
+  }
+  // 写入不变量:不允许通过外部 provider API 把 protocol 改成 *-native
+  if (
+    typeof payload.protocol === "string"
+    && isProviderProtocol(payload.protocol)
+    && isAccountManagedProtocol(payload.protocol)
+  ) {
+    return c.json(
+      {
+        error: `Protocol "${payload.protocol}" is account-managed. Use the accounts API to manage this type of connection.`,
+      },
+      400,
+    )
   }
 
   try {
