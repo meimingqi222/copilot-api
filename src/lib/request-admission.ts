@@ -158,13 +158,10 @@ export async function prepareRequestAdmission(
   })
   if (!target) {
     const diagnostic = diagnoseRouteFailure(options)
-    const headers: Record<string, string> = {}
-    if (diagnostic.retryAfterSeconds > 0) {
-      headers["Retry-After"] = String(diagnostic.retryAfterSeconds)
-    }
     throw new HTTPError(
       diagnostic.message,
-      new Response(diagnostic.message, { status: 429, headers }),
+      buildRateLimitResponse(options.endpoint, diagnostic),
+      buildRateLimitResponseBody(options.endpoint, diagnostic),
     )
   }
 
@@ -215,6 +212,11 @@ type FailureReason = "disabled" | "cooldown" | "quota" | "auth" | "unknown"
 interface RouteFailureDiagnostic {
   message: string
   retryAfterSeconds: number
+  /**
+   * 主因:用于构造客户端可识别的 error.type / error.code。
+   * 混合原因下取最严重的(quota > auth > cooldown > disabled > unknown)。
+   */
+  reason: FailureReason
 }
 
 function diagnoseRouteFailure(
@@ -234,6 +236,7 @@ function diagnoseRouteFailure(
     return {
       message: `No available route for model "${options.model}": model is not configured or not supported by any enabled provider`,
       retryAfterSeconds: 0,
+      reason: "unknown",
     }
   }
 
@@ -245,33 +248,40 @@ function diagnoseRouteFailure(
     return {
       message: `No available route for model "${options.model}": all candidates were filtered out by routing rules`,
       retryAfterSeconds: 0,
+      reason: "unknown",
     }
   }
+
+  const dominantReason = pickDominantFailureReason(reasons)
 
   if (reasons.size === 1) {
     const reason = [...reasons][0]
     if (reason === "quota") {
       return {
         message: `No available route for model "${options.model}": quota exhausted for all providers`,
-        retryAfterSeconds: 0,
+        retryAfterSeconds,
+        reason: dominantReason,
       }
     }
     if (reason === "cooldown") {
       return {
         message: `No available route for model "${options.model}": all providers are temporarily rate-limited`,
         retryAfterSeconds,
+        reason: dominantReason,
       }
     }
     if (reason === "auth") {
       return {
         message: `No available route for model "${options.model}": authentication failed for all providers`,
         retryAfterSeconds: 0,
+        reason: dominantReason,
       }
     }
     if (reason === "disabled") {
       return {
         message: `No available route for model "${options.model}": all providers are disabled`,
         retryAfterSeconds: 0,
+        reason: dominantReason,
       }
     }
   }
@@ -301,7 +311,89 @@ function diagnoseRouteFailure(
   return {
     message: `No available route for model "${options.model}": all providers are unavailable (${reasonLabels})`,
     retryAfterSeconds,
+    reason: dominantReason,
   }
+}
+
+/**
+ * 从混合原因中选最严重的,作为构造 error.type/code 的主因。
+ * quota > auth > cooldown > disabled > unknown
+ */
+function pickDominantFailureReason(reasons: Set<FailureReason>): FailureReason {
+  if (reasons.has("quota")) return "quota"
+  if (reasons.has("auth")) return "auth"
+  if (reasons.has("cooldown")) return "cooldown"
+  if (reasons.has("disabled")) return "disabled"
+  return "unknown"
+}
+
+/**
+ * 按 endpoint 协议构造错误响应体。
+ *
+ * - Anthropic `/v1/messages`: `{ type: "error", error: { type, message } }`,
+ *   `type` = `rate_limit_error`(cooldown)或 `billing_error`(quota)。
+ *   参考:docs.anthropic.com/en/api/errors
+ * - OpenAI(`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`):
+ *   `{ error: { message, type, param, code } }`,
+ *   `code` = `insufficient_quota`(quota)或 `rate_limit_exceeded`(其他)。
+ *   参考:platform.openai.com/docs/guides/error-codes
+ */
+function buildRateLimitResponseBody(
+  endpoint: ModelEndpoint,
+  diagnostic: RouteFailureDiagnostic,
+): string {
+  const isAnthropic = endpoint === "messages"
+  if (isAnthropic) {
+    const errorType =
+      diagnostic.reason === "quota" ? "billing_error" : "rate_limit_error"
+    return JSON.stringify({
+      type: "error",
+      error: {
+        type: errorType,
+        message: diagnostic.message,
+      },
+    })
+  }
+  const code =
+    diagnostic.reason === "quota" ? "insufficient_quota" : "rate_limit_exceeded"
+  return JSON.stringify({
+    error: {
+      message: diagnostic.message,
+      type: code,
+      param: null,
+      code,
+    },
+  })
+}
+
+/**
+ * 构造 429 响应,包含 3 个客户端 SDK 都会读取的退避 headers:
+ *
+ * - `Retry-After`:HTTP 标准,秒。所有 SDK 默认读取此 header。
+ * - `retry-after-ms`:Anthropic 风格,毫秒。oh-my-pi 等客户端优先读取,
+ *   提供更高精度(避免 0.5s 被 floor 到 0)。
+ * - `x-ratelimit-reset`:OpenAI 风格,秒。oh-my-pi 等客户端作为补充信号读取。
+ *
+ * 没有退避时间(reasons 没有 cooldown/quota)时不设置这些 headers,
+ * 让客户端走默认指数退避。
+ */
+function buildRateLimitResponse(
+  endpoint: ModelEndpoint,
+  diagnostic: RouteFailureDiagnostic,
+): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  }
+  if (diagnostic.retryAfterSeconds > 0) {
+    const retryAfterMs = diagnostic.retryAfterSeconds * 1000
+    headers["Retry-After"] = String(diagnostic.retryAfterSeconds)
+    headers["retry-after-ms"] = String(retryAfterMs)
+    headers["x-ratelimit-reset"] = String(diagnostic.retryAfterSeconds)
+  }
+  return new Response(buildRateLimitResponseBody(endpoint, diagnostic), {
+    status: 429,
+    headers,
+  })
 }
 
 function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
@@ -319,8 +411,10 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
       if (!availability.available) {
         const reason = mapAccountReason(availability.reason)
         reasons.add(reason)
+        // quota 也提取 retryAfterSeconds(凭据配额耗尽时也有 cooldownUntil,
+        // 通常是 24h 自动恢复窗口),客户端据此退避,避免立即重试雪崩。
         if (
-          reason === "cooldown"
+          (reason === "cooldown" || reason === "quota")
           && availability.retryAfterSeconds > retryAfterSeconds
         ) {
           retryAfterSeconds = availability.retryAfterSeconds
@@ -370,8 +464,10 @@ function getCredentialFailureDiagnostic(
 
   const reason = mapCredentialReason(credential.status)
   let retryAfterSeconds = 0
+  // cooldown 和 quota_exhausted 都有 cooldownUntil(冷却 / 配额恢复窗口)。
+  // 提取剩余秒数让客户端据此退避,避免立即重试导致雪崩。
   if (
-    reason === "cooldown"
+    (reason === "cooldown" || reason === "quota")
     && credential.cooldownUntil
     && credential.cooldownUntil > Date.now()
   ) {

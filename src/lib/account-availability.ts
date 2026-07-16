@@ -104,7 +104,26 @@ export function getAccountAvailability(account: Account): {
   }
 
   if (account.quotaState === "exhausted") {
-    return { available: false, reason: "quota", retryAfterSeconds: 0 }
+    // 配额耗尽时,根据 quotaExhaustedAt + 自动恢复窗口计算剩余时间,
+    // 客户端据此退避,避免立即重试导致雪崩。
+    let retryAfterSeconds = 0
+    if (account.quotaExhaustedAt) {
+      const recoverAt =
+        account.quotaExhaustedAt + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+      const remainingMs = recoverAt - Date.now()
+      if (remainingMs > 0) {
+        retryAfterSeconds = Math.ceil(remainingMs / 1000)
+      }
+    }
+    // 如果有 cooldownUntil(更精确的恢复时间,如 Codex usage_limit_reached
+    // 返回了 resets_at),优先使用 cooldownUntil。
+    if (account.cooldownUntil && account.cooldownUntil > Date.now()) {
+      const cooldownSec = Math.ceil((account.cooldownUntil - Date.now()) / 1000)
+      if (cooldownSec > retryAfterSeconds) {
+        retryAfterSeconds = cooldownSec
+      }
+    }
+    return { available: false, reason: "quota", retryAfterSeconds }
   }
 
   return { available: true, reason: "available", retryAfterSeconds: 0 }
