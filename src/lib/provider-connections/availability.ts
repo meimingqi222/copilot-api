@@ -239,11 +239,13 @@ export function isCodexUsageLimitError(body: string): boolean {
   if (!body) return false
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>
-    const errorType = (parsed.error as Record<string, unknown> | undefined)
-      ?.type
+    const errorObj = parsed.error as Record<string, unknown> | undefined
+    const errorType = errorObj?.type
+    const errorCode = errorObj?.code
     const topLevelType = parsed.type
     return (
       errorType === "usage_limit_reached"
+      || errorCode === "AccountQuotaExceeded"
       || topLevelType === "usage_limit_reached"
     )
   } catch {
@@ -264,7 +266,12 @@ export function parseCodexUsageLimitRetryAfter(
     const parsed = JSON.parse(body) as Record<string, unknown>
     const error = parsed.error as Record<string, unknown> | undefined
     if (!error) return undefined
-    if (error.type !== "usage_limit_reached") return undefined
+    if (
+      error.type !== "usage_limit_reached"
+      && error.code !== "AccountQuotaExceeded"
+    ) {
+      return undefined
+    }
 
     // resets_at — Unix timestamp (seconds)
     const resetsAt = error.resets_at
@@ -283,6 +290,33 @@ export function parseCodexUsageLimitRetryAfter(
         resetsInSeconds * 1000,
         DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
       )
+    }
+
+    // Parse "reset at" timestamp from the error message.
+    // e.g. "...reset at 2026-07-16 20:27:09 +0800 CST..."
+    // The offset is part of the message and must be preserved; appending "Z"
+    // would treat a local time as UTC and extend the cooldown by hours.
+    const message = typeof error.message === "string" ? error.message : ""
+    const resetAtMatch = message.match(
+      /reset at (\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\s*([+-]\d{2}:?\d{2}))?/,
+    )
+    if (resetAtMatch) {
+      const datePart = resetAtMatch[1].replace(" ", "T")
+      const offsetRaw = resetAtMatch[2]
+      let offsetPart = "Z"
+      if (offsetRaw) {
+        offsetPart =
+          offsetRaw.includes(":") ? offsetRaw : (
+            `${offsetRaw.slice(0, 3)}:${offsetRaw.slice(3)}`
+          )
+      }
+      const resetTime = Date.parse(`${datePart}${offsetPart}`)
+      if (!Number.isNaN(resetTime)) {
+        const diff = resetTime - Date.now()
+        if (diff > 0) {
+          return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
+        }
+      }
     }
 
     // No reset timing — use default quota cooldown

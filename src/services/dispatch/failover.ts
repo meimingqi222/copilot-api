@@ -181,9 +181,10 @@ async function markAccountCooldown(
     if (error.kind === "quota_exhausted") {
       invalidateSessionAffinityAuth(authKey)
       setAccountQuotaState(account, "exhausted")
-      if (error.retryAfterMs) {
-        account.cooldownUntil = Date.now() + error.retryAfterMs
-      }
+      account.cooldownUntil =
+        error.retryAfterMs ?
+          Date.now() + error.retryAfterMs
+        : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
       syncLegacyExhaustedState(account)
       const conn = getMutableProviderConnection(account.id)
       if (conn) syncAccountToConnection(conn, account)
@@ -233,9 +234,10 @@ async function markAccountCooldown(
     if (classified.kind === "quota_exhausted") {
       invalidateSessionAffinityAuth(authKey)
       setAccountQuotaState(account, "exhausted")
-      if (classified.retryAfterMs) {
-        account.cooldownUntil = Date.now() + classified.retryAfterMs
-      }
+      account.cooldownUntil =
+        classified.retryAfterMs ?
+          Date.now() + classified.retryAfterMs
+        : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
       syncLegacyExhaustedState(account)
       const quotaConn = getMutableProviderConnection(account.id)
       if (quotaConn) syncAccountToConnection(quotaConn, account)

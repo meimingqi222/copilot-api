@@ -5,17 +5,23 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
+import type { Account } from "~/lib/accounts"
+
+import { refreshAccountRuntimeAvailability } from "~/lib/account-availability"
 import {
   __resetProviderConnectionsForTest,
   classifyUpstreamError,
   createConnection,
+  DEFAULTS,
   getProviderConnection,
+  isCodexUsageLimitError,
   isCredentialAvailable,
   isProviderProtocol,
   listProviderConnections,
   markCredentialAuthError,
   markCredentialCooldown,
   markCredentialQuotaExhausted,
+  parseCodexUsageLimitRetryAfter,
   refreshCredentialAvailability,
   resetCredentialStatus,
   setCredentialEnabled,
@@ -23,6 +29,7 @@ import {
   type ProviderConnection,
   updateConnection,
 } from "~/lib/provider-connections"
+import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
@@ -39,6 +46,32 @@ const originalFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = originalFetch
 })
+
+function buildAccount(overrides?: Partial<Account>): Account {
+  return {
+    id: "acct-test",
+    label: "Test",
+    provider: "codex",
+    enabled: true,
+    priority: 0,
+    quotaState: "unknown",
+    createdAt: Date.now(),
+    ...overrides,
+  }
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0")
+
+/** Format a future Date (in UTC+offsetHours wall-clock) as "YYYY-MM-DD HH:MM:SS". */
+function formatOffsetWallClock(future: Date, offsetHours: number): string {
+  const offsetMs = offsetHours * 3600 * 1000
+  const local = new Date(future.getTime() + offsetMs)
+  return `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(
+    local.getUTCDate(),
+  )} ${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}:${pad2(
+    local.getUTCSeconds(),
+  )}`
+}
 
 async function setupSimpleConnection(opts?: {
   id?: string
@@ -291,6 +324,208 @@ describe("classifyUpstreamError", () => {
       classifyUpstreamError({ status: 503, retryAfterHeader: null, body: "" })
         .kind,
     ).toBe("server_error")
+  })
+})
+
+describe("isCodexUsageLimitError", () => {
+  test("matches error.type === usage_limit_reached", () => {
+    const body = JSON.stringify({
+      error: { type: "usage_limit_reached", message: "limit reached" },
+    })
+    expect(isCodexUsageLimitError(body)).toBe(true)
+  })
+
+  test("matches error.code === AccountQuotaExceeded", () => {
+    const body = JSON.stringify({
+      error: { code: "AccountQuotaExceeded", message: "quota exceeded" },
+    })
+    expect(isCodexUsageLimitError(body)).toBe(true)
+  })
+
+  test("matches top-level type === usage_limit_reached", () => {
+    const body = JSON.stringify({ type: "usage_limit_reached" })
+    expect(isCodexUsageLimitError(body)).toBe(true)
+  })
+
+  test("returns false for unrelated errors", () => {
+    const body = JSON.stringify({
+      error: { type: "rate_limit_exceeded", message: "slow down" },
+    })
+    expect(isCodexUsageLimitError(body)).toBe(false)
+  })
+
+  test("returns false for empty body", () => {
+    expect(isCodexUsageLimitError("")).toBe(false)
+  })
+})
+
+describe("parseCodexUsageLimitRetryAfter", () => {
+  test("parses resets_at unix timestamp", () => {
+    const futureSeconds = Math.floor(Date.now() / 1000) + 3600
+    const body = JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        resets_at: futureSeconds,
+      },
+    })
+    const result = parseCodexUsageLimitRetryAfter(body)
+    expect(result).toBeDefined()
+    expect(result ?? 0).toBeGreaterThan(3_500_000)
+    expect(result ?? 0).toBeLessThanOrEqual(3_600_000)
+  })
+
+  test("parses resets_in_seconds", () => {
+    const body = JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        resets_in_seconds: 1800,
+      },
+    })
+    expect(parseCodexUsageLimitRetryAfter(body)).toBe(1_800_000)
+  })
+
+  test("parses error.code === AccountQuotaExceeded with resets_in_seconds", () => {
+    const body = JSON.stringify({
+      error: {
+        code: "AccountQuotaExceeded",
+        resets_in_seconds: 600,
+      },
+    })
+    expect(parseCodexUsageLimitRetryAfter(body)).toBe(600_000)
+  })
+
+  test("parses 'reset at' timestamp with +0800 offset", () => {
+    const future = new Date(Date.now() + 2 * 3600 * 1000)
+    const dateStr = formatOffsetWallClock(future, 8)
+    const body = JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        message: `You have reached your usage limit. It will reset at ${dateStr} +0800 CST.`,
+      },
+    })
+    const result = parseCodexUsageLimitRetryAfter(body)
+    expect(result).toBeDefined()
+    // Should be ~2h (with a small tolerance for test execution time)
+    expect(result ?? 0).toBeGreaterThan(7_100_000)
+    expect(result ?? 0).toBeLessThanOrEqual(7_200_000)
+  })
+
+  test("parses 'reset at' timestamp with colon offset (+08:00)", () => {
+    const future = new Date(Date.now() + 3600 * 1000)
+    const dateStr = formatOffsetWallClock(future, 8)
+    const body = JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        message: `reset at ${dateStr} +08:00`,
+      },
+    })
+    const result = parseCodexUsageLimitRetryAfter(body)
+    expect(result).toBeDefined()
+    expect(result ?? 0).toBeGreaterThan(3_500_000)
+    expect(result ?? 0).toBeLessThanOrEqual(3_600_000)
+  })
+
+  test("returns default when no reset timing is available", () => {
+    const body = JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        message: "limit reached, no timing info",
+      },
+    })
+    expect(parseCodexUsageLimitRetryAfter(body)).toBe(
+      DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+    )
+  })
+
+  test("returns undefined for non-usage-limit body", () => {
+    const body = JSON.stringify({
+      error: { type: "rate_limit_exceeded" },
+    })
+    expect(parseCodexUsageLimitRetryAfter(body)).toBeUndefined()
+  })
+
+  test("returns undefined for missing error object", () => {
+    expect(parseCodexUsageLimitRetryAfter(JSON.stringify({}))).toBeUndefined()
+  })
+})
+
+describe("refreshAccountRuntimeAvailability", () => {
+  beforeEach(() => {
+    __resetProviderConnectionsForTest()
+    resetAdaptiveRateLimiterForTest()
+  })
+
+  afterEach(() => {
+    resetAdaptiveRateLimiterForTest()
+  })
+
+  test("recovers from cooldown after cooldownUntil expires", () => {
+    const account = buildAccount({
+      cooldownUntil: Date.now() - 1000,
+      lastRateLimitReason: "upstream_429",
+      quotaState: "unknown",
+    })
+    const recovered = refreshAccountRuntimeAvailability(account)
+    expect(recovered).toBe(true)
+    expect(account.cooldownUntil).toBeUndefined()
+    expect(account.lastRateLimitReason).toBeUndefined()
+  })
+
+  test("does not recover while cooldownUntil is in the future", () => {
+    const future = Date.now() + 60_000
+    const account = buildAccount({
+      cooldownUntil: future,
+      lastRateLimitReason: "upstream_429",
+    })
+    const recovered = refreshAccountRuntimeAvailability(account)
+    expect(recovered).toBe(false)
+    expect(account.cooldownUntil).toBe(future)
+  })
+
+  test("auto-recovers quota_exhausted after DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS", () => {
+    const account = buildAccount({
+      quotaState: "exhausted",
+      quotaExhaustedAt:
+        Date.now() - DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS - 1000,
+      // No cooldownUntil — simulates upstream 429 with quota body but no reset time
+      cooldownUntil: undefined,
+    })
+    const recovered = refreshAccountRuntimeAvailability(account)
+    expect(recovered).toBe(true)
+    expect(account.quotaState).toBe("unknown")
+    expect(account.quotaExhaustedAt).toBeUndefined()
+  })
+
+  test("does not auto-recover quota_exhausted before recovery window", () => {
+    const account = buildAccount({
+      quotaState: "exhausted",
+      quotaExhaustedAt: Date.now() - 1000,
+      cooldownUntil: undefined,
+    })
+    const recovered = refreshAccountRuntimeAvailability(account)
+    expect(recovered).toBe(false)
+    expect(account.quotaState).toBe("exhausted")
+  })
+
+  test("recovers quota_exhausted via cooldownUntil expiry (resets quotaState)", () => {
+    const account = buildAccount({
+      quotaState: "exhausted",
+      cooldownUntil: Date.now() - 1000,
+      quotaExhaustedAt: Date.now() - 2000,
+    })
+    const recovered = refreshAccountRuntimeAvailability(account)
+    expect(recovered).toBe(true)
+    expect(account.cooldownUntil).toBeUndefined()
+    expect(account.quotaState).toBe("unknown")
+    expect(account.quotaExhaustedAt).toBeUndefined()
+  })
+
+  test("returns false for healthy account with no cooldown", () => {
+    const account = buildAccount()
+    const recovered = refreshAccountRuntimeAvailability(account)
+    expect(recovered).toBe(false)
+    expect(account.cooldownUntil).toBeUndefined()
+    expect(account.quotaState).toBe("unknown")
   })
 })
 

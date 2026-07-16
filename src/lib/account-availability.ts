@@ -5,6 +5,7 @@ import { saveAccounts } from "~/lib/account-store"
 import { getAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import {
+  DEFAULTS,
   getMutableProviderConnection,
   syncAccountToConnection,
 } from "~/lib/provider-connections"
@@ -39,9 +40,35 @@ export function refreshAccountRuntimeAvailability(account: Account): boolean {
   if (account.cooldownUntil && account.cooldownUntil < Date.now()) {
     account.cooldownUntil = undefined
     account.lastRateLimitReason = undefined
+    // Also reset quotaState if we were in exhausted state.
+    // This prevents permanent lock-out for OAuth providers.
+    if (account.quotaState === "exhausted") {
+      account.quotaState = "unknown"
+      account.quotaExhaustedAt = undefined
+    }
     syncLegacyExhaustedState(account)
     logger.info(
       `Account cooldown expired — re-activating: ${JSON.stringify(
+        buildAccountDiagnosticSnapshot(account),
+      )}`,
+    )
+    return true
+  }
+
+  // Auto-recover quota_exhausted state after QUOTA_EXHAUSTED_AUTO_RECOVERY_MS.
+  // Handles the case where cooldownUntil was not set (e.g. upstream returned
+  // 429 with a quota body but no parseable reset time / Retry-After header).
+  if (
+    account.quotaState === "exhausted"
+    && account.quotaExhaustedAt
+    && Date.now() - account.quotaExhaustedAt
+      >= DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+  ) {
+    account.quotaState = "unknown"
+    account.quotaExhaustedAt = undefined
+    syncLegacyExhaustedState(account)
+    logger.info(
+      `Account quota exhausted timed out — re-activating: ${JSON.stringify(
         buildAccountDiagnosticSnapshot(account),
       )}`,
     )

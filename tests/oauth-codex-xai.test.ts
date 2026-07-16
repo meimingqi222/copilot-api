@@ -21,7 +21,10 @@ import {
   extractCodexSubscriptionActiveUntilFromIdToken,
 } from "~/services/oauth/jwt"
 import { generatePkceCodes } from "~/services/oauth/pkce"
-import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
+import {
+  refreshOAuthAccountToken,
+  clearOAuthAuthError,
+} from "~/services/oauth/refresh-scheduler"
 import {
   buildXaiAuthUrl,
   discoverXaiOAuthEndpoints,
@@ -481,5 +484,104 @@ describe("OAuth refresh scheduler", () => {
     expect(account.credentials?.accessToken).toBe("xai-new-access")
     expect(account.credentials?.refreshToken).toBe("xai-new-refresh")
     expect(account.runtimeState?.authStatus).toBe("ready")
+  })
+
+  test("refreshOAuthAccountToken resets authStatus to ready on success after prior error", async () => {
+    const account: OAuthAccount = {
+      id: "acct-codex-recover",
+      label: "Codex Recover",
+      provider: "codex",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "old-access",
+        refreshToken: "codex-refresh",
+      },
+      runtimeState: { authStatus: "error", lastError: "previous failure" },
+    }
+    setTestAccounts([account])
+
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "new-access",
+            refresh_token: "new-refresh",
+            expires_in: 3600,
+          }),
+          { status: 200 },
+        ),
+      )) as unknown as typeof fetch
+
+    await refreshOAuthAccountToken(account, "test")
+    expect(account.credentials?.accessToken).toBe("new-access")
+    expect(account.runtimeState?.authStatus).toBe("ready")
+    expect(account.runtimeState?.lastError).toBeUndefined()
+    expect(account.runtimeState?.lastRefreshAt).toBeDefined()
+  })
+
+  test("refreshOAuthAccountToken sets authStatus to error on failure", async () => {
+    const account: OAuthAccount = {
+      id: "acct-codex-fail",
+      label: "Codex Fail",
+      provider: "codex",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "old-access",
+        refreshToken: "codex-refresh",
+      },
+      runtimeState: { authStatus: "ready" },
+    }
+    setTestAccounts([account])
+
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "temporarily_unavailable" }), {
+          status: 500,
+        }),
+      )) as unknown as typeof fetch
+
+    let threw = false
+    try {
+      await refreshOAuthAccountToken(account, "test")
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(true)
+    expect(account.runtimeState?.authStatus).toBe("error")
+    expect(account.runtimeState?.lastError).toContain("Codex token refresh")
+  })
+
+  test("clearOAuthAuthError resets authStatus and reschedules", () => {
+    const account: OAuthAccount = {
+      id: "acct-codex-clear",
+      label: "Codex Clear",
+      provider: "codex",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "access",
+        refreshToken: "refresh",
+        expiresAt: Date.now() + 3600_000,
+      },
+      runtimeState: { authStatus: "error", lastError: "broken" },
+    }
+    setTestAccounts([account])
+
+    clearOAuthAuthError(account.id)
+
+    // After clearing, the account should no longer have authStatus === "error".
+    // buildRuntimeState only sets authStatus when it's NOT "ready", so
+    // authStatus being undefined means the account is in the default ready state.
+    const updated = listAccounts().find((a) => a.id === account.id)
+    expect(updated?.runtimeState?.authStatus).not.toBe("error")
+    expect(updated?.runtimeState?.lastError).toBeUndefined()
   })
 })

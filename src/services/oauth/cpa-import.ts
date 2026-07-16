@@ -106,6 +106,7 @@ export function mapCpaRecordToAccount(
   const tokenEndpoint =
     provider === "xai" ?
       pickString(
+        record.token_endpoint,
         record.attributes?.token_endpoint,
         record.attributes?.tokenEndpoint,
         XAI_DEFAULT_TOKEN_ENDPOINT,
