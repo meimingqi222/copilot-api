@@ -179,6 +179,71 @@ describe("availability state machine", () => {
     expect(cred.status).toBe("ready")
   })
 
+  // 回归测试:cooldownUntil === undefined 但 status 仍为 quota_exhausted 时,
+  // refreshCredentialAvailability 必须恢复为 ready。
+  // 这覆盖了 normalizeConnectionRuntimeFields 清除 cooldownUntil 但不重置
+  // status 的历史 bug,以及从磁盘加载时 cooldownUntil 丢失的边缘情况。
+  test("quota_exhausted with undefined cooldownUntil auto-recovers", () => {
+    const cred: ApiCredential = {
+      id: "x",
+      authMode: "bearer" as const,
+      value: "v",
+      enabled: true,
+      status: "quota_exhausted" as const,
+      cooldownUntil: undefined,
+      createdAt: Date.now(),
+    }
+    refreshCredentialAvailability(cred)
+    expect(cred.status).toBe("ready")
+    expect(cred.cooldownUntil).toBeUndefined()
+  })
+
+  test("cooldown with undefined cooldownUntil auto-recovers", () => {
+    const cred: ApiCredential = {
+      id: "x",
+      authMode: "bearer" as const,
+      value: "v",
+      enabled: true,
+      status: "cooldown" as const,
+      cooldownUntil: undefined,
+      createdAt: Date.now(),
+    }
+    refreshCredentialAvailability(cred)
+    expect(cred.status).toBe("ready")
+    expect(cred.cooldownUntil).toBeUndefined()
+  })
+
+  // 回归测试:cooldownUntil 未过期时不应恢复
+  test("quota_exhausted with future cooldownUntil does not recover", () => {
+    const future = Date.now() + 60_000
+    const cred: ApiCredential = {
+      id: "x",
+      authMode: "bearer" as const,
+      value: "v",
+      enabled: true,
+      status: "quota_exhausted" as const,
+      cooldownUntil: future,
+      createdAt: Date.now(),
+    }
+    refreshCredentialAvailability(cred)
+    expect(cred.status).toBe("quota_exhausted")
+    expect(cred.cooldownUntil).toBe(future)
+  })
+
+  // 回归测试:disabled credential 不被 refresh 恢复
+  test("disabled credential is not affected by refresh", () => {
+    const cred: ApiCredential = {
+      id: "x",
+      authMode: "bearer" as const,
+      value: "v",
+      enabled: false,
+      status: "disabled" as const,
+      createdAt: Date.now(),
+    }
+    refreshCredentialAvailability(cred)
+    expect(cred.status).toBe("disabled")
+  })
+
   test("setCredentialEnabled toggles disabled status", () => {
     const cred: ApiCredential = {
       id: "x",

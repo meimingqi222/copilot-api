@@ -149,7 +149,9 @@ export function buildRouteTargets(
     if (onlyAvailable && !connection.enabled) continue
 
     const credentials = safeCredentials(connection)
-    refreshConnectionAvailability({ ...connection, credentials })
+    // 直接在原 connection 上 refresh,让 stateRoot 中的 credential
+    // 状态被正确恢复(已过期的 cooldown / quota_exhausted → ready)。
+    refreshConnectionAvailability(connection)
 
     // account-backed 虚拟 connection 特殊处理:availableModels === undefined 生成通配 target
     if (account && account.availableModels === undefined) {
@@ -326,10 +328,7 @@ export function listExposedPublicModels(
   }> = []
   for (const connection of connections) {
     if (!connection.enabled) continue
-    refreshConnectionAvailability({
-      ...connection,
-      credentials: safeCredentials(connection),
-    })
+    refreshConnectionAvailability(connection)
     for (const model of connection.models ?? []) {
       if (!model.enabled) continue
       const ids = [model.publicId, ...(model.aliases ?? [])]

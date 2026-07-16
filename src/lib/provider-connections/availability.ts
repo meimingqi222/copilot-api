@@ -14,15 +14,23 @@ import type { ApiCredential, ProviderConnection } from "./types"
 
 import { DEFAULTS } from "./types"
 
-/** 把过期的 cooldown / 长期 quota_exhausted 自动恢复为 ready。 */
+/**
+ * 把过期的 cooldown / 长期 quota_exhausted 自动恢复为 ready。
+ *
+ * 修复:当 cooldownUntil === undefined 但 status 仍为 cooldown/quota_exhausted
+ * 时也恢复为 ready。这处理了 normalizeConnectionRuntimeFields 清除
+ * cooldownUntil 但不重置 status 的历史 bug,以及从磁盘加载时
+ * cooldownUntil 丢失的边缘情况。如果上游仍处于限额状态,
+ * 下次请求会重新标记 credential。
+ */
 export function refreshCredentialAvailability(
   credential: ApiCredential,
   now: number = Date.now(),
 ): void {
   if (
     credential.status === "cooldown"
-    && credential.cooldownUntil !== undefined
-    && credential.cooldownUntil <= now
+    && (credential.cooldownUntil === undefined
+      || credential.cooldownUntil <= now)
   ) {
     credential.status = "ready"
     credential.cooldownUntil = undefined
@@ -30,8 +38,8 @@ export function refreshCredentialAvailability(
 
   if (
     credential.status === "quota_exhausted"
-    && credential.cooldownUntil !== undefined
-    && credential.cooldownUntil <= now
+    && (credential.cooldownUntil === undefined
+      || credential.cooldownUntil <= now)
   ) {
     credential.status = "ready"
     credential.cooldownUntil = undefined
@@ -42,7 +50,9 @@ export function refreshConnectionAvailability(
   connection: ProviderConnection,
   now: number = Date.now(),
 ): void {
-  for (const credential of connection.credentials) {
+  const credentials = connection.credentials
+  if (!Array.isArray(credentials)) return
+  for (const credential of credentials) {
     refreshCredentialAvailability(credential, now)
   }
 }
