@@ -233,16 +233,26 @@ function normalizeAccountRuntimeFields(account: Account): void {
 /**
  * 规范化 connection 的运行时字段（cooldownUntil、lastRateLimit）。
  * 镜像原 normalizeAccountRuntimeFields 的逻辑，但直接操作 connection。
+ *
+ * 修复:清除已过期的 cooldownUntil 时必须同时重置 status,
+ * 否则 refreshCredentialAvailability 因 cooldownUntil === undefined
+ * 无法恢复 credential,导致永久卡在 quota_exhausted / cooldown。
+ * 同时处理所有 credential,不只 credentials[0]。
  */
 function normalizeConnectionRuntimeFields(conn: ProviderConnection): void {
   const now = Date.now()
-  const cred = conn.credentials[0]
-  if (typeof cred.cooldownUntil === "number") {
-    if (cred.cooldownUntil <= now) {
+  for (const cred of conn.credentials) {
+    if (typeof cred.cooldownUntil === "number") {
+      if (cred.cooldownUntil <= now) {
+        // cooldown 已过期:清除 cooldownUntil 并重置 status
+        cred.cooldownUntil = undefined
+        if (cred.status === "cooldown" || cred.status === "quota_exhausted") {
+          cred.status = cred.enabled ? "ready" : "disabled"
+        }
+      }
+    } else {
       cred.cooldownUntil = undefined
     }
-  } else {
-    cred.cooldownUntil = undefined
   }
   // Also normalize metadata.cooldownUntil (connectionToAccount falls back to it)
   const meta = conn.metadata

@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto"
 import { logger } from "~/lib/logger"
 import { emitStateChange } from "~/lib/state-events"
 
+import { refreshConnectionAvailability } from "./availability"
 import { loadProviderConnections, saveProviderConnections } from "./store"
 import {
   type ApiCredential,
@@ -41,6 +42,13 @@ export async function initializeProviderConnections(): Promise<void> {
   try {
     stateRoot.connections = await loadProviderConnections()
     stateRoot.loaded = true
+    // 启动时对所有 connection 做 availability refresh,
+    // 把已过期的 cooldown / quota_exhausted 自动恢复为 ready。
+    // 这覆盖了外部 provider connection(account-store 的
+    // normalizeAllConnectionRuntimeFields 只处理 account connection)。
+    for (const conn of stateRoot.connections) {
+      refreshConnectionAvailability(conn)
+    }
     logger.info(
       `[provider-connections] loaded ${stateRoot.connections.length} connection(s)`,
     )

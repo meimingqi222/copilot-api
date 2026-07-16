@@ -40,7 +40,10 @@ import {
   updateCredential,
   updateModel,
 } from "~/lib/provider-connections"
-import { isCredentialAvailable } from "~/lib/provider-connections/availability"
+import {
+  isCredentialAvailable,
+  refreshConnectionAvailability,
+} from "~/lib/provider-connections/availability"
 import { mountConnectionGuard } from "~/routes/admin/api/provider-connection-guard"
 import { providerConnectionIoRoutes } from "~/routes/admin/api/provider-connection-io"
 import {
@@ -82,10 +85,18 @@ providerConnectionApiRoutes.get("/", (c) => {
   // 由账号管理路径(/admin/api/accounts)管理,不应出现在外部 provider 列表中,
   // 避免用户在外部 provider 页面误编辑而破坏 account 路径的 metadata。
   // 判别器用 protocol 派生,T5.2.5 后仍然有效。
+  //
+  // 列表请求时先 refresh 一次:把已过期的 cooldown / quota_exhausted
+  // 自动恢复为 ready,让 WebUI 看到实时状态(否则限额过期后仍显示红色,
+  // 必须手工点"测试"才能恢复)。
+  const connections = listProviderConnections().filter(
+    (conn) => !isAccountManagedConnection(conn),
+  )
+  for (const conn of connections) {
+    refreshConnectionAvailability(conn)
+  }
   return c.json({
-    connections: listProviderConnections()
-      .filter((conn) => !isAccountManagedConnection(conn))
-      .map((conn) => sanitizeConnection(conn)),
+    connections: connections.map((conn) => sanitizeConnection(conn)),
   })
 })
 
