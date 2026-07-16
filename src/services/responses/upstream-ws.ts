@@ -22,6 +22,14 @@ export type UpstreamWsProvider = "codex" | "xai"
 const CODEX_WS_BETA = "responses_websockets=2026-02-06"
 /** Idle unused upstream sockets are closed after this many ms. */
 const UPSTREAM_WS_IDLE_MS = 5 * 60_000
+/**
+ * Upstream (xAI/Codex) sockets are force-closed by the provider at ~60 min.
+ * Proactively redial a fresh connection before that hard limit so a turn is
+ * never sent on a socket that is about to be dropped. store=true (forced for
+ * xAI) + previous_response_id keep multi-turn chaining working across the
+ * redial via the provider's server-side response store.
+ */
+const UPSTREAM_WS_MAX_AGE_MS = 55 * 60_000
 
 /** Convert HTTP(S) responses URL to ws(s). */
 export function buildResponsesWebsocketUrl(httpUrl: string): string {
@@ -192,6 +200,8 @@ interface UpstreamWsSession {
   chain: Promise<void>
   closed: boolean
   lastUsedAt: number
+  /** Wall-clock ms when the live socket was opened (0 until connected). */
+  openedAt: number
 }
 
 const sessions = new Map<string, UpstreamWsSession>()
@@ -275,6 +285,7 @@ export async function openUpstreamResponsesWebsocketTurn(
       chain: Promise.resolve(),
       closed: true,
       lastUsedAt: Date.now(),
+      openedAt: 0,
     }
     sessions.set(key, sess)
   }
@@ -292,10 +303,23 @@ export async function openUpstreamResponsesWebsocketTurn(
       throw new Error(`${provider} websockets: aborted`)
     }
 
+    const age = sess.openedAt > 0 ? Date.now() - sess.openedAt : 0
+    const tooOld = age >= UPSTREAM_WS_MAX_AGE_MS
     const live =
-      sess.ws !== null && !sess.closed && sess.ws.readyState === WebSocket.OPEN
+      sess.ws !== null
+      && !sess.closed
+      && sess.ws.readyState === WebSocket.OPEN
+      && !tooOld
     if (!live) {
       if (sess.ws !== null && !sess.closed) {
+        if (tooOld) {
+          logger.info(
+            `${provider} websockets: redialing session=${executionSessionId} `
+              + `age=${Math.round(age / 1000)}s >= max=${Math.round(
+                UPSTREAM_WS_MAX_AGE_MS / 1000,
+              )}s (avoid upstream ~60m hard limit)`,
+          )
+        }
         try {
           sess.ws.close()
         } catch {
@@ -313,6 +337,7 @@ export async function openUpstreamResponsesWebsocketTurn(
       sess.ws = opened.ws
       sess.closed = false
       sess.url = wsUrl
+      sess.openedAt = Date.now()
       sess.lastUsedAt = Date.now()
     }
 
