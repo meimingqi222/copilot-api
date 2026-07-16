@@ -397,6 +397,23 @@ describe("connectionToAccount (round-trip)", () => {
     expect(reconstructed.availableModels).toEqual(original.availableModels)
   })
 
+  test("round-trip preserves empty availableModels ([] stays [], not undefined)", () => {
+    // [] 表示"已加载但为空",undefined 表示"尚未加载"。
+    // 两者在通配 target 判定中语义不同(附录 D.3 规则 4),
+    // round-trip 必须保留区分,不能把 [] 坍缩为 undefined。
+    const original = makeCopilotAccount({ availableModels: [] })
+    const conn = accountToConnectionForPersistence(original)
+    const reconstructed = connectionToAccount(conn)
+    expect(reconstructed.availableModels).toEqual([])
+  })
+
+  test("round-trip preserves undefined availableModels", () => {
+    const original = makeCopilotAccount({ availableModels: undefined })
+    const conn = accountToConnectionForPersistence(original)
+    const reconstructed = connectionToAccount(conn)
+    expect(reconstructed.availableModels).toBeUndefined()
+  })
+
   test("round-trip preserves quotaInfo", () => {
     const original = makeCopilotAccount({
       quotaInfo: {

@@ -14,6 +14,8 @@ import {
   createConnection,
   deleteConnection,
   getProviderConnection,
+  isAccountManagedConnection,
+  isAccountManagedProtocol,
   isProviderProtocol,
   listProviderConnections,
 } from "~/lib/provider-connections"
@@ -22,7 +24,12 @@ export const providerConnectionIoRoutes = new Hono()
 
 /** Export all provider connections including credential secrets. */
 providerConnectionIoRoutes.get("/export", (c) => {
-  const connections = listProviderConnections()
+  // 过滤 account-managed connection(*-native protocol):它们由账号管理路径
+  // 管理,不应通过外部 provider export 导出。
+  // 判别器用 protocol 派生,T5.2.5 后仍然有效。
+  const connections = listProviderConnections().filter(
+    (conn) => !isAccountManagedConnection(conn),
+  )
   const body = JSON.stringify({ version: 1 as const, connections }, null, 2)
   c.header("Content-Type", "application/json; charset=utf-8")
   c.header(
@@ -229,6 +236,12 @@ function normalizeImportedConnection(
 
   if (!name) throw new Error("Missing connection name")
   if (!protocol) throw new Error("Invalid or missing protocol")
+  // 写入不变量:不允许通过外部 provider import 创建 account-managed connection
+  if (isAccountManagedProtocol(protocol)) {
+    throw new Error(
+      `Protocol "${protocol}" is account-managed. Use the accounts API to create this type of connection.`,
+    )
+  }
   if (!baseUrl) throw new Error("Missing baseUrl")
 
   const credentialsRaw = Array.isArray(raw.credentials) ? raw.credentials : []

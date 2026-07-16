@@ -235,6 +235,86 @@ describe("unified selectRouteTarget", () => {
     expect(second).not.toBeNull()
     expect(second?.connectionId).toBe("acc")
   })
+
+  test("wildcard account (availableModels=undefined) does not preempt dedicated connection", async () => {
+    // 复现 edu 场景:copilot 账号模型列表为空(availableModels=undefined)
+    // 触发通配匹配,但不应抢占声明了该模型的专用 connection(如火山引擎)。
+    await setupConnection("volcengine", 10, "glm-5.2")
+    const wildcardAcc = createTestAccount("copilot-edu", 0)
+    // 模拟模型加载失败:availableModels 设为 undefined 触发通配
+    wildcardAcc.availableModels = undefined
+    setTestAccounts([wildcardAcc])
+
+    const targets = buildRouteTargets({
+      publicModelId: "glm-5.2",
+      endpoint: "chat",
+    })
+
+    // 通配 target 仍应生成(作为兜底)
+    const wildcardTarget = targets.find((t) => t.connectionId === "copilot-edu")
+    expect(wildcardTarget).toBeDefined()
+    // 通配 target 应标记 isWildcard,connectionPriority 保留 account.priority 原值
+    // (两阶段过滤通过 isWildcard 做层级判别,不再用 1e15 标量偏移)
+    expect(wildcardTarget?.isWildcard).toBe(true)
+    expect(wildcardTarget?.connectionPriority).toBe(0)
+
+    const selected = selectRouteTarget(targets)
+    expect(selected).not.toBeNull()
+    // 应选中专用 connection 而非通配 copilot 账号
+    expect(selected?.connectionId).toBe("volcengine")
+  })
+
+  test("wildcard account is used as fallback when dedicated connection is excluded", async () => {
+    // 所有专用 connection 都失败/排除后,通配 target 作为兜底被选中
+    await setupConnection("volcengine", 10, "glm-5.2")
+    const wildcardAcc = createTestAccount("copilot-edu", 0)
+    wildcardAcc.availableModels = undefined
+    setTestAccounts([wildcardAcc])
+
+    const targets = buildRouteTargets({
+      publicModelId: "glm-5.2",
+      endpoint: "chat",
+    })
+
+    const first = selectRouteTarget(targets)
+    expect(first?.connectionId).toBe("volcengine")
+
+    const second = selectRouteTarget(targets, {
+      exclude: new Set([targetKey(first as NonNullable<typeof first>)]),
+    })
+    expect(second).not.toBeNull()
+    expect(second?.connectionId).toBe("copilot-edu")
+  })
+
+  test("wildcard priority preserves account.priority relative order", async () => {
+    // 多个通配 account 之间按 account.priority 区分:priority 越小越高
+    await setupConnection("volcengine", 10, "glm-5.2")
+    const highAcc = createTestAccount("copilot-high", 0)
+    highAcc.availableModels = undefined
+    const lowAcc = createTestAccount("copilot-low", 5)
+    lowAcc.availableModels = undefined
+    setTestAccounts([highAcc, lowAcc])
+
+    const targets = buildRouteTargets({
+      publicModelId: "glm-5.2",
+      endpoint: "chat",
+    })
+
+    const highTarget = targets.find((t) => t.connectionId === "copilot-high")
+    const lowTarget = targets.find((t) => t.connectionId === "copilot-low")
+    expect(highTarget?.connectionPriority).toBeLessThan(
+      lowTarget?.connectionPriority as number,
+    )
+
+    // 排除专用 connection 后,应选 priority 更高的通配 account
+    const volcTarget = targets.find((t) => t.connectionId === "volcengine")
+    const selected = selectRouteTarget(targets, {
+      exclude: new Set([
+        targetKey(volcTarget as NonNullable<typeof volcTarget>),
+      ]),
+    })
+    expect(selected?.connectionId).toBe("copilot-high")
+  })
 })
 
 describe("cross-system failover via executeWithFailover", () => {

@@ -21,6 +21,7 @@ import {
 } from "~/lib/accounts"
 import {
   DEFAULTS,
+  isAccountManagedConnection,
   isCredentialAvailable,
   listProviderConnections,
   refreshConnectionAvailability,
@@ -30,7 +31,6 @@ import {
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
-import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -86,11 +86,12 @@ export function buildRouteTargets(
 ): Array<RouteTarget> {
   const onlyAvailable = options.onlyAvailable ?? true
   const rawConnections = options.connections ?? listProviderConnections()
-  // 批次 2：account-derived connections 已在 stateRoot.connections 中，
+  // account-managed connections(*-native protocol)已在 stateRoot.connections 中,
   // 但它们也会通过 state.accounts → accountToConnection 作为虚拟 connection 加入。
-  // 为避免重复，从 baseConnections 中排除 account-derived connections。
+  // 为避免重复,从 baseConnections 中排除 account-managed connections。
+  // 判别器用 protocol 派生(非 AccountLegacyMetadata),T5.2.5 后仍然有效。
   const baseConnections = rawConnections.filter(
-    (conn) => !readAccountLegacyMetadata(conn),
+    (conn) => !isAccountManagedConnection(conn),
   )
   const accounts = options.accounts ?? listAccounts()
 
@@ -169,12 +170,17 @@ export function buildRouteTargets(
           publicModelId: options.publicModelId,
           upstreamModelId: options.publicModelId,
           endpoint,
+          // 通配 target 作为兜底:selectRouteTarget 的两阶段过滤
+          // 优先选择专用(非通配) target,仅当无专用 target 时才选通配。
+          // connectionPriority 保留 connection.priority 原值,
+          // 仅在同一层级(专用或通配)内参与优先级比较。
           connectionPriority: connection.priority,
           connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
           credentialPriority:
             credentials[0]?.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
           credentialWeight:
             credentials[0]?.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
+          isWildcard: true,
         })
       }
       continue

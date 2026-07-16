@@ -1,6 +1,9 @@
 /**
  * RouteTarget 选择算法。
  *
+ * 0. 两阶段过滤:优先专用(非通配) target,仅当无专用 target 时才用通配。
+ *    这取代了旧的 WILDCARD_PRIORITY_BASE 标量编码——isWildcard 是类型化
+ *    字段,直接用它做层级判别,connectionPriority 只在同一层级内比较。
  * 1. 按 connectionPriority 找到最低数字层(优先级最高)。
  * 2. 在该层内按 strategy:
  *    - fill-first (default): 固定选排序后第一个 (CPA FillFirstSelector, best cache)
@@ -94,8 +97,14 @@ export function selectRouteTarget(
   options: SelectRouteTargetOptions = {},
 ): RouteTarget | null {
   const exclude = options.exclude ?? new Set<string>()
-  const pool = candidates.filter((t) => !exclude.has(targetKey(t)))
-  if (pool.length === 0) return null
+  const allPool = candidates.filter((t) => !exclude.has(targetKey(t)))
+  if (allPool.length === 0) return null
+
+  // 0) 两阶段过滤:优先专用(非通配) target,仅当无专用 target 时才用通配。
+  //    isWildcard 是类型化字段,直接用它做层级判别,
+  //    connectionPriority 只在同一层级内参与比较。
+  const dedicatedPool = allPool.filter((t) => !t.isWildcard)
+  const pool = dedicatedPool.length > 0 ? dedicatedPool : allPool
 
   // 1) connection priority 最小值
   const minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))
@@ -114,8 +123,14 @@ export function selectRouteTarget(
     const bound = getSessionAffinity(primaryKey)
     if (bound) {
       const hit = findByAuthKey(topConn, bound) ?? findByAuthKey(pool, bound)
-      if (hit) return hit
-      // Bound auth unavailable — fall through to reselect + rebind
+      // 两阶段过滤后,pool 要么全是专用、要么全是通配。
+      // 若 pool 是专用池,hit 一定是专用 target,直接命中。
+      // 若 pool 是通配池(无专用可用),hit 一定是通配 target,放行。
+      // 旧的"通配不粘 affinity"守卫已由两阶段过滤在 pool 选择时完成。
+      if (hit) {
+        return hit
+      }
+      // Bound auth unavailable — fall through to reselect
     }
 
     if (
