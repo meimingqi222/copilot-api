@@ -116,6 +116,9 @@ function resolveCodexExtraHeaders(
     "x-codex-beta-features",
     "version",
     "originator",
+    // Responses Lite marker. When present, upstream requires
+    // parallel_tool_calls to be false (see isResponsesLiteRequest).
+    "x-openai-internal-codex-responses-lite",
   ]) {
     const value = forwarded[key]
     if (typeof value === "string" && value.trim()) {
@@ -123,6 +126,55 @@ function resolveCodexExtraHeaders(
     }
   }
   return extra
+}
+
+/**
+ * Detects whether the incoming request targets OpenAI's "Responses Lite"
+ * variant. The official codex CLI signals this two ways:
+ *   - HTTP transport: the `x-openai-internal-codex-responses-lite: true`
+ *     request header (added by `add_responses_lite_header`).
+ *   - WebSocket transport: a `client_metadata` entry keyed
+ *     `ws_request_header_x_openai_internal_codex_responses_lite` = "true"
+ *     (added by `build_ws_client_metadata`), which the upstream proxy
+ *     converts back into the header.
+ *
+ * When Responses Lite is active, the codex client forces
+ * `parallel_tool_calls` to false and the ChatGPT backend rejects any request
+ * that sends the marker together with `parallel_tool_calls: true`
+ * ("X-OpenAI-Internal-Codex-Responses-Lite requires `parallel_tool_calls` to
+ * be false."). We must mirror that invariant when proxying.
+ */
+function isResponsesLiteRequest(
+  payload: ResponsesPayload,
+  ctx?: RequestExecutionContext,
+): boolean {
+  // 1. Forwarded HTTP header from the codex client.
+  const headerValue =
+    ctx?.forwardedHeaders?.["x-openai-internal-codex-responses-lite"]
+  if (isResponsesLiteMarker(headerValue)) {
+    return true
+  }
+
+  // 2. WebSocket transport marker carried inside client_metadata.
+  const clientMetadata = (payload as { client_metadata?: unknown })
+    .client_metadata
+  if (clientMetadata && typeof clientMetadata === "object") {
+    const marker = (clientMetadata as Record<string, unknown>)[
+      "ws_request_header_x_openai_internal_codex_responses_lite"
+    ]
+    if (isResponsesLiteMarker(marker)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isResponsesLiteMarker(value: unknown): boolean {
+  return (
+    value === true
+    || (typeof value === "string" && value.trim().toLowerCase() === "true")
+  )
 }
 
 export async function createCodexResponsesOnce(
@@ -151,6 +203,7 @@ export async function createCodexResponsesOnce(
   )
   const { sessionId, threadId } = resolveCodexSessionHeaders(payload, ctx)
   const extraHeaders = resolveCodexExtraHeaders(ctx)
+  const responsesLite = isResponsesLiteRequest(payload, ctx)
 
   // previous_response_id is WS-only (CPA). HTTP body always strips it.
   const previousResponseIdRaw = (payload as { previous_response_id?: unknown })
@@ -168,7 +221,11 @@ export async function createCodexResponsesOnce(
     model,
     stream: true,
     store: false,
-    parallel_tool_calls: true,
+    // Responses Lite requests must send parallel_tool_calls=false; every
+    // other Codex responses request keeps the default of true. Mixing the
+    // Responses Lite marker with parallel_tool_calls=true is rejected by the
+    // ChatGPT backend.
+    parallel_tool_calls: !responsesLite,
     include: ["reasoning.encrypted_content"],
     // Normalize instructions: null → "" for consistent cache keys
     instructions:
