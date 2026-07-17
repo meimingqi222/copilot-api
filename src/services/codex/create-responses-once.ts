@@ -40,6 +40,11 @@ import {
 } from "~/services/responses/upstream-ws"
 
 import { buildCodexHeaders } from "./headers"
+import {
+  codexTranscriptKey,
+  getCodexTranscript,
+  setCodexTranscript,
+} from "./ws-transcript-cache"
 
 /**
  * Resolves the session ID and thread ID for the upstream Codex request.
@@ -291,6 +296,31 @@ export async function createCodexResponsesOnce(
       || sessionId
       || replaySessionKey
       || account.id
+    const transcriptKey = codexTranscriptKey(executionSessionId, model)
+    // Use the *raw* client input delta (not upstreamBody.input, which may
+    // have reasoning-replay items injected) — cachedFull already carries the
+    // real reasoning items from prior response output, so this avoids
+    // double-injecting reasoning into the replayed full input.
+    const rawDelta =
+      Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
+    const cachedFull =
+      previousResponseId ? getCodexTranscript(transcriptKey) : undefined
+    // A chained turn (previous_response_id set) with no cached transcript
+    // means the wire input is only a delta we cannot expand — skip recording
+    // so we never poison the transcript with a partial input.
+    const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
+    const fullInputThisTurn =
+      cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
+    // Self-contained replay body used only when a fresh upstream socket cannot
+    // resolve the client's previous_response_id (store=false).
+    const fallbackFullInputBody =
+      previousResponseId && cachedFull ?
+        {
+          ...upstreamBody,
+          input: fullInputThisTurn,
+          previous_response_id: undefined,
+        }
+      : undefined
     const wsBody: Record<string, unknown> = {
       ...upstreamBody,
       previous_response_id: previousResponseId,
@@ -306,18 +336,21 @@ export async function createCodexResponsesOnce(
         body: wsBody,
         executionSessionId,
         signal,
+        previousResponseId,
+        fallbackFullInputBody,
       })
       const normalized = normalizeResponsesStreamIds(wsStream)
+      // Record on the normalized stream so recorded output-item ids match what
+      // the codex client sees (and later chains from).
+      const tracked =
+        transcriptTrackable ?
+          recordCodexTranscript(normalized, transcriptKey, fullInputThisTurn)
+        : normalized
       if (clientStream) {
-        return wrapCodexStream(
-          normalized,
-          model,
-          replaySessionKey,
-          identityState,
-        )
+        return wrapCodexStream(tracked, model, replaySessionKey, identityState)
       }
       return await collectResponsesFromWsStream(
-        wrapCodexStream(normalized, model, replaySessionKey, identityState),
+        wrapCodexStream(tracked, model, replaySessionKey, identityState),
         model,
         identityState,
       )
@@ -425,6 +458,42 @@ async function collectResponsesFromWsStream(
     return JSON.parse(restored) as ResponsesResponse
   }
   return completed
+}
+
+/**
+ * Passthrough generator that, on each `response.completed`, appends the
+ * completed response's output items to the running full-input transcript and
+ * stores it. This lets a later turn that lands on a fresh upstream socket
+ * replay a self-contained request (full input, no previous_response_id)
+ * instead of failing with "Previous response with id ... not found.".
+ *
+ * Runs on the *normalized* stream so recorded output-item ids match what the
+ * codex client sees (and later chains from).
+ */
+async function* recordCodexTranscript(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+  transcriptKey: string,
+  fullInputThisTurn: Array<unknown>,
+): AsyncIterable<CopilotStreamEventLike> {
+  for await (const event of stream) {
+    const data = event.data
+    if (data && data !== "[DONE]" && data.includes('"response.completed"')) {
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>
+        if (parsed.type === "response.completed") {
+          const response = parsed.response as { output?: unknown } | undefined
+          const output: Array<unknown> =
+            response && Array.isArray(response.output) ?
+              (response.output as Array<unknown>)
+            : []
+          setCodexTranscript(transcriptKey, [...fullInputThisTurn, ...output])
+        }
+      } catch {
+        // Best-effort transcript recording.
+      }
+    }
+    yield event
+  }
 }
 
 /**

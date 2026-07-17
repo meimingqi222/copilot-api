@@ -223,6 +223,48 @@ export interface UpstreamWsTurnOptions {
   /** Sticky key for connection reuse (downstream WS session id). */
   executionSessionId: string
   signal?: AbortSignal
+  /**
+   * The `previous_response_id` the client is chaining from (if any). Used
+   * together with `fallbackFullInputBody` to recover when the turn lands on a
+   * freshly dialed upstream socket that cannot resolve it (store=false).
+   */
+  previousResponseId?: string
+  /**
+   * A self-contained request body (full input, no `previous_response_id`) to
+   * send instead of `body` when the socket is freshly opened. Only Codex
+   * supplies this; xAI relies on store=true to survive redials.
+   */
+  fallbackFullInputBody?: Record<string, unknown>
+}
+
+/**
+ * Decides which request body to send on the upstream socket.
+ *
+ * A freshly opened socket has no server-side response store (Codex forces
+ * store=false), so any `previous_response_id` on it is guaranteed unresolvable.
+ * When that happens and a self-contained fallback body is available, send the
+ * fallback (full input, no previous_response_id) instead of the incremental
+ * body. A reused, still-live socket keeps chaining with the incremental body.
+ */
+export function selectUpstreamWsBody(params: {
+  openedFresh: boolean
+  previousResponseId?: string
+  incrementalBody: Record<string, unknown>
+  fallbackFullInputBody?: Record<string, unknown>
+  provider: UpstreamWsProvider
+}): { body: Record<string, unknown>; usedFallback: boolean } {
+  const { openedFresh, previousResponseId, incrementalBody } = params
+  const chaining =
+    typeof previousResponseId === "string" && previousResponseId.trim() !== ""
+  if (openedFresh && chaining && params.fallbackFullInputBody) {
+    return {
+      body: buildUpstreamResponsesCreateBody(params.fallbackFullInputBody, {
+        provider: params.provider,
+      }),
+      usedFallback: true,
+    }
+  }
+  return { body: incrementalBody, usedFallback: false }
 }
 
 /**
@@ -298,6 +340,7 @@ export async function openUpstreamResponsesWebsocketTurn(
   await prev
 
   let ws: WebSocket
+  let openedFresh = false
   try {
     if (signal?.aborted) {
       throw new Error(`${provider} websockets: aborted`)
@@ -339,6 +382,7 @@ export async function openUpstreamResponsesWebsocketTurn(
       sess.url = wsUrl
       sess.openedAt = Date.now()
       sess.lastUsedAt = Date.now()
+      openedFresh = true
     }
 
     if (sess.ws === null) {
@@ -348,7 +392,22 @@ export async function openUpstreamResponsesWebsocketTurn(
     if (ws.readyState !== WebSocket.OPEN) {
       throw new Error(`${provider} websockets: connection not open`)
     }
-    ws.send(JSON.stringify(wsBody))
+    const { body: effectiveBody, usedFallback } = selectUpstreamWsBody({
+      openedFresh,
+      previousResponseId: options.previousResponseId,
+      incrementalBody: wsBody,
+      fallbackFullInputBody: options.fallbackFullInputBody,
+      provider,
+    })
+    if (usedFallback) {
+      logger.info(
+        `${provider} websockets: fresh socket cannot resolve previous_response_id=`
+          + `${options.previousResponseId ?? ""}; replaying full input `
+          + `session=${executionSessionId} auth=${account.id} `
+          + `input_items=${Array.isArray(effectiveBody.input) ? effectiveBody.input.length : 0}`,
+      )
+    }
+    ws.send(JSON.stringify(effectiveBody))
     sess.lastUsedAt = Date.now()
   } catch (error) {
     releaseChain()
