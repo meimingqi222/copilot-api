@@ -1,6 +1,7 @@
 import type { Account } from "~/lib/accounts"
 
 import {
+  getAccount,
   getOAuthAccessToken,
   getOAuthRefreshToken,
   isOAuthAccount,
@@ -10,6 +11,27 @@ import { refreshOAuthAccountToken } from "./refresh-scheduler"
 
 const EXPIRY_SKEW_MS = 60_000
 const inflightRefresh = new Map<string, Promise<void>>()
+
+interface EnsureOAuthAccessTokenOptions {
+  forceRefresh?: boolean
+  failedAccessToken?: string
+}
+
+function getCurrentAccount(account: Account): Account {
+  return getAccount(account.id) ?? account
+}
+
+function getCurrentAccessToken(account: Account): string | undefined {
+  const currentAccount = getCurrentAccount(account)
+  if (
+    currentAccount !== account
+    && isOAuthAccount(account)
+    && isOAuthAccount(currentAccount)
+  ) {
+    account.credentials = { ...currentAccount.credentials }
+  }
+  return getOAuthAccessToken(currentAccount)
+}
 
 function tokenNeedsRefresh(account: Account): boolean {
   if (!isOAuthAccount(account)) {
@@ -32,30 +54,46 @@ function tokenNeedsRefresh(account: Account): boolean {
 
 export async function ensureOAuthAccessToken(
   account: Account,
+  options: EnsureOAuthAccessTokenOptions = {},
 ): Promise<string | undefined> {
-  if (!isOAuthAccount(account) || !account.enabled) {
-    return getOAuthAccessToken(account)
+  const currentAccount = getCurrentAccount(account)
+  if (!isOAuthAccount(currentAccount) || !currentAccount.enabled) {
+    return getOAuthAccessToken(currentAccount)
   }
 
-  if (!tokenNeedsRefresh(account)) {
-    return getOAuthAccessToken(account)
+  const currentToken = getOAuthAccessToken(currentAccount)
+  if (
+    options.forceRefresh
+    && options.failedAccessToken
+    && currentToken
+    && currentToken !== options.failedAccessToken
+  ) {
+    return currentToken
   }
 
-  const inflight = inflightRefresh.get(account.id)
+  if (!options.forceRefresh && !tokenNeedsRefresh(currentAccount)) {
+    return currentToken
+  }
+
+  const inflight = inflightRefresh.get(currentAccount.id)
   if (inflight) {
     await inflight
-    return getOAuthAccessToken(account)
+    return getCurrentAccessToken(account)
   }
 
-  const refreshPromise = refreshOAuthAccountToken(account, "pre-request")
+  const accountId = currentAccount.id
+  const refreshPromise = refreshOAuthAccountToken(
+    currentAccount,
+    options.forceRefresh ? "unauthorized" : "pre-request",
+  )
     .catch((error: unknown) => {
       throw error
     })
     .finally(() => {
-      inflightRefresh.delete(account.id)
+      inflightRefresh.delete(accountId)
     })
 
-  inflightRefresh.set(account.id, refreshPromise)
+  inflightRefresh.set(accountId, refreshPromise)
   await refreshPromise
-  return getOAuthAccessToken(account)
+  return getCurrentAccessToken(account)
 }
