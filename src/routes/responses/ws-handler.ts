@@ -16,6 +16,7 @@ import {
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
 import { isAbortError } from "~/lib/utils"
+import { clearCodexTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
@@ -117,6 +118,8 @@ export function createResponsesWebSocketSession(c: Context) {
         executionSessionId,
         "client_disconnect",
       )
+      // Drop the codex full-input transcript accumulated for this session.
+      clearCodexTranscriptsByExecutionId(executionSessionId)
       if (closed > 0) {
         logger.info(
           `responses websocket: closed ${closed} upstream session(s) for id=${executionSessionId}`,
@@ -131,6 +134,7 @@ export function createResponsesWebSocketSession(c: Context) {
         executionSessionId,
         "client_error",
       )
+      clearCodexTranscriptsByExecutionId(executionSessionId)
     },
   }
 }
