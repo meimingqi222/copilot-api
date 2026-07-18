@@ -64,22 +64,25 @@ export async function executeUpstreamProxyCall(
   account: Account,
   request: Omit<UpstreamProxyRequest, "accountId">,
 ): Promise<UpstreamProxyResponse> {
-  // Prefer a static API key (never expires) when present; otherwise ensure the
-  // OAuth access token is fresh before sending, so quota/model requests don't
-  // fail with 401 after the scheduled refresh missed the expiry window.
+  // Prefer a fresh OAuth access token (matching CPA's request-path behavior:
+  // access_token first, static api_key only as fallback). ensureOAuthAccessToken
+  // refreshes when needed and returns undefined for accounts that only carry a
+  // static key, so `?? apiKey` covers the static-key-only case.
   const apiKey = getOAuthApiKey(account)
-  let token = apiKey ?? (await ensureOAuthAccessToken(account))
+  let token = (await ensureOAuthAccessToken(account)) ?? apiKey
   let response = await sendUpstreamProxyRequest(account, request, token)
 
   // xAI and other OAuth providers can invalidate an access token before its
-  // advertised expiry. Refresh once on 401 and retry the original request,
-  // matching CPA's request-path recovery behavior.
-  if (response.status === 401 && !apiKey && getOAuthRefreshToken(account)) {
+  // advertised expiry. If the account has a refreshable OAuth token, refresh
+  // once on 401 and retry the original request, matching CPA's request-path
+  // recovery behavior.
+  if (response.status === 401 && getOAuthRefreshToken(account)) {
     await response.text()
-    token = await ensureOAuthAccessToken(account, {
-      forceRefresh: true,
-      failedAccessToken: token,
-    })
+    token =
+      (await ensureOAuthAccessToken(account, {
+        forceRefresh: true,
+        failedAccessToken: token,
+      })) ?? apiKey
     response = await sendUpstreamProxyRequest(account, request, token)
   }
 

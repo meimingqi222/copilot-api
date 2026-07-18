@@ -56,6 +56,43 @@ describe("ensureOAuthAccessToken", () => {
     expect(account.credentials?.accessToken).toBe("fresh-access")
   })
 
+  test("refreshes expired access token even when account is disabled", async () => {
+    // A disabled account is only excluded from request routing, not from its
+    // token lifecycle. On-demand actions (e.g. quota refresh) must still work.
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "fresh-access",
+            refresh_token: "fresh-refresh",
+            expires_in: 3600,
+          }),
+          { status: 200 },
+        ),
+      )) as unknown as typeof fetch
+
+    const account: OAuthAccount = {
+      id: "acct-disabled",
+      label: "claude-disabled",
+      provider: "claude",
+      enabled: false,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "stale-access",
+        refreshToken: "refresh-1",
+        expiresAt: Date.now() - 1_000,
+      },
+      runtimeState: { authStatus: "ready" },
+    }
+    setTestAccounts([account])
+
+    const token = await ensureOAuthAccessToken(account)
+    expect(token).toBe("fresh-access")
+    expect(account.credentials?.accessToken).toBe("fresh-access")
+  })
+
   test("returns existing token when still valid", async () => {
     let fetchCalls = 0
     globalThis.fetch = (() => {
@@ -142,5 +179,45 @@ describe("ensureOAuthAccessToken", () => {
       "Bearer invalid-access",
       "Bearer fresh-access",
     ])
+  })
+
+  test("prefers the OAuth access token over a present static api key", async () => {
+    // CPA request-path precedence: access_token first, static api_key only as a
+    // fallback. An account carrying both must send the OAuth bearer token.
+    const authorizationHeaders: Array<string | null> = []
+    globalThis.fetch = ((
+      _input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      authorizationHeaders.push(new Headers(init?.headers).get("Authorization"))
+      return Promise.resolve(new Response("ok", { status: 200 }))
+    }) as typeof fetch
+
+    const account: OAuthAccount = {
+      id: "acct-both-creds",
+      label: "xai-both",
+      provider: "xai",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "oauth-access",
+        refreshToken: "refresh-1",
+        expiresAt: Date.now() + 3_600_000,
+        apiKey: "xai-static-key",
+      },
+      runtimeState: { authStatus: "ready" },
+    }
+    setTestAccounts([account])
+
+    const response = await executeUpstreamProxyCall(account, {
+      method: "GET",
+      url: "https://cli-chat-proxy.grok.com/v1/billing",
+      headers: { Authorization: "Bearer $TOKEN$" },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(authorizationHeaders).toEqual(["Bearer oauth-access"])
   })
 })

@@ -166,11 +166,14 @@ accountApiRoutes.put("/:id", async (c) => {
   await updateProviderAccount(account, body)
   if (typeof body.enabled === "boolean" && body.enabled !== prevEnabled) {
     if (!account.enabled) {
+      // Disabling only removes the account from request routing. Keep the
+      // OAuth token refresh running so its access token stays valid and
+      // on-demand actions (e.g. quota refresh) don't fail with 401.
       cancelTokenRefreshTimer(account.id)
-      cancelOAuthRefreshTimer(account.id)
-    } else {
-      scheduleOAuthRefreshForAccount(account)
     }
+    // (Re)schedule OAuth refresh regardless of enabled state. For non-OAuth
+    // accounts this is a no-op (cancels the timer internally).
+    scheduleOAuthRefreshForAccount(account)
     logger.info(
       `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
     )
