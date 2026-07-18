@@ -33,6 +33,13 @@ export interface RequestExecutionContext {
    * `response.create` on the same client socket (CPA execution session).
    */
   executionSessionId?: string
+  /**
+   * Force the upstream to use HTTP POST, skipping the WS path even when the
+   * client connected via WebSocket. Set by the WS handler's same-account
+   * recovery after a lazy connection failure (socket dropped mid-iteration)
+   * so `createResponses` does not re-enter the WS path on the retry.
+   */
+  forceUpstreamHttp?: boolean
 }
 
 export type ProviderChatResult =

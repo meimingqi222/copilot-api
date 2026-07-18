@@ -2,6 +2,7 @@ import type { Context } from "hono"
 
 import { randomUUID } from "node:crypto"
 
+import type { RequestAdmission } from "~/lib/request-admission"
 import type {
   ResponsesPayload,
   ResponsesResponse,
@@ -10,17 +11,24 @@ import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { prepareRequestAdmission } from "~/lib/request-admission"
+import {
+  prepareRequestAdmission,
+  resolveConnectionFromTarget,
+  selectNextResponsesWsTarget,
+} from "~/lib/request-admission"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
+import { targetKey } from "~/lib/route-target"
 import { isAbortError } from "~/lib/utils"
-import { clearCodexTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
+import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { recordUpstreamFailure } from "~/services/dispatch/failover"
 import { closeUpstreamWebsocketSessionsByExecutionId } from "~/services/responses/upstream-ws"
+import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import {
   createResponsesErrorPayload,
@@ -119,7 +127,7 @@ export function createResponsesWebSocketSession(c: Context) {
         "client_disconnect",
       )
       // Drop the codex full-input transcript accumulated for this session.
-      clearCodexTranscriptsByExecutionId(executionSessionId)
+      clearResponsesTranscriptsByExecutionId(executionSessionId)
       if (closed > 0) {
         logger.info(
           `responses websocket: closed ${closed} upstream session(s) for id=${executionSessionId}`,
@@ -134,7 +142,7 @@ export function createResponsesWebSocketSession(c: Context) {
         executionSessionId,
         "client_error",
       )
-      clearCodexTranscriptsByExecutionId(executionSessionId)
+      clearResponsesTranscriptsByExecutionId(executionSessionId)
     },
   }
 }
@@ -173,40 +181,227 @@ interface ProcessResponseCreateOptions {
   executionSessionId: string
 }
 
+/**
+ * Same-protocol, account-backed next-target selection for the rotation loop.
+ * Returns a fully resolved admission for the next candidate, or null when the
+ * candidate set is exhausted (or the pinned connection has no more accounts).
+ */
+function selectNextResponsesAdmission(
+  initial: RequestAdmission,
+  current: RequestAdmission,
+  modelId: string,
+  tried: Set<string>,
+): RequestAdmission | null {
+  const next = selectNextResponsesWsTarget(initial.target, modelId, tried, {
+    sessionId: current.sessionId,
+    fallbackSessionId: current.fallbackSessionId,
+  })
+  if (!next) return null
+  const resolved = resolveConnectionFromTarget(next)
+  if (!resolved?.account) return null
+  return {
+    target: next,
+    connection: resolved.connection,
+    credential: resolved.credential,
+    account: resolved.account,
+    initiator: current.initiator,
+    sessionId: current.sessionId,
+    fallbackSessionId: current.fallbackSessionId,
+  }
+}
+
 async function processResponseCreate(
   options: ProcessResponseCreateOptions,
 ): Promise<void> {
   const { c, ws, payload, signal, executionSessionId } = options
-  let accountId: string | undefined
-  let completedResponse: ResponsesResponse | undefined
 
+  const sessionHeaders = extractResponsesSessionHeaders(c)
+  let admission: RequestAdmission
   try {
-    const result = await executeResponseCreate(
-      c,
-      payload,
-      signal,
-      executionSessionId,
-    )
-    accountId = result.accountId
-
-    if (isNonStreaming(result.response)) {
-      completedResponse = result.response
-      sendJson(ws, result.response)
-      return
-    }
-
-    completedResponse = await streamResponseEvents(ws, result.response)
+    admission = await prepareResponsesAdmission(c, payload, sessionHeaders)
   } catch (error) {
     handleResponseError(ws, error, signal)
     return
-  } finally {
-    if (completedResponse && accountId) {
+  }
+
+  // Commit-aware, account-rotating loop. Each attempt buffers leading control
+  // frames and only "commits" when the first real frame reaches the client;
+  // before that a credential-scoped failure silently fails over to the next
+  // same-protocol account, and a connection-scoped failure gets one same-
+  // account HTTP recovery.
+  let current = admission
+  let httpRecoveryTried = false
+  const tried = new Set<string>()
+
+  while (true) {
+    const outcome = await runResponsesAttempt({
+      c,
+      ws,
+      payload,
+      signal,
+      executionSessionId,
+      sessionHeaders,
+      admission,
+      current,
+      tried,
+      httpRecoveryTried,
+    })
+    if (outcome.type === "retry-http") {
+      httpRecoveryTried = true
+      continue
+    }
+    if (outcome.type === "rotate") {
+      current = outcome.next
+      httpRecoveryTried = false
+      continue
+    }
+    // "done" | "stop": the attempt already forwarded the response or surfaced
+    // the error / stopped silently on abort.
+    return
+  }
+}
+
+interface RunResponsesAttemptParams {
+  c: Context
+  ws: WebSocketSendTarget
+  payload: ResponsesPayload
+  signal: AbortSignal
+  executionSessionId: string
+  sessionHeaders: Record<string, string | undefined>
+  admission: RequestAdmission
+  current: RequestAdmission
+  tried: Set<string>
+  httpRecoveryTried: boolean
+}
+
+/**
+ * A single create + pump attempt. Returns a directive for the rotation loop:
+ *   - `done`       — response forwarded (or fully surfaced); stop.
+ *   - `stop`       — abort / committed error / non-retryable error; stop.
+ *   - `retry-http` — lazy connection failure; retry same account over HTTP.
+ *   - `rotate`     — credential failure; continue on the returned admission.
+ * Usage is recorded here (only for the account that actually completed).
+ */
+async function runResponsesAttempt(
+  params: RunResponsesAttemptParams,
+): Promise<
+  | { type: "done" }
+  | { type: "stop" }
+  | { type: "retry-http" }
+  | { type: "rotate"; next: RequestAdmission }
+> {
+  const {
+    c,
+    ws,
+    payload,
+    signal,
+    executionSessionId,
+    sessionHeaders,
+    admission,
+    current,
+    tried,
+    httpRecoveryTried,
+  } = params
+
+  // Rotation is account-managed; the selector only returns account-backed
+  // candidates and the initial admission is validated as account-backed.
+  const account = current.account
+  if (!account) {
+    handleResponseError(
+      ws,
+      new HTTPError(
+        "Responses API requires an Account-based admission",
+        new Response("Not Implemented", { status: 501 }),
+      ),
+      signal,
+    )
+    return { type: "stop" }
+  }
+
+  const state = { committed: false }
+
+  try {
+    const result = await createResponses(payload, {
+      signal,
+      initiatorOverride: current.initiator,
+      account,
+      forwardedHeaders: sessionHeaders,
+      c,
+      downstreamWebsocket: true,
+      // Same-account HTTP recovery for a lazy connection failure: skip WS.
+      forceUpstreamHttp: httpRecoveryTried,
+      executionSessionId,
+    })
+    c.set("accountId" as never, result.accountId)
+
+    let completedResponse: ResponsesResponse | undefined
+    if (isNonStreaming(result.response)) {
+      state.committed = true
+      completedResponse = result.response
+      sendJson(ws, result.response)
+    } else {
+      completedResponse = await pumpWithLeadingBuffer(ws, result.response, {
+        onCommit: () => {
+          state.committed = true
+        },
+      })
+    }
+
+    // Usage is recorded ONLY for the account that actually committed/completed;
+    // failed accounts get cooldown via recordUpstreamFailure only.
+    if (state.committed && completedResponse) {
       recordResponsesUsage({
         c,
-        accountId,
+        accountId: result.accountId,
         response: completedResponse,
       })
     }
+    return { type: "done" }
+  } catch (error) {
+    const failure = classifyWsFailure(error)
+
+    // Client abort / closed downstream socket → stop silently.
+    if (
+      failure.scope === "abort"
+      || error instanceof ClientAbortError
+      || (isAbortError(error) && signal.aborted)
+    ) {
+      return { type: "stop" }
+    }
+
+    // Content already forwarded → committed; surface once, never retry.
+    if (state.committed) {
+      handleResponseError(ws, error, signal)
+      return { type: "stop" }
+    }
+
+    // Lazy connection failure → one same-account HTTP recovery, WS skipped.
+    if (failure.scope === "connection" && !httpRecoveryTried) {
+      return { type: "retry-http" }
+    }
+
+    // Request error / exhausted / repeat connection → surface once.
+    if (failure.scope !== "credential") {
+      handleResponseError(ws, error, signal)
+      return { type: "stop" }
+    }
+
+    // Credential failure → mark the current target BEFORE selecting the next
+    // (mirrors executeWithFailover ordering) so it isn't re-picked and the last
+    // candidate's failure is still recorded when next is null.
+    tried.add(targetKey(current.target))
+    await recordUpstreamFailure(current, failure)
+    const next = selectNextResponsesAdmission(
+      admission,
+      current,
+      payload.model,
+      tried,
+    )
+    if (!next) {
+      handleResponseError(ws, error, signal)
+      return { type: "stop" }
+    }
+    return { type: "rotate", next }
   }
 }
 
@@ -232,16 +427,11 @@ function extractResponsesSessionHeaders(
   }
 }
 
-async function executeResponseCreate(
+async function prepareResponsesAdmission(
   c: Context,
   payload: ResponsesPayload,
-  signal: AbortSignal,
-  executionSessionId: string,
-): Promise<{
-  accountId: string
-  response: ResponsesResponse | AsyncIterable<CopilotStreamEventLike>
-}> {
-  const sessionHeaders = extractResponsesSessionHeaders(c)
+  sessionHeaders: Record<string, string | undefined>,
+): Promise<RequestAdmission> {
   const messageContent = extractMessageContentFromResponsesPayload(payload)
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
@@ -264,26 +454,65 @@ async function executeResponseCreate(
       new Response("Not Implemented", { status: 501 }),
     )
   }
-
-  const result = await createResponses(payload, {
-    signal,
-    initiatorOverride: admission.initiator,
-    account: admission.account,
-    forwardedHeaders: sessionHeaders,
-    c,
-    downstreamWebsocket: true,
-    executionSessionId,
-  })
-  c.set("accountId" as never, result.accountId)
-
-  return result
+  return admission
 }
 
-async function streamResponseEvents(
+/**
+ * Leading control-frame types that carry no user-visible content. They are
+ * buffered (uncommitted) until the first content event or a terminal, so a
+ * `response.created → response.failed(usage_limit_reached)` quota turn can
+ * still fail over silently (nothing was forwarded).
+ */
+const LEADING_CONTROL_TYPES = new Set([
+  "response.created",
+  "response.in_progress",
+  "response.queued",
+])
+
+// Bounded buffer caps: overflow flushes + commits rather than buffering
+// unbounded, trading a tiny failover window for a memory guarantee.
+const MAX_BUFFERED_EVENTS = 32
+const MAX_BUFFERED_BYTES = 64 * 1024
+
+interface PumpHooks {
+  /** Fired synchronously on the first successful forward to the client. */
+  onCommit: () => void
+}
+
+/**
+ * Commit-aware pump. Leading control frames are held in a bounded buffer while
+ * uncommitted; a credential/request error thrown by the generator during this
+ * window propagates with nothing forwarded (retryable). The first content
+ * event / terminal (or buffer overflow) flushes the buffer, forwards, and
+ * calls onCommit(). A failed `sendText` (client socket gone) throws
+ * ClientAbortError so the caller treats it as an abort — never a rotation.
+ */
+async function pumpWithLeadingBuffer(
   ws: WebSocketSendTarget,
   response: AsyncIterable<CopilotStreamEventLike>,
+  hooks: PumpHooks,
 ): Promise<ResponsesResponse | undefined> {
   let completedResponse: ResponsesResponse | undefined
+  // Mutable state object so control-flow analysis keeps `committed` a plain
+  // boolean (it is only ever flipped inside the commit closure below).
+  const state = { committed: false }
+  const buffer: Array<string> = []
+  let bufferedBytes = 0
+
+  const forward = (data: string) => {
+    if (!sendText(ws, data)) {
+      throw new ClientAbortError()
+    }
+  }
+
+  // Flush buffered control frames, then mark committed.
+  const commit = () => {
+    for (const data of buffer) forward(data)
+    buffer.length = 0
+    bufferedBytes = 0
+    state.committed = true
+    hooks.onCommit()
+  }
 
   for await (const event of response) {
     if (event.data === "[DONE]") {
@@ -297,7 +526,7 @@ async function streamResponseEvents(
     try {
       parsed = JSON.parse(event.data) as Record<string, unknown>
     } catch {
-      // Ignore parse errors - malformed JSON will be sent as-is
+      // Ignore parse errors - malformed JSON will be sent as-is (as content).
     }
 
     if (
@@ -308,7 +537,39 @@ async function streamResponseEvents(
       completedResponse = parsed.response as ResponsesResponse
     }
 
-    sendText(ws, event.data)
+    const type = typeof parsed?.type === "string" ? parsed.type : undefined
+
+    // Buffer leading control frames until content/terminal or overflow.
+    if (
+      !state.committed
+      && type !== undefined
+      && LEADING_CONTROL_TYPES.has(type)
+    ) {
+      buffer.push(event.data)
+      bufferedBytes += event.data.length
+      if (
+        buffer.length >= MAX_BUFFERED_EVENTS
+        || bufferedBytes >= MAX_BUFFERED_BYTES
+      ) {
+        commit()
+      }
+      continue
+    }
+
+    // First content event / terminal → include it in the flush and commit.
+    if (!state.committed) {
+      buffer.push(event.data)
+      commit()
+      continue
+    }
+
+    forward(event.data)
+  }
+
+  // Stream ended while still buffering (e.g. only control frames then a clean
+  // close) → flush + commit so the client isn't left hanging.
+  if (!state.committed && buffer.length > 0) {
+    commit()
   }
 
   return completedResponse
@@ -365,14 +626,21 @@ function sendJson(ws: WebSocketSendTarget, payload: unknown): void {
   sendText(ws, JSON.stringify(payload))
 }
 
-function sendText(ws: WebSocketSendTarget, payload: string): void {
+/**
+ * Returns true only when the payload was actually handed to `ws.send()`.
+ * The pump uses this so onCommit() fires on a real successful send: if the
+ * client socket is gone the first flush returns false and is treated as abort.
+ */
+function sendText(ws: WebSocketSendTarget, payload: string): boolean {
   if (ws.readyState !== WS_READY_STATE_OPEN) {
-    return
+    return false
   }
 
   try {
     ws.send(payload)
+    return true
   } catch {
-    // Ignore send errors - connection may be closing
+    // Connection may be closing — report failure so callers can stop.
+    return false
   }
 }

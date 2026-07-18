@@ -1,5 +1,6 @@
 import type { Account } from "~/lib/accounts"
 import type { RouteTarget } from "~/lib/provider-connections"
+import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
 
 import {
   markAccountRateLimited,
@@ -256,6 +257,113 @@ async function markAccountCooldown(
     invalidateSessionAffinityAuth(authKey)
     await markAccountRateLimited(account.id, new Response(null, { status }))
   }
+}
+
+/**
+ * Apply account cooldown / quota / auth state from an already-classified WS
+ * `response.create` failure (credential scope). Unlike the private markCooldown
+ * (which re-derives everything from HTTP heuristics), the scope/kind here is
+ * authoritative — quota is quota, 5xx is cooled, 401/403 is auth.
+ *
+ * Writes back to the ProviderConnection + AccountLegacyMetadata via
+ * syncAccountToConnection so the next `listAccounts()` / `isAccountAvailable()`
+ * sees the account as unavailable (not just the derived admission.account).
+ *
+ * WS rotation is account-managed only, so this targets `admission.account`;
+ * when absent it falls back to a direct credential cooldown.
+ */
+export async function recordUpstreamFailure(
+  admission: RequestAdmission,
+  failure: ClassifiedWsFailure,
+  logPrefix = "[ws-failover]",
+): Promise<void> {
+  const authKey = affinityAuthKey(admission.target)
+  invalidateSessionAffinityAuth(authKey)
+
+  const stateAccount =
+    admission.account ? resolveStateAccount(admission.account.id) : undefined
+
+  if (stateAccount) {
+    switch (failure.kind) {
+      case "quota": {
+        setAccountQuotaState(stateAccount, "exhausted")
+        stateAccount.cooldownUntil =
+          failure.retryAfterMs ?
+            Date.now() + failure.retryAfterMs
+          : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+        syncLegacyExhaustedState(stateAccount)
+        const conn = getMutableProviderConnection(stateAccount.id)
+        if (conn) syncAccountToConnection(conn, stateAccount)
+        await saveAccounts().catch((err: unknown) => {
+          logger.warn(
+            `${logPrefix} failed to persist account quota state:`,
+            (err as Error).message,
+          )
+        })
+        return
+      }
+      case "auth": {
+        stateAccount.runtimeState = {
+          ...stateAccount.runtimeState,
+          authStatus: "error",
+          lastError: `upstream ws auth error${
+            failure.status ? ` (HTTP ${failure.status})` : ""
+          }`,
+        }
+        syncLegacyExhaustedState(stateAccount)
+        const conn = getMutableProviderConnection(stateAccount.id)
+        if (conn) syncAccountToConnection(conn, stateAccount)
+        await saveAccounts().catch((err: unknown) => {
+          logger.warn(
+            `${logPrefix} failed to persist account auth state:`,
+            (err as Error).message,
+          )
+        })
+        return
+      }
+      case "rate":
+      case "server": {
+        const cooldownMs =
+          failure.retryAfterMs
+          ?? (failure.kind === "server" ?
+            DEFAULTS.COOLDOWN_5XX_MS
+          : DEFAULTS.COOLDOWN_429_FALLBACK_MS)
+        await markAccountRateLimitedMs(
+          stateAccount.id,
+          cooldownMs,
+          `upstream_ws_${failure.kind}`,
+        )
+        return
+      }
+      default: {
+        return
+      }
+    }
+  }
+
+  // No account-backed connection: cool the credential directly.
+  if (failure.kind === "quota") {
+    markCredentialQuotaExhausted(
+      admission.credential,
+      "upstream ws quota exhausted",
+      failure.retryAfterMs,
+    )
+  } else {
+    markCredentialCooldown(admission.credential, {
+      retryAfterMs:
+        failure.retryAfterMs
+        ?? (failure.kind === "server" ?
+          DEFAULTS.COOLDOWN_5XX_MS
+        : DEFAULTS.COOLDOWN_429_FALLBACK_MS),
+      reason: `upstream ws ${failure.kind}`,
+    })
+  }
+  await persistProviderConnections().catch((err: unknown) => {
+    logger.warn(
+      `${logPrefix} failed to persist credential status:`,
+      (err as Error).message,
+    )
+  })
 }
 
 async function markCooldown(

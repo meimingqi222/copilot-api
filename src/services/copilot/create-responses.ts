@@ -29,6 +29,11 @@ interface CreateResponsesOptions {
   downstreamWebsocket?: boolean
   /** Sticky key for upstream WS connection reuse. */
   executionSessionId?: string
+  /**
+   * Force upstream HTTP POST (skip the WS path) for this call. Used by the WS
+   * handler's same-account recovery after a lazy connection failure.
+   */
+  forceUpstreamHttp?: boolean
 }
 
 export const createResponses = async (
@@ -89,6 +94,7 @@ export const createResponses = async (
       c: options.c,
       downstreamWebsocket: options.downstreamWebsocket,
       executionSessionId: options.executionSessionId,
+      forceUpstreamHttp: options.forceUpstreamHttp,
     },
   )
 }

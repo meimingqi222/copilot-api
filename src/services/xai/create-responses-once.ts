@@ -23,12 +23,18 @@ import {
 import { collectResponsesFromSseResponse } from "~/services/responses/sse-collector"
 import {
   applyXaiWebsocketHeaders,
+  destroyUpstreamWebsocketSession,
   isAbortLikeError,
-  isUpstreamWsTransportError,
   openUpstreamResponsesWebsocketTurn,
   shouldUseUpstreamResponsesWebsocket,
 } from "~/services/responses/upstream-ws"
+import { classifyWsFailure } from "~/services/responses/ws-failure"
 
+import {
+  getResponsesTranscript,
+  setResponsesTranscript,
+  xaiTranscriptKey,
+} from "../codex/ws-transcript-cache"
 import { buildXaiHeaders } from "./headers"
 
 /**
@@ -347,7 +353,9 @@ export async function createXaiResponsesOnce(
   const baseUrl = account.settings?.baseUrl ?? XAI_API_BASE_URL
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
-  const useUpstreamWs = shouldUseUpstreamResponsesWebsocket(account, "xai", ctx)
+  const useUpstreamWs =
+    !ctx?.forceUpstreamHttp
+    && shouldUseUpstreamResponsesWebsocket(account, "xai", ctx)
   const sessionId = resolveXaiSessionId(payload, ctx)
 
   // Log cache-prefix diagnostic so we can compare prefix stability across
@@ -382,12 +390,41 @@ export async function createXaiResponsesOnce(
   )
 
   // ── Upstream WebSocket path (CPA XAIWebsocketsExecutor) ──────────────
+  // Set when a chained turn falls back to HTTP: the HTTP POST must send the
+  // full self-contained input (not the client's delta) so the tool-result turn
+  // is not an orphan.
+  let httpFallbackBody: Record<string, unknown> | undefined
   if (useUpstreamWs) {
     const headers = applyXaiWebsocketHeaders(
       buildXaiHeaders(accessToken, true, sessionId),
     )
     const executionSessionId =
       ctx?.executionSessionId?.trim() || sessionId || account.id
+    const transcriptKey = xaiTranscriptKey(executionSessionId, model)
+    const rawDelta =
+      Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
+    const cachedFull =
+      previousResponseId ? getResponsesTranscript(transcriptKey) : undefined
+    // A chained turn (previous_response_id set) with no cached transcript means
+    // the wire input is only a delta we cannot expand — skip recording so we
+    // never poison the transcript with a partial input.
+    const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
+    const fullInputThisTurn =
+      cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
+    // On a *different credential's* fresh socket, this account's
+    // previous_response_id is not in that connection's in-memory cache and is
+    // not cross-credential resolvable, so drop it and replay the full input.
+    // xAI keeps store=true unchanged; this is a per-connection recovery, not a
+    // store-policy change. Reused as the connection-scope HTTP fallback body.
+    const fallbackFullInputBody =
+      previousResponseId && cachedFull ?
+        {
+          ...upstreamBody,
+          input: fullInputThisTurn,
+          previous_response_id: undefined,
+        }
+      : undefined
+    httpFallbackBody = fallbackFullInputBody
     const wsBody: Record<string, unknown> = {
       ...upstreamBody,
       previous_response_id: previousResponseId,
@@ -402,15 +439,33 @@ export async function createXaiResponsesOnce(
         body: wsBody,
         executionSessionId,
         signal,
+        previousResponseId,
+        fallbackFullInputBody,
       })
       const normalized = normalizeResponsesStreamIds(wsStream)
+      const tracked =
+        transcriptTrackable ?
+          recordXaiTranscript(normalized, transcriptKey, fullInputThisTurn)
+        : normalized
       if (clientStream) {
-        return normalized
+        return tracked
       }
-      return await collectResponsesFromWsStream(normalized)
+      return await collectResponsesFromWsStream(tracked)
     } catch (error) {
       if (isAbortLikeError(error) || signal?.aborted) throw error
-      if (!isUpstreamWsTransportError(error)) throw error
+      const failure = classifyWsFailure(error)
+      // credential (quota/auth/rate/server) and request (bad body) failures are
+      // the handler's concern — an account switch or a surfaced error. Never
+      // silently re-POST them on the same account.
+      if (failure.scope === "credential" || failure.scope === "request") {
+        throw error
+      }
+      // connection scope: this socket is unusable. On a connection-limit frame,
+      // destroy the stale session so the next turn redials; then fall through
+      // to a same-account HTTP POST for the current turn.
+      if (failure.kind === "connection_limit") {
+        destroyUpstreamWebsocketSession("xai", account.id, executionSessionId)
+      }
       logger.warn(
         `xai websockets: falling back to HTTP: ${
           error instanceof Error ? error.message : String(error)
@@ -422,8 +477,9 @@ export async function createXaiResponsesOnce(
   const response = await fetchWithOAuthProxy(account, url, {
     method: "POST",
     headers: buildXaiHeaders(accessToken, true, sessionId),
-    // HTTP: no previous_response_id
-    body: JSON.stringify(upstreamBody),
+    // HTTP: no previous_response_id. On a chained-turn WS fallback, send the
+    // full self-contained input (httpFallbackBody) so the turn is not orphaned.
+    body: JSON.stringify(httpFallbackBody ?? upstreamBody),
     signal,
   })
 
@@ -468,4 +524,41 @@ async function collectResponsesFromWsStream(
     throw new Error("xAI websockets: missing response.completed event")
   }
   return completed
+}
+
+/**
+ * Passthrough generator that, on each `response.completed`, appends the
+ * completed response's output items to the running full-input transcript and
+ * stores it. This lets a later turn that lands on a *different credential's*
+ * fresh upstream socket replay a self-contained request (full input, no
+ * previous_response_id) instead of failing because that connection's in-memory
+ * cache does not hold this account's previous_response_id.
+ */
+async function* recordXaiTranscript(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+  transcriptKey: string,
+  fullInputThisTurn: Array<unknown>,
+): AsyncIterable<CopilotStreamEventLike> {
+  for await (const event of stream) {
+    const data = event.data
+    if (data && data !== "[DONE]" && data.includes('"response.completed"')) {
+      try {
+        const parsed = JSON.parse(data) as Record<string, unknown>
+        if (parsed.type === "response.completed") {
+          const response = parsed.response as { output?: unknown } | undefined
+          const output: Array<unknown> =
+            response && Array.isArray(response.output) ?
+              (response.output as Array<unknown>)
+            : []
+          setResponsesTranscript(transcriptKey, [
+            ...fullInputThisTurn,
+            ...output,
+          ])
+        }
+      } catch {
+        // Best-effort transcript recording.
+      }
+    }
+    yield event
+  }
 }
