@@ -46,11 +46,31 @@ const MAX_TRANSCRIPT_ITEMS = 4000
 const TRANSCRIPT_IDLE_MS = 60 * 60_000
 
 /** Build the map key for a client session + model pair. */
+export type ResponsesTranscriptProvider = "codex" | "xai"
+
+/** Build the provider-scoped map key for a client session + model triple. */
+function transcriptKey(
+  provider: ResponsesTranscriptProvider,
+  executionSessionId: string,
+  model: string,
+): string {
+  return `${provider}::${executionSessionId}::${model}`
+}
+
+/** Codex-scoped transcript key. */
 export function codexTranscriptKey(
   executionSessionId: string,
   model: string,
 ): string {
-  return `${executionSessionId}::${model}`
+  return transcriptKey("codex", executionSessionId, model)
+}
+
+/** xAI-scoped transcript key. */
+export function xaiTranscriptKey(
+  executionSessionId: string,
+  model: string,
+): string {
+  return transcriptKey("xai", executionSessionId, model)
 }
 
 /** Returns the accumulated full input for a session, if present. */
@@ -85,19 +105,30 @@ export function clearCodexTranscript(key: string): void {
   transcripts.delete(key)
 }
 
+// Provider-agnostic aliases (the store is keyed by a provider-scoped key, so
+// the same get/set/clear serve codex and xAI without cross-provider bleed).
+export const getResponsesTranscript = getCodexTranscript
+export const setResponsesTranscript = setCodexTranscript
+export const clearResponsesTranscript = clearCodexTranscript
+
 /**
- * Clears every transcript bound to a downstream client WS session id. Called
- * when the client socket closes (mirrors upstream WS session teardown).
+ * Clears every transcript bound to a downstream client WS session id, across
+ * all providers. Called when the client socket closes (mirrors upstream WS
+ * session teardown). Matches the `executionSessionId::` segment after the
+ * provider prefix, so it never clears a lookalike session id.
  */
-export function clearCodexTranscriptsByExecutionId(
+export function clearResponsesTranscriptsByExecutionId(
   executionSessionId: string,
 ): number {
   const id = executionSessionId.trim()
   if (!id) return 0
-  const prefix = `${id}::`
   let cleared = 0
   for (const key of transcripts.keys()) {
-    if (key.startsWith(prefix)) {
+    // key = `${provider}::${executionSessionId}::${model}`.
+    const sep = key.indexOf("::")
+    if (sep === -1) continue
+    const rest = key.slice(sep + 2)
+    if (rest.startsWith(`${id}::`)) {
       transcripts.delete(key)
       cleared += 1
     }

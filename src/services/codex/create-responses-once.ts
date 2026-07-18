@@ -33,11 +33,12 @@ import {
 import { collectResponsesFromSseResponse } from "~/services/responses/sse-collector"
 import {
   applyCodexWebsocketHeaders,
+  destroyUpstreamWebsocketSession,
   isAbortLikeError,
-  isUpstreamWsTransportError,
   openUpstreamResponsesWebsocketTurn,
   shouldUseUpstreamResponsesWebsocket,
 } from "~/services/responses/upstream-ws"
+import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import { buildCodexHeaders } from "./headers"
 import {
@@ -182,6 +183,32 @@ function isResponsesLiteMarker(value: unknown): boolean {
   )
 }
 
+/**
+ * Remove all `reasoning` items from a Responses `input` array.
+ *
+ * The OpenAI Responses API accepts reasoning items in only two valid shapes:
+ * fully paired (each reasoning item immediately followed by the item it
+ * reasoned about) or omitted entirely. A partially-stripped input triggers a
+ * 400 ("reasoning ... provided without its required following item"), so we
+ * drop *every* reasoning item and keep messages / function_call /
+ * custom_tool_call and their outputs intact.
+ *
+ * Used for self-contained replays (fresh WS socket / HTTP fallback) where the
+ * accumulated transcript's historical `reasoning.encrypted_content` blobs are
+ * both the bulk of the payload (blowing past the WS frame the upstream can
+ * process) and stale relative to the freshly dialed upstream context. Dropping
+ * them shrinks the replay and avoids stale-signature rejections; the only cost
+ * is losing cross-turn chain-of-thought continuity on the (rare) recovery path.
+ */
+export function stripReasoningItems(input: Array<unknown>): Array<unknown> {
+  return input.filter(
+    (item) =>
+      item === null
+      || typeof item !== "object"
+      || (item as { type?: unknown }).type !== "reasoning",
+  )
+}
+
 export async function createCodexResponsesOnce(
   account: Account,
   payload: ResponsesPayload,
@@ -201,11 +228,9 @@ export async function createCodexResponsesOnce(
   const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
-  const useUpstreamWs = shouldUseUpstreamResponsesWebsocket(
-    account,
-    "codex",
-    ctx,
-  )
+  const useUpstreamWs =
+    !ctx?.forceUpstreamHttp
+    && shouldUseUpstreamResponsesWebsocket(account, "codex", ctx)
   const { sessionId, threadId } = resolveCodexSessionHeaders(payload, ctx)
   const extraHeaders = resolveCodexExtraHeaders(ctx)
   const responsesLite = isResponsesLiteRequest(payload, ctx)
@@ -290,6 +315,11 @@ export async function createCodexResponsesOnce(
   applyIdentityConfuseHeaders(httpHeaders, identityState)
 
   // ── Upstream WebSocket path (CPA CodexWebsocketsExecutor) ────────────
+  // Set when a chained turn falls back to HTTP: the HTTP POST must send the
+  // full self-contained input (not the client's delta), or a tool-result turn
+  // arrives as an orphan custom_tool_call_output and upstream rejects it with
+  // "No tool call found for custom tool call output with call_id ...".
+  let httpFallbackBody: Record<string, unknown> | undefined
   if (useUpstreamWs) {
     const executionSessionId =
       ctx?.executionSessionId?.trim()
@@ -311,16 +341,22 @@ export async function createCodexResponsesOnce(
     const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
     const fullInputThisTurn =
       cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
-    // Self-contained replay body used only when a fresh upstream socket cannot
-    // resolve the client's previous_response_id (store=false).
+    // Self-contained replay body used when a fresh upstream socket cannot
+    // resolve the client's previous_response_id (store=false), and as the HTTP
+    // fallback body. Strip historical reasoning items: they are the bulk of a
+    // long transcript (oversized WS frames stall silently) and are stale on a
+    // fresh socket. Dropping them all is a valid Responses API input shape.
     const fallbackFullInputBody =
       previousResponseId && cachedFull ?
         {
           ...upstreamBody,
-          input: fullInputThisTurn,
+          input: stripReasoningItems(fullInputThisTurn),
           previous_response_id: undefined,
         }
       : undefined
+    // Reuse the same self-contained body if the WS turn fails and we fall back
+    // to HTTP (HTTP handles large bodies with no WS frame limit).
+    httpFallbackBody = fallbackFullInputBody
     const wsBody: Record<string, unknown> = {
       ...upstreamBody,
       previous_response_id: previousResponseId,
@@ -356,8 +392,19 @@ export async function createCodexResponsesOnce(
       )
     } catch (error) {
       if (isAbortLikeError(error) || signal?.aborted) throw error
-      // Application errors from upstream WS (response.failed) — do not re-POST.
-      if (!isUpstreamWsTransportError(error)) throw error
+      const failure = classifyWsFailure(error)
+      // credential (quota/auth/rate/server) and request (bad body) failures are
+      // the handler's concern — an account switch or a surfaced error. Never
+      // silently re-POST them on the same account.
+      if (failure.scope === "credential" || failure.scope === "request") {
+        throw error
+      }
+      // connection scope: this socket is unusable. On a connection-limit frame,
+      // destroy the stale session so the next turn redials; then fall through
+      // to a same-account HTTP POST for the current turn.
+      if (failure.kind === "connection_limit") {
+        destroyUpstreamWebsocketSession("codex", account.id, executionSessionId)
+      }
       logger.warn(
         `codex websockets: falling back to HTTP: ${
           error instanceof Error ? error.message : String(error)
@@ -369,8 +416,10 @@ export async function createCodexResponsesOnce(
   const response = await fetchWithOAuthProxy(account, url, {
     method: "POST",
     headers: httpHeaders,
-    // HTTP path: no previous_response_id (already stripped on upstreamBody)
-    body: JSON.stringify(upstreamBody),
+    // HTTP path: no previous_response_id (already stripped on upstreamBody).
+    // On a chained-turn WS fallback, send the full self-contained input so the
+    // tool-result turn is not an orphan (see httpFallbackBody).
+    body: JSON.stringify(httpFallbackBody ?? upstreamBody),
     signal,
   })
 

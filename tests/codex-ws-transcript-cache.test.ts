@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import {
   clearCodexTranscript,
-  clearCodexTranscriptsByExecutionId,
   clearCodexTranscriptsForTest,
+  clearResponsesTranscriptsByExecutionId,
   codexTranscriptKey,
   getCodexTranscript,
   getCodexTranscriptCountForTest,
@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe("codexTranscriptKey", () => {
   test("combines execution session id and model", () => {
-    expect(codexTranscriptKey("sess-1", "gpt-5")).toBe("sess-1::gpt-5")
+    expect(codexTranscriptKey("sess-1", "gpt-5")).toBe("codex::sess-1::gpt-5")
   })
 })
 
@@ -63,11 +63,11 @@ describe("transcript clearing", () => {
     expect(getCodexTranscript(b)).toBeDefined()
   })
 
-  test("clearCodexTranscriptsByExecutionId removes all models for a session", () => {
+  test("clearResponsesTranscriptsByExecutionId removes all models for a session", () => {
     setCodexTranscript(codexTranscriptKey("sess-1", "gpt-5"), [{ a: 1 }])
     setCodexTranscript(codexTranscriptKey("sess-1", "gpt-5-mini"), [{ b: 1 }])
     setCodexTranscript(codexTranscriptKey("sess-2", "gpt-5"), [{ c: 1 }])
-    const cleared = clearCodexTranscriptsByExecutionId("sess-1")
+    const cleared = clearResponsesTranscriptsByExecutionId("sess-1")
     expect(cleared).toBe(2)
     expect(
       getCodexTranscript(codexTranscriptKey("sess-1", "gpt-5")),
@@ -80,16 +80,16 @@ describe("transcript clearing", () => {
     ).toBeDefined()
   })
 
-  test("clearCodexTranscriptsByExecutionId ignores empty id", () => {
+  test("clearResponsesTranscriptsByExecutionId ignores empty id", () => {
     setCodexTranscript(codexTranscriptKey("sess-1", "gpt-5"), [{ a: 1 }])
-    expect(clearCodexTranscriptsByExecutionId("  ")).toBe(0)
+    expect(clearResponsesTranscriptsByExecutionId("  ")).toBe(0)
     expect(getCodexTranscriptCountForTest()).toBe(1)
   })
 
   test("prefix match does not clear a lookalike session id", () => {
     setCodexTranscript(codexTranscriptKey("sess-1", "gpt-5"), [{ a: 1 }])
     setCodexTranscript(codexTranscriptKey("sess-10", "gpt-5"), [{ b: 1 }])
-    const cleared = clearCodexTranscriptsByExecutionId("sess-1")
+    const cleared = clearResponsesTranscriptsByExecutionId("sess-1")
     expect(cleared).toBe(1)
     expect(
       getCodexTranscript(codexTranscriptKey("sess-10", "gpt-5")),

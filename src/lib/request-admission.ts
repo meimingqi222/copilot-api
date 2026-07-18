@@ -565,6 +565,49 @@ export function switchToNextRouteTarget(
 }
 
 /**
+ * WS-only same-protocol account rotation selector for in-round Responses
+ * failover. Deliberately separate from `switchToNextRouteTarget` (which the
+ * HTTP dispatch path and its cross-system failover test depend on), because
+ * this selector adds three WS-specific constraints:
+ *
+ *   1. Forwards `routing.connectionId` so an explicit `connectionId/model` pin
+ *      is honored — never switches to a different connection (returns null
+ *      once the pinned connection's account is exhausted).
+ *   2. Keeps the same protocol as the initial target — a bare model resolving
+ *      to both codex + xAI must not cross protocols mid-turn.
+ *   3. Only returns account-backed candidates, since rotation resolves the
+ *      account and calls `createResponses({ account })`.
+ *
+ * Returns null when no other same-protocol, account-backed candidate remains
+ * (excluding those already in `tried`).
+ */
+export function selectNextResponsesWsTarget(
+  initialTarget: RouteTarget,
+  modelId: string,
+  tried: Set<string>,
+  session?: { sessionId?: string; fallbackSessionId?: string },
+): RouteTarget | null {
+  const routing = resolveModelRouting(modelId)
+  const candidates = buildRouteTargets({
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
+    connectionId: routing.connectionId,
+    endpoint: "responses",
+  }).filter(
+    (candidate) =>
+      candidate.protocol === initialTarget.protocol
+      && resolveConnectionFromTarget(candidate)?.account !== undefined,
+  )
+  return selectRouteTarget(candidates, {
+    exclude: tried,
+    sessionId: session?.sessionId,
+    fallbackSessionId: session?.fallbackSessionId,
+    rebindAffinity: true,
+  })
+}
+
+/**
  * 把 RouteTarget 解析为 ProviderAdmission 信息。
  *
  * 批次 3 后统一从 getProviderConnection 查找真实 connection/credential。

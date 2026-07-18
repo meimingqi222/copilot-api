@@ -168,6 +168,16 @@ describe("fallback error classification", () => {
     ).toBe(true)
   })
 
+  test("first-event timeout is fallback-eligible", () => {
+    expect(
+      isUpstreamWsTransportError(
+        new Error(
+          "codex websockets: no upstream response within 60s (timeout)",
+        ),
+      ),
+    ).toBe(true)
+  })
+
   test("application HTTPError and aborts are not fallback-eligible", () => {
     expect(
       isUpstreamWsTransportError(
