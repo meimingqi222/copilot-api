@@ -130,7 +130,9 @@ function scheduleOAuthRefreshAttempt(
     () => {
       void (async () => {
         const account = listAccounts().find((item) => item.id === accountId)
-        if (!account || !account.enabled || !isOAuthAccount(account)) {
+        // Disabled accounts still get token refresh — disabling only removes
+        // them from request routing, not from token lifecycle.
+        if (!account || !isOAuthAccount(account)) {
           cancelOAuthRefreshTimer(accountId)
           oauthRetryCounts.delete(accountId)
           return
@@ -185,7 +187,9 @@ export async function refreshOAuthAccountToken(
   account: Account,
   reason = "scheduled",
 ): Promise<void> {
-  if (!isOAuthAccount(account) || !account.enabled) {
+  // Note: intentionally not gated on `account.enabled` — a disabled account
+  // must still be able to refresh its OAuth token so quota/token stays valid.
+  if (!isOAuthAccount(account)) {
     return
   }
 
@@ -251,7 +255,10 @@ export async function refreshOAuthAccountToken(
 }
 
 export function scheduleOAuthRefreshForAccount(account: Account): void {
-  if (!isOAuthAccount(account) || !account.enabled) {
+  // Keep refreshing disabled accounts' tokens in the background (matches the
+  // reference CPA behavior): `enabled` gates request routing, not token
+  // lifecycle.
+  if (!isOAuthAccount(account)) {
     cancelOAuthRefreshTimer(account.id)
     return
   }

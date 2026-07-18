@@ -57,7 +57,11 @@ export async function ensureOAuthAccessToken(
   options: EnsureOAuthAccessTokenOptions = {},
 ): Promise<string | undefined> {
   const currentAccount = getCurrentAccount(account)
-  if (!isOAuthAccount(currentAccount) || !currentAccount.enabled) {
+  // Token refresh is decoupled from `enabled`: a disabled account is only
+  // excluded from request routing, not from token lifecycle. Otherwise a
+  // disabled account's access token expires and can never be refreshed,
+  // breaking on-demand actions like quota refresh (401 forever).
+  if (!isOAuthAccount(currentAccount)) {
     return getOAuthAccessToken(currentAccount)
   }
 
