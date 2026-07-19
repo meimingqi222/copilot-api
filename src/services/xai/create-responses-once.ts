@@ -15,7 +15,6 @@ import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 import { resolveXaiModelId } from "~/services/oauth/model-catalog"
-import { XAI_API_BASE_URL } from "~/services/oauth/xai"
 import {
   detectResponsesStreamError,
   safeSseStream,
@@ -35,6 +34,11 @@ import {
   setResponsesTranscript,
   xaiTranscriptKey,
 } from "../codex/ws-transcript-cache"
+import {
+  isXaiCliChatProxyBaseUrl,
+  xaiChatBaseUrl,
+  xaiWsBaseUrl,
+} from "./endpoint"
 import { buildXaiHeaders } from "./headers"
 
 /**
@@ -350,8 +354,13 @@ export async function createXaiResponsesOnce(
   }
 
   const model = resolveXaiModelId(canonicalNativeModelId(payload.model))
-  const baseUrl = account.settings?.baseUrl ?? XAI_API_BASE_URL
-  const url = `${baseUrl.replace(/\/+$/, "")}/responses`
+  // WebSocket always uses the official API (cli-chat-proxy rejects WS with 405).
+  // HTTP chat uses the resolved chat endpoint: Grok CLI chat-proxy in CLI mode
+  // (the default) or the official API when settings.useApi is true.
+  const wsUrl = `${xaiWsBaseUrl(account).replace(/\/+$/, "")}/responses`
+  const chatBaseUrl = xaiChatBaseUrl(account)
+  const chatUrl = `${chatBaseUrl.replace(/\/+$/, "")}/responses`
+  const useCliIdentity = isXaiCliChatProxyBaseUrl(chatBaseUrl)
   const clientStream = payload.stream === true
   const useUpstreamWs =
     !ctx?.forceUpstreamHttp
@@ -434,7 +443,7 @@ export async function createXaiResponsesOnce(
       const wsStream = await openUpstreamResponsesWebsocketTurn({
         provider: "xai",
         account,
-        httpResponsesUrl: url,
+        httpResponsesUrl: wsUrl,
         headers,
         body: wsBody,
         executionSessionId,
@@ -474,9 +483,9 @@ export async function createXaiResponsesOnce(
     }
   }
 
-  const response = await fetchWithOAuthProxy(account, url, {
+  const response = await fetchWithOAuthProxy(account, chatUrl, {
     method: "POST",
-    headers: buildXaiHeaders(accessToken, true, sessionId),
+    headers: buildXaiHeaders(accessToken, true, sessionId, useCliIdentity),
     // HTTP: no previous_response_id. On a chained-turn WS fallback, send the
     // full self-contained input (httpFallbackBody) so the turn is not orphaned.
     body: JSON.stringify(httpFallbackBody ?? upstreamBody),

@@ -459,6 +459,18 @@ function applySettingsPatch(
         setSettingsField(account, key, settings[key].trim() || undefined)
       }
     }
+    // useApi 是布尔开关(xAI CLI/API 端点切换)。接受布尔或字符串形式,
+    // 显式 false 会写入(而非清除),以便与 undefined(未设置)默认值区分。
+    if ("useApi" in settings) {
+      const raw = settings.useApi
+      let value: boolean | undefined
+      if (typeof raw === "boolean") {
+        value = raw
+      } else if (typeof raw === "string") {
+        value = raw.trim().toLowerCase() === "true"
+      }
+      account.settings = { ...account.settings, useApi: value }
+    }
   } else {
     // 其他 provider:直接合并 settings(保留原始值,不强制 trim/clear)
     account.settings = { ...account.settings, ...settings }

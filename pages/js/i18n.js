@@ -208,6 +208,11 @@ const i18n = {
       "accounts.priority": "优先级",
       "accounts.priorityHint": "数值越小优先级越高，相同优先级按顺序使用",
       "accounts.prioritySuccess": "优先级已更新",
+      "accounts.xaiEndpoint": "接入端点",
+      "accounts.xaiEndpoint.cli": "Grok CLI",
+      "accounts.xaiEndpoint.api": "官方 API",
+      "accounts.xaiEndpointHint":
+        "默认走 Grok CLI 端点（cli-chat-proxy），开启后 HTTP 请求改走官方 API（api.x.ai）。WebSocket 始终使用官方 API。",
       "accounts.export": "导出账户",
       "accounts.exportSuccess": "账户导出成功",
       "accounts.exportOne": "导出此账户",
@@ -854,6 +859,11 @@ const i18n = {
       "accounts.priorityHint":
         "Lower value = higher priority. Same priority uses order.",
       "accounts.prioritySuccess": "Priority updated",
+      "accounts.xaiEndpoint": "Endpoint",
+      "accounts.xaiEndpoint.cli": "Grok CLI",
+      "accounts.xaiEndpoint.api": "Official API",
+      "accounts.xaiEndpointHint":
+        "Defaults to the Grok CLI endpoint (cli-chat-proxy). When enabled, HTTP requests use the official API (api.x.ai). WebSocket always uses the official API.",
       "accounts.export": "Export Accounts",
       "accounts.exportSuccess": "Accounts exported successfully",
       "accounts.exportOne": "Export this account",

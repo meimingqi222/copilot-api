@@ -665,6 +665,20 @@
                       </div>
                       <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('accounts.priorityHint')"></p>
                     </div>
+                    <!-- xAI Endpoint Toggle (CLI chat-proxy vs official API) -->
+                    <div x-show="(account.provider || 'copilot') === 'xai'" class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg">
+                      <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                          <i data-lucide="route" class="w-4 h-4 text-[var(--apple-text-secondary)]"></i>
+                          <span class="text-sm text-[var(--apple-text-secondary)]" x-text="t('accounts.xaiEndpoint')"></span>
+                        </div>
+                        <button @click="toggleXaiUseApi(account)" type="button" class="btn btn-sm"
+                                :class="isXaiUsingApi(account) ? 'btn-primary' : 'btn-secondary'"
+                                x-text="isXaiUsingApi(account) ? t('accounts.xaiEndpoint.api') : t('accounts.xaiEndpoint.cli')">
+                        </button>
+                      </div>
+                      <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('accounts.xaiEndpointHint')"></p>
+                    </div>
                     <!-- Available Models -->
                     <div x-show="account.availableModels && account.availableModels.length" class="mb-4 flex-1">
                       <p class="text-xs text-[var(--apple-text-secondary)] mb-1.5" x-text="t('accounts.availableModels')"></p>
