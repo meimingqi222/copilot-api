@@ -86,6 +86,13 @@ export interface OAuthAccountSettings {
   cpaSourcePath?: string
   tokenEndpoint?: string
   redirectUri?: string
+  /**
+   * xAI only. When true, route non-media HTTP chat to the official API
+   * (api.x.ai). When false/undefined (the default), route it to the Grok CLI
+   * chat-proxy. WebSocket/compact transports always use the official API
+   * regardless of this flag.
+   */
+  useApi?: boolean
 }
 
 // ── Flat Account type ───────────────────────────────────────────

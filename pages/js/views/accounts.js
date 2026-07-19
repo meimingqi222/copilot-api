@@ -542,6 +542,35 @@ function accountsView() {
       }
     },
 
+    /**
+     * Whether an xAI account is set to use the official API endpoint.
+     * Defaults to false (Grok CLI chat-proxy).
+     */
+    isXaiUsingApi(account) {
+      return account.settings?.useApi === true
+    },
+
+    /**
+     * Toggle an xAI account between the Grok CLI chat-proxy (default) and the
+     * official API endpoint for HTTP chat. WebSocket traffic always uses the
+     * official API regardless of this setting.
+     */
+    async toggleXaiUseApi(account) {
+      const nextUseApi = !this.isXaiUsingApi(account)
+      try {
+        await API.accounts.update(account.id, {
+          settings: { useApi: nextUseApi },
+        })
+        account.settings = { ...account.settings, useApi: nextUseApi }
+        this.showToast(
+          I18n.t("accounts.updateSuccess") || "Account updated",
+          "success",
+        )
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
     async decreasePriority(account) {
       const newPriority = Math.max(0, (account.priority ?? 0) - 1)
       account.priority = newPriority

@@ -8,6 +8,14 @@ import { extractEmailFromIdToken } from "./jwt"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
 
 export const XAI_API_BASE_URL = "https://api.x.ai/v1"
+/**
+ * Grok CLI chat-proxy base URL. Used for non-media HTTP chat when an xAI OAuth
+ * account is in CLI mode (settings.useApi !== true, the default). WebSocket and
+ * /responses/compact transports must NOT use this endpoint: cli-chat-proxy only
+ * accepts HTTP POST chat and returns 405 for websocket upgrades / 404 for
+ * compact.
+ */
+export const XAI_CLI_CHAT_PROXY_BASE_URL = "https://cli-chat-proxy.grok.com/v1"
 export const XAI_ISSUER = "https://auth.x.ai"
 export const XAI_DISCOVERY_URL = `${XAI_ISSUER}/.well-known/openid-configuration`
 export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
