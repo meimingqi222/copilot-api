@@ -447,6 +447,7 @@
 
         <!-- Edit User Modal -->
         <div x-show="showEditModal" class="modal-overlay" @click.self="showEditModal = false" x-cloak>
+          <template x-if="editingUser">
           <div class="modal">
             <div class="modal-header">
               <h3 class="text-title-3" x-text="t('users.editUser', { name: editingUser?.username || '' })"></h3>
@@ -501,6 +502,7 @@
               <button @click="saveEditUser()" class="btn btn-primary" x-text="t('save')"></button>
             </div>
           </div>
+          </template>
         </div>
 
         <!-- New API Key Modal -->
@@ -1410,20 +1412,20 @@
             </div>
             <p class="text-xs text-[var(--apple-text-secondary)] mb-4" x-show="usageSummary?.period?.startDate">
               <span x-text="t('usage.period')"></span>:
-              <span x-text="usageSummary.period.startDate"></span>
+              <span x-text="usageSummary?.period?.startDate"></span>
               →
-              <span x-text="usageSummary.period.endDate"></span>
+              <span x-text="usageSummary?.period?.endDate"></span>
             </p>
 
             <!-- Stats Cards -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.requestsInRange')"></p>
-                <p class="text-2xl font-bold" x-text="usageSummary.totals.requests || 0"></p>
+                <p class="text-2xl font-bold" x-text="usageSummary.totals?.requests || 0"></p>
               </div>
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.tokens.total')"></p>
-                <p class="text-2xl font-bold" x-text="formatTokens(usageSummary.totals.totalTokens || 0)"></p>
+                <p class="text-2xl font-bold" x-text="formatTokens(usageSummary.totals?.totalTokens || 0)"></p>
               </div>
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1">
@@ -1432,24 +1434,24 @@
                   <span x-text="t('usage.tokens.completion')"></span>
                 </p>
                 <p class="text-lg font-bold">
-                  <span x-text="formatTokens(usageSummary.totals.promptTokens || 0)"></span>
+                  <span x-text="formatTokens(usageSummary.totals?.promptTokens || 0)"></span>
                   <span class="text-sm text-[var(--apple-text-secondary)] mx-1">/</span>
-                  <span x-text="formatTokens(usageSummary.totals.completionTokens || 0)"></span>
+                  <span x-text="formatTokens(usageSummary.totals?.completionTokens || 0)"></span>
                 </p>
-                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-show="(usageSummary.totals.cacheReadTokens || 0) + (usageSummary.totals.cacheWriteTokens || 0) > 0">
-                  <span x-text="t('usage.tokens.cacheRead') + ': ' + formatTokens(usageSummary.totals.cacheReadTokens || 0)"></span>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-show="(usageSummary.totals?.cacheReadTokens || 0) + (usageSummary.totals?.cacheWriteTokens || 0) > 0">
+                  <span x-text="t('usage.tokens.cacheRead') + ': ' + formatTokens(usageSummary.totals?.cacheReadTokens || 0)"></span>
                   <span class="mx-1">·</span>
-                  <span x-text="t('usage.tokens.cacheWrite') + ': ' + formatTokens(usageSummary.totals.cacheWriteTokens || 0)"></span>
+                  <span x-text="t('usage.tokens.cacheWrite') + ': ' + formatTokens(usageSummary.totals?.cacheWriteTokens || 0)"></span>
                 </p>
               </div>
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.cacheHitRate')"></p>
-                <p class="text-2xl font-bold" :class="getCacheHitRateClass(usageSummary.totals.cacheHitRate)" x-text="formatCacheHitRate(usageSummary.totals.cacheHitRate)"></p>
+                <p class="text-2xl font-bold" :class="getCacheHitRateClass(usageSummary.totals?.cacheHitRate)" x-text="formatCacheHitRate(usageSummary.totals?.cacheHitRate)"></p>
                 <p class="text-xs text-[var(--apple-text-tertiary)] mt-1" x-text="t('usage.cacheHitRateDesc')"></p>
               </div>
               <div class="card p-4">
                 <p class="text-sm text-[var(--apple-text-secondary)] mb-1" x-text="t('usage.cost')"></p>
-                <p class="text-2xl font-bold" x-text="'$' + (usageSummary.totals.cost || 0).toFixed(4)"></p>
+                <p class="text-2xl font-bold" x-text="'$' + (usageSummary.totals?.cost || 0).toFixed(4)"></p>
               </div>
             </div>
           </div>
@@ -1470,7 +1472,7 @@
               </div>
 
               <!-- Aggregate View -->
-              <div class="space-y-4" x-show="modelViewMode === 'aggregate' && Object.keys(usageSummary.byModel).length">
+              <div class="space-y-4" x-show="modelViewMode === 'aggregate' && Object.keys(usageSummary.byModel || {}).length">
                 <template x-for="([model, data]) in sortedModelUsage" :key="model">
                   <div class="rounded-2xl border border-[var(--apple-gray-5)] p-4 bg-[var(--apple-bg-secondary)]">
                     <div class="flex justify-between items-start gap-3 mb-3">
@@ -1507,7 +1509,7 @@
                   </div>
                 </template>
               </div>
-              <div x-show="modelViewMode === 'aggregate' && !Object.keys(usageSummary.byModel).length" class="empty-state">
+              <div x-show="modelViewMode === 'aggregate' && !Object.keys(usageSummary.byModel || {}).length" class="empty-state">
                 <i data-lucide="cpu" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('usage.noModelData')"></p>
               </div>
@@ -1562,7 +1564,7 @@
             <div class="card p-6">
               <h3 class="text-title-2 mb-4" x-text="t('usage.userUsage')"></h3>
               <div class="space-y-4" x-show="Object.keys(usageSummary.byUser || {}).length">
-                <template x-for="(data, userId) in usageSummary.byUser" :key="userId">
+                <template x-for="(data, userId) in (usageSummary.byUser || {})" :key="userId">
                   <div class="pb-4 border-b border-[var(--apple-gray-5)] last:border-0 last:pb-0">
                     <div class="flex justify-between items-center mb-2">
                       <span class="font-medium" x-text="data.username"></span>

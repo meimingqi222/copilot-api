@@ -20,6 +20,7 @@ const PUBLIC_PATHS = new Set([
   "/admin/setup",
   "/health",
   "/ws/mimo",
+  "/favicon.ico",
 ])
 const PUBLIC_PREFIXES = ["/admin"]
 

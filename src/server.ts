@@ -35,6 +35,9 @@ server.use("*", requireApiKey)
 // Health check endpoint (plain text, always public)
 server.get("/health", (c) => c.text("OK"))
 
+// Favicon - return 204 to avoid 401/404 noise in browser console
+server.get("/favicon.ico", (c) => c.body(null, 204))
+
 server.get("/", (c) => c.redirect("/admin"))
 server.route("/admin", adminRoutes)
 

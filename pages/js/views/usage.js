@@ -67,18 +67,26 @@ function usageView() {
       if (range !== "custom") {
         this.selectedMonth = ""
       }
-      this.loadUsageStats().then(() => {
-        this.$nextTick(() => this.renderChart())
-      })
+      this.loadUsageStats()
+        .then(() => {
+          this.$nextTick(() => this.renderChart())
+        })
+        .catch(() => {
+          this.showToast(this.t("error.load"), "error")
+        })
     },
 
     setMonth(month) {
       if (!month) return
       this.dateRange = "custom"
       this.selectedMonth = month
-      this.loadUsageStats().then(() => {
-        this.$nextTick(() => this.renderChart())
-      })
+      this.loadUsageStats()
+        .then(() => {
+          this.$nextTick(() => this.renderChart())
+        })
+        .catch(() => {
+          this.showToast(this.t("error.load"), "error")
+        })
     },
 
     setModelViewMode(mode) {
