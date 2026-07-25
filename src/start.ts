@@ -7,6 +7,7 @@ import invariant from "tiny-invariant"
 
 import { flushAllPersistentMaps } from "~/lib/cache/persistent-map"
 import { initLogger, logger } from "~/lib/logger"
+import { loadModelAliases } from "~/lib/model-aliases"
 
 import {
   flushAccountsOnShutdown,
@@ -193,6 +194,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   // Load provider connections (generic OpenAI/Anthropic-compatible providers)
   await initializeProviderConnections()
+  loadModelAliases()
   initializeProtocolAdapters()
   initializeCredentialRefreshers()
 

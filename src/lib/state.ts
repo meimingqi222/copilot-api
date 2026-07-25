@@ -3,6 +3,7 @@ import type { User } from "~/lib/users"
 import type { ModelsResponse } from "~/services/copilot/get-models"
 
 import { CACHE_UTILIZATION_DEFAULTS } from "~/lib/routing/provider-cache"
+import type { ModelAliasRule } from "~/lib/model-aliases"
 
 interface CodebuffProviderDefaults {
   authToken?: string
@@ -59,6 +60,7 @@ export interface State {
   adminPassword?: string
   adminSessionToken?: string
   adminSessionExpiresAt?: number
+  modelAliases: Array<ModelAliasRule>
 }
 
 export const state: State = {
@@ -82,4 +84,5 @@ export const state: State = {
   routing: { ...CACHE_UTILIZATION_DEFAULTS },
   manualApprove: false,
   showToken: false,
+  modelAliases: [],
 }

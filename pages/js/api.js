@@ -245,6 +245,21 @@ const API = {
       API.request(`/provider-connections/${id}/credentials/${credId}/value`),
   },
 
+  modelAliases: {
+    list: () => API.request("/model-aliases"),
+    create: (data) =>
+      API.request("/model-aliases", { method: "POST", body: data }),
+    update: (id, data) =>
+      API.request(`/model-aliases/${id}`, { method: "PUT", body: data }),
+    delete: (id) =>
+      API.request(`/model-aliases/${id}`, { method: "DELETE" }),
+    resolve: (model) =>
+      API.request("/model-aliases/resolve", {
+        method: "POST",
+        body: { model },
+      }),
+  },
+
   accountFlows: {
     poll: (flowId) =>
       API.request(`/account-flows/${flowId}/poll`, { method: "POST" }),
