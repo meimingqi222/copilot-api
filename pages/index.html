@@ -1249,6 +1249,7 @@
                 <input type="text" x-model="modelForm.upstreamId" class="form-input"
                        :placeholder="modelForm.publicId || 'GLM-4'">
                 <p class="text-xs text-[var(--apple-text-tertiary)] mt-1.5" x-text="t('connections.modelUpstreamIdHint')"></p>
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-1.5" x-text="t('connections.modelAliasesGlobalHint')"></p>
               </div>
             </div>
             <div class="modal-footer">
@@ -1364,6 +1365,92 @@
                 <i data-lucide="upload" class="w-4 h-4"></i>
                 <span x-text="t('connections.import')"></span>
               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Model Aliases View -->
+      <div x-show="currentView === 'model-aliases'" x-data="modelAliasesView()" x-init="load()" style="display: none;">
+        <header class="flex justify-between items-center mb-8">
+          <h2 class="text-headline" x-text="t('modelAliases.title')"></h2>
+          <button @click="openCreate()" class="btn btn-primary">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span x-text="t('modelAliases.add')"></span>
+          </button>
+        </header>
+        <div class="card mb-6">
+          <div class="flex gap-3 items-center">
+            <input class="form-input flex-1" x-model="previewModel"
+                   @input.debounce.250ms="resolve()"
+                   :placeholder="t('modelAliases.previewPlaceholder')">
+            <button @click="resolve()" class="btn btn-secondary" x-text="t('modelAliases.try')"></button>
+          </div>
+          <div x-show="preview" class="mt-4 text-sm" x-cloak>
+            <p class="font-medium" x-text="(preview.aliasChain || []).join(' → ')"></p>
+            <template x-for="candidate in (preview.candidates || [])" :key="candidate.connectionId + candidate.endpoint">
+              <p class="text-[var(--apple-text-secondary)]"
+                 x-text="candidate.connectionId + ' / ' + candidate.upstreamModelId"></p>
+            </template>
+          </div>
+        </div>
+        <div class="card overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="text-left">
+              <th class="p-3" x-text="t('modelAliases.enabled')"></th>
+              <th class="p-3" x-text="t('modelAliases.kind')"></th>
+              <th class="p-3" x-text="t('modelAliases.from')"></th>
+              <th class="p-3" x-text="t('modelAliases.to')"></th>
+              <th class="p-3" x-text="t('modelAliases.scope')"></th>
+              <th class="p-3" x-text="t('modelAliases.expose')"></th>
+              <th class="p-3"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="alias in aliases" :key="alias.id">
+                <tr class="border-t border-[var(--apple-gray-5)]">
+                  <td class="p-3"><input type="checkbox" :checked="alias.enabled"
+                    @change="openEdit({ ...alias, enabled: $event.target.checked })"></td>
+                  <td class="p-3" x-text="alias.kind"></td>
+                  <td class="p-3 font-mono" x-text="alias.from"></td>
+                  <td class="p-3 font-mono" x-text="alias.to"></td>
+                  <td class="p-3 text-xs" x-text="alias.scope ? JSON.stringify(alias.scope) : '—'"></td>
+                  <td class="p-3" x-text="alias.exposeInModels ? '✓' : '—'"></td>
+                  <td class="p-3 text-right">
+                    <button class="btn btn-secondary btn-small mr-2" @click="openEdit(alias)" x-text="t('edit')"></button>
+                    <button class="btn btn-danger btn-small" @click="remove(alias)" x-text="t('delete')"></button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="!aliases.length" class="p-6 text-center text-[var(--apple-text-secondary)]"
+             x-text="t('modelAliases.empty')"></p>
+        </div>
+
+        <div x-show="showModal" class="modal-overlay" @click.self="showModal = false" x-cloak>
+          <div class="modal">
+            <div class="modal-header">
+              <h3 class="text-title-3" x-text="editingId ? t('modelAliases.edit') : t('modelAliases.add')"></h3>
+              <button @click="showModal = false" class="btn-icon"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="modal-body space-y-4">
+              <label class="flex gap-2 items-center"><input type="checkbox" x-model="form.enabled">
+                <span x-text="t('modelAliases.enabled')"></span></label>
+              <div><label class="form-label" x-text="t('modelAliases.kind')"></label>
+                <select class="form-input" x-model="form.kind">
+                  <option value="exact">exact</option><option value="prefix">prefix</option><option value="pattern">pattern</option>
+                </select></div>
+              <div><label class="form-label" x-text="t('modelAliases.from')"></label><input class="form-input" x-model="form.from"></div>
+              <div><label class="form-label" x-text="t('modelAliases.to')"></label><input class="form-input" x-model="form.to"></div>
+              <div><label class="form-label" x-text="t('modelAliases.scope')"></label>
+                <textarea class="form-input" rows="2" x-model="form.scope" placeholder='{"providers":["xai"]}'></textarea></div>
+              <label class="flex gap-2 items-center"><input type="checkbox" x-model="form.exposeInModels">
+                <span x-text="t('modelAliases.expose')"></span></label>
+              <div><label class="form-label" x-text="t('modelAliases.note')"></label><input class="form-input" x-model="form.note"></div>
+            </div>
+            <div class="modal-footer">
+              <button @click="showModal = false" class="btn btn-secondary" x-text="t('cancel')"></button>
+              <button @click="save()" class="btn btn-primary" x-text="t('save')"></button>
             </div>
           </div>
         </div>
@@ -2379,6 +2466,7 @@
   <script src="/admin/static/js/views/users.js"></script>
   <script src="/admin/static/js/views/accounts.js"></script>
   <script src="/admin/static/js/views/connections.js"></script>
+  <script src="/admin/static/js/views/model-aliases.js"></script>
   <script src="/admin/static/js/views/usage.js"></script>
   <script src="/admin/static/js/views/quotas.js"></script>
   <script src="/admin/static/js/views/performance.js"></script>

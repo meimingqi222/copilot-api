@@ -31,6 +31,11 @@ import {
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
+import {
+  connectionMatchesAliasRestriction,
+  getExposedAliasEntries,
+  type ModelAliasRestriction,
+} from "~/lib/model-aliases"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -79,6 +84,8 @@ export interface BuildRouteTargetsOptions {
   legacyProvider?: ProviderId
   /** 仅匹配指定 modelPrefix 的账户。 */
   accountPrefix?: string
+  /** Restrict candidates to the scope of a matched global alias rule. */
+  aliasRestriction?: ModelAliasRestriction
 }
 
 export function buildRouteTargets(
@@ -146,6 +153,9 @@ export function buildRouteTargets(
 
   for (const { connection, account } of allConnections) {
     if (options.connectionId && connection.id !== options.connectionId) continue
+    if (!connectionMatchesAliasRestriction(connection, options.aliasRestriction)) {
+      continue
+    }
     if (onlyAvailable && !connection.enabled) continue
 
     const credentials = safeCredentials(connection)
@@ -345,7 +355,7 @@ export function listExposedPublicModels(
       }
     }
   }
-  return out
+  return [...out, ...getExposedAliasEntries(out, connections)]
 }
 
 function accountModelId(model: AccountModel): string {

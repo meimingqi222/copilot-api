@@ -18,6 +18,10 @@ import {
   getProviderConnection,
   listProviderConnections,
 } from "~/lib/provider-connections"
+import {
+  resolveModelAlias,
+  type ModelAliasRestriction,
+} from "~/lib/model-aliases"
 
 export interface ParsedModelRef {
   /** 命中已注册 connection 时的 connection id;否则 undefined。 */
@@ -35,6 +39,9 @@ export interface ResolvedModelRouting {
   legacyProvider?: ProviderId
   accountPrefix?: string
   modelId: string
+  aliasChain?: Array<string>
+  matchedAliasRuleIds?: Array<string>
+  aliasRestriction?: ModelAliasRestriction
 }
 
 export function parseModelRef(modelId: string): ParsedModelRef {
@@ -114,31 +121,55 @@ export function resolveModelRouting(
   accounts: Array<Account> = listAccounts(),
 ): ResolvedModelRouting {
   const ref = parseModelRef(modelId)
-  if (ref.connectionId || ref.legacyProvider) {
-    return {
-      connectionId: ref.connectionId,
-      legacyProvider: ref.legacyProvider,
-      modelId: ref.modelId,
-    }
-  }
-
-  const slashIndex = modelId.indexOf("/")
-  if (slashIndex > 0) {
-    const prefix = modelId.slice(0, slashIndex)
-    const rest = modelId.slice(slashIndex + 1).trim()
-    if (rest) {
-      for (const account of accounts) {
-        if (
-          getAccountModelPrefix(account).toLowerCase() === prefix.toLowerCase()
-        ) {
-          return {
-            accountPrefix: prefix,
-            modelId: rest,
+  let accountPrefix: string | undefined
+  let aliasModelId = ref.modelId
+  if (!ref.connectionId && !ref.legacyProvider) {
+    const slashIndex = modelId.indexOf("/")
+    if (slashIndex > 0) {
+      const prefix = modelId.slice(0, slashIndex)
+      const rest = modelId.slice(slashIndex + 1).trim()
+      if (rest) {
+        for (const account of accounts) {
+          if (
+            getAccountModelPrefix(account).toLowerCase() === prefix.toLowerCase()
+          ) {
+            accountPrefix = prefix
+            aliasModelId = rest
+            break
           }
         }
       }
     }
   }
+  const alias = resolveModelAlias(
+    aliasModelId,
+    ref.connectionId,
+  )
+  if (ref.connectionId || ref.legacyProvider) {
+    return {
+      connectionId: ref.connectionId,
+      legacyProvider: ref.legacyProvider,
+      modelId: alias.resolvedModelId,
+      aliasChain: alias.aliasChain,
+      matchedAliasRuleIds: alias.matchedRuleIds,
+      aliasRestriction: alias.restriction,
+    }
+  }
 
-  return { modelId: ref.modelId }
+  if (accountPrefix) {
+    return {
+      accountPrefix,
+      modelId: alias.resolvedModelId,
+      aliasChain: alias.aliasChain,
+      matchedAliasRuleIds: alias.matchedRuleIds,
+      aliasRestriction: alias.restriction,
+    }
+  }
+
+  return {
+    modelId: alias.resolvedModelId,
+    aliasChain: alias.aliasChain,
+    matchedAliasRuleIds: alias.matchedRuleIds,
+    aliasRestriction: alias.restriction,
+  }
 }

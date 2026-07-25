@@ -144,6 +144,7 @@ export async function prepareRequestAdmission(
     legacyProvider: routing.legacyProvider,
     accountPrefix: routing.accountPrefix,
     publicModelId: routing.modelId,
+    aliasRestriction: routing.aliasRestriction,
     endpoint: options.endpoint,
   })
 
@@ -228,6 +229,7 @@ function diagnoseRouteFailure(
     legacyProvider: routing.legacyProvider,
     accountPrefix: routing.accountPrefix,
     publicModelId: routing.modelId,
+    aliasRestriction: routing.aliasRestriction,
     endpoint: options.endpoint,
     onlyAvailable: false,
   })
@@ -554,6 +556,7 @@ export function switchToNextRouteTarget(
     legacyProvider: routing.legacyProvider,
     accountPrefix: routing.accountPrefix,
     publicModelId: routing.modelId,
+    aliasRestriction: routing.aliasRestriction,
     endpoint,
   })
   return selectRouteTarget(candidates, {
@@ -593,6 +596,7 @@ export function selectNextResponsesWsTarget(
     accountPrefix: routing.accountPrefix,
     publicModelId: routing.modelId,
     connectionId: routing.connectionId,
+    aliasRestriction: routing.aliasRestriction,
     endpoint: "responses",
   }).filter(
     (candidate) =>
