@@ -398,7 +398,7 @@ async function markCooldown(
     // for Codex usage_limit_reached which needs quota_exhausted treatment.
     classified = classifyUpstreamError({
       status,
-      retryAfterHeader: error.response.headers.get("retry-after"),
+      headers: error.response.headers,
       body: error.responseBody,
     })
     if (classified.kind === "quota_exhausted") {
@@ -418,7 +418,15 @@ async function markCooldown(
   }
   const retryAfterMs =
     classified?.retryAfterMs ?? resolveRetryAfterMs(isHttp, status)
-  const reason = isHttp ? `upstream ${status}` : resolveNetworkError(error)
+  const errorCode =
+    isHttp ? extractUpstreamErrorCode(error.responseBody) : undefined
+  let reason: string
+  if (isHttp) {
+    reason =
+      errorCode ? `upstream ${status}: ${errorCode}` : `upstream ${status}`
+  } else {
+    reason = resolveNetworkError(error)
+  }
   markCredentialCooldown(admission.credential, { retryAfterMs, reason })
   await persistProviderConnections().catch((err: unknown) => {
     logger.warn(
@@ -432,6 +440,18 @@ function resolveRetryAfterMs(isHttp: boolean, status: number): number {
   if (!isHttp) return DEFAULTS.COOLDOWN_NETWORK_MS
   if (status === 429) return DEFAULTS.COOLDOWN_429_FALLBACK_MS
   return DEFAULTS.COOLDOWN_5XX_MS
+}
+
+function extractUpstreamErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: string | number; type?: string }
+    }
+    const code = parsed.error?.code ?? parsed.error?.type
+    return code === undefined ? undefined : String(code)
+  } catch {
+    return undefined
+  }
 }
 
 function resolveNetworkError(error: unknown): string {
