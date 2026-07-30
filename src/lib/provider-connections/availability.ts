@@ -292,8 +292,19 @@ export function classifyUpstreamError(input: {
   }
 
   if (status === 429) {
+    // Provider cap / usage-limit errors that carry a reset time
+    // (e.g. Clinepass INFERENCE_CAP_ERROR, opencode-go GoUsageLimitError)
+    // should failover to other providers and be cooled until the reset time.
+    if (
+      body
+      && /\b(?:INFERENCE_CAP_ERROR|GoUsageLimitError|usage\s+limit\s+reached)\b/i.test(
+        body,
+      )
+    ) {
+      return { kind: "rate_limited", retryAfterMs }
+    }
     if (body && /quota|insufficient|balance|exhaust/i.test(body)) {
-      return { kind: "quota_exhausted" }
+      return { kind: "quota_exhausted", retryAfterMs }
     }
     return { kind: "rate_limited", retryAfterMs }
   }
