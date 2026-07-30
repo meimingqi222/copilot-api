@@ -165,16 +165,117 @@ export type UpstreamErrorKind =
   | "network_error"
   | "unknown"
 
+/**
+ * 解析自然语言/半结构化消息体中的重试时间。
+ *
+ * 支持:
+ * - "resets in 57m"
+ * - "resets in 4h 6m"
+ * - "resets in 3h0m0s"
+ * - "resets in 1 day"
+ * - "5-hour Clinepass limit" (fallback 5h)
+ * - "reset at 2026-07-16 20:27:09 +0800 CST"
+ */
+export function parseRetryAfterFromBody(body?: string): number | undefined {
+  if (!body) return undefined
+  const text = body.toLowerCase()
+
+  // "resets in <duration>" — Clinepass / opencode-go 等常见表述
+  const resetInMatch = text.match(
+    /resets?\s+in\s+((?:\d+(?:\.\d+)?\s*[a-z-]+\s*)+)(?:,|\.|please|$)/i,
+  )
+  if (resetInMatch) {
+    const ms = parseDuration(resetInMatch[1])
+    if (ms && ms > 0) {
+      return Math.min(ms, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
+    }
+  }
+
+  // "reached your 5-hour Clinepass limit" / "5 hour limit" — fallback
+  const hourLimitMatch = text.match(/(\d+(?:\.\d+)?)(?:\s*-\s*|\s+)hour\b/i)
+  if (hourLimitMatch) {
+    const hours = Number.parseFloat(hourLimitMatch[1])
+    if (hours > 0) {
+      return Math.min(
+        hours * 60 * 60 * 1000,
+        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
+    }
+  }
+
+  // "reset at 2026-07-16 20:27:09 +0800 CST"
+  const resetAtMatch = body.match(
+    /reset at (\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\s*([+-]\d{2}:?\d{2}))?/i,
+  )
+  if (resetAtMatch) {
+    const datePart = resetAtMatch[1].replaceAll(" ", "T")
+    const offsetRaw = resetAtMatch[2]
+    let offsetPart = "Z"
+    if (offsetRaw) {
+      offsetPart =
+        offsetRaw.includes(":") ? offsetRaw : (
+          `${offsetRaw.slice(0, 3)}:${offsetRaw.slice(3)}`
+        )
+    }
+    const resetTime = Date.parse(`${datePart}${offsetPart}`)
+    if (!Number.isNaN(resetTime)) {
+      const diff = resetTime - Date.now()
+      if (diff > 0) {
+        return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
+      }
+    }
+  }
+
+  return undefined
+}
+
+function parseDuration(input: string): number | undefined {
+  const normalized = input
+    .toLowerCase()
+    .replaceAll(/(\d)([a-z])/g, "$1 $2")
+    .replaceAll(/([a-z])(\d)/g, "$1 $2")
+    .replaceAll(/(\d)-([a-z])/g, "$1 $2")
+
+  const regex =
+    /(\d+(?:\.\d+)?)\s*(milliseconds?|seconds?|minutes?|mins?|hours?|hrs?|days?|ms|[smhd])\b/gi
+  let totalMs = 0
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(normalized)) !== null) {
+    const value = Number.parseFloat(match[1])
+    const unit = match[2].toLowerCase()
+    if (Number.isNaN(value) || value < 0) continue
+    if (unit === "ms" || unit.startsWith("milli")) totalMs += value
+    else if (unit === "s" || unit.startsWith("sec")) totalMs += value * 1000
+    else if (unit === "m" || unit.startsWith("min")) {
+      totalMs += value * 60 * 1000
+    } else if (
+      unit === "h"
+      || unit.startsWith("hr")
+      || unit.startsWith("hour")
+    ) {
+      totalMs += value * 60 * 60 * 1000
+    } else if (unit === "d" || unit.startsWith("day")) {
+      totalMs += value * 24 * 60 * 60 * 1000
+    }
+  }
+
+  return totalMs > 0 ? totalMs : undefined
+}
+
 export function classifyUpstreamError(input: {
   status?: number
   retryAfterHeader?: string | null
   body?: string
 }): { kind: UpstreamErrorKind; retryAfterMs?: number } {
   const { status, body } = input
-  const retryAfterMs = parseRetryAfterMs(
+  const headerMs = parseRetryAfterMs(
     input.retryAfterHeader,
     DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
   )
+  const bodyMs = parseRetryAfterFromBody(body)
+  const retryAfterMs = [headerMs, bodyMs]
+    .filter((v): v is number => v !== undefined && v > 0)
+    .sort((a, b) => a - b)[0]
 
   if (status === undefined) {
     return { kind: "network_error" }
