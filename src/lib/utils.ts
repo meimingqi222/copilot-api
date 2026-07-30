@@ -329,7 +329,7 @@ export function shouldFailover(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return false
   const classified = classifyUpstreamError({
     status: error.response.status,
-    retryAfterHeader: error.response.headers.get("retry-after"),
+    headers: error.response.headers,
     body: error.responseBody,
   })
   // quota_exhausted (incl. Codex usage_limit_reached) should NOT

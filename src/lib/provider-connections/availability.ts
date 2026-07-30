@@ -176,8 +176,81 @@ export type UpstreamErrorKind =
  * - "5-hour Clinepass limit" (fallback 5h)
  * - "reset at 2026-07-16 20:27:09 +0800 CST"
  */
+function parseRetryAfterFromJson(body: string): number | undefined {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>
+    const errorObj =
+      typeof parsed.error === "object" && parsed.error !== null ?
+        (parsed.error as Record<string, unknown>)
+      : undefined
+
+    const topLevelResetAt =
+      parsed.resets_at
+      ?? parsed.resetsAt
+      ?? errorObj?.resets_at
+      ?? errorObj?.resetsAt
+    if (typeof topLevelResetAt === "number" && topLevelResetAt > 0) {
+      const resetMs = topLevelResetAt * 1000
+      const diff = resetMs - Date.now()
+      if (diff > 0) {
+        return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
+      }
+    }
+
+    const topLevelResetInSeconds =
+      parsed.resets_in_seconds
+      ?? parsed.resetsInSeconds
+      ?? errorObj?.resets_in_seconds
+      ?? errorObj?.resetsInSeconds
+    if (
+      typeof topLevelResetInSeconds === "number"
+      && topLevelResetInSeconds > 0
+    ) {
+      return Math.min(
+        topLevelResetInSeconds * 1000,
+        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
+    }
+
+    const retryAfter =
+      parsed.retry_after
+      ?? parsed.retryAfter
+      ?? errorObj?.retry_after
+      ?? errorObj?.retryAfter
+    if (typeof retryAfter === "number") {
+      return retryAfter > 0 ? retryAfter * 1000 : undefined
+    }
+    if (typeof retryAfter === "string") {
+      const headerMs = parseRetryAfterMs(
+        retryAfter,
+        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
+      if (headerMs && headerMs > 0) return headerMs
+    }
+
+    const retryAfterMsField =
+      parsed.retry_after_ms
+      ?? parsed.retryAfterMs
+      ?? errorObj?.retry_after_ms
+      ?? errorObj?.retryAfterMs
+    if (typeof retryAfterMsField === "number" && retryAfterMsField > 0) {
+      return Math.min(
+        retryAfterMsField,
+        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
+    }
+  } catch {
+    // not JSON — fall through to natural-language parsing
+  }
+  return undefined
+}
+
 export function parseRetryAfterFromBody(body?: string): number | undefined {
   if (!body) return undefined
+
+  const jsonMs = parseRetryAfterFromJson(body)
+  if (jsonMs) return jsonMs
+
   const text = body.toLowerCase()
 
   // "resets in <duration>" — Clinepass / opencode-go 等常见表述
@@ -262,16 +335,66 @@ function parseDuration(input: string): number | undefined {
   return totalMs > 0 ? totalMs : undefined
 }
 
+function retryAfterMsFromHeaders(input: {
+  retryAfterHeader?: string | null
+  headers?: Headers
+}): number | undefined {
+  const candidates: Array<number | undefined> = []
+
+  const retryAfter = input.retryAfterHeader ?? input.headers?.get("retry-after")
+  if (retryAfter) {
+    candidates.push(
+      parseRetryAfterMs(retryAfter, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS),
+    )
+  }
+
+  const retryAfterMs = input.headers?.get("retry-after-ms")
+  if (retryAfterMs) {
+    const ms = Number.parseInt(retryAfterMs, 10)
+    if (Number.isFinite(ms) && ms > 0) {
+      candidates.push(Math.min(ms, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS))
+    }
+  }
+
+  const xReset = input.headers?.get("x-ratelimit-reset")
+  if (xReset) {
+    const asNumber = Number(xReset)
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      // Some providers send epoch milliseconds; others send epoch seconds.
+      const ms = asNumber > 1e10 ? asNumber : asNumber * 1000
+      const diff = ms - Date.now()
+      if (diff > 0) {
+        candidates.push(
+          Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS),
+        )
+      }
+    } else {
+      const asDate = Date.parse(xReset)
+      if (!Number.isNaN(asDate)) {
+        const diff = asDate - Date.now()
+        if (diff > 0) {
+          candidates.push(
+            Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS),
+          )
+        }
+      }
+    }
+  }
+
+  const valid = candidates
+    .filter((v): v is number => v !== undefined && v > 0)
+    .sort((a, b) => a - b)
+  return valid[0]
+}
+
 export function classifyUpstreamError(input: {
   status?: number
   retryAfterHeader?: string | null
+  headers?: Headers
   body?: string
 }): { kind: UpstreamErrorKind; retryAfterMs?: number } {
   const { status, body } = input
-  const headerMs = parseRetryAfterMs(
-    input.retryAfterHeader,
-    DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-  )
+  const headerMs = retryAfterMsFromHeaders(input)
   const bodyMs = parseRetryAfterFromBody(body)
   const retryAfterMs = [headerMs, bodyMs]
     .filter((v): v is number => v !== undefined && v > 0)
