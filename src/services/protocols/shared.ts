@@ -99,15 +99,18 @@ export async function handleUpstreamFailure(
     .catch(() => "")
   const classified = classifyUpstreamError({
     status: response.status,
-    retryAfterHeader: response.headers.get("retry-after"),
+    headers: response.headers,
     body,
   })
+
+  const upstreamCode = extractUpstreamErrorCode(body)
+  const reasonSuffix = upstreamCode ? `: ${upstreamCode}` : ""
 
   switch (classified.kind) {
     case "rate_limited": {
       markCredentialCooldown(credential, {
         retryAfterMs: classified.retryAfterMs,
-        reason: `HTTP ${response.status}`,
+        reason: `HTTP ${response.status}${reasonSuffix}`,
       })
       break
     }
@@ -144,7 +147,46 @@ export async function handleUpstreamFailure(
       (err as Error).message,
     )
   })
-  throw new HTTPError(contextMessage, response, body)
+
+  const responseWithRetryAfter = buildResponseWithRetryAfter(
+    response,
+    body,
+    credential,
+  )
+  throw new HTTPError(contextMessage, responseWithRetryAfter, body)
+}
+
+function extractUpstreamErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { code?: string | number; type?: string }
+    }
+    const code = parsed.error?.code ?? parsed.error?.type
+    return code === undefined ? undefined : String(code)
+  } catch {
+    return undefined
+  }
+}
+
+function buildResponseWithRetryAfter(
+  response: Response,
+  body: string,
+  credential: ApiCredential,
+): Response {
+  const headers = new Headers(response.headers)
+  const cooldownUntil = credential.cooldownUntil
+  if (cooldownUntil && cooldownUntil > Date.now()) {
+    const remainingMs = cooldownUntil - Date.now()
+    const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000))
+    headers.set("Retry-After", String(remainingSeconds))
+    headers.set("retry-after-ms", String(remainingMs))
+    headers.set("x-ratelimit-reset", String(remainingSeconds))
+  }
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
 }
 
 // ─── Streaming error detection helpers ─────────────────────────────────────
