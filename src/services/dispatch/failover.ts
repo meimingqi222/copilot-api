@@ -392,10 +392,11 @@ async function markCooldown(
 
   // 纯 provider 路径:标记 credential cooldown / quota_exhausted
   invalidateSessionAffinityAuth(authKey)
+  let classified: ReturnType<typeof classifyUpstreamError> | undefined
   if (isHttp && error.responseBody) {
     // Use classifyUpstreamError for accurate categorization, especially
     // for Codex usage_limit_reached which needs quota_exhausted treatment.
-    const classified = classifyUpstreamError({
+    classified = classifyUpstreamError({
       status,
       retryAfterHeader: error.response.headers.get("retry-after"),
       body: error.responseBody,
@@ -415,7 +416,8 @@ async function markCooldown(
       return
     }
   }
-  const retryAfterMs = resolveRetryAfterMs(isHttp, status)
+  const retryAfterMs =
+    classified?.retryAfterMs ?? resolveRetryAfterMs(isHttp, status)
   const reason = isHttp ? `upstream ${status}` : resolveNetworkError(error)
   markCredentialCooldown(admission.credential, { retryAfterMs, reason })
   await persistProviderConnections().catch((err: unknown) => {
