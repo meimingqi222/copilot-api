@@ -13,6 +13,8 @@ function usageView() {
     expandedProviderAccounts: {},
     customStartDate: "",
     customEndDate: "",
+    monthPickerOpen: false,
+    customRangeOpen: false,
     usageSummary: {
       totals: {
         requests: 0,
@@ -71,6 +73,10 @@ function usageView() {
       this.dateRange = range
       if (range !== "custom") {
         this.selectedMonth = ""
+        this.customStartDate = ""
+        this.customEndDate = ""
+        this.monthPickerOpen = false
+        this.customRangeOpen = false
       }
       this.loadUsageStats()
         .then(() => {
@@ -81,10 +87,65 @@ function usageView() {
         })
     },
 
+    // Value bound to the quick-range <select>; blank when a custom date
+    // range is active (no single option represents it).
+    get quickSelectValue() {
+      if (this.monthPickerOpen || this.selectedMonth) return "pickMonth"
+      return this.dateRange === "custom" ? "" : this.dateRange
+    },
+
+    onQuickSelect(value) {
+      if (value === "pickMonth") {
+        this.monthPickerOpen = true
+        this.customRangeOpen = false
+        this.customStartDate = ""
+        this.customEndDate = ""
+        return
+      }
+      this.monthPickerOpen = false
+      this.customRangeOpen = false
+      this.setRange(value)
+    },
+
+    toggleCustomRange() {
+      this.customRangeOpen = !this.customRangeOpen
+      if (this.customRangeOpen) {
+        this.monthPickerOpen = false
+        this.selectedMonth = ""
+      }
+    },
+
+    // Bind flatpickr's range mode to a single input so start/end are picked
+    // together in one calendar instead of two disconnected date fields.
+    initCustomRangePicker(el) {
+      flatpickr(el, {
+        mode: "range",
+        dateFormat: "Y-m-d",
+        locale: I18n.currentLang() === "zh" ? "zh" : "default",
+        // Show two months side by side (like Ant Design's RangePicker) so
+        // cross-month ranges don't require flipping calendar pages.
+        showMonths: window.innerWidth < 640 ? 1 : 2,
+        maxDate: this.todayStr,
+        defaultDate:
+          this.customStartDate && this.customEndDate ?
+            [this.customStartDate, this.customEndDate]
+          : undefined,
+        onChange: (selectedDates, _dateStr, instance) => {
+          if (selectedDates.length !== 2) return
+          this.customStartDate = instance.formatDate(selectedDates[0], "Y-m-d")
+          this.customEndDate = instance.formatDate(selectedDates[1], "Y-m-d")
+          this.setCustomRange()
+        },
+      })
+    },
+
     setMonth(month) {
       if (!month) return
       this.dateRange = "custom"
       this.selectedMonth = month
+      this.customStartDate = ""
+      this.customEndDate = ""
+      this.customRangeOpen = false
       this.loadUsageStats()
         .then(() => {
           this.$nextTick(() => this.renderChart())
@@ -142,6 +203,7 @@ function usageView() {
       if (this.customStartDate > this.customEndDate) return
       this.dateRange = "custom"
       this.selectedMonth = ""
+      this.monthPickerOpen = false
       this.loadUsageStats()
         .then(() => {
           this.$nextTick(() => this.renderChart())
