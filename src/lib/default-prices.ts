@@ -223,16 +223,18 @@ const DEFAULT_MODEL_PRICES: Record<
     cacheWritePricePer1m: 5.0,
   },
   "gpt-5.6-terra": {
-    promptPricePer1m: 2.5,
-    completionPricePer1m: 15.0,
-    cacheReadPricePer1m: 0.25,
-    cacheWritePricePer1m: 2.5,
+    // Updated 2026-08: OpenAI cut Terra pricing 20% (developers.openai.com/api/docs/models/gpt-5.6-terra)
+    promptPricePer1m: 2.0,
+    completionPricePer1m: 12.0,
+    cacheReadPricePer1m: 0.2,
+    cacheWritePricePer1m: 2.0,
   },
   "gpt-5.6-luna": {
-    promptPricePer1m: 1.0,
-    completionPricePer1m: 6.0,
-    cacheReadPricePer1m: 0.1,
-    cacheWritePricePer1m: 1.0,
+    // Updated 2026-08: OpenAI cut Luna pricing 80% (developers.openai.com/api/docs/models/gpt-5.6-luna)
+    promptPricePer1m: 0.2,
+    completionPricePer1m: 1.2,
+    cacheReadPricePer1m: 0.02,
+    cacheWritePricePer1m: 0.2,
   },
   "gpt-5.4-mini": {
     promptPricePer1m: 0.75,

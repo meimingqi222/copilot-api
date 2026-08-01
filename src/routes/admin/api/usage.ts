@@ -1,8 +1,38 @@
 import { Hono } from "hono"
 
+import type { ProviderId } from "~/lib/provider-config"
+
 import { getAccount, listAccounts } from "~/lib/accounts"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+
+/**
+ * Map each exposed model id to the provider of the highest-priority account
+ * that serves it, mirroring the priority resolution in `cacheModels()`.
+ * Used to give pricing lookups a provider hint so they hit the correct
+ * models.dev bucket instead of falling back to the global (provider-agnostic)
+ * lookup, which can return stale data from an unrelated provider.
+ */
+function buildModelProviderHints(): Map<string, ProviderId> {
+  const hints = new Map<string, ProviderId>()
+  const sortedAccounts = listAccounts()
+    .map((account, originalIndex) => ({ account, originalIndex }))
+    .sort((left, right) => {
+      if (left.account.priority !== right.account.priority) {
+        return left.account.priority - right.account.priority
+      }
+      return left.originalIndex - right.originalIndex
+    })
+
+  for (const { account } of sortedAccounts) {
+    for (const model of account.availableModels ?? []) {
+      if (!hints.has(model.id)) {
+        hints.set(model.id, account.provider)
+      }
+    }
+  }
+  return hints
+}
 
 export const usageApiRoutes = new Hono()
 
@@ -95,11 +125,15 @@ usageApiRoutes.get("/pricing", (c) => {
   }
 
   if (state.models?.data) {
+    const providerHints = buildModelProviderHints()
     for (const model of state.models.data) {
       if (Object.hasOwn(pricing, model.id)) {
         continue
       }
-      const resolved = statsStore.resolveModelPricing(model.id)
+      const resolved = statsStore.resolveModelPricing(
+        model.id,
+        providerHints.get(model.id),
+      )
       if (resolved) {
         pricing[model.id] = {
           promptPricePer1k: resolved.promptPricePer1k,

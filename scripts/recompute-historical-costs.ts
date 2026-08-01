@@ -14,6 +14,7 @@
 import { Database } from "bun:sqlite"
 
 import { PATHS } from "~/lib/paths"
+import { isProviderId } from "~/lib/provider-config"
 import { statsStore } from "~/lib/stats-store"
 
 const apply = process.argv.includes("--apply")
@@ -24,6 +25,7 @@ const db = new Database(PATHS.STATS_PATH)
 type Row = {
   id: number
   model: string
+  provider: string | null
   prompt_tokens: number
   completion_tokens: number
   cache_read_tokens: number
@@ -33,7 +35,7 @@ type Row = {
 
 const rows = db
   .prepare(
-    `SELECT id, model, prompt_tokens, completion_tokens,
+    `SELECT id, model, provider, prompt_tokens, completion_tokens,
             cache_read_tokens, cache_write_tokens, cost
        FROM usage_stats`,
   )
@@ -51,10 +53,19 @@ const pricingCache = new Map<
 >()
 
 for (const row of rows) {
-  if (!pricingCache.has(row.model)) {
-    pricingCache.set(row.model, statsStore.getModelPricing(row.model))
+  // Key pricing lookups by model+provider: the same model id can be served
+  // by different providers with different models.dev pricing buckets.
+  const cacheKey = `${row.model}\u0000${row.provider ?? ""}`
+  if (!pricingCache.has(cacheKey)) {
+    pricingCache.set(
+      cacheKey,
+      statsStore.getModelPricing(
+        row.model,
+        row.provider && isProviderId(row.provider) ? row.provider : undefined,
+      ),
+    )
   }
-  const pricing = pricingCache.get(row.model)
+  const pricing = pricingCache.get(cacheKey)
   const newCost =
     pricing ?
       (row.prompt_tokens / 1000) * pricing.promptPricePer1k

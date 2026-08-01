@@ -1045,13 +1045,16 @@ class StatsStore {
     return null
   }
 
-  getModelPricing(model: string): {
+  getModelPricing(
+    model: string,
+    provider?: ProviderId,
+  ): {
     promptPricePer1k: number
     completionPricePer1k: number
     cacheReadPricePer1k: number
     cacheWritePricePer1k: number
   } | null {
-    const resolved = this.resolveModelPricing(model)
+    const resolved = this.resolveModelPricing(model, provider)
     if (!resolved) {
       return null
     }

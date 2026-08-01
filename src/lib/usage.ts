@@ -9,6 +9,7 @@ import {
 } from "~/lib/accounts"
 import { logStore } from "~/lib/log-store"
 import { logger } from "~/lib/logger"
+import { isProviderId } from "~/lib/provider-config"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
@@ -105,7 +106,10 @@ export function recordUsage(input: UsageRecordInput): void {
       connectionId ?? (c.get("connectionId") as string | undefined)
     const resolvedCredentialId =
       credentialId ?? (c.get("credentialId") as string | undefined)
-    const pricing = statsStore.getModelPricing(usageModel)
+    const pricing = statsStore.getModelPricing(
+      usageModel,
+      isProviderId(provider) ? provider : undefined,
+    )
     const cost =
       pricing ?
         (promptTokens / 1000) * pricing.promptPricePer1k
