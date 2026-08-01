@@ -5,11 +5,14 @@
 import type { RequestAdmission } from "~/lib/request-admission"
 import type { AnthropicMessagesPayload } from "~/services/protocols"
 
+import type { DispatchIdentity } from "./shared"
+
 import { dispatchRequest } from "./shared"
 
 export interface MessagesDispatchResult {
   accountId: string
   response: AsyncIterable<unknown> | Record<string, unknown>
+  identity: DispatchIdentity
 }
 
 export async function dispatchMessages(
@@ -24,7 +27,8 @@ export async function dispatchMessages(
     signal,
   )
   return {
-    accountId: result.credentialId,
+    accountId: result.identity.ownerId,
     response: result.response,
+    identity: result.identity,
   } as MessagesDispatchResult
 }

@@ -139,7 +139,7 @@ export async function delegateResponsesToNativeAdapter(
   })
 
   return {
-    accountId: result.credentialId,
+    accountId: account.id,
     response: result.response,
   } as ProviderResponsesResult
 }
@@ -219,7 +219,7 @@ export async function delegateMessagesToNativeAdapter(
   })
 
   return {
-    accountId: result.credentialId,
+    accountId: account.id,
     response: result.response,
   } as ProviderMessagesResult
 }

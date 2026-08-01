@@ -14,7 +14,7 @@ beforeEach(() => {
 })
 
 describe("windsurf session cache", () => {
-  test("reuses stable session and cascade ids per host+apiKey+conversation", async () => {
+  test("reuses stable cascade and prompt ids per host+apiKey+conversation", async () => {
     const first = await getOrAllocateCloudSessionIds({
       host: HOST,
       apiKey: "key-a",
@@ -25,8 +25,8 @@ describe("windsurf session cache", () => {
       apiKey: "key-a",
       conversationKey: "conv-1",
     })
-    expect(second.sessionId).toBe(first.sessionId)
     expect(second.cascadeId).toBe(first.cascadeId)
+    expect(second.promptId).toBe(first.promptId)
   })
 
   test("isolates ids by api key, host, and conversation", async () => {
@@ -45,47 +45,44 @@ describe("windsurf session cache", () => {
       apiKey: "key-a",
       conversationKey: "conv-2",
     })
-    expect(b.sessionId).not.toBe(a.sessionId)
-    expect(c.sessionId).not.toBe(a.sessionId)
+    expect(b.cascadeId).not.toBe(a.cascadeId)
     expect(c.cascadeId).not.toBe(a.cascadeId)
+    expect(c.promptId).not.toBe(a.promptId)
   })
 
-  test("prefers forwarded session headers", async () => {
-    const key = await resolveWindsurfConversationKey({
+  test("prefers forwarded session headers", () => {
+    const key = resolveWindsurfConversationKey({
       forwardedHeaders: { "x-windsurf-session-id": "  session-abc  " },
       accountId: "acct-1",
     })
     expect(key).toBe("session-abc")
   })
 
-  test("uses body prompt_cache_key when headers absent", async () => {
-    const key = await resolveWindsurfConversationKey({
+  test("uses body prompt_cache_key when headers absent", () => {
+    const key = resolveWindsurfConversationKey({
       promptCacheKey: "cache-body-1",
       accountId: "acct-1",
     })
     expect(key).toBe("cache-body-1")
   })
 
-  test("uses OpenAI user field before account fallback", async () => {
-    const key = await resolveWindsurfConversationKey({
+  test("does not use OpenAI user as an implicit conversation identity", () => {
+    const key = resolveWindsurfConversationKey({
       user: "end-user-42",
       accountId: "acct-1",
     })
-    expect(key).toBe("user:end-user-42")
+    expect(key).not.toBe("user:end-user-42")
+    expect(key).toMatch(/^[0-9a-f-]{36}$/)
   })
 
-  test("auto-generates stable key per account when client sends nothing", async () => {
-    const first = await resolveWindsurfConversationKey({
+  test("uses a fresh key when client sends no conversation identity", () => {
+    const first = resolveWindsurfConversationKey({
       accountId: "acct-stable-a",
     })
-    const second = await resolveWindsurfConversationKey({
+    const second = resolveWindsurfConversationKey({
       accountId: "acct-stable-a",
     })
-    const other = await resolveWindsurfConversationKey({
-      accountId: "acct-stable-b",
-    })
-    expect(first).toBe(second)
-    expect(other).not.toBe(first)
+    expect(first).not.toBe(second)
     expect(first).not.toBe("__default__")
   })
 
@@ -111,7 +108,7 @@ describe("windsurf session cache", () => {
       apiKey: "key-a",
       conversationKey: "conv-2",
     })
-    expect(after.sessionId).not.toBe(before.sessionId)
-    expect(otherAgain.sessionId).toBe(other.sessionId)
+    expect(after.cascadeId).not.toBe(before.cascadeId)
+    expect(otherAgain.cascadeId).toBe(other.cascadeId)
   })
 })

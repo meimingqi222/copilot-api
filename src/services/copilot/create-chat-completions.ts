@@ -11,6 +11,7 @@ interface CreateChatCompletionsOptions {
   account: Account
   signal?: AbortSignal
   initiatorOverride?: "agent" | "user"
+  forwardedHeaders?: Record<string, string | undefined>
   c?: Context
 }
 
@@ -43,6 +44,7 @@ export const createChatCompletions = async (
     {
       initiator,
       enableVision,
+      forwardedHeaders: options.forwardedHeaders,
       c: options.c,
     },
   )

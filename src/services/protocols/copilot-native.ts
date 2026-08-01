@@ -16,10 +16,17 @@ import { getCopilotToken } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { connectionToAccount } from "~/lib/provider-connections"
+import { isChatCompletionResponse } from "~/lib/utils"
 import { createCopilotChatCompletionsOnce } from "~/services/copilot/create-chat-completions-once"
 import { createCopilotEmbeddingsOnce } from "~/services/copilot/create-embeddings-once"
 import { createCopilotMessagesOnce } from "~/services/copilot/create-messages-once"
 import { createCopilotResponsesOnce } from "~/services/copilot/create-responses-once"
+import {
+  supportsResponsesApi,
+  translateChatCompletionToResponses,
+  translateChatCompletionsStreamToResponses,
+  translateResponsesToChatPayload,
+} from "~/services/copilot/responses-api"
 
 /**
  * 兜底刷新 Copilot token。
@@ -67,6 +74,27 @@ export const copilotNativeAdapter: ProtocolAdapter = {
   async createResponses({ connection, payload, signal, ctx }) {
     const account = connectionToAccount(connection)
     await ensureCopilotToken(account)
+    if (!supportsResponsesApi(payload.model, account)) {
+      const chatResponse = await createCopilotChatCompletionsOnce(
+        account,
+        translateResponsesToChatPayload(payload),
+        signal,
+        ctx,
+      )
+      if (isChatCompletionResponse(chatResponse)) {
+        return {
+          credentialId: account.id,
+          response: translateChatCompletionToResponses(chatResponse, payload),
+        } as AdapterResponsesResult
+      }
+      return {
+        credentialId: account.id,
+        response: translateChatCompletionsStreamToResponses(
+          chatResponse,
+          payload,
+        ),
+      } as AdapterResponsesResult
+    }
     const response = await createCopilotResponsesOnce(
       account,
       payload,

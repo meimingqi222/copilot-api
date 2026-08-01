@@ -1,11 +1,11 @@
 import type { Context } from "hono"
 
 import type { Account } from "~/lib/accounts"
+import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
-} from "~/routes/messages/anthropic-types"
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+} from "~/services/protocols/anthropic/types"
 
 import { getAccountProtocol } from "~/lib/request-admission"
 import { delegateMessagesToNativeAdapter } from "~/services/providers/delegate"

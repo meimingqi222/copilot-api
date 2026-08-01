@@ -16,11 +16,21 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
+import type { DispatchIdentity } from "./shared"
+
 import { dispatchRequest } from "./shared"
 
 export type ResponsesDispatchResult =
-  | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
-  | { accountId: string; response: ResponsesResponse }
+  | {
+      accountId: string
+      response: AsyncIterable<CopilotStreamEventLike>
+      identity: DispatchIdentity
+    }
+  | {
+      accountId: string
+      response: ResponsesResponse
+      identity: DispatchIdentity
+    }
 
 export async function dispatchResponses(
   payload: ResponsesPayload,
@@ -35,7 +45,8 @@ export async function dispatchResponses(
     signal,
   )
   return {
-    accountId: result.credentialId,
+    accountId: result.identity.ownerId,
     response: result.response,
+    identity: result.identity,
   } as ResponsesDispatchResult
 }

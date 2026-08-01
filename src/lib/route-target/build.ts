@@ -20,6 +20,11 @@ import {
   listAccounts,
 } from "~/lib/accounts"
 import {
+  connectionMatchesAliasRestriction,
+  getExposedAliasEntries,
+  type ModelAliasRestriction,
+} from "~/lib/model-aliases"
+import {
   DEFAULTS,
   isAccountManagedConnection,
   isCredentialAvailable,
@@ -31,40 +36,10 @@ import {
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
-import {
-  connectionMatchesAliasRestriction,
-  getExposedAliasEntries,
-  type ModelAliasRestriction,
-} from "~/lib/model-aliases"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
   return Array.isArray(credentials) ? (credentials as Array<ApiCredential>) : []
-}
-
-function pushEndpointTargets(
-  out: Array<RouteTarget>,
-  endpoints: Array<ModelEndpoint>,
-  model: ModelMapping,
-  connection: ProviderConnection,
-  credential: ApiCredential,
-): void {
-  for (const endpoint of endpoints) {
-    if (!model.endpoints.includes(endpoint)) continue
-    out.push({
-      connectionId: connection.id,
-      connectionName: connection.name,
-      protocol: connection.protocol,
-      credentialId: credential.id,
-      publicModelId: model.publicId,
-      upstreamModelId: model.upstreamId,
-      endpoint,
-      connectionPriority: connection.priority,
-      connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
-      credentialPriority: credential.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
-      credentialWeight: credential.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
-    })
-  }
 }
 
 export interface BuildRouteTargetsOptions {
@@ -153,7 +128,9 @@ export function buildRouteTargets(
 
   for (const { connection, account } of allConnections) {
     if (options.connectionId && connection.id !== options.connectionId) continue
-    if (!connectionMatchesAliasRestriction(connection, options.aliasRestriction)) {
+    if (
+      !connectionMatchesAliasRestriction(connection, options.aliasRestriction)
+    ) {
       continue
     }
     if (onlyAvailable && !connection.enabled) continue
@@ -201,17 +178,15 @@ export function buildRouteTargets(
     const models = connection.models ?? []
     for (const model of models) {
       if (!model.enabled) continue
-      // account-backed 虚拟 connection 走 resolveEndpoints(支持 responses/messages → chat fallback);
-      // 普通 connection 直接用 endpoint 包含关系过滤(无 fallback)。
-      if (account) {
-        const ep = resolveEndpoints(model.endpoints, options.endpoint)
-        if (!ep) continue
-      } else if (
-        options.endpoint
-        && !model.endpoints.includes(options.endpoint)
-      ) {
-        continue
-      }
+      // Both account-backed and plain connections use resolveEndpoints so a
+      // request for one endpoint (e.g. "messages") can fall back to another
+      // the connection actually supports (e.g. "chat"), enabling cross-protocol
+      // translation in the dispatch layer.
+      const resolvedEndpoints = resolveEndpoints(
+        model.endpoints,
+        options.endpoint,
+      )
+      if (!resolvedEndpoints) continue
       if (options.publicModelId) {
         // 对 account-backed 虚拟 connection,使用 account 别名匹配;
         // 对普通 connection,使用 connection 别名匹配
@@ -230,36 +205,48 @@ export function buildRouteTargets(
         if (onlyAvailable && !isCredentialAvailable(credential)) continue
 
         // account-backed 虚拟 connection:保留请求时的 publicModelId(可能带 provider/自定义前缀),
-        // upstreamModelId 用 model.upstreamId(已剥离前缀),并支持 responses/messages → chat fallback
-        if (account) {
-          const ep = resolveEndpoints(model.endpoints, options.endpoint)
-          if (!ep) continue
-          for (const endpoint of ep) {
-            targets.push({
-              connectionId: connection.id,
-              connectionName: connection.name,
-              protocol: connection.protocol,
-              credentialId: credential.id,
-              publicModelId: options.publicModelId ?? model.publicId,
-              upstreamModelId: model.upstreamId,
-              endpoint,
-              connectionPriority: connection.priority,
-              connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
-              credentialPriority:
-                credential.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
-              credentialWeight: credential.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
-            })
-          }
-        } else {
-          const endpoints =
-            options.endpoint ? [options.endpoint] : model.endpoints
-          pushEndpointTargets(targets, endpoints, model, connection, credential)
-        }
+        // upstreamModelId 用 model.upstreamId(已剥离前缀)
+        const publicModelId =
+          account ? (options.publicModelId ?? model.publicId) : model.publicId
+        pushResolvedTargets(targets, resolvedEndpoints, {
+          connection,
+          credential,
+          model,
+          publicModelId,
+        })
       }
     }
   }
 
   return targets
+}
+
+function pushResolvedTargets(
+  out: Array<RouteTarget>,
+  endpoints: Array<ModelEndpoint>,
+  fields: {
+    connection: ProviderConnection
+    credential: ApiCredential
+    model: ModelMapping
+    publicModelId: string
+  },
+): void {
+  const { connection, credential, model, publicModelId } = fields
+  for (const endpoint of endpoints) {
+    out.push({
+      connectionId: connection.id,
+      connectionName: connection.name,
+      protocol: connection.protocol,
+      credentialId: credential.id,
+      publicModelId,
+      upstreamModelId: model.upstreamId,
+      endpoint,
+      connectionPriority: connection.priority,
+      connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
+      credentialPriority: credential.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
+      credentialWeight: credential.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
+    })
+  }
 }
 
 /** 将 ModelMapping 转回 AccountModel 形态(仅用于 matchesAccountModel 的别名匹配)。 */

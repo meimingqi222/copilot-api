@@ -1,11 +1,11 @@
 import { describe, test, expect } from "bun:test"
 import { z } from "zod"
 
-import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
-import { translateToOpenAI } from "../src/routes/messages/non-stream-translation"
 import { translateToResponsesPayload } from "../src/services/copilot/chat-to-responses"
 import { translateToCopilotMessages } from "../src/services/copilot/create-messages"
+import { translateToOpenAI } from "../src/services/protocols/anthropic"
 
 // Zod schema for a single message in the chat completion request.
 const messageSchema = z.object({

@@ -11,7 +11,7 @@ import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
-import { recordUsage } from "~/lib/usage"
+import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { isChatCompletionResponse, isNullish } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
@@ -122,7 +122,7 @@ export async function handleCompletion(c: Context) {
       { forwardedHeaders: sessionHeaders },
     )
 
-    c.set("accountId", result.accountId)
+    applyUsageIdentity(c, result.identity)
     c.set("model", payload.model)
 
     if (isChatCompletionResponse(result.response)) {
@@ -415,6 +415,7 @@ function handleStreamingCompletion(
           { forwardedHeaders: extractChatForwardedHeaders(c) },
         )
         accountId = result.accountId
+        applyUsageIdentity(c, result.identity)
 
         c.set("accountId", accountId)
         c.set("model", model)

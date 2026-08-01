@@ -29,6 +29,13 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
+export interface AdapterRouteIdentity {
+  connectionId: string
+  credentialId: string
+  ownerId: string
+  provider: string
+}
+
 export type AdapterChatResult =
   | { credentialId: string; response: AsyncIterable<CopilotStreamEvent> }
   | { credentialId: string; response: ChatCompletionResponse }
@@ -38,7 +45,7 @@ export type AdapterEmbeddingsResult = {
   response: EmbeddingResponse
 }
 
-import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "./anthropic/types"
 
 export type AdapterMessagesResult =
   | { credentialId: string; response: AsyncIterable<unknown> }
@@ -88,4 +95,4 @@ export interface ProtocolAdapter {
   ): Promise<AdapterEmbeddingsResult>
 }
 
-export { type AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
+export { type AnthropicMessagesPayload } from "./anthropic/types"

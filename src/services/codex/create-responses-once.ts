@@ -246,6 +246,14 @@ export async function createCodexResponsesOnce(
   // Codex /responses rejects many standard Responses API parameters with
   // "Unsupported parameter: <name>". Strip them out before forwarding.
   // See CLIProxyAPI codex_openai-responses_request.go for the reference set.
+  // Preserve the client's `include` items and append reasoning.encrypted_content
+  // (needed for cross-turn replay under store=false) instead of overwriting -
+  // overwriting drops include items the client needs (e.g. reasoning summary
+  // controls), which can suppress visible thinking output. Matches oh-my-pi
+  // `applyResponsesCompatPolicy` (openai-shared.ts:3192-3195).
+  const rawInclude = (payload as { include?: unknown }).include
+  const clientInclude: Array<string> =
+    Array.isArray(rawInclude) ? (rawInclude as Array<string>) : []
   const upstreamBody: Record<string, unknown> = {
     ...payload,
     model,
@@ -256,7 +264,10 @@ export async function createCodexResponsesOnce(
     // Responses Lite marker with parallel_tool_calls=true is rejected by the
     // ChatGPT backend.
     parallel_tool_calls: !responsesLite,
-    include: ["reasoning.encrypted_content"],
+    include:
+      clientInclude.includes("reasoning.encrypted_content") ? clientInclude : (
+        [...clientInclude, "reasoning.encrypted_content"]
+      ),
     // Normalize instructions: null → "" for consistent cache keys
     instructions:
       typeof payload.instructions === "string" ? payload.instructions : "",

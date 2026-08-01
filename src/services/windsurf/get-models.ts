@@ -3,6 +3,7 @@ import type { Account, AccountModel } from "~/lib/accounts"
 import { getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 
+import { normalizeWindsurfBaseUrl } from "./base-url"
 import {
   buildWindsurfClientMetadata,
   wrapWindsurfMetadataMessage,
@@ -226,8 +227,9 @@ export async function getWindsurfModelsForAccount(
     return fallbackWindsurfModels(settings.defaultModel ?? "")
   }
 
+  const baseUrl = normalizeWindsurfBaseUrl(settings.baseUrl)
   const response = await fetch(
-    `${settings.baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
+    `${baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
     {
       method: "POST",
       headers: {

@@ -14,11 +14,13 @@
 import { randomUUID } from "node:crypto"
 
 import { hashKeyPart, PersistentTTLMap } from "~/lib/cache/persistent-map"
-import { getStableSessionId } from "~/lib/cache/session-id-cache"
+
+import { normalizeWindsurfBaseUrl } from "./base-url"
 
 export interface CloudSessionIds {
-  sessionId: string
+  /** Stable cascade id sent on the wire. */
   cascadeId: string
+  /** Stable prompt id sent on the wire when the upstream supports field 17. */
   promptId: string
 }
 
@@ -40,14 +42,13 @@ export interface ResolveWindsurfConversationKeyOptions {
   user?: string | null
   /** copilot-api authenticated user id (multi-user API key mode). */
   clientUserId?: string
-  /** Windsurf upstream account id — last-resort stable scope. */
-  accountId: string
+  /** Windsurf upstream account id, retained for API compatibility. */
+  accountId?: string
 }
 
 const CLOUD_SESSION_TTL_MS = 60 * 60_000 // 1 hour, matches Claude session-id cache
 
 interface StoredCloudSessionIds {
-  sessionId: string
   cascadeId: string
   promptId: string
   conversationKey: string
@@ -68,7 +69,7 @@ async function ensureCloudSessionInit(): Promise<void> {
 }
 
 function normalizeHost(host: string): string {
-  return host.replace(/\/$/, "") || "https://server.codeium.com"
+  return normalizeWindsurfBaseUrl(host)
 }
 
 function cacheKey(opts: CloudSessionCacheOpts): string {
@@ -101,27 +102,21 @@ function readHeaderSession(
  *   1. Session headers (x-windsurf-session-id, session_id, prompt_cache_key header)
  *   2. `prompt_cache_key` in request body
  *   3. OpenAI `user` field
- *   4. copilot-api authenticated client user id
- *   5. Stable persisted id per windsurf account (survives restarts)
+ *   4. A fresh request-scoped id when no explicit conversation key exists
  */
-export async function resolveWindsurfConversationKey(
+export function resolveWindsurfConversationKey(
   opts: ResolveWindsurfConversationKeyOptions,
-): Promise<string> {
+): string {
   const fromHeader = readHeaderSession(opts.forwardedHeaders)
   if (fromHeader) return fromHeader
 
   const bodyCacheKey = opts.promptCacheKey?.trim()
   if (bodyCacheKey) return bodyCacheKey
 
-  const user = opts.user?.trim()
-  if (user) return `user:${user}`
-
-  const clientUserId = opts.clientUserId?.trim()
-  if (clientUserId) {
-    return getStableSessionId(`windsurf:client:${clientUserId}`)
-  }
-
-  return getStableSessionId(`windsurf:account:${opts.accountId}`)
+  // Match Devin/Cascade semantics: without an explicit conversation identity,
+  // each request gets a fresh cache bucket rather than sharing history by user
+  // or account across unrelated conversations.
+  return randomUUID()
 }
 
 export async function getOrAllocateCloudSessionIds(
@@ -135,7 +130,6 @@ export async function getOrAllocateCloudSessionIds(
 
   if (!stored) {
     stored = {
-      sessionId: randomUUID(),
       cascadeId: opts.cascadeIdOverride ?? randomUUID(),
       promptId: randomUUID(),
       conversationKey,
@@ -155,7 +149,6 @@ export async function getOrAllocateCloudSessionIds(
   }
 
   return {
-    sessionId: stored.sessionId,
     cascadeId: stored.cascadeId,
     promptId: stored.promptId,
   }

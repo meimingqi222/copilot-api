@@ -24,7 +24,7 @@ import {
   type AnthropicToolUseBlock,
   type AnthropicUserContentBlock,
   type AnthropicUserMessage,
-} from "./anthropic-types"
+} from "./types"
 import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation

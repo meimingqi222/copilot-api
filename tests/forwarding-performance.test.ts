@@ -3,8 +3,8 @@ import { describe, expect, test } from "bun:test"
 import type { ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
 
 import { writeSseEvent, writeSseEvents, type SSEStream } from "~/lib/sse"
-import { createInitialStreamState } from "~/routes/messages/anthropic-types"
-import { translateChunkToAnthropicEvents } from "~/routes/messages/stream-translation"
+import { createInitialStreamState } from "~/services/protocols/anthropic"
+import { translateChunkToAnthropicEvents } from "~/services/protocols/anthropic"
 
 function createCapturingStream(): SSEStream & {
   frames: Array<string>

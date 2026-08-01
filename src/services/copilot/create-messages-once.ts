@@ -1,9 +1,9 @@
 import type { Account } from "~/lib/accounts"
+import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
-} from "~/routes/messages/anthropic-types"
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+} from "~/services/protocols/anthropic/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { getCopilotToken } from "~/lib/accounts"

@@ -12,11 +12,21 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
+import type { DispatchIdentity } from "./shared"
+
 import { dispatchRequest } from "./shared"
 
 export type ChatDispatchResult =
-  | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
-  | { accountId: string; response: ChatCompletionResponse }
+  | {
+      accountId: string
+      response: AsyncIterable<CopilotStreamEvent>
+      identity: DispatchIdentity
+    }
+  | {
+      accountId: string
+      response: ChatCompletionResponse
+      identity: DispatchIdentity
+    }
 
 export async function dispatchChatCompletions(
   payload: ChatCompletionsPayload,
@@ -31,7 +41,8 @@ export async function dispatchChatCompletions(
     signal,
   )
   return {
-    accountId: result.credentialId,
+    accountId: result.identity.ownerId,
     response: result.response,
+    identity: result.identity,
   } as ChatDispatchResult
 }

@@ -71,6 +71,29 @@ function findByAuthKey(
   return pool.find((t) => affinityAuthKey(t) === authKey)
 }
 
+function commitAffinityIfEnabled(
+  options: SelectRouteTargetOptions,
+  cacheKey: string,
+  target: RouteTarget,
+): void {
+  if (options.commitAffinity === false) return
+  setSessionAffinity(cacheKey, affinityAuthKey(target))
+}
+
+/** Commit affinity for a target that was selected during a side-effect-free preview. */
+export function commitRouteTargetAffinity(
+  target: RouteTarget,
+  sessionId?: string,
+): void {
+  if (!isSessionAffinityEnabled() || !sessionId) return
+  const cacheKey = affinityCacheKey(
+    sessionId,
+    target.publicModelId,
+    target.protocol,
+  )
+  setSessionAffinity(cacheKey, affinityAuthKey(target))
+}
+
 export interface SelectRouteTargetOptions {
   exclude?: Set<string>
   /**
@@ -86,6 +109,8 @@ export interface SelectRouteTargetOptions {
    * when the bound credential is in the exclude set).
    */
   rebindAffinity?: boolean
+  /** When false, selection does not persist a new session binding. */
+  commitAffinity?: boolean
 }
 
 /**
@@ -148,7 +173,7 @@ export function selectRouteTarget(
           findByAuthKey(topConn, fallbackBound)
           ?? findByAuthKey(pool, fallbackBound)
         if (hit) {
-          setSessionAffinity(primaryKey, affinityAuthKey(hit))
+          commitAffinityIfEnabled(options, primaryKey, hit)
           return hit
         }
       }
@@ -158,7 +183,11 @@ export function selectRouteTarget(
   const chosen = pickFromPriorityPool(topConn, minConnPrio)
 
   // Record affinity binding for this session
-  if (isSessionAffinityEnabled() && options.sessionId) {
+  if (
+    options.commitAffinity !== false
+    && isSessionAffinityEnabled()
+    && options.sessionId
+  ) {
     const primaryKey = affinityCacheKey(
       options.sessionId,
       chosen.publicModelId,

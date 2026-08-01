@@ -44,6 +44,8 @@ export class PersistentTTLMap<V> {
   private readonly store = new Map<string, Entry<V>>()
   private flushTimer: ReturnType<typeof setTimeout> | undefined
   private cleanupTimer: ReturnType<typeof setInterval> | undefined
+  private flushPromise: Promise<void> | undefined
+  private dirty = false
   private readonly filePath: string
   private readonly repo: Repository<Record<string, Entry<V>>>
 
@@ -172,7 +174,17 @@ export class PersistentTTLMap<V> {
       this.flushTimer = undefined
     }
     this.dirty = true
-    await this.flush()
+    do {
+      await this.flush()
+      // The `await` above yields control, so `flushTimer`/`dirty` may have
+      // been mutated concurrently (e.g. via scheduleFlush()); TS's flow
+      // analysis can't see that, hence the disables below.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (this.flushTimer !== undefined) {
+        clearTimeout(this.flushTimer)
+        this.flushTimer = undefined
+      }
+    } while (this.dirty)
   }
 
   // ── Internal ─────────────────────────────────────────────────────────
@@ -211,7 +223,7 @@ export class PersistentTTLMap<V> {
 
   private scheduleFlush(): void {
     this.dirty = true
-    if (this.flushTimer) return
+    if (this.flushTimer || this.flushPromise) return
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined
       void this.flush()
@@ -219,12 +231,22 @@ export class PersistentTTLMap<V> {
     this.flushTimer.unref()
   }
 
-  private flushing = false
-  private dirty = false
-
   private async flush(): Promise<void> {
-    if (this.flushing) return
-    this.flushing = true
+    if (this.flushPromise) return this.flushPromise
+    this.dirty = false
+    const promise = this.persistSnapshot()
+    this.flushPromise = promise
+    try {
+      await promise
+    } finally {
+      this.flushPromise = undefined
+      // `dirty` may have been set to true again while awaiting `promise`.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (this.dirty) this.scheduleFlush()
+    }
+  }
+
+  private async persistSnapshot(): Promise<void> {
     try {
       const now = Date.now()
       const serializable: Record<string, Entry<V>> = {}
@@ -236,13 +258,6 @@ export class PersistentTTLMap<V> {
       await this.repo.save(serializable)
     } catch {
       // Best-effort persistence; ignore write errors.
-    } finally {
-      this.flushing = false
-      // If new writes arrived during flush, schedule another flush.
-      if (!this.flushTimer && this.dirty) {
-        this.dirty = false
-        this.scheduleFlush()
-      }
     }
   }
 

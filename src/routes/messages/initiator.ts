@@ -2,7 +2,7 @@ import type {
   AnthropicAssistantMessage,
   AnthropicMessage,
   AnthropicUserMessage,
-} from "./anthropic-types"
+} from "~/services/protocols/anthropic"
 
 import { hasClaudeCodeBeta } from "./anthropic-beta"
 

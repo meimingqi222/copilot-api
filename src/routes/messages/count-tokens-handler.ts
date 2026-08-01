@@ -3,10 +3,12 @@ import type { Context } from "hono"
 import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
+import {
+  type AnthropicMessagesPayload,
+  translateToOpenAI,
+} from "~/services/protocols/anthropic"
 
 import { hasClaudeCodeBeta } from "./anthropic-beta"
-import { type AnthropicMessagesPayload } from "./anthropic-types"
-import { translateToOpenAI } from "./non-stream-translation"
 
 /**
  * Handles token counting for Anthropic messages

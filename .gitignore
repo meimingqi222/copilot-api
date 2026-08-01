@@ -25,3 +25,4 @@ temp_*.js
 agent-tools/
 .tmp-*
 .bun-test-data/
+.zcode
