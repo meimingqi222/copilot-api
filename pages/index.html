@@ -5,10 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Copilot API Admin</title>
   <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/zh.js"></script>
   <script src="/admin/static/js/i18n.js"></script>
   <script src="/admin/static/js/api.js"></script>
   <script src="/admin/static/js/quota-display.js"></script>
@@ -1483,33 +1486,50 @@
               <h3 class="text-title-2" x-text="t('usage.usageStats')"></h3>
               <!-- Date Range Selector -->
               <div class="flex flex-wrap items-center gap-2 justify-end">
-                <button @click="setRange('today')" class="btn btn-small" :class="dateRange === 'today' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.today')"></button>
-                <button @click="setRange('week')" class="btn btn-small" :class="dateRange === 'week' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.week')"></button>
-                <button @click="setRange('month')" class="btn btn-small" :class="dateRange === 'month' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.month')"></button>
-                <button @click="setRange('lastMonth')" class="btn btn-small" :class="dateRange === 'lastMonth' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.lastMonth')"></button>
-                <button @click="setRange('last30d')" class="btn btn-small" :class="dateRange === 'last30d' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.last30d')"></button>
-                <button @click="setRange('all')" class="btn btn-small" :class="dateRange === 'all' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.all')"></button>
+                <select
+                  class="input input-small"
+                  :value="quickSelectValue"
+                  @change="onQuickSelect($event.target.value)">
+                  <option value="today" x-text="t('usage.today')"></option>
+                  <option value="week" x-text="t('usage.week')"></option>
+                  <option value="month" x-text="t('usage.month')"></option>
+                  <option value="lastMonth" x-text="t('usage.lastMonth')"></option>
+                  <option value="last30d" x-text="t('usage.last30d')"></option>
+                  <option value="all" x-text="t('usage.all')"></option>
+                  <option value="pickMonth" x-text="t('usage.pickMonthOption')"></option>
+                </select>
                 <input
                   type="month"
                   class="input input-small"
+                  x-show="monthPickerOpen"
                   :value="selectedMonth"
                   @change="setMonth($event.target.value)"
                   :title="t('usage.pickMonth')" />
-                <span class="text-xs text-[var(--apple-text-tertiary)]">~</span>
-                <input
-                  type="date"
-                  class="input input-small"
-                  x-model="customStartDate"
-                  @change="setCustomRange()"
-                  :max="todayStr"
-                  :title="t('usage.customStart')" />
-                <input
-                  type="date"
-                  class="input input-small"
-                  x-model="customEndDate"
-                  @change="setCustomRange()"
-                  :max="todayStr"
-                  :title="t('usage.customEnd')" />
+                <button
+                  type="button"
+                  @click="toggleCustomRange()"
+                  class="btn btn-small"
+                  :class="customRangeOpen ? 'btn-primary' : 'btn-secondary'"
+                  x-text="t('usage.customRange')"></button>
+                <template x-if="customRangeOpen">
+                  <div class="flex items-center gap-2">
+                    <input
+                      type="date"
+                      class="input input-small"
+                      x-model="customStartDate"
+                      @change="setCustomRange()"
+                      :max="todayStr"
+                      :title="t('usage.customStart')" />
+                    <span class="text-xs text-[var(--apple-text-tertiary)]">~</span>
+                    <input
+                      type="date"
+                      class="input input-small"
+                      x-model="customEndDate"
+                      @change="setCustomRange()"
+                      :max="todayStr"
+                      :title="t('usage.customEnd')" />
+                  </div>
+                </template>
               </div>
             </div>
             <p class="text-xs text-[var(--apple-text-secondary)] mb-4" x-show="usageSummary?.period?.startDate">
