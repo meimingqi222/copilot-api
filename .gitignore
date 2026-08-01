@@ -17,6 +17,7 @@ node_modules/
 
 # build output
 dist/
+deploy/
 .playwright-mcp
 opencode.json
 temp/
