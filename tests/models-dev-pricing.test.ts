@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
+import type { Account } from "~/lib/accounts"
 import type { ModelsDevCatalog } from "~/lib/models-dev"
 
+import { listAccounts } from "~/lib/accounts"
 import {
   buildPricingLookupCandidates,
   resolveModelsDevPrice,
@@ -19,6 +21,7 @@ import {
   clearAdminPasswordConfig,
   setupAdminAuth,
 } from "./admin-test-utils"
+import { setTestAccounts } from "./helpers/set-accounts"
 
 const TEST_CATALOG: ModelsDevCatalog = {
   xiaomi: {
@@ -49,6 +52,12 @@ const TEST_CATALOG: ModelsDevCatalog = {
         id: "gpt-5.1-codex",
         cost: { input: 1.25, output: 10, cache_read: 0.125 },
       },
+      // Fresh, just-discounted price direct from the OpenAI bucket — used to
+      // simulate a models.dev provider desync (see "github-copilot" below).
+      "gpt-9-mini": {
+        id: "gpt-9-mini",
+        cost: { input: 0.2, output: 1.2, cache_read: 0.02 },
+      },
     },
   },
   google: {
@@ -72,6 +81,13 @@ const TEST_CATALOG: ModelsDevCatalog = {
       "claude-opus-4.8": {
         id: "claude-opus-4.8",
         cost: { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
+      },
+      // Stale price — models.dev hasn't synced GitHub Copilot's listing with
+      // OpenAI's discount yet, even though the same model is already fresh
+      // in the "openai" bucket above.
+      "gpt-9-mini": {
+        id: "gpt-9-mini",
+        cost: { input: 1, output: 6, cache_read: 0.1 },
       },
     },
   },
@@ -255,6 +271,106 @@ describe("models.dev pricing resolver", () => {
     expect(resolved?.source).toBe("builtin")
     expect(resolved?.promptPricePer1k).toBeCloseTo(0.003, 10)
     expect(resolved?.completionPricePer1k).toBeCloseTo(0.015, 10)
+  })
+
+  test("without a provider hint, a stale bucket earlier in global priority wins", () => {
+    // github-copilot ranks ahead of openai in GLOBAL_MODEL_PROVIDER_PRIORITY,
+    // so the provider-agnostic global lookup picks up its stale price even
+    // though openai's own listing has already been discounted.
+    const resolved = resolveModelsDevPriceDetailed("gpt-9-mini")
+    expect(resolved?.source).toBe("models-dev")
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.001, 10)
+  })
+
+  test("a correct provider hint resolves through the fresh bucket instead", () => {
+    // codex's provider priority is ["openai", "github-copilot"], so passing
+    // the hint should avoid the stale github-copilot price above.
+    const resolved = resolveModelsDevPriceDetailed("gpt-9-mini", "codex")
+    expect(resolved?.source).toBe("models-dev")
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.0002, 10)
+  })
+
+  test("statsStore.getModelPricing threads the provider hint through to resolution", () => {
+    expect(
+      statsStore.getModelPricing("gpt-9-mini")?.promptPricePer1k,
+    ).toBeCloseTo(0.001, 10)
+    expect(
+      statsStore.getModelPricing("gpt-9-mini", "codex")?.promptPricePer1k,
+    ).toBeCloseTo(0.0002, 10)
+  })
+})
+
+function codexAccount(overrides?: Partial<Account>): Account {
+  return {
+    id: "codex-1",
+    label: "codex",
+    provider: "codex",
+    enabled: true,
+    priority: 0,
+    createdAt: Date.now(),
+    credentials: {},
+    settings: {},
+    availableModels: [
+      {
+        id: "gpt-9-mini",
+        name: "GPT-9 Mini",
+        vendor: "openai",
+        pickerEnabled: true,
+        supportedEndpoints: ["/v1/responses"],
+        provider: "codex",
+        upstreamId: "gpt-9-mini",
+      },
+    ],
+    ...overrides,
+  } as Account
+}
+
+describe("pricing provider-hint desync regression", () => {
+  test("GET /admin/api/usage/pricing uses the account's provider bucket, not the stale global one", async () => {
+    const originalAccounts = listAccounts()
+    const originalModelsData = state.models
+    setTestAccounts([codexAccount()])
+    state.models = {
+      object: "list",
+      data: [
+        {
+          id: "gpt-9-mini",
+          object: "model",
+          name: "GPT-9 Mini",
+          preview: false,
+          vendor: "openai",
+          version: "1",
+          model_picker_enabled: true,
+          supported_endpoints: ["/v1/responses"],
+          capabilities: {
+            family: "codex",
+            object: "capabilities",
+            supports: { streaming: true },
+            tokenizer: "unknown",
+            type: "chat",
+          },
+        },
+      ],
+    }
+
+    try {
+      const response = await server.fetch(
+        adminRequest("http://localhost/admin/api/usage/pricing"),
+      )
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        pricing: Record<string, { promptPricePer1k: number }>
+        sources: Record<string, string>
+      }
+      expect(body.sources["gpt-9-mini"]).toBe("models-dev")
+      expect(body.pricing["gpt-9-mini"].promptPricePer1k).toBeCloseTo(
+        0.0002,
+        10,
+      )
+    } finally {
+      setTestAccounts(originalAccounts)
+      state.models = originalModelsData
+    }
   })
 })
 
