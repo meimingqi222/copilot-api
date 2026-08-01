@@ -13,6 +13,7 @@ import { state } from "~/lib/state"
 import {
   normalizeResponsesStreamIds,
   supportsResponsesApi,
+  withDefaultReasoningSummary,
 } from "~/services/copilot/responses-api"
 import {
   detectResponsesStreamError,
@@ -56,17 +57,7 @@ export async function createCopilotResponsesOnce(
   const responsesBody = JSON.stringify({
     ...payload,
     model: normalizedModel,
-    ...(payload.reasoning ?
-      {
-        reasoning: {
-          ...payload.reasoning,
-          summary:
-            payload.reasoning.summary === undefined ?
-              "auto"
-            : payload.reasoning.summary,
-        },
-      }
-    : {}),
+    ...withDefaultReasoningSummary(payload.reasoning),
   })
 
   const headers: Record<string, string> = {

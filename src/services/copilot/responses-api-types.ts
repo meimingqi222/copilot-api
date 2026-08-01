@@ -145,6 +145,26 @@ export interface ResponsesPayload {
   }
 }
 
+/**
+ * Defaults `reasoning.summary` to "auto" when the client requests a
+ * reasoning effort but omits summary. Without an explicit summary, upstream
+ * still performs (and bills for) the reasoning but never returns any visible
+ * thinking/reasoning output, so the client silently gets no reasoning
+ * content at all. Shared by every /v1/responses request builder (Copilot,
+ * Codex, ...) so they stay in sync — returns a spreadable partial object.
+ */
+export function withDefaultReasoningSummary(
+  reasoning: ResponsesPayload["reasoning"],
+): Pick<ResponsesPayload, "reasoning"> | Record<string, never> {
+  if (!reasoning) return {}
+  return {
+    reasoning: {
+      ...reasoning,
+      summary: reasoning.summary === undefined ? "auto" : reasoning.summary,
+    },
+  }
+}
+
 export interface ResponsesResponse {
   id: string
   object?: "response"
