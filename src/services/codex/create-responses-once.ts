@@ -24,6 +24,7 @@ import { logger } from "~/lib/logger"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
+import { withDefaultReasoningSummary } from "~/services/copilot/responses-api"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 import {
@@ -268,6 +269,7 @@ export async function createCodexResponsesOnce(
       clientInclude.includes("reasoning.encrypted_content") ? clientInclude : (
         [...clientInclude, "reasoning.encrypted_content"]
       ),
+    ...withDefaultReasoningSummary(payload.reasoning),
     // Normalize instructions: null → "" for consistent cache keys
     instructions:
       typeof payload.instructions === "string" ? payload.instructions : "",
@@ -313,6 +315,26 @@ export async function createCodexResponsesOnce(
       injectReasoningReplayItems(upstreamBody, replayItems)
     }
   }
+
+  // Debug: surface the reasoning-related fields we actually send upstream,
+  // to diagnose cases where the client never sees thinking/reasoning output.
+  logger.debug("[codex] outbound reasoning params", {
+    model,
+    stream: clientStream,
+    useUpstreamWs,
+    responsesLite,
+    reasoning: upstreamBody.reasoning,
+    include: upstreamBody.include,
+    inputReasoningItemCount:
+      Array.isArray(upstreamBody.input) ?
+        (upstreamBody.input as Array<unknown>).filter(
+          (item) =>
+            item !== null
+            && typeof item === "object"
+            && (item as { type?: unknown }).type === "reasoning",
+        ).length
+      : 0,
+  })
 
   // ── Build headers (HTTP-safe base; WS path clones + rewrites) ────────
   const httpHeaders: Record<string, string> = {
@@ -464,6 +486,12 @@ export async function createCodexResponsesOnce(
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
+  // Debug: same reasoning-summary check as the streaming path, for the
+  // non-streaming (clientStream=false) response.
+  logCodexReasoningSummary(
+    "[codex] non-stream response reasoning summary",
+    result.output as Array<Record<string, unknown>> | undefined,
+  )
   // Cache reasoning items from the completed response.
   // `result` is the response object itself (has `output`), so we pass it
   // directly — cacheReasoningReplayItems checks both `.response.output`
@@ -561,6 +589,44 @@ async function* recordCodexTranscript(
  * 1. Cache reasoning items from `response.completed` events.
  * 2. Restore original identifiers (identity confuse) in all events.
  */
+/**
+ * Debug: confirm whether a completed Codex response actually contains
+ * reasoning output items (and a non-empty summary) before it's forwarded to
+ * the client. Helps diagnose cases where thinking output silently vanishes.
+ */
+function logCodexReasoningSummary(
+  label: string,
+  output: Array<Record<string, unknown>> | undefined,
+): void {
+  const reasoningItems = output?.filter((item) => item.type === "reasoning")
+  logger.debug(label, {
+    outputTypes: output?.map((item) => item.type),
+    reasoningItemCount: reasoningItems?.length ?? 0,
+    reasoningHasSummary: reasoningItems?.some(
+      (item) => Array.isArray(item.summary) && item.summary.length > 0,
+    ),
+  })
+}
+
+/** Handles a single `response.completed` SSE frame: cache + debug-log. */
+function handleCodexStreamCompletion(
+  parsed: Record<string, unknown>,
+  model: string,
+  replaySessionKey: string,
+): void {
+  if (parsed.type !== "response.completed") return
+  if (replaySessionKey) {
+    void cacheReasoningReplayItems(model, replaySessionKey, parsed)
+  }
+  const output = (
+    parsed.response as { output?: Array<Record<string, unknown>> }
+  ).output
+  logCodexReasoningSummary(
+    "[codex] response.completed reasoning summary",
+    output,
+  )
+}
+
 async function* wrapCodexStream(
   stream: AsyncIterable<CopilotStreamEventLike>,
   model: string,
@@ -575,13 +641,10 @@ async function* wrapCodexStream(
     }
 
     // Cache reasoning items on response.completed events.
-    if (replaySessionKey && data.includes('"response.completed"')) {
+    if (data.includes('"response.completed"')) {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
-        // Only cache if this is actually a response.completed event.
-        if (parsed.type === "response.completed") {
-          void cacheReasoningReplayItems(model, replaySessionKey, parsed)
-        }
+        handleCodexStreamCompletion(parsed, model, replaySessionKey)
       } catch {
         // Best-effort caching.
       }

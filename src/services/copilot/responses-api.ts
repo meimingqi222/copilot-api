@@ -25,6 +25,7 @@ export {
   supportsChatCompletionsApi,
   supportsMessagesApi,
   supportsResponsesApi,
+  withDefaultReasoningSummary,
 } from "~/services/copilot/responses-api-types"
 export {
   translateResponsesStreamToChatCompletions,
