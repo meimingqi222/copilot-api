@@ -100,7 +100,10 @@ export async function dispatchRequest(
             target,
             connection: conn,
             credential: cred,
-            payload,
+            payload: {
+              ...payload,
+              model: target.upstreamModelId,
+            },
             signal,
             ctx: {
               initiator: current.initiator,
@@ -123,7 +126,10 @@ export async function dispatchRequest(
               target,
               connection: conn,
               credential: cred,
-              payload,
+              payload: {
+                ...payload,
+                model: target.upstreamModelId,
+              },
               signal,
               ctx: executionContext,
             })
@@ -135,7 +141,10 @@ export async function dispatchRequest(
             target,
             connection: conn,
             credential: cred,
-            payload,
+            payload: {
+              ...payload,
+              model: target.upstreamModelId,
+            },
             signal,
             ctx: executionContext,
             chatExecutor: (p) => createChat(p),
@@ -154,7 +163,10 @@ export async function dispatchRequest(
             target,
             connection: conn,
             credential: cred,
-            payload,
+            payload: {
+              ...payload,
+              model: target.upstreamModelId,
+            },
             signal,
             ctx: {
               forwardedHeaders: options.forwardedHeaders,
@@ -173,7 +185,10 @@ export async function dispatchRequest(
           target,
           connection: conn,
           credential: cred,
-          payload,
+          payload: {
+            ...payload,
+            model: target.upstreamModelId,
+          },
           signal,
           ctx: {
             initiator: current.initiator,
