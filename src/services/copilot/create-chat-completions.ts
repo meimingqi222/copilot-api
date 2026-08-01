@@ -229,6 +229,16 @@ export interface Message {
   tool_calls?: Array<ToolCall>
   tool_call_id?: string
   reasoning_text?: string | null
+  /** Historical reasoning details, including signatures when available. */
+  reasoning_details?: Array<ChatCompletionReasoningDetail> | null
+  /**
+   * Historical assistant reasoning carried through translation
+   * (DeepSeek thinking mode requires it round-tripped with tool calls).
+   */
+  reasoning_content?: string | null
+  signature?: string | null
+  reasoning_signature?: string | null
+  thinking_signature?: string | null
 }
 
 export interface ToolCall {

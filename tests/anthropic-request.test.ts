@@ -312,7 +312,7 @@ describe("Anthropic thinking and model mapping", () => {
     expect(openAIPayload.reasoning).toBeUndefined()
   })
 
-  test("should map adaptive thinking configuration to OpenAI reasoning fields", () => {
+  test("should omit reasoning_effort for adaptive thinking configuration", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
@@ -324,10 +324,94 @@ describe("Anthropic thinking and model mapping", () => {
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 
-    expect(openAIPayload.reasoning_effort).toBe("auto")
-    expect(openAIPayload.temperature).toBe(1)
+    // "auto" is not a valid reasoning_effort value for most upstreams;
+    // adaptive → omit so each upstream falls back to its own default.
+    expect(openAIPayload.reasoning_effort).toBeUndefined()
+    // Reasoning not force-enabled → original temperature is preserved.
+    expect(openAIPayload.temperature).toBeUndefined()
     expect(openAIPayload.thinking).toBeUndefined()
     expect(openAIPayload.reasoning).toBeUndefined()
+  })
+
+  test("strips historical thinking by default, preserves as reasoning_content when opted in", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "step 1" },
+            { type: "text", text: "thought done" },
+          ],
+        },
+        { role: "user", content: "continue" },
+      ],
+      max_tokens: 128,
+    }
+
+    // Default (Copilot path): historical thinking is stripped.
+    const stripped = translateToOpenAI(anthropicPayload)
+    expect(stripped.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "thought done",
+    })
+    expect(stripped.messages[0].reasoning_content).toBeUndefined()
+
+    // Opt-in (non-Copilot path): preserved for DeepSeek/Kimi/Qwen/xAI.
+    const preserved = translateToOpenAI(anthropicPayload, {
+      preserveHistoricalReasoning: true,
+    })
+    expect(preserved.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "thought done",
+      reasoning_content: "step 1",
+    })
+  })
+
+  test("preserves historical thinking alongside tool_calls when opted in", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "plan" },
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "bash",
+              input: { cmd: "pwd" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "toolu_1", content: "/home" },
+          ],
+        },
+      ],
+      max_tokens: 128,
+    }
+
+    const preserved = translateToOpenAI(anthropicPayload, {
+      preserveHistoricalReasoning: true,
+    })
+
+    expect(preserved.messages[0]).toMatchObject({
+      role: "assistant",
+      content: null,
+      reasoning_content: "plan",
+      tool_calls: [
+        {
+          id: "toolu_1",
+          type: "function",
+          function: { name: "bash", arguments: '{"cmd":"pwd"}' },
+        },
+      ],
+    })
+    // tool_result still becomes a role:"tool" message.
+    expect(preserved.messages[1]).toMatchObject({ role: "tool" })
   })
 
   test("should handle boundary values for budget_tokens in OpenAI translation", () => {
@@ -360,6 +444,24 @@ describe("Anthropic thinking and model mapping", () => {
         expected as "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
       )
     }
+  })
+
+  test("omits explicit none while preserving budget-zero none", () => {
+    const explicitNone = translateToOpenAI({
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      reasoning_effort: "none",
+    })
+    expect(explicitNone.reasoning_effort).toBeUndefined()
+
+    const budgetZero = translateToOpenAI({
+      model: "claude-sonnet-4",
+      messages: [{ role: "user", content: "hello" }],
+      max_tokens: 128,
+      thinking: { type: "enabled", budget_tokens: 0 },
+    })
+    expect(budgetZero.reasoning_effort).toBe("none")
   })
 
   test("should override temperature to 1 when thinking is enabled in OpenAI translation", () => {

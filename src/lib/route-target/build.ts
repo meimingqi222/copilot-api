@@ -277,11 +277,14 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
  * 不支持时可 fallback 到语义等价的 endpoint；embeddings 不做 fallback。
  * 返回 null 表示该模型不支持此 endpoint，应跳过。
  *
- * fallback 映射：
- * - responses → chat：上游只支持 chat completions 但客户端用 responses API
- * - messages  → chat：上游只支持 chat completions 但客户端用 anthropic messages API
- * - chat      → responses：上游只支持 responses API（如 xAI/Codex native_responses），
- *   由 protocol adapter 的 createChatViaResponses 自动转换
+ * fallback 映射（ordered candidates，首个命中的优先）：
+ * - responses → [chat]：上游只支持 chat completions 但客户端用 responses API，
+ *   由 dispatch 的 createResponsesViaChat 自动转换
+ * - messages  → [chat]：上游只支持 chat completions 但客户端用 anthropic
+ *   messages API，由 createMessagesViaChat 自动转换
+ * - chat      → [responses, messages]：上游只支持 responses API（xAI/Codex
+ *   native_responses，由 adapter 的 createChatViaResponses 转换），或只支持
+ *   messages API（claude-native/anthropic-compatible，由 chat-via-messages 转换）
  */
 function resolveEndpoints(
   supported: Array<ModelEndpoint>,
@@ -289,13 +292,16 @@ function resolveEndpoints(
 ): Array<ModelEndpoint> | null {
   if (!requested) return supported
   if (supported.includes(requested)) return [requested]
-  const fallbackMap: Partial<Record<ModelEndpoint, ModelEndpoint>> = {
-    responses: "chat",
-    messages: "chat",
-    chat: "responses",
+  const fallbackCandidates: Partial<
+    Record<ModelEndpoint, Array<ModelEndpoint>>
+  > = {
+    responses: ["chat"],
+    messages: ["chat"],
+    chat: ["responses", "messages"],
   }
-  const fallback = fallbackMap[requested]
-  if (fallback && supported.includes(fallback)) return [fallback]
+  for (const candidate of fallbackCandidates[requested] ?? []) {
+    if (supported.includes(candidate)) return [candidate]
+  }
   return null
 }
 

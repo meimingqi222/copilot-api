@@ -51,3 +51,37 @@ export function openAIUsageToAnthropic(
     }),
   }
 }
+
+/**
+ * Anthropic 形状 usage → OpenAI 形状 usage（净值语义的严格反向）。
+ * `openAIUsageToAnthropic` 把 cache buckets 从 prompt_tokens 中扣除得到
+ * 净值 input_tokens；此函数把净值 + 两个 cache buckets 加回 prompt_tokens，
+ * 保持守恒不变量（refactor-usage-translation.md）。
+ *
+ * 供 chat→messages 响应翻译使用（OpenAI 形状响应必须报告总量）。
+ */
+export function anthropicUsageToOpenAI(
+  usage: AnthropicUsageLike,
+): OpenAIUsageLike {
+  const cacheReadTokens = usage.cache_read_input_tokens ?? 0
+  const cacheCreationTokens = usage.cache_creation_input_tokens
+
+  const details:
+    | { cached_tokens?: number; cache_creation_input_tokens?: number }
+    | undefined =
+    cacheReadTokens !== 0 || cacheCreationTokens !== undefined ?
+      {
+        ...(cacheReadTokens !== 0 && { cached_tokens: cacheReadTokens }),
+        ...(cacheCreationTokens !== undefined && {
+          cache_creation_input_tokens: cacheCreationTokens,
+        }),
+      }
+    : undefined
+
+  return {
+    prompt_tokens:
+      usage.input_tokens + cacheReadTokens + (cacheCreationTokens ?? 0),
+    completion_tokens: usage.output_tokens,
+    ...(details !== undefined && { prompt_tokens_details: details }),
+  }
+}

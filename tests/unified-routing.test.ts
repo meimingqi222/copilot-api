@@ -18,6 +18,7 @@ import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
+  type ProviderConnection,
 } from "~/lib/provider-connections"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import {
@@ -182,6 +183,111 @@ describe("unified buildRouteTargets", () => {
     })
     expect(targets).toHaveLength(1)
     expect(targets[0].connectionId).toBe("deepseek")
+  })
+})
+
+describe("unified endpoint fallback (cross-protocol)", () => {
+  beforeEach(() => {
+    __resetProviderConnectionsForTest()
+    __resetRouteTargetRoundRobin()
+  })
+
+  test("chat request resolves to a messages-only connection via chat→messages fallback", async () => {
+    await createConnection({
+      id: "anthropic",
+      name: "anthropic",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://api.anthropic.test",
+      credentials: [{ id: "cred", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "claude-sonnet-4",
+          upstreamId: "claude-sonnet-4",
+          endpoints: ["messages"],
+          enabled: true,
+        },
+      ],
+    })
+
+    const targets = buildRouteTargets({
+      publicModelId: "claude-sonnet-4",
+      endpoint: "chat",
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      connectionId: "anthropic",
+      protocol: "anthropic-compatible",
+      endpoint: "messages",
+    })
+  })
+
+  test("chat request still prefers the responses fallback over messages", () => {
+    // Custom connection list bypasses protocol endpoint normalization so both
+    // endpoints survive; the ordered chat fallback picks responses first.
+    const connection: ProviderConnection = {
+      id: "multi",
+      name: "multi",
+      protocol: "openai-responses-compatible",
+      baseUrl: "https://multi.example.com/v1",
+      enabled: true,
+      priority: 0,
+      credentials: [
+        {
+          id: "cred",
+          value: "sk-test",
+          authMode: "bearer",
+          enabled: true,
+          priority: 0,
+          status: "ready",
+          createdAt: Date.now(),
+        },
+      ],
+      createdAt: Date.now(),
+      models: [
+        {
+          publicId: "grok-4.5",
+          upstreamId: "grok-4.5",
+          endpoints: ["responses", "messages"],
+          enabled: true,
+        },
+      ],
+    }
+
+    const targets = buildRouteTargets({
+      publicModelId: "grok-4.5",
+      endpoint: "chat",
+      connections: [connection],
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0].endpoint).toBe("responses")
+  })
+
+  test("messages request still resolves to chat-only connections (existing fallback)", async () => {
+    await createConnection({
+      id: "openai",
+      name: "openai",
+      protocol: "openai-compatible",
+      baseUrl: "https://openai.example.com/v1",
+      credentials: [{ id: "cred", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "gpt-5-mini",
+          upstreamId: "gpt-5-mini",
+          endpoints: ["chat"],
+          enabled: true,
+        },
+      ],
+    })
+
+    const targets = buildRouteTargets({
+      publicModelId: "gpt-5-mini",
+      endpoint: "messages",
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({ endpoint: "chat" })
   })
 })
 

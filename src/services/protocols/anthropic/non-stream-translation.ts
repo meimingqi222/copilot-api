@@ -31,17 +31,34 @@ import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
+  options?: { preserveHistoricalReasoning?: boolean },
 ): ChatCompletionsPayload {
+  const hasExplicitReasoningEffort =
+    payload.reasoning_effort !== undefined && payload.reasoning_effort !== null
   const reasoningEffort =
-    payload.reasoning_effort
-    ?? translateAnthropicThinkingToReasoningEffort(payload.thinking)
+    hasExplicitReasoningEffort ?
+      payload.reasoning_effort
+    : translateAnthropicThinkingToReasoningEffort(payload.thinking)
+  // Explicit "auto"/"none" values are not portable across OpenAI-compatible
+  // upstreams, so omit them. A budget_tokens=0 translation is intentionally
+  // retained as "none" because it represents an explicit Anthropic budget
+  // disable request and existing provider-specific sanitizers handle it.
+  const effectiveReasoningEffort =
+    (
+      hasExplicitReasoningEffort
+      && (reasoningEffort === "auto" || reasoningEffort === "none")
+    ) ?
+      undefined
+    : reasoningEffort
   const isReasoningEnabled =
-    reasoningEffort !== undefined && reasoningEffort !== "none"
+    effectiveReasoningEffort !== undefined
+    && effectiveReasoningEffort !== "none"
   return {
     model: translateModelName(payload.model),
     messages: translateAnthropicMessagesToOpenAI(
       payload.messages,
       payload.system,
+      options?.preserveHistoricalReasoning ?? false,
     ),
     max_tokens: payload.max_tokens,
     stop: payload.stop_sequences,
@@ -52,7 +69,7 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
-    reasoning_effort: reasoningEffort,
+    reasoning_effort: effectiveReasoningEffort,
   }
 }
 
@@ -69,13 +86,14 @@ function translateModelName(model: string): string {
 function translateAnthropicMessagesToOpenAI(
   anthropicMessages: Array<AnthropicMessage>,
   system: string | Array<AnthropicTextBlock> | undefined,
+  preserveHistoricalReasoning = false,
 ): Array<Message> {
   const systemMessages = handleSystemPrompt(system)
 
   const otherMessages = anthropicMessages.flatMap((message) =>
     message.role === "user" ?
       handleUserMessage(message)
-    : handleAssistantMessage(message),
+    : handleAssistantMessage(message, preserveHistoricalReasoning),
   )
 
   return [...systemMessages, ...otherMessages]
@@ -144,6 +162,7 @@ function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
 
 function handleAssistantMessage(
   message: AnthropicAssistantMessage,
+  preserveHistoricalReasoning = false,
 ): Array<Message> {
   if (!Array.isArray(message.content)) {
     return [
@@ -169,12 +188,25 @@ function handleAssistantMessage(
     .map((block) => block.text)
     .join("\n\n")
 
-  // Copilot API rejects reasoning_text in historical assistant messages.
-  // Strip reasoning_text unconditionally; it is only valid on the model's
-  // most-recent live response, not in conversation history.
+  // Copilot API rejects reasoning_text in historical assistant messages, so
+  // reasoning is stripped by default. For non-Copilot upstreams (DeepSeek
+  // thinking mode + tool calls REQUIRES reasoning_content round-trip,
+  // Kimi/Qwen/xAI accept it), preserve historical thinking as
+  // reasoning_content when opted in.
+  const thinkingText =
+    preserveHistoricalReasoning ?
+      message.content
+        .filter(
+          (block): block is AnthropicThinkingBlock => block.type === "thinking",
+        )
+        .map((block) => block.thinking)
+        .join("\n\n") || undefined
+    : undefined
+
   const baseMessage = {
     role: "assistant" as const,
     content: textContent || null,
+    ...(thinkingText ? { reasoning_content: thinkingText } : {}),
   }
 
   if (toolUseBlocks.length === 0) {
@@ -262,35 +294,34 @@ function translateAnthropicToolsToOpenAI(
 // Copilot proxy (api.githubcopilot.com) uses OpenAI-compatible format with
 // reasoning_effort instead of Anthropic's budget_tokens.
 // Uses shared budgetToLevel from ~/lib/thinking for consistent thresholds.
+//
+// "adaptive" / "disabled" both map to undefined (omit reasoning_effort):
+// - "auto"/"none" are not valid reasoning_effort values for most upstreams
+//   (OpenAI/DeepSeek/xAI/Gemini), so emitting them risks a 400.
+// - omitting lets each upstream use its own default; disabling reasoning
+//   cannot be expressed portably (xAI grok-4.5 cannot be disabled at all).
 function translateAnthropicThinkingToReasoningEffort(
   thinking: AnthropicMessagesPayload["thinking"],
-):
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "none"
-  | "auto"
-  | undefined {
+): "minimal" | "low" | "medium" | "high" | "xhigh" | "none" | undefined {
   if (!thinking) {
     return undefined
   }
 
   if (thinking.type === "disabled") {
-    return "none"
+    return undefined
   }
 
   if (thinking.type === "enabled") {
     const budget = thinking.budget_tokens
     // No budget specified → let the model decide (Copilot default)
     if (budget === undefined) return undefined
-    // Use shared conversion function (single source of truth for thresholds)
+    // Use shared conversion function (single source of truth for thresholds).
+    // budget_tokens=0 → "none" (explicit off) is preserved intentionally.
     return budgetToLevel(budget) ?? undefined
   }
 
   // adaptive: let the model decide dynamically
-  return "auto"
+  return undefined
 }
 
 function translateAnthropicToolChoiceToOpenAI(
