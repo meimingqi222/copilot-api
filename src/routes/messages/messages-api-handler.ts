@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 
 import type { Account } from "~/lib/accounts"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
 import { HTTPError } from "~/lib/error"
 import { buildAnthropicUpstreamError } from "~/lib/error-builder"
@@ -8,10 +9,8 @@ import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { createMessages } from "~/services/copilot/create-messages"
+import { isDirectAnthropicResponse } from "~/services/protocols/anthropic"
 
-import type { AnthropicMessagesPayload } from "./anthropic-types"
-
-import { isDirectAnthropicResponse } from "./anthropic-types"
 import { handleDirectStreamingResponse } from "./connection-handler"
 import { recordAnthropicUsage } from "./usage-recorder"
 

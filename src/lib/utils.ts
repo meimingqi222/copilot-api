@@ -5,7 +5,7 @@ import { getConnInfo } from "hono/bun"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { saveAccounts } from "~/lib/account-store"
-import { getAccountModelPrefix, listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
@@ -15,7 +15,6 @@ import {
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { listExposedPublicModels } from "~/lib/route-target/build"
-import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { onStateChange } from "~/lib/state-events"
 import { globalTimers } from "~/lib/timer-registry"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
@@ -75,15 +74,6 @@ export function cacheModels(): void {
     )
 
   if (accountModels.length > 0) {
-    const duplicateCounts = new Map<string, number>()
-    for (const entry of accountModels) {
-      const nativeModelId = canonicalNativeModelId(entry.model.id)
-      duplicateCounts.set(
-        nativeModelId,
-        (duplicateCounts.get(nativeModelId) ?? 0) + 1,
-      )
-    }
-
     const merged = new Map<
       string,
       {
@@ -92,34 +82,16 @@ export function cacheModels(): void {
       }
     >()
     for (const entry of accountModels) {
-      const providerId = entry.model.provider ?? entry.account.provider
-      const nativeModelId = canonicalNativeModelId(entry.model.id)
-      const prefix = getAccountModelPrefix(entry.account)
-      const isDuplicate = (duplicateCounts.get(nativeModelId) ?? 0) > 1
-      // Bare id is always exposed (auto-LB across providers).
-      // Prefixed ids (prefix/model and provider/model) are only exposed when
-      // multiple providers serve the same native model, letting the client
-      // target a specific provider. With a single provider the prefixed id
-      // is redundant — routing still works via buildAccountModelAliases.
-      const publicIds = [
-        entry.model.id,
-        ...(isDuplicate ?
-          [
-            `${prefix}/${entry.model.id}`,
-            ...(prefix !== providerId ?
-              [`${providerId}/${entry.model.id}`]
-            : []),
-          ]
-        : []),
-      ]
-
-      for (const publicId of publicIds) {
-        if (!merged.has(publicId)) {
-          merged.set(publicId, {
-            model: entry.model,
-            publicId,
-          })
-        }
+      // Only the bare model id is exposed; routing/auto-LB across providers
+      // happens transparently. Clients may still target a specific provider
+      // by sending a prefixed id (prefix/model), resolved via
+      // buildAccountModelAliases - but it is not listed here.
+      const publicId = entry.model.id
+      if (!merged.has(publicId)) {
+        merged.set(publicId, {
+          model: entry.model,
+          publicId,
+        })
       }
     }
 
@@ -209,35 +181,20 @@ function appendProviderConnectionModels(): void {
   const exposed = listExposedPublicModels()
   if (exposed.length === 0) return
 
-  // Count distinct connections per publicId: when > 1, also expose
-  // provider-pinned entries (connectionId/publicId).
-  const connSetByModel = new Map<string, Set<string>>()
-  for (const entry of exposed) {
-    const s = connSetByModel.get(entry.publicId) ?? new Set<string>()
-    connSetByModel.set(entry.publicId, s.add(entry.connectionId))
-  }
-
   const existing = new Set((state.models?.data ?? []).map((m) => m.id))
   const additions: NonNullable<typeof state.models>["data"] = []
   const autoLbSeen = new Set<string>()
 
   for (const entry of exposed) {
-    // Auto-LB entry: bare publicId (added once, load-balanced across all providers)
+    // Auto-LB entry: bare publicId (added once, load-balanced across all
+    // providers). Provider-pinned ids (connectionId/publicId) are not listed;
+    // clients may still send one to target a specific connection, resolved
+    // via the route-target build path.
     if (!autoLbSeen.has(entry.publicId)) {
       autoLbSeen.add(entry.publicId)
       if (!existing.has(entry.publicId)) {
         existing.add(entry.publicId)
         additions.push(buildConnectionModelEntry(entry.publicId, entry))
-      }
-    }
-
-    // Provider-pinned entry: connectionId/publicId — only when multiple connections
-    // serve the same publicId, letting the client target a specific provider.
-    if ((connSetByModel.get(entry.publicId)?.size ?? 1) > 1) {
-      const pinnedId = `${entry.connectionId}/${entry.publicId}`
-      if (!existing.has(pinnedId)) {
-        existing.add(pinnedId)
-        additions.push(buildConnectionModelEntry(pinnedId, entry))
       }
     }
   }

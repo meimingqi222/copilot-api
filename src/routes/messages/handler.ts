@@ -3,20 +3,20 @@ import type { Context } from "hono"
 import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { supportsMessagesApi } from "~/services/copilot/responses-api"
-
 import {
   extractMessageContentFromAnthropicPayload,
   type AnthropicMessagesPayload,
-} from "./anthropic-types"
+} from "~/services/protocols/anthropic"
+
 import { handleAnthropicViaConnection } from "./connection-handler"
 import { handleCopilotApi } from "./copilot-handler"
 import { inferInitiatorFromAnthropicMessages } from "./initiator"
-import { handleMessagesApi } from "./messages-api-handler"
 
 /** Protocols whose adapter supports native Anthropic Messages passthrough. */
 const NATIVE_MESSAGES_PROTOCOLS = new Set([
   "anthropic-compatible",
   "mimo-native",
+  "claude-native",
 ])
 
 export async function handleCompletion(c: Context) {
@@ -61,18 +61,18 @@ export async function handleCompletion(c: Context) {
     logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
   }
 
-  // Copilot Messages API (native Anthropic API passthrough)
+  // Copilot's native Messages API uses the unified dispatch path so failover
+  // usage is attributed to the target that actually completed the request.
   if (
     admission.account
     && admission.account.provider === "copilot"
     && supportsMessagesApi(anthropicPayload.model, admission.account)
   ) {
-    return handleMessagesApi({
+    return handleAnthropicViaConnection({
       c,
       anthropicPayload,
       signal,
-      account: admission.account,
-      initiator: admission.initiator,
+      admission,
       anthropicBeta,
       anthropicVersion,
       forwardedHeaders,

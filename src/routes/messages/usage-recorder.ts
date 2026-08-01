@@ -1,12 +1,12 @@
 import type { Context } from "hono"
 
-import { logger } from "~/lib/logger"
-import { recordUsage } from "~/lib/usage"
-
 import type {
   AnthropicResponse,
   AnthropicStreamingUsage,
-} from "./anthropic-types"
+} from "~/services/protocols/anthropic"
+
+import { logger } from "~/lib/logger"
+import { recordUsage } from "~/lib/usage"
 
 export interface UsageInfo {
   prompt_tokens: number

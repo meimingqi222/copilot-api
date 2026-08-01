@@ -16,6 +16,7 @@ import {
   applyClaudeOAuthBundle,
   createClaudeOAuthStart,
   exchangeClaudeCodeForTokens,
+  fetchClaudeBootstrapIdentity,
 } from "./claude"
 import {
   applyCodexOAuthBundle,
@@ -146,6 +147,20 @@ const claudeStrategy: OAuthProviderStrategy = {
       flow.pkce,
       flowFetchOptions(flow),
     )
+    // Best-effort bootstrap: recover account_uuid/email for the request
+    // fingerprint (metadata.user_id.account_uuid). Login-only - identity is
+    // captured once, never rewritten during refresh (oh-my-pi convention).
+    if (!bundle.accountId || !bundle.email || !bundle.organizationId) {
+      const identity = await fetchClaudeBootstrapIdentity(
+        bundle.accessToken,
+        flowFetchOptions(flow),
+      )
+      bundle.accountId = bundle.accountId ?? identity.accountId
+      bundle.email = bundle.email ?? identity.email
+      bundle.organizationId = bundle.organizationId ?? identity.organizationId
+      bundle.organizationName =
+        bundle.organizationName ?? identity.organizationName
+    }
     applyClaudeOAuthBundle(account, bundle)
     return account
   },

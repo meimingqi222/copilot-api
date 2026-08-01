@@ -6,17 +6,18 @@ import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { forwardSseEvent, handleSseStream, writeSseEvent } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
+import { applyUsageIdentity } from "~/lib/usage"
 import { dispatchMessages } from "~/services/dispatch/messages"
-
-import type { HandleStreamingResponseOptions } from "./copilot-handler"
-
 import {
   type AnthropicMessagesPayload,
   type AnthropicResponse,
   type AnthropicStreamingUsage,
   isAsyncIterable,
   isDirectAnthropicResponse,
-} from "./anthropic-types"
+} from "~/services/protocols/anthropic"
+
+import type { HandleStreamingResponseOptions } from "./copilot-handler"
+
 import {
   recordDirectStreamingUsage,
   recordAnthropicUsage,
@@ -63,7 +64,7 @@ export async function handleAnthropicViaConnection(
       signal,
       forwarded,
     )
-    c.set("accountId", result.accountId)
+    applyUsageIdentity(c, result.identity)
     c.set("model", anthropicPayload.model)
     if (!isAsyncIterable(result.response)) {
       if (
@@ -95,7 +96,7 @@ export async function handleAnthropicViaConnection(
         forwarded,
       )
       resultAccountId = result.accountId
-      c.set("accountId", result.accountId)
+      applyUsageIdentity(c, result.identity)
       c.set("model", anthropicPayload.model)
       if (!isAsyncIterable(result.response)) {
         if (

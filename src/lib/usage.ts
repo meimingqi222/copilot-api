@@ -1,5 +1,7 @@
 import type { Context } from "hono"
 
+import type { RequestAdmission } from "~/lib/request-admission"
+
 import {
   canonicalModelId,
   canonicalNativeModelId,
@@ -27,9 +29,37 @@ export function resolveUsageModelId(accountId: string, model: string): string {
   return canonicalModelId(model, account)
 }
 
+export function identityFromAdmission(
+  admission: RequestAdmission,
+): UsageIdentity {
+  return {
+    ownerId: admission.account?.id ?? admission.connection.id,
+    connectionId: admission.target.connectionId,
+    credentialId: admission.target.credentialId,
+    provider: admission.account?.provider ?? admission.target.protocol,
+  }
+}
+
+export interface UsageIdentity {
+  ownerId: string
+  connectionId: string
+  credentialId: string
+  provider: string
+}
+
+export function applyUsageIdentity(c: Context, identity: UsageIdentity): void {
+  c.set("accountId", identity.ownerId)
+  c.set("provider", identity.provider)
+  c.set("connectionId", identity.connectionId)
+  c.set("credentialId", identity.credentialId)
+}
+
 export interface UsageRecordInput {
   c: Context
   accountId: string
+  provider?: string
+  connectionId?: string
+  credentialId?: string
   model: string
   promptTokens: number
   completionTokens: number
@@ -56,6 +86,9 @@ export function recordUsage(input: UsageRecordInput): void {
     ttftMs,
     tps,
     streaming,
+    provider: explicitProvider,
+    connectionId,
+    credentialId,
   } = input
 
   void trackUserTokenUsage(c, totalTokens)
@@ -63,6 +96,15 @@ export function recordUsage(input: UsageRecordInput): void {
   try {
     const now = timestamp ?? Date.now()
     const usageModel = resolveUsageModelId(accountId, model)
+    const provider =
+      explicitProvider
+      ?? getAccount(accountId)?.provider
+      ?? (c.get("provider") as string | undefined)
+      ?? "unknown"
+    const resolvedConnectionId =
+      connectionId ?? (c.get("connectionId") as string | undefined)
+    const resolvedCredentialId =
+      credentialId ?? (c.get("credentialId") as string | undefined)
     const pricing = statsStore.getModelPricing(usageModel)
     const cost =
       pricing ?
@@ -75,8 +117,11 @@ export function recordUsage(input: UsageRecordInput): void {
     statsStore.recordUsage({
       date: statsStore.getDateString(now),
       accountId,
+      connectionId: resolvedConnectionId,
+      credentialId: resolvedCredentialId,
       userId: c.get("userId"),
       model: usageModel,
+      provider,
       promptTokens,
       completionTokens,
       totalTokens,

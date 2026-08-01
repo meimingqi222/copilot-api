@@ -77,6 +77,8 @@ export interface OAuthAccountCredentials {
   deviceId?: string
   apiKey?: string
   email?: string
+  organizationId?: string
+  organizationName?: string
 }
 
 export interface OAuthAccountSettings {

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 
 import { PATHS } from "~/lib/paths"
 import { Repository } from "~/lib/repository"
+import { parseModelRef } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 
 export interface User {
@@ -192,10 +193,20 @@ export async function resetUserTokens(id: string): Promise<boolean> {
   return true
 }
 
+/**
+ * Strip a recognized routing prefix (providerId/connectionId) keeping the
+ * bare model id. `parseModelRef` only strips prefixes it identifies; a model
+ * name that itself contains `/` (e.g. `z-ai/glm-5.1`) is kept intact.
+ */
+function bareModelId(model: string): string {
+  return parseModelRef(model).modelId
+}
+
 export function isUserAllowedModel(user: User, model: string): boolean {
   const allowedModels = user.allowedModels ?? []
   if (allowedModels.length === 0) return true
-  return allowedModels.includes(model)
+  const bare = bareModelId(model)
+  return allowedModels.some((allowed) => bareModelId(allowed) === bare)
 }
 
 type PersistedUser = Partial<User>

@@ -44,7 +44,7 @@ interface GuardInput {
   stream?: boolean
   trustedClient?: boolean
   messageContent?: string
-  /** Provider ID — auto-detection skips non-Copilot providers */
+  /** Selected provider kind — automation detection skips non-Copilot routes. */
   provider?: string
 }
 

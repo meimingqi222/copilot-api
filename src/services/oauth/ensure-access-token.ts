@@ -10,7 +10,15 @@ import {
 import { refreshOAuthAccountToken } from "./refresh-scheduler"
 
 const EXPIRY_SKEW_MS = 60_000
+// Claude mirrors the official Claude Code CLI, which refreshes ~5 minutes
+// before expiry to avoid sending a borderline-expired token (a 401 mid-stream
+// is costly). Other OAuth providers keep the tighter 60s skew.
+const CLAUDE_EXPIRY_SKEW_MS = 5 * 60_000
 const inflightRefresh = new Map<string, Promise<void>>()
+
+function expirySkewMs(account: Account): number {
+  return account.provider === "claude" ? CLAUDE_EXPIRY_SKEW_MS : EXPIRY_SKEW_MS
+}
 
 interface EnsureOAuthAccessTokenOptions {
   forceRefresh?: boolean
@@ -49,7 +57,7 @@ function tokenNeedsRefresh(account: Account): boolean {
   if (expiresAt === undefined) {
     return false
   }
-  return expiresAt <= Date.now() + EXPIRY_SKEW_MS
+  return expiresAt <= Date.now() + expirySkewMs(account)
 }
 
 export async function ensureOAuthAccessToken(

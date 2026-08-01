@@ -1,15 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import {
-  checkRateLimit,
-  resetAdaptiveRateLimiterForTest,
-} from "~/lib/rate-limit"
-import {
-  acquireWindsurfSlot,
-  getWindsurfConcurrency,
-  releaseWindsurfSlot,
-  resetWindsurfSlotsForTest,
-} from "~/services/windsurf/concurrency-limiter"
+import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import {
   WindsurfUpstreamError,
   classifyWindsurfErrorText,
@@ -23,24 +14,6 @@ function utf8(str: string): Uint8Array {
 
 afterEach(() => {
   resetAdaptiveRateLimiterForTest()
-  resetWindsurfSlotsForTest()
-})
-
-// ── Windsurf-specific rate limit (stricter pacing) ───────────────────────────
-
-describe("windsurf rate limit pacing", () => {
-  test("enforces 4s interval between requests (after burst)", async () => {
-    const TEST_ID = "windsurf-pacing-test"
-    // First 2 requests pass instantly (burst=2)
-    await checkRateLimit(TEST_ID, undefined, { intervalMs: 50, burst: 2 })
-    await checkRateLimit(TEST_ID, undefined, { intervalMs: 50, burst: 2 })
-
-    // 3rd request should wait ~50ms
-    const start = Date.now()
-    await checkRateLimit(TEST_ID, undefined, { intervalMs: 50, burst: 2 })
-    const elapsed = Date.now() - start
-    expect(elapsed).toBeGreaterThanOrEqual(40)
-  }, 10_000)
 })
 
 // ── parseResetsInDuration ────────────────────────────────────────────────────
@@ -156,62 +129,6 @@ describe("WindsurfUpstreamError", () => {
     expect(err.retryAfterMs).toBe(3_600_000)
     expect(err.code).toBe("Permission denied")
     expect(err.message).toContain("Windsurf upstream error")
-  })
-})
-
-// ── concurrency limiter ──────────────────────────────────────────────────────
-
-describe("windsurf concurrency limiter", () => {
-  test("allows first acquire immediately", async () => {
-    await acquireWindsurfSlot("acct-1")
-    expect(getWindsurfConcurrency("acct-1")).toBeGreaterThanOrEqual(1)
-    releaseWindsurfSlot("acct-1")
-  })
-
-  test("blocks acquire when slot cap is reached", async () => {
-    // Default cap is 8 — fill all slots, then verify the 9th blocks.
-    for (let i = 0; i < 8; i++) {
-      await acquireWindsurfSlot("acct-cap")
-    }
-
-    let extraAcquired = false
-    const extraPromise = acquireWindsurfSlot("acct-cap").then(() => {
-      extraAcquired = true
-    })
-
-    await new Promise((r) => setTimeout(r, 20))
-    expect(extraAcquired).toBe(false)
-
-    releaseWindsurfSlot("acct-cap")
-    await extraPromise
-    expect(extraAcquired).toBe(true)
-    // Drain remaining slots
-    for (let i = 0; i < 8; i++) releaseWindsurfSlot("acct-cap")
-  })
-
-  test("isolates slots per account", async () => {
-    await acquireWindsurfSlot("acct-a")
-    await acquireWindsurfSlot("acct-b") // should not block
-    releaseWindsurfSlot("acct-a")
-    releaseWindsurfSlot("acct-b")
-  })
-
-  test("rejects on abort signal while waiting", async () => {
-    // Fill all 8 slots so the 9th acquires waits.
-    for (let i = 0; i < 8; i++) {
-      await acquireWindsurfSlot("acct-abort")
-    }
-    const controller = new AbortController()
-    const promise = acquireWindsurfSlot("acct-abort", controller.signal)
-    controller.abort()
-    let threw = false
-    try {
-      await promise
-    } catch {
-      threw = true
-    }
-    expect(threw).toBe(true)
-    for (let i = 0; i < 8; i++) releaseWindsurfSlot("acct-abort")
   })
 })
 

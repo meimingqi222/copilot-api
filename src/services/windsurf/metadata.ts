@@ -23,13 +23,21 @@ export function normalizeDevinApiKey(apiKey: string): string {
  *   f4=locale "en"
  *   f7=ide_version "3.2.23"
  *   f12=extension_name "windsurf"
+ *   f21=user_jwt (the short-lived JWT from GetUserJwt; present on chat requests)
  *
  * Deliberately omits f5(os), f8(hardware), f9(requestId), f10(sessionId),
- * f16(timestamp), f21(userJwt), f28(ideType), f30(platform_id), f31(f) —
- * oh-my-pi does not send them, and the extra fields create an anomalous
- * fingerprint that can trigger per-model rate limits.
+ * f16(timestamp), f28(ideType), f30(platform_id), f31(f) - oh-my-pi does not
+ * send them, and the extra fields create an anomalous fingerprint that can
+ * trigger per-model rate limits.
+ *
+ * `userJwt` is the short-lived JWT obtained from the two-stage `GetUserJwt`
+ * exchange (see `fetchDevinUserJwt`). Real Windsurf sends it on every chat
+ * request (oh-my-pi devin.ts line 514), so it is part of the wire fingerprint.
  */
-export function buildWindsurfClientMetadata(apiKey: string): ProtobufEncoder {
+export function buildWindsurfClientMetadata(
+  apiKey: string,
+  userJwt?: string,
+): ProtobufEncoder {
   const metadata = new ProtobufEncoder()
   metadata.writeString(1, "windsurf")
   metadata.writeString(2, DEVIN_EXTENSION_VERSION)
@@ -37,6 +45,9 @@ export function buildWindsurfClientMetadata(apiKey: string): ProtobufEncoder {
   metadata.writeString(4, "en")
   metadata.writeString(7, DEVIN_IDE_VERSION)
   metadata.writeString(12, "windsurf")
+  if (userJwt) {
+    metadata.writeString(21, userJwt)
+  }
   return metadata
 }
 

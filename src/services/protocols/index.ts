@@ -37,6 +37,7 @@ export function initializeProtocolAdapters(): void {
 }
 
 export { getProtocolAdapter, registerProtocolAdapter } from "./registry"
+export { createResponsesViaChat } from "./responses-via-chat"
 export type {
   AdapterChatResult,
   AdapterEmbeddingsResult,

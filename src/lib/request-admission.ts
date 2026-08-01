@@ -27,10 +27,10 @@ import {
 import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
 import {
   buildRouteTargets,
+  commitRouteTargetAffinity,
   resolveModelRouting,
   selectRouteTarget,
 } from "~/lib/route-target"
-import { parseModelReference } from "~/lib/route-target/model-reference"
 import { extractSessionIds } from "~/lib/routing"
 import { state } from "~/lib/state"
 import { isUserAllowedModel } from "~/lib/users"
@@ -106,32 +106,6 @@ export async function prepareRequestAdmission(
   c.set("model", options.model)
   enforceUserModelAccess(c, options.model)
 
-  try {
-    checkProtectedRouteGuard(c, {
-      routeKind: options.routeKind,
-      model: options.model,
-      maxTokens: options.maxTokens,
-      stream: options.stream,
-      messageContent: options.messageContent,
-      provider: inferProviderFromModel(options.model),
-    })
-  } catch (error) {
-    if (error instanceof Error) {
-      logger.warn(
-        `Request admission failed before selection: ${JSON.stringify({
-          path: c.req.path,
-          model: options.model,
-          routeKind: options.routeKind,
-          maxTokens: options.maxTokens,
-          stream: options.stream ?? false,
-          errorName: error.name,
-          errorMessage: error.message,
-        })}`,
-      )
-    }
-    throw error
-  }
-
   const { initiator } = resolveInitiatorWithClientHeader(
     c,
     options.inferredInitiator ?? "user",
@@ -153,10 +127,46 @@ export async function prepareRequestAdmission(
     payload: options.sessionPayload,
   })
 
+  // Select without any upstream I/O so the guard can use the actual provider.
+  // When no target exists, still run the guard with an explicit non-Copilot
+  // scope before returning the route diagnostic.
   const target = selectRouteTarget(candidates, {
     sessionId: sessionIds.primaryId || undefined,
     fallbackSessionId: sessionIds.fallbackId || undefined,
+    commitAffinity: false,
   })
+  let guardProvider = "unroutable"
+  if (target) {
+    guardProvider =
+      target.protocol === "copilot-native" ? "copilot" : target.protocol
+  }
+  try {
+    checkProtectedRouteGuard(c, {
+      routeKind: options.routeKind,
+      model: options.model,
+      maxTokens: options.maxTokens,
+      stream: options.stream,
+      messageContent: options.messageContent,
+      provider: guardProvider,
+    })
+  } catch (error) {
+    if (error instanceof Error) {
+      logger.warn(
+        `Request admission guard rejected request: ${JSON.stringify({
+          path: c.req.path,
+          model: options.model,
+          routeKind: options.routeKind,
+          protocol: target?.protocol,
+          maxTokens: options.maxTokens,
+          stream: options.stream ?? false,
+          errorName: error.name,
+          errorMessage: error.message,
+        })}`,
+      )
+    }
+    throw error
+  }
+
   if (!target) {
     const diagnostic = diagnoseRouteFailure(options)
     throw new HTTPError(
@@ -169,6 +179,9 @@ export async function prepareRequestAdmission(
   if (state.manualApprove) {
     await awaitApproval()
   }
+
+  // Commit the previewed target only after all admission checks pass.
+  commitRouteTargetAffinity(target, sessionIds.primaryId || undefined)
 
   const sessionFields = {
     sessionId: sessionIds.primaryId || undefined,
@@ -198,6 +211,11 @@ export async function prepareRequestAdmission(
     readAccountLegacyMetadata(connection) ?
       connectionToAccount(connection)
     : undefined
+  // Expose provider on the context so usage recording can attribute plain
+  // (non-account-managed) provider connections correctly. Account-backed
+  // paths derive provider from the final accountId at record time (preserving
+  // failover correctness); plain connections fall back to this value.
+  c.set("provider", account?.provider ?? target.protocol)
   return {
     target,
     connection,
@@ -634,18 +652,4 @@ export function resolveConnectionFromTarget(target: RouteTarget): {
       connectionToAccount(connection)
     : undefined
   return { connection, credential: found.credential, account }
-}
-
-/** Infer provider ID from model name (for guard auto-detection exemption). */
-function inferProviderFromModel(model: string): string | undefined {
-  const parsed = parseModelReference(model)
-  if (parsed.provider) return parsed.provider
-  // Check connection-level prefix
-  const slashIdx = model.indexOf("/")
-  if (slashIdx > 0) {
-    const maybeConn = model.slice(0, slashIdx)
-    const conn = getProviderConnection(maybeConn)
-    if (conn) return conn.protocol === "copilot-native" ? "copilot" : maybeConn
-  }
-  return undefined
 }

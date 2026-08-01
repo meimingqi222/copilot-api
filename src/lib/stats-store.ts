@@ -5,6 +5,7 @@ import path from "node:path"
 import type { ResolvedModelPricing } from "~/lib/models-dev"
 import type { ProviderId } from "~/lib/provider-config"
 
+import { listAccounts } from "~/lib/accounts"
 import { getDefaultModelPrice } from "~/lib/default-prices"
 import { resolveModelsDevPriceDetailed } from "~/lib/models-dev"
 import { PATHS } from "~/lib/paths"
@@ -21,6 +22,9 @@ export interface UsageStats {
   accountId: string
   userId?: string
   model: string
+  provider?: string
+  connectionId?: string
+  credentialId?: string
   promptTokens: number
   completionTokens: number
   cacheReadTokens?: number
@@ -100,6 +104,45 @@ type UsageModelRow = {
   cost: number
 }
 
+type UsageProviderRow = {
+  provider: string | null
+  account_id: string
+  model: string
+  requests: number
+  prompt_tokens: number
+  completion_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  cost: number
+}
+
+/** Per-account rollup nested under a provider, for by-provider aggregation. */
+export type ProviderAccountUsage = {
+  label: string
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  cost: number
+  models: Record<string, UsageModelStats>
+}
+
+/** By-provider aggregation: provider id -> provider totals + nested accounts. */
+export type UsageProviderStats = {
+  label: string
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  cost: number
+  accounts: Record<string, ProviderAccountUsage>
+}
+
 class StatsStore {
   private db: Database | null = null
   private isTestMode = false
@@ -173,6 +216,17 @@ class StatsStore {
     this.ensureColumn(db, "usage_stats", "ttft_ms", "REAL")
     this.ensureColumn(db, "usage_stats", "tps", "REAL")
     this.ensureColumn(db, "usage_stats", "streaming", "INTEGER DEFAULT 0")
+    // Add provider column so usage can be aggregated by provider even after
+    // an account/connection is deleted (historical rows keep their provider).
+    this.ensureColumn(db, "usage_stats", "provider", "TEXT")
+    this.ensureColumn(db, "usage_stats", "connection_id", "TEXT")
+    this.ensureColumn(db, "usage_stats", "credential_id", "TEXT")
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_provider ON usage_stats(provider)
+    `)
+    db.run(`
+      CREATE INDEX IF NOT EXISTS idx_usage_connection ON usage_stats(connection_id)
+    `)
 
     db.run(`
       CREATE TABLE IF NOT EXISTS model_pricing (
@@ -191,6 +245,7 @@ class StatsStore {
       )
     `)
     this.migrateSwe16UsageLabels(db)
+    this.backfillProviderColumn(db)
   }
 
   /** One-time: drop obvious junk swe-1-6-fast test rows (tiny input, zero output). */
@@ -208,6 +263,29 @@ class StatsStore {
     `)
     db.run("INSERT INTO stats_migrations (name, applied_at) VALUES (?, ?)", [
       "swe-1-6-fast-junk-cleanup",
+      Date.now(),
+    ])
+  }
+
+  /**
+   * One-time: backfill the `provider` column for pre-existing usage rows by
+   * joining against the current account registry. Rows whose account no longer
+   * exists are left NULL and reported as "unknown" by the by-provider query.
+   */
+  private backfillProviderColumn(db: Database): void {
+    const applied = db
+      .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
+      .get("backfill-usage-provider") as { ok: number } | undefined
+    if (applied) return
+
+    const stmt = db.prepare(
+      "UPDATE usage_stats SET provider = ? WHERE account_id = ? AND provider IS NULL",
+    )
+    for (const account of listAccounts()) {
+      stmt.run(account.provider, account.id)
+    }
+    db.run("INSERT INTO stats_migrations (name, applied_at) VALUES (?, ?)", [
+      "backfill-usage-provider",
       Date.now(),
     ])
   }
@@ -356,16 +434,19 @@ class StatsStore {
     const db = this.ensureDb()
     const stmt = db.prepare(`
       INSERT INTO usage_stats (
-        date, account_id, user_id, model, prompt_tokens, completion_tokens,
-        cache_read_tokens, cache_write_tokens, total_tokens, cost, timestamp,
-        ttft_ms, tps, streaming
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        date, account_id, user_id, model, provider, connection_id, credential_id,
+        prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens,
+        total_tokens, cost, timestamp, ttft_ms, tps, streaming
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       stats.date,
       stats.accountId,
       stats.userId ?? null,
       stats.model,
+      stats.provider ?? null,
+      stats.connectionId ?? null,
+      stats.credentialId ?? null,
       stats.promptTokens,
       stats.completionTokens,
       stats.cacheReadTokens ?? 0,
@@ -524,6 +605,115 @@ class StatsStore {
     }
 
     return models
+  }
+
+  /**
+   * Aggregate usage by provider -> account -> model directly from the DB.
+   * Does NOT depend on the live account registry, so usage from deleted
+   * accounts (provider backfilled/known) is still grouped under its provider.
+   * Rows with a NULL provider (pre-migration, unbackfillable) map to "unknown".
+   */
+  getUsageStatsByProvider(
+    startDate?: string,
+    endDate?: string,
+  ): Record<string, UsageProviderStats> {
+    const db = this.ensureDb()
+    let query = `
+      SELECT
+        provider,
+        account_id,
+        model,
+        COUNT(*) as requests,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(completion_tokens) as completion_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_write_tokens) as cache_write_tokens,
+        SUM(total_tokens) as total_tokens,
+        SUM(cost) as cost
+      FROM usage_stats
+      WHERE 1=1
+    `
+    const params: Array<string> = []
+    if (startDate) {
+      query += " AND date >= ?"
+      params.push(startDate)
+    }
+    if (endDate) {
+      query += " AND date <= ?"
+      params.push(endDate)
+    }
+    query += " GROUP BY provider, account_id, model"
+
+    const rows = db.prepare(query).all(...params) as Array<UsageProviderRow>
+
+    const result: Record<string, UsageProviderStats> = {}
+    const ensureProvider = (providerKey: string): UsageProviderStats => {
+      if (!(providerKey in result)) {
+        result[providerKey] = {
+          label: providerKey,
+          requests: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          cost: 0,
+          accounts: {},
+        }
+      }
+      return result[providerKey]
+    }
+    const ensureAccount = (
+      provider: UsageProviderStats,
+      accountId: string,
+    ): ProviderAccountUsage => {
+      if (!(accountId in provider.accounts)) {
+        provider.accounts[accountId] = {
+          label: accountId,
+          requests: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          cost: 0,
+          models: {},
+        }
+      }
+      return provider.accounts[accountId]
+    }
+
+    for (const row of rows) {
+      const providerKey = row.provider ?? "unknown"
+      const provider = ensureProvider(providerKey)
+      const account = ensureAccount(provider, row.account_id)
+      const metrics = {
+        requests: row.requests,
+        promptTokens: row.prompt_tokens,
+        completionTokens: row.completion_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+        cacheWriteTokens: row.cache_write_tokens,
+        totalTokens: row.total_tokens,
+        cost: row.cost,
+      }
+      provider.requests += metrics.requests
+      provider.promptTokens += metrics.promptTokens
+      provider.completionTokens += metrics.completionTokens
+      provider.cacheReadTokens += metrics.cacheReadTokens
+      provider.cacheWriteTokens += metrics.cacheWriteTokens
+      provider.totalTokens += metrics.totalTokens
+      provider.cost += metrics.cost
+      account.requests += metrics.requests
+      account.promptTokens += metrics.promptTokens
+      account.completionTokens += metrics.completionTokens
+      account.cacheReadTokens += metrics.cacheReadTokens
+      account.cacheWriteTokens += metrics.cacheWriteTokens
+      account.totalTokens += metrics.totalTokens
+      account.cost += metrics.cost
+      account.models[row.model] = metrics
+    }
+
+    return result
   }
 
   clearUsageStatsForTest(): void {

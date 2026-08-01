@@ -1,10 +1,32 @@
 import { Hono } from "hono"
 
-import { listAccounts } from "~/lib/accounts"
+import { getAccount, listAccounts } from "~/lib/accounts"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 
 export const usageApiRoutes = new Hono()
+
+/** Friendly display names for provider ids (also covers "unknown" orphans). */
+const PROVIDER_LABELS: Record<string, string> = {
+  copilot: "GitHub Copilot",
+  claude: "Claude",
+  kimi: "Kimi",
+  xai: "xAI",
+  codex: "Codex",
+  windsurf: "Windsurf",
+  antigravity: "Antigravity",
+  codebuff: "Codebuff",
+  "mimo-aistudio": "MiMo",
+  unknown: "Unknown",
+  // Protocol values used as provider for plain (non-account-managed) connections.
+  "openai-compatible": "OpenAI Compatible",
+  "openai-responses-compatible": "OpenAI Responses",
+  "anthropic-compatible": "Anthropic Compatible",
+}
+
+function providerLabel(providerId: string): string {
+  return PROVIDER_LABELS[providerId] ?? providerId
+}
 
 type UsageMetricsBase = {
   requests: number
@@ -424,6 +446,71 @@ function aggregateByUser(startDate: string, endDate: string) {
   return byUser
 }
 
+// Helper: Aggregate by provider (account -> model nested under each provider).
+// Reads the persisted `provider` column directly, so usage from deleted
+// accounts is still grouped under its provider rather than disappearing.
+function aggregateByProvider(startDate: string, endDate: string) {
+  const raw = statsStore.getUsageStatsByProvider(startDate, endDate)
+  const result: Record<
+    string,
+    UsageMetrics & {
+      label: string
+      accounts: Record<
+        string,
+        UsageMetrics & {
+          label: string
+          deleted?: boolean
+          models: Record<string, UsageMetrics>
+        }
+      >
+    }
+  > = {}
+
+  for (const [providerId, provider] of Object.entries(raw)) {
+    const accounts: Record<
+      string,
+      UsageMetrics & {
+        label: string
+        deleted?: boolean
+        models: Record<string, UsageMetrics>
+      }
+    > = {}
+    for (const [accountId, account] of Object.entries(provider.accounts)) {
+      const liveAccount = getAccount(accountId)
+      accounts[accountId] = {
+        label: liveAccount?.label ?? accountId,
+        ...(liveAccount ? {} : { deleted: true }),
+        ...enrichUsageMetrics({
+          requests: account.requests,
+          promptTokens: account.promptTokens,
+          completionTokens: account.completionTokens,
+          cacheReadTokens: account.cacheReadTokens,
+          cacheWriteTokens: account.cacheWriteTokens,
+          totalTokens: account.totalTokens,
+          cost: account.cost,
+        }),
+        models: enrichMetricsMap(account.models),
+      }
+    }
+
+    result[providerId] = {
+      label: providerLabel(providerId),
+      ...enrichUsageMetrics({
+        requests: provider.requests,
+        promptTokens: provider.promptTokens,
+        completionTokens: provider.completionTokens,
+        cacheReadTokens: provider.cacheReadTokens,
+        cacheWriteTokens: provider.cacheWriteTokens,
+        totalTokens: provider.totalTokens,
+        cost: provider.cost,
+      }),
+      accounts,
+    }
+  }
+
+  return result
+}
+
 function enrichIntervalSeries(
   series: ReturnType<typeof statsStore.getUsageStatsByInterval> | null,
 ) {
@@ -455,6 +542,7 @@ usageApiRoutes.get("/summary", (c) => {
   const { totals, timeSeries, byModel } = aggregateStats(allStats)
   const byAccount = aggregateByAccount(startDate, endDate)
   const byUser = aggregateByUser(startDate, endDate)
+  const byProvider = aggregateByProvider(startDate, endDate)
 
   // Only show 15-minute interval breakdown when the range is a single day
   const intervalSeries = enrichIntervalSeries(
@@ -466,6 +554,7 @@ usageApiRoutes.get("/summary", (c) => {
   return c.json({
     totals,
     byAccount,
+    byProvider,
     byUser,
     byModel,
     timeSeries,

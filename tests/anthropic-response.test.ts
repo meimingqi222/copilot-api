@@ -9,12 +9,12 @@ import type {
 import {
   createInitialStreamState,
   type AnthropicStreamEventData,
-} from "~/routes/messages/anthropic-types"
-import { translateToAnthropic } from "~/routes/messages/non-stream-translation"
+} from "~/services/protocols/anthropic"
+import { translateToAnthropic } from "~/services/protocols/anthropic"
 import {
   translateChunkToAnthropicEvents,
   translateStreamEndEvents,
-} from "~/routes/messages/stream-translation"
+} from "~/services/protocols/anthropic"
 
 function translateFullStream(
   openAIStream: Array<ChatCompletionChunk>,

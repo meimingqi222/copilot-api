@@ -15,7 +15,7 @@ import {
 import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
-import { recordUsage } from "~/lib/usage"
+import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
@@ -23,22 +23,18 @@ import {
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
 import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
-
 import {
   createInitialStreamState,
-  type AnthropicMessagesPayload,
-  type AnthropicStreamState,
-  type CopilotStream,
-} from "./anthropic-types"
-import {
-  translateToAnthropic,
-  translateToOpenAI,
-} from "./non-stream-translation"
-import {
   translateChunkToAnthropicEvents,
   translateErrorToAnthropicErrorEvent,
   translateStreamEndEvents,
-} from "./stream-translation"
+  translateToAnthropic,
+  translateToOpenAI,
+  type AnthropicMessagesPayload,
+  type AnthropicStreamState,
+  type CopilotStream,
+} from "~/services/protocols/anthropic"
+
 import { recordStreamingUsage, type UsageInfo } from "./usage-recorder"
 
 export interface HandleStreamingResponseOptions {
@@ -93,7 +89,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       throw error
     }
 
-    c.set("accountId", result.accountId)
+    applyUsageIdentity(c, result.identity)
     c.set("model", openAIPayload.model)
 
     if (isNonStreaming(result)) {
@@ -143,7 +139,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
       throw error
     }
 
-    c.set("accountId", result.accountId)
+    applyUsageIdentity(c, result.identity)
     c.set("model", openAIPayload.model)
 
     if (isNonStreaming(result)) {

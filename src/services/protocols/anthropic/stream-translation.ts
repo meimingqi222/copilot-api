@@ -9,7 +9,7 @@ import {
   type AnthropicMessageDeltaEvent,
   type AnthropicStreamEventData,
   type AnthropicStreamState,
-} from "./anthropic-types"
+} from "./types"
 import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 
 type OpenAIStreamUsage = NonNullable<ChatCompletionChunk["usage"]>

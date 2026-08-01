@@ -4,7 +4,7 @@ import type {
   AnthropicMessagesPayload,
   AnthropicTextBlock,
   AnthropicToolResultBlock,
-} from "~/routes/messages/anthropic-types"
+} from "~/services/protocols/anthropic/types"
 
 import { parseModelReference } from "~/lib/accounts"
 

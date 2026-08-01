@@ -1,5 +1,7 @@
 import type { OAuthAccount } from "~/lib/accounts"
 
+import { claudeCodeVersion } from "~/services/claude/fingerprint"
+
 import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
@@ -9,14 +11,26 @@ export const CLAUDE_AUTH_URL = "https://claude.ai/oauth/authorize"
 export const CLAUDE_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
 export const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 export const CLAUDE_REDIRECT_URI = "http://localhost:54545/callback"
+export const CLAUDE_BOOTSTRAP_URL =
+  "https://api.anthropic.com/api/claude_cli/bootstrap"
 export const CLAUDE_OAUTH_SCOPE =
-  "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+  "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 
 interface ClaudeTokenResponse {
   access_token?: string
   refresh_token?: string
   expires_in?: number
-  account?: { email_address?: string }
+  account?: { uuid?: string; email_address?: string }
+  organization?: { uuid?: string; name?: string }
+}
+
+interface ClaudeBootstrapResponse {
+  oauth_account?: {
+    account_uuid?: string
+    account_email?: string
+    organization_uuid?: string
+    organization_name?: string
+  }
 }
 
 export interface ClaudeOAuthBundle {
@@ -24,6 +38,9 @@ export interface ClaudeOAuthBundle {
   refreshToken?: string
   expiresAt?: number
   email?: string
+  accountId?: string
+  organizationId?: string
+  organizationName?: string
 }
 
 export { generateOAuthState } from "./pkce"
@@ -74,8 +91,8 @@ export async function exchangeClaudeCodeForTokens(
     {
       method: "POST",
       headers: {
+        // CC omits Accept on OAuth token requests (oh-my-pi postJson line 55).
         "Content-Type": "application/json",
-        Accept: "application/json",
       },
       body: JSON.stringify(body),
     },
@@ -100,6 +117,60 @@ export async function exchangeClaudeCodeForTokens(
     expiresAt:
       token.expires_in ? Date.now() + token.expires_in * 1000 : undefined,
     email: token.account?.email_address,
+    accountId: token.account?.uuid,
+    organizationId: token.organization?.uuid,
+    organizationName: token.organization?.name,
+  }
+}
+
+/**
+ * Fetches account identity (account_uuid / email / org) from the CC bootstrap
+ * endpoint. Called only at login to recover fields the token response doesn't
+ * inline - notably `account_uuid`, which feeds `metadata.user_id.account_uuid`
+ * in the request fingerprint. Best-effort: failures return an empty identity
+ * rather than blocking login (mirrors oh-my-pi `resolveAccountIdentity`).
+ *
+ * Ported from oh-my-pi registry/oauth/anthropic.ts (141-176).
+ */
+export async function fetchClaudeBootstrapIdentity(
+  accessToken: string,
+  options?: OAuthFetchOptions,
+): Promise<{
+  accountId?: string
+  email?: string
+  organizationId?: string
+  organizationName?: string
+}> {
+  try {
+    const url = `${CLAUDE_BOOTSTRAP_URL}?entrypoint=cli&model=claude-opus-4-8`
+    const response = await oauthFetch(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": `claude-code/${claudeCodeVersion}`,
+          "anthropic-beta": "oauth-2025-04-20",
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+      options,
+    )
+    if (!response.ok) return {}
+    const data = (await response.json()) as ClaudeBootstrapResponse
+    const acct = data.oauth_account
+    return {
+      accountId: acct?.account_uuid?.trim() || undefined,
+      email: acct?.account_email?.trim() || undefined,
+      organizationId: acct?.organization_uuid?.trim() || undefined,
+      organizationName: acct?.organization_name?.trim() || undefined,
+    }
+  } catch {
+    // Bootstrap is identity enrichment only. Token exchange must still succeed
+    // when the optional endpoint is unavailable or times out.
+    return {}
   }
 }
 
@@ -113,7 +184,11 @@ export async function refreshClaudeTokens(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json",
+        // CC sends these on refresh but NOT on the initial code exchange
+        // (oh-my-pi registry/oauth/anthropic.ts line 317). The SDK UA (not the
+        // claude-cli UA) + the oauth beta are the refresh-path fingerprint.
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "anthropic-sdk-typescript/0.94.0 userOAuthProvider",
       },
       body: JSON.stringify({
         client_id: CLAUDE_CLIENT_ID,
@@ -142,6 +217,9 @@ export async function refreshClaudeTokens(
     expiresAt:
       token.expires_in ? Date.now() + token.expires_in * 1000 : undefined,
     email: token.account?.email_address,
+    accountId: token.account?.uuid,
+    organizationId: token.organization?.uuid,
+    organizationName: token.organization?.name,
   }
 }
 
@@ -149,7 +227,12 @@ export function applyClaudeOAuthBundle(
   account: OAuthAccount,
   bundle: ClaudeOAuthBundle,
 ): void {
-  applyOAuthBundle(account, bundle, { email: bundle.email })
+  applyOAuthBundle(account, bundle, {
+    email: bundle.email,
+    accountId: bundle.accountId,
+    organizationId: bundle.organizationId,
+    organizationName: bundle.organizationName,
+  })
 }
 
 export function createClaudeOAuthStart(pkce = generatePkceCodes()): {

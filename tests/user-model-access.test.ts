@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
-import { createUserSync } from "~/lib/users"
+import { createUserSync, isUserAllowedModel, type User } from "~/lib/users"
 import { server } from "~/server"
 
 const originalUsers = state.users
@@ -85,3 +85,65 @@ function createModel(
     },
   }
 }
+
+function makeUser(allowedModels: Array<string>): User {
+  return {
+    id: "u1",
+    username: "test",
+    hashedApiKey: "x",
+    quotaLimit: 0,
+    usedTokens: 0,
+    allowedModels,
+    enabled: true,
+    role: "user",
+    createdAt: 0,
+  }
+}
+
+describe("isUserAllowedModel (prefix-aware)", () => {
+  test("empty allowlist allows everything", () => {
+    expect(isUserAllowedModel(makeUser([]), "anything")).toBe(true)
+  })
+
+  test("exact bare match", () => {
+    expect(
+      isUserAllowedModel(makeUser(["claude-sonnet-4"]), "claude-sonnet-4"),
+    ).toBe(true)
+  })
+
+  test("prefixed request matches bare allowlist entry", () => {
+    expect(
+      isUserAllowedModel(
+        makeUser(["claude-sonnet-4"]),
+        "claude/claude-sonnet-4",
+      ),
+    ).toBe(true)
+  })
+
+  test("bare request matches prefixed allowlist entry", () => {
+    expect(
+      isUserAllowedModel(
+        makeUser(["claude/claude-sonnet-4"]),
+        "claude-sonnet-4",
+      ),
+    ).toBe(true)
+  })
+
+  test("non-matching model is denied", () => {
+    expect(isUserAllowedModel(makeUser(["claude-sonnet-4"]), "gpt-4o")).toBe(
+      false,
+    )
+  })
+
+  test("model name containing `/` is NOT split (z-ai/glm-5.1)", () => {
+    // `z-ai` is not a recognized provider/connection prefix, so the full id
+    // `z-ai/glm-5.1` is the bare model id and must match exactly.
+    expect(isUserAllowedModel(makeUser(["z-ai/glm-5.1"]), "z-ai/glm-5.1")).toBe(
+      true,
+    )
+    // A bare `glm-5.1` (without the `z-ai/` vendor part) does NOT match.
+    expect(isUserAllowedModel(makeUser(["z-ai/glm-5.1"]), "glm-5.1")).toBe(
+      false,
+    )
+  })
+})

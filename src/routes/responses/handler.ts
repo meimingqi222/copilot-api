@@ -16,16 +16,24 @@ import {
   forwardSseEvent,
   writeSseEvent,
 } from "~/lib/sse"
-import { recordUsage } from "~/lib/usage"
+import { identityFromAdmission } from "~/lib/usage"
+import {
+  applyUsageIdentity,
+  type UsageIdentity,
+  recordUsage,
+} from "~/lib/usage"
 import { isAbortError } from "~/lib/utils"
-import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
 import { dispatchResponses } from "~/services/dispatch/responses"
 
 type ResponsesExecutionResult =
-  | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
-  | { accountId: string; response: ResponsesResponse }
+  | {
+      accountId: string
+      response: AsyncIterable<CopilotStreamEventLike>
+      identity?: UsageIdentity
+    }
+  | { accountId: string; response: ResponsesResponse; identity?: UsageIdentity }
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
@@ -71,24 +79,13 @@ export async function handleResponses(c: Context) {
     sessionPayload: payload,
   })
 
-  // Account-backed 路径走 legacy createResponses(支持 responses↔chat 自动翻译、
-  // native provider 特性);普通 Provider Connection 路径走 dispatchResponses,
-  // 直接调用 adapter.createResponses。
-  const executeRequest = (): Promise<ResponsesExecutionResult> => {
-    if (admission.account) {
-      return createResponses(payload, {
-        signal,
-        initiatorOverride: admission.initiator,
-        account: admission.account,
-        forwardedHeaders,
-        c,
-      }) as Promise<ResponsesExecutionResult>
-    }
-    return dispatchResponses(payload, admission, signal, c, {
+  // Dispatch all admissions through the unified failover path so the usage
+  // identity always describes the target that actually completed the request.
+  const executeRequest = (): Promise<ResponsesExecutionResult> =>
+    dispatchResponses(payload, admission, signal, c, {
       initiator: admission.initiator,
       forwardedHeaders,
     }) as Promise<ResponsesExecutionResult>
-  }
 
   if (payload.stream) {
     return streamSSE(c, async (stream) => {
@@ -101,7 +98,10 @@ export async function handleResponses(c: Context) {
       try {
         const result = await executeRequest()
         accountId = result.accountId
-        c.set("accountId", result.accountId)
+        applyUsageIdentity(
+          c,
+          result.identity ?? identityFromAdmission(admission),
+        )
         c.set("model", payload.model)
 
         if (isNonStreaming(result.response)) {
@@ -179,7 +179,7 @@ export async function handleResponses(c: Context) {
 
   const nonStreamStart = Date.now()
   const result = await executeRequest()
-  c.set("accountId", result.accountId)
+  applyUsageIdentity(c, result.identity ?? identityFromAdmission(admission))
   c.set("model", payload.model)
   if (!isNonStreaming(result.response)) {
     throw new Error("Expected non-streaming response for non-stream request")

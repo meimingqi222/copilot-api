@@ -9,6 +9,10 @@ function usageView() {
     pricingSources: {},
     modelViewMode: "aggregate",
     expandedAccounts: {},
+    expandedProviders: {},
+    expandedProviderAccounts: {},
+    customStartDate: "",
+    customEndDate: "",
     usageSummary: {
       totals: {
         requests: 0,
@@ -19,6 +23,7 @@ function usageView() {
         cacheHitRate: null,
       },
       byAccount: {},
+      byProvider: {},
       byUser: {},
       byModel: {},
       timeSeries: [],
@@ -103,6 +108,49 @@ function usageView() {
       return Boolean(this.expandedAccounts[accountId])
     },
 
+    toggleProviderExpanded(providerId) {
+      this.expandedProviders[providerId] = !this.expandedProviders[providerId]
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    isProviderExpanded(providerId) {
+      return Boolean(this.expandedProviders[providerId])
+    },
+
+    toggleProviderAccountExpanded(providerId, accountId) {
+      if (!this.expandedProviderAccounts[providerId]) {
+        this.expandedProviderAccounts[providerId] = {}
+      }
+      this.expandedProviderAccounts[providerId][accountId] =
+        !this.expandedProviderAccounts[providerId][accountId]
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    isProviderAccountExpanded(providerId, accountId) {
+      return Boolean(this.expandedProviderAccounts[providerId]?.[accountId])
+    },
+
+    get todayStr() {
+      const d = new Date()
+      const m = String(d.getMonth() + 1).padStart(2, "0")
+      const day = String(d.getDate()).padStart(2, "0")
+      return `${d.getFullYear()}-${m}-${day}`
+    },
+
+    setCustomRange() {
+      if (!this.customStartDate || !this.customEndDate) return
+      if (this.customStartDate > this.customEndDate) return
+      this.dateRange = "custom"
+      this.selectedMonth = ""
+      this.loadUsageStats()
+        .then(() => {
+          this.$nextTick(() => this.renderChart())
+        })
+        .catch(() => {
+          this.showToast(this.t("error.load"), "error")
+        })
+    },
+
     async load() {
       this.loading = true
       try {
@@ -162,10 +210,21 @@ function usageView() {
 
     async loadUsageStats() {
       try {
-        const params =
-          this.dateRange === "custom" && this.selectedMonth ?
-            { month: this.selectedMonth }
-          : { range: this.dateRange }
+        let params
+        if (this.dateRange === "custom") {
+          if (this.selectedMonth) {
+            params = { month: this.selectedMonth }
+          } else if (this.customStartDate && this.customEndDate) {
+            params = {
+              startDate: this.customStartDate,
+              endDate: this.customEndDate,
+            }
+          } else {
+            params = { range: "today" }
+          }
+        } else {
+          params = { range: this.dateRange }
+        }
         const data = await API.usage.summary(params)
         this.usageSummary = data
       } catch (e) {
@@ -369,6 +428,22 @@ function usageView() {
       return Object.entries(models || {}).sort(([, left], [, right]) => {
         return (right.totalTokens || 0) - (left.totalTokens || 0)
       })
+    },
+
+    get sortedProviderUsage() {
+      return Object.entries(this.usageSummary.byProvider || {})
+        .filter(([, data]) => (data.requests || 0) > 0)
+        .sort(([, left], [, right]) => {
+          return (right.totalTokens || 0) - (left.totalTokens || 0)
+        })
+    },
+
+    sortedProviderAccounts(providerData) {
+      return Object.entries(providerData?.accounts || {})
+        .filter(([, data]) => (data.requests || 0) > 0)
+        .sort(([, left], [, right]) => {
+          return (right.totalTokens || 0) - (left.totalTokens || 0)
+        })
     },
 
     getModelShare(tokens) {

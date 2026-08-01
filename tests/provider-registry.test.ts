@@ -52,7 +52,7 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true }).catch(() => undefined)
 })
 
-test("cacheModels keeps provider-qualified duplicates visible", () => {
+test("cacheModels exposes only bare model ids", () => {
   setTestAccounts([
     {
       id: "copilot-1",
@@ -102,8 +102,8 @@ test("cacheModels keeps provider-qualified duplicates visible", () => {
 
   const modelIds = state.models?.data.map((model) => model.id) ?? []
   expect(modelIds.includes("swe-1-6-fast")).toBe(true)
-  expect(modelIds.includes("copilot/swe-1-6-fast")).toBe(true)
-  expect(modelIds.includes("windsurf/swe-1-6-fast")).toBe(true)
+  expect(modelIds.includes("copilot/swe-1-6-fast")).toBe(false)
+  expect(modelIds.includes("windsurf/swe-1-6-fast")).toBe(false)
 })
 
 test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct accounts", async () => {

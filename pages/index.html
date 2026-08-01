@@ -1495,6 +1495,21 @@
                   :value="selectedMonth"
                   @change="setMonth($event.target.value)"
                   :title="t('usage.pickMonth')" />
+                <span class="text-xs text-[var(--apple-text-tertiary)]">~</span>
+                <input
+                  type="date"
+                  class="input input-small"
+                  x-model="customStartDate"
+                  @change="setCustomRange()"
+                  :max="todayStr"
+                  :title="t('usage.customStart')" />
+                <input
+                  type="date"
+                  class="input input-small"
+                  x-model="customEndDate"
+                  @change="setCustomRange()"
+                  :max="todayStr"
+                  :title="t('usage.customEnd')" />
               </div>
             </div>
             <p class="text-xs text-[var(--apple-text-secondary)] mb-4" x-show="usageSummary?.period?.startDate">
@@ -1555,6 +1570,7 @@
                 <div class="flex items-center gap-1 p-1 bg-[var(--apple-bg-secondary)] rounded-xl border border-[var(--apple-gray-5)]">
                   <button @click="setModelViewMode('aggregate')" class="btn btn-small" :class="modelViewMode === 'aggregate' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.viewAggregate')"></button>
                   <button @click="setModelViewMode('byAccount')" class="btn btn-small" :class="modelViewMode === 'byAccount' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.viewByAccount')"></button>
+                  <button @click="setModelViewMode('byProvider')" class="btn btn-small" :class="modelViewMode === 'byProvider' ? 'btn-primary' : 'btn-secondary'" x-text="t('usage.viewByProvider')"></button>
                 </div>
               </div>
 
@@ -1644,6 +1660,70 @@
               <div x-show="modelViewMode === 'byAccount' && !sortedAccountUsage.length" class="empty-state">
                 <i data-lucide="git-branch" class="empty-state-icon"></i>
                 <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('usage.noAccountData')"></p>
+              </div>
+
+              <!-- By Provider View -->
+              <div class="space-y-4" x-show="modelViewMode === 'byProvider' && sortedProviderUsage.length">
+                <template x-for="([providerId, data]) in sortedProviderUsage" :key="providerId">
+                  <div class="rounded-2xl border border-[var(--apple-gray-5)] p-4 bg-[var(--apple-bg-secondary)]">
+                    <button type="button" @click="toggleProviderExpanded(providerId)" class="w-full text-left">
+                      <div class="flex justify-between items-start gap-3">
+                        <div class="min-w-0">
+                          <span class="text-sm font-semibold truncate block" :title="data.label" x-text="data.label"></span>
+                          <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
+                            <span x-text="(data.requests || 0) + ' ' + t('usage.requests')"></span>
+                            <span class="mx-1">·</span>
+                            <span x-text="formatTokens(data.totalTokens)"></span>
+                            <span class="mx-1">·</span>
+                            <span :class="getCacheHitRateClass(data.cacheHitRate)" x-text="t('usage.cacheHitRate') + ': ' + formatCacheHitRate(data.cacheHitRate)"></span>
+                          </p>
+                        </div>
+                        <div class="text-right shrink-0">
+                          <p class="text-xs text-[var(--apple-blue)]" x-text="'$' + (data.cost || 0).toFixed(4)"></p>
+                          <i data-lucide="chevron-down" class="w-4 h-4 mt-1 text-[var(--apple-text-tertiary)] transition-transform" :class="{ 'rotate-180': isProviderExpanded(providerId) }"></i>
+                        </div>
+                      </div>
+                    </button>
+                    <div x-show="isProviderExpanded(providerId)" class="mt-3 pt-3 border-t border-[var(--apple-gray-5)]">
+                      <p class="text-xs font-medium text-[var(--apple-text-tertiary)] mb-2 uppercase tracking-wide" x-text="t('usage.accountDetails')"></p>
+                      <div class="space-y-2">
+                        <template x-for="([accountId, accountData]) in sortedProviderAccounts(data)" :key="accountId">
+                          <div class="rounded-xl border border-[var(--apple-gray-6)] bg-[var(--apple-bg-tertiary)]">
+                            <button type="button" @click="toggleProviderAccountExpanded(providerId, accountId)" class="w-full text-left p-2.5">
+                              <div class="flex items-center justify-between gap-2">
+                                <div class="min-w-0 flex items-center gap-1.5">
+                                  <span class="text-xs font-medium truncate" :title="accountData.label" x-text="accountData.label"></span>
+                                  <span x-show="accountData.deleted" class="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--apple-gray-4)] text-[var(--apple-text-tertiary)]" x-text="t('usage.deletedAccount')"></span>
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0 text-[var(--apple-text-secondary)]">
+                                  <span class="text-xs" x-text="formatTokens(accountData.totalTokens)"></span>
+                                  <span class="text-xs text-[var(--apple-blue)]" x-text="'$' + (accountData.cost || 0).toFixed(2)"></span>
+                                  <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-[var(--apple-text-tertiary)] transition-transform" :class="{ 'rotate-180': isProviderAccountExpanded(providerId, accountId) }"></i>
+                                </div>
+                              </div>
+                            </button>
+                            <div x-show="isProviderAccountExpanded(providerId, accountId)" class="px-2.5 pb-2.5 pt-1">
+                              <template x-for="([modelName, modelData]) in sortedAccountModels(accountData.models)" :key="modelName">
+                                <div class="flex items-center justify-between gap-2 text-xs py-1.5 border-b border-[var(--apple-gray-6)] last:border-0">
+                                  <span class="font-mono text-[var(--apple-blue)] truncate min-w-0" :title="modelName" x-text="modelName"></span>
+                                  <div class="flex items-center gap-2 shrink-0 text-[var(--apple-text-secondary)]">
+                                    <span x-text="formatTokens(modelData.totalTokens)"></span>
+                                    <span :class="getCacheHitRateClass(modelData.cacheHitRate)" x-text="formatCacheHitRate(modelData.cacheHitRate)"></span>
+                                    <span x-text="'$' + (modelData.cost || 0).toFixed(2)"></span>
+                                  </div>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div x-show="modelViewMode === 'byProvider' && !sortedProviderUsage.length" class="empty-state">
+                <i data-lucide="layers" class="empty-state-icon"></i>
+                <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('usage.noProviderData')"></p>
               </div>
             </div>
 

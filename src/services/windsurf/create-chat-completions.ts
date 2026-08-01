@@ -12,17 +12,18 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { checkRateLimit, getRemainingCooldownSeconds } from "~/lib/rate-limit"
+import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { isAbortError, isChatCompletionResponse, sleep } from "~/lib/utils"
 
+import { fetchDevinUserJwt } from "./auth"
+import { normalizeWindsurfBaseUrl } from "./base-url"
 import {
   chunkFromText,
   chunkFromToolCallInit,
   chunkFromToolCallArgs,
   doneChunk,
 } from "./chunk-builders"
-import { acquireWindsurfSlot, releaseWindsurfSlot } from "./concurrency-limiter"
 import {
   WindsurfUpstreamError,
   classifyWindsurfErrorText,
@@ -174,7 +175,6 @@ export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
 
 export interface WindsurfCacheDebugContext {
   conversationKey: string
-  sessionId: string
   cascadeId: string
 }
 
@@ -512,9 +512,16 @@ export async function createWindsurfChatCompletionsOnce(
 
   const model = canonicalNativeModelId(payload.model)
   const requestModel = resolveWindsurfRequestModel(account, payload.model)
-  const baseUrl = settings.baseUrl ?? state.providerDefaults.windsurf.baseUrl
+  const baseUrl = normalizeWindsurfBaseUrl(
+    settings.baseUrl ?? state.providerDefaults.windsurf.baseUrl,
+  )
+
+  // Resolve region routing before allocating host-scoped conversation IDs.
+  const auth = await fetchDevinUserJwt({ apiKey, baseUrl, signal })
+  const chatBaseUrl = normalizeWindsurfBaseUrl(auth.baseUrl ?? baseUrl)
+
   const clientUserId = ctx?.c?.get("userId")
-  const conversationKey = await resolveWindsurfConversationKey({
+  const conversationKey = resolveWindsurfConversationKey({
     forwardedHeaders: ctx?.forwardedHeaders,
     promptCacheKey:
       payload.prompt_cache_key ?? ctx?.forwardedHeaders?.prompt_cache_key,
@@ -523,14 +530,13 @@ export async function createWindsurfChatCompletionsOnce(
     accountId: account.id,
   })
   const cloudIds = await getOrAllocateCloudSessionIds({
-    host: baseUrl,
+    host: chatBaseUrl,
     apiKey,
     conversationKey,
   })
 
   const cacheDebug: WindsurfCacheDebugContext = {
     conversationKey,
-    sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
   }
 
@@ -539,23 +545,24 @@ export async function createWindsurfChatCompletionsOnce(
     accountId: account.id,
     model: requestModel,
     conversationKey,
-    sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
     hasTools: (payload.tools?.length ?? 0) > 0,
   })
 
+  // Two-stage auth above exchanges the session token for userJwt and the
+  // final region-routed chat host. Carry userJwt in Metadata.user_jwt (f21).
   const requestBody = buildRequest({
     payload: { ...payload, model },
     apiKey,
     requestModel,
     cascadeId: cloudIds.cascadeId,
     promptId: cloudIds.promptId,
+    userJwt: auth.userJwt,
   })
 
   const protoFingerprint = fingerprintWindsurfRequest(requestBody)
   logger.debug("[windsurf] proto fingerprint", {
     conversationKey,
-    sessionId: cloudIds.sessionId,
     cascadeId: cloudIds.cascadeId,
     upstreamModel: protoFingerprint.model,
     requestType: protoFingerprint.requestType,
@@ -567,49 +574,21 @@ export async function createWindsurfChatCompletionsOnce(
     configurationFields: protoFingerprint.configurationFields,
   })
 
-  // Proactive rate-limit gate — stricter than the global default.
-  // Windsurf's per-model "message rate limit" triggers far more easily than
-  // GitHub Copilot's 429. Production data shows ~60 requests in 3.5 min
-  // triggers a 3h cooldown, while the Devin CLI (32 req/min with natural
-  // tool-execution gaps) does not. copilot-api's multi-subagent fan-out
-  // removes those natural gaps, so we enforce a 5s interval (1 burst) to
-  // cap at ~12 req/min — well below the observed trigger threshold.
-  //
-  // burst=1 matches the Devin CLI's strictly sequential execution model
-  // (single "LLM semaphore" — one request at a time). Higher burst values
-  // allow concurrent dispatches that look anomalous to the rate limiter.
-  await checkRateLimit(account.id, signal, {
-    intervalMs: 5_000,
-    burst: 1,
+  const response = await fetchWithRetry({
+    url: `${chatBaseUrl}/exa.api_server_pb.ApiServerService/GetChatMessage`,
+    headers: {
+      "Content-Type": "application/connect+proto",
+      "Connect-Protocol-Version": "1",
+      "Connect-Accept-Encoding": "gzip",
+      "Connect-Content-Encoding": "gzip",
+      "Connect-Timeout-Ms": "600000",
+      "User-Agent": "connect-go/1.18.1 (go1.26.3)",
+      "Accept-Encoding": "identity",
+    },
+    body: requestBody,
+    signal,
+    accountLabel: account.label,
   })
-  // Per-account concurrency cap (Devin CLI's "LLM semaphore"). Limits
-  // concurrent in-flight upstream fetches to 1 by default.
-  await acquireWindsurfSlot(account.id, signal)
-
-  let response: Response
-  try {
-    response = await fetchWithRetry({
-      url: `${baseUrl}/exa.api_server_pb.ApiServerService/GetChatMessage`,
-      headers: {
-        "Content-Type": "application/connect+proto",
-        "Connect-Protocol-Version": "1",
-        "Connect-Accept-Encoding": "gzip",
-        "Connect-Content-Encoding": "gzip",
-        "Connect-Timeout-Ms": "600000",
-        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
-        "Accept-Encoding": "identity",
-      },
-      body: requestBody,
-      signal,
-      accountLabel: account.label,
-    })
-  } catch (err) {
-    releaseWindsurfSlot(account.id)
-    throw err
-  }
-  // Slot released after the fetch resolves — stream consumption does not
-  // hold the concurrency gate (it gates fetch dispatch, not body reads).
-  releaseWindsurfSlot(account.id)
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")

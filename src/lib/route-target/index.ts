@@ -12,21 +12,22 @@ export {
   resolveModelRouting,
 } from "./model-reference"
 export {
+  __resetRouteTargetRoundRobin,
+  commitRouteTargetAffinity,
+  selectRouteTarget,
+  targetKey,
+} from "./select"
+export {
   deleteModelAlias,
   listModelAliases,
   loadModelAliases,
-  replaceModelAliases,
-  resolveModelAlias,
-  upsertModelAlias,
-  validateModelAliasRule,
   type ModelAliasKind,
   type ModelAliasResolution,
   type ModelAliasRestriction,
   type ModelAliasRule,
   type ModelAliasScope,
+  replaceModelAliases,
+  resolveModelAlias,
+  upsertModelAlias,
+  validateModelAliasRule,
 } from "~/lib/model-aliases"
-export {
-  __resetRouteTargetRoundRobin,
-  selectRouteTarget,
-  targetKey,
-} from "./select"

@@ -136,15 +136,14 @@ function buildChatMessagePrompt(opts: {
 
   if (message.role === "user" || message.role === "developer") {
     const { text, images } = serializeMessageContent(message.content)
-    const trimmed = text.trim()
-    if (!trimmed && images.length === 0) return null
+    if (!text.trim() && images.length === 0) return null
 
     prompt.writeString(
       1,
       deterministicUuid(`${cascadeId}\0${index}\0${message.role}`),
     )
     prompt.writeVarint(2, ChatMessageSource.USER)
-    if (trimmed) prompt.writeString(3, trimmed)
+    if (text) prompt.writeString(3, text)
     for (const image of images) {
       const img = new ProtobufEncoder()
       img.writeString(1, image.base64)
@@ -164,7 +163,7 @@ function buildChatMessagePrompt(opts: {
       deterministicUuid(`${cascadeId}\0${index}\0assistant`),
     )
     prompt.writeVarint(2, ChatMessageSource.SYSTEM)
-    if (content.text.trim()) prompt.writeString(3, content.text.trim())
+    if (content.text) prompt.writeString(3, content.text)
 
     for (const tc of toolCalls) {
       const tcMsg = new ProtobufEncoder()
@@ -183,8 +182,7 @@ function buildChatMessagePrompt(opts: {
 
   if (message.role === "tool") {
     const { text, images } = serializeMessageContent(message.content)
-    const trimmed = text.trim()
-    if (!trimmed || !message.tool_call_id) return null
+    if (!text.trim() || !message.tool_call_id) return null
 
     prompt.writeString(
       1,
@@ -193,7 +191,7 @@ function buildChatMessagePrompt(opts: {
       ),
     )
     prompt.writeVarint(2, ChatMessageSource.TOOL)
-    if (trimmed) prompt.writeString(3, trimmed)
+    if (text) prompt.writeString(3, text)
     prompt.writeString(7, message.tool_call_id)
     for (const image of images) {
       const img = new ProtobufEncoder()
@@ -210,8 +208,8 @@ function buildChatMessagePrompt(opts: {
 export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
   const texts = payload.messages
     .filter((m) => m.role === "system")
-    .map((m) => serializeMessageContent(m.content).text.trim())
-    .filter(Boolean)
+    .map((m) => serializeMessageContent(m.content).text)
+    .filter((text) => text.trim().length > 0)
   return texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
 }
 
@@ -300,29 +298,31 @@ export function buildRequest(opts: {
   payload: ChatCompletionsPayload
   apiKey: string
   requestModel: string
-  /** Stable cascade_id (field 16) — reuse across turns for prompt cache. */
+  /** Stable cascade_id (field 16) - reuse across turns for prompt cache. */
   cascadeId: string
   /** Stable per-conversation prompt_id (field 17). */
   promptId?: string
+  /**
+   * Short-lived userJwt from the GetUserJwt exchange, carried in
+   * Metadata.user_jwt (field 21). Real Windsurf sends it on every chat
+   * request (oh-my-pi devin.ts line 514); omitting it is detectable.
+   */
+  userJwt?: string
 }): Uint8Array {
-  const { payload, apiKey, requestModel, cascadeId, promptId } = opts
+  const { payload, apiKey, requestModel, cascadeId, promptId, userJwt } = opts
   const request = new ProtobufEncoder()
 
-  request.writeMessage(1, buildWindsurfClientMetadata(apiKey))
+  request.writeMessage(1, buildWindsurfClientMetadata(apiKey, userJwt))
   request.writeString(2, resolveSystemPrompt(payload))
 
-  let messageIndex = 0
-  for (const message of payload.messages) {
+  for (const [messageIndex, message] of payload.messages.entries()) {
     if (message.role === "system") continue
     const encoded = buildChatMessagePrompt({
       message,
       index: messageIndex,
       cascadeId,
     })
-    if (encoded) {
-      request.writeMessage(3, encoded)
-      messageIndex += 1
-    }
+    if (encoded) request.writeMessage(3, encoded)
   }
 
   request.writeVarint(7, ChatMessageRequestType.CASCADE)

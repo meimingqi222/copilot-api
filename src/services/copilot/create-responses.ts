@@ -56,6 +56,7 @@ export const createResponses = async (
       initiatorOverride: options.initiatorOverride,
       account,
       c: options.c,
+      forwardedHeaders: options.forwardedHeaders,
     })
 
     if (isChatCompletionResponse(result.response)) {

@@ -1,5 +1,5 @@
 import type { CopilotInitiator } from "~/lib/initiator-header"
-import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/types"
 
 import type { ResponsesPayload } from "./responses-api"
 

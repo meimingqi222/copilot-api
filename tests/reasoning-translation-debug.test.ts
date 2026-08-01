@@ -20,16 +20,16 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { ResponsesResponse } from "~/services/copilot/responses-api-types"
 
+import { translateResponsesToChatCompletion } from "~/services/copilot/responses-to-chat"
 import {
   createInitialStreamState,
   type AnthropicMessagesPayload,
-} from "~/routes/messages/anthropic-types"
+} from "~/services/protocols/anthropic"
 import {
   translateToAnthropic,
   translateToOpenAI,
-} from "~/routes/messages/non-stream-translation"
-import { translateChunkToAnthropicEvents } from "~/routes/messages/stream-translation"
-import { translateResponsesToChatCompletion } from "~/services/copilot/responses-to-chat"
+} from "~/services/protocols/anthropic"
+import { translateChunkToAnthropicEvents } from "~/services/protocols/anthropic"
 
 describe("Reasoning translation diagnosis for Responses API models", () => {
   // ============================================================
