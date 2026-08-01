@@ -7,11 +7,20 @@ import type {
   ApiCredential,
 } from "~/lib/provider-connections"
 import type { ProviderAdmission } from "~/lib/request-admission"
+import type {
+  ChatCompletionResponse,
+  ChatCompletionsPayload,
+} from "~/services/copilot/create-chat-completions"
 
 import { listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { executeWithFailover } from "~/services/dispatch/failover"
+import { dispatchRequest } from "~/services/dispatch/shared"
+import {
+  getProtocolAdapter,
+  initializeProtocolAdapters,
+} from "~/services/protocols"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -95,6 +104,122 @@ describe("dispatch-failover", () => {
     }
 
     expect(executeCount).toBe(1)
+  })
+
+  test("dispatches a dual-capability adapter according to target endpoint", async () => {
+    initializeProtocolAdapters()
+    const adapter = getProtocolAdapter("openai-compatible")
+    expect(adapter).toBeDefined()
+    if (!adapter) return
+
+    const originalChat = adapter.createChatCompletions?.bind(adapter)
+    const originalMessages = adapter.createMessages?.bind(adapter)
+    let chatCalls = 0
+    let messagesCalls = 0
+
+    adapter.createChatCompletions = () => {
+      chatCalls++
+      const response: ChatCompletionResponse = {
+        id: "chat-response",
+        object: "chat.completion",
+        created: 0,
+        model: "upstream-model",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "chat-native" },
+            logprobs: null,
+            finish_reason: "stop",
+          },
+        ],
+      }
+      return Promise.resolve({ credentialId: "cred-1", response })
+    }
+    adapter.createMessages = () => {
+      messagesCalls++
+      return Promise.resolve({
+        credentialId: "cred-1",
+        response: {
+          id: "messages-response",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "messages-fallback" }],
+          model: "upstream-model",
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      })
+    }
+
+    const credential: ApiCredential = {
+      id: "cred-1",
+      authMode: "bearer",
+      value: "cred-value-1",
+      enabled: true,
+      priority: 0,
+      status: "ready",
+      createdAt: Date.now(),
+    }
+    const connection: ProviderConnection = {
+      id: "conn-1",
+      name: "conn-1",
+      protocol: "openai-compatible",
+      baseUrl: "https://example.test",
+      enabled: true,
+      priority: 0,
+      credentials: [credential],
+      createdAt: Date.now(),
+    }
+    const payload: ChatCompletionsPayload = {
+      model: "public-model",
+      messages: [{ role: "user", content: "hello" }],
+    }
+
+    const makeAdmission = (
+      endpoint: RouteTarget["endpoint"],
+    ): ProviderAdmission => ({
+      target: {
+        connectionId: "conn-1",
+        connectionName: "conn-1",
+        protocol: "openai-compatible",
+        credentialId: "cred-1",
+        publicModelId: "public-model",
+        upstreamModelId: "upstream-model",
+        endpoint,
+        connectionPriority: 0,
+        connectionWeight: 1,
+        credentialPriority: 0,
+        credentialWeight: 1,
+      },
+      connection,
+      credential,
+      initiator: "user",
+    })
+
+    try {
+      const native = await dispatchRequest(
+        { routeKind: "chat", payload },
+        makeAdmission("chat"),
+      )
+      expect(
+        (native.response as ChatCompletionResponse).choices[0]?.message.content,
+      ).toBe("chat-native")
+
+      const fallback = await dispatchRequest(
+        { routeKind: "chat", payload },
+        makeAdmission("messages"),
+      )
+      expect(
+        (fallback.response as ChatCompletionResponse).choices[0]?.message
+          .content,
+      ).toBe("messages-fallback")
+      expect(chatCalls).toBe(1)
+      expect(messagesCalls).toBe(1)
+    } finally {
+      adapter.createChatCompletions = originalChat
+      adapter.createMessages = originalMessages
+    }
   })
 
   test("marks account quota exhausted on usage_limit_reached", async () => {

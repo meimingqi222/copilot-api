@@ -2,7 +2,10 @@ import { describe, test, expect } from "bun:test"
 
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
-import { openAIUsageToAnthropic } from "~/lib/usage-translation"
+import {
+  anthropicUsageToOpenAI,
+  openAIUsageToAnthropic,
+} from "~/lib/usage-translation"
 import { translateChatCompletionToResponses } from "~/services/copilot/chat-to-responses"
 import { translateResponsesToChatCompletion } from "~/services/copilot/responses-to-chat"
 
@@ -95,6 +98,82 @@ describe("openAIUsageToAnthropic", () => {
     })
 
     expect(result.input_tokens).toBe(0)
+  })
+})
+
+// ── anthropicUsageToOpenAI: strict reverse (net + cache buckets = prompt) ────
+
+describe("anthropicUsageToOpenAI", () => {
+  test("no cache details at all", () => {
+    const result = anthropicUsageToOpenAI({
+      input_tokens: 100,
+      output_tokens: 10,
+    })
+
+    expect(result).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 10,
+    })
+  })
+
+  test("cache read only folds into prompt_tokens and exposes cached_tokens", () => {
+    const result = anthropicUsageToOpenAI({
+      input_tokens: 60,
+      output_tokens: 10,
+      cache_read_input_tokens: 40,
+    })
+
+    expect(result).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      prompt_tokens_details: { cached_tokens: 40 },
+    })
+  })
+
+  test("cache creation only folds into prompt_tokens", () => {
+    const result = anthropicUsageToOpenAI({
+      input_tokens: 70,
+      output_tokens: 10,
+      cache_creation_input_tokens: 30,
+    })
+
+    expect(result).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      prompt_tokens_details: { cache_creation_input_tokens: 30 },
+    })
+  })
+
+  test("both cache buckets fold into prompt_tokens", () => {
+    const result = anthropicUsageToOpenAI({
+      input_tokens: 200,
+      output_tokens: 50,
+      cache_read_input_tokens: 600,
+      cache_creation_input_tokens: 200,
+    })
+
+    expect(result).toEqual({
+      prompt_tokens: 1000,
+      completion_tokens: 50,
+      prompt_tokens_details: {
+        cached_tokens: 600,
+        cache_creation_input_tokens: 200,
+      },
+    })
+  })
+
+  test("round-trips through openAIUsageToAnthropic (conservation invariant)", () => {
+    const original: Parameters<typeof anthropicUsageToOpenAI>[0] = {
+      input_tokens: 200,
+      output_tokens: 50,
+      cache_read_input_tokens: 600,
+      cache_creation_input_tokens: 200,
+    }
+
+    const backToAnthropic = openAIUsageToAnthropic(
+      anthropicUsageToOpenAI(original),
+    )
+    expect(backToAnthropic).toEqual(original)
   })
 })
 

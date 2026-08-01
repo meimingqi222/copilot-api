@@ -73,7 +73,14 @@ export async function createMessagesViaChat(
   const { target, connection, credential, payload, signal, ctx, chatExecutor } =
     params
 
-  const openAIPayload = translateToOpenAI(payload)
+  // Preserve historical thinking for non-Copilot upstreams: DeepSeek thinking
+  // mode + tool calls REQUIRES reasoning_content round-trip (else 400), and
+  // Kimi/Qwen/xAI accept it. copilot-native rejects reasoning in history,
+  // but it never reaches this path (it implements createMessages natively) —
+  // the guard keeps the behavior explicit and future-proof.
+  const openAIPayload = translateToOpenAI(payload, {
+    preserveHistoricalReasoning: target.protocol !== "copilot-native",
+  })
   const result = await chatExecutor({
     target,
     connection,

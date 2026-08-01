@@ -15,6 +15,8 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
+import { createChatViaResponses } from "~/services/protocols/chat-via-responses"
 import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
 import { createResponsesViaChat } from "~/services/protocols/responses-via-chat"
 
@@ -89,29 +91,65 @@ export async function dispatchRequest(
       const { connection: conn, credential: cred } = current
 
       if (routeKind === "chat") {
-        if (!adapter?.createChatCompletions) {
-          throw new HTTPError(
-            `Protocol "${target.protocol}" does not support chat completions`,
-            new Response("Not Implemented", { status: 501 }),
-          )
+        const executionContext = {
+          initiator: current.initiator,
+          c: options.c,
+          ...options.executionContext,
         }
-        return adapter
-          .createChatCompletions({
-            target,
-            connection: conn,
-            credential: cred,
-            payload: {
-              ...payload,
-              model: target.upstreamModelId,
-            },
-            signal,
-            ctx: {
-              initiator: current.initiator,
-              c: options.c,
-              ...options.executionContext,
-            },
-          })
-          .then((r) => decorateResult(r, current))
+        const chatPayload = {
+          ...payload,
+          model: target.upstreamModelId,
+        }
+
+        // Follow the endpoint selected by route-target resolution. Adapter
+        // method availability alone must not bypass a protocol fallback.
+        if (target.endpoint === "chat" && adapter?.createChatCompletions) {
+          return adapter
+            .createChatCompletions({
+              target,
+              connection: conn,
+              credential: cred,
+              payload: chatPayload,
+              signal,
+              ctx: executionContext,
+            })
+            .then((r) => decorateResult(r, current))
+        }
+
+        if (target.endpoint === "messages") {
+          const createMessages = adapter?.createMessages?.bind(adapter)
+          if (createMessages) {
+            return createChatViaMessages({
+              target,
+              connection: conn,
+              credential: cred,
+              payload: chatPayload,
+              signal,
+              ctx: executionContext,
+              messagesExecutor: (p) => createMessages(p),
+            }).then((r) => decorateResult(r, current))
+          }
+        }
+
+        if (target.endpoint === "responses") {
+          const createResponses = adapter?.createResponses?.bind(adapter)
+          if (createResponses) {
+            return createChatViaResponses({
+              target,
+              connection: conn,
+              credential: cred,
+              payload: chatPayload,
+              signal,
+              ctx: executionContext,
+              responsesExecutor: (p) => createResponses(p),
+            }).then((r) => decorateResult(r, current))
+          }
+        }
+
+        throw new HTTPError(
+          `Protocol "${target.protocol}" does not support chat completions via ${target.endpoint}`,
+          new Response("Not Implemented", { status: 501 }),
+        )
       }
 
       if (routeKind === "responses") {
@@ -136,7 +174,7 @@ export async function dispatchRequest(
             .then((r) => decorateResult(r, current))
         }
         const createChat = adapter?.createChatCompletions?.bind(adapter)
-        if (createChat) {
+        if (target.endpoint === "chat" && createChat) {
           return createResponsesViaChat({
             target,
             connection: conn,
@@ -156,8 +194,14 @@ export async function dispatchRequest(
         )
       }
 
-      // Native Anthropic passthrough when the adapter supports /messages.
-      if (adapter?.createMessages) {
+      const messageExecutionContext = {
+        initiator: current.initiator,
+        forwardedHeaders: options.forwardedHeaders,
+      }
+
+      // Follow the endpoint selected by route-target resolution. Native
+      // Messages passthrough is valid only for a messages endpoint target.
+      if (target.endpoint === "messages" && adapter?.createMessages) {
         return adapter
           .createMessages({
             target,
@@ -168,19 +212,16 @@ export async function dispatchRequest(
               model: target.upstreamModelId,
             },
             signal,
-            ctx: {
-              forwardedHeaders: options.forwardedHeaders,
-              initiator: current.initiator,
-            },
+            ctx: messageExecutionContext,
           })
           .then((r) => decorateResult(r, current))
       }
 
       // Cross-protocol fallback: translate Anthropic Messages -> Chat
       // Completions, delegate to createChatCompletions, then translate the
-      // response back. Enables /v1/messages to reach openai-compatible etc.
+      // response back. Enables /v1/messages to reach chat-only targets.
       const createChat = adapter?.createChatCompletions?.bind(adapter)
-      if (createChat) {
+      if (target.endpoint === "chat" && createChat) {
         return createMessagesViaChat({
           target,
           connection: conn,
@@ -190,16 +231,13 @@ export async function dispatchRequest(
             model: target.upstreamModelId,
           },
           signal,
-          ctx: {
-            initiator: current.initiator,
-            forwardedHeaders: options.forwardedHeaders,
-          },
+          ctx: messageExecutionContext,
           chatExecutor: (p) => createChat(p),
         }).then((r) => decorateResult(r, current))
       }
 
       throw new HTTPError(
-        `Protocol "${target.protocol}" does not support /messages`,
+        `Protocol "${target.protocol}" does not support /messages via ${target.endpoint}`,
         new Response("Not Implemented", { status: 501 }),
       )
     },

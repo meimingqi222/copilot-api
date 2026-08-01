@@ -558,7 +558,15 @@ function createToolCallDeltaEvent(
 function getReasoningDelta(
   delta: ChatCompletionChunk["choices"][number]["delta"],
 ): string {
-  return delta.reasoning_text ?? delta.reasoning ?? delta.thinking ?? ""
+  // Alias chain aligned with anthropic/stream-translation.ts getThinkingDelta:
+  // includes reasoning_content so DeepSeek/Kimi/xAI-style deltas are captured.
+  return (
+    delta.reasoning_text
+    ?? delta.reasoning_content
+    ?? delta.reasoning
+    ?? delta.thinking
+    ?? ""
+  )
 }
 
 function translateToolChoice(
