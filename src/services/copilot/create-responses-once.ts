@@ -56,6 +56,17 @@ export async function createCopilotResponsesOnce(
   const responsesBody = JSON.stringify({
     ...payload,
     model: normalizedModel,
+    ...(payload.reasoning ?
+      {
+        reasoning: {
+          ...payload.reasoning,
+          summary:
+            payload.reasoning.summary === undefined ?
+              "auto"
+            : payload.reasoning.summary,
+        },
+      }
+    : {}),
   })
 
   const headers: Record<string, string> = {
