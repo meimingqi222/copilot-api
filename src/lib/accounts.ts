@@ -4,9 +4,9 @@ import { isOAuthProviderId } from "~/lib/provider-config"
 import {
   connectionToAccount,
   getProviderConnection,
+  isAccountManagedConnection,
   listProviderConnections,
   migrateAccountsToConnections,
-  readAccountLegacyMetadata,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { parseModelReference } from "~/lib/route-target/model-reference"
@@ -245,7 +245,7 @@ export function canonicalModelId(modelId: string, account?: Account): string {
  */
 export function listAccounts(): Array<Account> {
   return listProviderConnections()
-    .filter((c) => readAccountLegacyMetadata(c) !== undefined)
+    .filter((c) => isAccountManagedConnection(c))
     .map((c) => connectionToAccount(c))
 }
 
@@ -256,7 +256,7 @@ export function listAccounts(): Array<Account> {
  */
 export function getAccount(id: string): Account | undefined {
   const conn = getProviderConnection(id)
-  if (!conn || !readAccountLegacyMetadata(conn)) return undefined
+  if (!conn || !isAccountManagedConnection(conn)) return undefined
   return connectionToAccount(conn)
 }
 
