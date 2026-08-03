@@ -24,7 +24,7 @@ export interface CloudSessionIds {
   promptId: string
 }
 
-/** Legacy sentinel — only used in tests; production always resolves a stable key. */
+/** Legacy sentinel — only used by callers that intentionally omit a key. */
 export const DEFAULT_CONVERSATION_KEY = "__default__"
 
 export interface CloudSessionCacheOpts {
@@ -32,13 +32,20 @@ export interface CloudSessionCacheOpts {
   apiKey: string
   conversationKey?: string
   cascadeIdOverride?: string
+  /** Skip persistence for request-scoped keys with no client conversation id. */
+  persist?: boolean
+}
+
+export interface ResolvedWindsurfConversationKey {
+  key: string
+  persistent: boolean
 }
 
 export interface ResolveWindsurfConversationKeyOptions {
   forwardedHeaders?: Record<string, string | undefined>
   /** OpenAI body field — primary cache key for Codex-style clients. */
   promptCacheKey?: string | null
-  /** OpenAI `user` field — stable per end-user when set by the client. */
+  /** OpenAI `user` field — accepted for API compatibility, not used as a key. */
   user?: string | null
   /** copilot-api authenticated user id (multi-user API key mode). */
   clientUserId?: string
@@ -101,30 +108,38 @@ function readHeaderSession(
  * Priority (mirrors Codex/Claude cache routing in copilot-api):
  *   1. Session headers (x-windsurf-session-id, session_id, prompt_cache_key header)
  *   2. `prompt_cache_key` in request body
- *   3. OpenAI `user` field
- *   4. A fresh request-scoped id when no explicit conversation key exists
+ *   3. A fresh request-scoped id when no explicit conversation key exists
  */
 export function resolveWindsurfConversationKey(
   opts: ResolveWindsurfConversationKeyOptions,
-): string {
+): ResolvedWindsurfConversationKey {
   const fromHeader = readHeaderSession(opts.forwardedHeaders)
-  if (fromHeader) return fromHeader
+  if (fromHeader) return { key: fromHeader, persistent: true }
 
   const bodyCacheKey = opts.promptCacheKey?.trim()
-  if (bodyCacheKey) return bodyCacheKey
+  if (bodyCacheKey) return { key: bodyCacheKey, persistent: true }
 
   // Match Devin/Cascade semantics: without an explicit conversation identity,
-  // each request gets a fresh cache bucket rather than sharing history by user
-  // or account across unrelated conversations.
-  return randomUUID()
+  // each request gets a fresh request-scoped bucket rather than sharing history
+  // by user or account across unrelated conversations. It must not be persisted:
+  // ordinary OpenAI clients do not send a session id, so persisting this UUID
+  // would create one never-reused cache entry per request.
+  return { key: randomUUID(), persistent: false }
 }
 
 export async function getOrAllocateCloudSessionIds(
   opts: CloudSessionCacheOpts,
 ): Promise<CloudSessionIds> {
-  await ensureCloudSessionInit()
   const conversationKey =
     opts.conversationKey?.trim() || DEFAULT_CONVERSATION_KEY
+  if (opts.persist === false) {
+    return {
+      cascadeId: opts.cascadeIdOverride ?? randomUUID(),
+      promptId: randomUUID(),
+    }
+  }
+
+  await ensureCloudSessionInit()
   const key = hashKeyPart(cacheKey(opts))
   let stored = persistedSessions.get(key)
 

@@ -55,7 +55,7 @@ describe("windsurf session cache", () => {
       forwardedHeaders: { "x-windsurf-session-id": "  session-abc  " },
       accountId: "acct-1",
     })
-    expect(key).toBe("session-abc")
+    expect(key).toEqual({ key: "session-abc", persistent: true })
   })
 
   test("uses body prompt_cache_key when headers absent", () => {
@@ -63,7 +63,7 @@ describe("windsurf session cache", () => {
       promptCacheKey: "cache-body-1",
       accountId: "acct-1",
     })
-    expect(key).toBe("cache-body-1")
+    expect(key).toEqual({ key: "cache-body-1", persistent: true })
   })
 
   test("does not use OpenAI user as an implicit conversation identity", () => {
@@ -71,8 +71,9 @@ describe("windsurf session cache", () => {
       user: "end-user-42",
       accountId: "acct-1",
     })
-    expect(key).not.toBe("user:end-user-42")
-    expect(key).toMatch(/^[0-9a-f-]{36}$/)
+    expect(key.key).not.toBe("user:end-user-42")
+    expect(key.key).toMatch(/^[0-9a-f-]{36}$/)
+    expect(key.persistent).toBe(false)
   })
 
   test("uses a fresh key when client sends no conversation identity", () => {
@@ -82,8 +83,34 @@ describe("windsurf session cache", () => {
     const second = resolveWindsurfConversationKey({
       accountId: "acct-stable-a",
     })
-    expect(first).not.toBe(second)
-    expect(first).not.toBe("__default__")
+    expect(first.key).not.toBe(second.key)
+    expect(first.key).not.toBe("__default__")
+    expect(first.persistent).toBe(false)
+    expect(second.persistent).toBe(false)
+  })
+
+  test("does not persist request-scoped session ids", async () => {
+    const firstKey = resolveWindsurfConversationKey({}).key
+    const first = await getOrAllocateCloudSessionIds({
+      host: HOST,
+      apiKey: "key-a",
+      conversationKey: firstKey,
+      persist: false,
+    })
+    const second = await getOrAllocateCloudSessionIds({
+      host: HOST,
+      apiKey: "key-a",
+      conversationKey: firstKey,
+      persist: false,
+    })
+    const persisted = await getOrAllocateCloudSessionIds({
+      host: HOST,
+      apiKey: "key-a",
+      conversationKey: firstKey,
+    })
+
+    expect(second.cascadeId).not.toBe(first.cascadeId)
+    expect(persisted.cascadeId).not.toBe(first.cascadeId)
   })
 
   test("clearCloudSessionCache drops only matching conversation suffix", async () => {

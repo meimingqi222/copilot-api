@@ -109,4 +109,23 @@ describe("decodeConnectFrames", () => {
     expect(frames).toHaveLength(1)
     expect(new TextDecoder().decode(frames[0])).toBe("split across chunks")
   })
+
+  test("cancels the reader when the consumer stops early", async () => {
+    let cancelled = false
+    const frame = encodeConnectFrame(new TextEncoder().encode("first"), false)
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(frame)
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+
+    const iterator = decodeConnectFrames(stream)[Symbol.asyncIterator]()
+    const result = await iterator.next()
+    expect(result.done).toBe(false)
+    await iterator.return?.()
+    expect(cancelled).toBe(true)
+  })
 })

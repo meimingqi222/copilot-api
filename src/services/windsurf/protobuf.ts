@@ -95,7 +95,7 @@ const CONNECT_END_STREAM_FLAG = 0x02
  */
 const MAX_FRAME_PAYLOAD = 16 * 1024 * 1024 // 16MB
 /** 跨帧累积 buffer 的上限(完整帧会持续被消费,正常情况远低于此)。 */
-const MAX_BUFFER_BYTES = 128 * 1024 * 1024 // 128MB
+const MAX_BUFFER_BYTES = 32 * 1024 * 1024 // 32MB
 
 /**
  * 解析 Connect end-of-stream JSON trailer。
@@ -126,70 +126,84 @@ function decompressConnectPayload(payload: Uint8Array): Uint8Array {
   return new Uint8Array(Bun.gunzipSync(Buffer.from(payload)))
 }
 
+function decodeConnectFramePayload(
+  flags: number,
+  payload: Uint8Array,
+): Uint8Array | undefined {
+  const raw =
+    flags & CONNECT_COMPRESSED_FLAG ?
+      decompressConnectPayload(payload)
+    : payload
+
+  if (flags & CONNECT_END_STREAM_FLAG) {
+    const trailerError = readConnectTrailerError(
+      Buffer.from(raw).toString("utf8").trim(),
+    )
+    if (trailerError) {
+      throw new Error(trailerError)
+    }
+    return undefined
+  }
+
+  return raw
+}
+
 export async function* decodeConnectFrames(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<Uint8Array> {
   const reader = stream.getReader()
   let buffer: Uint8Array = new Uint8Array(0) as Uint8Array
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) {
-      break
-    }
-
-    buffer = concat(buffer, value)
-
-    // 防御:若 buffer 持续累积却无法凑齐一个完整帧(畸形 length 头或
-    // 非 Connect 帧数据),直接抛错而非无限 concat,避免 O(n²) 内存膨胀。
-    if (buffer.length > MAX_BUFFER_BYTES) {
-      throw new Error(
-        `decodeConnectFrames: buffer overflow (${buffer.length} bytes) — `
-          + `stream did not produce a complete frame within ${MAX_BUFFER_BYTES} bytes`,
-      )
-    }
-
-    while (buffer.length >= 5) {
-      const flags = buffer[0]
-      const length = new DataView(
-        buffer.buffer,
-        buffer.byteOffset + 1,
-        4,
-      ).getUint32(0, false)
-      // 畸形 length 头(声明远超合理上限的 payload):立即拒绝,
-      // 否则 buffer 会一直累积直到凑齐该 length 才消费。
-      if (length > MAX_FRAME_PAYLOAD) {
-        throw new Error(
-          `decodeConnectFrames: declared frame length ${length} exceeds limit ${MAX_FRAME_PAYLOAD}`,
-        )
-      }
-      if (buffer.length < 5 + length) {
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
         break
       }
 
-      const payload = buffer.slice(5, 5 + length)
-      buffer = buffer.slice(5 + length)
+      buffer = concat(buffer, value)
 
-      // End-of-stream trailer: 不是 protobuf 消息,而是 JSON 元数据/错误。
-      // 参考 oh-my-pi 的处理,先解压再解析,携带错误时直接抛错。
-      if (flags & CONNECT_END_STREAM_FLAG) {
-        const raw =
-          flags & CONNECT_COMPRESSED_FLAG ?
-            decompressConnectPayload(payload)
-          : payload
-        const trailerError = readConnectTrailerError(
-          Buffer.from(raw).toString("utf8").trim(),
+      // 防御:若 buffer 持续累积却无法凑齐一个完整帧(畸形 length 头或
+      // 非 Connect 帧数据),直接抛错而非无限 concat,避免 O(n²) 内存膨胀。
+      if (buffer.length > MAX_BUFFER_BYTES) {
+        throw new Error(
+          `decodeConnectFrames: buffer overflow (${buffer.length} bytes) — `
+            + `stream did not produce a complete frame within ${MAX_BUFFER_BYTES} bytes`,
         )
-        if (trailerError) {
-          throw new Error(trailerError)
-        }
-        continue
       }
 
-      yield flags & CONNECT_COMPRESSED_FLAG ?
-        decompressConnectPayload(payload)
-      : payload
+      while (buffer.length >= 5) {
+        const flags = buffer[0]
+        const length = new DataView(
+          buffer.buffer,
+          buffer.byteOffset + 1,
+          4,
+        ).getUint32(0, false)
+        // 畸形 length 头(声明远超合理上限的 payload):立即拒绝,
+        // 否则 buffer 会一直累积直到凑齐该 length 才消费。
+        if (length > MAX_FRAME_PAYLOAD) {
+          throw new Error(
+            `decodeConnectFrames: declared frame length ${length} exceeds limit ${MAX_FRAME_PAYLOAD}`,
+          )
+        }
+        if (buffer.length < 5 + length) {
+          break
+        }
+
+        const payload = buffer.slice(5, 5 + length)
+        buffer = buffer.slice(5 + length)
+
+        // End-of-stream trailers are JSON metadata rather than protobuf.
+        const decoded = decodeConnectFramePayload(flags, payload)
+        if (decoded) yield decoded
+      }
     }
+  } finally {
+    // A client disconnect can close the async generator before the upstream
+    // response reaches EOF. Explicitly cancel the reader so the socket/body
+    // is released instead of relying on fetch implementation details.
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
   }
 }
 

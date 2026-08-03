@@ -521,7 +521,7 @@ export async function createWindsurfChatCompletionsOnce(
   const chatBaseUrl = normalizeWindsurfBaseUrl(auth.baseUrl ?? baseUrl)
 
   const clientUserId = ctx?.c?.get("userId")
-  const conversationKey = resolveWindsurfConversationKey({
+  const resolvedConversation = resolveWindsurfConversationKey({
     forwardedHeaders: ctx?.forwardedHeaders,
     promptCacheKey:
       payload.prompt_cache_key ?? ctx?.forwardedHeaders?.prompt_cache_key,
@@ -532,11 +532,12 @@ export async function createWindsurfChatCompletionsOnce(
   const cloudIds = await getOrAllocateCloudSessionIds({
     host: chatBaseUrl,
     apiKey,
-    conversationKey,
+    conversationKey: resolvedConversation.key,
+    persist: resolvedConversation.persistent,
   })
 
   const cacheDebug: WindsurfCacheDebugContext = {
-    conversationKey,
+    conversationKey: resolvedConversation.key,
     cascadeId: cloudIds.cascadeId,
   }
 
@@ -544,7 +545,7 @@ export async function createWindsurfChatCompletionsOnce(
     account: account.label,
     accountId: account.id,
     model: requestModel,
-    conversationKey,
+    conversationKey: resolvedConversation.key,
     cascadeId: cloudIds.cascadeId,
     hasTools: (payload.tools?.length ?? 0) > 0,
   })
@@ -562,7 +563,7 @@ export async function createWindsurfChatCompletionsOnce(
 
   const protoFingerprint = fingerprintWindsurfRequest(requestBody)
   logger.debug("[windsurf] proto fingerprint", {
-    conversationKey,
+    conversationKey: resolvedConversation.key,
     cascadeId: cloudIds.cascadeId,
     upstreamModel: protoFingerprint.model,
     requestType: protoFingerprint.requestType,
