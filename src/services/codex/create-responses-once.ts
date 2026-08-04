@@ -210,6 +210,31 @@ export function stripReasoningItems(input: Array<unknown>): Array<unknown> {
   )
 }
 
+/**
+ * Reject a chained Codex /responses request that would otherwise travel over
+ * plain HTTP. `previous_response_id` is WebSocket-only (CPA): a fresh HTTP
+ * request has no server-side conversation chain to reference, so forwarding
+ * the incremental delta would yield a useless `function_call_output` with no
+ * matching `function_call` upstream. Clients (Crush's Responses chaining)
+ * detect the `previous_response_not_found` marker and retry with a full
+ * self-contained replay instead.
+ */
+export function chainedHttpCodexRequestError(): HTTPError {
+  const errorBody = JSON.stringify({
+    error: {
+      type: "invalid_request_error",
+      code: "previous_response_not_found",
+      message:
+        "Chained Codex requests require WebSocket transport or full replay.",
+    },
+  })
+  return new HTTPError(
+    "previous_response_not_found: chained Codex request requires full replay",
+    new Response(errorBody, { status: 409 }),
+    errorBody,
+  )
+}
+
 export async function createCodexResponsesOnce(
   account: Account,
   payload: ResponsesPayload,
@@ -243,6 +268,10 @@ export async function createCodexResponsesOnce(
     typeof previousResponseIdRaw === "string" ?
       previousResponseIdRaw.trim() || undefined
     : undefined
+
+  if (previousResponseId && !useUpstreamWs) {
+    throw chainedHttpCodexRequestError()
+  }
 
   // Codex /responses rejects many standard Responses API parameters with
   // "Unsupported parameter: <name>". Strip them out before forwarding.
