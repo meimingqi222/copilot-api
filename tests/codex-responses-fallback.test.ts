@@ -1,7 +1,29 @@
 import { describe, expect, test } from "bun:test"
 
-import { stripReasoningItems } from "~/services/codex/create-responses-once"
+import {
+  chainedHttpCodexRequestError,
+  stripReasoningItems,
+} from "~/services/codex/create-responses-once"
 import { selectUpstreamWsBody } from "~/services/responses/upstream-ws"
+
+describe("chainedHttpCodexRequestError", () => {
+  test("carries the previous_response_not_found marker and a 409 status", () => {
+    const err = chainedHttpCodexRequestError()
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toContain("previous_response_not_found")
+    expect(err.response.status).toBe(409)
+  })
+
+  test("error body carries a machine-readable code for clients", () => {
+    const err = chainedHttpCodexRequestError()
+    expect(err.responseBody).toBeTruthy()
+    const body = JSON.parse(err.responseBody) as {
+      error: { code: string; type: string }
+    }
+    expect(body.error.code).toBe("previous_response_not_found")
+    expect(body.error.type).toBe("invalid_request_error")
+  })
+})
 
 describe("stripReasoningItems", () => {
   test("drops every reasoning item, keeps conversation items in order", () => {
