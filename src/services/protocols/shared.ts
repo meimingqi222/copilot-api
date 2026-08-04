@@ -12,6 +12,7 @@ import {
   type ApiCredential,
   type ProviderConnection,
 } from "~/lib/provider-connections"
+import { readResponseBytes } from "~/lib/request-body"
 
 /**
  * Standard OpenAI / Anthropic-compatible resource paths that live under `/v1`.
@@ -93,9 +94,11 @@ export async function handleUpstreamFailure(
   contextMessage: string,
   adapterName: string,
 ): Promise<never> {
-  const body = await response
-    .clone()
-    .text()
+  const body = await readResponseBytes(
+    response.clone() as unknown as Response,
+    1024 * 1024,
+  )
+    .then((bytes) => new TextDecoder().decode(bytes))
     .catch(() => "")
   const classified = classifyUpstreamError({
     status: response.status,
@@ -228,7 +231,14 @@ export async function safeSseStream<T>(
   if (first.done) return raw
 
   const error = isError(first.value)
-  if (error) throw error
+  if (error) {
+    try {
+      await iterator.return?.()
+    } catch {
+      // Preserve the upstream error while still releasing the response body.
+    }
+    throw error
+  }
 
   return {
     [Symbol.asyncIterator](): AsyncIterator<T> {

@@ -1,6 +1,9 @@
 import type { ResponsesResponse } from "~/services/copilot/responses-api"
 
 import { HTTPError } from "~/lib/error"
+import { readResponseBytes } from "~/lib/request-body"
+
+const MAX_COLLECTED_SSE_BYTES = 32 * 1024 * 1024
 
 function parseEventData(line: string): Record<string, unknown> | undefined {
   const trimmed = line.trim()
@@ -136,6 +139,8 @@ export async function collectResponsesFromSseResponse(
   response: Response,
   model: string,
 ): Promise<ResponsesResponse> {
-  const text = await response.text()
+  const text = new TextDecoder().decode(
+    await readResponseBytes(response, MAX_COLLECTED_SSE_BYTES),
+  )
   return collectResponsesFromSseText(text, model)
 }

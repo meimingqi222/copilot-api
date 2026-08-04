@@ -10,6 +10,7 @@ import {
   removeBlacklistEntry,
   removeUaWhitelistPattern,
 } from "~/lib/guard"
+import { readJsonBody } from "~/lib/request-body"
 
 export const guardApiRoutes = new Hono()
 
@@ -33,7 +34,7 @@ guardApiRoutes.post("/blacklist", async (c) => {
     expiresAt?: number
   }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
@@ -66,7 +67,7 @@ guardApiRoutes.post("/blacklist", async (c) => {
 guardApiRoutes.delete("/blacklist", async (c) => {
   let body: { value?: string; type?: "ip" | "ua" }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
@@ -96,7 +97,7 @@ guardApiRoutes.get("/ua-whitelist", (c) => {
 guardApiRoutes.post("/ua-whitelist", async (c) => {
   let body: { pattern?: string }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
@@ -114,7 +115,7 @@ guardApiRoutes.post("/ua-whitelist", async (c) => {
 guardApiRoutes.delete("/ua-whitelist", async (c) => {
   let body: { pattern?: string }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

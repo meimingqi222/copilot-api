@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 
+import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
 import {
   createUser,
@@ -48,7 +49,7 @@ userApiRoutes.post("/", async (c) => {
     allowedModels?: Array<string>
   }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
@@ -90,7 +91,7 @@ userApiRoutes.put("/:id", async (c) => {
     allowedModels?: Array<string>
   }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

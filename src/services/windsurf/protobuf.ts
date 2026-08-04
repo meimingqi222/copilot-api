@@ -96,6 +96,8 @@ const CONNECT_END_STREAM_FLAG = 0x02
 const MAX_FRAME_PAYLOAD = 16 * 1024 * 1024 // 16MB
 /** 跨帧累积 buffer 的上限(完整帧会持续被消费,正常情况远低于此)。 */
 const MAX_BUFFER_BYTES = 32 * 1024 * 1024 // 32MB
+/** gzip 展开后的单帧上限,防止压缩数据造成无界 native 分配。 */
+const MAX_DECOMPRESSED_FRAME_PAYLOAD = 32 * 1024 * 1024 // 32MB
 
 /**
  * 解析 Connect end-of-stream JSON trailer。
@@ -122,17 +124,56 @@ function readConnectTrailerError(text: string): string | undefined {
   return `Windsurf stream error${code ? ` ${code}` : ""}: ${message}`
 }
 
-function decompressConnectPayload(payload: Uint8Array): Uint8Array {
-  return new Uint8Array(Bun.gunzipSync(Buffer.from(payload)))
+async function decompressConnectPayload(
+  payload: Uint8Array,
+): Promise<Uint8Array> {
+  const compressed = new Response(payload).body
+  if (!compressed) throw new Error("empty compressed Connect frame")
+
+  const decompressed = compressed.pipeThrough(
+    new DecompressionStream("gzip") as unknown as TransformStream<
+      Uint8Array,
+      Uint8Array
+    >,
+  ) as unknown as ReadableStream<Uint8Array>
+  const reader = decompressed.getReader()
+  const parts: Array<Uint8Array> = []
+  let totalLength = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      totalLength += value.byteLength
+      if (totalLength > MAX_DECOMPRESSED_FRAME_PAYLOAD) {
+        await reader.cancel().catch(() => undefined)
+        throw new Error(
+          `decodeConnectFrames: decompressed frame exceeds limit ${MAX_DECOMPRESSED_FRAME_PAYLOAD}`,
+        )
+      }
+      parts.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const result = new Uint8Array(totalLength)
+  let offset = 0
+  for (const part of parts) {
+    result.set(part, offset)
+    offset += part.byteLength
+  }
+  return result
 }
 
-function decodeConnectFramePayload(
+async function decodeConnectFramePayload(
   flags: number,
   payload: Uint8Array,
-): Uint8Array | undefined {
+): Promise<Uint8Array | undefined> {
   const raw =
     flags & CONNECT_COMPRESSED_FLAG ?
-      decompressConnectPayload(payload)
+      await decompressConnectPayload(payload)
     : payload
 
   if (flags & CONNECT_END_STREAM_FLAG) {
@@ -152,7 +193,9 @@ export async function* decodeConnectFrames(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<Uint8Array> {
   const reader = stream.getReader()
-  let buffer: Uint8Array = new Uint8Array(0) as Uint8Array
+  let buffer = new Uint8Array(0)
+  let bufferStart = 0
+  let bufferEnd = 0
 
   try {
     while (true) {
@@ -161,22 +204,44 @@ export async function* decodeConnectFrames(
         break
       }
 
-      buffer = concat(buffer, value)
-
+      const pendingLength = bufferEnd - bufferStart
+      const nextLength = pendingLength + value.byteLength
       // 防御:若 buffer 持续累积却无法凑齐一个完整帧(畸形 length 头或
-      // 非 Connect 帧数据),直接抛错而非无限 concat,避免 O(n²) 内存膨胀。
-      if (buffer.length > MAX_BUFFER_BYTES) {
+      // 非 Connect 帧数据),直接抛错而非无限增长。
+      if (nextLength > MAX_BUFFER_BYTES) {
         throw new Error(
-          `decodeConnectFrames: buffer overflow (${buffer.length} bytes) — `
+          `decodeConnectFrames: buffer overflow (${nextLength} bytes) — `
             + `stream did not produce a complete frame within ${MAX_BUFFER_BYTES} bytes`,
         )
       }
 
-      while (buffer.length >= 5) {
-        const flags = buffer[0]
+      // Reuse a growable buffer. Repeatedly concatenating partial chunks also
+      // creates an O(n^2) allocation pattern when a frame arrives slowly.
+      if (bufferStart > 0 && buffer.length - bufferEnd < value.byteLength) {
+        buffer.copyWithin(0, bufferStart, bufferEnd)
+        bufferEnd = pendingLength
+        bufferStart = 0
+      }
+      if (buffer.length - bufferEnd < value.byteLength) {
+        const capacity = Math.min(
+          MAX_BUFFER_BYTES,
+          Math.max(nextLength, Math.max(1024, buffer.length * 2)),
+        )
+        const next = new Uint8Array(capacity)
+        next.set(buffer.subarray(bufferStart, bufferEnd))
+        buffer = next
+        bufferStart = 0
+        bufferEnd = pendingLength
+      }
+      buffer.set(value, bufferEnd)
+      bufferEnd += value.byteLength
+
+      let offset = bufferStart
+      while (bufferEnd - offset >= 5) {
+        const flags = buffer[offset]
         const length = new DataView(
           buffer.buffer,
-          buffer.byteOffset + 1,
+          buffer.byteOffset + offset + 1,
           4,
         ).getUint32(0, false)
         // 畸形 length 头(声明远超合理上限的 payload):立即拒绝,
@@ -186,16 +251,29 @@ export async function* decodeConnectFrames(
             `decodeConnectFrames: declared frame length ${length} exceeds limit ${MAX_FRAME_PAYLOAD}`,
           )
         }
-        if (buffer.length < 5 + length) {
+        if (bufferEnd - offset < 5 + length) {
           break
         }
 
-        const payload = buffer.slice(5, 5 + length)
-        buffer = buffer.slice(5 + length)
+        const payload = buffer.slice(offset + 5, offset + 5 + length)
+        offset += 5 + length
 
         // End-of-stream trailers are JSON metadata rather than protobuf.
-        const decoded = decodeConnectFramePayload(flags, payload)
+        const decoded = await decodeConnectFramePayload(flags, payload)
         if (decoded) yield decoded
+      }
+
+      // Advance once per reader chunk, not once per frame. Re-slicing the
+      // remaining buffer inside the loop turns a chunk containing many small
+      // frames into an O(n^2) allocation pattern.
+      bufferStart = offset
+      if (bufferStart === bufferEnd) {
+        bufferStart = 0
+        bufferEnd = 0
+      } else if (bufferStart > buffer.length / 2) {
+        buffer.copyWithin(0, bufferStart, bufferEnd)
+        bufferEnd -= bufferStart
+        bufferStart = 0
       }
     }
   } finally {
@@ -318,14 +396,14 @@ export function parseMessage(
       }
 
       if (wire === 1) {
-        node.raw = data.slice(offset, offset + 8)
+        node.raw = data.subarray(offset, offset + 8)
         offset += 8
         nodes.push(node)
         continue
       }
 
       if (wire === 5) {
-        node.raw = data.slice(offset, offset + 4)
+        node.raw = data.subarray(offset, offset + 4)
         offset += 4
         nodes.push(node)
         continue
@@ -337,7 +415,7 @@ export function parseMessage(
 
       const lengthInfo = readVarint(data, offset)
       offset = lengthInfo.nextOffset
-      node.raw = data.slice(offset, offset + lengthInfo.value)
+      node.raw = data.subarray(offset, offset + lengthInfo.value)
       offset += lengthInfo.value
 
       if (depth < maxDepth && node.raw.length > 0) {
@@ -367,11 +445,4 @@ export function walkNodes(
       ...(node.sub ? walkNodes(node.sub, nextPath) : []),
     ]
   })
-}
-
-function concat(left: Uint8Array, right: Uint8Array): Uint8Array {
-  const merged = new Uint8Array(left.length + right.length)
-  merged.set(left, 0)
-  merged.set(right, left.length)
-  return merged as Uint8Array
 }

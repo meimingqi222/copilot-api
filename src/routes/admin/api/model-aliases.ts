@@ -7,6 +7,7 @@ import {
   upsertModelAlias,
   type ModelAliasRule,
 } from "~/lib/model-aliases"
+import { readJsonBody } from "~/lib/request-body"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 
 export const modelAliasApiRoutes = new Hono()
@@ -19,7 +20,7 @@ modelAliasApiRoutes.get("/", (c) => c.json({ aliases: listModelAliases() }))
 
 modelAliasApiRoutes.post("/", async (c) => {
   try {
-    const body = await c.req.json<Partial<ModelAliasRule>>()
+    const body = await readJsonBody<Partial<ModelAliasRule>>(c.req.raw)
     return c.json({ alias: upsertModelAlias(body) }, 201)
   } catch (error) {
     return c.json({ error: bodyError(error) }, 400)
@@ -28,7 +29,7 @@ modelAliasApiRoutes.post("/", async (c) => {
 
 modelAliasApiRoutes.put("/", async (c) => {
   try {
-    const body = await c.req.json<unknown>()
+    const body = await readJsonBody<unknown>(c.req.raw)
     let aliases: Array<Partial<ModelAliasRule>> | undefined
     if (Array.isArray(body)) {
       aliases = body as Array<Partial<ModelAliasRule>>
@@ -48,7 +49,7 @@ modelAliasApiRoutes.put("/", async (c) => {
 
 modelAliasApiRoutes.put("/:id", async (c) => {
   try {
-    const body = await c.req.json<Partial<ModelAliasRule>>()
+    const body = await readJsonBody<Partial<ModelAliasRule>>(c.req.raw)
     return c.json({
       alias: upsertModelAlias({ ...body, id: c.req.param("id") }),
     })
@@ -66,7 +67,7 @@ modelAliasApiRoutes.delete("/:id", (c) => {
 
 modelAliasApiRoutes.post("/resolve", async (c) => {
   try {
-    const body = await c.req.json<{ model?: string }>()
+    const body = await readJsonBody<{ model?: string }>(c.req.raw)
     const model = body.model?.trim()
     if (!model) return c.json({ error: "model is required" }, 400)
     const routing = resolveModelRouting(model)

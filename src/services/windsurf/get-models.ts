@@ -2,6 +2,7 @@ import type { Account, AccountModel } from "~/lib/accounts"
 
 import { getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { readResponseBytes } from "~/lib/request-body"
 
 import { normalizeWindsurfBaseUrl } from "./base-url"
 import {
@@ -252,7 +253,7 @@ export async function getWindsurfModelsForAccount(
   }
 
   const models = extractWindsurfModelsFromPayload(
-    new Uint8Array(await response.arrayBuffer()),
+    await readResponseBytes(response, 16 * 1024 * 1024),
   )
   return models.length > 0 ?
       models

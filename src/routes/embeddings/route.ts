@@ -2,6 +2,7 @@ import { Hono } from "hono"
 
 import { forwardError, HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { readJsonBody } from "~/lib/request-body"
 import { recordUsage } from "~/lib/usage"
 import {
   createEmbeddings,
@@ -12,7 +13,7 @@ export const embeddingRoutes = new Hono()
 
 embeddingRoutes.post("/", async (c) => {
   try {
-    const payload = await c.req.json<EmbeddingRequest>()
+    const payload = await readJsonBody<EmbeddingRequest>(c.req.raw)
     const admission = await prepareRequestAdmission(c, {
       model: payload.model,
       endpoint: "embeddings",

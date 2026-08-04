@@ -9,6 +9,7 @@ import { logger } from "~/lib/logger"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { upgradeOAuthAccountLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
@@ -122,7 +123,7 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
 
   let body: { label?: string; proxyUrl?: string; manual?: boolean }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     body = {}
   }
@@ -248,7 +249,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
 
   let body: { flowId?: string; code?: string; callback?: string }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
@@ -331,7 +332,7 @@ oauthApiRoutes.post("/:provider/cancel", async (c) => {
 
   let body: { flowId?: string }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

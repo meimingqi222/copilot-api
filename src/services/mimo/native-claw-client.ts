@@ -97,7 +97,6 @@ export class NativeClawClient {
   private ws: ClawWs | null = null
   private connected = false
   private events: Array<ChatEvent> = []
-  private responses = new Map<string, WsMessage>()
   private resolveConnected: (() => void) | null = null
 
   constructor(params: {
@@ -404,7 +403,6 @@ export class NativeClawClient {
         return
       }
       case "res": {
-        if (data.id) this.responses.set(data.id, data)
         if (data.ok && data.payload?.type === "hello-ok") {
           this.connected = true
           if (this.resolveConnected) {

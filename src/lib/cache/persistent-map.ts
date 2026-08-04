@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 
 import { PATHS } from "~/lib/paths"
@@ -25,6 +25,7 @@ interface Entry<V> {
 
 const FLUSH_DEBOUNCE_MS = 2_000
 const CLEANUP_INTERVAL_MS = 15 * 60_000
+const MAX_PERSISTED_CACHE_BYTES = 32 * 1024 * 1024
 
 const registeredMaps = new Set<PersistentTTLMap<unknown>>()
 
@@ -263,13 +264,21 @@ export class PersistentTTLMap<V> {
 
   private async load(): Promise<void> {
     try {
+      const fileStats = await stat(this.filePath)
+      if (fileStats.size > MAX_PERSISTED_CACHE_BYTES) {
+        return
+      }
       const raw = await readFile(this.filePath, "utf8")
       const parsed = JSON.parse(raw) as Record<string, Entry<V>>
       const now = Date.now()
-      for (const [key, entry] of Object.entries(parsed)) {
-        if (typeof entry.expire === "number" && now < entry.expire) {
-          this.store.set(key, entry)
-        }
+      const entries = Object.entries(parsed)
+        .filter(
+          ([, entry]) => typeof entry.expire === "number" && now < entry.expire,
+        )
+        .sort(([, left], [, right]) => left.expire - right.expire)
+        .slice(-this.maxEntries)
+      for (const [key, entry] of entries) {
+        this.store.set(key, entry)
       }
     } catch {
       // File doesn't exist or is corrupt — start fresh.

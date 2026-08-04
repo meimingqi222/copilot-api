@@ -140,6 +140,10 @@ const RECENT_REQUEST_THRESHOLD = 60
 const AUTO_BLOCK_SCORE_THRESHOLD = 80
 const AUTO_BLOCK_DURATION_MS = 60 * 60 * 1000
 const AUTO_BLOCK_DURATION_SEVERE_MS = 24 * 60 * 60 * 1000
+const MAX_SNAPSHOT_ENTRIES = 10_000
+const MAX_SNAPSHOT_PATHS = 256
+const MAX_SNAPSHOT_USERNAMES = 256
+const MAX_RECENT_REQUESTS = 4_096
 
 // ── In-memory state ────────────────────────────────────────────
 
@@ -327,6 +331,10 @@ function updateSnapshot(
   const { key, type, now } = opts
   let snap = map.get(key)
   if (!snap) {
+    if (map.size >= MAX_SNAPSHOT_ENTRIES) {
+      const oldest = map.keys().next().value
+      if (typeof oldest === "string") map.delete(oldest)
+    }
     snap = {
       key,
       type,
@@ -356,8 +364,16 @@ function updateSnapshot(
     snap.notFounds += 1
   }
   snap.lastSeenAt = now
-  if (opts.username) snap.usernames.add(opts.username)
-  snap.paths.set(opts.path, (snap.paths.get(opts.path) ?? 0) + 1)
+  if (
+    opts.username
+    && (snap.usernames.has(opts.username)
+      || snap.usernames.size < MAX_SNAPSHOT_USERNAMES)
+  ) {
+    snap.usernames.add(opts.username)
+  }
+  if (snap.paths.has(opts.path) || snap.paths.size < MAX_SNAPSHOT_PATHS) {
+    snap.paths.set(opts.path, (snap.paths.get(opts.path) ?? 0) + 1)
+  }
 
   // Track initiator distribution
   if (opts.initiator === "user") snap.userInitiatorCount += 1
@@ -365,6 +381,12 @@ function updateSnapshot(
 
   snap.recentRequests.push(now)
   trimTimestamps(snap.recentRequests, now - RECENT_WINDOW_MS)
+  if (snap.recentRequests.length > MAX_RECENT_REQUESTS) {
+    snap.recentRequests.splice(
+      0,
+      snap.recentRequests.length - MAX_RECENT_REQUESTS,
+    )
+  }
 
   // Mark blocked status for display
   const blocklist = type === "ip" ? ipBlacklist : uaBlacklist

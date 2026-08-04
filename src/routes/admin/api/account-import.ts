@@ -14,6 +14,7 @@ import { logger } from "~/lib/logger"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import { removeProviderConnection } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
 import {
   importCpaAuthRecords,
@@ -108,7 +109,7 @@ function buildOAuthAccountFromImportPayload(
 importAccountRoutes.post("/import", async (c) => {
   let body: { accounts?: Array<ImportAccountPayload>; overwrite?: boolean }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
@@ -335,7 +336,7 @@ importAccountRoutes.post("/import", async (c) => {
 importAccountRoutes.post("/import-cpa", async (c) => {
   let body: { records?: unknown; overwrite?: boolean }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

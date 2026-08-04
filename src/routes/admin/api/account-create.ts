@@ -7,6 +7,7 @@ import { saveAccounts } from "~/lib/account-store"
 import { addAccount, listAccounts } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isProviderId } from "~/lib/provider-config"
+import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -29,7 +30,7 @@ createAccountRoutes.post("/", async (c) => {
     settings?: Record<string, unknown>
   }
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

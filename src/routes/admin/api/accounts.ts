@@ -28,6 +28,7 @@ import {
   syncAccountToConnection,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
 import {
   getOAuthAccountSubtitle,
@@ -157,7 +158,7 @@ accountApiRoutes.put("/:id", async (c) => {
 
   let body: UpdateAccountBody
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

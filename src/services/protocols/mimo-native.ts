@@ -18,6 +18,7 @@ import {
   mimoConnections,
 } from "~/services/mimo/connections"
 import { markAccountFailed } from "~/services/mimo/manager"
+import { MAX_MIMO_RESPONSE_BYTES } from "~/services/mimo/ws-proxy"
 import { detectOpenAIStreamError } from "~/services/protocols/shared"
 
 import type { ProtocolAdapter } from "./types"
@@ -36,6 +37,29 @@ const IDLE_TIMEOUT_MS = (() => {
     : DEFAULT_IDLE_TIMEOUT_MS
 })()
 const IDLE_TIMEOUT_MESSAGE = `Request timeout: No data received from Mimo node for ${Math.round(IDLE_TIMEOUT_MS / 1000)} seconds`
+const MAX_MIMO_QUEUED_MESSAGES = 1024
+const MAX_MIMO_QUEUE_BYTES = MAX_MIMO_RESPONSE_BYTES
+
+function getMimoMessageBytes(msg: MimoMessage): number {
+  let bytes = 0
+  if (msg.chunk) bytes += Buffer.byteLength(msg.chunk)
+  if (msg.error) bytes += Buffer.byteLength(msg.error)
+  if (msg.body !== undefined) {
+    const body = JSON.stringify(msg.body)
+    if (body) bytes += Buffer.byteLength(body)
+  }
+  return bytes
+}
+
+async function returnAsyncIterator<T>(
+  iterator: AsyncIterator<T>,
+): Promise<void> {
+  try {
+    await iterator.return?.()
+  } catch {
+    // Ignore cleanup failures while reporting the original stream error.
+  }
+}
 
 async function* streamResponse(
   conn: MimoConnection,
@@ -43,10 +67,12 @@ async function* streamResponse(
   signal?: AbortSignal,
 ): AsyncIterable<StreamChunk> {
   const queue: Array<MimoMessage> = []
+  let queuedBytes = 0
   let resolveNext: (() => void) | null = null
   let done = false
   let error: Error | null = null
   let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
+  let responseBytes = 0
 
   const resetIdleTimer = () => {
     if (idleTimeoutId) clearTimeout(idleTimeoutId)
@@ -60,7 +86,23 @@ async function* streamResponse(
   }
 
   const listener = (msg: MimoMessage) => {
+    if (error) return
+    const messageBytes = getMimoMessageBytes(msg)
+    if (
+      queue.length >= MAX_MIMO_QUEUED_MESSAGES
+      || queuedBytes + messageBytes > MAX_MIMO_QUEUE_BYTES
+    ) {
+      error = new Error("Mimo response message queue exceeds the maximum size")
+      queue.length = 0
+      queuedBytes = 0
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+      return
+    }
     queue.push(msg)
+    queuedBytes += messageBytes
     resetIdleTimer()
     if (resolveNext) {
       resolveNext()
@@ -72,17 +114,23 @@ async function* streamResponse(
 
   const cleanup = () => {
     if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    queue.length = 0
+    queuedBytes = 0
     conn.activeRequests.delete(reqId)
+    if (signal) signal.removeEventListener("abort", onAbort)
+  }
+
+  const onAbort = () => {
+    error = new Error("Request aborted")
+    if (resolveNext) {
+      resolveNext()
+      resolveNext = null
+    }
   }
 
   if (signal) {
-    signal.addEventListener("abort", () => {
-      error = new Error("Request aborted")
-      if (resolveNext) {
-        resolveNext()
-        resolveNext = null
-      }
-    })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener("abort", onAbort, { once: true })
   }
 
   resetIdleTimer()
@@ -103,6 +151,7 @@ async function* streamResponse(
 
       const msg = queue.shift()
       if (!msg) continue
+      queuedBytes -= getMimoMessageBytes(msg)
 
       if (msg.type === "stream_start") {
         // Ignore: status/headers already captured by bridge protocol.
@@ -111,10 +160,18 @@ async function* streamResponse(
         // Non-SSE reply arrived while expecting a stream (e.g. upstream error).
         // Yield as a single SSE data line then finish, matching mimo-claw behavior.
         const bodyStr = JSON.stringify(msg.body)
+        responseBytes += Buffer.byteLength(bodyStr)
+        if (responseBytes > MAX_MIMO_RESPONSE_BYTES) {
+          throw new Error("Mimo response exceeds the maximum size")
+        }
         yield { data: bodyStr }
         done = true
       } else if (msg.type === "stream_delta" && msg.chunk) {
         // Bridge.py already strips "data: " prefix, chunk is raw JSON
+        responseBytes += Buffer.byteLength(msg.chunk)
+        if (responseBytes > MAX_MIMO_RESPONSE_BYTES) {
+          throw new Error("Mimo response exceeds the maximum size")
+        }
         yield { data: msg.chunk }
       } else if (msg.type === "stream_end") {
         done = true
@@ -136,10 +193,12 @@ async function collectResponse(
   signal?: AbortSignal,
 ): Promise<ChatCompletionResponse> {
   const queue: Array<MimoMessage> = []
+  let queuedBytes = 0
   let resolveNext: (() => void) | null = null
   let done = false
   let error: Error | null = null
   let accumulatedBody = ""
+  let accumulatedBytes = 0
   let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
 
   const resetIdleTimer = () => {
@@ -154,7 +213,23 @@ async function collectResponse(
   }
 
   const listener = (msg: MimoMessage) => {
+    if (error) return
+    const messageBytes = getMimoMessageBytes(msg)
+    if (
+      queue.length >= MAX_MIMO_QUEUED_MESSAGES
+      || queuedBytes + messageBytes > MAX_MIMO_QUEUE_BYTES
+    ) {
+      error = new Error("Mimo response message queue exceeds the maximum size")
+      queue.length = 0
+      queuedBytes = 0
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+      return
+    }
     queue.push(msg)
+    queuedBytes += messageBytes
     resetIdleTimer()
     if (resolveNext) {
       resolveNext()
@@ -166,17 +241,23 @@ async function collectResponse(
 
   const cleanup = () => {
     if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    queue.length = 0
+    queuedBytes = 0
     conn.activeRequests.delete(reqId)
+    if (signal) signal.removeEventListener("abort", onAbort)
+  }
+
+  const onAbort = () => {
+    error = new Error("Request aborted")
+    if (resolveNext) {
+      resolveNext()
+      resolveNext = null
+    }
   }
 
   if (signal) {
-    signal.addEventListener("abort", () => {
-      error = new Error("Request aborted")
-      if (resolveNext) {
-        resolveNext()
-        resolveNext = null
-      }
-    })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener("abort", onAbort, { once: true })
   }
 
   resetIdleTimer()
@@ -197,14 +278,23 @@ async function collectResponse(
 
       const msg = queue.shift()
       if (!msg) continue
+      queuedBytes -= getMimoMessageBytes(msg)
 
       if (msg.type === "stream_start") {
         // Ignore: non-streaming path — status/headers not needed here.
       } else if (msg.type === "stream_delta" && msg.chunk) {
+        const chunkBytes = Buffer.byteLength(msg.chunk)
+        accumulatedBytes += chunkBytes
+        if (accumulatedBytes > MAX_MIMO_RESPONSE_BYTES) {
+          throw new Error("Mimo response exceeds the maximum size")
+        }
         accumulatedBody += msg.chunk
       } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "response" && msg.body) {
+        if (getMimoMessageBytes(msg) > MAX_MIMO_RESPONSE_BYTES) {
+          throw new Error("Mimo response exceeds the maximum size")
+        }
         return msg.body as ChatCompletionResponse
       } else if (msg.type === "error") {
         const errorMsg =
@@ -235,7 +325,10 @@ async function safeMimoStream(
   if (first.done) return gen
 
   const streamError = detectOpenAIStreamError(first.value)
-  if (streamError) throw streamError
+  if (streamError) {
+    await returnAsyncIterator(iterator)
+    throw streamError
+  }
 
   return {
     [Symbol.asyncIterator](): AsyncIterator<StreamChunk> {
@@ -247,6 +340,10 @@ async function safeMimoStream(
             return first
           }
           return iterator.next()
+        },
+        async return(): Promise<IteratorResult<StreamChunk>> {
+          await returnAsyncIterator(iterator)
+          return { done: true, value: undefined }
         },
       }
     },
@@ -295,7 +392,10 @@ async function safeMimoMessagesStream(
   if (first.done) return gen
 
   const streamError = detectMimoAnthropicStreamError(first.value)
-  if (streamError) throw streamError
+  if (streamError) {
+    await returnAsyncIterator(iterator)
+    throw streamError
+  }
 
   return {
     [Symbol.asyncIterator](): AsyncIterator<StreamChunk> {
@@ -307,6 +407,10 @@ async function safeMimoMessagesStream(
             return first
           }
           return iterator.next()
+        },
+        async return(): Promise<IteratorResult<StreamChunk>> {
+          await returnAsyncIterator(iterator)
+          return { done: true, value: undefined }
         },
       }
     },
@@ -323,10 +427,12 @@ async function collectMessagesResponse(
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const queue: Array<MimoMessage> = []
+  let queuedBytes = 0
   let resolveNext: (() => void) | null = null
   let done = false
   let error: Error | null = null
   let accumulatedBody = ""
+  let accumulatedBytes = 0
   let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
 
   const resetIdleTimer = () => {
@@ -341,7 +447,23 @@ async function collectMessagesResponse(
   }
 
   const listener = (msg: MimoMessage) => {
+    if (error) return
+    const messageBytes = getMimoMessageBytes(msg)
+    if (
+      queue.length >= MAX_MIMO_QUEUED_MESSAGES
+      || queuedBytes + messageBytes > MAX_MIMO_QUEUE_BYTES
+    ) {
+      error = new Error("Mimo response message queue exceeds the maximum size")
+      queue.length = 0
+      queuedBytes = 0
+      if (resolveNext) {
+        resolveNext()
+        resolveNext = null
+      }
+      return
+    }
     queue.push(msg)
+    queuedBytes += messageBytes
     resetIdleTimer()
     if (resolveNext) {
       resolveNext()
@@ -353,17 +475,23 @@ async function collectMessagesResponse(
 
   const cleanup = () => {
     if (idleTimeoutId) clearTimeout(idleTimeoutId)
+    queue.length = 0
+    queuedBytes = 0
     conn.activeRequests.delete(reqId)
+    if (signal) signal.removeEventListener("abort", onAbort)
+  }
+
+  const onAbort = () => {
+    error = new Error("Request aborted")
+    if (resolveNext) {
+      resolveNext()
+      resolveNext = null
+    }
   }
 
   if (signal) {
-    signal.addEventListener("abort", () => {
-      error = new Error("Request aborted")
-      if (resolveNext) {
-        resolveNext()
-        resolveNext = null
-      }
-    })
+    if (signal.aborted) onAbort()
+    else signal.addEventListener("abort", onAbort, { once: true })
   }
 
   resetIdleTimer()
@@ -384,14 +512,23 @@ async function collectMessagesResponse(
 
       const msg = queue.shift()
       if (!msg) continue
+      queuedBytes -= getMimoMessageBytes(msg)
 
       if (msg.type === "stream_start") {
         // Ignore
       } else if (msg.type === "stream_delta" && msg.chunk) {
+        const chunkBytes = Buffer.byteLength(msg.chunk)
+        accumulatedBytes += chunkBytes
+        if (accumulatedBytes > MAX_MIMO_RESPONSE_BYTES) {
+          throw new Error("Mimo response exceeds the maximum size")
+        }
         accumulatedBody += msg.chunk
       } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "response" && msg.body) {
+        if (getMimoMessageBytes(msg) > MAX_MIMO_RESPONSE_BYTES) {
+          throw new Error("Mimo response exceeds the maximum size")
+        }
         return msg.body as Record<string, unknown>
       } else if (msg.type === "error") {
         const errorMsg =
