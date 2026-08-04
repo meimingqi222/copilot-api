@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 
 import { logger } from "~/lib/logger"
+import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import {
@@ -17,7 +18,9 @@ export async function handleCountTokens(c: Context) {
   try {
     const anthropicBeta = c.req.header("anthropic-beta")
 
-    const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+    const anthropicPayload = await readJsonBody<AnthropicMessagesPayload>(
+      c.req.raw,
+    )
 
     const openAIPayload = translateToOpenAI(anthropicPayload)
 

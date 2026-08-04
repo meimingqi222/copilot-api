@@ -31,6 +31,7 @@ export interface PollState {
 
 // In-memory cache, loaded from disk on startup
 const pendingFlows = new Map<string, PollState>()
+const MAX_PENDING_DEVICE_FLOWS = 256
 
 // Load pending flows from disk
 export async function loadPendingFlows(): Promise<void> {
@@ -64,6 +65,14 @@ export function registerPendingFlow(
   deviceCode: string,
   state: PollState,
 ): void {
+  const now = Date.now()
+  for (const [id, pending] of pendingFlows) {
+    if (pending.expiresAt <= now) pendingFlows.delete(id)
+  }
+  if (pendingFlows.size >= MAX_PENDING_DEVICE_FLOWS) {
+    const oldest = pendingFlows.keys().next().value
+    if (typeof oldest === "string") pendingFlows.delete(oldest)
+  }
   pendingFlows.set(deviceCode, state)
   void savePendingFlows()
 }

@@ -45,6 +45,7 @@ export interface OAuthPendingFlow {
 const pendingOAuthFlows = new Map<string, OAuthPendingFlow>()
 const oauthCallbackServers = new Map<string, Server>()
 const oauthFlowAbortControllers = new Map<string, AbortController>()
+const MAX_PENDING_OAUTH_FLOWS = 256
 
 export async function loadPendingOAuthFlows(): Promise<void> {
   try {
@@ -99,11 +100,7 @@ export async function savePendingOAuthFlows(): Promise<void> {
 function purgeStaleOAuthFlows(): void {
   const now = Date.now()
   for (const [flowId, flow] of pendingOAuthFlows.entries()) {
-    const terminal =
-      flow.status === "complete"
-      || flow.status === "error"
-      || flow.status === "expired"
-    if (terminal && flow.expiresAt <= now) {
+    if (flow.expiresAt <= now) {
       removeOAuthFlow(flowId)
     }
   }
@@ -131,6 +128,11 @@ export function hasActiveOAuthFlowForProvider(
 void loadPendingOAuthFlows()
 
 export function registerOAuthFlow(flow: OAuthPendingFlow): void {
+  purgeStaleOAuthFlows()
+  if (pendingOAuthFlows.size >= MAX_PENDING_OAUTH_FLOWS) {
+    const oldest = pendingOAuthFlows.keys().next().value
+    if (typeof oldest === "string") removeOAuthFlow(oldest)
+  }
   pendingOAuthFlows.set(flow.id, flow)
   void savePendingOAuthFlows()
 }

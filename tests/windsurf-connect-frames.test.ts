@@ -16,6 +16,17 @@ function buildStream(chunks: Array<Uint8Array>): ReadableStream<Uint8Array> {
   })
 }
 
+function joinChunks(chunks: Array<Uint8Array>): Uint8Array {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const result = new Uint8Array(totalLength)
+  let offset = 0
+  for (const chunk of chunks) {
+    result.set(chunk, offset)
+    offset += chunk.length
+  }
+  return result
+}
+
 async function collectFrames(
   stream: ReadableStream<Uint8Array>,
 ): Promise<Array<Uint8Array>> {
@@ -108,6 +119,27 @@ describe("decodeConnectFrames", () => {
     const frames = await collectFrames(buildStream([chunk1, chunk2]))
     expect(frames).toHaveLength(1)
     expect(new TextDecoder().decode(frames[0])).toBe("split across chunks")
+  })
+
+  test("handles many frames delivered in one chunk without quadratic copying", async () => {
+    const wire = joinChunks(
+      Array.from({ length: 10_000 }, (_, index) =>
+        encodeConnectFrame(new TextEncoder().encode(String(index)), false),
+      ),
+    )
+    const frames = await collectFrames(buildStream([wire]))
+
+    expect(frames).toHaveLength(10_000)
+    expect(new TextDecoder().decode(frames[9_999])).toBe("9999")
+  })
+
+  test("rejects a compressed frame that expands beyond the safety limit", () => {
+    const payload = new Uint8Array(33 * 1024 * 1024)
+    const frame = encodeConnectFrame(payload, true)
+
+    expect(collectFrames(buildStream([frame]))).rejects.toThrow(
+      /decompressed frame exceeds limit/,
+    )
   })
 
   test("cancels the reader when the consumer stops early", async () => {

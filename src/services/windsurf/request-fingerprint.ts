@@ -46,13 +46,16 @@ function readStringField(
 export function fingerprintWindsurfRequest(
   framedRequest: Uint8Array,
 ): WindsurfRequestFingerprint {
-  const nodes = parseMessage(decodeConnectPayload(framedRequest), 0, 6)
-  const metadataNode = nodes.find((n) => n.field === 1 && n.sub)
-  const metadataFields =
-    metadataNode?.sub?.map((n) => n.field).sort((a, b) => a - b) ?? []
+  const nodes = parseMessage(decodeConnectPayload(framedRequest), 0, 0)
+  const metadataNode = nodes.find((n) => n.field === 1 && n.raw)
+  const metadataSubnodes =
+    metadataNode?.raw ? parseMessage(metadataNode.raw, 0, 0) : []
+  const metadataFields = metadataSubnodes
+    .map((n) => n.field)
+    .sort((a, b) => a - b)
   const metadata: Record<string, string | number> = {}
 
-  for (const sub of metadataNode?.sub ?? []) {
+  for (const sub of metadataSubnodes) {
     if (sub.raw && METADATA_STRING_FIELDS.has(sub.field)) {
       const value = new TextDecoder().decode(sub.raw)
       metadata[`f${sub.field}`] =
@@ -60,7 +63,9 @@ export function fingerprintWindsurfRequest(
     }
   }
 
-  const configurationNode = nodes.find((n) => n.field === 8 && n.sub)
+  const configurationNode = nodes.find((n) => n.field === 8 && n.raw)
+  const configurationSubnodes =
+    configurationNode?.raw ? parseMessage(configurationNode.raw, 0, 0) : []
   return {
     metadataFields,
     metadata,
@@ -74,7 +79,7 @@ export function fingerprintWindsurfRequest(
     executionId: readStringField(nodes, 22),
     hasSystemPrompt: nodes.some((n) => n.field === 2 && n.raw),
     configurationFields: [
-      ...new Set(configurationNode?.sub?.map((n) => n.field) ?? []),
+      ...new Set(configurationSubnodes.map((n) => n.field)),
     ].sort((a, b) => a - b),
   }
 }

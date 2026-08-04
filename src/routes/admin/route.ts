@@ -16,6 +16,7 @@ import {
   setAdminSession,
   verifyAdminPassword,
 } from "~/lib/request-auth"
+import { readJsonBody, readTextBody } from "~/lib/request-body"
 import { getClientIp } from "~/lib/utils"
 
 import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
@@ -198,17 +199,17 @@ adminRoutes.post("/login", async (c) => {
 
     if (contentType.includes("application/x-www-form-urlencoded")) {
       // Handle form data from login.html
-      const body = await c.req.text()
+      const body = await readTextBody(c.req.raw)
       const params = new URLSearchParams(body)
       password = params.get("password") || undefined
       remember =
         params.get("remember") === "on" || params.get("remember") === "true"
     } else {
       // Handle JSON from API
-      const payload = await c.req.json<{
+      const payload = await readJsonBody<{
         password?: string
         remember?: boolean
-      }>()
+      }>(c.req.raw)
       password = payload.password
       remember = Boolean(payload.remember)
     }
@@ -249,11 +250,11 @@ adminRoutes.post("/setup", async (c) => {
     const contentType = c.req.header("content-type") ?? ""
 
     if (contentType.includes("application/x-www-form-urlencoded")) {
-      const body = await c.req.text()
+      const body = await readTextBody(c.req.raw)
       const params = new URLSearchParams(body)
       password = params.get("password") || undefined
     } else {
-      const payload = await c.req.json<{ password?: string }>()
+      const payload = await readJsonBody<{ password?: string }>(c.req.raw)
       password = payload.password
     }
   } catch {

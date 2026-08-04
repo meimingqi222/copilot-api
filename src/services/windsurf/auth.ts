@@ -11,11 +11,14 @@
  * Ported from oh-my-pi packages/ai/src/providers/devin.ts (441-491).
  */
 
+import { readResponseBytes } from "~/lib/request-body"
+
 import { normalizeWindsurfBaseUrl } from "./base-url"
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, parseMessage } from "./protobuf"
 
 const DEVIN_AUTH_PATH = "/exa.auth_pb.AuthService/GetUserJwt"
+const MAX_AUTH_RESPONSE_BYTES = 1024 * 1024
 
 export interface DevinAuthMetadata {
   /** Short-lived JWT carried in Metadata.user_jwt (field 21) on chat requests. */
@@ -76,7 +79,7 @@ export async function fetchDevinUserJwt(opts: {
     signal,
   })
 
-  const payload = new Uint8Array(await response.arrayBuffer())
+  const payload = await readResponseBytes(response, MAX_AUTH_RESPONSE_BYTES)
   if (!response.ok) {
     throw new Error(
       `Devin auth error ${response.status} ${response.statusText}: ${new TextDecoder().decode(payload)}`,
@@ -110,8 +113,7 @@ async function decompressGzip(payload: Uint8Array): Promise<Uint8Array> {
   const stream = new Response(payload).body
   if (!stream) throw new Error("empty body")
   const decompressed = stream.pipeThrough(new DecompressionStream("gzip"))
-  const buffer = await new Response(decompressed).arrayBuffer()
-  return new Uint8Array(buffer)
+  return readResponseBytes(new Response(decompressed), MAX_AUTH_RESPONSE_BYTES)
 }
 
 /** Re-exported so callers can normalize without importing metadata directly. */

@@ -2,6 +2,7 @@ import type { Context } from "hono"
 
 import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { readJsonBody } from "~/lib/request-body"
 import { supportsMessagesApi } from "~/services/copilot/responses-api"
 import {
   extractMessageContentFromAnthropicPayload,
@@ -21,7 +22,9 @@ const NATIVE_MESSAGES_PROTOCOLS = new Set([
 
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
-  const anthropicPayload = await c.req.json<AnthropicMessagesPayload>()
+  const anthropicPayload = await readJsonBody<AnthropicMessagesPayload>(
+    c.req.raw,
+  )
   const messageContent =
     extractMessageContentFromAnthropicPayload(anthropicPayload)
 

@@ -44,6 +44,7 @@ import {
   isCredentialAvailable,
   refreshConnectionAvailability,
 } from "~/lib/provider-connections/availability"
+import { readJsonBody } from "~/lib/request-body"
 import { mountConnectionGuard } from "~/routes/admin/api/provider-connection-guard"
 import { providerConnectionIoRoutes } from "~/routes/admin/api/provider-connection-io"
 import {
@@ -110,7 +111,7 @@ mountConnectionGuard(providerConnectionApiRoutes)
 providerConnectionApiRoutes.post("/", async (c) => {
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }
@@ -179,7 +180,7 @@ providerConnectionApiRoutes.put("/:id", async (c) => {
   const id = c.req.param("id")
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }
@@ -463,7 +464,7 @@ providerConnectionApiRoutes.post("/:id/models", async (c) => {
 
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }
@@ -519,7 +520,7 @@ providerConnectionApiRoutes.post("/:id/models/batch", async (c) => {
 
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }
@@ -728,7 +729,7 @@ providerConnectionApiRoutes.put("/:id/models/:publicId", async (c) => {
 
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }
@@ -773,7 +774,7 @@ providerConnectionApiRoutes.delete("/:id/models/:publicId", async (c) => {
 providerConnectionApiRoutes.post("/:id/credentials", async (c) => {
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }
@@ -811,7 +812,7 @@ providerConnectionApiRoutes.post("/:id/credentials", async (c) => {
 providerConnectionApiRoutes.put("/:id/credentials/:credentialId", async (c) => {
   let payload: Record<string, unknown>
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }

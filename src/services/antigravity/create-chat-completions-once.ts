@@ -72,6 +72,7 @@ async function* translateAntigravitySseToOpenAi(
   const decoder = new TextDecoder()
   let buffer = ""
   const state = createAntigravityStreamState(model)
+  const maxReadChunkBytes = 64 * 1024
 
   while (true) {
     const readResult = (await reader.read()) as {
@@ -84,20 +85,33 @@ async function* translateAntigravitySseToOpenAi(
     if (!readResult.value) {
       continue
     }
-    buffer += decoder.decode(readResult.value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-    for (const line of lines) {
-      const event = parseSseJson(line)
-      if (!event) {
-        continue
+    for (
+      let offset = 0;
+      offset < readResult.value.byteLength;
+      offset += maxReadChunkBytes
+    ) {
+      const piece = readResult.value.subarray(
+        offset,
+        Math.min(offset + maxReadChunkBytes, readResult.value.byteLength),
+      )
+      buffer += decoder.decode(piece, { stream: true })
+      if (Buffer.byteLength(buffer) > 16 * 1024 * 1024) {
+        throw new Error("Antigravity SSE line exceeds the maximum size")
       }
-      for (const openAiChunk of convertAntigravityStreamChunk(
-        event,
-        model,
-        state,
-      )) {
-        yield { data: JSON.stringify(openAiChunk) }
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+      for (const line of lines) {
+        const event = parseSseJson(line)
+        if (!event) {
+          continue
+        }
+        for (const openAiChunk of convertAntigravityStreamChunk(
+          event,
+          model,
+          state,
+        )) {
+          yield { data: JSON.stringify(openAiChunk) }
+        }
       }
     }
   }

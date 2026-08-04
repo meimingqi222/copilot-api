@@ -17,6 +17,11 @@ export interface ClawWs {
 
 const proxyAgents = new Map<string, HttpsProxyAgent<string>>()
 
+export const MAX_MIMO_RESPONSE_BYTES = 16 * 1024 * 1024
+const MAX_WS_FRAME_BUFFER_BYTES = MAX_MIMO_RESPONSE_BYTES + 14
+const MAX_PENDING_WS_MESSAGES = 256
+const MAX_PENDING_WS_MESSAGE_BYTES = MAX_MIMO_RESPONSE_BYTES
+
 const CHINA_IP_RANGES = ["39.", "111.", "124.", "202.69.", "220.181."]
 
 let cachedChinaIps: Array<string> = []
@@ -108,27 +113,52 @@ interface WsFrame {
 }
 
 export function decodeWsFrame(data: Buffer): WsFrame {
+  if (data.length < 2) {
+    throw new Error("Incomplete WebSocket frame header")
+  }
   const firstByte = data[0]
   const opcode = firstByte & 0x0f
   const secondByte = data[1]
   let length = secondByte & 0x7f
   let offset = 2
   if (length === 126) {
+    if (data.length < offset + 2) {
+      throw new Error("Incomplete WebSocket extended frame length")
+    }
     length = data.readUInt16BE(offset)
     offset += 2
   } else if (length === 127) {
-    length = Number(data.readBigUInt64BE(offset))
+    if (data.length < offset + 8) {
+      throw new Error("Incomplete WebSocket extended frame length")
+    }
+    const extendedLength = data.readBigUInt64BE(offset)
+    if (extendedLength > BigInt(MAX_MIMO_RESPONSE_BYTES)) {
+      throw new Error("WebSocket frame exceeds the maximum size")
+    }
+    length = Number(extendedLength)
     offset += 8
+  }
+  if (length > MAX_MIMO_RESPONSE_BYTES) {
+    throw new Error("WebSocket frame exceeds the maximum size")
   }
   const masked = (secondByte & 0x80) !== 0
   if (masked) {
+    if (data.length < offset + 4) {
+      throw new Error("Incomplete WebSocket mask key")
+    }
     const maskKey = data.subarray(offset, offset + 4)
     offset += 4
+    if (data.length < offset + length) {
+      throw new Error("Incomplete WebSocket frame payload")
+    }
     const payload = Buffer.alloc(length)
     for (let i = 0; i < length; i++) {
       payload[i] = data[offset + i] ^ maskKey[i % 4]
     }
     return { opcode, payload, remaining: data.subarray(offset + length) }
+  }
+  if (data.length < offset + length) {
+    throw new Error("Incomplete WebSocket frame payload")
   }
   const payload = data.subarray(offset, offset + length)
   return { opcode, payload, remaining: data.subarray(offset + length) }
@@ -169,6 +199,12 @@ function performWsUpgrade(
     tlsSock.write(headerLines.join("\r\n"))
 
     tlsSock.on("data", function handler(data: Buffer) {
+      if (buf.length + data.length > MAX_WS_FRAME_BUFFER_BYTES) {
+        tlsSock.destroy(
+          new Error("WebSocket upgrade buffer exceeds the maximum size"),
+        )
+        return
+      }
       buf = Buffer.concat([buf, data])
       const headerEnd = buf.indexOf("\r\n\r\n")
       if (headerEnd === -1) return
@@ -185,10 +221,11 @@ function performWsUpgrade(
       }
 
       // WS upgrade successful
-      let frameBuf = buf.subarray(headerEnd + 4)
+      let frameBuf: Buffer = buf.subarray(headerEnd + 4)
       buf = Buffer.alloc(0)
 
       const messageBuffer: Array<string> = []
+      let messageBufferBytes = 0
 
       const wsHandle: ClawWs = {
         send(data: string) {
@@ -207,6 +244,7 @@ function performWsUpgrade(
           if (event === "message" && messageBuffer.length > 0) {
             const msgs = [...messageBuffer]
             messageBuffer.length = 0
+            messageBufferBytes = 0
             for (const msg of msgs) {
               for (const h of listeners.message) {
                 h(msg)
@@ -233,7 +271,9 @@ function performWsUpgrade(
         while (frameBuf.length >= 2) {
           try {
             const frame = decodeWsFrame(frameBuf)
-            frameBuf = Buffer.from(frame.remaining)
+            // Keep the remaining view instead of copying it for every frame.
+            // A single socket chunk can contain many frames.
+            frameBuf = frame.remaining
 
             switch (frame.opcode) {
               case 0x01: {
@@ -260,8 +300,15 @@ function performWsUpgrade(
               }
               // No default
             }
-          } catch {
-            break
+          } catch (error) {
+            if (
+              error instanceof Error
+              && error.message.startsWith("Incomplete WebSocket")
+            ) {
+              break
+            }
+            tlsSock.destroy(error instanceof Error ? error : undefined)
+            return
           }
         }
 
@@ -271,7 +318,20 @@ function performWsUpgrade(
               h(text)
             }
           } else {
+            const textBytes = Buffer.byteLength(text)
+            if (
+              messageBuffer.length >= MAX_PENDING_WS_MESSAGES
+              || messageBufferBytes + textBytes > MAX_PENDING_WS_MESSAGE_BYTES
+            ) {
+              tlsSock.destroy(
+                new Error(
+                  "WebSocket pending message buffer exceeds the maximum size",
+                ),
+              )
+              return
+            }
             messageBuffer.push(text)
+            messageBufferBytes += textBytes
           }
         }
 
@@ -285,6 +345,12 @@ function performWsUpgrade(
       // Start reading WS frames (remove upgrade-response listener first)
       tlsSock.removeAllListeners("data")
       tlsSock.on("data", (chunk: Buffer) => {
+        if (frameBuf.length + chunk.length > MAX_WS_FRAME_BUFFER_BYTES) {
+          tlsSock.destroy(
+            new Error("WebSocket frame buffer exceeds the maximum size"),
+          )
+          return
+        }
         frameBuf = Buffer.concat([frameBuf, chunk])
         processWsFrames()
       })
@@ -452,6 +518,7 @@ export async function fetchWithProxy(
   }
   const urlObj = new URL(url)
   return new Promise((resolve, reject) => {
+    let settled = false
     const req = https.request(
       {
         hostname: urlObj.hostname,
@@ -462,21 +529,47 @@ export async function fetchWithProxy(
         agent,
       },
       (res) => {
-        let body = ""
+        const chunks: Array<Buffer> = []
+        let bodyBytes = 0
+        const rejectOverflow = () => {
+          if (settled) return
+          settled = true
+          const error = new Error("Mimo HTTP response exceeds the maximum size")
+          res.destroy(error)
+          req.destroy(error)
+          reject(error)
+        }
         res.on("data", (chunk: Buffer) => {
-          body += chunk.toString()
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+          bodyBytes += buffer.length
+          if (bodyBytes > MAX_MIMO_RESPONSE_BYTES) {
+            rejectOverflow()
+            return
+          }
+          chunks.push(buffer)
         })
         res.on("end", () => {
+          if (settled) return
+          settled = true
           resolve(
-            new Response(body, {
+            new Response(Buffer.concat(chunks).toString(), {
               status: res.statusCode,
               statusText: res.statusMessage,
             }),
           )
         })
+        res.on("error", (error) => {
+          if (settled) return
+          settled = true
+          reject(error)
+        })
       },
     )
-    req.on("error", reject)
+    req.on("error", (error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    })
     if (options?.body && typeof options.body === "string") {
       req.write(options.body)
     }
@@ -506,15 +599,28 @@ function fetchViaNodeHttps(opts: {
         timeout: 15_000,
       },
       (res) => {
-        let responseBody = ""
+        const chunks: Array<Buffer> = []
+        let responseBytes = 0
         res.on("data", (chunk: Buffer) => {
-          responseBody += chunk.toString()
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+          responseBytes += buffer.length
+          if (responseBytes > MAX_MIMO_RESPONSE_BYTES) {
+            const error = new Error(
+              "Mimo HTTP response exceeds the maximum size",
+            )
+            resolved = true
+            res.destroy(error)
+            req.destroy(error)
+            reject(error)
+            return
+          }
+          chunks.push(buffer)
         })
         res.on("end", () => {
           if (resolved) return
           resolved = true
           resolve(
-            new Response(responseBody, {
+            new Response(Buffer.concat(chunks).toString(), {
               status: res.statusCode,
               statusText: res.statusMessage,
             }),

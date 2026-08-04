@@ -2,6 +2,7 @@ import { Hono } from "hono"
 
 import { forwardError, HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
 import { recordUsage } from "~/lib/usage"
 import {
   createXaiImageEdit,
@@ -14,7 +15,10 @@ export const imageRoutes = new Hono()
 
 imageRoutes.post("/generations", async (c) => {
   try {
-    const payload = await c.req.json<ImageGenerationRequest>()
+    const payload = await readJsonBody<ImageGenerationRequest>(
+      c.req.raw,
+      MAX_MEDIA_JSON_BODY_BYTES,
+    )
     const admission = await prepareRequestAdmission(c, {
       model: payload.model,
       endpoint: "images",
@@ -50,7 +54,10 @@ imageRoutes.post("/generations", async (c) => {
 
 imageRoutes.post("/edits", async (c) => {
   try {
-    const payload = await c.req.json<ImageEditRequest>()
+    const payload = await readJsonBody<ImageEditRequest>(
+      c.req.raw,
+      MAX_MEDIA_JSON_BODY_BYTES,
+    )
     const admission = await prepareRequestAdmission(c, {
       model: payload.model,
       endpoint: "images",

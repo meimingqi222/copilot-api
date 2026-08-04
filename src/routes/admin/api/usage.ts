@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import type { ProviderId } from "~/lib/provider-config"
 
 import { getAccount, listAccounts } from "~/lib/accounts"
+import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 
@@ -194,7 +195,7 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
   }
 
   try {
-    body = await c.req.json()
+    body = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }

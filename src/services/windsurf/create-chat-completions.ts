@@ -34,7 +34,6 @@ import { buildRequest } from "./request-builders"
 import { fingerprintWindsurfRequest } from "./request-fingerprint"
 import {
   type ChatStreamFrame,
-  extractRawUsageSignals,
   mergeRawUsageSignals,
   type WindsurfRawUsageSignals,
   parseChatStreamFrame,
@@ -71,6 +70,7 @@ const FETCH_MAX_ATTEMPTS = 2
 export { FETCH_MAX_ATTEMPTS }
 const FETCH_BASE_DELAY_MS = 1_000
 const FETCH_MAX_DELAY_MS = 5_000
+const MAX_COLLECTED_RESPONSE_BYTES = 32 * 1024 * 1024
 
 function isTransientFetchError(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return true
@@ -199,7 +199,7 @@ async function* streamToOpenAI(
     if (classified) throw new WindsurfUpstreamError(classified, frame)
 
     const parsed = parseChatStreamFrame(frame)
-    const rawFrame = extractRawUsageSignals(frame)
+    const rawFrame = parsed.rawUsage
     if (rawFrame) {
       rawUsage = mergeRawUsageSignals(rawUsage, rawFrame)
       logger.debug("[windsurf] cache raw frame", {
@@ -349,9 +349,21 @@ function updateToolCalls(
         name: tc.function.name ?? "",
         arguments: tc.function.arguments ?? "",
       })
+      if (
+        Buffer.byteLength(tc.function.arguments ?? "")
+        > MAX_COLLECTED_RESPONSE_BYTES
+      ) {
+        throw new Error("Windsurf tool arguments exceed the maximum size")
+      }
     } else if (tc.function?.arguments !== undefined) {
       const existing = toolCallMap.get(tc.index)
-      if (existing) existing.arguments += tc.function.arguments
+      if (existing) {
+        const nextArguments = existing.arguments + tc.function.arguments
+        if (Buffer.byteLength(nextArguments) > MAX_COLLECTED_RESPONSE_BYTES) {
+          throw new Error("Windsurf tool arguments exceed the maximum size")
+        }
+        existing.arguments = nextArguments
+      }
     }
   }
 }
@@ -393,6 +405,12 @@ async function collectChatCompletion(
 
     text += chunk.choices?.[0]?.delta?.content ?? ""
     reasoningText += chunk.choices?.[0]?.delta?.reasoning_text ?? ""
+    if (
+      Buffer.byteLength(text) + Buffer.byteLength(reasoningText)
+      > MAX_COLLECTED_RESPONSE_BYTES
+    ) {
+      throw new Error("Windsurf response exceeds the maximum size")
+    }
     usage = chunk.usage ?? usage
 
     const finReason = chunk.choices?.[0]?.finish_reason

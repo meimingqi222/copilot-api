@@ -7,6 +7,8 @@ import type {
 
 import { cacheSignature } from "~/lib/cache/signature-cache"
 
+const MAX_ACCUMULATED_THINKING_BYTES = 32 * 1024 * 1024
+
 export interface AntigravityStreamState {
   created: number
   responseId: string
@@ -352,7 +354,11 @@ async function cacheResponseSignatures(
     // Accumulate thinking text across stream chunks
     const text = getString(part.text)
     if (text && part.thought) {
-      state.accumulatedThinkingText += text
+      const next = state.accumulatedThinkingText + text
+      if (Buffer.byteLength(next) > MAX_ACCUMULATED_THINKING_BYTES) {
+        throw new Error("Antigravity thinking exceeds the maximum size")
+      }
+      state.accumulatedThinkingText = next
     }
 
     // Cache signature when we have both accumulated text and signature

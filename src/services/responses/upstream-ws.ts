@@ -16,6 +16,7 @@ import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import { getOAuthProxyUrl } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { globalTimers } from "~/lib/timer-registry"
 
 export type UpstreamWsProvider = "codex" | "xai"
 
@@ -56,6 +57,9 @@ const UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS = 60_000
  * No HTTP fallback here — partial output may already have reached the client.
  */
 const UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS = 120_000
+const MAX_UPSTREAM_WS_QUEUE_MESSAGES = 1_024
+const MAX_UPSTREAM_WS_QUEUE_BYTES = 16 * 1024 * 1024
+const MAX_UPSTREAM_WS_SESSIONS = 1_024
 
 /** Convert HTTP(S) responses URL to ws(s). */
 export function buildResponsesWebsocketUrl(httpUrl: string): string {
@@ -343,6 +347,12 @@ export async function openUpstreamResponsesWebsocketTurn(
   // double-open and orphan sockets.
   let sess = sessions.get(key)
   if (!sess) {
+    if (sessions.size >= MAX_UPSTREAM_WS_SESSIONS) {
+      pruneIdleUpstreamSessions()
+      if (sessions.size >= MAX_UPSTREAM_WS_SESSIONS) {
+        throw new Error(`${provider} websockets: session limit reached`)
+      }
+    }
     sess = {
       key,
       provider,
@@ -508,6 +518,7 @@ function createTurnConsumer(options: {
   } = options
 
   const queue: Array<string> = []
+  let queueBytes = 0
   let wake: (() => void) | undefined
   let fail: ((err: Error) => void) | undefined
   let done = false
@@ -528,6 +539,8 @@ function createTurnConsumer(options: {
   const rejectWait = (err: Error) => {
     terminalError = err
     done = true
+    queue.length = 0
+    queueBytes = 0
     fail?.(err)
     fail = undefined
     wake = undefined
@@ -538,10 +551,41 @@ function createTurnConsumer(options: {
     if (typeof event.data === "string") {
       data = event.data
     } else if (event.data instanceof ArrayBuffer) {
+      if (event.data.byteLength > MAX_UPSTREAM_WS_QUEUE_BYTES) {
+        rejectWait(
+          new Error(
+            `${provider} websockets: upstream event exceeds size limit`,
+          ),
+        )
+        try {
+          ws.close()
+        } catch {
+          // ignore
+        }
+        return
+      }
       data = new TextDecoder().decode(event.data)
     }
     if (!data) return
+    const dataBytes = Buffer.byteLength(data)
+    if (
+      queue.length >= MAX_UPSTREAM_WS_QUEUE_MESSAGES
+      || queueBytes + dataBytes > MAX_UPSTREAM_WS_QUEUE_BYTES
+    ) {
+      rejectWait(
+        new Error(
+          `${provider} websockets: upstream event queue exceeds size limit`,
+        ),
+      )
+      try {
+        ws.close()
+      } catch {
+        // ignore
+      }
+      return
+    }
     queue.push(data)
+    queueBytes += dataBytes
     notify()
   }
   const onError = () => {
@@ -603,7 +647,8 @@ function createTurnConsumer(options: {
     }
     const eventType = typeof parsed.type === "string" ? parsed.type : ""
     if (eventType === "error" || eventType === "response.failed") {
-      queue.shift()
+      const removed = queue.shift()
+      if (removed) queueBytes -= Buffer.byteLength(removed)
       const message = extractWsErrorMessage(parsed)
       const status = extractWsErrorStatus(parsed)
       throw new HTTPError(
@@ -682,6 +727,7 @@ function createTurnConsumer(options: {
 
         const raw = queue.shift()
         if (raw === undefined) continue
+        queueBytes -= Buffer.byteLength(raw)
 
         let parsed: Record<string, unknown> | undefined
         try {
@@ -894,6 +940,11 @@ function pruneIdleUpstreamSessions(now = Date.now()): void {
     }
   }
 }
+
+globalTimers.interval(
+  () => pruneIdleUpstreamSessions(),
+  Math.min(UPSTREAM_WS_IDLE_MS, 60_000),
+)
 
 /**
  * Close all upstream WS sessions bound to a downstream execution session

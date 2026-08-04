@@ -2,6 +2,7 @@ import { Hono } from "hono"
 
 import { forwardError, HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
 import { recordUsage } from "~/lib/usage"
 import {
   createXaiVideoGeneration,
@@ -13,7 +14,10 @@ export const videoRoutes = new Hono()
 
 videoRoutes.post("/generations", async (c) => {
   try {
-    const payload = await c.req.json<VideoGenerationRequest>()
+    const payload = await readJsonBody<VideoGenerationRequest>(
+      c.req.raw,
+      MAX_MEDIA_JSON_BODY_BYTES,
+    )
     const admission = await prepareRequestAdmission(c, {
       model: payload.model,
       endpoint: "videos",

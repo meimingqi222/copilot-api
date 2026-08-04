@@ -6,6 +6,7 @@ import { canonicalModelId } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
@@ -71,7 +72,7 @@ interface StreamUsageInput {
 
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
-  let payload = await c.req.json<ChatCompletionsPayload>()
+  let payload = await readJsonBody<ChatCompletionsPayload>(c.req.raw)
   if (logger.level >= 4) {
     logger.debug("Request payload:", JSON.stringify(payload).slice(-400))
   }

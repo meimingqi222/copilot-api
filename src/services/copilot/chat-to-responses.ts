@@ -27,6 +27,8 @@ import {
   getResponsesReasoning,
 } from "~/services/copilot/chat-to-responses-response"
 
+const MAX_CHAT_TO_RESPONSES_BUFFER_BYTES = 32 * 1024 * 1024
+
 interface ChatToResponsesToolCallState {
   arguments: string
   id: string
@@ -253,7 +255,11 @@ function appendContentDelta(
   content: string | null | undefined,
 ): void {
   if (content) {
-    state.outputText += content
+    const next = state.outputText + content
+    if (Buffer.byteLength(next) > MAX_CHAT_TO_RESPONSES_BUFFER_BYTES) {
+      throw new Error("Chat completion output exceeds the maximum size")
+    }
+    state.outputText = next
   }
 }
 
@@ -263,7 +269,11 @@ function appendReasoningDelta(
 ): void {
   const reasoningDelta = getReasoningDelta(delta)
   if (reasoningDelta) {
-    state.reasoningText += reasoningDelta
+    const next = state.reasoningText + reasoningDelta
+    if (Buffer.byteLength(next) > MAX_CHAT_TO_RESPONSES_BUFFER_BYTES) {
+      throw new Error("Chat reasoning exceeds the maximum size")
+    }
+    state.reasoningText = next
   }
 }
 
@@ -277,10 +287,14 @@ function appendToolCallDeltas(
 
   for (const toolCall of toolCalls) {
     const existing = state.toolCalls.get(toolCall.index)
+    const argumentsText = `${existing?.arguments ?? ""}${toolCall.function?.arguments ?? ""}`
+    if (Buffer.byteLength(argumentsText) > MAX_CHAT_TO_RESPONSES_BUFFER_BYTES) {
+      throw new Error("Chat tool arguments exceed the maximum size")
+    }
     state.toolCalls.set(toolCall.index, {
       id: toolCall.id ?? existing?.id ?? `call_${toolCall.index}`,
       name: toolCall.function?.name ?? existing?.name ?? "unknown_function",
-      arguments: `${existing?.arguments ?? ""}${toolCall.function?.arguments ?? ""}`,
+      arguments: argumentsText,
     })
   }
 }

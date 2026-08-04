@@ -16,6 +16,7 @@ export interface ChatStreamFrame {
   textDone: boolean
   /** tool call generation finished (field 5 = varint 10) */
   toolCallsDone: boolean
+  rawUsage?: WindsurfRawUsageSignals
   usage?: {
     prompt_tokens: number
     completion_tokens: number
@@ -233,10 +234,14 @@ function parseToolCallDelta(sub: Array<ProtobufNode>): Array<ChatStreamDelta> {
 // ── Full frame parser ─────────────────────────────────────────────────────────
 
 export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
-  const nodes = parseMessage(frame, 0, 3)
+  // Response text fields can be large strings, not nested protobuf messages.
+  // Parse only the top level here and descend explicitly for known message
+  // fields to avoid building an object tree for arbitrary text bytes.
+  const nodes = parseMessage(frame, 0, 0)
   const deltas: Array<ChatStreamDelta> = []
   let textDone = false
   let toolCallsDone = false
+  let rawUsage: WindsurfRawUsageSignals | undefined
   let usage: ChatStreamFrame["usage"] | undefined
 
   for (const node of nodes) {
@@ -253,7 +258,7 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
 
     if (node.field === 6 && node.wire === 2 && node.raw) {
-      const sub = parseMessage(node.raw, 0, 1)
+      const sub = parseMessage(node.raw, 0, 0)
       deltas.push(...parseToolCallDelta(sub))
       continue
     }
@@ -264,8 +269,13 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
       continue
     }
 
-    if (node.field === 7 && node.wire === 2 && node.sub) {
-      const metaUsage = parseUsageFromMeta(node.sub)
+    if (node.field === 7 && node.wire === 2 && node.raw) {
+      const field7Nodes = parseMessage(node.raw, 0, 0)
+      const field7 = readField7Varints(field7Nodes)
+      if (field7) {
+        rawUsage = mergeRawUsageSignals(rawUsage, { field7 })
+      }
+      const metaUsage = parseUsageFromMeta(field7Nodes)
       if (metaUsage) {
         if (usage) {
           const prevCached = usage.cached_tokens
@@ -281,6 +291,7 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
 
     if (node.field === 33 && node.wire === 0 && node.varint !== undefined) {
+      rawUsage = mergeRawUsageSignals(rawUsage, { field33: node.varint })
       // field[33] = KV cache hits (large value, e.g. 50654). This IS the real
       // cache_read_tokens. Must set it on creation, otherwise cross-frame merge
       // in create-chat-completions.ts would only see `cached_tokens` and lose
@@ -306,12 +317,19 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
         { field: 28, wire: 2, sub: field28Nodes },
       ])
       if (tokenUsage) {
+        rawUsage = mergeRawUsageSignals(rawUsage, {
+          field28: {
+            inputTokens: tokenUsage.inputTokens,
+            outputTokens: tokenUsage.outputTokens,
+            cachedInputTokens: tokenUsage.cachedInputTokens,
+          },
+        })
         usage = mergeField28Usage(usage, tokenUsage)
       }
     }
   }
 
-  return { deltas, textDone, toolCallsDone, usage }
+  return { deltas, textDone, toolCallsDone, rawUsage, usage }
 }
 
 // ── Raw usage signals (cache debug) ───────────────────────────────────────────
@@ -346,13 +364,13 @@ function readField7Varints(
 export function extractRawUsageSignals(
   frame: Uint8Array,
 ): WindsurfRawUsageSignals | undefined {
-  const nodes = parseMessage(frame, 0, 3)
+  const nodes = parseMessage(frame, 0, 0)
   const signals: WindsurfRawUsageSignals = {}
   let hasSignal = false
 
   for (const node of nodes) {
-    if (node.field === 7 && node.wire === 2 && node.sub) {
-      const field7 = readField7Varints(node.sub)
+    if (node.field === 7 && node.wire === 2 && node.raw) {
+      const field7 = readField7Varints(parseMessage(node.raw, 0, 0))
       if (field7) {
         signals.field7 = field7
         hasSignal = true

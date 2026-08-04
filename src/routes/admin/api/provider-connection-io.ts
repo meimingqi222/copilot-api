@@ -19,6 +19,7 @@ import {
   isProviderProtocol,
   listProviderConnections,
 } from "~/lib/provider-connections"
+import { readJsonBody } from "~/lib/request-body"
 
 export const providerConnectionIoRoutes = new Hono()
 
@@ -61,7 +62,7 @@ providerConnectionIoRoutes.get("/:id/export", (c) => {
 providerConnectionIoRoutes.post("/import", async (c) => {
   let payload: unknown
   try {
-    payload = await c.req.json()
+    payload = await readJsonBody(c.req.raw)
   } catch {
     return c.json({ error: "Invalid JSON" }, 400)
   }

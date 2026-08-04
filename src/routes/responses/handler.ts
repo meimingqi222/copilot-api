@@ -10,6 +10,7 @@ import type {
 
 import { extractErrorMessage } from "~/lib/error-builder"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
@@ -37,7 +38,7 @@ type ResponsesExecutionResult =
 
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
-  const payload = await c.req.json<ResponsesPayload>()
+  const payload = await readJsonBody<ResponsesPayload>(c.req.raw)
   const messageContent = extractMessageContentFromResponsesPayload(payload)
   // Forward session_id, thread_id, and provider-specific headers from the
   // incoming request so that upstream providers can reuse cached prompt
