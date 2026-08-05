@@ -17,6 +17,12 @@ export interface AntigravityStreamState {
   upstreamFinishReason: string
   /** Accumulated thinking text across stream chunks for signature caching. */
   accumulatedThinkingText: string
+  /**
+   * Running UTF-8 size of `accumulatedThinkingText`. Measuring the whole string
+   * on every chunk flattens the accumulated rope, making a long thinking stream
+   * quadratic in both time and allocation.
+   */
+  accumulatedThinkingBytes: number
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {
@@ -108,6 +114,7 @@ export function createAntigravityStreamState(
     sawToolCall: false,
     upstreamFinishReason: "",
     accumulatedThinkingText: "",
+    accumulatedThinkingBytes: 0,
   }
 }
 
@@ -354,11 +361,12 @@ async function cacheResponseSignatures(
     // Accumulate thinking text across stream chunks
     const text = getString(part.text)
     if (text && part.thought) {
-      const next = state.accumulatedThinkingText + text
-      if (Buffer.byteLength(next) > MAX_ACCUMULATED_THINKING_BYTES) {
+      const nextBytes = state.accumulatedThinkingBytes + Buffer.byteLength(text)
+      if (nextBytes > MAX_ACCUMULATED_THINKING_BYTES) {
         throw new Error("Antigravity thinking exceeds the maximum size")
       }
-      state.accumulatedThinkingText = next
+      state.accumulatedThinkingText += text
+      state.accumulatedThinkingBytes = nextBytes
     }
 
     // Cache signature when we have both accumulated text and signature
@@ -370,6 +378,7 @@ async function cacheResponseSignatures(
     ) {
       await cacheSignature(model, state.accumulatedThinkingText, sig)
       state.accumulatedThinkingText = "" // Reset after caching
+      state.accumulatedThinkingBytes = 0
     }
   }
 }

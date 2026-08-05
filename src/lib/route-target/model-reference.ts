@@ -13,15 +13,16 @@
 import type { Account } from "~/lib/accounts"
 
 import { getAccountModelPrefix, listAccounts } from "~/lib/accounts"
+import {
+  resolveModelAlias,
+  type ModelAliasRestriction,
+} from "~/lib/model-aliases"
 import { isProviderId, type ProviderId } from "~/lib/provider-config"
 import {
   getProviderConnection,
   listProviderConnections,
 } from "~/lib/provider-connections"
-import {
-  resolveModelAlias,
-  type ModelAliasRestriction,
-} from "~/lib/model-aliases"
+import { parseThinkingModel } from "~/lib/thinking"
 
 export interface ParsedModelRef {
   /** 命中已注册 connection 时的 connection id;否则 undefined。 */
@@ -45,7 +46,7 @@ export interface ResolvedModelRouting {
 }
 
 export function parseModelRef(modelId: string): ParsedModelRef {
-  const trimmed = modelId.trim()
+  const trimmed = parseThinkingModel(modelId).model
   const slashIndex = trimmed.indexOf("/")
   if (slashIndex <= 0) {
     return { modelId: trimmed }
@@ -90,7 +91,7 @@ export function parseModelReference(
   provider?: ProviderId
   nativeModelId: string
 } {
-  const trimmed = modelId.trim()
+  const trimmed = parseThinkingModel(modelId).model
   const slashIndex = trimmed.indexOf("/")
   if (slashIndex > 0) {
     const prefix = trimmed.slice(0, slashIndex)
@@ -121,30 +122,27 @@ export function resolveModelRouting(
   accounts: Array<Account> = listAccounts(),
 ): ResolvedModelRouting {
   const ref = parseModelRef(modelId)
+  const baseModelId = parseThinkingModel(modelId).model
   let accountPrefix: string | undefined
   let aliasModelId = ref.modelId
   if (!ref.connectionId && !ref.legacyProvider) {
-    const slashIndex = modelId.indexOf("/")
-    if (slashIndex > 0) {
-      const prefix = modelId.slice(0, slashIndex)
-      const rest = modelId.slice(slashIndex + 1).trim()
-      if (rest) {
-        for (const account of accounts) {
-          if (
-            getAccountModelPrefix(account).toLowerCase() === prefix.toLowerCase()
-          ) {
-            accountPrefix = prefix
-            aliasModelId = rest
-            break
-          }
-        }
-      }
+    const slashIndex = baseModelId.indexOf("/")
+    const prefix = slashIndex > 0 ? baseModelId.slice(0, slashIndex) : ""
+    const rest = slashIndex > 0 ? baseModelId.slice(slashIndex + 1).trim() : ""
+    const matchingAccount =
+      rest ?
+        accounts.find(
+          (account) =>
+            getAccountModelPrefix(account).toLowerCase()
+            === prefix.toLowerCase(),
+        )
+      : undefined
+    if (matchingAccount && rest) {
+      accountPrefix = prefix
+      aliasModelId = rest
     }
   }
-  const alias = resolveModelAlias(
-    aliasModelId,
-    ref.connectionId,
-  )
+  const alias = resolveModelAlias(aliasModelId, ref.connectionId)
   if (ref.connectionId || ref.legacyProvider) {
     return {
       connectionId: ref.connectionId,

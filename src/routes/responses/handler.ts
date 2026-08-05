@@ -17,6 +17,10 @@ import {
   forwardSseEvent,
   writeSseEvent,
 } from "~/lib/sse"
+import {
+  parseThinkingModel,
+  thinkingConfigToResponsesEffort,
+} from "~/lib/thinking"
 import { identityFromAdmission } from "~/lib/usage"
 import {
   applyUsageIdentity,
@@ -39,7 +43,27 @@ type ResponsesExecutionResult =
 export async function handleResponses(c: Context) {
   const signal = c.req.raw.signal
   const payload = await readJsonBody<ResponsesPayload>(c.req.raw)
-  const messageContent = extractMessageContentFromResponsesPayload(payload)
+  const parsedThinkingModel = parseThinkingModel(payload.model)
+  const suffixEffort =
+    parsedThinkingModel.config ?
+      thinkingConfigToResponsesEffort(parsedThinkingModel.config)
+    : undefined
+  let effectivePayload: ResponsesPayload = payload
+  if (parsedThinkingModel.config) {
+    effectivePayload = {
+      ...payload,
+      model: parsedThinkingModel.model,
+    }
+    effectivePayload.reasoning =
+      suffixEffort ?
+        {
+          effort: suffixEffort,
+          summary: payload.reasoning?.summary,
+        }
+      : undefined
+  }
+  const messageContent =
+    extractMessageContentFromResponsesPayload(effectivePayload)
   // Forward session_id, thread_id, and provider-specific headers from the
   // incoming request so that upstream providers can reuse cached prompt
   // prefixes across turns within the same session. Without a stable
@@ -67,23 +91,23 @@ export async function handleResponses(c: Context) {
 
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
-    model: payload.model,
+    model: effectivePayload.model,
     endpoint: "responses",
     maxTokens:
-      typeof payload.max_output_tokens === "number" ?
-        payload.max_output_tokens
+      typeof effectivePayload.max_output_tokens === "number" ?
+        effectivePayload.max_output_tokens
       : undefined,
-    stream: payload.stream === true ? true : undefined,
-    inferredInitiator: inferInitiatorFromResponsesPayload(payload),
+    stream: effectivePayload.stream === true ? true : undefined,
+    inferredInitiator: inferInitiatorFromResponsesPayload(effectivePayload),
     messageContent,
     sessionHeaders: forwardedHeaders,
-    sessionPayload: payload,
+    sessionPayload: effectivePayload,
   })
 
   // Dispatch all admissions through the unified failover path so the usage
   // identity always describes the target that actually completed the request.
   const executeRequest = (): Promise<ResponsesExecutionResult> =>
-    dispatchResponses(payload, admission, signal, c, {
+    dispatchResponses(effectivePayload, admission, signal, c, {
       initiator: admission.initiator,
       forwardedHeaders,
     }) as Promise<ResponsesExecutionResult>

@@ -397,8 +397,16 @@ async function* streamToOpenAI(
 
 // ── Non-streaming collector ────────────────────────────────────────────────────
 
+interface CollectedToolCall {
+  id: string
+  name: string
+  arguments: string
+  /** Running UTF-8 size of `arguments`, to avoid re-measuring it per delta. */
+  argumentBytes: number
+}
+
 function updateToolCalls(
-  toolCallMap: Map<number, { id: string; name: string; arguments: string }>,
+  toolCallMap: Map<number, CollectedToolCall>,
   deltaToolCalls: Array<{
     index: number
     id?: string
@@ -407,25 +415,27 @@ function updateToolCalls(
 ): void {
   for (const tc of deltaToolCalls) {
     if (tc.id && tc.function?.name !== undefined) {
+      const args = tc.function.arguments ?? ""
+      const argumentBytes = Buffer.byteLength(args)
+      if (argumentBytes > MAX_COLLECTED_RESPONSE_BYTES) {
+        throw new Error("Windsurf tool arguments exceed the maximum size")
+      }
       toolCallMap.set(tc.index, {
         id: tc.id,
         name: tc.function.name ?? "",
-        arguments: tc.function.arguments ?? "",
+        arguments: args,
+        argumentBytes,
       })
-      if (
-        Buffer.byteLength(tc.function.arguments ?? "")
-        > MAX_COLLECTED_RESPONSE_BYTES
-      ) {
-        throw new Error("Windsurf tool arguments exceed the maximum size")
-      }
     } else if (tc.function?.arguments !== undefined) {
       const existing = toolCallMap.get(tc.index)
       if (existing) {
-        const nextArguments = existing.arguments + tc.function.arguments
-        if (Buffer.byteLength(nextArguments) > MAX_COLLECTED_RESPONSE_BYTES) {
+        const nextBytes =
+          existing.argumentBytes + Buffer.byteLength(tc.function.arguments)
+        if (nextBytes > MAX_COLLECTED_RESPONSE_BYTES) {
           throw new Error("Windsurf tool arguments exceed the maximum size")
         }
-        existing.arguments = nextArguments
+        existing.arguments += tc.function.arguments
+        existing.argumentBytes = nextBytes
       }
     }
   }
@@ -439,6 +449,10 @@ async function collectChatCompletion(
   let text = ""
   let reasoningText = ""
   let reasoningOpaque = ""
+  // Running total of the three accumulators above. Calling Buffer.byteLength on
+  // them once per chunk flattens each rope, which turns a long reasoning stream
+  // into O(n^2) allocation.
+  let collectedBytes = 0
   let sawContentPart = false
   let hasReasoningAfterContent = false
   let orderedPartsComplete = true
@@ -447,10 +461,7 @@ async function collectChatCompletion(
   let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
   let usage: ChatCompletionResponse["usage"] | undefined
 
-  const toolCallMap = new Map<
-    number,
-    { id: string; name: string; arguments: string }
-  >()
+  const toolCallMap = new Map<number, CollectedToolCall>()
 
   for await (const event of streamToOpenAI(response, model, cacheDebug)) {
     if (!event.data || event.data === "[DONE]") continue
@@ -477,6 +488,8 @@ async function collectChatCompletion(
     const reasoningDelta = chunk.choices?.[0]?.delta?.reasoning_text ?? ""
     text += contentDelta
     reasoningText += reasoningDelta
+    collectedBytes +=
+      Buffer.byteLength(contentDelta) + Buffer.byteLength(reasoningDelta)
     if (contentDelta) {
       sawContentPart = true
     }
@@ -505,6 +518,7 @@ async function collectChatCompletion(
     }
     const signatureDelta = chunk.choices?.[0]?.delta?.reasoning_opaque ?? ""
     reasoningOpaque += signatureDelta
+    collectedBytes += Buffer.byteLength(signatureDelta)
     if (signatureDelta && orderedPartsComplete) {
       const previous = orderedParts.at(-1)
       if (
@@ -516,12 +530,7 @@ async function collectChatCompletion(
         orderedPartsBytes += Buffer.byteLength(signatureDelta)
       }
     }
-    if (
-      Buffer.byteLength(text)
-        + Buffer.byteLength(reasoningText)
-        + Buffer.byteLength(reasoningOpaque)
-      > MAX_COLLECTED_RESPONSE_BYTES
-    ) {
+    if (collectedBytes > MAX_COLLECTED_RESPONSE_BYTES) {
       throw new Error("Windsurf response exceeds the maximum size")
     }
     usage = chunk.usage ?? usage

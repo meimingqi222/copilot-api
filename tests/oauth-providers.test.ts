@@ -10,6 +10,7 @@ import {
   parseModelReference,
 } from "~/lib/accounts"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
+import { parseThinkingModel } from "~/lib/thinking"
 import { getCodexModelsForAccount } from "~/services/codex/get-models"
 import { getOAuthCatalogModels } from "~/services/oauth/discover-models"
 import { getOAuthFallbackModels } from "~/services/oauth/model-catalog"
@@ -95,6 +96,25 @@ describe("OAuth model prefix helpers", () => {
       settings: { modelPrefix: "work" },
     })
     expect(getAccountModelPrefix(account)).toBe("work")
+  })
+
+  test("parses thinking suffixes without changing ordinary model ids", () => {
+    expect(parseThinkingModel("gpt-5(high)")).toEqual({
+      model: "gpt-5",
+      config: { mode: "level", effort: "high" },
+    })
+    expect(parseThinkingModel("claude-sonnet-4(16384)")).toEqual({
+      model: "claude-sonnet-4",
+      config: { mode: "budget", budget: 16384 },
+    })
+    expect(parseThinkingModel("provider/model(high)")).toEqual({
+      model: "provider/model",
+      config: { mode: "level", effort: "high" },
+    })
+    expect(parseThinkingModel("gpt-5")).toEqual({ model: "gpt-5" })
+    expect(parseThinkingModel("gpt-5(unknown)")).toEqual({
+      model: "gpt-5(unknown)",
+    })
   })
 
   test("parseModelReference strips provider and custom prefixes", () => {

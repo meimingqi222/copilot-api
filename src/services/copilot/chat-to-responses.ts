@@ -26,27 +26,14 @@ import {
   getIncompleteDetails,
   getResponsesReasoning,
 } from "~/services/copilot/chat-to-responses-response"
-
-const MAX_CHAT_TO_RESPONSES_BUFFER_BYTES = 32 * 1024 * 1024
-
-interface ChatToResponsesToolCallState {
-  arguments: string
-  id: string
-  name: string
-}
-
-interface ChatToResponsesStreamState {
-  createdAt: number
-  createdSent: boolean
-  messageOutputAdded: boolean
-  model: string
-  outputText: string
-  reasoningText: string
-  request: ResponsesPayload
-  responseId: string
-  toolCalls: Map<number, ChatToResponsesToolCallState>
-  usage?: ResponsesUsage
-}
+import {
+  appendContentDelta,
+  appendReasoningDelta,
+  appendToolCallDeltas,
+  type ChatToResponsesStreamState,
+  createChatToResponsesStreamState,
+  getReasoningDelta,
+} from "~/services/copilot/chat-to-responses-stream-state"
 
 interface BuildResponsesOutputInput {
   outputTextParts: Array<{ type: "output_text"; text: string }>
@@ -217,22 +204,6 @@ function buildCompletedResponsesObject(
   }
 }
 
-function createChatToResponsesStreamState(
-  request: ResponsesPayload,
-): ChatToResponsesStreamState {
-  return {
-    createdAt: Math.floor(Date.now() / 1000),
-    createdSent: false,
-    messageOutputAdded: false,
-    model: request.model,
-    outputText: "",
-    reasoningText: "",
-    request,
-    responseId: `resp_${Math.random().toString(36).slice(2)}`,
-    toolCalls: new Map(),
-  }
-}
-
 function updateChatToResponsesStateFromChunk(
   state: ChatToResponsesStreamState,
   chunk: ChatCompletionChunk,
@@ -248,55 +219,6 @@ function updateChatToResponsesStateFromChunk(
   appendContentDelta(state, delta.content)
   appendReasoningDelta(state, delta)
   appendToolCallDeltas(state, delta.tool_calls)
-}
-
-function appendContentDelta(
-  state: ChatToResponsesStreamState,
-  content: string | null | undefined,
-): void {
-  if (content) {
-    const next = state.outputText + content
-    if (Buffer.byteLength(next) > MAX_CHAT_TO_RESPONSES_BUFFER_BYTES) {
-      throw new Error("Chat completion output exceeds the maximum size")
-    }
-    state.outputText = next
-  }
-}
-
-function appendReasoningDelta(
-  state: ChatToResponsesStreamState,
-  delta: ChatCompletionChunk["choices"][number]["delta"],
-): void {
-  const reasoningDelta = getReasoningDelta(delta)
-  if (reasoningDelta) {
-    const next = state.reasoningText + reasoningDelta
-    if (Buffer.byteLength(next) > MAX_CHAT_TO_RESPONSES_BUFFER_BYTES) {
-      throw new Error("Chat reasoning exceeds the maximum size")
-    }
-    state.reasoningText = next
-  }
-}
-
-function appendToolCallDeltas(
-  state: ChatToResponsesStreamState,
-  toolCalls: ChatCompletionChunk["choices"][number]["delta"]["tool_calls"],
-): void {
-  if (!toolCalls) {
-    return
-  }
-
-  for (const toolCall of toolCalls) {
-    const existing = state.toolCalls.get(toolCall.index)
-    const argumentsText = `${existing?.arguments ?? ""}${toolCall.function?.arguments ?? ""}`
-    if (Buffer.byteLength(argumentsText) > MAX_CHAT_TO_RESPONSES_BUFFER_BYTES) {
-      throw new Error("Chat tool arguments exceed the maximum size")
-    }
-    state.toolCalls.set(toolCall.index, {
-      id: toolCall.id ?? existing?.id ?? `call_${toolCall.index}`,
-      name: toolCall.function?.name ?? existing?.name ?? "unknown_function",
-      arguments: argumentsText,
-    })
-  }
 }
 
 function updateResponsesUsage(
@@ -567,20 +489,6 @@ function createToolCallDeltaEvent(
     output_index: outputIndex,
     delta: toolCall.function?.arguments,
   }
-}
-
-function getReasoningDelta(
-  delta: ChatCompletionChunk["choices"][number]["delta"],
-): string {
-  // Alias chain aligned with anthropic/stream-translation.ts getThinkingDelta:
-  // includes reasoning_content so DeepSeek/Kimi/xAI-style deltas are captured.
-  return (
-    delta.reasoning_text
-    ?? delta.reasoning_content
-    ?? delta.reasoning
-    ?? delta.thinking
-    ?? ""
-  )
 }
 
 function translateToolChoice(
