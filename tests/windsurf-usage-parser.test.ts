@@ -66,6 +66,27 @@ function buildFramePayload(): Uint8Array {
 }
 
 describe("parseChatStreamFrame - UsageMetadata field mapping", () => {
+  test("parses reasoning_text field[9] alongside content deltas", () => {
+    const frame = new Uint8Array(
+      Buffer.concat([
+        encodeLengthDelimited(3, Buffer.from("visible")),
+        encodeLengthDelimited(9, Buffer.from("thinking")),
+        encodeLengthDelimited(10, Buffer.from("signature")),
+      ]),
+    )
+
+    expect(parseChatStreamFrame(frame).deltas).toEqual([
+      { kind: "content", text: "visible" },
+      { kind: "reasoning_text", text: "thinking" },
+      { kind: "reasoning_signature", text: "signature" },
+    ])
+  })
+
+  test("maps max-token stop reason from field[5]", () => {
+    const frame = new Uint8Array(encodeVarintField(5, 3))
+    expect(parseChatStreamFrame(frame).finishReason).toBe("length")
+  })
+
   test("maps field[2]/[3] to prompt/completion (not field[3] as cache)", () => {
     const parsed = parseChatStreamFrame(buildFramePayload())
     const usage = parsed.usage

@@ -7,6 +7,7 @@ import { parseMessage } from "./protobuf"
 export type ChatStreamDelta =
   | { kind: "content"; text: string }
   | { kind: "reasoning_text"; text: string }
+  | { kind: "reasoning_signature"; text: string }
   | { kind: "tool_call_init"; callId: string; toolName: string }
   | { kind: "tool_call_args"; args: string; callId?: string }
 
@@ -16,6 +17,8 @@ export interface ChatStreamFrame {
   textDone: boolean
   /** tool call generation finished (field 5 = varint 10) */
   toolCallsDone: boolean
+  /** upstream stop reason mapped from field 5 */
+  finishReason?: "stop" | "length" | "content_filter"
   rawUsage?: WindsurfRawUsageSignals
   usage?: {
     prompt_tokens: number
@@ -241,6 +244,7 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
   const deltas: Array<ChatStreamDelta> = []
   let textDone = false
   let toolCallsDone = false
+  let finishReason: ChatStreamFrame["finishReason"]
   let rawUsage: WindsurfRawUsageSignals | undefined
   let usage: ChatStreamFrame["usage"] | undefined
 
@@ -257,6 +261,14 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
       continue
     }
 
+    if (node.field === 10 && node.wire === 2 && node.raw) {
+      const signature = decodeFrameText(node.raw)
+      if (signature) {
+        deltas.push({ kind: "reasoning_signature", text: signature })
+      }
+      continue
+    }
+
     if (node.field === 6 && node.wire === 2 && node.raw) {
       const sub = parseMessage(node.raw, 0, 0)
       deltas.push(...parseToolCallDelta(sub))
@@ -264,8 +276,29 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
 
     if (node.field === 5 && node.wire === 0) {
-      if (node.varint === 2) textDone = true
-      else if (node.varint === 10) toolCallsDone = true
+      switch (node.varint) {
+        case 1:
+        case 2: {
+          textDone = true
+          finishReason = "stop"
+          break
+        }
+        case 3: {
+          finishReason = "length"
+          break
+        }
+        case 10: {
+          toolCallsDone = true
+          break
+        }
+        case 11: {
+          finishReason = "content_filter"
+          break
+        }
+        default: {
+          break
+        }
+      }
       continue
     }
 
@@ -329,7 +362,7 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
     }
   }
 
-  return { deltas, textDone, toolCallsDone, rawUsage, usage }
+  return { deltas, textDone, toolCallsDone, finishReason, rawUsage, usage }
 }
 
 // ── Raw usage signals (cache debug) ───────────────────────────────────────────

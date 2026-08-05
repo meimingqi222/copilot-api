@@ -47,6 +47,8 @@ message ChatMessage {
   repeated ChatToolCall tool_calls = 6;
   string tool_call_id          = 7;  // tool result correlation
   string reasoning_text        = 11; // thinking (assistant only)
+  string reasoning_signature   = 12; // thinking signature (assistant only)
+  string signature_type        = 18;
 }
 
 // ========================================================================
@@ -128,9 +130,10 @@ message ChatMessagePrompt {
 // Parsed by: src/services/windsurf/response-parsers.ts
 message RawChatMessage {
   string         content         = 3;   // text delta
-  int32          status          = 5;   // 2=text_done, 10=tool_calls_done
+  int32          status          = 5;   // StopReason enum: 2=stop, 3=max_tokens, 10=function_call
   ChatToolCall   tool_call       = 6;   // tool call delta
   UsageMetadata  usage           = 7;   // token usage
+  string         reasoning_signature = 10; // thinking signature
   string         reasoning_text  = 9;   // thinking delta
   repeated Section sections      = 28;  // perf / KV-cache sections
   int32          cached_tokens   = 33;  // KV cache hits

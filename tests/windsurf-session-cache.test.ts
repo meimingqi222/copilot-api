@@ -58,6 +58,15 @@ describe("windsurf session cache", () => {
     expect(key).toEqual({ key: "session-abc", persistent: true })
   })
 
+  test("uses Claude Code session headers for Messages requests", () => {
+    const key = resolveWindsurfConversationKey({
+      forwardedHeaders: {
+        "x-claude-code-session-id": "claude-session-1",
+      },
+    })
+    expect(key).toEqual({ key: "claude-session-1", persistent: true })
+  })
+
   test("uses body prompt_cache_key when headers absent", () => {
     const key = resolveWindsurfConversationKey({
       promptCacheKey: "cache-body-1",

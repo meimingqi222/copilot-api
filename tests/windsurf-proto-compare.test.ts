@@ -30,6 +30,21 @@ function metadataFields(payload: Uint8Array): Array<number> {
   return (meta?.sub ?? []).map((n) => n.field).sort((a, b) => a - b)
 }
 
+function assistantMessageFields(payload: Uint8Array): Array<number> {
+  const message = parseMessage(payload, 0, 6).find(
+    (n) => n.field === 3 && n.sub,
+  )
+  return (message?.sub ?? []).map((n) => n.field).sort((a, b) => a - b)
+}
+
+function assistantMessageId(payload: Uint8Array): string | undefined {
+  const message = parseMessage(payload, 0, 6).find(
+    (n) => n.field === 3 && n.sub,
+  )
+  const id = message?.sub?.find((n) => n.field === 1)
+  return id?.raw ? new TextDecoder().decode(id.raw) : undefined
+}
+
 describe("Windsurf proto — buildRequest fingerprint", () => {
   const basePayload: ChatCompletionsPayload = {
     model: "swe-1-6",
@@ -98,7 +113,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(top).not.toContain(17)
   })
 
-  test("sends do_not_call tool when no tools are provided", () => {
+  test("omits tools when no tools are provided", () => {
     const payload: ChatCompletionsPayload = {
       model: "swe-1-6",
       messages: [{ role: "user", content: "hello" }],
@@ -113,7 +128,99 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     })
 
     const fp = fingerprintWindsurfRequest(built)
-    expect(fp.toolCount).toBe(1)
+    expect(fp.toolCount).toBe(0)
+  })
+
+  test("forwards historical reasoning_content as reasoning_text", () => {
+    const payload: ChatCompletionsPayload = {
+      ...basePayload,
+      messages: [
+        {
+          role: "assistant",
+          content: "answer",
+          reasoning_content: "private reasoning",
+        },
+      ],
+    }
+
+    const built = buildRequest({
+      payload,
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageFields(decodeFramedPayload(built))).toContain(11)
+    expect(assistantMessageId(decodeFramedPayload(built))).toMatch(/^bot-/)
+  })
+
+  test("keeps reasoning-only assistant history", () => {
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            reasoning_content: "private reasoning",
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageFields(decodeFramedPayload(built))).toContain(11)
+  })
+
+  test("forwards historical reasoning signatures in the correct field", () => {
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: "answer",
+            reasoning_content: "private reasoning",
+            signature: "sig-1",
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageFields(decodeFramedPayload(built))).toEqual([
+      1, 2, 3, 11, 12,
+    ])
+  })
+
+  test("extracts signatures from reasoning content parts", () => {
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "private reasoning",
+                signature: "sig-2",
+              },
+              { type: "text", text: "answer" },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageFields(decodeFramedPayload(built))).toContain(12)
   })
 
   test("normalizes bare apiKey to devin-session-token$ prefix", () => {

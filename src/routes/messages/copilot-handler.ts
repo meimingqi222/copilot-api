@@ -53,11 +53,14 @@ interface HandleCopilotApiOpts {
   anthropicPayload: AnthropicMessagesPayload
   signal: AbortSignal
   admission: RequestAdmission
+  forwardedHeaders?: Record<string, string | undefined>
 }
 
 export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
-  const { c, anthropicPayload, signal, admission } = opts
-  const openAIPayload = translateToOpenAI(anthropicPayload)
+  const { c, anthropicPayload, signal, admission, forwardedHeaders } = opts
+  const openAIPayload = translateToOpenAI(anthropicPayload, {
+    preserveHistoricalReasoning: admission.target.protocol !== "copilot-native",
+  })
   if (logger.level >= 4) {
     logger.debug(
       "Translated OpenAI request payload:",
@@ -77,6 +80,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
         admission,
         signal,
         c,
+        { forwardedHeaders },
       )
     } catch (error) {
       if (error instanceof HTTPError && isContextWindowError(error)) {
@@ -116,6 +120,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
         admission,
         sseSignal,
         c,
+        { forwardedHeaders },
       )
     } catch (error) {
       const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")

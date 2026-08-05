@@ -4,9 +4,27 @@ export function chunkFromText(opts: {
   requestId: string
   model: string
   text: string
-  field: "content" | "reasoning_text"
+  field: "content" | "reasoning_text" | "reasoning_opaque"
 }): string {
   const { requestId, model, text, field } = opts
+  let delta: Record<string, string>
+  switch (field) {
+    case "content": {
+      delta = { content: text }
+      break
+    }
+    case "reasoning_text": {
+      delta = { reasoning_text: text }
+      break
+    }
+    case "reasoning_opaque": {
+      delta = { reasoning_opaque: text }
+      break
+    }
+    default: {
+      throw new Error("Unsupported Windsurf chunk field")
+    }
+  }
   return JSON.stringify({
     id: requestId,
     object: "chat.completion.chunk",
@@ -15,8 +33,7 @@ export function chunkFromText(opts: {
     choices: [
       {
         index: 0,
-        delta:
-          field === "content" ? { content: text } : { reasoning_text: text },
+        delta,
         finish_reason: null,
         logprobs: null,
       },
@@ -85,7 +102,7 @@ export function chunkFromToolCallArgs(opts: {
 export function doneChunk(opts: {
   requestId: string
   model: string
-  finishReason: "stop" | "tool_calls"
+  finishReason: "stop" | "length" | "tool_calls" | "content_filter"
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number

@@ -340,7 +340,7 @@ describe("Anthropic thinking and model mapping", () => {
         {
           role: "assistant",
           content: [
-            { type: "thinking", thinking: "step 1" },
+            { type: "thinking", thinking: "step 1", signature: "sig-1" },
             { type: "text", text: "thought done" },
           ],
         },
@@ -365,6 +365,7 @@ describe("Anthropic thinking and model mapping", () => {
       role: "assistant",
       content: "thought done",
       reasoning_content: "step 1",
+      signature: "sig-1",
     })
   })
 

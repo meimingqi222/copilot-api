@@ -230,8 +230,8 @@ export interface AnthropicStreamState {
   // Buffer for thinking content that arrives before signature
   // (Copilot sends reasoning first, signature later)
   bufferedThinking: string
-  // Once visible text starts before a thinking signature arrives, we can no
-  // longer emit a compliant thinking block for the buffered reasoning.
+  // A signature that arrives after unsigned thinking has already been closed
+  // is not safely attributable to that block. A new reasoning delta resets it.
   suppressLateThinking: boolean
   toolCalls: {
     [openAIToolIndex: number]: {

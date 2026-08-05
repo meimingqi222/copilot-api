@@ -102,5 +102,6 @@ export async function handleCompletion(c: Context) {
     anthropicPayload,
     signal,
     admission,
+    forwardedHeaders,
   })
 }
