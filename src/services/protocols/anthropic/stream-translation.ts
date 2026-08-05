@@ -167,6 +167,7 @@ function flushBufferedThinking(
 
   ensureThinkingBlockOpen(state, events, state.bufferedThinking)
   state.bufferedThinking = ""
+  state.bufferedThinkingBytes = 0
 }
 
 function appendBufferedThinking(
@@ -174,11 +175,17 @@ function appendBufferedThinking(
   events: Array<AnthropicStreamEventData>,
   thinking: string,
 ): void {
+  // Track the size incrementally. Re-measuring `state.bufferedThinking` on
+  // every delta forces the accumulated rope to flatten, so a provider that
+  // sends its signature only at the end of a long reasoning stream (Windsurf)
+  // reallocates the whole buffer once per token.
+  const thinkingBytes = Buffer.byteLength(thinking)
   if (
-    Buffer.byteLength(state.bufferedThinking) + Buffer.byteLength(thinking)
+    state.bufferedThinkingBytes + thinkingBytes
     <= MAX_BUFFERED_THINKING_BYTES
   ) {
     state.bufferedThinking += thinking
+    state.bufferedThinkingBytes += thinkingBytes
     return
   }
 
@@ -295,6 +302,7 @@ export function translateChunkToAnthropicEvents(
     // Per Anthropic spec, signature goes only via signature_delta, not in start event.
     ensureThinkingBlockOpen(state, events, state.bufferedThinking || undefined)
     state.bufferedThinking = "" // Clear buffer after flushing
+    state.bufferedThinkingBytes = 0
 
     if (thinkingDelta.thinking) {
       events.push({

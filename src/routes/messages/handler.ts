@@ -3,6 +3,11 @@ import type { Context } from "hono"
 import { logger } from "~/lib/logger"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
+import {
+  parseThinkingModel,
+  thinkingConfigToAnthropic,
+  thinkingConfigToReasoningEffort,
+} from "~/lib/thinking"
 import { supportsMessagesApi } from "~/services/copilot/responses-api"
 import {
   extractMessageContentFromAnthropicPayload,
@@ -25,8 +30,20 @@ export async function handleCompletion(c: Context) {
   const anthropicPayload = await readJsonBody<AnthropicMessagesPayload>(
     c.req.raw,
   )
+  const parsedThinkingModel = parseThinkingModel(anthropicPayload.model)
+  const effectivePayload: AnthropicMessagesPayload =
+    parsedThinkingModel.config ?
+      {
+        ...anthropicPayload,
+        model: parsedThinkingModel.model,
+        ...thinkingConfigToAnthropic(parsedThinkingModel.config),
+        reasoning_effort: thinkingConfigToReasoningEffort(
+          parsedThinkingModel.config,
+        ),
+      }
+    : anthropicPayload
   const messageContent =
-    extractMessageContentFromAnthropicPayload(anthropicPayload)
+    extractMessageContentFromAnthropicPayload(effectivePayload)
 
   const anthropicBeta = c.req.header("anthropic-beta")
   const anthropicVersion = c.req.header("anthropic-version")
@@ -44,24 +61,24 @@ export async function handleCompletion(c: Context) {
 
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
-    model: anthropicPayload.model,
+    model: effectivePayload.model,
     endpoint: "messages",
     maxTokens:
-      typeof anthropicPayload.max_tokens === "number" ?
-        anthropicPayload.max_tokens
+      typeof effectivePayload.max_tokens === "number" ?
+        effectivePayload.max_tokens
       : undefined,
-    stream: anthropicPayload.stream === true ? true : undefined,
+    stream: effectivePayload.stream === true ? true : undefined,
     inferredInitiator: inferInitiatorFromAnthropicMessages(
-      anthropicPayload.messages,
+      effectivePayload.messages,
       anthropicBeta,
     ),
     messageContent,
     sessionHeaders: forwardedHeaders,
-    sessionPayload: anthropicPayload,
+    sessionPayload: effectivePayload,
   })
 
   if (logger.level >= 4) {
-    logger.debug("Anthropic request payload:", JSON.stringify(anthropicPayload))
+    logger.debug("Anthropic request payload:", JSON.stringify(effectivePayload))
   }
 
   // Copilot's native Messages API uses the unified dispatch path so failover
@@ -69,11 +86,11 @@ export async function handleCompletion(c: Context) {
   if (
     admission.account
     && admission.account.provider === "copilot"
-    && supportsMessagesApi(anthropicPayload.model, admission.account)
+    && supportsMessagesApi(effectivePayload.model, admission.account)
   ) {
     return handleAnthropicViaConnection({
       c,
-      anthropicPayload,
+      anthropicPayload: effectivePayload,
       signal,
       admission,
       anthropicBeta,
@@ -87,7 +104,7 @@ export async function handleCompletion(c: Context) {
   if (NATIVE_MESSAGES_PROTOCOLS.has(admission.target.protocol)) {
     return handleAnthropicViaConnection({
       c,
-      anthropicPayload,
+      anthropicPayload: effectivePayload,
       signal,
       admission,
       anthropicBeta,
@@ -99,7 +116,7 @@ export async function handleCompletion(c: Context) {
   // Fallback: translate Anthropic → OpenAI and dispatch as chat completions
   return handleCopilotApi({
     c,
-    anthropicPayload,
+    anthropicPayload: effectivePayload,
     signal,
     admission,
     forwardedHeaders,

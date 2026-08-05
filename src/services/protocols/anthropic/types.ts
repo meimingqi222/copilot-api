@@ -230,6 +230,10 @@ export interface AnthropicStreamState {
   // Buffer for thinking content that arrives before signature
   // (Copilot sends reasoning first, signature later)
   bufferedThinking: string
+  // Running UTF-8 size of `bufferedThinking`. Measuring the accumulated string
+  // on every delta is O(n) per chunk (it flattens the rope), which makes a long
+  // reasoning stream quadratic in both time and allocation.
+  bufferedThinkingBytes: number
   // A signature that arrives after unsigned thinking has already been closed
   // is not safely attributable to that block. A new reasoning delta resets it.
   suppressLateThinking: boolean
@@ -261,6 +265,7 @@ export function createInitialStreamState(): AnthropicStreamState {
     contentBlockOpen: false,
     currentContentBlockType: undefined,
     bufferedThinking: "",
+    bufferedThinkingBytes: 0,
     suppressLateThinking: false,
     toolCalls: {},
     estimatedInputTokens: 0,

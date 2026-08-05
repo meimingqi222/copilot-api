@@ -10,6 +10,10 @@ import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
+import {
+  parseThinkingModel,
+  thinkingConfigToReasoningEffort,
+} from "~/lib/thinking"
 import { computeStreamingTiming } from "~/lib/timing"
 import { getTokenCount } from "~/lib/tokenizer"
 import { applyUsageIdentity, recordUsage } from "~/lib/usage"
@@ -77,15 +81,17 @@ export async function handleCompletion(c: Context) {
     logger.debug("Request payload:", JSON.stringify(payload).slice(-400))
   }
 
-  // Normalize model name (e.g., "z-ai/glm5" -> "z-ai/glm-5.1")
-  const normalizedModel = payload.model ? canonicalModelId(payload.model) : ""
+  const parsedThinkingModel = parseThinkingModel(payload.model)
+  const suffixEffort =
+    parsedThinkingModel.config ?
+      thinkingConfigToReasoningEffort(parsedThinkingModel.config)
+    : undefined
+  const normalizedModel =
+    payload.model ? canonicalModelId(parsedThinkingModel.model) : ""
   payload = {
     ...payload,
-    model:
-      normalizedModel
-      // Use a Copilot-compatible default model (with vendor prefix)
-      // This model ID is recognized by Copilot's backend
-      || "gpt-5-mini",
+    model: normalizedModel || "gpt-5-mini",
+    ...(parsedThinkingModel.config ? { reasoning_effort: suffixEffort } : {}),
   }
 
   const messageContent =
