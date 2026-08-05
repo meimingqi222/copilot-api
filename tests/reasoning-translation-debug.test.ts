@@ -301,7 +301,6 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
         bufferedThinking: state.bufferedThinking,
         contentBlockOpen: state.contentBlockOpen,
         currentContentBlockType: state.currentContentBlockType,
-        suppressLateThinking: state.suppressLateThinking,
       }),
     )
 
@@ -329,7 +328,6 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
       "State after text chunk:",
       JSON.stringify({
         bufferedThinking: state.bufferedThinking,
-        suppressLateThinking: state.suppressLateThinking,
       }),
     )
 
@@ -375,32 +373,8 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
     console.log("Thinking block starts:", thinkingEvents.length)
     console.log("Thinking deltas:", thinkingDeltas.length)
 
-    if (thinkingEvents.length === 0) {
-      console.log("❌ PROBLEM: No thinking blocks in streaming response!")
-      console.log(
-        "   Root cause: Responses API models (gpt-5.1-codex-mini) send",
-      )
-      console.log(
-        "   reasoning_text WITHOUT a signature. The stream translation",
-      )
-      console.log(
-        "   buffers thinking content waiting for a signature that never",
-      )
-      console.log(
-        "   arrives. When text content starts, the buffered thinking is",
-      )
-      console.log(
-        "   DISCARDED (see 'Discarding N chars of unsigned reasoning').",
-      )
-      console.log("")
-      console.log(
-        "   The signature requirement exists because Anthropic protocol",
-      )
-      console.log(
-        "   needs signed thinking blocks. But OpenAI reasoning models",
-      )
-      console.log("   never provide signatures - their reasoning is plaintext.")
-    }
+    expect(thinkingEvents.length).toBeGreaterThan(0)
+    expect(thinkingDeltas.length).toBeGreaterThan(0)
   })
 
   // ============================================================
@@ -455,15 +429,13 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
 
     const textEvents = translateChunkToAnthropicEvents(textChunk, state)
     console.log("Events after text:", JSON.stringify(textEvents, null, 2))
-    console.log("suppressLateThinking:", state.suppressLateThinking)
-
-    if (state.suppressLateThinking) {
-      console.log("")
-      console.log(
-        "❌ CONFIRMED: reasoning_content is buffered but then discarded",
-      )
-      console.log("   because no signature arrives before text content.")
-    }
+    expect(
+      textEvents.some(
+        (event) =>
+          event.type === "content_block_delta"
+          && event.delta.type === "text_delta",
+      ),
+    ).toBe(true)
   })
 
   // ============================================================
@@ -503,17 +475,8 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
     console.log("Events:", JSON.stringify(events, null, 2))
     console.log("Buffered thinking:", JSON.stringify(state.bufferedThinking))
 
-    if (state.bufferedThinking === "" && events.length <= 1) {
-      console.log(
-        "❌ PROBLEM: reasoning_content is NOT recognized by getThinkingDelta!",
-      )
-      console.log(
-        "   getThinkingDelta checks: reasoning_text, thinking, reasoning",
-      )
-      console.log(
-        "   But NOT reasoning_content, which is what Responses API translation produces.",
-      )
-    }
+    expect(events.length).toBeGreaterThan(0)
+    expect(state.bufferedThinking).toBe("Important reasoning here")
   })
 
   // ============================================================
@@ -557,13 +520,6 @@ describe("Reasoning translation diagnosis for Responses API models", () => {
     )
     console.log("Thinking blocks:", thinkingBlocks.length)
 
-    if (thinkingBlocks.length === 0) {
-      console.log(
-        "❌ PROBLEM: reasoning_content is NOT picked up by addTopLevelReasoningBlocks!",
-      )
-      console.log(
-        "   It checks: reasoning_text, thinking, reasoning - but NOT reasoning_content",
-      )
-    }
+    expect(thinkingBlocks.length).toBe(1)
   })
 })

@@ -156,11 +156,20 @@ function buildChatMessagePrompt(opts: {
   if (message.role === "assistant") {
     const content = serializeMessageContent(message.content)
     const toolCalls = message.tool_calls ?? []
-    if (!content.text.trim() && toolCalls.length === 0) return null
+    const reasoningText = resolveAssistantReasoning(message)
+    const reasoningSignature = resolveAssistantSignature(message, reasoningText)
+    if (
+      !content.text.trim()
+      && !reasoningText
+      && !reasoningSignature
+      && toolCalls.length === 0
+    ) {
+      return null
+    }
 
     prompt.writeString(
       1,
-      deterministicUuid(`${cascadeId}\0${index}\0assistant`),
+      `bot-${deterministicUuid(`${cascadeId}\0${index}\0assistant`)}`,
     )
     prompt.writeVarint(2, ChatMessageSource.SYSTEM)
     if (content.text) prompt.writeString(3, content.text)
@@ -173,16 +182,20 @@ function buildChatMessagePrompt(opts: {
       prompt.writeMessage(6, tcMsg)
     }
 
-    if (message.reasoning_text) {
-      prompt.writeString(11, message.reasoning_text)
-      prompt.writeString(18, "")
+    if (reasoningText) {
+      prompt.writeString(11, reasoningText)
+    }
+    if (reasoningSignature) {
+      prompt.writeString(12, reasoningSignature)
     }
     return prompt
   }
 
   if (message.role === "tool") {
     const { text, images } = serializeMessageContent(message.content)
-    if (!text.trim() || !message.tool_call_id) return null
+    if ((!text.trim() && images.length === 0) || !message.tool_call_id) {
+      return null
+    }
 
     prompt.writeString(
       1,
@@ -205,6 +218,53 @@ function buildChatMessagePrompt(opts: {
   return null
 }
 
+function resolveAssistantReasoning(message: Message): string {
+  if (message.reasoning_text ?? message.reasoning_content) {
+    return message.reasoning_text ?? message.reasoning_content ?? ""
+  }
+  if (!Array.isArray(message.content)) return ""
+
+  return message.content
+    .filter((part) => part.type === "reasoning" || part.type === "thinking")
+    .map((part) => {
+      switch (part.type) {
+        case "reasoning":
+        case "thinking": {
+          return part.text ?? part.reasoning ?? part.thinking ?? ""
+        }
+        default: {
+          return ""
+        }
+      }
+    })
+    .join("")
+}
+
+function resolveAssistantSignature(
+  message: Message,
+  reasoningText: string,
+): string | undefined {
+  const fromMessage =
+    message.signature
+    ?? message.reasoning_signature
+    ?? message.thinking_signature
+    ?? message.reasoning_details?.find(
+      (detail) => detail.text === reasoningText,
+    )?.signature
+  if (fromMessage) return fromMessage
+
+  if (!Array.isArray(message.content)) return undefined
+  for (const part of message.content) {
+    if (
+      (part.type === "reasoning" || part.type === "thinking")
+      && part.signature
+    ) {
+      return part.signature
+    }
+  }
+  return undefined
+}
+
 export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
   const texts = payload.messages
     .filter((m) => m.role === "system")
@@ -214,13 +274,6 @@ export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
 }
 
 // ── Tool-definition builder ────────────────────────────────────────────────────
-
-const DO_NOT_CALL_TOOL_SCHEMA = JSON.stringify({
-  $schema: "https://json-schema.org/draft/2020-12/schema",
-  properties: {},
-  additionalProperties: false,
-  type: "object",
-})
 
 /** Cloud rejects tool descriptions ≥7000 chars with a misleading MCP error. */
 const MAX_TOOL_DESC_LEN = 6998
@@ -237,20 +290,6 @@ function buildToolDef(tool: Tool): ProtobufEncoder {
   t.writeString(3, JSON.stringify(tool.function.parameters))
   t.writeBool(12, false)
   return t
-}
-
-function buildDoNotCallTool(): ProtobufEncoder {
-  return buildToolDef({
-    type: "function",
-    function: {
-      name: "do_not_call",
-      description: "Do not call this tool.",
-      parameters: JSON.parse(DO_NOT_CALL_TOOL_SCHEMA) as Record<
-        string,
-        unknown
-      >,
-    },
-  })
 }
 
 // ── Configuration block (oh-my-pi CompletionConfiguration) ─────────────────────
@@ -329,12 +368,8 @@ export function buildRequest(opts: {
   request.writeMessage(8, buildConfiguration(payload))
 
   const tools = payload.tools?.filter(Boolean) ?? []
-  if (tools.length > 0) {
-    for (const tool of tools) {
-      request.writeMessage(10, buildToolDef(tool))
-    }
-  } else {
-    request.writeMessage(10, buildDoNotCallTool())
+  for (const tool of tools) {
+    request.writeMessage(10, buildToolDef(tool))
   }
 
   request.writeBool(11, true) // disable_parallel_tool_calls

@@ -11,6 +11,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
   CopilotStreamEvent,
+  ContentPart,
   ToolCall,
 } from "~/services/copilot/create-chat-completions"
 import type { AnthropicResponse } from "~/services/protocols/anthropic"
@@ -70,16 +71,25 @@ export function translateAnthropicResponseToChat(
     signature?: string
   }> = []
   const textParts: Array<string> = []
+  const orderedParts: Array<ContentPart> = []
+  let hasReasoningAfterText = false
   const toolCalls: Array<ToolCall> = []
 
   for (const block of response.content) {
     switch (block.type) {
       case "text": {
         textParts.push(block.text)
+        orderedParts.push({ type: "text", text: block.text })
         break
       }
       case "thinking": {
         reasoningParts.push({
+          text: block.thinking,
+          ...(block.signature && { signature: block.signature }),
+        })
+        if (textParts.length > 0) hasReasoningAfterText = true
+        orderedParts.push({
+          type: "reasoning",
           text: block.thinking,
           ...(block.signature && { signature: block.signature }),
         })
@@ -105,7 +115,10 @@ export function translateAnthropicResponseToChat(
 
   const message: ChatCompletionResponse["choices"][number]["message"] = {
     role: "assistant",
-    content: textParts.join("") || null,
+    content:
+      hasReasoningAfterText && orderedParts.length > 0 ?
+        orderedParts
+      : textParts.join("") || null,
     ...(reasoningParts.length > 0 && {
       reasoning_content: reasoningParts.map((part) => part.text).join(""),
       reasoning_text: reasoningParts.map((part) => part.text).join(""),

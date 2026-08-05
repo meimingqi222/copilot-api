@@ -12,6 +12,10 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { AnthropicResponse } from "~/services/protocols/anthropic"
 
+import {
+  createInitialStreamState,
+  translateChunkToAnthropicEvents,
+} from "~/services/protocols/anthropic"
 import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
 import {
   DEFAULT_VIA_MESSAGES_MAX_TOKENS,
@@ -65,6 +69,21 @@ const messageStart = (
     },
   }),
 })
+
+function makeChatChunk(
+  delta: ChatCompletionChunk["choices"][number]["delta"],
+  finishReason: ChatCompletionChunk["choices"][number]["finish_reason"] = null,
+  usage?: ChatCompletionChunk["usage"],
+): ChatCompletionChunk {
+  return {
+    id: "msg_interleaved",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "swe-1-6",
+    choices: [{ index: 0, delta, finish_reason: finishReason, logprobs: null }],
+    ...(usage ? { usage } : {}),
+  }
+}
 
 describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   test("maps system/developer, params, tools, and user metadata", () => {
@@ -403,6 +422,23 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
     ])
   })
 
+  test("preserves interleaved thinking order in non-streaming responses", () => {
+    const result = translateAnthropicResponseToChat({
+      ...response,
+      content: [
+        { type: "text", text: "before" },
+        { type: "thinking", thinking: "middle", signature: "sig" },
+        { type: "text", text: "after" },
+      ],
+    })
+
+    expect(result.choices[0].message.content).toEqual([
+      { type: "text", text: "before" },
+      { type: "reasoning", text: "middle", signature: "sig" },
+      { type: "text", text: "after" },
+    ])
+  })
+
   test("preserves thinking signatures in reasoning_details", () => {
     const result = translateAnthropicResponseToChat({
       ...response,
@@ -669,6 +705,54 @@ describe("translateAnthropicStreamToChatEvents (streaming)", () => {
     expect(chunks[3]).toMatchObject({
       choices: [{ index: 0, delta: { content: "done" } }],
     })
+  })
+
+  test("preserves interleaved reasoning segments after visible text", () => {
+    const state = createInitialStreamState()
+
+    const events = [
+      ...translateChunkToAnthropicEvents(
+        makeChatChunk({ reasoning_text: "first thought" }),
+        state,
+      ),
+      ...translateChunkToAnthropicEvents(
+        makeChatChunk({ content: "first answer" }),
+        state,
+      ),
+      ...translateChunkToAnthropicEvents(
+        makeChatChunk({ reasoning_text: "second thought" }),
+        state,
+      ),
+      ...translateChunkToAnthropicEvents(
+        makeChatChunk({ content: "second answer" }),
+        state,
+      ),
+      ...translateChunkToAnthropicEvents(
+        makeChatChunk({}, "stop", {
+          prompt_tokens: 10,
+          completion_tokens: 4,
+          total_tokens: 14,
+        }),
+        state,
+      ),
+    ]
+
+    const blockTypes = events.flatMap((event) => {
+      if (event.type !== "content_block_start") return []
+      return [event.content_block.type === "thinking" ? "thinking" : "text"]
+    })
+    expect(blockTypes).toEqual(["thinking", "text", "thinking", "text"])
+
+    const thinkingTexts = events.flatMap((event) => {
+      if (
+        event.type !== "content_block_delta"
+        || event.delta.type !== "thinking_delta"
+      ) {
+        return []
+      }
+      return [event.delta.thinking]
+    })
+    expect(thinkingTexts).toEqual(["first thought", "second thought"])
   })
 
   test("skips ping events", async () => {

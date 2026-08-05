@@ -13,6 +13,7 @@ import {
 import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
 
 type OpenAIStreamUsage = NonNullable<ChatCompletionChunk["usage"]>
+const MAX_BUFFERED_THINKING_BYTES = 4 * 1024 * 1024
 
 function buildAnthropicStreamUsage(
   usage: OpenAIStreamUsage | undefined,
@@ -158,6 +159,41 @@ function ensureThinkingBlockOpen(
   }
 }
 
+function flushBufferedThinking(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+): void {
+  if (!state.bufferedThinking) return
+
+  ensureThinkingBlockOpen(state, events, state.bufferedThinking)
+  state.bufferedThinking = ""
+}
+
+function appendBufferedThinking(
+  state: AnthropicStreamState,
+  events: Array<AnthropicStreamEventData>,
+  thinking: string,
+): void {
+  if (
+    Buffer.byteLength(state.bufferedThinking) + Buffer.byteLength(thinking)
+    <= MAX_BUFFERED_THINKING_BYTES
+  ) {
+    state.bufferedThinking += thinking
+    return
+  }
+
+  flushBufferedThinking(state, events)
+  state.suppressLateThinking = true
+  if (!state.contentBlockOpen) {
+    ensureThinkingBlockOpen(state, events, undefined)
+  }
+  events.push({
+    type: "content_block_delta",
+    index: state.contentBlockIndex,
+    delta: { type: "thinking_delta", thinking },
+  })
+}
+
 function getReasoningText(
   source: ChatCompletionReasoningDetail,
 ): string | undefined {
@@ -279,34 +315,50 @@ export function translateChunkToAnthropicEvents(
         signature: thinkingDelta.signature,
       },
     })
-  } else if (
-    thinkingDelta.thinking
-    && state.contentBlockOpen
-    && state.currentContentBlockType === "thinking"
-  ) {
-    // Thinking block already open - emit thinking delta directly
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: {
-        type: "thinking_delta",
-        thinking: thinkingDelta.thinking,
-      },
-    })
-  } else if (thinkingDelta.thinking && !state.suppressLateThinking) {
-    // No signature yet and no thinking block open - buffer the thinking content
-    state.bufferedThinking += thinkingDelta.thinking
+  } else if (thinkingDelta.thinking) {
+    if (
+      state.contentBlockOpen
+      && state.currentContentBlockType === "thinking"
+    ) {
+      // Thinking block already open - emit thinking delta directly.
+      events.push({
+        type: "content_block_delta",
+        index: state.contentBlockIndex,
+        delta: {
+          type: "thinking_delta",
+          thinking: thinkingDelta.thinking,
+        },
+      })
+    } else if (state.contentBlockOpen) {
+      // Windsurf can interleave a new reasoning segment after visible text or
+      // a tool call. Close that block and start a new unsigned thinking block.
+      state.suppressLateThinking = false
+      stopCurrentContentBlock(state, events)
+      ensureThinkingBlockOpen(state, events, undefined)
+      events.push({
+        type: "content_block_delta",
+        index: state.contentBlockIndex,
+        delta: {
+          type: "thinking_delta",
+          thinking: thinkingDelta.thinking,
+        },
+      })
+    } else {
+      // Keep the existing signature buffering behavior for the first thinking
+      // segment, since some upstreams send its signature in a later chunk.
+      appendBufferedThinking(state, events, thinkingDelta.thinking)
+    }
   }
 
   if (delta.content) {
-    if (!state.contentBlockOpen && state.bufferedThinking) {
+    if (state.bufferedThinking) {
       // OpenAI reasoning models (e.g. gpt-5.1-codex-mini) send reasoning
       // without a signature. Emit the buffered thinking as an unsigned
-      // thinking block so clients can still display reasoning info.
-      ensureThinkingBlockOpen(state, events, state.bufferedThinking)
-      state.bufferedThinking = ""
-      stopCurrentContentBlock(state, events)
+      // thinking block so clients can still display reasoning info. This also
+      // closes a preceding text/tool block when the stream is interleaved.
+      flushBufferedThinking(state, events)
       state.suppressLateThinking = true
+      stopCurrentContentBlock(state, events)
     }
 
     if (isToolBlockOpen(state)) {
@@ -327,14 +379,13 @@ export function translateChunkToAnthropicEvents(
   }
 
   if (delta.tool_calls) {
-    if (!state.contentBlockOpen && state.bufferedThinking) {
+    if (state.bufferedThinking) {
       // If unsigned reasoning is followed directly by a tool call, flush the
       // buffered thinking before opening the tool_use block so Anthropic
       // clients can still display it.
-      ensureThinkingBlockOpen(state, events, state.bufferedThinking)
-      state.bufferedThinking = ""
-      stopCurrentContentBlock(state, events)
+      flushBufferedThinking(state, events)
       state.suppressLateThinking = true
+      stopCurrentContentBlock(state, events)
     }
 
     for (const toolCall of delta.tool_calls) {
@@ -389,6 +440,7 @@ export function translateChunkToAnthropicEvents(
     // Close the current content block if one is still open.
     // Previous blocks (text/tool_use) were already closed when the next block
     // opened, so we only need to close the last open one here.
+    flushBufferedThinking(state, events)
     if (state.contentBlockOpen) {
       stopCurrentContentBlock(state, events, false)
     }
@@ -412,6 +464,11 @@ export function translateStreamEndEvents(
     return events
   }
 
+  if (state.contentBlockOpen) {
+    stopCurrentContentBlock(state, events, false)
+  }
+
+  flushBufferedThinking(state, events)
   if (state.contentBlockOpen) {
     stopCurrentContentBlock(state, events, false)
   }

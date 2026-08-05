@@ -92,6 +92,7 @@ function readHeaderSession(
   if (!forwarded) return undefined
   const candidates = [
     forwarded["x-windsurf-session-id"],
+    forwarded["x-claude-code-session-id"],
     forwarded.session_id,
     forwarded["session-id"],
     forwarded.prompt_cache_key,

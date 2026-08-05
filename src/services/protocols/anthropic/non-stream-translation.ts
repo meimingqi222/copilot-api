@@ -202,11 +202,19 @@ function handleAssistantMessage(
         .map((block) => block.thinking)
         .join("\n\n") || undefined
     : undefined
+  const thinkingSignature =
+    preserveHistoricalReasoning && Array.isArray(message.content) ?
+      message.content.find(
+        (block): block is AnthropicThinkingBlock =>
+          block.type === "thinking" && Boolean(block.signature),
+      )?.signature
+    : undefined
 
   const baseMessage = {
     role: "assistant" as const,
     content: textContent || null,
     ...(thinkingText ? { reasoning_content: thinkingText } : {}),
+    ...(thinkingSignature ? { signature: thinkingSignature } : {}),
   }
 
   if (toolUseBlocks.length === 0) {
@@ -427,15 +435,25 @@ function addTopLevelReasoningBlocks(
   message: CopilotResponseMessage,
   collector: ThinkingCollector,
 ): void {
-  addThinkingBlockUnique(
-    collector,
+  const topLevelReasoning =
     message.reasoning_text
-      ?? message.thinking
-      ?? message.reasoning
-      ?? message.reasoning_content
-      ?? undefined,
-    getMessageLevelThinkingSignature(message),
-  )
+    ?? message.thinking
+    ?? message.reasoning
+    ?? message.reasoning_content
+    ?? undefined
+  const existingReasoning = collector.blocks
+    .filter(
+      (block): block is AnthropicThinkingBlock => block.type === "thinking",
+    )
+    .map((block) => block.thinking)
+    .join("")
+  if (existingReasoning !== topLevelReasoning) {
+    addThinkingBlockUnique(
+      collector,
+      topLevelReasoning,
+      getMessageLevelThinkingSignature(message),
+    )
+  }
 
   if (Array.isArray(message.reasoning_details)) {
     for (const detail of message.reasoning_details) {

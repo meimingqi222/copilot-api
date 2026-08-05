@@ -4,6 +4,7 @@ import type { Account } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
+  ContentPart,
   CopilotStreamEvent,
   ToolCall,
 } from "~/services/copilot/create-chat-completions"
@@ -71,6 +72,32 @@ export { FETCH_MAX_ATTEMPTS }
 const FETCH_BASE_DELAY_MS = 1_000
 const FETCH_MAX_DELAY_MS = 5_000
 const MAX_COLLECTED_RESPONSE_BYTES = 32 * 1024 * 1024
+const MAX_ORDERED_PARTS = 8192
+const MAX_ORDERED_RESPONSE_BYTES = 4 * 1024 * 1024
+
+type OrderedResponsePart = {
+  kind: "content" | "reasoning"
+  text: string
+  signature?: string
+}
+
+function appendOrderedResponsePart(
+  parts: Array<OrderedResponsePart>,
+  kind: OrderedResponsePart["kind"],
+  text: string,
+  currentBytes: number,
+): number | undefined {
+  const nextBytes = currentBytes + Buffer.byteLength(text)
+  if (nextBytes > MAX_ORDERED_RESPONSE_BYTES) return undefined
+  const previous = parts.at(-1)
+  if (previous?.kind === kind) {
+    previous.text += text
+    return nextBytes
+  }
+  if (parts.length >= MAX_ORDERED_PARTS) return undefined
+  parts.push({ kind, text })
+  return nextBytes
+}
 
 function isTransientFetchError(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return true
@@ -101,6 +128,30 @@ function computeRetryDelayMs(attempt: number): number {
   // ±25% jitter to avoid thundering herd
   const jitter = capped * (0.75 + Math.random() * 0.5)
   return Math.round(jitter)
+}
+
+async function* decodeWindsurfFrames(
+  stream: ReadableStream<Uint8Array>,
+): AsyncIterable<Uint8Array> {
+  try {
+    for await (const frame of decodeConnectFrames(stream)) {
+      yield frame
+    }
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message.startsWith("Windsurf stream error")
+    ) {
+      const detail = error.message.slice("Windsurf stream error".length).trim()
+      const separator = detail.indexOf(":")
+      const classified = classifyWindsurfErrorText(
+        separator !== -1 ? detail.slice(0, separator).trim() : undefined,
+        separator !== -1 ? detail.slice(separator + 1).trim() : detail,
+      )
+      throw new WindsurfUpstreamError(classified, new Uint8Array())
+    }
+    throw error
+  }
 }
 
 interface FetchOptions {
@@ -189,12 +240,12 @@ async function* streamToOpenAI(
   const requestId = `chatcmpl-${randomUUID().replaceAll("-", "")}`
   let usage: ChatStreamFrame["usage"] | undefined
   let rawUsage: WindsurfRawUsageSignals | undefined
-  let finishReason: "stop" | "tool_calls" = "stop"
+  let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
   let currentToolCallIndex = -1
   const toolIdToIndex = new Map<string, number>()
   let lastToolCallId: string | undefined
 
-  for await (const frame of decodeConnectFrames(stream)) {
+  for await (const frame of decodeWindsurfFrames(stream)) {
     const classified = classifyWindsurfFrameError(frame)
     if (classified) throw new WindsurfUpstreamError(classified, frame)
 
@@ -235,6 +286,17 @@ async function* streamToOpenAI(
           }
           break
         }
+        case "reasoning_signature": {
+          yield {
+            data: chunkFromText({
+              requestId,
+              model,
+              text: delta.text,
+              field: "reasoning_opaque",
+            }),
+          }
+          break
+        }
         case "tool_call_init": {
           currentToolCallIndex++
           toolIdToIndex.set(delta.callId, currentToolCallIndex)
@@ -271,6 +333,7 @@ async function* streamToOpenAI(
     }
 
     if (parsed.toolCallsDone) finishReason = "tool_calls"
+    else if (parsed.finishReason) finishReason = parsed.finishReason
     if (parsed.usage) {
       const incomingMeta = {
         req: requestId,
@@ -375,7 +438,13 @@ async function collectChatCompletion(
 ): Promise<ChatCompletionResponse> {
   let text = ""
   let reasoningText = ""
-  let finishReason: "stop" | "tool_calls" = "stop"
+  let reasoningOpaque = ""
+  let sawContentPart = false
+  let hasReasoningAfterContent = false
+  let orderedPartsComplete = true
+  let orderedPartsBytes = 0
+  const orderedParts: Array<OrderedResponsePart> = []
+  let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
   let usage: ChatCompletionResponse["usage"] | undefined
 
   const toolCallMap = new Map<
@@ -391,6 +460,7 @@ async function collectChatCompletion(
         delta?: {
           content?: string
           reasoning_text?: string
+          reasoning_opaque?: string
           tool_calls?: Array<{
             index: number
             id?: string
@@ -403,10 +473,53 @@ async function collectChatCompletion(
       usage?: ChatCompletionResponse["usage"]
     }
 
-    text += chunk.choices?.[0]?.delta?.content ?? ""
-    reasoningText += chunk.choices?.[0]?.delta?.reasoning_text ?? ""
+    const contentDelta = chunk.choices?.[0]?.delta?.content ?? ""
+    const reasoningDelta = chunk.choices?.[0]?.delta?.reasoning_text ?? ""
+    text += contentDelta
+    reasoningText += reasoningDelta
+    if (contentDelta) {
+      sawContentPart = true
+    }
+    if (reasoningDelta && sawContentPart) {
+      hasReasoningAfterContent = true
+    }
+    if (contentDelta && orderedPartsComplete) {
+      const nextBytes = appendOrderedResponsePart(
+        orderedParts,
+        "content",
+        contentDelta,
+        orderedPartsBytes,
+      )
+      if (nextBytes === undefined) orderedPartsComplete = false
+      else orderedPartsBytes = nextBytes
+    }
+    if (reasoningDelta && orderedPartsComplete) {
+      const nextBytes = appendOrderedResponsePart(
+        orderedParts,
+        "reasoning",
+        reasoningDelta,
+        orderedPartsBytes,
+      )
+      if (nextBytes === undefined) orderedPartsComplete = false
+      else orderedPartsBytes = nextBytes
+    }
+    const signatureDelta = chunk.choices?.[0]?.delta?.reasoning_opaque ?? ""
+    reasoningOpaque += signatureDelta
+    if (signatureDelta && orderedPartsComplete) {
+      const previous = orderedParts.at(-1)
+      if (
+        previous?.kind === "reasoning"
+        && orderedPartsBytes + Buffer.byteLength(signatureDelta)
+          <= MAX_ORDERED_RESPONSE_BYTES
+      ) {
+        previous.signature = `${previous.signature ?? ""}${signatureDelta}`
+        orderedPartsBytes += Buffer.byteLength(signatureDelta)
+      }
+    }
     if (
-      Buffer.byteLength(text) + Buffer.byteLength(reasoningText)
+      Buffer.byteLength(text)
+        + Buffer.byteLength(reasoningText)
+        + Buffer.byteLength(reasoningOpaque)
       > MAX_COLLECTED_RESPONSE_BYTES
     ) {
       throw new Error("Windsurf response exceeds the maximum size")
@@ -414,8 +527,27 @@ async function collectChatCompletion(
     usage = chunk.usage ?? usage
 
     const finReason = chunk.choices?.[0]?.finish_reason
-    if (finReason === "tool_calls") finishReason = "tool_calls"
-    else if (finReason === "stop") finishReason = "stop"
+    switch (finReason) {
+      case "tool_calls": {
+        finishReason = "tool_calls"
+        break
+      }
+      case "length": {
+        finishReason = "length"
+        break
+      }
+      case "content_filter": {
+        finishReason = "content_filter"
+        break
+      }
+      case "stop": {
+        finishReason = "stop"
+        break
+      }
+      default: {
+        break
+      }
+    }
 
     updateToolCalls(toolCallMap, chunk.choices?.[0]?.delta?.tool_calls ?? [])
   }
@@ -433,6 +565,15 @@ async function collectChatCompletion(
 
   const textLen = text.length
   const toolCallsLen = toolCalls.length
+  const orderedContent: Array<ContentPart> = orderedParts.map((part) =>
+    part.kind === "content" ?
+      { type: "text", text: part.text }
+    : {
+        type: "reasoning",
+        text: part.text,
+        ...(part.signature ? { signature: part.signature } : {}),
+      },
+  )
   logger.info(
     `[windsurf] collect result for ${model}: textLen=${textLen} toolCalls=${toolCallsLen} finishReason=${finishReason} usage=${JSON.stringify(usage)}`,
   )
@@ -452,9 +593,17 @@ async function collectChatCompletion(
         index: 0,
         message: {
           role: "assistant",
-          content: text || null,
+          content:
+            (
+              orderedPartsComplete
+              && hasReasoningAfterContent
+              && orderedContent.length > 0
+            ) ?
+              orderedContent
+            : text || null,
           ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
           reasoning_text: reasoningText || null,
+          reasoning_opaque: reasoningOpaque || null,
         },
         logprobs: null,
         finish_reason: finishReason,
