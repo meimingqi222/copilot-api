@@ -1,3 +1,5 @@
+import { gunzipSync } from "node:zlib"
+
 function encodeVarintBytes(value: number): Uint8Array {
   const bytes: Array<number> = []
   let remaining = value >>> 0
@@ -124,56 +126,36 @@ function readConnectTrailerError(text: string): string | undefined {
   return `Windsurf stream error${code ? ` ${code}` : ""}: ${message}`
 }
 
-async function decompressConnectPayload(
-  payload: Uint8Array,
-): Promise<Uint8Array> {
-  const compressed = new Response(payload).body
-  if (!compressed) throw new Error("empty compressed Connect frame")
-
-  const decompressed = compressed.pipeThrough(
-    new DecompressionStream("gzip") as unknown as TransformStream<
-      Uint8Array,
-      Uint8Array
-    >,
-  ) as unknown as ReadableStream<Uint8Array>
-  const reader = decompressed.getReader()
-  const parts: Array<Uint8Array> = []
-  let totalLength = 0
-
+function decompressConnectPayload(payload: Uint8Array): Uint8Array {
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      totalLength += value.byteLength
-      if (totalLength > MAX_DECOMPRESSED_FRAME_PAYLOAD) {
-        await reader.cancel().catch(() => undefined)
-        throw new Error(
-          `decodeConnectFrames: decompressed frame exceeds limit ${MAX_DECOMPRESSED_FRAME_PAYLOAD}`,
-        )
-      }
-      parts.push(value)
+    // Windsurf emits many small gzip frames. A Web Streams decompressor adds a
+    // Response, reader, and concatenation buffer for every frame, which causes
+    // a disproportionate native-memory spike in Bun. zlib performs one bounded
+    // allocation and returns the decompressed bytes directly.
+    return gunzipSync(payload, {
+      maxOutputLength: MAX_DECOMPRESSED_FRAME_PAYLOAD,
+    })
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error ?
+        (error as { code?: unknown }).code
+      : undefined
+    if (code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        `decodeConnectFrames: decompressed frame exceeds limit ${MAX_DECOMPRESSED_FRAME_PAYLOAD}`,
+      )
     }
-  } finally {
-    reader.releaseLock()
+    throw error
   }
-
-  const result = new Uint8Array(totalLength)
-  let offset = 0
-  for (const part of parts) {
-    result.set(part, offset)
-    offset += part.byteLength
-  }
-  return result
 }
 
-async function decodeConnectFramePayload(
+function decodeConnectFramePayload(
   flags: number,
   payload: Uint8Array,
-): Promise<Uint8Array | undefined> {
+): Uint8Array | undefined {
   const raw =
     flags & CONNECT_COMPRESSED_FLAG ?
-      await decompressConnectPayload(payload)
+      decompressConnectPayload(payload)
     : payload
 
   if (flags & CONNECT_END_STREAM_FLAG) {
@@ -271,7 +253,7 @@ export async function* decodeConnectFrames(
         offset += 5 + length
 
         // End-of-stream trailers are JSON metadata rather than protobuf.
-        const decoded = await decodeConnectFramePayload(flags, payload)
+        const decoded = decodeConnectFramePayload(flags, payload)
         if (!decoded) continue
         if (!sawFrame) diagnostics?.onFirstFrame?.(decoded.byteLength)
         sawFrame = true
