@@ -11,6 +11,7 @@ import type {
 import type { ResponsesPayload } from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import {
   translateChatCompletionToResponses,
   translateChatCompletionsStreamToResponses,
@@ -54,26 +55,45 @@ export async function createResponsesViaChat(
 ): Promise<AdapterResponsesResult> {
   const { target, connection, credential, payload, signal, ctx, chatExecutor } =
     params
+  updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_start", {
+    inputItems: Array.isArray(payload.input) ? payload.input.length : 1,
+  })
+  const chatPayload = translateResponsesToChatPayload(payload)
+  updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_complete", {
+    messageCount: chatPayload.messages.length,
+    toolCount: chatPayload.tools?.length ?? 0,
+  })
   const result = await chatExecutor({
     target,
     connection,
     credential,
-    payload: translateResponsesToChatPayload(payload),
+    payload: chatPayload,
     signal,
     ctx,
   })
 
   if (isChatCompletionResponse(result.response)) {
     const response = result.response as ChatCompletionResponse
+    updateMemoryTrace(ctx?.memoryTraceId, "chat_to_responses_start", {
+      responseMode: "non_streaming",
+    })
+    const translated = translateChatCompletionToResponses(response, payload)
+    updateMemoryTrace(ctx?.memoryTraceId, "chat_to_responses_complete", {
+      responseMode: "non_streaming",
+    })
     return {
       credentialId: result.credentialId,
-      response: translateChatCompletionToResponses(response, payload),
+      response: translated,
     }
   }
 
   const stream = result.response as AsyncIterable<CopilotStreamEvent>
   return {
     credentialId: result.credentialId,
-    response: translateChatCompletionsStreamToResponses(stream, payload),
+    response: translateChatCompletionsStreamToResponses(
+      stream,
+      payload,
+      ctx?.memoryTraceId,
+    ),
   }
 }

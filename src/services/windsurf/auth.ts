@@ -11,9 +11,12 @@
  * Ported from oh-my-pi packages/ai/src/providers/devin.ts (441-491).
  */
 
+import { createHash } from "node:crypto"
+
 import { readResponseBytes } from "~/lib/request-body"
 
 import { normalizeWindsurfBaseUrl } from "./base-url"
+import { getWindsurfUserJwtCacheTtlMs } from "./config"
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, parseMessage } from "./protobuf"
 
@@ -25,6 +28,70 @@ export interface DevinAuthMetadata {
   userJwt: string
   /** Optional region-routed base URL; when present, chat requests go here. */
   baseUrl?: string
+  /** Runtime diagnostic only; never serialized into Windsurf metadata. */
+  cacheStatus?: "hit" | "miss" | "shared"
+}
+
+interface CachedDevinAuth {
+  value: DevinAuthMetadata
+  expiresAt: number
+}
+
+const JWT_EXPIRY_SKEW_MS = 30_000
+const authCache = new Map<string, CachedDevinAuth>()
+
+function authCacheKey(apiKey: string, baseUrl: string): string {
+  return createHash("sha256")
+    .update(`${normalizeWindsurfBaseUrl(baseUrl)}\0${apiKey}`)
+    .digest("hex")
+}
+
+function readJwtExpiryMs(jwt: string): number | undefined {
+  const payload = jwt.split(".")[1]
+  if (!payload) return undefined
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as { exp?: unknown }
+    return typeof decoded.exp === "number" && Number.isFinite(decoded.exp) ?
+        decoded.exp * 1000
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function cacheAuthResult(
+  key: string,
+  value: DevinAuthMetadata,
+  ttlMs: number,
+): void {
+  if (ttlMs <= 0) return
+  const now = Date.now()
+  const jwtExpiry = readJwtExpiryMs(value.userJwt)
+  const expiresAt = Math.min(
+    now + ttlMs,
+    jwtExpiry ? jwtExpiry - JWT_EXPIRY_SKEW_MS : Number.POSITIVE_INFINITY,
+  )
+  if (expiresAt <= now) return
+  authCache.set(key, {
+    value: {
+      userJwt: value.userJwt,
+      ...(value.baseUrl ? { baseUrl: value.baseUrl } : {}),
+    },
+    expiresAt,
+  })
+}
+
+export function invalidateDevinUserJwtCache(opts: {
+  apiKey: string
+  baseUrl: string
+}): void {
+  authCache.delete(authCacheKey(opts.apiKey, opts.baseUrl))
+}
+
+export function clearDevinUserJwtCacheForTest(): void {
+  authCache.clear()
 }
 
 /** Decodes a `GetUserJwtResponse` proto: { user_jwt=1, custom_api_server_url=2 }. */
@@ -55,7 +122,7 @@ function decodeGetUserJwtResponse(payload: Uint8Array): {
  * matching oh-my-pi `decodeDevinUserJwtResponse`). Returns the userJwt and an
  * optional region-routed `baseUrl` (`customApiServerUrl`).
  */
-export async function fetchDevinUserJwt(opts: {
+async function fetchDevinUserJwtUncached(opts: {
   apiKey: string
   baseUrl: string
   signal?: AbortSignal
@@ -107,6 +174,29 @@ export async function fetchDevinUserJwt(opts: {
     userJwt: decoded.userJwt,
     ...(customBaseUrl ? { baseUrl: customBaseUrl.replace(/\/+$/, "") } : {}),
   }
+}
+
+export async function fetchDevinUserJwt(opts: {
+  apiKey: string
+  baseUrl: string
+  signal?: AbortSignal
+}): Promise<DevinAuthMetadata> {
+  const ttlMs = getWindsurfUserJwtCacheTtlMs()
+  if (ttlMs <= 0) {
+    const value = await fetchDevinUserJwtUncached(opts)
+    return { ...value, cacheStatus: "miss" }
+  }
+
+  const key = authCacheKey(opts.apiKey, opts.baseUrl)
+  const cached = authCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) {
+    return { ...cached.value, cacheStatus: "hit" }
+  }
+  if (cached) authCache.delete(key)
+
+  const value = await fetchDevinUserJwtUncached(opts)
+  cacheAuthResult(key, value, ttlMs)
+  return { ...value, cacheStatus: "miss" }
 }
 
 async function decompressGzip(payload: Uint8Array): Promise<Uint8Array> {

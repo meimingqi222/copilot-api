@@ -31,6 +31,8 @@ interface CreateResponsesOptions {
   executionSessionId?: string
   /** Isolation scope for reconnectable in-memory Responses transcripts. */
   transcriptScopeId?: string
+  /** Correlates memory diagnostics for one Responses WebSocket turn. */
+  memoryTraceId?: string
   /**
    * Force upstream HTTP POST (skip the WS path) for this call. Used by the WS
    * handler's same-account recovery after a lazy connection failure.
@@ -59,6 +61,7 @@ export const createResponses = async (
       account,
       c: options.c,
       forwardedHeaders: options.forwardedHeaders,
+      memoryTraceId: options.memoryTraceId,
     })
 
     if (isChatCompletionResponse(result.response)) {
@@ -98,6 +101,7 @@ export const createResponses = async (
       downstreamWebsocket: options.downstreamWebsocket,
       executionSessionId: options.executionSessionId,
       transcriptScopeId: options.transcriptScopeId,
+      memoryTraceId: options.memoryTraceId,
       forceUpstreamHttp: options.forceUpstreamHttp,
     },
   )

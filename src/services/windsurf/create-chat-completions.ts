@@ -13,26 +13,33 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
-import { state } from "~/lib/state"
 import { isAbortError, isChatCompletionResponse, sleep } from "~/lib/utils"
 
-import { fetchDevinUserJwt } from "./auth"
-import { normalizeWindsurfBaseUrl } from "./base-url"
+import {
+  createWindsurfAttempt,
+  invalidateWindsurfAttemptAuthOnError,
+  type WindsurfAttempt,
+  type WindsurfCacheDebugContext,
+} from "./attempt"
 import {
   chunkFromText,
   chunkFromToolCallInit,
   chunkFromToolCallArgs,
   doneChunk,
 } from "./chunk-builders"
+import { beginWindsurfAccountRequest } from "./concurrency"
+import {
+  getWindsurfFirstFrameRetries,
+  getWindsurfFirstFrameTimeoutMs,
+} from "./config"
 import {
   WindsurfUpstreamError,
   classifyWindsurfErrorText,
   classifyWindsurfFrameError,
 } from "./error-classifier"
 import { decodeConnectFrames } from "./protobuf"
-import { buildRequest } from "./request-builders"
-import { fingerprintWindsurfRequest } from "./request-fingerprint"
 import {
   type ChatStreamFrame,
   mergeRawUsageSignals,
@@ -40,9 +47,12 @@ import {
   parseChatStreamFrame,
 } from "./response-parsers"
 import {
-  getOrAllocateCloudSessionIds,
-  resolveWindsurfConversationKey,
-} from "./session-cache"
+  primeWindsurfStream,
+  WindsurfFirstFrameTimeoutError,
+  withWindsurfStreamCleanup,
+} from "./stream-start"
+
+export type { WindsurfCacheDebugContext } from "./attempt"
 
 // ── Model resolution ───────────────────────────────────────────────────────────
 
@@ -132,9 +142,21 @@ function computeRetryDelayMs(attempt: number): number {
 
 async function* decodeWindsurfFrames(
   stream: ReadableStream<Uint8Array>,
+  memoryTraceId?: string,
 ): AsyncIterable<Uint8Array> {
   try {
-    for await (const frame of decodeConnectFrames(stream)) {
+    for await (const frame of decodeConnectFrames(stream, {
+      onFirstRead: (upstreamReadBytes) => {
+        updateMemoryTrace(memoryTraceId, "windsurf_first_upstream_bytes", {
+          upstreamReadBytes,
+        })
+      },
+      onFirstFrame: (upstreamFrameBytes) => {
+        updateMemoryTrace(memoryTraceId, "windsurf_first_connect_frame", {
+          upstreamFrameBytes,
+        })
+      },
+    })) {
       yield frame
     }
   } catch (error) {
@@ -224,15 +246,11 @@ export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
 
 // ── Streaming → OpenAI SSE ─────────────────────────────────────────────────────
 
-export interface WindsurfCacheDebugContext {
-  conversationKey: string
-  cascadeId: string
-}
-
 async function* streamToOpenAI(
   response: Response,
   model: string,
   cacheDebug?: WindsurfCacheDebugContext,
+  memoryTraceId?: string,
 ): AsyncIterable<CopilotStreamEvent> {
   const stream = response.body
   if (!stream) throw new Error("Windsurf response body is empty")
@@ -244,12 +262,34 @@ async function* streamToOpenAI(
   let currentToolCallIndex = -1
   const toolIdToIndex = new Map<string, number>()
   let lastToolCallId: string | undefined
+  let upstreamFrameCount = 0
+  let upstreamFrameBytes = 0
+  let decodedDeltaCount = 0
+  let nextCheckpointBytes = 1024 * 1024
 
-  for await (const frame of decodeWindsurfFrames(stream)) {
+  updateMemoryTrace(memoryTraceId, "windsurf_stream_decode_start", {
+    provider: "windsurf",
+  })
+
+  for await (const frame of decodeWindsurfFrames(stream, memoryTraceId)) {
+    upstreamFrameCount += 1
+    upstreamFrameBytes += frame.byteLength
     const classified = classifyWindsurfFrameError(frame)
     if (classified) throw new WindsurfUpstreamError(classified, frame)
 
     const parsed = parseChatStreamFrame(frame)
+    decodedDeltaCount += parsed.deltas.length
+    if (
+      upstreamFrameCount % 256 === 0
+      || upstreamFrameBytes >= nextCheckpointBytes
+    ) {
+      updateMemoryTrace(memoryTraceId, "windsurf_stream_decode", {
+        upstreamFrameCount,
+        upstreamFrameBytes,
+        decodedDeltaCount,
+      })
+      nextCheckpointBytes = upstreamFrameBytes + 1024 * 1024
+    }
     const rawFrame = parsed.rawUsage
     if (rawFrame) {
       rawUsage = mergeRawUsageSignals(rawUsage, rawFrame)
@@ -375,6 +415,11 @@ async function* streamToOpenAI(
   }
 
   const finalMeta = { req: requestId, model, provider: "windsurf", usage }
+  updateMemoryTrace(memoryTraceId, "windsurf_stream_decoded", {
+    upstreamFrameCount,
+    upstreamFrameBytes,
+    decodedDeltaCount,
+  })
   logger.debug("usage final", finalMeta)
   if (cacheDebug) {
     logger.debug("[windsurf] cache summary", {
@@ -442,9 +487,9 @@ function updateToolCalls(
 }
 
 async function collectChatCompletion(
-  response: Response,
+  response: AsyncIterable<CopilotStreamEvent>,
   model: string,
-  cacheDebug?: WindsurfCacheDebugContext,
+  memoryTraceId?: string,
 ): Promise<ChatCompletionResponse> {
   let text = ""
   let reasoningText = ""
@@ -463,7 +508,8 @@ async function collectChatCompletion(
 
   const toolCallMap = new Map<number, CollectedToolCall>()
 
-  for await (const event of streamToOpenAI(response, model, cacheDebug)) {
+  updateMemoryTrace(memoryTraceId, "windsurf_collect_start")
+  for await (const event of response) {
     if (!event.data || event.data === "[DONE]") continue
 
     const chunk = JSON.parse(event.data) as {
@@ -586,6 +632,12 @@ async function collectChatCompletion(
   logger.info(
     `[windsurf] collect result for ${model}: textLen=${textLen} toolCalls=${toolCallsLen} finishReason=${finishReason} usage=${JSON.stringify(usage)}`,
   )
+  updateMemoryTrace(memoryTraceId, "windsurf_collect_complete", {
+    collectedBytes,
+    orderedPartsBytes,
+    orderedParts: orderedParts.length,
+    toolCalls: toolCallsLen,
+  })
   if (textLen === 0 && toolCallsLen === 0) {
     logger.warn(
       `[windsurf] EMPTY response for ${model} finishReason=${finishReason}`,
@@ -687,112 +739,89 @@ export async function createWindsurfChatCompletionsOnce(
   }
 
   const model = canonicalNativeModelId(payload.model)
-  const requestModel = resolveWindsurfRequestModel(account, payload.model)
-  const baseUrl = normalizeWindsurfBaseUrl(
-    settings.baseUrl ?? state.providerDefaults.windsurf.baseUrl,
-  )
-
-  // Resolve region routing before allocating host-scoped conversation IDs.
-  const auth = await fetchDevinUserJwt({ apiKey, baseUrl, signal })
-  const chatBaseUrl = normalizeWindsurfBaseUrl(auth.baseUrl ?? baseUrl)
-
-  const clientUserId = ctx?.c?.get("userId")
-  const resolvedConversation = resolveWindsurfConversationKey({
-    forwardedHeaders: ctx?.forwardedHeaders,
-    promptCacheKey:
-      payload.prompt_cache_key ?? ctx?.forwardedHeaders?.prompt_cache_key,
-    user: payload.user,
-    clientUserId,
+  const releaseAccountRequest = beginWindsurfAccountRequest({
     accountId: account.id,
-  })
-  const cloudIds = await getOrAllocateCloudSessionIds({
-    host: chatBaseUrl,
-    apiKey,
-    conversationKey: resolvedConversation.key,
-    persist: resolvedConversation.persistent,
-  })
-
-  const cacheDebug: WindsurfCacheDebugContext = {
-    conversationKey: resolvedConversation.key,
-    cascadeId: cloudIds.cascadeId,
-  }
-
-  logger.debug("[windsurf] cloud-direct request", {
-    account: account.label,
-    accountId: account.id,
-    model: requestModel,
-    conversationKey: resolvedConversation.key,
-    cascadeId: cloudIds.cascadeId,
-    hasTools: (payload.tools?.length ?? 0) > 0,
-  })
-
-  // Two-stage auth above exchanges the session token for userJwt and the
-  // final region-routed chat host. Carry userJwt in Metadata.user_jwt (f21).
-  const requestBody = buildRequest({
-    payload: { ...payload, model },
-    apiKey,
-    requestModel,
-    cascadeId: cloudIds.cascadeId,
-    promptId: cloudIds.promptId,
-    userJwt: auth.userJwt,
-  })
-
-  const protoFingerprint = fingerprintWindsurfRequest(requestBody)
-  logger.debug("[windsurf] proto fingerprint", {
-    conversationKey: resolvedConversation.key,
-    cascadeId: cloudIds.cascadeId,
-    upstreamModel: protoFingerprint.model,
-    requestType: protoFingerprint.requestType,
-    plannerMode: protoFingerprint.plannerMode,
-    toolCount: protoFingerprint.toolCount,
-    messageCount: protoFingerprint.messageCount,
-    metadataFields: protoFingerprint.metadataFields,
-    metadata: protoFingerprint.metadata,
-    configurationFields: protoFingerprint.configurationFields,
-  })
-
-  const response = await fetchWithRetry({
-    url: `${chatBaseUrl}/exa.api_server_pb.ApiServerService/GetChatMessage`,
-    headers: {
-      "Content-Type": "application/connect+proto",
-      "Connect-Protocol-Version": "1",
-      "Connect-Accept-Encoding": "gzip",
-      "Connect-Content-Encoding": "gzip",
-      "Connect-Timeout-Ms": "600000",
-      "User-Agent": "connect-go/1.18.1 (go1.26.3)",
-      "Accept-Encoding": "identity",
-    },
-    body: requestBody,
-    signal,
     accountLabel: account.label,
+    model,
+    streaming: Boolean(payload.stream),
+    memoryTraceId: ctx?.memoryTraceId,
   })
+  const firstFrameTimeoutMs = getWindsurfFirstFrameTimeoutMs()
+  const firstFrameRetries = getWindsurfFirstFrameRetries()
+  let streamOwnsRelease = false
 
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "(unreadable)")
-    logger.error(
-      `[windsurf] HTTP ${response.status} for ${account.label} model=${requestModel}`,
-    )
-    // HTTP error responses may carry the same {error:{code,message}} body
-    // as in-stream frames. Classify so cooldown uses the real "Resets in"
-    // duration instead of the default 60s backoff.
-    const classified = classifyWindsurfErrorText(undefined, errorBody)
-    if (classified.kind !== "unknown") {
-      throw new WindsurfUpstreamError(classified, new Uint8Array())
+  try {
+    for (let attemptNumber = 1; ; attemptNumber++) {
+      let attempt: WindsurfAttempt | undefined
+      try {
+        attempt = await createWindsurfAttempt({
+          account,
+          payload,
+          signal,
+          ctx,
+          settings: { apiKey, baseUrl: settings.baseUrl },
+          model,
+          requestModel: resolveWindsurfRequestModel(account, payload.model),
+          fetcher: fetchWithRetry,
+          streamFactory: streamToOpenAI,
+        })
+        const waitStartedAt = Date.now()
+        const primed = await primeWindsurfStream(attempt.stream, {
+          timeoutMs: firstFrameTimeoutMs,
+          onTimeout: attempt.abort,
+        })
+        updateMemoryTrace(ctx?.memoryTraceId, "windsurf_first_output_ready", {
+          firstFrameWaitMs: Date.now() - waitStartedAt,
+          firstFrameTimeoutMs,
+          firstFrameAttempt: attemptNumber,
+        })
+
+        if (payload.stream) {
+          const currentAttempt = attempt
+          streamOwnsRelease = true
+          return withWindsurfStreamCleanup(
+            primed,
+            () => {
+              currentAttempt.dispose()
+              releaseAccountRequest()
+            },
+            (error) => {
+              invalidateWindsurfAttemptAuthOnError(error, currentAttempt)
+            },
+          )
+        }
+
+        try {
+          return await collectChatCompletion(primed, model, ctx?.memoryTraceId)
+        } finally {
+          attempt.dispose()
+        }
+      } catch (error) {
+        attempt?.dispose()
+        if (attempt) invalidateWindsurfAttemptAuthOnError(error, attempt)
+        if (
+          error instanceof WindsurfFirstFrameTimeoutError
+          && attemptNumber <= firstFrameRetries
+        ) {
+          logger.warn("[windsurf] first frame timeout; retrying account", {
+            accountId: account.id,
+            accountLabel: account.label,
+            model,
+            timeoutMs: error.timeoutMs,
+            retry: attemptNumber,
+            maxRetries: firstFrameRetries,
+          })
+          updateMemoryTrace(ctx?.memoryTraceId, "windsurf_first_output_retry", {
+            firstFrameTimeoutMs: error.timeoutMs,
+            firstFrameAttempt: attemptNumber,
+            firstFrameRetries,
+          })
+          continue
+        }
+        throw error
+      }
     }
-    throw new HTTPError(
-      "Failed to create Windsurf chat completion",
-      response,
-      errorBody,
-    )
+  } finally {
+    if (!streamOwnsRelease) releaseAccountRequest()
   }
-
-  logger.info(
-    `[windsurf] HTTP ${response.status} for ${account.label} model=${requestModel} stream=${payload.stream}`,
-  )
-
-  if (payload.stream) {
-    return streamToOpenAI(response, model, cacheDebug)
-  }
-
-  return await collectChatCompletion(response, model, cacheDebug)
 }

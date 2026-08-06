@@ -13,6 +13,7 @@ interface CreateChatCompletionsOptions {
   initiatorOverride?: "agent" | "user"
   forwardedHeaders?: Record<string, string | undefined>
   c?: Context
+  memoryTraceId?: string
 }
 
 export const createChatCompletions = async (
@@ -46,6 +47,7 @@ export const createChatCompletions = async (
       enableVision,
       forwardedHeaders: options.forwardedHeaders,
       c: options.c,
+      memoryTraceId: options.memoryTraceId,
     },
   )
 }

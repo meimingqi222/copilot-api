@@ -189,19 +189,31 @@ async function decodeConnectFramePayload(
   return raw
 }
 
+interface ConnectFrameDiagnostics {
+  onFirstRead?: (bytes: number) => void
+  onFirstFrame?: (bytes: number) => void
+}
+
 export async function* decodeConnectFrames(
   stream: ReadableStream<Uint8Array>,
+  diagnostics?: ConnectFrameDiagnostics,
 ): AsyncIterable<Uint8Array> {
   const reader = stream.getReader()
   let buffer = new Uint8Array(0)
   let bufferStart = 0
   let bufferEnd = 0
+  let sawRead = false
+  let sawFrame = false
 
   try {
     while (true) {
       const { done, value } = await reader.read()
       if (done) {
         break
+      }
+      if (!sawRead) {
+        sawRead = true
+        diagnostics?.onFirstRead?.(value.byteLength)
       }
 
       const pendingLength = bufferEnd - bufferStart
@@ -260,7 +272,10 @@ export async function* decodeConnectFrames(
 
         // End-of-stream trailers are JSON metadata rather than protobuf.
         const decoded = await decodeConnectFramePayload(flags, payload)
-        if (decoded) yield decoded
+        if (!decoded) continue
+        if (!sawFrame) diagnostics?.onFirstFrame?.(decoded.byteLength)
+        sawFrame = true
+        yield decoded
       }
 
       // Advance once per reader chunk, not once per frame. Re-slicing the

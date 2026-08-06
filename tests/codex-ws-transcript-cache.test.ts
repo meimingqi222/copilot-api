@@ -37,9 +37,15 @@ describe("transcript get/set", () => {
   test("stores and returns full input", () => {
     const key = codexTranscriptKey("sess-1", "gpt-5")
     const items = [{ type: "message", role: "user", content: "hi" }]
-    setCodexTranscript(key, items)
+    const result = setCodexTranscript(key, items)
     expect(getCodexTranscript(key)).toEqual(items)
     expect(getCodexTranscriptCountForTest()).toBe(1)
+    expect(result).toEqual({
+      stored: true,
+      entryBytes: getCodexTranscriptBytesForTest(),
+      totalBytes: getCodexTranscriptBytesForTest(),
+      entries: 1,
+    })
   })
 
   test("missing key returns undefined", () => {
@@ -49,9 +55,11 @@ describe("transcript get/set", () => {
   test("oversized transcript is dropped, not stored", () => {
     const key = codexTranscriptKey("sess-big", "gpt-5")
     const huge = Array.from({ length: 4001 }, (_, i) => ({ i }))
-    setCodexTranscript(key, huge)
+    const result = setCodexTranscript(key, huge)
     expect(getCodexTranscript(key)).toBeUndefined()
     expect(getCodexTranscriptCountForTest()).toBe(0)
+    expect(result.stored).toBe(false)
+    expect(result.entries).toBe(0)
   })
 
   test("oversized transcript deletes an existing entry", () => {

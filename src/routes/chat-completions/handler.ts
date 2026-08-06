@@ -1,10 +1,17 @@
 import type { Context } from "hono"
 
+import { randomUUID } from "node:crypto"
+
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { canonicalModelId } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import {
+  beginMemoryTrace,
+  endMemoryTrace,
+  updateMemoryTrace,
+} from "~/lib/memory-diagnostics"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
@@ -75,8 +82,37 @@ interface StreamUsageInput {
 }
 
 export async function handleCompletion(c: Context) {
+  const memoryTraceId = randomUUID()
+  const declaredBytes = Number(c.req.header("content-length"))
+  beginMemoryTrace({
+    traceId: memoryTraceId,
+    kind: "chat_completions_http",
+    stage: "chat_body_read_start",
+    details: {
+      declaredBytes:
+        Number.isFinite(declaredBytes) && declaredBytes >= 0 ?
+          declaredBytes
+        : undefined,
+    },
+  })
+
+  try {
+    return await handleCompletionWithTrace(c, memoryTraceId)
+  } catch (error) {
+    endMemoryTrace(memoryTraceId, "error")
+    throw error
+  }
+}
+
+async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
   const signal = c.req.raw.signal
   let payload = await readJsonBody<ChatCompletionsPayload>(c.req.raw)
+  updateMemoryTrace(memoryTraceId, "chat_payload_parsed", {
+    model: payload.model,
+    messageCount: payload.messages.length,
+    toolCount: payload.tools?.length ?? 0,
+    streaming: Boolean(payload.stream),
+  })
   if (logger.level >= 4) {
     logger.debug("Request payload:", JSON.stringify(payload).slice(-400))
   }
@@ -97,6 +133,7 @@ export async function handleCompletion(c: Context) {
   const messageContent =
     extractMessageContentFromChatCompletionsPayload(payload)
   const sessionHeaders = extractChatForwardedHeaders(c)
+  updateMemoryTrace(memoryTraceId, "chat_admission_start")
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: payload.model,
@@ -112,6 +149,10 @@ export async function handleCompletion(c: Context) {
     sessionHeaders,
     sessionPayload: payload,
   })
+  updateMemoryTrace(memoryTraceId, "chat_admission_ready", {
+    provider: admission.account?.provider ?? admission.target.protocol,
+    accountId: admission.account?.id ?? admission.target.credentialId,
+  })
 
   const selectedModel = state.models?.data.find(
     (model) => model.id === payload.model,
@@ -119,15 +160,24 @@ export async function handleCompletion(c: Context) {
   payload = applyMaxTokens(payload, selectedModel)
 
   if (!payload.stream) {
+    updateMemoryTrace(memoryTraceId, "chat_token_estimate_start")
     const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+    updateMemoryTrace(memoryTraceId, "chat_token_estimated", {
+      estimatedInputTokens,
+    })
     const nonStreamStart = Date.now()
+    updateMemoryTrace(memoryTraceId, "chat_dispatch_start")
     const result = await dispatchChatCompletions(
       payload,
       admission,
       signal,
       c,
-      { forwardedHeaders: sessionHeaders },
+      { forwardedHeaders: sessionHeaders, memoryTraceId },
     )
+    updateMemoryTrace(memoryTraceId, "chat_provider_response_open", {
+      provider: result.identity.provider,
+      streaming: !isChatCompletionResponse(result.response),
+    })
 
     applyUsageIdentity(c, result.identity)
     c.set("model", payload.model)
@@ -140,13 +190,23 @@ export async function handleCompletion(c: Context) {
         estimatedInputTokens,
         elapsed,
       )
+      endMemoryTrace(memoryTraceId, "completed")
       return c.json(result.response)
     }
 
-    return handleStreamingResponse(c, result.response, estimatedInputTokens)
+    return handleStreamingResponse(
+      c,
+      result.response,
+      estimatedInputTokens,
+      memoryTraceId,
+    )
   }
 
+  updateMemoryTrace(memoryTraceId, "chat_token_estimate_start")
   const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+  updateMemoryTrace(memoryTraceId, "chat_token_estimated", {
+    estimatedInputTokens,
+  })
 
   return handleStreamingCompletion(c, {
     payload,
@@ -154,6 +214,7 @@ export async function handleCompletion(c: Context) {
     signal,
     selectedModel,
     estimatedInputTokens,
+    memoryTraceId,
   })
 }
 
@@ -257,6 +318,7 @@ function handleStreamingResponse(
   c: Context,
   response: CopilotStream,
   estimatedInputTokens: number,
+  memoryTraceId: string,
 ) {
   logger.debug("Streaming response")
   const model = c.get("model")
@@ -265,12 +327,15 @@ function handleStreamingResponse(
   let lastUsage: UsageInfo | undefined
   let usageRecorded = false
   let firstChunkTs: number | undefined
+  let downstreamCommitted = false
   const streamStart = Date.now()
 
   return handleSseStream(
     c,
     async (stream) => {
+      let outcome = "completed"
       try {
+        updateMemoryTrace(memoryTraceId, "chat_sse_open")
         for await (const rawEvent of response) {
           if (rawEvent.data === "[DONE]") {
             break
@@ -281,6 +346,7 @@ function handleStreamingResponse(
 
           if (!firstChunkTs) {
             firstChunkTs = Date.now()
+            updateMemoryTrace(memoryTraceId, "chat_first_chunk")
           }
 
           const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
@@ -291,7 +357,16 @@ function handleStreamingResponse(
             lastUsage = chunk.usage
           }
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+          if (!downstreamCommitted) {
+            downstreamCommitted = true
+            updateMemoryTrace(memoryTraceId, "chat_downstream_committed", {
+              responseMode: "streaming",
+            })
+          }
         }
+      } catch (error) {
+        outcome = signalOutcome(c.req.raw.signal)
+        throw error
       } finally {
         if (!usageRecorded) {
           usageRecorded = recordStreamingUsage({
@@ -308,6 +383,7 @@ function handleStreamingResponse(
             ),
           })
         }
+        endMemoryTrace(memoryTraceId, outcome)
       }
     },
     {
@@ -395,6 +471,7 @@ interface StreamingCompletionOptions {
   signal: AbortSignal | undefined
   selectedModel: CachedModel | undefined
   estimatedInputTokens: number
+  memoryTraceId: string
 }
 
 function handleStreamingCompletion(
@@ -405,21 +482,36 @@ function handleStreamingCompletion(
   let usageRecorded = false
   let accountId: string | undefined
   let firstChunkTs: number | undefined
+  let downstreamCommitted = false
   let streamStart = 0
   return handleSseStream(
     c,
     async (stream) => {
       const { payload, admission, signal, estimatedInputTokens } = options
       const model = payload.model
+      let outcome = "completed"
 
       try {
+        updateMemoryTrace(options.memoryTraceId, "chat_sse_open")
         const dispatchStart = Date.now()
+        updateMemoryTrace(options.memoryTraceId, "chat_dispatch_start")
         const result = await dispatchChatCompletions(
           payload,
           admission,
           signal,
           c,
-          { forwardedHeaders: extractChatForwardedHeaders(c) },
+          {
+            forwardedHeaders: extractChatForwardedHeaders(c),
+            memoryTraceId: options.memoryTraceId,
+          },
+        )
+        updateMemoryTrace(
+          options.memoryTraceId,
+          "chat_provider_response_open",
+          {
+            provider: result.identity.provider,
+            streaming: !isChatCompletionResponse(result.response),
+          },
         )
         accountId = result.accountId
         applyUsageIdentity(c, result.identity)
@@ -437,6 +529,13 @@ function handleStreamingCompletion(
           )
           await writeSseEvent(stream, JSON.stringify(result.response))
           usageRecorded = true
+          updateMemoryTrace(
+            options.memoryTraceId,
+            "chat_downstream_committed",
+            {
+              responseMode: "non_streaming",
+            },
+          )
           return
         }
 
@@ -451,6 +550,7 @@ function handleStreamingCompletion(
 
           if (!firstChunkTs) {
             firstChunkTs = Date.now()
+            updateMemoryTrace(options.memoryTraceId, "chat_first_chunk")
           }
 
           const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
@@ -461,8 +561,17 @@ function handleStreamingCompletion(
             lastUsage = chunk.usage
           }
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+          if (!downstreamCommitted) {
+            downstreamCommitted = true
+            updateMemoryTrace(
+              options.memoryTraceId,
+              "chat_downstream_committed",
+              { responseMode: "streaming" },
+            )
+          }
         }
       } catch (error) {
+        outcome = signalOutcome(signal)
         logger.error("Streaming error:", error)
         const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
         if (knownError?.status === 499) {
@@ -502,6 +611,7 @@ function handleStreamingCompletion(
             ),
           })
         }
+        endMemoryTrace(options.memoryTraceId, outcome)
       }
     },
     {
@@ -522,4 +632,8 @@ function handleStreamingCompletion(
       },
     },
   )
+}
+
+function signalOutcome(signal: AbortSignal | undefined): string {
+  return signal?.aborted ? "aborted" : "error"
 }

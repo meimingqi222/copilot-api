@@ -28,6 +28,7 @@ import {
   targetKey,
 } from "~/lib/route-target"
 import { executeWithFailover } from "~/services/dispatch/failover"
+import { WindsurfFirstFrameTimeoutError } from "~/services/windsurf/stream-start"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -472,6 +473,46 @@ describe("cross-system failover via executeWithFailover", () => {
     })
 
     expect(result).toBe("success")
+    expect(executeCallOrder).toEqual(["conn", "acc"])
+  })
+
+  test("fails over while a Windsurf first-frame timeout is still pre-output", async () => {
+    await setupConnection("conn", 0, "model-x")
+    const account = createTestAccount("acc", 5, "model-x")
+    setTestAccounts([account])
+
+    const targets = buildRouteTargets({
+      publicModelId: "model-x",
+      endpoint: "chat",
+    })
+    const selected = selectRouteTarget(targets)
+    const conn = await import("~/lib/provider-connections").then((module) =>
+      module.getProviderConnection("conn"),
+    )
+    expect(selected).not.toBeNull()
+    expect(conn).not.toBeNull()
+
+    const admission: ProviderAdmission = {
+      target: selected as NonNullable<typeof selected>,
+      connection: conn as NonNullable<typeof conn>,
+      credential: (conn as NonNullable<typeof conn>).credentials[0],
+      initiator: "user",
+    }
+    const executeCallOrder: Array<string> = []
+    const result = await executeWithFailover({
+      payload: { model: "model-x" },
+      admission,
+      routeKind: "chat",
+      execute: (_adapter, target) => {
+        executeCallOrder.push(target.connectionId)
+        if (target.connectionId === "conn") {
+          throw new WindsurfFirstFrameTimeoutError(30_000)
+        }
+        return Promise.resolve("recovered")
+      },
+    })
+
+    expect(result).toBe("recovered")
     expect(executeCallOrder).toEqual(["conn", "acc"])
   })
 

@@ -16,6 +16,7 @@ import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import { getOAuthProxyUrl } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { globalTimers } from "~/lib/timer-registry"
 
 import {
@@ -271,6 +272,8 @@ export interface UpstreamWsTurnOptions {
    * supplies this; xAI relies on store=true to survive redials.
    */
   fallbackFullInputBody?: Record<string, unknown>
+  /** Correlates request-size checkpoints with the downstream WS turn. */
+  memoryTraceId?: string
 }
 
 /**
@@ -463,13 +466,31 @@ export async function openUpstreamResponsesWebsocketTurn(
       signal,
       releaseChain,
     })
+    updateMemoryTrace(options.memoryTraceId, "upstream_ws_stringify_start", {
+      provider,
+      inputItems:
+        Array.isArray(effectiveBody.input) ? effectiveBody.input.length : 0,
+      replayedFullInput: usedFallback,
+    })
     const wireBody = JSON.stringify(effectiveBody)
-    if (Buffer.byteLength(wireBody) > MAX_UPSTREAM_WS_REQUEST_BYTES) {
+    const wireBytes = Buffer.byteLength(wireBody)
+    updateMemoryTrace(options.memoryTraceId, "upstream_ws_send", {
+      provider,
+      wireBytes,
+      upstreamBufferedBytes: ws.bufferedAmount,
+      replayedFullInput: usedFallback,
+    })
+    if (wireBytes > MAX_UPSTREAM_WS_REQUEST_BYTES) {
       throw new Error(
         `${provider} websockets: upstream request exceeds WebSocket size limit`,
       )
     }
     ws.send(wireBody)
+    updateMemoryTrace(options.memoryTraceId, "upstream_ws_sent", {
+      provider,
+      wireBytes,
+      upstreamBufferedBytes: ws.bufferedAmount,
+    })
     sess.lastUsedAt = Date.now()
   } catch (error) {
     consumer?.dispose()

@@ -347,6 +347,7 @@ export function buildRequest(opts: {
    * request (oh-my-pi devin.ts line 514); omitting it is detectable.
    */
   userJwt?: string
+  onEncoded?: (metrics: { protobufBytes: number; wireBytes: number }) => void
 }): Uint8Array {
   const { payload, apiKey, requestModel, cascadeId, promptId, userJwt } = opts
   const request = new ProtobufEncoder()
@@ -384,5 +385,11 @@ export function buildRequest(opts: {
   request.writeString(22, randomUUID())
 
   // Connect frame is gzip-compressed to match oh-my-pi.
-  return encodeConnectFrame(request.toUint8Array(), true)
+  const protobuf = request.toUint8Array()
+  const framed = encodeConnectFrame(protobuf, true)
+  opts.onEncoded?.({
+    protobufBytes: protobuf.byteLength,
+    wireBytes: framed.byteLength,
+  })
+  return framed
 }

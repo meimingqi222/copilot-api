@@ -46,6 +46,30 @@ describe("decodeConnectFrames", () => {
     expect(new TextDecoder().decode(frames[0])).toBe("hello world")
   })
 
+  test("reports the first raw read and first complete frame once", async () => {
+    const firstPayload = new TextEncoder().encode("first")
+    const secondPayload = new TextEncoder().encode("second")
+    const reads: Array<number> = []
+    const framesSeen: Array<number> = []
+    const frames: Array<Uint8Array> = []
+    for await (const frame of decodeConnectFrames(
+      buildStream([
+        encodeConnectFrame(firstPayload, false),
+        encodeConnectFrame(secondPayload, false),
+      ]),
+      {
+        onFirstRead: (bytes) => reads.push(bytes),
+        onFirstFrame: (bytes) => framesSeen.push(bytes),
+      },
+    )) {
+      frames.push(frame)
+    }
+
+    expect(frames).toHaveLength(2)
+    expect(reads).toEqual([firstPayload.byteLength + 5])
+    expect(framesSeen).toEqual([firstPayload.byteLength])
+  })
+
   test("yields compressed protobuf frames", async () => {
     const payload = new TextEncoder().encode("compressed payload")
     const frame = encodeConnectFrame(payload, true)
