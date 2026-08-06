@@ -157,6 +157,18 @@ describe("decodeConnectFrames", () => {
     expect(new TextDecoder().decode(frames[9_999])).toBe("9999")
   })
 
+  test("handles many compressed frames without per-frame web stream setup", async () => {
+    const wire = joinChunks(
+      Array.from({ length: 1_000 }, (_, index) =>
+        encodeConnectFrame(new TextEncoder().encode(String(index)), true),
+      ),
+    )
+    const frames = await collectFrames(buildStream([wire]))
+
+    expect(frames).toHaveLength(1_000)
+    expect(new TextDecoder().decode(frames[999])).toBe("999")
+  })
+
   test("rejects a compressed frame that expands beyond the safety limit", () => {
     const payload = new Uint8Array(33 * 1024 * 1024)
     const frame = encodeConnectFrame(payload, true)
