@@ -12,6 +12,7 @@
  */
 
 import { createHash } from "node:crypto"
+import { gunzipSync } from "node:zlib"
 
 import { readResponseBytes } from "~/lib/request-body"
 
@@ -38,6 +39,7 @@ interface CachedDevinAuth {
 }
 
 const JWT_EXPIRY_SKEW_MS = 30_000
+const MAX_AUTH_CACHE_ENTRIES = 1024
 const authCache = new Map<string, CachedDevinAuth>()
 
 function authCacheKey(apiKey: string, baseUrl: string): string {
@@ -74,6 +76,17 @@ function cacheAuthResult(
     jwtExpiry ? jwtExpiry - JWT_EXPIRY_SKEW_MS : Number.POSITIVE_INFINITY,
   )
   if (expiresAt <= now) return
+  if (!authCache.has(key) && authCache.size >= MAX_AUTH_CACHE_ENTRIES) {
+    let oldestKey: string | undefined
+    let oldestExpiry = Number.POSITIVE_INFINITY
+    for (const [candidateKey, candidate] of authCache) {
+      if (oldestKey === undefined || candidate.expiresAt < oldestExpiry) {
+        oldestKey = candidateKey
+        oldestExpiry = candidate.expiresAt
+      }
+    }
+    if (oldestKey) authCache.delete(oldestKey)
+  }
   authCache.set(key, {
     value: {
       userJwt: value.userJwt,
@@ -158,7 +171,7 @@ async function fetchDevinUserJwtUncached(opts: {
     // oh-my-pi retries with gunzip on parse failure - the response may be
     // gzip-compressed.
     try {
-      const decompressed = await decompressGzip(payload)
+      const decompressed = decompressGzip(payload)
       decoded = decodeGetUserJwtResponse(decompressed)
     } catch {
       // fall through with the original (empty) decode
@@ -199,11 +212,23 @@ export async function fetchDevinUserJwt(opts: {
   return { ...value, cacheStatus: "miss" }
 }
 
-async function decompressGzip(payload: Uint8Array): Promise<Uint8Array> {
-  const stream = new Response(payload).body
-  if (!stream) throw new Error("empty body")
-  const decompressed = stream.pipeThrough(new DecompressionStream("gzip"))
-  return readResponseBytes(new Response(decompressed), MAX_AUTH_RESPONSE_BYTES)
+function decompressGzip(payload: Uint8Array): Uint8Array {
+  try {
+    return gunzipSync(payload, {
+      maxOutputLength: MAX_AUTH_RESPONSE_BYTES,
+    })
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error ?
+        (error as { code?: unknown }).code
+      : undefined
+    if (code === "ERR_BUFFER_TOO_LARGE") {
+      throw new Error(
+        `Devin auth response exceeds ${MAX_AUTH_RESPONSE_BYTES} bytes`,
+      )
+    }
+    throw error
+  }
 }
 
 /** Re-exported so callers can normalize without importing metadata directly. */

@@ -59,6 +59,22 @@ function parseSseJson(line: string): Record<string, unknown> | undefined {
   return undefined
 }
 
+function* convertSseLine(
+  line: string,
+  model: string,
+  state: ReturnType<typeof createAntigravityStreamState>,
+): Generator<CopilotStreamEvent> {
+  const event = parseSseJson(line)
+  if (!event) return
+  for (const openAiChunk of convertAntigravityStreamChunk(
+    event,
+    model,
+    state,
+  )) {
+    yield { data: JSON.stringify(openAiChunk) }
+  }
+}
+
 async function* translateAntigravitySseToOpenAi(
   response: Response,
   model: string,
@@ -98,35 +114,21 @@ async function* translateAntigravitySseToOpenAi(
       if (Buffer.byteLength(buffer) > 16 * 1024 * 1024) {
         throw new Error("Antigravity SSE line exceeds the maximum size")
       }
-      const lines = buffer.split("\n")
-      buffer = lines.pop() ?? ""
-      for (const line of lines) {
-        const event = parseSseJson(line)
-        if (!event) {
-          continue
-        }
-        for (const openAiChunk of convertAntigravityStreamChunk(
-          event,
-          model,
-          state,
-        )) {
-          yield { data: JSON.stringify(openAiChunk) }
-        }
+      let lineStart = 0
+      while (true) {
+        const lineEnd = buffer.indexOf("\n", lineStart)
+        if (lineEnd === -1) break
+        const line = buffer.slice(lineStart, lineEnd)
+        for (const output of convertSseLine(line, model, state)) yield output
+        lineStart = lineEnd + 1
       }
+      if (lineStart > 0) buffer = buffer.slice(lineStart)
     }
   }
 
+  buffer += decoder.decode()
   if (buffer.trim()) {
-    const event = parseSseJson(buffer)
-    if (event) {
-      for (const openAiChunk of convertAntigravityStreamChunk(
-        event,
-        model,
-        state,
-      )) {
-        yield { data: JSON.stringify(openAiChunk) }
-      }
-    }
+    for (const output of convertSseLine(buffer, model, state)) yield output
   }
 
   yield { data: "[DONE]" }

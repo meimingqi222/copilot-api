@@ -39,14 +39,27 @@ const IDLE_TIMEOUT_MS = (() => {
 const IDLE_TIMEOUT_MESSAGE = `Request timeout: No data received from Mimo node for ${Math.round(IDLE_TIMEOUT_MS / 1000)} seconds`
 const MAX_MIMO_QUEUED_MESSAGES = 1024
 const MAX_MIMO_QUEUE_BYTES = MAX_MIMO_RESPONSE_BYTES
+const mimoBodySizeCache = new WeakMap<object, number>()
 
 function getMimoMessageBytes(msg: MimoMessage): number {
   let bytes = 0
   if (msg.chunk) bytes += Buffer.byteLength(msg.chunk)
   if (msg.error) bytes += Buffer.byteLength(msg.error)
   if (msg.body !== undefined) {
-    const body = JSON.stringify(msg.body)
-    if (body) bytes += Buffer.byteLength(body)
+    if (typeof msg.body === "object" && msg.body !== null) {
+      const cached = mimoBodySizeCache.get(msg.body)
+      if (cached !== undefined) {
+        bytes += cached
+      } else {
+        const body = JSON.stringify(msg.body)
+        const bodyBytes = body ? Buffer.byteLength(body) : 0
+        mimoBodySizeCache.set(msg.body, bodyBytes)
+        bytes += bodyBytes
+      }
+    } else {
+      const body = JSON.stringify(msg.body)
+      if (body) bytes += Buffer.byteLength(body)
+    }
   }
   return bytes
 }
@@ -197,7 +210,7 @@ async function collectResponse(
   let resolveNext: (() => void) | null = null
   let done = false
   let error: Error | null = null
-  let accumulatedBody = ""
+  const accumulatedBodyParts: Array<string> = []
   let accumulatedBytes = 0
   let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -288,7 +301,7 @@ async function collectResponse(
         if (accumulatedBytes > MAX_MIMO_RESPONSE_BYTES) {
           throw new Error("Mimo response exceeds the maximum size")
         }
-        accumulatedBody += msg.chunk
+        accumulatedBodyParts.push(msg.chunk)
       } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "response" && msg.body) {
@@ -303,7 +316,7 @@ async function collectResponse(
       }
     }
 
-    return JSON.parse(accumulatedBody) as ChatCompletionResponse
+    return JSON.parse(accumulatedBodyParts.join("")) as ChatCompletionResponse
   } finally {
     cleanup()
   }
@@ -431,7 +444,7 @@ async function collectMessagesResponse(
   let resolveNext: (() => void) | null = null
   let done = false
   let error: Error | null = null
-  let accumulatedBody = ""
+  const accumulatedBodyParts: Array<string> = []
   let accumulatedBytes = 0
   let idleTimeoutId: ReturnType<typeof setTimeout> | null = null
 
@@ -522,7 +535,7 @@ async function collectMessagesResponse(
         if (accumulatedBytes > MAX_MIMO_RESPONSE_BYTES) {
           throw new Error("Mimo response exceeds the maximum size")
         }
-        accumulatedBody += msg.chunk
+        accumulatedBodyParts.push(msg.chunk)
       } else if (msg.type === "stream_end") {
         done = true
       } else if (msg.type === "response" && msg.body) {
@@ -537,7 +550,7 @@ async function collectMessagesResponse(
       }
     }
 
-    return JSON.parse(accumulatedBody) as Record<string, unknown>
+    return JSON.parse(accumulatedBodyParts.join("")) as Record<string, unknown>
   } finally {
     cleanup()
   }

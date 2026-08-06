@@ -62,10 +62,12 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     preserveHistoricalReasoning: admission.target.protocol !== "copilot-native",
   })
   if (logger.level >= 4) {
-    logger.debug(
-      "Translated OpenAI request payload:",
-      JSON.stringify(openAIPayload),
-    )
+    logger.debug("Translated OpenAI request payload summary:", {
+      model: openAIPayload.model,
+      messageCount: openAIPayload.messages.length,
+      toolCount: openAIPayload.tools?.length ?? 0,
+      stream: openAIPayload.stream === true,
+    })
   }
 
   logDuplicateToolCallIds(openAIPayload.messages)

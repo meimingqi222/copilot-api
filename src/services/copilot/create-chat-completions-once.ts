@@ -71,11 +71,10 @@ export async function createCopilotChatCompletionsOnce(
   )
   const enableVision = ctx?.enableVision ?? hasImageContent(normalizedPayload)
 
-  const chatCompletionsBody = JSON.stringify(normalizedPayload)
-  const responsesBody =
+  const body =
     useResponsesApi ?
       JSON.stringify(translateToResponsesPayload(normalizedPayload))
-    : ""
+    : JSON.stringify(normalizedPayload)
 
   const headers: Record<string, string> = {
     ...copilotHeaders(copilotAccount, enableVision),
@@ -86,8 +85,6 @@ export async function createCopilotChatCompletionsOnce(
   }
 
   const url = `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`
-  const body = useResponsesApi ? responsesBody : chatCompletionsBody
-
   let retryCount = 0
   const maxRetries = 3
   const maxDelayMs = 60_000
