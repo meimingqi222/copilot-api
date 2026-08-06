@@ -6,7 +6,9 @@ import {
   clearResponsesTranscriptsByExecutionId,
   codexTranscriptKey,
   getCodexTranscript,
+  getCodexTranscriptBytesForTest,
   getCodexTranscriptCountForTest,
+  resolveResponsesTranscriptSessionId,
   setCodexTranscript,
 } from "~/services/codex/ws-transcript-cache"
 import { selectUpstreamWsBody } from "~/services/responses/upstream-ws"
@@ -18,6 +20,16 @@ afterEach(() => {
 describe("codexTranscriptKey", () => {
   test("combines execution session id and model", () => {
     expect(codexTranscriptKey("sess-1", "gpt-5")).toBe("codex::sess-1::gpt-5")
+  })
+
+  test("prefers a stable client session across socket reconnects", () => {
+    expect(resolveResponsesTranscriptSessionId("socket-2", " session-1 ")).toBe(
+      "session-1",
+    )
+    expect(
+      resolveResponsesTranscriptSessionId("socket-2", "session-1", "user:1"),
+    ).toBe("user:1::session-1")
+    expect(resolveResponsesTranscriptSessionId("socket-2")).toBe("socket-2")
   })
 })
 
@@ -49,6 +61,14 @@ describe("transcript get/set", () => {
     const huge = Array.from({ length: 5000 }, (_, i) => ({ i }))
     setCodexTranscript(key, huge)
     expect(getCodexTranscript(key)).toBeUndefined()
+    expect(getCodexTranscriptBytesForTest()).toBe(0)
+  })
+
+  test("one oversized item is rejected by the byte cap", () => {
+    const key = codexTranscriptKey("sess-bytes", "gpt-5")
+    setCodexTranscript(key, [{ content: "x".repeat(8 * 1024 * 1024) }])
+    expect(getCodexTranscript(key)).toBeUndefined()
+    expect(getCodexTranscriptBytesForTest()).toBe(0)
   })
 })
 

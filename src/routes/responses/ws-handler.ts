@@ -1,6 +1,6 @@
 import type { Context } from "hono"
 
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 import type {
@@ -16,6 +16,7 @@ import {
   resolveConnectionFromTarget,
   selectNextResponsesWsTarget,
 } from "~/lib/request-admission"
+import { MAX_JSON_BODY_BYTES } from "~/lib/request-body"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
@@ -44,10 +45,14 @@ interface ResponsesWebSocketMessage {
 
 export interface WebSocketSendTarget {
   readyState: number
-  send: (data: string | ArrayBuffer | Uint8Array) => void
+  send: (data: string | ArrayBuffer | Uint8Array) => unknown
+  getBufferedAmount?: () => number
 }
 
 const WS_READY_STATE_OPEN = 1
+const WS_SEND_HIGH_WATER_BYTES = 1024 * 1024
+const WS_SEND_BACKPRESSURE_TIMEOUT_MS = 30_000
+const WS_SEND_POLL_MS = 5
 
 export function createResponsesWebSocketSession(c: Context) {
   let inFlight = false
@@ -55,6 +60,7 @@ export function createResponsesWebSocketSession(c: Context) {
   // Sticky id for upstream WS connection reuse across multi-turn creates
   // on this client socket (CPA execution session / passthroughSessionID).
   const executionSessionId = randomUUID()
+  const transcriptScopeId = resolveTranscriptScopeId(c)
   logger.info(
     `responses websocket: client session opened id=${executionSessionId}`,
   )
@@ -70,7 +76,16 @@ export function createResponsesWebSocketSession(c: Context) {
       ws: WebSocketSendTarget,
     ) {
       if (typeof event.data !== "string") {
-        sendError(ws, "Invalid request. Expected text JSON message.")
+        void sendError(ws, "Invalid request. Expected text JSON message.")
+        return
+      }
+
+      if (Buffer.byteLength(event.data) > MAX_JSON_BODY_BYTES) {
+        void sendError(
+          ws,
+          `Request exceeds the ${MAX_JSON_BODY_BYTES}-byte WebSocket message limit.`,
+          "request_too_large",
+        )
         return
       }
 
@@ -78,17 +93,17 @@ export function createResponsesWebSocketSession(c: Context) {
       try {
         message = JSON.parse(event.data) as ResponsesWebSocketMessage
       } catch {
-        sendError(ws, "Invalid request. Expected valid JSON payload.")
+        void sendError(ws, "Invalid request. Expected valid JSON payload.")
         return
       }
 
       if (message.type !== "response.create") {
-        sendError(ws, 'Invalid request type. Expected "response.create".')
+        void sendError(ws, 'Invalid request type. Expected "response.create".')
         return
       }
 
       if (inFlight) {
-        sendError(
+        void sendError(
           ws,
           "Connection is busy processing another response.create request.",
           "busy",
@@ -98,7 +113,7 @@ export function createResponsesWebSocketSession(c: Context) {
 
       const payload = parseResponsePayload(message)
       if (!payload) {
-        sendError(ws, "Invalid request. Missing response payload object.")
+        void sendError(ws, "Invalid request. Missing response payload object.")
         return
       }
 
@@ -112,12 +127,14 @@ export function createResponsesWebSocketSession(c: Context) {
         payload,
         signal: controller.signal,
         executionSessionId,
+        transcriptScopeId,
       }).finally(endActiveRequest)
     },
 
-    onClose() {
+    onClose(event?: CloseEvent) {
       logger.info(
-        `responses websocket: client session closed id=${executionSessionId}`,
+        `responses websocket: client session closed id=${executionSessionId} `
+          + `code=${event?.code ?? 0} reason=${event?.reason || "(none)"}`,
       )
       activeController?.abort()
       endActiveRequest()
@@ -126,7 +143,8 @@ export function createResponsesWebSocketSession(c: Context) {
         executionSessionId,
         "client_disconnect",
       )
-      // Drop the codex full-input transcript accumulated for this session.
+      // Drop anonymous socket-scoped transcripts. Auth/session-scoped recovery
+      // entries use a stable key and remain bounded by TTL/capacity eviction.
       clearResponsesTranscriptsByExecutionId(executionSessionId)
       if (closed > 0) {
         logger.info(
@@ -135,7 +153,11 @@ export function createResponsesWebSocketSession(c: Context) {
       }
     },
 
-    onError() {
+    onError(event?: Event) {
+      logger.warn(
+        `responses websocket: client session error id=${executionSessionId} `
+          + `event=${event?.type ?? "unknown"}`,
+      )
       activeController?.abort()
       endActiveRequest()
       closeUpstreamWebsocketSessionsByExecutionId(
@@ -179,6 +201,7 @@ interface ProcessResponseCreateOptions {
   payload: ResponsesPayload
   signal: AbortSignal
   executionSessionId: string
+  transcriptScopeId: string
 }
 
 /**
@@ -213,14 +236,15 @@ function selectNextResponsesAdmission(
 async function processResponseCreate(
   options: ProcessResponseCreateOptions,
 ): Promise<void> {
-  const { c, ws, payload, signal, executionSessionId } = options
+  const { c, ws, payload, signal, executionSessionId, transcriptScopeId } =
+    options
 
   const sessionHeaders = extractResponsesSessionHeaders(c)
   let admission: RequestAdmission
   try {
     admission = await prepareResponsesAdmission(c, payload, sessionHeaders)
   } catch (error) {
-    handleResponseError(ws, error, signal)
+    await handleResponseError(ws, error, signal)
     return
   }
 
@@ -240,6 +264,7 @@ async function processResponseCreate(
       payload,
       signal,
       executionSessionId,
+      transcriptScopeId,
       sessionHeaders,
       admission,
       current,
@@ -267,6 +292,7 @@ interface RunResponsesAttemptParams {
   payload: ResponsesPayload
   signal: AbortSignal
   executionSessionId: string
+  transcriptScopeId: string
   sessionHeaders: Record<string, string | undefined>
   admission: RequestAdmission
   current: RequestAdmission
@@ -296,6 +322,7 @@ async function runResponsesAttempt(
     payload,
     signal,
     executionSessionId,
+    transcriptScopeId,
     sessionHeaders,
     admission,
     current,
@@ -307,7 +334,7 @@ async function runResponsesAttempt(
   // candidates and the initial admission is validated as account-backed.
   const account = current.account
   if (!account) {
-    handleResponseError(
+    await handleResponseError(
       ws,
       new HTTPError(
         "Responses API requires an Account-based admission",
@@ -331,14 +358,17 @@ async function runResponsesAttempt(
       // Same-account HTTP recovery for a lazy connection failure: skip WS.
       forceUpstreamHttp: httpRecoveryTried,
       executionSessionId,
+      transcriptScopeId,
     })
     c.set("accountId" as never, result.accountId)
 
     let completedResponse: ResponsesResponse | undefined
     if (isNonStreaming(result.response)) {
-      state.committed = true
       completedResponse = result.response
-      sendJson(ws, result.response)
+      if (!(await sendJson(ws, result.response, signal))) {
+        throw new ClientAbortError()
+      }
+      state.committed = true
     } else {
       completedResponse = await pumpWithLeadingBuffer(ws, result.response, {
         onCommit: () => {
@@ -371,7 +401,7 @@ async function runResponsesAttempt(
 
     // Content already forwarded → committed; surface once, never retry.
     if (state.committed) {
-      handleResponseError(ws, error, signal)
+      await handleResponseError(ws, error, signal)
       return { type: "stop" }
     }
 
@@ -382,7 +412,7 @@ async function runResponsesAttempt(
 
     // Request error / exhausted / repeat connection → surface once.
     if (failure.scope !== "credential") {
-      handleResponseError(ws, error, signal)
+      await handleResponseError(ws, error, signal)
       return { type: "stop" }
     }
 
@@ -398,11 +428,19 @@ async function runResponsesAttempt(
       tried,
     )
     if (!next) {
-      handleResponseError(ws, error, signal)
+      await handleResponseError(ws, error, signal)
       return { type: "stop" }
     }
     return { type: "rotate", next }
   }
+}
+
+function resolveTranscriptScopeId(c: Context): string {
+  const userId = c.get("userId" as never) as string | undefined
+  if (userId?.trim()) return `user:${userId.trim()}`
+  const credential =
+    c.req.header("authorization") ?? c.req.header("x-api-key") ?? "anonymous"
+  return createHash("sha256").update(credential).digest("hex").slice(0, 24)
 }
 
 function extractResponsesSessionHeaders(
@@ -469,6 +507,13 @@ const LEADING_CONTROL_TYPES = new Set([
   "response.queued",
 ])
 
+const TERMINAL_RESPONSE_TYPES = new Set([
+  "response.completed",
+  "response.incomplete",
+  "response.failed",
+  "error",
+])
+
 // Bounded buffer caps: overflow flushes + commits rather than buffering
 // unbounded, trading a tiny failover window for a memory guarantee.
 const MAX_BUFFERED_EVENTS = 32
@@ -493,21 +538,22 @@ async function pumpWithLeadingBuffer(
   hooks: PumpHooks,
 ): Promise<ResponsesResponse | undefined> {
   let completedResponse: ResponsesResponse | undefined
+  let sawTerminal = false
   // Mutable state object so control-flow analysis keeps `committed` a plain
   // boolean (it is only ever flipped inside the commit closure below).
   const state = { committed: false }
   const buffer: Array<string> = []
   let bufferedBytes = 0
 
-  const forward = (data: string) => {
-    if (!sendText(ws, data)) {
+  const forward = async (data: string) => {
+    if (!(await sendText(ws, data))) {
       throw new ClientAbortError()
     }
   }
 
   // Flush buffered control frames, then mark committed.
-  const commit = () => {
-    for (const data of buffer) forward(data)
+  const commit = async () => {
+    for (const data of buffer) await forward(data)
     buffer.length = 0
     bufferedBytes = 0
     state.committed = true
@@ -538,6 +584,9 @@ async function pumpWithLeadingBuffer(
     }
 
     const type = typeof parsed?.type === "string" ? parsed.type : undefined
+    if (type && TERMINAL_RESPONSE_TYPES.has(type)) {
+      sawTerminal = true
+    }
 
     // Buffer leading control frames until content/terminal or overflow.
     if (
@@ -551,7 +600,7 @@ async function pumpWithLeadingBuffer(
         buffer.length >= MAX_BUFFERED_EVENTS
         || bufferedBytes >= MAX_BUFFERED_BYTES
       ) {
-        commit()
+        await commit()
       }
       continue
     }
@@ -559,27 +608,28 @@ async function pumpWithLeadingBuffer(
     // First content event / terminal → include it in the flush and commit.
     if (!state.committed) {
       buffer.push(event.data)
-      commit()
+      await commit()
       continue
     }
 
-    forward(event.data)
+    await forward(event.data)
   }
 
-  // Stream ended while still buffering (e.g. only control frames then a clean
-  // close) → flush + commit so the client isn't left hanging.
-  if (!state.committed && buffer.length > 0) {
-    commit()
+  // A clean EOF/[DONE] without a Responses terminal event is a truncated turn.
+  // Do not flush leading control frames: while uncommitted the caller can still
+  // retry the same account over HTTP or rotate credentials safely.
+  if (!sawTerminal) {
+    throw new Error("Upstream stream ended without a terminal response event")
   }
 
   return completedResponse
 }
 
-function handleResponseError(
+async function handleResponseError(
   ws: WebSocketSendTarget,
   error: unknown,
   signal: AbortSignal,
-): void {
+): Promise<void> {
   if (isAbortError(error) && signal.aborted) {
     return
   }
@@ -590,29 +640,33 @@ function handleResponseError(
 
   const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
   if (knownError) {
-    sendJson(ws, {
-      type: "error",
-      error: {
-        message: knownError.message,
-        type: knownError.type,
-        code: knownError.type,
-        ...(knownError.retryAfterSeconds > 0 ?
-          { retry_after: knownError.retryAfterSeconds }
-        : {}),
+    await sendJson(
+      ws,
+      {
+        type: "error",
+        error: {
+          message: knownError.message,
+          type: knownError.type,
+          code: knownError.type,
+          ...(knownError.retryAfterSeconds > 0 ?
+            { retry_after: knownError.retryAfterSeconds }
+          : {}),
+        },
       },
-    })
+      signal,
+    )
     return
   }
 
-  sendJson(ws, createResponsesErrorPayload(error))
+  await sendJson(ws, createResponsesErrorPayload(error), signal)
 }
 
-function sendError(
+async function sendError(
   ws: WebSocketSendTarget,
   message: string,
   code?: string,
-): void {
-  sendJson(ws, {
+): Promise<void> {
+  await sendJson(ws, {
     type: "error",
     error: {
       message,
@@ -622,8 +676,12 @@ function sendError(
   })
 }
 
-function sendJson(ws: WebSocketSendTarget, payload: unknown): void {
-  sendText(ws, JSON.stringify(payload))
+async function sendJson(
+  ws: WebSocketSendTarget,
+  payload: unknown,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  return sendText(ws, JSON.stringify(payload), signal)
 }
 
 /**
@@ -631,16 +689,54 @@ function sendJson(ws: WebSocketSendTarget, payload: unknown): void {
  * The pump uses this so onCommit() fires on a real successful send: if the
  * client socket is gone the first flush returns false and is treated as abort.
  */
-function sendText(ws: WebSocketSendTarget, payload: string): boolean {
-  if (ws.readyState !== WS_READY_STATE_OPEN) {
+async function sendText(
+  ws: WebSocketSendTarget,
+  payload: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!isSocketOpen(ws)) {
     return false
   }
 
   try {
-    ws.send(payload)
-    return true
+    const deadline = Date.now() + WS_SEND_BACKPRESSURE_TIMEOUT_MS
+    while (
+      ws.getBufferedAmount
+      && ws.getBufferedAmount() > WS_SEND_HIGH_WATER_BYTES
+    ) {
+      if (!isSocketOpen(ws) || signal?.aborted || Date.now() >= deadline) {
+        return false
+      }
+      await waitForSendPoll(signal)
+    }
+
+    const status = ws.send(payload)
+    // Bun returns 0 when it dropped the message, -1 when it accepted the
+    // message but applied backpressure, and a positive byte count on success.
+    // Browser-style/mocked sockets return void after accepting the message.
+    return status !== 0
   } catch {
     // Connection may be closing — report failure so callers can stop.
     return false
   }
 }
+
+function isSocketOpen(ws: WebSocketSendTarget): boolean {
+  return ws.readyState === WS_READY_STATE_OPEN
+}
+
+function waitForSendPoll(signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, WS_SEND_POLL_MS)
+    signal?.addEventListener("abort", finish, { once: true })
+  })
+}
+
+/** Test hook for Bun send-status/backpressure behavior. */
+export const sendResponsesWebSocketTextForTest = sendText

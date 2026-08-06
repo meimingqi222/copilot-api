@@ -2,9 +2,9 @@
 
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
-import { websocket } from "hono/bun"
 import invariant from "tiny-invariant"
 
+import { bunWebsocket } from "~/lib/bun-websocket"
 import { flushAllPersistentMaps } from "~/lib/cache/persistent-map"
 import { initLogger, logger } from "~/lib/logger"
 import { loadModelAliases } from "~/lib/model-aliases"
@@ -309,7 +309,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   const bunServer = Bun.serve({
     fetch: server.fetch,
-    websocket,
+    websocket: bunWebsocket,
     port: options.port,
     hostname: process.env.HOST || undefined,
     idleTimeout: 0,

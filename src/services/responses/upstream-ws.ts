@@ -18,6 +18,11 @@ import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
 
+import {
+  extractWsErrorMessage,
+  extractWsErrorStatus,
+} from "./upstream-ws-error"
+
 export type UpstreamWsProvider = "codex" | "xai"
 
 const CODEX_WS_BETA = "responses_websockets=2026-02-06"
@@ -59,6 +64,7 @@ const UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS = 60_000
 const UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS = 120_000
 const MAX_UPSTREAM_WS_QUEUE_MESSAGES = 1_024
 const MAX_UPSTREAM_WS_QUEUE_BYTES = 16 * 1024 * 1024
+const MAX_UPSTREAM_WS_REQUEST_BYTES = 16 * 1024 * 1024
 const MAX_UPSTREAM_WS_SESSIONS = 1_024
 
 /** Convert HTTP(S) responses URL to ws(s). */
@@ -377,6 +383,7 @@ export async function openUpstreamResponsesWebsocketTurn(
 
   let ws: WebSocket
   let openedFresh = false
+  let consumer: TurnConsumer | undefined
   try {
     if (signal?.aborted) {
       throw new Error(`${provider} websockets: aborted`)
@@ -444,10 +451,29 @@ export async function openUpstreamResponsesWebsocketTurn(
           + `input_items=${Array.isArray(effectiveBody.input) ? effectiveBody.input.length : 0}`,
       )
     }
-    ws.send(JSON.stringify(effectiveBody))
+    // Attach message/close/error listeners before sending. Very fast upstream
+    // responses must not race past the first-event gate.
+    consumer = createTurnConsumer({
+      provider,
+      accountId: account.id,
+      executionSessionId,
+      key,
+      sess,
+      ws,
+      signal,
+      releaseChain,
+    })
+    const wireBody = JSON.stringify(effectiveBody)
+    if (Buffer.byteLength(wireBody) > MAX_UPSTREAM_WS_REQUEST_BYTES) {
+      throw new Error(
+        `${provider} websockets: upstream request exceeds WebSocket size limit`,
+      )
+    }
+    ws.send(wireBody)
     sess.lastUsedAt = Date.now()
   } catch (error) {
-    releaseChain()
+    consumer?.dispose()
+    if (!consumer) releaseChain()
     // Drop half-open / failed sessions so the next turn redials.
     destroySession(key, "dial_or_send_failed")
     throw error
@@ -457,16 +483,6 @@ export async function openUpstreamResponsesWebsocketTurn(
   // socket (e.g. an oversized replay frame the upstream never processes)
   // throws a transport error *here* — letting the caller fall back to HTTP —
   // instead of hanging until the downstream client gives up.
-  const consumer = createTurnConsumer({
-    provider,
-    accountId: account.id,
-    executionSessionId,
-    key,
-    sess,
-    ws,
-    signal,
-    releaseChain,
-  })
   try {
     await consumer.waitForFirstEvent(UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS)
   } catch (error) {
@@ -873,32 +889,6 @@ function waitForOpen(
     ws.addEventListener("error", onError)
     ws.addEventListener("close", onClose)
   })
-}
-
-function extractWsErrorMessage(parsed: Record<string, unknown>): string {
-  const err = parsed.error
-  if (err && typeof err === "object") {
-    const msg = (err as { message?: unknown }).message
-    if (typeof msg === "string" && msg.trim()) return msg
-    const code = (err as { code?: unknown }).code
-    if (typeof code === "string" && code.trim()) return code
-  }
-  if (typeof parsed.message === "string" && parsed.message.trim()) {
-    return parsed.message
-  }
-  return "upstream websocket error"
-}
-
-function extractWsErrorStatus(parsed: Record<string, unknown>): number {
-  if (typeof parsed.status === "number" && parsed.status >= 400) {
-    return parsed.status
-  }
-  const err = parsed.error
-  if (err && typeof err === "object") {
-    const status = (err as { status?: unknown }).status
-    if (typeof status === "number" && status >= 400) return status
-  }
-  return 400
 }
 
 function readResponseId(parsed: Record<string, unknown>): string {

@@ -14,6 +14,10 @@ import {
   isUpstreamWsTransportError,
   shouldUseUpstreamResponsesWebsocket,
 } from "~/services/responses/upstream-ws"
+import {
+  extractWsErrorMessage,
+  extractWsErrorStatus,
+} from "~/services/responses/upstream-ws-error"
 
 function makeAccount(
   provider: Account["provider"],
@@ -192,5 +196,18 @@ describe("fallback error classification", () => {
       false,
     )
     expect(isAbortLikeError(new Error("xai websockets: aborted"))).toBe(true)
+  })
+})
+
+describe("upstream response.failed extraction", () => {
+  test("reads nested server failures for failover", () => {
+    const event = {
+      type: "response.failed",
+      response: {
+        error: { type: "server_error", message: "backend unavailable" },
+      },
+    }
+    expect(extractWsErrorMessage(event)).toBe("backend unavailable")
+    expect(extractWsErrorStatus(event)).toBe(500)
   })
 })

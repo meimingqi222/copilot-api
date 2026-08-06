@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
-import { websocket } from "hono/bun"
 
 import { listAccounts } from "~/lib/accounts"
+import { bunWebsocket } from "~/lib/bun-websocket"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
+import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+import { sendResponsesWebSocketTextForTest } from "~/routes/responses/ws-handler"
 import { server } from "~/server"
 
 import { setTestAccounts } from "./helpers/set-accounts"
@@ -19,6 +21,7 @@ const originalUsers = state.users
 
 beforeEach(() => {
   resetProtectedRouteGuardForTest()
+  resetAdaptiveRateLimiterForTest()
   statsStore.clearUsageStatsForTest()
   setTestAccounts([
     {
@@ -110,7 +113,7 @@ test("WS /responses supports sequential response.create requests", async () => {
   using appServer = Bun.serve({
     port: 0,
     fetch: server.fetch,
-    websocket,
+    websocket: bunWebsocket,
   })
 
   const { ws, queue } = await openSocket(
@@ -200,7 +203,7 @@ test("WS /v1/responses returns busy error on concurrent response.create", async 
   using appServer = Bun.serve({
     port: 0,
     fetch: server.fetch,
-    websocket,
+    websocket: bunWebsocket,
   })
 
   const { ws, queue } = await openSocket(
@@ -266,7 +269,7 @@ test("WS /v1/responses forwards upstream errors as error events", async () => {
   using appServer = Bun.serve({
     port: 0,
     fetch: server.fetch,
-    websocket,
+    websocket: bunWebsocket,
   })
 
   const { ws, queue } = await openSocket(
@@ -296,6 +299,84 @@ test("WS /v1/responses forwards upstream errors as error events", async () => {
   expect(message.error.message).toContain("upstream failed")
 
   ws.close()
+})
+
+test("WS /v1/responses reports a stream that ends without a terminal event", async () => {
+  const fetchMock = mock(
+    () =>
+      new Response(
+        [
+          'data: {"type":"response.created","response":{"id":"resp_truncated","status":"in_progress"}}',
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"),
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        },
+      ),
+  )
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+
+  using appServer = Bun.serve({
+    port: 0,
+    fetch: server.fetch,
+    websocket: bunWebsocket,
+  })
+  const { ws, queue } = await openSocket(
+    `ws://localhost:${appServer.port}/v1/responses`,
+  )
+
+  ws.send(
+    JSON.stringify({
+      type: "response.create",
+      response: { model: "gpt-responses", input: "hi", stream: true },
+    }),
+  )
+
+  const message = JSON.parse(await queue.next()) as {
+    type?: string
+    error?: { message?: string }
+  }
+  expect(message.type).toBe("error")
+  expect(message.error?.message).toContain("without a terminal response event")
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  ws.close()
+})
+
+test("Responses WS send detects a message dropped by Bun", async () => {
+  const accepted = await sendResponsesWebSocketTextForTest(
+    {
+      readyState: 1,
+      send: () => 0,
+      getBufferedAmount: () => 0,
+    },
+    "payload",
+  )
+  expect(accepted).toBe(false)
+})
+
+test("Responses WS send waits for buffered output to drain", async () => {
+  let buffered = 2 * 1024 * 1024
+  let sends = 0
+  setTimeout(() => {
+    buffered = 0
+  }, 15)
+
+  const accepted = await sendResponsesWebSocketTextForTest(
+    {
+      readyState: 1,
+      send: () => {
+        sends += 1
+        return 7
+      },
+      getBufferedAmount: () => buffered,
+    },
+    "payload",
+  )
+  expect(accepted).toBe(true)
+  expect(sends).toBe(1)
 })
 
 interface SocketQueue {

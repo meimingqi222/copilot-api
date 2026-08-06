@@ -31,6 +31,7 @@ import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import {
   getResponsesTranscript,
+  resolveResponsesTranscriptSessionId,
   setResponsesTranscript,
   xaiTranscriptKey,
 } from "../codex/ws-transcript-cache"
@@ -402,38 +403,41 @@ export async function createXaiResponsesOnce(
   // Set when a chained turn falls back to HTTP: the HTTP POST must send the
   // full self-contained input (not the client's delta) so the tool-result turn
   // is not an orphan.
-  let httpFallbackBody: Record<string, unknown> | undefined
+  const executionSessionId =
+    ctx?.executionSessionId?.trim() || sessionId || account.id
+  const transcriptSessionId = resolveResponsesTranscriptSessionId(
+    executionSessionId,
+    sessionId,
+    ctx?.transcriptScopeId,
+  )
+  const transcriptKey = xaiTranscriptKey(transcriptSessionId, model)
+  const rawDelta =
+    Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
+  const cachedFull =
+    previousResponseId ? getResponsesTranscript(transcriptKey) : undefined
+  const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
+  const fullInputThisTurn = cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
+  const fallbackFullInputBody =
+    previousResponseId && cachedFull ?
+      {
+        ...upstreamBody,
+        input: fullInputThisTurn,
+        previous_response_id: undefined,
+      }
+    : undefined
+  const httpFallbackBody = fallbackFullInputBody
+
+  if (previousResponseId && !useUpstreamWs && !httpFallbackBody) {
+    throw new HTTPError(
+      "previous_response_not_found: chained xAI request requires full replay",
+      new Response(null, { status: 409 }),
+    )
+  }
+
   if (useUpstreamWs) {
     const headers = applyXaiWebsocketHeaders(
       buildXaiHeaders(accessToken, true, sessionId),
     )
-    const executionSessionId =
-      ctx?.executionSessionId?.trim() || sessionId || account.id
-    const transcriptKey = xaiTranscriptKey(executionSessionId, model)
-    const rawDelta =
-      Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
-    const cachedFull =
-      previousResponseId ? getResponsesTranscript(transcriptKey) : undefined
-    // A chained turn (previous_response_id set) with no cached transcript means
-    // the wire input is only a delta we cannot expand — skip recording so we
-    // never poison the transcript with a partial input.
-    const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
-    const fullInputThisTurn =
-      cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
-    // On a *different credential's* fresh socket, this account's
-    // previous_response_id is not in that connection's in-memory cache and is
-    // not cross-credential resolvable, so drop it and replay the full input.
-    // xAI keeps store=true unchanged; this is a per-connection recovery, not a
-    // store-policy change. Reused as the connection-scope HTTP fallback body.
-    const fallbackFullInputBody =
-      previousResponseId && cachedFull ?
-        {
-          ...upstreamBody,
-          input: fullInputThisTurn,
-          previous_response_id: undefined,
-        }
-      : undefined
-    httpFallbackBody = fallbackFullInputBody
     const wsBody: Record<string, unknown> = {
       ...upstreamBody,
       previous_response_id: previousResponseId,
@@ -502,12 +506,22 @@ export async function createXaiResponsesOnce(
 
   if (clientStream) {
     const stream = await safeSseStream(response, detectResponsesStreamError)
-    return normalizeResponsesStreamIds(
+    const normalized = normalizeResponsesStreamIds(
       stream as unknown as AsyncIterable<CopilotStreamEventLike>,
     )
+    return ctx?.downstreamWebsocket && transcriptTrackable ?
+        recordXaiTranscript(normalized, transcriptKey, fullInputThisTurn)
+      : normalized
   }
 
-  return collectResponsesFromSseResponse(response, model)
+  const result = await collectResponsesFromSseResponse(response, model)
+  if (ctx?.downstreamWebsocket && transcriptTrackable) {
+    setResponsesTranscript(transcriptKey, [
+      ...fullInputThisTurn,
+      ...(Array.isArray(result.output) ? result.output : []),
+    ])
+  }
+  return result
 }
 
 async function collectResponsesFromWsStream(

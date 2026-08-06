@@ -1,10 +1,25 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+
+import type { Account } from "~/lib/accounts"
 
 import {
   chainedHttpCodexRequestError,
+  createCodexResponsesOnce,
   stripReasoningItems,
 } from "~/services/codex/create-responses-once"
+import {
+  clearCodexTranscriptsForTest,
+  codexTranscriptKey,
+  setCodexTranscript,
+} from "~/services/codex/ws-transcript-cache"
 import { selectUpstreamWsBody } from "~/services/responses/upstream-ws"
+
+const originalFetch = globalThis.fetch
+
+afterEach(() => {
+  globalThis.fetch = originalFetch
+  clearCodexTranscriptsForTest()
+})
 
 describe("chainedHttpCodexRequestError", () => {
   test("carries the previous_response_not_found marker and a 409 status", () => {
@@ -109,5 +124,89 @@ describe("selectUpstreamWsBody fallback", () => {
     })
     expect(usedFallback).toBe(false)
     expect(body).toBe(incremental)
+  })
+})
+
+describe("chained HTTP recovery", () => {
+  test("expands a previous_response_id delta from the stable transcript", async () => {
+    const sessionId = "stable-session"
+    setCodexTranscript(
+      codexTranscriptKey(`test-scope::${sessionId}`, "gpt-5"),
+      [
+        { type: "message", role: "user", content: "first" },
+        { type: "message", role: "assistant", content: "answer" },
+      ],
+    )
+
+    let postedBody: Record<string, unknown> | undefined
+    globalThis.fetch = ((_url, init) => {
+      if (typeof init?.body !== "string") {
+        throw new TypeError("expected string request body")
+      }
+      postedBody = JSON.parse(init.body) as Record<string, unknown>
+      return Promise.resolve(
+        new Response(
+          [
+            'data: {"type":"response.created","response":{"id":"resp_2","status":"in_progress"}}',
+            "",
+            'data: {"type":"response.completed","response":{"id":"resp_2","status":"completed","output":[]}}',
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      )
+    }) as typeof fetch
+
+    const account: Account = {
+      id: "codex-1",
+      label: "codex",
+      provider: "codex",
+      credentials: { accessToken: "token", accountId: "acct-1" },
+      enabled: true,
+      priority: 0,
+      createdAt: Date.now(),
+    }
+    const stream = await createCodexResponsesOnce(
+      account,
+      {
+        model: "gpt-5",
+        input: [
+          {
+            type: "function_call_output",
+            call_id: "call-1",
+            output: "ok",
+          },
+        ],
+        previous_response_id: "resp_1",
+        stream: true,
+      },
+      undefined,
+      {
+        downstreamWebsocket: true,
+        executionSessionId: "new-socket",
+        transcriptScopeId: "test-scope",
+        forwardedHeaders: { session_id: sessionId },
+        forceUpstreamHttp: true,
+      },
+    )
+    for await (const _event of stream as AsyncIterable<unknown>) {
+      // consume the recovery stream so transcript recording also completes
+    }
+
+    expect(postedBody?.previous_response_id).toBeUndefined()
+    expect(postedBody?.input).toEqual([
+      { type: "message", role: "user", content: "first" },
+      { type: "message", role: "assistant", content: "answer" },
+      {
+        type: "function_call_output",
+        call_id: "call-1",
+        output: "ok",
+      },
+    ])
   })
 })
