@@ -74,7 +74,12 @@ export function collectResponsesFromSseText(
   let completedEvent: Record<string, unknown> | undefined
   let terminalError: string | undefined
 
-  for (const line of text.split("\n")) {
+  let lineStart = 0
+  while (lineStart <= text.length) {
+    const lineEnd = text.indexOf("\n", lineStart)
+    const line =
+      lineEnd === -1 ? text.slice(lineStart) : text.slice(lineStart, lineEnd)
+    lineStart = lineEnd === -1 ? text.length + 1 : lineEnd + 1
     const event = parseEventData(line)
     if (!event) {
       continue

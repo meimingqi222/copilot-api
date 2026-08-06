@@ -21,6 +21,7 @@ export const MAX_MIMO_RESPONSE_BYTES = 16 * 1024 * 1024
 const MAX_WS_FRAME_BUFFER_BYTES = MAX_MIMO_RESPONSE_BYTES + 14
 const MAX_PENDING_WS_MESSAGES = 256
 const MAX_PENDING_WS_MESSAGE_BYTES = MAX_MIMO_RESPONSE_BYTES
+const INITIAL_WS_FRAME_BUFFER_BYTES = 64 * 1024
 
 const CHINA_IP_RANGES = ["39.", "111.", "124.", "202.69.", "220.181."]
 
@@ -221,7 +222,51 @@ function performWsUpgrade(
       }
 
       // WS upgrade successful
-      let frameBuf: Buffer = buf.subarray(headerEnd + 4)
+      let frameStorage = Buffer.allocUnsafe(
+        Math.min(
+          MAX_WS_FRAME_BUFFER_BYTES,
+          Math.max(INITIAL_WS_FRAME_BUFFER_BYTES, buf.length - headerEnd - 4),
+        ),
+      )
+      let frameStart = 0
+      let frameEnd = 0
+
+      function appendFrameData(chunk: Buffer): void {
+        const pendingLength = frameEnd - frameStart
+        const nextLength = pendingLength + chunk.length
+        if (nextLength > MAX_WS_FRAME_BUFFER_BYTES) {
+          throw new Error("WebSocket frame buffer exceeds the maximum size")
+        }
+
+        if (frameStorage.length - frameEnd < chunk.length) {
+          if (frameStart > 0) {
+            frameStorage.copy(frameStorage, 0, frameStart, frameEnd)
+            frameStart = 0
+            frameEnd = pendingLength
+          }
+          if (frameStorage.length - frameEnd < chunk.length) {
+            const nextCapacity = Math.min(
+              MAX_WS_FRAME_BUFFER_BYTES,
+              Math.max(nextLength, frameStorage.length * 2),
+            )
+            const next = Buffer.allocUnsafe(nextCapacity)
+            frameStorage.copy(next, 0, frameStart, frameEnd)
+            frameStorage = next
+            frameStart = 0
+            frameEnd = pendingLength
+          }
+        }
+
+        chunk.copy(frameStorage, frameEnd)
+        frameEnd += chunk.length
+      }
+
+      try {
+        appendFrameData(buf.subarray(headerEnd + 4))
+      } catch (error) {
+        tlsSock.destroy(error instanceof Error ? error : undefined)
+        return
+      }
       buf = Buffer.alloc(0)
 
       const messageBuffer: Array<string> = []
@@ -268,12 +313,13 @@ function performWsUpgrade(
         let closeCode = 1000
         let closeReason = "Remote close"
 
-        while (frameBuf.length >= 2) {
+        while (frameEnd - frameStart >= 2) {
+          const pending = frameStorage.subarray(frameStart, frameEnd)
           try {
-            const frame = decodeWsFrame(frameBuf)
-            // Keep the remaining view instead of copying it for every frame.
-            // A single socket chunk can contain many frames.
-            frameBuf = frame.remaining
+            const frame = decodeWsFrame(pending)
+            // Advance a cursor instead of copying the remaining bytes for
+            // every frame. A single socket chunk can contain many frames.
+            frameStart += pending.length - frame.remaining.length
 
             switch (frame.opcode) {
               case 0x01: {
@@ -340,18 +386,29 @@ function performWsUpgrade(
             h(closeCode, closeReason)
           }
         }
+
+        if (frameStart === frameEnd) {
+          if (frameStorage.length > INITIAL_WS_FRAME_BUFFER_BYTES) {
+            frameStorage = Buffer.allocUnsafe(INITIAL_WS_FRAME_BUFFER_BYTES)
+          }
+          frameStart = 0
+          frameEnd = 0
+        } else if (frameStart > frameStorage.length / 2) {
+          frameStorage.copy(frameStorage, 0, frameStart, frameEnd)
+          frameEnd -= frameStart
+          frameStart = 0
+        }
       }
 
       // Start reading WS frames (remove upgrade-response listener first)
       tlsSock.removeAllListeners("data")
       tlsSock.on("data", (chunk: Buffer) => {
-        if (frameBuf.length + chunk.length > MAX_WS_FRAME_BUFFER_BYTES) {
-          tlsSock.destroy(
-            new Error("WebSocket frame buffer exceeds the maximum size"),
-          )
+        try {
+          appendFrameData(chunk)
+        } catch (error) {
+          tlsSock.destroy(error instanceof Error ? error : undefined)
           return
         }
-        frameBuf = Buffer.concat([frameBuf, chunk])
         processWsFrames()
       })
 

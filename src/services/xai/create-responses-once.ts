@@ -31,9 +31,10 @@ import {
 import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import {
+  appendResponsesTranscript,
+  buildResponsesTranscriptInput,
   getResponsesTranscript,
   resolveResponsesTranscriptSessionId,
-  setResponsesTranscript,
   type TranscriptStoreResult,
   xaiTranscriptKey,
 } from "../codex/ws-transcript-cache"
@@ -418,7 +419,11 @@ export async function createXaiResponsesOnce(
   const cachedFull =
     previousResponseId ? getResponsesTranscript(transcriptKey) : undefined
   const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
-  const fullInputThisTurn = cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
+  const fullInputThisTurn = buildResponsesTranscriptInput(
+    cachedFull,
+    rawDelta,
+    Boolean(ctx?.downstreamWebsocket),
+  )
   const fallbackFullInputBody =
     previousResponseId && cachedFull ?
       {
@@ -544,10 +549,11 @@ export async function createXaiResponsesOnce(
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
     recordTranscriptCheckpoint(
       ctx.memoryTraceId,
-      setResponsesTranscript(transcriptKey, [
-        ...fullInputThisTurn,
-        ...(Array.isArray(result.output) ? result.output : []),
-      ]),
+      appendResponsesTranscript(
+        transcriptKey,
+        fullInputThisTurn,
+        Array.isArray(result.output) ? result.output : [],
+      ),
     )
   }
   return result
@@ -605,10 +611,7 @@ async function* recordXaiTranscript(
             : []
           recordTranscriptCheckpoint(
             memoryTraceId,
-            setResponsesTranscript(transcriptKey, [
-              ...fullInputThisTurn,
-              ...output,
-            ]),
+            appendResponsesTranscript(transcriptKey, fullInputThisTurn, output),
           )
         }
       } catch {

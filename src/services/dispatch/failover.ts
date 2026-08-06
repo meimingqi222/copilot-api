@@ -33,6 +33,7 @@ import {
   getProtocolAdapter,
   initializeProtocolAdapters,
 } from "~/services/protocols"
+import { WindsurfConcurrencyLimitError } from "~/services/windsurf/concurrency"
 import { WindsurfUpstreamError } from "~/services/windsurf/error-classifier"
 
 export interface FailoverOptions<TPayload, TResult> {
@@ -84,7 +85,11 @@ export async function executeWithFailover<
         throw error
       }
 
-      if (error instanceof HTTPError && !shouldFailover(error)) {
+      if (
+        error instanceof HTTPError
+        && !(error instanceof WindsurfConcurrencyLimitError)
+        && !shouldFailover(error)
+      ) {
         // Non-failover errors (e.g. usage_limit_reached) still need to
         // mark the credential as exhausted so it's not selected again
         // for subsequent requests until the quota resets.
@@ -121,7 +126,12 @@ export async function executeWithFailover<
         )
       }
 
-      await markCooldown(current, error, logPrefix)
+      // A local per-account concurrency rejection is not an upstream failure:
+      // do not cool down or mark the account. It is safe to try another route
+      // target, while preserving the 429 if no target is available.
+      if (!(error instanceof WindsurfConcurrencyLimitError)) {
+        await markCooldown(current, error, logPrefix)
+      }
 
       const next = switchToNextRouteTarget(
         current.target,

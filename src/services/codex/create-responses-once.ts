@@ -44,10 +44,11 @@ import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import { buildCodexHeaders } from "./headers"
 import {
+  appendCodexTranscript,
+  buildResponsesTranscriptInput,
   codexTranscriptKey,
   getCodexTranscript,
   resolveResponsesTranscriptSessionId,
-  setCodexTranscript,
   type TranscriptStoreResult,
 } from "./ws-transcript-cache"
 
@@ -409,7 +410,11 @@ export async function createCodexResponsesOnce(
   const cachedFull =
     previousResponseId ? getCodexTranscript(transcriptKey) : undefined
   const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
-  const fullInputThisTurn = cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
+  const fullInputThisTurn = buildResponsesTranscriptInput(
+    cachedFull,
+    rawDelta,
+    Boolean(ctx?.downstreamWebsocket),
+  )
   const fallbackFullInputBody =
     previousResponseId && cachedFull ?
       {
@@ -539,10 +544,11 @@ export async function createCodexResponsesOnce(
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
     recordTranscriptCheckpoint(
       memoryTraceId,
-      setCodexTranscript(transcriptKey, [
-        ...fullInputThisTurn,
-        ...(Array.isArray(result.output) ? result.output : []),
-      ]),
+      appendCodexTranscript(
+        transcriptKey,
+        fullInputThisTurn,
+        Array.isArray(result.output) ? result.output : [],
+      ),
     )
   }
   // Debug: same reasoning-summary check as the streaming path, for the
@@ -636,10 +642,7 @@ async function* recordCodexTranscript(
             : []
           recordTranscriptCheckpoint(
             memoryTraceId,
-            setCodexTranscript(transcriptKey, [
-              ...fullInputThisTurn,
-              ...output,
-            ]),
+            appendCodexTranscript(transcriptKey, fullInputThisTurn, output),
           )
         }
       } catch {

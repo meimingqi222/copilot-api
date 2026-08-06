@@ -1,5 +1,8 @@
 import { gunzipSync } from "node:zlib"
 
+const textEncoder = new TextEncoder()
+const INITIAL_ENCODER_CAPACITY = 64
+
 function encodeVarintBytes(value: number): Uint8Array {
   const bytes: Array<number> = []
   let remaining = value >>> 0
@@ -12,8 +15,8 @@ function encodeVarintBytes(value: number): Uint8Array {
 }
 
 export class ProtobufEncoder {
-  private readonly parts: Array<Uint8Array> = []
-  private totalLength = 0
+  private buffer = new Uint8Array(0)
+  private length = 0
 
   writeVarint(fieldNumber: number, value: number): void {
     this.writeTag(fieldNumber, 0)
@@ -25,7 +28,7 @@ export class ProtobufEncoder {
   }
 
   writeString(fieldNumber: number, value: string): void {
-    this.writeBytes(fieldNumber, new TextEncoder().encode(value))
+    this.writeBytes(fieldNumber, textEncoder.encode(value))
   }
 
   writeBytes(fieldNumber: number, value: Uint8Array): void {
@@ -36,10 +39,9 @@ export class ProtobufEncoder {
 
   writeMessage(fieldNumber: number, other: ProtobufEncoder): void {
     this.writeTag(fieldNumber, 2)
-    this.appendPart(encodeVarintBytes(other.totalLength))
-    for (const part of other.parts) {
-      this.appendPart(part)
-    }
+    const encoded = other.toUint8Array()
+    this.appendPart(encodeVarintBytes(encoded.length))
+    this.appendPart(encoded)
   }
 
   writeDouble(fieldNumber: number, value: number): void {
@@ -49,14 +51,13 @@ export class ProtobufEncoder {
     this.appendPart(bytes)
   }
 
+  /**
+   * Returns a view over the encoded bytes without a final flattening copy.
+   * Encoders are one-shot builders: callers should obtain this view after all
+   * writes are complete and should not mutate the encoder afterwards.
+   */
   toUint8Array(): Uint8Array {
-    const out = new Uint8Array(this.totalLength)
-    let offset = 0
-    for (const part of this.parts) {
-      out.set(part, offset)
-      offset += part.length
-    }
-    return out
+    return this.buffer.subarray(0, this.length)
   }
 
   private writeTag(fieldNumber: number, wireType: number): void {
@@ -64,8 +65,21 @@ export class ProtobufEncoder {
   }
 
   private appendPart(part: Uint8Array): void {
-    this.parts.push(part)
-    this.totalLength += part.length
+    const required = this.length + part.length
+    this.ensureCapacity(required)
+    this.buffer.set(part, this.length)
+    this.length = required
+  }
+
+  private ensureCapacity(required: number): void {
+    if (required <= this.buffer.length) return
+    let capacity = this.buffer.length || INITIAL_ENCODER_CAPACITY
+    while (capacity < required) {
+      capacity *= 2
+    }
+    const next = new Uint8Array(capacity)
+    next.set(this.buffer.subarray(0, this.length))
+    this.buffer = next
   }
 }
 
@@ -74,7 +88,15 @@ export function encodeConnectFrame(
   compressed = false,
 ): Uint8Array {
   const bytes =
-    compressed ? new Uint8Array(Bun.gzipSync(Buffer.from(payload))) : payload
+    compressed ?
+      (Bun.gzipSync(
+        Buffer.from(
+          payload.buffer as ArrayBuffer,
+          payload.byteOffset,
+          payload.byteLength,
+        ),
+      ) as unknown as Uint8Array)
+    : payload
   const header = new Uint8Array(5)
   header[0] = compressed ? 1 : 0
   new DataView(header.buffer).setUint32(1, bytes.length, false)
@@ -126,7 +148,7 @@ function readConnectTrailerError(text: string): string | undefined {
   return `Windsurf stream error${code ? ` ${code}` : ""}: ${message}`
 }
 
-function decompressConnectPayload(payload: Uint8Array): Uint8Array {
+export function decompressConnectPayload(payload: Uint8Array): Uint8Array {
   try {
     // Windsurf emits many small gzip frames. A Web Streams decompressor adds a
     // Response, reader, and concatenation buffer for every frame, which causes

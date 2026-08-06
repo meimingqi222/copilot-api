@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 
+import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 
@@ -25,6 +26,33 @@ export interface WindsurfConcurrencySnapshot {
 }
 
 const activeByAccount = new Map<string, Map<string, ActiveWindsurfRequest>>()
+const DEFAULT_MAX_CONCURRENT_PER_ACCOUNT = 2
+const MAX_CONCURRENT_PER_ACCOUNT = readConcurrencyLimit()
+
+function readConcurrencyLimit(): number {
+  const raw = process.env.WINDSURF_MAX_CONCURRENT_REQUESTS?.trim()
+  if (!raw) return DEFAULT_MAX_CONCURRENT_PER_ACCOUNT
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_MAX_CONCURRENT_PER_ACCOUNT
+  }
+  return Math.min(parsed, 16)
+}
+
+export class WindsurfConcurrencyLimitError extends HTTPError {
+  readonly accountId: string
+
+  constructor(accountId: string, limit: number) {
+    const headers = new Headers({
+      "Retry-After": "1",
+      "retry-after-ms": "1000",
+    })
+    const message = `Windsurf account concurrency limit reached (${limit}); retry shortly`
+    super(message, new Response(null, { status: 429, headers }), message)
+    this.name = "WindsurfConcurrencyLimitError"
+    this.accountId = accountId
+  }
+}
 
 export function getWindsurfConcurrencySnapshot(
   accountId: string,
@@ -46,15 +74,32 @@ export function getWindsurfConcurrencySnapshot(
 export function beginWindsurfAccountRequest(
   options: BeginWindsurfRequestOptions,
 ): () => void {
+  let active = activeByAccount.get(options.accountId)
+  if (
+    MAX_CONCURRENT_PER_ACCOUNT > 0
+    && active
+    && active.size >= MAX_CONCURRENT_PER_ACCOUNT
+  ) {
+    logger.warn("[windsurf] rejecting request at account concurrency limit", {
+      accountId: options.accountId,
+      accountLabel: options.accountLabel,
+      model: options.model,
+      active: active.size,
+      limit: MAX_CONCURRENT_PER_ACCOUNT,
+    })
+    throw new WindsurfConcurrencyLimitError(
+      options.accountId,
+      MAX_CONCURRENT_PER_ACCOUNT,
+    )
+  }
+  if (!active) {
+    active = new Map()
+    activeByAccount.set(options.accountId, active)
+  }
   const request: ActiveWindsurfRequest = {
     id: randomUUID(),
     startedAt: Date.now(),
     streaming: options.streaming,
-  }
-  let active = activeByAccount.get(options.accountId)
-  if (!active) {
-    active = new Map()
-    activeByAccount.set(options.accountId, active)
   }
   active.set(request.id, request)
 

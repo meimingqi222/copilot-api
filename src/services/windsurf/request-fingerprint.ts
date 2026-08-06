@@ -1,4 +1,7 @@
-import { parseMessage } from "~/services/windsurf/protobuf"
+import {
+  decompressConnectPayload,
+  parseMessage,
+} from "~/services/windsurf/protobuf"
 
 const METADATA_STRING_FIELDS = new Set([1, 2, 3, 4, 7, 12])
 
@@ -28,7 +31,7 @@ function decodeConnectPayload(framed: Uint8Array): Uint8Array {
   const flags = framed[0]
   const payload = framed.subarray(5)
   if (flags === 1 || flags === 3) {
-    return new Uint8Array(Bun.gunzipSync(Buffer.from(payload)))
+    return decompressConnectPayload(payload)
   }
   return payload
 }

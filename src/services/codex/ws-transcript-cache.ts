@@ -139,6 +139,27 @@ export function setCodexTranscript(
   return transcriptStoreResult(transcripts.has(key), bytes)
 }
 
+/** Append completed output items in-place before storing the transcript. */
+export function appendCodexTranscript(
+  key: string,
+  fullInput: Array<unknown>,
+  output: Array<unknown>,
+): TranscriptStoreResult {
+  for (const item of output) fullInput.push(item)
+  return setCodexTranscript(key, fullInput)
+}
+
+/** Build a replay array only when transcript tracking needs ownership. */
+export function buildResponsesTranscriptInput(
+  cachedFull: Array<unknown> | undefined,
+  rawDelta: Array<unknown>,
+  track: boolean,
+): Array<unknown> {
+  if (cachedFull) return [...cachedFull, ...rawDelta]
+  if (track) return [...rawDelta]
+  return rawDelta
+}
+
 function transcriptStoreResult(
   stored: boolean,
   entryBytes: number,
@@ -160,6 +181,7 @@ export function clearCodexTranscript(key: string): void {
 // the same get/set/clear serve codex and xAI without cross-provider bleed).
 export const getResponsesTranscript = getCodexTranscript
 export const setResponsesTranscript = setCodexTranscript
+export const appendResponsesTranscript = appendCodexTranscript
 export const clearResponsesTranscript = clearCodexTranscript
 
 /**

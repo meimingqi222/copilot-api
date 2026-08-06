@@ -114,7 +114,12 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
     streaming: Boolean(payload.stream),
   })
   if (logger.level >= 4) {
-    logger.debug("Request payload:", JSON.stringify(payload).slice(-400))
+    logger.debug("Request payload summary:", {
+      model: payload.model,
+      messageCount: payload.messages.length,
+      toolCount: payload.tools?.length ?? 0,
+      stream: payload.stream === true,
+    })
   }
 
   const parsedThinkingModel = parseThinkingModel(payload.model)

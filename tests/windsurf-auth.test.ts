@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { gzipSync } from "node:zlib"
 
 import {
   clearDevinUserJwtCacheForTest,
@@ -49,6 +50,20 @@ describe("fetchDevinUserJwt", () => {
     })
     expect(auth.userJwt).toBe("short-lived-jwt")
     expect(auth.baseUrl).toBeUndefined()
+  })
+
+  test("decodes a gzip-compressed response without a Web Stream roundtrip", async () => {
+    const payload = gzipSync(
+      Buffer.from(encodeGetUserJwtResponse("compressed-jwt")),
+    )
+    mockFetch(payload)
+
+    const auth = await fetchDevinUserJwt({
+      apiKey: "tok",
+      baseUrl: "https://server.codeium.com",
+    })
+
+    expect(auth.userJwt).toBe("compressed-jwt")
   })
 
   test("returns the region-routed baseUrl when customApiServerUrl is present", async () => {

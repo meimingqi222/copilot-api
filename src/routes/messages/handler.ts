@@ -78,7 +78,12 @@ export async function handleCompletion(c: Context) {
   })
 
   if (logger.level >= 4) {
-    logger.debug("Anthropic request payload:", JSON.stringify(effectivePayload))
+    logger.debug("Anthropic request payload summary:", {
+      model: effectivePayload.model,
+      messageCount: effectivePayload.messages.length,
+      toolCount: effectivePayload.tools?.length ?? 0,
+      stream: effectivePayload.stream === true,
+    })
   }
 
   // Copilot's native Messages API uses the unified dispatch path so failover
