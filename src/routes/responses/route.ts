@@ -19,11 +19,11 @@ const upgradeResponsesWebSocket = upgradeWebSocket((c) => {
         ws.raw as unknown as import("./ws-handler").WebSocketSendTarget,
       )
     },
-    onClose() {
-      session.onClose()
+    onClose(event) {
+      session.onClose(event)
     },
-    onError() {
-      session.onError()
+    onError(event) {
+      session.onError(event)
     },
   }
 })

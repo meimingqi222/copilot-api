@@ -29,6 +29,8 @@ interface CreateResponsesOptions {
   downstreamWebsocket?: boolean
   /** Sticky key for upstream WS connection reuse. */
   executionSessionId?: string
+  /** Isolation scope for reconnectable in-memory Responses transcripts. */
+  transcriptScopeId?: string
   /**
    * Force upstream HTTP POST (skip the WS path) for this call. Used by the WS
    * handler's same-account recovery after a lazy connection failure.
@@ -95,6 +97,7 @@ export const createResponses = async (
       c: options.c,
       downstreamWebsocket: options.downstreamWebsocket,
       executionSessionId: options.executionSessionId,
+      transcriptScopeId: options.transcriptScopeId,
       forceUpstreamHttp: options.forceUpstreamHttp,
     },
   )

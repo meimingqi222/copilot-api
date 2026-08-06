@@ -33,6 +33,8 @@ export interface RequestExecutionContext {
    * `response.create` on the same client socket (CPA execution session).
    */
   executionSessionId?: string
+  /** Isolation scope for reconnectable in-memory Responses transcripts. */
+  transcriptScopeId?: string
   /**
    * Force the upstream to use HTTP POST, skipping the WS path even when the
    * client connected via WebSocket. Set by the WS handler's same-account

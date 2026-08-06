@@ -7,78 +7,74 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { Model } from "~/services/copilot/get-models"
 
-// Encoder type mapping
-const ENCODING_MAP = {
-  o200k_base: () => import("gpt-tokenizer/encoding/o200k_base"),
-  cl100k_base: () => import("gpt-tokenizer/encoding/cl100k_base"),
-  p50k_base: () => import("gpt-tokenizer/encoding/p50k_base"),
-  p50k_edit: () => import("gpt-tokenizer/encoding/p50k_edit"),
-  r50k_base: () => import("gpt-tokenizer/encoding/r50k_base"),
-} as const
-
-type SupportedEncoding = keyof typeof ENCODING_MAP
-
-// Define encoder interface
-interface Encoder {
-  encode: (text: string) => Array<number>
+/**
+ * Cheap token estimate used on the request path.
+ *
+ * Loading a BPE vocabulary costs well over 100MB, and encoding a large prompt
+ * allocates a token array proportional to the entire context. That made local
+ * usage estimation capable of exhausting small servers before the request was
+ * even sent upstream. Four UTF-8 bytes per token matches oh-my-pi's default
+ * estimator and is sufficient here because upstream usage remains authoritative.
+ */
+function estimateTextTokens(text: string): number {
+  return Math.ceil(Buffer.byteLength(text, "utf8") / 4)
 }
 
-// Cache loaded encoders to avoid repeated imports
-const encodingCache = new Map<string, Encoder>()
+interface TokenCounter {
+  count: (text: string) => number
+}
 
-/**
- * Calculate tokens for tool calls
- */
-const calculateToolCallsTokens = (
+const approximateCounter: TokenCounter = {
+  count: estimateTextTokens,
+}
+
+/** Calculate tokens for tool calls. */
+function calculateToolCallsTokens(
   toolCalls: Array<ToolCall>,
-  encoder: Encoder,
+  counter: TokenCounter,
   constants: ReturnType<typeof getModelConstants>,
-): number => {
+): number {
   let tokens = 0
   for (const toolCall of toolCalls) {
     tokens += constants.funcInit
-    tokens += encoder.encode(JSON.stringify(toolCall)).length
+    tokens += counter.count(JSON.stringify(toolCall))
   }
   tokens += constants.funcEnd
   return tokens
 }
 
-/**
- * Calculate tokens for content parts
- */
-const calculateContentPartsTokens = (
+/** Calculate tokens for content parts. */
+function calculateContentPartsTokens(
   contentParts: Array<ContentPart>,
-  encoder: Encoder,
-): number => {
+  counter: TokenCounter,
+): number {
   let tokens = 0
   for (const part of contentParts) {
     if (part.type === "image_url") {
-      // Avoid BPE-encoding large base64 payloads; use a fixed image allowance.
+      // Avoid counting large base64 payloads; use a fixed image allowance.
       tokens +=
         part.image_url.url.startsWith("data:") ?
           85
-        : encoder.encode(part.image_url.url).length + 85
+        : counter.count(part.image_url.url) + 85
     } else if (part.text) {
-      tokens += encoder.encode(part.text).length
+      tokens += counter.count(part.text)
     }
   }
   return tokens
 }
 
-/**
- * Calculate tokens for a single message
- */
-const calculateMessageTokens = (
+/** Calculate tokens for a single message. */
+function calculateMessageTokens(
   message: Message,
-  encoder: Encoder,
+  counter: TokenCounter,
   constants: ReturnType<typeof getModelConstants>,
-): number => {
+): number {
   const tokensPerMessage = 3
   const tokensPerName = 1
   let tokens = tokensPerMessage
   for (const [key, value] of Object.entries(message)) {
     if (typeof value === "string") {
-      tokens += encoder.encode(value).length
+      tokens += counter.count(value)
     }
     if (key === "name") {
       tokens += tokensPerName
@@ -86,54 +82,21 @@ const calculateMessageTokens = (
     if (key === "tool_calls") {
       tokens += calculateToolCallsTokens(
         value as Array<ToolCall>,
-        encoder,
+        counter,
         constants,
       )
     }
     if (key === "content" && Array.isArray(value)) {
       tokens += calculateContentPartsTokens(
         value as Array<ContentPart>,
-        encoder,
+        counter,
       )
     }
   }
   return tokens
 }
 
-/**
- * Get the corresponding encoder module based on encoding type
- */
-const getEncodeChatFunction = async (encoding: string): Promise<Encoder> => {
-  if (encodingCache.has(encoding)) {
-    const cached = encodingCache.get(encoding)
-    if (cached) {
-      return cached
-    }
-  }
-
-  const supportedEncoding = encoding as SupportedEncoding
-  if (!(supportedEncoding in ENCODING_MAP)) {
-    const fallbackModule = (await ENCODING_MAP.o200k_base()) as Encoder
-    encodingCache.set(encoding, fallbackModule)
-    return fallbackModule
-  }
-
-  const encodingModule = (await ENCODING_MAP[supportedEncoding]()) as Encoder
-  encodingCache.set(encoding, encodingModule)
-  return encodingModule
-}
-
-/**
- * Get tokenizer type from model information
- */
-export const getTokenizerFromModel = (model: Model): string => {
-  return model.capabilities.tokenizer || "o200k_base"
-}
-
-/**
- * Get model-specific constants for token calculation
- */
-const getModelConstants = (model: Model) => {
+function getModelConstants(model: Model) {
   return model.id === "gpt-3.5-turbo" || model.id === "gpt-4" ?
       {
         funcInit: 10,
@@ -153,26 +116,21 @@ const getModelConstants = (model: Model) => {
       }
 }
 
-/**
- * Calculate tokens for a single parameter
- */
-const calculateParameterTokens = (
+function calculateParameterTokens(
   key: string,
   prop: unknown,
   context: {
-    encoder: Encoder
+    counter: TokenCounter
     constants: ReturnType<typeof getModelConstants>
   },
-): number => {
-  const { encoder, constants } = context
+): number {
+  const { counter, constants } = context
   let tokens = constants.propKey
 
-  // Early return if prop is not an object
   if (typeof prop !== "object" || prop === null) {
     return tokens
   }
 
-  // Type assertion for parameter properties
   const param = prop as {
     type?: string
     description?: string
@@ -180,29 +138,23 @@ const calculateParameterTokens = (
     [key: string]: unknown
   }
 
-  const paramName = key
   const paramType = param.type || "string"
   let paramDesc = param.description || ""
 
-  // Handle enum values
   if (param.enum && Array.isArray(param.enum)) {
     tokens += constants.enumInit
     for (const item of param.enum) {
       tokens += constants.enumItem
-      tokens += encoder.encode(String(item)).length
+      tokens += counter.count(String(item))
     }
   }
 
-  // Clean up description
   if (paramDesc.endsWith(".")) {
     paramDesc = paramDesc.slice(0, -1)
   }
 
-  // Encode the main parameter line
-  const line = `${paramName}:${paramType}:${paramDesc}`
-  tokens += encoder.encode(line).length
+  tokens += counter.count(`${key}:${paramType}:${paramDesc}`)
 
-  // Handle additional properties (excluding standard ones)
   const excludedKeys = new Set(["type", "description", "enum"])
   for (const propertyName of Object.keys(param)) {
     if (!excludedKeys.has(propertyName)) {
@@ -211,21 +163,18 @@ const calculateParameterTokens = (
         typeof propertyValue === "string" ? propertyValue : (
           JSON.stringify(propertyValue)
         )
-      tokens += encoder.encode(`${propertyName}:${propertyText}`).length
+      tokens += counter.count(`${propertyName}:${propertyText}`)
     }
   }
 
   return tokens
 }
 
-/**
- * Calculate tokens for function parameters
- */
-const calculateParametersTokens = (
+function calculateParametersTokens(
   parameters: unknown,
-  encoder: Encoder,
+  counter: TokenCounter,
   constants: ReturnType<typeof getModelConstants>,
-): number => {
+): number {
   if (!parameters || typeof parameters !== "object") {
     return 0
   }
@@ -240,7 +189,7 @@ const calculateParametersTokens = (
         tokens += constants.propInit
         for (const propKey of Object.keys(properties)) {
           tokens += calculateParameterTokens(propKey, properties[propKey], {
-            encoder,
+            counter,
             constants,
           })
         }
@@ -248,93 +197,83 @@ const calculateParametersTokens = (
     } else {
       const paramText =
         typeof value === "string" ? value : JSON.stringify(value)
-      tokens += encoder.encode(`${key}:${paramText}`).length
+      tokens += counter.count(`${key}:${paramText}`)
     }
   }
 
   return tokens
 }
 
-/**
- * Calculate tokens for a single tool
- */
-const calculateToolTokens = (
+function calculateToolTokens(
   tool: Tool,
-  encoder: Encoder,
+  counter: TokenCounter,
   constants: ReturnType<typeof getModelConstants>,
-): number => {
+): number {
   let tokens = constants.funcInit
   const func = tool.function
-  const fName = func.name
-  let fDesc = func.description || ""
-  if (fDesc.endsWith(".")) {
-    fDesc = fDesc.slice(0, -1)
+  let description = func.description || ""
+  if (description.endsWith(".")) {
+    description = description.slice(0, -1)
   }
-  const line = fName + ":" + fDesc
-  tokens += encoder.encode(line).length
+  tokens += counter.count(`${func.name}:${description}`)
   if (
     typeof func.parameters === "object" // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     && func.parameters !== null
   ) {
-    tokens += calculateParametersTokens(func.parameters, encoder, constants)
+    tokens += calculateParametersTokens(func.parameters, counter, constants)
   }
   return tokens
 }
 
-/**
- * Calculate token count for tools based on model
- */
-export const numTokensForTools = (
+/** Estimate tokens for tools based on the existing chat-format overheads. */
+export function numTokensForTools(
   tools: Array<Tool>,
-  encoder: Encoder,
   constants: ReturnType<typeof getModelConstants>,
-): number => {
-  let funcTokenCount = 0
+): number {
+  let tokenCount = 0
   for (const tool of tools) {
-    funcTokenCount += calculateToolTokens(tool, encoder, constants)
+    tokenCount += calculateToolTokens(tool, approximateCounter, constants)
   }
-  funcTokenCount += constants.funcEnd
-  return funcTokenCount
+  tokenCount += constants.funcEnd
+  return tokenCount
 }
 
 /**
  * Local token estimate for a chat completions payload.
  *
- * - `input`: full estimated prompt tokens (all messages + tools).
- * - `history`: estimated tokens from assistant messages only (prior turns
- *   already in the request). This is a subset of `input`, not a separate
- *   "output" total.
+ * This deliberately avoids model BPE tokenizers. The estimate is used for
+ * local logging and fallback streaming usage only; provider-reported usage is
+ * authoritative.
  */
-export const getTokenCount = async (
+export function getTokenCount(
   payload: ChatCompletionsPayload,
   model: Model,
-): Promise<{ input: number; history: number }> => {
-  const tokenizer = getTokenizerFromModel(model)
-  const encoder = await getEncodeChatFunction(tokenizer)
+): Promise<{ input: number; history: number }> {
   const constants = getModelConstants(model)
 
   let history = 0
   let messagesTokens = 0
   for (const message of payload.messages) {
-    const tokens = calculateMessageTokens(message, encoder, constants)
+    const tokens = calculateMessageTokens(
+      message,
+      approximateCounter,
+      constants,
+    )
     messagesTokens += tokens
     if (message.role === "assistant") {
       history += tokens
     }
   }
 
-  // every reply is primed with <|start|>assistant<|message|>
+  // Every reply is primed with <|start|>assistant<|message|>.
   if (payload.messages.length > 0) {
     messagesTokens += 3
   }
 
   let input = messagesTokens
   if (payload.tools && payload.tools.length > 0) {
-    input += numTokensForTools(payload.tools, encoder, constants)
+    input += numTokensForTools(payload.tools, constants)
   }
 
-  return {
-    input,
-    history,
-  }
+  return Promise.resolve({ input, history })
 }

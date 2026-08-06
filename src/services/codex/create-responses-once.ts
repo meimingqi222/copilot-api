@@ -45,6 +45,7 @@ import { buildCodexHeaders } from "./headers"
 import {
   codexTranscriptKey,
   getCodexTranscript,
+  resolveResponsesTranscriptSessionId,
   setCodexTranscript,
 } from "./ws-transcript-cache"
 
@@ -235,6 +236,16 @@ export function chainedHttpCodexRequestError(): HTTPError {
   )
 }
 
+function assertChainedHttpReplayAvailable(
+  previousResponseId: string | undefined,
+  useUpstreamWs: boolean,
+  httpFallbackBody: Record<string, unknown> | undefined,
+): void {
+  if (previousResponseId && !useUpstreamWs && !httpFallbackBody) {
+    throw chainedHttpCodexRequestError()
+  }
+}
+
 export async function createCodexResponsesOnce(
   account: Account,
   payload: ResponsesPayload,
@@ -268,10 +279,6 @@ export async function createCodexResponsesOnce(
     typeof previousResponseIdRaw === "string" ?
       previousResponseIdRaw.trim() || undefined
     : undefined
-
-  if (previousResponseId && !useUpstreamWs) {
-    throw chainedHttpCodexRequestError()
-  }
 
   // Codex /responses rejects many standard Responses API parameters with
   // "Unsupported parameter: <name>". Strip them out before forwarding.
@@ -381,44 +388,44 @@ export async function createCodexResponsesOnce(
   // full self-contained input (not the client's delta), or a tool-result turn
   // arrives as an orphan custom_tool_call_output and upstream rejects it with
   // "No tool call found for custom tool call output with call_id ...".
-  let httpFallbackBody: Record<string, unknown> | undefined
+  const executionSessionId =
+    ctx?.executionSessionId?.trim()
+    || sessionId
+    || replaySessionKey
+    || account.id
+  const transcriptSessionId = resolveResponsesTranscriptSessionId(
+    executionSessionId,
+    sessionId || replaySessionKey,
+    ctx?.transcriptScopeId,
+  )
+  const transcriptKey = codexTranscriptKey(transcriptSessionId, model)
+  // Use the *raw* client input delta (not upstreamBody.input, which may have
+  // reasoning-replay items injected) so full replay never double-injects it.
+  const rawDelta =
+    Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
+  const cachedFull =
+    previousResponseId ? getCodexTranscript(transcriptKey) : undefined
+  const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
+  const fullInputThisTurn = cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
+  const fallbackFullInputBody =
+    previousResponseId && cachedFull ?
+      {
+        ...upstreamBody,
+        input: stripReasoningItems(fullInputThisTurn),
+        previous_response_id: undefined,
+      }
+    : undefined
+  const httpFallbackBody = fallbackFullInputBody
+
+  // A forced HTTP retry can recover a chained turn only when the socket-scoped
+  // delta can be expanded from the transcript cache.
+  assertChainedHttpReplayAvailable(
+    previousResponseId,
+    useUpstreamWs,
+    httpFallbackBody,
+  )
+
   if (useUpstreamWs) {
-    const executionSessionId =
-      ctx?.executionSessionId?.trim()
-      || sessionId
-      || replaySessionKey
-      || account.id
-    const transcriptKey = codexTranscriptKey(executionSessionId, model)
-    // Use the *raw* client input delta (not upstreamBody.input, which may
-    // have reasoning-replay items injected) — cachedFull already carries the
-    // real reasoning items from prior response output, so this avoids
-    // double-injecting reasoning into the replayed full input.
-    const rawDelta =
-      Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
-    const cachedFull =
-      previousResponseId ? getCodexTranscript(transcriptKey) : undefined
-    // A chained turn (previous_response_id set) with no cached transcript
-    // means the wire input is only a delta we cannot expand — skip recording
-    // so we never poison the transcript with a partial input.
-    const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
-    const fullInputThisTurn =
-      cachedFull ? [...cachedFull, ...rawDelta] : rawDelta
-    // Self-contained replay body used when a fresh upstream socket cannot
-    // resolve the client's previous_response_id (store=false), and as the HTTP
-    // fallback body. Strip historical reasoning items: they are the bulk of a
-    // long transcript (oversized WS frames stall silently) and are stale on a
-    // fresh socket. Dropping them all is a valid Responses API input shape.
-    const fallbackFullInputBody =
-      previousResponseId && cachedFull ?
-        {
-          ...upstreamBody,
-          input: stripReasoningItems(fullInputThisTurn),
-          previous_response_id: undefined,
-        }
-      : undefined
-    // Reuse the same self-contained body if the WS turn fails and we fall back
-    // to HTTP (HTTP handles large bodies with no WS frame limit).
-    httpFallbackBody = fallbackFullInputBody
     const wsBody: Record<string, unknown> = {
       ...upstreamBody,
       previous_response_id: previousResponseId,
@@ -504,17 +511,23 @@ export async function createCodexResponsesOnce(
 
   if (clientStream) {
     const stream = await safeSseStream(response, detectResponsesStreamError)
-    return wrapCodexStream(
-      normalizeResponsesStreamIds(
-        stream as unknown as AsyncIterable<CopilotStreamEventLike>,
-      ),
-      model,
-      replaySessionKey,
-      identityState,
+    const normalized = normalizeResponsesStreamIds(
+      stream as unknown as AsyncIterable<CopilotStreamEventLike>,
     )
+    const tracked =
+      ctx?.downstreamWebsocket && transcriptTrackable ?
+        recordCodexTranscript(normalized, transcriptKey, fullInputThisTurn)
+      : normalized
+    return wrapCodexStream(tracked, model, replaySessionKey, identityState)
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
+  if (ctx?.downstreamWebsocket && transcriptTrackable) {
+    setCodexTranscript(transcriptKey, [
+      ...fullInputThisTurn,
+      ...(Array.isArray(result.output) ? result.output : []),
+    ])
+  }
   // Debug: same reasoning-summary check as the streaming path, for the
   // non-streaming (clientStream=false) response.
   logCodexReasoningSummary(
