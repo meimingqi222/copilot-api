@@ -20,6 +20,7 @@ import type {
   ResponsesUsage,
 } from "~/services/copilot/responses-api-types"
 
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import {
   buildCompletedRequestFields,
   buildCompletedResponseBase,
@@ -115,8 +116,12 @@ export function translateChatCompletionToResponses(
 export async function* translateChatCompletionsStreamToResponses(
   response: AsyncIterable<CopilotStreamEventLike>,
   request: ResponsesPayload,
+  memoryTraceId?: string,
 ): AsyncIterable<CopilotStreamEventLike> {
   const state = createChatToResponsesStreamState(request)
+  let chunkCount = 0
+  let nextCheckpointBytes = 1024 * 1024
+  updateMemoryTrace(memoryTraceId, "chat_to_responses_stream_start")
 
   for await (const rawEvent of response) {
     if (!rawEvent.data || rawEvent.data === "[DONE]") {
@@ -125,6 +130,17 @@ export async function* translateChatCompletionsStreamToResponses(
 
     const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
     updateChatToResponsesStateFromChunk(state, chunk)
+    chunkCount += 1
+    const accumulatedBytes = state.outputTextBytes + state.reasoningTextBytes
+    if (chunkCount % 256 === 0 || accumulatedBytes >= nextCheckpointBytes) {
+      updateMemoryTrace(memoryTraceId, "chat_to_responses_accumulating", {
+        chunkCount,
+        outputBytes: state.outputTextBytes,
+        reasoningBytes: state.reasoningTextBytes,
+        toolCalls: state.toolCalls.size,
+      })
+      nextCheckpointBytes = accumulatedBytes + 1024 * 1024
+    }
 
     if (!state.createdSent) {
       state.createdSent = true
@@ -142,15 +158,26 @@ export async function* translateChatCompletionsStreamToResponses(
 
     const finishReason = chunk.choices[0]?.finish_reason
     if (finishReason) {
+      updateMemoryTrace(memoryTraceId, "response_completed_stringify_start", {
+        chunkCount,
+        outputBytes: state.outputTextBytes,
+        reasoningBytes: state.reasoningTextBytes,
+        toolCalls: state.toolCalls.size,
+      })
+      const completedEvent = JSON.stringify({
+        type: "response.completed",
+        response: buildCompletedResponsesResponseFromStream(
+          state,
+          chunk,
+          finishReason,
+        ),
+      })
+      updateMemoryTrace(memoryTraceId, "response_completed_serialized", {
+        chunkCount,
+        completedEventBytes: Buffer.byteLength(completedEvent),
+      })
       yield {
-        data: JSON.stringify({
-          type: "response.completed",
-          response: buildCompletedResponsesResponseFromStream(
-            state,
-            chunk,
-            finishReason,
-          ),
-        }),
+        data: completedEvent,
       }
       return
     }

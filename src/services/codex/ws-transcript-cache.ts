@@ -36,6 +36,13 @@ interface TranscriptEntry {
   bytes: number
 }
 
+export interface TranscriptStoreResult {
+  stored: boolean
+  entryBytes: number
+  totalBytes: number
+  entries: number
+}
+
 const transcripts = new Map<string, TranscriptEntry>()
 let transcriptBytes = 0
 
@@ -118,17 +125,30 @@ export function getCodexTranscript(key: string): Array<unknown> | undefined {
 export function setCodexTranscript(
   key: string,
   fullInput: Array<unknown>,
-): void {
+): TranscriptStoreResult {
   pruneIdleTranscripts()
   const bytes = estimateJsonBytes(fullInput, MAX_TRANSCRIPT_BYTES)
   if (fullInput.length > MAX_TRANSCRIPT_ITEMS || bytes > MAX_TRANSCRIPT_BYTES) {
     deleteTranscript(key)
-    return
+    return transcriptStoreResult(false, bytes)
   }
   deleteTranscript(key)
   transcripts.set(key, { fullInput, updatedAt: Date.now(), bytes })
   transcriptBytes += bytes
   pruneTranscriptCapacity()
+  return transcriptStoreResult(transcripts.has(key), bytes)
+}
+
+function transcriptStoreResult(
+  stored: boolean,
+  entryBytes: number,
+): TranscriptStoreResult {
+  return {
+    stored,
+    entryBytes,
+    totalBytes: transcriptBytes,
+    entries: transcripts.size,
+  }
 }
 
 /** Clears a single transcript by exact key. */

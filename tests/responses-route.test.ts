@@ -572,6 +572,7 @@ test("POST /v1/responses streaming sends ping while waiting for upstream respons
 
   expect(response.status).toBe(200)
   const body = await response.text()
+  expect(body).toStartWith(": connected\n\n")
   expect(body).toContain(": keep-alive")
   expect(body.indexOf(": keep-alive")).toBeLessThan(
     body.indexOf("response.created"),

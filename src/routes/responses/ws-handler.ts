@@ -12,6 +12,11 @@ import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
+  beginMemoryTrace,
+  endMemoryTrace,
+  updateMemoryTrace,
+} from "~/lib/memory-diagnostics"
+import {
   prepareRequestAdmission,
   resolveConnectionFromTarget,
   selectNextResponsesWsTarget,
@@ -56,6 +61,7 @@ const WS_SEND_POLL_MS = 5
 
 export function createResponsesWebSocketSession(c: Context) {
   let inFlight = false
+  let turnSequence = 0
   let activeController: AbortController | undefined
   // Sticky id for upstream WS connection reuse across multi-turn creates
   // on this client socket (CPA execution session / passthroughSessionID).
@@ -80,12 +86,22 @@ export function createResponsesWebSocketSession(c: Context) {
         return
       }
 
-      if (Buffer.byteLength(event.data) > MAX_JSON_BODY_BYTES) {
+      const inputBytes = Buffer.byteLength(event.data)
+      const memoryTraceId = `${executionSessionId}:${++turnSequence}`
+      beginMemoryTrace({
+        traceId: memoryTraceId,
+        kind: "responses_websocket",
+        stage: "downstream_frame_received",
+        details: { inputBytes },
+      })
+
+      if (inputBytes > MAX_JSON_BODY_BYTES) {
         void sendError(
           ws,
           `Request exceeds the ${MAX_JSON_BODY_BYTES}-byte WebSocket message limit.`,
           "request_too_large",
         )
+        endMemoryTrace(memoryTraceId, "rejected_too_large")
         return
       }
 
@@ -94,11 +110,18 @@ export function createResponsesWebSocketSession(c: Context) {
         message = JSON.parse(event.data) as ResponsesWebSocketMessage
       } catch {
         void sendError(ws, "Invalid request. Expected valid JSON payload.")
+        endMemoryTrace(memoryTraceId, "rejected_invalid_json")
         return
       }
 
+      updateMemoryTrace(memoryTraceId, "payload_parsed", {
+        requestType:
+          typeof message.type === "string" ? message.type : "unknown",
+      })
+
       if (message.type !== "response.create") {
         void sendError(ws, 'Invalid request type. Expected "response.create".')
+        endMemoryTrace(memoryTraceId, "rejected_invalid_type")
         return
       }
 
@@ -108,14 +131,21 @@ export function createResponsesWebSocketSession(c: Context) {
           "Connection is busy processing another response.create request.",
           "busy",
         )
+        endMemoryTrace(memoryTraceId, "rejected_busy")
         return
       }
 
       const payload = parseResponsePayload(message)
       if (!payload) {
         void sendError(ws, "Invalid request. Missing response payload object.")
+        endMemoryTrace(memoryTraceId, "rejected_invalid_payload")
         return
       }
+
+      updateMemoryTrace(memoryTraceId, "payload_ready", {
+        model: payload.model,
+        inputItems: Array.isArray(payload.input) ? payload.input.length : 1,
+      })
 
       inFlight = true
       const controller = new AbortController()
@@ -128,7 +158,11 @@ export function createResponsesWebSocketSession(c: Context) {
         signal: controller.signal,
         executionSessionId,
         transcriptScopeId,
-      }).finally(endActiveRequest)
+        memoryTraceId,
+      })
+        .then((outcome) => endMemoryTrace(memoryTraceId, outcome))
+        .catch(() => endMemoryTrace(memoryTraceId, "error"))
+        .finally(endActiveRequest)
     },
 
     onClose(event?: CloseEvent) {
@@ -202,6 +236,7 @@ interface ProcessResponseCreateOptions {
   signal: AbortSignal
   executionSessionId: string
   transcriptScopeId: string
+  memoryTraceId: string
 }
 
 /**
@@ -235,18 +270,30 @@ function selectNextResponsesAdmission(
 
 async function processResponseCreate(
   options: ProcessResponseCreateOptions,
-): Promise<void> {
-  const { c, ws, payload, signal, executionSessionId, transcriptScopeId } =
-    options
+): Promise<"aborted" | "completed" | "error"> {
+  const {
+    c,
+    ws,
+    payload,
+    signal,
+    executionSessionId,
+    transcriptScopeId,
+    memoryTraceId,
+  } = options
 
   const sessionHeaders = extractResponsesSessionHeaders(c)
   let admission: RequestAdmission
   try {
     admission = await prepareResponsesAdmission(c, payload, sessionHeaders)
   } catch (error) {
+    updateMemoryTrace(memoryTraceId, "admission_error")
     await handleResponseError(ws, error, signal)
-    return
+    return signal.aborted ? "aborted" : "error"
   }
+  updateMemoryTrace(memoryTraceId, "admission_ready", {
+    provider: admission.account?.provider ?? "unknown",
+    accountId: admission.account?.id ?? "unknown",
+  })
 
   // Commit-aware, account-rotating loop. Each attempt buffers leading control
   // frames and only "commits" when the first real frame reaches the client;
@@ -270,19 +317,26 @@ async function processResponseCreate(
       current,
       tried,
       httpRecoveryTried,
+      memoryTraceId,
     })
     if (outcome.type === "retry-http") {
+      updateMemoryTrace(memoryTraceId, "provider_http_recovery")
       httpRecoveryTried = true
       continue
     }
     if (outcome.type === "rotate") {
+      updateMemoryTrace(memoryTraceId, "provider_account_rotation", {
+        provider: outcome.next.account?.provider ?? "unknown",
+        accountId: outcome.next.account?.id ?? "unknown",
+      })
       current = outcome.next
       httpRecoveryTried = false
       continue
     }
     // "done" | "stop": the attempt already forwarded the response or surfaced
     // the error / stopped silently on abort.
-    return
+    if (outcome.type === "done") return "completed"
+    return signal.aborted ? "aborted" : "error"
   }
 }
 
@@ -298,6 +352,7 @@ interface RunResponsesAttemptParams {
   current: RequestAdmission
   tried: Set<string>
   httpRecoveryTried: boolean
+  memoryTraceId: string
 }
 
 /**
@@ -328,6 +383,7 @@ async function runResponsesAttempt(
     current,
     tried,
     httpRecoveryTried,
+    memoryTraceId,
   } = params
 
   // Rotation is account-managed; the selector only returns account-backed
@@ -348,6 +404,11 @@ async function runResponsesAttempt(
   const state = { committed: false }
 
   try {
+    updateMemoryTrace(memoryTraceId, "provider_request_start", {
+      provider: account.provider,
+      accountId: account.id,
+      httpRecovery: httpRecoveryTried,
+    })
     const result = await createResponses(payload, {
       signal,
       initiatorOverride: current.initiator,
@@ -359,6 +420,12 @@ async function runResponsesAttempt(
       forceUpstreamHttp: httpRecoveryTried,
       executionSessionId,
       transcriptScopeId,
+      memoryTraceId,
+    })
+    updateMemoryTrace(memoryTraceId, "provider_response_open", {
+      provider: account.provider,
+      accountId: result.accountId,
+      streaming: !isNonStreaming(result.response),
     })
     c.set("accountId" as never, result.accountId)
 
@@ -369,10 +436,16 @@ async function runResponsesAttempt(
         throw new ClientAbortError()
       }
       state.committed = true
+      updateMemoryTrace(memoryTraceId, "downstream_committed", {
+        responseMode: "non_streaming",
+      })
     } else {
       completedResponse = await pumpWithLeadingBuffer(ws, result.response, {
         onCommit: () => {
           state.committed = true
+          updateMemoryTrace(memoryTraceId, "downstream_committed", {
+            responseMode: "streaming",
+          })
         },
       })
     }
@@ -389,6 +462,11 @@ async function runResponsesAttempt(
     return { type: "done" }
   } catch (error) {
     const failure = classifyWsFailure(error)
+    updateMemoryTrace(memoryTraceId, "provider_attempt_failed", {
+      failureScope: failure.scope,
+      failureKind: failure.kind,
+      committed: state.committed,
+    })
 
     // Client abort / closed downstream socket → stop silently.
     if (

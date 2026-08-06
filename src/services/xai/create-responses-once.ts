@@ -11,6 +11,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
@@ -33,6 +34,7 @@ import {
   getResponsesTranscript,
   resolveResponsesTranscriptSessionId,
   setResponsesTranscript,
+  type TranscriptStoreResult,
   xaiTranscriptKey,
 } from "../codex/ws-transcript-cache"
 import {
@@ -454,11 +456,17 @@ export async function createXaiResponsesOnce(
         signal,
         previousResponseId,
         fallbackFullInputBody,
+        memoryTraceId: ctx?.memoryTraceId,
       })
       const normalized = normalizeResponsesStreamIds(wsStream)
       const tracked =
         transcriptTrackable ?
-          recordXaiTranscript(normalized, transcriptKey, fullInputThisTurn)
+          recordXaiTranscript(
+            normalized,
+            transcriptKey,
+            fullInputThisTurn,
+            ctx?.memoryTraceId,
+          )
         : normalized
       if (clientStream) {
         return tracked
@@ -487,12 +495,25 @@ export async function createXaiResponsesOnce(
     }
   }
 
+  const effectiveHttpBody = httpFallbackBody ?? upstreamBody
+  updateMemoryTrace(ctx?.memoryTraceId, "upstream_http_stringify_start", {
+    provider: "xai",
+    inputItems:
+      Array.isArray(effectiveHttpBody.input) ?
+        effectiveHttpBody.input.length
+      : 0,
+  })
+  const httpBody = JSON.stringify(effectiveHttpBody)
+  updateMemoryTrace(ctx?.memoryTraceId, "upstream_http_send", {
+    provider: "xai",
+    wireBytes: Buffer.byteLength(httpBody),
+  })
   const response = await fetchWithOAuthProxy(account, chatUrl, {
     method: "POST",
     headers: buildXaiHeaders(accessToken, true, sessionId, useCliIdentity),
     // HTTP: no previous_response_id. On a chained-turn WS fallback, send the
     // full self-contained input (httpFallbackBody) so the turn is not orphaned.
-    body: JSON.stringify(httpFallbackBody ?? upstreamBody),
+    body: httpBody,
     signal,
   })
 
@@ -510,16 +531,24 @@ export async function createXaiResponsesOnce(
       stream as unknown as AsyncIterable<CopilotStreamEventLike>,
     )
     return ctx?.downstreamWebsocket && transcriptTrackable ?
-        recordXaiTranscript(normalized, transcriptKey, fullInputThisTurn)
+        recordXaiTranscript(
+          normalized,
+          transcriptKey,
+          fullInputThisTurn,
+          ctx.memoryTraceId,
+        )
       : normalized
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
-    setResponsesTranscript(transcriptKey, [
-      ...fullInputThisTurn,
-      ...(Array.isArray(result.output) ? result.output : []),
-    ])
+    recordTranscriptCheckpoint(
+      ctx.memoryTraceId,
+      setResponsesTranscript(transcriptKey, [
+        ...fullInputThisTurn,
+        ...(Array.isArray(result.output) ? result.output : []),
+      ]),
+    )
   }
   return result
 }
@@ -561,6 +590,7 @@ async function* recordXaiTranscript(
   stream: AsyncIterable<CopilotStreamEventLike>,
   transcriptKey: string,
   fullInputThisTurn: Array<unknown>,
+  memoryTraceId?: string,
 ): AsyncIterable<CopilotStreamEventLike> {
   for await (const event of stream) {
     const data = event.data
@@ -573,10 +603,13 @@ async function* recordXaiTranscript(
             response && Array.isArray(response.output) ?
               (response.output as Array<unknown>)
             : []
-          setResponsesTranscript(transcriptKey, [
-            ...fullInputThisTurn,
-            ...output,
-          ])
+          recordTranscriptCheckpoint(
+            memoryTraceId,
+            setResponsesTranscript(transcriptKey, [
+              ...fullInputThisTurn,
+              ...output,
+            ]),
+          )
         }
       } catch {
         // Best-effort transcript recording.
@@ -584,4 +617,19 @@ async function* recordXaiTranscript(
     }
     yield event
   }
+}
+
+function recordTranscriptCheckpoint(
+  memoryTraceId: string | undefined,
+  result: TranscriptStoreResult,
+): void {
+  updateMemoryTrace(
+    memoryTraceId,
+    result.stored ? "transcript_stored" : "transcript_dropped",
+    {
+      transcriptEntryBytes: result.entryBytes,
+      transcriptTotalBytes: result.totalBytes,
+      transcriptEntries: result.entries,
+    },
+  )
 }

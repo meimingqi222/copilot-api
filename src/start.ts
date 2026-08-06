@@ -7,6 +7,7 @@ import invariant from "tiny-invariant"
 import { bunWebsocket } from "~/lib/bun-websocket"
 import { flushAllPersistentMaps } from "~/lib/cache/persistent-map"
 import { initLogger, logger } from "~/lib/logger"
+import { startMemoryDiagnostics } from "~/lib/memory-diagnostics"
 import { loadModelAliases } from "~/lib/model-aliases"
 
 import {
@@ -182,6 +183,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   await ensurePaths()
   await acquireServerLock()
   initLogger({ verbose: options.verbose })
+  startMemoryDiagnostics()
   if (options.verbose) {
     logger.info("Verbose logging enabled")
   }

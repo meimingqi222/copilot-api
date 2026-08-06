@@ -21,6 +21,7 @@ import {
 } from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
@@ -47,6 +48,7 @@ import {
   getCodexTranscript,
   resolveResponsesTranscriptSessionId,
   setCodexTranscript,
+  type TranscriptStoreResult,
 } from "./ws-transcript-cache"
 
 /**
@@ -262,6 +264,7 @@ export async function createCodexResponsesOnce(
   }
 
   const model = canonicalNativeModelId(payload.model)
+  const memoryTraceId = readMemoryTraceId(ctx)
   const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
   const url = `${baseUrl.replace(/\/+$/, "")}/responses`
   const clientStream = payload.stream === true
@@ -443,13 +446,19 @@ export async function createCodexResponsesOnce(
         signal,
         previousResponseId,
         fallbackFullInputBody,
+        memoryTraceId,
       })
       const normalized = normalizeResponsesStreamIds(wsStream)
       // Record on the normalized stream so recorded output-item ids match what
       // the codex client sees (and later chains from).
       const tracked =
         transcriptTrackable ?
-          recordCodexTranscript(normalized, transcriptKey, fullInputThisTurn)
+          recordCodexTranscript(
+            normalized,
+            transcriptKey,
+            fullInputThisTurn,
+            memoryTraceId,
+          )
         : normalized
       if (clientStream) {
         return wrapCodexStream(tracked, model, replaySessionKey, identityState)
@@ -482,14 +491,14 @@ export async function createCodexResponsesOnce(
     }
   }
 
-  const response = await fetchWithOAuthProxy(account, url, {
-    method: "POST",
+  const response = await postCodexResponses({
+    account,
+    url,
     headers: httpHeaders,
-    // HTTP path: no previous_response_id (already stripped on upstreamBody).
-    // On a chained-turn WS fallback, send the full self-contained input so the
-    // tool-result turn is not an orphan (see httpFallbackBody).
-    body: JSON.stringify(httpFallbackBody ?? upstreamBody),
+    upstreamBody,
+    httpFallbackBody,
     signal,
+    memoryTraceId,
   })
 
   if (!response.ok) {
@@ -516,17 +525,25 @@ export async function createCodexResponsesOnce(
     )
     const tracked =
       ctx?.downstreamWebsocket && transcriptTrackable ?
-        recordCodexTranscript(normalized, transcriptKey, fullInputThisTurn)
+        recordCodexTranscript(
+          normalized,
+          transcriptKey,
+          fullInputThisTurn,
+          memoryTraceId,
+        )
       : normalized
     return wrapCodexStream(tracked, model, replaySessionKey, identityState)
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
-    setCodexTranscript(transcriptKey, [
-      ...fullInputThisTurn,
-      ...(Array.isArray(result.output) ? result.output : []),
-    ])
+    recordTranscriptCheckpoint(
+      memoryTraceId,
+      setCodexTranscript(transcriptKey, [
+        ...fullInputThisTurn,
+        ...(Array.isArray(result.output) ? result.output : []),
+      ]),
+    )
   }
   // Debug: same reasoning-summary check as the streaming path, for the
   // non-streaming (clientStream=false) response.
@@ -604,6 +621,7 @@ async function* recordCodexTranscript(
   stream: AsyncIterable<CopilotStreamEventLike>,
   transcriptKey: string,
   fullInputThisTurn: Array<unknown>,
+  memoryTraceId?: string,
 ): AsyncIterable<CopilotStreamEventLike> {
   for await (const event of stream) {
     const data = event.data
@@ -616,7 +634,13 @@ async function* recordCodexTranscript(
             response && Array.isArray(response.output) ?
               (response.output as Array<unknown>)
             : []
-          setCodexTranscript(transcriptKey, [...fullInputThisTurn, ...output])
+          recordTranscriptCheckpoint(
+            memoryTraceId,
+            setCodexTranscript(transcriptKey, [
+              ...fullInputThisTurn,
+              ...output,
+            ]),
+          )
         }
       } catch {
         // Best-effort transcript recording.
@@ -624,6 +648,60 @@ async function* recordCodexTranscript(
     }
     yield event
   }
+}
+
+function recordTranscriptCheckpoint(
+  memoryTraceId: string | undefined,
+  result: TranscriptStoreResult,
+): void {
+  updateMemoryTrace(
+    memoryTraceId,
+    result.stored ? "transcript_stored" : "transcript_dropped",
+    {
+      transcriptEntryBytes: result.entryBytes,
+      transcriptTotalBytes: result.totalBytes,
+      transcriptEntries: result.entries,
+    },
+  )
+}
+
+function countArrayItems(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0
+}
+
+function readMemoryTraceId(
+  ctx: RequestExecutionContext | undefined,
+): string | undefined {
+  return ctx?.memoryTraceId
+}
+
+async function postCodexResponses(options: {
+  account: Account
+  url: string
+  headers: Record<string, string>
+  upstreamBody: Record<string, unknown>
+  httpFallbackBody?: Record<string, unknown>
+  signal?: AbortSignal
+  memoryTraceId?: string
+}): Promise<Response> {
+  const effectiveBody = options.httpFallbackBody ?? options.upstreamBody
+  updateMemoryTrace(options.memoryTraceId, "upstream_http_stringify_start", {
+    provider: "codex",
+    inputItems: countArrayItems(effectiveBody.input),
+  })
+  const body = JSON.stringify(effectiveBody)
+  updateMemoryTrace(options.memoryTraceId, "upstream_http_send", {
+    provider: "codex",
+    wireBytes: Buffer.byteLength(body),
+  })
+  return fetchWithOAuthProxy(options.account, options.url, {
+    method: "POST",
+    headers: options.headers,
+    // HTTP never sends previous_response_id. A chained WS fallback uses the
+    // full self-contained body so the tool-result turn is not orphaned.
+    body,
+    signal: options.signal,
+  })
 }
 
 /**

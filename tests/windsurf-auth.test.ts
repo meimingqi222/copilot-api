@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { fetchDevinUserJwt } from "~/services/windsurf/auth"
+import {
+  clearDevinUserJwtCacheForTest,
+  fetchDevinUserJwt,
+  invalidateDevinUserJwtCache,
+} from "~/services/windsurf/auth"
 import { ProtobufEncoder } from "~/services/windsurf/protobuf"
 
 // Build a GetUserJwtResponse proto: { user_jwt=1, custom_api_server_url=2 }.
@@ -15,8 +19,15 @@ function encodeGetUserJwtResponse(
 }
 
 const originalFetch = globalThis.fetch
+const originalCacheTtl = process.env.WINDSURF_USER_JWT_CACHE_TTL_MS
 afterEach(() => {
   globalThis.fetch = originalFetch
+  clearDevinUserJwtCacheForTest()
+  if (originalCacheTtl === undefined) {
+    Reflect.deleteProperty(process.env, "WINDSURF_USER_JWT_CACHE_TTL_MS")
+  } else {
+    process.env.WINDSURF_USER_JWT_CACHE_TTL_MS = originalCacheTtl
+  }
 })
 
 function mockFetch(payload: Uint8Array, status = 200) {
@@ -69,5 +80,70 @@ describe("fetchDevinUserJwt", () => {
         baseUrl: "https://server.codeium.com",
       }),
     ).rejects.toThrow(/empty user JWT/)
+  })
+
+  test("caches GetUserJwt in memory and reports cache hits", async () => {
+    process.env.WINDSURF_USER_JWT_CACHE_TTL_MS = "60000"
+    let calls = 0
+    globalThis.fetch = (() => {
+      calls++
+      return Promise.resolve(
+        new Response(encodeGetUserJwtResponse("cached-jwt"), { status: 200 }),
+      )
+    }) as unknown as typeof fetch
+
+    const options = {
+      apiKey: "cached-token",
+      baseUrl: "https://server.codeium.com",
+    }
+    const first = await fetchDevinUserJwt(options)
+    const second = await fetchDevinUserJwt(options)
+
+    expect(first.cacheStatus).toBe("miss")
+    expect(second.cacheStatus).toBe("hit")
+    expect(calls).toBe(1)
+  })
+
+  test("invalidating cached auth forces a new exchange", async () => {
+    process.env.WINDSURF_USER_JWT_CACHE_TTL_MS = "60000"
+    let calls = 0
+    globalThis.fetch = (() => {
+      calls++
+      return Promise.resolve(
+        new Response(encodeGetUserJwtResponse(`jwt-${calls}`), { status: 200 }),
+      )
+    }) as unknown as typeof fetch
+    const options = {
+      apiKey: "rotating-token",
+      baseUrl: "https://server.codeium.com",
+    }
+
+    expect((await fetchDevinUserJwt(options)).userJwt).toBe("jwt-1")
+    invalidateDevinUserJwtCache(options)
+    expect((await fetchDevinUserJwt(options)).userJwt).toBe("jwt-2")
+    expect(calls).toBe(2)
+  })
+
+  test("does not cache a JWT that is inside the expiry safety margin", async () => {
+    process.env.WINDSURF_USER_JWT_CACHE_TTL_MS = "60000"
+    const payload = Buffer.from(
+      JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 10 }),
+    ).toString("base64url")
+    const jwt = `header.${payload}.signature`
+    let calls = 0
+    globalThis.fetch = (() => {
+      calls++
+      return Promise.resolve(
+        new Response(encodeGetUserJwtResponse(jwt), { status: 200 }),
+      )
+    }) as unknown as typeof fetch
+    const options = {
+      apiKey: "expiring-token",
+      baseUrl: "https://server.codeium.com",
+    }
+
+    await fetchDevinUserJwt(options)
+    await fetchDevinUserJwt(options)
+    expect(calls).toBe(2)
   })
 })

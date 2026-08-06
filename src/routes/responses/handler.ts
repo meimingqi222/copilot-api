@@ -15,6 +15,7 @@ import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   createSsePingInterval,
   forwardSseEvent,
+  writeSseComment,
   writeSseEvent,
 } from "~/lib/sse"
 import {
@@ -114,6 +115,7 @@ export async function handleResponses(c: Context) {
 
   if (payload.stream) {
     return streamSSE(c, async (stream) => {
+      await writeSseComment(stream)
       const pingInterval = createSsePingInterval(stream)
       let accountId: string | undefined
       let completedResponse: ResponsesResponse | undefined

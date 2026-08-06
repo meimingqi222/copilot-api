@@ -35,6 +35,8 @@ export interface RequestExecutionContext {
   executionSessionId?: string
   /** Isolation scope for reconnectable in-memory Responses transcripts. */
   transcriptScopeId?: string
+  /** Correlates low-overhead memory checkpoints for one Responses WS turn. */
+  memoryTraceId?: string
   /**
    * Force the upstream to use HTTP POST, skipping the WS path even when the
    * client connected via WebSocket. Set by the WS handler's same-account

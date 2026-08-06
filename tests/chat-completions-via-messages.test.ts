@@ -135,6 +135,7 @@ test("POST /v1/chat/completions streaming translates Anthropic SSE to OpenAI chu
 
   expect(response.status).toBe(200)
   const text = await response.text()
+  expect(text).toStartWith(": connected\n\n")
   expect(text).toContain("chat.completion.chunk")
   expect(text).toContain("Hello from Claude")
   // The route consumes the upstream [DONE] and closes the stream (matching

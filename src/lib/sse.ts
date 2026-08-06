@@ -50,6 +50,15 @@ export async function writeSseEvent(
   })
 }
 
+export async function writeSseComment(
+  stream: SSEStream,
+  comment = "connected",
+): Promise<void> {
+  if (!stream.write) return
+  const safeComment = comment.replaceAll(/[\r\n]/g, " ")
+  await stream.write(`: ${safeComment}\n\n`)
+}
+
 function formatSseFrame(data: string, event?: string): string {
   const eventLine = event ? `event: ${event}\n` : ""
   return `${eventLine}data: ${data}\n\n`
@@ -95,7 +104,11 @@ export async function forwardSseEvent(
 export function handleSseStream(
   c: Context,
   run: (stream: SSEStream, signal: AbortSignal) => Promise<void>,
-  options?: { onAbort?: () => void; skipPing?: boolean },
+  options?: {
+    onAbort?: () => void
+    skipPing?: boolean
+    initialComment?: string | false
+  },
 ) {
   return streamSSE(c, async (stream) => {
     const pingInterval =
@@ -103,6 +116,14 @@ export function handleSseStream(
     const signal = c.req.raw.signal
 
     try {
+      if (options?.initialComment !== false) {
+        await writeSseComment(
+          stream,
+          typeof options?.initialComment === "string" ?
+            options.initialComment
+          : "connected",
+        )
+      }
       await run(stream, signal)
     } catch (error) {
       if (isAbortError(error)) {
