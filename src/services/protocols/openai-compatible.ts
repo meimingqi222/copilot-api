@@ -38,6 +38,28 @@ function buildHeaders(
   return buildBaseHeaders(connection, credential)
 }
 
+/**
+ * Unwraps the `{ data: { ... } }` envelope some upstreams (e.g. Cline Pass)
+ * wrap the standard OpenAI response in.
+ *
+ * Only unwraps when the envelope provably holds the payload: `marker` must be
+ * present on `raw.data`. An unconditional `raw.data ?? raw` is wrong for any
+ * response shape that legitimately carries a top-level `data` — the standard
+ * embeddings response is exactly that (`{ object, data, model, usage }`), and
+ * unwrapping it drops `model` and `usage`.
+ */
+function unwrapDataEnvelope(
+  raw: Record<string, unknown>,
+  marker: string,
+): Record<string, unknown> {
+  if (marker in raw) return raw
+  const inner = raw["data"]
+  if (inner === null || typeof inner !== "object" || Array.isArray(inner)) {
+    return raw
+  }
+  return marker in inner ? (inner as Record<string, unknown>) : raw
+}
+
 function classifyDiscoveredModelEndpoints(
   id: string,
 ): Array<"chat" | "embeddings"> {
@@ -131,7 +153,10 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     // Some upstreams (e.g. Cline Pass) wrap the standard OpenAI response
     // in a `data` envelope. Unwrap it so downstream code sees a normal
     // ChatCompletionResponse with top-level `choices`.
-    const body = (raw.data ?? raw) as ChatCompletionResponse
+    const body = unwrapDataEnvelope(
+      raw,
+      "choices",
+    ) as unknown as ChatCompletionResponse
     return {
       credentialId: credential.id,
       response: body,
@@ -161,7 +186,13 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     }
 
     const rawEmb = (await response.json()) as Record<string, unknown>
-    const body = (rawEmb.data ?? rawEmb) as EmbeddingResponse
+    // Same `data` envelope as the chat path. Keyed on `object` rather than
+    // `data`, since a standard embeddings response has a top-level `data`
+    // array of its own and must not be unwrapped.
+    const body = unwrapDataEnvelope(
+      rawEmb,
+      "object",
+    ) as unknown as EmbeddingResponse
     return {
       credentialId: credential.id,
       response: body,
