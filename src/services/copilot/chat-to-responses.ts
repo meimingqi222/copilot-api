@@ -22,6 +22,11 @@ import type {
 
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import {
+  extractReasoningBlockText,
+  extractReasoningPartsText,
+  extractReasoningTextAlias,
+} from "~/lib/thinking"
+import {
   buildCompletedRequestFields,
   buildCompletedResponseBase,
   getIncompleteDetails,
@@ -686,11 +691,9 @@ function stringifyMessageContent(content: Message["content"]): string {
         case "output_text": {
           return [part.text]
         }
-        case "reasoning": {
-          return [part.text ?? part.reasoning ?? ""]
-        }
+        case "reasoning":
         case "thinking": {
-          return [part.text ?? part.thinking ?? ""]
+          return [extractReasoningBlockText(part) ?? ""]
         }
         default: {
           return []
@@ -733,29 +736,14 @@ function getChatMessageReasoningText(
   }
 
   // `reasoning_content` is what DeepSeek/Kimi/Qwen/GLM upstreams actually
-  // emit; the streaming path already accepts all three spellings
-  // (`getReasoningDelta`), so the non-streaming path must too.
-  const topLevel =
-    message.reasoning_text ?? message.reasoning_content ?? message.reasoning
-  if (topLevel) {
-    return topLevel
-  }
-
-  if (typeof message.content === "string" || !Array.isArray(message.content)) {
-    return ""
-  }
-
-  return message.content
-    .flatMap((part) => {
-      if (part.type === "reasoning") {
-        return [part.text ?? part.reasoning ?? ""]
-      }
-      if (part.type === "thinking") {
-        return [part.text ?? part.thinking ?? ""]
-      }
-      return []
-    })
-    .join("")
+  // emit; the streaming path accepts all four spellings (`getReasoningDelta`),
+  // so the non-streaming path must too. This path does not run through
+  // `routes/chat-completions/normalize.ts`, so there is no alias fallback
+  // behind it.
+  return (
+    extractReasoningTextAlias(message)
+    ?? extractReasoningPartsText(message.content)
+  )
 }
 
 function buildResponsesOutputFromChatMessage(

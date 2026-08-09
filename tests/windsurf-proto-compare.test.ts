@@ -45,6 +45,23 @@ function assistantMessageId(payload: Uint8Array): string | undefined {
   return id?.raw ? new TextDecoder().decode(id.raw) : undefined
 }
 
+function messageNodeCount(payload: Uint8Array): number {
+  return parseMessage(payload, 0, 6).filter((n) => n.field === 3 && n.sub)
+    .length
+}
+
+/** Reads a string subfield off the first ChatMessagePrompt. */
+function assistantMessageString(
+  payload: Uint8Array,
+  field: number,
+): string | undefined {
+  const message = parseMessage(payload, 0, 6).find(
+    (n) => n.field === 3 && n.sub,
+  )
+  const node = message?.sub?.find((n) => n.field === field)
+  return node?.raw ? new TextDecoder().decode(node.raw) : undefined
+}
+
 describe("Windsurf proto — buildRequest fingerprint", () => {
   const basePayload: ChatCompletionsPayload = {
     model: "swe-1-6",
@@ -221,6 +238,123 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     })
 
     expect(assistantMessageFields(decodeFramedPayload(built))).toContain(12)
+  })
+
+  test("round-trips its own reply: reasoning_opaque returns as field 12", () => {
+    // The exact assistant message shape `collect-response.ts` hands back, fed
+    // straight into the next request. Windsurf emits the signature as
+    // `reasoning_opaque`, so the request side has to accept that spelling or
+    // every multi-turn conversation loses its signatures.
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: "the answer",
+            reasoning_text: "private reasoning",
+            reasoning_opaque: "sig-from-windsurf",
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    const decoded = decodeFramedPayload(built)
+    expect(assistantMessageString(decoded, 11)).toBe("private reasoning")
+    expect(assistantMessageString(decoded, 12)).toBe("sig-from-windsurf")
+  })
+
+  test("forwards top-level `reasoning` (OpenRouter spelling)", () => {
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          { role: "assistant", content: "answer", reasoning: "private" },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageString(decodeFramedPayload(built), 11)).toBe(
+      "private",
+    )
+  })
+
+  test("drops the signature when it cannot cover the merged reasoning", () => {
+    // Two separately signed thinking blocks — what an Anthropic client sends
+    // back after interleaved reasoning. Field 11 is their concatenation, which
+    // neither signature signs, so field 12 must be omitted rather than carry
+    // the first block's signature.
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "first half", signature: "sig-a" },
+              { type: "reasoning", text: "second half", signature: "sig-b" },
+              { type: "text", text: "answer" },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    const decoded = decodeFramedPayload(built)
+    expect(assistantMessageString(decoded, 11)).toBe("first halfsecond half")
+    expect(assistantMessageFields(decoded)).not.toContain(12)
+  })
+
+  test("drops a reasoning_details signature that only signs a fragment", () => {
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: "answer",
+            reasoning_text: "first halfsecond half",
+            reasoning_details: [
+              { text: "first half", signature: "sig-a" },
+              { text: "second half", signature: "sig-b" },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageFields(decodeFramedPayload(built))).not.toContain(12)
+  })
+
+  test("skips an assistant turn carrying only a signature", () => {
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          { role: "user", content: "hello" },
+          { role: "assistant", content: null, signature: "sig-orphan" },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    const decoded = decodeFramedPayload(built)
+    expect(messageNodeCount(decoded)).toBe(1)
+    expect(assistantMessageFields(decoded)).not.toContain(12)
   })
 
   test("normalizes bare apiKey to devin-session-token$ prefix", () => {

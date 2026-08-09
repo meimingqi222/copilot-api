@@ -238,9 +238,27 @@ export interface Message {
    * (DeepSeek thinking mode requires it round-tripped with tool calls).
    */
   reasoning_content?: string | null
+  /**
+   * OpenRouter's spelling. Declared for the same reason `ResponseMessage`
+   * declares it: clients are as uncontrolled as upstreams, and a client that
+   * replays an OpenRouter assistant turn verbatim sends this rather than
+   * `reasoning_content`. Dropping it silently breaks signed-thinking round
+   * trips on the Anthropic path, which discards unsigned reasoning outright.
+   */
+  reasoning?: string | null
+  /** Anthropic-style reasoning flattened to the top level by some proxies. */
+  thinking?: string | null
   signature?: string | null
   reasoning_signature?: string | null
   thinking_signature?: string | null
+  /**
+   * The spelling this proxy's own Windsurf path emits (see
+   * `windsurf/collect-response.ts` and `windsurf/chunk-builders.ts`). Declared
+   * here so a client replaying a Windsurf assistant turn verbatim round-trips
+   * its signature instead of silently dropping it. Read via
+   * `extractSignatureAlias`.
+   */
+  reasoning_opaque?: string | null
 }
 
 export interface ToolCall {

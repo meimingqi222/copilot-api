@@ -10,7 +10,8 @@
  * - `n`, `seed`, `logprobs`, `logit_bias`, `frequency_penalty`,
  *   `presence_penalty`, `response_format`, `stream_options`: Anthropic has no
  *   equivalent, silently dropped.
- * - Historical assistant `reasoning_text`/`reasoning_content` (no signature):
+ * - Historical assistant reasoning with no signature (any of the four
+ *   spellings: `reasoning_content`/`reasoning_text`/`reasoning`/`thinking`):
  *   Claude rejects unsigned thinking blocks in history → stripped.
  * - Remote (non-base64) `image_url` parts: Anthropic only accepts base64 →
  *   skipped.
@@ -35,6 +36,11 @@ import type {
 } from "~/services/protocols/anthropic"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
+import {
+  extractReasoningBlockText,
+  extractReasoningTextAlias,
+  extractSignatureAlias,
+} from "~/lib/thinking"
 
 /**
  * Anthropic requires `max_tokens`; OpenAI clients may omit it. Default mirrors
@@ -289,9 +295,8 @@ function translateAssistantMessage(msg: Message): AnthropicMessage {
     thinkingBlocks.push({ type: "thinking", thinking: text, signature })
   }
 
-  const topLevelSignature =
-    msg.signature ?? msg.reasoning_signature ?? msg.thinking_signature
-  const topLevelReasoning = msg.reasoning_content ?? msg.reasoning_text
+  const topLevelSignature = extractSignatureAlias(msg)
+  const topLevelReasoning = extractReasoningTextAlias(msg)
   if (topLevelReasoning) {
     const signedDetails = reasoningDetails.filter(
       (item): item is typeof item & { text: string; signature: string } =>
@@ -330,7 +335,7 @@ function translateAssistantMessage(msg: Message): AnthropicMessage {
           // Only signed reasoning can round-trip to a valid thinking block;
           // unsigned historical reasoning is stripped (Claude rejects it).
           addSignedReasoning(
-            part.text ?? part.reasoning ?? part.thinking ?? "",
+            extractReasoningBlockText(part) ?? "",
             part.signature,
           )
           break

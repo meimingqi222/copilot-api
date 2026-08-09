@@ -4,7 +4,12 @@ import type {
   Tool,
 } from "~/services/copilot/create-chat-completions"
 
-import { LEVEL_TO_BUDGET, geminiSupportsLevelFormat } from "~/lib/thinking"
+import {
+  LEVEL_TO_BUDGET,
+  extractReasoningPartsText,
+  extractReasoningTextAlias,
+  geminiSupportsLevelFormat,
+} from "~/lib/thinking"
 
 const FUNCTION_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
 
@@ -32,6 +37,24 @@ function createSignatureRegistry(
  * the message history. Returns a registry that the synchronous translation
  * functions use to look up signatures.
  */
+/**
+ * Resolves an assistant turn's thinking text.
+ *
+ * Must stay the single definition: the signature registry is keyed by this
+ * exact string, so `preResolveSignatures` and `buildAssistantContent` looking
+ * it up differently would miss every cache entry. Note this path emits
+ * `reasoning_content` (see `translate-response.ts`), so reading only
+ * `reasoning_text` would drop the thought on every round trip of our own reply.
+ */
+function assistantReasoningText(message: Message): string {
+  // Response *content* is deliberately excluded — the cache is keyed by
+  // thinking text, and `messageText` covers the visible text separately.
+  const text =
+    extractReasoningTextAlias(message)
+    ?? extractReasoningPartsText(message.content)
+  return text.trim() ? text : ""
+}
+
 export async function preResolveSignatures(
   modelName: string,
   messages: Array<Message>,
@@ -41,14 +64,11 @@ export async function preResolveSignatures(
 
   for (const message of messages) {
     if (message.role !== "assistant") continue
-    // Only use reasoning_text for signature lookup — the signature cache is
-    // keyed by thinking text, not response content.
-    const reasoningText = message.reasoning_text
-    if (typeof reasoningText === "string" && reasoningText.trim()) {
-      const sig = await getCachedSignature(modelName, reasoningText)
-      if (sig) {
-        entries.push([reasoningText, sig])
-      }
+    const reasoningText = assistantReasoningText(message)
+    if (!reasoningText) continue
+    const sig = await getCachedSignature(modelName, reasoningText)
+    if (sig) {
+      entries.push([reasoningText, sig])
     }
   }
 
@@ -227,26 +247,24 @@ function buildAssistantContent(
     modelParts.push({ text })
   }
 
+  const reasoningText = assistantReasoningText(message)
+
   // Include reasoning text as a thought part so Gemini can continue the
   // chain-of-thought. Attach the cached signature for replay validation.
-  if (
-    typeof message.reasoning_text === "string"
-    && message.reasoning_text.trim()
-  ) {
-    const reasoningSig =
-      sigReg ? sigReg.get(message.reasoning_text) : FUNCTION_THOUGHT_SIGNATURE
+  if (reasoningText) {
     modelParts.push({
-      text: message.reasoning_text,
+      text: reasoningText,
       thought: true,
-      thoughtSignature: reasoningSig,
+      thoughtSignature:
+        sigReg ? sigReg.get(reasoningText) : FUNCTION_THOUGHT_SIGNATURE,
     })
   }
 
   // Use cached signature for tool calls (same signature as reasoning, since
   // Gemini associates the signature with the thinking that preceded the call).
   const reasoningSig =
-    message.reasoning_text && sigReg ?
-      sigReg.get(message.reasoning_text)
+    reasoningText && sigReg ?
+      sigReg.get(reasoningText)
     : FUNCTION_THOUGHT_SIGNATURE
 
   const toolCallIds: Array<string> = []

@@ -15,22 +15,5 @@ export function mapOpenAIStopReasonToAnthropic(
   return stopReasonMap[finishReason]
 }
 
-/**
- * Extracts a thinking signature from an object that may use any of the known
- * alias field names used by various Copilot proxy implementations.
- * Both the streaming delta and non-streaming response message use the same alias chain.
- */
-export function extractSignatureAlias(source: {
-  reasoning_opaque?: string | null
-  thinking_signature?: string | null
-  reasoning_signature?: string | null
-  signature?: string | null
-}): string | undefined {
-  return (
-    source.reasoning_opaque
-    ?? source.thinking_signature
-    ?? source.reasoning_signature
-    ?? source.signature
-    ?? undefined
-  )
-}
+// `extractSignatureAlias` moved to ~/lib/thinking — the request side needs the
+// same chain, so it can no longer live under the Anthropic protocol folder.

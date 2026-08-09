@@ -3,6 +3,8 @@ import type {
   ChatCompletionResponse,
 } from "~/services/copilot/create-chat-completions"
 
+import { extractReasoningTextAlias } from "~/lib/thinking"
+
 /**
  * Normalizes a streaming ChatCompletionChunk so that non-standard reasoning
  * field aliases used by the upstream Copilot API are mapped to the standard
@@ -30,9 +32,8 @@ export function normalizeChunk(
       return choice
     }
     // Map the first non-null alias to reasoning_content.
-    const reasoningContent =
-      delta.reasoning_text ?? delta.thinking ?? delta.reasoning
-    if (reasoningContent === null) {
+    const reasoningContent = extractReasoningTextAlias(delta)
+    if (reasoningContent === undefined) {
       return choice
     }
     return {
@@ -60,9 +61,8 @@ export function normalizeResponse(
     if (message.reasoning_content !== undefined) {
       return choice
     }
-    const reasoningContent =
-      message.reasoning_text ?? message.thinking ?? message.reasoning
-    if (reasoningContent === null) {
+    const reasoningContent = extractReasoningTextAlias(message)
+    if (reasoningContent === undefined) {
       return choice
     }
     return {
