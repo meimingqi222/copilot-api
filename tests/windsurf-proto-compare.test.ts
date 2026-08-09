@@ -338,6 +338,66 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decodeFramedPayload(built))).not.toContain(12)
   })
 
+  test("drops a top-level signature that cannot cover merged reasoning", () => {
+    // `reasoning_content` concatenates several signed blocks (the shape
+    // `messages-to-chat.ts` emits), and the client re-attaches only the first
+    // block's signature at the top level. Field 11 is the concatenation, which
+    // that signature does not cover, so field 12 must be omitted.
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: "answer",
+            reasoning_content: "first halfsecond half",
+            signature: "sig-a",
+            reasoning_details: [
+              { text: "first half", signature: "sig-a" },
+              { text: "second half", signature: "sig-b" },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    const decoded = decodeFramedPayload(built)
+    expect(assistantMessageString(decoded, 11)).toBe("first halfsecond half")
+    expect(assistantMessageFields(decoded)).not.toContain(12)
+  })
+
+  test("round-trips interleaved reasoning via reasoning_opaque", () => {
+    // An interleaved Windsurf reply carries both per-part signatures and the
+    // accumulated `reasoning_opaque`. Only the latter covers the whole
+    // reasoning text, so it — not the part signature — must be field 12.
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "first half", signature: "part-sig" },
+              { type: "text", text: "answer" },
+            ],
+            reasoning_text: "first half",
+            reasoning_opaque: "full-stream-sig",
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    const decoded = decodeFramedPayload(built)
+    expect(assistantMessageString(decoded, 11)).toBe("first half")
+    expect(assistantMessageString(decoded, 12)).toBe("full-stream-sig")
+  })
+
   test("skips an assistant turn carrying only a signature", () => {
     const built = buildRequest({
       payload: {

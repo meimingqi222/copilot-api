@@ -303,6 +303,13 @@ function resolveAssistantReasoning(message: Message): string {
  * is their concatenation, and attaching the first segment's signature to it
  * yields a pair the upstream rejects. Dropping the signature degrades
  * gracefully; mismatching it does not.
+ *
+ * A top-level signature must provably pair with the whole of `reasoningText`
+ * to be trusted: it needs its own top-level text, and the message must not
+ * carry independently-signed segments that show the reasoning was assembled
+ * from several signed blocks. `reasoning_opaque` is exempt — it is the full
+ * accumulated signature this proxy's own Windsurf collector writes
+ * (`collect-response.ts`), covering the stream by construction.
  */
 function resolveAssistantSignature(
   message: Message,
@@ -311,8 +318,32 @@ function resolveAssistantSignature(
   // Nothing to sign — never emit a signature-only assistant prompt.
   if (!reasoningText) return undefined
 
+  // Top-level signature, trusted only when it provably pairs with the whole of
+  // `reasoningText`. Two conditions, both required:
+  //  1. `reasoningText` is exactly the message's top-level reasoning text —
+  //     otherwise the signature has no paired text and would be signing the
+  //     concatenation of content parts instead.
+  //  2. The message carries no independently-signed segments (`reasoning_details`
+  //     entries or reasoning/thinking content parts) — those indicate the
+  //     reasoning was assembled from several signed blocks, so no single
+  //     top-level signature can be shown to cover the concatenation.
+  // `reasoning_opaque` is exempt from (2): it is the spelling this proxy's own
+  // Windsurf collector emits as the full accumulated signature of the whole
+  // stream, so it covers `reasoning_text` by construction.
   const topLevel = extractSignatureAlias(message)
-  if (topLevel) return topLevel
+  if (topLevel && reasoningText === extractReasoningTextAlias(message)) {
+    const hasSignedSegments =
+      (message.reasoning_details?.some((detail) => detail.signature) ?? false)
+      || (Array.isArray(message.content)
+        && message.content.some(
+          (part) =>
+            (part.type === "reasoning" || part.type === "thinking")
+            && part.signature,
+        ))
+    if (!hasSignedSegments || message.reasoning_opaque) {
+      return topLevel
+    }
+  }
 
   const detailSignature = message.reasoning_details?.find(
     (detail) => detail.text === reasoningText && detail.signature,
