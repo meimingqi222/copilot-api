@@ -49,9 +49,11 @@ function createSignatureRegistry(
 function assistantReasoningText(message: Message): string {
   // Response *content* is deliberately excluded — the cache is keyed by
   // thinking text, and `messageText` covers the visible text separately.
+  // `||`, not `??`: an empty top-level alias must not shadow reasoning that
+  // the message carries as content parts.
   const text =
     extractReasoningTextAlias(message)
-    ?? extractReasoningPartsText(message.content)
+    || extractReasoningPartsText(message.content)
   return text.trim() ? text : ""
 }
 

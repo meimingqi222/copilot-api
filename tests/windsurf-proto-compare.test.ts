@@ -267,6 +267,35 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageString(decoded, 12)).toBe("sig-from-windsurf")
   })
 
+  test("an empty top-level alias does not shadow reasoning content parts", () => {
+    // Upstreams routinely emit `reasoning_content: ""` on turns without
+    // thinking, and a client replaying such a turn sends the empty string back
+    // alongside the real reasoning it carries as parts. `??` would stop at the
+    // empty string and drop the chain of thought.
+    const built = buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            reasoning_content: "",
+            content: [
+              { type: "reasoning", text: "private reasoning" },
+              { type: "text", text: "the answer" },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+    })
+
+    expect(assistantMessageString(decodeFramedPayload(built), 11)).toBe(
+      "private reasoning",
+    )
+  })
+
   test("forwards top-level `reasoning` (OpenRouter spelling)", () => {
     const built = buildRequest({
       payload: {
