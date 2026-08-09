@@ -121,6 +121,32 @@ describe("chat → responses non-streaming reasoning", () => {
     expect(reasoning?.summary?.[0].text).toBe("think first")
   })
 
+  test("picks up top-level message.thinking", () => {
+    // The streaming twin (`getReasoningDelta`) accepts this spelling, and this
+    // path does not run through routes/chat-completions/normalize.ts, so the
+    // alias has to be handled here or it is dropped.
+    const out = translateChatCompletionToResponses(
+      chatResponse({ content: "done", thinking: "think first" }),
+      requestPayload,
+    )
+    const reasoning = out.output?.find((item) => item.type === "reasoning")
+    expect(reasoning?.summary?.[0].text).toBe("think first")
+  })
+
+  test("picks up a reasoning content part spelled with `thinking`", () => {
+    const out = translateChatCompletionToResponses(
+      chatResponse({
+        content: [
+          { type: "reasoning", thinking: "think first" },
+          { type: "output_text", text: "done" },
+        ],
+      }),
+      requestPayload,
+    )
+    const reasoning = out.output?.find((item) => item.type === "reasoning")
+    expect(reasoning?.summary?.[0].text).toBe("think first")
+  })
+
   test("emits the reasoning item before the message and function_call", () => {
     const out = translateChatCompletionToResponses(
       chatResponse({

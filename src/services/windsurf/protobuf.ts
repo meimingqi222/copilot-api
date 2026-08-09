@@ -209,6 +209,9 @@ const CONNECT_END_STREAM_FLAG = 0x02
  * 这三个上限定义了单条 Windsurf 流的最坏内存占用。默认值按常规主机设定;
  * 小内存主机(1GB VPS)上两个并发请求撞满就是数百 MB,应调低。
  * 用 `WINDSURF_MAX_FRAME_MB` 统一缩放,0 或非法值回退到默认。
+ *
+ * 注意这个旋钮**只能调低**:大于默认 16 的值会被 clamp 回 scale=1。
+ * 上限本身是安全边界(见上方注释:让畸形 length 头快速失败),不开放放大。
  */
 function readFrameLimitScale(): number {
   const raw = process.env.WINDSURF_MAX_FRAME_MB?.trim()

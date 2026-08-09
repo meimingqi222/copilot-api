@@ -1,9 +1,104 @@
 /**
- * Shared thinking configuration utilities.
+ * Shared thinking utilities.
  *
- * Provides level↔budget conversion and Gemini model format detection
- * used by the Anthropic and Antigravity translation layers.
+ * Provides level↔budget conversion, Gemini model format detection, and the
+ * canonical thinking-signature alias chain, used by the Anthropic, Antigravity
+ * and Windsurf translation layers.
  */
+
+/**
+ * Extracts a thinking signature under any of the spellings the various proxy
+ * implementations use.
+ *
+ * Lives here rather than next to one protocol because both directions need the
+ * same chain: a response is written under one spelling and a client replays it
+ * verbatim on the next request. The Windsurf path emits `reasoning_opaque`
+ * specifically, so a request-side reader that omits it silently drops the
+ * signature on every round trip.
+ */
+export function extractSignatureAlias(source: {
+  reasoning_opaque?: string | null
+  thinking_signature?: string | null
+  reasoning_signature?: string | null
+  signature?: string | null
+}): string | undefined {
+  return (
+    source.reasoning_opaque
+    ?? source.thinking_signature
+    ?? source.reasoning_signature
+    ?? source.signature
+    ?? undefined
+  )
+}
+
+/**
+ * Top-level reasoning text under any of the spellings in circulation.
+ *
+ * Same reason as `extractSignatureAlias`: each provider writes one spelling
+ * (Windsurf `reasoning_text`, Antigravity `reasoning_content`, OpenRouter
+ * `reasoning`), and any of them can come back on the next request. A reader
+ * that hard-codes one spelling drops the whole chain of thought.
+ */
+export function extractReasoningTextAlias(source: {
+  reasoning_text?: string | null
+  reasoning_content?: string | null
+  reasoning?: string | null
+  thinking?: string | null
+}): string | undefined {
+  return (
+    source.reasoning_text
+    ?? source.reasoning_content
+    ?? source.reasoning
+    ?? source.thinking
+    ?? undefined
+  )
+}
+
+/**
+ * Text of a single reasoning block — a `reasoning_details` entry or a
+ * reasoning/thinking content part.
+ *
+ * Distinct from `extractReasoningTextAlias`, which reads the *message*-level
+ * fields. `text` leads because that is what every emitter in this repo writes
+ * and what the OpenRouter `reasoning_details` convention uses; `reasoning` and
+ * `thinking` are the fallbacks other proxies emit.
+ */
+export function extractReasoningBlockText(source: {
+  text?: string | null
+  reasoning?: string | null
+  thinking?: string | null
+}): string | undefined {
+  return source.text ?? source.reasoning ?? source.thinking ?? undefined
+}
+
+/** Structural view of a chat content part; avoids a lib→services type import. */
+interface ReasoningPartLike {
+  type: string
+  text?: string
+  reasoning?: string
+  thinking?: string
+}
+
+/**
+ * Reasoning carried as content parts rather than a top-level field,
+ * concatenated in order.
+ *
+ * This is the shape our own translators emit whenever reasoning interleaves
+ * with text (`protocols/openai/messages-to-chat.ts`,
+ * `windsurf/collect-response.ts`, `copilot/responses-to-chat.ts`), so a
+ * request-side reader that only checks top-level fields misses it.
+ */
+export function extractReasoningPartsText(
+  content: string | Array<ReasoningPartLike> | null | undefined,
+): string {
+  if (!Array.isArray(content)) return ""
+  let text = ""
+  for (const part of content) {
+    if (part.type !== "reasoning" && part.type !== "thinking") continue
+    text += extractReasoningBlockText(part) ?? ""
+  }
+  return text
+}
 
 /** Standard reasoning effort levels from lowest to highest. */
 export type ReasoningEffortLevel =

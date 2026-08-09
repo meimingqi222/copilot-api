@@ -6,6 +6,13 @@ import type {
   Tool,
 } from "~/services/copilot/create-chat-completions"
 
+import {
+  extractReasoningBlockText,
+  extractReasoningPartsText,
+  extractReasoningTextAlias,
+  extractSignatureAlias,
+} from "~/lib/thinking"
+
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectFrame } from "./protobuf"
 
@@ -148,8 +155,9 @@ function estimateRequestBytes(payload: ChatCompletionsPayload): number {
         }
       }
     }
-    bytes += message.reasoning_text?.length ?? 0
-    bytes += message.reasoning_content?.length ?? 0
+    // Only the alias `resolveAssistantReasoning` would actually pick, so the
+    // estimate tracks what gets written rather than summing every spelling.
+    bytes += (extractReasoningTextAlias(message) ?? "").length
     for (const tc of message.tool_calls ?? []) {
       bytes += tc.function.arguments.length + tc.function.name.length + 64
     }
@@ -222,12 +230,9 @@ function writeChatMessagePrompt(
     const toolCalls = message.tool_calls ?? []
     const reasoningText = resolveAssistantReasoning(message)
     const reasoningSignature = resolveAssistantSignature(message, reasoningText)
-    if (
-      !hasText(content.text)
-      && !reasoningText
-      && !reasoningSignature
-      && toolCalls.length === 0
-    ) {
+    // `reasoningSignature` is only ever set alongside `reasoningText`, so it
+    // cannot on its own keep an otherwise empty turn alive.
+    if (!hasText(content.text) && !reasoningText && toolCalls.length === 0) {
       return false
     }
 
@@ -281,48 +286,45 @@ function writeChatMessagePrompt(
 }
 
 function resolveAssistantReasoning(message: Message): string {
-  if (message.reasoning_text ?? message.reasoning_content) {
-    return message.reasoning_text ?? message.reasoning_content ?? ""
-  }
-  if (!Array.isArray(message.content)) return ""
-
-  return message.content
-    .filter((part) => part.type === "reasoning" || part.type === "thinking")
-    .map((part) => {
-      switch (part.type) {
-        case "reasoning":
-        case "thinking": {
-          return part.text ?? part.reasoning ?? part.thinking ?? ""
-        }
-        default: {
-          return ""
-        }
-      }
-    })
-    .join("")
+  return (
+    extractReasoningTextAlias(message)
+    ?? extractReasoningPartsText(message.content)
+  )
 }
 
+/**
+ * Signature covering the whole of `reasoningText`, or undefined.
+ *
+ * Windsurf carries reasoning as a single pair — field 11 text, field 12
+ * signature — so a signature may only be sent when it signs the entire string
+ * written to field 11. History that arrives as several separately signed
+ * segments (an Anthropic client with interleaved thinking and tool use, via
+ * `protocols/openai/messages-to-chat.ts`) has no such signature: `reasoningText`
+ * is their concatenation, and attaching the first segment's signature to it
+ * yields a pair the upstream rejects. Dropping the signature degrades
+ * gracefully; mismatching it does not.
+ */
 function resolveAssistantSignature(
   message: Message,
   reasoningText: string,
 ): string | undefined {
-  const fromMessage =
-    message.signature
-    ?? message.reasoning_signature
-    ?? message.thinking_signature
-    ?? message.reasoning_details?.find(
-      (detail) => detail.text === reasoningText,
-    )?.signature
-  if (fromMessage) return fromMessage
+  // Nothing to sign — never emit a signature-only assistant prompt.
+  if (!reasoningText) return undefined
+
+  const topLevel = extractSignatureAlias(message)
+  if (topLevel) return topLevel
+
+  const detailSignature = message.reasoning_details?.find(
+    (detail) => detail.text === reasoningText && detail.signature,
+  )?.signature
+  if (detailSignature) return detailSignature
 
   if (!Array.isArray(message.content)) return undefined
   for (const part of message.content) {
-    if (
-      (part.type === "reasoning" || part.type === "thinking")
-      && part.signature
-    ) {
-      return part.signature
-    }
+    if (part.type !== "reasoning" && part.type !== "thinking") continue
+    if (!part.signature) continue
+    const partText = extractReasoningBlockText(part) ?? ""
+    if (partText === reasoningText) return part.signature
   }
   return undefined
 }

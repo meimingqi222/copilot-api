@@ -1,16 +1,18 @@
 import { sanitizeId } from "~/lib/id-sanitizer"
-import { openAIUsageToAnthropic } from "~/lib/usage-translation"
 import {
-  type ChatCompletionChunk,
-  type ChatCompletionReasoningDetail,
-} from "~/services/copilot/create-chat-completions"
+  extractReasoningBlockText,
+  extractReasoningTextAlias,
+  extractSignatureAlias,
+} from "~/lib/thinking"
+import { openAIUsageToAnthropic } from "~/lib/usage-translation"
+import { type ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
 
 import {
   type AnthropicMessageDeltaEvent,
   type AnthropicStreamEventData,
   type AnthropicStreamState,
 } from "./types"
-import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
+import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 type OpenAIStreamUsage = NonNullable<ChatCompletionChunk["usage"]>
 const MAX_BUFFERED_THINKING_BYTES = 4 * 1024 * 1024
@@ -201,12 +203,6 @@ function appendBufferedThinking(
   })
 }
 
-function getReasoningText(
-  source: ChatCompletionReasoningDetail,
-): string | undefined {
-  return source.thinking ?? source.reasoning ?? source.text
-}
-
 function getThinkingDelta(
   delta: ChatCompletionChunk["choices"][number]["delta"],
 ): {
@@ -219,18 +215,14 @@ function getThinkingDelta(
   // Use ?? chaining so only one top-level field is picked per chunk,
   // matching the non-streaming translation and avoiding duplication when
   // the Copilot proxy echoes the same content in multiple alias fields.
-  const topLevelReasoning =
-    delta.reasoning_text
-    ?? delta.thinking
-    ?? delta.reasoning
-    ?? delta.reasoning_content
+  const topLevelReasoning = extractReasoningTextAlias(delta)
   if (topLevelReasoning) {
     reasoningParts.push(topLevelReasoning)
   }
 
   if (Array.isArray(delta.reasoning_details)) {
     for (const detail of delta.reasoning_details) {
-      const detailText = getReasoningText(detail)
+      const detailText = extractReasoningBlockText(detail)
       if (detailText) {
         reasoningParts.push(detailText)
       }

@@ -22,8 +22,15 @@ import { updateMemoryTrace } from "~/lib/memory-diagnostics"
  * Ceiling for a single non-streaming response held in memory. The default
  * suits a normal host; on a small one (1GB VPS) a couple of concurrent
  * requests at this size are enough to push the process into swap, so it is
- * tunable. `WINDSURF_MAX_RESPONSE_MB` also scales the ordered-parts budget,
- * which is the same data kept a second time to preserve block order.
+ * tunable.
+ *
+ * `WINDSURF_MAX_RESPONSE_MB` only lowers the ceiling — values above the 32MB
+ * default are clamped away, since the point of the knob is to cap worst-case
+ * memory, not to raise it. It lowers the ordered-parts budget below with it;
+ * that budget covers the same data kept a second time to preserve block order,
+ * and has its own 4MB cap that the env var cannot lift. Overflowing it is not
+ * lossy: `orderedPartsComplete` flips to false and the response falls back to
+ * flat text, losing only the reasoning/content interleaving.
  */
 function readResponseLimitBytes(): number {
   const raw = process.env.WINDSURF_MAX_RESPONSE_MB?.trim()

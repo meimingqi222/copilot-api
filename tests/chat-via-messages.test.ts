@@ -285,6 +285,57 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     })
   })
 
+  test("round-trips signed reasoning under OpenRouter's `reasoning` spelling", () => {
+    // A client replaying an OpenRouter assistant turn verbatim sends top-level
+    // `reasoning`, not `reasoning_content`. Without that alias the signed block
+    // is dropped entirely, not merely downgraded.
+    const result = translateChatPayloadToAnthropic(
+      basePayload({
+        messages: [
+          {
+            role: "assistant",
+            content: "answer",
+            reasoning: "step 1",
+            signature: "sig_1",
+          },
+          { role: "user", content: "continue" },
+        ],
+      }),
+    )
+
+    expect(result.messages[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "step 1", signature: "sig_1" },
+        { type: "text", text: "answer" },
+      ],
+    })
+  })
+
+  test("accepts a Windsurf reply's `reasoning_opaque` as the signature", () => {
+    const result = translateChatPayloadToAnthropic(
+      basePayload({
+        messages: [
+          {
+            role: "assistant",
+            content: "answer",
+            reasoning_text: "step 1",
+            reasoning_opaque: "sig_1",
+          },
+          { role: "user", content: "continue" },
+        ],
+      }),
+    )
+
+    expect(result.messages[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "step 1", signature: "sig_1" },
+        { type: "text", text: "answer" },
+      ],
+    })
+  })
+
   test("keeps user content valid when all image parts are unsupported", () => {
     const result = translateChatPayloadToAnthropic(
       basePayload({

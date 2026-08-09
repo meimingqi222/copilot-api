@@ -5,6 +5,7 @@ import type {
 } from "~/services/copilot/responses-api-types"
 
 import { growByteCount } from "~/lib/bounded-text"
+import { extractReasoningTextAlias } from "~/lib/thinking"
 
 const MAX_CHAT_TO_RESPONSES_BUFFER_BYTES = 32 * 1024 * 1024
 
@@ -56,13 +57,7 @@ export function getReasoningDelta(
 ): string {
   // Alias chain aligned with anthropic/stream-translation.ts getThinkingDelta:
   // includes reasoning_content so DeepSeek/Kimi/xAI-style deltas are captured.
-  return (
-    delta.reasoning_text
-    ?? delta.reasoning_content
-    ?? delta.reasoning
-    ?? delta.thinking
-    ?? ""
-  )
+  return extractReasoningTextAlias(delta) ?? ""
 }
 
 export function appendContentDelta(

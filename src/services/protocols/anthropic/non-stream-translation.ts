@@ -1,13 +1,16 @@
 import { sanitizeId } from "~/lib/id-sanitizer"
-import { budgetToLevel } from "~/lib/thinking"
+import {
+  budgetToLevel,
+  extractReasoningBlockText,
+  extractReasoningTextAlias,
+  extractSignatureAlias,
+} from "~/lib/thinking"
 import { openAIUsageToAnthropic } from "~/lib/usage-translation"
 import {
-  type ChatCompletionReasoningDetail,
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
   type ContentPart,
   type Message,
-  type ReasoningContentPart,
   type Tool,
   type ToolCall,
 } from "~/services/copilot/create-chat-completions"
@@ -25,7 +28,7 @@ import {
   type AnthropicUserContentBlock,
   type AnthropicUserMessage,
 } from "./types"
-import { extractSignatureAlias, mapOpenAIStopReasonToAnthropic } from "./utils"
+import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation
 
@@ -448,12 +451,7 @@ function addTopLevelReasoningBlocks(
   message: CopilotResponseMessage,
   collector: ThinkingCollector,
 ): void {
-  const topLevelReasoning =
-    message.reasoning_text
-    ?? message.thinking
-    ?? message.reasoning
-    ?? message.reasoning_content
-    ?? undefined
+  const topLevelReasoning = extractReasoningTextAlias(message)
   const existingReasoning = collector.blocks
     .filter(
       (block): block is AnthropicThinkingBlock => block.type === "thinking",
@@ -472,7 +470,7 @@ function addTopLevelReasoningBlocks(
     for (const detail of message.reasoning_details) {
       addThinkingBlockUnique(
         collector,
-        getReasoningText(detail),
+        extractReasoningBlockText(detail),
         detail.signature,
       )
     }
@@ -508,7 +506,7 @@ function getAnthropicContentBlocks(
         case "thinking": {
           addThinkingBlockUnique(
             collector,
-            getReasoningText(part),
+            extractReasoningBlockText(part),
             ("signature" in part ? part.signature : undefined)
               ?? messageLevelSignature,
           )
@@ -528,12 +526,6 @@ function getAnthropicContentBlocks(
   }
 
   return blocks
-}
-
-function getReasoningText(
-  source: ChatCompletionReasoningDetail | ReasoningContentPart,
-): string | undefined {
-  return source.thinking ?? source.reasoning ?? source.text
 }
 
 function getAnthropicToolUseBlocks(
