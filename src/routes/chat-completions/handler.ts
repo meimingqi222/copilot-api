@@ -396,7 +396,10 @@ function handleStreamingResponse(
           if (chunk.usage) {
             lastUsage = chunk.usage
           }
-          const chunkFinishReason = chunk.choices[0]?.finish_reason
+          // `choices` is typed as required but some upstreams omit it on
+          // usage-only / filter chunks — same reason `normalizeChunk` guards it.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          const chunkFinishReason = chunk.choices?.[0]?.finish_reason
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
@@ -610,7 +613,10 @@ function handleStreamingCompletion(
           if (chunk.usage) {
             lastUsage = chunk.usage
           }
-          const chunkFinishReason = chunk.choices[0]?.finish_reason
+          // `choices` is typed as required but some upstreams omit it on
+          // usage-only / filter chunks — same reason `normalizeChunk` guards it.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          const chunkFinishReason = chunk.choices?.[0]?.finish_reason
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
