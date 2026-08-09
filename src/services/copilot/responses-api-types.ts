@@ -111,6 +111,20 @@ export type ResponsesInputItem =
       call_id: string
       output: string
     }
+  /**
+   * Reasoning items are replayed verbatim in `input` by Responses clients
+   * (Codex CLI sends one every turn). Chat Completions has no equivalent item,
+   * so the translation merges the summary text into the following assistant
+   * message or drops it — but the variant must be modelled, otherwise it falls
+   * through to the `function_call_output` branch and becomes a `role: "tool"`
+   * message with no `tool_call_id`.
+   */
+  | {
+      type: "reasoning"
+      id?: string
+      encrypted_content?: string
+      summary?: Array<ResponsesReasoningSummaryPart>
+    }
 
 export type ResponsesTool = {
   type: "function"

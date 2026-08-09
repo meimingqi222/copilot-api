@@ -163,9 +163,24 @@ echo -e "${GREEN}📊 Server will start on http://localhost:$PORT${NC}"
 echo -e "${GREEN}Press Ctrl+C to stop${NC}"
 echo ""
 
+# Memory policy for small hosts — must be applied here, not from .env at
+# runtime. `--smol` is a CLI flag and BUN_JSC_forceRAMSize is read by JSC when
+# it sizes the heap, both of which happen before Bun parses .env; a value that
+# only reaches process.env arrives far too late to have any effect.
+# BUN_MEMORY_LIMIT_MB comes from .env above (sourced with allexport) or the
+# shell. Set it to 0 to opt out.
+: "${BUN_MEMORY_LIMIT_MB:=0}"
+BUN_FLAGS=""
+if [ -n "$BUN_MEMORY_LIMIT_MB" ] && [ "$BUN_MEMORY_LIMIT_MB" -gt 0 ] 2>/dev/null; then
+    BUN_FLAGS="--smol"
+    export BUN_JSC_forceRAMSize=$((BUN_MEMORY_LIMIT_MB * 1024 * 1024))
+    echo -e "${GREEN}🧠 Memory limit: ${BUN_MEMORY_LIMIT_MB} MB (--smol)${NC}"
+    echo ""
+fi
+
 # Run the command
 if [ "$MODE" = "prod" ]; then
-    NODE_ENV=production bun ./src/main.ts "${CMD_ARGS[@]}"
+    NODE_ENV=production bun $BUN_FLAGS ./src/main.ts "${CMD_ARGS[@]}"
 else
-    bun --watch ./src/main.ts "${CMD_ARGS[@]}"
+    bun $BUN_FLAGS --watch ./src/main.ts "${CMD_ARGS[@]}"
 fi

@@ -1,9 +1,13 @@
 /**
  * RouteTarget 选择算法。
  *
- * 0. 两阶段过滤:优先专用(非通配) target,仅当无专用 target 时才用通配。
- *    这取代了旧的 WILDCARD_PRIORITY_BASE 标量编码——isWildcard 是类型化
- *    字段,直接用它做层级判别,connectionPriority 只在同一层级内比较。
+ * 0. 分层过滤(层级判别优先于 connectionPriority):
+ *    a. 优先专用(非通配) target,仅当无专用 target 时才用通配。
+ *       这取代了旧的 WILDCARD_PRIORITY_BASE 标量编码——isWildcard 是类型化
+ *       字段,直接用它做层级判别。
+ *    b. 同层内优先原生 endpoint(isTranslated 为假),仅当没有原生候选时
+ *       才用需要协议转换的 target。
+ *    connectionPriority 只在最终层级内比较。
  * 1. 按 connectionPriority 找到最低数字层(优先级最高)。
  * 2. 在该层内按 strategy:
  *    - fill-first (default): 固定选排序后第一个 (CPA FillFirstSelector, best cache)
@@ -125,11 +129,16 @@ export function selectRouteTarget(
   const allPool = candidates.filter((t) => !exclude.has(targetKey(t)))
   if (allPool.length === 0) return null
 
-  // 0) 两阶段过滤:优先专用(非通配) target,仅当无专用 target 时才用通配。
-  //    isWildcard 是类型化字段,直接用它做层级判别,
-  //    connectionPriority 只在同一层级内参与比较。
+  // 0) 分层过滤,层级判别优先于 connectionPriority:
+  //    a. 优先专用(非通配) target,仅当无专用 target 时才用通配。
+  //    b. 同层内优先原生 endpoint,仅当没有原生候选时才用协议转换 target。
+  //       转换是有损的(丢 cache_control 断点、字段降级),同优先级下
+  //       不应抢占一个原生支持该 endpoint 的 provider。
+  //       failover 把原生 target 排除后,转换 target 仍会作为后备被选中。
   const dedicatedPool = allPool.filter((t) => !t.isWildcard)
-  const pool = dedicatedPool.length > 0 ? dedicatedPool : allPool
+  const tierPool = dedicatedPool.length > 0 ? dedicatedPool : allPool
+  const nativePool = tierPool.filter((t) => !t.isTranslated)
+  const pool = nativePool.length > 0 ? nativePool : tierPool
 
   // 1) connection priority 最小值
   const minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))

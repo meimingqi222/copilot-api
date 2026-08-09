@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import type { ProviderId } from "~/lib/provider-config"
 
 import { getAccount, listAccounts } from "~/lib/accounts"
+import { getProviderConnection } from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -511,10 +512,20 @@ function aggregateByProvider(startDate: string, endDate: string) {
       }
     > = {}
     for (const [accountId, account] of Object.entries(provider.accounts)) {
-      const liveAccount = getAccount(accountId)
+      // "live" check must cover BOTH account-managed connections (accounts)
+      // and external provider connections (plain *-compatible connections).
+      // getAccount() only resolves account-managed connections, so external
+      // providers' usage would otherwise be mislabeled as deleted.
+      const liveConnection = getProviderConnection(accountId)
+      const liveAccount =
+        liveConnection ?
+          (getAccount(accountId) ?? {
+            label: liveConnection.name,
+          })
+        : undefined
       accounts[accountId] = {
         label: liveAccount?.label ?? accountId,
-        ...(liveAccount ? {} : { deleted: true }),
+        ...(liveConnection ? {} : { deleted: true }),
         ...enrichUsageMetrics({
           requests: account.requests,
           promptTokens: account.promptTokens,

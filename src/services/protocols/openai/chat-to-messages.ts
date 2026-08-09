@@ -384,7 +384,13 @@ function mapContentToAnthropicBlocks(
     switch (part.type) {
       case "text":
       case "output_text": {
-        blocks.push({ type: "text", text: part.text })
+        blocks.push({
+          type: "text",
+          text: part.text,
+          // OpenRouter-style breakpoint: the only way a chat client can place
+          // one. `createChatViaMessages` defers to these before auto-placing.
+          ...(part.cache_control && { cache_control: part.cache_control }),
+        })
         break
       }
       case "image_url": {

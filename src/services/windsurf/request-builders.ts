@@ -126,31 +126,95 @@ function serializeMessageContent(content: Message["content"]): {
 
 // ── Request-side message builders ─────────────────────────────────────────────
 
-function buildChatMessagePrompt(opts: {
-  message: Message
-  index: number
-  cascadeId: string
-}): ProtobufEncoder | null {
+/**
+ * Rough upper bound on the encoded request, used only to pre-size the encoder
+ * so it does not double its way up (which leaves the final buffer at up to 2x
+ * the payload with two copies briefly live). Cheap and approximate on purpose:
+ * `String.length` under-counts multi-byte text, and growth still covers a miss.
+ */
+function estimateRequestBytes(payload: ChatCompletionsPayload): number {
+  let bytes = 4096 // metadata, config, tool choice, cache options, ids
+  for (const message of payload.messages) {
+    bytes += 128 // per-turn ids, enums, framing
+    const { content } = message
+    if (typeof content === "string") {
+      bytes += content.length
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part.type === "text" || part.type === "output_text") {
+          bytes += part.text.length
+        } else if (part.type === "image_url") {
+          bytes += part.image_url.url.length
+        }
+      }
+    }
+    bytes += message.reasoning_text?.length ?? 0
+    bytes += message.reasoning_content?.length ?? 0
+    for (const tc of message.tool_calls ?? []) {
+      bytes += tc.function.arguments.length + tc.function.name.length + 64
+    }
+  }
+  for (const tool of payload.tools ?? []) {
+    bytes += JSON.stringify(tool.function.parameters).length + 256
+  }
+  return bytes
+}
+
+/**
+ * Non-blank test that does not allocate. `text.trim()` copies the whole string
+ * just to check emptiness, which on a long conversation means one throwaway
+ * copy of every message body.
+ */
+const NON_WHITESPACE = /\S/
+function hasText(value: string): boolean {
+  return NON_WHITESPACE.test(value)
+}
+
+function writeImages(
+  prompt: ProtobufEncoder,
+  images: Array<{ base64: string; mimeType: string }>,
+): void {
+  for (const image of images) {
+    prompt.writeNested(10, (img) => {
+      img.writeString(1, image.base64)
+      img.writeString(2, image.mimeType)
+    })
+  }
+}
+
+/**
+ * Appends one ChatMessagePrompt to `request` in place, returning false when the
+ * message carries nothing worth sending.
+ *
+ * Writes straight into the request buffer rather than building a per-turn
+ * encoder: on a long agent history the child encoders were the dominant
+ * allocation, since every turn's bytes were built once and then copied again
+ * into the parent.
+ */
+function writeChatMessagePrompt(
+  request: ProtobufEncoder,
+  opts: {
+    message: Message
+    index: number
+    cascadeId: string
+  },
+): boolean {
   const { message, index, cascadeId } = opts
-  const prompt = new ProtobufEncoder()
 
   if (message.role === "user" || message.role === "developer") {
     const { text, images } = serializeMessageContent(message.content)
-    if (!text.trim() && images.length === 0) return null
+    if (!hasText(text) && images.length === 0) return false
 
-    prompt.writeString(
-      1,
-      deterministicUuid(`${cascadeId}\0${index}\0${message.role}`),
-    )
-    prompt.writeVarint(2, ChatMessageSource.USER)
-    if (text) prompt.writeString(3, text)
-    for (const image of images) {
-      const img = new ProtobufEncoder()
-      img.writeString(1, image.base64)
-      img.writeString(2, image.mimeType)
-      prompt.writeMessage(10, img)
-    }
-    return prompt
+    request.writeNested(3, (prompt) => {
+      prompt.writeString(
+        1,
+        deterministicUuid(`${cascadeId}\0${index}\0${message.role}`),
+      )
+      prompt.writeVarint(2, ChatMessageSource.USER)
+      if (text) prompt.writeString(3, text)
+      writeImages(prompt, images)
+    })
+    return true
   }
 
   if (message.role === "assistant") {
@@ -159,63 +223,61 @@ function buildChatMessagePrompt(opts: {
     const reasoningText = resolveAssistantReasoning(message)
     const reasoningSignature = resolveAssistantSignature(message, reasoningText)
     if (
-      !content.text.trim()
+      !hasText(content.text)
       && !reasoningText
       && !reasoningSignature
       && toolCalls.length === 0
     ) {
-      return null
+      return false
     }
 
-    prompt.writeString(
-      1,
-      `bot-${deterministicUuid(`${cascadeId}\0${index}\0assistant`)}`,
-    )
-    prompt.writeVarint(2, ChatMessageSource.SYSTEM)
-    if (content.text) prompt.writeString(3, content.text)
+    request.writeNested(3, (prompt) => {
+      prompt.writeString(
+        1,
+        `bot-${deterministicUuid(`${cascadeId}\0${index}\0assistant`)}`,
+      )
+      prompt.writeVarint(2, ChatMessageSource.SYSTEM)
+      if (content.text) prompt.writeString(3, content.text)
 
-    for (const tc of toolCalls) {
-      const tcMsg = new ProtobufEncoder()
-      tcMsg.writeString(1, tc.id)
-      tcMsg.writeString(2, tc.function.name)
-      tcMsg.writeString(3, tc.function.arguments)
-      prompt.writeMessage(6, tcMsg)
-    }
+      for (const tc of toolCalls) {
+        prompt.writeNested(6, (tcMsg) => {
+          tcMsg.writeString(1, tc.id)
+          tcMsg.writeString(2, tc.function.name)
+          tcMsg.writeString(3, tc.function.arguments)
+        })
+      }
 
-    if (reasoningText) {
-      prompt.writeString(11, reasoningText)
-    }
-    if (reasoningSignature) {
-      prompt.writeString(12, reasoningSignature)
-    }
-    return prompt
+      if (reasoningText) {
+        prompt.writeString(11, reasoningText)
+      }
+      if (reasoningSignature) {
+        prompt.writeString(12, reasoningSignature)
+      }
+    })
+    return true
   }
 
   if (message.role === "tool") {
     const { text, images } = serializeMessageContent(message.content)
-    if ((!text.trim() && images.length === 0) || !message.tool_call_id) {
-      return null
+    const toolCallId = message.tool_call_id
+    if ((!hasText(text) && images.length === 0) || !toolCallId) {
+      return false
     }
 
-    prompt.writeString(
-      1,
-      deterministicUuid(
-        `${cascadeId}\0${index}\0tool\0${message.tool_call_id}`,
-      ),
-    )
-    prompt.writeVarint(2, ChatMessageSource.TOOL)
-    if (text) prompt.writeString(3, text)
-    prompt.writeString(7, message.tool_call_id)
-    for (const image of images) {
-      const img = new ProtobufEncoder()
-      img.writeString(1, image.base64)
-      img.writeString(2, image.mimeType)
-      prompt.writeMessage(10, img)
-    }
-    return prompt
+    request.writeNested(3, (prompt) => {
+      prompt.writeString(
+        1,
+        deterministicUuid(`${cascadeId}\0${index}\0tool\0${toolCallId}`),
+      )
+      prompt.writeVarint(2, ChatMessageSource.TOOL)
+      if (text) prompt.writeString(3, text)
+      prompt.writeString(7, toolCallId)
+      writeImages(prompt, images)
+    })
+    return true
   }
 
-  return null
+  return false
 }
 
 function resolveAssistantReasoning(message: Message): string {
@@ -269,7 +331,7 @@ export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
   const texts = payload.messages
     .filter((m) => m.role === "system")
     .map((m) => serializeMessageContent(m.content).text)
-    .filter((text) => text.trim().length > 0)
+    .filter((text) => hasText(text))
   return texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
 }
 
@@ -350,19 +412,18 @@ export function buildRequest(opts: {
   onEncoded?: (metrics: { protobufBytes: number; wireBytes: number }) => void
 }): Uint8Array {
   const { payload, apiKey, requestModel, cascadeId, promptId, userJwt } = opts
-  const request = new ProtobufEncoder()
+  const request = new ProtobufEncoder(estimateRequestBytes(payload))
 
   request.writeMessage(1, buildWindsurfClientMetadata(apiKey, userJwt))
   request.writeString(2, resolveSystemPrompt(payload))
 
   for (const [messageIndex, message] of payload.messages.entries()) {
     if (message.role === "system") continue
-    const encoded = buildChatMessagePrompt({
+    writeChatMessagePrompt(request, {
       message,
       index: messageIndex,
       cascadeId,
     })
-    if (encoded) request.writeMessage(3, encoded)
   }
 
   request.writeVarint(7, ChatMessageRequestType.CASCADE)

@@ -238,6 +238,16 @@ export interface RouteTarget {
    * 优先走专用,避免通配 account 抢占本该路由到专用 provider 的请求。
    */
   isWildcard?: boolean
+  /**
+   * 协议转换标志:请求的 endpoint 不被该 model 支持,`resolveEndpoints`
+   * 回退到了语义等价的 endpoint(如 chat 请求落到 messages 上游),
+   * dispatch 层会做协议翻译。
+   *
+   * 翻译是有损的(client 的 cache_control 断点会丢失、字段降级),因此
+   * `selectRouteTarget` 在同一层级内优先选择原生 endpoint 的 target,
+   * 仅当没有原生候选时才使用翻译 target(failover 时仍可回退到它)。
+   */
+  isTranslated?: boolean
 }
 
 /**

@@ -1,26 +1,46 @@
 import { gunzipSync } from "node:zlib"
 
 const textEncoder = new TextEncoder()
-const INITIAL_ENCODER_CAPACITY = 64
-
-function encodeVarintBytes(value: number): Uint8Array {
-  const bytes: Array<number> = []
-  let remaining = value >>> 0
-  while (remaining >= 0x80) {
-    bytes.push((remaining & 0x7f) | 0x80)
-    remaining >>>= 7
-  }
-  bytes.push(remaining)
-  return Uint8Array.from(bytes)
-}
+/**
+ * Growth starts here rather than at 64 bytes. Doubling from 64 costs a
+ * reallocate-and-copy for every ~doubling of a message, and the request
+ * encoder builds one child per conversation turn — measured on a 3.8 MiB
+ * history, 64 bytes peaked at 22.9 MiB of churn versus 4.6 MiB at 256.
+ * Larger is worse, not better: a big initial block is wasted on the many
+ * small children (64 KiB measured 16.2 MiB).
+ */
+const INITIAL_ENCODER_CAPACITY = 256
+/** Widest varint this encoder emits — all values are clamped to uint32. */
+const MAX_VARINT_BYTES = 5
+/** Ceiling on a caller-supplied size hint, so a bogus estimate cannot allocate. */
+const MAX_CAPACITY_HINT = 64 * 1024 * 1024
 
 export class ProtobufEncoder {
-  private buffer = new Uint8Array(0)
+  private buffer: Uint8Array
   private length = 0
+
+  /**
+   * `capacityHint` pre-sizes the buffer for callers that can estimate the
+   * output. Doubling from the default costs a full copy per step and leaves
+   * the final buffer up to 2x the payload: a 3.9 MiB request measured 14 MiB
+   * of churn unhinted, since it grew 4 MiB -> 8 MiB with both live at once.
+   * An undersized hint is harmless — growth still applies.
+   */
+  constructor(capacityHint?: number) {
+    const hint =
+      (
+        capacityHint !== undefined
+        && Number.isFinite(capacityHint)
+        && capacityHint > INITIAL_ENCODER_CAPACITY
+      ) ?
+        Math.min(Math.ceil(capacityHint), MAX_CAPACITY_HINT)
+      : INITIAL_ENCODER_CAPACITY
+    this.buffer = new Uint8Array(hint)
+  }
 
   writeVarint(fieldNumber: number, value: number): void {
     this.writeTag(fieldNumber, 0)
-    this.appendPart(encodeVarintBytes(value))
+    this.writeVarintValue(value)
   }
 
   writeBool(fieldNumber: number, value: boolean): void {
@@ -28,27 +48,79 @@ export class ProtobufEncoder {
   }
 
   writeString(fieldNumber: number, value: string): void {
-    this.writeBytes(fieldNumber, textEncoder.encode(value))
+    this.writeTag(fieldNumber, 2)
+    // Measure first so the length prefix and the destination window are both
+    // exact: `encode()` would allocate a second copy of the whole string, and
+    // reserving `value.length * 3` for `encodeInto` would over-grow the buffer
+    // on long messages.
+    const byteLength = Buffer.byteLength(value)
+    this.writeVarintValue(byteLength)
+    if (byteLength === 0) return
+    this.ensureCapacity(this.length + byteLength)
+    textEncoder.encodeInto(
+      value,
+      this.buffer.subarray(this.length, this.length + byteLength),
+    )
+    this.length += byteLength
   }
 
   writeBytes(fieldNumber: number, value: Uint8Array): void {
     this.writeTag(fieldNumber, 2)
-    this.appendPart(encodeVarintBytes(value.length))
-    this.appendPart(value)
+    this.writeVarintValue(value.length)
+    this.ensureCapacity(this.length + value.length)
+    this.buffer.set(value, this.length)
+    this.length += value.length
   }
 
+  /**
+   * Appends a sub-message built by a separate encoder. Prefer `writeNested`:
+   * this form allocates a whole second buffer for the child and then copies it
+   * in, so a nested build copies every byte once per level.
+   */
   writeMessage(fieldNumber: number, other: ProtobufEncoder): void {
+    this.writeBytes(fieldNumber, other.toUint8Array())
+  }
+
+  /**
+   * Appends a sub-message written directly into this buffer: reserve a
+   * maximum-width length slot, let `build` append the fields, then back-patch
+   * the real length and close the gap. Avoids the child encoder entirely.
+   *
+   * `build` receives this same encoder and must only append — it must not call
+   * `toUint8Array()`, whose view would be invalidated by the back-patch shift.
+   */
+  writeNested(
+    fieldNumber: number,
+    build: (encoder: ProtobufEncoder) => void,
+  ): void {
     this.writeTag(fieldNumber, 2)
-    const encoded = other.toUint8Array()
-    this.appendPart(encodeVarintBytes(encoded.length))
-    this.appendPart(encoded)
+    const slot = this.length
+    this.ensureCapacity(this.length + MAX_VARINT_BYTES)
+    this.length += MAX_VARINT_BYTES
+    const start = this.length
+
+    build(this)
+
+    const size = this.length - start
+    const written = this.writeVarintAt(slot, size)
+    if (written !== MAX_VARINT_BYTES) {
+      // A non-minimal length varint is legal on the wire but not canonical;
+      // shift the body down instead so the output stays byte-identical to a
+      // conventional encoder.
+      this.buffer.copyWithin(slot + written, start, this.length)
+      this.length -= MAX_VARINT_BYTES - written
+    }
   }
 
   writeDouble(fieldNumber: number, value: number): void {
     this.writeTag(fieldNumber, 1)
-    const bytes = new Uint8Array(8)
-    new DataView(bytes.buffer).setFloat64(0, value, true)
-    this.appendPart(bytes)
+    this.ensureCapacity(this.length + 8)
+    new DataView(
+      this.buffer.buffer,
+      this.buffer.byteOffset + this.length,
+      8,
+    ).setFloat64(0, value, true)
+    this.length += 8
   }
 
   /**
@@ -61,14 +133,30 @@ export class ProtobufEncoder {
   }
 
   private writeTag(fieldNumber: number, wireType: number): void {
-    this.appendPart(encodeVarintBytes((fieldNumber << 3) | wireType))
+    this.writeVarintValue((fieldNumber << 3) | wireType)
   }
 
-  private appendPart(part: Uint8Array): void {
-    const required = this.length + part.length
-    this.ensureCapacity(required)
-    this.buffer.set(part, this.length)
-    this.length = required
+  /** Appends a varint at the write cursor. */
+  private writeVarintValue(value: number): void {
+    this.ensureCapacity(this.length + MAX_VARINT_BYTES)
+    let remaining = value >>> 0
+    while (remaining >= 0x80) {
+      this.buffer[this.length++] = (remaining & 0x7f) | 0x80
+      remaining >>>= 7
+    }
+    this.buffer[this.length++] = remaining
+  }
+
+  /** Writes a varint at a fixed offset; returns how many bytes it took. */
+  private writeVarintAt(offset: number, value: number): number {
+    let remaining = value >>> 0
+    let cursor = offset
+    while (remaining >= 0x80) {
+      this.buffer[cursor++] = (remaining & 0x7f) | 0x80
+      remaining >>>= 7
+    }
+    this.buffer[cursor++] = remaining
+    return cursor - offset
   }
 
   private ensureCapacity(required: number): void {
@@ -117,11 +205,28 @@ const CONNECT_END_STREAM_FLAG = 0x02
  * 足够覆盖任何合法 Cascade 响应,同时让畸形/攻击性的 length 头快速失败,
  * 避免在 idle timeout 触发前缓冲数 GB 数据。
  */
-const MAX_FRAME_PAYLOAD = 16 * 1024 * 1024 // 16MB
+/**
+ * 这三个上限定义了单条 Windsurf 流的最坏内存占用。默认值按常规主机设定;
+ * 小内存主机(1GB VPS)上两个并发请求撞满就是数百 MB,应调低。
+ * 用 `WINDSURF_MAX_FRAME_MB` 统一缩放,0 或非法值回退到默认。
+ */
+function readFrameLimitScale(): number {
+  const raw = process.env.WINDSURF_MAX_FRAME_MB?.trim()
+  if (!raw) return 1
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1
+  // 16 是 MAX_FRAME_PAYLOAD 的默认 MB 数,按它换算出缩放比。
+  return Math.min(1, parsed / 16)
+}
+
+const FRAME_LIMIT_SCALE = readFrameLimitScale()
+const MAX_FRAME_PAYLOAD = Math.ceil(16 * 1024 * 1024 * FRAME_LIMIT_SCALE)
 /** 跨帧累积 buffer 的上限(完整帧会持续被消费,正常情况远低于此)。 */
-const MAX_BUFFER_BYTES = 32 * 1024 * 1024 // 32MB
+const MAX_BUFFER_BYTES = Math.ceil(32 * 1024 * 1024 * FRAME_LIMIT_SCALE)
 /** gzip 展开后的单帧上限,防止压缩数据造成无界 native 分配。 */
-const MAX_DECOMPRESSED_FRAME_PAYLOAD = 32 * 1024 * 1024 // 32MB
+const MAX_DECOMPRESSED_FRAME_PAYLOAD = Math.ceil(
+  32 * 1024 * 1024 * FRAME_LIMIT_SCALE,
+)
 
 /**
  * 解析 Connect end-of-stream JSON trailer。

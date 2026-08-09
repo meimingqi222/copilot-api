@@ -29,13 +29,25 @@ interface StreamingState {
   toolCalls: Map<number, ResponsesFunctionCallItem>
 }
 
+export interface ResponsesToChatOptions {
+  /**
+   * Attach replayed `reasoning` items to the assistant message they precede as
+   * `reasoning_content`. Mirrors `createMessagesViaChat`: DeepSeek thinking
+   * mode + tool calls REQUIRES the round-trip (else 400) and Kimi/Qwen/xAI
+   * accept it, but Copilot rejects reasoning in history. Off by default so the
+   * copilot-native call sites keep their current behavior.
+   */
+  preserveHistoricalReasoning?: boolean
+}
+
 export function translateResponsesToChatPayload(
   payload: ResponsesPayload,
+  options: ResponsesToChatOptions = {},
 ): ChatCompletionsPayload {
   const messages =
     typeof payload.input === "string" ?
       [{ role: "user", content: payload.input } satisfies Message]
-    : translateResponsesInputToMessages(payload.input)
+    : translateResponsesInputToMessages(payload.input, options)
 
   return {
     model: payload.model,
@@ -179,38 +191,77 @@ export async function* translateResponsesStreamToChatCompletions(
 
 function translateResponsesInputToMessages(
   input: Array<ResponsesInputItem>,
+  options: ResponsesToChatOptions = {},
 ): Array<Message> {
-  return input.map((item) => {
+  const out: Array<Message> = []
+  // A `reasoning` item describes the assistant turn that follows it, so its
+  // summary is held until that turn is emitted. Chat Completions cannot carry
+  // `encrypted_content` at all — the Responses client loses replay context
+  // whenever the upstream only speaks chat.
+  let pendingReasoning: string | undefined
+
+  const takeReasoning = (): { reasoning_content?: string } => {
+    const text = pendingReasoning
+    pendingReasoning = undefined
+    return text && options.preserveHistoricalReasoning ?
+        { reasoning_content: text }
+      : {}
+  }
+
+  for (const item of input) {
     if ("role" in item) {
-      return {
-        role: item.role,
-        content: translateResponsesContentToChatContent(item.content),
-      }
+      const content = translateResponsesContentToChatContent(item.content)
+      out.push(
+        item.role === "assistant" ?
+          { role: item.role, content, ...takeReasoning() }
+        : { role: item.role, content },
+      )
+      continue
     }
 
-    if (item.type === "function_call") {
-      return {
-        role: "assistant",
-        content: null,
-        tool_calls: [
-          {
-            id: item.call_id,
-            type: "function",
-            function: {
-              name: item.name,
-              arguments: item.arguments,
+    switch (item.type) {
+      case "reasoning": {
+        const summary = (item.summary ?? [])
+          .map((part) => part.text ?? "")
+          .join("")
+        if (summary) pendingReasoning = summary
+        break
+      }
+      case "function_call": {
+        out.push({
+          role: "assistant",
+          content: null,
+          ...takeReasoning(),
+          tool_calls: [
+            {
+              id: item.call_id,
+              type: "function",
+              function: {
+                name: item.name,
+                arguments: item.arguments,
+              },
             },
-          },
-        ],
+          ],
+        })
+        break
+      }
+      case "function_call_output": {
+        out.push({
+          role: "tool",
+          tool_call_id: item.call_id,
+          content: item.output,
+        })
+        break
+      }
+      default: {
+        // ResponsesInputItem union is exhaustive; unknown items are skipped
+        // rather than coerced into a malformed message.
+        break
       }
     }
+  }
 
-    return {
-      role: "tool",
-      tool_call_id: item.call_id,
-      content: item.output,
-    }
-  })
+  return out
 }
 
 function translateResponsesContentToChatContent(

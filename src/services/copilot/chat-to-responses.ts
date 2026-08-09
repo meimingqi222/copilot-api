@@ -732,8 +732,13 @@ function getChatMessageReasoningText(
     return ""
   }
 
-  if (message.reasoning_text) {
-    return message.reasoning_text
+  // `reasoning_content` is what DeepSeek/Kimi/Qwen/GLM upstreams actually
+  // emit; the streaming path already accepts all three spellings
+  // (`getReasoningDelta`), so the non-streaming path must too.
+  const topLevel =
+    message.reasoning_text ?? message.reasoning_content ?? message.reasoning
+  if (topLevel) {
+    return topLevel
   }
 
   if (typeof message.content === "string" || !Array.isArray(message.content)) {
@@ -763,6 +768,18 @@ function buildResponsesOutputFromChatMessage(
     ResponsesMessageItem | ResponsesFunctionCallItem | ResponsesReasoningItem
   > = []
 
+  // Reasoning precedes the output it explains — Responses clients replay
+  // `output` items in order, and OpenAI rejects a reasoning item that follows
+  // the message/function_call it belongs to. No `encrypted_content` is
+  // available: a Chat Completions upstream never produces one.
+  if (reasoningText) {
+    output.push({
+      type: "reasoning",
+      id: `rs_${responseId}`,
+      summary: [{ type: "summary_text", text: reasoningText }],
+    })
+  }
+
   if (outputTextParts.length > 0) {
     output.push({
       type: "message",
@@ -781,14 +798,6 @@ function buildResponsesOutputFromChatMessage(
       arguments: toolCall.function.arguments,
     })),
   )
-
-  if (reasoningText) {
-    output.push({
-      type: "reasoning",
-      id: `rs_${responseId}`,
-      summary: [{ type: "summary_text", text: reasoningText }],
-    })
-  }
 
   return output
 }
