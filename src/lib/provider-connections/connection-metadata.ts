@@ -643,7 +643,7 @@ function syncAccountModelToMapping(model: AccountModel): ModelMapping {
 
   return {
     publicId: model.id,
-    upstreamId: model.upstreamId ?? model.id,
+    upstreamId: model.upstreamId || model.id,
     name: model.name,
     vendor: model.vendor,
     endpoints,

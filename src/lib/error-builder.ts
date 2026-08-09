@@ -15,7 +15,9 @@ export function extractErrorMessage(
         error?: { message?: string }
         message?: string
       }
-      const raw = parsed.error?.message ?? parsed.message
+      // `||`: an upstream that sends `{ error: { message: "" }, message: "..." }`
+      // still has a usable message under the outer spelling.
+      const raw = parsed.error?.message || parsed.message
       if (raw) {
         msg =
           raw.startsWith("{") ?

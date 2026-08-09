@@ -44,6 +44,24 @@ describe("extractReasoningTextAlias (message/delta level)", () => {
     ).toBeUndefined()
     expect(extractReasoningTextAlias({})).toBeUndefined()
   })
+
+  // An upstream emits `""` under the spelling it does not use, so the empty
+  // string arrives ahead of the real reasoning on replayed history. Treating it
+  // as present would make the order above decide the outcome instead of the
+  // message content.
+  test("treats an empty alias as absent, not as an empty result", () => {
+    expect(
+      extractReasoningTextAlias({ reasoning_text: "", reasoning_content: "b" }),
+    ).toBe("b")
+    expect(
+      extractReasoningTextAlias({
+        reasoning_text: "",
+        reasoning_content: "",
+        thinking: "d",
+      }),
+    ).toBe("d")
+    expect(extractReasoningTextAlias({ reasoning_text: "" })).toBeUndefined()
+  })
 })
 
 describe("extractReasoningBlockText (detail/content-part level)", () => {
@@ -56,6 +74,15 @@ describe("extractReasoningBlockText (detail/content-part level)", () => {
     )
     expect(extractReasoningBlockText({ thinking: "c" })).toBe("c")
     expect(extractReasoningBlockText({})).toBeUndefined()
+  })
+
+  // `{ type: "thinking", thinking: "...", text: "" }` is what a proxy that
+  // writes both spellings emits. `text` leads the chain, so an empty one would
+  // otherwise swallow the block.
+  test("treats an empty field as absent, not as an empty result", () => {
+    expect(extractReasoningBlockText({ text: "", thinking: "c" })).toBe("c")
+    expect(extractReasoningBlockText({ text: "", reasoning: "b" })).toBe("b")
+    expect(extractReasoningBlockText({ text: "" })).toBeUndefined()
   })
 })
 
@@ -79,6 +106,15 @@ describe("extractReasoningPartsText", () => {
 })
 
 describe("extractSignatureAlias", () => {
+  test("treats an empty signature as absent", () => {
+    // An empty signature signs nothing; letting it win means emitting a
+    // text/signature pair the upstream rejects.
+    expect(
+      extractSignatureAlias({ reasoning_opaque: "", signature: "d" }),
+    ).toBe("d")
+    expect(extractSignatureAlias({ signature: "" })).toBeUndefined()
+  })
+
   test("prefers reasoning_opaque, then thinking_/reasoning_signature, signature", () => {
     expect(
       extractSignatureAlias({

@@ -108,7 +108,7 @@ export function cacheModels(): void {
         model_picker_category: model.pickerCategory,
         supported_endpoints: model.supportedEndpoints,
         capabilities: {
-          family: model.provider ?? model.vendor.toLowerCase(),
+          family: model.provider || model.vendor.toLowerCase(),
           object: "capabilities",
           supports: { streaming: true },
           tokenizer: "unknown",

@@ -155,9 +155,23 @@ function estimateRequestBytes(payload: ChatCompletionsPayload): number {
         }
       }
     }
-    // Only the alias `resolveAssistantReasoning` would actually pick, so the
-    // estimate tracks what gets written rather than summing every spelling.
-    bytes += (extractReasoningTextAlias(message) ?? "").length
+    // Only what `resolveAssistantReasoning` would actually pick, so the estimate
+    // tracks what gets written rather than summing every spelling — including
+    // its content-part fallback, which is where a long chain of thought lands
+    // when the client replays reasoning as parts rather than a top-level field.
+    const reasoningAlias = extractReasoningTextAlias(message)
+    if (reasoningAlias === undefined) {
+      // Length only; `extractReasoningPartsText` would concatenate the parts
+      // into a throwaway copy of the whole chain of thought just to measure it.
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          if (part.type !== "reasoning" && part.type !== "thinking") continue
+          bytes += (extractReasoningBlockText(part) ?? "").length
+        }
+      }
+    } else {
+      bytes += reasoningAlias.length
+    }
     for (const tc of message.tool_calls ?? []) {
       bytes += tc.function.arguments.length + tc.function.name.length + 64
     }
@@ -286,11 +300,12 @@ function writeChatMessagePrompt(
 }
 
 function resolveAssistantReasoning(message: Message): string {
-  // `||`, not `??`: an upstream that emits an empty top-level alias alongside
-  // real reasoning in content parts must still fall through to the parts.
+  // Falls through to the parts when the message carries no top-level
+  // reasoning — including when it carries only an empty one, which
+  // `extractReasoningTextAlias` reports as absent.
   return (
     extractReasoningTextAlias(message)
-    || extractReasoningPartsText(message.content)
+    ?? extractReasoningPartsText(message.content)
   )
 }
 

@@ -15,6 +15,14 @@
  * verbatim on the next request. The Windsurf path emits `reasoning_opaque`
  * specifically, so a request-side reader that omits it silently drops the
  * signature on every round trip.
+ *
+ * All three extractors below chain with `||`, not `??`: an empty string is an
+ * absent value here, not a present one. Upstreams routinely emit `""` under
+ * the spelling they do not use — a turn with no thinking comes back as
+ * `reasoning_content: ""` — and a client replaying such a turn sends the empty
+ * string alongside the spelling that does carry the reasoning. Stopping at it
+ * drops the chain of thought, and which spelling wins is then an accident of
+ * the order below rather than of what the message actually holds.
  */
 export function extractSignatureAlias(source: {
   reasoning_opaque?: string | null
@@ -24,10 +32,10 @@ export function extractSignatureAlias(source: {
 }): string | undefined {
   return (
     source.reasoning_opaque
-    ?? source.thinking_signature
-    ?? source.reasoning_signature
-    ?? source.signature
-    ?? undefined
+    || source.thinking_signature
+    || source.reasoning_signature
+    || source.signature
+    || undefined
   )
 }
 
@@ -47,10 +55,10 @@ export function extractReasoningTextAlias(source: {
 }): string | undefined {
   return (
     source.reasoning_text
-    ?? source.reasoning_content
-    ?? source.reasoning
-    ?? source.thinking
-    ?? undefined
+    || source.reasoning_content
+    || source.reasoning
+    || source.thinking
+    || undefined
   )
 }
 
@@ -68,7 +76,7 @@ export function extractReasoningBlockText(source: {
   reasoning?: string | null
   thinking?: string | null
 }): string | undefined {
-  return source.text ?? source.reasoning ?? source.thinking ?? undefined
+  return source.text || source.reasoning || source.thinking || undefined
 }
 
 /** Structural view of a chat content part; avoids a lib→services type import. */

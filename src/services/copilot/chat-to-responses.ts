@@ -101,7 +101,17 @@ export function translateChatCompletionToResponses(
   response: ChatCompletionResponse,
   request?: ResponsesPayload,
 ): ResponsesResponse {
-  const choice = response.choices[0]
+  // Matches `protocols/anthropic/non-stream-translation.ts`: an upstream that
+  // returns no choices (content filter, some gateways) would otherwise surface
+  // as `Cannot read properties of undefined (reading 'message')` here.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const choice = response.choices?.[0]
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (!choice) {
+    throw new Error(
+      `Unexpected empty choices in OpenAI response (id: ${response.id})`,
+    )
+  }
   const message = choice.message
   const outputTextParts = getChatMessageOutputTextParts(message.content)
   const outputText = outputTextParts.map((part) => part.text).join("")
@@ -161,7 +171,8 @@ export async function* translateChatCompletionsStreamToResponses(
       yield { data: JSON.stringify(event) }
     }
 
-    const finishReason = chunk.choices[0]?.finish_reason
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    const finishReason = chunk.choices?.[0]?.finish_reason
     if (finishReason) {
       updateMemoryTrace(memoryTraceId, "response_completed_stringify_start", {
         chunkCount,
@@ -245,7 +256,8 @@ function updateChatToResponsesStateFromChunk(
 
   updateResponsesUsage(state, chunk)
 
-  const delta = chunk.choices[0]?.delta
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const delta = chunk.choices?.[0]?.delta
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!delta) return
   appendContentDelta(state, delta.content)
@@ -399,7 +411,8 @@ function buildChunkEvents(
   state: ChatToResponsesStreamState,
   chunk: ChatCompletionChunk,
 ): Array<Record<string, unknown>> {
-  const delta = chunk.choices[0]?.delta
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const delta = chunk.choices?.[0]?.delta
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!delta) return []
   return [
@@ -740,11 +753,11 @@ function getChatMessageReasoningText(
   // so the non-streaming path must too. This path does not run through
   // `routes/chat-completions/normalize.ts`, so there is no alias fallback
   // behind it.
-  // `||`, not `??`: an empty top-level alias must not shadow reasoning that
-  // the message carries as content parts.
+  // An empty top-level alias counts as absent (see `extractReasoningTextAlias`)
+  // and falls through to reasoning carried as content parts.
   return (
     extractReasoningTextAlias(message)
-    || extractReasoningPartsText(message.content)
+    ?? extractReasoningPartsText(message.content)
   )
 }
 

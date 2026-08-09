@@ -251,8 +251,7 @@ const API = {
       API.request("/model-aliases", { method: "POST", body: data }),
     update: (id, data) =>
       API.request(`/model-aliases/${id}`, { method: "PUT", body: data }),
-    delete: (id) =>
-      API.request(`/model-aliases/${id}`, { method: "DELETE" }),
+    delete: (id) => API.request(`/model-aliases/${id}`, { method: "DELETE" }),
     resolve: (model) =>
       API.request("/model-aliases/resolve", {
         method: "POST",

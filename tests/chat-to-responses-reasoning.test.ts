@@ -189,6 +189,43 @@ describe("chat → responses non-streaming reasoning", () => {
   })
 })
 
+// `choices` is typed as required on both the chunk and the response, but
+// upstreams omit it on usage-only / filter chunks and can return an empty list
+// outright. Every reader on this path has to survive that.
+describe("chat → responses tolerates upstream chunks without choices", () => {
+  test("a usage-only chunk with no choices does not crash the stream", async () => {
+    const usageOnly = {
+      id: "cmpl-1",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "deepseek-v4",
+      usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+    } as unknown as ChatCompletionChunk
+
+    const events = await collectStreamEvents(
+      translateChatCompletionsStreamToResponses(toStream([usageOnly]), {
+        model: "deepseek-v4",
+        input: [],
+      } as ResponsesPayload),
+    )
+    expect(events.length).toBeGreaterThan(0)
+  })
+
+  test("an empty choices array reports the upstream id, not a TypeError", () => {
+    const empty = {
+      id: "cmpl-empty",
+      object: "chat.completion",
+      created: 1,
+      model: "deepseek-v4",
+      choices: [],
+    } as unknown as ChatCompletionResponse
+
+    expect(() =>
+      translateChatCompletionToResponses(empty, requestPayload),
+    ).toThrow(/cmpl-empty/)
+  })
+})
+
 describe("responses → chat replayed reasoning items", () => {
   const input = [
     { role: "user", content: "list files" },

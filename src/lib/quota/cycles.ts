@@ -244,7 +244,10 @@ export function resolveAntigravityQuotaWindows(
   const windows: Array<QuotaWindowDescriptor> = []
 
   for (const group of payload.groups ?? []) {
-    const groupLabel = group.displayName ?? group.display_name ?? "quota-group"
+    // `||` throughout: these are camelCase/snake_case spellings of one field,
+    // and an upstream that emits the unused spelling as "" must not shadow the
+    // populated one.
+    const groupLabel = group.displayName || group.display_name || "quota-group"
     for (const bucket of group.buckets ?? []) {
       const windowEndMs = parseIsoMs(bucket.resetTime ?? bucket.reset_time)
       const durationMs = antigravityWindowDurationMs(bucket.window)
@@ -252,8 +255,8 @@ export function resolveAntigravityQuotaWindows(
         continue
       }
       const bucketId =
-        bucket.bucketId ?? bucket.bucket_id ?? bucket.window ?? "bucket"
-      const bucketLabel = bucket.displayName ?? bucket.display_name ?? bucketId
+        bucket.bucketId || bucket.bucket_id || bucket.window || "bucket"
+      const bucketLabel = bucket.displayName || bucket.display_name || bucketId
       const fraction = normalizeNumber(
         bucket.remainingFraction ?? bucket.remaining_fraction,
       )

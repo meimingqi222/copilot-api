@@ -59,14 +59,22 @@ function normalizeScope(value: unknown): ModelAliasScope | undefined {
     return undefined
   }
   const record = value as Record<string, unknown>
-  const connectionIds = Array.isArray(record.connectionIds) ?
-    record.connectionIds.filter((item): item is string => typeof item === "string")
-  : undefined
-  const providers = Array.isArray(record.providers) ?
-    record.providers.filter((item): item is string => typeof item === "string")
-  : undefined
-  if ((!connectionIds || connectionIds.length === 0)
-    && (!providers || providers.length === 0)) {
+  const connectionIds =
+    Array.isArray(record.connectionIds) ?
+      record.connectionIds.filter(
+        (item): item is string => typeof item === "string",
+      )
+    : undefined
+  const providers =
+    Array.isArray(record.providers) ?
+      record.providers.filter(
+        (item): item is string => typeof item === "string",
+      )
+    : undefined
+  if (
+    (!connectionIds || connectionIds.length === 0)
+    && (!providers || providers.length === 0)
+  ) {
     return undefined
   }
   return {
@@ -78,7 +86,7 @@ function normalizeScope(value: unknown): ModelAliasScope | undefined {
 export function validateModelAliasRule(
   input: Partial<ModelAliasRule>,
 ): ModelAliasRule {
-  if (!input.kind || !["exact", "prefix", "pattern"].includes(input.kind)) {
+  if (!input.kind || !["exact", "pattern", "prefix"].includes(input.kind)) {
     throw new Error("Invalid alias kind")
   }
   const from = typeof input.from === "string" ? input.from.trim() : ""
@@ -101,9 +109,10 @@ export function validateModelAliasRule(
   }
 
   return {
-    id: typeof input.id === "string" && input.id.trim() ?
-      input.id.trim()
-    : crypto.randomUUID(),
+    id:
+      typeof input.id === "string" && input.id.trim() ?
+        input.id.trim()
+      : crypto.randomUUID(),
     enabled: input.enabled !== false,
     kind: input.kind,
     from,
@@ -126,9 +135,12 @@ export function loadModelAliases(): void {
   }
   try {
     const parsed: unknown = JSON.parse(raw)
-    rules = Array.isArray(parsed) ?
-      parsed.map((item) => validateModelAliasRule(item as Partial<ModelAliasRule>))
-    : []
+    rules =
+      Array.isArray(parsed) ?
+        parsed.map((item) =>
+          validateModelAliasRule(item as Partial<ModelAliasRule>),
+        )
+      : []
     state.modelAliases = cloneRules(rules)
     invalidateRuleCache()
   } catch {
@@ -186,7 +198,9 @@ export function __resetModelAliasesForTest(): void {
   invalidateRuleCache()
 }
 
-function connectionProvider(connection: ProviderConnection): string | undefined {
+function connectionProvider(
+  connection: ProviderConnection,
+): string | undefined {
   const provider = connection.metadata?.provider
   if (typeof provider === "string") return provider
   if (connection.protocol.endsWith("-native")) {
@@ -230,7 +244,7 @@ function intersectRestrictions(
   const connectionIds =
     left?.connectionIds && right?.connectionIds ?
       left.connectionIds.filter((id) => right.connectionIds?.includes(id))
-    : left?.connectionIds ?? right?.connectionIds
+    : (left?.connectionIds ?? right?.connectionIds)
 
   const providers =
     left?.providers && right?.providers ?
@@ -239,7 +253,7 @@ function intersectRestrictions(
           (item) => item.toLowerCase() === provider.toLowerCase(),
         ),
       )
-    : left?.providers ?? right?.providers
+    : (left?.providers ?? right?.providers)
 
   return {
     ...(connectionIds ? { connectionIds } : {}),
@@ -257,8 +271,8 @@ function applyRule(rule: ModelAliasRule, modelId: string): string | undefined {
 
   if (rule.kind === "prefix") {
     return normalized.startsWith(from) ?
-      `${rule.to}${modelId.slice(rule.from.length)}`
-    : undefined
+        `${rule.to}${modelId.slice(rule.from.length)}`
+      : undefined
   }
 
   const star = rule.from.indexOf("*")
@@ -278,7 +292,10 @@ function applyRule(rule: ModelAliasRule, modelId: string): string | undefined {
   return rule.to.replace("*", capture)
 }
 
-function reverseRule(rule: ModelAliasRule, modelId: string): string | undefined {
+function reverseRule(
+  rule: ModelAliasRule,
+  modelId: string,
+): string | undefined {
   const normalized = modelId.toLowerCase()
   const to = rule.to.toLowerCase()
 
@@ -288,12 +305,12 @@ function reverseRule(rule: ModelAliasRule, modelId: string): string | undefined 
 
   if (rule.kind === "prefix") {
     return normalized.startsWith(to) ?
-      `${rule.from}${modelId.slice(rule.to.length)}`
-    : undefined
+        `${rule.from}${modelId.slice(rule.to.length)}`
+      : undefined
   }
 
   const star = rule.to.indexOf("*")
-  if (star < 0) {
+  if (star === -1) {
     return normalized === to ? rule.from : undefined
   }
   const before = rule.to.slice(0, star)
@@ -321,18 +338,22 @@ function getSortedActiveRules(): Array<ModelAliasRule> {
   }
   activeRulesCache = rules
     .filter((rule) => rule.enabled)
-    .toSorted((left, right) =>
-      kindOrder[left.kind] - kindOrder[right.kind]
-      || right.from.length - left.from.length
-      || left.id.localeCompare(right.id),
+    .toSorted(
+      (left, right) =>
+        kindOrder[left.kind] - kindOrder[right.kind]
+        || right.from.length - left.from.length
+        || left.id.localeCompare(right.id),
     )
   return activeRulesCache
 }
 
 function modelIsReal(modelId: string, connectionId?: string): boolean {
-  const connections = connectionId ?
-    listProviderConnections().filter((connection) => connection.id === connectionId)
-  : listProviderConnections()
+  const connections =
+    connectionId ?
+      listProviderConnections().filter(
+        (connection) => connection.id === connectionId,
+      )
+    : listProviderConnections()
 
   for (const connection of connections) {
     for (const model of connection.models ?? []) {
@@ -344,9 +365,10 @@ function modelIsReal(modelId: string, connectionId?: string): boolean {
     }
   }
 
-  const accounts = connectionId ?
-    listAccounts().filter((account) => account.id === connectionId)
-  : listAccounts()
+  const accounts =
+    connectionId ?
+      listAccounts().filter((account) => account.id === connectionId)
+    : listAccounts()
   return accounts.some((account) =>
     (account.availableModels ?? []).some((model) =>
       buildAccountModelAliases(account, model.id).some(
