@@ -331,6 +331,38 @@ function handleStreamingResponse(
   const model = c.get("model")
   const accountId = c.get("accountId")
 
+  // Guard: if the upstream returned a non-iterable object (e.g. an error
+  // body without a `choices` field that failed isChatCompletionResponse),
+  // surface it as an explicit error instead of crashing with
+  // "undefined is not a function" on `for await`.
+  const respAny = response as unknown as
+    | AsyncIterable<unknown>
+    | { [Symbol.asyncIterator]?: unknown }
+    | null
+    | undefined
+  if (
+    respAny === null
+    || typeof respAny === "undefined"
+    || typeof respAny[Symbol.asyncIterator] !== "function"
+  ) {
+    const body =
+      typeof response === "object" ? JSON.stringify(response) : String(response)
+    logger.error(
+      `Upstream returned a non-iterable response in non-stream path: ${body.slice(0, 500)}`,
+    )
+    return c.json(
+      {
+        error: {
+          message:
+            "Upstream returned an unexpected response format (no choices and not a stream). See server logs for details.",
+          type: "upstream_response_error",
+          upstream_body: body.slice(0, 1000),
+        },
+      },
+      502,
+    )
+  }
+
   let lastUsage: UsageInfo | undefined
   let usageRecorded = false
   let firstChunkTs: number | undefined

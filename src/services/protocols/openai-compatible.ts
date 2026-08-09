@@ -127,7 +127,11 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       } satisfies AdapterChatResult
     }
 
-    const body = (await response.json()) as ChatCompletionResponse
+    const raw = (await response.json()) as Record<string, unknown>
+    // Some upstreams (e.g. Cline Pass) wrap the standard OpenAI response
+    // in a `data` envelope. Unwrap it so downstream code sees a normal
+    // ChatCompletionResponse with top-level `choices`.
+    const body = (raw.data ?? raw) as ChatCompletionResponse
     return {
       credentialId: credential.id,
       response: body,
@@ -156,7 +160,8 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       )
     }
 
-    const body = (await response.json()) as EmbeddingResponse
+    const rawEmb = (await response.json()) as Record<string, unknown>
+    const body = (rawEmb.data ?? rawEmb) as EmbeddingResponse
     return {
       credentialId: credential.id,
       response: body,
