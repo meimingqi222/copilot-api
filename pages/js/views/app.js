@@ -117,7 +117,11 @@ function adminApp() {
         { id: "users", icon: "key", label: this.t("nav.users") },
         { id: "accounts", icon: "users", label: this.t("nav.accounts") },
         { id: "connections", icon: "plug", label: this.t("nav.connections") },
-        { id: "model-aliases", icon: "shuffle", label: this.t("nav.modelAliases") },
+        {
+          id: "model-aliases",
+          icon: "shuffle",
+          label: this.t("nav.modelAliases"),
+        },
         { id: "usage", icon: "bar-chart-3", label: this.t("nav.usage") },
         { id: "quotas", icon: "battery-charging", label: this.t("nav.quotas") },
         { id: "performance", icon: "gauge", label: this.t("nav.performance") },

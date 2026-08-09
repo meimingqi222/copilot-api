@@ -255,7 +255,7 @@ function modelToAccountModel(model: ModelMapping): AccountModel {
   // supportedEndpoints 用空数组占位,matchesAccountModel 只用 id/buildAccountModelAliases
   return {
     id: model.publicId,
-    name: model.name ?? model.publicId,
+    name: model.name || model.publicId,
     vendor: model.vendor ?? "unknown",
     pickerEnabled: model.pickerEnabled ?? true,
     pickerCategory: model.pickerCategory,

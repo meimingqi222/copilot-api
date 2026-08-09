@@ -61,9 +61,7 @@ function modelAliasesView() {
         to: alias.to,
         exposeInModels: alias.exposeInModels,
         note: alias.note || "",
-        scope: alias.scope ?
-          JSON.stringify(alias.scope)
-        : "",
+        scope: alias.scope ? JSON.stringify(alias.scope) : "",
       }
       this.showModal = true
     },
@@ -84,11 +82,9 @@ function modelAliasesView() {
           note: this.form.note,
           scope: this.parseScope(),
         }
-        if (this.editingId) {
-          await API.modelAliases.update(this.editingId, payload)
-        } else {
-          await API.modelAliases.create(payload)
-        }
+        await (this.editingId ?
+          API.modelAliases.update(this.editingId, payload)
+        : API.modelAliases.create(payload))
         this.showModal = false
         this.showToast(this.t("modelAliases.saved"), "success")
         await this.load()

@@ -164,9 +164,10 @@ export function convertAntigravityStreamChunk(
       continue
     }
 
-    const thoughtSignature = getString(
-      part.thoughtSignature ?? part.thought_signature,
-    )
+    // `getString` per alias, not around the pair: `thoughtSignature: ""` would
+    // otherwise satisfy `??` and shadow a populated `thought_signature`.
+    const thoughtSignature =
+      getString(part.thoughtSignature) ?? getString(part.thought_signature)
     const hasText = getString(part.text) !== undefined
     const hasFunction =
       getRecord(part.functionCall ?? part.function_call) !== undefined
@@ -370,7 +371,8 @@ async function cacheResponseSignatures(
     }
 
     // Cache signature when we have both accumulated text and signature
-    const sig = getString(part.thoughtSignature ?? part.thought_signature)
+    const sig =
+      getString(part.thoughtSignature) ?? getString(part.thought_signature)
     if (
       sig
       && sig !== "skip_thought_signature_validator"

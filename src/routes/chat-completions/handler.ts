@@ -350,13 +350,33 @@ function handleStreamingResponse(
     logger.error(
       `Upstream returned a non-iterable response in non-stream path: ${body.slice(0, 500)}`,
     )
+    // The request consumed an upstream call and produced no stream, so it still
+    // needs a usage row — otherwise this failure mode is invisible in the logs,
+    // which is the symptom the guard exists to make diagnosable.
+    if (model && accountId) {
+      recordUsage({
+        c,
+        accountId,
+        model,
+        promptTokens: estimatedInputTokens,
+        completionTokens: 0,
+        totalTokens: estimatedInputTokens,
+        tps: 0,
+        streaming: false,
+        finishReason: "upstream_error",
+      })
+    }
+    endMemoryTrace(memoryTraceId, "error")
+    // The upstream body stays in the log only. It is an arbitrary third-party
+    // payload — echoing it downstream forwards whatever the upstream chose to
+    // put in it (internal endpoints, credential fragments in error text) to a
+    // client that cannot act on it anyway.
     return c.json(
       {
         error: {
           message:
             "Upstream returned an unexpected response format (no choices and not a stream). See server logs for details.",
           type: "upstream_response_error",
-          upstream_body: body.slice(0, 1000),
         },
       },
       502,
@@ -436,6 +456,12 @@ function handleStreamingResponse(
     },
     {
       onAbort: () => {
+        // `run`'s `finally` has already executed by the time an abort reaches
+        // this handler — the exception passes through it on the way out — so
+        // this is the second attempt at the same request. Without the guard an
+        // upstream that reports usage on every chunk gets billed twice for any
+        // stream the client disconnects from.
+        if (usageRecorded) return
         usageRecorded = recordStreamingUsage({
           c,
           accountId,
@@ -657,7 +683,7 @@ function handleStreamingCompletion(
         throw error
       } finally {
         if (!usageRecorded) {
-          recordStreamingUsage({
+          usageRecorded = recordStreamingUsage({
             c,
             accountId,
             model,
@@ -677,6 +703,12 @@ function handleStreamingCompletion(
     },
     {
       onAbort: () => {
+        // `run`'s `finally` has already executed by the time an abort reaches
+        // this handler — the exception passes through it on the way out — so
+        // this is the second attempt at the same request. Without the guard an
+        // upstream that reports usage on every chunk gets billed twice for any
+        // stream the client disconnects from.
+        if (usageRecorded) return
         usageRecorded = recordStreamingUsage({
           c,
           accountId,
