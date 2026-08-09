@@ -198,6 +198,41 @@ These endpoints are designed to be compatible with the Anthropic Messages API.
 | `POST /v1/messages`              | `POST` | Creates a model response for a given conversation.           |
 | `POST /v1/messages/count_tokens` | `POST` | Calculates the number of tokens for a given set of messages. |
 
+### Cross-Protocol Translation
+
+The proxy transparently converts between protocols when the upstream connection
+does not natively speak the requested API — both directions are supported:
+
+| Request route | Native (passthrough) | Fallback (auto-translated)                      |
+| ------------- | -------------------- | ----------------------------------------------- |
+| `/v1/messages` | `createMessages`     | Anthropic → Chat Completions (`messages-via-chat`) |
+| `/v1/chat/completions` | `createChatCompletions` | Chat Completions → Anthropic (`chat-via-messages`) |
+| `/v1/responses` | `createResponses`    | Responses → Chat Completions (`responses-via-chat`) |
+
+Native passthrough is always preferred when the upstream implements the
+matching protocol; translation only kicks in as a fallback (e.g. a
+`claude-native`/`anthropic-compatible` connection serving `/v1/chat/completions`,
+or an `openai-compatible` connection serving `/v1/messages`).
+
+Notes on translation fidelity:
+
+- **Thinking/reasoning** is carried across both directions. Historical
+  assistant thinking is preserved for non-Copilot upstreams (DeepSeek thinking
+  mode + tool calls requires the `reasoning_content` round-trip); Copilot's
+  native path keeps stripping it. `reasoning_effort` maps to Anthropic
+  `thinking: adaptive` + `output_config.effort` (narrowed to low/medium/high),
+  and Anthropic `thinking` maps to `reasoning_effort`.
+- **Dropped with no equivalent** (documented loss): `n`, `seed`, `logprobs`,
+  `logit_bias`, `frequency/presence_penalty`, `response_format`
+  (`json_object`/`json_schema`), `stream_options`.
+- **Historical unsigned reasoning** is stripped in the chat → messages
+  direction (Claude rejects unsigned thinking blocks); only signed reasoning
+  round-trips.
+- **Remote image URLs** are not translated (Anthropic only accepts base64);
+  base64 `data:` URLs are.
+- Anthropic `max_tokens` is required; when the client omits it the proxy
+  defaults to 64000.
+
 ### Usage Monitoring Endpoints
 
 New endpoints for monitoring your Copilot usage and quotas.
