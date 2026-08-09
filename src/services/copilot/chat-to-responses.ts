@@ -740,9 +740,11 @@ function getChatMessageReasoningText(
   // so the non-streaming path must too. This path does not run through
   // `routes/chat-completions/normalize.ts`, so there is no alias fallback
   // behind it.
+  // `||`, not `??`: an empty top-level alias must not shadow reasoning that
+  // the message carries as content parts.
   return (
     extractReasoningTextAlias(message)
-    ?? extractReasoningPartsText(message.content)
+    || extractReasoningPartsText(message.content)
   )
 }
 

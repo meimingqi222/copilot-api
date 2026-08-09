@@ -286,9 +286,11 @@ function writeChatMessagePrompt(
 }
 
 function resolveAssistantReasoning(message: Message): string {
+  // `||`, not `??`: an upstream that emits an empty top-level alias alongside
+  // real reasoning in content parts must still fall through to the parts.
   return (
     extractReasoningTextAlias(message)
-    ?? extractReasoningPartsText(message.content)
+    || extractReasoningPartsText(message.content)
   )
 }
 

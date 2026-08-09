@@ -147,6 +147,23 @@ describe("chat → responses non-streaming reasoning", () => {
     expect(reasoning?.summary?.[0].text).toBe("think first")
   })
 
+  test("an empty top-level alias does not shadow reasoning content parts", () => {
+    // `reasoning_content: ""` is what upstreams emit on turns without thinking,
+    // so it shows up on replayed history next to real part-carried reasoning.
+    const out = translateChatCompletionToResponses(
+      chatResponse({
+        reasoning_content: "",
+        content: [
+          { type: "reasoning", text: "think first" },
+          { type: "output_text", text: "done" },
+        ],
+      }),
+      requestPayload,
+    )
+    const reasoning = out.output?.find((item) => item.type === "reasoning")
+    expect(reasoning?.summary?.[0].text).toBe("think first")
+  })
+
   test("emits the reasoning item before the message and function_call", () => {
     const out = translateChatCompletionToResponses(
       chatResponse({
