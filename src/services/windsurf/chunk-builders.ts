@@ -99,18 +99,48 @@ export function chunkFromToolCallArgs(opts: {
   })
 }
 
+export interface WindsurfUsageLike {
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  cached_tokens?: number
+  cache_write_tokens?: number
+  cache_read_tokens?: number
+}
+
+export interface OpenAIChunkUsage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  prompt_tokens_details: {
+    cached_tokens: number
+    cache_creation_input_tokens?: number
+  }
+}
+
+/**
+ * Windsurf-shaped usage → OpenAI chunk usage. Shared so the SSE chunk and the
+ * non-streaming collector's structured twin cannot drift apart.
+ */
+export function toOpenAIChunkUsage(usage: WindsurfUsageLike): OpenAIChunkUsage {
+  return {
+    prompt_tokens: usage.prompt_tokens ?? 0,
+    completion_tokens: usage.completion_tokens ?? 0,
+    total_tokens: usage.total_tokens ?? 0,
+    prompt_tokens_details: {
+      cached_tokens: usage.cache_read_tokens ?? usage.cached_tokens ?? 0,
+      ...(usage.cache_write_tokens ?
+        { cache_creation_input_tokens: usage.cache_write_tokens }
+      : {}),
+    },
+  }
+}
+
 export function doneChunk(opts: {
   requestId: string
   model: string
   finishReason: "stop" | "length" | "tool_calls" | "content_filter"
-  usage?: {
-    prompt_tokens?: number
-    completion_tokens?: number
-    total_tokens?: number
-    cached_tokens?: number
-    cache_write_tokens?: number
-    cache_read_tokens?: number
-  }
+  usage?: WindsurfUsageLike
 }): string {
   const { requestId, model, finishReason, usage } = opts
   return JSON.stringify({
@@ -126,20 +156,6 @@ export function doneChunk(opts: {
         logprobs: null,
       },
     ],
-    ...(usage ?
-      {
-        usage: {
-          prompt_tokens: usage.prompt_tokens ?? 0,
-          completion_tokens: usage.completion_tokens ?? 0,
-          total_tokens: usage.total_tokens ?? 0,
-          prompt_tokens_details: {
-            cached_tokens: usage.cache_read_tokens ?? usage.cached_tokens ?? 0,
-            ...(usage.cache_write_tokens ?
-              { cache_creation_input_tokens: usage.cache_write_tokens }
-            : {}),
-          },
-        },
-      }
-    : {}),
+    ...(usage ? { usage: toOpenAIChunkUsage(usage) } : {}),
   })
 }

@@ -288,7 +288,81 @@ describe("unified endpoint fallback (cross-protocol)", () => {
     })
 
     expect(targets).toHaveLength(1)
-    expect(targets[0]).toMatchObject({ endpoint: "chat" })
+    expect(targets[0]).toMatchObject({ endpoint: "chat", isTranslated: true })
+  })
+
+  test("native-endpoint target wins over a same-priority translated target", async () => {
+    // 复现:火山引擎(anthropic-compatible,只暴露 messages)与另一个
+    // openai-compatible connection 同为 priority 10 且提供同一模型。
+    // chat 请求不应因 connectionId 字典序落到需要协议转换的上游。
+    await createConnection({
+      id: "6dd75edc",
+      name: "volcengine",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://ark.example.com/api/coding/v1",
+      priority: 10,
+      credentials: [{ id: "volc-cred", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "glm-5.2",
+          upstreamId: "glm-5.2",
+          endpoints: ["messages"],
+          enabled: true,
+        },
+      ],
+    })
+    await setupConnection("clinepass", 10, "glm-5.2")
+
+    const targets = buildRouteTargets({
+      publicModelId: "glm-5.2",
+      endpoint: "chat",
+    })
+    expect(targets).toHaveLength(2)
+    expect(
+      targets.find((t) => t.connectionId === "6dd75edc")?.isTranslated,
+    ).toBe(true)
+    expect(
+      targets.find((t) => t.connectionId === "clinepass")?.isTranslated,
+    ).toBeUndefined()
+
+    const selected = selectRouteTarget(targets)
+    expect(selected?.connectionId).toBe("clinepass")
+    expect(selected?.endpoint).toBe("chat")
+
+    // failover:原生候选被排除后,转换 target 仍作为后备可用。
+    const next = selectRouteTarget(targets, {
+      exclude: new Set([targetKey(selected as NonNullable<typeof selected>)]),
+    })
+    expect(next?.connectionId).toBe("6dd75edc")
+    expect(next?.endpoint).toBe("messages")
+  })
+
+  test("lower-priority native still loses to a higher-priority translated target", async () => {
+    // 层级判别只在同一 wildcard 层内生效之后才比较 priority;
+    // 但转换层级判别本身优先于 priority —— 这里显式固定该行为。
+    await createConnection({
+      id: "anthropic-p0",
+      name: "anthropic-p0",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://api.anthropic.test",
+      priority: 0,
+      credentials: [{ id: "cred", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "shared-model",
+          upstreamId: "shared-model",
+          endpoints: ["messages"],
+          enabled: true,
+        },
+      ],
+    })
+    await setupConnection("openai-p99", 99, "shared-model")
+
+    const selected = selectRouteTarget(
+      buildRouteTargets({ publicModelId: "shared-model", endpoint: "chat" }),
+    )
+    // 原生优先于协议转换,即使原生 connection 的 priority 数字更大。
+    expect(selected?.connectionId).toBe("openai-p99")
   })
 })
 

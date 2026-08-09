@@ -290,10 +290,27 @@ await refreshCopilotToken(account)
 
 ### Request Translation
 
-The project translates between Anthropic and OpenAI formats:
-- `src/routes/messages/non-stream-translation.ts` — Anthropic → OpenAI
-- `src/routes/messages/stream-translation.ts` — Streaming translation
+OpenAI **Chat Completions is the hub format** — every client protocol translates
+to and from it, never directly to another client protocol
+(`docs/translation-conventions.md`, rule R1).
+
+- `src/services/protocols/anthropic/non-stream-translation.ts` — Messages ↔ Chat
+- `src/services/protocols/anthropic/stream-translation.ts` — Chat stream → Messages stream
+- `src/services/protocols/openai/chat-to-messages.ts` — Chat → Messages (request)
+- `src/services/protocols/openai/messages-to-chat.ts` — Messages → Chat (response)
+- `src/services/copilot/chat-to-responses.ts` / `responses-to-chat.ts` — Chat ↔ Responses
 - `src/routes/chat-completions/normalize.ts` — OpenAI payload normalization
+- `src/services/protocols/{chat-via-messages,chat-via-responses,messages-via-chat,responses-via-chat}.ts`
+  — cross-protocol adapters the dispatch layer picks when the route target's
+  endpoint differs from the requested one
+
+> **Before touching any of these, read
+> [`docs/protocol-translation-pitfalls.md`](docs/protocol-translation-pitfalls.md).**
+> It records the irreducible losses in the Chat/Messages/Responses matrix (do
+> **not** try to "fix" those) and the bugs already fixed there with the tests
+> that lock them down (do **not** regress those). It also covers prompt-cache
+> breakpoint placement on translated payloads and why `messages ↔ responses`
+> has no direct path.
 
 ## Important Gotchas
 
@@ -314,6 +331,14 @@ Anthropic's `thinking` blocks in assistant messages must be:
 - Stripped from historical messages (not sent to Copilot)
 - Preserved only in the final response
 - Converted to OpenAI's `reasoning_text` field
+
+Reasoning arrives under three spellings — `reasoning_text`, `reasoning_content`,
+`reasoning` — and streaming and non-streaming paths must accept the same set.
+Only signed thinking can round-trip back to an Anthropic upstream, and a
+signature is only valid for the exact text it was issued for, so a turn with
+several thinking blocks must keep them separate (`reasoning_details`). See
+[`docs/protocol-translation-pitfalls.md`](docs/protocol-translation-pitfalls.md)
+§2.2, §3.4 and §3.5.
 
 ### 3. Model Name Normalization
 

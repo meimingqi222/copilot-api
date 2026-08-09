@@ -193,27 +193,40 @@ function handleAssistantMessage(
   // thinking mode + tool calls REQUIRES reasoning_content round-trip,
   // Kimi/Qwen/xAI accept it), preserve historical thinking as
   // reasoning_content when opted in.
-  const thinkingText =
+  //
+  // A signature only validates against the exact text it was issued for, so a
+  // turn with several thinking blocks cannot round-trip through the joined
+  // `reasoning_content` + single top-level `signature` — the join is only
+  // lossless when there is exactly one block. In that (overwhelmingly common)
+  // case the wire format is left untouched; with 2+ blocks the ordered
+  // per-block form is added alongside, which `translateAssistantMessage`
+  // (openai/chat-to-messages.ts) prefers and reassembles block for block.
+  const thinkingBlocks =
     preserveHistoricalReasoning ?
-      message.content
-        .filter(
-          (block): block is AnthropicThinkingBlock => block.type === "thinking",
-        )
-        .map((block) => block.thinking)
-        .join("\n\n") || undefined
-    : undefined
-  const thinkingSignature =
-    preserveHistoricalReasoning && Array.isArray(message.content) ?
-      message.content.find(
+      message.content.filter(
         (block): block is AnthropicThinkingBlock =>
-          block.type === "thinking" && Boolean(block.signature),
-      )?.signature
-    : undefined
+          block.type === "thinking" && Boolean(block.thinking),
+      )
+    : []
+  const thinkingText =
+    thinkingBlocks.map((block) => block.thinking).join("\n\n") || undefined
+  const reasoningDetails =
+    thinkingBlocks.length > 1 ?
+      thinkingBlocks.map((block) => ({
+        type: "reasoning.text",
+        text: block.thinking,
+        ...(block.signature && { signature: block.signature }),
+      }))
+    : []
+  const thinkingSignature = thinkingBlocks.find((block) =>
+    Boolean(block.signature),
+  )?.signature
 
   const baseMessage = {
     role: "assistant" as const,
     content: textContent || null,
     ...(thinkingText ? { reasoning_content: thinkingText } : {}),
+    ...(reasoningDetails.length > 0 && { reasoning_details: reasoningDetails }),
     ...(thinkingSignature ? { signature: thinkingSignature } : {}),
   }
 

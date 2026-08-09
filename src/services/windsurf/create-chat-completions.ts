@@ -4,15 +4,13 @@ import type { Account } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-  ContentPart,
   CopilotStreamEvent,
-  ToolCall,
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { isAbortError, isChatCompletionResponse, sleep } from "~/lib/utils"
@@ -28,7 +26,12 @@ import {
   chunkFromToolCallInit,
   chunkFromToolCallArgs,
   doneChunk,
+  toOpenAIChunkUsage,
 } from "./chunk-builders"
+import {
+  collectChatCompletion,
+  type WindsurfStreamEvent,
+} from "./collect-response"
 import { beginWindsurfAccountRequest } from "./concurrency"
 import {
   getWindsurfFirstFrameRetries,
@@ -81,33 +84,6 @@ const FETCH_MAX_ATTEMPTS = 2
 export { FETCH_MAX_ATTEMPTS }
 const FETCH_BASE_DELAY_MS = 1_000
 const FETCH_MAX_DELAY_MS = 5_000
-const MAX_COLLECTED_RESPONSE_BYTES = 32 * 1024 * 1024
-const MAX_ORDERED_PARTS = 8192
-const MAX_ORDERED_RESPONSE_BYTES = 4 * 1024 * 1024
-
-type OrderedResponsePart = {
-  kind: "content" | "reasoning"
-  text: string
-  signature?: string
-}
-
-function appendOrderedResponsePart(
-  parts: Array<OrderedResponsePart>,
-  kind: OrderedResponsePart["kind"],
-  text: string,
-  currentBytes: number,
-): number | undefined {
-  const nextBytes = currentBytes + Buffer.byteLength(text)
-  if (nextBytes > MAX_ORDERED_RESPONSE_BYTES) return undefined
-  const previous = parts.at(-1)
-  if (previous?.kind === kind) {
-    previous.text += text
-    return nextBytes
-  }
-  if (parts.length >= MAX_ORDERED_PARTS) return undefined
-  parts.push({ kind, text })
-  return nextBytes
-}
 
 function isTransientFetchError(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return true
@@ -251,7 +227,7 @@ async function* streamToOpenAI(
   model: string,
   cacheDebug?: WindsurfCacheDebugContext,
   memoryTraceId?: string,
-): AsyncIterable<CopilotStreamEvent> {
+): AsyncIterable<WindsurfStreamEvent> {
   const stream = response.body
   if (!stream) throw new Error("Windsurf response body is empty")
 
@@ -266,6 +242,9 @@ async function* streamToOpenAI(
   let upstreamFrameBytes = 0
   let decodedDeltaCount = 0
   let nextCheckpointBytes = 1024 * 1024
+
+  // Hoisted: this is checked once per stream, not once per frame.
+  const debugLogging = isDebugLoggingEnabled()
 
   updateMemoryTrace(memoryTraceId, "windsurf_stream_decode_start", {
     provider: "windsurf",
@@ -293,13 +272,16 @@ async function* streamToOpenAI(
     const rawFrame = parsed.rawUsage
     if (rawFrame) {
       rawUsage = mergeRawUsageSignals(rawUsage, rawFrame)
-      logger.debug("[windsurf] cache raw frame", {
-        req: requestId,
-        model,
-        ...cacheDebug,
-        raw: rawFrame,
-        parsedUsage: parsed.usage,
-      })
+      // Per-frame: only build the meta object when it will actually be logged.
+      if (debugLogging) {
+        logger.debug("[windsurf] cache raw frame", {
+          req: requestId,
+          model,
+          ...cacheDebug,
+          raw: rawFrame,
+          parsedUsage: parsed.usage,
+        })
+      }
     }
 
     for (const delta of parsed.deltas) {
@@ -312,6 +294,7 @@ async function* streamToOpenAI(
               text: delta.text,
               field: "content",
             }),
+            collected: { content: delta.text },
           }
           break
         }
@@ -323,6 +306,7 @@ async function* streamToOpenAI(
               text: delta.text,
               field: "reasoning_text",
             }),
+            collected: { reasoningText: delta.text },
           }
           break
         }
@@ -334,6 +318,7 @@ async function* streamToOpenAI(
               text: delta.text,
               field: "reasoning_opaque",
             }),
+            collected: { reasoningOpaque: delta.text },
           }
           break
         }
@@ -349,6 +334,15 @@ async function* streamToOpenAI(
               callId: delta.callId,
               toolName: delta.toolName,
             }),
+            collected: {
+              toolCalls: [
+                {
+                  index: currentToolCallIndex,
+                  id: delta.callId,
+                  function: { name: delta.toolName, arguments: "" },
+                },
+              ],
+            },
           }
           break
         }
@@ -363,6 +357,11 @@ async function* streamToOpenAI(
               toolIndex,
               args: delta.args,
             }),
+            collected: {
+              toolCalls: [
+                { index: toolIndex, function: { arguments: delta.args } },
+              ],
+            },
           }
           break
         }
@@ -375,13 +374,14 @@ async function* streamToOpenAI(
     if (parsed.toolCallsDone) finishReason = "tool_calls"
     else if (parsed.finishReason) finishReason = parsed.finishReason
     if (parsed.usage) {
-      const incomingMeta = {
-        req: requestId,
-        model,
-        provider: "windsurf",
-        usage: parsed.usage,
+      if (debugLogging) {
+        logger.debug("usage frame incoming", {
+          req: requestId,
+          model,
+          provider: "windsurf",
+          usage: parsed.usage,
+        })
       }
-      logger.debug("usage frame incoming", incomingMeta)
       if (usage) {
         // Merge across frames: field[7] (prompt/completion) and field[33]/field[28]
         // (cache hits) often arrive in separate frames. The `??` operator would
@@ -401,13 +401,14 @@ async function* streamToOpenAI(
             prev.cache_read_tokens ?? 0,
           ),
         }
-        const mergedMeta = {
-          req: requestId,
-          model,
-          provider: "windsurf",
-          usage,
+        if (debugLogging) {
+          logger.debug("usage frame merged", {
+            req: requestId,
+            model,
+            provider: "windsurf",
+            usage,
+          })
         }
-        logger.debug("usage frame merged", mergedMeta)
       } else {
         usage = parsed.usage
       }
@@ -436,242 +437,14 @@ async function* streamToOpenAI(
         : null,
     })
   }
-  yield { data: doneChunk({ requestId, model, finishReason, usage }) }
+  yield {
+    data: doneChunk({ requestId, model, finishReason, usage }),
+    collected: {
+      finishReason,
+      ...(usage && { usage: toOpenAIChunkUsage(usage) }),
+    },
+  }
   yield { data: "[DONE]" }
-}
-
-// ── Non-streaming collector ────────────────────────────────────────────────────
-
-interface CollectedToolCall {
-  id: string
-  name: string
-  arguments: string
-  /** Running UTF-8 size of `arguments`, to avoid re-measuring it per delta. */
-  argumentBytes: number
-}
-
-function updateToolCalls(
-  toolCallMap: Map<number, CollectedToolCall>,
-  deltaToolCalls: Array<{
-    index: number
-    id?: string
-    function?: { name?: string; arguments?: string }
-  }>,
-): void {
-  for (const tc of deltaToolCalls) {
-    if (tc.id && tc.function?.name !== undefined) {
-      const args = tc.function.arguments ?? ""
-      const argumentBytes = Buffer.byteLength(args)
-      if (argumentBytes > MAX_COLLECTED_RESPONSE_BYTES) {
-        throw new Error("Windsurf tool arguments exceed the maximum size")
-      }
-      toolCallMap.set(tc.index, {
-        id: tc.id,
-        name: tc.function.name ?? "",
-        arguments: args,
-        argumentBytes,
-      })
-    } else if (tc.function?.arguments !== undefined) {
-      const existing = toolCallMap.get(tc.index)
-      if (existing) {
-        const nextBytes =
-          existing.argumentBytes + Buffer.byteLength(tc.function.arguments)
-        if (nextBytes > MAX_COLLECTED_RESPONSE_BYTES) {
-          throw new Error("Windsurf tool arguments exceed the maximum size")
-        }
-        existing.arguments += tc.function.arguments
-        existing.argumentBytes = nextBytes
-      }
-    }
-  }
-}
-
-async function collectChatCompletion(
-  response: AsyncIterable<CopilotStreamEvent>,
-  model: string,
-  memoryTraceId?: string,
-): Promise<ChatCompletionResponse> {
-  let text = ""
-  let reasoningText = ""
-  let reasoningOpaque = ""
-  // Running total of the three accumulators above. Calling Buffer.byteLength on
-  // them once per chunk flattens each rope, which turns a long reasoning stream
-  // into O(n^2) allocation.
-  let collectedBytes = 0
-  let sawContentPart = false
-  let hasReasoningAfterContent = false
-  let orderedPartsComplete = true
-  let orderedPartsBytes = 0
-  const orderedParts: Array<OrderedResponsePart> = []
-  let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
-  let usage: ChatCompletionResponse["usage"] | undefined
-
-  const toolCallMap = new Map<number, CollectedToolCall>()
-
-  updateMemoryTrace(memoryTraceId, "windsurf_collect_start")
-  for await (const event of response) {
-    if (!event.data || event.data === "[DONE]") continue
-
-    const chunk = JSON.parse(event.data) as {
-      choices?: Array<{
-        delta?: {
-          content?: string
-          reasoning_text?: string
-          reasoning_opaque?: string
-          tool_calls?: Array<{
-            index: number
-            id?: string
-            type?: string
-            function?: { name?: string; arguments?: string }
-          }>
-        }
-        finish_reason?: string | null
-      }>
-      usage?: ChatCompletionResponse["usage"]
-    }
-
-    const contentDelta = chunk.choices?.[0]?.delta?.content ?? ""
-    const reasoningDelta = chunk.choices?.[0]?.delta?.reasoning_text ?? ""
-    text += contentDelta
-    reasoningText += reasoningDelta
-    collectedBytes +=
-      Buffer.byteLength(contentDelta) + Buffer.byteLength(reasoningDelta)
-    if (contentDelta) {
-      sawContentPart = true
-    }
-    if (reasoningDelta && sawContentPart) {
-      hasReasoningAfterContent = true
-    }
-    if (contentDelta && orderedPartsComplete) {
-      const nextBytes = appendOrderedResponsePart(
-        orderedParts,
-        "content",
-        contentDelta,
-        orderedPartsBytes,
-      )
-      if (nextBytes === undefined) orderedPartsComplete = false
-      else orderedPartsBytes = nextBytes
-    }
-    if (reasoningDelta && orderedPartsComplete) {
-      const nextBytes = appendOrderedResponsePart(
-        orderedParts,
-        "reasoning",
-        reasoningDelta,
-        orderedPartsBytes,
-      )
-      if (nextBytes === undefined) orderedPartsComplete = false
-      else orderedPartsBytes = nextBytes
-    }
-    const signatureDelta = chunk.choices?.[0]?.delta?.reasoning_opaque ?? ""
-    reasoningOpaque += signatureDelta
-    collectedBytes += Buffer.byteLength(signatureDelta)
-    if (signatureDelta && orderedPartsComplete) {
-      const previous = orderedParts.at(-1)
-      if (
-        previous?.kind === "reasoning"
-        && orderedPartsBytes + Buffer.byteLength(signatureDelta)
-          <= MAX_ORDERED_RESPONSE_BYTES
-      ) {
-        previous.signature = `${previous.signature ?? ""}${signatureDelta}`
-        orderedPartsBytes += Buffer.byteLength(signatureDelta)
-      }
-    }
-    if (collectedBytes > MAX_COLLECTED_RESPONSE_BYTES) {
-      throw new Error("Windsurf response exceeds the maximum size")
-    }
-    usage = chunk.usage ?? usage
-
-    const finReason = chunk.choices?.[0]?.finish_reason
-    switch (finReason) {
-      case "tool_calls": {
-        finishReason = "tool_calls"
-        break
-      }
-      case "length": {
-        finishReason = "length"
-        break
-      }
-      case "content_filter": {
-        finishReason = "content_filter"
-        break
-      }
-      case "stop": {
-        finishReason = "stop"
-        break
-      }
-      default: {
-        break
-      }
-    }
-
-    updateToolCalls(toolCallMap, chunk.choices?.[0]?.delta?.tool_calls ?? [])
-  }
-
-  const toolCalls: Array<ToolCall> =
-    toolCallMap.size > 0 ?
-      [...toolCallMap.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([, tc]) => ({
-          id: tc.id,
-          type: "function" as const,
-          function: { name: tc.name, arguments: tc.arguments },
-        }))
-    : []
-
-  const textLen = text.length
-  const toolCallsLen = toolCalls.length
-  const orderedContent: Array<ContentPart> = orderedParts.map((part) =>
-    part.kind === "content" ?
-      { type: "text", text: part.text }
-    : {
-        type: "reasoning",
-        text: part.text,
-        ...(part.signature ? { signature: part.signature } : {}),
-      },
-  )
-  logger.info(
-    `[windsurf] collect result for ${model}: textLen=${textLen} toolCalls=${toolCallsLen} finishReason=${finishReason} usage=${JSON.stringify(usage)}`,
-  )
-  updateMemoryTrace(memoryTraceId, "windsurf_collect_complete", {
-    collectedBytes,
-    orderedPartsBytes,
-    orderedParts: orderedParts.length,
-    toolCalls: toolCallsLen,
-  })
-  if (textLen === 0 && toolCallsLen === 0) {
-    logger.warn(
-      `[windsurf] EMPTY response for ${model} finishReason=${finishReason}`,
-    )
-  }
-
-  return {
-    id: `chatcmpl-${randomUUID().replaceAll("-", "")}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: "assistant",
-          content:
-            (
-              orderedPartsComplete
-              && hasReasoningAfterContent
-              && orderedContent.length > 0
-            ) ?
-              orderedContent
-            : text || null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-          reasoning_text: reasoningText || null,
-          reasoning_opaque: reasoningOpaque || null,
-        },
-        logprobs: null,
-        finish_reason: finishReason,
-      },
-    ],
-    usage,
-  }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────

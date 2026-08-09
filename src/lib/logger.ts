@@ -224,6 +224,19 @@ export function createLogger(tag: string) {
   return logger.withTag(tag)
 }
 
+/**
+ * True when a `logger.debug(...)` call would actually be recorded somewhere.
+ *
+ * Consola filters by level inside `logger.debug`, but the arguments are built
+ * by the caller first — a per-frame `logger.debug("...", { ...meta })` in a
+ * streaming loop allocates its meta object thousands of times per response and
+ * then throws every one away. Guard those call sites with this; ordinary
+ * once-per-request logging does not need it.
+ */
+export function isDebugLoggingEnabled(): boolean {
+  return consola.level >= 4 || fileMinLevel === "debug"
+}
+
 /** Test hook: redirect file output and reset reporter state. */
 export function configureLoggerForTest(options: {
   logFilePath: string

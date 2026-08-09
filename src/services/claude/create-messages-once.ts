@@ -57,14 +57,11 @@ function normalizeSystemBlocks(
   if (typeof payload.system === "string") {
     return [{ type: "text", text: payload.system }]
   }
-  return payload.system.map((block) => {
-    const cc = (block as { cache_control?: unknown }).cache_control
-    return {
-      type: "text" as const,
-      text: block.text,
-      ...(cc ? { cache_control: cc } : {}),
-    }
-  })
+  return payload.system.map((block) => ({
+    type: "text" as const,
+    text: block.text,
+    ...(block.cache_control && { cache_control: block.cache_control }),
+  }))
 }
 
 /**

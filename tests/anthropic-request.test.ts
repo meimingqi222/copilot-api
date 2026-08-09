@@ -6,6 +6,7 @@ import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 import { translateToResponsesPayload } from "../src/services/copilot/chat-to-responses"
 import { translateToCopilotMessages } from "../src/services/copilot/create-messages"
 import { translateToOpenAI } from "../src/services/protocols/anthropic"
+import { translateChatPayloadToAnthropic } from "../src/services/protocols/openai"
 
 // Zod schema for a single message in the chat completion request.
 const messageSchema = z.object({
@@ -367,6 +368,47 @@ describe("Anthropic thinking and model mapping", () => {
       reasoning_content: "step 1",
       signature: "sig-1",
     })
+    // A single block joins losslessly — the wire format stays as it was.
+    expect(preserved.messages[0].reasoning_details).toBeUndefined()
+  })
+
+  test("multiple thinking blocks round-trip with their own signatures", () => {
+    const anthropicPayload: AnthropicMessagesPayload = {
+      model: "claude-sonnet-4",
+      messages: [
+        { role: "user", content: "q" },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "step one", signature: "sig-a" },
+            { type: "thinking", thinking: "step two", signature: "sig-b" },
+            { type: "text", text: "answer" },
+          ],
+        },
+        { role: "user", content: "again" },
+      ],
+      max_tokens: 128,
+    }
+
+    const hub = translateToOpenAI(anthropicPayload, {
+      preserveHistoricalReasoning: true,
+    })
+    // A signature only validates against the exact text it was issued for, so
+    // the joined reasoning_content + single top-level signature cannot carry
+    // two blocks. The ordered per-block form is added alongside it.
+    expect(hub.messages[1].reasoning_details).toEqual([
+      { type: "reasoning.text", text: "step one", signature: "sig-a" },
+      { type: "reasoning.text", text: "step two", signature: "sig-b" },
+    ])
+
+    // Back through the hub: blocks are reassembled one-for-one, each keeping
+    // the signature it was issued with.
+    const back = translateChatPayloadToAnthropic(hub)
+    expect(back.messages[1].content).toEqual([
+      { type: "thinking", thinking: "step one", signature: "sig-a" },
+      { type: "thinking", thinking: "step two", signature: "sig-b" },
+      { type: "text", text: "answer" },
+    ])
   })
 
   test("preserves historical thinking alongside tool_calls when opted in", () => {

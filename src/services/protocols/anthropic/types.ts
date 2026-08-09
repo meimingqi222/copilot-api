@@ -49,9 +49,15 @@ export interface AnthropicMessagesPayload {
     | null
 }
 
+export interface AnthropicCacheControl {
+  type: "ephemeral"
+  ttl?: "5m" | "1h"
+}
+
 export interface AnthropicTextBlock {
   type: "text"
   text: string
+  cache_control?: AnthropicCacheControl
 }
 
 export interface AnthropicImageBlock {

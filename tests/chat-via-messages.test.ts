@@ -10,7 +10,10 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
-import type { AnthropicResponse } from "~/services/protocols/anthropic"
+import type {
+  AnthropicMessagesPayload,
+  AnthropicResponse,
+} from "~/services/protocols/anthropic"
 
 import {
   createInitialStreamState,
@@ -855,5 +858,108 @@ describe("createChatViaMessages (wrapper)", () => {
     expect(response.object).toBe("chat.completion")
     expect(response.choices[0].message.content).toBe("ok")
     expect(response.choices[0].finish_reason).toBe("stop")
+  })
+
+  test("places prompt-cache breakpoints on the translated payload", async () => {
+    let sent: AnthropicMessagesPayload | undefined
+    await createChatViaMessages({
+      target,
+      connection,
+      credential,
+      payload: basePayload({
+        messages: [
+          { role: "system", content: "sys prompt" },
+          { role: "user", content: "turn 1" },
+          { role: "assistant", content: "resp 1" },
+          { role: "user", content: "turn 2" },
+        ],
+      }),
+      messagesExecutor: (params) => {
+        sent = params.payload
+        return Promise.resolve({
+          credentialId: "cred-1",
+          response: anthropicResponse as unknown as Record<string, unknown>,
+        })
+      },
+    })
+
+    // `system` is promoted from string to a block so it can carry a breakpoint.
+    const system = sent?.system as Array<{ cache_control?: unknown }>
+    expect(Array.isArray(system)).toBe(true)
+    expect(system[0].cache_control).toEqual({ type: "ephemeral" })
+
+    // Last two messages each get one; 5m default TTL (no `ttl` field).
+    const cached = (sent?.messages ?? []).filter(
+      (m) =>
+        Array.isArray(m.content)
+        && m.content.some(
+          (b) => (b as { cache_control?: unknown }).cache_control !== undefined,
+        ),
+    )
+    expect(cached).toHaveLength(2)
+  })
+
+  test("preserves a client-supplied cache_control breakpoint (OpenRouter style)", async () => {
+    let sent: AnthropicMessagesPayload | undefined
+    await createChatViaMessages({
+      target,
+      connection,
+      credential,
+      payload: basePayload({
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "big stable prefix",
+                cache_control: { type: "ephemeral", ttl: "1h" },
+              },
+            ],
+          },
+          { role: "assistant", content: "ok" },
+          { role: "user", content: "next" },
+        ],
+      }),
+      messagesExecutor: (params) => {
+        sent = params.payload
+        return Promise.resolve({
+          credentialId: "cred-1",
+          response: anthropicResponse as unknown as Record<string, unknown>,
+        })
+      },
+    })
+
+    const first = sent?.messages[0].content as Array<{
+      cache_control?: unknown
+    }>
+    // The client's own breakpoint (and its 1h TTL) survives translation and is
+    // not overwritten by auto-placement.
+    expect(first[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" })
+  })
+
+  test("leaves claude-native payloads alone (adapter places CC-layout breakpoints)", async () => {
+    let sent: AnthropicMessagesPayload | undefined
+    await createChatViaMessages({
+      target: { ...target, protocol: "claude-native" },
+      connection: { ...connection, protocol: "claude-native" },
+      credential,
+      payload: basePayload({
+        messages: [
+          { role: "system", content: "sys prompt" },
+          { role: "user", content: "turn 1" },
+        ],
+      }),
+      messagesExecutor: (params) => {
+        sent = params.payload
+        return Promise.resolve({
+          credentialId: "cred-1",
+          response: anthropicResponse as unknown as Record<string, unknown>,
+        })
+      },
+    })
+
+    expect(typeof sent?.system).toBe("string")
+    expect(JSON.stringify(sent)).not.toContain("cache_control")
   })
 })

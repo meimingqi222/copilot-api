@@ -258,14 +258,26 @@ export type ContentPart =
   | OutputTextPart
   | ReasoningContentPart
 
+/**
+ * Anthropic prompt-cache breakpoint smuggled through the Chat Completions
+ * shape — the OpenRouter convention, and the only way a chat client can place
+ * one. Honoured on the chat→messages path; ignored by chat upstreams.
+ */
+export interface ChatCacheControl {
+  type: "ephemeral"
+  ttl?: "5m" | "1h"
+}
+
 export interface TextPart {
   type: "text"
   text: string
+  cache_control?: ChatCacheControl
 }
 
 export interface OutputTextPart {
   type: "output_text"
   text: string
+  cache_control?: ChatCacheControl
 }
 
 export interface ReasoningContentPart {

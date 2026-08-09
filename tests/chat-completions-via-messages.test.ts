@@ -86,11 +86,20 @@ test("POST /v1/chat/completions routes to a messages-only connection via chat→
   const upstreamBody = JSON.parse(options.body ?? "{}") as {
     model: string
     max_tokens: number
-    messages: Array<{ role: string; content: string }>
+    messages: Array<{ role: string; content: unknown }>
   }
   expect(upstreamBody.model).toBe("claude-sonnet-4")
   expect(upstreamBody.max_tokens).toBe(64000)
-  expect(upstreamBody.messages).toEqual([{ role: "user", content: "hi" }])
+  // Chat has no way to express cache_control, so the translation layer places
+  // the breakpoints itself — the string turn becomes a cached text block.
+  expect(upstreamBody.messages).toEqual([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "hi", cache_control: { type: "ephemeral" } },
+      ],
+    },
+  ])
 })
 
 test("POST /v1/chat/completions streaming translates Anthropic SSE to OpenAI chunks", async () => {

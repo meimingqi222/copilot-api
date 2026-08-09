@@ -58,7 +58,12 @@ export async function createResponsesViaChat(
   updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_start", {
     inputItems: Array.isArray(payload.input) ? payload.input.length : 1,
   })
-  const chatPayload = translateResponsesToChatPayload(payload)
+  // Mirrors createMessagesViaChat: replayed reasoning survives as
+  // reasoning_content for every upstream except Copilot, which rejects
+  // reasoning in history.
+  const chatPayload = translateResponsesToChatPayload(payload, {
+    preserveHistoricalReasoning: target.protocol !== "copilot-native",
+  })
   updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_complete", {
     messageCount: chatPayload.messages.length,
     toolCount: chatPayload.tools?.length ?? 0,

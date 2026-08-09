@@ -182,11 +182,8 @@ export function buildRouteTargets(
       // request for one endpoint (e.g. "messages") can fall back to another
       // the connection actually supports (e.g. "chat"), enabling cross-protocol
       // translation in the dispatch layer.
-      const resolvedEndpoints = resolveEndpoints(
-        model.endpoints,
-        options.endpoint,
-      )
-      if (!resolvedEndpoints) continue
+      const resolved = resolveEndpoints(model.endpoints, options.endpoint)
+      if (!resolved) continue
       if (options.publicModelId) {
         // 对 account-backed 虚拟 connection,使用 account 别名匹配;
         // 对普通 connection,使用 connection 别名匹配
@@ -208,11 +205,12 @@ export function buildRouteTargets(
         // upstreamModelId 用 model.upstreamId(已剥离前缀)
         const publicModelId =
           account ? (options.publicModelId ?? model.publicId) : model.publicId
-        pushResolvedTargets(targets, resolvedEndpoints, {
+        pushResolvedTargets(targets, resolved.endpoints, {
           connection,
           credential,
           model,
           publicModelId,
+          isTranslated: resolved.translated,
         })
       }
     }
@@ -229,9 +227,10 @@ function pushResolvedTargets(
     credential: ApiCredential
     model: ModelMapping
     publicModelId: string
+    isTranslated: boolean
   },
 ): void {
-  const { connection, credential, model, publicModelId } = fields
+  const { connection, credential, model, publicModelId, isTranslated } = fields
   for (const endpoint of endpoints) {
     out.push({
       connectionId: connection.id,
@@ -245,6 +244,7 @@ function pushResolvedTargets(
       connectionWeight: connection.weight ?? DEFAULTS.CONNECTION_WEIGHT,
       credentialPriority: credential.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
       credentialWeight: credential.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
+      ...(isTranslated && { isTranslated: true }),
     })
   }
 }
@@ -276,6 +276,8 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
  * 根据请求的 endpoint 从模型支持的 endpoint 列表中解析出实际执行的 endpoint 列表。
  * 不支持时可 fallback 到语义等价的 endpoint；embeddings 不做 fallback。
  * 返回 null 表示该模型不支持此 endpoint，应跳过。
+ * `translated` 表示走的是 fallback 分支（dispatch 层需做协议翻译），
+ * 供 `selectRouteTarget` 在同级候选中优先选原生 endpoint。
  *
  * fallback 映射（ordered candidates，首个命中的优先）：
  * - responses → [chat]：上游只支持 chat completions 但客户端用 responses API，
@@ -289,9 +291,11 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
 function resolveEndpoints(
   supported: Array<ModelEndpoint>,
   requested: ModelEndpoint | undefined,
-): Array<ModelEndpoint> | null {
-  if (!requested) return supported
-  if (supported.includes(requested)) return [requested]
+): { endpoints: Array<ModelEndpoint>; translated: boolean } | null {
+  if (!requested) return { endpoints: supported, translated: false }
+  if (supported.includes(requested)) {
+    return { endpoints: [requested], translated: false }
+  }
   const fallbackCandidates: Partial<
     Record<ModelEndpoint, Array<ModelEndpoint>>
   > = {
@@ -300,7 +304,9 @@ function resolveEndpoints(
     chat: ["responses", "messages"],
   }
   for (const candidate of fallbackCandidates[requested] ?? []) {
-    if (supported.includes(candidate)) return [candidate]
+    if (supported.includes(candidate)) {
+      return { endpoints: [candidate], translated: true }
+    }
   }
   return null
 }

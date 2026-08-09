@@ -2,7 +2,8 @@
 
 状态：**生效中**
 日期：2026-07-15
-关联：`docs/refactor-usage-translation.md`（usage 收口模式参考）
+关联：`docs/refactor-usage-translation.md`（usage 收口模式参考）、
+`docs/protocol-translation-pitfalls.md`（本规约下的不可修落差与已修坑位）
 
 ## 1. 枢纽格式
 
