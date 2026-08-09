@@ -79,6 +79,7 @@ interface StreamUsageInput {
   estimatedInputTokens: number
   onlyWhenUsageExists?: boolean
   timing?: { ttftMs: number; tps: number }
+  finishReason?: string
 }
 
 export async function handleCompletion(c: Context) {
@@ -302,6 +303,7 @@ function handleNonStreamingResponse(
       cacheWriteTokens,
       tps,
       streaming: false,
+      finishReason: normalized.choices[0]?.finish_reason,
     })
   } else if (model && accountId) {
     recordUsage({
@@ -333,6 +335,7 @@ function handleStreamingResponse(
   let usageRecorded = false
   let firstChunkTs: number | undefined
   let downstreamCommitted = false
+  let lastFinishReason: string | undefined
   const streamStart = Date.now()
 
   return handleSseStream(
@@ -361,6 +364,10 @@ function handleStreamingResponse(
           if (chunk.usage) {
             lastUsage = chunk.usage
           }
+          const chunkFinishReason = chunk.choices[0]?.finish_reason
+          if (chunkFinishReason) {
+            lastFinishReason = chunkFinishReason
+          }
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
           if (!downstreamCommitted) {
             downstreamCommitted = true
@@ -386,6 +393,7 @@ function handleStreamingResponse(
               firstChunkTs,
               lastUsage?.completion_tokens ?? 0,
             ),
+            finishReason: lastFinishReason,
           })
         }
         endMemoryTrace(memoryTraceId, outcome)
@@ -405,6 +413,7 @@ function handleStreamingResponse(
             firstChunkTs,
             lastUsage?.completion_tokens ?? 0,
           ),
+          finishReason: lastFinishReason ?? "aborted",
         })
       },
     },
@@ -420,6 +429,7 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
     estimatedInputTokens,
     onlyWhenUsageExists = false,
     timing,
+    finishReason,
   } = input
   if (!accountId || !model) {
     return false
@@ -444,6 +454,7 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
       ttftMs: timing?.ttftMs,
       tps: timing?.tps,
       streaming: true,
+      finishReason,
     })
     return true
   }
@@ -462,6 +473,7 @@ function recordStreamingUsage(input: StreamUsageInput): boolean {
     tps: 0,
     ttftMs: timing?.ttftMs,
     streaming: true,
+    finishReason,
   })
   return true
 }
@@ -488,6 +500,7 @@ function handleStreamingCompletion(
   let accountId: string | undefined
   let firstChunkTs: number | undefined
   let downstreamCommitted = false
+  let lastFinishReason: string | undefined
   let streamStart = 0
   return handleSseStream(
     c,
@@ -565,6 +578,10 @@ function handleStreamingCompletion(
           if (chunk.usage) {
             lastUsage = chunk.usage
           }
+          const chunkFinishReason = chunk.choices[0]?.finish_reason
+          if (chunkFinishReason) {
+            lastFinishReason = chunkFinishReason
+          }
           await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
           if (!downstreamCommitted) {
             downstreamCommitted = true
@@ -614,6 +631,7 @@ function handleStreamingCompletion(
               firstChunkTs,
               lastUsage?.completion_tokens ?? 0,
             ),
+            finishReason: lastFinishReason,
           })
         }
         endMemoryTrace(options.memoryTraceId, outcome)
@@ -633,6 +651,7 @@ function handleStreamingCompletion(
             firstChunkTs,
             lastUsage?.completion_tokens ?? 0,
           ),
+          finishReason: lastFinishReason ?? "aborted",
         })
       },
     },

@@ -71,6 +71,7 @@ export interface UsageRecordInput {
   ttftMs?: number
   tps?: number
   streaming?: boolean
+  finishReason?: string
 }
 
 export function recordUsage(input: UsageRecordInput): void {
@@ -87,6 +88,7 @@ export function recordUsage(input: UsageRecordInput): void {
     ttftMs,
     tps,
     streaming,
+    finishReason,
     provider: explicitProvider,
     connectionId,
     credentialId,
@@ -152,6 +154,7 @@ export function recordUsage(input: UsageRecordInput): void {
       ttftMs,
       generationTps: tps,
       streaming,
+      finishReason,
     })
     // logger.info(
     //   `Token usage: ${promptTokens} in + ${completionTokens} out = ${totalTokens} total (model: ${usageModel})${cacheReadTokens > 0 ? `, cache read: ${cacheReadTokens} (${Math.round((cacheReadTokens / (promptTokens + cacheReadTokens)) * 100)}%)` : ""}`,

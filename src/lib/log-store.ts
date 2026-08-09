@@ -20,6 +20,7 @@ export interface LogEntry {
   ttftMs?: number
   generationTps?: number
   streaming?: boolean
+  finishReason?: string
 }
 
 const MAX_SIZE = Number(process.env["LOG_BUFFER_SIZE"] ?? 1000)
