@@ -65,8 +65,9 @@ codex-native 拿一个不属于本次对话的 blob。
 
 `translateAssistantMessage()` / `addSignedReasoning()`
 （`src/services/protocols/openai/chat-to-messages.ts`）只在 `signature` 存在时
-才生成 `thinking` block；剥空的 assistant turn 用 `EMPTY_TEXT_PLACEHOLDER`（单空格）
-兜底，因为 Anthropic 拒绝空 content 数组和纯空白 text block。
+才生成 `thinking` block；剥空的 assistant turn 用 `EMPTY_TEXT_PLACEHOLDER`
+（`"(no content)"`）兜底，因为 Anthropic 拒绝空 content 数组和纯空白 text block。
+**占位符必须是非空白文本**（见 §3.9）。
 
 **为什么不可修**：Anthropic 拒收无签名的历史 thinking block（400）。响应侧
 （`messages-to-chat.ts`）**已经**把签名透出去了——非流式在
@@ -151,8 +152,14 @@ replay reasoning item，于是每次多轮请求都往 prefix 中间插一条畸
 **规约**：新增任何读取 reasoning 的代码，stream 与 non-stream 必须走同一套字段优先级
 （`docs/translation-conventions.md` 规则 R2）。
 
+**顺序也是规约的一部分**：顶层别名 → `reasoning_details` → content parts，取第一个
+非空的，**不拼接**。拼接会把同时回显两处的上游（OpenRouter 常见）的思考在用户可见的
+summary 里翻倍。`getReasoningDelta()` 与 `getChatMessageReasoningText()` 走同一顺序。
+
 测试：`tests/chat-to-responses-reasoning.test.ts` →
-`"picks up message.reasoning_content, not just reasoning_text"`。
+`"picks up message.reasoning_content, not just reasoning_text"` /
+`"picks up delta.reasoning_details when no top-level alias is set"` /
+`"does not duplicate reasoning echoed under both an alias and details"`。
 
 ### 3.5 多个 thinking block 必须逐块保签名
 
@@ -182,6 +189,63 @@ Responses 客户端按 `output` 顺序 replay，reasoning item 必须出现在�
 
 测试：`tests/chat-to-responses-reasoning.test.ts` →
 `"emits the reasoning item before the message and function_call"`。
+
+### 3.7 空字符串在 reasoning 别名链里等于「缺失」
+
+上游在**不使用**的那个拼写上回填 `""` 是常态：一轮没有思考的对话会带回
+`reasoning_content: ""`，而真正的思考在 `reasoning_text` 里。因此
+`~/lib/thinking` 的三个 extractor 一律用 `||` 而非 `??`。
+
+`routes/chat-completions/normalize.ts` 曾用 `delta.reasoning_content !== undefined`
+判定"已存在"，把 `""` 当成有值直接短路返回，与别名链的语义相反 —— 客户端拿到空的
+`reasoning_content`，真文本就在隔壁字段里。
+
+**规约**：任何"这个 reasoning 字段有没有值"的判断都用真值判断，不要用
+`!== undefined` / `!= null`。
+
+测试：`tests/chat-completions-normalize.test.ts` →
+`"an empty reasoning_content does not shadow a populated alias"`。
+
+### 3.8 chat → messages：远程图片翻成 `url` source，不要丢弃
+
+`image_url` 里的 http(s) URL 曾被直接 `return undefined` 跳过，理由是"Anthropic 只收
+base64"。这已经过时：Anthropic 支持 `source: { type: "url", url }` 并自行抓取。丢弃的
+后果是模型在没有任何线索的情况下用纯文本回答图片问题 —— 静默降级比一个响亮的 400
+更难排查。
+
+**锁定**：`AnthropicImageBlock.source` 是 `base64 | url` 的联合类型，消费方必须
+`switch` 在 `source.type` 上（反向的 `mapContent()` 会把两者收敛回 OpenAI 单一的
+`url` 字段）。既不是 `data:` 也不是 http(s) 的（`blob:` / `file:`）以及 Anthropic
+不接受的 media type 仍然丢弃，但**带 warn 日志**。
+
+测试：`tests/chat-via-messages.test.ts` →
+`"maps base64 image parts to base64 sources and remote URLs to url sources"` /
+`"drops data: images whose media type Anthropic does not accept"`。
+
+### 3.9 空 turn 占位符不能是空白字符
+
+`EMPTY_TEXT_PLACEHOLDER` 曾是单个空格。Anthropic 同时拒绝两件事：空 content 数组，
+以及**结尾带空白的末条 assistant 消息**（"final assistant content cannot end with
+trailing whitespace"）。剥空的 assistant turn 若正好落在数组末尾（prefill），单空格
+等于把一个 400 换成了另一个 400。
+
+**规约**：占位符必须是非空白文本（当前 `"(no content)"`）。
+
+测试：`tests/chat-via-messages.test.ts` →
+`"placeholder is not whitespace, so a trailing assistant turn is a valid prefill"`。
+
+### 3.10 responses → chat：reasoning 只归属紧随其后的 assistant turn
+
+`pendingReasoning` 曾只在 assistant / function_call 分支被消费，user 消息和
+`function_call_output` 都不清它。于是一条没等到 assistant turn 的 reasoning item
+会一直挂着，最终贴到**后面某个不相关的** assistant turn 上 —— 上一轮的思考被当成
+这一轮的报告出去。
+
+**规约**：任何 push 非 assistant 消息的分支都要 `pendingReasoning = undefined`。
+
+测试：`tests/chat-to-responses-reasoning.test.ts` →
+`"does not carry a summary past an intervening tool result"` /
+`"does not carry a summary past an intervening user turn"`。
 
 ---
 

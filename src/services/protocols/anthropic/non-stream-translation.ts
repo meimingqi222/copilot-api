@@ -1,4 +1,5 @@
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { logger } from "~/lib/logger"
 import {
   budgetToLevel,
   extractReasoningBlockText,
@@ -283,10 +284,16 @@ function mapContent(
         break
       }
       case "image": {
+        // Both Anthropic image sources collapse onto OpenAI's single `url`
+        // field: base64 is re-encoded as a data URL, a `url` source passes
+        // through as-is.
         contentParts.push({
           type: "image_url",
           image_url: {
-            url: `data:${block.source.media_type};base64,${block.source.data}`,
+            url:
+              block.source.type === "url" ?
+                block.source.url
+              : `data:${block.source.media_type};base64,${block.source.data}`,
           },
         })
 
@@ -538,20 +545,39 @@ function getAnthropicToolUseBlocks(
     type: "tool_use",
     id: sanitizeId(toolCall.id),
     name: toolCall.function.name,
-    input: parseToolCallArguments(toolCall.function.arguments),
+    input: parseToolCallArguments(
+      toolCall.function.arguments,
+      toolCall.function.name,
+    ),
   }))
 }
 
+/**
+ * Anthropic `tool_use.input` must be an object, so malformed arguments have no
+ * faithful representation and become `{}`. That substitution is silent on the
+ * wire — the client sees a well-formed call it will happily execute with no
+ * arguments — so it is logged without the raw content (may contain user data).
+ * The usual cause is a response truncated by the token limit
+ * (`finish_reason: "length"`) mid-JSON.
+ */
 function parseToolCallArguments(
   argumentsJson: string,
+  toolName: string,
 ): Record<string, unknown> {
+  if (!argumentsJson.trim()) return {}
+
   try {
     const parsed = JSON.parse(argumentsJson) as unknown
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>
     }
+    logger.warn(
+      `[anthropic-translation] tool "${toolName}" arguments are not a JSON object (${argumentsJson.length} chars), sending empty input`,
+    )
   } catch {
-    return {}
+    logger.warn(
+      `[anthropic-translation] tool "${toolName}" has malformed JSON arguments (likely truncated, ${argumentsJson.length} chars), sending empty input`,
+    )
   }
 
   return {}

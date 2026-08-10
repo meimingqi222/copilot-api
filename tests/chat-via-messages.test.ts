@@ -269,20 +269,79 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
       }),
     )
 
+    // C3: consecutive assistant messages are merged to satisfy Anthropic's
+    // "roles must alternate" constraint.
     expect(result.messages[0]).toEqual({
       role: "assistant",
-      content: [{ type: "thinking", thinking: "step 1", signature: "sig_1" }],
+      content: [
+        { type: "thinking", thinking: "step 1", signature: "sig_1" },
+        { type: "text", text: "(no content)" },
+        { type: "text", text: "plain text" },
+      ],
     })
-    // Unsigned historical thinking / reasoning_text are stripped, leaving a
-    // valid placeholder text block instead of an empty assistant content list.
     expect(result.messages[1]).toEqual({
-      role: "assistant",
-      content: [{ type: "text", text: " " }],
+      role: "user",
+      content: "continue",
     })
-    expect(result.messages[2]).toEqual({
-      role: "assistant",
-      content: [{ type: "text", text: "plain text" }],
-    })
+  })
+
+  test("merges consecutive tool-call-only assistant turns into one message", () => {
+    // Two assistant turns with content:null + tool_calls (the shape of a
+    // tool-call-only turn) must collapse into a single assistant message —
+    // Anthropic rejects consecutive assistant roles, and neither turn's
+    // tool calls may be lost in the merge.
+    const result = translateChatPayloadToAnthropic(
+      basePayload({
+        messages: [
+          { role: "user", content: "list files" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "bash", arguments: '{"cmd":"ls"}' },
+              },
+            ],
+          },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_2",
+                type: "function",
+                function: { name: "bash", arguments: '{"cmd":"pwd"}' },
+              },
+            ],
+          },
+          { role: "user", content: "done" },
+        ],
+      }),
+    )
+
+    expect(result.messages).toEqual([
+      { role: "user", content: "list files" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "call_1",
+            name: "bash",
+            input: { cmd: "ls" },
+          },
+          {
+            type: "tool_use",
+            id: "call_2",
+            name: "bash",
+            input: { cmd: "pwd" },
+          },
+        ],
+      },
+      { role: "user", content: "done" },
+    ])
   })
 
   test("round-trips signed reasoning under OpenRouter's `reasoning` spelling", () => {
@@ -342,10 +401,11 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
         messages: [
           {
             role: "user",
+            // Neither data: nor http(s) — no Anthropic representation exists.
             content: [
               {
                 type: "image_url",
-                image_url: { url: "https://example.com/image.png" },
+                image_url: { url: "blob:https://example.com/abc-123" },
               },
             ],
           },
@@ -353,8 +413,32 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
       }),
     )
     expect(result.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: " " }] },
+      { role: "user", content: [{ type: "text", text: "(no content)" }] },
     ])
+  })
+
+  test("placeholder is not whitespace, so a trailing assistant turn is a valid prefill", () => {
+    // Anthropic rejects a final assistant message ending in trailing
+    // whitespace, so an all-stripped turn in last position must not collapse
+    // to " ".
+    const result = translateChatPayloadToAnthropic(
+      basePayload({
+        messages: [
+          { role: "user", content: "hi" },
+          {
+            role: "assistant",
+            content: [{ type: "thinking", thinking: "unsigned" }],
+          },
+        ],
+      }),
+    )
+
+    const last = result.messages.at(-1)
+    expect(last?.role).toBe("assistant")
+    const blocks = last?.content as Array<{ type: string; text: string }>
+    expect(blocks[0].text).toBe("(no content)")
+    expect(blocks[0].text).not.toMatch(/^\s*$/)
+    expect(blocks[0].text).toBe(blocks[0].text.trimEnd())
   })
 
   test("does not inject a placeholder when merging empty user content into a tool-result turn", () => {
@@ -378,7 +462,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
             content: [
               {
                 type: "image_url",
-                image_url: { url: "https://example.com/unsupported.png" },
+                image_url: { url: "blob:https://example.com/unsupported" },
               },
             ],
           },
@@ -399,7 +483,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     })
   })
 
-  test("maps base64 image parts to Anthropic image blocks, drops remote URLs", () => {
+  test("maps base64 image parts to base64 sources and remote URLs to url sources", () => {
     const result = translateChatPayloadToAnthropic(
       basePayload({
         messages: [
@@ -423,6 +507,9 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
       }),
     )
 
+    // A remote URL is forwarded as a `url` source rather than dropped:
+    // Anthropic fetches it itself, and dropping it left the model answering an
+    // image question from text alone with nothing on the wire to say so.
     expect(result.messages).toEqual([
       {
         role: "user",
@@ -436,8 +523,68 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
               data: "iVBORw0KGgo=",
             },
           },
+          {
+            type: "image",
+            source: { type: "url", url: "https://example.com/x.png" },
+          },
         ],
       },
+    ])
+  })
+
+  test("substitutes empty input for truncated tool-call arguments", () => {
+    // Anthropic tool_use.input must be an object, so a response truncated
+    // mid-JSON has no faithful representation. The substitution stands, but it
+    // is logged rather than silent — see parseToolCallArguments.
+    const result = translateChatPayloadToAnthropic(
+      basePayload({
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "bash", arguments: '{"cmd":"echo hel' },
+              },
+              {
+                id: "call_2",
+                type: "function",
+                function: { name: "now", arguments: "" },
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    expect(result.messages[0].content).toEqual([
+      { type: "tool_use", id: "call_1", name: "bash", input: {} },
+      { type: "tool_use", id: "call_2", name: "now", input: {} },
+    ])
+  })
+
+  test("drops data: images whose media type Anthropic does not accept", () => {
+    const result = translateChatPayloadToAnthropic(
+      basePayload({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what is this?" },
+              {
+                type: "image_url",
+                image_url: { url: "data:image/tiff;base64,SUkqAA==" },
+              },
+            ],
+          },
+        ],
+      }),
+    )
+
+    expect(result.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "what is this?" }] },
     ])
   })
 })

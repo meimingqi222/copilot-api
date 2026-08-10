@@ -27,6 +27,7 @@ interface StreamingState {
   model: string
   responseId: string
   toolCalls: Map<number, ResponsesFunctionCallItem>
+  reasoningText: string
 }
 
 export interface ResponsesToChatOptions {
@@ -186,7 +187,32 @@ export async function* translateResponsesStreamToChatCompletions(
     }
   }
 
+  if (state.toolCalls.size > 0 || state.reasoningText) {
+    const incomplete = buildIncompleteResponsesChunk(state)
+    if (incomplete) yield { data: JSON.stringify(incomplete) }
+  }
   yield { data: "[DONE]" }
+}
+
+function buildIncompleteResponsesChunk(
+  state: StreamingState,
+): Record<string, unknown> | undefined {
+  const id = state.responseId || `resp_${Math.random().toString(36).slice(2)}`
+  const hasToolCalls = state.toolCalls.size > 0
+  return {
+    id,
+    object: "chat.completion.chunk",
+    created: state.created,
+    model: state.model,
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: hasToolCalls ? "tool_calls" : "length",
+        logprobs: null,
+      },
+    ],
+  }
 }
 
 function translateResponsesInputToMessages(
@@ -211,11 +237,16 @@ function translateResponsesInputToMessages(
   for (const item of input) {
     if ("role" in item) {
       const content = translateResponsesContentToChatContent(item.content)
-      out.push(
-        item.role === "assistant" ?
-          { role: item.role, content, ...takeReasoning() }
-        : { role: item.role, content },
-      )
+      if (item.role === "assistant") {
+        out.push({ role: item.role, content, ...takeReasoning() })
+      } else {
+        // Reasoning belongs to the assistant turn that immediately follows it.
+        // Any other message intervening means that turn never materialized, so
+        // the summary is dropped rather than carried forward — holding it would
+        // attach one turn's chain of thought to a later, unrelated turn.
+        pendingReasoning = undefined
+        out.push({ role: item.role, content })
+      }
       continue
     }
 
@@ -246,6 +277,9 @@ function translateResponsesInputToMessages(
         break
       }
       case "function_call_output": {
+        // Same rule as the non-assistant role branch above: a tool result
+        // intervening means the reasoning's assistant turn never came.
+        pendingReasoning = undefined
         out.push({
           role: "tool",
           tool_call_id: item.call_id,
@@ -443,6 +477,7 @@ function buildReasoningSummaryDeltaChunk(
   }
 
   updateResponseId(state, parsed)
+  state.reasoningText += delta
   return createChunk({
     id: state.responseId,
     created: state.created,
@@ -482,6 +517,7 @@ function createStreamingState(model: string): StreamingState {
     model,
     responseId: `resp_${Math.random().toString(36).slice(2)}`,
     toolCalls: new Map(),
+    reasoningText: "",
   }
 }
 

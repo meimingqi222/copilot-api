@@ -121,6 +121,14 @@ function ensureTextBlockOpen(
   state.currentContentBlockType = "text"
 }
 
+/**
+ * Display vs replay-safety: an unsigned thinking block is still emitted so the
+ * Claude Code UI can render the reasoning, but the block carries no signature.
+ * When the client replays that turn to a real Anthropic upstream (claude-native
+ * or anthropic-compatible) the thinking block will be stripped or rejected
+ * (400). This is an intentional display-over-fidelity choice — see
+ * docs/protocol-translation-pitfalls.md §2.2.
+ */
 function ensureThinkingBlockOpen(
   state: AnthropicStreamState,
   events: Array<AnthropicStreamEventData>,
@@ -209,34 +217,34 @@ function getThinkingDelta(
   thinking?: string
   signature?: string
 } {
-  const reasoningParts: Array<string> = []
   let signature = extractSignatureAlias(delta)
-
-  // Use ?? chaining so only one top-level field is picked per chunk,
-  // matching the non-streaming translation and avoiding duplication when
-  // the Copilot proxy echoes the same content in multiple alias fields.
   const topLevelReasoning = extractReasoningTextAlias(delta)
   if (topLevelReasoning) {
-    reasoningParts.push(topLevelReasoning)
+    if (!signature) {
+      for (const detail of delta.reasoning_details ?? []) {
+        if (
+          detail.signature
+          && extractReasoningBlockText(detail) === topLevelReasoning
+        ) {
+          signature = detail.signature
+          break
+        }
+      }
+    }
+    return { thinking: topLevelReasoning, signature }
   }
 
   if (Array.isArray(delta.reasoning_details)) {
+    let text = ""
     for (const detail of delta.reasoning_details) {
       const detailText = extractReasoningBlockText(detail)
-      if (detailText) {
-        reasoningParts.push(detailText)
-      }
-
-      if (!signature && detail.signature) {
-        signature = detail.signature
-      }
+      if (detailText) text += detailText
+      if (!signature && detail.signature) signature = detail.signature
     }
+    if (text) return { thinking: text, signature }
   }
 
-  return {
-    thinking: reasoningParts.length > 0 ? reasoningParts.join("") : undefined,
-    signature,
-  }
+  return { thinking: undefined, signature }
 }
 
 export function translateChunkToAnthropicEvents(
@@ -289,32 +297,45 @@ export function translateChunkToAnthropicEvents(
   }
 
   const thinkingDelta = getThinkingDelta(delta)
+  const hasOnlySignature =
+    Boolean(thinkingDelta.signature) && !thinkingDelta.thinking
   if (thinkingDelta.signature && !state.suppressLateThinking) {
-    // Signature arrived - create thinking block and flush buffered content.
-    // Per Anthropic spec, signature goes only via signature_delta, not in start event.
-    ensureThinkingBlockOpen(state, events, state.bufferedThinking || undefined)
-    state.bufferedThinking = "" // Clear buffer after flushing
-    state.bufferedThinkingBytes = 0
+    if (
+      hasOnlySignature
+      && state.contentBlockOpen
+      && state.currentContentBlockType !== "thinking"
+    ) {
+      // Orphan signature with no thinking after text/tool has started: drop it
+      // (matches "should ignore late signatures after text has started").
+    } else {
+      ensureThinkingBlockOpen(
+        state,
+        events,
+        state.bufferedThinking || undefined,
+      )
+      state.bufferedThinking = ""
+      state.bufferedThinkingBytes = 0
 
-    if (thinkingDelta.thinking) {
+      if (thinkingDelta.thinking) {
+        events.push({
+          type: "content_block_delta",
+          index: state.contentBlockIndex,
+          delta: {
+            type: "thinking_delta",
+            thinking: thinkingDelta.thinking,
+          },
+        })
+      }
+
       events.push({
         type: "content_block_delta",
         index: state.contentBlockIndex,
         delta: {
-          type: "thinking_delta",
-          thinking: thinkingDelta.thinking,
+          type: "signature_delta",
+          signature: thinkingDelta.signature,
         },
       })
     }
-
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: {
-        type: "signature_delta",
-        signature: thinkingDelta.signature,
-      },
-    })
   } else if (thinkingDelta.thinking) {
     if (
       state.contentBlockOpen
@@ -352,13 +373,14 @@ export function translateChunkToAnthropicEvents(
 
   if (delta.content) {
     if (state.bufferedThinking) {
-      // OpenAI reasoning models (e.g. gpt-5.1-codex-mini) send reasoning
-      // without a signature. Emit the buffered thinking as an unsigned
-      // thinking block so clients can still display reasoning info. This also
-      // closes a preceding text/tool block when the stream is interleaved.
-      flushBufferedThinking(state, events)
-      state.suppressLateThinking = true
-      stopCurrentContentBlock(state, events)
+      if (!state.suppressLateThinking) {
+        flushBufferedThinking(state, events)
+        stopCurrentContentBlock(state, events)
+      } else {
+        state.bufferedThinking = ""
+        state.bufferedThinkingBytes = 0
+        state.suppressLateThinking = false
+      }
     }
 
     if (isToolBlockOpen(state)) {

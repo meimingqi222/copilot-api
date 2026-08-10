@@ -879,6 +879,84 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     expect(hasTextDelta).toBe(true)
   })
 
+  test("should not duplicate thinking echoed under both a top-level alias and reasoning_details", () => {
+    // Upstreams that mirror Copilot/OpenRouter conventions can echo the same
+    // reasoning under the top-level alias AND reasoning_details in one chunk.
+    // getThinkingDelta must take the top-level text and not concatenate the
+    // details copy (that would double the client-visible thinking), while
+    // still picking up the signature that only lives in the details.
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-dupe",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+              reasoning: "step-1",
+              reasoning_details: [
+                { type: "reasoning", text: "step-1", signature: "sig-abc" },
+              ],
+            },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-dupe",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          {
+            index: 0,
+            delta: { content: " final answer" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-dupe",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "claude-sonnet-4",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+      },
+    ]
+
+    const translatedStream = translateFullStream(openAIStream)
+
+    const thinkingText = translatedStream
+      .flatMap((event) =>
+        (
+          event.type === "content_block_delta"
+          && event.delta.type === "thinking_delta"
+        ) ?
+          [event.delta.thinking]
+        : [],
+      )
+      .join("")
+    expect(thinkingText).toBe("step-1")
+    expect(thinkingText).not.toContain("step-1step-1")
+
+    const signatureTexts = translatedStream.flatMap((event) =>
+      (
+        event.type === "content_block_delta"
+        && event.delta.type === "signature_delta"
+      ) ?
+        [event.delta.signature]
+      : [],
+    )
+    expect(signatureTexts).toEqual(["sig-abc"])
+  })
+
   test("should not emit thinking events when reasoning never gets a signature", () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {

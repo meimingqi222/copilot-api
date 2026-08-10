@@ -13,8 +13,10 @@
  * - Historical assistant reasoning with no signature (any of the four
  *   spellings: `reasoning_content`/`reasoning_text`/`reasoning`/`thinking`):
  *   Claude rejects unsigned thinking blocks in history → stripped.
- * - Remote (non-base64) `image_url` parts: Anthropic only accepts base64 →
- *   skipped.
+ * - `image_url` parts that are neither `data:` nor http(s) (blob:, file:) and
+ *   `data:` parts whose media type Anthropic does not accept: no
+ *   representation exists → dropped with a warning. Remote http(s) URLs are
+ *   forwarded as an Anthropic `url` image source.
  * - `budget_tokens`-style `thinking` on the chat payload: not translated in
  *   v1 — reasoning is always mapped to `adaptive` + `output_config.effort`.
  */
@@ -27,15 +29,19 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type {
   AnthropicAssistantContentBlock,
+  AnthropicAssistantMessage,
   AnthropicImageBlock,
+  AnthropicImageMediaType,
   AnthropicMessage,
   AnthropicMessagesPayload,
   AnthropicTextBlock,
   AnthropicTool,
   AnthropicToolResultBlock,
+  AnthropicToolUseBlock,
 } from "~/services/protocols/anthropic"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { logger } from "~/lib/logger"
 import {
   extractReasoningBlockText,
   extractReasoningTextAlias,
@@ -52,11 +58,22 @@ export const DEFAULT_VIA_MESSAGES_MAX_TOKENS = 64000
 /**
  * Anthropic rejects empty content arrays and whitespace-only text blocks.
  * When translation strips everything from a turn (unsigned historical
- * reasoning, unsupported remote images), keep it structurally valid with a
- * single-space placeholder. Only used when the whole message would otherwise
- * be empty — never appended to a turn that already has real blocks.
+ * reasoning, unsupported images), keep it structurally valid with this
+ * placeholder. Only used when the whole message would otherwise be empty —
+ * never appended to a turn that already has real blocks.
+ *
+ * It must not be whitespace: a placeholder assistant turn that lands last in
+ * the array is a prefill, and Anthropic rejects a final assistant message
+ * ending in trailing whitespace ("final assistant content cannot end with
+ * trailing whitespace"), so a single space traded one 400 for another.
+ *
+ * Cost: ~3 prompt tokens per empty turn (upstream counts it), stable content
+ * so cache prefix stays hit; never surfaced to client history.
+ * Must match PLACEHOLDER_TEXT in lib/tokenizer.ts (drift guard in
+ * tests/tokenizer.test.ts); kept as a duplicate to avoid a services→lib cycle
+ * would be the wrong layer, lib→services is the prohibited direction here.
  */
-const EMPTY_TEXT_PLACEHOLDER = " "
+export const EMPTY_TEXT_PLACEHOLDER = "(no content)"
 
 const SUPPORTED_IMAGE_MEDIA_TYPES = new Set([
   "image/jpeg",
@@ -233,7 +250,108 @@ function translateMessages(messages: Array<Message>): TranslatedMessages {
       }
       case "assistant": {
         flushToolResults()
-        out.push(translateAssistantMessage(msg))
+        const cur = translateAssistantMessage(msg)
+        const curMsg = msg
+        const last = out.at(-1)
+        if (last?.role !== "assistant") {
+          out.push(cur)
+          break
+        }
+        const mergeToolCalls = (
+          target: AnthropicAssistantMessage,
+          source: Message,
+        ): void => {
+          if (!source.tool_calls || source.tool_calls.length === 0) return
+          const existing =
+            Array.isArray(target.content) ?
+              target.content.filter(
+                (b): b is AnthropicToolUseBlock => b.type === "tool_use",
+              )
+            : []
+          const existingIds = new Set(existing.map((b) => b.id))
+          for (const call of source.tool_calls) {
+            if (existingIds.has(call.id)) continue
+            const toolBlock: AnthropicToolUseBlock = {
+              type: "tool_use",
+              id: sanitizeId(call.id),
+              name: call.function.name,
+              input: parseToolCallArguments(
+                call.function.arguments,
+                call.function.name,
+              ),
+            }
+            if (Array.isArray(target.content)) {
+              target.content.push(toolBlock)
+            } else if (typeof target.content === "string") {
+              target.content = [
+                {
+                  type: "text",
+                  text: target.content,
+                } as AnthropicAssistantContentBlock,
+                toolBlock,
+              ]
+            }
+          }
+        }
+        const lastContent = last.content
+        const curContent = cur.content
+        let merged = false
+        if (Array.isArray(lastContent) && Array.isArray(curContent)) {
+          lastContent.push(
+            ...(curContent as Array<AnthropicAssistantContentBlock>),
+          )
+          merged = true
+        } else if (
+          typeof lastContent === "string"
+          && Array.isArray(curContent)
+        ) {
+          last.content = [
+            {
+              type: "text",
+              text: lastContent,
+            } as AnthropicAssistantContentBlock,
+            ...(curContent as Array<AnthropicAssistantContentBlock>),
+          ]
+          merged = true
+        } else if (
+          Array.isArray(lastContent)
+          && typeof curContent === "string"
+        ) {
+          if (curContent) {
+            lastContent.push({
+              type: "text",
+              text: curContent,
+            } as AnthropicAssistantContentBlock)
+            merged = true
+          } else if (
+            (curMsg.tool_calls && curMsg.tool_calls.length > 0)
+            || (curMsg.content === null && curMsg.tool_calls)
+          ) {
+            merged = true
+          }
+        } else if (
+          typeof lastContent === "string"
+          && typeof curContent === "string"
+        ) {
+          if (curContent) {
+            last.content =
+              lastContent ? `${lastContent}\n\n${curContent}` : curContent
+            merged = true
+          } else if (curMsg.tool_calls && curMsg.tool_calls.length > 0) {
+            last.content = [
+              {
+                type: "text",
+                text: lastContent,
+              } as AnthropicAssistantContentBlock,
+            ]
+            merged = true
+          }
+        }
+        if (merged) {
+          mergeToolCalls(last, curMsg)
+        } else {
+          out.push(cur)
+        }
         break
       }
       default: {
@@ -357,7 +475,10 @@ function translateAssistantMessage(msg: Message): AnthropicMessage {
       type: "tool_use",
       id: sanitizeId(call.id),
       name: call.function.name,
-      input: parseToolCallArguments(call.function.arguments),
+      input: parseToolCallArguments(
+        call.function.arguments,
+        call.function.name,
+      ),
     })
   }
 
@@ -399,9 +520,8 @@ function mapContentToAnthropicBlocks(
         break
       }
       case "image_url": {
-        const image = dataUrlToAnthropicImage(part.image_url.url)
+        const image = toAnthropicImage(part.image_url.url)
         if (image) blocks.push(image)
-        // Non-base64 remote URLs skipped (Anthropic only accepts base64).
         break
       }
       case "reasoning":
@@ -418,31 +538,75 @@ function mapContentToAnthropicBlocks(
   return blocks
 }
 
-function dataUrlToAnthropicImage(url: string): AnthropicImageBlock | undefined {
-  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(url)
-  if (!match) return undefined
-  const mediaType = match[1]
-  if (!SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType)) return undefined
-  return {
-    type: "image",
-    source: {
-      type: "base64",
-      media_type: mediaType as AnthropicImageBlock["source"]["media_type"],
-      data: match[2],
-    },
+/**
+ * Translates an OpenAI `image_url` to an Anthropic image block.
+ *
+ * `data:` URLs become a base64 source. Remote http(s) URLs become a `url`
+ * source, which Anthropic fetches itself — dropping them instead (as this did
+ * originally) leaves the model answering an image question from text alone,
+ * with nothing on the wire to say an image went missing. An upstream that only
+ * implements base64 sources will reject the block, which is a louder and more
+ * fixable failure than a silently degraded answer.
+ *
+ * Anything else (blob:, file:, unsupported media types) has no representation
+ * and is dropped with a warning.
+ */
+function toAnthropicImage(url: string): AnthropicImageBlock | undefined {
+  const dataUrl = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(url)
+  if (dataUrl) {
+    const mediaType = dataUrl[1]
+    if (!SUPPORTED_IMAGE_MEDIA_TYPES.has(mediaType)) {
+      logger.warn(
+        `[chat-to-messages] dropping image with unsupported media type: ${mediaType}`,
+      )
+      return undefined
+    }
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: mediaType as AnthropicImageMediaType,
+        data: dataUrl[2],
+      },
+    }
   }
+
+  if (/^https?:\/\//i.test(url)) {
+    return { type: "image", source: { type: "url", url } }
+  }
+
+  logger.warn(
+    `[chat-to-messages] dropping image with unsupported URL scheme: ${url.slice(0, 32)}`,
+  )
+  return undefined
 }
 
+/**
+ * Anthropic `tool_use.input` must be an object, so malformed arguments have no
+ * faithful representation and become `{}`. That substitution is silent on the
+ * wire — the client sees a well-formed call it will happily execute with no
+ * arguments — so it is logged without the raw content (may contain user data).
+ * The usual cause is a response truncated by the token limit
+ * (`finish_reason: "length"`) mid-JSON.
+ */
 function parseToolCallArguments(
   argumentsJson: string,
+  toolName: string,
 ): Record<string, unknown> {
+  if (!argumentsJson.trim()) return {}
+
   try {
     const parsed = JSON.parse(argumentsJson) as unknown
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>
     }
+    logger.warn(
+      `[chat-to-messages] tool "${toolName}" arguments are not a JSON object (${argumentsJson.length} chars), sending empty input`,
+    )
   } catch {
-    // Malformed arguments → empty input object (matches Anthropic tool_use).
+    logger.warn(
+      `[chat-to-messages] tool "${toolName}" has malformed JSON arguments (likely truncated, ${argumentsJson.length} chars), sending empty input`,
+    )
   }
   return {}
 }

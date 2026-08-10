@@ -24,13 +24,20 @@ import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
 function buildHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
-  ctx?: { anthropicVersion?: string; anthropicBeta?: string },
+  ctx?: {
+    anthropicVersion?: string
+    anthropicBeta?: string
+    sessionId?: string
+    promptCacheKey?: string
+  },
 ): Record<string, string> {
   const headers = buildBaseHeaders(connection, credential)
   headers["anthropic-version"] = ctx?.anthropicVersion ?? "2023-06-01"
   if (ctx?.anthropicBeta) {
     headers["anthropic-beta"] = ctx.anthropicBeta
   }
+  if (ctx?.sessionId) headers["x-claude-code-session-id"] = ctx.sessionId
+  if (ctx?.promptCacheKey) headers["prompt_cache_key"] = ctx.promptCacheKey
   if (credential.authMode !== "bearer") {
     delete headers["Authorization"]
     const headerName = credential.headerName ?? "x-api-key"
@@ -63,6 +70,11 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
       headers: buildHeaders(connection, credential, {
         anthropicVersion: forwardedHeaders["anthropic-version"],
         anthropicBeta: forwardedHeaders["anthropic-beta"],
+        sessionId:
+          forwardedHeaders["x-claude-code-session-id"]
+          ?? forwardedHeaders["session_id"]
+          ?? forwardedHeaders["session-id"],
+        promptCacheKey: forwardedHeaders["prompt_cache_key"],
       }),
       body: JSON.stringify(upstreamPayload),
       signal,
