@@ -88,6 +88,13 @@ export default config(
       "max-lines": "off",
     },
   },
+  // Chat-to-responses is the hub translator with many protocol variants
+  {
+    files: ["src/services/copilot/chat-to-responses.ts"],
+    rules: {
+      "max-lines": "off",
+    },
+  },
   // Unified logger: disallow direct consola / legacy file-logger imports.
   {
     files: ["src/**/*.ts"],

@@ -43,6 +43,20 @@ function calculateToolCallsTokens(
   return tokens
 }
 
+/**
+ * Wire-only placeholder — must match EMPTY_TEXT_PLACEHOLDER in
+ * services/protocols/openai/chat-to-messages.ts (lib→services import would
+ * violate repo layering, cf. ReasoningPartLike in lib/thinking.ts).
+ * Defensive on current call sites: getTokenCount only sees client payloads,
+ * never the translated outbound payload where this placeholder is synthesized,
+ * so this branch is dead today (see tests/tokenizer.test.ts drift guard).
+ */
+export const PLACEHOLDER_TEXT = "(no content)"
+
+function isPlaceholderText(text: string): boolean {
+  return text === PLACEHOLDER_TEXT
+}
+
 /** Calculate tokens for content parts. */
 function calculateContentPartsTokens(
   contentParts: Array<ContentPart>,
@@ -51,16 +65,24 @@ function calculateContentPartsTokens(
   let tokens = 0
   for (const part of contentParts) {
     if (part.type === "image_url") {
-      // Avoid counting large base64 payloads; use a fixed image allowance.
       tokens +=
         part.image_url.url.startsWith("data:") ?
           85
         : counter.count(part.image_url.url) + 85
-    } else if (part.text) {
+    } else if (part.text && !isPlaceholderText(part.text)) {
       tokens += counter.count(part.text)
     }
   }
   return tokens
+}
+
+function isPlaceholderMessageContent(content: unknown): boolean {
+  return (
+    Array.isArray(content)
+    && content.length === 1
+    && (content[0] as { type?: string; text?: string }).type === "text"
+    && isPlaceholderText((content[0] as { text?: string }).text ?? "")
+  )
 }
 
 /** Calculate tokens for a single message. */
@@ -69,11 +91,12 @@ function calculateMessageTokens(
   counter: TokenCounter,
   constants: ReturnType<typeof getModelConstants>,
 ): number {
+  if (isPlaceholderMessageContent(message.content)) return 0
   const tokensPerMessage = 3
   const tokensPerName = 1
   let tokens = tokensPerMessage
   for (const [key, value] of Object.entries(message)) {
-    if (typeof value === "string") {
+    if (typeof value === "string" && !isPlaceholderText(value)) {
       tokens += counter.count(value)
     }
     if (key === "name") {

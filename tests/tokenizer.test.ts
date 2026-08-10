@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import type { Model } from "~/services/copilot/get-models"
 
-import { getTokenCount } from "~/lib/tokenizer"
+import { getTokenCount, PLACEHOLDER_TEXT } from "~/lib/tokenizer"
 
 const MODEL = {
   id: "swe-1",
@@ -67,5 +67,12 @@ describe("token estimation", () => {
     )
 
     expect(result).toEqual({ input: 92, history: 0 })
+  })
+
+  test("placeholder drift guard: tokenizer and chat-to-messages agree", async () => {
+    const { EMPTY_TEXT_PLACEHOLDER } = await import(
+      "~/services/protocols/openai/chat-to-messages"
+    )
+    expect(PLACEHOLDER_TEXT).toBe(EMPTY_TEXT_PLACEHOLDER)
   })
 })

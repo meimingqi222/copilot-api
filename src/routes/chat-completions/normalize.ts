@@ -27,8 +27,12 @@ export function normalizeChunk(
 
   const normalizedChoices = chunk.choices.map((choice) => {
     const { delta } = choice
-    // If reasoning_content is already present, nothing to do.
-    if (delta.reasoning_content !== undefined) {
+    // If reasoning_content already carries text, nothing to do. An empty
+    // string counts as absent, matching `extractReasoningTextAlias`: upstreams
+    // routinely emit `reasoning_content: ""` alongside the spelling that does
+    // hold the reasoning, and short-circuiting on it would hand the client an
+    // empty field while the real text sits one alias away.
+    if (delta.reasoning_content) {
       return choice
     }
     // Map the first non-null alias to reasoning_content.
@@ -58,7 +62,8 @@ export function normalizeResponse(
 
   const normalizedChoices = response.choices.map((choice) => {
     const { message } = choice
-    if (message.reasoning_content !== undefined) {
+    // Empty string counts as absent — see `normalizeChunk`.
+    if (message.reasoning_content) {
       return choice
     }
     const reasoningContent = extractReasoningTextAlias(message)

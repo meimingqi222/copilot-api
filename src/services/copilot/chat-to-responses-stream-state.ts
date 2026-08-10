@@ -5,7 +5,10 @@ import type {
 } from "~/services/copilot/responses-api-types"
 
 import { growByteCount } from "~/lib/bounded-text"
-import { extractReasoningTextAlias } from "~/lib/thinking"
+import {
+  extractReasoningBlockText,
+  extractReasoningTextAlias,
+} from "~/lib/thinking"
 
 const MAX_CHAT_TO_RESPONSES_BUFFER_BYTES = 32 * 1024 * 1024
 
@@ -23,6 +26,7 @@ export interface ChatToResponsesStreamState {
   createdAt: number
   createdSent: boolean
   messageOutputAdded: boolean
+  messageOutputIndex?: number
   model: string
   outputText: string
   outputTextBytes: number
@@ -57,7 +61,20 @@ export function getReasoningDelta(
 ): string {
   // Alias chain aligned with anthropic/stream-translation.ts getThinkingDelta:
   // includes reasoning_content so DeepSeek/Kimi/xAI-style deltas are captured.
-  return extractReasoningTextAlias(delta) ?? ""
+  const topLevel = extractReasoningTextAlias(delta)
+  if (topLevel) return topLevel
+
+  // OpenRouter-style upstreams carry the reasoning only in `reasoning_details`
+  // with no top-level alias at all; reading just the aliases drops the whole
+  // chain of thought from the Responses summary. Unlike getThinkingDelta this
+  // does not concatenate both sources: an upstream that echoes the same text
+  // under both would have it duplicated into the user-visible summary.
+  if (!Array.isArray(delta.reasoning_details)) return ""
+  let text = ""
+  for (const detail of delta.reasoning_details) {
+    text += extractReasoningBlockText(detail) ?? ""
+  }
+  return text
 }
 
 export function appendContentDelta(

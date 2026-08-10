@@ -60,13 +60,33 @@ export interface AnthropicTextBlock {
   cache_control?: AnthropicCacheControl
 }
 
+export type AnthropicImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp"
+
+/**
+ * Anthropic accepts two image sources. `base64` is the original inline form;
+ * `url` lets the API fetch a remote image itself, which is the only way an
+ * OpenAI `image_url` pointing at http(s) can survive the translation to
+ * Messages (see `openai/chat-to-messages.ts`). Consumers must switch on
+ * `source.type` — a `url` source carries no `media_type`/`data`.
+ */
+export type AnthropicImageSource =
+  | {
+      type: "base64"
+      media_type: AnthropicImageMediaType
+      data: string
+    }
+  | {
+      type: "url"
+      url: string
+    }
+
 export interface AnthropicImageBlock {
   type: "image"
-  source: {
-    type: "base64"
-    media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp"
-    data: string
-  }
+  source: AnthropicImageSource
 }
 
 export interface AnthropicToolResultBlock {

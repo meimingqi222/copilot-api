@@ -450,11 +450,13 @@ function buildContentEvents(
 
   const events: Array<Record<string, unknown>> = []
   if (!state.messageOutputAdded) {
+    const messageIndex = Math.max(state.toolCalls.size, 0)
     state.messageOutputAdded = true
+    state.messageOutputIndex = messageIndex
     events.push({
       type: "response.output_item.added",
       response_id: state.responseId,
-      output_index: 0,
+      output_index: messageIndex,
       item: {
         type: "message",
         id: `msg_${state.responseId}`,
@@ -467,7 +469,7 @@ function buildContentEvents(
   events.push({
     type: "response.output_text.delta",
     response_id: state.responseId,
-    output_index: 0,
+    output_index: state.messageOutputIndex ?? 0,
     delta: content,
   })
   return events
@@ -483,7 +485,9 @@ function buildToolCallEvents(
 
   const events: Array<Record<string, unknown>> = []
   for (const toolCall of toolCalls) {
-    const outputIndex = toolCall.index + (state.messageOutputAdded ? 1 : 0)
+    const messageOffset =
+      state.messageOutputAdded || state.messageOutputIndex !== undefined ? 1 : 0
+    const outputIndex = toolCall.index + messageOffset
     if (toolCall.id && toolCall.function?.name) {
       events.push(createToolCallStartedEvent(state, outputIndex, toolCall))
     }
@@ -609,27 +613,148 @@ function translateMessageToResponsesInput(
     ]
   }
 
-  if (
-    message.role === "assistant"
-    && message.tool_calls
-    && message.tool_calls.length > 0
-  ) {
-    const inputItems = buildAssistantInputItems(message)
-    if (inputItems.length > 0) {
-      return inputItems
+  if (message.role === "assistant") {
+    const reasoningText =
+      extractReasoningTextAlias(
+        message as unknown as Record<string, string | null>,
+      )
+      ?? messageTopLevelReasoningDetailsText(
+        message as unknown as Record<string, unknown>,
+      )
+      ?? extractReasoningPartsText(message.content)
+    const hasToolCalls =
+      message.tool_calls !== undefined && message.tool_calls.length > 0
+    const hasReasoningInContent =
+      Array.isArray(message.content)
+      && message.content.some(
+        (p) => p.type === "reasoning" || p.type === "thinking",
+      )
+    if (hasToolCalls) {
+      const inputItems = buildAssistantInputItems(
+        message,
+        Boolean(reasoningText && hasReasoningInContent),
+      )
+      if (inputItems.length > 0) {
+        return injectAssistantReasoning(inputItems, reasoningText)
+      }
     }
+    if (reasoningText) {
+      const content =
+        hasReasoningInContent ?
+          translateContentWithoutReasoning(message.content)
+        : translateContent(message.content)
+      const prefix: Array<ResponsesInputContent> = [
+        { type: "input_text", text: `[historical reasoning] ${reasoningText}` },
+      ]
+      if (typeof content === "string") {
+        return [
+          {
+            role: message.role,
+            content:
+              content ?
+                [...prefix, { type: "input_text" as const, text: content }]
+              : prefix,
+          },
+        ]
+      }
+      return [
+        {
+          role: message.role,
+          content: [...prefix, ...content],
+        },
+      ]
+    }
+    const translated = translateContent(message.content)
+    if (
+      translated === ""
+      || (Array.isArray(translated) && translated.length === 0)
+    ) {
+      return []
+    }
+    return [
+      {
+        role: message.role,
+        content: translated,
+      },
+    ]
   }
 
+  const translated = translateContent(message.content)
+
+  const isEmpty =
+    translated === "" || (Array.isArray(translated) && translated.length === 0)
+  if (isEmpty) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    if (message.role === "user") {
+      return [{ role: message.role, content: "" }]
+    }
+    return []
+  }
   return [
     {
       role: message.role,
-      content: translateContent(message.content),
+      content: translated,
     },
   ]
 }
 
-function buildAssistantInputItems(message: Message): Array<ResponsesInputItem> {
-  const textContent = stringifyMessageContent(message.content)
+function messageTopLevelReasoningDetailsText(
+  message: Record<string, unknown>,
+): string | undefined {
+  const details = message["reasoning_details"] as
+    | Array<{ text?: string; reasoning?: string; thinking?: string }>
+    | undefined
+  if (!Array.isArray(details) || details.length === 0) return undefined
+  const text = details.map((d) => extractReasoningBlockText(d) ?? "").join("")
+  return text || undefined
+}
+
+function injectAssistantReasoning(
+  items: Array<ResponsesInputItem>,
+  reasoningText: string | undefined,
+): Array<ResponsesInputItem> {
+  if (!reasoningText) return items
+  const first = items[0]
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (first && "role" in first && first.role === "assistant") {
+    const isStringContent = typeof first.content === "string"
+    const existing: Array<ResponsesInputContent> =
+      isStringContent ?
+        [{ type: "input_text" as const, text: first.content as string }]
+      : [...(first.content as Array<ResponsesInputContent>)]
+    return [
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "input_text" as const,
+            text: `[historical reasoning] ${reasoningText}`,
+          },
+          ...existing,
+        ],
+      },
+      ...items.slice(1),
+    ]
+  }
+  return [
+    {
+      role: "assistant" as const,
+      content: [
+        { type: "input_text", text: `[historical reasoning] ${reasoningText}` },
+      ],
+    },
+    ...items,
+  ]
+}
+
+function buildAssistantInputItems(
+  message: Message,
+  excludeReasoning = false,
+): Array<ResponsesInputItem> {
+  const textContent =
+    excludeReasoning ?
+      stringifyMessageContentWithoutReasoning(message.content)
+    : stringifyMessageContent(message.content)
   const inputItems: Array<ResponsesInputItem> = []
   if (textContent) {
     inputItems.push({
@@ -648,6 +773,38 @@ function buildAssistantInputItems(message: Message): Array<ResponsesInputItem> {
   }
 
   return inputItems
+}
+
+function stringifyMessageContentWithoutReasoning(
+  content: Message["content"],
+): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  return content
+    .flatMap((part) => {
+      switch (part.type) {
+        case "text":
+        case "output_text": {
+          return [part.text]
+        }
+        default: {
+          return []
+        }
+      }
+    })
+    .filter((part) => part.length > 0)
+    .join("\n\n")
+}
+
+function translateContentWithoutReasoning(
+  content: Message["content"],
+): string | Array<ResponsesInputContent> {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  const translated = content
+    .filter((part) => part.type !== "reasoning" && part.type !== "thinking")
+    .flatMap((part) => translateContentPart(part))
+  return translated.length > 0 ? translated : ""
 }
 
 function translateContent(
@@ -681,6 +838,12 @@ function translateContentPart(part: ContentPart): Array<ResponsesInputContent> {
           detail: part.image_url.detail,
         },
       ]
+    }
+    case "reasoning":
+    case "thinking": {
+      const text = extractReasoningBlockText(part) ?? ""
+      if (!text) return []
+      return [{ type: "input_text", text: `[reasoning:${part.type}] ${text}` }]
     }
     default: {
       return []
@@ -754,11 +917,17 @@ function getChatMessageReasoningText(
   // `routes/chat-completions/normalize.ts`, so there is no alias fallback
   // behind it.
   // An empty top-level alias counts as absent (see `extractReasoningTextAlias`)
-  // and falls through to reasoning carried as content parts.
-  return (
-    extractReasoningTextAlias(message)
-    ?? extractReasoningPartsText(message.content)
-  )
+  // and falls through to `reasoning_details` (the OpenRouter convention, and
+  // the only place such upstreams put it) and then to reasoning carried as
+  // content parts. `getReasoningDelta` walks the same order.
+  const topLevel = extractReasoningTextAlias(message)
+  if (topLevel) return topLevel
+
+  let detailsText = ""
+  for (const detail of message.reasoning_details ?? []) {
+    detailsText += extractReasoningBlockText(detail) ?? ""
+  }
+  return detailsText || extractReasoningPartsText(message.content)
 }
 
 function buildResponsesOutputFromChatMessage(
