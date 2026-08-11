@@ -43,14 +43,21 @@ export function applyOAuthQuotaSnapshot(
 
   const provider = snapshot.provider as OAuthProviderId | undefined
 
+  // xAI's `chatRemaining` is monthly credit *cents*, not a message count, so
+  // the count threshold must not mark it exhausted when the user has no monthly
+  // limit (e.g. Grok CLI weekly-credit accounts). Exhaustion for xAI is
+  // already handled by the percentage threshold (weekly/credit usage percent).
+  const countExhausted =
+    provider !== "xai"
+    && snapshot.chatRemaining !== undefined
+    && snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD
+
   const exhausted =
     !snapshot.unlimited
     && ((snapshot.premiumInteractionsRemaining !== undefined
       && snapshot.premiumInteractionsRemaining
         <= PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD)
-      || (snapshot.chatRemaining !== undefined
-        && snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD))
+      || countExhausted)
 
   setAccountQuotaState(account, exhausted ? "exhausted" : "available")
-  void provider
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { OAuthAccount } from "~/lib/accounts"
 
 import { listAccounts } from "~/lib/accounts"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
   parseCodexUsagePayload,
@@ -383,6 +384,46 @@ describe("Codex and xAI quota parsers", () => {
     expect(summary.remainingCents).toBe(900)
     expect(summary.remainingPercent).toBe(0)
     expect(summary.unlimited).toBe(false)
+  })
+
+  test("applyOAuthQuotaSnapshot does not exhaust xAI accounts with no monthly limit", () => {
+    // Regression: Grok CLI style accounts have monthly_limit = 0 and a weekly
+    // creditUsagePercent. The count threshold must not treat the $0 monthly
+    // balance as exhausted.
+    const account: OAuthAccount = {
+      id: "acct-xai-no-monthly",
+      label: "xAI (Grok CLI)",
+      provider: "xai",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: { accessToken: "token" },
+    }
+
+    applyOAuthQuotaSnapshot(account, {
+      fetchedAt: Date.now(),
+      provider: "xai",
+      unlimited: false,
+      premiumInteractionsRemaining: 94,
+      chatRemaining: 0,
+      chatTotal: 0,
+      details: {},
+    })
+
+    expect(account.quotaState).toBe("available")
+
+    applyOAuthQuotaSnapshot(account, {
+      fetchedAt: Date.now(),
+      provider: "xai",
+      unlimited: false,
+      premiumInteractionsRemaining: 0,
+      chatRemaining: 0,
+      chatTotal: 0,
+      details: {},
+    })
+
+    expect(account.quotaState).toBe("exhausted")
   })
 })
 
