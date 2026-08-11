@@ -3,12 +3,19 @@ function logsView() {
     loading: false,
     entries: [],
     total: 0,
+    selectedLog: null,
     autoRefresh: false,
     refreshTimer: null,
-    filters: { level: "", search: "", limit: 50, offset: 0 },
+    filters: {
+      level: "",
+      apiKind: "",
+      outcome: "",
+      search: "",
+      limit: 50,
+      offset: 0,
+    },
 
     init() {
-      // Watch autoRefresh and start/stop timer accordingly
       this.$watch("autoRefresh", (enabled) => {
         if (enabled) {
           this.startAutoRefresh()
@@ -19,7 +26,6 @@ function logsView() {
     },
 
     startAutoRefresh() {
-      // Refresh every 5 seconds when auto-refresh is enabled
       this.refreshTimer = setInterval(() => {
         this.load()
       }, 5000)
@@ -38,11 +44,49 @@ function logsView() {
         const data = await API.logs.get(this.filters)
         this.entries = data.entries || []
         this.total = data.total || 0
+        if (this.selectedLog) {
+          this.selectedLog =
+            this.entries.find(
+              (entry) => entry.requestId === this.selectedLog.requestId,
+            ) ?? null
+        }
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
         this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    clearFilters() {
+      this.filters = {
+        level: "",
+        apiKind: "",
+        outcome: "",
+        search: "",
+        limit: 50,
+        offset: 0,
+      }
+      this.load()
+    },
+
+    async exportLogs() {
+      try {
+        const response = await API.logs.exportLogs(this.filters)
+        const blob = await response.blob()
+        const disposition = response.headers.get("content-disposition") || ""
+        const match = disposition.match(/filename="?([^"]+)"?/)
+        const filename = match ? match[1] : "copilot-api-logs.jsonl"
+        const url = URL.createObjectURL(blob)
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = filename
+        document.body.append(anchor)
+        anchor.click()
+        anchor.remove()
+        URL.revokeObjectURL(url)
+      } catch {
+        this.showToast(I18n.t("error.load"), "error")
       }
     },
 
@@ -70,6 +114,24 @@ function logsView() {
       return map[level] || "badge-info"
     },
 
+    formatJson(value) {
+      return JSON.stringify(value ?? null, null, 2)
+    },
+
+    formatUpstream(log) {
+      if (!log) return "-"
+      if (log.connectionName) {
+        const connection =
+          log.provider && log.provider !== log.connectionName ?
+            `${log.provider}/${log.connectionName}`
+          : log.connectionName
+        return log.credentialLabel ?
+            `${connection} · ${log.credentialLabel}`
+          : connection
+      }
+      return log.finalTarget || log.connectionId || log.provider || "-"
+    },
+
     showToast(msg, type) {
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) Alpine.$data(app).showToast(msg, type)
@@ -82,7 +144,6 @@ function logsView() {
         : new Date(ts).toLocaleString()
     },
     t(key, params) {
-      // Access parent lang to establish reactive dependency
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) void Alpine.$data(app).lang
       return I18n.t(key, params)

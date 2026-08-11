@@ -139,14 +139,23 @@ export function setCodexTranscript(
   return transcriptStoreResult(transcripts.has(key), bytes)
 }
 
-/** Append completed output items in-place before storing the transcript. */
+/**
+ * Appends completed output items and stores the result. Builds a *new* array
+ * rather than pushing onto `fullInput` in place: `fullInput` can be
+ * `buildResponsesTranscriptInput`'s untracked return value, which is the
+ * caller's own `payload.input` array by reference (not a copy) — mutating it
+ * here would leak upstream response output items into the caller's payload
+ * object. Previously this was safe only because every call site happened to
+ * gate the write on the same condition `buildResponsesTranscriptInput` used
+ * to decide whether to copy; making this non-mutating removes that implicit
+ * coupling between two independent call sites.
+ */
 export function appendCodexTranscript(
   key: string,
   fullInput: Array<unknown>,
   output: Array<unknown>,
 ): TranscriptStoreResult {
-  for (const item of output) fullInput.push(item)
-  return setCodexTranscript(key, fullInput)
+  return setCodexTranscript(key, [...fullInput, ...output])
 }
 
 /** Build a replay array only when transcript tracking needs ownership. */

@@ -7,6 +7,13 @@ import { buildAnthropicContextWindowError } from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
+  beginStreamLog,
+  finishRequestLog,
+  markStreamTerminal,
+  patchRequestLog,
+  recordTraceError,
+} from "~/lib/request-log"
+import {
   handleSseStream,
   type SSEStream,
   writeSseEvent,
@@ -35,6 +42,7 @@ import {
   type CopilotStream,
 } from "~/services/protocols/anthropic"
 
+import { isMessagesOutputEvent } from "./logging"
 import { recordStreamingUsage, type UsageInfo } from "./usage-recorder"
 
 export interface HandleStreamingResponseOptions {
@@ -97,6 +105,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
 
     applyUsageIdentity(c, result.identity)
     c.set("model", openAIPayload.model)
+    patchRequestLog(c, { streaming: false })
 
     if (isNonStreaming(result)) {
       const elapsed = Date.now() - nonStreamStart
@@ -113,59 +122,72 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
 
   const estimatedInputTokens = await estimateInputTokens(openAIPayload)
 
-  return handleSseStream(c, async (stream, sseSignal) => {
-    const streamStartTs = Date.now()
-    let result
-    try {
-      result = await dispatchChatCompletions(
-        openAIPayload,
-        admission,
-        sseSignal,
-        c,
-        { forwardedHeaders },
-      )
-    } catch (error) {
-      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-      if (knownError) {
-        const errPayload = {
-          type: "error",
-          error: {
-            type: knownError.type,
-            message: knownError.message,
-          },
+  beginStreamLog(c)
+  return handleSseStream(
+    c,
+    async (stream, sseSignal) => {
+      const streamStartTs = Date.now()
+      let result
+      try {
+        result = await dispatchChatCompletions(
+          openAIPayload,
+          admission,
+          sseSignal,
+          c,
+          { forwardedHeaders },
+        )
+      } catch (error) {
+        recordTraceError(c, error)
+        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+        if (knownError) {
+          const errPayload = {
+            type: "error",
+            error: {
+              type: knownError.type,
+              message: knownError.message,
+            },
+          }
+          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
+          return
         }
-        await writeSseEvent(stream, JSON.stringify(errPayload), "error")
+        if (error instanceof HTTPError && isContextWindowError(error)) {
+          logger.warn("Context window exceeded")
+          const errPayload = buildAnthropicContextWindowError(error)
+          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
+          return
+        }
+        throw error
+      }
+
+      applyUsageIdentity(c, result.identity)
+      c.set("model", openAIPayload.model)
+      patchRequestLog(c, { streaming: true })
+
+      if (isNonStreaming(result)) {
+        const elapsed = Date.now() - streamStartTs
+        handleNonStreamingResponse(
+          c,
+          result.accountId,
+          result.response,
+          elapsed,
+        )
+        markStreamTerminal(c, "message_stop", "success", true)
         return
       }
-      if (error instanceof HTTPError && isContextWindowError(error)) {
-        logger.warn("Context window exceeded")
-        const errPayload = buildAnthropicContextWindowError(error)
-        await writeSseEvent(stream, JSON.stringify(errPayload), "error")
-        return
-      }
-      throw error
-    }
 
-    applyUsageIdentity(c, result.identity)
-    c.set("model", openAIPayload.model)
-
-    if (isNonStreaming(result)) {
-      const elapsed = Date.now() - streamStartTs
-      handleNonStreamingResponse(c, result.accountId, result.response, elapsed)
-      return
-    }
-
-    await handleStreamingResponse({
-      stream,
-      response: result.response,
-      clientSignal: sseSignal,
-      c,
-      accountId: result.accountId,
-      estimatedInputTokens,
-      skipPing: true,
-      streamStartTs,
-    })
-  })
+      await handleStreamingResponse({
+        stream,
+        response: result.response,
+        clientSignal: sseSignal,
+        c,
+        accountId: result.accountId,
+        estimatedInputTokens,
+        skipPing: true,
+        streamStartTs,
+      })
+    },
+    { onFinally: () => finishRequestLog(c) },
+  )
 }
 
 function logDuplicateToolCallIds(
@@ -280,10 +302,6 @@ async function handleStreamingResponse({
         continue
       }
 
-      if (!firstChunkTs) {
-        firstChunkTs = Date.now()
-      }
-
       const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
       if (logger.level >= 4) {
         logger.debug("Copilot raw stream event:", JSON.stringify(rawEvent))
@@ -293,6 +311,9 @@ async function handleStreamingResponse({
         chunk,
         streamState,
       )
+      if (translatedEvents.some((event) => isMessagesOutputEvent(event))) {
+        firstChunkTs ??= Date.now()
+      }
       if (logger.level >= 4) {
         for (const event of translatedEvents) {
           logger.debug("Translated Anthropic event:", JSON.stringify(event))
@@ -337,6 +358,12 @@ async function handleStreamingResponse({
     throw error
   } finally {
     if (c) {
+      markStreamTerminal(
+        c,
+        streamState.messageStopSent ? "message_stop" : "missing",
+        streamState.messageStopSent ? "success" : "incomplete",
+        Boolean(firstChunkTs),
+      )
       recordStreamingUsage(
         c,
         accountId,

@@ -324,11 +324,37 @@ const API = {
       if (filters.limit) params.set("limit", filters.limit.toString())
       if (filters.offset !== undefined)
         params.set("offset", filters.offset.toString())
+      if (filters.apiKind) params.set("apiKind", filters.apiKind)
+      if (filters.outcome) params.set("outcome", filters.outcome)
+      if (filters.provider) params.set("provider", filters.provider)
+      if (filters.requestId) params.set("requestId", filters.requestId)
+      if (filters.timeFrom) params.set("timeFrom", filters.timeFrom)
+      if (filters.timeTo) params.set("timeTo", filters.timeTo)
 
       const query = params.toString()
       return API.request(`/logs${query ? "?" + query : ""}`)
     },
     getRecent: (limit = 10) => API.request(`/logs?limit=${limit}`),
+    exportLogs: async (filters = {}) => {
+      const params = new URLSearchParams()
+      if (filters.level) params.set("level", filters.level)
+      if (filters.search) params.set("search", filters.search)
+      if (filters.apiKind) params.set("apiKind", filters.apiKind)
+      if (filters.outcome) params.set("outcome", filters.outcome)
+      if (filters.provider) params.set("provider", filters.provider)
+      if (filters.requestId) params.set("requestId", filters.requestId)
+      if (filters.timeFrom) params.set("timeFrom", filters.timeFrom)
+      if (filters.timeTo) params.set("timeTo", filters.timeTo)
+      if (filters.limit) params.set("limit", filters.limit.toString())
+      const response = await fetch(
+        `${API.baseUrl}/logs/export?${params.toString()}`,
+      )
+      if (!response.ok) {
+        const err = await response.text()
+        throw API.extractErrorMessage(err, response.status)
+      }
+      return response
+    },
   },
 
   // Guard

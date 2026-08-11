@@ -13,6 +13,14 @@ import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
+  beginStreamLog,
+  finishRequestLog,
+  markStreamTerminal,
+  patchRequestLog,
+  recordTraceError,
+} from "~/lib/request-log"
+import { resolveTranscriptScopeId } from "~/lib/request-scope"
+import {
   createSsePingInterval,
   forwardSseEvent,
   writeSseComment,
@@ -32,6 +40,12 @@ import { isAbortError } from "~/lib/utils"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
 import { dispatchResponses } from "~/services/dispatch/responses"
+
+import {
+  getResponsesStatusOutcome,
+  hasResponsesOutput,
+  isResponsesOutputEvent,
+} from "./logging"
 
 type ResponsesExecutionResult =
   | {
@@ -107,19 +121,26 @@ export async function handleResponses(c: Context) {
 
   // Dispatch all admissions through the unified failover path so the usage
   // identity always describes the target that actually completed the request.
+  // transcriptScopeId is the same per-principal scope the Responses WebSocket
+  // handler computes (~/lib/request-scope) — plain HTTP callers need it too so
+  // a chained Codex turn that lands on a fresh upstream socket can recover via
+  // the transcript cache instead of only ever hitting the 409 fallback.
   const executeRequest = (): Promise<ResponsesExecutionResult> =>
     dispatchResponses(effectivePayload, admission, signal, c, {
       initiator: admission.initiator,
       forwardedHeaders,
+      transcriptScopeId: resolveTranscriptScopeId(c),
     }) as Promise<ResponsesExecutionResult>
 
   if (payload.stream) {
+    beginStreamLog(c)
     return streamSSE(c, async (stream) => {
       await writeSseComment(stream)
       const pingInterval = createSsePingInterval(stream)
       let accountId: string | undefined
       let completedResponse: ResponsesResponse | undefined
       let firstChunkTs: number | undefined
+      let outputObserved = false
       const streamStartTs = Date.now()
 
       try {
@@ -130,6 +151,7 @@ export async function handleResponses(c: Context) {
           result.identity ?? identityFromAdmission(admission),
         )
         c.set("model", payload.model)
+        patchRequestLog(c, { streaming: true })
 
         if (isNonStreaming(result.response)) {
           const elapsed = Date.now() - streamStartTs
@@ -145,6 +167,12 @@ export async function handleResponses(c: Context) {
             streaming: false,
           })
           await writeSseEvent(stream, JSON.stringify(result.response))
+          markStreamTerminal(
+            c,
+            "response.completed",
+            "success",
+            hasResponsesOutput(result.response),
+          )
           return
         }
 
@@ -157,11 +185,11 @@ export async function handleResponses(c: Context) {
             continue
           }
 
-          if (!firstChunkTs) {
-            firstChunkTs = Date.now()
-          }
-
           const parsed = JSON.parse(event.data) as Record<string, unknown>
+          if (isResponsesOutputEvent(parsed)) {
+            outputObserved = true
+            firstChunkTs ??= Date.now()
+          }
           if (
             parsed.type === "response.completed"
             && parsed.response
@@ -169,6 +197,12 @@ export async function handleResponses(c: Context) {
           ) {
             completedResponse = parsed.response as ResponsesResponse
             sawTerminal = true
+            markStreamTerminal(
+              c,
+              "response.completed",
+              "success",
+              hasResponsesOutput(completedResponse),
+            )
           } else if (
             typeof parsed.type === "string"
             && (parsed.type === "response.failed"
@@ -176,12 +210,20 @@ export async function handleResponses(c: Context) {
               || parsed.type === "error")
           ) {
             sawTerminal = true
+            const terminal = parsed.type as string
+            markStreamTerminal(
+              c,
+              terminal,
+              terminal === "response.incomplete" ? "incomplete" : "failed",
+              outputObserved,
+            )
           }
 
           await forwardSseEvent(stream, event)
         }
 
         if (!completedResponse && !sawTerminal) {
+          markStreamTerminal(c, "missing", "incomplete", outputObserved)
           await writeResponsesErrorEvent(
             stream,
             new Error("Upstream stream ended without response.completed"),
@@ -189,9 +231,12 @@ export async function handleResponses(c: Context) {
         }
       } catch (error) {
         if (isAbortError(error) && signal.aborted) {
+          markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
           return
         }
 
+        recordTraceError(c, error)
+        markStreamTerminal(c, "error", "failed", outputObserved)
         await writeResponsesErrorEvent(stream, error)
       } finally {
         clearInterval(pingInterval)
@@ -209,6 +254,7 @@ export async function handleResponses(c: Context) {
             ttftMs,
           })
         }
+        finishRequestLog(c)
       }
     })
   }
@@ -217,6 +263,7 @@ export async function handleResponses(c: Context) {
   const result = await executeRequest()
   applyUsageIdentity(c, result.identity ?? identityFromAdmission(admission))
   c.set("model", payload.model)
+  patchRequestLog(c, { streaming: false })
   if (!isNonStreaming(result.response)) {
     throw new Error("Expected non-streaming response for non-stream request")
   }
@@ -230,6 +277,11 @@ export async function handleResponses(c: Context) {
     response: result.response,
     tps,
     streaming: false,
+  })
+  patchRequestLog(c, {
+    outcome: getResponsesStatusOutcome(result.response.status),
+    outputObserved: hasResponsesOutput(result.response),
+    protocolTerminal: `response.${result.response.status ?? "completed"}`,
   })
   return c.json(result.response)
 }

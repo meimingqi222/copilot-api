@@ -3,6 +3,7 @@ import { upgradeWebSocket } from "hono/bun"
 
 import { forwardError } from "~/lib/error"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
+import { recordTraceError } from "~/lib/request-log"
 
 import { handleResponses } from "./handler"
 import { createResponsesWebSocketSession } from "./ws-handler"
@@ -32,6 +33,7 @@ responsesRoutes.post("/", async (c) => {
   try {
     return await handleResponses(c)
   } catch (error) {
+    recordTraceError(c, error)
     const knownErrorResponse = respondToKnownRouteError(
       c,
       error,

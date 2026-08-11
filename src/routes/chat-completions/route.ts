@@ -2,6 +2,7 @@ import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
+import { recordTraceError } from "~/lib/request-log"
 
 import { handleCompletion } from "./handler"
 
@@ -11,6 +12,7 @@ completionRoutes.post("/", async (c) => {
   try {
     return await handleCompletion(c)
   } catch (error) {
+    recordTraceError(c, error)
     const knownErrorResponse = respondToKnownRouteError(
       c,
       error,

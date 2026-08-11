@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { forwardError, HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
+import { recordTraceError } from "~/lib/request-log"
 import { recordUsage } from "~/lib/usage"
 import {
   createEmbeddings,
@@ -44,6 +45,7 @@ embeddingRoutes.post("/", async (c) => {
 
     return c.json(result.response)
   } catch (error) {
+    recordTraceError(c, error)
     return forwardError(c, error)
   }
 })

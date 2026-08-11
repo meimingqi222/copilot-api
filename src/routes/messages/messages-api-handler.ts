@@ -7,6 +7,12 @@ import { HTTPError } from "~/lib/error"
 import { buildAnthropicUpstreamError } from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
+import {
+  beginStreamLog,
+  finishRequestLog,
+  markStreamTerminal,
+  recordTraceError,
+} from "~/lib/request-log"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { createMessages } from "~/services/copilot/create-messages"
 import { isDirectAnthropicResponse } from "~/services/protocols/anthropic"
@@ -70,63 +76,78 @@ export async function handleMessagesApi(opts: HandleMessagesApiOpts) {
     }
   }
 
-  return handleSseStream(c, async (stream, sseSignal) => {
-    const streamStartTs = Date.now()
-    try {
-      const result = await createMessages(anthropicPayload, {
-        account,
-        signal: sseSignal,
-        initiatorOverride: initiator,
-        forwardedHeaders: mergedForwardedHeaders,
-        c,
-      })
+  beginStreamLog(c)
+  return handleSseStream(
+    c,
+    async (stream, sseSignal) => {
+      const streamStartTs = Date.now()
+      try {
+        const result = await createMessages(anthropicPayload, {
+          account,
+          signal: sseSignal,
+          initiatorOverride: initiator,
+          forwardedHeaders: mergedForwardedHeaders,
+          c,
+        })
 
-      c.set("accountId", result.accountId)
-      c.set("model", anthropicPayload.model)
+        c.set("accountId", result.accountId)
+        c.set("model", anthropicPayload.model)
 
-      if (isDirectAnthropicResponse(result.response)) {
-        const elapsed = Date.now() - streamStartTs
-        const tps =
-          elapsed > 0 ?
-            result.response.usage.output_tokens / (elapsed / 1000)
-          : 0
-        recordAnthropicUsage(c, result.accountId, result.response, tps)
-        return
-      }
-
-      await handleDirectStreamingResponse({
-        stream,
-        response: result.response,
-        clientSignal: sseSignal,
-        c,
-        accountId: result.accountId,
-        skipPing: true,
-        streamStartTs,
-      })
-    } catch (error) {
-      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-      if (knownError) {
-        const errPayload = {
-          type: "error",
-          error: {
-            type: knownError.type,
-            message: knownError.message,
-          },
+        if (isDirectAnthropicResponse(result.response)) {
+          const elapsed = Date.now() - streamStartTs
+          const tps =
+            elapsed > 0 ?
+              result.response.usage.output_tokens / (elapsed / 1000)
+            : 0
+          recordAnthropicUsage(c, result.accountId, result.response, tps)
+          markStreamTerminal(c, "message_stop", "success", true)
+          return
         }
-        await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
-        return
+
+        await handleDirectStreamingResponse({
+          stream,
+          response: result.response,
+          clientSignal: sseSignal,
+          c,
+          accountId: result.accountId,
+          skipPing: true,
+          streamStartTs,
+        })
+      } catch (error) {
+        recordTraceError(c, error)
+        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+        if (knownError) {
+          const errPayload = {
+            type: "error",
+            error: {
+              type: knownError.type,
+              message: knownError.message,
+            },
+          }
+          await writeSseEvent(
+            stream,
+            JSON.stringify(errPayload),
+            errPayload.type,
+          )
+          return
+        }
+        if (error instanceof HTTPError) {
+          logger.error(
+            "Messages API upstream error",
+            error.response.status,
+            error.responseBody,
+          )
+          const errPayload = buildAnthropicUpstreamError(error)
+          await writeSseEvent(
+            stream,
+            JSON.stringify(errPayload),
+            errPayload.type,
+          )
+          return
+        }
+        throw error
       }
-      if (error instanceof HTTPError) {
-        logger.error(
-          "Messages API upstream error",
-          error.response.status,
-          error.responseBody,
-        )
-        const errPayload = buildAnthropicUpstreamError(error)
-        await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
-        return
-      }
-      throw error
-    }
-  })
+    },
+    { onFinally: () => finishRequestLog(c) },
+  )
 }

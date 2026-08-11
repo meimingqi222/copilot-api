@@ -6,9 +6,11 @@ import path from "node:path"
 import {
   buildRotatedLogFileName,
   isLogDateExpired,
+  listExpiredRequestLogs,
   listExpiredRotatedLogFiles,
   parseRotatedLogFileName,
   pruneExpiredLogFiles,
+  pruneExpiredRequestLogs,
   RotatingLogFileSink,
 } from "~/lib/log-rotation"
 
@@ -66,9 +68,11 @@ describe("retention", () => {
     const oldFile = path.join(logDir, "server-2026-06-10.log")
     const keepFile = path.join(logDir, "server-2026-06-25.log")
     const noiseFile = path.join(logDir, "notes.txt")
+    const oldRequestFile = path.join(logDir, "requests-2026-06-10.jsonl")
     fs.writeFileSync(oldFile, "old")
     fs.writeFileSync(keepFile, "keep")
     fs.writeFileSync(noiseFile, "ignore")
+    fs.writeFileSync(oldRequestFile, "old-request")
 
     const now = new Date("2026-06-27T12:00:00.000Z")
     const removed = pruneExpiredLogFiles(
@@ -76,11 +80,41 @@ describe("retention", () => {
       now,
     )
 
+    // server 日志清理不碰 requests-*.jsonl(由 pruneExpiredRequestLogs 单独管理)
     expect(removed).toBe(1)
     expect(fs.existsSync(oldFile)).toBe(false)
     expect(fs.existsSync(keepFile)).toBe(true)
     expect(fs.existsSync(noiseFile)).toBe(true)
+    expect(fs.existsSync(oldRequestFile)).toBe(true)
     expect(listExpiredRotatedLogFiles(logDir, now, 7)).toHaveLength(0)
+
+    rmDir(logDir)
+  })
+
+  test("pruneExpiredRequestLogs removes only expired request jsonl", () => {
+    const logDir = tempLogDir()
+    fs.mkdirSync(logDir, { recursive: true })
+    const oldRequestFile = path.join(logDir, "requests-2026-06-10.jsonl")
+    const keepRequestFile = path.join(logDir, "requests-2026-06-25.jsonl")
+    const noiseFile = path.join(logDir, "notes.txt")
+    const serverFile = path.join(logDir, "server-2026-06-10.log")
+    fs.writeFileSync(oldRequestFile, "old-request")
+    fs.writeFileSync(keepRequestFile, "keep-request")
+    fs.writeFileSync(noiseFile, "ignore")
+    fs.writeFileSync(serverFile, "old-server")
+
+    const now = new Date("2026-06-27T12:00:00.000Z")
+    const removed = pruneExpiredRequestLogs(
+      { logDir, maxFileBytes: 1024, retentionDays: 7 },
+      now,
+    )
+
+    expect(removed).toBe(1)
+    expect(fs.existsSync(oldRequestFile)).toBe(false)
+    expect(fs.existsSync(keepRequestFile)).toBe(true)
+    expect(fs.existsSync(noiseFile)).toBe(true)
+    expect(fs.existsSync(serverFile)).toBe(true)
+    expect(listExpiredRequestLogs(logDir, now, 7)).toHaveLength(0)
 
     rmDir(logDir)
   })

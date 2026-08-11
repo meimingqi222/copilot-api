@@ -5,6 +5,7 @@ import { getCopilotToken } from "~/lib/accounts"
 import { forwardError } from "~/lib/error"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
+import { recordTraceError } from "~/lib/request-log"
 
 export const tokenRoute = new Hono()
 
@@ -16,6 +17,7 @@ tokenRoute.get("/", (c) => {
       token: getCopilotToken(account),
     })
   } catch (error) {
+    recordTraceError(c, error)
     const knownErrorResponse = respondToKnownRouteError(
       c,
       error,
@@ -25,6 +27,7 @@ tokenRoute.get("/", (c) => {
       return knownErrorResponse
     }
 
+    recordTraceError(c, error)
     return forwardError(c, error)
   }
 })

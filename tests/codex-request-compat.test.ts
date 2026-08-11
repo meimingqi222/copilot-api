@@ -2,7 +2,15 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import type { Account } from "~/lib/accounts"
 
-import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
+import {
+  createCodexResponsesOnce,
+  finalizeCodexOutboundBody,
+} from "~/services/codex/create-responses-once"
+import {
+  clearCodexTranscript,
+  codexTranscriptKey,
+  setCodexTranscript,
+} from "~/services/codex/ws-transcript-cache"
 
 const originalFetch = globalThis.fetch
 
@@ -47,7 +55,15 @@ function sseOkBody(): Response {
 /** Runs one createCodexResponsesOnce call and returns the posted upstream body. */
 async function capturePostedBody(
   payload: Record<string, unknown>,
-  opts: { headers?: Record<string, string> } = {},
+  opts: {
+    headers?: Record<string, string>
+    /**
+     * Transcript recovery fails closed without a tenant scope, so any test
+     * exercising the replay path must model a real scoped caller (both route
+     * handlers always supply one — see ~/lib/request-scope).
+     */
+    transcriptScopeId?: string
+  } = {},
 ): Promise<Record<string, unknown>> {
   let postedBody: Record<string, unknown> | undefined
   globalThis.fetch = ((_url: unknown, init: RequestInit) => {
@@ -59,7 +75,10 @@ async function capturePostedBody(
     makeAccount(),
     payload as never,
     undefined,
-    { forwardedHeaders: opts.headers ?? {} },
+    {
+      forwardedHeaders: opts.headers ?? {},
+      transcriptScopeId: opts.transcriptScopeId,
+    },
   )
   for await (const _e of stream as AsyncIterable<unknown>) {
     // drain
@@ -201,5 +220,144 @@ describe("codex request compatibility (CPA parity)", () => {
       generate: { kind: "spawn_agent" },
     })
     expect(Object.hasOwn(body, "generate")).toBe(false)
+  })
+
+  // `generate` is WebSocket-only (CPA deletes it only on the HTTP path). The
+  // HTTP-capture harness above cannot observe the WS-bound body, so exercise
+  // finalizeCodexOutboundBody's transport branch directly. Like the rest of
+  // this module, the strip is done by setting the field to `undefined` and
+  // relying on JSON.stringify to drop it on the actual wire (see the
+  // "generate is stripped" test above), so assert on the value here rather
+  // than `Object.hasOwn`.
+  test("finalizeCodexOutboundBody keeps generate for ws transport, strips for http", () => {
+    const body = {
+      model: "gpt-5",
+      input: [{ type: "message", role: "user", content: "hi" }],
+      generate: { kind: "spawn_agent" },
+    }
+    expect(finalizeCodexOutboundBody(body, "ws").generate).toEqual({
+      kind: "spawn_agent",
+    })
+    expect(finalizeCodexOutboundBody(body, "http").generate).toBeUndefined()
+  })
+
+  // The chained-replay body rebuilds `input` from the raw client delta plus the
+  // transcript, so it does not inherit the normalization applied to
+  // `upstreamBody.input`. Both halves must still be rewritten.
+  test("chained HTTP replay body rewrites role system in transcript and delta", async () => {
+    const sessionKey = "codex-replay-system-role"
+    const scopeId = "user:replay-system-role"
+    const key = codexTranscriptKey(`${scopeId}::${sessionKey}`, "gpt-5")
+    setCodexTranscript(key, [
+      {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: "cached system turn" }],
+      },
+    ])
+
+    try {
+      const body = await capturePostedBody(
+        {
+          model: "gpt-5",
+          stream: true,
+          prompt_cache_key: sessionKey,
+          previous_response_id: "resp_prev",
+          input: [
+            {
+              type: "message",
+              role: "system",
+              content: [{ type: "input_text", text: "delta system turn" }],
+            },
+            {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "hi" }],
+            },
+          ],
+        },
+        { transcriptScopeId: scopeId },
+      )
+
+      const roles = (body.input as Array<{ role?: string }>).map(
+        (item) => item.role,
+      )
+      expect(roles).toEqual(["developer", "developer", "user"])
+      // HTTP never chains; the replay body carries the full input instead.
+      expect(Object.hasOwn(body, "previous_response_id")).toBe(false)
+    } finally {
+      clearCodexTranscript(key)
+    }
+  })
+
+  // P0 invariant: every body sent upstream passes through the single
+  // `finalizeCodexOutboundBody` boundary. This is a general parity check
+  // (not an enumeration of known fields) so a future field-level transform
+  // that gets added to only one of the two body-construction paths (primary
+  // vs. transcript-replay) fails this test instead of silently diverging —
+  // the same failure shape as the system-role bug fixed above.
+  test("replay body matches the primary body field-by-field except input and previous_response_id", async () => {
+    const EXEMPT_FIELDS = new Set(["input", "previous_response_id"])
+    const sessionKey = "codex-invariant-session"
+    const scopeId = "user:codex-invariant"
+    const basePayload = {
+      model: "gpt-5",
+      stream: true,
+      prompt_cache_key: sessionKey,
+      tools: [{ type: "function", name: "lookup" }],
+      parallel_tool_calls: true,
+      service_tier: "priority",
+      stream_options: {
+        reasoning_summary_delivery: "sequential_cutoff",
+        include_usage: true,
+      },
+    }
+
+    const primaryBody = await capturePostedBody(
+      {
+        ...basePayload,
+        input: [{ type: "message", role: "user", content: "hi" }],
+      },
+      { transcriptScopeId: scopeId },
+    )
+
+    const key = codexTranscriptKey(`${scopeId}::${sessionKey}`, "gpt-5")
+    setCodexTranscript(key, [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "cached" }],
+      },
+    ])
+    let replayBody: Record<string, unknown>
+    try {
+      replayBody = await capturePostedBody(
+        {
+          ...basePayload,
+          previous_response_id: "resp_prev",
+          input: [
+            {
+              type: "message",
+              role: "user",
+              content: [{ type: "input_text", text: "hi" }],
+            },
+          ],
+        },
+        { transcriptScopeId: scopeId },
+      )
+    } finally {
+      clearCodexTranscript(key)
+    }
+
+    const primaryKeys = Object.keys(primaryBody).filter(
+      (k) => !EXEMPT_FIELDS.has(k),
+    )
+    const replayKeys = Object.keys(replayBody).filter(
+      (k) => !EXEMPT_FIELDS.has(k),
+    )
+    expect(new Set(replayKeys)).toEqual(new Set(primaryKeys))
+    for (const field of primaryKeys) {
+      expect(replayBody[field]).toEqual(primaryBody[field])
+    }
   })
 })
