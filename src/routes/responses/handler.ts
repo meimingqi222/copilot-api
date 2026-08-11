@@ -148,6 +148,7 @@ export async function handleResponses(c: Context) {
           return
         }
 
+        let sawTerminal = false
         for await (const event of result.response) {
           if (event.data === "[DONE]") {
             break
@@ -167,12 +168,20 @@ export async function handleResponses(c: Context) {
             && typeof parsed.response === "object"
           ) {
             completedResponse = parsed.response as ResponsesResponse
+            sawTerminal = true
+          } else if (
+            typeof parsed.type === "string"
+            && (parsed.type === "response.failed"
+              || parsed.type === "response.incomplete"
+              || parsed.type === "error")
+          ) {
+            sawTerminal = true
           }
 
           await forwardSseEvent(stream, event)
         }
 
-        if (!completedResponse) {
+        if (!completedResponse && !sawTerminal) {
           await writeResponsesErrorEvent(
             stream,
             new Error("Upstream stream ended without response.completed"),
