@@ -15,6 +15,13 @@ import {
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
+import {
+  beginStreamLog,
+  finishRequestLog,
+  markStreamTerminal,
+  patchRequestLog,
+  recordTraceError,
+} from "~/lib/request-log"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
 import {
@@ -187,6 +194,7 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
 
     applyUsageIdentity(c, result.identity)
     c.set("model", payload.model)
+    patchRequestLog(c, { streaming: false })
 
     if (isChatCompletionResponse(result.response)) {
       const elapsed = Date.now() - nonStreamStart
@@ -388,8 +396,10 @@ function handleStreamingResponse(
   let firstChunkTs: number | undefined
   let downstreamCommitted = false
   let lastFinishReason: string | undefined
+  let outputObserved = false
   const streamStart = Date.now()
 
+  beginStreamLog(c)
   return handleSseStream(
     c,
     async (stream) => {
@@ -410,6 +420,7 @@ function handleStreamingResponse(
           }
 
           const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+          outputObserved ||= hasChatChunkOutput(chunk)
           if (logger.level >= 4) {
             logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
@@ -433,8 +444,15 @@ function handleStreamingResponse(
         }
       } catch (error) {
         outcome = signalOutcome(c.req.raw.signal)
+        recordTraceError(c, error)
         throw error
       } finally {
+        markStreamTerminal(
+          c,
+          lastFinishReason ? "finish_reason" : "missing",
+          lastFinishReason ? "success" : "incomplete",
+          outputObserved,
+        )
         if (!usageRecorded) {
           usageRecorded = recordStreamingUsage({
             c,
@@ -456,6 +474,7 @@ function handleStreamingResponse(
     },
     {
       onAbort: () => {
+        markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
         // `run`'s `finally` has already executed by the time an abort reaches
         // this handler — the exception passes through it on the way out — so
         // this is the second attempt at the same request. Without the guard an
@@ -477,6 +496,7 @@ function handleStreamingResponse(
           finishReason: lastFinishReason ?? "aborted",
         })
       },
+      onFinally: () => finishRequestLog(c),
     },
   )
 }
@@ -562,7 +582,9 @@ function handleStreamingCompletion(
   let firstChunkTs: number | undefined
   let downstreamCommitted = false
   let lastFinishReason: string | undefined
+  let outputObserved = false
   let streamStart = 0
+  beginStreamLog(c)
   return handleSseStream(
     c,
     async (stream) => {
@@ -597,8 +619,12 @@ function handleStreamingCompletion(
 
         c.set("accountId", accountId)
         c.set("model", model)
+        patchRequestLog(c, { streaming: true })
 
         if (isChatCompletionResponse(result.response)) {
+          lastFinishReason =
+            result.response.choices[0]?.finish_reason ?? undefined
+          outputObserved = Boolean(result.response.choices[0]?.message)
           const elapsed = Date.now() - dispatchStart
           handleNonStreamingResponse(
             c,
@@ -633,6 +659,7 @@ function handleStreamingCompletion(
           }
 
           const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+          outputObserved ||= hasChatChunkOutput(chunk)
           if (logger.level >= 4) {
             logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
@@ -658,6 +685,7 @@ function handleStreamingCompletion(
         }
       } catch (error) {
         outcome = signalOutcome(signal)
+        recordTraceError(c, error)
         logger.error("Streaming error:", error)
         const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
         if (knownError?.status === 499) {
@@ -682,6 +710,12 @@ function handleStreamingCompletion(
         )
         throw error
       } finally {
+        markStreamTerminal(
+          c,
+          lastFinishReason ? "finish_reason" : "missing",
+          lastFinishReason ? "success" : "incomplete",
+          outputObserved,
+        )
         if (!usageRecorded) {
           usageRecorded = recordStreamingUsage({
             c,
@@ -703,6 +737,7 @@ function handleStreamingCompletion(
     },
     {
       onAbort: () => {
+        markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
         // `run`'s `finally` has already executed by the time an abort reaches
         // this handler — the exception passes through it on the way out — so
         // this is the second attempt at the same request. Without the guard an
@@ -724,10 +759,25 @@ function handleStreamingCompletion(
           finishReason: lastFinishReason ?? "aborted",
         })
       },
+      onFinally: () => finishRequestLog(c),
     },
   )
 }
 
 function signalOutcome(signal: AbortSignal | undefined): string {
   return signal?.aborted ? "aborted" : "error"
+}
+
+function hasChatChunkOutput(chunk: ChatCompletionChunk): boolean {
+  const delta = chunk.choices[0]?.delta as Record<string, unknown> | undefined
+  if (!delta) return false
+  return Boolean(
+    delta["content"]
+      || delta["reasoning"]
+      || delta["reasoning_content"]
+      || delta["reasoning_text"]
+      || delta["refusal"]
+      || delta["tool_calls"]
+      || delta["function_call"],
+  )
 }

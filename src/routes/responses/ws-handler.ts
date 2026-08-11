@@ -1,6 +1,6 @@
 import type { Context } from "hono"
 
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 import type {
@@ -10,6 +10,7 @@ import type {
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
 import { HTTPError } from "~/lib/error"
+import { logStore } from "~/lib/log-store"
 import { logger } from "~/lib/logger"
 import {
   beginMemoryTrace,
@@ -26,8 +27,19 @@ import {
   ClientAbortError,
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
+import {
+  bindRequestLogContext,
+  createDetachedRequestLog,
+  finalizeRequestLogContext,
+  getRequestLogContext,
+  markStreamTerminal,
+  recordTraceError,
+  restoreRequestLogContext,
+} from "~/lib/request-log"
+import { appendRequestLogSync } from "~/lib/request-log-persist"
+import { resolveTranscriptScopeId } from "~/lib/request-scope"
 import { targetKey } from "~/lib/route-target"
-import { isAbortError } from "~/lib/utils"
+import { getClientIp, isAbortError } from "~/lib/utils"
 import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
@@ -41,6 +53,18 @@ import {
   isNonStreaming,
   recordResponsesUsage,
 } from "./handler"
+import {
+  getResponsesStatusOutcome,
+  hasResponsesOutput,
+  isResponsesOutputEvent,
+  LEADING_RESPONSES_CONTROL_TYPES,
+  TERMINAL_RESPONSE_TYPES,
+} from "./logging"
+import {
+  getResponsesTerminalOutcome,
+  getResponsesWsErrorSnippet,
+  recordResponsesWsAttemptIfMissing,
+} from "./ws-attempt-log"
 
 interface ResponsesWebSocketMessage {
   type?: unknown
@@ -63,8 +87,7 @@ export function createResponsesWebSocketSession(c: Context) {
   let inFlight = false
   let turnSequence = 0
   let activeController: AbortController | undefined
-  // Sticky id for upstream WS connection reuse across multi-turn creates
-  // on this client socket (CPA execution session / passthroughSessionID).
+  let activeTurn: ReturnType<typeof createDetachedRequestLog> | undefined
   const executionSessionId = randomUUID()
   const transcriptScopeId = resolveTranscriptScopeId(c)
   logger.info(
@@ -150,6 +173,36 @@ export function createResponsesWebSocketSession(c: Context) {
       inFlight = true
       const controller = new AbortController()
       activeController = controller
+      const handshakeCtx = getRequestLogContext(c)
+      const turnCtx = createDetachedRequestLog({
+        parentRequestId: handshakeCtx?.requestId,
+        method: "WS",
+        path: c.req.path,
+        endpoint: "responses",
+        apiKind: "responses",
+        clientIp: getClientIp(c),
+        userAgent: c.req.header("user-agent") || undefined,
+        userId: c.get("userId"),
+        username: c.get("username"),
+        modelRequested: payload.model,
+        model: payload.model,
+        streaming: true,
+        outcome: "incomplete",
+      })
+      activeTurn = turnCtx
+      const previousCtx = bindRequestLogContext(c, turnCtx)
+
+      const finishTurn = (status: number) => {
+        if (turnCtx.finished) return
+        turnCtx.finished = true
+        const finalized = finalizeRequestLogContext(turnCtx, status, {
+          method: "WS",
+          path: c.req.path,
+        })
+        logStore.push(finalized)
+        appendRequestLogSync(finalized)
+      }
+      turnCtx.finish = () => finishTurn(turnCtx.entry.statusCode ?? 500)
 
       void processResponseCreate({
         c,
@@ -160,9 +213,22 @@ export function createResponsesWebSocketSession(c: Context) {
         transcriptScopeId,
         memoryTraceId,
       })
-        .then((outcome) => endMemoryTrace(memoryTraceId, outcome))
-        .catch(() => endMemoryTrace(memoryTraceId, "error"))
-        .finally(endActiveRequest)
+        .then((outcome) => {
+          endMemoryTrace(memoryTraceId, outcome)
+          if (outcome === "completed") finishTurn(200)
+          else if (outcome === "aborted") finishTurn(499)
+          else finishTurn(turnCtx.entry.upstreamStatus ?? 500)
+        })
+        .catch((error: unknown) => {
+          recordTraceError(c, error)
+          endMemoryTrace(memoryTraceId, "error")
+          finishTurn(error instanceof HTTPError ? error.response.status : 500)
+        })
+        .finally(() => {
+          restoreRequestLogContext(c, turnCtx, previousCtx)
+          if (activeTurn === turnCtx) activeTurn = undefined
+          endActiveRequest()
+        })
     },
 
     onClose(event?: CloseEvent) {
@@ -171,14 +237,13 @@ export function createResponsesWebSocketSession(c: Context) {
           + `code=${event?.code ?? 0} reason=${event?.reason || "(none)"}`,
       )
       activeController?.abort()
+      if (activeTurn) recordTraceError(c, new ClientAbortError())
+      cancelActiveTurn(activeTurn)
       endActiveRequest()
-      // Tear down sticky upstream Codex/xAI sockets for this client session.
       const closed = closeUpstreamWebsocketSessionsByExecutionId(
         executionSessionId,
         "client_disconnect",
       )
-      // Drop anonymous socket-scoped transcripts. Auth/session-scoped recovery
-      // entries use a stable key and remain bounded by TTL/capacity eviction.
       clearResponsesTranscriptsByExecutionId(executionSessionId)
       if (closed > 0) {
         logger.info(
@@ -193,6 +258,8 @@ export function createResponsesWebSocketSession(c: Context) {
           + `event=${event?.type ?? "unknown"}`,
       )
       activeController?.abort()
+      if (activeTurn) recordTraceError(c, new ClientAbortError())
+      cancelActiveTurn(activeTurn)
       endActiveRequest()
       closeUpstreamWebsocketSessionsByExecutionId(
         executionSessionId,
@@ -201,6 +268,18 @@ export function createResponsesWebSocketSession(c: Context) {
       clearResponsesTranscriptsByExecutionId(executionSessionId)
     },
   }
+}
+
+function cancelActiveTurn(
+  turn: ReturnType<typeof createDetachedRequestLog> | undefined,
+): void {
+  if (!turn || turn.finished) return
+  Object.assign(turn.entry, {
+    outcome: "cancelled",
+    protocolTerminal: "client.closed",
+    statusCode: 499,
+  })
+  turn.finish?.()
 }
 
 function parseResponsePayload(
@@ -286,6 +365,7 @@ async function processResponseCreate(
   try {
     admission = await prepareResponsesAdmission(c, payload, sessionHeaders)
   } catch (error) {
+    recordTraceError(c, error)
     updateMemoryTrace(memoryTraceId, "admission_error")
     await handleResponseError(ws, error, signal)
     return signal.aborted ? "aborted" : "error"
@@ -402,6 +482,8 @@ async function runResponsesAttempt(
   }
 
   const state = { committed: false }
+  const attemptStarted = Date.now()
+  const attemptsBefore = getRequestLogContext(c)?.entry.attempts?.length ?? 0
 
   try {
     updateMemoryTrace(memoryTraceId, "provider_request_start", {
@@ -428,6 +510,8 @@ async function runResponsesAttempt(
       streaming: !isNonStreaming(result.response),
     })
     c.set("accountId" as never, result.accountId)
+    const turn = getRequestLogContext(c)
+    if (turn) turn.entry.accountId = result.accountId
 
     let completedResponse: ResponsesResponse | undefined
     if (isNonStreaming(result.response)) {
@@ -439,8 +523,15 @@ async function runResponsesAttempt(
       updateMemoryTrace(memoryTraceId, "downstream_committed", {
         responseMode: "non_streaming",
       })
+      const terminal = `response.${result.response.status ?? "completed"}`
+      markStreamTerminal(
+        c,
+        terminal,
+        getResponsesStatusOutcome(result.response.status),
+        hasResponsesOutput(result.response),
+      )
     } else {
-      completedResponse = await pumpWithLeadingBuffer(ws, result.response, {
+      const pumped = await pumpWithLeadingBuffer(ws, result.response, {
         onCommit: () => {
           state.committed = true
           updateMemoryTrace(memoryTraceId, "downstream_committed", {
@@ -448,10 +539,15 @@ async function runResponsesAttempt(
           })
         },
       })
+      completedResponse = pumped.completedResponse
+      markStreamTerminal(
+        c,
+        pumped.terminal,
+        getResponsesTerminalOutcome(pumped.terminal),
+        pumped.outputObserved,
+      )
     }
 
-    // Usage is recorded ONLY for the account that actually committed/completed;
-    // failed accounts get cooldown via recordUpstreamFailure only.
     if (state.committed && completedResponse) {
       recordResponsesUsage({
         c,
@@ -459,37 +555,59 @@ async function runResponsesAttempt(
         response: completedResponse,
       })
     }
+    recordResponsesWsAttemptIfMissing(
+      c,
+      current,
+      attemptsBefore,
+      attemptStarted,
+      {
+        status: 200,
+      },
+    )
     return { type: "done" }
   } catch (error) {
     const failure = classifyWsFailure(error)
+    const failureStatus =
+      error instanceof HTTPError ? error.response.status : undefined
+    recordResponsesWsAttemptIfMissing(
+      c,
+      current,
+      attemptsBefore,
+      attemptStarted,
+      {
+        status: failureStatus,
+        errorCode: failure.kind,
+        errorSnippet: getResponsesWsErrorSnippet(error),
+        retryAfterMs: failure.retryAfterMs,
+      },
+    )
     updateMemoryTrace(memoryTraceId, "provider_attempt_failed", {
       failureScope: failure.scope,
       failureKind: failure.kind,
       committed: state.committed,
     })
 
-    // Client abort / closed downstream socket → stop silently.
     if (
       failure.scope === "abort"
       || error instanceof ClientAbortError
       || (isAbortError(error) && signal.aborted)
     ) {
+      recordTraceError(c, new ClientAbortError())
       return { type: "stop" }
     }
 
-    // Content already forwarded → committed; surface once, never retry.
     if (state.committed) {
+      recordTraceError(c, error)
       await handleResponseError(ws, error, signal)
       return { type: "stop" }
     }
 
-    // Lazy connection failure → one same-account HTTP recovery, WS skipped.
     if (failure.scope === "connection" && !httpRecoveryTried) {
       return { type: "retry-http" }
     }
 
-    // Request error / exhausted / repeat connection → surface once.
     if (failure.scope !== "credential") {
+      recordTraceError(c, error)
       await handleResponseError(ws, error, signal)
       return { type: "stop" }
     }
@@ -506,19 +624,12 @@ async function runResponsesAttempt(
       tried,
     )
     if (!next) {
+      recordTraceError(c, error)
       await handleResponseError(ws, error, signal)
       return { type: "stop" }
     }
     return { type: "rotate", next }
   }
-}
-
-function resolveTranscriptScopeId(c: Context): string {
-  const userId = c.get("userId" as never) as string | undefined
-  if (userId?.trim()) return `user:${userId.trim()}`
-  const credential =
-    c.req.header("authorization") ?? c.req.header("x-api-key") ?? "anonymous"
-  return createHash("sha256").update(credential).digest("hex").slice(0, 24)
 }
 
 function extractResponsesSessionHeaders(
@@ -579,19 +690,6 @@ async function prepareResponsesAdmission(
  * `response.created → response.failed(usage_limit_reached)` quota turn can
  * still fail over silently (nothing was forwarded).
  */
-const LEADING_CONTROL_TYPES = new Set([
-  "response.created",
-  "response.in_progress",
-  "response.queued",
-])
-
-const TERMINAL_RESPONSE_TYPES = new Set([
-  "response.completed",
-  "response.incomplete",
-  "response.failed",
-  "error",
-])
-
 // Bounded buffer caps: overflow flushes + commits rather than buffering
 // unbounded, trading a tiny failover window for a memory guarantee.
 const MAX_BUFFERED_EVENTS = 32
@@ -614,9 +712,15 @@ async function pumpWithLeadingBuffer(
   ws: WebSocketSendTarget,
   response: AsyncIterable<CopilotStreamEventLike>,
   hooks: PumpHooks,
-): Promise<ResponsesResponse | undefined> {
+): Promise<{
+  completedResponse?: ResponsesResponse
+  terminal: string
+  outputObserved: boolean
+}> {
   let completedResponse: ResponsesResponse | undefined
   let sawTerminal = false
+  let terminal = "error"
+  let outputObserved = false
   // Mutable state object so control-flow analysis keeps `committed` a plain
   // boolean (it is only ever flipped inside the commit closure below).
   const state = { committed: false }
@@ -664,13 +768,25 @@ async function pumpWithLeadingBuffer(
     const type = typeof parsed?.type === "string" ? parsed.type : undefined
     if (type && TERMINAL_RESPONSE_TYPES.has(type)) {
       sawTerminal = true
+      terminal = type
+      if (parsed?.response && typeof parsed.response === "object") {
+        const terminalResponse = parsed.response as ResponsesResponse
+        outputObserved ||= hasResponsesOutput(terminalResponse)
+      }
+    }
+    if (
+      type
+      && !LEADING_RESPONSES_CONTROL_TYPES.has(type)
+      && !TERMINAL_RESPONSE_TYPES.has(type)
+    ) {
+      outputObserved ||= Boolean(parsed && isResponsesOutputEvent(parsed))
     }
 
     // Buffer leading control frames until content/terminal or overflow.
     if (
       !state.committed
       && type !== undefined
-      && LEADING_CONTROL_TYPES.has(type)
+      && LEADING_RESPONSES_CONTROL_TYPES.has(type)
     ) {
       buffer.push(event.data)
       bufferedBytes += event.data.length
@@ -700,7 +816,7 @@ async function pumpWithLeadingBuffer(
     throw new Error("Upstream stream ended without a terminal response event")
   }
 
-  return completedResponse
+  return { completedResponse, terminal, outputObserved }
 }
 
 async function handleResponseError(

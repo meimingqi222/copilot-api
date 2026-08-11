@@ -1,3 +1,5 @@
+import type { Context } from "hono"
+
 import type { Account } from "~/lib/accounts"
 import type { RouteTarget } from "~/lib/provider-connections"
 import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
@@ -26,6 +28,8 @@ import {
   resolveConnectionFromTarget,
   type RequestAdmission,
 } from "~/lib/request-admission"
+import { safeOrigin } from "~/lib/request-admission"
+import { recordUpstreamAttempt } from "~/lib/request-log"
 import { targetKey } from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { isAbortError, shouldFailover } from "~/lib/utils"
@@ -47,6 +51,7 @@ export interface FailoverOptions<TPayload, TResult> {
     current: RequestAdmission,
   ) => Promise<TResult>
   logPrefix?: string
+  c?: Context
 }
 
 export async function executeWithFailover<
@@ -59,19 +64,75 @@ export async function executeWithFailover<
     routeKind,
     execute,
     logPrefix = "[dispatch]",
+    c,
   } = options
   initializeProtocolAdapters()
 
   const tried = new Set<string>()
   let current: RequestAdmission = admission
 
+  let attemptIndex = 0
   while (true) {
     const adapter = getProtocolAdapter(current.target.protocol)
+    const attemptStart = Date.now()
     try {
-      return await execute(adapter, current.target, current)
+      const result = await execute(adapter, current.target, current)
+      recordUpstreamAttempt(
+        c,
+        {
+          ...current.target,
+          connectionName: current.connection.name,
+          credentialLabel: current.credential.label,
+          provider: current.account?.provider ?? current.target.protocol,
+          upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
+        },
+        { status: 200, latencyMs: Date.now() - attemptStart },
+        ++attemptIndex,
+      )
+      return result
     } catch (error) {
       if (isAbortError(error)) throw error
 
+      const latencyMs = Date.now() - attemptStart
+      const idx = ++attemptIndex
+      let errorCode: string | undefined
+      let retryAfterMs: number | undefined
+      let errorSnippet: string | undefined
+      if (error instanceof HTTPError) {
+        const classified = classifyUpstreamError({
+          status: error.response.status,
+          headers: error.response.headers,
+          body: error.responseBody,
+        })
+        errorCode = classified.kind
+        retryAfterMs = classified.retryAfterMs
+        errorSnippet = error.responseBody
+      } else if (error instanceof WindsurfUpstreamError) {
+        errorCode = error.kind
+        retryAfterMs = error.retryAfterMs
+        errorSnippet = error.message
+      } else if (error instanceof Error) {
+        errorCode = error.name
+      }
+      recordUpstreamAttempt(
+        c,
+        {
+          ...current.target,
+          connectionName: current.connection.name,
+          credentialLabel: current.credential.label,
+          provider: current.account?.provider ?? current.target.protocol,
+          upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
+        },
+        {
+          status:
+            error instanceof HTTPError ? error.response.status : undefined,
+          latencyMs,
+          errorCode,
+          retryAfterMs,
+          errorSnippet,
+        },
+        idx,
+      )
       tried.add(targetKey(current.target))
 
       // Windsurf in-stream error frames (rate-limit / quota / auth).
@@ -90,9 +151,6 @@ export async function executeWithFailover<
         && !(error instanceof WindsurfConcurrencyLimitError)
         && !shouldFailover(error)
       ) {
-        // Non-failover errors (e.g. usage_limit_reached) still need to
-        // mark the credential as exhausted so it's not selected again
-        // for subsequent requests until the quota resets.
         await markCooldown(current, error, logPrefix)
         throw error
       }

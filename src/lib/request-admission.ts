@@ -25,6 +25,7 @@ import {
   type ModelEndpoint,
 } from "~/lib/provider-connections"
 import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
+import { patchRequestLog } from "~/lib/request-log"
 import {
   buildRouteTargets,
   commitRouteTargetAffinity,
@@ -169,6 +170,27 @@ export async function prepareRequestAdmission(
 
   if (!target) {
     const diagnostic = diagnoseRouteFailure(options)
+    patchRequestLog(c, {
+      modelRequested: options.model,
+      endpoint: options.endpoint,
+      apiKind: options.endpoint as import("~/lib/log-store").ApiKind,
+      streaming: options.stream,
+      initiator,
+      outcome: "failed",
+      error: diagnostic.message,
+      errorType:
+        diagnostic.reason === "quota" ? "insufficient_quota" : "no_route",
+      upstreamStatus: 429,
+      retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
+      failoverReason: diagnostic.reason,
+      diagnosticError: {
+        origin: "admission",
+        kind: diagnostic.reason === "quota" ? "quota_exhausted" : "no_route",
+        message: diagnostic.message,
+        status: 429,
+        retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
+      },
+    })
     throw new HTTPError(
       diagnostic.message,
       buildRateLimitResponse(options.endpoint, diagnostic),
@@ -216,6 +238,22 @@ export async function prepareRequestAdmission(
   // paths derive provider from the final accountId at record time (preserving
   // failover correctness); plain connections fall back to this value.
   c.set("provider", account?.provider ?? target.protocol)
+  patchRequestLog(c, {
+    modelRequested: options.model,
+    modelUpstream: target.upstreamModelId,
+    endpoint: target.endpoint,
+    provider: account?.provider ?? target.protocol,
+    protocol: target.protocol,
+    connectionId: target.connectionId,
+    connectionName: connection.name,
+    credentialId: target.credentialId,
+    credentialLabel: found.credential.label,
+    upstreamBaseUrl: safeOrigin(connection.baseUrl),
+    isTranslated: target.isTranslated,
+    isWildcard: target.isWildcard,
+    initiator,
+    streaming: options.stream,
+  })
   return {
     target,
     connection,
@@ -540,6 +578,16 @@ function mapCredentialReason(status: string | undefined): FailureReason {
     default: {
       return "unknown"
     }
+  }
+}
+
+export function safeOrigin(baseUrl: string | undefined): string | undefined {
+  if (!baseUrl) return undefined
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    // 解析失败返回 undefined,避免把含 path/query 的原始串写进日志泄露信息
+    return undefined
   }
 }
 

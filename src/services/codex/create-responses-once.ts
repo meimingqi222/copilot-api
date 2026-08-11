@@ -52,6 +52,25 @@ import {
   type TranscriptStoreResult,
 } from "./ws-transcript-cache"
 
+interface ResolvedCodexSessionHeaders {
+  sessionId?: string
+  threadId?: string
+  /**
+   * True when `sessionId` came from a client-supplied stable identifier
+   * (`prompt_cache_key` or a `session_id`/`session-id` header) rather than the
+   * turn-1 content-hash fallback (priority 3 below).
+   *
+   * This gates the transcript recovery cache (see ws-transcript-cache.ts):
+   * the content-hash fallback is derived from the turn's own content, so two
+   * *different* conversations that happen to open with an identical first
+   * turn would hash to the same id and collide on the same transcript key —
+   * an isolation break in a multi-user deployment, not just a cache-hit-rate
+   * concern. Only an id the client actually chose is guaranteed unique to one
+   * conversation.
+   */
+  sessionIdIsStable: boolean
+}
+
 /**
  * Resolves the session ID and thread ID for the upstream Codex request.
  *
@@ -71,7 +90,7 @@ import {
 function resolveCodexSessionHeaders(
   payload: ResponsesPayload,
   ctx?: RequestExecutionContext,
-): { sessionId?: string; threadId?: string } {
+): ResolvedCodexSessionHeaders {
   const forwarded = ctx?.forwardedHeaders
   const threadIdRaw = forwarded?.["thread_id"] ?? forwarded?.["thread-id"]
   const threadId =
@@ -83,13 +102,21 @@ function resolveCodexSessionHeaders(
   const bodyCacheKey = (payload as unknown as { prompt_cache_key?: unknown })
     .prompt_cache_key
   if (typeof bodyCacheKey === "string" && bodyCacheKey.trim()) {
-    return { sessionId: bodyCacheKey.trim(), threadId }
+    return {
+      sessionId: bodyCacheKey.trim(),
+      threadId,
+      sessionIdIsStable: true,
+    }
   }
 
   // 2. session_id from forwarded headers
   const headerSession = forwarded?.["session_id"] ?? forwarded?.["session-id"]
   if (typeof headerSession === "string" && headerSession.trim()) {
-    return { sessionId: headerSession.trim(), threadId }
+    return {
+      sessionId: headerSession.trim(),
+      threadId,
+      sessionIdIsStable: true,
+    }
   }
 
   // 3. L1 Codex content-hash fallback (stable Session_id across turns).
@@ -102,10 +129,10 @@ function resolveCodexSessionHeaders(
   })
   const stableId = resolveStableSessionId(extracted)
   if (stableId) {
-    return { sessionId: stableId, threadId }
+    return { sessionId: stableId, threadId, sessionIdIsStable: false }
   }
 
-  return { threadId }
+  return { threadId, sessionIdIsStable: false }
 }
 
 /**
@@ -240,6 +267,38 @@ function convertSystemRoleToDeveloper(input: unknown): unknown {
   return state.changed ? items : input
 }
 
+/** Transport a finalized Codex body is about to be sent over. */
+type CodexOutboundTransport = "http" | "ws"
+
+/**
+ * Single normalization boundary every body sent to the Codex upstream must
+ * pass through last, regardless of which path assembled it (the primary
+ * request, the WS `previous_response_id` turn, or a transcript-replay
+ * rebuild). Before this existed, `input`-level normalization was applied at
+ * `buildCodexUpstreamBody` time and the replay path (which rebuilds `input`
+ * from the raw client delta + transcript, bypassing that) had to remember to
+ * re-apply it separately — exactly the bug fixed above at the `input:`
+ * assignment in the replay body (a replayed turn sent role "system" upstream
+ * and was rejected with "Codex API does not accept 'system' role in the
+ * input array"). Centralizing here means a future input-level transform only
+ * has to be added in one place.
+ */
+export function finalizeCodexOutboundBody(
+  body: Record<string, unknown>,
+  transport: CodexOutboundTransport,
+): Record<string, unknown> {
+  const finalized: Record<string, unknown> = {
+    ...body,
+    input: convertSystemRoleToDeveloper(body.input),
+  }
+  if (transport === "http") {
+    // `generate` is WebSocket-only (CPA deletes it on the HTTP path): a
+    // spawn-agent turn over plain HTTP would be rejected/orphaned upstream.
+    finalized.generate = undefined
+  }
+  return finalized
+}
+
 /**
  * Builds the body sent to the Codex upstream /responses endpoint.
  *
@@ -287,7 +346,10 @@ function buildCodexUpstreamBody(
     ...withDefaultReasoningSummary(payload.reasoning),
     instructions:
       typeof payload.instructions === "string" ? payload.instructions : "",
-    input: convertSystemRoleToDeveloper(payload.input),
+    // `input`-level normalization (system→developer) happens once, last, in
+    // `finalizeCodexOutboundBody` — every send site applies it there instead
+    // of here so it can never be bypassed by a path that rebuilds `input`.
+    input: payload.input,
     previous_response_id: undefined,
     prompt_cache_retention: undefined,
     safety_identifier: undefined,
@@ -361,8 +423,17 @@ function assertChainedHttpReplayAvailable(
   previousResponseId: string | undefined,
   useUpstreamWs: boolean,
   httpFallbackBody: Record<string, unknown> | undefined,
+  memoryTraceId: string | undefined,
 ): void {
   if (previousResponseId && !useUpstreamWs && !httpFallbackBody) {
+    // Telemetry for how often the 409 recovery-required path actually fires
+    // in real traffic (no client-supplied stable session id, or the
+    // transcript for one was evicted/never written) — see P2 goal of making
+    // cap-tuning (ws-transcript-cache.ts MAX_TRANSCRIPT_* ) answerable from
+    // telemetry instead of guesswork.
+    updateMemoryTrace(memoryTraceId, "transcript_replay_unavailable", {
+      provider: "codex",
+    })
     throw chainedHttpCodexRequestError()
   }
 }
@@ -390,7 +461,10 @@ export async function createCodexResponsesOnce(
   const useUpstreamWs =
     !ctx?.forceUpstreamHttp
     && shouldUseUpstreamResponsesWebsocket(account, "codex", ctx)
-  const { sessionId, threadId } = resolveCodexSessionHeaders(payload, ctx)
+  const { sessionId, threadId, sessionIdIsStable } = resolveCodexSessionHeaders(
+    payload,
+    ctx,
+  )
   const extraHeaders = resolveCodexExtraHeaders(ctx)
   const responsesLite = isResponsesLiteRequest(payload, ctx)
 
@@ -414,7 +488,12 @@ export async function createCodexResponsesOnce(
   const replaySessionKey =
     typeof originalCacheKey === "string" && originalCacheKey.trim() ?
       originalCacheKey.trim()
-    : (sessionId ?? "")
+    : sessionId
+  const transcriptScopeId = ctx?.transcriptScopeId?.trim()
+  const scopedReplaySessionKey =
+    transcriptScopeId && replaySessionKey ?
+      `${transcriptScopeId}::${replaySessionKey}`
+    : undefined
 
   // ── Identity Confuse ────────────────────────────────────────────────
   // Remap prompt_cache_key to a per-account deterministic UUID so that
@@ -426,8 +505,11 @@ export async function createCodexResponsesOnce(
   )
 
   // Inject cached reasoning items from previous turns in this session.
-  if (replaySessionKey) {
-    const replayItems = await getReasoningReplayItems(model, replaySessionKey)
+  if (scopedReplaySessionKey) {
+    const replayItems = await getReasoningReplayItems(
+      model,
+      scopedReplaySessionKey,
+    )
     if (replayItems && replayItems.length > 0) {
       injectReasoningReplayItems(upstreamBody, replayItems)
     }
@@ -474,28 +556,65 @@ export async function createCodexResponsesOnce(
     || sessionId
     || replaySessionKey
     || account.id
-  const transcriptSessionId = resolveResponsesTranscriptSessionId(
-    executionSessionId,
-    sessionId || replaySessionKey,
-    ctx?.transcriptScopeId,
-  )
-  const transcriptKey = codexTranscriptKey(transcriptSessionId, model)
+  // Transcript recovery is gated on a client-supplied stable session id —
+  // never the turn-1 content-hash fallback (two different conversations that
+  // open with an identical first turn would hash to the same id and collide
+  // on the same transcript, leaking one tenant's turns into another's replay)
+  // and never `account.id` (shared by every caller routed to this credential).
+  // `transcriptKey` is therefore only ever built from `sessionId` once we know
+  // it is stable, so `resolveResponsesTranscriptSessionId`'s empty-preferred
+  // fallback (which would key on `executionSessionId`, bottoming out at
+  // `account.id`) is never reached for a key that is actually read or
+  // written — making an account-scoped transcript key structurally
+  // impossible rather than merely coincidentally absent.
+  //
+  // A tenant scope is equally required, and for the same reason: a stable
+  // session id is only unique *within* a principal. Not every entry point
+  // establishes one — the chat→responses bridge (`dispatch/shared.ts`
+  // responsesExecutor, whose executionContext is built in
+  // `routes/chat-completions/handler.ts`) forwards `session_id` /
+  // `prompt_cache_key` but no `transcriptScopeId` — so without this guard two
+  // principals sending the same id would share one transcript entry and
+  // replay each other's turns. Fail closed: no scope means no transcript, and
+  // a chained turn degrades to the documented 409 instead. Any future entry
+  // point that forgets to pass a scope loses recovery rather than isolation.
+  const transcriptKey =
+    transcriptScopeId && sessionIdIsStable && sessionId ?
+      codexTranscriptKey(
+        resolveResponsesTranscriptSessionId(
+          executionSessionId,
+          sessionId,
+          transcriptScopeId,
+        ),
+        model,
+      )
+    : undefined
   // Use the *raw* client input delta (not upstreamBody.input, which may have
   // reasoning-replay items injected) so full replay never double-injects it.
   const rawDelta =
     Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
+  // Apply the same gate to reads as to writes: a transcript keyed on an
+  // unstable/account-scoped id could never legitimately have been written
+  // under the rules above, so it must never be consulted either.
   const cachedFull =
-    previousResponseId ? getCodexTranscript(transcriptKey) : undefined
+    previousResponseId && transcriptKey ?
+      getCodexTranscript(transcriptKey)
+    : undefined
   const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
   const fullInputThisTurn = buildResponsesTranscriptInput(
     cachedFull,
     rawDelta,
-    Boolean(ctx?.downstreamWebsocket),
+    Boolean(transcriptKey),
   )
   const fallbackFullInputBody =
     previousResponseId && cachedFull ?
       {
         ...upstreamBody,
+        // The replay input is rebuilt from the *raw* client delta + transcript,
+        // so it bypasses `buildCodexUpstreamBody`'s per-field normalization.
+        // `input` itself is normalized once, at send time, by
+        // `finalizeCodexOutboundBody` (see below) — not here — so this stays
+        // in sync with the primary body's normalization automatically.
         input: stripReasoningItems(fullInputThisTurn),
         previous_response_id: undefined,
       }
@@ -508,13 +627,20 @@ export async function createCodexResponsesOnce(
     previousResponseId,
     useUpstreamWs,
     httpFallbackBody,
+    memoryTraceId,
   )
 
   if (useUpstreamWs) {
-    const wsBody: Record<string, unknown> = {
-      ...upstreamBody,
-      previous_response_id: previousResponseId,
-    }
+    const wsBody = finalizeCodexOutboundBody(
+      { ...upstreamBody, previous_response_id: previousResponseId },
+      "ws",
+    )
+    // `generate` must survive on the WS transport (see finalizeCodexOutboundBody);
+    // finalize the replay fallback the same way so a fresh-socket recovery turn
+    // does not silently drop it either.
+    const wsFallbackFullInputBody =
+      fallbackFullInputBody
+      && finalizeCodexOutboundBody(fallbackFullInputBody, "ws")
     const wsHeaders = applyCodexWebsocketHeaders({ ...httpHeaders })
     try {
       // Eager open+send so handshake failures hit this catch (streaming-safe).
@@ -527,14 +653,16 @@ export async function createCodexResponsesOnce(
         executionSessionId,
         signal,
         previousResponseId,
-        fallbackFullInputBody,
+        fallbackFullInputBody: wsFallbackFullInputBody,
         memoryTraceId,
       })
       const normalized = normalizeResponsesStreamIds(wsStream)
       // Record on the normalized stream so recorded output-item ids match what
-      // the codex client sees (and later chains from).
+      // the codex client sees (and later chains from). Gated the same as the
+      // HTTP paths below: a client-supplied stable session id, not merely
+      // "this transport is a WebSocket".
       const tracked =
-        transcriptTrackable ?
+        transcriptKey && transcriptTrackable ?
           recordCodexTranscript(
             normalized,
             transcriptKey,
@@ -543,10 +671,15 @@ export async function createCodexResponsesOnce(
           )
         : normalized
       if (clientStream) {
-        return wrapCodexStream(tracked, model, replaySessionKey, identityState)
+        return wrapCodexStream(
+          tracked,
+          model,
+          scopedReplaySessionKey,
+          identityState,
+        )
       }
       return await collectResponsesFromWsStream(
-        wrapCodexStream(tracked, model, replaySessionKey, identityState),
+        wrapCodexStream(tracked, model, scopedReplaySessionKey, identityState),
         model,
         identityState,
       )
@@ -589,9 +722,9 @@ export async function createCodexResponsesOnce(
     if (
       response.status === 400
       && errorBody.includes("thinking_signature_invalid")
-      && replaySessionKey
+      && scopedReplaySessionKey
     ) {
-      await deleteReasoningReplayItems(model, replaySessionKey)
+      await deleteReasoningReplayItems(model, scopedReplaySessionKey)
     }
     throw new HTTPError(
       "Failed to create Codex responses",
@@ -605,8 +738,13 @@ export async function createCodexResponsesOnce(
     const normalized = normalizeResponsesStreamIds(
       stream as unknown as AsyncIterable<CopilotStreamEventLike>,
     )
+    // Gate on a client-supplied stable session id (transcriptKey), not on
+    // transport: an HTTP-only client with a stable prompt_cache_key is just
+    // as entitled to recovery as a WebSocket client (P1 — previously this
+    // required ctx.downstreamWebsocket, so pure-HTTP chained clients like
+    // Crush always hit the 409 path even when they supplied a stable id).
     const tracked =
-      ctx?.downstreamWebsocket && transcriptTrackable ?
+      transcriptKey && transcriptTrackable ?
         recordCodexTranscript(
           normalized,
           transcriptKey,
@@ -614,11 +752,16 @@ export async function createCodexResponsesOnce(
           memoryTraceId,
         )
       : normalized
-    return wrapCodexStream(tracked, model, replaySessionKey, identityState)
+    return wrapCodexStream(
+      tracked,
+      model,
+      scopedReplaySessionKey,
+      identityState,
+    )
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
-  if (ctx?.downstreamWebsocket && transcriptTrackable) {
+  if (transcriptKey && transcriptTrackable) {
     recordTranscriptCheckpoint(
       memoryTraceId,
       appendCodexTranscript(
@@ -638,10 +781,10 @@ export async function createCodexResponsesOnce(
   // `result` is the response object itself (has `output`), so we pass it
   // directly — cacheReasoningReplayItems checks both `.response.output`
   // (SSE event shape) and `.output` (collected response shape).
-  if (replaySessionKey) {
+  if (scopedReplaySessionKey) {
     void cacheReasoningReplayItems(
       model,
-      replaySessionKey,
+      scopedReplaySessionKey,
       result as unknown as Record<string, unknown>,
     )
   }
@@ -764,14 +907,15 @@ async function postCodexResponses(options: {
   signal?: AbortSignal
   memoryTraceId?: string
 }): Promise<Response> {
-  const effectiveBody = options.httpFallbackBody ?? options.upstreamBody
+  const effectiveBody = finalizeCodexOutboundBody(
+    options.httpFallbackBody ?? options.upstreamBody,
+    "http",
+  )
   updateMemoryTrace(options.memoryTraceId, "upstream_http_stringify_start", {
     provider: "codex",
     inputItems: countArrayItems(effectiveBody.input),
   })
-  // `generate` is WebSocket-only (CPA deletes it on the HTTP path): a
-  // spawn-agent turn over plain HTTP would be rejected/orphaned upstream.
-  const body = JSON.stringify({ ...effectiveBody, generate: undefined })
+  const body = JSON.stringify(effectiveBody)
   updateMemoryTrace(options.memoryTraceId, "upstream_http_send", {
     provider: "codex",
     wireBytes: Buffer.byteLength(body),
@@ -814,7 +958,7 @@ function logCodexReasoningSummary(
 function handleCodexStreamCompletion(
   parsed: Record<string, unknown>,
   model: string,
-  replaySessionKey: string,
+  replaySessionKey: string | undefined,
 ): void {
   if (parsed.type !== "response.completed") return
   if (replaySessionKey) {
@@ -832,7 +976,7 @@ function handleCodexStreamCompletion(
 async function* wrapCodexStream(
   stream: AsyncIterable<CopilotStreamEventLike>,
   model: string,
-  replaySessionKey: string,
+  replaySessionKey: string | undefined,
   identityState: IdentityConfuseState,
 ): AsyncIterable<CopilotStreamEventLike> {
   for await (const event of stream) {

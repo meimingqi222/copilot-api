@@ -33,6 +33,7 @@ export interface MessagesDispatchOptions {
   routeKind: "messages"
   payload: AnthropicMessagesPayload
   forwardedHeaders?: Record<string, string | undefined>
+  c?: import("hono").Context
 }
 
 export interface ResponsesDispatchOptions {
@@ -78,13 +79,13 @@ export async function dispatchRequest(
   signal?: AbortSignal,
 ): Promise<DispatchResult> {
   const { routeKind, payload } = options
-
-  return await executeWithFailover({
+  return executeWithFailover({
     payload,
     admission,
     signal,
     routeKind,
     logPrefix: `[dispatch/${routeKind}]`,
+    c: options.c,
     execute: (adapter, target: RouteTarget, current) => {
       // Step B 后 admission 始终携带 connection/credential;
       // account-backed 路径下由 accountToConnection 构造虚拟对象。

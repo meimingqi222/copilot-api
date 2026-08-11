@@ -5,6 +5,9 @@ import { PATHS } from "~/lib/paths"
 
 /** Matches `server-2026-06-27.log` and `server-2026-06-27.1.log`. */
 export const LOG_FILE_PATTERN = /^server-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log$/
+/** Matches daily request logs and their numbered size-based segments. */
+export const REQUEST_LOG_JSONL_PATTERN =
+  /^requests-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/
 
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024
 const DEFAULT_RETENTION_DAYS = 7
@@ -121,6 +124,48 @@ export function pruneExpiredLogFiles(
 
 export function ensureLogDir(logDir: string): void {
   fs.mkdirSync(logDir, { recursive: true })
+}
+
+export function listExpiredRequestLogs(
+  logDir: string,
+  now: Date,
+  retentionDays: number,
+): Array<string> {
+  let entries: Array<string>
+  try {
+    entries = fs.readdirSync(logDir)
+  } catch {
+    return []
+  }
+  const expired: Array<string> = []
+  for (const entry of entries) {
+    const m = REQUEST_LOG_JSONL_PATTERN.exec(entry)
+    if (!m) continue
+    if (isLogDateExpired(m[1], now, retentionDays)) {
+      expired.push(path.join(logDir, entry))
+    }
+  }
+  return expired
+}
+
+export function pruneExpiredRequestLogs(
+  config: LogRotationConfig,
+  now = new Date(),
+): number {
+  const days = Number.parseInt(process.env.LOG_REQUEST_RETENTION_DAYS ?? "", 10)
+  const retention =
+    Number.isFinite(days) && days > 0 ? days : config.retentionDays
+  const expired = listExpiredRequestLogs(config.logDir, now, retention)
+  let removed = 0
+  for (const p of expired) {
+    try {
+      fs.unlinkSync(p)
+      removed += 1
+    } catch {
+      // Retention cleanup is best-effort; a busy file can be retried later.
+    }
+  }
+  return removed
 }
 
 export class RotatingLogFileSink {

@@ -2,6 +2,8 @@
  * Anthropic Messages 调度器(unified path)。
  */
 
+import type { Context } from "hono"
+
 import type { RequestAdmission } from "~/lib/request-admission"
 import type { AnthropicMessagesPayload } from "~/services/protocols"
 
@@ -15,14 +17,20 @@ export interface MessagesDispatchResult {
   identity: DispatchIdentity
 }
 
+interface DispatchMessagesOptions {
+  payload: AnthropicMessagesPayload
+  admission: RequestAdmission
+  signal?: AbortSignal
+  forwardedHeaders?: Record<string, string | undefined>
+  c?: Context
+}
+
 export async function dispatchMessages(
-  payload: AnthropicMessagesPayload,
-  admission: RequestAdmission,
-  signal?: AbortSignal,
-  forwardedHeaders?: Record<string, string | undefined>,
+  options: DispatchMessagesOptions,
 ): Promise<MessagesDispatchResult> {
+  const { payload, admission, signal, forwardedHeaders, c } = options
   const result = await dispatchRequest(
-    { routeKind: "messages", payload, forwardedHeaders },
+    { routeKind: "messages", payload, forwardedHeaders, c },
     admission,
     signal,
   )

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
 import { listAccounts } from "~/lib/accounts"
 import { bunWebsocket } from "~/lib/bun-websocket"
+import { logStore } from "~/lib/log-store"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -22,6 +23,7 @@ const originalUsers = state.users
 beforeEach(() => {
   resetProtectedRouteGuardForTest()
   resetAdaptiveRateLimiterForTest()
+  logStore.clearForTest()
   statsStore.clearUsageStatsForTest()
   setTestAccounts([
     {
@@ -152,6 +154,25 @@ test("WS /responses supports sequential response.create requests", async () => {
   }
   expect(second.object).toBe("response")
   expect(second.output_text).toBe("second")
+
+  await waitFor(
+    () =>
+      logStore
+        .query({ endpoint: "responses", limit: 10 })
+        .entries.filter((entry) => entry.method === "WS").length === 2,
+  )
+  const turns = logStore
+    .query({ endpoint: "responses", limit: 10 })
+    .entries.filter((entry) => entry.method === "WS")
+  expect(new Set(turns.map((entry) => entry.requestId)).size).toBe(2)
+  expect(turns[0]?.parentRequestId).toBeDefined()
+  expect(turns[0]?.parentRequestId).toBe(turns[1]?.parentRequestId)
+  for (const turn of turns) {
+    expect(turn.model).toBe("gpt-responses")
+    expect(turn.outcome).toBe("success")
+    expect(turn.attempts?.length).toBeGreaterThan(0)
+    expect(turn.totalTokens).toBe(2)
+  }
 
   ws.close()
 })
@@ -299,6 +320,39 @@ test("WS /v1/responses forwards upstream errors as error events", async () => {
   expect(message.error.message).toContain("upstream failed")
 
   ws.close()
+})
+
+test("WS /v1/responses logs an active turn as cancelled on client close", async () => {
+  globalThis.fetch = mock(
+    () =>
+      new Promise<Response>((resolve) =>
+        setTimeout(() => resolve(new Response("late")), 500),
+      ),
+  ) as unknown as typeof fetch
+  using appServer = Bun.serve({
+    port: 0,
+    fetch: server.fetch,
+    websocket: bunWebsocket,
+  })
+  const { ws } = await openSocket(
+    `ws://localhost:${appServer.port}/v1/responses`,
+  )
+  ws.send(
+    JSON.stringify({
+      type: "response.create",
+      response: { model: "gpt-responses", input: "cancel me" },
+    }),
+  )
+  await Bun.sleep(20)
+  ws.close()
+
+  await waitFor(() =>
+    logStore
+      .query({ endpoint: "responses", outcome: "cancelled", limit: 10 })
+      .entries.some(
+        (entry) => entry.method === "WS" && entry.statusCode === 499,
+      ),
+  )
 })
 
 test("WS /v1/responses reports a stream that ends without a terminal event", async () => {
@@ -465,4 +519,16 @@ async function toText(data: string | Blob | ArrayBuffer): Promise<string> {
   }
 
   return Buffer.from(data).toString("utf8")
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline)
+      throw new Error("Timed out waiting for condition")
+    await Bun.sleep(5)
+  }
 }

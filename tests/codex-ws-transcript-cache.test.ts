@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
 import {
+  appendCodexTranscript,
   clearCodexTranscript,
   clearCodexTranscriptsForTest,
   clearResponsesTranscriptsByExecutionId,
@@ -50,6 +51,27 @@ describe("transcript get/set", () => {
 
   test("missing key returns undefined", () => {
     expect(getCodexTranscript("nope::gpt-5")).toBeUndefined()
+  })
+
+  // P3: appendCodexTranscript must never mutate the caller's array in place.
+  // buildResponsesTranscriptInput can return the caller's own `payload.input`
+  // array by reference for an untracked turn; if append pushed onto it, an
+  // upstream response's output items would leak into the caller's payload.
+  test("appendCodexTranscript does not mutate the caller's fullInput array", () => {
+    const key = codexTranscriptKey("sess-append", "gpt-5")
+    const callerOwnedInput = [{ type: "message", role: "user", content: "hi" }]
+    const originalLength = callerOwnedInput.length
+
+    const result = appendCodexTranscript(key, callerOwnedInput, [
+      { type: "message", role: "assistant", content: "hello" },
+    ])
+
+    expect(callerOwnedInput.length).toBe(originalLength)
+    expect(result.stored).toBe(true)
+    expect(getCodexTranscript(key)).toEqual([
+      { type: "message", role: "user", content: "hi" },
+      { type: "message", role: "assistant", content: "hello" },
+    ])
   })
 
   test("oversized transcript is dropped, not stored", () => {

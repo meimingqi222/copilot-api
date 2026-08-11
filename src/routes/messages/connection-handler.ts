@@ -4,6 +4,13 @@ import type { RequestAdmission } from "~/lib/request-admission"
 
 import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
+import {
+  beginStreamLog,
+  finishRequestLog,
+  markStreamTerminal,
+  patchRequestLog,
+  recordTraceError,
+} from "~/lib/request-log"
 import { forwardSseEvent, handleSseStream, writeSseEvent } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
 import { applyUsageIdentity } from "~/lib/usage"
@@ -18,6 +25,7 @@ import {
 
 import type { HandleStreamingResponseOptions } from "./copilot-handler"
 
+import { isMessagesOutputEvent } from "./logging"
 import {
   recordDirectStreamingUsage,
   recordAnthropicUsage,
@@ -58,14 +66,16 @@ export async function handleAnthropicViaConnection(
 
   if (!anthropicPayload.stream) {
     const nonStreamStart = Date.now()
-    const result = await dispatchMessages(
-      anthropicPayload,
+    const result = await dispatchMessages({
+      payload: anthropicPayload,
       admission,
       signal,
-      forwarded,
-    )
+      forwardedHeaders: forwarded,
+      c,
+    })
     applyUsageIdentity(c, result.identity)
     c.set("model", anthropicPayload.model)
+    patchRequestLog(c, { streaming: false })
     if (!isAsyncIterable(result.response)) {
       if (
         isDirectAnthropicResponse(
@@ -82,77 +92,104 @@ export async function handleAnthropicViaConnection(
     }
   }
 
-  return handleSseStream(c, async (stream, sseSignal) => {
-    let lastUsage: AnthropicStreamingUsage | undefined
-    let resultAccountId: string | undefined
-    let firstChunkTs: number | undefined
-    let streamStart = 0
-    try {
-      streamStart = Date.now()
-      const result = await dispatchMessages(
-        anthropicPayload,
-        admission,
-        sseSignal,
-        forwarded,
-      )
-      resultAccountId = result.accountId
-      applyUsageIdentity(c, result.identity)
-      c.set("model", anthropicPayload.model)
-      if (!isAsyncIterable(result.response)) {
-        if (
-          isDirectAnthropicResponse(
-            result.response as unknown as AnthropicResponse,
-          )
-        ) {
-          const elapsed = Date.now() - streamStart
-          const response = result.response as unknown as AnthropicResponse
-          const tps =
-            elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
-          recordAnthropicUsage(c, result.accountId, response, tps)
-        }
-        await writeSseEvent(stream, JSON.stringify(result.response))
-        return
-      }
-      for await (const event of result.response as AsyncIterable<{
-        data?: string
-        event?: string
-      }>) {
-        if (!event.data) continue
-        if (!firstChunkTs) {
-          firstChunkTs = Date.now()
-        }
-        lastUsage = updateLastUsage(event.data, lastUsage)
-        await forwardSseEvent(stream, event)
-      }
-    } catch (error) {
-      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-      if (knownError) {
-        await writeSseEvent(
-          stream,
-          JSON.stringify({
-            type: "error",
-            error: { type: knownError.type, message: knownError.message },
-          }),
-          "error",
-        )
-        return
-      }
-      throw error
-    } finally {
-      if (resultAccountId) {
-        recordDirectStreamingUsage(
+  beginStreamLog(c)
+  return handleSseStream(
+    c,
+    async (stream, sseSignal) => {
+      let lastUsage: AnthropicStreamingUsage | undefined
+      let resultAccountId: string | undefined
+      let firstChunkTs: number | undefined
+      let streamStart = 0
+      let messageStop = false
+      let outputObserved = false
+      try {
+        streamStart = Date.now()
+        const result = await dispatchMessages({
+          payload: anthropicPayload,
+          admission,
+          signal: sseSignal,
+          forwardedHeaders: forwarded,
           c,
-          resultAccountId,
-          lastUsage,
-          computeStreamingTiming(
-            streamStart,
-            firstChunkTs,
-            lastUsage?.output_tokens ?? 0,
-          ),
+        })
+        resultAccountId = result.accountId
+        applyUsageIdentity(c, result.identity)
+        c.set("model", anthropicPayload.model)
+        patchRequestLog(c, { streaming: true })
+        if (!isAsyncIterable(result.response)) {
+          if (
+            isDirectAnthropicResponse(
+              result.response as unknown as AnthropicResponse,
+            )
+          ) {
+            const elapsed = Date.now() - streamStart
+            const response = result.response as unknown as AnthropicResponse
+            const tps =
+              elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
+            recordAnthropicUsage(c, result.accountId, response, tps)
+          }
+          await writeSseEvent(stream, JSON.stringify(result.response))
+          markStreamTerminal(c, "message_stop", "success", true)
+          return
+        }
+        for await (const event of result.response as AsyncIterable<{
+          data?: string
+          event?: string
+        }>) {
+          if (!event.data) continue
+          lastUsage = updateLastUsage(event.data, lastUsage)
+          try {
+            const parsed = JSON.parse(event.data) as {
+              type?: string
+              delta?: unknown
+              content_block?: unknown
+            }
+            messageStop ||= parsed.type === "message_stop"
+            const isOutput = isMessagesOutputEvent(parsed)
+            outputObserved ||= isOutput
+            if (isOutput) firstChunkTs ??= Date.now()
+          } catch {
+            // Malformed provider frames are forwarded but never count as output.
+          }
+          await forwardSseEvent(stream, event)
+        }
+      } catch (error) {
+        recordTraceError(c, error)
+        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+        if (knownError) {
+          await writeSseEvent(
+            stream,
+            JSON.stringify({
+              type: "error",
+              error: { type: knownError.type, message: knownError.message },
+            }),
+            "error",
+          )
+          return
+        }
+        throw error
+      } finally {
+        markStreamTerminal(
+          c,
+          messageStop ? "message_stop" : "missing",
+          messageStop ? "success" : "incomplete",
+          outputObserved,
         )
+        if (resultAccountId) {
+          recordDirectStreamingUsage(
+            c,
+            resultAccountId,
+            lastUsage,
+            computeStreamingTiming(
+              streamStart,
+              firstChunkTs,
+              lastUsage?.output_tokens ?? 0,
+            ),
+          )
+        }
       }
-    }
-  })
+    },
+    { onFinally: () => finishRequestLog(c) },
+  )
 }
 
 export async function handleDirectStreamingResponse({
@@ -175,11 +212,13 @@ export async function handleDirectStreamingResponse({
         continue
       }
 
-      if (!firstChunkTs) {
-        firstChunkTs = Date.now()
-      }
-
       const dataStr = rawEvent.data
+      try {
+        const parsed = JSON.parse(dataStr) as { type?: string }
+        if (isMessagesOutputEvent(parsed)) firstChunkTs ??= Date.now()
+      } catch {
+        // Malformed frames do not count toward TTFT.
+      }
       if (dataStr.includes('"usage"')) {
         lastUsage = updateLastUsage(dataStr, lastUsage)
       }
@@ -215,6 +254,12 @@ export async function handleDirectStreamingResponse({
     throw error
   } finally {
     if (c) {
+      markStreamTerminal(
+        c,
+        receivedMessageStop ? "message_stop" : "missing",
+        receivedMessageStop ? "success" : "incomplete",
+        Boolean(firstChunkTs),
+      )
       recordDirectStreamingUsage(
         c,
         accountId,

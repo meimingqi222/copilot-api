@@ -106,6 +106,7 @@ export function handleSseStream(
   run: (stream: SSEStream, signal: AbortSignal) => Promise<void>,
   options?: {
     onAbort?: () => void
+    onFinally?: () => void
     skipPing?: boolean
     initialComment?: string | false
   },
@@ -134,6 +135,7 @@ export function handleSseStream(
       throw error
     } finally {
       if (pingInterval) clearInterval(pingInterval)
+      options?.onFinally?.()
     }
   })
 }

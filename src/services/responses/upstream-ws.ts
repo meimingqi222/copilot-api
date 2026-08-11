@@ -453,6 +453,12 @@ export async function openUpstreamResponsesWebsocketTurn(
           + `session=${executionSessionId} auth=${account.id} `
           + `input_items=${Array.isArray(effectiveBody.input) ? effectiveBody.input.length : 0}`,
       )
+      // Own stage (not just a detail field on the stringify/send stages below)
+      // so telemetry can answer "did replay actually fire" independently of
+      // whether a later stage in this trace overwrites `stage`.
+      updateMemoryTrace(options.memoryTraceId, "transcript_replay_used", {
+        provider,
+      })
     }
     // Attach message/close/error listeners before sending. Very fast upstream
     // responses must not race past the first-event gate.

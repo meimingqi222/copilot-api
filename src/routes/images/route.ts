@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { forwardError, HTTPError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
+import { recordTraceError } from "~/lib/request-log"
 import { recordUsage } from "~/lib/usage"
 import {
   createXaiImageEdit,
@@ -48,6 +49,7 @@ imageRoutes.post("/generations", async (c) => {
 
     return c.json(response)
   } catch (error) {
+    recordTraceError(c, error)
     return forwardError(c, error)
   }
 })
@@ -87,6 +89,7 @@ imageRoutes.post("/edits", async (c) => {
 
     return c.json(response)
   } catch (error) {
+    recordTraceError(c, error)
     return forwardError(c, error)
   }
 })

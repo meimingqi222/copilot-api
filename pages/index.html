@@ -2506,8 +2506,23 @@
             <option value="warn">Warn</option>
             <option value="error">Error</option>
           </select>
+          <select x-model="filters.apiKind" @change="filters.offset = 0; load()" class="input w-36">
+            <option value="" x-text="t('logs.allApis')"></option>
+            <option value="chat">chat</option>
+            <option value="messages">messages</option>
+            <option value="responses">responses</option>
+            <option value="embeddings">embeddings</option>
+          </select>
+          <select x-model="filters.outcome" @change="filters.offset = 0; load()" class="input w-36">
+            <option value="" x-text="t('logs.allOutcomes')"></option>
+            <option value="success" x-text="t('logs.outcomeSuccess')"></option>
+            <option value="incomplete" x-text="t('logs.outcomeIncomplete')"></option>
+            <option value="failed" x-text="t('logs.outcomeFailed')"></option>
+            <option value="cancelled" x-text="t('logs.outcomeCancelled')"></option>
+          </select>
           <input x-model="filters.search" @keyup.enter="filters.offset = 0; load()" type="text" :placeholder="t('logs.search')" class="input flex-1 min-w-[200px]">
-          <button @click="filters = { level: '', search: '', limit: 50, offset: 0 }; load()" class="btn btn-secondary" x-text="t('logs.clearFilters')"></button>
+          <button @click="clearFilters()" class="btn btn-secondary" x-text="t('logs.clearFilters')"></button>
+          <button @click="exportLogs()" class="btn btn-secondary" x-text="t('logs.exportJsonl')"></button>
         </div>
 
         <div x-show="loading" class="flex justify-center py-20">
@@ -2519,26 +2534,33 @@
             <thead>
               <tr class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]">
                 <th class="text-left p-3" x-text="t('logs.time')"></th>
+                <th class="text-left p-3">API</th>
+                <th class="text-left p-3">Upstream</th>
                 <th class="text-left p-3" x-text="t('logs.level')"></th>
-                <th class="text-left p-3" x-text="t('logs.path')"></th>
-                <th class="text-left p-3" x-text="t('logs.user')"></th>
-                <th class="text-left p-3" x-text="t('logs.clientIp')"></th>
-                <th class="text-left p-3" x-text="t('logs.userAgent')"></th>
+                <th class="text-left p-3">Result</th>
+                <th class="text-left p-3">Latency</th>
                 <th class="text-left p-3" x-text="t('logs.model')"></th>
+                <th class="text-left p-3" x-text="t('logs.clientIp')"></th>
+                <th class="text-left p-3">Request</th>
               </tr>
             </thead>
             <tbody>
               <template x-for="log in entries" :key="log.id">
-                <tr class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]">
-                  <td class="p-3 text-[var(--apple-text-secondary)]" x-text="formatTime(log.timestamp)"></td>
+                <tr class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)] cursor-pointer" :title="log.error || log.errorSnippet || ''" @click="selectedLog = selectedLog?.requestId === log.requestId ? null : log">
+                  <td class="p-3 text-[var(--apple-text-secondary)] text-xs" x-text="formatTime(log.timestamp)"></td>
+                  <td class="p-3 font-mono text-xs" x-text="(log.apiKind || log.endpoint || '-') + ' ' + (log.modelRequested || log.model || '-')"></td>
+                  <td class="p-3 font-mono text-xs" x-text="formatUpstream(log)" :title="log.upstreamBaseUrl || ''"></td>
                   <td class="p-3">
                     <span class="badge" :class="getLevelClass(log.level)" x-text="log.level"></span>
                   </td>
-                  <td class="p-3 font-mono" x-text="log.path"></td>
-                  <td class="p-3" x-text="log.username || '-'"></td>
-                  <td class="p-3 font-mono text-xs" x-text="log.clientIp || '-'"></td>
-                  <td class="p-3 text-xs max-w-[200px] truncate" :title="log.userAgent || ''" x-text="log.userAgent || '-'"></td>
-                  <td class="p-3" x-text="log.model || '-'"></td>
+                  <td class="p-3 text-xs">
+                    <span :class="log.outcome === 'success' ? 'text-[var(--apple-green)]' : 'text-[var(--apple-red)]'" x-text="(log.outcome || 'unknown') + ' HTTP ' + (log.statusCode || '-')"></span>
+                    <span x-show="log.error" class="block text-[var(--apple-text-secondary)] max-w-[280px] truncate" x-text="log.error"></span>
+                  </td>
+                  <td class="p-3 text-xs" x-text="log.latencyMs != null ? (log.latencyMs + 'ms') : '-'"></td>
+                  <td class="p-3 text-xs" x-text="log.modelUpstream || log.model || '-'"></td>
+                  <td class="p-3 font-mono text-xs" :title="log.userAgent || ''" x-text="log.clientIp || '-'"></td>
+                  <td class="p-3 font-mono text-xs" :title="log.requestId || ''" x-text="`${log.attempts?.length || 0} attempts · ${(log.requestId || '-').slice(0, 8)}`"></td>
                 </tr>
               </template>
             </tbody>
@@ -2547,6 +2569,28 @@
             <i data-lucide="scroll-text" class="empty-state-icon"></i>
             <p class="text-body text-[var(--apple-text-secondary)]" x-text="t('logs.noLogs')"></p>
           </div>
+        </div>
+
+        <div x-show="selectedLog" class="card p-5 mt-4" style="display: none;">
+          <div class="flex justify-between items-start gap-4 mb-4">
+            <div>
+              <div class="font-mono text-sm" x-text="selectedLog?.requestId"></div>
+              <div class="text-xs text-[var(--apple-text-secondary)]" x-text="selectedLog ? `${selectedLog.clientIp || '-'} · ${selectedLog.userAgent || '-'}` : ''"></div>
+            </div>
+            <button class="btn btn-secondary btn-small" @click="selectedLog = null">Close</button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div>
+              <div class="font-medium mb-2">Result</div>
+              <pre class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded" x-text="formatJson({ outcome: selectedLog?.outcome, httpStatus: selectedLog?.statusCode, outputObserved: selectedLog?.outputObserved, protocolTerminal: selectedLog?.protocolTerminal, finishReason: selectedLog?.finishReason, error: selectedLog?.diagnosticError || selectedLog?.error })"></pre>
+            </div>
+            <div>
+              <div class="font-medium mb-2">Routing</div>
+              <pre class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded" x-text="formatJson({ initialTarget: selectedLog?.initialTarget, finalTarget: selectedLog?.finalTarget, provider: selectedLog?.provider, protocol: selectedLog?.protocol, upstreamModel: selectedLog?.modelUpstream })"></pre>
+            </div>
+          </div>
+          <div class="font-medium mt-4 mb-2">Upstream attempts</div>
+          <pre class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80" x-text="formatJson(selectedLog?.attempts || [])"></pre>
         </div>
 
         <!-- Pagination -->

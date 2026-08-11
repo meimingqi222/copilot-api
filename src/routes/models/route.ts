@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
+import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
 import { isUserAllowedModel, type User } from "~/lib/users"
 import { refreshModelsForAllAccounts } from "~/lib/utils"
@@ -25,6 +26,7 @@ modelRoutes.get("/", async (c) => {
       has_more: false,
     })
   } catch (error) {
+    recordTraceError(c, error)
     return forwardError(c, error)
   }
 })

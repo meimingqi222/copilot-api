@@ -7,9 +7,9 @@ import {
   canonicalNativeModelId,
   getAccount,
 } from "~/lib/accounts"
-import { logStore } from "~/lib/log-store"
 import { logger } from "~/lib/logger"
 import { isProviderId } from "~/lib/provider-config"
+import { patchRequestLog } from "~/lib/request-log"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
@@ -139,18 +139,13 @@ export function recordUsage(input: UsageRecordInput): void {
       tps,
       streaming,
     })
-    logStore.push({
-      timestamp: now,
-      level: "info",
-      message: `Usage recorded for ${usageModel}`,
-      userId: c.get("userId"),
-      username: c.get("username"),
-      accountId,
+    patchRequestLog(c, {
       model: usageModel,
       promptTokens,
       completionTokens,
-      path: c.req.path,
-      statusCode: c.res.status,
+      totalTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
       ttftMs,
       generationTps: tps,
       streaming,

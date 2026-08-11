@@ -11,6 +11,7 @@ import path from "node:path"
 import { ensurePaths, redirectPathsToDir } from "~/lib/paths"
 
 process.env.COPILOT_API_TEST_ISOLATION = "1"
+process.env.NODE_ENV = "test"
 
 const testDataDir =
   process.env.COPILOT_API_DATA_DIR?.trim()
