@@ -16,6 +16,10 @@
  * Mirrors CPA's codex_reasoning_replay_cache.go.
  */
 
+import { createHash } from "node:crypto"
+
+import { isValidGPTReasoningSignature } from "~/services/codex/sanitize-input"
+
 import { PersistentTTLMap } from "./persistent-map"
 
 const REASONING_REPLAY_TTL_MS = 60 * 60_000 // 1 hour
@@ -200,17 +204,36 @@ export function injectReasoningReplayItems(
   const input = body.input
   if (!Array.isArray(input)) return body
 
-  // Collect existing reasoning encrypted_content values in the input to
-  // avoid injecting duplicates the client already included.
+  // Collect the current input's replay anchors. A cached tool call is valid
+  // only when this turn contains its output; otherwise it is a dangling call
+  // and Codex rejects the whole request.
   const existingEncrypted = new Set<string>()
+  let hasInputReasoning = false
+  const existingCalls = new Set<string>()
+  const outputCallIds = new Map<string, string>()
   for (const entry of input) {
     if (typeof entry === "object" && entry !== null) {
       const obj = entry as Record<string, unknown>
       if (
         obj.type === "reasoning"
         && typeof obj.encrypted_content === "string"
+        && isValidGPTReasoningSignature(obj.encrypted_content)
       ) {
         existingEncrypted.add(obj.encrypted_content)
+        hasInputReasoning = true
+      }
+      const type = typeof obj.type === "string" ? obj.type : ""
+      if (type === "function_call" || type === "custom_tool_call") {
+        for (const key of replayToolCallKeys(obj)) existingCalls.add(key)
+      }
+      if (
+        type === "function_call_output"
+        || type === "custom_tool_call_output"
+      ) {
+        const callId = typeof obj.call_id === "string" ? obj.call_id.trim() : ""
+        for (const candidate of comparableCallIds(callId)) {
+          outputCallIds.set(candidate, callId)
+        }
       }
     }
   }
@@ -218,21 +241,118 @@ export function injectReasoningReplayItems(
   const replayItems: Array<Record<string, unknown>> = []
   for (const item of items) {
     const parsed = JSON.parse(item.raw) as Record<string, unknown>
-    // Skip items already present in the input.
-    if (
-      parsed.type === "reasoning"
-      && typeof parsed.encrypted_content === "string"
-      && existingEncrypted.has(parsed.encrypted_content)
-    ) {
+    if (parsed.type === "reasoning") {
+      if (
+        hasInputReasoning
+        || typeof parsed.encrypted_content !== "string"
+        || existingEncrypted.has(parsed.encrypted_content)
+      ) {
+        continue
+      }
+      existingEncrypted.add(parsed.encrypted_content)
+      replayItems.push(parsed)
       continue
     }
-    replayItems.push(parsed)
+
+    if (parsed.type !== "function_call" && parsed.type !== "custom_tool_call") {
+      continue
+    }
+
+    const keys = replayToolCallKeys(parsed)
+    if (keys.length === 0 || keys.some((key) => existingCalls.has(key))) {
+      continue
+    }
+    const callId =
+      typeof parsed.call_id === "string" ? parsed.call_id.trim() : ""
+    const alignedCallId = comparableCallIds(callId)
+      .map((candidate) => outputCallIds.get(candidate))
+      .find(Boolean)
+    if (!alignedCallId) continue
+
+    const aligned =
+      alignedCallId === callId ? parsed : { ...parsed, call_id: alignedCallId }
+    for (const key of replayToolCallKeys(aligned)) existingCalls.add(key)
+    replayItems.push(aligned)
   }
 
   if (replayItems.length === 0) return body
 
-  // Insert replay items at the beginning of the input array.
+  // Keep calls immediately before the matching output. For reasoning-only
+  // replay, insert after leading developer/system instructions.
   const inputArray: Array<unknown> = input
-  body.input = [...replayItems, ...inputArray]
+  const insertIndex = reasoningReplayInsertIndex(inputArray, replayItems)
+  body.input = [
+    ...inputArray.slice(0, insertIndex),
+    ...replayItems,
+    ...inputArray.slice(insertIndex),
+  ]
   return body
+}
+
+function reasoningReplayInsertIndex(
+  input: Array<unknown>,
+  replayItems: Array<Record<string, unknown>>,
+): number {
+  const replayCallIds = new Set(
+    replayItems.flatMap((item) =>
+      typeof item.call_id === "string" ? comparableCallIds(item.call_id) : [],
+    ),
+  )
+  if (replayCallIds.size > 0) {
+    const outputIndex = input.findIndex((entry) => {
+      const item = getRecord(entry)
+      if (!item) return false
+      if (
+        item.type !== "function_call_output"
+        && item.type !== "custom_tool_call_output"
+      ) {
+        return false
+      }
+      return (
+        typeof item.call_id === "string"
+        && comparableCallIds(item.call_id).some((id) => replayCallIds.has(id))
+      )
+    })
+    if (outputIndex !== -1) return outputIndex
+  }
+
+  const firstConversationItem = input.findIndex((entry) => {
+    const item = getRecord(entry)
+    return item?.role !== "system" && item?.role !== "developer"
+  })
+  const lastAssistantIndex = input.findLastIndex((entry) => {
+    const item = getRecord(entry)
+    return item?.role === "assistant"
+  })
+  if (lastAssistantIndex !== -1) return lastAssistantIndex
+  return firstConversationItem !== -1 ? firstConversationItem : input.length
+}
+
+function replayToolCallKeys(item: Record<string, unknown>): Array<string> {
+  const itemType = typeof item.type === "string" ? item.type : ""
+  if (itemType !== "function_call" && itemType !== "custom_tool_call") {
+    return []
+  }
+  if (typeof item.call_id !== "string") return []
+  return comparableCallIds(item.call_id).map((id) => `${itemType}:${id}`)
+}
+
+function comparableCallIds(callId: string): Array<string> {
+  const trimmed = callId.trim()
+  if (!trimmed) return []
+  const sanitized = trimmed.replaceAll(/[^\w-]/g, "_")
+  const visible = shortenReplayCallId(sanitized)
+  return visible === trimmed ? [trimmed] : [trimmed, visible]
+}
+
+function shortenReplayCallId(id: string): string {
+  if (id.length <= 64) return id
+  const suffix = `_${createHash("sha256").update(id).digest("hex").slice(0, 16)}`
+  return `${id.slice(0, 64 - suffix.length)}${suffix}`
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ?
+      (value as Record<string, unknown>)
+    : undefined
 }

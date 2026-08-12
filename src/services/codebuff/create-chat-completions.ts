@@ -8,6 +8,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { parseModelReference } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type CodebuffRuntimeSettings,
@@ -19,6 +20,7 @@ import {
 } from "~/services/protocols/shared"
 interface CodebuffAgentRunResponse {
   runId?: string
+  run_id?: string
 }
 
 interface CodebuffMetadata {
@@ -125,7 +127,13 @@ export async function createCodebuffChatCompletionsOnce(
   }
 
   const responseBody = (await response.json()) as ChatCompletionResponse
-  await finishAgentRun(settings, authToken, runId)
+  await finishAgentRun(settings, authToken, runId).catch((error: unknown) => {
+    logger.warn(
+      `Codebuff failed to finish agent run ${runId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  })
   return responseBody
 }
 
@@ -181,11 +189,12 @@ async function createAgentRun(
   }
 
   const body = (await response.json()) as CodebuffAgentRunResponse
-  if (!body.runId) {
+  const runId = body.runId ?? body.run_id
+  if (!runId) {
     throw new Error("Codebuff response missing runId")
   }
 
-  return body.runId
+  return runId
 }
 
 async function finishAgentRun(

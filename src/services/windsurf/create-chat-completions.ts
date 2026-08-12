@@ -383,24 +383,7 @@ async function* streamToOpenAI(
         })
       }
       if (usage) {
-        // Merge across frames: field[7] (prompt/completion) and field[33]/field[28]
-        // (cache hits) often arrive in separate frames. The `??` operator would
-        // let a late cache-only frame overwrite real completion_tokens with 0.
-        const prev = usage
-        usage = {
-          prompt_tokens: parsed.usage.prompt_tokens || prev.prompt_tokens,
-          completion_tokens:
-            parsed.usage.completion_tokens || prev.completion_tokens,
-          total_tokens: parsed.usage.total_tokens || prev.total_tokens,
-          cached_tokens: Math.max(
-            parsed.usage.cached_tokens,
-            prev.cached_tokens,
-          ),
-          cache_read_tokens: Math.max(
-            parsed.usage.cache_read_tokens ?? 0,
-            prev.cache_read_tokens ?? 0,
-          ),
-        }
+        usage = mergeWindsurfUsageFrames(usage, parsed.usage, rawFrame)
         if (debugLogging) {
           logger.debug("usage frame merged", {
             req: requestId,
@@ -445,6 +428,58 @@ async function* streamToOpenAI(
     },
   }
   yield { data: "[DONE]" }
+}
+
+type WindsurfUsage = NonNullable<ChatStreamFrame["usage"]>
+
+/**
+ * Merge usage values according to protobuf field presence. A field[28] frame
+ * may carry input/cache metrics but omit output_tokens; its parsed zero is a
+ * placeholder, not an instruction to erase completion usage from an earlier
+ * frame. Explicit zero values remain authoritative when the protobuf field was
+ * actually present.
+ */
+export function mergeWindsurfUsageFrames(
+  previous: WindsurfUsage,
+  incoming: WindsurfUsage,
+  rawFrame: WindsurfRawUsageSignals | undefined,
+): WindsurfUsage {
+  const hasPrompt =
+    rawFrame === undefined ?
+      incoming.prompt_tokens !== 0
+    : rawFrame.field7?.f2 !== undefined
+      || rawFrame.field28?.inputTokens !== undefined
+      || rawFrame.field28?.cachedInputTokens !== undefined
+  const hasCompletion =
+    rawFrame === undefined ?
+      incoming.completion_tokens !== 0
+    : rawFrame.field7?.f3 !== undefined
+      || rawFrame.field28?.outputTokens !== undefined
+  const promptTokens =
+    hasPrompt ? incoming.prompt_tokens : previous.prompt_tokens
+  const completionTokens =
+    hasCompletion ? incoming.completion_tokens : previous.completion_tokens
+  const cacheWriteTokens = Math.max(
+    previous.cache_write_tokens ?? 0,
+    incoming.cache_write_tokens ?? 0,
+  )
+
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: promptTokens + completionTokens,
+    cached_tokens: Math.max(incoming.cached_tokens, previous.cached_tokens),
+    cache_read_tokens: Math.max(
+      incoming.cache_read_tokens ?? 0,
+      previous.cache_read_tokens ?? 0,
+    ),
+    ...((
+      previous.cache_write_tokens !== undefined
+      || incoming.cache_write_tokens !== undefined
+    ) ?
+      { cache_write_tokens: cacheWriteTokens }
+    : {}),
+  }
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────

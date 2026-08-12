@@ -24,8 +24,8 @@ import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
+import { sanitizeCodexInput } from "~/services/codex/sanitize-input"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
-import { withDefaultReasoningSummary } from "~/services/copilot/responses-api"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 import {
@@ -40,9 +40,18 @@ import {
   openUpstreamResponsesWebsocketTurn,
   shouldUseUpstreamResponsesWebsocket,
 } from "~/services/responses/upstream-ws"
+import { isChainedTurnUpstreamError } from "~/services/responses/upstream-ws-error"
 import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import { buildCodexHeaders } from "./headers"
+import {
+  assertChainedHttpReplayAvailable,
+  buildCodexUpstreamBody,
+  chainedHttpCodexRequestError,
+  convertSystemRoleToDeveloper,
+  isResponsesLiteRequest,
+  stripReasoningItems,
+} from "./upstream-body"
 import {
   appendCodexTranscript,
   buildResponsesTranscriptInput,
@@ -166,107 +175,6 @@ function resolveCodexExtraHeaders(
   return extra
 }
 
-/**
- * Detects whether the incoming request targets OpenAI's "Responses Lite"
- * variant. The official codex CLI signals this two ways:
- *   - HTTP transport: the `x-openai-internal-codex-responses-lite: true`
- *     request header (added by `add_responses_lite_header`).
- *   - WebSocket transport: a `client_metadata` entry keyed
- *     `ws_request_header_x_openai_internal_codex_responses_lite` = "true"
- *     (added by `build_ws_client_metadata`), which the upstream proxy
- *     converts back into the header.
- *
- * When Responses Lite is active, the codex client forces
- * `parallel_tool_calls` to false and the ChatGPT backend rejects any request
- * that sends the marker together with `parallel_tool_calls: true`
- * ("X-OpenAI-Internal-Codex-Responses-Lite requires `parallel_tool_calls` to
- * be false."). We must mirror that invariant when proxying.
- */
-function isResponsesLiteRequest(
-  payload: ResponsesPayload,
-  ctx?: RequestExecutionContext,
-): boolean {
-  // 1. Forwarded HTTP header from the codex client.
-  const headerValue =
-    ctx?.forwardedHeaders?.["x-openai-internal-codex-responses-lite"]
-  if (isResponsesLiteMarker(headerValue)) {
-    return true
-  }
-
-  // 2. WebSocket transport marker carried inside client_metadata.
-  const clientMetadata = (payload as { client_metadata?: unknown })
-    .client_metadata
-  if (clientMetadata && typeof clientMetadata === "object") {
-    const marker = (clientMetadata as Record<string, unknown>)[
-      "ws_request_header_x_openai_internal_codex_responses_lite"
-    ]
-    if (isResponsesLiteMarker(marker)) {
-      return true
-    }
-  }
-
-  return false
-}
-
-function isResponsesLiteMarker(value: unknown): boolean {
-  return (
-    value === true
-    || (typeof value === "string" && value.trim().toLowerCase() === "true")
-  )
-}
-
-/**
- * Resolve the `parallel_tool_calls` value to send upstream, mirroring CPA's
- * normalizeCodexParallelToolCalls:
- *   - Responses Lite requests must send false (upstream rejects true together
- *     with the Lite marker).
- *   - Non-Lite requests keep the client's explicit value when tools are
- *     present; when no tools are present the field is dropped entirely
- *     (CPA deletes it — it is meaningless without tools).
- *   - Default (client omitted the field): true.
- */
-function resolveCodexParallelToolCalls(
-  payload: ResponsesPayload,
-  responsesLite: boolean,
-): boolean | undefined {
-  if (responsesLite) return false
-  const tools = (payload as { tools?: unknown }).tools
-  const hasTools = Array.isArray(tools) && tools.length > 0
-  if (!hasTools) return undefined
-  if (typeof payload.parallel_tool_calls === "boolean") {
-    return payload.parallel_tool_calls
-  }
-  return true
-}
-
-/**
- * Codex upstream does not accept the "system" role in input items (CPA
- * convertSystemRoleToDeveloper: "Codex API does not accept 'system' role in
- * the input array"). Rewrite role "system" → "developer" without mutating the
- * caller's payload; returns the original array when nothing needs changing.
- */
-function convertSystemRoleToDeveloper(input: unknown): unknown {
-  if (!Array.isArray(input)) {
-    return input
-  }
-  // Mutable state object so the linter's control-flow analysis keeps
-  // `changed` a plain boolean (it is only flipped inside the map callback).
-  const state = { changed: false }
-  const items = (input as Array<unknown>).map((item) => {
-    if (
-      item !== null
-      && typeof item === "object"
-      && !Array.isArray(item)
-      && (item as { role?: unknown }).role === "system"
-    ) {
-      state.changed = true
-      return { ...(item as Record<string, unknown>), role: "developer" }
-    }
-    return item
-  })
-  return state.changed ? items : input
-}
-
 /** Transport a finalized Codex body is about to be sent over. */
 type CodexOutboundTransport = "http" | "ws"
 
@@ -295,147 +203,23 @@ export function finalizeCodexOutboundBody(
     // `generate` is WebSocket-only (CPA deletes it on the HTTP path): a
     // spawn-agent turn over plain HTTP would be rejected/orphaned upstream.
     finalized.generate = undefined
-  }
-  return finalized
-}
-
-/**
- * Builds the body sent to the Codex upstream /responses endpoint.
- *
- * Codex /responses rejects many standard Responses API parameters with
- * "Unsupported parameter: <name>". Strip them out before forwarding.
- * See CLIProxyAPI codex_openai-responses_request.go for the reference set.
- * Preserve the client's `include` items and append reasoning.encrypted_content
- * (needed for cross-turn replay under store=false) instead of overwriting -
- * overwriting drops include items the client needs (e.g. reasoning summary
- * controls), which can suppress visible thinking output. Matches oh-my-pi
- * `applyResponsesCompatPolicy` (openai-shared.ts:3192-3195).
- */
-function buildCodexUpstreamBody(
-  payload: ResponsesPayload,
-  model: string,
-  responsesLite: boolean,
-): Record<string, unknown> {
-  const rawInclude = (payload as { include?: unknown }).include
-  const clientInclude: Array<string> =
-    Array.isArray(rawInclude) ? (rawInclude as Array<string>) : []
-  const parallelToolCalls = resolveCodexParallelToolCalls(
-    payload,
-    responsesLite,
-  )
-  // CPA preserves only stream_options.reasoning_summary_delivery (read before
-  // deleting stream_options, then re-set). include_usage etc. are dropped.
-  const reasoningSummaryDelivery = (
-    payload as unknown as {
-      stream_options?: { reasoning_summary_delivery?: unknown }
+    // The codex HTTP backend rejects stream_options.include_usage (CPA
+    // drops the whole stream_options there, keeping only
+    // reasoning_summary_delivery). include_usage is WS-only. Copy before
+    // deleting: `stream_options` may be a shared reference with the WS body.
+    const streamOptions = finalized.stream_options as
+      | Record<string, unknown>
+      | undefined
+    if (streamOptions && typeof streamOptions === "object") {
+      const httpStreamOptions = { ...streamOptions }
+      delete httpStreamOptions.include_usage
+      finalized.stream_options =
+        Object.keys(httpStreamOptions).length === 0 ?
+          undefined
+        : httpStreamOptions
     }
-  ).stream_options?.reasoning_summary_delivery
-  // CPA keeps only service_tier "priority" and strips every other value.
-  const serviceTier = (payload as unknown as { service_tier?: unknown })
-    .service_tier
-  return {
-    ...payload,
-    model,
-    stream: true,
-    store: false,
-    parallel_tool_calls: parallelToolCalls,
-    include:
-      clientInclude.includes("reasoning.encrypted_content") ? clientInclude : (
-        [...clientInclude, "reasoning.encrypted_content"]
-      ),
-    ...withDefaultReasoningSummary(payload.reasoning),
-    instructions:
-      typeof payload.instructions === "string" ? payload.instructions : "",
-    // `input`-level normalization (system→developer) happens once, last, in
-    // `finalizeCodexOutboundBody` — every send site applies it there instead
-    // of here so it can never be bypassed by a path that rebuilds `input`.
-    input: payload.input,
-    previous_response_id: undefined,
-    prompt_cache_retention: undefined,
-    safety_identifier: undefined,
-    stream_options:
-      reasoningSummaryDelivery === undefined ? undefined : (
-        { reasoning_summary_delivery: reasoningSummaryDelivery }
-      ),
-    max_output_tokens: undefined,
-    max_completion_tokens: undefined,
-    temperature: undefined,
-    top_p: undefined,
-    truncation: undefined,
-    user: undefined,
-    context_management: undefined,
-    service_tier: serviceTier === "priority" ? "priority" : undefined,
   }
-}
-
-/**
- * Remove all `reasoning` items from a Responses `input` array.
- *
- * The OpenAI Responses API accepts reasoning items in only two valid shapes:
- * fully paired (each reasoning item immediately followed by the item it
- * reasoned about) or omitted entirely. A partially-stripped input triggers a
- * 400 ("reasoning ... provided without its required following item"), so we
- * drop *every* reasoning item and keep messages / function_call /
- * custom_tool_call and their outputs intact.
- *
- * Used for self-contained replays (fresh WS socket / HTTP fallback) where the
- * accumulated transcript's historical `reasoning.encrypted_content` blobs are
- * both the bulk of the payload (blowing past the WS frame the upstream can
- * process) and stale relative to the freshly dialed upstream context. Dropping
- * them shrinks the replay and avoids stale-signature rejections; the only cost
- * is losing cross-turn chain-of-thought continuity on the (rare) recovery path.
- */
-export function stripReasoningItems(input: Array<unknown>): Array<unknown> {
-  return input.filter(
-    (item) =>
-      item === null
-      || typeof item !== "object"
-      || (item as { type?: unknown }).type !== "reasoning",
-  )
-}
-
-/**
- * Reject a chained Codex /responses request that would otherwise travel over
- * plain HTTP. `previous_response_id` is WebSocket-only (CPA): a fresh HTTP
- * request has no server-side conversation chain to reference, so forwarding
- * the incremental delta would yield a useless `function_call_output` with no
- * matching `function_call` upstream. Clients (Crush's Responses chaining)
- * detect the `previous_response_not_found` marker and retry with a full
- * self-contained replay instead.
- */
-export function chainedHttpCodexRequestError(): HTTPError {
-  const errorBody = JSON.stringify({
-    error: {
-      type: "invalid_request_error",
-      code: "previous_response_not_found",
-      message:
-        "Chained Codex requests require WebSocket transport or full replay.",
-    },
-  })
-  return new HTTPError(
-    "previous_response_not_found: chained Codex request requires full replay",
-    new Response(errorBody, { status: 409 }),
-    errorBody,
-  )
-}
-
-function assertChainedHttpReplayAvailable(
-  previousResponseId: string | undefined,
-  useUpstreamWs: boolean,
-  httpFallbackBody: Record<string, unknown> | undefined,
-  memoryTraceId: string | undefined,
-): void {
-  if (previousResponseId && !useUpstreamWs && !httpFallbackBody) {
-    // Telemetry for how often the 409 recovery-required path actually fires
-    // in real traffic (no client-supplied stable session id, or the
-    // transcript for one was evicted/never written) — see P2 goal of making
-    // cap-tuning (ws-transcript-cache.ts MAX_TRANSCRIPT_* ) answerable from
-    // telemetry instead of guesswork.
-    updateMemoryTrace(memoryTraceId, "transcript_replay_unavailable", {
-      provider: "codex",
-    })
-    throw chainedHttpCodexRequestError()
-  }
+  return sanitizeCodexInput(finalized)
 }
 
 export async function createCodexResponsesOnce(
@@ -586,7 +370,6 @@ export async function createCodexResponsesOnce(
           sessionId,
           transcriptScopeId,
         ),
-        model,
       )
     : undefined
   // Use the *raw* client input delta (not upstreamBody.input, which may have
@@ -630,79 +413,30 @@ export async function createCodexResponsesOnce(
     memoryTraceId,
   )
 
+  // Upstream WebSocket attempt. Returns the completed turn when the WS path
+  // succeeds, or undefined when the socket is unusable and the caller should
+  // fall through to a same-account HTTP POST.
   if (useUpstreamWs) {
-    const wsBody = finalizeCodexOutboundBody(
-      { ...upstreamBody, previous_response_id: previousResponseId },
-      "ws",
-    )
-    // `generate` must survive on the WS transport (see finalizeCodexOutboundBody);
-    // finalize the replay fallback the same way so a fresh-socket recovery turn
-    // does not silently drop it either.
-    const wsFallbackFullInputBody =
-      fallbackFullInputBody
-      && finalizeCodexOutboundBody(fallbackFullInputBody, "ws")
-    const wsHeaders = applyCodexWebsocketHeaders({ ...httpHeaders })
-    try {
-      // Eager open+send so handshake failures hit this catch (streaming-safe).
-      const wsStream = await openUpstreamResponsesWebsocketTurn({
-        provider: "codex",
-        account,
-        httpResponsesUrl: url,
-        headers: wsHeaders,
-        body: wsBody,
-        executionSessionId,
-        signal,
-        previousResponseId,
-        fallbackFullInputBody: wsFallbackFullInputBody,
-        memoryTraceId,
-      })
-      const normalized = normalizeResponsesStreamIds(wsStream)
-      // Record on the normalized stream so recorded output-item ids match what
-      // the codex client sees (and later chains from). Gated the same as the
-      // HTTP paths below: a client-supplied stable session id, not merely
-      // "this transport is a WebSocket".
-      const tracked =
-        transcriptKey && transcriptTrackable ?
-          recordCodexTranscript(
-            normalized,
-            transcriptKey,
-            fullInputThisTurn,
-            memoryTraceId,
-          )
-        : normalized
-      if (clientStream) {
-        return wrapCodexStream(
-          tracked,
-          model,
-          scopedReplaySessionKey,
-          identityState,
-        )
-      }
-      return await collectResponsesFromWsStream(
-        wrapCodexStream(tracked, model, scopedReplaySessionKey, identityState),
-        model,
-        identityState,
-      )
-    } catch (error) {
-      if (isAbortLikeError(error) || signal?.aborted) throw error
-      const failure = classifyWsFailure(error)
-      // credential (quota/auth/rate/server) and request (bad body) failures are
-      // the handler's concern — an account switch or a surfaced error. Never
-      // silently re-POST them on the same account.
-      if (failure.scope === "credential" || failure.scope === "request") {
-        throw error
-      }
-      // connection scope: this socket is unusable. On a connection-limit frame,
-      // destroy the stale session so the next turn redials; then fall through
-      // to a same-account HTTP POST for the current turn.
-      if (failure.kind === "connection_limit") {
-        destroyUpstreamWebsocketSession("codex", account.id, executionSessionId)
-      }
-      logger.warn(
-        `codex websockets: falling back to HTTP: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
+    const wsTurn = await attemptCodexUpstreamWsTurn({
+      account,
+      url,
+      httpHeaders,
+      upstreamBody,
+      previousResponseId,
+      fallbackFullInputBody,
+      executionSessionId,
+      signal,
+      model,
+      clientStream,
+      scopedReplaySessionKey,
+      identityState,
+      transcriptKey,
+      transcriptTrackable,
+      fullInputThisTurn,
+      memoryTraceId,
+    })
+    if (wsTurn !== undefined) {
+      return wsTurn
     }
   }
 
@@ -1003,4 +737,136 @@ async function* wrapCodexStream(
 
     yield { ...event, data }
   }
+}
+
+interface CodexWsTurnOptions {
+  account: Account
+  url: string
+  httpHeaders: Record<string, string>
+  upstreamBody: Record<string, unknown>
+  previousResponseId?: string
+  fallbackFullInputBody?: Record<string, unknown>
+  executionSessionId: string
+  signal?: AbortSignal
+  model: string
+  clientStream: boolean
+  scopedReplaySessionKey?: string
+  identityState: IdentityConfuseState
+  transcriptKey?: string
+  transcriptTrackable: boolean
+  fullInputThisTurn: Array<unknown>
+  memoryTraceId?: string
+}
+
+/**
+ * Run one Codex turn over the upstream WebSocket. Returns the completed turn
+ * (stream or collected response) on success, or undefined when the socket is
+ * unusable and the caller should fall through to a same-account HTTP POST.
+ */
+async function attemptCodexUpstreamWsTurn(
+  options: CodexWsTurnOptions,
+): Promise<
+  AsyncIterable<CopilotStreamEventLike> | ResponsesResponse | undefined
+> {
+  const {
+    account,
+    url,
+    httpHeaders,
+    upstreamBody,
+    previousResponseId,
+    fallbackFullInputBody,
+    executionSessionId,
+    signal,
+    model,
+    clientStream,
+    scopedReplaySessionKey,
+    identityState,
+    transcriptKey,
+    transcriptTrackable,
+    fullInputThisTurn,
+    memoryTraceId,
+  } = options
+  const wsBody = finalizeCodexOutboundBody(
+    { ...upstreamBody, previous_response_id: previousResponseId },
+    "ws",
+  )
+  // `generate` must survive on the WS transport (see finalizeCodexOutboundBody);
+  // finalize the replay fallback the same way so a fresh-socket recovery turn
+  // does not silently drop it either.
+  const wsFallbackFullInputBody =
+    fallbackFullInputBody
+    && finalizeCodexOutboundBody(fallbackFullInputBody, "ws")
+  const wsHeaders = applyCodexWebsocketHeaders({ ...httpHeaders })
+  try {
+    // Eager open+send so handshake failures hit this catch (streaming-safe).
+    const wsStream = await openUpstreamResponsesWebsocketTurn({
+      provider: "codex",
+      account,
+      httpResponsesUrl: url,
+      headers: wsHeaders,
+      body: wsBody,
+      executionSessionId,
+      signal,
+      previousResponseId,
+      fallbackFullInputBody: wsFallbackFullInputBody,
+      memoryTraceId,
+    })
+    const normalized = normalizeResponsesStreamIds(wsStream)
+    // Record on the normalized stream so recorded output-item ids match what
+    // the codex client sees (and later chains from). Gated the same as the
+    // HTTP paths below: a client-supplied stable session id, not merely
+    // "this transport is a WebSocket".
+    const tracked =
+      transcriptKey && transcriptTrackable ?
+        recordCodexTranscript(
+          normalized,
+          transcriptKey,
+          fullInputThisTurn,
+          memoryTraceId,
+        )
+      : normalized
+    if (clientStream) {
+      return wrapCodexStream(
+        tracked,
+        model,
+        scopedReplaySessionKey,
+        identityState,
+      )
+    }
+    return await collectResponsesFromWsStream(
+      wrapCodexStream(tracked, model, scopedReplaySessionKey, identityState),
+      model,
+      identityState,
+    )
+  } catch (error) {
+    if (isAbortLikeError(error) || signal?.aborted) throw error
+    const failure = classifyWsFailure(error)
+    // A chained turn the upstream rejected because its server-side chain is
+    // gone (account switch / fresh socket with no transcript to replay):
+    // signal the client to resend the full conversation. Codex CLI/Desktop
+    // and waku recognize `previous_response_not_found` and retry with a
+    // self-contained replay. The in-turn auto-retry (upstream-ws.ts) already
+    // exhausted the transcript path before this error surfaced.
+    if (isChainedTurnUpstreamError(error) && previousResponseId) {
+      throw chainedHttpCodexRequestError()
+    }
+    // credential (quota/auth/rate/server) and request (bad body) failures are
+    // the handler's concern — an account switch or a surfaced error. Never
+    // silently re-POST them on the same account.
+    if (failure.scope === "credential" || failure.scope === "request") {
+      throw error
+    }
+    // connection scope: this socket is unusable. On a connection-limit frame,
+    // destroy the stale session so the next turn redials; then fall through
+    // to a same-account HTTP POST for the current turn.
+    if (failure.kind === "connection_limit") {
+      destroyUpstreamWebsocketSession("codex", account.id, executionSessionId)
+    }
+    logger.warn(
+      `codex websockets: falling back to HTTP: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
+  return undefined
 }

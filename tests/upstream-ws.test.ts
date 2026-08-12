@@ -12,12 +12,25 @@ import {
   isAbortLikeError,
   isAccountWebsocketsEnabled,
   isUpstreamWsTransportError,
+  normalizeUpstreamWsEvent,
   shouldUseUpstreamResponsesWebsocket,
 } from "~/services/responses/upstream-ws"
 import {
   extractWsErrorMessage,
   extractWsErrorStatus,
+  isChainedTurnUpstreamError,
 } from "~/services/responses/upstream-ws-error"
+
+/** Build an upstream-style 400 error frame for classification tests. */
+function wsError(message: string): HTTPError {
+  return new HTTPError(
+    `codex websockets: ${message}`,
+    new Response(JSON.stringify({ type: "error", error: { message } }), {
+      status: 400,
+    }),
+    "",
+  )
+}
 
 function makeAccount(
   provider: Account["provider"],
@@ -110,6 +123,54 @@ describe("buildUpstreamResponsesCreateBody", () => {
     )
     expect(body.type).toBe("response.create")
     expect(body.previous_response_id).toBe("resp_c1")
+  })
+
+  test("codex preserves reasoning_summary_delivery and include_usage", () => {
+    const body = buildUpstreamResponsesCreateBody(
+      {
+        model: "gpt-5",
+        stream_options: {
+          include_usage: true,
+          reasoning_summary_delivery: "auto",
+        },
+      },
+      { provider: "codex" },
+    )
+    // include_usage must survive on the WS transport: it is what makes the
+    // upstream attach `usage` to response.completed (CPA keeps stream_options
+    // on the codex WS path).
+    expect(body.stream_options).toEqual({
+      reasoning_summary_delivery: "auto",
+      include_usage: true,
+    })
+  })
+
+  test("codex drops other stream_options", () => {
+    const body = buildUpstreamResponsesCreateBody(
+      {
+        model: "gpt-5",
+        stream_options: {
+          include_usage: true,
+          something_else: "x",
+        },
+      },
+      { provider: "codex" },
+    )
+    expect(body.stream_options).toEqual({ include_usage: true })
+  })
+})
+
+describe("upstream event normalization", () => {
+  test("codex response.done becomes a terminal response.completed", () => {
+    const event: Record<string, unknown> = { type: "response.done" }
+    expect(normalizeUpstreamWsEvent(event, "codex")).toBe("response.completed")
+    expect(event.type).toBe("response.completed")
+  })
+
+  test("xai response.done remains provider-native", () => {
+    const event: Record<string, unknown> = { type: "response.done" }
+    expect(normalizeUpstreamWsEvent(event, "xai")).toBe("response.done")
+    expect(event.type).toBe("response.done")
   })
 })
 
@@ -209,5 +270,48 @@ describe("upstream response.failed extraction", () => {
     }
     expect(extractWsErrorMessage(event)).toBe("backend unavailable")
     expect(extractWsErrorStatus(event)).toBe(500)
+  })
+})
+
+describe("chained-turn upstream error classification", () => {
+  test("orphan tool-call output is chained-recoverable", () => {
+    expect(
+      isChainedTurnUpstreamError(
+        wsError(
+          "No tool call found for custom tool call output with call_id call_x.",
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      isChainedTurnUpstreamError(
+        wsError(
+          "No tool call found for function call output with call_id call_y.",
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  test("previous_response_id not found is chained-recoverable", () => {
+    expect(
+      isChainedTurnUpstreamError(wsError("previous_response_not_found")),
+    ).toBe(true)
+    expect(
+      isChainedTurnUpstreamError(
+        wsError("Previous response with id 'resp_1' not found."),
+      ),
+    ).toBe(true)
+    expect(
+      isChainedTurnUpstreamError(
+        wsError("No response found for previous_response_id resp_1"),
+      ),
+    ).toBe(true)
+  })
+
+  test("unrelated upstream 400s are not chained-recoverable", () => {
+    expect(
+      isChainedTurnUpstreamError(wsError("Unsupported parameter: temperature")),
+    ).toBe(false)
+    expect(isChainedTurnUpstreamError(new Error("network"))).toBe(false)
+    expect(isChainedTurnUpstreamError(null)).toBe(false)
   })
 })

@@ -1,11 +1,16 @@
-import { randomUUID } from "node:crypto"
-
 /**
  * Grok CLI client version that cli-chat-proxy expects. Keep in sync with
  * CLIProxyAPI's `xaiClientVersionValue`.
  */
-export const XAI_CLI_CLIENT_VERSION = "0.2.93"
+export const XAI_CLI_CLIENT_VERSION = "0.2.120"
 
+/**
+ * Build headers for xAI upstream requests.
+ *
+ * Mirrors CPA `applyXAIDefaultHeaders` / `applyXAIChatHeaders`:
+ * - `x-grok-conv-id` is only set when a session ID is known (do not invent one).
+ * - CLI chat-proxy identity headers are only attached when `cliIdentity` is true.
+ */
 export function buildXaiHeaders(
   accessToken: string,
   stream?: boolean,
@@ -16,7 +21,11 @@ export function buildXaiHeaders(
     "Content-Type": "application/json",
     Authorization: `Bearer ${accessToken}`,
     Connection: "Keep-Alive",
-    "x-grok-conv-id": sessionId?.trim() || randomUUID(),
+  }
+
+  const trimmedSession = sessionId?.trim()
+  if (trimmedSession) {
+    headers["x-grok-conv-id"] = trimmedSession
   }
 
   headers.Accept = stream ? "text/event-stream" : "application/json"
@@ -28,6 +37,8 @@ export function buildXaiHeaders(
     headers["X-XAI-Token-Auth"] = "xai-grok-cli"
     headers["x-grok-client-version"] = XAI_CLI_CLIENT_VERSION
     headers["User-Agent"] = `xai-grok-workspace/${XAI_CLI_CLIENT_VERSION}`
+    headers["x-grok-client-identifier"] = "grok-shell"
+    headers["x-authenticateresponse"] = "authenticate-response"
   }
 
   return headers

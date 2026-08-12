@@ -309,4 +309,92 @@ describe("dispatch-failover", () => {
     expect(listAccounts()[0]?.quotaState).toBe("exhausted")
     expect(listAccounts()[0]?.isExhausted).toBe(true)
   })
+
+  test("rotates to another account after usage_limit_reached", async () => {
+    const makeAccount = (id: string): Account => ({
+      id,
+      label: id,
+      provider: "codex",
+      credentials: {
+        accessToken: `${id}-access-token`,
+        refreshToken: `${id}-refresh-token`,
+      },
+      enabled: true,
+      priority: 0,
+      quotaState: "available",
+      createdAt: Date.now(),
+    })
+    const first = makeAccount("oauth-1")
+    const second = makeAccount("oauth-2")
+    setTestAccounts([first, second])
+
+    const credential: ApiCredential = {
+      id: first.id,
+      authMode: "bearer",
+      value: "oauth-1-access-token",
+      enabled: true,
+      priority: 0,
+      status: "ready",
+      createdAt: Date.now(),
+    }
+    const connection: ProviderConnection = {
+      id: first.id,
+      name: first.label,
+      protocol: "codex-native",
+      baseUrl: "https://api.openai.com",
+      enabled: true,
+      priority: 0,
+      credentials: [credential],
+      createdAt: Date.now(),
+    }
+    const target: RouteTarget = {
+      connectionId: first.id,
+      connectionName: first.label,
+      protocol: "codex-native",
+      credentialId: first.id,
+      publicModelId: "gpt-5",
+      upstreamModelId: "gpt-5",
+      endpoint: "chat",
+      connectionPriority: 0,
+      connectionWeight: 1,
+      credentialPriority: 0,
+      credentialWeight: 1,
+      isWildcard: true,
+    }
+    const usageLimitBody = JSON.stringify({
+      error: { type: "usage_limit_reached", resets_in_seconds: 3600 },
+    })
+    const attempts: Array<string> = []
+
+    const result = await executeWithFailover({
+      payload: { model: "gpt-5" },
+      admission: {
+        target,
+        connection,
+        credential,
+        account: first,
+        initiator: "user",
+      },
+      routeKind: "chat",
+      execute: (_adapter, currentTarget) => {
+        attempts.push(currentTarget.connectionId)
+        if (currentTarget.connectionId === first.id) {
+          throw new HTTPError(
+            "usage limit",
+            new Response(usageLimitBody, { status: 429 }),
+            usageLimitBody,
+          )
+        }
+        return Promise.resolve("success")
+      },
+    })
+
+    expect(result).toBe("success")
+    expect(attempts).toEqual([first.id, second.id])
+    const storedFirst = listAccounts().find(
+      (account) => account.id === first.id,
+    )
+    expect(storedFirst?.quotaState).toBe("exhausted")
+    expect(storedFirst?.isExhausted).toBe(true)
+  })
 })

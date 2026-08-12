@@ -115,6 +115,12 @@ export interface AntigravityUpstreamBody {
     }
     generationConfig?: Record<string, unknown>
     tools?: Array<Record<string, unknown>>
+    toolConfig?: {
+      functionCallingConfig: {
+        mode: "NONE" | "AUTO" | "ANY"
+        allowedFunctionNames?: Array<string>
+      }
+    }
   }
 }
 
@@ -270,14 +276,14 @@ function buildAssistantContent(
     : FUNCTION_THOUGHT_SIGNATURE
 
   const toolCallIds: Array<string> = []
-  for (const toolCall of message.tool_calls ?? []) {
+  for (const [index, toolCall] of (message.tool_calls ?? []).entries()) {
     modelParts.push({
       functionCall: {
         id: toolCall.id,
         name: sanitizeFunctionName(toolCall.function.name),
         args: parseFunctionArgs(toolCall.function.arguments),
       },
-      thoughtSignature: reasoningSig,
+      ...(index === 0 ? { thoughtSignature: reasoningSig } : {}),
     })
     toolCallIds.push(toolCall.id)
   }
@@ -308,6 +314,12 @@ function buildAssistantContent(
     })
   }
   if (responseParts.length > 0) {
+    // Tool results are a *user* turn: CPA emits
+    // `antigravityOpenAIContent("user", responseParts)`
+    // (antigravity_openai_request.go), and its signature validator documents
+    // the same rule ("user functionResponse/tool-result parts"). Emitting them
+    // as "model" produces two consecutive model turns and the upstream can
+    // silently ignore the tool output.
     contents.push({ role: "user", parts: responseParts })
   }
 
@@ -329,6 +341,56 @@ function buildTools(
     return undefined
   }
   return [{ functionDeclarations: declarations }]
+}
+
+/** String `tool_choice` values CPA maps to a functionCallingConfig mode. */
+const TOOL_CHOICE_MODES = new Map<string, "NONE" | "AUTO" | "ANY">([
+  ["none", "NONE"],
+  ["auto", "AUTO"],
+  ["required", "ANY"],
+  ["any", "ANY"],
+])
+
+/**
+ * Maps OpenAI `tool_choice` onto Gemini `toolConfig.functionCallingConfig`,
+ * mirroring CPA `applyOpenAIToolChoiceToAntigravity`.
+ *
+ * The payload is an unvalidated cast of the client body (`readJsonBody<T>`),
+ * so `tool_choice` can hold any JSON value. Anything that does not map to a
+ * mode is dropped rather than coerced into a forced-function choice — the old
+ * fall-through dereferenced `toolChoice.function.name` and threw on strings
+ * outside the declared union (e.g. the `"any"` alias CPA accepts).
+ */
+function buildToolConfig(
+  toolChoice: ChatCompletionsPayload["tool_choice"],
+): AntigravityUpstreamBody["request"]["toolConfig"] {
+  if (toolChoice === null || toolChoice === undefined) return undefined
+
+  if (typeof toolChoice === "string") {
+    const mode = TOOL_CHOICE_MODES.get(toolChoice.trim().toLowerCase())
+    return mode ? { functionCallingConfig: { mode } } : undefined
+  }
+
+  const choice = toolChoice as { type?: unknown; function?: { name?: unknown } }
+  if (
+    typeof choice.type !== "string"
+    || choice.type.trim().toLowerCase() !== "function"
+  ) {
+    return undefined
+  }
+
+  const name = choice.function?.name
+  // CPA only emits allowedFunctionNames for a non-empty name; a forced-function
+  // choice missing a usable name degrades to plain ANY.
+  if (typeof name !== "string" || !name.trim()) {
+    return { functionCallingConfig: { mode: "ANY" } }
+  }
+  return {
+    functionCallingConfig: {
+      mode: "ANY",
+      allowedFunctionNames: [sanitizeFunctionName(name)],
+    },
+  }
 }
 
 /**
@@ -445,6 +507,10 @@ export function translateOpenAiChatToAntigravity(
   const tools = buildTools(payload.tools ?? undefined)
   if (tools) {
     body.request.tools = tools
+  }
+  const toolConfig = buildToolConfig(payload.tool_choice)
+  if (toolConfig) {
+    body.request.toolConfig = toolConfig
   }
 
   return body

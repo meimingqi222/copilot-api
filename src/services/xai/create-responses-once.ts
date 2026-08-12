@@ -44,174 +44,12 @@ import {
   xaiWsBaseUrl,
 } from "./endpoint"
 import { buildXaiHeaders } from "./headers"
-
-/**
- * Resolves the xAI conversation/session ID for the upstream request.
- *
- * Priority:
- *   1. `prompt_cache_key` from the request body top-level field
- *      (matches CPA's xaiExecutionSessionID which checks req.Payload first).
- *   2. `prompt_cache_key` from `metadata.prompt_cache_key`
- *      (legacy OpenAI Responses API metadata location).
- *   3. `x-grok-conv-id` from forwarded headers (if a downstream client set it).
- *   4. `x-claude-code-session-id` from forwarded headers.
- *   5. Claude Code session ID extracted from `metadata.user_id` in the payload.
- *   6. L1 xAI prefix-hash fallback (system + first user). Always applied
- *      when possible for max cache utilization; Composer models especially
- *      need a stable key (CPA `xaiRequiresIsolatedConversation`).
- *
- * The xAI backend uses `x-grok-conv-id` to group requests within a
- * conversation and reuse cached prompt prefixes.
- */
-function resolveXaiSessionId(
-  payload: ResponsesPayload,
-  ctx?: RequestExecutionContext,
-): string | undefined {
-  // 1. Body-level prompt_cache_key
-  const bodyCacheKey = (payload as unknown as { prompt_cache_key?: unknown })
-    .prompt_cache_key
-  if (typeof bodyCacheKey === "string" && bodyCacheKey.trim()) {
-    return bodyCacheKey.trim()
-  }
-  // 2. metadata.prompt_cache_key
-  const metadataCacheKey = payload.metadata?.prompt_cache_key
-  if (typeof metadataCacheKey === "string" && metadataCacheKey.trim()) {
-    return metadataCacheKey.trim()
-  }
-  const forwarded = ctx?.forwardedHeaders
-  // 3. x-grok-conv-id header
-  const headerConvId = forwarded?.["x-grok-conv-id"]
-  if (typeof headerConvId === "string" && headerConvId.trim()) {
-    return headerConvId.trim()
-  }
-  // 4. x-claude-code-session-id header
-  const claudeSessionHeader = forwarded?.["x-claude-code-session-id"]
-  if (typeof claudeSessionHeader === "string" && claudeSessionHeader.trim()) {
-    return claudeSessionHeader.trim()
-  }
-  // 5. Claude Code session ID from payload metadata.user_id
-  const claudeSessionFromPayload =
-    extractClaudeCodeSessionIdFromPayload(payload)
-  if (claudeSessionFromPayload) {
-    return claudeSessionFromPayload
-  }
-  // 6. Prefix-hash fallback: derive a stable cache key from the system
-  //    prompt + first user message. xAI caching is prefix-based, so
-  //    conversations with the same opening prefix share cache hits.
-  //    Composer models always need a cache key (CPA behavior); other
-  //    models benefit too when we have enough prefix to hash.
-  const prefixHash = computePrefixHash(payload)
-  if (prefixHash) {
-    return prefixHash
-  }
-  return undefined
-}
-
-/**
- * Extracts a Claude Code session ID from the payload's `metadata.user_id`
- * field. Claude Code encodes the session ID either as a JSON object
- * `{"session_id": "..."}` or as a suffix `_session_<uuid>`.
- * Mirrors CPA's `extractClaudeCodeSessionIDFromPayload`.
- */
-function extractClaudeCodeSessionIdFromPayload(
-  payload: ResponsesPayload,
-): string | undefined {
-  const userId = payload.metadata?.user_id
-  if (typeof userId !== "string" || !userId.trim()) {
-    return undefined
-  }
-  // Suffix pattern: user_id ends with _session_<hex-uuid>
-  const suffixMatch = userId.match(/_session_([a-f0-9-]+)$/)
-  if (suffixMatch?.[1]) {
-    return suffixMatch[1]
-  }
-  // JSON pattern: user_id is a JSON object with session_id
-  if (userId[0] === "{") {
-    try {
-      const parsed = JSON.parse(userId) as { session_id?: unknown }
-      const sessionId = parsed.session_id
-      if (typeof sessionId === "string" && sessionId.trim()) {
-        return sessionId.trim()
-      }
-    } catch {
-      // not valid JSON, ignore
-    }
-  }
-  return undefined
-}
-
-/**
- * Computes a stable hash from the conversation prefix (system instructions +
- * first user message) to use as a prompt_cache_key fallback.
- *
- * xAI's prompt caching is prefix-based: if two requests share the same
- * leading tokens (system prompt + opening user turn), the cached prefix
- * is reused. By hashing these two components we ensure:
- *   - Same conversation across turns → same cache key → cache hits
- *   - Different conversations → different cache keys → no cache pollution
- *
- * Returns a short hex string (first 16 chars of sha256) prefixed with
- * "prefix:", or undefined if there is not enough content to hash.
- */
-function computePrefixHash(payload: ResponsesPayload): string | undefined {
-  const parts: Array<string> = []
-
-  // System instructions
-  const instructions = payload.instructions?.trim()
-  if (instructions) {
-    parts.push(instructions)
-  }
-
-  // First user message from the input array
-  const firstUserText = extractFirstUserMessageText(payload.input)
-  if (firstUserText) {
-    parts.push(firstUserText)
-  }
-
-  if (parts.length === 0) {
-    return undefined
-  }
-
-  const hash = createHash("sha256")
-    .update(parts.join("\n\n"))
-    .digest("hex")
-    .slice(0, 16)
-  return `prefix:${hash}`
-}
-
-/**
- * Extracts the text content of the first user message from a Responses
- * payload's `input` field. Handles both string input and structured
- * input arrays with mixed content types.
- */
-function extractFirstUserMessageText(
-  input: ResponsesPayload["input"],
-): string | undefined {
-  if (typeof input === "string") {
-    return input.trim() || undefined
-  }
-  if (!Array.isArray(input)) {
-    return undefined
-  }
-  for (const item of input) {
-    if (!("role" in item) || item.role !== "user") continue
-    const content = item.content
-    if (typeof content === "string") {
-      return content.trim() || undefined
-    }
-    if (Array.isArray(content)) {
-      const text = content
-        .filter(
-          (part): part is { type: "input_text"; text: string } =>
-            part.type === "input_text" && typeof part.text === "string",
-        )
-        .map((part) => part.text)
-        .join("")
-      return text.trim() || undefined
-    }
-  }
-  return undefined
-}
+import {
+  restoreXaiNamespaceToolCalls,
+  sanitizeXaiResponsesBodyWithRefs,
+  type XaiNamespaceToolRef,
+} from "./sanitize-body"
+import { resolveXaiSessionId } from "./session"
 
 /**
  * Computes a short hash of a string for cache-prefix diagnostics.
@@ -280,68 +118,6 @@ function logCachePrefixDiag(
   )
 }
 
-/**
- * xAI only accepts `reasoning.effort` on a subset of reasoning-capable models.
- * Forwarding it to other models triggers an upstream rejection. The set below
- * mirrors `xaiSupportsReasoningEffort` in CLIProxyAPI/xai_executor.go.
- */
-function xaiSupportsReasoningEffort(model: string): boolean {
-  // Strip any thinking suffix (e.g. ":high") and lowercase.
-  const name = model.split(":")[0]?.toLowerCase().trim() ?? ""
-  const base = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name
-  return (
-    base.startsWith("grok-3-mini")
-    || base.startsWith("grok-4.20-multi-agent")
-    || base.startsWith("grok-4.3")
-  )
-}
-
-/**
- * Strips `reasoning.effort` (and the now-empty `reasoning` object) when the
- * target model does not support reasoning effort. Mirrors
- * `sanitizeXAIResponsesBody` in CLIProxyAPI/xai_executor.go.
- */
-function sanitizeXaiReasoningEffort(
-  body: Record<string, unknown>,
-  model: string,
-): Record<string, unknown> {
-  if (xaiSupportsReasoningEffort(model)) {
-    return body
-  }
-  const reasoning = body.reasoning
-  if (!reasoning || typeof reasoning !== "object") {
-    return body
-  }
-  const { effort: _effort, ...rest } = reasoning as Record<string, unknown>
-  if (Object.keys(rest).length === 0) {
-    const { reasoning: _r, ...withoutReasoning } = body
-    return withoutReasoning
-  }
-  return { ...body, reasoning: rest }
-}
-
-/**
- * xAI rejects payloads that include `tool_choice` or `parallel_tool_calls`
- * without any `tools` defined. Drop them in that case. Mirrors
- * `normalizeXAIToolChoiceForTools` in CLIProxyAPI/xai_executor.go.
- */
-function normalizeXaiToolChoiceForTools(
-  body: Record<string, unknown>,
-): Record<string, unknown> {
-  const tools = body.tools
-  const hasTools = Array.isArray(tools) && tools.length > 0
-  if (hasTools) {
-    return body
-  }
-  const {
-    tools: _t,
-    tool_choice: _tc,
-    parallel_tool_calls: _ptc,
-    ...rest
-  } = body
-  return rest
-}
-
 export async function createXaiResponsesOnce(
   account: Account,
   payload: ResponsesPayload,
@@ -369,7 +145,7 @@ export async function createXaiResponsesOnce(
   const useUpstreamWs =
     !ctx?.forceUpstreamHttp
     && shouldUseUpstreamResponsesWebsocket(account, "xai", ctx)
-  const sessionId = resolveXaiSessionId(payload, ctx)
+  const sessionId = resolveXaiSessionId(payload, model, ctx)
 
   // Log cache-prefix diagnostic so we can compare prefix stability across
   // turns within the same session. If instr/tools hash changes between
@@ -398,9 +174,9 @@ export async function createXaiResponsesOnce(
   if (sessionId && !baseBody.prompt_cache_key) {
     baseBody.prompt_cache_key = sessionId
   }
-  const upstreamBody = normalizeXaiToolChoiceForTools(
-    sanitizeXaiReasoningEffort(baseBody, model),
-  )
+  const sanitized = sanitizeXaiResponsesBodyWithRefs(baseBody, model)
+  const upstreamBody = sanitized.body
+  const namespaceToolRefs = sanitized.namespaceToolRefs
 
   // ── Upstream WebSocket path (CPA XAIWebsocketsExecutor) ──────────────
   // Set when a chained turn falls back to HTTP: the HTTP POST must send the
@@ -413,7 +189,7 @@ export async function createXaiResponsesOnce(
     sessionId,
     ctx?.transcriptScopeId,
   )
-  const transcriptKey = xaiTranscriptKey(transcriptSessionId, model)
+  const transcriptKey = xaiTranscriptKey(transcriptSessionId)
   const rawDelta =
     Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
   const cachedFull =
@@ -426,11 +202,14 @@ export async function createXaiResponsesOnce(
   )
   const fallbackFullInputBody =
     previousResponseId && cachedFull ?
-      {
-        ...upstreamBody,
-        input: fullInputThisTurn,
-        previous_response_id: undefined,
-      }
+      sanitizeXaiResponsesBodyWithRefs(
+        {
+          ...upstreamBody,
+          input: fullInputThisTurn,
+          previous_response_id: undefined,
+        },
+        model,
+      ).body
     : undefined
   const httpFallbackBody = fallbackFullInputBody
 
@@ -464,15 +243,19 @@ export async function createXaiResponsesOnce(
         memoryTraceId: ctx?.memoryTraceId,
       })
       const normalized = normalizeResponsesStreamIds(wsStream)
+      const restored = restoreXaiNamespaceCallsInStream(
+        normalized,
+        namespaceToolRefs,
+      )
       const tracked =
         transcriptTrackable ?
           recordXaiTranscript(
-            normalized,
+            restored,
             transcriptKey,
             fullInputThisTurn,
             ctx?.memoryTraceId,
           )
-        : normalized
+        : restored
       if (clientStream) {
         return tracked
       }
@@ -535,17 +318,22 @@ export async function createXaiResponsesOnce(
     const normalized = normalizeResponsesStreamIds(
       stream as unknown as AsyncIterable<CopilotStreamEventLike>,
     )
+    const restored = restoreXaiNamespaceCallsInStream(
+      normalized,
+      namespaceToolRefs,
+    )
     return ctx?.downstreamWebsocket && transcriptTrackable ?
         recordXaiTranscript(
-          normalized,
+          restored,
           transcriptKey,
           fullInputThisTurn,
           ctx.memoryTraceId,
         )
-      : normalized
+      : restored
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
+  restoreXaiNamespaceToolCallsInResponse(result, namespaceToolRefs)
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
     recordTranscriptCheckpoint(
       ctx.memoryTraceId,
@@ -635,4 +423,45 @@ function recordTranscriptCheckpoint(
       transcriptEntries: result.entries,
     },
   )
+}
+
+/**
+ * Passthrough generator that restores namespace-qualified function_call names
+ * in every upstream SSE data payload before it reaches the client or the
+ * transcript recorder. Mirrors CPA's restore on HTTP SSE and WS frames.
+ */
+async function* restoreXaiNamespaceCallsInStream(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+  refs: Map<string, XaiNamespaceToolRef>,
+): AsyncIterable<CopilotStreamEventLike> {
+  if (refs.size === 0) {
+    yield* stream
+    return
+  }
+  for await (const event of stream) {
+    if (event.data && event.data !== "[DONE]") {
+      const restored = restoreXaiNamespaceToolCalls(event.data, refs)
+      yield restored === event.data ? event : { ...event, data: restored }
+    } else {
+      yield event
+    }
+  }
+}
+
+/** Restore namespace-qualified function_call names in a completed response. */
+function restoreXaiNamespaceToolCallsInResponse(
+  response: ResponsesResponse,
+  refs: Map<string, XaiNamespaceToolRef>,
+): void {
+  if (refs.size === 0 || !Array.isArray(response.output)) return
+  for (const item of response.output) {
+    if (typeof item !== "object") continue
+    const record = item as unknown as Record<string, unknown>
+    if (record.type !== "function_call") continue
+    const qualified = typeof record.name === "string" ? record.name.trim() : ""
+    const ref = refs.get(qualified)
+    if (!ref) continue
+    record.name = ref.name
+    record.namespace = ref.namespace
+  }
 }

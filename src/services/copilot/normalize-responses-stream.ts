@@ -7,6 +7,8 @@ interface NormalizedOutputState {
 
 interface NormalizationState {
   outputs: Map<number, NormalizedOutputState>
+  completedOutputItems: Map<number, Record<string, unknown>>
+  completedOutputFallback: Array<Record<string, unknown>>
   responseId?: string
 }
 
@@ -15,6 +17,8 @@ export async function* normalizeResponsesStreamIds(
 ): AsyncIterable<CopilotStreamEventLike> {
   const state: NormalizationState = {
     outputs: new Map(),
+    completedOutputItems: new Map(),
+    completedOutputFallback: [],
   }
 
   for await (const event of response) {
@@ -32,10 +36,49 @@ export async function* normalizeResponsesStreamIds(
     }
 
     normalizeParsedEvent(parsed, state)
+    collectAndHydrateCompletedOutput(parsed, state)
     yield {
       ...event,
       data: JSON.stringify(parsed),
     }
+  }
+}
+
+function collectAndHydrateCompletedOutput(
+  parsed: Record<string, unknown>,
+  state: NormalizationState,
+): void {
+  if (parsed.type === "response.output_item.done") {
+    const item = getRecord(parsed.item)
+    if (!item) return
+    const outputIndex = getNumber(parsed.output_index)
+    if (outputIndex === undefined) {
+      state.completedOutputFallback.push({ ...item })
+    } else {
+      state.completedOutputItems.set(outputIndex, { ...item })
+    }
+    return
+  }
+  if (parsed.type !== "response.completed") return
+
+  const response = getRecord(parsed.response)
+  if (!response) return
+  const output = getArray(response.output)
+  if (output && output.length > 0) {
+    for (const [index, value] of output.entries()) {
+      const item = getRecord(value)
+      if (!item || hasNonEmptyString(item.id)) continue
+      const completedId = state.completedOutputItems.get(index)?.id
+      if (hasNonEmptyString(completedId)) item.id = completedId
+    }
+    return
+  }
+
+  const indexed = [...state.completedOutputItems.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, item]) => item)
+  if (indexed.length > 0 || state.completedOutputFallback.length > 0) {
+    response.output = [...indexed, ...state.completedOutputFallback]
   }
 }
 
@@ -198,4 +241,8 @@ function getRecord(value: unknown): Record<string, unknown> | undefined {
 
 function getString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined
+}
+
+function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0
 }

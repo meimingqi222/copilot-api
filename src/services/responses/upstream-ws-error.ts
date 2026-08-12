@@ -1,3 +1,5 @@
+import { HTTPError } from "~/lib/error"
+
 /** Extract an actionable message from top-level or response.failed payloads. */
 export function extractWsErrorMessage(parsed: Record<string, unknown>): string {
   const error = readWsErrorPayload(parsed)
@@ -48,4 +50,27 @@ function readWsErrorPayload(
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : ""
+}
+
+/**
+ * True when an upstream WS error frame means the server-side conversation
+ * chain is missing for this turn: an orphan tool-call output (the client's
+ * incremental input references a call the upstream never saw — e.g. after an
+ * account switch or socket redial) or an unresolvable previous_response_id.
+ * These are recoverable by replaying the full conversation (server-side
+ * replay from the transcript cache) or by asking the client to resend it.
+ */
+export function isChainedTurnUpstreamError(error: unknown): boolean {
+  if (!(error instanceof HTTPError)) return false
+  const message = error.message.toLowerCase()
+  return (
+    message.includes("no tool call found for custom tool call output")
+    || message.includes("no tool call found for function call output")
+    || message.includes("previous_response_not_found")
+    || (message.includes("previous response with id")
+      && message.includes("not found"))
+    || (message.includes("previous_response_id")
+      && message.includes("not found"))
+    || message.includes("no response found for previous_response_id")
+  )
 }

@@ -247,7 +247,7 @@ describe("codex request compatibility (CPA parity)", () => {
   test("chained HTTP replay body rewrites role system in transcript and delta", async () => {
     const sessionKey = "codex-replay-system-role"
     const scopeId = "user:replay-system-role"
-    const key = codexTranscriptKey(`${scopeId}::${sessionKey}`, "gpt-5")
+    const key = codexTranscriptKey(`${scopeId}::${sessionKey}`)
     setCodexTranscript(key, [
       {
         type: "message",
@@ -321,7 +321,7 @@ describe("codex request compatibility (CPA parity)", () => {
       { transcriptScopeId: scopeId },
     )
 
-    const key = codexTranscriptKey(`${scopeId}::${sessionKey}`, "gpt-5")
+    const key = codexTranscriptKey(`${scopeId}::${sessionKey}`)
     setCodexTranscript(key, [
       {
         type: "message",
