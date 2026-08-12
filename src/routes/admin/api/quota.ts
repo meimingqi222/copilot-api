@@ -19,6 +19,7 @@ import {
   enrichQuotaInfoForResponse,
 } from "~/lib/quota/cycles"
 import { summarizeCodexQuota } from "~/lib/quota/parsers"
+import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import {
   getOAuthAccountSubtitle,
   upgradeOAuthAccountLabels,
@@ -210,6 +211,16 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
       }),
     }
     applyOAuthQuotaSnapshot(account, snapshot)
+    // Clear any residual cooldown state left over from the prior
+    // quota-exhausted period. `applyOAuthQuotaSnapshot` flips quotaState to
+    // "available" but does not touch cooldownUntil (persisted) or the
+    // in-memory rate-limiter state — without clearing both, the account
+    // stays flagged as unavailable ("cooldown") even though the upstream
+    // quota has recovered to 100%.
+    account.cooldownUntil = undefined
+    account.lastRateLimitAt = undefined
+    account.lastRateLimitReason = undefined
+    clearAccountRateLimitState(account.id)
     const conn = getMutableProviderConnection(account.id)
     if (conn) syncAccountToConnection(conn, account)
     await saveAccounts()
