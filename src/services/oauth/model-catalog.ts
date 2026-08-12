@@ -56,6 +56,12 @@ const KIMI_CATALOG: Array<CatalogEntry> = [
 
 const XAI_CATALOG: Array<CatalogEntry> = [
   {
+    id: "grok-4.6",
+    name: "Grok 4.6",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
     id: "grok-4.5",
     name: "Grok 4.5",
     vendor: "xai",

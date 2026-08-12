@@ -13,6 +13,11 @@ const XAI_CATALOG_RULES: Array<{
   reasoningLevels?: ReadonlyArray<string>
 }> = [
   {
+    test: (base) => base.startsWith("grok-4.6"),
+    contextWindow: 500_000,
+    reasoningLevels: ["low", "medium", "high"],
+  },
+  {
     test: (base) => base.startsWith("grok-4.5"),
     contextWindow: 500_000,
     reasoningLevels: ["low", "medium", "high"],
