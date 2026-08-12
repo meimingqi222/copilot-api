@@ -585,6 +585,48 @@ const DEFAULT_MODEL_PRICES: Record<
     cacheReadPricePer1m: 0.02,
     cacheWritePricePer1m: 0.2,
   },
+  "grok-4.6": {
+    promptPricePer1m: 2.0,
+    completionPricePer1m: 6.0,
+    cacheReadPricePer1m: 0.5,
+    cacheWritePricePer1m: 2.0,
+  },
+  "grok-4.5": {
+    promptPricePer1m: 2.0,
+    completionPricePer1m: 6.0,
+    cacheReadPricePer1m: 0.3,
+    cacheWritePricePer1m: 2.0,
+  },
+  "grok-4.3": {
+    promptPricePer1m: 1.25,
+    completionPricePer1m: 2.5,
+    cacheReadPricePer1m: 0.2,
+    cacheWritePricePer1m: 1.25,
+  },
+  "grok-4.20-0309-reasoning": {
+    promptPricePer1m: 1.25,
+    completionPricePer1m: 2.5,
+    cacheReadPricePer1m: 0.2,
+    cacheWritePricePer1m: 1.25,
+  },
+  "grok-4.20-0309-non-reasoning": {
+    promptPricePer1m: 1.25,
+    completionPricePer1m: 2.5,
+    cacheReadPricePer1m: 0.2,
+    cacheWritePricePer1m: 1.25,
+  },
+  "grok-4.20-multi-agent-0309": {
+    promptPricePer1m: 1.25,
+    completionPricePer1m: 2.5,
+    cacheReadPricePer1m: 0.2,
+    cacheWritePricePer1m: 1.25,
+  },
+  "grok-build-0.1": {
+    promptPricePer1m: 1.0,
+    completionPricePer1m: 2.0,
+    cacheReadPricePer1m: 0.2,
+    cacheWritePricePer1m: 1.0,
+  },
 
   // ==================== Embedding Models ====================
   "text-embedding-ada-002": {
