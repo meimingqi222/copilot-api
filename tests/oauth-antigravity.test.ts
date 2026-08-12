@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import type { OAuthAccount } from "~/lib/accounts"
+import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
 
 import { listAccounts } from "~/lib/accounts"
 import {
@@ -27,6 +28,18 @@ import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
+
+/** Translate a bare `tool_choice` value and return the resulting toolConfig. */
+function toolConfigFor(toolChoice: unknown) {
+  return translateOpenAiChatToAntigravity(
+    {
+      model: "gemini-2.5-pro",
+      messages: [{ role: "user", content: "go" }],
+      tool_choice: toolChoice as ChatCompletionsPayload["tool_choice"],
+    },
+    "project-1",
+  ).request.toolConfig
+}
 
 beforeEach(() => {
   setTestAccounts([])
@@ -139,6 +152,118 @@ describe("Antigravity Gemini translation", () => {
       "You are helpful.",
     )
     expect(body.request.contents[0]?.parts[0]?.text).toBe("Hello")
+  })
+
+  test("uses user role for function responses (CPA parity)", () => {
+    const body = translateOpenAiChatToAntigravity(
+      {
+        model: "gemini-2.5-pro",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "lookup", arguments: "{}" },
+              },
+            ],
+          },
+          { role: "tool", tool_call_id: "call_1", content: "done" },
+        ],
+      },
+      "project-1",
+    )
+    // CPA antigravity_openai_request.go emits tool results as a user turn;
+    // the preceding functionCall parts stay on the model turn.
+    expect(body.request.contents[0]?.role).toBe("model")
+    expect(body.request.contents[1]?.role).toBe("user")
+    expect(body.request.contents[1]?.parts[0]?.functionResponse).toBeDefined()
+  })
+
+  test("only signs the first sibling functionCall", () => {
+    const body = translateOpenAiChatToAntigravity(
+      {
+        model: "gemini-2.5-pro",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: { name: "one", arguments: "{}" },
+              },
+              {
+                id: "call_2",
+                type: "function",
+                function: { name: "two", arguments: "{}" },
+              },
+            ],
+          },
+        ],
+      },
+      "project-1",
+    )
+    const parts = body.request.contents[0]?.parts ?? []
+    expect(parts[0]?.thoughtSignature).toBe("skip_thought_signature_validator")
+    expect(parts[1]?.thoughtSignature).toBeUndefined()
+  })
+
+  test("maps OpenAI tool_choice into Gemini functionCallingConfig", () => {
+    const required = translateOpenAiChatToAntigravity(
+      {
+        model: "gemini-2.5-pro",
+        messages: [{ role: "user", content: "go" }],
+        tool_choice: "required",
+      },
+      "project-1",
+    )
+    expect(required.request.toolConfig).toEqual({
+      functionCallingConfig: { mode: "ANY" },
+    })
+
+    const forced = translateOpenAiChatToAntigravity(
+      {
+        model: "gemini-2.5-pro",
+        messages: [{ role: "user", content: "go" }],
+        tool_choice: {
+          type: "function",
+          function: { name: "odd function" },
+        },
+      },
+      "project-1",
+    )
+    expect(forced.request.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["odd_function"],
+      },
+    })
+  })
+
+  test("tolerates tool_choice values outside the declared union", () => {
+    // CPA accepts "any" as an alias of "required".
+    expect(toolConfigFor("any")).toEqual({
+      functionCallingConfig: { mode: "ANY" },
+    })
+    expect(toolConfigFor("AUTO")).toEqual({
+      functionCallingConfig: { mode: "AUTO" },
+    })
+    // Unmappable values are dropped, not coerced into a forced-function
+    // choice — the request body is an unvalidated cast of client JSON.
+    expect(toolConfigFor("bogus")).toBeUndefined()
+    expect(toolConfigFor(42)).toBeUndefined()
+    expect(toolConfigFor({ type: "allowed_tools" })).toBeUndefined()
+    // Forced-function shape with no usable name degrades to plain ANY.
+    expect(toolConfigFor({ type: "function" })).toEqual({
+      functionCallingConfig: { mode: "ANY" },
+    })
+    expect(
+      toolConfigFor({ type: "function", function: { name: "  " } }),
+    ).toEqual({ functionCallingConfig: { mode: "ANY" } })
   })
 
   test("convertAntigravityStreamChunk maps text and finish reason", () => {

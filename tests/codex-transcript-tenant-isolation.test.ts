@@ -278,11 +278,8 @@ describe("codex transcript recovery — pure HTTP client, no downstream WebSocke
     // Direct key-level check: same prompt_cache_key, different scope prefix,
     // different transcript entries — Bob's stored transcript never contains
     // Alice's content and vice versa.
-    const aliceKey = codexTranscriptKey(
-      `user:alice::${promptCacheKey}`,
-      "gpt-5",
-    )
-    const bobKey = codexTranscriptKey(`user:bob::${promptCacheKey}`, "gpt-5")
+    const aliceKey = codexTranscriptKey(`user:alice::${promptCacheKey}`)
+    const bobKey = codexTranscriptKey(`user:bob::${promptCacheKey}`)
     expect(aliceKey).not.toBe(bobKey)
     expect(JSON.stringify(getCodexTranscript(bobKey))).not.toContain("alice")
     expect(JSON.stringify(getCodexTranscript(aliceKey))).not.toContain("bob")
@@ -348,10 +345,10 @@ describe("codex transcript recovery — pure HTTP client, no downstream WebSocke
     }
 
     expect(
-      getCodexTranscript(codexTranscriptKey(promptCacheKey, "gpt-5")),
+      getCodexTranscript(codexTranscriptKey(promptCacheKey)),
     ).toBeUndefined()
     expect(
-      getCodexTranscript(codexTranscriptKey(sessionHeaderId, "gpt-5")),
+      getCodexTranscript(codexTranscriptKey(sessionHeaderId)),
     ).toBeUndefined()
 
     // A second principal sending the same id chains from its own response id

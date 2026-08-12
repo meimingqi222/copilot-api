@@ -63,32 +63,35 @@ const MAX_TRANSCRIPT_ENTRIES = 256
 /** Evict transcripts untouched for longer than this. */
 const TRANSCRIPT_IDLE_MS = 60 * 60_000
 
-/** Build the map key for a client session + model pair. */
+/** Build the map key for a client session (conversation-scoped, not model). */
 export type ResponsesTranscriptProvider = "codex" | "xai"
 
-/** Build the provider-scoped map key for a client session + model triple. */
+/**
+ * Build the provider-scoped map key for a client session.
+ *
+ * Deliberately NOT keyed by model: Codex Desktop / waku alternate models
+ * within one conversation (multi-agent sub-turns, e.g. gpt-5.6-sol ↔
+ * gpt-5.6-terra). A per-model key makes the fresh-socket full replay miss the
+ * function_calls produced under the other model, and the replayed turn is
+ * rejected with "No tool call found for custom tool call output with call_id
+ * ..." after an account switch / socket redial. The session id is chosen by
+ * the client per conversation, so it already isolates conversations.
+ */
 function transcriptKey(
   provider: ResponsesTranscriptProvider,
   executionSessionId: string,
-  model: string,
 ): string {
-  return `${provider}::${executionSessionId}::${model}`
+  return `${provider}::${executionSessionId}`
 }
 
 /** Codex-scoped transcript key. */
-export function codexTranscriptKey(
-  executionSessionId: string,
-  model: string,
-): string {
-  return transcriptKey("codex", executionSessionId, model)
+export function codexTranscriptKey(executionSessionId: string): string {
+  return transcriptKey("codex", executionSessionId)
 }
 
 /** xAI-scoped transcript key. */
-export function xaiTranscriptKey(
-  executionSessionId: string,
-  model: string,
-): string {
-  return transcriptKey("xai", executionSessionId, model)
+export function xaiTranscriptKey(executionSessionId: string): string {
+  return transcriptKey("xai", executionSessionId)
 }
 
 /**
@@ -158,15 +161,46 @@ export function appendCodexTranscript(
   return setCodexTranscript(key, [...fullInput, ...output])
 }
 
-/** Build a replay array only when transcript tracking needs ownership. */
+/**
+ * Build a replay array only when transcript tracking needs ownership.
+ *
+ * When a cached transcript exists, dedupe the raw delta against it by item id
+ * (delta wins — it is the client's newer copy). Without this, a client that
+ * re-sends previous turns (full replay after `previous_response_not_found`,
+ * or a tool-result turn that repeats the preceding turn's items) would
+ * produce duplicate ids upstream and get rejected. Items without an `id`
+ * (e.g. plain message items some clients omit ids for) are always kept.
+ */
 export function buildResponsesTranscriptInput(
   cachedFull: Array<unknown> | undefined,
   rawDelta: Array<unknown>,
   track: boolean,
 ): Array<unknown> {
-  if (cachedFull) return [...cachedFull, ...rawDelta]
-  if (track) return [...rawDelta]
-  return rawDelta
+  if (!cachedFull) {
+    return track ? [...rawDelta] : rawDelta
+  }
+  const deltaKeys = new Set<string>()
+  for (const entry of rawDelta) {
+    const key = transcriptItemKey(entry)
+    if (key) deltaKeys.add(key)
+  }
+  if (deltaKeys.size === 0) {
+    return [...cachedFull, ...rawDelta]
+  }
+  const merged = cachedFull.filter((entry) => {
+    const key = transcriptItemKey(entry)
+    return key === undefined || !deltaKeys.has(key)
+  })
+  return [...merged, ...rawDelta]
+}
+
+function transcriptItemKey(entry: unknown): string | undefined {
+  if (typeof entry !== "object" || entry === null) return undefined
+  const item = entry as Record<string, unknown>
+  const id = typeof item.id === "string" ? item.id.trim() : ""
+  if (!id) return undefined
+  const type = typeof item.type === "string" ? item.type : ""
+  return `${type}:${id}`
 }
 
 function transcriptStoreResult(
@@ -206,11 +240,19 @@ export function clearResponsesTranscriptsByExecutionId(
   if (!id) return 0
   let cleared = 0
   for (const key of transcripts.keys()) {
-    // key = `${provider}::${executionSessionId}::${model}`.
+    // key = `<provider>::<session>` (session is conversation-scoped; the key
+    // deliberately carries no model segment).
     const sep = key.indexOf("::")
     if (sep === -1) continue
     const rest = key.slice(sep + 2)
-    if (rest.startsWith(`${id}::`)) {
+    // `rest` is either the bare execution session id (no client-supplied
+    // stable id) or `<scope>::<stableSessionId>`. The equality branch clears
+    // the former — that is what this function is for, and it is required now
+    // that the key carries no trailing model segment. The prefix branch only
+    // fires when `id` is itself the *scope* segment, so a socket-scoped call
+    // never touches another principal's transcript, and a lookalike id
+    // (`sess-1` vs `sess-10`) can never match either branch.
+    if (rest === id || rest.startsWith(`${id}::`)) {
       deleteTranscript(key)
       cleared += 1
     }

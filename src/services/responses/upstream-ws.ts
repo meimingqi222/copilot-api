@@ -18,13 +18,23 @@ import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { globalTimers } from "~/lib/timer-registry"
+import {
+  buildUpstreamResponsesCreateBody,
+  type UpstreamWsProvider,
+} from "~/services/responses/upstream-ws-body"
 
 import {
-  extractWsErrorMessage,
-  extractWsErrorStatus,
-} from "./upstream-ws-error"
+  createTurnConsumer,
+  sessions,
+  type TurnConsumer,
+} from "./upstream-ws-consumer"
+import { isChainedTurnUpstreamError } from "./upstream-ws-error"
 
-export type UpstreamWsProvider = "codex" | "xai"
+export {
+  buildUpstreamResponsesCreateBody,
+  normalizeUpstreamWsEvent,
+  type UpstreamWsProvider,
+} from "~/services/responses/upstream-ws-body"
 
 const CODEX_WS_BETA = "responses_websockets=2026-02-06"
 /** Idle unused upstream sockets are closed after this many ms. */
@@ -62,9 +72,6 @@ const UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS = 60_000
  * stalled mid-turn. Throwing frees the connection instead of hanging forever.
  * No HTTP fallback here — partial output may already have reached the client.
  */
-const UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS = 120_000
-const MAX_UPSTREAM_WS_QUEUE_MESSAGES = 1_024
-const MAX_UPSTREAM_WS_QUEUE_BYTES = 16 * 1024 * 1024
 const MAX_UPSTREAM_WS_REQUEST_BYTES = 16 * 1024 * 1024
 const MAX_UPSTREAM_WS_SESSIONS = 1_024
 
@@ -149,34 +156,6 @@ export function shouldUseUpstreamResponsesWebsocket(
   return true
 }
 
-/**
- * Build the wire JSON for `response.create` on the upstream WS.
- * Strips transport-only fields per xAI/Codex docs.
- */
-export function buildUpstreamResponsesCreateBody(
-  body: Record<string, unknown>,
-  options: { provider: UpstreamWsProvider },
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...body, type: "response.create" }
-  delete out.stream
-  delete out.stream_options
-  delete out.background
-
-  if (options.provider === "xai") {
-    // CPA forces store=true so connection-cache + previous_response_id work
-    // under multi-turn WS (and survives reconnect with store).
-    out.store = true
-    if (
-      typeof out.previous_response_id === "string"
-      && out.previous_response_id.trim()
-    ) {
-      delete out.instructions
-    }
-  }
-
-  return out
-}
-
 export function applyCodexWebsocketHeaders(
   headers: Record<string, string>,
 ): Record<string, string> {
@@ -225,23 +204,6 @@ export function isAbortLikeError(error: unknown): boolean {
 }
 
 // ── Session-backed upstream WS ────────────────────────────────────────
-
-interface UpstreamWsSession {
-  key: string
-  provider: UpstreamWsProvider
-  executionSessionId: string
-  url: string
-  accountId: string
-  ws: WebSocket | null
-  /** Serialize dial + turns on one connection key (CPA reqMu). */
-  chain: Promise<void>
-  closed: boolean
-  lastUsedAt: number
-  /** Wall-clock ms when the live socket was opened (0 until connected). */
-  openedAt: number
-}
-
-const sessions = new Map<string, UpstreamWsSession>()
 
 function sessionKey(
   provider: UpstreamWsProvider,
@@ -313,6 +275,24 @@ export function selectUpstreamWsBody(params: {
  */
 export async function openUpstreamResponsesWebsocketTurn(
   options: UpstreamWsTurnOptions,
+): Promise<AsyncIterable<CopilotStreamEventLike>> {
+  return openUpstreamResponsesWebsocketTurnOnce(options, 1)
+}
+
+/**
+ * One turn attempt over the upstream WebSocket (attempt 1 = normal, attempt 2
+ * = full-input replay after a chained-turn rejection).
+ *
+ * A chained turn can be rejected upstream with "No tool call found for custom
+ * tool call output ..." / previous_response_not_found when the server-side
+ * conversation chain is missing — exactly what happens after an account switch
+ * (the new credential's socket has zero upstream memory) or a socket redial.
+ * When a self-contained replay body is available, retry once on a fresh socket
+ * with the full input instead of failing the turn.
+ */
+async function openUpstreamResponsesWebsocketTurnOnce(
+  options: UpstreamWsTurnOptions,
+  attempt: number,
 ): Promise<AsyncIterable<CopilotStreamEventLike>> {
   const {
     provider,
@@ -387,6 +367,9 @@ export async function openUpstreamResponsesWebsocketTurn(
   let ws: WebSocket
   let openedFresh = false
   let consumer: TurnConsumer | undefined
+  // Mutable state object so control-flow analysis keeps `replayed` a plain
+  // boolean for the catch blocks below (it is only assigned inside `try`).
+  const replayState = { replayed: false }
   try {
     if (signal?.aborted) {
       throw new Error(`${provider} websockets: aborted`)
@@ -446,6 +429,7 @@ export async function openUpstreamResponsesWebsocketTurn(
       fallbackFullInputBody: options.fallbackFullInputBody,
       provider,
     })
+    replayState.replayed = usedFallback
     if (usedFallback) {
       logger.info(
         `${provider} websockets: fresh socket cannot resolve previous_response_id=`
@@ -501,6 +485,22 @@ export async function openUpstreamResponsesWebsocketTurn(
   } catch (error) {
     consumer?.dispose()
     if (!consumer) releaseChain()
+    if (
+      retryChainedTurnOnce({
+        options,
+        key,
+        provider,
+        executionSessionId,
+        accountId: account.id,
+        attempt,
+        alreadyReplayed: replayState.replayed,
+        error,
+      })
+    ) {
+      // The session was destroyed; the retry dials fresh and sends the
+      // self-contained replay body.
+      return openUpstreamResponsesWebsocketTurnOnce(options, attempt + 1)
+    }
     // Drop half-open / failed sessions so the next turn redials.
     destroySession(key, "dial_or_send_failed")
     throw error
@@ -514,9 +514,77 @@ export async function openUpstreamResponsesWebsocketTurn(
     await consumer.waitForFirstEvent(UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS)
   } catch (error) {
     consumer.dispose()
+    if (
+      retryChainedTurnOnce({
+        options,
+        key,
+        provider,
+        executionSessionId,
+        accountId: account.id,
+        attempt,
+        alreadyReplayed: replayState.replayed,
+        error,
+      })
+    ) {
+      return openUpstreamResponsesWebsocketTurnOnce(options, attempt + 1)
+    }
     throw error
   }
   return consumer.iterate()
+}
+
+/**
+ * Decide whether a rejected chained turn should be retried once with the
+ * self-contained full-input replay on a fresh socket. Only the first attempt
+ * may retry, and only when the request is actually chained
+ * (previous_response_id), a replay body exists, and the upstream error is one
+ * of the chain-missing signals.
+ *
+ * `alreadyReplayed` short-circuits the case where this attempt *already* sent
+ * the full-input replay (the socket was dialed fresh, so selectUpstreamWsBody
+ * picked the fallback) and upstream rejected it anyway — typically because the
+ * transcript itself is missing the referenced tool call. Retrying would redial
+ * and send a byte-identical body, so it can only fail the same way; surface
+ * the error instead and let the provider turn it into the client-side replay
+ * handshake.
+ */
+function retryChainedTurnOnce(params: {
+  options: UpstreamWsTurnOptions
+  key: string
+  provider: UpstreamWsProvider
+  executionSessionId: string
+  accountId: string
+  attempt: number
+  alreadyReplayed: boolean
+  error: unknown
+}): boolean {
+  const {
+    options,
+    key,
+    provider,
+    executionSessionId,
+    accountId,
+    attempt,
+    alreadyReplayed,
+    error,
+  } = params
+  if (
+    attempt >= 2
+    || alreadyReplayed
+    || typeof options.previousResponseId !== "string"
+    || options.previousResponseId.trim() === ""
+    || options.fallbackFullInputBody === undefined
+    || !isChainedTurnUpstreamError(error)
+  ) {
+    return false
+  }
+  destroySession(key, "chained_replay_retry")
+  logger.info(
+    `${provider} websockets: chained turn rejected upstream; retrying with `
+      + `full-input replay session=${executionSessionId} auth=${accountId} `
+      + `error=${error instanceof Error ? error.message : String(error)}`,
+  )
+  return true
 }
 
 /** @deprecated Prefer openUpstreamResponsesWebsocketTurn for eager open. */
@@ -525,330 +593,6 @@ export async function* streamUpstreamResponsesWebsocket(
 ): AsyncIterable<CopilotStreamEventLike> {
   const stream = await openUpstreamResponsesWebsocketTurn(options)
   yield* stream
-}
-
-interface TurnConsumer {
-  /**
-   * Resolve once the first upstream event is queued (or a terminal/error/close
-   * arrives). Reject if none arrives within `timeoutMs`. Does not consume the
-   * queue — `iterate()` yields the buffered event(s).
-   */
-  waitForFirstEvent: (timeoutMs: number) => Promise<void>
-  iterate: () => AsyncIterable<CopilotStreamEventLike>
-  /** Tear down before streaming starts (first-event gate failed). */
-  dispose: () => void
-}
-
-function createTurnConsumer(options: {
-  provider: UpstreamWsProvider
-  accountId: string
-  executionSessionId: string
-  key: string
-  sess: UpstreamWsSession
-  ws: WebSocket
-  signal?: AbortSignal
-  releaseChain: () => void
-}): TurnConsumer {
-  const {
-    provider,
-    accountId,
-    executionSessionId,
-    key,
-    sess,
-    ws,
-    signal,
-    releaseChain,
-  } = options
-
-  const queue: Array<string> = []
-  let queueBytes = 0
-  let wake: (() => void) | undefined
-  let fail: ((err: Error) => void) | undefined
-  let done = false
-  let terminalError: Error | undefined
-  let listenersRemoved = false
-  let chainReleased = false
-
-  // Read through a getter so eslint/TS control-flow analysis does not narrow
-  // `terminalError` to `undefined` (it is only assigned inside the listener
-  // closures below, which the analyzer cannot see as reachable from here).
-  const currentTerminalError = (): Error | undefined => terminalError
-
-  const notify = () => {
-    wake?.()
-    wake = undefined
-  }
-
-  const rejectWait = (err: Error) => {
-    terminalError = err
-    done = true
-    queue.length = 0
-    queueBytes = 0
-    fail?.(err)
-    fail = undefined
-    wake = undefined
-  }
-
-  const onMessage = (event: MessageEvent) => {
-    let data = ""
-    if (typeof event.data === "string") {
-      data = event.data
-    } else if (event.data instanceof ArrayBuffer) {
-      if (event.data.byteLength > MAX_UPSTREAM_WS_QUEUE_BYTES) {
-        rejectWait(
-          new Error(
-            `${provider} websockets: upstream event exceeds size limit`,
-          ),
-        )
-        try {
-          ws.close()
-        } catch {
-          // ignore
-        }
-        return
-      }
-      data = new TextDecoder().decode(event.data)
-    }
-    if (!data) return
-    const dataBytes = Buffer.byteLength(data)
-    if (
-      queue.length >= MAX_UPSTREAM_WS_QUEUE_MESSAGES
-      || queueBytes + dataBytes > MAX_UPSTREAM_WS_QUEUE_BYTES
-    ) {
-      rejectWait(
-        new Error(
-          `${provider} websockets: upstream event queue exceeds size limit`,
-        ),
-      )
-      try {
-        ws.close()
-      } catch {
-        // ignore
-      }
-      return
-    }
-    queue.push(data)
-    queueBytes += dataBytes
-    notify()
-  }
-  const onError = () => {
-    rejectWait(new Error(`${provider} websockets: upstream socket error`))
-    notify()
-  }
-  const onClose = () => {
-    sess.closed = true
-    if (sessions.get(key) === sess) {
-      sessions.delete(key)
-    }
-    if (!done) {
-      rejectWait(
-        new Error(
-          `${provider} websockets: upstream socket closed unexpectedly`,
-        ),
-      )
-    }
-    notify()
-  }
-  const onAbort = () => {
-    rejectWait(new Error(`${provider} websockets: aborted`))
-    notify()
-  }
-
-  signal?.addEventListener("abort", onAbort, { once: true })
-  ws.addEventListener("message", onMessage)
-  ws.addEventListener("error", onError)
-  ws.addEventListener("close", onClose)
-
-  const removeListeners = () => {
-    if (listenersRemoved) return
-    listenersRemoved = true
-    signal?.removeEventListener("abort", onAbort)
-    ws.removeEventListener("message", onMessage)
-    ws.removeEventListener("error", onError)
-    ws.removeEventListener("close", onClose)
-  }
-
-  const release = () => {
-    if (chainReleased) return
-    chainReleased = true
-    releaseChain()
-  }
-
-  // Peek the first buffered frame; if it is an upstream error/response.failed
-  // frame, throw it *before* the stream iterable is returned so the caller
-  // (openUpstream) surfaces it eagerly — enabling provider-layer HTTP fallback
-  // (connection scope) or handler account rotation (credential scope) without
-  // ever forwarding a partial stream.
-  const peekFirstEventError = () => {
-    if (queue.length === 0) return
-    const raw = queue[0]
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(raw) as Record<string, unknown>
-    } catch {
-      return
-    }
-    const eventType = typeof parsed.type === "string" ? parsed.type : ""
-    if (eventType === "error" || eventType === "response.failed") {
-      const removed = queue.shift()
-      if (removed) queueBytes -= Buffer.byteLength(removed)
-      const message = extractWsErrorMessage(parsed)
-      const status = extractWsErrorStatus(parsed)
-      throw new HTTPError(
-        `${provider} websockets: ${message}`,
-        new Response(raw, { status }),
-        raw,
-      )
-    }
-  }
-
-  const waitForFirstEvent = async (timeoutMs: number): Promise<void> => {
-    if (terminalError) throw terminalError
-    if (queue.length > 0 || done) {
-      peekFirstEventError()
-      return
-    }
-    if (signal?.aborted) {
-      throw new Error(`${provider} websockets: aborted`)
-    }
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        wake = undefined
-        fail = undefined
-        reject(
-          new Error(
-            `${provider} websockets: no upstream response within `
-              + `${Math.round(timeoutMs / 1000)}s (timeout)`,
-          ),
-        )
-      }, timeoutMs)
-      wake = () => {
-        clearTimeout(timer)
-        resolve()
-      }
-      fail = (err) => {
-        clearTimeout(timer)
-        reject(err)
-      }
-    })
-    peekFirstEventError()
-  }
-
-  async function* iterate(): AsyncIterable<CopilotStreamEventLike> {
-    try {
-      const pendingBeforeStream = currentTerminalError()
-      if (pendingBeforeStream) throw pendingBeforeStream
-      while (!done) {
-        const pending = currentTerminalError()
-        if (pending) throw pending
-        if (signal?.aborted) {
-          throw new Error(`${provider} websockets: aborted`)
-        }
-
-        if (queue.length === 0) {
-          await new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(() => {
-              wake = undefined
-              fail = undefined
-              reject(
-                new Error(
-                  `${provider} websockets: upstream stream idle timeout`,
-                ),
-              )
-            }, UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS)
-            wake = () => {
-              clearTimeout(timer)
-              resolve()
-            }
-            fail = (err) => {
-              clearTimeout(timer)
-              reject(err)
-            }
-          })
-          continue
-        }
-
-        const raw = queue.shift()
-        if (raw === undefined) continue
-        queueBytes -= Buffer.byteLength(raw)
-
-        let parsed: Record<string, unknown> | undefined
-        try {
-          parsed = JSON.parse(raw) as Record<string, unknown>
-        } catch {
-          // Non-JSON frame cannot be an error/terminal event; forward as-is.
-          yield { data: raw }
-          continue
-        }
-
-        const eventType = typeof parsed.type === "string" ? parsed.type : ""
-        // Classify + throw the upstream error frame BEFORE forwarding it, so
-        // (a) the raw error frame is never yielded to the client, (b) there is
-        // no double-error, and (c) this generator's own cleanup (destroy the
-        // stale session, below) runs. Providers/handler classify the thrown
-        // HTTPError via classifyWsFailure.
-        if (eventType === "error" || eventType === "response.failed") {
-          const message = extractWsErrorMessage(parsed)
-          const status = extractWsErrorStatus(parsed)
-          throw new HTTPError(
-            `${provider} websockets: ${message}`,
-            new Response(raw, { status }),
-            raw,
-          )
-        }
-
-        yield { data: raw }
-
-        // Terminal success events (Responses streaming). incomplete must not hang.
-        if (
-          eventType === "response.completed"
-          || eventType === "response.incomplete"
-        ) {
-          done = true
-          sess.lastUsedAt = Date.now()
-          logger.info(
-            `${provider} websockets: upstream terminal response session=${executionSessionId} `
-              + `auth=${accountId} event=${eventType} `
-              + `response_id=${readResponseId(parsed)}`,
-          )
-          break
-        }
-      }
-
-      yield { data: "[DONE]" }
-    } catch (error) {
-      // Drop broken connections so the next turn dials fresh.
-      try {
-        ws.close()
-      } catch {
-        // ignore
-      }
-      sess.closed = true
-      if (sessions.get(key) === sess) {
-        sessions.delete(key)
-      }
-      throw error
-    } finally {
-      removeListeners()
-      release()
-    }
-  }
-
-  const dispose = () => {
-    removeListeners()
-    try {
-      ws.close()
-    } catch {
-      // ignore
-    }
-    sess.closed = true
-    if (sessions.get(key) === sess) {
-      sessions.delete(key)
-    }
-    release()
-  }
-
-  return { waitForFirstEvent, iterate, dispose }
 }
 
 async function openSession(options: {
@@ -916,15 +660,6 @@ function waitForOpen(
     ws.addEventListener("error", onError)
     ws.addEventListener("close", onClose)
   })
-}
-
-function readResponseId(parsed: Record<string, unknown>): string {
-  const response = parsed.response
-  if (response && typeof response === "object") {
-    const id = (response as { id?: unknown }).id
-    if (typeof id === "string") return id
-  }
-  return ""
 }
 
 function destroySession(key: string, reason: string): void {

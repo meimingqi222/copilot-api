@@ -8,6 +8,7 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
+import { HTTPError } from "~/lib/error"
 import { extractErrorMessage } from "~/lib/error-builder"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
@@ -334,7 +335,9 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
 export function createResponsesErrorPayload(error: unknown): {
   type: "error"
   error: {
+    code?: string
     message: string
+    param?: string
     type: string
   }
 } {
@@ -349,15 +352,47 @@ export function createResponsesErrorPayload(error: unknown): {
     }
   }
 
+  const structured = readStructuredResponsesError(error)
   const message = extractErrorMessage(error)
 
   return {
     type: "error",
     error: {
-      message,
-      type: "error",
+      message: structured?.message ?? message,
+      type: structured?.type ?? "error",
+      ...(structured?.code ? { code: structured.code } : {}),
+      ...(structured?.param ? { param: structured.param } : {}),
     },
   }
+}
+
+/** Preserve machine-readable OpenAI error fields on SSE/WS error events. */
+function readStructuredResponsesError(error: unknown):
+  | {
+      code?: string
+      message?: string
+      param?: string
+      type?: string
+    }
+  | undefined {
+  if (!(error instanceof HTTPError) || !error.responseBody) return undefined
+  try {
+    const parsed = JSON.parse(error.responseBody) as { error?: unknown }
+    if (!parsed.error || typeof parsed.error !== "object") return undefined
+    const detail = parsed.error as Record<string, unknown>
+    return {
+      code: readNonEmptyString(detail.code),
+      message: readNonEmptyString(detail.message),
+      param: readNonEmptyString(detail.param),
+      type: readNonEmptyString(detail.type),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined
 }
 
 async function writeResponsesErrorEvent(

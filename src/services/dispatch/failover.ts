@@ -135,17 +135,6 @@ export async function executeWithFailover<
       )
       tried.add(targetKey(current.target))
 
-      // Windsurf in-stream error frames (rate-limit / quota / auth).
-      // quota_exhausted does NOT failover (preserves cache affinity, like
-      // the HTTPError path above); other kinds failover to another account.
-      if (
-        error instanceof WindsurfUpstreamError
-        && error.kind === "quota_exhausted"
-      ) {
-        await markCooldown(current, error, logPrefix)
-        throw error
-      }
-
       if (
         error instanceof HTTPError
         && !(error instanceof WindsurfConcurrencyLimitError)

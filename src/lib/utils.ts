@@ -289,15 +289,9 @@ export function shouldFailover(error: unknown): boolean {
     headers: error.response.headers,
     body: error.responseBody,
   })
-  // quota_exhausted (incl. Codex usage_limit_reached) should NOT
-  // failover: the credential's plan quota is depleted, and switching
-  // accounts breaks cache affinity. Let the client handle it.
-  // NOTE: 402 (Payment Required) is classified as quota_exhausted but
-  // historically triggered failover. Preserve that behavior.
-  if (classified.kind === "quota_exhausted") {
-    if (error.response.status === 402) return true
-    return false
-  }
+  // A depleted credential cannot serve this request. Mark it exhausted in
+  // dispatch, then rotate to another eligible credential/account.
+  if (classified.kind === "quota_exhausted") return true
   if (classified.kind === "auth_error") return true
   if (classified.kind === "rate_limited") return true
   if (classified.kind === "server_error") return true

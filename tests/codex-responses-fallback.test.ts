@@ -2,11 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import type { Account } from "~/lib/accounts"
 
+import { createResponsesErrorPayload } from "~/routes/responses/handler"
+import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 import {
   chainedHttpCodexRequestError,
-  createCodexResponsesOnce,
   stripReasoningItems,
-} from "~/services/codex/create-responses-once"
+} from "~/services/codex/upstream-body"
 import {
   clearCodexTranscriptsForTest,
   codexTranscriptKey,
@@ -37,6 +38,20 @@ describe("chainedHttpCodexRequestError", () => {
     }
     expect(body.error.code).toBe("previous_response_not_found")
     expect(body.error.type).toBe("invalid_request_error")
+  })
+
+  test("WS/SSE error event preserves the client replay handshake", () => {
+    expect(createResponsesErrorPayload(chainedHttpCodexRequestError())).toEqual(
+      {
+        type: "error",
+        error: {
+          code: "previous_response_not_found",
+          message:
+            "Chained Codex requests require WebSocket transport or full replay.",
+          type: "invalid_request_error",
+        },
+      },
+    )
   })
 })
 
@@ -130,13 +145,10 @@ describe("selectUpstreamWsBody fallback", () => {
 describe("chained HTTP recovery", () => {
   test("expands a previous_response_id delta from the stable transcript", async () => {
     const sessionId = "stable-session"
-    setCodexTranscript(
-      codexTranscriptKey(`test-scope::${sessionId}`, "gpt-5"),
-      [
-        { type: "message", role: "user", content: "first" },
-        { type: "message", role: "assistant", content: "answer" },
-      ],
-    )
+    setCodexTranscript(codexTranscriptKey(`test-scope::${sessionId}`), [
+      { type: "message", role: "user", content: "first" },
+      { type: "message", role: "assistant", content: "answer" },
+    ])
 
     let postedBody: Record<string, unknown> | undefined
     globalThis.fetch = ((_url, init) => {
@@ -205,6 +217,111 @@ describe("chained HTTP recovery", () => {
       {
         type: "function_call_output",
         call_id: "call-1",
+        output: "ok",
+      },
+    ])
+  })
+
+  test("recovers a tool call collected from output_item.done after a fresh connection", async () => {
+    const postedBodies: Array<Record<string, unknown>> = []
+    let requestIndex = 0
+    globalThis.fetch = ((_url, init) => {
+      if (typeof init?.body !== "string") {
+        throw new TypeError("expected string request body")
+      }
+      postedBodies.push(JSON.parse(init.body) as Record<string, unknown>)
+      requestIndex += 1
+      const responseId = `resp_${requestIndex}`
+      const events =
+        requestIndex === 1 ?
+          [
+            `data: {"type":"response.created","response":{"id":"${responseId}","status":"in_progress"}}`,
+            "",
+            `data: {"type":"response.output_item.done","response_id":"${responseId}","output_index":0,"item":{"id":"ctc_1","type":"custom_tool_call","call_id":"call_1","name":"shell","input":"pwd"}}`,
+            "",
+            `data: {"type":"response.completed","response":{"id":"${responseId}","status":"completed","output":[]}}`,
+            "",
+            "data: [DONE]",
+            "",
+          ]
+        : [
+            `data: {"type":"response.completed","response":{"id":"${responseId}","status":"completed","output":[]}}`,
+            "",
+            "data: [DONE]",
+            "",
+          ]
+      return Promise.resolve(
+        new Response(events.join("\n"), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      )
+    }) as typeof fetch
+
+    const account: Account = {
+      id: "codex-1",
+      label: "codex",
+      provider: "codex",
+      credentials: { accessToken: "token", accountId: "acct-1" },
+      enabled: true,
+      priority: 0,
+      createdAt: Date.now(),
+    }
+    const context = {
+      downstreamWebsocket: true,
+      executionSessionId: "fresh-socket",
+      transcriptScopeId: "test-scope",
+      forwardedHeaders: { session_id: "tool-session" },
+      forceUpstreamHttp: true,
+    }
+    const first = await createCodexResponsesOnce(
+      account,
+      {
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "run pwd" } as never],
+        stream: true,
+      },
+      undefined,
+      context,
+    )
+    for await (const _event of first as AsyncIterable<unknown>) {
+      // Consume completion so the transcript checkpoint is written.
+    }
+
+    const second = await createCodexResponsesOnce(
+      account,
+      {
+        model: "gpt-5",
+        input: [
+          {
+            type: "custom_tool_call_output",
+            call_id: "call_1",
+            output: "ok",
+          } as never,
+        ],
+        previous_response_id: "resp_1",
+        stream: true,
+      },
+      undefined,
+      context,
+    )
+    for await (const _event of second as AsyncIterable<unknown>) {
+      // Consume the recovery turn.
+    }
+
+    expect(postedBodies[1]?.previous_response_id).toBeUndefined()
+    expect(postedBodies[1]?.input).toEqual([
+      { type: "message", role: "user", content: "run pwd" },
+      {
+        id: "ctc_1",
+        type: "custom_tool_call",
+        call_id: "call_1",
+        name: "shell",
+        input: "pwd",
+      },
+      {
+        type: "custom_tool_call_output",
+        call_id: "call_1",
         output: "ok",
       },
     ])

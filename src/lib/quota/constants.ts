@@ -30,7 +30,8 @@ export const CODEX_RATE_LIMIT_RESET_CREDITS_URL =
 export const CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL =
   "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 export const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
-export const XAI_GROK_CLIENT_VERSION = "0.2.91"
+/** Keep in sync with `XAI_CLI_CLIENT_VERSION` in `src/services/xai/headers.ts`. */
+export const XAI_GROK_CLIENT_VERSION = "0.2.120"
 
 export const CODEX_REQUEST_HEADERS = {
   Authorization: "Bearer $TOKEN$",

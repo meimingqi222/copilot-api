@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "node:fs"
 
+import { mergeWindsurfUsageFrames } from "~/services/windsurf/create-chat-completions"
 import { parseMessage } from "~/services/windsurf/protobuf"
 import {
   extractRawUsageSignals,
@@ -168,6 +169,57 @@ function buildTokenUsageField28(): Buffer {
 }
 
 describe("parseChatStreamFrame - field[28] Token Usage", () => {
+  test("cross-frame merge preserves completion when field[28] omits it", () => {
+    const merged = mergeWindsurfUsageFrames(
+      {
+        prompt_tokens: 100,
+        completion_tokens: 23,
+        total_tokens: 123,
+        cached_tokens: 0,
+      },
+      {
+        prompt_tokens: 180,
+        completion_tokens: 0,
+        total_tokens: 180,
+        cached_tokens: 80,
+        cache_read_tokens: 80,
+      },
+      {
+        field28: { inputTokens: 100, cachedInputTokens: 80 },
+      },
+    )
+
+    expect(merged).toEqual({
+      prompt_tokens: 180,
+      completion_tokens: 23,
+      total_tokens: 203,
+      cached_tokens: 80,
+      cache_read_tokens: 80,
+    })
+  })
+
+  test("cross-frame merge accepts an explicit zero completion field", () => {
+    const merged = mergeWindsurfUsageFrames(
+      {
+        prompt_tokens: 100,
+        completion_tokens: 23,
+        total_tokens: 123,
+        cached_tokens: 0,
+      },
+      {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        cached_tokens: 0,
+      },
+      { field7: { f2: 0, f3: 0 } },
+    )
+
+    expect(merged.prompt_tokens).toBe(0)
+    expect(merged.completion_tokens).toBe(0)
+    expect(merged.total_tokens).toBe(0)
+  })
+
   test("parses input_tokens / output_tokens / cached_input_tokens from field[28]", () => {
     const frame = new Uint8Array(buildTokenUsageField28())
     const parsed = parseChatStreamFrame(frame)
