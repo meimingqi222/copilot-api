@@ -6,7 +6,6 @@ import type {
 import { ClientAbortError } from "~/lib/request-lifecycle"
 
 import {
-  LEADING_RESPONSES_CONTROL_TYPES,
   TERMINAL_RESPONSE_TYPES,
   hasResponsesOutput,
   isResponsesOutputEvent,
@@ -80,6 +79,7 @@ export async function pumpWithLeadingBuffer(
     }
 
     const type = typeof parsed?.type === "string" ? parsed.type : undefined
+    const meaningfulOutput = parsed ? isResponsesOutputEvent(parsed) : false
     if (type && TERMINAL_RESPONSE_TYPES.has(type)) {
       sawTerminal = true
       terminal = type
@@ -89,20 +89,19 @@ export async function pumpWithLeadingBuffer(
         if (hasResponsesOutput(terminalResponse)) markOutputObserved()
       }
     }
-    if (
-      type
-      && !LEADING_RESPONSES_CONTROL_TYPES.has(type)
-      && !TERMINAL_RESPONSE_TYPES.has(type)
-      && parsed
-      && isResponsesOutputEvent(parsed)
-    )
+    if (type && !TERMINAL_RESPONSE_TYPES.has(type) && meaningfulOutput)
       markOutputObserved()
 
-    // Buffer leading control frames until content/terminal or overflow.
+    // Keep every non-output lifecycle frame buffered until the first
+    // meaningful output or a terminal event. Codex commonly emits empty
+    // output_item/content_part scaffolding before any text. Forwarding that
+    // scaffolding would commit the downstream turn and prevent the caller
+    // from recovering a subsequent upstream socket drop over HTTP.
     if (
       !state.committed
       && type !== undefined
-      && LEADING_RESPONSES_CONTROL_TYPES.has(type)
+      && !TERMINAL_RESPONSE_TYPES.has(type)
+      && !meaningfulOutput
     ) {
       buffer.push(event.data)
       bufferedBytes += event.data.length
@@ -115,7 +114,9 @@ export async function pumpWithLeadingBuffer(
       continue
     }
 
-    // First content event / terminal → include it in the flush and commit.
+    // First meaningful output / terminal → include it in the flush and
+    // commit. A malformed or untyped frame is conservatively committed because
+    // it may already be user-visible content.
     if (!state.committed) {
       buffer.push(event.data)
       await commit()
