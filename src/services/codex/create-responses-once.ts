@@ -32,7 +32,10 @@ import {
   detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
-import { collectResponsesFromSseResponse } from "~/services/responses/sse-collector"
+import {
+  collectResponsesFromEventStream,
+  collectResponsesFromSseResponse,
+} from "~/services/responses/sse-collector"
 import {
   applyCodexWebsocketHeaders,
   destroyUpstreamWebsocketSession,
@@ -533,42 +536,8 @@ export async function createCodexResponsesOnce(
   return result
 }
 
-async function collectResponsesFromWsStream(
-  stream: AsyncIterable<CopilotStreamEventLike>,
-  _model: string,
-  identityState: IdentityConfuseState,
-): Promise<ResponsesResponse> {
-  let completed: ResponsesResponse | undefined
-  for await (const event of stream) {
-    if (!event.data || event.data === "[DONE]") continue
-    try {
-      const parsed = JSON.parse(event.data) as Record<string, unknown>
-      if (
-        parsed.type === "response.completed"
-        && parsed.response
-        && typeof parsed.response === "object"
-      ) {
-        completed = parsed.response as ResponsesResponse
-      }
-    } catch {
-      // ignore partial frames
-    }
-  }
-  if (!completed) {
-    throw new Error("Codex websockets: missing response.completed event")
-  }
-  if (identityState.enabled) {
-    const restored = restoreIdentityConfuseResponse(
-      JSON.stringify(completed),
-      identityState,
-    )
-    return JSON.parse(restored) as ResponsesResponse
-  }
-  return completed
-}
-
 /**
- * Passthrough generator that, on each `response.completed`, appends the
+ * Passthrough generator that, on each successful terminal response, appends the
  * completed response's output items to the running full-input transcript and
  * stores it. This lets a later turn that lands on a fresh upstream socket
  * replay a self-contained request (full input, no previous_response_id)
@@ -585,10 +554,18 @@ async function* recordCodexTranscript(
 ): AsyncIterable<CopilotStreamEventLike> {
   for await (const event of stream) {
     const data = event.data
-    if (data && data !== "[DONE]" && data.includes('"response.completed"')) {
+    if (
+      data
+      && data !== "[DONE]"
+      && (data.includes('"response.completed"')
+        || data.includes('"response.incomplete"'))
+    ) {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
-        if (parsed.type === "response.completed") {
+        if (
+          parsed.type === "response.completed"
+          || parsed.type === "response.incomplete"
+        ) {
           const response = parsed.response as { output?: unknown } | undefined
           const output: Array<unknown> =
             response && Array.isArray(response.output) ?
@@ -688,23 +665,25 @@ function logCodexReasoningSummary(
   })
 }
 
-/** Handles a single `response.completed` SSE frame: cache + debug-log. */
+/** Handles a successful terminal SSE frame: cache + debug-log. */
 function handleCodexStreamCompletion(
   parsed: Record<string, unknown>,
   model: string,
   replaySessionKey: string | undefined,
 ): void {
-  if (parsed.type !== "response.completed") return
+  if (
+    parsed.type !== "response.completed"
+    && parsed.type !== "response.incomplete"
+  ) {
+    return
+  }
   if (replaySessionKey) {
     void cacheReasoningReplayItems(model, replaySessionKey, parsed)
   }
   const output = (
     parsed.response as { output?: Array<Record<string, unknown>> }
   ).output
-  logCodexReasoningSummary(
-    "[codex] response.completed reasoning summary",
-    output,
-  )
+  logCodexReasoningSummary(`[codex] ${parsed.type} reasoning summary`, output)
 }
 
 async function* wrapCodexStream(
@@ -720,8 +699,11 @@ async function* wrapCodexStream(
       continue
     }
 
-    // Cache reasoning items on response.completed events.
-    if (data.includes('"response.completed"')) {
+    // Cache reasoning items on successful terminal response events.
+    if (
+      data.includes('"response.completed"')
+      || data.includes('"response.incomplete"')
+    ) {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
         handleCodexStreamCompletion(parsed, model, replaySessionKey)
@@ -833,10 +815,11 @@ async function attemptCodexUpstreamWsTurn(
         identityState,
       )
     }
-    return await collectResponsesFromWsStream(
+    return await collectResponsesFromEventStream(
+      // wrapCodexStream restores confused identifiers before collection, so
+      // the returned object must not be restored a second time.
       wrapCodexStream(tracked, model, scopedReplaySessionKey, identityState),
       model,
-      identityState,
     )
   } catch (error) {
     if (isAbortLikeError(error) || signal?.aborted) throw error

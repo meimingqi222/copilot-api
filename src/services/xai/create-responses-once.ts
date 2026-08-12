@@ -20,7 +20,10 @@ import {
   detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
-import { collectResponsesFromSseResponse } from "~/services/responses/sse-collector"
+import {
+  collectResponsesFromEventStream,
+  collectResponsesFromSseResponse,
+} from "~/services/responses/sse-collector"
 import {
   applyXaiWebsocketHeaders,
   destroyUpstreamWebsocketSession,
@@ -34,7 +37,7 @@ import {
   appendResponsesTranscript,
   buildResponsesTranscriptInput,
   getResponsesTranscript,
-  resolveResponsesTranscriptSessionId,
+  resolveSocketResponsesTranscriptSessionId,
   type TranscriptStoreResult,
   xaiTranscriptKey,
 } from "../codex/ws-transcript-cache"
@@ -184,7 +187,7 @@ export async function createXaiResponsesOnce(
   // is not an orphan.
   const executionSessionId =
     ctx?.executionSessionId?.trim() || sessionId || account.id
-  const transcriptSessionId = resolveResponsesTranscriptSessionId(
+  const transcriptSessionId = resolveSocketResponsesTranscriptSessionId(
     executionSessionId,
     sessionId,
     ctx?.transcriptScopeId,
@@ -259,7 +262,7 @@ export async function createXaiResponsesOnce(
       if (clientStream) {
         return tracked
       }
-      return await collectResponsesFromWsStream(tracked)
+      return await collectResponsesFromEventStream(tracked, model)
     } catch (error) {
       if (isAbortLikeError(error) || signal?.aborted) throw error
       const failure = classifyWsFailure(error)
@@ -347,33 +350,8 @@ export async function createXaiResponsesOnce(
   return result
 }
 
-async function collectResponsesFromWsStream(
-  stream: AsyncIterable<CopilotStreamEventLike>,
-): Promise<ResponsesResponse> {
-  let completed: ResponsesResponse | undefined
-  for await (const event of stream) {
-    if (!event.data || event.data === "[DONE]") continue
-    try {
-      const parsed = JSON.parse(event.data) as Record<string, unknown>
-      if (
-        parsed.type === "response.completed"
-        && parsed.response
-        && typeof parsed.response === "object"
-      ) {
-        completed = parsed.response as ResponsesResponse
-      }
-    } catch {
-      // ignore
-    }
-  }
-  if (!completed) {
-    throw new Error("xAI websockets: missing response.completed event")
-  }
-  return completed
-}
-
 /**
- * Passthrough generator that, on each `response.completed`, appends the
+ * Passthrough generator that, on each successful terminal response, appends the
  * completed response's output items to the running full-input transcript and
  * stores it. This lets a later turn that lands on a *different credential's*
  * fresh upstream socket replay a self-contained request (full input, no
@@ -388,10 +366,18 @@ async function* recordXaiTranscript(
 ): AsyncIterable<CopilotStreamEventLike> {
   for await (const event of stream) {
     const data = event.data
-    if (data && data !== "[DONE]" && data.includes('"response.completed"')) {
+    if (
+      data
+      && data !== "[DONE]"
+      && (data.includes('"response.completed"')
+        || data.includes('"response.incomplete"'))
+    ) {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
-        if (parsed.type === "response.completed") {
+        if (
+          parsed.type === "response.completed"
+          || parsed.type === "response.incomplete"
+        ) {
           const response = parsed.response as { output?: unknown } | undefined
           const output: Array<unknown> =
             response && Array.isArray(response.output) ?

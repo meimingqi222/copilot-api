@@ -59,7 +59,12 @@ function collectAndHydrateCompletedOutput(
     }
     return
   }
-  if (parsed.type !== "response.completed") return
+  if (
+    parsed.type !== "response.completed"
+    && parsed.type !== "response.incomplete"
+  ) {
+    return
+  }
 
   const response = getRecord(parsed.response)
   if (!response) return
@@ -71,6 +76,24 @@ function collectAndHydrateCompletedOutput(
       const completedId = state.completedOutputItems.get(index)?.id
       if (hasNonEmptyString(completedId)) item.id = completedId
     }
+
+    // A terminal response can contain a valid but partial output prefix. Keep
+    // that authoritative prefix, then append only collected indexed items that
+    // fall beyond it. This does not assume the upstream must duplicate every
+    // item in response.completed; it merely preserves items already delivered
+    // as response.output_item.done on the same stream.
+    for (const [index, item] of [...state.completedOutputItems.entries()].sort(
+      ([left], [right]) => left - right,
+    )) {
+      if (index >= output.length && !hasOutputItem(output, item)) {
+        output.push(item)
+      }
+    }
+    for (const item of state.completedOutputFallback) {
+      // Without output_index or a stable item identity we cannot distinguish a
+      // missing tail item from another copy already present in completed.
+      if (outputItemKey(item) && !hasOutputItem(output, item)) output.push(item)
+    }
     return
   }
 
@@ -80,6 +103,26 @@ function collectAndHydrateCompletedOutput(
   if (indexed.length > 0 || state.completedOutputFallback.length > 0) {
     response.output = [...indexed, ...state.completedOutputFallback]
   }
+}
+
+function hasOutputItem(
+  output: Array<unknown>,
+  candidate: Record<string, unknown>,
+): boolean {
+  const candidateKey = outputItemKey(candidate)
+  if (!candidateKey) return false
+  return output.some((value) => {
+    const item = getRecord(value)
+    return item ? outputItemKey(item) === candidateKey : false
+  })
+}
+
+function outputItemKey(item: Record<string, unknown>): string | undefined {
+  const type = getString(item.type) ?? ""
+  const id = getString(item.id)
+  if (id) return `${type}:id:${id}`
+  const callId = getString(item.call_id)
+  return callId ? `${type}:call_id:${callId}` : undefined
 }
 
 function normalizeParsedEvent(

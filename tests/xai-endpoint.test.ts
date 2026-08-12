@@ -205,6 +205,75 @@ describe("resolveXaiSessionId", () => {
 })
 
 describe("sanitizeXaiResponsesBody", () => {
+  test("removes non-xAI encrypted content and null reasoning fields", () => {
+    const valid = Buffer.from(Array.from({ length: 64 }, (_, index) => index))
+      .toString("base64")
+      .replace(/=+$/, "")
+    const body = sanitizeXaiResponsesBody(
+      {
+        model: "grok-4.5",
+        input: [
+          {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "kept" }],
+            content: null,
+            encrypted_content: "gAAAA-invalid-for-xai",
+          },
+          {
+            type: "reasoning",
+            summary: [],
+            encrypted_content: null,
+          },
+          {
+            type: "compaction",
+            encrypted_content: "gAAAA-invalid-for-xai",
+          },
+          { type: "compaction", encrypted_content: null },
+          { type: "compaction", encrypted_content: valid },
+        ],
+      },
+      "grok-4.5",
+    )
+
+    expect(body.input).toEqual([
+      {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "kept" }],
+      },
+      { type: "reasoning", summary: [] },
+      { type: "compaction", encrypted_content: valid },
+    ])
+  })
+
+  test("merges adjacent summary-only reasoning items after sanitization", () => {
+    const body = sanitizeXaiResponsesBody(
+      {
+        input: [
+          {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "one" }],
+            encrypted_content: "invalid",
+          },
+          {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "two" }],
+          },
+        ],
+      },
+      "grok-4.5",
+    )
+
+    expect(body.input).toEqual([
+      {
+        type: "reasoning",
+        summary: [
+          { type: "summary_text", text: "one" },
+          { type: "summary_text", text: "two" },
+        ],
+      },
+    ])
+  })
+
   test("normalizes custom tool-call history into xAI function calls", () => {
     const body = sanitizeXaiResponsesBody(
       {

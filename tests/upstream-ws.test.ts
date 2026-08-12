@@ -14,6 +14,7 @@ import {
   isUpstreamWsTransportError,
   normalizeUpstreamWsEvent,
   shouldUseUpstreamResponsesWebsocket,
+  waitForUpstreamWsOpenForTest,
 } from "~/services/responses/upstream-ws"
 import {
   extractWsErrorMessage,
@@ -260,6 +261,46 @@ describe("fallback error classification", () => {
   })
 })
 
+describe("upstream handshake cancellation", () => {
+  test("aborting closes the pending socket and rejects immediately", async () => {
+    const listeners = new Map<string, Set<EventListener>>()
+    let closeCalls = 0
+    const socket = {
+      readyState: WebSocket.CONNECTING,
+      close() {
+        closeCalls += 1
+      },
+      addEventListener(type: string, listener: EventListener) {
+        const handlers = listeners.get(type) ?? new Set<EventListener>()
+        handlers.add(listener)
+        listeners.set(type, handlers)
+      },
+      removeEventListener(type: string, listener: EventListener) {
+        listeners.get(type)?.delete(listener)
+      },
+    } as unknown as WebSocket
+    const controller = new AbortController()
+
+    const pending = waitForUpstreamWsOpenForTest(
+      socket,
+      "codex",
+      controller.signal,
+    )
+    controller.abort()
+
+    let rejection: unknown
+    try {
+      await pending
+    } catch (error) {
+      rejection = error
+    }
+    expect(rejection).toBeInstanceOf(Error)
+    expect((rejection as Error).message).toBe("codex websockets: aborted")
+    expect(closeCalls).toBe(1)
+    expect([...listeners.values()].every((set) => set.size === 0)).toBe(true)
+  })
+})
+
 describe("upstream response.failed extraction", () => {
   test("reads nested server failures for failover", () => {
     const event = {
@@ -270,6 +311,21 @@ describe("upstream response.failed extraction", () => {
     }
     expect(extractWsErrorMessage(event)).toBe("backend unavailable")
     expect(extractWsErrorStatus(event)).toBe(500)
+  })
+
+  test("promotes nested usage-limit failures to quota status", () => {
+    const event = {
+      type: "response.failed",
+      response: {
+        error: {
+          type: "usage_limit_reached",
+          code: "AccountQuotaExceeded",
+          message: "quota exhausted",
+        },
+      },
+    }
+    expect(extractWsErrorMessage(event)).toBe("quota exhausted")
+    expect(extractWsErrorStatus(event)).toBe(429)
   })
 })
 

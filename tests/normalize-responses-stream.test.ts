@@ -70,4 +70,67 @@ describe("normalizeResponsesStreamIds", () => {
     }
     expect(completed.output?.[0]?.id).toBe("msg_1")
   })
+
+  test("appends output_item.done items missing from a partial completed output", async () => {
+    const events = await collect([
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { id: "rs_1", type: "reasoning", summary: [] },
+      },
+      {
+        type: "response.output_item.done",
+        output_index: 1,
+        item: {
+          id: "msg_1",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "done" }],
+        },
+      },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_1",
+          output: [{ id: "rs_1", type: "reasoning", summary: [] }],
+        },
+      },
+    ])
+
+    const completed = events[2]?.response as { output?: Array<unknown> }
+    expect(completed.output).toEqual([
+      { id: "rs_1", type: "reasoning", summary: [] },
+      {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "done" }],
+      },
+    ])
+  })
+
+  test("hydrates response.incomplete output from observed done items", async () => {
+    const events = await collect([
+      {
+        type: "response.output_item.done",
+        output_index: 0,
+        item: { type: "message", id: "msg_1", content: [] },
+      },
+      {
+        type: "response.incomplete",
+        response: {
+          id: "resp_1",
+          object: "response",
+          model: "gpt-5",
+          status: "incomplete",
+          output: [],
+        },
+      },
+    ])
+
+    const incomplete = events[1]?.response as { output?: Array<unknown> }
+    expect(incomplete.output).toEqual([
+      { type: "message", id: "msg_1", content: [] },
+    ])
+  })
 })

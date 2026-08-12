@@ -406,7 +406,16 @@ async function openUpstreamResponsesWebsocketTurnOnce(
         url: wsUrl,
         accountId: account.id,
         headers,
+        signal,
       })
+      if (signal?.aborted) {
+        try {
+          opened.ws.close()
+        } catch {
+          // ignore
+        }
+        throw new Error(`${provider} websockets: aborted`)
+      }
       sess.ws = opened.ws
       sess.closed = false
       sess.url = wsUrl
@@ -456,6 +465,9 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       signal,
       releaseChain,
     })
+    if (signal?.aborted) {
+      throw new Error(`${provider} websockets: aborted`)
+    }
     updateMemoryTrace(options.memoryTraceId, "upstream_ws_stringify_start", {
       provider,
       inputItems:
@@ -474,6 +486,9 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       throw new Error(
         `${provider} websockets: upstream request exceeds WebSocket size limit`,
       )
+    }
+    if (signal?.aborted) {
+      throw new Error(`${provider} websockets: aborted`)
     }
     ws.send(wireBody)
     updateMemoryTrace(options.memoryTraceId, "upstream_ws_sent", {
@@ -602,8 +617,9 @@ async function openSession(options: {
   url: string
   accountId: string
   headers: Record<string, string>
+  signal?: AbortSignal
 }): Promise<{ ws: WebSocket }> {
-  const { key, provider, url, accountId, headers } = options
+  const { key, provider, url, accountId, headers, signal } = options
 
   logger.info(
     `${provider} websockets: upstream connecting session=${key} auth=${accountId} url=${url}`,
@@ -614,7 +630,7 @@ async function openSession(options: {
     headers,
   } as unknown as string)
 
-  await waitForOpen(ws, provider)
+  await waitForOpen(ws, provider, signal)
 
   logger.info(
     `${provider} websockets: upstream connected session=${key} auth=${accountId} url=${url}`,
@@ -626,8 +642,17 @@ async function openSession(options: {
 function waitForOpen(
   ws: WebSocket,
   provider: UpstreamWsProvider,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (ws.readyState === WebSocket.OPEN) return Promise.resolve()
+  if (signal?.aborted) {
+    try {
+      ws.close()
+    } catch {
+      // ignore
+    }
+    return Promise.reject(new Error(`${provider} websockets: aborted`))
+  }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup()
@@ -650,15 +675,27 @@ function waitForOpen(
       cleanup()
       reject(new Error(`${provider} websockets: closed during handshake`))
     }
+    const onAbort = () => {
+      cleanup()
+      try {
+        ws.close()
+      } catch {
+        // ignore
+      }
+      reject(new Error(`${provider} websockets: aborted`))
+    }
     const cleanup = () => {
       clearTimeout(timer)
       ws.removeEventListener("open", onOpen)
       ws.removeEventListener("error", onError)
       ws.removeEventListener("close", onClose)
+      signal?.removeEventListener("abort", onAbort)
     }
     ws.addEventListener("open", onOpen)
     ws.addEventListener("error", onError)
     ws.addEventListener("close", onClose)
+    signal?.addEventListener("abort", onAbort, { once: true })
+    if (signal?.aborted) onAbort()
   })
 }
 
@@ -745,3 +782,6 @@ export function clearUpstreamWebsocketSessionsForTest(): void {
 export function getUpstreamWebsocketSessionCountForTest(): number {
   return sessions.size
 }
+
+/** Test hook for handshake cancellation without opening a real socket. */
+export const waitForUpstreamWsOpenForTest = waitForOpen

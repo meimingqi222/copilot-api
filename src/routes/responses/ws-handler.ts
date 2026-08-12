@@ -374,6 +374,7 @@ async function processResponseCreate(
   let current = admission
   let httpRecoveryTried = false
   const tried = new Set<string>()
+  const turnStarted = Date.now()
 
   while (true) {
     const outcome = await runResponsesAttempt({
@@ -389,6 +390,7 @@ async function processResponseCreate(
       tried,
       httpRecoveryTried,
       memoryTraceId,
+      turnStarted,
     })
     if (outcome.type === "retry-http") {
       updateMemoryTrace(memoryTraceId, "provider_http_recovery")
@@ -424,6 +426,7 @@ interface RunResponsesAttemptParams {
   tried: Set<string>
   httpRecoveryTried: boolean
   memoryTraceId: string
+  turnStarted: number
 }
 
 /**
@@ -455,6 +458,7 @@ async function runResponsesAttempt(
     tried,
     httpRecoveryTried,
     memoryTraceId,
+    turnStarted,
   } = params
 
   // Rotation is account-managed; the selector only returns account-backed
@@ -513,7 +517,7 @@ async function runResponsesAttempt(
     let usageStreaming = false
     if (isNonStreaming(result.response)) {
       completedResponse = result.response
-      const elapsed = Date.now() - attemptStarted
+      const elapsed = Date.now() - turnStarted
       const completionTokens = completedResponse.usage?.output_tokens ?? 0
       usageTps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
       usageStreaming = false
@@ -542,13 +546,11 @@ async function runResponsesAttempt(
       })
       completedResponse = pumped.completedResponse
       usageStreaming = true
-      const elapsed = Date.now() - attemptStarted
+      const elapsed = Date.now() - turnStarted
       const completionTokens = completedResponse?.usage?.output_tokens ?? 0
       usageTps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
       usageTtftMs =
-        pumped.firstContentAt ?
-          pumped.firstContentAt - attemptStarted
-        : undefined
+        pumped.firstContentAt ? pumped.firstContentAt - turnStarted : undefined
       markStreamTerminal(
         c,
         pumped.terminal,

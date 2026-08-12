@@ -29,6 +29,7 @@ export function extractWsErrorStatus(parsed: Record<string, unknown>): number {
   if (/auth|unauthori[sz]ed|invalid_api_key|token_expired/i.test(marker)) {
     return 401
   }
+  if (/usage_limit|quota|accountquotaexceeded/i.test(marker)) return 429
   if (/rate.?limit/i.test(marker)) return 429
   if (/server|internal|unavailable/i.test(marker)) return 500
   return 400

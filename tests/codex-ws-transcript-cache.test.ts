@@ -11,6 +11,7 @@ import {
   getCodexTranscriptBytesForTest,
   getCodexTranscriptCountForTest,
   resolveResponsesTranscriptSessionId,
+  resolveSocketResponsesTranscriptSessionId,
   setCodexTranscript,
 } from "~/services/codex/ws-transcript-cache"
 import { selectUpstreamWsBody } from "~/services/responses/upstream-ws"
@@ -88,6 +89,47 @@ describe("transcript get/set", () => {
     expect(merged).toHaveLength(2)
     expect(merged[0]).toEqual(cached[0])
     expect(merged[1]).toEqual(delta[0])
+  })
+
+  test("dedupes id-less tool outputs by type and call_id", () => {
+    const cached = [
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: "stale",
+      },
+    ]
+    const delta = [
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: "latest",
+      },
+    ]
+
+    expect(buildResponsesTranscriptInput(cached, delta, false)).toEqual(delta)
+  })
+
+  test("does not collapse different tool output types sharing a call_id", () => {
+    const cached = [
+      {
+        type: "custom_tool_call_output",
+        call_id: "call_1",
+        output: "custom",
+      },
+    ]
+    const delta = [
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: "function",
+      },
+    ]
+
+    expect(buildResponsesTranscriptInput(cached, delta, false)).toEqual([
+      ...cached,
+      ...delta,
+    ])
   })
 
   test("buildResponsesTranscriptInput copies when tracking without a cache", () => {
@@ -183,6 +225,21 @@ describe("transcript clearing", () => {
     const cleared = clearResponsesTranscriptsByExecutionId("sess-1")
     expect(cleared).toBe(1)
     expect(getCodexTranscript(codexTranscriptKey("sess-10"))).toBeDefined()
+  })
+
+  test("socket execution id is not mistaken for a stable scoped session", () => {
+    const executionId = "socket-123"
+    const resolved = resolveSocketResponsesTranscriptSessionId(
+      executionId,
+      executionId,
+      "user:1",
+    )
+    const key = codexTranscriptKey(resolved)
+    setCodexTranscript(key, [{ a: 1 }])
+
+    expect(resolved).toBe(executionId)
+    expect(clearResponsesTranscriptsByExecutionId(executionId)).toBe(1)
+    expect(getCodexTranscript(key)).toBeUndefined()
   })
 })
 
