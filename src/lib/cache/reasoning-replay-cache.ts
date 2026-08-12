@@ -232,7 +232,7 @@ export function injectReasoningReplayItems(
       ) {
         const callId = typeof obj.call_id === "string" ? obj.call_id.trim() : ""
         for (const candidate of comparableCallIds(callId)) {
-          outputCallIds.set(candidate, callId)
+          outputCallIds.set(`${type}:${candidate}`, callId)
         }
       }
     }
@@ -264,8 +264,9 @@ export function injectReasoningReplayItems(
     }
     const callId =
       typeof parsed.call_id === "string" ? parsed.call_id.trim() : ""
+    const outputType = replayOutputTypeForCall(parsed.type)
     const alignedCallId = comparableCallIds(callId)
-      .map((candidate) => outputCallIds.get(candidate))
+      .map((candidate) => outputCallIds.get(`${outputType}:${candidate}`))
       .find(Boolean)
     if (!alignedCallId) continue
 
@@ -293,12 +294,16 @@ function reasoningReplayInsertIndex(
   input: Array<unknown>,
   replayItems: Array<Record<string, unknown>>,
 ): number {
-  const replayCallIds = new Set(
-    replayItems.flatMap((item) =>
-      typeof item.call_id === "string" ? comparableCallIds(item.call_id) : [],
-    ),
+  const replayOutputKeys = new Set(
+    replayItems.flatMap((item) => {
+      if (typeof item.call_id !== "string") return []
+      const outputType = replayOutputTypeForCall(item.type)
+      return comparableCallIds(item.call_id).map(
+        (callId) => `${outputType}:${callId}`,
+      )
+    }),
   )
-  if (replayCallIds.size > 0) {
+  if (replayOutputKeys.size > 0) {
     const outputIndex = input.findIndex((entry) => {
       const item = getRecord(entry)
       if (!item) return false
@@ -308,9 +313,12 @@ function reasoningReplayInsertIndex(
       ) {
         return false
       }
+      const outputType = item.type
       return (
         typeof item.call_id === "string"
-        && comparableCallIds(item.call_id).some((id) => replayCallIds.has(id))
+        && comparableCallIds(item.call_id).some((id) =>
+          replayOutputKeys.has(`${outputType}:${id}`),
+        )
       )
     })
     if (outputIndex !== -1) return outputIndex
@@ -335,6 +343,12 @@ function replayToolCallKeys(item: Record<string, unknown>): Array<string> {
   }
   if (typeof item.call_id !== "string") return []
   return comparableCallIds(item.call_id).map((id) => `${itemType}:${id}`)
+}
+
+function replayOutputTypeForCall(type: unknown): string {
+  return type === "custom_tool_call" ?
+      "custom_tool_call_output"
+    : "function_call_output"
 }
 
 function comparableCallIds(callId: string): Array<string> {

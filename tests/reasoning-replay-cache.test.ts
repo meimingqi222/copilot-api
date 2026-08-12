@@ -53,6 +53,26 @@ describe("injectReasoningReplayItems", () => {
     ])
   })
 
+  test("does not match a cached custom call to a function output", () => {
+    const output = {
+      type: "function_call_output",
+      call_id: "call_1",
+      output: "ok",
+    }
+    const body: Record<string, unknown> = { input: [output] }
+
+    injectReasoningReplayItems(body, [
+      replayItem({
+        type: "custom_tool_call",
+        call_id: "call_1",
+        name: "shell",
+        input: "pwd",
+      }),
+    ])
+
+    expect(body.input).toEqual([output])
+  })
+
   test("aligns cached call_id to the client-visible shortened output id", () => {
     const original = `call_${"a".repeat(90)}`
     const sanitized = original.replaceAll(/[^\w-]/g, "_")

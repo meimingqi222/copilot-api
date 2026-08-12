@@ -156,7 +156,7 @@ export async function sendText(
   payload: string,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  if (!isSocketOpen(ws)) {
+  if (!isSocketOpen(ws) || signal?.aborted) {
     return false
   }
 
@@ -172,6 +172,9 @@ export async function sendText(
       await waitForSendPoll(signal)
     }
 
+    // The signal can flip after the backpressure loop exits. Recheck at the
+    // actual send boundary so an aborted turn never queues a late frame.
+    if (!isSocketOpen(ws) || signal?.aborted) return false
     const status = ws.send(payload)
     // Bun returns 0 when it dropped the message, -1 when it accepted the
     // message but applied backpressure, and a positive byte count on success.

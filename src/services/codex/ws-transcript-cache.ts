@@ -110,6 +110,20 @@ export function resolveResponsesTranscriptSessionId(
   return scope ? `${scope}::${preferred}` : preferred
 }
 
+/** Resolve a provider session that may simply mirror the physical socket id. */
+export function resolveSocketResponsesTranscriptSessionId(
+  executionSessionId: string,
+  providerSessionId?: string,
+  scopeId?: string,
+): string {
+  const providerSession = providerSessionId?.trim()
+  return resolveResponsesTranscriptSessionId(
+    executionSessionId,
+    providerSession === executionSessionId ? undefined : providerSession,
+    scopeId,
+  )
+}
+
 /** Returns the accumulated full input for a session, if present. */
 export function getCodexTranscript(key: string): Array<unknown> | undefined {
   const entry = transcripts.get(key)
@@ -198,9 +212,23 @@ function transcriptItemKey(entry: unknown): string | undefined {
   if (typeof entry !== "object" || entry === null) return undefined
   const item = entry as Record<string, unknown>
   const id = typeof item.id === "string" ? item.id.trim() : ""
-  if (!id) return undefined
-  const type = typeof item.type === "string" ? item.type : ""
-  return `${type}:${id}`
+  const type = typeof item.type === "string" ? item.type.trim() : ""
+  if (id) return `${type}:id:${id}`
+
+  // Responses tool outputs normally carry call_id but no item id. A full
+  // history resend must replace the cached copy of the same output instead of
+  // appending a duplicate. Keep the type in the key: function and custom tool
+  // outputs are different protocol items even when a client reuses a call_id.
+  if (
+    type === "function_call"
+    || type === "custom_tool_call"
+    || type === "function_call_output"
+    || type === "custom_tool_call_output"
+  ) {
+    const callId = typeof item.call_id === "string" ? item.call_id.trim() : ""
+    if (callId) return `${type}:call_id:${callId}`
+  }
+  return undefined
 }
 
 function transcriptStoreResult(

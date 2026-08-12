@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { OAuthAccount } from "~/lib/accounts"
 
 import { listAccounts } from "~/lib/accounts"
+import { HTTPError } from "~/lib/error"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
@@ -225,6 +226,51 @@ describe("Responses SSE collector", () => {
     expect(() => collectResponsesFromSseText(sse, "gpt-5")).toThrow(
       "quota exceeded",
     )
+  })
+
+  test("collectResponsesFromSseText accepts response.incomplete", () => {
+    const sse =
+      'data: {"type":"response.incomplete","response":{"id":"resp-inc","status":"incomplete","output":[],"usage":{"input_tokens":10,"output_tokens":4,"total_tokens":14}}}'
+
+    const response = collectResponsesFromSseText(sse, "gpt-5")
+    expect(response.id).toBe("resp-inc")
+    expect(response.status).toBe("incomplete")
+    expect(response.usage?.output_tokens).toBe(4)
+  })
+
+  test("collectResponsesFromSseText appends observed tail items to partial terminal output", () => {
+    const sse = [
+      'data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg-1"}}',
+      'data: {"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","id":"fc-1","call_id":"call-1"}}',
+      'data: {"type":"response.completed","response":{"id":"resp-1","status":"completed","output":[{"type":"message"}]}}',
+    ].join("\n")
+
+    const response = collectResponsesFromSseText(sse, "gpt-5")
+    expect(response.output?.map((item) => item.id)).toEqual(["msg-1", "fc-1"])
+  })
+
+  test("collectResponsesFromSseText preserves nested quota errors", () => {
+    const sse =
+      'data: {"type":"response.failed","response":{"error":{"type":"usage_limit_reached","code":"AccountQuotaExceeded","message":"quota exhausted","resets_in_seconds":60}}}'
+
+    try {
+      collectResponsesFromSseText(sse, "gpt-5")
+      expect.unreachable("expected nested quota error")
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError)
+      if (!(error instanceof HTTPError)) return
+      expect(error.message).toBe("quota exhausted")
+      expect(error.response.status).toBe(429)
+      expect(error.response.headers.get("Retry-After")).toBe("60")
+      expect(JSON.parse(error.responseBody)).toEqual({
+        error: {
+          type: "usage_limit_reached",
+          code: "AccountQuotaExceeded",
+          message: "quota exhausted",
+          resets_in_seconds: 60,
+        },
+      })
+    }
   })
 })
 

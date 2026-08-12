@@ -208,12 +208,13 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
       return c.json(result.response)
     }
 
-    return handleStreamingResponse(
+    return handleStreamingResponse({
       c,
-      result.response,
+      response: result.response,
       estimatedInputTokens,
       memoryTraceId,
-    )
+      streamStartTs: nonStreamStart,
+    })
   }
 
   updateMemoryTrace(memoryTraceId, "chat_token_estimate_start")
@@ -329,12 +330,17 @@ function handleNonStreamingResponse(
   Object.assign(response, normalized)
 }
 
-function handleStreamingResponse(
-  c: Context,
-  response: CopilotStream,
-  estimatedInputTokens: number,
-  memoryTraceId: string,
-) {
+interface HandleChatStreamingResponseOptions {
+  c: Context
+  response: CopilotStream
+  estimatedInputTokens: number
+  memoryTraceId: string
+  streamStartTs?: number
+}
+
+function handleStreamingResponse(options: HandleChatStreamingResponseOptions) {
+  const { c, response, estimatedInputTokens, memoryTraceId, streamStartTs } =
+    options
   logger.debug("Streaming response")
   const model = c.get("model")
   const accountId = c.get("accountId")
@@ -397,7 +403,7 @@ function handleStreamingResponse(
   let downstreamCommitted = false
   let lastFinishReason: string | undefined
   let outputObserved = false
-  const streamStart = Date.now()
+  const streamStart = streamStartTs ?? Date.now()
 
   beginStreamLog(c)
   return handleSseStream(
@@ -414,13 +420,13 @@ function handleStreamingResponse(
             continue
           }
 
-          if (!firstChunkTs) {
+          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+          const isOutput = hasChatChunkOutput(chunk)
+          outputObserved ||= isOutput
+          if (isOutput && !firstChunkTs) {
             firstChunkTs = Date.now()
             updateMemoryTrace(memoryTraceId, "chat_first_chunk")
           }
-
-          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-          outputObserved ||= hasChatChunkOutput(chunk)
           if (logger.level >= 4) {
             logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
@@ -653,13 +659,13 @@ function handleStreamingCompletion(
             continue
           }
 
-          if (!firstChunkTs) {
+          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+          const isOutput = hasChatChunkOutput(chunk)
+          outputObserved ||= isOutput
+          if (isOutput && !firstChunkTs) {
             firstChunkTs = Date.now()
             updateMemoryTrace(options.memoryTraceId, "chat_first_chunk")
           }
-
-          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-          outputObserved ||= hasChatChunkOutput(chunk)
           if (logger.level >= 4) {
             logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
@@ -768,16 +774,48 @@ function signalOutcome(signal: AbortSignal | undefined): string {
   return signal?.aborted ? "aborted" : "error"
 }
 
-function hasChatChunkOutput(chunk: ChatCompletionChunk): boolean {
+export function hasChatChunkOutput(chunk: ChatCompletionChunk): boolean {
   const delta = chunk.choices[0]?.delta as Record<string, unknown> | undefined
   if (!delta) return false
-  return Boolean(
-    delta["content"]
-      || delta["reasoning"]
-      || delta["reasoning_content"]
-      || delta["reasoning_text"]
-      || delta["refusal"]
-      || delta["tool_calls"]
-      || delta["function_call"],
+  return (
+    hasNonEmptyChatValue(delta["content"])
+    || hasNonEmptyChatValue(delta["reasoning"])
+    || hasNonEmptyChatValue(delta["reasoning_content"])
+    || hasNonEmptyChatValue(delta["reasoning_text"])
+    || hasNonEmptyChatValue(delta["refusal"])
+    || hasToolCallOutput(delta["tool_calls"])
+    || hasFunctionCallOutput(delta["function_call"])
+  )
+}
+
+function hasNonEmptyChatValue(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0
+  if (!Array.isArray(value)) return false
+  return value.some((part) => {
+    if (!part || typeof part !== "object") return false
+    const record = part as Record<string, unknown>
+    return (
+      hasNonEmptyChatValue(record.text) || hasNonEmptyChatValue(record.content)
+    )
+  })
+}
+
+function hasToolCallOutput(value: unknown): boolean {
+  return (
+    Array.isArray(value) && value.some((call) => hasFunctionCallOutput(call))
+  )
+}
+
+function hasFunctionCallOutput(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const call = value as Record<string, unknown>
+  const fn =
+    call.function && typeof call.function === "object" ?
+      (call.function as Record<string, unknown>)
+    : call
+  return (
+    hasNonEmptyChatValue(call.id)
+    || hasNonEmptyChatValue(fn.name)
+    || hasNonEmptyChatValue(fn.arguments)
   )
 }

@@ -143,6 +143,10 @@ export async function handleResponses(c: Context) {
       let firstChunkTs: number | undefined
       let outputObserved = false
       const streamStartTs = Date.now()
+      const markOutputObserved = () => {
+        outputObserved = true
+        firstChunkTs ??= Date.now()
+      }
 
       try {
         const result = await executeRequest()
@@ -188,8 +192,7 @@ export async function handleResponses(c: Context) {
 
           const parsed = JSON.parse(event.data) as Record<string, unknown>
           if (isResponsesOutputEvent(parsed)) {
-            outputObserved = true
-            firstChunkTs ??= Date.now()
+            markOutputObserved()
           }
           if (
             parsed.type === "response.completed"
@@ -198,6 +201,7 @@ export async function handleResponses(c: Context) {
           ) {
             completedResponse = parsed.response as ResponsesResponse
             sawTerminal = true
+            if (hasResponsesOutput(completedResponse)) markOutputObserved()
             markStreamTerminal(
               c,
               "response.completed",
@@ -212,6 +216,10 @@ export async function handleResponses(c: Context) {
           ) {
             sawTerminal = true
             const terminal = parsed.type as string
+            const incompleteResponse = readIncompleteResponse(parsed, terminal)
+            completedResponse = incompleteResponse ?? completedResponse
+            if (incompleteResponse && hasResponsesOutput(incompleteResponse))
+              markOutputObserved()
             markStreamTerminal(
               c,
               terminal,
@@ -291,6 +299,20 @@ export function isNonStreaming(
   response: AsyncIterable<CopilotStreamEventLike> | ResponsesResponse,
 ): response is ResponsesResponse {
   return Object.hasOwn(response, "id") && Object.hasOwn(response, "model")
+}
+
+function readIncompleteResponse(
+  event: Record<string, unknown>,
+  terminal: string,
+): ResponsesResponse | undefined {
+  if (
+    terminal === "response.incomplete"
+    && event.response
+    && typeof event.response === "object"
+  ) {
+    return event.response as ResponsesResponse
+  }
+  return undefined
 }
 
 interface RecordResponsesUsageOpts {
