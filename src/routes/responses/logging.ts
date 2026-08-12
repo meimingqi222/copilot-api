@@ -2,12 +2,6 @@ import type { ResponsesResponse } from "~/services/copilot/responses-api"
 
 export type ResponsesLogOutcome = "success" | "incomplete" | "failed"
 
-export const LEADING_RESPONSES_CONTROL_TYPES = new Set([
-  "response.created",
-  "response.in_progress",
-  "response.queued",
-])
-
 export const TERMINAL_RESPONSE_TYPES = new Set([
   "response.completed",
   "response.incomplete",

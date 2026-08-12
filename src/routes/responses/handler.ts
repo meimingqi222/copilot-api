@@ -356,6 +356,7 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
 
 export function createResponsesErrorPayload(error: unknown): {
   type: "error"
+  status: number
   error: {
     code?: string
     message: string
@@ -367,6 +368,7 @@ export function createResponsesErrorPayload(error: unknown): {
   if (knownError) {
     return {
       type: "error",
+      status: knownError.status,
       error: {
         message: knownError.message,
         type: knownError.type,
@@ -379,6 +381,11 @@ export function createResponsesErrorPayload(error: unknown): {
 
   return {
     type: "error",
+    // Codex's Responses WebSocket client only maps a wrapped `type:error`
+    // event into an HTTP/stream failure when the status is present at the top
+    // level. Without it, the client may ignore the frame until idle timeout or
+    // surface a non-retryable generic error instead of using its retry budget.
+    status: error instanceof HTTPError ? error.response.status : 500,
     error: {
       message: structured?.message ?? message,
       type: structured?.type ?? "error",

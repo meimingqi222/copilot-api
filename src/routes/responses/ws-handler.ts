@@ -735,6 +735,7 @@ async function handleResponseError(
       ws,
       {
         type: "error",
+        status: knownError.status,
         error: {
           message: knownError.message,
           type: knownError.type,

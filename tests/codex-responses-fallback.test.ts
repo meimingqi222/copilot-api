@@ -23,6 +23,21 @@ afterEach(() => {
 })
 
 describe("chainedHttpCodexRequestError", () => {
+  test("generic transport failures carry a retryable WebSocket status", () => {
+    expect(
+      createResponsesErrorPayload(
+        new Error("codex websockets: upstream socket closed unexpectedly"),
+      ),
+    ).toEqual({
+      type: "error",
+      status: 500,
+      error: {
+        message: "codex websockets: upstream socket closed unexpectedly",
+        type: "error",
+      },
+    })
+  })
+
   test("carries the previous_response_not_found marker and a 409 status", () => {
     const err = chainedHttpCodexRequestError()
     expect(err).toBeInstanceOf(Error)
@@ -44,6 +59,7 @@ describe("chainedHttpCodexRequestError", () => {
     expect(createResponsesErrorPayload(chainedHttpCodexRequestError())).toEqual(
       {
         type: "error",
+        status: 409,
         error: {
           code: "previous_response_not_found",
           message:

@@ -309,6 +309,7 @@ test("WS /v1/responses forwards upstream errors as error events", async () => {
 
   const message = JSON.parse(await queue.next()) as {
     type: string
+    status: number
     error: {
       message: string
       type: string
@@ -316,6 +317,7 @@ test("WS /v1/responses forwards upstream errors as error events", async () => {
   }
 
   expect(message.type).toBe("error")
+  expect(message.status).toBe(500)
   expect(message.error.type).toBe("error")
   expect(message.error.message).toContain("upstream failed")
 
@@ -355,12 +357,16 @@ test("WS /v1/responses logs an active turn as cancelled on client close", async 
   )
 })
 
-test("WS /v1/responses reports a stream that ends without a terminal event", async () => {
+test("WS /v1/responses retries a truncated pre-output stream over HTTP", async () => {
   const fetchMock = mock(
     () =>
       new Response(
         [
           'data: {"type":"response.created","response":{"id":"resp_truncated","status":"in_progress"}}',
+          "",
+          'data: {"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}',
+          "",
+          'data: {"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}}',
           "",
           "data: [DONE]",
           "",

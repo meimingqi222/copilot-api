@@ -17,6 +17,77 @@ function eventStream(
 }
 
 describe("Responses WebSocket pump", () => {
+  test("keeps empty lifecycle frames retryable when the upstream drops", async () => {
+    const sent: Array<string> = []
+    let commits = 0
+    const events: Array<CopilotStreamEventLike> = [
+      {
+        data: JSON.stringify({
+          type: "response.created",
+          response: { id: "resp_dropped", status: "in_progress" },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "response.output_item.added",
+          item: { type: "reasoning", summary: [] },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "response.reasoning_summary_part.added",
+          part: { type: "summary_text", text: "" },
+        }),
+      },
+    ]
+    const droppedStream: AsyncIterable<CopilotStreamEventLike> = {
+      [Symbol.asyncIterator]() {
+        const iterator = events[Symbol.iterator]()
+        return {
+          next() {
+            const next = iterator.next()
+            return next.done ?
+                Promise.reject(
+                  new Error(
+                    "codex websockets: upstream socket closed unexpectedly",
+                  ),
+                )
+              : Promise.resolve(next)
+          },
+        }
+      },
+    }
+
+    let caught: unknown
+    try {
+      await pumpWithLeadingBuffer(
+        {
+          readyState: 1,
+          send(data) {
+            sent.push(
+              typeof data === "string" ? data : new TextDecoder().decode(data),
+            )
+          },
+        },
+        droppedStream,
+        {
+          onCommit() {
+            commits += 1
+          },
+        },
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain(
+      "upstream socket closed unexpectedly",
+    )
+    expect(sent).toEqual([])
+    expect(commits).toBe(0)
+  })
+
   test("does not treat an empty output container as first content", async () => {
     const result = await pumpWithLeadingBuffer(
       { readyState: 1, send() {} },
