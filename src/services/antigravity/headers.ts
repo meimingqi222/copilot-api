@@ -9,6 +9,5 @@ export function buildAntigravityHeaders(
     "Content-Type": "application/json",
     Accept: stream ? "text/event-stream" : "*/*",
     "User-Agent": buildAntigravityUserAgent(),
-    Connection: "close",
   }
 }

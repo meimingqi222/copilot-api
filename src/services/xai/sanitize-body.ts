@@ -26,6 +26,11 @@ const EMPTY_FUNCTION_PARAMETERS = {
  * Mirrors the critical parts of CPA `prepareResponsesRequest` /
  * `sanitizeXAIResponsesBody` / `normalizeXAITools`.
  */
+import {
+  collectXaiClientDeclaredTools,
+  xaiRequestHasNativeXSearch,
+} from "./search-filter"
+
 export type XaiNamespaceToolRef = {
   namespace: string
   name: string
@@ -35,6 +40,10 @@ export type XaiSanitizeResult = {
   body: Record<string, unknown>
   /** qualified name → original { namespace, name }, for response restore. */
   namespaceToolRefs: Map<string, XaiNamespaceToolRef>
+  /** Tools declared by the client before normalization */
+  clientDeclaredTools: Set<string>
+  /** Whether the request uses native x_search */
+  hasNativeXSearch: boolean
 }
 
 export function sanitizeXaiResponsesBody(
@@ -49,6 +58,8 @@ export function sanitizeXaiResponsesBodyWithRefs(
   model: string,
 ): XaiSanitizeResult {
   const namespaceToolRefs = collectXaiNamespaceToolRefs(body)
+  const clientDeclaredTools = collectXaiClientDeclaredTools(body)
+  const hasNativeXSearch = xaiRequestHasNativeXSearch(body)
 
   let next = { ...body }
 
@@ -64,7 +75,12 @@ export function sanitizeXaiResponsesBodyWithRefs(
   next = normalizeXaiInputCustomToolCalls(next)
   next = normalizeXaiInputNamespaceToolCalls(next)
   next = sanitizeXaiInputReasoningItems(next)
-  return { body: next, namespaceToolRefs }
+  return {
+    body: next,
+    namespaceToolRefs,
+    clientDeclaredTools,
+    hasNativeXSearch,
+  }
 }
 
 const MAX_XAI_ENCRYPTED_CONTENT_LENGTH = 8 * 1024 * 1024

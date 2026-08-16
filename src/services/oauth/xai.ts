@@ -90,7 +90,6 @@ export function buildXaiAuthUrl(options: {
     state: options.state,
     nonce: options.nonce,
     plan: "generic",
-    referrer: "cli-proxy-api",
   })
   return `${options.authorizationEndpoint}?${params.toString()}`
 }
