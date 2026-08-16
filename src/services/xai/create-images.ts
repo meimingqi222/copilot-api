@@ -81,6 +81,7 @@ export async function createXaiImageGeneration(
   account: Account,
   payload: ImageGenerationRequest,
   signal?: AbortSignal,
+  idempotencyKey?: string,
 ): Promise<ImageGenerationResponse> {
   if (!isOAuthAccount(account) || account.provider !== "xai") {
     throw new Error("xAI image generation requires an xAI OAuth account")
@@ -105,9 +106,14 @@ export async function createXaiImageGeneration(
     n: payload.n ?? 1,
   }
 
+  const headers = buildXaiHeaders(accessToken, false)
+  if (idempotencyKey) {
+    headers["x-idempotency-key"] = idempotencyKey
+  }
+
   const response = await fetchWithOAuthProxy(account, url, {
     method: "POST",
-    headers: buildXaiHeaders(accessToken, false),
+    headers,
     body: JSON.stringify(upstreamBody),
     signal,
   })
@@ -135,6 +141,7 @@ export async function createXaiImageEdit(
   account: Account,
   payload: ImageEditRequest,
   signal?: AbortSignal,
+  idempotencyKey?: string,
 ): Promise<ImageGenerationResponse> {
   if (!isOAuthAccount(account) || account.provider !== "xai") {
     throw new Error("xAI image edit requires an xAI OAuth account")
@@ -166,9 +173,14 @@ export async function createXaiImageEdit(
     upstreamBody.image = payload.image
   }
 
+  const headers = buildXaiHeaders(accessToken, false)
+  if (idempotencyKey) {
+    headers["x-idempotency-key"] = idempotencyKey
+  }
+
   const response = await fetchWithOAuthProxy(account, url, {
     method: "POST",
-    headers: buildXaiHeaders(accessToken, false),
+    headers,
     body: JSON.stringify(upstreamBody),
     signal,
   })

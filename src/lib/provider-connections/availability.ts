@@ -426,7 +426,12 @@ export function classifyUpstreamError(input: {
     ) {
       return { kind: "rate_limited", retryAfterMs }
     }
-    if (body && /quota|insufficient|balance|exhaust/i.test(body)) {
+    if (
+      body
+      && /quota|insufficient|balance|exhaust|included\s+free\s+usage/i.test(
+        body,
+      )
+    ) {
       return { kind: "quota_exhausted", retryAfterMs }
     }
     return { kind: "rate_limited", retryAfterMs }
