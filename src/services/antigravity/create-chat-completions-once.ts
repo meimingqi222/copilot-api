@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto"
+
 import type { Account } from "~/lib/accounts"
 import type {
   ChatCompletionResponse,
@@ -236,8 +238,14 @@ export async function createAntigravityChatCompletionsOnce(
     : undefined)
     ?? resolveAntigravityStableSessionFromMessages(payload.messages)
   if (sessionId) {
-    ;(upstreamBody.request as Record<string, unknown>).sessionId = sessionId
+    upstreamBody.request.sessionId = sessionId
   }
+
+  // L1 Antigravity only: inject the top-level metadata the native IDE client
+  // sends, so the request carries the same audit identity (CPA mirrors this).
+  upstreamBody.userAgent = "antigravity"
+  upstreamBody.requestType = "agent"
+  upstreamBody.requestId = `agent-${randomUUID()}`
 
   const response = await postAntigravityRequest(
     account,

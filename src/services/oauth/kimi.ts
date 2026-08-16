@@ -34,8 +34,8 @@ export interface KimiOAuthBundle {
 
 function kimiDeviceHeaders(deviceId: string): Record<string, string> {
   return {
-    "X-Msh-Platform": "cli-proxy-api",
-    "X-Msh-Version": "1.0.0",
+    "X-Msh-Platform": "kimi_cli",
+    "X-Msh-Version": "1.10.6",
     "X-Msh-Device-Name": hostname() || "unknown",
     "X-Msh-Device-Model": `${process.platform} ${process.arch}`,
     "X-Msh-Device-Id": deviceId,

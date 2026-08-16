@@ -34,6 +34,12 @@ import { targetKey } from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { isAbortError, shouldFailover } from "~/lib/utils"
 import {
+  CredentialConcurrencyLimitError,
+  isAsyncIterable,
+  tryAcquireCredentialLease,
+  wrapLeaseStream,
+} from "~/services/dispatch/concurrency"
+import {
   getProtocolAdapter,
   initializeProtocolAdapters,
 } from "~/services/protocols"
@@ -76,20 +82,37 @@ export async function executeWithFailover<
     const adapter = getProtocolAdapter(current.target.protocol)
     const attemptStart = Date.now()
     try {
-      const result = await execute(adapter, current.target, current)
-      recordUpstreamAttempt(
-        c,
-        {
-          ...current.target,
-          connectionName: current.connection.name,
-          credentialLabel: current.credential.label,
-          provider: current.account?.provider ?? current.target.protocol,
-          upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
-        },
-        { status: 200, latencyMs: Date.now() - attemptStart },
-        ++attemptIndex,
-      )
-      return result
+      const lease = tryAcquireCredentialLease(current.target)
+      if (!lease) {
+        throw new CredentialConcurrencyLimitError(
+          `credential ${targetKey(current.target)} at in-flight cap`,
+        )
+      }
+      let handedOffToStream = false
+      try {
+        const result = await execute(adapter, current.target, current)
+        recordUpstreamAttempt(
+          c,
+          {
+            ...current.target,
+            connectionName: current.connection.name,
+            credentialLabel: current.credential.label,
+            provider: current.account?.provider ?? current.target.protocol,
+            upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
+          },
+          { status: 200, latencyMs: Date.now() - attemptStart },
+          ++attemptIndex,
+        )
+        if (isAsyncIterable(result)) {
+          // Hold the lease for the full stream lifetime, not until the
+          // iterable is returned.
+          handedOffToStream = true
+          return wrapLeaseStream(result, lease) as TResult
+        }
+        return result
+      } finally {
+        if (!handedOffToStream) lease.release()
+      }
     } catch (error) {
       if (isAbortError(error)) throw error
 
@@ -173,10 +196,14 @@ export async function executeWithFailover<
         )
       }
 
-      // A local per-account concurrency rejection is not an upstream failure:
-      // do not cool down or mark the account. It is safe to try another route
-      // target, while preserving the 429 if no target is available.
-      if (!(error instanceof WindsurfConcurrencyLimitError)) {
+      // A local per-account / per-credential concurrency rejection is not an
+      // upstream failure: do not cool down or mark the account. It is safe to
+      // try another route target, while preserving the 429 if no target is
+      // available.
+      if (
+        !(error instanceof WindsurfConcurrencyLimitError)
+        && !(error instanceof CredentialConcurrencyLimitError)
+      ) {
         await markCooldown(current, error, logPrefix)
       }
 

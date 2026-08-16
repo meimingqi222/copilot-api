@@ -9,6 +9,11 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
+import {
+  cacheReasoningReplayItems,
+  getReasoningReplayItems,
+  injectReasoningReplayItems,
+} from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
@@ -52,6 +57,7 @@ import {
   sanitizeXaiResponsesBodyWithRefs,
   type XaiNamespaceToolRef,
 } from "./sanitize-body"
+import { XaiInternalXSearchResponseFilter } from "./search-filter"
 import { resolveXaiSessionId } from "./session"
 
 /**
@@ -60,6 +66,19 @@ import { resolveXaiSessionId } from "./session"
  */
 function shortHash(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 12)
+}
+
+/**
+ * True when an upstream error indicates an invalidated xAI OAuth access token:
+ * an HTTP 403 carrying the bad-credentials payload. Mirrors CPA
+ * `isXAIBadCredentialsBody`. Used to decide whether to force a token refresh
+ * and retry once instead of treating the account as an unrecoverable auth error.
+ */
+function isXaiBadCredentialsHttpError(error: unknown): boolean {
+  if (!(error instanceof HTTPError)) return false
+  if (error.response.status !== 403) return false
+  const body = `${error.responseBody} ${error.message}`
+  return /unauthenticated:bad-credentials|could not be validated/i.test(body)
 }
 
 /**
@@ -177,9 +196,23 @@ export async function createXaiResponsesOnce(
   if (sessionId && !baseBody.prompt_cache_key) {
     baseBody.prompt_cache_key = sessionId
   }
+
+  // Fetch cached reasoning items for replay. xAI WebSocket sessions keep
+  // multi-turn continuity server-side (previous_response_id / x-grok-conv-id),
+  // so replay is injected only into HTTP requests, mirroring CPA. Reading the
+  // cache here lets the HTTP path below reuse the result.
+  const replayItems =
+    sessionId && !previousResponseId ?
+      await getReasoningReplayItems(model, sessionId)
+    : undefined
+
   const sanitized = sanitizeXaiResponsesBodyWithRefs(baseBody, model)
   const upstreamBody = sanitized.body
   const namespaceToolRefs = sanitized.namespaceToolRefs
+  const searchFilter = new XaiInternalXSearchResponseFilter(
+    sanitized.hasNativeXSearch,
+    sanitized.clientDeclaredTools,
+  )
 
   // ── Upstream WebSocket path (CPA XAIWebsocketsExecutor) ──────────────
   // Set when a chained turn falls back to HTTP: the HTTP POST must send the
@@ -224,69 +257,45 @@ export async function createXaiResponsesOnce(
   }
 
   if (useUpstreamWs) {
-    const headers = applyXaiWebsocketHeaders(
-      buildXaiHeaders(accessToken, true, sessionId),
-    )
     const wsBody: Record<string, unknown> = {
       ...upstreamBody,
       previous_response_id: previousResponseId,
     }
-    try {
-      // Eager open+send so handshake failures hit this catch (streaming-safe).
-      const wsStream = await openUpstreamResponsesWebsocketTurn({
-        provider: "xai",
-        account,
-        httpResponsesUrl: wsUrl,
-        headers,
-        body: wsBody,
-        executionSessionId,
-        signal,
-        previousResponseId,
-        fallbackFullInputBody,
-        memoryTraceId: ctx?.memoryTraceId,
-      })
-      const normalized = normalizeResponsesStreamIds(wsStream)
-      const restored = restoreXaiNamespaceCallsInStream(
-        normalized,
-        namespaceToolRefs,
-      )
-      const tracked =
-        transcriptTrackable ?
-          recordXaiTranscript(
-            restored,
-            transcriptKey,
-            fullInputThisTurn,
-            ctx?.memoryTraceId,
-          )
-        : restored
-      if (clientStream) {
-        return tracked
-      }
-      return await collectResponsesFromEventStream(tracked, model)
-    } catch (error) {
-      if (isAbortLikeError(error) || signal?.aborted) throw error
-      const failure = classifyWsFailure(error)
-      // credential (quota/auth/rate/server) and request (bad body) failures are
-      // the handler's concern — an account switch or a surfaced error. Never
-      // silently re-POST them on the same account.
-      if (failure.scope === "credential" || failure.scope === "request") {
-        throw error
-      }
-      // connection scope: this socket is unusable. On a connection-limit frame,
-      // destroy the stale session so the next turn redials; then fall through
-      // to a same-account HTTP POST for the current turn.
-      if (failure.kind === "connection_limit") {
-        destroyUpstreamWebsocketSession("xai", account.id, executionSessionId)
-      }
-      logger.warn(
-        `xai websockets: falling back to HTTP: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
+    const wsTurn = await runXaiWebSocketTurn({
+      account,
+      accessToken,
+      wsUrl,
+      sessionId,
+      wsBody,
+      executionSessionId,
+      previousResponseId,
+      fallbackFullInputBody,
+      signal,
+      ctx,
+      model,
+      namespaceToolRefs,
+      searchFilter,
+      fullInputThisTurn,
+      transcriptKey,
+      transcriptTrackable,
+      clientStream,
+    })
+    if (wsTurn.handled) {
+      return wsTurn.result
     }
   }
 
-  const effectiveHttpBody = httpFallbackBody ?? upstreamBody
+  let effectiveHttpBody = httpFallbackBody
+  // Inject the previous turn's encrypted reasoning only into plain HTTP
+  // requests (WS keeps continuity server-side). On a chained-turn WS fallback
+  // the full-input replay already carries the reasoning, so skip it there.
+  if (!effectiveHttpBody && replayItems && replayItems.length > 0) {
+    effectiveHttpBody = sanitizeXaiResponsesBodyWithRefs(
+      injectReasoningReplayItems({ ...upstreamBody }, replayItems),
+      model,
+    ).body
+  }
+  effectiveHttpBody ??= upstreamBody
   updateMemoryTrace(ctx?.memoryTraceId, "upstream_http_stringify_start", {
     provider: "xai",
     inputItems:
@@ -299,14 +308,54 @@ export async function createXaiResponsesOnce(
     provider: "xai",
     wireBytes: Buffer.byteLength(httpBody),
   })
-  const response = await fetchWithOAuthProxy(account, chatUrl, {
+
+  let currentAccessToken = accessToken
+  let response = await fetchWithOAuthProxy(account, chatUrl, {
     method: "POST",
-    headers: buildXaiHeaders(accessToken, true, sessionId, useCliIdentity),
+    headers: buildXaiHeaders(
+      currentAccessToken,
+      true,
+      sessionId,
+      useCliIdentity,
+    ),
     // HTTP: no previous_response_id. On a chained-turn WS fallback, send the
     // full self-contained input (httpFallbackBody) so the turn is not orphaned.
     body: httpBody,
     signal,
   })
+
+  // Handle xAI 403 bad-credentials (OAuth token expired on server) -> auto-refresh and retry once
+  if (response.status === 403) {
+    const errorBody = await response
+      .clone()
+      .text()
+      .catch(() => "")
+    if (
+      /unauthenticated:bad-credentials|could not be validated/i.test(errorBody)
+    ) {
+      logger.warn(
+        `xAI returned 403 bad-credentials for account "${account.label}". Forcing token refresh...`,
+      )
+      const refreshedToken = await ensureOAuthAccessToken(account, {
+        forceRefresh: true,
+        failedAccessToken: currentAccessToken,
+      })
+      if (refreshedToken && refreshedToken !== currentAccessToken) {
+        currentAccessToken = refreshedToken
+        response = await fetchWithOAuthProxy(account, chatUrl, {
+          method: "POST",
+          headers: buildXaiHeaders(
+            currentAccessToken,
+            true,
+            sessionId,
+            useCliIdentity,
+          ),
+          body: httpBody,
+          signal,
+        })
+      }
+    }
+  }
 
   if (!response.ok) {
     throw new HTTPError(
@@ -325,18 +374,31 @@ export async function createXaiResponsesOnce(
       normalized,
       namespaceToolRefs,
     )
-    return ctx?.downstreamWebsocket && transcriptTrackable ?
-        recordXaiTranscript(
-          restored,
-          transcriptKey,
-          fullInputThisTurn,
-          ctx.memoryTraceId,
-        )
-      : restored
+    const filtered = filterXaiInternalSearchInStream(restored, searchFilter)
+    if (ctx?.downstreamWebsocket && transcriptTrackable) {
+      return recordXaiTranscript(
+        filtered,
+        transcriptKey,
+        fullInputThisTurn,
+        { model, sessionId },
+        ctx.memoryTraceId,
+      )
+    }
+    // Plain HTTP streaming has no transcript to piggyback on — cache the
+    // reasoning so a subsequent HTTP turn in this session can replay it.
+    return cacheXaiReasoningReplayInStream(filtered, model, sessionId)
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
   restoreXaiNamespaceToolCallsInResponse(result, namespaceToolRefs)
+  searchFilter.filterResponse(result)
+  if (sessionId) {
+    void cacheReasoningReplayItems(
+      model,
+      sessionId,
+      result as unknown as Record<string, unknown>,
+    )
+  }
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
     recordTranscriptCheckpoint(
       ctx.memoryTraceId,
@@ -350,18 +412,184 @@ export async function createXaiResponsesOnce(
   return result
 }
 
+/** Reasoning-replay context threaded through the transcript/HTTP stream paths. */
+interface XaiReasoningReplayContext {
+  model?: string
+  sessionId?: string
+}
+
+/** Outcome of an upstream WebSocket turn: handled (return the result) or fell
+ * back to HTTP. */
+type XaiWsTurnOutcome =
+  | {
+      handled: true
+      result: AsyncIterable<CopilotStreamEventLike> | ResponsesResponse
+    }
+  | { handled: false }
+
+interface RunXaiWebSocketTurnOptions {
+  account: Account
+  accessToken: string
+  wsUrl: string
+  sessionId?: string
+  wsBody: Record<string, unknown>
+  executionSessionId: string
+  previousResponseId?: string
+  fallbackFullInputBody?: Record<string, unknown>
+  signal?: AbortSignal
+  ctx?: RequestExecutionContext
+  model: string
+  namespaceToolRefs: Map<string, XaiNamespaceToolRef>
+  searchFilter: XaiInternalXSearchResponseFilter
+  fullInputThisTurn: Array<unknown>
+  transcriptKey: string
+  transcriptTrackable: boolean
+  clientStream: boolean
+}
+
+/**
+ * Runs one xAI upstream WebSocket turn with up to two attempts. The first
+ * attempt's failure on a 403 bad-credentials frame forces an OAuth refresh and
+ * retries once on a fresh socket; connection-scope failures fall back to HTTP
+ * (handled=false); credential/request failures rethrow.
+ */
+async function runXaiWebSocketTurn(
+  opts: RunXaiWebSocketTurnOptions,
+): Promise<XaiWsTurnOutcome> {
+  let wsToken = opts.accessToken
+  const buildWsHeaders = () =>
+    applyXaiWebsocketHeaders(buildXaiHeaders(wsToken, true, opts.sessionId))
+
+  for (let wsAttempt = 0; wsAttempt < 2; wsAttempt++) {
+    try {
+      // Eager open+send so handshake failures hit this catch (streaming-safe).
+      const wsStream = await openUpstreamResponsesWebsocketTurn({
+        provider: "xai",
+        account: opts.account,
+        httpResponsesUrl: opts.wsUrl,
+        headers: buildWsHeaders(),
+        body: opts.wsBody,
+        executionSessionId: opts.executionSessionId,
+        signal: opts.signal,
+        previousResponseId: opts.previousResponseId,
+        fallbackFullInputBody: opts.fallbackFullInputBody,
+        memoryTraceId: opts.ctx?.memoryTraceId,
+      })
+      const normalized = normalizeResponsesStreamIds(wsStream)
+      const restored = restoreXaiNamespaceCallsInStream(
+        normalized,
+        opts.namespaceToolRefs,
+      )
+      const filtered = filterXaiInternalSearchInStream(
+        restored,
+        opts.searchFilter,
+      )
+      const tracked =
+        opts.transcriptTrackable ?
+          recordXaiTranscript(
+            filtered,
+            opts.transcriptKey,
+            opts.fullInputThisTurn,
+            { model: opts.model, sessionId: opts.sessionId },
+            opts.ctx?.memoryTraceId,
+          )
+        : filtered
+      if (opts.clientStream) {
+        return { handled: true, result: tracked }
+      }
+      const collected = await collectResponsesFromEventStream(
+        tracked,
+        opts.model,
+      )
+      opts.searchFilter.filterResponse(collected)
+      if (opts.sessionId) {
+        void cacheReasoningReplayItems(
+          opts.model,
+          opts.sessionId,
+          collected as unknown as Record<string, unknown>,
+        )
+      }
+      return { handled: true, result: collected }
+    } catch (error) {
+      if (isAbortLikeError(error) || opts.signal?.aborted) throw error
+
+      // xAI 403 bad-credentials → force OAuth refresh and retry once.
+      const refreshed = await maybeRefreshXaiWsToken(
+        opts.account,
+        opts.executionSessionId,
+        wsAttempt,
+        wsToken,
+        error,
+      )
+      if (refreshed) {
+        wsToken = refreshed
+        continue
+      }
+
+      const failure = classifyWsFailure(error)
+      // credential (quota/auth/rate/server) and request (bad body) failures are
+      // the caller's concern — an account switch or a surfaced error. Never
+      // silently re-POST them on the same account.
+      if (failure.scope === "credential" || failure.scope === "request") {
+        throw error
+      }
+      // connection scope: this socket is unusable. On a connection-limit frame,
+      // destroy the stale session so the next turn redials; then fall through
+      // to a same-account HTTP POST for the current turn.
+      if (failure.kind === "connection_limit") {
+        destroyUpstreamWebsocketSession(
+          "xai",
+          opts.account.id,
+          opts.executionSessionId,
+        )
+      }
+      logger.warn(
+        `xai websockets: falling back to HTTP: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+      return { handled: false }
+    }
+  }
+  return { handled: false }
+}
+
+/**
+ * On a 403 bad-credentials frame, refresh the xAI OAuth token and return it.
+ * Returns undefined when the error is not bad-credentials, the attempt already
+ * refreshed once, or the refresh did not produce a new token.
+ */
+async function maybeRefreshXaiWsToken(
+  account: Account,
+  executionSessionId: string,
+  wsAttempt: number,
+  wsToken: string,
+  error: unknown,
+): Promise<string | undefined> {
+  if (wsAttempt !== 0 || !isXaiBadCredentialsHttpError(error)) return undefined
+  logger.warn(
+    `xai websockets: bad-credentials for account "${account.label}". `
+      + "Forcing token refresh and retrying...",
+  )
+  const refreshedToken = await ensureOAuthAccessToken(account, {
+    forceRefresh: true,
+    failedAccessToken: wsToken,
+  })
+  if (!refreshedToken || refreshedToken === wsToken) return undefined
+  destroyUpstreamWebsocketSession("xai", account.id, executionSessionId)
+  return refreshedToken
+}
+
 /**
  * Passthrough generator that, on each successful terminal response, appends the
  * completed response's output items to the running full-input transcript and
- * stores it. This lets a later turn that lands on a *different credential's*
- * fresh upstream socket replay a self-contained request (full input, no
- * previous_response_id) instead of failing because that connection's in-memory
- * cache does not hold this account's previous_response_id.
+ * stores it. Also caches reasoning items for the session.
  */
 async function* recordXaiTranscript(
   stream: AsyncIterable<CopilotStreamEventLike>,
   transcriptKey: string,
   fullInputThisTurn: Array<unknown>,
+  replay: XaiReasoningReplayContext,
   memoryTraceId?: string,
 ): AsyncIterable<CopilotStreamEventLike> {
   for await (const event of stream) {
@@ -372,24 +600,102 @@ async function* recordXaiTranscript(
       && (data.includes('"response.completed"')
         || data.includes('"response.incomplete"'))
     ) {
+      recordXaiTerminalEvent(
+        data,
+        replay,
+        transcriptKey,
+        fullInputThisTurn,
+        memoryTraceId,
+      )
+    }
+    yield event
+  }
+}
+
+/** Extract transcript + reasoning-replay cache from a terminal response frame. */
+function recordXaiTerminalEvent(
+  data: string,
+  replay: XaiReasoningReplayContext,
+  transcriptKey: string,
+  fullInputThisTurn: Array<unknown>,
+  memoryTraceId?: string,
+): void {
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>
+    if (
+      parsed.type !== "response.completed"
+      && parsed.type !== "response.incomplete"
+    ) {
+      return
+    }
+    const response = parsed.response as { output?: unknown } | undefined
+    const output: Array<unknown> =
+      response && Array.isArray(response.output) ?
+        (response.output as Array<unknown>)
+      : []
+    recordTranscriptCheckpoint(
+      memoryTraceId,
+      appendResponsesTranscript(transcriptKey, fullInputThisTurn, output),
+    )
+    if (
+      replay.model
+      && replay.sessionId
+      && parsed.type === "response.completed"
+    ) {
+      void cacheReasoningReplayItems(replay.model, replay.sessionId, parsed)
+    }
+  } catch {
+    // Best-effort transcript recording.
+  }
+}
+
+/**
+ * Passthrough generator that filters out internal x_search subtool traces
+ * (xs_call...) from every upstream SSE data payload.
+ */
+async function* filterXaiInternalSearchInStream(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+  searchFilter: XaiInternalXSearchResponseFilter,
+): AsyncIterable<CopilotStreamEventLike> {
+  for await (const event of stream) {
+    if (event.data && event.data !== "[DONE]") {
+      const filteredData = searchFilter.apply(event.data)
+      if (filteredData === null) {
+        continue
+      }
+      yield filteredData === event.data ?
+        event
+      : { ...event, data: filteredData }
+    } else {
+      yield event
+    }
+  }
+}
+
+/**
+ * Passthrough generator that caches reasoning items on `response.completed`
+ * for the plain HTTP-streaming path (which has no transcript to piggyback on),
+ * so a subsequent HTTP turn in the same session can replay them.
+ */
+async function* cacheXaiReasoningReplayInStream(
+  stream: AsyncIterable<CopilotStreamEventLike>,
+  model?: string,
+  sessionId?: string,
+): AsyncIterable<CopilotStreamEventLike> {
+  if (!model || !sessionId) {
+    yield* stream
+    return
+  }
+  for await (const event of stream) {
+    const data = event.data
+    if (data && data !== "[DONE]" && data.includes('"response.completed"')) {
       try {
         const parsed = JSON.parse(data) as Record<string, unknown>
-        if (
-          parsed.type === "response.completed"
-          || parsed.type === "response.incomplete"
-        ) {
-          const response = parsed.response as { output?: unknown } | undefined
-          const output: Array<unknown> =
-            response && Array.isArray(response.output) ?
-              (response.output as Array<unknown>)
-            : []
-          recordTranscriptCheckpoint(
-            memoryTraceId,
-            appendResponsesTranscript(transcriptKey, fullInputThisTurn, output),
-          )
+        if (parsed.type === "response.completed") {
+          void cacheReasoningReplayItems(model, sessionId, parsed)
         }
       } catch {
-        // Best-effort transcript recording.
+        // Best-effort reasoning replay caching.
       }
     }
     yield event

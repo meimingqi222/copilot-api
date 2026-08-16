@@ -31,10 +31,12 @@ imageRoutes.post("/generations", async (c) => {
       )
     }
 
+    const idempotencyKey = c.req.header("x-idempotency-key")
     const response = await createXaiImageGeneration(
       admission.account,
       payload,
       c.req.raw.signal,
+      idempotencyKey,
     )
 
     c.set("accountId", admission.account.id)
@@ -71,10 +73,12 @@ imageRoutes.post("/edits", async (c) => {
       )
     }
 
+    const idempotencyKey = c.req.header("x-idempotency-key")
     const response = await createXaiImageEdit(
       admission.account,
       payload,
       c.req.raw.signal,
+      idempotencyKey,
     )
 
     c.set("accountId", admission.account.id)
