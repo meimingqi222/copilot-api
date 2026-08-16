@@ -107,7 +107,11 @@ export interface AntigravityGeminiContent {
 export interface AntigravityUpstreamBody {
   project: string
   model: string
+  userAgent?: string
+  requestType?: string
+  requestId?: string
   request: {
+    sessionId?: string
     contents: Array<AntigravityGeminiContent>
     systemInstruction?: {
       role?: string

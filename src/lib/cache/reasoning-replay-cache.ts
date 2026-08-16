@@ -19,6 +19,13 @@
 import { createHash } from "node:crypto"
 
 import { isValidGPTReasoningSignature } from "~/services/codex/sanitize-input"
+import { isValidXaiEncryptedContent } from "~/services/xai/sanitize-body"
+
+function isValidReasoningSignature(value: string): boolean {
+  return (
+    isValidGPTReasoningSignature(value) || isValidXaiEncryptedContent(value)
+  )
+}
 
 import { PersistentTTLMap } from "./persistent-map"
 
@@ -217,7 +224,7 @@ export function injectReasoningReplayItems(
       if (
         obj.type === "reasoning"
         && typeof obj.encrypted_content === "string"
-        && isValidGPTReasoningSignature(obj.encrypted_content)
+        && isValidReasoningSignature(obj.encrypted_content)
       ) {
         existingEncrypted.add(obj.encrypted_content)
         hasInputReasoning = true

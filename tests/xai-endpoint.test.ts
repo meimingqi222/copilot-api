@@ -913,3 +913,79 @@ describe("Grok Shell models format", () => {
     })
   })
 })
+
+describe("xAI internal x_search response filter", () => {
+  test("filters internal xs_call tool call events and compacts output_index", async () => {
+    const { XaiInternalXSearchResponseFilter } = await import(
+      "~/services/xai/search-filter"
+    )
+    const filter = new XaiInternalXSearchResponseFilter(true)
+
+    // Event 0: Normal message (output_index: 0) -> kept
+    const event0 = JSON.stringify({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { id: "msg_1", type: "message", role: "assistant" },
+    })
+    expect(filter.apply(event0)).toBe(event0)
+
+    // Event 1: Internal X-Search tool call (output_index: 1, xs_call_123) -> dropped
+    const event1 = JSON.stringify({
+      type: "response.output_item.added",
+      output_index: 1,
+      item: {
+        id: "call_1",
+        call_id: "xs_call_123",
+        type: "custom_tool_call",
+        name: "x_keyword_search",
+      },
+    })
+    expect(filter.apply(event1)).toBeNull()
+
+    // Event 2: Done for the internal tool call -> dropped
+    const event2 = JSON.stringify({
+      type: "response.output_item.done",
+      output_index: 1,
+      item_id: "call_1",
+    })
+    expect(filter.apply(event2)).toBeNull()
+
+    // Event 3: Next legitimate function call (output_index: 2) -> compacted to output_index: 1
+    const event3 = JSON.stringify({
+      type: "response.output_item.added",
+      output_index: 2,
+      item: {
+        id: "call_2",
+        call_id: "fn_real",
+        type: "function_call",
+        name: "read_file",
+      },
+    })
+    const result3 = filter.apply(event3)
+    if (result3 === null) {
+      throw new Error("expected output_index-2 event to survive filtering")
+    }
+    const parsed3 = JSON.parse(result3) as { output_index: number }
+    expect(parsed3.output_index).toBe(1)
+  })
+
+  test("does not filter client-declared same-name tools", async () => {
+    const { XaiInternalXSearchResponseFilter } = await import(
+      "~/services/xai/search-filter"
+    )
+    const clientTools = new Set([":x_keyword_search:function"])
+    const filter = new XaiInternalXSearchResponseFilter(true, clientTools)
+
+    const event = JSON.stringify({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        id: "call_custom",
+        call_id: "call_normal_123",
+        type: "function_call",
+        name: "x_keyword_search",
+      },
+    })
+    expect(filter.apply(event)).toBe(event)
+  })
+})
