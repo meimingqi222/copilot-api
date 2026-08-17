@@ -8,6 +8,7 @@ import {
   getAccount,
 } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
+import { resolveModelAlias } from "~/lib/model-aliases"
 import { isProviderId } from "~/lib/provider-config"
 import { patchRequestLog } from "~/lib/request-log"
 import { parseModelReference } from "~/lib/route-target/model-reference"
@@ -17,17 +18,24 @@ import { incrementUserTokens } from "~/lib/users"
 /** Map request model id to the account catalog public id when possible. */
 export function resolveUsageModelId(accountId: string, model: string): string {
   const account = getAccount(accountId)
-  if (!account) return model
+  if (!account) {
+    // 没有 account 时也解析别名，以便用真实 model id 查询定价
+    return resolveModelAlias(model, accountId).resolvedModelId
+  }
 
   const native = canonicalNativeModelId(
     parseModelReference(model, account).nativeModelId,
   )
+  // 解析模型别名：将客户端请求的别名映射到真实 model id，
+  // 确保用量统计和定价查询使用真实模型而非别名
+  const resolvedModel = resolveModelAlias(native, accountId).resolvedModelId
+
   const matched = account.availableModels?.find(
-    (entry) => canonicalNativeModelId(entry.id) === native,
+    (entry) => canonicalNativeModelId(entry.id) === resolvedModel,
   )
   if (matched) return matched.id
 
-  return canonicalModelId(model, account)
+  return canonicalModelId(resolvedModel, account)
 }
 
 export function identityFromAdmission(
