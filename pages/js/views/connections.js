@@ -4,6 +4,17 @@ function connectionsView() {
     connections: [],
     showConnModal: false,
     showCredModal: false,
+    presets: [],
+    presetCategory: "popular",
+    presetSearchQuery: "",
+    selectedPresetId: "",
+    selectedPreset: null,
+    showAdvanced: false,
+    fetchedModels: [],
+    fetchingModels: false,
+    modelSearchQuery: "",
+    selectedModelIds: [],
+    showFetchedModelsPanel: false,
     connForm: {
       id: null,
       name: "",
@@ -97,8 +108,16 @@ function connectionsView() {
     async load() {
       this.loading = true
       try {
-        const data = await API.providerConnections.list()
+        const [data, presetsData] = await Promise.all([
+          API.providerConnections.list(),
+          this.presets.length === 0 ?
+            API.providerConnections.presets().catch(() => ({ presets: [] }))
+          : Promise.resolve({ presets: this.presets }),
+        ])
         this.connections = data.connections || []
+        if (presetsData?.presets) {
+          this.presets = presetsData.presets
+        }
       } catch (e) {
         this.showToast(e.message || "Failed to load connections", "error")
       } finally {
@@ -107,7 +126,179 @@ function connectionsView() {
       }
     },
 
-    openCreate() {
+    async loadPresets() {
+      try {
+        const data = await API.providerConnections.presets()
+        this.presets = data.presets || []
+      } catch {
+        this.presets = []
+      }
+    },
+
+    popularPresets() {
+      const popularIds = new Set([
+        "deepseek",
+        "siliconflow",
+        "moonshot",
+        "zhipu",
+        "openai",
+        "anthropic",
+        "openrouter",
+        "groq",
+      ])
+      return this.presets.filter((p) => popularIds.has(p.id))
+    },
+
+    filteredPresets() {
+      if (this.presetSearchQuery.trim()) {
+        const q = this.presetSearchQuery.trim().toLowerCase()
+        return this.presets.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q)
+            || p.id.toLowerCase().includes(q)
+            || (p.description || "").toLowerCase().includes(q)
+            || (p.baseUrl || "").toLowerCase().includes(q),
+        )
+      }
+      return this.presetCategory === "popular" ?
+          this.popularPresets()
+        : this.presets.filter((p) => p.category === this.presetCategory)
+    },
+
+    selectPreset(preset) {
+      if (!preset) return
+      this.selectedPresetId = preset.id
+      this.selectedPreset = preset
+      this.connForm.name = preset.name
+      this.connForm.protocol = preset.protocol
+      this.connForm.baseUrl = preset.baseUrl
+      this.connForm.discoveryEnabled = Boolean(preset.discoveryEnabled)
+      this.connForm.discoveryMode = preset.discoveryMode || "merge"
+      this.connForm.apiKey = ""
+      this.fetchedModels = (preset.defaultModels || []).map((m) => ({
+        publicId: m.publicId,
+        upstreamId: m.upstreamId,
+        name: m.name,
+        endpoints:
+          m.endpoints
+          || (preset.protocol === "anthropic-compatible" ?
+            ["messages"]
+          : ["chat"]),
+      }))
+      this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
+      this.showFetchedModelsPanel = this.fetchedModels.length > 0
+      this.modelSearchQuery = ""
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    selectCustomPreset() {
+      this.selectedPresetId = "custom"
+      this.selectedPreset = null
+      this.connForm.name = ""
+      this.connForm.protocol = "openai-compatible"
+      this.connForm.baseUrl = ""
+      this.connForm.apiKey = ""
+      this.connForm.discoveryEnabled = false
+      this.connForm.discoveryMode = "merge"
+      this.fetchedModels = []
+      this.selectedModelIds = []
+      this.showFetchedModelsPanel = false
+      this.modelSearchQuery = ""
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    async fetchRemoteModels() {
+      const form = this.connForm
+      if (!form.baseUrl) {
+        this.showToast(
+          this.t("connections.baseUrl")
+            + " "
+            + (this.t("required") || "required"),
+          "error",
+        )
+        return
+      }
+
+      const preset = this.selectedPreset
+      const isLocal =
+        preset?.category === "local"
+        || form.baseUrl.includes("localhost")
+        || form.baseUrl.includes("127.0.0.1")
+      if (!form.apiKey && !form._credentialId && !isLocal) {
+        this.showToast(
+          this.t("connections.apiKeyRequiredForFetch")
+            || "在线探测需要有效的 API Key，请先输入 API Key",
+          "error",
+        )
+        return
+      }
+
+      const authMode =
+        preset?.authMode
+        || (form.protocol === "anthropic-compatible" ? "header" : "bearer")
+      const headerName =
+        preset?.headerName || (authMode === "header" ? "x-api-key" : undefined)
+
+      this.fetchingModels = true
+      try {
+        const res = await API.providerConnections.fetchModels({
+          protocol: form.protocol,
+          baseUrl: form.baseUrl,
+          apiKey: form.apiKey || "",
+          authMode,
+          headerName,
+        })
+        if (res.error) {
+          const msg = (res.hint ? res.hint + ": " : "") + res.error
+          this.showToast(msg, "error")
+          return
+        }
+        this.fetchedModels = res.models || []
+        this.showFetchedModelsPanel = true
+        this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
+        this.showToast(`Fetched ${this.fetchedModels.length} models`, "success")
+      } catch (e) {
+        this.showToast(e.message || "Failed to fetch models", "error")
+      } finally {
+        this.fetchingModels = false
+        this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    filteredFetchedModels() {
+      const q = (this.modelSearchQuery || "").trim().toLowerCase()
+      if (!q) return this.fetchedModels
+      return this.fetchedModels.filter(
+        (m) =>
+          (m.publicId || "").toLowerCase().includes(q)
+          || (m.upstreamId || "").toLowerCase().includes(q)
+          || (m.vendor || "").toLowerCase().includes(q),
+      )
+    },
+
+    toggleSelectAllModels() {
+      this.selectedModelIds =
+        this.selectedModelIds.length === this.fetchedModels.length ?
+          []
+        : this.fetchedModels.map((m) => m.publicId)
+    },
+
+    clearModelSelection() {
+      this.selectedModelIds = []
+    },
+
+    toggleModelSelection(publicId) {
+      this.selectedModelIds =
+        this.selectedModelIds.includes(publicId) ?
+          this.selectedModelIds.filter((id) => id !== publicId)
+        : [...this.selectedModelIds, publicId]
+    },
+
+    isModelSelected(publicId) {
+      return this.selectedModelIds.includes(publicId)
+    },
+
+    openCreate(presetId) {
       this.connForm = {
         id: null,
         name: "",
@@ -121,8 +312,34 @@ function connectionsView() {
         apiKey: "",
         _credentialId: null,
       }
+      this.showAdvanced = false
+      this.presetSearchQuery = ""
       this.showConnModal = true
-      this.$nextTick(() => lucide.createIcons())
+
+      const initPresets = async () => {
+        if (this.presets.length === 0) {
+          await this.loadPresets()
+        }
+        if (presetId) {
+          const target = this.presets.find((p) => p.id === presetId)
+          if (target) {
+            this.presetCategory = target.category || "popular"
+            this.selectPreset(target)
+            return
+          }
+        }
+        // 默认选中 deepseek
+        const defaultPreset =
+          this.presets.find((p) => p.id === "deepseek") || this.presets[0]
+        if (defaultPreset) {
+          this.presetCategory = "popular"
+          this.selectPreset(defaultPreset)
+        }
+      }
+
+      initPresets().finally(() => {
+        this.$nextTick(() => lucide.createIcons())
+      })
     },
 
     openEdit(conn) {
@@ -139,6 +356,17 @@ function connectionsView() {
         apiKey: "",
         _credentialId: conn.credentials?.[0]?.id || null,
       }
+      this.selectedPresetId = ""
+      this.selectedPreset = null
+      this.showAdvanced = true
+      this.fetchedModels = (conn.models || []).map((m) => ({
+        publicId: m.publicId,
+        upstreamId: m.upstreamId || m.publicId,
+        vendor: m.vendor,
+        endpoints: m.endpoints || [],
+      }))
+      this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
+      this.showFetchedModelsPanel = this.fetchedModels.length > 0
       this.showConnModal = true
       this.$nextTick(() => lucide.createIcons())
     },
@@ -149,6 +377,22 @@ function connectionsView() {
         this.showToast("Name and Base URL are required", "error")
         return
       }
+
+      const selectedModels = this.fetchedModels
+        .filter((m) => this.selectedModelIds.includes(m.publicId))
+        .map((m) => ({
+          publicId: m.publicId,
+          upstreamId: m.upstreamId || m.publicId,
+          vendor: m.vendor,
+          endpoints:
+            m.endpoints
+            || (form.protocol === "anthropic-compatible" ?
+              ["messages"]
+            : ["chat"]),
+          enabled: true,
+          pickerEnabled: true,
+        }))
+
       const payload = {
         name: form.name,
         protocol: form.protocol,
@@ -160,11 +404,18 @@ function connectionsView() {
           enabled: form.discoveryEnabled,
           mode: form.discoveryMode,
         },
+        models: selectedModels,
       }
+
+      const preset = this.selectedPreset
       const credAuth =
-        form.protocol === "anthropic-compatible" ?
-          { authMode: "header", headerName: "x-api-key" }
+        (
+          preset?.authMode === "header"
+          || form.protocol === "anthropic-compatible"
+        ) ?
+          { authMode: "header", headerName: preset?.headerName || "x-api-key" }
         : { authMode: "bearer" }
+
       try {
         let connId
         if (form.id) {
@@ -184,15 +435,15 @@ function connectionsView() {
               }))
           }
         } else {
-          const res = await API.providerConnections.create(payload)
-          connId = res.connection.id
-          if (form.apiKey) {
-            await API.providerConnections.addCredential(connId, {
-              ...credAuth,
-              value: form.apiKey,
-              enabled: true,
-            })
+          const createPayload = {
+            ...payload,
+            credentials:
+              form.apiKey ?
+                [{ ...credAuth, value: form.apiKey, enabled: true }]
+              : undefined,
           }
+          const res = await API.providerConnections.create(createPayload)
+          connId = res.connection.id
         }
         this.showConnModal = false
         await this.load()

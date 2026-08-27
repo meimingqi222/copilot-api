@@ -47,6 +47,7 @@ import {
 import { readJsonBody } from "~/lib/request-body"
 import { mountConnectionGuard } from "~/routes/admin/api/provider-connection-guard"
 import { providerConnectionIoRoutes } from "~/routes/admin/api/provider-connection-io"
+import { handleFetchModels } from "~/routes/admin/api/provider-connections-fetch-models"
 import {
   clearCredentialErrorStateAfterSuccessfulTest,
   extractJsonArray,
@@ -56,6 +57,7 @@ import {
   probeModelsEndpoint,
   testViaAdapter,
 } from "~/routes/admin/api/provider-connections-helpers"
+import { providerPresetRoutes } from "~/routes/admin/api/provider-presets"
 import {
   getProtocolAdapter,
   initializeProtocolAdapters,
@@ -80,6 +82,12 @@ function normalizeNullableArray(
   if (Array.isArray(value)) return value as Array<unknown>
   return undefined
 }
+
+// 预设目录路由
+providerConnectionApiRoutes.route("/presets", providerPresetRoutes)
+
+// 即时模型探测 (不落盘、不建连接)
+providerConnectionApiRoutes.post("/fetch-models", handleFetchModels)
 
 providerConnectionApiRoutes.get("/", (c) => {
   // 过滤 account-managed connection(*-native protocol):这些 connection
