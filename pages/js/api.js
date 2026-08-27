@@ -137,7 +137,12 @@ const API = {
 
   providerConnections: {
     list: () => API.request("/provider-connections"),
-    get: (id) => API.request(`/provider-connections/${id}`),
+    presets: () => API.request("/provider-connections/presets"),
+    fetchModels: (data) =>
+      API.request("/provider-connections/fetch-models", {
+        method: "POST",
+        body: data,
+      }),
     create: (data) =>
       API.request("/provider-connections", { method: "POST", body: data }),
     update: (id, data) =>

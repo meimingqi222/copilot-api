@@ -79,11 +79,13 @@ export function buildBaseHeaders(
     ...connection.headers,
   }
 
-  if (credential.authMode === "bearer") {
-    headers["Authorization"] = `Bearer ${credential.value}`
-  } else {
-    const headerName = credential.headerName ?? "Authorization"
-    headers[headerName] = credential.value
+  if (credential.value) {
+    if (credential.authMode === "bearer") {
+      headers["Authorization"] = `Bearer ${credential.value}`
+    } else {
+      const headerName = credential.headerName ?? "Authorization"
+      headers[headerName] = credential.value
+    }
   }
   return headers
 }
@@ -144,12 +146,14 @@ export async function handleUpstreamFailure(
     }
   }
 
-  await persistProviderConnections().catch((err: unknown) => {
-    logger.warn(
-      `[${adapterName}] failed to persist credential status:`,
-      (err as Error).message,
-    )
-  })
+  if (!credential.id.startsWith("__")) {
+    await persistProviderConnections().catch((err: unknown) => {
+      logger.warn(
+        `[${adapterName}] failed to persist credential status:`,
+        (err as Error).message,
+      )
+    })
+  }
 
   const responseWithRetryAfter = buildResponseWithRetryAfter(
     response,

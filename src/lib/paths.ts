@@ -57,6 +57,9 @@ export const PATHS = {
   get PROVIDER_CONNECTIONS_PATH(): string {
     return pathUnderApp("provider-connections.json")
   },
+  get PROVIDER_PRESETS_PATH(): string {
+    return pathUnderApp("provider-presets.json")
+  },
   get MODELS_DEV_CACHE_PATH(): string {
     return pathUnderApp("models-dev.json")
   },

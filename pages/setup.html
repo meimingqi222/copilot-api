@@ -1,173 +1,217 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Initial Setup - Copilot API Admin</title>
-  <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
-</head>
-<body class="login-container" x-data="setupApp()" x-init="init()" x-cloak>
-  <div class="login-card">
-    <!-- Logo -->
-    <div class="login-logo">
-      <i data-lucide="shield-check" class="w-10 h-10 text-white"></i>
-    </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Initial Setup - Copilot API Admin</title>
+    <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+    ></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+  </head>
+  <body class="login-container" x-data="setupApp()" x-init="init()" x-cloak>
+    <div class="login-card">
+      <!-- Logo -->
+      <div class="login-logo">
+        <i data-lucide="shield-check" class="w-10 h-10 text-white"></i>
+      </div>
 
-    <!-- Title -->
-    <h1 class="text-headline mb-2" x-text="t('setup.title')"></h1>
-    <p class="text-body text-[var(--apple-text-secondary)] mb-8" x-text="t('setup.subtitle')"></p>
+      <!-- Title -->
+      <h1 class="text-headline mb-2" x-text="t('setup.title')"></h1>
+      <p
+        class="text-body text-[var(--apple-text-secondary)] mb-8"
+        x-text="t('setup.subtitle')"
+      ></p>
 
-    <!-- Form -->
-    <form @submit.prevent="setup()" class="space-y-6" method="post" action="/admin/setup">
-      <div>
-        <label class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1">
-          <span x-text="t('setup.password')"></span>
-        </label>
-        <input
-          x-model="password"
-          type="password"
-          name="password"
-          id="password"
-          class="input text-center text-lg"
-          :placeholder="t('setup.passwordPlaceholder')"
-          autocomplete="new-password"
+      <!-- Form -->
+      <form
+        @submit.prevent="setup()"
+        class="space-y-6"
+        method="post"
+        action="/admin/setup"
+      >
+        <div>
+          <label
+            class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1"
+          >
+            <span x-text="t('setup.password')"></span>
+          </label>
+          <input
+            x-model="password"
+            type="password"
+            name="password"
+            id="password"
+            class="input text-center text-lg"
+            :placeholder="t('setup.passwordPlaceholder')"
+            autocomplete="new-password"
+          />
+        </div>
+
+        <div>
+          <label
+            class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1"
+          >
+            <span x-text="t('setup.confirmPassword')"></span>
+          </label>
+          <input
+            x-model="confirmPassword"
+            type="password"
+            name="confirmPassword"
+            id="confirm-password"
+            class="input text-center text-lg"
+            :placeholder="t('setup.confirmPlaceholder')"
+            autocomplete="new-password"
+          />
+        </div>
+
+        <button
+          type="submit"
+          class="btn btn-primary w-full"
+          :disabled="loading"
         >
+          <span x-show="!loading" x-text="t('setup.submit')"></span>
+          <span x-show="loading" class="flex items-center justify-center gap-2">
+            <div
+              class="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"
+            ></div>
+            <span x-text="t('loading')"></span>
+          </span>
+        </button>
+      </form>
+
+      <!-- Error Message -->
+      <div
+        x-show="error"
+        class="mt-6 p-4 bg-[rgba(255,59,48,0.1)] rounded-lg flex items-center gap-3"
+      >
+        <i
+          data-lucide="alert-circle"
+          class="w-5 h-5 text-[var(--apple-red)]"
+        ></i>
+        <span class="text-body text-[var(--apple-red)]" x-text="error"></span>
       </div>
 
-      <div>
-        <label class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1">
-          <span x-text="t('setup.confirmPassword')"></span>
-        </label>
-        <input
-          x-model="confirmPassword"
-          type="password"
-          name="confirmPassword"
-          id="confirm-password"
-          class="input text-center text-lg"
-          :placeholder="t('setup.confirmPlaceholder')"
-          autocomplete="new-password"
-        >
+      <!-- Language Switcher -->
+      <div class="mt-8 flex justify-center">
+        <div class="lang-switcher">
+          <button
+            @click="setLang('zh')"
+            :class="{ 'active': lang === 'zh' }"
+            class="cursor-pointer"
+          >
+            中文
+          </button>
+          <button
+            @click="setLang('en')"
+            :class="{ 'active': lang === 'en' }"
+            class="cursor-pointer"
+          >
+            EN
+          </button>
+        </div>
       </div>
-
-      <button type="submit" class="btn btn-primary w-full" :disabled="loading">
-        <span x-show="!loading" x-text="t('setup.submit')"></span>
-        <span x-show="loading" class="flex items-center justify-center gap-2">
-          <div class="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
-          <span x-text="t('loading')"></span>
-        </span>
-      </button>
-    </form>
-
-    <!-- Error Message -->
-    <div x-show="error" class="mt-6 p-4 bg-[rgba(255,59,48,0.1)] rounded-lg flex items-center gap-3">
-      <i data-lucide="alert-circle" class="w-5 h-5 text-[var(--apple-red)]"></i>
-      <span class="text-body text-[var(--apple-red)]" x-text="error"></span>
     </div>
 
-    <!-- Language Switcher -->
-    <div class="mt-8 flex justify-center">
-      <div class="lang-switcher">
-        <button @click="setLang('zh')" :class="{ 'active': lang === 'zh' }" class="cursor-pointer">中文</button>
-        <button @click="setLang('en')" :class="{ 'active': lang === 'en' }" class="cursor-pointer">EN</button>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    const translations = {
-      zh: {
-        'setup.title': '初始设置',
-        'setup.subtitle': '设置 Copilot API 管理控制台密码',
-        'setup.password': '管理密码',
-        'setup.passwordPlaceholder': '请输入至少 6 位密码',
-        'setup.confirmPassword': '确认密码',
-        'setup.confirmPlaceholder': '再次输入密码',
-        'setup.submit': '设置密码并登录',
-        'setup.error.mismatch': '两次输入的密码不一致',
-        'setup.error.tooShort': '密码长度不能少于 6 位',
-        'loading': '加载中...'
-      },
-      en: {
-        'setup.title': 'Initial Setup',
-        'setup.subtitle': 'Set the Copilot API Admin Console password',
-        'setup.password': 'Admin Password',
-        'setup.passwordPlaceholder': 'Enter at least 6 characters',
-        'setup.confirmPassword': 'Confirm Password',
-        'setup.confirmPlaceholder': 'Enter the password again',
-        'setup.submit': 'Set Password & Sign In',
-        'setup.error.mismatch': 'Passwords do not match',
-        'setup.error.tooShort': 'Password must be at least 6 characters',
-        'loading': 'Loading...'
+    <script>
+      const translations = {
+        zh: {
+          "setup.title": "初始设置",
+          "setup.subtitle": "设置 Copilot API 管理控制台密码",
+          "setup.password": "管理密码",
+          "setup.passwordPlaceholder": "请输入至少 6 位密码",
+          "setup.confirmPassword": "确认密码",
+          "setup.confirmPlaceholder": "再次输入密码",
+          "setup.submit": "设置密码并登录",
+          "setup.error.mismatch": "两次输入的密码不一致",
+          "setup.error.tooShort": "密码长度不能少于 6 位",
+          loading: "加载中...",
+        },
+        en: {
+          "setup.title": "Initial Setup",
+          "setup.subtitle": "Set the Copilot API Admin Console password",
+          "setup.password": "Admin Password",
+          "setup.passwordPlaceholder": "Enter at least 6 characters",
+          "setup.confirmPassword": "Confirm Password",
+          "setup.confirmPlaceholder": "Enter the password again",
+          "setup.submit": "Set Password & Sign In",
+          "setup.error.mismatch": "Passwords do not match",
+          "setup.error.tooShort": "Password must be at least 6 characters",
+          loading: "Loading...",
+        },
       }
-    };
 
-    function setupApp() {
-      return {
-        password: '',
-        confirmPassword: '',
-        loading: false,
-        error: null,
-        lang: 'zh',
+      function setupApp() {
+        return {
+          password: "",
+          confirmPassword: "",
+          loading: false,
+          error: null,
+          lang: "zh",
 
-        init() {
-          const browserLang = navigator.language || navigator.userLanguage;
-          const storedLang = localStorage.getItem('copilot-api-lang');
-          this.lang = storedLang || (browserLang.startsWith('zh') ? 'zh' : 'en');
+          init() {
+            const browserLang = navigator.language || navigator.userLanguage
+            const storedLang = localStorage.getItem("copilot-api-lang")
+            this.lang =
+              storedLang || (browserLang.startsWith("zh") ? "zh" : "en")
 
-          this.$nextTick(() => {
-            lucide.createIcons();
-          });
-        },
+            this.$nextTick(() => {
+              lucide.createIcons()
+            })
+          },
 
-        t(key) {
-          return translations[this.lang]?.[key] || translations['en']?.[key] || key;
-        },
+          t(key) {
+            return (
+              translations[this.lang]?.[key] || translations["en"]?.[key] || key
+            )
+          },
 
-        setLang(lang) {
-          this.lang = lang;
-          localStorage.setItem('copilot-api-lang', lang);
-          this.$nextTick(() => lucide.createIcons());
-        },
+          setLang(lang) {
+            this.lang = lang
+            localStorage.setItem("copilot-api-lang", lang)
+            this.$nextTick(() => lucide.createIcons())
+          },
 
-        async setup() {
-          this.error = null;
+          async setup() {
+            this.error = null
 
-          if (this.password.length < 6) {
-            this.error = this.t('setup.error.tooShort');
-            return;
-          }
-
-          if (this.password !== this.confirmPassword) {
-            this.error = this.t('setup.error.mismatch');
-            return;
-          }
-
-          this.loading = true;
-
-          try {
-            const res = await fetch('/admin/setup', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({ password: this.password })
-            });
-
-            if (res.ok) {
-              window.location.href = '/admin';
-            } else {
-              const data = await res.json().catch(() => ({}));
-              this.error = data.error || 'Setup failed';
+            if (this.password.length < 6) {
+              this.error = this.t("setup.error.tooShort")
+              return
             }
-          } catch (e) {
-            this.error = 'Network error';
-          } finally {
-            this.loading = false;
-          }
+
+            if (this.password !== this.confirmPassword) {
+              this.error = this.t("setup.error.mismatch")
+              return
+            }
+
+            this.loading = true
+
+            try {
+              const res = await fetch("/admin/setup", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({ password: this.password }),
+              })
+
+              if (res.ok) {
+                window.location.href = "/admin"
+              } else {
+                const data = await res.json().catch(() => ({}))
+                this.error = data.error || "Setup failed"
+              }
+            } catch (e) {
+              this.error = "Network error"
+            } finally {
+              this.loading = false
+            }
+          },
         }
-      };
-    }
-  </script>
-</body>
+      }
+    </script>
+  </body>
 </html>
