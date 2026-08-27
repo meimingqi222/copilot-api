@@ -27,6 +27,7 @@ function connectionsView() {
       discoveryMode: "merge",
       apiKey: "",
       _credentialId: null,
+      customHeaders: [],
     },
     credForm: {
       connectionId: null,
@@ -298,6 +299,24 @@ function connectionsView() {
       return this.selectedModelIds.includes(publicId)
     },
 
+    addCustomHeader() {
+      this.connForm.customHeaders.push({ key: "", value: "" })
+    },
+
+    removeCustomHeader(index) {
+      this.connForm.customHeaders.splice(index, 1)
+    },
+
+    customHeadersToRecord() {
+      const record = {}
+      for (const h of this.connForm.customHeaders) {
+        const key = (h.key || "").trim()
+        if (!key) continue
+        record[key] = h.value || ""
+      }
+      return Object.keys(record).length > 0 ? record : undefined
+    },
+
     openCreate(presetId) {
       this.connForm = {
         id: null,
@@ -311,6 +330,7 @@ function connectionsView() {
         discoveryMode: "merge",
         apiKey: "",
         _credentialId: null,
+        customHeaders: [],
       }
       this.showAdvanced = false
       this.presetSearchQuery = ""
@@ -343,6 +363,7 @@ function connectionsView() {
     },
 
     openEdit(conn) {
+      const headerEntries = Object.entries(conn.headers || {})
       this.connForm = {
         id: conn.id,
         name: conn.name,
@@ -355,6 +376,7 @@ function connectionsView() {
         discoveryMode: conn.modelDiscovery?.mode || "merge",
         apiKey: "",
         _credentialId: conn.credentials?.[0]?.id || null,
+        customHeaders: headerEntries.map(([key, value]) => ({ key, value })),
       }
       this.selectedPresetId = ""
       this.selectedPreset = null
@@ -405,6 +427,7 @@ function connectionsView() {
           mode: form.discoveryMode,
         },
         models: selectedModels,
+        headers: this.customHeadersToRecord(),
       }
 
       const preset = this.selectedPreset
