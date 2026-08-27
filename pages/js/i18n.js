@@ -532,6 +532,11 @@ const i18n = {
         "暂无模型，可点击「在线获取模型」或高级设置配置自动发现",
       "connections.noModelsFound": "未找到匹配的模型",
       "connections.advancedOptions": "高级选项",
+      "connections.customHeaders": "自定义请求头",
+      "connections.addHeader": "添加请求头",
+      "connections.headerValue": "值",
+      "connections.customHeadersHint":
+        "随上游请求附加的固定请求头（不应包含 API Key，鉴权由凭据自动处理）",
       "connections.emptyTitle": "暂未配置外部 Provider",
       "connections.emptyHint":
         "选择下方常用 Provider 快速接入，或点击上方添加连接自定义配置",
@@ -1248,6 +1253,11 @@ const i18n = {
         'No models yet. Click "Fetch Models" or enable auto-discovery in Advanced Options.',
       "connections.noModelsFound": "No models match your search",
       "connections.advancedOptions": "Advanced Options",
+      "connections.customHeaders": "Custom Headers",
+      "connections.addHeader": "Add Header",
+      "connections.headerValue": "Value",
+      "connections.customHeadersHint":
+        "Fixed headers appended to upstream requests (do not include API Key — auth is handled by credentials)",
       "connections.emptyTitle": "No external provider connections yet",
       "connections.emptyHint":
         "Quick-add a popular provider below, or click Add to customize.",

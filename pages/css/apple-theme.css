@@ -1105,7 +1105,7 @@ select.form-input {
   display: flex;
   flex-direction: column;
   width: 95vw;
-  max-width: 960px;
+  max-width: 1080px;
   height: 86vh;
   max-height: 760px;
   border-radius: 18px;
