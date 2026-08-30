@@ -88,6 +88,80 @@ describe("Responses WebSocket pump", () => {
     expect(commits).toBe(0)
   })
 
+  test("keeps a 64-frame control burst retryable under the byte cap", async () => {
+    const events = Array.from({ length: 64 }, (_, sequence) => ({
+      data: JSON.stringify({
+        type: "response.output_item.added",
+        sequence,
+        item: { type: "reasoning", summary: [] },
+      }),
+    }))
+    const droppedStream: AsyncIterable<CopilotStreamEventLike> = {
+      [Symbol.asyncIterator]() {
+        const iterator = events[Symbol.iterator]()
+        return {
+          next() {
+            const next = iterator.next()
+            return next.done ?
+                Promise.reject(new Error("upstream socket dropped"))
+              : Promise.resolve(next)
+          },
+        }
+      },
+    }
+    let commits = 0
+    let caught: unknown
+
+    try {
+      await pumpWithLeadingBuffer({ readyState: 1, send() {} }, droppedStream, {
+        onCommit() {
+          commits += 1
+        },
+      })
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toBe("upstream socket dropped")
+    expect(commits).toBe(0)
+  })
+
+  test("reports why the bounded control-frame buffer commits", async () => {
+    const details: Array<{
+      reason: string
+      bufferedEvents: number
+      bufferedBytes: number
+    }> = []
+    const events = Array.from({ length: 128 }, (_, sequence) => ({
+      data: JSON.stringify({
+        type: "response.output_item.added",
+        sequence,
+        item: { type: "reasoning", summary: [] },
+      }),
+    }))
+    let caught: unknown
+
+    try {
+      await pumpWithLeadingBuffer(
+        { readyState: 1, send() {} },
+        eventStream(events),
+        {
+          onCommit(commit) {
+            details.push(commit)
+          },
+        },
+      )
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(Error)
+    expect((caught as Error).message).toContain("terminal response event")
+    expect(details).toHaveLength(1)
+    expect(details[0]?.reason).toBe("buffer_message_limit")
+    expect(details[0]?.bufferedEvents).toBe(128)
+    expect(details[0]?.bufferedBytes).toBeGreaterThan(0)
+  })
+
   test("does not treat an empty output container as first content", async () => {
     const result = await pumpWithLeadingBuffer(
       { readyState: 1, send() {} },

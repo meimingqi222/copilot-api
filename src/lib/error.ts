@@ -14,6 +14,29 @@ export class HTTPError extends Error {
   }
 }
 
+export class UpstreamTransportError extends HTTPError {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    const responseBody = JSON.stringify({
+      error: {
+        code: "upstream_transport_error",
+        message,
+        retryable: true,
+        type: "upstream_error",
+      },
+    })
+    super(
+      message,
+      new Response(responseBody, {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }),
+      responseBody,
+    )
+    this.name = "UpstreamTransportError"
+    this.cause = options.cause
+  }
+}
+
 export function forwardError(c: Context, error: unknown) {
   logger.error("Error occurred:", error)
 

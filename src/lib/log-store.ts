@@ -73,6 +73,9 @@ export interface LogEntry {
   ttftMs?: number
   generationTps?: number
   streaming?: boolean
+  wsCommitReason?: string
+  wsBufferedEvents?: number
+  wsBufferedBytes?: number
   finishReason?: string
   requestId?: string
   parentRequestId?: string

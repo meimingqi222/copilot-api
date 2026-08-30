@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 
 import type { Account } from "~/lib/accounts"
 
+import { UpstreamTransportError } from "~/lib/error"
 import { createResponsesErrorPayload } from "~/routes/responses/handler"
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 import {
@@ -23,17 +24,18 @@ afterEach(() => {
 })
 
 describe("chainedHttpCodexRequestError", () => {
-  test("generic transport failures carry a retryable WebSocket status", () => {
+  test("transport failures carry a retryable upstream WebSocket status", () => {
+    const message = "codex websockets: upstream socket closed unexpectedly"
     expect(
-      createResponsesErrorPayload(
-        new Error("codex websockets: upstream socket closed unexpectedly"),
-      ),
+      createResponsesErrorPayload(new UpstreamTransportError(message)),
     ).toEqual({
       type: "error",
-      status: 500,
+      status: 503,
       error: {
-        message: "codex websockets: upstream socket closed unexpectedly",
-        type: "error",
+        code: "upstream_transport_error",
+        message,
+        retryable: true,
+        type: "upstream_error",
       },
     })
   })
