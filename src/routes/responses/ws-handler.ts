@@ -8,7 +8,7 @@ import type {
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, UpstreamTransportError } from "~/lib/error"
 import { logStore } from "~/lib/log-store"
 import { logger } from "~/lib/logger"
 import {
@@ -537,11 +537,20 @@ async function runResponsesAttempt(
       )
     } else {
       const pumped = await pumpWithLeadingBuffer(ws, result.response, {
-        onCommit: () => {
+        onCommit: (details) => {
           state.committed = true
           updateMemoryTrace(memoryTraceId, "downstream_committed", {
             responseMode: "streaming",
+            commitReason: details.reason,
+            bufferedEvents: details.bufferedEvents,
+            bufferedBytes: details.bufferedBytes,
           })
+          const turn = getRequestLogContext(c)
+          if (turn) {
+            turn.entry.wsCommitReason = details.reason
+            turn.entry.wsBufferedEvents = details.bufferedEvents
+            turn.entry.wsBufferedBytes = details.bufferedBytes
+          }
         },
       })
       completedResponse = pumped.completedResponse
@@ -581,8 +590,12 @@ async function runResponsesAttempt(
     return { type: "done" }
   } catch (error) {
     const failure = classifyWsFailure(error)
-    const failureStatus =
-      error instanceof HTTPError ? error.response.status : undefined
+    let failureStatus: number | undefined
+    if (error instanceof HTTPError) {
+      failureStatus = error.response.status
+    } else if (failure.kind === "transport") {
+      failureStatus = 503
+    }
     recordResponsesWsAttemptIfMissing(
       c,
       current,
@@ -611,8 +624,14 @@ async function runResponsesAttempt(
     }
 
     if (state.committed) {
-      recordTraceError(c, error)
-      await handleResponseError(ws, error, signal)
+      const surfacedError =
+        failure.kind === "transport" ?
+          new UpstreamTransportError(getResponsesWsErrorSnippet(error), {
+            cause: error,
+          })
+        : error
+      recordTraceError(c, surfacedError)
+      await handleResponseError(ws, surfacedError, signal)
       return { type: "stop" }
     }
 

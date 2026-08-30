@@ -361,6 +361,7 @@ export function createResponsesErrorPayload(error: unknown): {
     code?: string
     message: string
     param?: string
+    retryable?: boolean
     type: string
   }
 } {
@@ -391,6 +392,7 @@ export function createResponsesErrorPayload(error: unknown): {
       type: structured?.type ?? "error",
       ...(structured?.code ? { code: structured.code } : {}),
       ...(structured?.param ? { param: structured.param } : {}),
+      ...(structured?.retryable === true ? { retryable: true } : {}),
     },
   }
 }
@@ -401,6 +403,7 @@ function readStructuredResponsesError(error: unknown):
       code?: string
       message?: string
       param?: string
+      retryable?: boolean
       type?: string
     }
   | undefined {
@@ -413,6 +416,7 @@ function readStructuredResponsesError(error: unknown):
       code: readNonEmptyString(detail.code),
       message: readNonEmptyString(detail.message),
       param: readNonEmptyString(detail.param),
+      retryable: detail.retryable === true,
       type: readNonEmptyString(detail.type),
     }
   } catch {

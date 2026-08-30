@@ -9,7 +9,7 @@ import type {
   UpstreamAttempt,
 } from "~/lib/log-store"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, UpstreamTransportError } from "~/lib/error"
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
 import { classifyUpstreamError } from "~/lib/provider-connections/availability"
 import {
@@ -223,6 +223,16 @@ function classifyTraceError(
       message: "Client disconnected",
       errorType: "abort_error",
       upstreamStatus: 499,
+    }
+  }
+  if (error instanceof UpstreamTransportError) {
+    return {
+      stage: "upstream",
+      kind: "transport",
+      message: error.message,
+      errorType: "transport_error",
+      upstreamStatus: error.response.status,
+      errorSnippet: truncate(error.responseBody, 2048),
     }
   }
   if (error instanceof ProtectedRouteGuardError) {

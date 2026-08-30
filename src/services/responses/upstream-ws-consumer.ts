@@ -74,6 +74,7 @@ export function createTurnConsumer(options: {
   let terminalError: Error | undefined
   let listenersRemoved = false
   let chainReleased = false
+  let socketErrored = false
 
   // Read through a getter so eslint/TS control-flow analysis does not narrow
   // `terminalError` to `undefined` (it is only assigned inside the listener
@@ -138,13 +139,27 @@ export function createTurnConsumer(options: {
     notify()
   }
   const onError = () => {
+    socketErrored = true
     rejectWait(new Error(`${provider} websockets: upstream socket error`))
     notify()
   }
-  const onClose = () => {
+  const onClose = (event: CloseEvent) => {
     sess.closed = true
     if (sessions.get(key) === sess) {
       sessions.delete(key)
+    }
+    if (!done || socketErrored) {
+      const socketAgeMs = sess.openedAt ? Date.now() - sess.openedAt : 0
+      const closeCode = Number.isFinite(event.code) ? event.code : 1006
+      const rawReason = typeof event.reason === "string" ? event.reason : ""
+      const reason = rawReason.trim().replaceAll(/\s+/g, " ").slice(0, 200)
+      logger.warn(
+        `${provider} websockets: upstream socket closed unexpectedly `
+          + `session=${executionSessionId} auth=${accountId} code=${closeCode} `
+          + `reason=${reason || "(none)"} was_clean=${event.wasClean} `
+          + `socket_age_ms=${socketAgeMs} queue_messages=${queue.length} `
+          + `queue_bytes=${queueBytes}`,
+      )
     }
     if (!done) {
       rejectWait(

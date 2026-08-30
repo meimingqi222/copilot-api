@@ -13,12 +13,25 @@ import {
 
 /** Bounded buffer caps: overflow flushes + commits rather than buffering
  * unbounded, trading a tiny failover window for a memory guarantee. */
-const MAX_BUFFERED_EVENTS = 32
+const MAX_BUFFERED_EVENTS = 128
 const MAX_BUFFERED_BYTES = 64 * 1024
+
+export type ResponsesWsCommitReason =
+  | "meaningful_output"
+  | "terminal"
+  | "buffer_message_limit"
+  | "buffer_byte_limit"
+  | "untyped_frame"
+
+export interface ResponsesWsCommitDetails {
+  reason: ResponsesWsCommitReason
+  bufferedEvents: number
+  bufferedBytes: number
+}
 
 export interface PumpHooks {
   /** Fired synchronously on the first successful forward to the client. */
-  onCommit: () => void
+  onCommit: (details: ResponsesWsCommitDetails) => void
 }
 
 export async function pumpWithLeadingBuffer(
@@ -55,12 +68,17 @@ export async function pumpWithLeadingBuffer(
   }
 
   // Flush buffered control frames, then mark committed.
-  const commit = async () => {
+  const commit = async (reason: ResponsesWsCommitReason) => {
+    const details: ResponsesWsCommitDetails = {
+      reason,
+      bufferedEvents: buffer.length,
+      bufferedBytes,
+    }
     for (const data of buffer) await forward(data)
     buffer.length = 0
     bufferedBytes = 0
     state.committed = true
-    hooks.onCommit()
+    hooks.onCommit(details)
   }
 
   for await (const event of response) {
@@ -109,7 +127,11 @@ export async function pumpWithLeadingBuffer(
         buffer.length >= MAX_BUFFERED_EVENTS
         || bufferedBytes >= MAX_BUFFERED_BYTES
       ) {
-        await commit()
+        const reason: ResponsesWsCommitReason =
+          bufferedBytes >= MAX_BUFFERED_BYTES ? "buffer_byte_limit" : (
+            "buffer_message_limit"
+          )
+        await commit(reason)
       }
       continue
     }
@@ -119,7 +141,10 @@ export async function pumpWithLeadingBuffer(
     // it may already be user-visible content.
     if (!state.committed) {
       buffer.push(event.data)
-      await commit()
+      let reason: ResponsesWsCommitReason = "meaningful_output"
+      if (type === undefined) reason = "untyped_frame"
+      else if (TERMINAL_RESPONSE_TYPES.has(type)) reason = "terminal"
+      await commit(reason)
       continue
     }
 
