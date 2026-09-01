@@ -1,7 +1,7 @@
 /**
  * Live test: verify tool call request/response round-trip
  */
-/* eslint-disable @typescript-eslint/use-unknown-in-catch-callback-variable */
+
 import { Database } from "bun:sqlite"
 import { join } from "node:path"
 

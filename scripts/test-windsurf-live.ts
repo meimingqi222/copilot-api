@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-non-null-assertion, unicorn/text-encoding-identifier-case, max-depth */
+/* eslint-disable @typescript-eslint/no-non-null-assertion, unicorn/text-encoding-identifier-case, max-depth */
 import { Database } from "bun:sqlite"
 import { join } from "node:path"
 

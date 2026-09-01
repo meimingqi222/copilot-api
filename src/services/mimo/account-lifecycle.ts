@@ -364,7 +364,6 @@ ${bridgeCode}
           destroyClient.close()
           await sleep(3000)
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (!this.active) break
 
           // Step 2: Create new container (only create, no WS connect yet)
@@ -456,7 +455,6 @@ ${bridgeCode}
         logger.info(`[MimoManager ${this.label}] Waiting 15s for restart...`)
         await sleep(15_000)
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (!this.active) break
 
         // Step 7: Reconnect WS with retries (up to 5 attempts)

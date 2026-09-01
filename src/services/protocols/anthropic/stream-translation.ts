@@ -258,7 +258,7 @@ export function translateChunkToAnthropicEvents(
   }
 
   // Usage-only chunks (common after Responses API finish) may have no choices.
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
   if (!chunk.choices?.length) {
     tryEmitDeferredMessageDelta(state, events, chunk.usage)
     return events
@@ -443,7 +443,7 @@ export function translateChunkToAnthropicEvents(
       if (toolCall.function?.arguments) {
         const toolCallInfo = state.toolCalls[toolCall.index]
         // Tool call can still be empty
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
         if (toolCallInfo) {
           events.push({
             type: "content_block_delta",

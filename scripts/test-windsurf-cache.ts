@@ -16,7 +16,7 @@
  */
 
 import { Database } from "bun:sqlite"
-/* eslint-disable @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-non-null-assertion, unicorn/text-encoding-identifier-case, @typescript-eslint/no-unnecessary-type-conversion */
+/* eslint-disable @typescript-eslint/no-non-null-assertion, unicorn/text-encoding-identifier-case */
 import { createHash } from "node:crypto"
 import { join } from "node:path"
 

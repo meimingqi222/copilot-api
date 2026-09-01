@@ -52,8 +52,8 @@ const guardState = new Map<string, PrincipalGuardState>()
 
 const BEHAVIOR_WINDOW_MS = 10 * 60 * 1000
 const REQUEST_WINDOW_MS = 60_000
-const REQUEST_LIMIT = 60
-const TRUSTED_CLIENT_REQUEST_LIMIT = 120
+const REQUEST_LIMIT = 240
+const TRUSTED_CLIENT_REQUEST_LIMIT = 480
 
 const UPSTREAM_429_DENSE_THRESHOLD = 5
 const UPSTREAM_429_DENSE_WINDOW_MS = 60_000
@@ -72,11 +72,12 @@ const IDLE_TTL_MS = TEMPORARY_BLOCK_MS + BEHAVIOR_WINDOW_MS
 const TRUSTED_CLIENT_PATTERNS = [
   /charm-crush/i,
   /claude-code/i,
+  /codex/i,
   /cursor/i,
   /windsurf/i,
   /zed-editor/i,
   /opencode/i,
-  /amp/i,
+  /amp[\s/-]/i,
   /droid/i,
 ]
 

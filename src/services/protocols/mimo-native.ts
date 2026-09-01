@@ -150,7 +150,6 @@ async function* streamResponse(
 
   try {
     while (!done) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       if (queue.length === 0) {
@@ -159,7 +158,6 @@ async function* streamResponse(
         })
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       const msg = queue.shift()
@@ -277,7 +275,6 @@ async function collectResponse(
 
   try {
     while (!done) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       if (queue.length === 0) {
@@ -286,7 +283,6 @@ async function collectResponse(
         })
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       const msg = queue.shift()
@@ -511,7 +507,6 @@ async function collectMessagesResponse(
 
   try {
     while (!done) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       if (queue.length === 0) {
@@ -520,7 +515,6 @@ async function collectMessagesResponse(
         })
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, @typescript-eslint/only-throw-error
       if (error) throw error
 
       const msg = queue.shift()

@@ -42,7 +42,6 @@ const upgradeMimoWebSocket = upgradeWebSocket((c) => {
         } else if (rawData instanceof Blob) {
           dataStr = await rawData.text()
         } else {
-          // eslint-disable-next-line @typescript-eslint/no-base-to-string
           dataStr = String(rawData)
         }
         const msg = JSON.parse(dataStr) as MimoMessage

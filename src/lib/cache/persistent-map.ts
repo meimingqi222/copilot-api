@@ -180,7 +180,7 @@ export class PersistentTTLMap<V> {
       // The `await` above yields control, so `flushTimer`/`dirty` may have
       // been mutated concurrently (e.g. via scheduleFlush()); TS's flow
       // analysis can't see that, hence the disables below.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
       if (this.flushTimer !== undefined) {
         clearTimeout(this.flushTimer)
         this.flushTimer = undefined
@@ -242,7 +242,7 @@ export class PersistentTTLMap<V> {
     } finally {
       this.flushPromise = undefined
       // `dirty` may have been set to true again while awaiting `promise`.
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
       if (this.dirty) this.scheduleFlush()
     }
   }

@@ -282,7 +282,6 @@ function performWsUpgrade(
           event: string,
           handler: (...args: Array<unknown>) => void,
         ) {
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
           if (listeners[event]) {
             listeners[event].push(handler)
           }
