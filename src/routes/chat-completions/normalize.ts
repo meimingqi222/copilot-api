@@ -20,7 +20,6 @@ import { extractReasoningTextAlias } from "~/lib/thinking"
 export function normalizeChunk(
   chunk: ChatCompletionChunk,
 ): ChatCompletionChunk {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (!chunk.choices?.length) {
     return chunk
   }

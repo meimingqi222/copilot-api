@@ -24,6 +24,8 @@
   "scripts": {
     "build": "tsdown",
     "dev": "bun run --watch ./src/main.ts start",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "knip": "knip-bun",
     "lint": "eslint --cache --cache-location node_modules/.cache/eslint",
     "lint:all": "eslint --cache --cache-location node_modules/.cache/eslint .",
@@ -37,7 +39,11 @@
     "pre-commit": "bunx lint-staged"
   },
   "lint-staged": {
-    "*.{ts,js,tsx,jsx}": "bun run lint --fix"
+    "*.{ts,js,tsx,jsx}": [
+      "eslint --cache --cache-location node_modules/.cache/eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": "prettier --write"
   },
   "dependencies": {
     "citty": "^0.1.6",

@@ -239,10 +239,7 @@ function calculateToolTokens(
     description = description.slice(0, -1)
   }
   tokens += counter.count(`${func.name}:${description}`)
-  if (
-    typeof func.parameters === "object" // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    && func.parameters !== null
-  ) {
+  if (typeof func.parameters === "object" && func.parameters !== null) {
     tokens += calculateParametersTokens(func.parameters, counter, constants)
   }
   return tokens

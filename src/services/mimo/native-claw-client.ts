@@ -462,7 +462,6 @@ export class NativeClawClient {
     this.ws.send(JSON.stringify(payload))
 
     for (let i = 0; i < timeout * 10; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       if (!this.ws || !this.connected) break
       const reply = this.extractReplyFromEvents()
       if (reply !== null) {

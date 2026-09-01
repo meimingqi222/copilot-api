@@ -6,9 +6,17 @@ export default config(
       plugins: ["prettier-plugin-packagejson"],
       endOfLine: "auto",
     },
+    typescript: { options: { typeChecked: false } },
   },
   {
     ignores: ["tools/**"],
+  },
+  // Disable projectService (TS type graph) — biggest lint performance bottleneck.
+  // Type checking is handled by `tsc` (bun run typecheck).
+  {
+    languageOptions: {
+      parserOptions: { projectService: false },
+    },
   },
   {
     files: ["pages/**/*.js"],
@@ -50,6 +58,16 @@ export default config(
       "require-atomic-updates": "off",
       // complexity: 16 is too restrictive for complex business logic
       complexity: ["error", 60],
+      // Disable prettier-as-eslint-rule — run `bun run format` separately instead.
+      // eslint-config-prettier (bundled in @echristian/eslint-config) still disables
+      // conflicting stylistic rules, so eslint and prettier won't fight.
+      "prettier/prettier": "off",
+      // Type-aware rules disabled because projectService is off (see above).
+      // Type safety is covered by `tsc` (bun run typecheck).
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/no-misused-promises": "off",
+      "@typescript-eslint/no-unnecessary-condition": "off",
+      "@typescript-eslint/restrict-template-expressions": "off",
     },
   },
   // Test files are inherently more verbose due to comprehensive test cases and fixtures.

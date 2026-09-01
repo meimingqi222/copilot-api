@@ -104,9 +104,9 @@ export function translateChatCompletionToResponses(
   // Matches `protocols/anthropic/non-stream-translation.ts`: an upstream that
   // returns no choices (content filter, some gateways) would otherwise surface
   // as `Cannot read properties of undefined (reading 'message')` here.
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
   const choice = response.choices?.[0]
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
   if (!choice) {
     throw new Error(
       `Unexpected empty choices in OpenAI response (id: ${response.id})`,
@@ -171,7 +171,6 @@ export async function* translateChatCompletionsStreamToResponses(
       yield { data: JSON.stringify(event) }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     const finishReason = chunk.choices?.[0]?.finish_reason
     if (finishReason) {
       updateMemoryTrace(memoryTraceId, "response_completed_stringify_start", {
@@ -256,9 +255,8 @@ function updateChatToResponsesStateFromChunk(
 
   updateResponsesUsage(state, chunk)
 
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   const delta = chunk.choices?.[0]?.delta
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
   if (!delta) return
   appendContentDelta(state, delta.content)
   appendReasoningDelta(state, delta)
@@ -411,9 +409,8 @@ function buildChunkEvents(
   state: ChatToResponsesStreamState,
   chunk: ChatCompletionChunk,
 ): Array<Record<string, unknown>> {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   const delta = chunk.choices?.[0]?.delta
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
   if (!delta) return []
   return [
     ...buildReasoningEvents(state, delta),
@@ -684,7 +681,6 @@ function translateMessageToResponsesInput(
   const isEmpty =
     translated === "" || (Array.isArray(translated) && translated.length === 0)
   if (isEmpty) {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     if (message.role === "user") {
       return [{ role: message.role, content: "" }]
     }
@@ -715,7 +711,7 @@ function injectAssistantReasoning(
 ): Array<ResponsesInputItem> {
   if (!reasoningText) return items
   const first = items[0]
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
   if (first && "role" in first && first.role === "assistant") {
     const isStringContent = typeof first.content === "string"
     const existing: Array<ResponsesInputContent> =
