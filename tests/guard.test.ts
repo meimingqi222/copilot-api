@@ -15,7 +15,7 @@ describe("guard", () => {
     resetGuardForTest()
   })
 
-  test("auto-blocks hard-signal abusive IPs temporarily with metadata", () => {
+  test("detects but does not auto-block hard-signal abusive IPs (auto-block disabled)", () => {
     for (let index = 0; index < 30; index += 1) {
       const result = recordRequest({
         ip: "203.0.113.9",
@@ -38,17 +38,11 @@ describe("guard", () => {
       }
     }
 
-    const blocked = isBlocked({ ip: "203.0.113.9" })
-    expect(blocked).not.toBeNull()
-    expect(blocked?.source).toBe("auto")
-    expect(blocked?.type).toBe("ip")
-    expect(typeof blocked?.expiresAt).toBe("number")
-    expect(blocked?.expiresAt).toBeGreaterThan(Date.now())
-    expect(blocked?.triggerScore).toBeGreaterThanOrEqual(80)
-    expect(blocked?.triggerReasons).toContain("auth_failures")
+    // Auto-block is disabled — suspicious IPs are logged but not blacklisted.
+    expect(isBlocked({ ip: "203.0.113.9" })).toBeNull()
 
     const snapshot = getSnapshots("ip")[0]
-    expect(snapshot.blocked).toBe(true)
+    expect(snapshot.blocked).toBe(false)
     expect(snapshot.recommendedAction).toBe("temporary_block")
     expect(snapshot.riskLevel).toBe("critical")
     expect(snapshot.flaggedRequests).toHaveLength(3)

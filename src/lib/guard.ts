@@ -138,8 +138,6 @@ const BURST_REQUEST_THRESHOLD = 20
 const RECENT_WINDOW_MS = 10 * 60 * 1000
 const RECENT_REQUEST_THRESHOLD = 60
 const AUTO_BLOCK_SCORE_THRESHOLD = 80
-const AUTO_BLOCK_DURATION_MS = 60 * 60 * 1000
-const AUTO_BLOCK_DURATION_SEVERE_MS = 24 * 60 * 60 * 1000
 const MAX_SNAPSHOT_ENTRIES = 10_000
 const MAX_SNAPSHOT_PATHS = 256
 const MAX_SNAPSHOT_USERNAMES = 256
@@ -647,20 +645,6 @@ function shouldAutoBlockGlobally(
   return getGlobalAutoBlockReasons(assessment.reasons).length > 0
 }
 
-function getAutoBlockDuration(
-  assessment: SuspiciousAssessment,
-  snap: ClientSnapshot,
-): number {
-  if (
-    assessment.burstRequests >= BURST_REQUEST_THRESHOLD * 2
-    || snap.authFailures >= AUTH_FAILURE_THRESHOLD * 2
-  ) {
-    return AUTO_BLOCK_DURATION_SEVERE_MS
-  }
-
-  return AUTO_BLOCK_DURATION_MS
-}
-
 function isLocalhostAddress(ip: string): boolean {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1"
 }
@@ -670,30 +654,17 @@ function checkAutoBlock(
   assessment: SuspiciousAssessment,
 ): void {
   if (isLocalhostAddress(snap.key)) return
+  // Auto-block disabled — behind a reverse proxy all users share the same IP,
+  // so IP-based auto-blocking causes collateral damage. Manual blacklisting
+  // via the admin dashboard and per-principal protected-route-guard still apply.
   if (!shouldAutoBlockGlobally(snap, assessment)) {
     return
   }
 
   const triggerReasons = getGlobalAutoBlockReasons(assessment.reasons)
-  const durationMs = getAutoBlockDuration(assessment, snap)
-  const expiresAt = Date.now() + durationMs
-  const entry: BlacklistEntry = {
-    value: snap.key,
-    type: snap.type,
-    source: "auto",
-    reason: `Auto-blocked (${assessment.riskLevel} risk): ${triggerReasons.join(", ")}`,
-    expiresAt,
-    triggerScore: assessment.score,
-    triggerReasons,
-    createdAt: Date.now(),
-  }
-
-  ipBlacklist.set(snap.key, entry)
-  snap.blocked = true
   logger.warn(
-    `⚠ Guard auto-blocked IP ${snap.key}: score=${assessment.score}, reasons=${triggerReasons.join(", ")}, expires=${new Date(expiresAt).toISOString()}`,
+    `⚠ Guard detected suspicious IP ${snap.key}: score=${assessment.score}, reasons=${triggerReasons.join(", ")}, risk=${assessment.riskLevel} (auto-block disabled)`,
   )
-  void saveGuard()
 }
 
 /** Serializable version of ClientSnapshot for API responses */

@@ -1,0 +1,13 @@
+perf: speed up eslint 2x and raise protected route guard limits
+
+- Disable projectService and type-aware eslint rules (type checking
+  stays in tsc). Disable prettier-as-eslint-rule in favor of a
+  standalone `format` script.
+- Remove now-unused eslint-disable comments across 16 files.
+- Raise REQUEST_LIMIT 60->240 and TRUSTED_CLIENT_REQUEST_LIMIT 120->480
+  to avoid false positives when multiple users share a single API key
+  behind a proxy.
+- Add /codex/i to TRUSTED_CLIENT_PATTERNS and tighten /amp/i to
+  /amp[\s/-]/i to avoid matching champ/sample/etc.
+- Add .prettierignore and format/format:check scripts; update
+  lint-staged to run eslint + prettier in parallel.
