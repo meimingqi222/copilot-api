@@ -27,6 +27,7 @@ import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 
 import { buildAntigravityHeaders } from "./headers"
 import {
+  type AntigravityUpstreamBody,
   preResolveSignatures,
   translateOpenAiChatToAntigravity,
 } from "./translate-request"
@@ -244,16 +245,30 @@ export async function createAntigravityChatCompletionsOnce(
   // L1 Antigravity only: inject the top-level metadata the native IDE client
   // sends, so the request carries the same audit identity (CPA mirrors this).
   upstreamBody.userAgent = "antigravity"
-  // image 模型使用 image_gen 请求类型，其余使用 agent
+  // requestType：保留客户端已有的值（如 web_search），否则按模型类型设置
   const isImageModel = model.includes("image")
-  upstreamBody.requestType = isImageModel ? "image_gen" : "agent"
-  upstreamBody.requestId =
-    isImageModel ?
-      `image_gen/${Date.now()}/${randomUUID()}/12`
-    : `agent-${randomUUID()}`
+  if (!upstreamBody.requestType) {
+    upstreamBody.requestType = isImageModel ? "image_gen" : "agent"
+  }
+  // requestId：image 模型用专用格式，其余用 agent-<uuid>
+  if (!upstreamBody.requestId) {
+    upstreamBody.requestId =
+      isImageModel ?
+        `image_gen/${Date.now()}/${randomUUID()}/12`
+      : `agent-${randomUUID()}`
+  }
 
   // 删除 safetySettings：原生客户端不发送此字段
   delete upstreamBody.request.safetySettings
+
+  // 迁移顶层 toolConfig 到 request.toolConfig（CPA 行为）
+  if (upstreamBody.toolConfig && !upstreamBody.request.toolConfig) {
+    upstreamBody.request.toolConfig =
+      upstreamBody.toolConfig as AntigravityUpstreamBody["request"]["toolConfig"]
+    delete upstreamBody.toolConfig
+  } else if (upstreamBody.toolConfig) {
+    delete upstreamBody.toolConfig
+  }
 
   // 敏感词混淆已在 dispatch 层统一处理，无需在此重复。
 
