@@ -73,5 +73,10 @@ export function isChainedTurnUpstreamError(error: unknown): boolean {
     || (message.includes("previous_response_id")
       && message.includes("not found"))
     || message.includes("no response found for previous_response_id")
+    // ChatGPT 后端在 previous_response_id 无法解析时也可能返回
+    // "Invalid `previous_response_id`."（不带 "not found"），和
+    // "Previous response with id '...' not found." 是同一种 chain 断裂，
+    // 需要同样的 transcript replay 恢复。
+    || message.includes("invalid `previous_response_id`")
   )
 }

@@ -363,6 +363,14 @@ describe("chained-turn upstream error classification", () => {
     ).toBe(true)
   })
 
+  test("Invalid previous_response_id (no 'not found') is chained-recoverable", () => {
+    // ChatGPT 后端有时返回 "Invalid `previous_response_id`." 而不是
+    // "Previous response with id '...' not found."，两者是同一种 chain 断裂。
+    expect(
+      isChainedTurnUpstreamError(wsError("Invalid `previous_response_id`.")),
+    ).toBe(true)
+  })
+
   test("unrelated upstream 400s are not chained-recoverable", () => {
     expect(
       isChainedTurnUpstreamError(wsError("Unsupported parameter: temperature")),
