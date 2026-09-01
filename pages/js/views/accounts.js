@@ -155,10 +155,7 @@ function accountsView() {
         provider,
         count: counts.get(provider) || 0,
         accounts: this.getAccountsByProvider(provider),
-        // Sparse providers (few models/features) use a denser grid.
-        dense: ["antigravity", "codebuff", "kimi", "mimo-aistudio"].includes(
-          provider,
-        ),
+        dense: false,
       }))
     },
 
