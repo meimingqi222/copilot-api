@@ -125,6 +125,8 @@ export interface AntigravityUpstreamBody {
         allowedFunctionNames?: Array<string>
       }
     }
+    // safetySettings 可能由翻译层意外产生，发送前需删除
+    safetySettings?: unknown
   }
 }
 
