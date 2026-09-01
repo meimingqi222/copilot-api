@@ -128,6 +128,23 @@ describe("classifyWsFailure — connection scope (same-account)", () => {
     })
   })
 
+  test("Invalid previous_response_id → connection (not request)", () => {
+    // ChatGPT 后端有时返回 "Invalid `previous_response_id`." 而不是
+    // "previous_response_not_found"，必须识别为 connection scope 以触发
+    // transcript replay 恢复，而不是当作普通 bad request 直接抛出。
+    const body = JSON.stringify({
+      error: {
+        type: "invalid_request_error",
+        message: "Invalid `previous_response_id`.",
+      },
+    })
+    const result = classifyWsFailure(wsFrameError(body, 400))
+    expect(result).toMatchObject({
+      scope: "connection",
+      kind: "previous_response_not_found",
+    })
+  })
+
   test("non-HTTPError transport error (socket drop) → transport", () => {
     const result = classifyWsFailure(new Error("socket hang up"))
     expect(result).toEqual({ scope: "connection", kind: "transport" })

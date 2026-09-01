@@ -54,7 +54,7 @@ export interface ClassifiedWsFailure {
  */
 const CONNECTION_LIMIT_RE = /websocket_connection_limit_reached/i
 const PREVIOUS_RESPONSE_NOT_FOUND_RE =
-  /previous_response_not_found|previous response with id/i
+  /previous_response_not_found|previous response with id|invalid `previous_response_id`/i
 
 interface WsStreamErrorPayload {
   type?: unknown
