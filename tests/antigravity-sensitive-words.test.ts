@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test"
 
 import {
   buildSensitiveWordMatcher,
-  obfuscateSensitiveWordsInSystemInstruction,
-} from "~/services/antigravity/sensitive-words"
+  obfuscateGeminiSystemInstruction,
+  obfuscateOpenAiMessages,
+} from "~/lib/sensitive-words"
 import {
   ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
   buildAntigravityHubUserAgent,
@@ -73,7 +74,7 @@ describe("antigravity sensitive word obfuscation", () => {
         },
       },
     }
-    const result = obfuscateSensitiveWordsInSystemInstruction(
+    const result = obfuscateGeminiSystemInstruction(
       payload as unknown as Record<string, unknown>,
       matcher,
     )
@@ -90,7 +91,74 @@ describe("antigravity sensitive word obfuscation", () => {
     const payload = {
       request: { systemInstruction: { parts: [{ text: "x" }] } },
     }
-    const result = obfuscateSensitiveWordsInSystemInstruction(
+    const result = obfuscateGeminiSystemInstruction(
+      payload as unknown as Record<string, unknown>,
+      null,
+    )
+    expect(result).toBe(payload)
+  })
+})
+
+describe("sensitive word obfuscation — OpenAI/Claude format", () => {
+  test("obfuscates string content in messages", () => {
+    const matcher = buildSensitiveWordMatcher(["proxy"])
+    if (!matcher) return
+    const payload = {
+      messages: [
+        { role: "system", content: "you are a proxy assistant" },
+        { role: "user", content: "use the proxy now" },
+      ],
+    }
+    const result = obfuscateOpenAiMessages(
+      payload as unknown as Record<string, unknown>,
+      matcher,
+    )
+    const messages = result.messages as Array<{ content: string }>
+    expect(messages[0].content).toBe("you are a p\u200Broxy assistant")
+    expect(messages[1].content).toBe("use the p\u200Broxy now")
+  })
+
+  test("obfuscates array content parts in messages", () => {
+    const matcher = buildSensitiveWordMatcher(["proxy"])
+    if (!matcher) return
+    const payload = {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "use proxy here" },
+            { type: "image_url", image_url: { url: "data:..." } },
+          ],
+        },
+      ],
+    }
+    const result = obfuscateOpenAiMessages(
+      payload as unknown as Record<string, unknown>,
+      matcher,
+    )
+    const messages = result.messages as Array<{
+      content: Array<{ type: string; text?: string }>
+    }>
+    expect(messages[0].content[0].text).toBe("use p\u200Broxy here")
+  })
+
+  test("obfuscates top-level system string (Anthropic format)", () => {
+    const matcher = buildSensitiveWordMatcher(["proxy"])
+    if (!matcher) return
+    const payload = {
+      system: "you are a proxy server",
+      messages: [{ role: "user", content: "hi" }],
+    }
+    const result = obfuscateOpenAiMessages(
+      payload as unknown as Record<string, unknown>,
+      matcher,
+    )
+    expect(result.system).toBe("you are a p\u200Broxy server")
+  })
+
+  test("null matcher returns payload unchanged", () => {
+    const payload = { messages: [{ role: "user", content: "hi" }] }
+    const result = obfuscateOpenAiMessages(
       payload as unknown as Record<string, unknown>,
       null,
     )
