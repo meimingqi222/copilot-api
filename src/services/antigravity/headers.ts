@@ -1,4 +1,4 @@
-import { buildAntigravityUserAgent } from "~/services/oauth/antigravity"
+import { buildAntigravityHubUserAgent } from "~/services/antigravity/version"
 
 export function buildAntigravityHeaders(
   accessToken: string,
@@ -8,6 +8,6 @@ export function buildAntigravityHeaders(
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
     Accept: stream ? "text/event-stream" : "*/*",
-    "User-Agent": buildAntigravityUserAgent(),
+    "User-Agent": buildAntigravityHubUserAgent(),
   }
 }

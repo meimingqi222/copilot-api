@@ -1,8 +1,10 @@
 import type { Account } from "~/lib/accounts"
 
 import { getOAuthAccessToken, getOAuthApiKey } from "~/lib/accounts"
+import { buildAntigravityHubUserAgent } from "~/services/antigravity/version"
 
 const TOKEN_PLACEHOLDER = "$TOKEN$"
+const ANTIGRAVITY_UA_PLACEHOLDER = "$ANTIGRAVITY_UA$"
 
 export function resolveAccountAccessToken(
   account: Account,
@@ -24,11 +26,18 @@ export function substituteTokenInHeaders(
 
   const resolved: Record<string, string> = {}
   for (const [key, value] of Object.entries(headers)) {
-    if (value.includes(TOKEN_PLACEHOLDER)) {
-      resolved[key] = token ? value.replaceAll(TOKEN_PLACEHOLDER, token) : value
-    } else {
-      resolved[key] = value
+    let replaced = value
+    if (replaced.includes(TOKEN_PLACEHOLDER)) {
+      replaced =
+        token ? replaced.replaceAll(TOKEN_PLACEHOLDER, token) : replaced
     }
+    if (replaced.includes(ANTIGRAVITY_UA_PLACEHOLDER)) {
+      replaced = replaced.replaceAll(
+        ANTIGRAVITY_UA_PLACEHOLDER,
+        buildAntigravityHubUserAgent(),
+      )
+    }
+    resolved[key] = replaced
   }
   return resolved
 }

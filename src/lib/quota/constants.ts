@@ -4,10 +4,14 @@ export const ANTIGRAVITY_QUOTA_URLS = [
   "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
 ] as const
 
+/**
+ * Antigravity 配额请求的 header 模板。
+ * User-Agent 使用占位符，在运行时由 buildAntigravityHubUserAgent() 替换为动态版本。
+ */
 export const ANTIGRAVITY_REQUEST_HEADERS = {
   Authorization: "Bearer $TOKEN$",
   "Content-Type": "application/json",
-  "User-Agent": "antigravity/cli/1.0.8 darwin/arm64",
+  "User-Agent": "$ANTIGRAVITY_UA$",
 } as const
 
 export const CLAUDE_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"

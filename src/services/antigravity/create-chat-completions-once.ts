@@ -27,6 +27,10 @@ import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
 
 import { buildAntigravityHeaders } from "./headers"
 import {
+  buildSensitiveWordMatcher,
+  obfuscateSensitiveWordsInSystemInstruction,
+} from "./sensitive-words"
+import {
   preResolveSignatures,
   translateOpenAiChatToAntigravity,
 } from "./translate-request"
@@ -244,8 +248,34 @@ export async function createAntigravityChatCompletionsOnce(
   // L1 Antigravity only: inject the top-level metadata the native IDE client
   // sends, so the request carries the same audit identity (CPA mirrors this).
   upstreamBody.userAgent = "antigravity"
-  upstreamBody.requestType = "agent"
-  upstreamBody.requestId = `agent-${randomUUID()}`
+  // image 模型使用 image_gen 请求类型，其余使用 agent
+  const isImageModel = model.includes("image")
+  upstreamBody.requestType = isImageModel ? "image_gen" : "agent"
+  upstreamBody.requestId =
+    isImageModel ?
+      `image_gen/${Date.now()}/${randomUUID()}/12`
+    : `agent-${randomUUID()}`
+
+  // 删除 safetySettings：原生客户端不发送此字段
+  delete upstreamBody.request.safetySettings
+
+  // 敏感词混淆：在 systemInstruction 的文本中插入零宽空格
+  // 通过 ANTIGRAVITY_SENSITIVE_WORDS 环境变量配置，逗号分隔
+  const sensitiveWordsEnv = process.env.ANTIGRAVITY_SENSITIVE_WORDS
+  if (sensitiveWordsEnv) {
+    const words = sensitiveWordsEnv
+      .split(",")
+      .map((w) => w.trim())
+      .filter(Boolean)
+    const matcher = buildSensitiveWordMatcher(words)
+    if (matcher) {
+      const obfuscated = obfuscateSensitiveWordsInSystemInstruction(
+        upstreamBody as unknown as Record<string, unknown>,
+        matcher,
+      )
+      Object.assign(upstreamBody, obfuscated)
+    }
+  }
 
   const response = await postAntigravityRequest(
     account,

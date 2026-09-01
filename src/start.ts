@@ -9,6 +9,7 @@ import { flushAllPersistentMaps } from "~/lib/cache/persistent-map"
 import { initLogger, logger } from "~/lib/logger"
 import { startMemoryDiagnostics } from "~/lib/memory-diagnostics"
 import { loadModelAliases } from "~/lib/model-aliases"
+import { startAntigravityVersionUpdater } from "~/services/antigravity/version"
 
 import {
   flushAccountsOnShutdown,
@@ -76,6 +77,9 @@ interface RunServerOptions {
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
+  // 启动 Antigravity 版本动态追踪（从 Hub manifest 拉取最新版本号）
+  startAntigravityVersionUpdater()
+
   // Handle unhandled promise rejections
   process.on("unhandledRejection", (reason: unknown) => {
     if (

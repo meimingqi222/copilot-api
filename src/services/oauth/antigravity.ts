@@ -1,5 +1,11 @@
 import type { OAuthAccount } from "~/lib/accounts"
 
+import {
+  ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
+  buildAntigravityHubUserAgent,
+  getAntigravityLatestVersion,
+} from "~/services/antigravity/version"
+
 import { applyOAuthBundle } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState } from "./pkce"
@@ -118,6 +124,9 @@ async function postAntigravityTokenForm(
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
+        // 原生 Antigravity 使用 Go 默认 HTTP 客户端刷新 token，
+        // User-Agent 是 Go-http-client/2.0 而非 antigravity/hub/...
+        "User-Agent": ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
       },
       body: form.toString(),
     },
@@ -256,12 +265,12 @@ async function onboardAntigravityUser(
   tierId: string,
   options?: OAuthFetchOptions,
 ): Promise<string | undefined> {
-  const userAgent = buildAntigravityUserAgent()
+  const userAgent = buildAntigravityHubUserAgent()
   const body = JSON.stringify({
     tier_id: tierId,
     metadata: {
       ide_type: "ANTIGRAVITY",
-      ide_version: "1.0.8",
+      ide_version: getAntigravityLatestVersion(),
       ide_name: "antigravity",
     },
   })
@@ -308,7 +317,7 @@ export async function fetchAntigravityProjectId(
   accessToken: string,
   options?: OAuthFetchOptions,
 ): Promise<string | undefined> {
-  const userAgent = buildAntigravityUserAgent()
+  const userAgent = buildAntigravityHubUserAgent()
   const response = await oauthFetch(
     `${ANTIGRAVITY_API_BASE_URL}/${ANTIGRAVITY_API_VERSION}:loadCodeAssist`,
     {
@@ -343,8 +352,17 @@ export async function fetchAntigravityProjectId(
   )
 }
 
-export function buildAntigravityUserAgent(version = "1.0.8"): string {
-  return `antigravity/cli/${version} darwin/arm64`
+/**
+ * @deprecated 使用 buildAntigravityHubUserAgent 以获取动态版本追踪。
+ * 保留此函数仅为向后兼容；新代码应直接调用
+ * ~/services/antigravity/version 中的 buildAntigravityHubUserAgent。
+ */
+export function buildAntigravityUserAgent(version?: string): string {
+  if (version) {
+    return `antigravity/hub/${version} darwin/arm64`
+  }
+  // 动态版本：从 Hub manifest 缓存中读取
+  return buildAntigravityHubUserAgent()
 }
 
 export function applyAntigravityOAuthBundle(
