@@ -17,10 +17,6 @@ import {
 import { HTTPError } from "~/lib/error"
 import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
 import { generateAntigravityStableSessionId } from "~/lib/routing"
-import {
-  getSensitiveWordMatcherFromEnv,
-  obfuscateGeminiSystemInstruction,
-} from "~/lib/sensitive-words"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
   ANTIGRAVITY_API_BASE_URL,
@@ -259,16 +255,7 @@ export async function createAntigravityChatCompletionsOnce(
   // 删除 safetySettings：原生客户端不发送此字段
   delete upstreamBody.request.safetySettings
 
-  // 敏感词混淆：在 systemInstruction 的文本中插入零宽空格
-  // 通过 SENSITIVE_WORDS 环境变量配置，逗号分隔
-  const matcher = getSensitiveWordMatcherFromEnv()
-  if (matcher) {
-    const obfuscated = obfuscateGeminiSystemInstruction(
-      upstreamBody as unknown as Record<string, unknown>,
-      matcher,
-    )
-    Object.assign(upstreamBody, obfuscated)
-  }
+  // 敏感词混淆已在 dispatch 层统一处理，无需在此重复。
 
   const response = await postAntigravityRequest(
     account,

@@ -4,14 +4,22 @@
  * 对配置的敏感词插入零宽空格（U+200B），在第一个 grapheme 后插入，
  * 保持人类可读性的同时破坏精确字符串匹配。
  *
- * 支持两种请求格式：
- * - OpenAI/Claude 格式：messages 数组中的 text content + 顶层 system 字段
- * - Gemini/Antigravity 格式：request.systemInstruction.parts 中的 text
+ * 支持三种请求格式：
+ * - OpenAI Chat / Anthropic Messages：messages 数组 + 顶层 system 字段
+ * - OpenAI Responses：instructions + input 数组
+ * - Gemini/Antigravity：request.systemInstruction.parts
  *
  * 通过 SENSITIVE_WORDS 环境变量配置，逗号分隔。不配则不生效。
  */
 
 const ZERO_WIDTH_SPACE = "\u200B"
+
+// 模块级 Segmenter，避免每次调用重复创建
+const graphemeSegmenter = new Intl.Segmenter("en", { granularity: "grapheme" })
+
+function graphemeCount(text: string): number {
+  return [...graphemeSegmenter.segment(text)].length
+}
 
 /**
  * 在词的第一个字符后插入零宽空格。
@@ -21,8 +29,7 @@ function obfuscateWord(word: string): string {
   if (word.includes(ZERO_WIDTH_SPACE)) {
     return word
   }
-  const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" })
-  const segments = [...segmenter.segment(word)]
+  const segments = [...graphemeSegmenter.segment(word)]
   if (segments.length < 2) {
     return word
   }
@@ -56,8 +63,7 @@ export function buildSensitiveWordMatcher(
     .map((w) => w.trim())
     .filter((w) => {
       if (!w || w.includes(ZERO_WIDTH_SPACE)) return false
-      const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" })
-      return [...segmenter.segment(w)].length >= 2
+      return graphemeCount(w) >= 2
     })
 
   if (filtered.length === 0) return null
@@ -93,6 +99,8 @@ export function getSensitiveWordMatcherFromEnv(): SensitiveWordMatcher | null {
 /**
  * 对 OpenAI/Claude 格式的请求体进行敏感词混淆。
  * 处理 messages 数组中所有 text content 以及顶层 system 字段。
+ * 兼容 Chat Completions（messages + string content / array content）
+ * 和 Anthropic Messages（system string/array + messages content blocks）。
  */
 export function obfuscateOpenAiMessages(
   payload: Record<string, unknown>,
@@ -124,6 +132,62 @@ export function obfuscateOpenAiMessages(
   return changed ? result : payload
 }
 
+/**
+ * 对 OpenAI Responses 格式的请求体进行敏感词混淆。
+ * 处理 instructions 字段和 input 数组中的 text content。
+ */
+export function obfuscateResponsesPayload(
+  payload: Record<string, unknown>,
+  matcher: SensitiveWordMatcher | null,
+): Record<string, unknown> {
+  if (!matcher) return payload
+
+  let changed = false
+  const result: Record<string, unknown> = { ...payload }
+
+  // 处理 instructions 字段
+  if (typeof result.instructions === "string") {
+    result.instructions = matcher.obfuscate(result.instructions)
+    changed = true
+  }
+
+  // 处理 input 字段
+  if (typeof result.input === "string") {
+    result.input = matcher.obfuscate(result.input)
+    changed = true
+  } else if (Array.isArray(result.input)) {
+    result.input = result.input.map((item) =>
+      obfuscateResponsesInputItem(item, matcher),
+    )
+    changed = true
+  }
+
+  return changed ? result : payload
+}
+
+function obfuscateResponsesInputItem(
+  item: unknown,
+  matcher: SensitiveWordMatcher,
+): unknown {
+  if (typeof item !== "object" || item === null) return item
+  const obj = item as Record<string, unknown>
+
+  if (typeof obj.content === "string") {
+    return { ...obj, content: matcher.obfuscate(obj.content) }
+  }
+
+  if (Array.isArray(obj.content)) {
+    return {
+      ...obj,
+      content: obj.content.map((part) =>
+        obfuscateTextPart(part, matcher, "input_text"),
+      ),
+    }
+  }
+
+  return item
+}
+
 function obfuscateSystemArray(
   parts: Array<unknown>,
   matcher: SensitiveWordMatcher,
@@ -145,6 +209,27 @@ function isTextPart(part: unknown): part is { type?: string; text: string } {
   )
 }
 
+/**
+ * 对 content part 做混淆。支持 OpenAI 的 `text` 类型和 Responses 的
+ * `input_text` 类型——两者的结构相同，只是 type 值不同。
+ */
+function obfuscateTextPart(
+  part: unknown,
+  matcher: SensitiveWordMatcher,
+  ...textTypes: Array<string>
+): unknown {
+  if (typeof part !== "object" || part === null) return part
+  const p = part as Record<string, unknown>
+  if (
+    typeof p.text === "string"
+    && typeof p.type === "string"
+    && textTypes.includes(p.type)
+  ) {
+    return { ...p, text: matcher.obfuscate(p.text) }
+  }
+  return part
+}
+
 function obfuscateMessage(
   message: unknown,
   matcher: SensitiveWordMatcher,
@@ -152,37 +237,20 @@ function obfuscateMessage(
   if (typeof message !== "object" || message === null) return message
   const msg = message as Record<string, unknown>
 
-  // string content
   if (typeof msg.content === "string") {
     return { ...msg, content: matcher.obfuscate(msg.content) }
   }
 
-  // array content (OpenAI multi-part)
   if (Array.isArray(msg.content)) {
     return {
       ...msg,
-      content: msg.content.map((part) => obfuscateContentPart(part, matcher)),
+      content: msg.content.map((part) =>
+        obfuscateTextPart(part, matcher, "text"),
+      ),
     }
   }
 
   return message
-}
-
-function obfuscateContentPart(
-  part: unknown,
-  matcher: SensitiveWordMatcher,
-): unknown {
-  if (
-    typeof part === "object"
-    && part !== null
-    && (part as Record<string, unknown>).type === "text"
-  ) {
-    const p = part as Record<string, unknown>
-    if (typeof p.text === "string") {
-      return { ...p, text: matcher.obfuscate(p.text) }
-    }
-  }
-  return part
 }
 
 /**

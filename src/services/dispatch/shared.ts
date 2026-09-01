@@ -15,6 +15,11 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import {
+  getSensitiveWordMatcherFromEnv,
+  obfuscateOpenAiMessages,
+  obfuscateResponsesPayload,
+} from "~/lib/sensitive-words"
 import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
 import { createChatViaResponses } from "~/services/protocols/chat-via-responses"
 import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
@@ -78,7 +83,18 @@ export async function dispatchRequest(
   admission: RequestAdmission,
   signal?: AbortSignal,
 ): Promise<DispatchResult> {
-  const { routeKind, payload } = options
+  const { routeKind } = options
+
+  // 统一敏感词混淆：在进入 provider 适配器之前处理所有 payload 格式。
+  // chat/messages 用 obfuscateOpenAiMessages，responses 用 obfuscateResponsesPayload。
+  // Antigravity 走 chat 路由，翻译成 Gemini 格式前已在此处混淆 messages。
+  const sensitiveMatcher = getSensitiveWordMatcherFromEnv()
+  const payload = applySensitiveWords(
+    options.payload,
+    routeKind,
+    sensitiveMatcher,
+  )
+
   return executeWithFailover({
     payload,
     admission,
@@ -243,4 +259,21 @@ export async function dispatchRequest(
       )
     },
   })
+}
+
+/**
+ * 对 dispatch 入口的 payload 做敏感词混淆。
+ * 泛型 T 保持原始 payload 类型，混淆函数只改文本不改结构。
+ */
+function applySensitiveWords<T>(
+  payload: T,
+  routeKind: "chat" | "messages" | "responses",
+  matcher: ReturnType<typeof getSensitiveWordMatcherFromEnv>,
+): T {
+  if (!matcher) return payload
+  const record = payload as unknown as Record<string, unknown>
+  if (routeKind === "chat" || routeKind === "messages") {
+    return obfuscateOpenAiMessages(record, matcher) as unknown as T
+  }
+  return obfuscateResponsesPayload(record, matcher) as unknown as T
 }
