@@ -375,7 +375,8 @@ export function applyAntigravityOAuthBundle(
   })
   account.settings = {
     ...account.settings,
-    baseUrl: account.settings?.baseUrl ?? ANTIGRAVITY_API_BASE_URL,
+    // 与 CPA 一致，默认使用 daily 端点（独立配额池，额度更高）
+    baseUrl: account.settings?.baseUrl ?? ANTIGRAVITY_DAILY_API_BASE_URL,
     redirectUri: bundle.redirectUri,
   }
 }
