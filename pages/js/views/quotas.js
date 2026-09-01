@@ -165,10 +165,7 @@ function quotasView() {
         provider,
         count: counts.get(provider) || 0,
         accounts: this.getAccountsByProvider(provider),
-        // Sparse providers (few quota rows) use a denser grid.
-        dense: ["antigravity", "codebuff", "kimi", "mimo-aistudio"].includes(
-          provider,
-        ),
+        dense: false,
       }))
     },
 
