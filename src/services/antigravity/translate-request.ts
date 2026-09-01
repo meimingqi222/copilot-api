@@ -4,6 +4,7 @@ import type {
   Tool,
 } from "~/services/copilot/create-chat-completions"
 
+import { cleanJsonSchemaForAntigravityTool } from "~/lib/gemini-schema"
 import {
   LEVEL_TO_BUDGET,
   extractReasoningPartsText,
@@ -334,46 +335,8 @@ function buildAssistantContent(
   return contents
 }
 
-// Gemini function declaration parameters 不支持部分 JSON Schema 字段，
-// 需要递归清理。对应 CPA 的 helps.SanitizeGeminiFunctionParameters。
-const GEMINI_UNSUPPORTED_SCHEMA_KEYS = new Set([
-  "$schema",
-  "$id",
-  "$ref",
-  "$defs",
-  "$comment",
-  "propertyNames",
-  "additionalProperties",
-  "patternProperties",
-  "dependencies",
-  "if",
-  "then",
-  "else",
-  "not",
-  "allOf",
-  "anyOf",
-  "oneOf",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "contentEncoding",
-  "contentMediaType",
-  "contentSchema",
-])
-
-function sanitizeGeminiParameters(schema: unknown): unknown {
-  if (typeof schema !== "object" || schema === null) {
-    return schema
-  }
-  if (Array.isArray(schema)) {
-    return schema.map((item) => sanitizeGeminiParameters(item))
-  }
-  const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(schema)) {
-    if (GEMINI_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue
-    result[key] = sanitizeGeminiParameters(value)
-  }
-  return result
-}
+// Gemini function declaration parameters 不支持完整 JSON Schema 规范，
+// 需要完整清理。移植自 CPA 的 CleanJSONSchemaForAntigravityTool。
 
 function buildTools(
   tools: Array<Tool> | null | undefined,
@@ -384,7 +347,10 @@ function buildTools(
   const declarations = tools.map((tool) => ({
     name: sanitizeFunctionName(tool.function.name),
     description: tool.function.description,
-    parameters: sanitizeGeminiParameters(tool.function.parameters),
+    parameters: cleanJsonSchemaForAntigravityTool(
+      tool.function.parameters,
+      true,
+    ),
   }))
   if (declarations.length === 0) {
     return undefined
