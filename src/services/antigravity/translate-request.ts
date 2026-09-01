@@ -418,22 +418,30 @@ function buildToolConfig(
 function buildGeminiThinkingConfig(
   effort: string,
   model: string,
-): Record<string, unknown> {
+): Record<string, unknown> | undefined {
   const level = effort.toLowerCase()
 
-  // auto → thinkingBudget=-1 (both Gemini 2.5 and 3 support this)
+  // auto → thinkingBudget=-1 (CPA ModeAuto always uses the budget format)
   if (level === "auto") {
     return { thinkingBudget: -1, includeThoughts: true }
   }
 
-  // none → disable thinking
+  const levelFormat = geminiSupportsLevelFormat(model)
+
+  // none → CPA ModeNone: level-format models (Gemini 3+) drop thinkingConfig
+  // entirely; budget-format models (Gemini 2.5) disable via thinkingBudget: 0.
   if (level === "none") {
+    if (levelFormat) {
+      return undefined
+    }
     return { thinkingBudget: 0, includeThoughts: false }
   }
 
-  if (geminiSupportsLevelFormat(model)) {
-    // Gemini 3+: use thinkingLevel string format
-    return { thinkingLevel: level, includeThoughts: true }
+  if (levelFormat) {
+    // CPA mapConfiguredHighIntent: no Antigravity Gemini model declares
+    // "xhigh" support (levels top out at "high"), so xhigh falls back to high.
+    const normalized = level === "xhigh" ? "high" : level
+    return { thinkingLevel: normalized, includeThoughts: true }
   }
 
   // Gemini 2.x: convert level string to thinkingBudget numeric format
@@ -519,10 +527,13 @@ export function translateOpenAiChatToAntigravity(
     generationConfig.maxOutputTokens = payload.max_tokens
   }
   if (payload.reasoning_effort) {
-    generationConfig.thinkingConfig = buildGeminiThinkingConfig(
+    const thinkingConfig = buildGeminiThinkingConfig(
       payload.reasoning_effort,
       payload.model,
     )
+    if (thinkingConfig) {
+      generationConfig.thinkingConfig = thinkingConfig
+    }
   }
   if (Object.keys(generationConfig).length > 0) {
     body.request.generationConfig = generationConfig
