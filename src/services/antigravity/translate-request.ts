@@ -506,7 +506,16 @@ export function translateOpenAiChatToAntigravity(
   if (payload.top_p !== null && payload.top_p !== undefined) {
     generationConfig.topP = payload.top_p
   }
-  if (payload.max_tokens !== null && payload.max_tokens !== undefined) {
+  // CPA parity: the private backend rejects maxOutputTokens above a model's
+  // cap with a vague 400 INVALID_ARGUMENT (e.g. gemini-3.1-flash-lite caps at
+  // 32768 while clients send 65536). Only Claude models keep it — VALIDATED
+  // mode relies on it; every other model drops the field entirely.
+  const isClaudeModel = model.includes("claude")
+  if (
+    isClaudeModel
+    && payload.max_tokens !== null
+    && payload.max_tokens !== undefined
+  ) {
     generationConfig.maxOutputTokens = payload.max_tokens
   }
   if (payload.reasoning_effort) {
