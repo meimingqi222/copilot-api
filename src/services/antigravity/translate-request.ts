@@ -110,6 +110,8 @@ export interface AntigravityUpstreamBody {
   userAgent?: string
   requestType?: string
   requestId?: string
+  // 顶层 toolConfig 可能由其他翻译器产生，发送前需迁移到 request.toolConfig
+  toolConfig?: unknown
   request: {
     sessionId?: string
     contents: Array<AntigravityGeminiContent>
