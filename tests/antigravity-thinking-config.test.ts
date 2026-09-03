@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test"
 
+import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
+
 import { translateOpenAiChatToAntigravity } from "~/services/antigravity/translate-request"
 
+type ReasoningEffort = NonNullable<ChatCompletionsPayload["reasoning_effort"]>
+
 /** The generationConfig a translated request carries. */
-function generationConfigFor(model: string, effort?: string) {
+function generationConfigFor(model: string, effort?: ReasoningEffort) {
   const body = translateOpenAiChatToAntigravity(
     {
       model,

@@ -14,9 +14,11 @@ import {
 
 import { buildAntigravityHeaders } from "./headers"
 
+// Daily first, matching CPA (daily gets new models like gemini-3.8-flash
+// before the prod endpoint rolls them out).
 const ANTIGRAVITY_MODEL_BASE_URLS = [
-  ANTIGRAVITY_API_BASE_URL,
   ANTIGRAVITY_DAILY_API_BASE_URL,
+  ANTIGRAVITY_API_BASE_URL,
 ]
 
 const SKIPPED_ANTIGRAVITY_MODELS = new Set([

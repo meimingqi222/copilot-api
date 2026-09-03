@@ -83,31 +83,30 @@ export async function dispatchRequest(
   admission: RequestAdmission,
   signal?: AbortSignal,
 ): Promise<DispatchResult> {
-  const { routeKind } = options
-
   // 统一敏感词混淆：在进入 provider 适配器之前处理所有 payload 格式。
   // chat/messages 用 obfuscateOpenAiMessages，responses 用 obfuscateResponsesPayload。
   // Antigravity 走 chat 路由，翻译成 Gemini 格式前已在此处混淆 messages。
+  // 按 routeKind 分支收窄 payload 类型，避免联合类型泄漏进 execute 闭包。
   const sensitiveMatcher = getSensitiveWordMatcherFromEnv()
-  const payload = applySensitiveWords(
-    options.payload,
-    routeKind,
-    sensitiveMatcher,
-  )
 
-  return executeWithFailover({
-    payload,
-    admission,
-    signal,
-    routeKind,
-    logPrefix: `[dispatch/${routeKind}]`,
-    c: options.c,
-    execute: (adapter, target: RouteTarget, current) => {
-      // Step B 后 admission 始终携带 connection/credential;
-      // account-backed 路径下由 accountToConnection 构造虚拟对象。
-      const { connection: conn, credential: cred } = current
+  if (options.routeKind === "chat") {
+    const payload = applySensitiveWords(
+      options.payload,
+      "chat",
+      sensitiveMatcher,
+    )
+    return executeWithFailover({
+      payload,
+      admission,
+      signal,
+      routeKind: "chat",
+      logPrefix: "[dispatch/chat]",
+      c: options.c,
+      execute: (adapter, target: RouteTarget, current) => {
+        // Step B 后 admission 始终携带 connection/credential;
+        // account-backed 路径下由 accountToConnection 构造虚拟对象。
+        const { connection: conn, credential: cred } = current
 
-      if (routeKind === "chat") {
         const executionContext = {
           initiator: current.initiator,
           c: options.c,
@@ -167,9 +166,26 @@ export async function dispatchRequest(
           `Protocol "${target.protocol}" does not support chat completions via ${target.endpoint}`,
           new Response("Not Implemented", { status: 501 }),
         )
-      }
+      },
+    })
+  }
 
-      if (routeKind === "responses") {
+  if (options.routeKind === "responses") {
+    const payload = applySensitiveWords(
+      options.payload,
+      "responses",
+      sensitiveMatcher,
+    )
+    return executeWithFailover({
+      payload,
+      admission,
+      signal,
+      routeKind: "responses",
+      logPrefix: "[dispatch/responses]",
+      c: options.c,
+      execute: (adapter, target: RouteTarget, current) => {
+        const { connection: conn, credential: cred } = current
+
         const executionContext = {
           initiator: current.initiator,
           c: options.c,
@@ -209,7 +225,24 @@ export async function dispatchRequest(
           `Protocol "${target.protocol}" does not support /responses`,
           new Response("Not Implemented", { status: 501 }),
         )
-      }
+      },
+    })
+  }
+
+  const payload = applySensitiveWords(
+    options.payload,
+    "messages",
+    sensitiveMatcher,
+  )
+  return executeWithFailover({
+    payload,
+    admission,
+    signal,
+    routeKind: "messages",
+    logPrefix: "[dispatch/messages]",
+    c: options.c,
+    execute: (adapter, target: RouteTarget, current) => {
+      const { connection: conn, credential: cred } = current
 
       const messageExecutionContext = {
         initiator: current.initiator,
