@@ -296,6 +296,9 @@ copilot-api debug     # Show diagnostic info
 - **Function length:**\
   Lint enforces reasonable line limits (except in tests).
 
+- **Temporary scripts files:**\
+  Write all temporary/scratch scripts and files to the `temp/` directory (already gitignored), never to the repository root. Do not create root-level `.tmp_*`, `temp_*`, or similar scratch files. This keeps the working tree clean and avoids polluting `git status`.
+
 ## Testing Patterns
 
 - **Test runner:** Bun's built-in test runner
