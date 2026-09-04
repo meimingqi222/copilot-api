@@ -95,6 +95,9 @@ function usageView() {
     },
 
     onQuickSelect(value) {
+      // 空值表示当前是自定义周期占位 option,不做任何操作
+      // (用户点击 select 但没有切换到其他快速选项)
+      if (!value) return
       if (value === "pickMonth") {
         this.monthPickerOpen = true
         this.customRangeOpen = false

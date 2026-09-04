@@ -5,6 +5,7 @@ import {
   getMutableProviderConnection,
   upsertProviderConnection,
   type ProviderConnection,
+  type ProviderProtocol,
 } from "~/lib/provider-connections"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
@@ -42,14 +43,14 @@ function createOAuthConnection(
   } = {},
 ): ProviderConnection {
   const now = Date.now()
-  const protocolMap: Record<string, string> = {
+  const protocolMap: Record<string, ProviderProtocol> = {
     claude: "claude-native",
     codex: "codex-native",
     xai: "xai-native",
     kimi: "kimi-native",
     antigravity: "antigravity-native",
   }
-  const protocol = protocolMap[provider] ?? "claude-native"
+  const protocol: ProviderProtocol = protocolMap[provider] ?? "claude-native"
   const conn: ProviderConnection = {
     id,
     name: `${provider}-1`,

@@ -54,6 +54,10 @@ function connectionsView() {
     showImportModal: false,
     importFile: null,
     importSkipDuplicates: true,
+    // 模型管理弹窗(替代 +N more 纯文本)
+    showModelManager: false,
+    modelManagerConn: null,
+    modelManagerSearch: "",
 
     t(key, params) {
       const app = document.querySelector("[x-data^=adminApp]")
@@ -819,6 +823,58 @@ function connectionsView() {
       } catch (e) {
         this.showToast(e.message || "Toggle failed", "error")
       }
+    },
+
+    // ── 模型管理弹窗 ─────────────────────────────────────────────
+
+    openModelManager(conn) {
+      this.modelManagerConn = conn
+      this.modelManagerSearch = ""
+      this.showModelManager = true
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    get modelManagerFilteredModels() {
+      const conn = this.modelManagerConn
+      if (!conn?.models) return []
+      const q = this.modelManagerSearch.trim().toLowerCase()
+      if (!q) return conn.models
+      return conn.models.filter(
+        (m) =>
+          m.publicId.toLowerCase().includes(q)
+          || (m.upstreamId || "").toLowerCase().includes(q),
+      )
+    },
+
+    async modelManagerToggle(model) {
+      const conn = this.modelManagerConn
+      if (!conn) return
+      await this.toggleModel(conn, model)
+    },
+
+    async modelManagerBatchToggle(enable) {
+      const conn = this.modelManagerConn
+      if (!conn?.models) return
+      const targets = this.modelManagerFilteredModels.filter(
+        (m) => m.enabled !== enable,
+      )
+      if (targets.length === 0) return
+      // 逐条调用 API(后端没有批量 toggle 端点)
+      for (const m of targets) {
+        try {
+          await API.providerConnections.updateModel(conn.id, m.publicId, {
+            enabled: enable,
+          })
+          m.enabled = enable
+        } catch (e) {
+          this.showToast(e.message || "Batch toggle failed", "error")
+          break
+        }
+      }
+      this.showToast(
+        `${enable ? "Enabled" : "Disabled"} ${targets.length} models`,
+        "success",
+      )
     },
 
     // ── 批量添加模型 ──────────────────────────────────────────────
