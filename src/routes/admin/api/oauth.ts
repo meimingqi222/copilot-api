@@ -1,17 +1,22 @@
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
-import { addAccount, getAccount, listAccounts } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
-import { removeProviderConnection } from "~/lib/provider-connections"
+import {
+  getProviderConnection,
+  isAccountManagedConnection,
+  listAccountManagedConnections,
+  providerFromProtocol,
+  removeProviderConnection,
+} from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
-import { refreshModelsForAccount } from "~/lib/utils"
-import { upgradeOAuthAccountLabelIfNeeded } from "~/services/oauth/account-label"
+import { refreshModelsForConnection } from "~/lib/utils"
+import { upgradeOAuthConnectionLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
 import {
   bindOAuthFlowAbortSignal,
@@ -30,12 +35,12 @@ import {
 } from "~/services/oauth/provider-strategies"
 import {
   cancelOAuthRefreshTimer,
-  scheduleOAuthRefreshForAccount,
+  scheduleOAuthRefreshForConnection,
 } from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
-import { publicAccount } from "./accounts"
+import { publicAccountFromConnection } from "./account-views"
 
 export const oauthApiRoutes = new Hono()
 
@@ -43,7 +48,8 @@ const FLOW_TIMEOUT_MS = 15 * 60 * 1000
 
 function parseLabel(body: { label?: string }, provider: string): string {
   const trimmed = body.label?.trim()
-  return trimmed || `${provider}-${listAccounts().length + 1}`
+  // 使用 connection 原生列表生成默认 label(替代 listAccounts().length)
+  return trimmed || `${provider}-${listAccountManagedConnections().length + 1}`
 }
 
 function parseProxyUrl(body: { proxyUrl?: string }): string | undefined {
@@ -52,7 +58,9 @@ function parseProxyUrl(body: { proxyUrl?: string }): string | undefined {
 }
 
 function removeOAuthAccountFromState(accountId: string): void {
-  if (!getAccount(accountId)) {
+  // 使用 connection 原生访问器检查账号是否存在(替代 getAccount())
+  const conn = getProviderConnection(accountId)
+  if (!conn || !isAccountManagedConnection(conn)) {
     return
   }
 
@@ -63,22 +71,41 @@ function removeOAuthAccountFromState(accountId: string): void {
   removeProviderConnection(accountId)
 }
 
-async function finalizeOAuthAccount(account: OAuthAccount): Promise<void> {
-  upgradeOAuthAccountLabelIfNeeded(account)
-  addAccount(account)
-  scheduleOAuthRefreshForAccount(account)
+/**
+ * 通过 connection 原生访问器获取 publicAccount 视图(替代 getAccount + publicAccount)。
+ * 仅对 account-managed connection 返回视图,否则返回 undefined。
+ */
+function publicAccountForId(accountId: string) {
+  const conn = getProviderConnection(accountId)
+  if (!conn || !isAccountManagedConnection(conn)) return undefined
+  return publicAccountFromConnection(conn)
+}
+
+/**
+ * Phase 3:connection 原生版本的 finalizeOAuthAccount。
+ * connection 已由 strategy.exchange 创建并 upsert,此处只做后续初始化。
+ * Phase 5:直接在 connection 上做 label upgrade,不再经由 getAccount 派生 Account 快照。
+ */
+async function finalizeOAuthConnection(
+  conn: ProviderConnection,
+): Promise<void> {
+  // 直接在 connection 上做 label upgrade
+  upgradeOAuthConnectionLabelIfNeeded(conn)
+  scheduleOAuthRefreshForConnection(conn)
   try {
-    await refreshModelsForAccount(account)
+    await refreshModelsForConnection(conn)
     await saveAccounts()
     initializeProviderRegistry()
-    const runtime = getProviderRuntime(account.provider)
+    const provider = providerFromProtocol(conn.protocol)
+    if (!provider) return
+    const runtime = getProviderRuntime(provider)
     if (runtime.refreshQuota) {
-      void runtime.refreshQuota(account).catch((error: unknown) => {
-        logger.warn(`Failed to refresh quota for "${account.label}":`, error)
+      void runtime.refreshQuota(conn).catch((error: unknown) => {
+        logger.warn(`Failed to refresh quota for "${conn.name}":`, error)
       })
     }
   } catch (error: unknown) {
-    removeOAuthAccountFromState(account.id)
+    removeOAuthAccountFromState(conn.id)
     throw error
   }
 }
@@ -101,18 +128,18 @@ async function executeOAuthExchange(
   }
 
   const strategy = OAUTH_PROVIDER_STRATEGIES[provider]
-  const account = await strategy.exchange({
+  const conn = await strategy.exchange({
     flow: claim.flow,
     code: exchangeInput.code,
     signal: exchangeInput.signal,
   })
 
-  await finalizeOAuthAccount(account)
+  await finalizeOAuthConnection(conn)
   updateOAuthFlow(flowId, {
     status: "complete",
-    accountId: account.id,
+    accountId: conn.id,
   })
-  return account.id
+  return conn.id
 }
 
 oauthApiRoutes.post("/:provider/start", async (c) => {
@@ -282,32 +309,33 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
   }
 
   if (flow.status === "complete" && flow.accountId) {
-    const account = getAccount(flow.accountId)
+    // 使用 connection 原生访问器获取账号视图(替代 getAccount + publicAccount)
+    const account = publicAccountForId(flow.accountId)
     return c.json({
       status: "complete",
       accountId: flow.accountId,
-      account: account ? publicAccount(account) : undefined,
+      account,
     })
   }
 
   try {
     const accountId = await executeOAuthExchange(provider, flowId, { code })
-    const account = getAccount(accountId)
+    const account = publicAccountForId(accountId)
     return c.json({
       status: "complete",
       accountId,
-      account: account ? publicAccount(account) : undefined,
+      account,
     })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error)
     if (message === "OAuth flow is not available for token exchange") {
       const current = getOAuthFlow(flowId)
       if (current?.status === "complete" && current.accountId) {
-        const account = getAccount(current.accountId)
+        const account = publicAccountForId(current.accountId)
         return c.json({
           status: "complete",
           accountId: current.accountId,
-          account: account ? publicAccount(account) : undefined,
+          account,
         })
       }
       if (current?.status === "exchanging") {
@@ -370,10 +398,11 @@ oauthApiRoutes.get("/:provider/poll/:flowId", (c) => {
 
   const result = pollOAuthFlow(flowId)
   if (result.status === "complete" && result.accountId) {
-    const account = getAccount(result.accountId)
+    // 使用 connection 原生访问器获取账号视图(替代 getAccount + publicAccount)
+    const account = publicAccountForId(result.accountId)
     return c.json({
       ...result,
-      account: account ? publicAccount(account) : undefined,
+      account,
     })
   }
 

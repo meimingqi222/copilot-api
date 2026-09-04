@@ -1,4 +1,10 @@
-import { connectionToAccount } from "~/lib/provider-connections"
+/**
+ * Codex Native Protocol Adapter。
+ *
+ * Phase 2d:纯 (connection, credential) 热路径,不再经由
+ * connectionToAccount 派生 Account。
+ */
+
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 
 import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
@@ -29,26 +35,27 @@ export const codexNativeAdapter: ProtocolAdapter = {
         signal: sig,
         ctx: context,
       }) => {
-        const account = connectionToAccount(conn)
         const response = await createCodexResponsesOnce(
-          account,
+          { connection: conn, credential },
           responsesPayload,
           sig,
           context,
         )
-        return { credentialId: account.id, response } as AdapterResponsesResult
+        return {
+          credentialId: credential.id,
+          response,
+        } as AdapterResponsesResult
       },
     })
   },
 
-  async createResponses({ connection, payload, signal, ctx }) {
-    const account = connectionToAccount(connection)
+  async createResponses({ connection, credential, payload, signal, ctx }) {
     const response = await createCodexResponsesOnce(
-      account,
+      { connection, credential },
       payload,
       signal,
       ctx,
     )
-    return { credentialId: account.id, response } as AdapterResponsesResult
+    return { credentialId: credential.id, response } as AdapterResponsesResult
   },
 }

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
 import { createCodebuffChatCompletionsOnce } from "~/services/codebuff/create-chat-completions"
 
@@ -10,16 +13,27 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-describe("Codebuff agent run cleanup", () => {
-  test("returns the main non-stream response when FINISH fails", async () => {
-    const account: Account = {
-      id: "codebuff-1",
-      label: "codebuff",
-      provider: "codebuff",
-      enabled: true,
-      priority: 0,
-      createdAt: Date.now(),
-      credentials: { authToken: "token" },
+function buildCodebuffConnection(): {
+  connection: ProviderConnection
+  credential: ApiCredential
+} {
+  const credential: ApiCredential = {
+    id: "codebuff-1",
+    authMode: "bearer",
+    value: "token",
+    enabled: true,
+    status: "ready",
+    createdAt: Date.now(),
+  }
+  const connection: ProviderConnection = {
+    id: "codebuff-1",
+    name: "codebuff",
+    protocol: "codebuff-native",
+    baseUrl: "",
+    enabled: true,
+    priority: 0,
+    createdAt: Date.now(),
+    metadata: {
       settings: {
         baseUrl: "https://codebuff.test",
         cliVersion: "1.0.0",
@@ -28,7 +42,15 @@ describe("Codebuff agent run cleanup", () => {
         costMode: "normal",
         allowFallbacks: true,
       },
-    }
+    },
+    credentials: [credential],
+  }
+  return { connection, credential }
+}
+
+describe("Codebuff agent run cleanup", () => {
+  test("returns the main non-stream response when FINISH fails", async () => {
+    const { connection, credential } = buildCodebuffConnection()
     const fetchMock = mock((url: string, init?: RequestInit) => {
       const rawBody = typeof init?.body === "string" ? init.body : "{}"
       const body = JSON.parse(rawBody) as {
@@ -57,11 +79,14 @@ describe("Codebuff agent run cleanup", () => {
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    const result = await createCodebuffChatCompletionsOnce(account, {
-      model: "model-1",
-      messages: [{ role: "user", content: "hello" }],
-      stream: false,
-    })
+    const result = await createCodebuffChatCompletionsOnce(
+      { connection, credential },
+      {
+        model: "model-1",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false,
+      },
+    )
 
     expect(result).toMatchObject({ id: "chatcmpl-1" })
     expect(fetchMock).toHaveBeenCalledTimes(3)
@@ -70,23 +95,7 @@ describe("Codebuff agent run cleanup", () => {
 
 describe("Codebuff agent run id shape", () => {
   test("accepts snake_case run_id from the upstream START response", async () => {
-    const account: Account = {
-      id: "codebuff-1",
-      label: "codebuff",
-      provider: "codebuff",
-      enabled: true,
-      priority: 0,
-      createdAt: Date.now(),
-      credentials: { authToken: "token" },
-      settings: {
-        baseUrl: "https://codebuff.test",
-        cliVersion: "1.0.0",
-        agentId: "agent",
-        model: "model-1",
-        costMode: "normal",
-        allowFallbacks: true,
-      },
-    }
+    const { connection, credential } = buildCodebuffConnection()
     const fetchMock = mock((url: string, init?: RequestInit) => {
       const rawBody = typeof init?.body === "string" ? init.body : "{}"
       const body = JSON.parse(rawBody) as { action?: string }
@@ -118,11 +127,14 @@ describe("Codebuff agent run id shape", () => {
     })
     globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    const result = await createCodebuffChatCompletionsOnce(account, {
-      model: "model-1",
-      messages: [{ role: "user", content: "hello" }],
-      stream: false,
-    })
+    const result = await createCodebuffChatCompletionsOnce(
+      { connection, credential },
+      {
+        model: "model-1",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false,
+      },
+    )
 
     expect(result).toMatchObject({ id: "chatcmpl-1" })
     expect(fetchMock).toHaveBeenCalledTimes(3)

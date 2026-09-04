@@ -1,9 +1,5 @@
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "~/lib/accounts"
-
-import { getOAuthAccountId, isOAuthAccount } from "~/lib/accounts"
-
 const CODEX_USER_AGENT =
   "codex-tui/0.144.1 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.144.1)"
 
@@ -23,10 +19,14 @@ export interface CodexHeaderOptions {
    * `x-client-request-id`. When omitted, a random UUID is generated.
    */
   threadId?: string
+  /**
+   * OAuth account id (credential.context.oauthAccountId), sent as
+   * `Chatgpt-Account-Id` when present.
+   */
+  accountId?: string
 }
 
 export function buildCodexHeaders(
-  account: Account,
   accessToken: string,
   stream?: boolean,
   options?: CodexHeaderOptions,
@@ -49,11 +49,8 @@ export function buildCodexHeaders(
     "x-client-request-id": threadId,
   }
 
-  if (isOAuthAccount(account)) {
-    const accountId = getOAuthAccountId(account)
-    if (accountId) {
-      headers["Chatgpt-Account-Id"] = accountId
-    }
+  if (options?.accountId) {
+    headers["Chatgpt-Account-Id"] = options.accountId
   }
 
   headers.Accept = stream ? "text/event-stream" : "application/json"

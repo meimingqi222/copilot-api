@@ -1,7 +1,8 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
+import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { isOAuthAccount } from "~/lib/accounts"
+import { getConnectionProvider } from "~/lib/provider-connections"
 import {
   buildCodexQuotaMeta,
   fetchCodexResetCredits,
@@ -11,17 +12,17 @@ import { enrichQuotaDetails } from "~/lib/quota/cycles"
 import { summarizeCodexQuota } from "~/lib/quota/parsers"
 
 export async function fetchCodexQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
-  if (!isOAuthAccount(account) || account.provider !== "codex") {
-    throw new Error("fetchCodexQuota requires a Codex OAuth account")
+  if (getConnectionProvider(connection) !== "codex") {
+    throw new Error("fetchCodexQuota requires a Codex OAuth connection")
   }
 
-  const payload = await fetchCodexUsagePayload(account, signal)
-  const resetCredits = await fetchCodexResetCredits(account, signal)
+  const payload = await fetchCodexUsagePayload(connection, signal)
+  const resetCredits = await fetchCodexResetCredits(connection, signal)
   const summary = summarizeCodexQuota(payload)
-  const meta = buildCodexQuotaMeta(account, payload, resetCredits)
+  const meta = buildCodexQuotaMeta(connection, payload, resetCredits)
 
   return {
     fetchedAt: Date.now(),

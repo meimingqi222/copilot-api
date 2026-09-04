@@ -1,7 +1,11 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
+import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { getOAuthProjectId, isOAuthAccount } from "~/lib/accounts"
+import {
+  getConnectionProvider,
+  getCredentialContextString,
+} from "~/lib/provider-connections"
 import {
   ANTIGRAVITY_QUOTA_URLS,
   ANTIGRAVITY_REQUEST_HEADERS,
@@ -14,23 +18,23 @@ import {
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 
 export async function fetchAntigravityQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
-  if (!isOAuthAccount(account) || account.provider !== "antigravity") {
+  if (getConnectionProvider(connection) !== "antigravity") {
     throw new Error(
-      "fetchAntigravityQuota requires an Antigravity OAuth account",
+      "fetchAntigravityQuota requires an Antigravity OAuth connection",
     )
   }
 
-  const projectId = getOAuthProjectId(account)
+  const projectId = readConnectionProjectId(connection)
   if (!projectId) {
     throw new Error("Antigravity quota request requires project_id")
   }
 
   let lastError = "Antigravity quota request failed"
   for (const url of ANTIGRAVITY_QUOTA_URLS) {
-    const response = await executeUpstreamProxyCall(account, {
+    const response = await executeUpstreamProxyCall(connection, {
       method: "POST",
       url,
       headers: { ...ANTIGRAVITY_REQUEST_HEADERS },
@@ -68,4 +72,17 @@ export async function fetchAntigravityQuota(
   }
 
   throw new Error(lastError)
+}
+
+/** 读取 projectId(context 优先,回退迁移期的 credentialExtras)。 */
+function readConnectionProjectId(
+  connection: ProviderConnection,
+): string | undefined {
+  const fromContext = getCredentialContextString(connection, "projectId")
+  if (fromContext) return fromContext
+  const extras = connection.metadata?.credentialExtras as
+    | Record<string, unknown>
+    | undefined
+  const value = extras?.projectId
+  return typeof value === "string" && value ? value : undefined
 }

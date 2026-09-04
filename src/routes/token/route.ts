@@ -1,9 +1,9 @@
 import { Hono } from "hono"
 
-import { getActiveAccount } from "~/lib/account-selection"
-import { getCopilotToken } from "~/lib/accounts"
 import { forwardError } from "~/lib/error"
+import { getFirstAvailableAccountManagedConnection } from "~/lib/legacy-accounts"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
+import { getConnectionCopilotToken } from "~/lib/provider-connections"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
 import { recordTraceError } from "~/lib/request-log"
 
@@ -12,9 +12,20 @@ export const tokenRoute = new Hono()
 tokenRoute.get("/", (c) => {
   try {
     checkProtectedRouteGuard(c, { routeKind: "token" })
-    const account = getActiveAccount()
+    // Phase 1.7:直接用 connection 原生,不再经由 getActiveAccount() →
+    // Account 快照 → getCopilotToken(account) 桥接。
+    const connection = getFirstAvailableAccountManagedConnection()
+    if (!connection) {
+      return c.json(
+        {
+          error:
+            "No available accounts (all disabled or no accounts configured)",
+        },
+        503,
+      )
+    }
     return c.json({
-      token: getCopilotToken(account),
+      token: getConnectionCopilotToken(connection),
     })
   } catch (error) {
     recordTraceError(c, error)

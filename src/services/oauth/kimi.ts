@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { hostname } from "node:os"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { applyOAuthBundle } from "./apply-bundle"
+import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 export const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
@@ -221,10 +221,12 @@ export async function refreshKimiTokens(
 }
 
 export function applyKimiOAuthBundle(
-  account: OAuthAccount,
+  connection: ProviderConnection,
   bundle: KimiOAuthBundle,
 ): void {
-  applyOAuthBundle(account, bundle, { deviceId: bundle.deviceId })
+  applyOAuthBundleToCredential(connection, bundle, {
+    deviceId: bundle.deviceId,
+  })
 }
 
 export function stripKimiModelPrefix(model: string): string {

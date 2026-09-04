@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test"
 
-import { listAccounts } from "~/lib/accounts"
+import { listProviderConnections } from "~/lib/provider-connections"
 
 import type {
   ChatCompletionsPayload,
@@ -72,12 +72,14 @@ function createWithSelectedAccount(
     initiatorOverride?: "agent" | "user"
   },
 ) {
-  const account = listAccounts().at(0)
-  if (!account) {
-    throw new Error("Expected at least one account in test state")
+  const connection = listProviderConnections().at(0)
+  if (!connection) {
+    throw new Error("Expected at least one connection in test state")
   }
+  const credential = connection.credentials[0]
   return createChatCompletions(payload, {
-    account,
+    connection,
+    credential,
     ...options,
   })
 }

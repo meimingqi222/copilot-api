@@ -1,17 +1,20 @@
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { isChatCompletionResponse } from "~/lib/utils"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { stripKimiModelPrefix } from "~/services/oauth/kimi"
 import {
   detectOpenAIStreamError,
@@ -41,17 +44,28 @@ async function* openAiSseToCopilotEvents(
 }
 
 export async function createKimiChatCompletionsOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "kimi") {
-    throw new Error(`Kimi chat requires a Kimi OAuth account`)
+  if (connection.protocol !== "kimi-native") {
+    throw new Error(`Kimi chat requires a Kimi OAuth connection`)
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`Kimi access token missing for account "${account.label}"`)
+    throw new Error(
+      `Kimi access token missing for connection "${connection.name}"`,
+    )
   }
 
   const model = canonicalNativeModelId(payload.model)
@@ -61,9 +75,9 @@ export async function createKimiChatCompletionsOnce(
     model: upstreamModel,
   }
 
-  const response = await fetchWithOAuthProxy(account, KIMI_CHAT_URL, {
+  const response = await fetchWithConnectionProxy(connection, KIMI_CHAT_URL, {
     method: "POST",
-    headers: buildKimiHeaders(account, accessToken, payload.stream === true),
+    headers: buildKimiHeaders(connection, accessToken, payload.stream === true),
     body: JSON.stringify(requestBody),
     signal,
   })

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
 import { UpstreamTransportError } from "~/lib/error"
 import { createResponsesErrorPayload } from "~/routes/responses/handler"
@@ -160,6 +163,36 @@ describe("selectUpstreamWsBody fallback", () => {
   })
 })
 
+function makeCodexSubject(): {
+  connection: ProviderConnection
+  credential: ApiCredential
+} {
+  const credential: ApiCredential = {
+    id: "cred-1",
+    authMode: "bearer",
+    value: "token",
+    enabled: true,
+    status: "ready",
+    createdAt: Date.now(),
+    refresherType: "oauth-token",
+    context: { oauthAccountId: "acct-1" },
+  }
+  return {
+    credential,
+    connection: {
+      id: "codex-1",
+      name: "codex",
+      protocol: "codex-native",
+      baseUrl: "https://api.openai.com/v1",
+      enabled: true,
+      priority: 0,
+      createdAt: Date.now(),
+      credentials: [credential],
+      metadata: { provider: "codex" },
+    },
+  }
+}
+
 describe("chained HTTP recovery", () => {
   test("expands a previous_response_id delta from the stable transcript", async () => {
     const sessionId = "stable-session"
@@ -192,17 +225,8 @@ describe("chained HTTP recovery", () => {
       )
     }) as typeof fetch
 
-    const account: Account = {
-      id: "codex-1",
-      label: "codex",
-      provider: "codex",
-      credentials: { accessToken: "token", accountId: "acct-1" },
-      enabled: true,
-      priority: 0,
-      createdAt: Date.now(),
-    }
     const stream = await createCodexResponsesOnce(
-      account,
+      makeCodexSubject(),
       {
         model: "gpt-5",
         input: [
@@ -276,15 +300,6 @@ describe("chained HTTP recovery", () => {
       )
     }) as typeof fetch
 
-    const account: Account = {
-      id: "codex-1",
-      label: "codex",
-      provider: "codex",
-      credentials: { accessToken: "token", accountId: "acct-1" },
-      enabled: true,
-      priority: 0,
-      createdAt: Date.now(),
-    }
     const context = {
       downstreamWebsocket: true,
       executionSessionId: "fresh-socket",
@@ -293,7 +308,7 @@ describe("chained HTTP recovery", () => {
       forceUpstreamHttp: true,
     }
     const first = await createCodexResponsesOnce(
-      account,
+      makeCodexSubject(),
       {
         model: "gpt-5",
         input: [{ type: "message", role: "user", content: "run pwd" } as never],
@@ -307,7 +322,7 @@ describe("chained HTTP recovery", () => {
     }
 
     const second = await createCodexResponsesOnce(
-      account,
+      makeCodexSubject(),
       {
         model: "gpt-5",
         input: [

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
@@ -8,12 +11,12 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { canonicalNativeModelId, getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
 import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
-import { isAbortError, isChatCompletionResponse, sleep } from "~/lib/utils"
+import { isAbortError, sleep } from "~/lib/utils"
 
 import {
   createWindsurfAttempt,
@@ -49,6 +52,7 @@ import {
   type WindsurfRawUsageSignals,
   parseChatStreamFrame,
 } from "./response-parsers"
+import { resolveWindsurfRuntimeSettings } from "./settings"
 import {
   primeWindsurfStream,
   WindsurfFirstFrameTimeoutError,
@@ -60,12 +64,13 @@ export type { WindsurfCacheDebugContext } from "./attempt"
 // ── Model resolution ───────────────────────────────────────────────────────────
 
 export function resolveWindsurfRequestModel(
-  account: Account,
+  connection: ProviderConnection,
   modelId: string,
 ): string {
   const normalizedModelId = canonicalNativeModelId(modelId)
-  const matchedModel = account.availableModels?.find(
-    (candidate) => canonicalNativeModelId(candidate.id) === normalizedModelId,
+  const matchedModel = connection.models?.find(
+    (candidate) =>
+      canonicalNativeModelId(candidate.publicId) === normalizedModelId,
   )
   const upstreamId = matchedModel?.upstreamId ?? modelId
   return /^model(?:_private)?_/i.test(upstreamId) ?
@@ -484,57 +489,37 @@ export function mergeWindsurfUsageFrames(
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
-export async function createWindsurfChatCompletions(options: {
-  account: Account
-  payload: ChatCompletionsPayload
-  signal?: AbortSignal
-  ctx?: RequestExecutionContext
-}): Promise<
-  | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
-  | { accountId: string; response: ChatCompletionResponse }
-> {
-  const { account, payload, signal, ctx } = options
-  const result = await createWindsurfChatCompletionsOnce(
-    account,
-    payload,
-    signal,
-    ctx,
-  )
-
-  if (isChatCompletionResponse(result)) {
-    return {
-      accountId: account.id,
-      response: result,
-    }
-  }
-
-  return {
-    accountId: account.id,
-    response: result,
-  }
-}
-
 export async function createWindsurfChatCompletionsOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
-  const settings = getWindsurfSettings(account)
+  const settings = resolveWindsurfRuntimeSettings(connection, credential)
   if (!settings) {
-    throw new Error(`Windsurf settings missing for account "${account.label}"`)
+    throw new Error(
+      `Windsurf settings missing for connection "${connection.name}"`,
+    )
   }
 
   const apiKey = settings.apiKey
   if (!apiKey) {
-    throw new Error(`Windsurf API key missing for account "${account.label}"`)
+    throw new Error(
+      `Windsurf API key missing for connection "${connection.name}"`,
+    )
   }
 
-  // Pre-check account cooldown: skip the rate-limiter gate + request
+  // Pre-check connection cooldown: skip the rate-limiter gate + request
   // build if WindSurf already returned a 3h cooldown. This avoids
   // wasting client wait time and prevents unnecessary messages from
   // counting toward the quota while the cooldown is still active.
-  const cooldownSeconds = getRemainingCooldownSeconds(account.id)
+  const cooldownSeconds = getRemainingCooldownSeconds(connection.id)
   if (cooldownSeconds > 0) {
     throw new WindsurfUpstreamError(
       {
@@ -548,8 +533,8 @@ export async function createWindsurfChatCompletionsOnce(
 
   const model = canonicalNativeModelId(payload.model)
   const releaseAccountRequest = beginWindsurfAccountRequest({
-    accountId: account.id,
-    accountLabel: account.label,
+    accountId: connection.id,
+    accountLabel: connection.name,
     model,
     streaming: Boolean(payload.stream),
     memoryTraceId: ctx?.memoryTraceId,
@@ -563,13 +548,13 @@ export async function createWindsurfChatCompletionsOnce(
       let attempt: WindsurfAttempt | undefined
       try {
         attempt = await createWindsurfAttempt({
-          account,
+          connection,
           payload,
           signal,
           ctx,
           settings: { apiKey, baseUrl: settings.baseUrl },
           model,
-          requestModel: resolveWindsurfRequestModel(account, payload.model),
+          requestModel: resolveWindsurfRequestModel(connection, payload.model),
           fetcher: fetchWithRetry,
           streamFactory: streamToOpenAI,
         })
@@ -612,8 +597,8 @@ export async function createWindsurfChatCompletionsOnce(
           && attemptNumber <= firstFrameRetries
         ) {
           logger.warn("[windsurf] first frame timeout; retrying account", {
-            accountId: account.id,
-            accountLabel: account.label,
+            accountId: connection.id,
+            accountLabel: connection.name,
             model,
             timeoutMs: error.timeoutMs,
             retry: attemptNumber,

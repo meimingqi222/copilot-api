@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto"
 import { hostname } from "node:os"
 
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { getOAuthDeviceId, isOAuthAccount } from "~/lib/accounts"
+import { getCredentialContextString } from "~/lib/provider-connections"
 
 // UUID v5 namespace (RFC 4122 OID namespace) for deterministic Kimi device ids.
 const KIMI_DEVICE_NS = "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
@@ -27,27 +27,27 @@ function deterministicKimiDeviceId(name: string): string {
 }
 
 /**
- * Resolve a stable per-account device ID. OAuth accounts keep the device ID
- * issued at login. Non-OAuth accounts get a deterministic ID derived from the
- * account id. The per-request randomUUID() fallback is avoided because a fresh
- * device ID on every request reads as an unstable/bot device, which is the
- * signal Kimi's anti-abuse looks for.
+ * Resolve a stable per-connection device ID. OAuth connections keep the device
+ * ID issued at login (credential.context.deviceId). The per-request
+ * randomUUID() fallback is avoided because a fresh device ID on every request
+ * reads as an unstable/bot device, which is the signal Kimi's anti-abuse
+ * looks for.
  */
-function resolveKimiDeviceId(account: Account): string {
-  const id = account.id.trim()
+function resolveKimiDeviceId(connection: ProviderConnection): string {
+  const id = connection.id.trim()
   if (!id) return randomUUID()
-  if (isOAuthAccount(account)) {
-    return getOAuthDeviceId(account) ?? deterministicKimiDeviceId(`kimi:${id}`)
-  }
-  return deterministicKimiDeviceId(`kimi:${id}`)
+  return (
+    getCredentialContextString(connection, "deviceId")
+    ?? deterministicKimiDeviceId(`kimi:${id}`)
+  )
 }
 
 export function buildKimiHeaders(
-  account: Account,
+  connection: ProviderConnection,
   accessToken: string,
   stream?: boolean,
 ): Record<string, string> {
-  const deviceId = resolveKimiDeviceId(account)
+  const deviceId = resolveKimiDeviceId(connection)
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
 import {
@@ -10,7 +10,7 @@ import {
   buildUpstreamResponsesCreateBody,
   clearUpstreamWebsocketSessionsForTest,
   isAbortLikeError,
-  isAccountWebsocketsEnabled,
+  isConnectionWebsocketsEnabled,
   isUpstreamWsTransportError,
   normalizeUpstreamWsEvent,
   shouldUseUpstreamResponsesWebsocket,
@@ -33,18 +33,34 @@ function wsError(message: string): HTTPError {
   )
 }
 
-function makeAccount(
-  provider: Account["provider"],
+function makeConnection(
+  provider: "codex" | "xai",
   settings?: Record<string, unknown>,
-): Account {
+): ProviderConnection {
   return {
     id: "acc-1",
-    label: "test",
-    provider,
+    name: "test",
+    protocol: provider === "codex" ? "codex-native" : "xai-native",
+    baseUrl: "https://example.invalid",
     enabled: true,
     priority: 0,
     createdAt: Date.now(),
-    settings,
+    credentials: [
+      {
+        id: "cred-1",
+        authMode: "bearer",
+        value: "",
+        enabled: true,
+        status: "ready",
+        createdAt: Date.now(),
+        refresherType: "oauth-token",
+      },
+    ],
+    metadata: {
+      provider,
+      quotaState: "unknown",
+      ...(settings ? { settings } : {}),
+    },
   }
 }
 
@@ -177,24 +193,30 @@ describe("upstream event normalization", () => {
 
 describe("websocket enablement", () => {
   test("defaults on for codex/xai", () => {
-    expect(isAccountWebsocketsEnabled(makeAccount("codex"), "codex")).toBe(true)
-    expect(isAccountWebsocketsEnabled(makeAccount("xai"), "xai")).toBe(true)
+    expect(
+      isConnectionWebsocketsEnabled(makeConnection("codex"), "codex"),
+    ).toBe(true)
+    expect(isConnectionWebsocketsEnabled(makeConnection("xai"), "xai")).toBe(
+      true,
+    )
   })
 
   test("explicit false disables", () => {
     expect(
-      isAccountWebsocketsEnabled(
-        makeAccount("xai", { websockets: false }),
+      isConnectionWebsocketsEnabled(
+        makeConnection("xai", { websockets: false }),
         "xai",
       ),
     ).toBe(false)
   })
 
   test("requires downstream websocket context", () => {
-    const account = makeAccount("xai")
-    expect(shouldUseUpstreamResponsesWebsocket(account, "xai", {})).toBe(false)
+    const connection = makeConnection("xai")
+    expect(shouldUseUpstreamResponsesWebsocket(connection, "xai", {})).toBe(
+      false,
+    )
     expect(
-      shouldUseUpstreamResponsesWebsocket(account, "xai", {
+      shouldUseUpstreamResponsesWebsocket(connection, "xai", {
         downstreamWebsocket: true,
       }),
     ).toBe(true)

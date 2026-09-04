@@ -1,31 +1,36 @@
 /**
- * 把 ProviderConnection + ApiCredential + ModelMapping 和 legacy Account
- * 展平为可调度的 RouteTarget。
+ * 把 ProviderConnection + ApiCredential + ModelMapping 展平为可调度的 RouteTarget。
  *
  * 输出按 (publicId, endpoint) 维度组织,选择器在此基础上做优先级与权重判定。
  *
- * Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
- * 注入到 connections 候选池中。account 循环分支已删除,但生成的虚拟 connection target
- * 仍携带 `account` 字段用于 build 时模型匹配,但 RouteTarget 不再包含 account 字段。
+ * Step D 收尾(Phase 1):account-managed connections 已常驻
+ * stateRoot.connections,不再经由 `state.accounts → accountToConnection`
+ * 派生虚拟 connection —— 所有 connection 走单一候选池路径。
+ *
+ * 通配 target 语义(D.2/D.3):
+ * - account-managed connection 且 conn.models === undefined/null(尚未加载)
+ *   → 为请求的模型生成通配 target(兜底)
+ * - conn.models === [](已加载但为空) → 跳过(不生成任何 target)
+ * - conn.models 非空 → 逐模型生成专用 target
+ * - 普通 connection(*-compatible)models 未加载时不生成 target(保持现行为)
  */
 
-import type { Account, AccountModel } from "~/lib/accounts"
 import type { ProviderId } from "~/lib/provider-config"
 
-import { accountToConnection } from "~/lib/account-adapter"
-import { isAccountAvailable } from "~/lib/account-availability"
 import {
-  buildAccountModelAliases,
-  getAccountModelPrefix,
-  listAccounts,
-} from "~/lib/accounts"
-import {
+  buildConnectionModelAliases,
   connectionMatchesAliasRestriction,
   getExposedAliasEntries,
   type ModelAliasRestriction,
 } from "~/lib/model-aliases"
 import {
   DEFAULTS,
+  accountManagedModelPrefix,
+  accountManagedProvider,
+  getConnectionAuthStatus,
+  getConnectionCooldownUntil,
+  getConnectionQuotaExhaustedAt,
+  getConnectionQuotaState,
   isAccountManagedConnection,
   isCredentialAvailable,
   listProviderConnections,
@@ -36,6 +41,7 @@ import {
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
+import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -53,11 +59,9 @@ export interface BuildRouteTargetsOptions {
   onlyAvailable?: boolean
   /** 自定义 connection 列表(供测试)。 */
   connections?: Array<ProviderConnection>
-  /** 自定义 account 列表(供测试);默认从 state.accounts 读取。 */
-  accounts?: Array<Account>
-  /** 仅匹配指定 legacy provider 的账户。 */
+  /** 仅匹配指定 legacy provider 的 account-managed connection。 */
   legacyProvider?: ProviderId
-  /** 仅匹配指定 modelPrefix 的账户。 */
+  /** 仅匹配指定 modelPrefix 的 account-managed connection。 */
   accountPrefix?: string
   /** Restrict candidates to the scope of a matched global alias rule. */
   aliasRestriction?: ModelAliasRestriction
@@ -67,81 +71,51 @@ export function buildRouteTargets(
   options: BuildRouteTargetsOptions = {},
 ): Array<RouteTarget> {
   const onlyAvailable = options.onlyAvailable ?? true
-  const rawConnections = options.connections ?? listProviderConnections()
-  // account-managed connections(*-native protocol)已在 stateRoot.connections 中,
-  // 但它们也会通过 state.accounts → accountToConnection 作为虚拟 connection 加入。
-  // 为避免重复,从 baseConnections 中排除 account-managed connections。
-  // 判别器用 protocol 派生(非 AccountLegacyMetadata),T5.2.5 后仍然有效。
-  const baseConnections = rawConnections.filter(
-    (conn) => !isAccountManagedConnection(conn),
-  )
-  const accounts = options.accounts ?? listAccounts()
-
-  // Step A(3.2):state.accounts 通过 accountToConnection 转换为虚拟 ProviderConnection,
-  // 合并到 connections 候选池。批次 3：RouteTarget.account 已删除，
-  // account 仅在 build 时用于模型匹配/端点解析，不放入 RouteTarget。
-  const virtualConnections: Array<{
-    connection: ProviderConnection
-    account: Account
-  }> = []
-  for (const account of accounts) {
-    if (onlyAvailable && !isAccountAvailable(account)) {
-      continue
-    }
-    if (options.legacyProvider && account.provider !== options.legacyProvider) {
-      continue
-    }
-    if (options.accountPrefix) {
-      const prefix = getAccountModelPrefix(account).toLowerCase()
-      if (prefix !== options.accountPrefix.toLowerCase()) continue
-    }
-    // availableModels === []：已加载但为空,跳过此账户
-    if (
-      account.availableModels !== undefined
-      && account.availableModels.length === 0
-    ) {
-      continue
-    }
-    virtualConnections.push({
-      connection: accountToConnection(account),
-      account,
-    })
-  }
-
-  // 合并:先普通 connection,再虚拟 connection(account-backed)
-  // connectionId 过滤时虚拟 connection 也要参与
-  const allConnections: Array<{
-    connection: ProviderConnection
-    account?: Account
-  }> = [
-    ...baseConnections.map((connection) => ({
-      connection,
-      account: undefined as Account | undefined,
-    })),
-    ...virtualConnections.map(({ connection, account }) => ({
-      connection,
-      account,
-    })),
-  ]
+  const connections = options.connections ?? listProviderConnections()
 
   const targets: Array<RouteTarget> = []
 
-  for (const { connection, account } of allConnections) {
-    if (options.connectionId && connection.id !== options.connectionId) continue
+  for (const connection of connections) {
+    if (options.connectionId && connection.id !== options.connectionId) {
+      continue
+    }
     if (
       !connectionMatchesAliasRestriction(connection, options.aliasRestriction)
     ) {
       continue
     }
     if (onlyAvailable && !connection.enabled) continue
+    if (
+      options.legacyProvider
+      && !connectionMatchesProvider(connection, options.legacyProvider)
+    ) {
+      continue
+    }
+    if (
+      options.accountPrefix
+      && !connectionMatchesPrefix(connection, options.accountPrefix)
+    ) {
+      continue
+    }
 
     const credentials = safeCredentials(connection)
     // 直接在原 connection 上 refresh,让 stateRoot 中的 credential
     // 状态被正确恢复(已过期的 cooldown / quota_exhausted → ready)。
     refreshConnectionAvailability(connection)
 
-    // account-backed 虚拟 connection 特殊处理:availableModels === undefined 生成通配 target
-    if (account && account.availableModels === undefined) {
+    const accountManaged = isAccountManagedConnection(connection)
+
+    // account-managed 可用性预过滤(镜像原 isAccountAvailable 账户级门禁:
+    // credential.enabled / authStatus / 限流器冷却 / 配额耗尽)
+    if (
+      onlyAvailable
+      && accountManaged
+      && !isAccountManagedConnectionRoutable(connection)
+    )
+      continue
+
+    // account-managed connection 尚未加载模型(undefined/null)→ 通配 target
+    if (accountManaged && modelsNotLoaded(connection)) {
       // 尚未加载:为请求的模型生成通配 target(publicModelId 为空则不生成)
       if (!options.publicModelId) continue
       const ep: Array<ModelEndpoint> =
@@ -149,8 +123,6 @@ export function buildRouteTargets(
           [options.endpoint]
         : (["chat"] as Array<ModelEndpoint>)
       for (const endpoint of ep) {
-        if (options.connectionId && connection.id !== options.connectionId)
-          continue
         targets.push({
           connectionId: connection.id,
           connectionName: connection.name,
@@ -178,22 +150,17 @@ export function buildRouteTargets(
     const models = connection.models ?? []
     for (const model of models) {
       if (!model.enabled) continue
-      // Both account-backed and plain connections use resolveEndpoints so a
-      // request for one endpoint (e.g. "messages") can fall back to another
-      // the connection actually supports (e.g. "chat"), enabling cross-protocol
-      // translation in the dispatch layer.
+      // account-backed 和普通 connection 都走 resolveEndpoints,使请求的
+      // endpoint(如 "messages")可以回退到 connection 实际支持的另一个
+      // endpoint(如 "chat"),由 dispatch 层做跨协议翻译。
       const resolved = resolveEndpoints(model.endpoints, options.endpoint)
       if (!resolved) continue
       if (options.publicModelId) {
-        // 对 account-backed 虚拟 connection,使用 account 别名匹配;
-        // 对普通 connection,使用 connection 别名匹配
+        // 对 account-managed connection,使用 prefix 别名匹配;
+        // 对普通 connection,使用 publicId/aliases 匹配
         const matched =
-          account ?
-            matchesAccountModel(
-              account,
-              modelToAccountModel(model),
-              options.publicModelId,
-            )
+          accountManaged ?
+            matchesConnectionModel(connection, model, options.publicModelId)
           : matchesPublicModelId(model, options.publicModelId)
         if (!matched) continue
       }
@@ -201,10 +168,12 @@ export function buildRouteTargets(
       for (const credential of credentials) {
         if (onlyAvailable && !isCredentialAvailable(credential)) continue
 
-        // account-backed 虚拟 connection:保留请求时的 publicModelId(可能带 provider/自定义前缀),
-        // upstreamModelId 用 model.upstreamId(已剥离前缀)
+        // account-managed connection:保留请求时的 publicModelId(可能带
+        // provider/自定义前缀),upstreamModelId 用 model.upstreamId(已剥离前缀)
         const publicModelId =
-          account ? (options.publicModelId ?? model.publicId) : model.publicId
+          accountManaged ?
+            (options.publicModelId ?? model.publicId)
+          : model.publicId
         pushResolvedTargets(targets, resolved.endpoints, {
           connection,
           credential,
@@ -217,6 +186,78 @@ export function buildRouteTargets(
   }
 
   return targets
+}
+
+/**
+ * connection.models 是否尚未加载(undefined/null)。
+ * 注意与 `[]`(已加载但为空)区分 —— 后者不生成任何 target(D.3 规则 4)。
+ */
+function modelsNotLoaded(connection: ProviderConnection): boolean {
+  const models = (connection as { models?: unknown }).models
+  return models === undefined || models === null
+}
+
+/**
+ * account-managed connection 是否可参与调度。
+ * 镜像原 isAccountAvailable(connectionToAccount(conn)) 的账户级门禁:
+ * enabled(credential 优先)、authStatus error、限流器冷却、配额耗尽
+ * (含自动恢复窗口与 cooldownUntil 过期恢复)。
+ */
+function isAccountManagedConnectionRoutable(
+  connection: ProviderConnection,
+): boolean {
+  const credential = connection.credentials[0]
+  if (credential && !credential.enabled) return false
+  if (getConnectionAuthStatus(connection) === "error") return false
+  if (getRemainingCooldownSeconds(connection.id) > 0) return false
+  if (activeQuotaExhausted(connection)) return false
+  return true
+}
+
+/**
+ * 配额耗尽是否仍然生效(镜像 refreshAccountRuntimeAvailability 的恢复逻辑):
+ * - cooldownUntil 已过期 → 恢复
+ * - quotaExhaustedAt + 自动恢复窗口已过 → 恢复
+ */
+function activeQuotaExhausted(connection: ProviderConnection): boolean {
+  if (getConnectionQuotaState(connection) !== "exhausted") return false
+  const cooldownUntil = getConnectionCooldownUntil(connection)
+  if (cooldownUntil !== undefined && cooldownUntil <= Date.now()) return false
+  const exhaustedAt = getConnectionQuotaExhaustedAt(connection)
+  if (
+    exhaustedAt !== undefined
+    && Date.now() - exhaustedAt >= DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+  ) {
+    return false
+  }
+  return true
+}
+
+/**
+ * legacy provider 过滤:仅 account-managed connection 参与
+ * (镜像原 account.provider !== legacyProvider → skip)。
+ */
+function connectionMatchesProvider(
+  connection: ProviderConnection,
+  legacyProvider: ProviderId,
+): boolean {
+  if (!isAccountManagedConnection(connection)) return false
+  return accountManagedProvider(connection) === legacyProvider
+}
+
+/**
+ * modelPrefix 过滤:仅 account-managed connection 参与
+ * (镜像原 getAccountModelPrefix(account) !== accountPrefix → skip)。
+ */
+function connectionMatchesPrefix(
+  connection: ProviderConnection,
+  accountPrefix: string,
+): boolean {
+  if (!isAccountManagedConnection(connection)) return false
+  return (
+    accountManagedModelPrefix(connection).toLowerCase()
+    === accountPrefix.toLowerCase()
+  )
 }
 
 function pushResolvedTargets(
@@ -249,20 +290,6 @@ function pushResolvedTargets(
   }
 }
 
-/** 将 ModelMapping 转回 AccountModel 形态(仅用于 matchesAccountModel 的别名匹配)。 */
-function modelToAccountModel(model: ModelMapping): AccountModel {
-  // AccountModel.id 与 ModelMapping.publicId 对应;
-  // supportedEndpoints 用空数组占位,matchesAccountModel 只用 id/buildAccountModelAliases
-  return {
-    id: model.publicId,
-    name: model.name || model.publicId,
-    vendor: model.vendor ?? "unknown",
-    pickerEnabled: model.pickerEnabled ?? true,
-    pickerCategory: model.pickerCategory,
-    supportedEndpoints: [],
-  }
-}
-
 function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
   const normalized = requested.toLowerCase()
   if (model.publicId.toLowerCase() === normalized) return true
@@ -270,6 +297,20 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
     return true
   }
   return false
+}
+
+/**
+ * account-managed connection 的模型匹配(镜像原 matchesAccountModel):
+ * 用 prefix 别名集合(nativeId / prefix/nativeId / provider-nativeId)匹配。
+ */
+function matchesConnectionModel(
+  connection: ProviderConnection,
+  model: ModelMapping,
+  requestedId: string,
+): boolean {
+  const aliases = buildConnectionModelAliases(connection, model.publicId)
+  const normalized = requestedId.toLowerCase()
+  return aliases.some((alias) => alias.toLowerCase() === normalized)
 }
 
 /**
@@ -355,19 +396,4 @@ export function listExposedPublicModels(
     }
   }
   return [...out, ...getExposedAliasEntries(out, connections)]
-}
-
-function accountModelId(model: AccountModel): string {
-  return model.id
-}
-
-function matchesAccountModel(
-  account: Account,
-  model: AccountModel,
-  requestedId: string,
-): boolean {
-  const nativeId = accountModelId(model)
-  const aliases = buildAccountModelAliases(account, nativeId)
-  const normalized = requestedId.toLowerCase()
-  return aliases.some((alias) => alias.toLowerCase() === normalized)
 }

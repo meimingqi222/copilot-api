@@ -22,9 +22,13 @@ export {
   type ResponsesToolChoice,
   type ResponsesUsage,
   shouldUseResponsesApi,
+  shouldUseResponsesApiForConnection,
   supportsChatCompletionsApi,
+  supportsChatCompletionsApiForConnection,
   supportsMessagesApi,
+  supportsMessagesApiForConnection,
   supportsResponsesApi,
+  supportsResponsesApiForConnection,
   withDefaultReasoningSummary,
 } from "~/services/copilot/responses-api-types"
 export {

@@ -2,50 +2,56 @@ import type { Context } from "hono"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 
-import {
-  canonicalModelId,
-  canonicalNativeModelId,
-  getAccount,
-} from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import { resolveModelAlias } from "~/lib/model-aliases"
 import { isProviderId } from "~/lib/provider-config"
+import {
+  connectionProvider,
+  getProviderConnection,
+  isAccountManagedConnection,
+  providerFromProtocol,
+} from "~/lib/provider-connections"
 import { patchRequestLog } from "~/lib/request-log"
-import { parseModelReference } from "~/lib/route-target/model-reference"
+import {
+  canonicalModelId,
+  canonicalNativeModelId,
+  parseModelReference,
+} from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
 
 /** Map request model id to the account catalog public id when possible. */
 export function resolveUsageModelId(accountId: string, model: string): string {
-  const account = getAccount(accountId)
-  if (!account) {
-    // 没有 account 时也解析别名，以便用真实 model id 查询定价
+  // 用 connection 字段直接判断（替代原 getAccount 路径）
+  const conn = getProviderConnection(accountId)
+  if (!conn || !isAccountManagedConnection(conn)) {
+    // 没有 account-managed connection 时也解析别名，以便用真实 model id 查询定价
     return resolveModelAlias(model, accountId).resolvedModelId
   }
 
   const native = canonicalNativeModelId(
-    parseModelReference(model, account).nativeModelId,
+    parseModelReference(model, conn.modelPrefix).nativeModelId,
   )
   // 解析模型别名：将客户端请求的别名映射到真实 model id，
   // 确保用量统计和定价查询使用真实模型而非别名
   const resolvedModel = resolveModelAlias(native, accountId).resolvedModelId
 
-  const matched = account.availableModels?.find(
-    (entry) => canonicalNativeModelId(entry.id) === resolvedModel,
+  const matched = conn.models?.find(
+    (entry) => canonicalNativeModelId(entry.publicId) === resolvedModel,
   )
-  if (matched) return matched.id
+  if (matched) return matched.publicId
 
-  return canonicalModelId(resolvedModel, account)
+  return canonicalModelId(resolvedModel, conn.modelPrefix)
 }
 
 export function identityFromAdmission(
   admission: RequestAdmission,
 ): UsageIdentity {
   return {
-    ownerId: admission.account?.id ?? admission.connection.id,
+    ownerId: admission.connection.id,
     connectionId: admission.target.connectionId,
     credentialId: admission.target.credentialId,
-    provider: admission.account?.provider ?? admission.target.protocol,
+    provider: connectionProvider(admission.connection),
   }
 }
 
@@ -107,9 +113,11 @@ export function recordUsage(input: UsageRecordInput): void {
   try {
     const now = timestamp ?? Date.now()
     const usageModel = resolveUsageModelId(accountId, model)
+    // 用 connection 字段直接派生 provider（替代原 getAccount(accountId)?.provider）
+    const conn = getProviderConnection(accountId)
     const provider =
       explicitProvider
-      ?? getAccount(accountId)?.provider
+      ?? (conn ? providerFromProtocol(conn.protocol) : undefined)
       ?? (c.get("provider") as string | undefined)
       ?? "unknown"
     const resolvedConnectionId =

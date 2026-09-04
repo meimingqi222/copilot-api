@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"

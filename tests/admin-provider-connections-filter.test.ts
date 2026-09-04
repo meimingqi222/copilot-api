@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"

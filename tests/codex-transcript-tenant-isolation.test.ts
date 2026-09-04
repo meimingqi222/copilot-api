@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
@@ -28,20 +31,36 @@ afterEach(() => {
   clearCodexTranscriptsForTest()
 })
 
-function makeAccount(): Account {
-  return {
-    id: "codex-shared-account",
-    label: "codex",
-    provider: "codex",
-    credentials: {
-      type: "oauth",
-      accessToken: "tok",
-      accountId: "acct-1",
+function makeCodexSubject(): {
+  connection: ProviderConnection
+  credential: ApiCredential
+} {
+  const credential: ApiCredential = {
+    id: "cred-1",
+    authMode: "bearer",
+    value: "tok",
+    enabled: true,
+    status: "ready",
+    createdAt: Date.now(),
+    refresherType: "oauth-token",
+    context: {
+      oauthAccountId: "acct-1",
       expiresAt: Date.now() + 100_000,
     },
-    enabled: true,
-    priority: 0,
-    createdAt: Date.now(),
+  }
+  return {
+    credential,
+    connection: {
+      id: "codex-shared-account",
+      name: "codex",
+      protocol: "codex-native",
+      baseUrl: "https://api.openai.com/v1",
+      enabled: true,
+      priority: 0,
+      createdAt: Date.now(),
+      credentials: [credential],
+      metadata: { provider: "codex" },
+    },
   }
 }
 
@@ -73,7 +92,7 @@ async function runHttpTurn(
   }) as typeof fetch
 
   const stream = await createCodexResponsesOnce(
-    makeAccount(),
+    makeCodexSubject(),
     payload as never,
     undefined,
     ctx,

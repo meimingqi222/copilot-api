@@ -1,28 +1,34 @@
 import type { Context } from "hono"
 
-import type { Account } from "~/lib/accounts"
-import type { RouteTarget } from "~/lib/provider-connections"
+import type {
+  ProviderConnection,
+  RouteTarget,
+} from "~/lib/provider-connections"
 import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
 
-import {
-  markAccountRateLimited,
-  markAccountRateLimitedMs,
-  setAccountQuotaState,
-  syncLegacyExhaustedState,
-} from "~/lib/account-availability"
-import { saveAccounts } from "~/lib/account-store"
-import { getAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   DEFAULTS,
   classifyUpstreamError,
+  connectionProvider,
   getMutableProviderConnection,
+  isAccountManagedConnection,
   markCredentialCooldown,
   markCredentialQuotaExhausted,
   persistProviderConnections,
-  syncAccountToConnection,
+  readAccountLegacyMetadata,
+  setConnectionAuthStatus,
+  setConnectionCooldownUntil,
+  setConnectionExhausted,
+  setConnectionQuotaState,
+  setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
+import {
+  getRemainingCooldownSeconds,
+  reportUpstreamRateLimit,
+  reportUpstreamRateLimitMs,
+} from "~/lib/rate-limit"
 import {
   switchToNextRouteTarget,
   resolveConnectionFromTarget,
@@ -97,7 +103,7 @@ export async function executeWithFailover<
             ...current.target,
             connectionName: current.connection.name,
             credentialLabel: current.credential.label,
-            provider: current.account?.provider ?? current.target.protocol,
+            provider: connectionProvider(current.connection),
             upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
           },
           { status: 200, latencyMs: Date.now() - attemptStart },
@@ -143,7 +149,7 @@ export async function executeWithFailover<
           ...current.target,
           connectionName: current.connection.name,
           credentialLabel: current.credential.label,
-          provider: current.account?.provider ?? current.target.protocol,
+          provider: connectionProvider(current.connection),
           upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
         },
         {
@@ -225,7 +231,6 @@ export async function executeWithFailover<
         target: next,
         connection: resolved.connection,
         credential: resolved.credential,
-        account: resolved.account,
         initiator: current.initiator,
         // Keep L0 session binding context so subsequent failovers rebind
         // the same conversation to the newly selected credential.
@@ -237,19 +242,89 @@ export async function executeWithFailover<
 }
 
 /**
- * 批次 3：admission.account 是从 connection 派生的临时对象，
- * 修改它不会写回 state.accounts。通过 id 查找 state.accounts 中的真实 account。
+ * 通过 id 获取 stateRoot.connections 中的可变 connection 引用
+ * (getMutableProviderConnection),冷却/配额写回直接落在其上。
  */
-function resolveStateAccount(id: string) {
-  return getAccount(id)
+function resolveStateConnection(id: string) {
+  return getMutableProviderConnection(id)
+}
+
+/** syncLegacyExhaustedState 的 connection 级镜像。 */
+function syncConnectionExhaustedState(conn: ProviderConnection): void {
+  const meta = readAccountLegacyMetadata(conn)
+  const remainingCooldown = getRemainingCooldownSeconds(conn.id)
+  const exhausted = remainingCooldown > 0 || meta?.quotaState === "exhausted"
+  if (!exhausted) {
+    setConnectionExhausted(conn, false)
+    return
+  }
+  setConnectionExhausted(
+    conn,
+    true,
+    meta?.lastRateLimitAt ?? meta?.quotaExhaustedAt,
+  )
+}
+
+async function persistConnectionState(
+  logPrefix: string,
+  what: string,
+): Promise<void> {
+  await persistProviderConnections().catch((err: unknown) => {
+    logger.warn(
+      `${logPrefix} failed to persist ${what}:`,
+      (err as Error).message,
+    )
+  })
+}
+
+function applyConnectionRateLimitCooldown(
+  conn: ProviderConnection,
+  reason: string,
+): void {
+  const remainingCooldown = getRemainingCooldownSeconds(conn.id)
+  setConnectionRateLimitInfo(conn, Date.now(), reason)
+  setConnectionCooldownUntil(
+    conn,
+    remainingCooldown > 0 ? Date.now() + remainingCooldown * 1000 : undefined,
+  )
+  syncConnectionExhaustedState(conn)
+}
+
+async function markConnectionRateLimited(
+  conn: ProviderConnection,
+  status: number,
+  logPrefix: string,
+): Promise<void> {
+  await reportUpstreamRateLimit(conn.id, new Response(null, { status }))
+  applyConnectionRateLimitCooldown(
+    conn,
+    status === 429 ? "upstream_429" : `upstream_${status}`,
+  )
+  await persistConnectionState(logPrefix, "connection rate-limit state")
+  logger.warn(
+    `Connection "${conn.name}" marked unavailable due to upstream rate limit`,
+  )
+}
+
+async function markConnectionRateLimitedMs(
+  conn: ProviderConnection,
+  opts: { retryAfterMs?: number; reason: string; logPrefix: string },
+): Promise<void> {
+  await reportUpstreamRateLimitMs(conn.id, opts.retryAfterMs)
+  applyConnectionRateLimitCooldown(conn, opts.reason)
+  await persistConnectionState(opts.logPrefix, "connection rate-limit state")
+  logger.warn(
+    `Connection "${conn.name}" marked unavailable due to rate limit (${opts.reason})`,
+  )
 }
 
 /**
- * 批次 3：对 state.accounts 中的真实 account 执行冷却/配额/鉴权错误标记。
- * 从 markCooldown 的 account-backed 分支提取，确保修改写回真实对象。
+ * Phase 1:对 account-managed connection 直接执行冷却/配额/鉴权错误标记。
+ * 原 Account 版本 mutate Account → syncAccountToConnection → saveAccounts;
+ * 现在通过 connection 写入器直接落在 ProviderConnection 上。
  */
-async function markAccountCooldown(
-  account: Account,
+async function markAccountManagedCooldown(
+  conn: ProviderConnection,
   error: unknown,
   ctx: {
     status: number
@@ -265,48 +340,32 @@ async function markAccountCooldown(
   if (error instanceof WindsurfUpstreamError) {
     if (error.kind === "quota_exhausted") {
       invalidateSessionAffinityAuth(authKey)
-      setAccountQuotaState(account, "exhausted")
-      account.cooldownUntil =
+      setConnectionQuotaState(conn, "exhausted")
+      setConnectionCooldownUntil(
+        conn,
         error.retryAfterMs ?
           Date.now() + error.retryAfterMs
-        : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-      syncLegacyExhaustedState(account)
-      const conn = getMutableProviderConnection(account.id)
-      if (conn) syncAccountToConnection(conn, account)
-      await saveAccounts().catch((err: unknown) => {
-        logger.warn(
-          `${logPrefix} failed to persist account quota state:`,
-          (err as Error).message,
-        )
-      })
+        : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
+      syncConnectionExhaustedState(conn)
+      await persistConnectionState(logPrefix, "connection quota state")
       return
     }
     if (error.kind === "auth_error") {
       invalidateSessionAffinityAuth(authKey)
-      account.runtimeState = {
-        ...account.runtimeState,
-        authStatus: "error",
-        lastError: error.message,
-      }
-      syncLegacyExhaustedState(account)
-      const authConn = getMutableProviderConnection(account.id)
-      if (authConn) syncAccountToConnection(authConn, account)
-      await saveAccounts().catch((err: unknown) => {
-        logger.warn(
-          `${logPrefix} failed to persist account auth error state:`,
-          (err as Error).message,
-        )
-      })
+      setConnectionAuthStatus(conn, "error", error.message)
+      syncConnectionExhaustedState(conn)
+      await persistConnectionState(logPrefix, "connection auth error state")
       return
     }
     // rate_limited / server_error → rate-limit cooldown
     // with the real upstream retryAfterMs (up to 4h for windsurf).
     invalidateSessionAffinityAuth(authKey)
-    await markAccountRateLimitedMs(
-      account.id,
-      error.retryAfterMs,
-      `upstream_windsurf_${error.kind}`,
-    )
+    await markConnectionRateLimitedMs(conn, {
+      retryAfterMs: error.retryAfterMs,
+      reason: `upstream_windsurf_${error.kind}`,
+      logPrefix,
+    })
     return
   }
 
@@ -318,43 +377,38 @@ async function markAccountCooldown(
     })
     if (classified.kind === "quota_exhausted") {
       invalidateSessionAffinityAuth(authKey)
-      setAccountQuotaState(account, "exhausted")
-      account.cooldownUntil =
+      setConnectionQuotaState(conn, "exhausted")
+      setConnectionCooldownUntil(
+        conn,
         classified.retryAfterMs ?
           Date.now() + classified.retryAfterMs
-        : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-      syncLegacyExhaustedState(account)
-      const quotaConn = getMutableProviderConnection(account.id)
-      if (quotaConn) syncAccountToConnection(quotaConn, account)
-      await saveAccounts().catch((err: unknown) => {
-        logger.warn(
-          `${logPrefix} failed to persist account quota state:`,
-          (err as Error).message,
-        )
-      })
+        : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
+      syncConnectionExhaustedState(conn)
+      await persistConnectionState(logPrefix, "connection quota state")
       return
     }
   }
 
-  // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 account、不打散 affinity
+  // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 connection、不打散 affinity
   if (status === 429 || !isHttp) {
     invalidateSessionAffinityAuth(authKey)
-    await markAccountRateLimited(account.id, new Response(null, { status }))
+    await markConnectionRateLimited(conn, status, logPrefix)
   }
 }
 
 /**
- * Apply account cooldown / quota / auth state from an already-classified WS
+ * Apply connection cooldown / quota / auth state from an already-classified WS
  * `response.create` failure (credential scope). Unlike the private markCooldown
  * (which re-derives everything from HTTP heuristics), the scope/kind here is
  * authoritative — quota is quota, 5xx is cooled, 401/403 is auth.
  *
- * Writes back to the ProviderConnection + AccountLegacyMetadata via
- * syncAccountToConnection so the next `listAccounts()` / `isAccountAvailable()`
- * sees the account as unavailable (not just the derived admission.account).
+ * Phase 1:直接通过 connection 写入器落在 ProviderConnection +
+ * AccountLegacyMetadata 上,使下一次 availability 检查
+ * (isAccountAvailable / isConnectionAvailable)看到不可用状态。
  *
- * WS rotation is account-managed only, so this targets `admission.account`;
- * when absent it falls back to a direct credential cooldown.
+ * WS rotation is account-managed only, so this targets account-managed
+ * connections; plain connections fall back to a direct credential cooldown.
  */
 export async function recordUpstreamFailure(
   admission: RequestAdmission,
@@ -364,45 +418,35 @@ export async function recordUpstreamFailure(
   const authKey = affinityAuthKey(admission.target)
   invalidateSessionAffinityAuth(authKey)
 
-  const stateAccount =
-    admission.account ? resolveStateAccount(admission.account.id) : undefined
+  const conn =
+    isAccountManagedConnection(admission.connection) ?
+      resolveStateConnection(admission.connection.id)
+    : undefined
 
-  if (stateAccount) {
+  if (conn) {
     switch (failure.kind) {
       case "quota": {
-        setAccountQuotaState(stateAccount, "exhausted")
-        stateAccount.cooldownUntil =
+        setConnectionQuotaState(conn, "exhausted")
+        setConnectionCooldownUntil(
+          conn,
           failure.retryAfterMs ?
             Date.now() + failure.retryAfterMs
-          : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-        syncLegacyExhaustedState(stateAccount)
-        const conn = getMutableProviderConnection(stateAccount.id)
-        if (conn) syncAccountToConnection(conn, stateAccount)
-        await saveAccounts().catch((err: unknown) => {
-          logger.warn(
-            `${logPrefix} failed to persist account quota state:`,
-            (err as Error).message,
-          )
-        })
+          : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+        )
+        syncConnectionExhaustedState(conn)
+        await persistConnectionState(logPrefix, "connection quota state")
         return
       }
       case "auth": {
-        stateAccount.runtimeState = {
-          ...stateAccount.runtimeState,
-          authStatus: "error",
-          lastError: `upstream ws auth error${
+        setConnectionAuthStatus(
+          conn,
+          "error",
+          `upstream ws auth error${
             failure.status ? ` (HTTP ${failure.status})` : ""
           }`,
-        }
-        syncLegacyExhaustedState(stateAccount)
-        const conn = getMutableProviderConnection(stateAccount.id)
-        if (conn) syncAccountToConnection(conn, stateAccount)
-        await saveAccounts().catch((err: unknown) => {
-          logger.warn(
-            `${logPrefix} failed to persist account auth state:`,
-            (err as Error).message,
-          )
-        })
+        )
+        syncConnectionExhaustedState(conn)
+        await persistConnectionState(logPrefix, "connection auth state")
         return
       }
       case "rate":
@@ -412,11 +456,11 @@ export async function recordUpstreamFailure(
           ?? (failure.kind === "server" ?
             DEFAULTS.COOLDOWN_5XX_MS
           : DEFAULTS.COOLDOWN_429_FALLBACK_MS)
-        await markAccountRateLimitedMs(
-          stateAccount.id,
-          cooldownMs,
-          `upstream_ws_${failure.kind}`,
-        )
+        await markConnectionRateLimitedMs(conn, {
+          retryAfterMs: cooldownMs,
+          reason: `upstream_ws_${failure.kind}`,
+          logPrefix,
+        })
         return
       }
       default: {
@@ -459,12 +503,11 @@ async function markCooldown(
   const status = isHttp ? error.response.status : 503
   const authKey = affinityAuthKey(admission.target)
 
-  // account-backed 路径:写入 state.accounts + 持久化
-  if (admission.account) {
-    // 批次 3：admission.account 是派生对象，需要查找 state.accounts 中的真实 account
-    const stateAccount = resolveStateAccount(admission.account.id)
-    if (stateAccount) {
-      await markAccountCooldown(stateAccount, error, {
+  // account-managed 路径:直接写回 ProviderConnection + 持久化
+  if (isAccountManagedConnection(admission.connection)) {
+    const conn = resolveStateConnection(admission.connection.id)
+    if (conn) {
+      await markAccountManagedCooldown(conn, error, {
         status,
         isHttp,
         authKey,

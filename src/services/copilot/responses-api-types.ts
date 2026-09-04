@@ -1,4 +1,8 @@
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
+import type {
+  ModelEndpoint as CopilotModelEndpoint,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type { Model } from "~/services/copilot/get-models"
 
 import {
@@ -6,8 +10,12 @@ import {
   canonicalNativeModelId,
   isOAuthAccount,
   parseModelReference,
-} from "~/lib/accounts"
-import { getOAuthProviderDescriptor } from "~/lib/provider-config"
+} from "~/lib/legacy-accounts"
+import {
+  getOAuthProviderDescriptor,
+  isOAuthProviderId,
+} from "~/lib/provider-config"
+import { getConnectionProvider } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 
 const CHAT_COMPLETIONS_ENDPOINTS = ["/chat/completions", "/v1/chat/completions"]
@@ -254,6 +262,108 @@ export function supportsMessagesApi(
   account: Account,
 ): boolean {
   return supportsAnyEndpoint(modelId, account, MESSAGES_ENDPOINTS)
+}
+
+// ── Connection 原生版本(Phase 2a)────────────────────────────────
+// 与上方 Account 版本语义一致,但面向 ProviderConnection:
+// - state.models 缓存优先(URL 形式 endpoint,与 Account 版本相同)
+// - fallback 到 connection.models(ModelMapping,短形式 endpoint)
+// 仅供 copilot 服务热路径使用;OAuth 原生路径不经此处。
+
+const URL_TO_ENDPOINT: Record<string, CopilotModelEndpoint> = {
+  "/chat/completions": "chat",
+  "/v1/chat/completions": "chat",
+  "/responses": "responses",
+  "/v1/responses": "responses",
+  "/v1/messages": "messages",
+  "/v1/embeddings": "embeddings",
+}
+
+function endpointListSupports(
+  supported: Array<string> | undefined,
+  endpoint: CopilotModelEndpoint,
+): boolean {
+  if (!supported || supported.length === 0) return false
+  return supported.some(
+    (ep) => ep === endpoint || URL_TO_ENDPOINT[ep] === endpoint,
+  )
+}
+
+function getSupportedEndpointsForConnection(
+  modelId: string,
+  connection: ProviderConnection,
+): Array<string> | undefined {
+  const exactModelId = canonicalModelId(modelId)
+  const cachedModel = state.models?.data.find(
+    (model) => canonicalModelId(model.id) === exactModelId,
+  )
+  if (cachedModel?.supported_endpoints) {
+    return cachedModel.supported_endpoints
+  }
+
+  const targetModelId = parseModelReference(modelId).nativeModelId
+  const mapping = connection.models?.find(
+    (m) => canonicalNativeModelId(m.publicId) === targetModelId,
+  )
+  if (!mapping) return undefined
+  // 镜像 mappingToAccountModel:空 endpoints 默认视为仅支持 chat。
+  return mapping.endpoints.length > 0 ? mapping.endpoints : ["chat"]
+}
+
+function supportsAnyEndpointForConnection(
+  modelId: string,
+  connection: ProviderConnection,
+  endpoint: CopilotModelEndpoint,
+): boolean {
+  return endpointListSupports(
+    getSupportedEndpointsForConnection(modelId, connection),
+    endpoint,
+  )
+}
+
+export function shouldUseResponsesApiForConnection(
+  modelId: string,
+  connection: ProviderConnection,
+): boolean {
+  return (
+    supportsResponsesApiForConnection(modelId, connection)
+    && !supportsChatCompletionsApiForConnection(modelId, connection)
+  )
+}
+
+export function supportsChatCompletionsApiForConnection(
+  modelId: string,
+  connection: ProviderConnection,
+): boolean {
+  return supportsAnyEndpointForConnection(modelId, connection, "chat")
+}
+
+export function supportsResponsesApiForConnection(
+  modelId: string,
+  connection: ProviderConnection,
+): boolean {
+  if (oauthConnectionSupportsNativeResponses(connection)) {
+    return true
+  }
+  return supportsAnyEndpointForConnection(modelId, connection, "responses")
+}
+
+export function supportsMessagesApiForConnection(
+  modelId: string,
+  connection: ProviderConnection,
+): boolean {
+  return supportsAnyEndpointForConnection(modelId, connection, "messages")
+}
+
+function oauthConnectionSupportsNativeResponses(
+  connection: ProviderConnection,
+): boolean {
+  const provider = getConnectionProvider(connection)
+  if (!provider || !isOAuthProviderId(provider)) {
+    return false
+  }
+  const descriptor = getOAuthProviderDescriptor(provider)
+  return descriptor.features.includes("native_responses")
 }
 
 export function getPublicModelData(model: Model): Model & {

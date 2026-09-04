@@ -10,16 +10,17 @@
  * (保留 `copilot/` `windsurf/` `codebuff/` 兼容)。
  */
 
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { getAccountModelPrefix, listAccounts } from "~/lib/accounts"
 import {
   resolveModelAlias,
   type ModelAliasRestriction,
 } from "~/lib/model-aliases"
 import { isProviderId, type ProviderId } from "~/lib/provider-config"
 import {
+  accountManagedModelPrefix,
   getProviderConnection,
+  listAccountManagedConnections,
   listProviderConnections,
 } from "~/lib/provider-connections"
 import { parseThinkingModel } from "~/lib/thinking"
@@ -84,9 +85,40 @@ export function canonicalNativeModelId(modelId: string): string {
   return normalized
 }
 
+/**
+ * 规范化模型 ID(Phase 5:从 accounts.ts 迁移到 model-reference.ts)。
+ *
+ * 去除 modelPrefix 前缀,返回 `provider/nativeModelId` 或 `nativeModelId`。
+ * `modelPrefix` 为可选的账户模型前缀(原 Account 版本传 Account,
+ * 现直接传前缀字符串;普通 connection 不传)。
+ */
+export function canonicalModelId(
+  modelId: string,
+  modelPrefix?: string,
+): string {
+  const trimmed = modelId.trim()
+  const parsed = parseModelReference(trimmed, modelPrefix)
+  const slashIndex = trimmed.indexOf("/")
+  if (modelPrefix && slashIndex > 0) {
+    const prefix = trimmed.slice(0, slashIndex)
+    if (modelPrefix.toLowerCase() === prefix.toLowerCase()) {
+      return `${modelPrefix}/${parsed.nativeModelId}`
+    }
+  }
+  if (parsed.provider) {
+    return `${parsed.provider}/${parsed.nativeModelId}`
+  }
+  return parsed.nativeModelId
+}
+
+/**
+ * 解析模型引用到 (provider, nativeModelId)。
+ * `modelPrefix` 为 account-managed connection 的模型前缀(原 account 版本
+ * 传 Account,现直接传前缀字符串;普通 connection 不传)。
+ */
 export function parseModelReference(
   modelId: string,
-  account?: Account,
+  modelPrefix?: string,
 ): {
   provider?: ProviderId
   nativeModelId: string
@@ -103,10 +135,7 @@ export function parseModelReference(
         nativeModelId: canonicalNativeModelId(rest),
       }
     }
-    if (
-      account
-      && getAccountModelPrefix(account).toLowerCase() === maybeProvider
-    ) {
+    if (modelPrefix && modelPrefix.toLowerCase() === maybeProvider) {
       return {
         nativeModelId: canonicalNativeModelId(rest),
       }
@@ -119,7 +148,7 @@ export function parseModelReference(
 
 export function resolveModelRouting(
   modelId: string,
-  accounts: Array<Account> = listAccounts(),
+  connections: Array<ProviderConnection> = listAccountManagedConnections(),
 ): ResolvedModelRouting {
   const ref = parseModelRef(modelId)
   const baseModelId = parseThinkingModel(modelId).model
@@ -129,15 +158,15 @@ export function resolveModelRouting(
     const slashIndex = baseModelId.indexOf("/")
     const prefix = slashIndex > 0 ? baseModelId.slice(0, slashIndex) : ""
     const rest = slashIndex > 0 ? baseModelId.slice(slashIndex + 1).trim() : ""
-    const matchingAccount =
+    const matchingConnection =
       rest ?
-        accounts.find(
-          (account) =>
-            getAccountModelPrefix(account).toLowerCase()
+        connections.find(
+          (connection) =>
+            accountManagedModelPrefix(connection).toLowerCase()
             === prefix.toLowerCase(),
         )
       : undefined
-    if (matchingAccount && rest) {
+    if (matchingConnection && rest) {
       accountPrefix = prefix
       aliasModelId = rest
     }

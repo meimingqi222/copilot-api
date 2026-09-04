@@ -5,7 +5,10 @@
 import { Database } from "bun:sqlite"
 import { join } from "node:path"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
@@ -13,7 +16,7 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 
 import { state } from "~/lib/state"
-import { createWindsurfChatCompletions } from "~/services/windsurf/create-chat-completions"
+import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"
 import { extractWindsurfModelsFromPayload } from "~/services/windsurf/get-models"
 import {
   buildWindsurfClientMetadata,
@@ -60,16 +63,31 @@ const models = extractWindsurfModelsFromPayload(
 )
 const sweModel = models.find((m) => m.id === "swe-1-6-fast") ?? models[0]
 
-const account: Account = {
+const credential: ApiCredential = {
   id: "test",
-  label: "test",
-  provider: "windsurf",
-  credentials: { apiKey },
-  availableModels: models,
+  authMode: "bearer",
+  value: apiKey,
+  enabled: true,
+  status: "ready",
+  createdAt: Date.now(),
+}
+const connection: ProviderConnection = {
+  id: "test",
+  name: "test",
+  protocol: "windsurf-native",
+  baseUrl: "",
   enabled: true,
   priority: 0,
-  isExhausted: false,
   createdAt: Date.now(),
+  models: models.map((m) => ({
+    publicId: m.id,
+    upstreamId: m.upstreamId ?? m.id,
+    name: m.name,
+    vendor: m.vendor,
+    endpoints: ["chat" as const],
+    enabled: true,
+  })),
+  credentials: [credential],
 }
 
 const TOOLS = [
@@ -151,15 +169,15 @@ console.log(`\nModel: ${sweModel.id} (upstream: ${sweModel.upstreamId})`)
 
 // ── Test 1: Simple chat ───────────────────────────────────────────────────────
 console.log("\n=== Test 1: Simple streaming chat ===")
-const r1 = await createWindsurfChatCompletions({
-  account,
-  payload: {
+const r1 = await createWindsurfChatCompletionsOnce(
+  { connection, credential },
+  {
     model: sweModel.id,
     stream: true,
     messages: [{ role: "user", content: 'Reply with exactly: "OK"' }],
   },
-})
-const t1 = await collectStream(r1.response as AsyncIterable<CopilotStreamEvent>)
+)
+const t1 = await collectStream(r1 as AsyncIterable<CopilotStreamEvent>)
 console.log(`finish_reason: ${t1.finishReason}`)
 console.log(`content: ${JSON.stringify(t1.content)}`)
 
@@ -167,9 +185,9 @@ console.log(`content: ${JSON.stringify(t1.content)}`)
 console.log(
   "\n=== Test 2: Streaming with tools (capture real tool call ID) ===",
 )
-const r2 = await createWindsurfChatCompletions({
-  account,
-  payload: {
+const r2 = await createWindsurfChatCompletionsOnce(
+  { connection, credential },
+  {
     model: sweModel.id,
     stream: true,
     messages: [
@@ -177,8 +195,8 @@ const r2 = await createWindsurfChatCompletions({
     ],
     tools: TOOLS,
   },
-})
-const t2 = await collectStream(r2.response as AsyncIterable<CopilotStreamEvent>)
+)
+const t2 = await collectStream(r2 as AsyncIterable<CopilotStreamEvent>)
 console.log(`finish_reason: ${t2.finishReason}`)
 console.log(`content: ${JSON.stringify(t2.content)}`)
 console.log(`tool_calls (${t2.toolCalls.length}):`)
@@ -197,9 +215,9 @@ if (t2.toolCalls.length === 0) {
     `Using tool call id=${JSON.stringify(firstCall.id)} name=${firstCall.function.name}`,
   )
 
-  const r3 = await createWindsurfChatCompletions({
-    account,
-    payload: {
+  const r3 = await createWindsurfChatCompletionsOnce(
+    { connection, credential },
+    {
       model: sweModel.id,
       stream: false,
       messages: [
@@ -217,13 +235,13 @@ if (t2.toolCalls.length === 0) {
       ],
       tools: TOOLS,
     },
-  }).catch((err: Error) => {
+  ).catch((err: Error) => {
     console.error(`❌ Error: ${err.message}`)
     return null
   })
 
   if (r3) {
-    const resp3 = r3.response as ChatCompletionResponse
+    const resp3 = r3 as ChatCompletionResponse
     console.log(`finish_reason: ${resp3.choices[0]?.finish_reason}`)
     console.log(
       `content: ${JSON.stringify(resp3.choices[0]?.message?.content)}`,
@@ -242,15 +260,15 @@ if (t2.toolCalls.length === 0) {
 
 // ── Test 4: Reasoning ─────────────────────────────────────────────────────────
 console.log("\n=== Test 4: Non-streaming (check reasoning_text) ===")
-const r4 = await createWindsurfChatCompletions({
-  account,
-  payload: {
+const r4 = await createWindsurfChatCompletionsOnce(
+  { connection, credential },
+  {
     model: sweModel.id,
     stream: false,
     messages: [{ role: "user", content: "What is 3 + 5? Think step by step." }],
   },
-})
-const resp4 = r4.response as ChatCompletionResponse
+)
+const resp4 = r4 as ChatCompletionResponse
 console.log(`finish_reason: ${resp4.choices[0]?.finish_reason}`)
 console.log(`content: ${JSON.stringify(resp4.choices[0]?.message?.content)}`)
 console.log(

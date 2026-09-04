@@ -4,7 +4,7 @@ import { z } from "zod"
 import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
 import { translateToResponsesPayload } from "../src/services/copilot/chat-to-responses"
-import { translateToCopilotMessages } from "../src/services/copilot/create-messages"
+import { translateToCopilotMessages } from "../src/services/copilot/create-messages-translate"
 import { translateToOpenAI } from "../src/services/protocols/anthropic"
 import { translateChatPayloadToAnthropic } from "../src/services/protocols/openai"
 

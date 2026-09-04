@@ -2,7 +2,7 @@ import type { Server } from "bun"
 
 import fs from "node:fs/promises"
 
-import type { AccountProvider } from "~/lib/accounts"
+import type { AccountProvider } from "~/lib/legacy-accounts"
 
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"

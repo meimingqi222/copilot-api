@@ -4,10 +4,10 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 
 import { loadAccounts, saveAccounts } from "~/lib/account-store"
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
 
@@ -409,5 +409,173 @@ describe("account-store", () => {
 
     const connections = await readProviderConnectionsFile()
     expect(connections).toEqual([])
+  })
+
+  // ── Phase 5 boot-migration 测试 ──
+
+  test("loadAccounts: connections take priority when accounts.json also exists", async () => {
+    // 先创建 provider-connections.json(已有 connections)
+    const acc: Account = {
+      id: "existing-conn",
+      label: "existing-connection",
+      provider: "copilot",
+      credentials: { githubToken: "token-existing" },
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+    }
+    setTestAccounts([acc])
+    await saveAccounts()
+
+    // 再写入 accounts.json(应被忽略,connections 优先)
+    await fs.writeFile(
+      PATHS.ACCOUNTS_PATH,
+      JSON.stringify([
+        {
+          id: "from-accounts-json",
+          label: "from-accounts-json",
+          provider: "copilot",
+          githubToken: "token-from-accounts",
+          enabled: true,
+          priority: 0,
+          createdAt: 1000,
+        },
+      ]),
+      "utf8",
+    )
+
+    __resetProviderConnectionsForTest()
+    await loadAccounts()
+
+    // 应加载 provider-connections.json 中的 connection,而非 accounts.json
+    expect(listAccounts()).toHaveLength(1)
+    expect(listAccounts()[0].id).toBe("existing-conn")
+    expect(listAccounts()[0].label).toBe("existing-connection")
+
+    // accounts.json 应仍然存在(未被改名,因为 connections 优先时不改名)
+    let accountsJsonExists = false
+    try {
+      await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
+      accountsJsonExists = true
+    } catch {
+      // expected
+    }
+    expect(accountsJsonExists).toBe(true)
+  })
+
+  test("loadAccounts: first migration renames accounts.json to .migrated-*.bak", async () => {
+    const legacyAccounts = [
+      {
+        id: "migrate-test-1",
+        label: "migrate-test",
+        provider: "copilot",
+        githubToken: "gh-migrate",
+        enabled: true,
+        priority: 0,
+        createdAt: 1000,
+      },
+    ]
+    await fs.writeFile(
+      PATHS.ACCOUNTS_PATH,
+      JSON.stringify(legacyAccounts),
+      "utf8",
+    )
+
+    await loadAccounts()
+
+    // accounts.json 应被改名为 .migrated-*.bak
+    let accountsJsonExists = false
+    try {
+      await fs.readFile(PATHS.ACCOUNTS_PATH, "utf8")
+      accountsJsonExists = true
+    } catch {
+      // expected — accounts.json was renamed
+    }
+    expect(accountsJsonExists).toBe(false)
+
+    // 应存在 .migrated-*.bak 文件
+    const dir = path.dirname(PATHS.ACCOUNTS_PATH)
+    const files = await fs.readdir(dir)
+    const bakFiles = files.filter(
+      (f) => f.includes(".migrated-") && f.endsWith(".bak"),
+    )
+    expect(bakFiles.length).toBeGreaterThanOrEqual(1)
+
+    // 迁移后的数据应正确加载
+    expect(listAccounts()).toHaveLength(1)
+    expect(listAccounts()[0].id).toBe("migrate-test-1")
+    expect(listAccounts()[0].credentials?.githubToken).toBe("gh-migrate")
+  })
+
+  test("loadAccounts: COPILOT_API_FORCE_REMIGRATE=1 re-migrates and merges by id", async () => {
+    // 1. 先创建 provider-connections.json(已有 1 个 connection)
+    const existingAcc: Account = {
+      id: "keep-existing",
+      label: "existing-conn",
+      provider: "copilot",
+      credentials: { githubToken: "token-existing" },
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+    }
+    setTestAccounts([existingAcc])
+    await saveAccounts()
+
+    // 2. 写入 accounts.json(包含 1 个同 id + 1 个新 id)
+    await fs.writeFile(
+      PATHS.ACCOUNTS_PATH,
+      JSON.stringify([
+        {
+          id: "keep-existing",
+          label: "re-migrated-label",
+          provider: "copilot",
+          githubToken: "gh-remigrated",
+          enabled: true,
+          priority: 5,
+          createdAt: 2000,
+        },
+        {
+          id: "new-from-accounts",
+          label: "new-account",
+          provider: "copilot",
+          githubToken: "gh-new",
+          enabled: true,
+          priority: 10,
+          createdAt: 3000,
+        },
+      ]),
+      "utf8",
+    )
+
+    // 3. 设置 FORCE_REMIGRATE=1 并重新加载
+    const originalEnv = process.env.COPILOT_API_FORCE_REMIGRATE
+    process.env.COPILOT_API_FORCE_REMIGRATE = "1"
+    try {
+      __resetProviderConnectionsForTest()
+      await loadAccounts()
+
+      // 应合并:同 id 的被 accounts.json 覆盖,新 id 的被添加
+      const accounts = listAccounts()
+      expect(accounts).toHaveLength(2)
+
+      const existing = accounts.find((a) => a.id === "keep-existing")
+      expect(existing).toBeDefined()
+      // force re-migration 后 label 应来自 accounts.json
+      expect(existing?.label).toBe("re-migrated-label")
+      expect(existing?.credentials?.githubToken).toBe("gh-remigrated")
+
+      const newAcc = accounts.find((a) => a.id === "new-from-accounts")
+      expect(newAcc).toBeDefined()
+      expect(newAcc?.label).toBe("new-account")
+      expect(newAcc?.credentials?.githubToken).toBe("gh-new")
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.COPILOT_API_FORCE_REMIGRATE
+      } else {
+        process.env.COPILOT_API_FORCE_REMIGRATE = originalEnv
+      }
+    }
   })
 })

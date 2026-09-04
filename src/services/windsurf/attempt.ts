@@ -1,4 +1,4 @@
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
@@ -37,7 +37,7 @@ interface AttemptFetchOptions {
 }
 
 interface CreateWindsurfAttemptOptions {
-  account: Account
+  connection: ProviderConnection
   payload: ChatCompletionsPayload
   signal?: AbortSignal
   ctx?: RequestExecutionContext
@@ -96,7 +96,7 @@ export async function createWindsurfAttempt(
   options: CreateWindsurfAttemptOptions,
 ): Promise<WindsurfAttempt> {
   const {
-    account,
+    connection,
     payload,
     signal,
     ctx,
@@ -136,7 +136,7 @@ export async function createWindsurfAttempt(
         payload.prompt_cache_key ?? ctx?.forwardedHeaders?.prompt_cache_key,
       user: payload.user,
       clientUserId: ctx?.c?.get("userId"),
-      accountId: account.id,
+      accountId: connection.id,
     })
     const cloudIds = await getOrAllocateCloudSessionIds({
       host: chatBaseUrl,
@@ -151,8 +151,8 @@ export async function createWindsurfAttempt(
       cascadeId: cloudIds.cascadeId,
     }
     logger.debug("[windsurf] cloud-direct request", {
-      account: account.label,
-      accountId: account.id,
+      account: connection.name,
+      accountId: connection.id,
       model: requestModel,
       conversationKey: resolvedConversation.key,
       cascadeId: cloudIds.cascadeId,
@@ -207,7 +207,7 @@ export async function createWindsurfAttempt(
       },
       body: requestBody,
       signal: upstreamSignal,
-      accountLabel: account.label,
+      accountLabel: connection.name,
     })
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_response_open", {
       httpStatus: response.status,
@@ -217,7 +217,7 @@ export async function createWindsurfAttempt(
     if (!response.ok) {
       const errorBody = await response.text().catch(() => "(unreadable)")
       logger.error(
-        `[windsurf] HTTP ${response.status} for ${account.label} model=${requestModel}`,
+        `[windsurf] HTTP ${response.status} for ${connection.name} model=${requestModel}`,
       )
       const classified = classifyWindsurfErrorText(undefined, errorBody)
       if (classified.kind !== "unknown") {
@@ -231,7 +231,7 @@ export async function createWindsurfAttempt(
     }
 
     logger.info(
-      `[windsurf] HTTP ${response.status} for ${account.label} model=${requestModel} stream=${payload.stream}`,
+      `[windsurf] HTTP ${response.status} for ${connection.name} model=${requestModel} stream=${payload.stream}`,
     )
     return {
       stream: streamFactory(response, model, cacheDebug, ctx?.memoryTraceId),

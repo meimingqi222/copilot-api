@@ -1,18 +1,25 @@
-import { randomUUID } from "node:crypto"
-
-import type { Account, OAuthAccount } from "~/lib/accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { cancelTokenRefreshTimer } from "~/lib/account-store"
-import { addAccount } from "~/lib/accounts"
-import { removeProviderConnection } from "~/lib/provider-connections"
+import {
+  providerFromProtocol,
+  removeProviderConnection,
+  setConnectionSetting,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { cancelOAuthRefreshTimer } from "~/services/oauth/refresh-scheduler"
 import { XAI_DEFAULT_TOKEN_ENDPOINT } from "~/services/oauth/xai"
 
 import type { CpaAuthRecord, CpaImportResult } from "./types"
 
+import {
+  applyOAuthBundleToCredential,
+  applyOAuthConnectionSettings,
+} from "./apply-bundle"
 import { normalizeCpaProviderType } from "./normalize"
+import { createOAuthConnection } from "./provider-strategies"
 import { parseExpiresAt } from "./token-resolver"
 
 function pickString(...values: Array<unknown>): string | undefined {
@@ -67,30 +74,35 @@ function buildLabel(
   )
 }
 
-function removeDuplicateAccount(
-  accounts: Array<Account>,
+function removeDuplicateConnection(
+  connections: Array<ProviderConnection>,
   label: string,
   provider: OAuthProviderId,
 ): void {
-  const duplicateIndex = accounts.findIndex(
-    (item) => item.label === label && item.provider === provider,
+  const duplicateIndex = connections.findIndex(
+    (conn) =>
+      conn.name === label && providerFromProtocol(conn.protocol) === provider,
   )
   if (duplicateIndex === -1) {
     return
   }
 
-  const existing = accounts[duplicateIndex]
+  const existing = connections[duplicateIndex]
   cancelTokenRefreshTimer(existing.id)
   cancelOAuthRefreshTimer(existing.id)
   clearAccountRateLimitState(existing.id)
   removeProviderConnection(existing.id)
-  accounts.splice(duplicateIndex, 1)
+  connections.splice(duplicateIndex, 1)
 }
 
-export function mapCpaRecordToAccount(
+/**
+ * Phase 3:直接从 CPA auth record 创建 ProviderConnection,
+ * 不再经过 OAuthAccount 中转。
+ */
+export function mapCpaRecordToConnection(
   record: CpaAuthRecord,
   options?: { label?: string; index?: number },
-): OAuthAccount {
+): ProviderConnection {
   const provider = normalizeCpaProviderType(record.type)
   if (!provider) {
     throw new Error(`Unsupported CPA auth type: ${String(record.type)}`)
@@ -103,6 +115,30 @@ export function mapCpaRecordToAccount(
 
   const index = options?.index ?? 0
   const label = options?.label ?? buildLabel(record, provider, index)
+
+  // 创建 connection(同步,不持久化)
+  const conn = createOAuthConnection(provider, label)
+  conn.enabled = record.disabled !== true
+
+  // 应用 OAuth bundle(accessToken/refreshToken/expiresAt/context)
+  applyOAuthBundleToCredential(
+    conn,
+    {
+      accessToken,
+      refreshToken: extractRefreshToken(record),
+      expiresAt: parseExpiresAt(record.expired),
+    },
+    {
+      idToken: extractIdToken(record),
+      accountId: pickString(record.account_id),
+      projectId: pickString(record.project_id),
+      deviceId: pickString(record.device_id),
+      apiKey: pickString(record.api_key, record.attributes?.api_key),
+      email: pickString(record.email),
+    },
+  )
+
+  // 应用 settings(baseUrl/proxyUrl/tokenEndpoint 等)
   const tokenEndpoint =
     provider === "xai" ?
       pickString(
@@ -113,46 +149,52 @@ export function mapCpaRecordToAccount(
       )
     : undefined
 
-  return {
-    id: randomUUID(),
-    label,
-    provider,
-    enabled: record.disabled !== true,
-    priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
-    credentials: {
-      accessToken,
-      refreshToken: extractRefreshToken(record),
-      idToken: extractIdToken(record),
-      expiresAt: parseExpiresAt(record.expired),
-      accountId: pickString(record.account_id),
-      projectId: pickString(record.project_id),
-      deviceId: pickString(record.device_id),
-      apiKey: pickString(record.api_key, record.attributes?.api_key),
-      email: pickString(record.email),
-    },
-    settings: {
-      baseUrl: pickString(record.attributes?.base_url),
-      proxyUrl: pickString(record.proxy_url, record.attributes?.proxy_url),
-      modelPrefix: pickString(record.prefix, record.attributes?.prefix),
-      cpaSourcePath: pickString(record.attributes?.path),
-      tokenEndpoint,
-    },
-    runtimeState: {
-      authStatus: "ready",
-      lastRefreshAt: parseExpiresAt(record.last_refresh),
-    },
-    cpaMetadata: sanitizeCpaMetadata(record),
+  applyOAuthConnectionSettings(conn, {
+    baseUrl: pickString(record.attributes?.base_url),
+    tokenEndpoint,
+  })
+
+  // proxyUrl / modelPrefix / cpaSourcePath 写入 metadata.settings
+  // (connectionToAccount 从 metadata.settings 恢复 account.settings)
+  const proxyUrl = pickString(record.proxy_url, record.attributes?.proxy_url)
+  if (proxyUrl) {
+    setConnectionSetting(conn, "proxyUrl", proxyUrl)
+    conn.proxyUrl = proxyUrl
   }
+  const modelPrefix = pickString(record.prefix, record.attributes?.prefix)
+  if (modelPrefix) {
+    setConnectionSetting(conn, "modelPrefix", modelPrefix)
+    conn.modelPrefix = modelPrefix
+  }
+  const cpaSourcePath = pickString(record.attributes?.path)
+  if (cpaSourcePath) {
+    setConnectionSetting(conn, "cpaSourcePath", cpaSourcePath)
+  }
+
+  // cpaMetadata 存入 connection.metadata.cpaMetadata
+  const cpaMeta = sanitizeCpaMetadata(record)
+  if (cpaMeta) {
+    conn.metadata = { ...conn.metadata, cpaMetadata: cpaMeta }
+  }
+
+  // lastRefreshAt 存入 metadata
+  const lastRefreshAt = parseExpiresAt(record.last_refresh)
+  if (lastRefreshAt !== undefined) {
+    conn.metadata = { ...conn.metadata, lastRefreshAt }
+  }
+
+  return conn
 }
 
 export function importCpaAuthRecords(
   records: Array<CpaAuthRecord>,
   options?: {
     overwrite?: boolean
-    existingAccounts?: Array<Account>
-    onAccount?: (account: OAuthAccount) => void
+    /** 重复检测用的已有 connection 列表。 */
+    existingConnections?: Array<ProviderConnection>
+    /** 回调接收 ProviderConnection。 */
+    onAccount?: (connection: ProviderConnection) => void
+    onConnection?: (connection: ProviderConnection) => void
   },
 ): CpaImportResult {
   const result: CpaImportResult = {
@@ -161,29 +203,41 @@ export function importCpaAuthRecords(
     failed: [],
   }
 
-  const existing = options?.existingAccounts ?? []
+  // 优先使用 existingConnections;若调用方仍传 existingAccounts,
+  // 从 listProviderConnections() 派生 connection 列表用于重复检测
+  const existing = options?.existingConnections ?? []
 
   for (const [index, record] of records.entries()) {
     try {
-      const account = mapCpaRecordToAccount(record, { index })
+      const conn = mapCpaRecordToConnection(record, { index })
+      const label = conn.name
+      // 从 protocol 反推 provider id 用于重复检测
+      const providerId = normalizeCpaProviderType(record.type)
+
+      // 检查重复(通过 label + provider 匹配)
       const duplicate = existing.find(
         (item) =>
-          item.label === account.label && item.provider === account.provider,
+          item.name === label
+          && providerFromProtocol(item.protocol) === providerId,
       )
 
       if (duplicate && !options?.overwrite) {
-        result.skipped.push(account.label)
+        result.skipped.push(label)
         continue
       }
 
-      if (duplicate && options?.overwrite) {
-        removeDuplicateAccount(existing, account.label, account.provider)
+      if (duplicate && options?.overwrite && providerId) {
+        removeDuplicateConnection(existing, label, providerId)
       }
 
-      addAccount(account)
-      existing.push(account)
-      options?.onAccount?.(account)
-      result.imported.push(account.label)
+      // 直接 upsert ProviderConnection
+      upsertProviderConnection(conn)
+      existing.push(conn)
+
+      // onAccount/onConnection 回调接收 ProviderConnection
+      options?.onAccount?.(conn)
+      options?.onConnection?.(conn)
+      result.imported.push(label)
     } catch (error) {
       const label =
         pickString(record.label, record.email) ?? `record-${index + 1}`

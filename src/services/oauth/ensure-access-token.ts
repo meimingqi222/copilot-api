@@ -1,13 +1,15 @@
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
+import { isOAuthProviderId } from "~/lib/provider-config"
 import {
-  getAccount,
-  getOAuthAccessToken,
-  getOAuthRefreshToken,
-  isOAuthAccount,
-} from "~/lib/accounts"
+  getConnectionProvider,
+  getMutableProviderConnection,
+} from "~/lib/provider-connections"
 
-import { refreshOAuthAccountToken } from "./refresh-scheduler"
+import { refreshOAuthConnectionToken } from "./refresh-scheduler"
 
 const EXPIRY_SKEW_MS = 60_000
 // Claude mirrors the official Claude Code CLI, which refreshes ~5 minutes
@@ -16,64 +18,88 @@ const EXPIRY_SKEW_MS = 60_000
 const CLAUDE_EXPIRY_SKEW_MS = 5 * 60_000
 const inflightRefresh = new Map<string, Promise<void>>()
 
-function expirySkewMs(account: Account): number {
-  return account.provider === "claude" ? CLAUDE_EXPIRY_SKEW_MS : EXPIRY_SKEW_MS
-}
-
 interface EnsureOAuthAccessTokenOptions {
   forceRefresh?: boolean
   failedAccessToken?: string
 }
 
-function getCurrentAccount(account: Account): Account {
-  return getAccount(account.id) ?? account
+/** 以 connectionId 为键执行去重的刷新(等价旧 inflightRefresh 逻辑)。 */
+async function refreshWithInflightDedup(
+  connectionId: string,
+  connection: ProviderConnection,
+  reason: string,
+): Promise<void> {
+  const inflight = inflightRefresh.get(connectionId)
+  if (inflight) {
+    await inflight
+    return
+  }
+
+  const refreshPromise = refreshOAuthConnectionToken(connection, reason)
+    .catch((error: unknown) => {
+      throw error
+    })
+    .finally(() => {
+      inflightRefresh.delete(connectionId)
+    })
+
+  inflightRefresh.set(connectionId, refreshPromise)
+  await refreshPromise
 }
 
-function getCurrentAccessToken(account: Account): string | undefined {
-  const currentAccount = getCurrentAccount(account)
-  if (
-    currentAccount !== account
-    && isOAuthAccount(account)
-    && isOAuthAccount(currentAccount)
-  ) {
-    account.credentials = { ...currentAccount.credentials }
-  }
-  return getOAuthAccessToken(currentAccount)
+/**
+ * ensureOAuthConnectionAccessToken 的读取辅助:credential.value 即
+ * OAuth access token 的运行时真相(context.accessToken 为迁移时的镜像)。
+ */
+function connectionAccessToken(credential: ApiCredential): string | undefined {
+  return credential.value || undefined
 }
 
-function tokenNeedsRefresh(account: Account): boolean {
-  if (!isOAuthAccount(account)) {
-    return false
-  }
-  const refreshToken = getOAuthRefreshToken(account)
-  if (!refreshToken) {
-    return false
-  }
-  const accessToken = getOAuthAccessToken(account)
-  const expiresAt = account.credentials?.expiresAt
-  if (!accessToken) {
-    return true
-  }
-  if (expiresAt === undefined) {
-    return false
-  }
-  return expiresAt <= Date.now() + expirySkewMs(account)
+function connectionRefreshToken(credential: ApiCredential): string | undefined {
+  const token = credential.context?.refreshToken
+  return typeof token === "string" && token ? token : undefined
 }
 
-export async function ensureOAuthAccessToken(
-  account: Account,
+function connectionTokenExpiry(credential: ApiCredential): number | undefined {
+  const expiry = credential.context?.expiresAt
+  return typeof expiry === "number" ? expiry : undefined
+}
+
+function connectionExpirySkewMs(connection: ProviderConnection): number {
+  return getConnectionProvider(connection) === "claude" ?
+      CLAUDE_EXPIRY_SKEW_MS
+    : EXPIRY_SKEW_MS
+}
+
+/** 刷新后从 stateRoot 中的 live connection 重新读取 access token。 */
+function readLiveAccessToken(connectionId: string): string | undefined {
+  const conn = getMutableProviderConnection(connectionId)
+  const cred = conn?.credentials[0]
+  return cred ? connectionAccessToken(cred) : undefined
+}
+
+/**
+ * ensureOAuthAccessToken 的 connection 原生等价物。
+ *
+ * 读取路径纯 credential:value = access token、context.refreshToken /
+ * expiresAt 为刷新材料。刷新路径调用 refreshOAuthConnectionToken(同样是
+ * connection 原生),刷新后从 live connection 重读 token,不依赖传入
+ * credential 对象的同一性。
+ *
+ * 非 OAuth connection(或尚未具备 legacy metadata 的 connection)直接
+ * 返回 credential.value,不触发刷新。
+ */
+export async function ensureOAuthConnectionAccessToken(
+  connection: ProviderConnection,
+  credential: ApiCredential,
   options: EnsureOAuthAccessTokenOptions = {},
 ): Promise<string | undefined> {
-  const currentAccount = getCurrentAccount(account)
-  // Token refresh is decoupled from `enabled`: a disabled account is only
-  // excluded from request routing, not from token lifecycle. Otherwise a
-  // disabled account's access token expires and can never be refreshed,
-  // breaking on-demand actions like quota refresh (401 forever).
-  if (!isOAuthAccount(currentAccount)) {
-    return getOAuthAccessToken(currentAccount)
+  const provider = getConnectionProvider(connection)
+  if (!provider || !isOAuthProviderId(provider)) {
+    return connectionAccessToken(credential)
   }
 
-  const currentToken = getOAuthAccessToken(currentAccount)
+  const currentToken = connectionAccessToken(credential)
   if (
     options.forceRefresh
     && options.failedAccessToken
@@ -83,29 +109,32 @@ export async function ensureOAuthAccessToken(
     return currentToken
   }
 
-  if (!options.forceRefresh && !tokenNeedsRefresh(currentAccount)) {
+  const refreshToken = connectionRefreshToken(credential)
+  const expiresAt = connectionTokenExpiry(credential)
+  const needsRefresh =
+    !currentToken
+    || (refreshToken !== undefined
+      && expiresAt !== undefined
+      && expiresAt <= Date.now() + connectionExpirySkewMs(connection))
+  if (!options.forceRefresh && !needsRefresh) {
     return currentToken
   }
 
-  const inflight = inflightRefresh.get(currentAccount.id)
-  if (inflight) {
-    await inflight
-    return getCurrentAccessToken(account)
+  // 无 refresh token 则无法刷新(镜像 tokenNeedsRefresh 的门禁)。
+  if (!refreshToken) {
+    return currentToken
   }
 
-  const accountId = currentAccount.id
-  const refreshPromise = refreshOAuthAccountToken(
-    currentAccount,
+  // 刷新必须落在 stateRoot 中的 live connection 上(传入对象可能是快照)。
+  const liveConnection = getMutableProviderConnection(connection.id)
+  if (!liveConnection) {
+    return currentToken
+  }
+
+  await refreshWithInflightDedup(
+    connection.id,
+    liveConnection,
     options.forceRefresh ? "unauthorized" : "pre-request",
   )
-    .catch((error: unknown) => {
-      throw error
-    })
-    .finally(() => {
-      inflightRefresh.delete(accountId)
-    })
-
-  inflightRefresh.set(accountId, refreshPromise)
-  await refreshPromise
-  return getCurrentAccessToken(account)
+  return readLiveAccessToken(connection.id) ?? currentToken
 }

@@ -1,5 +1,6 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
+import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { KIMI_REQUEST_HEADERS, KIMI_USAGE_URL } from "~/lib/quota/constants"
 import { enrichQuotaDetails } from "~/lib/quota/cycles"
@@ -14,7 +15,7 @@ const kimiQuotaDescriptor: SimpleQuotaDescriptor = {
   displayName: "Kimi",
   url: KIMI_USAGE_URL,
   headers: { ...KIMI_REQUEST_HEADERS },
-  buildSnapshot(body, _account): QuotaSnapshot {
+  buildSnapshot(body, _connection): QuotaSnapshot {
     const payload = parseKimiUsagePayload(body)
     if (!payload) {
       throw new Error("Kimi quota response was empty or invalid")
@@ -37,8 +38,8 @@ const kimiQuotaDescriptor: SimpleQuotaDescriptor = {
 }
 
 export async function fetchKimiQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
-  return fetchQuotaByDescriptor(account, kimiQuotaDescriptor, signal)
+  return fetchQuotaByDescriptor(connection, kimiQuotaDescriptor, signal)
 }

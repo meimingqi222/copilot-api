@@ -1,4 +1,10 @@
-import { connectionToAccount } from "~/lib/provider-connections"
+/**
+ * Antigravity Native Protocol Adapter。
+ *
+ * Phase 2d:纯 (connection, credential) 热路径,不再经由
+ * connectionToAccount 派生 Account。
+ */
+
 import { createAntigravityChatCompletionsOnce } from "~/services/antigravity/create-chat-completions-once"
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
@@ -6,14 +12,19 @@ import type { AdapterChatResult, ProtocolAdapter } from "./types"
 export const antigravityNativeAdapter: ProtocolAdapter = {
   protocol: "antigravity-native",
 
-  async createChatCompletions({ connection, payload, signal, ctx }) {
-    const account = connectionToAccount(connection)
+  async createChatCompletions({
+    connection,
+    credential,
+    payload,
+    signal,
+    ctx,
+  }) {
     const response = await createAntigravityChatCompletionsOnce(
-      account,
+      { connection, credential },
       payload,
       signal,
       ctx,
     )
-    return { credentialId: account.id, response } as AdapterChatResult
+    return { credentialId: credential.id, response } as AdapterChatResult
   },
 }

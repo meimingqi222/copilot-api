@@ -4,7 +4,7 @@
  * state.accounts 已删除，测试通过此 helper 将 Account 列表转换为
  * connections 并 upsert 到 stateRoot。读取时使用 listAccounts()。
  */
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 
 import {
   listProviderConnections,

@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/accounts"
-
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
+import {
+  getMutableProviderConnection,
+  upsertProviderConnection,
+  type ProviderConnection,
+} from "~/lib/provider-connections"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -20,7 +23,72 @@ afterEach(() => {
   globalThis.fetch = originalFetch
 })
 
-describe("ensureOAuthAccessToken", () => {
+/**
+ * 创建 OAuth account-managed connection(替代直接构造 Account)。
+ * Phase 3.4:测试已从 ensureOAuthAccessToken(account) 翻转为
+ * ensureOAuthConnectionAccessToken(connection, credential)。
+ */
+function createOAuthConnection(
+  id: string,
+  provider: string,
+  overrides: {
+    enabled?: boolean
+    accessToken?: string
+    refreshToken?: string
+    expiresAt?: number
+    apiKey?: string
+    email?: string
+    tokenEndpoint?: string
+  } = {},
+): ProviderConnection {
+  const now = Date.now()
+  const protocolMap: Record<string, string> = {
+    claude: "claude-native",
+    codex: "codex-native",
+    xai: "xai-native",
+    kimi: "kimi-native",
+    antigravity: "antigravity-native",
+  }
+  const protocol = protocolMap[provider] ?? "claude-native"
+  const conn: ProviderConnection = {
+    id,
+    name: `${provider}-1`,
+    protocol,
+    baseUrl: "",
+    enabled: overrides.enabled ?? true,
+    priority: 0,
+    credentials: [
+      {
+        id: `${id}-cred`,
+        authMode: "bearer",
+        value: overrides.accessToken ?? "",
+        enabled: overrides.enabled ?? true,
+        status: "ready",
+        createdAt: now,
+        context: {
+          refreshToken: overrides.refreshToken,
+          expiresAt: overrides.expiresAt,
+          apiKey: overrides.apiKey,
+          email: overrides.email,
+          tokenEndpoint: overrides.tokenEndpoint,
+        },
+      },
+    ],
+    models: [],
+    metadata: {
+      provider,
+      settings:
+        overrides.tokenEndpoint ?
+          { tokenEndpoint: overrides.tokenEndpoint }
+        : {},
+    },
+    createdAt: now,
+  }
+  upsertProviderConnection(conn)
+  return conn
+}
+
+describe("ensureOAuthConnectionAccessToken", () => {
   test("refreshes expired access token before returning", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(
@@ -34,26 +102,15 @@ describe("ensureOAuthAccessToken", () => {
         ),
       )) as unknown as typeof fetch
 
-    const account: OAuthAccount = {
-      id: "acct-1",
-      label: "claude-1",
-      provider: "claude",
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        accessToken: "stale-access",
-        refreshToken: "refresh-1",
-        expiresAt: Date.now() - 1_000,
-      },
-      runtimeState: { authStatus: "ready" },
-    }
-    setTestAccounts([account])
+    const conn = createOAuthConnection("acct-1", "claude", {
+      accessToken: "stale-access",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() - 1_000,
+    })
 
-    const token = await ensureOAuthAccessToken(account)
+    const credential = conn.credentials[0]
+    const token = await ensureOAuthConnectionAccessToken(conn, credential)
     expect(token).toBe("fresh-access")
-    expect(account.credentials?.accessToken).toBe("fresh-access")
   })
 
   test("refreshes expired access token even when account is disabled", async () => {
@@ -71,26 +128,16 @@ describe("ensureOAuthAccessToken", () => {
         ),
       )) as unknown as typeof fetch
 
-    const account: OAuthAccount = {
-      id: "acct-disabled",
-      label: "claude-disabled",
-      provider: "claude",
+    const conn = createOAuthConnection("acct-disabled", "claude", {
       enabled: false,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        accessToken: "stale-access",
-        refreshToken: "refresh-1",
-        expiresAt: Date.now() - 1_000,
-      },
-      runtimeState: { authStatus: "ready" },
-    }
-    setTestAccounts([account])
+      accessToken: "stale-access",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() - 1_000,
+    })
 
-    const token = await ensureOAuthAccessToken(account)
+    const credential = conn.credentials[0]
+    const token = await ensureOAuthConnectionAccessToken(conn, credential)
     expect(token).toBe("fresh-access")
-    expect(account.credentials?.accessToken).toBe("fresh-access")
   })
 
   test("returns existing token when still valid", async () => {
@@ -100,23 +147,14 @@ describe("ensureOAuthAccessToken", () => {
       return Promise.resolve(new Response("{}", { status: 200 }))
     }) as unknown as typeof fetch
 
-    const account: OAuthAccount = {
-      id: "acct-2",
-      label: "codex-1",
-      provider: "codex",
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        accessToken: "valid-access",
-        refreshToken: "refresh-2",
-        expiresAt: Date.now() + 3_600_000,
-      },
-      runtimeState: { authStatus: "ready" },
-    }
+    const conn = createOAuthConnection("acct-2", "codex", {
+      accessToken: "valid-access",
+      refreshToken: "refresh-2",
+      expiresAt: Date.now() + 3_600_000,
+    })
 
-    const token = await ensureOAuthAccessToken(account)
+    const credential = conn.credentials[0]
+    const token = await ensureOAuthConnectionAccessToken(conn, credential)
     expect(token).toBe("valid-access")
     expect(fetchCalls).toBe(0)
   })
@@ -149,25 +187,16 @@ describe("ensureOAuthAccessToken", () => {
       return Promise.resolve(new Response("ok", { status: 200 }))
     }) as typeof fetch
 
-    const account: OAuthAccount = {
-      id: "acct-xai-401",
-      label: "xai-401",
-      provider: "xai",
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        accessToken: "invalid-access",
-        refreshToken: "refresh-1",
-        expiresAt: Date.now() + 3_600_000,
-      },
-      settings: { tokenEndpoint: "https://auth.x.ai/oauth2/token" },
-      runtimeState: { authStatus: "ready" },
-    }
-    setTestAccounts([account])
+    const conn = createOAuthConnection("acct-xai-401", "xai", {
+      accessToken: "invalid-access",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() + 3_600_000,
+      tokenEndpoint: "https://auth.x.ai/oauth2/token",
+    })
+    const connection = getMutableProviderConnection(conn.id)
+    if (!connection) throw new Error("connection not found")
 
-    const response = await executeUpstreamProxyCall(account, {
+    const response = await executeUpstreamProxyCall(connection, {
       method: "GET",
       url: "https://cli-chat-proxy.grok.com/v1/billing",
       headers: { Authorization: "Bearer $TOKEN$" },
@@ -193,25 +222,16 @@ describe("ensureOAuthAccessToken", () => {
       return Promise.resolve(new Response("ok", { status: 200 }))
     }) as typeof fetch
 
-    const account: OAuthAccount = {
-      id: "acct-both-creds",
-      label: "xai-both",
-      provider: "xai",
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        accessToken: "oauth-access",
-        refreshToken: "refresh-1",
-        expiresAt: Date.now() + 3_600_000,
-        apiKey: "xai-static-key",
-      },
-      runtimeState: { authStatus: "ready" },
-    }
-    setTestAccounts([account])
+    const conn = createOAuthConnection("acct-both-creds", "xai", {
+      accessToken: "oauth-access",
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() + 3_600_000,
+      apiKey: "xai-static-key",
+    })
+    const connection = getMutableProviderConnection(conn.id)
+    if (!connection) throw new Error("connection not found")
 
-    const response = await executeUpstreamProxyCall(account, {
+    const response = await executeUpstreamProxyCall(connection, {
       method: "GET",
       url: "https://cli-chat-proxy.grok.com/v1/billing",
       headers: { Authorization: "Bearer $TOKEN$" },

@@ -1,7 +1,8 @@
-import type { AccountModel, OAuthAccount } from "~/lib/accounts"
+import type { AccountModel, OAuthAccount } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ModelMapping } from "~/lib/provider-connections"
 
-import { canonicalNativeModelId } from "~/lib/accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 
 interface CatalogEntry {
   id: string
@@ -303,4 +304,47 @@ export function getOAuthFallbackModels(
   account: OAuthAccount,
 ): Array<AccountModel> {
   return toAccountModels(account.provider, CATALOGS[account.provider])
+}
+
+// ── Connection 原生版本 ───────────────────────────────────────
+
+function endpointsToModelEndpoints(
+  supported: Array<string>,
+): Array<ModelMapping["endpoints"][number]> {
+  const endpoints: Array<ModelMapping["endpoints"][number]> = []
+  for (const ep of supported) {
+    if (ep.includes("chat/completions")) endpoints.push("chat")
+    else if (ep.includes("messages")) endpoints.push("messages")
+    else if (ep.includes("responses")) endpoints.push("responses")
+    else if (ep.includes("embeddings")) endpoints.push("embeddings")
+    else if (ep.includes("images")) endpoints.push("images")
+    else if (ep.includes("videos")) endpoints.push("videos")
+  }
+  if (endpoints.length === 0) endpoints.push("chat")
+  return endpoints
+}
+
+function toModelMappings(
+  _provider: OAuthProviderId,
+  entries: Array<CatalogEntry>,
+): Array<ModelMapping> {
+  return entries.map((entry) => ({
+    publicId: canonicalNativeModelId(entry.id),
+    upstreamId:
+      entry.upstreamId ? canonicalNativeModelId(entry.upstreamId) : entry.id,
+    name: entry.name,
+    vendor: entry.vendor,
+    enabled: true,
+    pickerEnabled: entry.pickerEnabled ?? true,
+    endpoints: endpointsToModelEndpoints(entry.supportedEndpoints),
+  }))
+}
+
+/**
+ * Connection 原生版本:返回 OAuth provider 的 fallback 模型列表。
+ */
+export function getOAuthFallbackModelsForConnection(
+  provider: OAuthProviderId,
+): Array<ModelMapping> {
+  return toModelMappings(provider, CATALOGS[provider])
 }

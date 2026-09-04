@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 import type { ModelsDevCatalog } from "~/lib/models-dev"
 
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
 import {
   buildPricingLookupCandidates,
   resolveModelsDevPrice,

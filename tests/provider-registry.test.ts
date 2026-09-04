@@ -2,9 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
-import { ensureDirectProviderAccounts } from "~/lib/provider-defaults"
+import { ensureDirectProviderConnections } from "~/lib/provider-defaults"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -106,7 +106,7 @@ test("cacheModels exposes only bare model ids", () => {
   expect(modelIds.includes("windsurf/swe-1-6-fast")).toBe(false)
 })
 
-test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct accounts", async () => {
+test("ensureDirectProviderConnections reapplies CLI defaults to managed direct accounts", async () => {
   state.providerDefaults.codebuff.authToken = "cb-token"
   state.providerDefaults.codebuff.baseUrl = "https://override.example"
   state.providerDefaults.codebuff.cliVersion = "9.9.9"
@@ -136,7 +136,7 @@ test("ensureDirectProviderAccounts reapplies CLI defaults to managed direct acco
     },
   ])
 
-  await ensureDirectProviderAccounts()
+  await ensureDirectProviderConnections()
 
   expect(listAccounts()[0]?.settings).toMatchObject({
     baseUrl: "https://override.example",

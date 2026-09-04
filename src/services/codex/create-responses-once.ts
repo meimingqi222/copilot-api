@@ -1,4 +1,7 @@
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
@@ -6,7 +9,6 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import {
   applyIdentityConfuseBody,
   applyIdentityConfuseHeaders,
@@ -20,14 +22,19 @@ import {
   injectReasoningReplayItems,
 } from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
+import {
+  getCredentialContextString,
+  getConnectionSettings,
+} from "~/lib/provider-connections"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 import { sanitizeCodexInput } from "~/services/codex/sanitize-input"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import {
   detectResponsesStreamError,
   safeSseStream,
@@ -226,28 +233,43 @@ export function finalizeCodexOutboundBody(
 }
 
 export async function createCodexResponsesOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ResponsesPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "codex") {
-    throw new Error("Codex responses requires a Codex OAuth account")
+  if (connection.protocol !== "codex-native") {
+    throw new Error("Codex responses requires a Codex OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`Codex access token missing for account "${account.label}"`)
+    throw new Error(
+      `Codex access token missing for connection "${connection.name}"`,
+    )
   }
 
   const model = canonicalNativeModelId(payload.model)
   const memoryTraceId = readMemoryTraceId(ctx)
-  const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
-  const url = `${baseUrl.replace(/\/+$/, "")}/responses`
+  const settingsBase = getConnectionSettings(connection)?.baseUrl
+  const baseUrl = (
+    typeof settingsBase === "string" ? settingsBase : (
+      CODEX_API_BASE_URL
+    )).replace(/\/+$/, "")
+  const url = `${baseUrl}/responses`
   const clientStream = payload.stream === true
   const useUpstreamWs =
     !ctx?.forceUpstreamHttp
-    && shouldUseUpstreamResponsesWebsocket(account, "codex", ctx)
+    && shouldUseUpstreamResponsesWebsocket(connection, "codex", ctx)
   const { sessionId, threadId, sessionIdIsStable } = resolveCodexSessionHeaders(
     payload,
     ctx,
@@ -286,7 +308,7 @@ export async function createCodexResponsesOnce(
   // Remap prompt_cache_key to a per-account deterministic UUID so that
   // multi-account load balancing doesn't break cache affinity.
   const identityState = applyIdentityConfuseBody(
-    account.id,
+    connection.id,
     payload as unknown as Record<string, unknown>,
     upstreamBody,
   )
@@ -324,9 +346,10 @@ export async function createCodexResponsesOnce(
 
   // ── Build headers (HTTP-safe base; WS path clones + rewrites) ────────
   const httpHeaders: Record<string, string> = {
-    ...buildCodexHeaders(account, accessToken, true, {
+    ...buildCodexHeaders(accessToken, true, {
       sessionId,
       threadId,
+      accountId: getCredentialContextString(connection, "oauthAccountId"),
     }),
     ...extraHeaders,
   }
@@ -342,7 +365,7 @@ export async function createCodexResponsesOnce(
     ctx?.executionSessionId?.trim()
     || sessionId
     || replaySessionKey
-    || account.id
+    || connection.id
   // Transcript recovery is gated on a client-supplied stable session id —
   // never the turn-1 content-hash fallback (two different conversations that
   // open with an identical first turn would hash to the same id and collide
@@ -421,7 +444,7 @@ export async function createCodexResponsesOnce(
   // fall through to a same-account HTTP POST.
   if (useUpstreamWs) {
     const wsTurn = await attemptCodexUpstreamWsTurn({
-      account,
+      connection,
       url,
       httpHeaders,
       upstreamBody,
@@ -444,7 +467,7 @@ export async function createCodexResponsesOnce(
   }
 
   const response = await postCodexResponses({
-    account,
+    connection,
     url,
     headers: httpHeaders,
     upstreamBody,
@@ -610,7 +633,7 @@ function readMemoryTraceId(
 }
 
 async function postCodexResponses(options: {
-  account: Account
+  connection: ProviderConnection
   url: string
   headers: Record<string, string>
   upstreamBody: Record<string, unknown>
@@ -631,7 +654,7 @@ async function postCodexResponses(options: {
     provider: "codex",
     wireBytes: Buffer.byteLength(body),
   })
-  return fetchWithOAuthProxy(options.account, options.url, {
+  return fetchWithConnectionProxy(options.connection, options.url, {
     method: "POST",
     headers: options.headers,
     // HTTP never sends previous_response_id. A chained WS fallback uses the
@@ -722,7 +745,7 @@ async function* wrapCodexStream(
 }
 
 interface CodexWsTurnOptions {
-  account: Account
+  connection: ProviderConnection
   url: string
   httpHeaders: Record<string, string>
   upstreamBody: Record<string, unknown>
@@ -751,7 +774,7 @@ async function attemptCodexUpstreamWsTurn(
   AsyncIterable<CopilotStreamEventLike> | ResponsesResponse | undefined
 > {
   const {
-    account,
+    connection,
     url,
     httpHeaders,
     upstreamBody,
@@ -783,7 +806,7 @@ async function attemptCodexUpstreamWsTurn(
     // Eager open+send so handshake failures hit this catch (streaming-safe).
     const wsStream = await openUpstreamResponsesWebsocketTurn({
       provider: "codex",
-      account,
+      accountId: connection.id,
       httpResponsesUrl: url,
       headers: wsHeaders,
       body: wsBody,
@@ -843,7 +866,11 @@ async function attemptCodexUpstreamWsTurn(
     // destroy the stale session so the next turn redials; then fall through
     // to a same-account HTTP POST for the current turn.
     if (failure.kind === "connection_limit") {
-      destroyUpstreamWebsocketSession("codex", account.id, executionSessionId)
+      destroyUpstreamWebsocketSession(
+        "codex",
+        connection.id,
+        executionSessionId,
+      )
     }
     logger.warn(
       `codex websockets: falling back to HTTP: ${

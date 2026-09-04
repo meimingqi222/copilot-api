@@ -1,8 +1,13 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
+import type { QuotaSnapshot } from "~/lib/quota/types"
 
-import { setAccountQuotaState } from "~/lib/account-availability"
-import { isOAuthAccount } from "~/lib/accounts"
+import { isOAuthProviderId } from "~/lib/provider-config"
+import {
+  getConnectionProvider,
+  setConnectionQuotaInfo,
+  setConnectionQuotaState,
+} from "~/lib/provider-connections"
 
 import { fetchAntigravityQuota } from "./fetchers/antigravity"
 import { fetchClaudeQuota } from "./fetchers/claude"
@@ -15,7 +20,10 @@ const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
 
 const QUOTA_FETCHERS: Record<
   OAuthProviderId,
-  (account: Account, signal?: AbortSignal) => Promise<QuotaSnapshot>
+  (
+    connection: ProviderConnection,
+    signal?: AbortSignal,
+  ) => Promise<QuotaSnapshot>
 > = {
   antigravity: fetchAntigravityQuota,
   claude: fetchClaudeQuota,
@@ -24,22 +32,32 @@ const QUOTA_FETCHERS: Record<
   xai: fetchXaiQuota,
 }
 
+/**
+ * 拉取 OAuth provider 配额快照(connection 原生)。
+ * 刷新材料与 access token 均从 connection credential 读取;
+ * 非 OAuth connection 返回 undefined。
+ */
 export async function fetchOAuthProviderQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot | undefined> {
-  if (!isOAuthAccount(account)) {
+  const provider = getConnectionProvider(connection)
+  if (!provider || !isOAuthProviderId(provider)) {
     return undefined
   }
 
-  return QUOTA_FETCHERS[account.provider](account, signal)
+  return QUOTA_FETCHERS[provider](connection, signal)
 }
 
+/**
+ * 将配额快照落到 connection(metadata.quotaInfo + quotaState,
+ * credential.status 随 setConnectionQuotaState 联动)。
+ */
 export function applyOAuthQuotaSnapshot(
-  account: Account,
+  connection: ProviderConnection,
   snapshot: QuotaSnapshot,
 ): void {
-  account.quotaInfo = snapshot
+  setConnectionQuotaInfo(connection, snapshot)
 
   const provider = snapshot.provider as OAuthProviderId | undefined
 
@@ -59,5 +77,5 @@ export function applyOAuthQuotaSnapshot(
         <= PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD)
       || countExhausted)
 
-  setAccountQuotaState(account, exhausted ? "exhausted" : "available")
+  setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
 }

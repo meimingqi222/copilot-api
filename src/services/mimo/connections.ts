@@ -2,41 +2,61 @@ import type { WSContext } from "hono/ws"
 
 import { randomBytes, timingSafeEqual } from "node:crypto"
 
-import { saveAccounts } from "~/lib/account-store"
-import {
-  getAccount,
-  getMimoWsToken as getAccountWsTokenFromStore,
-  setMimoWsToken as setAccountWsTokenInStore,
-} from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import {
+  getConnectionCredentialExtras,
   getMutableProviderConnection,
-  syncAccountToConnection,
+  persistProviderConnections,
+  setConnectionCredentialExtra,
+  setCredentialContextField,
 } from "~/lib/provider-connections"
 
 const generatedMimoWsToken = randomBytes(32).toString("hex")
 
 /**
+ * 读取 connection 的 WS token(Phase 2c)。
+ *
+ * 正位:credential.context.mimoWsToken;legacy 位置
+ * metadata.credentialExtras.mimoWsToken 作为回退(存量数据兼容)。
+ */
+function readConnectionWsToken(connId: string): string | undefined {
+  const conn = getMutableProviderConnection(connId)
+  if (!conn) return undefined
+  const cred = conn.credentials[0]
+  const fromContext = cred.context?.mimoWsToken
+  if (typeof fromContext === "string" && fromContext) return fromContext
+  const extras = getConnectionCredentialExtras(conn)
+  const fromExtras = extras?.mimoWsToken
+  if (typeof fromExtras === "string" && fromExtras) return fromExtras
+  return undefined
+}
+
+/**
  * Returns the per-account WS token. If none exists, generates one
- * and persists it to the account's credentials.
+ * and persists it to the credential.
+ *
+ * 写入正位 credential.context.mimoWsToken;同时镜像写入
+ * credentialExtras —— 过渡期 syncAccountToConnection 会用
+ * buildAccountLegacyMetadata 重建 credential.context(mimo 无 context
+ * 字段映射,会被清空),extras 是唯一能经 Account 往返存活的位置。
+ * Phase 5 删除 Account 后Extras 镜像可移除。
  */
 export function getOrCreateAccountWsToken(accountId: string): string {
   // Check for globally-configured token first (backward compat)
   const globalToken = process.env.MIMO_WS_TOKEN
   if (globalToken) return globalToken
 
-  const acc = getAccount(accountId)
-  if (!acc) return fallbackToken()
+  const conn = getMutableProviderConnection(accountId)
+  if (!conn) return fallbackToken()
 
-  const existing = getAccountWsTokenFromStore(acc)
+  const existing = readConnectionWsToken(accountId)
   if (existing) return existing
 
   const newToken = randomBytes(32).toString("hex")
-  setAccountWsTokenInStore(acc, newToken)
-  const conn = getMutableProviderConnection(acc.id)
-  if (conn) syncAccountToConnection(conn, acc)
-  saveAccounts().catch((err: unknown) => {
-    logger.error("Failed to save accounts after generating WS token:", err)
+  setCredentialContextField(conn, "mimoWsToken", newToken)
+  setConnectionCredentialExtra(conn, "mimoWsToken", newToken)
+  persistProviderConnections().catch((err: unknown) => {
+    logger.error("Failed to save connections after generating WS token:", err)
   })
   return newToken
 }
@@ -46,8 +66,7 @@ export function getOrCreateAccountWsToken(accountId: string): string {
  * Returns the cached per-account token or generates a new one.
  */
 export function getMimoWsTokenForAccount(accountId: string): string {
-  const acc = getAccount(accountId)
-  return (acc && getAccountWsTokenFromStore(acc)) ?? fallbackToken()
+  return readConnectionWsToken(accountId) ?? fallbackToken()
 }
 
 function fallbackToken(): string {
@@ -71,12 +90,11 @@ export function isValidMimoWsTokenForAccount(
     return true
   }
 
-  // Check per-account token
-  const acc = getAccount(accountId)
-  const accountToken = acc && getAccountWsTokenFromStore(acc)
-  if (!accountToken) return false
+  // Check per-connection token
+  const connectionToken = readConnectionWsToken(accountId)
+  if (!connectionToken) return false
 
-  return timingSafeEqualBuffer(token, accountToken)
+  return timingSafeEqualBuffer(token, connectionToken)
 }
 
 function timingSafeEqualBuffer(a: string, b: string): boolean {

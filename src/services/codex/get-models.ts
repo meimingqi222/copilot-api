@@ -1,6 +1,16 @@
-import type { Account, AccountModel } from "~/lib/accounts"
+import type { Account, AccountModel } from "~/lib/legacy-accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
+import {
+  canonicalNativeModelId,
+  getOAuthAccountId,
+  isOAuthAccount,
+} from "~/lib/legacy-accounts"
+import {
+  getConnectionProvider,
+  getConnectionSettings,
+  getMutableProviderConnection,
+} from "~/lib/provider-connections"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 
@@ -42,10 +52,88 @@ export async function getCodexModelsForAccount(
   // 0.144.1 matches CPA fetch_codex_models and returns the current catalog.
   url.searchParams.set("client_version", "0.144.1")
 
-  const response = await executeUpstreamProxyCall(account, {
+  const connection = getMutableProviderConnection(account.id)
+  if (!connection) {
+    return []
+  }
+  const response = await executeUpstreamProxyCall(connection, {
     method: "GET",
     url: url.toString(),
-    headers: buildCodexHeaders(account, accessToken),
+    headers: buildCodexHeaders(accessToken, undefined, {
+      accountId: getOAuthAccountId(account),
+    }),
+    signal,
+  })
+
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(
+      `Codex models request failed (${response.statusCode}): ${response.body.slice(0, 200)}`,
+    )
+  }
+
+  let payload: { models?: Array<CodexModelPayload> }
+  try {
+    payload = JSON.parse(response.body) as { models?: Array<CodexModelPayload> }
+  } catch {
+    throw new Error("Codex models response was not valid JSON")
+  }
+
+  const seen = new Set<string>()
+  const models: Array<AccountModel> = []
+  for (const entry of payload.models ?? []) {
+    const id = parseCodexModelId(entry)
+    if (!id || seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+    models.push({
+      id,
+      name: entry.display_name ?? entry.displayName ?? entry.name ?? id,
+      vendor: "openai",
+      pickerEnabled: true,
+      supportedEndpoints: ["/v1/responses"],
+      provider: "codex",
+    })
+  }
+
+  if (models.length === 0) {
+    throw new Error("Codex models response did not include any models")
+  }
+
+  return models
+}
+
+/**
+ * Connection 原生版本:直接从 ProviderConnection 发现 codex 模型。
+ * Phase 2d:消除 connectionToAccount 依赖。
+ */
+export async function getCodexModelsForConnection(
+  connection: ProviderConnection,
+  signal?: AbortSignal,
+): Promise<Array<AccountModel>> {
+  const provider = getConnectionProvider(connection)
+  if (provider !== "codex") return []
+
+  const cred = connection.credentials[0]
+  const accessToken = cred?.value
+  if (!accessToken) return []
+
+  const settings = getConnectionSettings(connection)
+  const baseUrl =
+    (typeof settings?.baseUrl === "string" ? settings.baseUrl : undefined)
+    ?? CODEX_API_BASE_URL
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/models`)
+  url.searchParams.set("client_version", "0.144.1")
+
+  const response = await executeUpstreamProxyCall(connection, {
+    method: "GET",
+    url: url.toString(),
+    headers: buildCodexHeaders(accessToken, undefined, {
+      accountId:
+        typeof cred.context?.oauthAccountId === "string" ?
+          cred.context.oauthAccountId
+        : undefined,
+    }),
     signal,
   })
 

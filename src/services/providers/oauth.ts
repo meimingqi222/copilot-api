@@ -1,21 +1,17 @@
-import type { Account, AccountModel } from "~/lib/accounts"
-
 import { saveAccounts } from "~/lib/account-store"
-import { isOAuthAccount } from "~/lib/accounts"
+import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
+import { getOAuthProviderDescriptor } from "~/lib/provider-config"
 import {
-  getOAuthProviderDescriptor,
-  type OAuthProviderId,
-} from "~/lib/provider-config"
-import {
+  getConnectionProvider,
   getMutableProviderConnection,
-  syncAccountToConnection,
+  setConnectionModels,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot, fetchOAuthProviderQuota } from "~/lib/quota"
 import {
-  discoverOAuthModels,
-  getOAuthCatalogModels,
+  discoverOAuthModelsForConnection,
+  getOAuthCatalogModelsForConnection,
 } from "~/services/oauth/discover-models"
-import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
+import { refreshOAuthConnectionToken } from "~/services/oauth/refresh-scheduler"
 
 import type { ProviderRuntime } from "./runtime"
 
@@ -27,60 +23,58 @@ export function createOAuthProviderRuntime(
   return {
     id: providerId,
     descriptor,
-    supports(account, feature) {
-      if (!isOAuthAccount(account) || account.provider !== providerId) {
-        return false
-      }
+    supports(connection, feature) {
+      const provider = getConnectionProvider(connection)
+      if (provider !== providerId) return false
+      if (!isOAuthProviderId(provider)) return false
       return descriptor.features.includes(feature)
     },
-    async refreshModels(account) {
-      if (!isOAuthAccount(account) || account.provider !== providerId) {
+    async refreshModels(connection) {
+      const provider = getConnectionProvider(connection)
+      if (provider !== providerId) {
         return []
       }
-      const models = await discoverOAuthModels(account)
-      account.availableModels = models
-      return toOAuthAccountModels(account, providerId)
+      const models = await discoverOAuthModelsForConnection(connection)
+      setConnectionModels(connection, models)
+      return models
     },
-    getFallbackModels(account) {
-      if (!isOAuthAccount(account) || account.provider !== providerId) {
+    getFallbackModels(connection) {
+      const provider = getConnectionProvider(connection)
+      if (provider !== providerId) {
         return []
       }
-      return getOAuthCatalogModels(account)
+      return getOAuthCatalogModelsForConnection(connection)
     },
-    async refreshQuota(account) {
-      if (!isOAuthAccount(account) || account.provider !== providerId) {
+    async refreshQuota(connection) {
+      const provider = getConnectionProvider(connection)
+      if (provider !== providerId) {
         return undefined
       }
 
-      const snapshot = await fetchOAuthProviderQuota(account)
-      if (!snapshot) {
-        return account.quotaInfo
+      const liveConnection = getMutableProviderConnection(connection.id)
+      if (!liveConnection) {
+        return undefined
       }
 
-      applyOAuthQuotaSnapshot(account, snapshot)
-      const conn = getMutableProviderConnection(account.id)
-      if (conn) syncAccountToConnection(conn, account)
+      const snapshot = await fetchOAuthProviderQuota(liveConnection)
+      if (!snapshot) {
+        return undefined
+      }
+
+      applyOAuthQuotaSnapshot(liveConnection, snapshot)
       await saveAccounts()
       return snapshot
     },
-    refreshAuth(account) {
-      if (!isOAuthAccount(account) || account.provider !== providerId) {
+    refreshAuth(connection) {
+      const provider = getConnectionProvider(connection)
+      if (provider !== providerId) {
         return Promise.resolve()
       }
-      return refreshOAuthAccountToken(account, "manual")
+      const liveConnection = getMutableProviderConnection(connection.id)
+      if (!liveConnection) {
+        return Promise.resolve()
+      }
+      return refreshOAuthConnectionToken(liveConnection, "manual")
     },
   }
-}
-
-export function toOAuthAccountModels(
-  account: Account,
-  providerId: OAuthProviderId,
-): Array<AccountModel> {
-  if (!isOAuthAccount(account) || account.provider !== providerId) {
-    return []
-  }
-  return (account.availableModels ?? []).map((model) => ({
-    ...model,
-    provider: providerId,
-  }))
 }

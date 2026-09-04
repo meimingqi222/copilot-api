@@ -1,12 +1,16 @@
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
+import { getConnectionSettings } from "~/lib/provider-connections"
 import {
   ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
   buildAntigravityHubUserAgent,
   getAntigravityLatestVersion,
 } from "~/services/antigravity/version"
 
-import { applyOAuthBundle } from "./apply-bundle"
+import {
+  applyOAuthBundleToCredential,
+  applyOAuthConnectionSettings,
+} from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState } from "./pkce"
 
@@ -366,17 +370,26 @@ export function buildAntigravityUserAgent(version?: string): string {
 }
 
 export function applyAntigravityOAuthBundle(
-  account: OAuthAccount,
+  connection: ProviderConnection,
   bundle: AntigravityOAuthBundle,
 ): void {
-  applyOAuthBundle(account, bundle, {
+  applyOAuthBundleToCredential(connection, bundle, {
     projectId: bundle.projectId,
     email: bundle.email,
   })
-  account.settings = {
-    ...account.settings,
+  applyOAuthConnectionSettings(connection, {
     // 与 CPA 一致，默认使用 daily 端点（独立配额池，额度更高）
-    baseUrl: account.settings?.baseUrl ?? ANTIGRAVITY_DAILY_API_BASE_URL,
+    baseUrl:
+      readSettingString(connection, "baseUrl")
+      ?? ANTIGRAVITY_DAILY_API_BASE_URL,
     redirectUri: bundle.redirectUri,
-  }
+  })
+}
+
+function readSettingString(
+  connection: ProviderConnection,
+  key: string,
+): string | undefined {
+  const value = getConnectionSettings(connection)?.[key]
+  return typeof value === "string" && value ? value : undefined
 }

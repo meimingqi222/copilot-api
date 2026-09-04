@@ -1,15 +1,18 @@
 import type { Context } from "hono"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import { canonicalModelId } from "~/lib/accounts"
-import { getAccountProtocol } from "~/lib/request-admission"
+import { canonicalModelId, parseModelReference } from "~/lib/legacy-accounts"
+import { accountManagedModelPrefix } from "~/lib/provider-connections"
 import { isChatCompletionResponse } from "~/lib/utils"
 import { createChatCompletions } from "~/services/copilot/create-chat-completions"
 import { hasVisionInput } from "~/services/copilot/create-responses-once"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import {
-  supportsResponsesApi,
+  supportsResponsesApiForConnection,
   translateChatCompletionToResponses,
   translateChatCompletionsStreamToResponses,
   translateResponsesToChatPayload,
@@ -17,10 +20,15 @@ import {
   type ResponsesPayload,
   type ResponsesResponse,
 } from "~/services/copilot/responses-api"
-import { delegateResponsesToNativeAdapter } from "~/services/providers/delegate"
+import {
+  getProtocolAdapter,
+  initializeProtocolAdapters,
+} from "~/services/protocols"
+import { buildDirectAdapterTarget } from "~/services/providers/adapter-target"
 
 interface CreateResponsesOptions {
-  account: Account
+  connection: ProviderConnection
+  credential: ApiCredential
   signal?: AbortSignal
   initiatorOverride?: "agent" | "user"
   forwardedHeaders?: Record<string, string | undefined>
@@ -43,22 +51,23 @@ interface CreateResponsesOptions {
 export const createResponses = async (
   payload: ResponsesPayload,
   options: CreateResponsesOptions,
-): Promise<
-  | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
-  | { accountId: string; response: ResponsesResponse }
-> => {
+): Promise<{
+  accountId: string
+  response: ResponsesResponse | AsyncIterable<CopilotStreamEventLike>
+}> => {
   const routedPayload = {
     ...payload,
     model: canonicalModelId(payload.model),
   }
-  const account = options.account
+  const { connection, credential } = options
 
-  if (!supportsResponsesApi(routedPayload.model, account)) {
+  if (!supportsResponsesApiForConnection(routedPayload.model, connection)) {
     const chatPayload = translateResponsesToChatPayload(routedPayload)
     const result = await createChatCompletions(chatPayload, {
+      connection,
+      credential,
       signal: options.signal,
       initiatorOverride: options.initiatorOverride,
-      account,
       c: options.c,
       forwardedHeaders: options.forwardedHeaders,
       memoryTraceId: options.memoryTraceId,
@@ -88,12 +97,33 @@ export const createResponses = async (
     options.initiatorOverride
     ?? inferInitiatorFromResponsesPayload(routedPayload)
 
-  return delegateResponsesToNativeAdapter(
-    account,
-    getAccountProtocol(account),
-    routedPayload,
-    options.signal,
-    {
+  initializeProtocolAdapters()
+  const adapter = getProtocolAdapter(connection.protocol)
+  if (!adapter?.createResponses) {
+    throw new Error(
+      `Protocol "${connection.protocol}" does not support responses`,
+    )
+  }
+
+  const nativeModelId = parseModelReference(
+    routedPayload.model,
+    accountManagedModelPrefix(connection),
+  ).nativeModelId
+  const target = buildDirectAdapterTarget({
+    connection,
+    credential,
+    payloadModel: routedPayload.model,
+    nativeModelId,
+    endpoint: "responses",
+  })
+
+  const result = await adapter.createResponses({
+    target,
+    connection,
+    credential,
+    payload: routedPayload,
+    signal: options.signal,
+    ctx: {
       initiator,
       enableVision,
       forwardedHeaders: options.forwardedHeaders,
@@ -104,5 +134,10 @@ export const createResponses = async (
       memoryTraceId: options.memoryTraceId,
       forceUpstreamHttp: options.forceUpstreamHttp,
     },
-  )
+  })
+
+  return {
+    accountId: result.credentialId,
+    response: result.response,
+  }
 }

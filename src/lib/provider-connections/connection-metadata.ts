@@ -11,18 +11,39 @@ import type {
   AccountModel,
   AccountQuotaState,
   AccountRuntimeState,
-  QuotaSnapshot,
-} from "~/lib/accounts"
+} from "~/lib/legacy-accounts"
 
-import { isOAuthAccount } from "~/lib/accounts"
-import { isOAuthProviderId, type ProviderId } from "~/lib/provider-config"
+import { isOAuthAccount } from "~/lib/legacy-accounts"
+import {
+  isOAuthProviderId,
+  PROVIDER_PROTOCOL_MAP,
+  type ProviderId,
+} from "~/lib/provider-config"
+
+// T5.2.5:内联 protocol → provider 映射(避免与 protocol-provider.ts 的循环依赖)
+const PROTOCOL_TO_PROVIDER: Partial<Record<ProviderProtocol, string>> = {}
+for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
+  PROTOCOL_TO_PROVIDER[protocol] = providerId
+}
 
 import type {
   ApiCredential,
   ModelEndpoint,
   ModelMapping,
   ProviderConnection,
+  ProviderProtocol,
+  QuotaSnapshot,
 } from "./types"
+
+/**
+ * protocol → provider 反向映射,从 PROVIDER_PROTOCOL_MAP 派生。
+ * 用于 ensureLegacyMetadata 的默认 provider 推导。
+ */
+const PROTOCOL_TO_PROVIDER_ID: Partial<Record<ProviderProtocol, ProviderId>> =
+  {}
+for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
+  PROTOCOL_TO_PROVIDER_ID[protocol] = providerId as ProviderId
+}
 
 /**
  * 迁移后 provider-connections.json 中 migrated connection 的 metadata 形状。
@@ -81,33 +102,59 @@ export function readAccountLegacyMetadata(
 export function getConnectionProvider(
   conn: ProviderConnection,
 ): ProviderId | undefined {
-  return readAccountLegacyMetadata(conn)?.provider
+  // T5.2.5:从 protocol 派生,不再读 metadata.provider
+  return PROTOCOL_TO_PROVIDER[conn.protocol] as ProviderId | undefined
 }
 
 export function getConnectionQuotaState(
   conn: ProviderConnection,
 ): AccountQuotaState {
-  return readAccountLegacyMetadata(conn)?.quotaState ?? "unknown"
+  // T5.2.5:从 credential.status 派生,不再读 metadata.quotaState
+  const cred = conn.credentials[0]
+  if (!cred) return "unknown"
+  if (cred.status === "quota_exhausted") return "exhausted"
+  if (cred.quota === undefined) return "unknown"
+  return "available"
 }
 
 export function getConnectionQuotaInfo(
   conn: ProviderConnection,
 ): QuotaSnapshot | undefined {
+  // T5.2.5:优先读 credential.quota(类型化字段),回退到 metadata.quotaInfo
+  const cred = conn.credentials[0]
+  if (cred?.quota) return cred.quota
   const meta = readAccountLegacyMetadata(conn)
   if (!meta) return undefined
   const info = meta.quotaInfo
   return info ?? undefined
 }
 
+/** 设置配额快照。T5.2.5:仅写入 credential.quota(类型化字段),不再双写 metadata。 */
+export function setConnectionQuotaInfo(
+  conn: ProviderConnection,
+  snapshot: QuotaSnapshot,
+): void {
+  const cred = conn.credentials[0]
+  if (cred) {
+    cred.quota = snapshot
+  }
+}
+
 export function getConnectionQuotaExhaustedAt(
   conn: ProviderConnection,
 ): number | undefined {
+  // T5.2.5:优先读 credential.exhaustedAt,回退到 metadata
+  const cred = conn.credentials[0]
+  if (cred?.exhaustedAt !== undefined) return cred.exhaustedAt
   return readAccountLegacyMetadata(conn)?.quotaExhaustedAt
 }
 
 export function getConnectionExhaustedAt(
   conn: ProviderConnection,
 ): number | undefined {
+  // T5.2.5:优先读 credential.exhaustedAt,回退到 metadata
+  const cred = conn.credentials[0]
+  if (cred?.exhaustedAt !== undefined) return cred.exhaustedAt
   return readAccountLegacyMetadata(conn)?.exhaustedAt
 }
 
@@ -129,6 +176,9 @@ export function getConnectionLastRateLimitAt(
 export function getConnectionLastRateLimitReason(
   conn: ProviderConnection,
 ): string | undefined {
+  // T5.2.5:优先读 credential.lastRateLimitReason,回退到 metadata
+  const cred = conn.credentials[0]
+  if (cred?.lastRateLimitReason) return cred.lastRateLimitReason
   return readAccountLegacyMetadata(conn)?.lastRateLimitReason
 }
 
@@ -147,7 +197,19 @@ export function getConnectionCpaMetadata(
 export function getConnectionSubtitle(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.subtitle
+  // T5.2.5:从 credential.context 派生,不再读 metadata.subtitle
+  const cred = conn.credentials[0]
+  const ctx = cred?.context
+  if (!ctx) return undefined
+  const email = typeof ctx.email === "string" ? ctx.email : undefined
+  const projectId =
+    typeof ctx.projectId === "string" ? ctx.projectId : undefined
+  const oauthAccountId =
+    typeof ctx.oauthAccountId === "string" ? ctx.oauthAccountId : undefined
+  if (email) return email
+  if (projectId) return projectId
+  if (oauthAccountId) return oauthAccountId
+  return undefined
 }
 
 export function getConnectionSettings(
@@ -175,13 +237,15 @@ export function getConnectionAuthError(
 export function getConnectionProxyUrl(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.proxyUrl
+  // T5.2.5:优先读 connection.proxyUrl(类型化字段),回退到 metadata
+  return conn.proxyUrl ?? readAccountLegacyMetadata(conn)?.proxyUrl
 }
 
 export function getConnectionModelPrefix(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.modelPrefix
+  // T5.2.5:优先读 connection.modelPrefix(类型化字段),回退到 metadata
+  return conn.modelPrefix ?? readAccountLegacyMetadata(conn)?.modelPrefix
 }
 
 export function getConnectionTokenEndpoint(
@@ -280,7 +344,7 @@ function getPrimaryTokenKey(provider: string): string | undefined {
       return "serviceToken"
     }
     default: {
-      if (isOAuthProviderId(provider as never)) return "accessToken"
+      if (isOAuthProviderId(provider)) return "accessToken"
       return undefined
     }
   }
@@ -368,8 +432,10 @@ export function ensureLegacyMetadata(
     || typeof conn.metadata !== "object"
     || !("provider" in conn.metadata)
   ) {
+    // 从 protocol 推导默认 provider,而非硬编码 "copilot"
+    const defaultProvider = PROTOCOL_TO_PROVIDER_ID[conn.protocol] ?? "copilot"
     conn.metadata = {
-      provider: "copilot" as ProviderId,
+      provider: defaultProvider,
       quotaState: "unknown",
       ...conn.metadata,
     }
@@ -377,27 +443,53 @@ export function ensureLegacyMetadata(
   return conn.metadata as unknown as AccountLegacyMetadata
 }
 
-/** 设置 metadata.cooldownUntil + credential.cooldownUntil（同步）。 */
+/**
+ * 设置 metadata.cooldownUntil + credential.cooldownUntil（同步）。
+ * 同时镜像 syncMapQuotaStateToCredentialStatus:冷却生效时把
+ * credential.status 置为 "cooldown"（auth_error 优先级更高，不覆盖）。
+ */
 export function setConnectionCooldownUntil(
   conn: ProviderConnection,
   value: number | undefined,
 ): void {
   const meta = ensureLegacyMetadata(conn)
   meta.cooldownUntil = value
-  conn.credentials[0].cooldownUntil = value
+  const cred = conn.credentials[0]
+  cred.cooldownUntil = value
+  if (
+    value
+    && value > Date.now()
+    && cred.status !== "auth_error"
+    && cred.status !== "quota_exhausted"
+  ) {
+    cred.status = "cooldown"
+  }
 }
 
-/** 设置 metadata.quotaState + quotaExhaustedAt。 */
+/**
+ * 设置 metadata.quotaState + quotaExhaustedAt。
+ * 同时镜像 syncMapQuotaStateToCredentialStatus:配额耗尽时把
+ * credential.status 置为 "quota_exhausted"（auth_error 优先级更高，不覆盖）。
+ */
 export function setConnectionQuotaState(
   conn: ProviderConnection,
   quotaState: AccountQuotaState,
 ): void {
   const meta = ensureLegacyMetadata(conn)
   meta.quotaState = quotaState
-  meta.quotaExhaustedAt = quotaState === "exhausted" ? Date.now() : undefined
+  const exhaustedAt = quotaState === "exhausted" ? Date.now() : undefined
+  meta.quotaExhaustedAt = exhaustedAt
+  // T5.2.5:同时写入 credential.exhaustedAt(类型化字段)
+  const cred = conn.credentials[0]
+  if (cred) {
+    cred.exhaustedAt = exhaustedAt
+  }
+  if (quotaState === "exhausted" && cred && cred.status !== "auth_error") {
+    cred.status = "quota_exhausted"
+  }
 }
 
-/** 设置 metadata.isExhausted + exhaustedAt。 */
+/** 设置 metadata.isExhausted + exhaustedAt。T5.2.5:同时写入 credential.exhaustedAt。 */
 export function setConnectionExhausted(
   conn: ProviderConnection,
   isExhausted: boolean,
@@ -405,11 +497,16 @@ export function setConnectionExhausted(
 ): void {
   const meta = ensureLegacyMetadata(conn)
   meta.isExhausted = isExhausted
-  meta.exhaustedAt =
-    !isExhausted ? undefined : (exhaustedAt ?? meta.exhaustedAt)
+  const at = !isExhausted ? undefined : (exhaustedAt ?? meta.exhaustedAt)
+  meta.exhaustedAt = at
+  // T5.2.5:同时写入 credential.exhaustedAt(类型化字段)
+  const cred = conn.credentials[0]
+  if (cred) {
+    cred.exhaustedAt = at
+  }
 }
 
-/** 设置 metadata.lastRateLimitAt + lastRateLimitReason。 */
+/** 设置 metadata.lastRateLimitAt + lastRateLimitReason。T5.2.5:同时写入 credential.lastRateLimitReason。 */
 export function setConnectionRateLimitInfo(
   conn: ProviderConnection,
   at: number | undefined,
@@ -418,6 +515,11 @@ export function setConnectionRateLimitInfo(
   const meta = ensureLegacyMetadata(conn)
   meta.lastRateLimitAt = at
   meta.lastRateLimitReason = reason
+  // T5.2.5:同时写入 credential.lastRateLimitReason(类型化字段)
+  const cred = conn.credentials[0]
+  if (cred) {
+    cred.lastRateLimitReason = reason
+  }
 }
 
 /** 设置 metadata.authStatus + authError。 */
@@ -481,7 +583,7 @@ export function setConnectionSetting(
 export function setConnectionCredentialExtra(
   conn: ProviderConnection,
   key: string,
-  value: string | undefined,
+  value: string | number | undefined,
 ): void {
   const meta = ensureLegacyMetadata(conn)
   if (!meta.credentialExtras) meta.credentialExtras = {}

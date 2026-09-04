@@ -1,8 +1,17 @@
-import type { Account, AccountModel } from "~/lib/accounts"
+import type { Account, AccountModel } from "~/lib/legacy-accounts"
+import type {
+  ModelMapping,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import { getWindsurfSettings } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { getWindsurfSettings } from "~/lib/legacy-accounts"
+import {
+  getConnectionSettings,
+  getConnectionWindsurfApiKey,
+} from "~/lib/provider-connections"
 import { readResponseBytes } from "~/lib/request-body"
+import { state } from "~/lib/state"
 
 import { normalizeWindsurfBaseUrl } from "./base-url"
 import {
@@ -274,4 +283,103 @@ export function fallbackWindsurfModels(
       upstreamId: defaultModel,
     },
   ]
+}
+
+// ── Connection 原生版本 ───────────────────────────────────────
+
+const WINDSURF_CONNECTION_ENDPOINTS: Array<ModelMapping["endpoints"][number]> =
+  ["chat", "messages"]
+
+function accountModelsToMappings(
+  models: Array<AccountModel>,
+): Array<ModelMapping> {
+  return models.map((m) => ({
+    publicId: m.id,
+    upstreamId: m.upstreamId || m.id,
+    name: m.name,
+    vendor: m.vendor,
+    enabled: true,
+    pickerEnabled: m.pickerEnabled,
+    pickerCategory: m.pickerCategory,
+    endpoints: WINDSURF_CONNECTION_ENDPOINTS,
+  }))
+}
+
+function fallbackWindsurfConnectionModels(
+  defaultModel: string,
+): Array<ModelMapping> {
+  return [
+    {
+      publicId: defaultModel,
+      upstreamId: defaultModel,
+      name: defaultModel,
+      vendor: "Windsurf",
+      enabled: true,
+      pickerEnabled: true,
+      endpoints: WINDSURF_CONNECTION_ENDPOINTS,
+    },
+  ]
+}
+
+/**
+ * Connection 原生版本:从 connection 的 settings + credential 读取 windsurf 配置。
+ */
+export async function getWindsurfModelsForConnection(
+  connection: ProviderConnection,
+): Promise<Array<ModelMapping>> {
+  const settings = getConnectionSettings(connection) as
+    | { baseUrl?: string; defaultModel?: string }
+    | undefined
+  const apiKey = getConnectionWindsurfApiKey(connection)
+  const defaultModel =
+    settings?.defaultModel ?? state.providerDefaults.windsurf.defaultModel
+  if (!apiKey) {
+    return fallbackWindsurfConnectionModels(defaultModel ?? "")
+  }
+
+  const baseUrl = normalizeWindsurfBaseUrl(settings?.baseUrl)
+  const response = await fetch(
+    `${baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/proto",
+        "Connect-Protocol-Version": "1",
+        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
+        "Accept-Encoding": "gzip",
+        "Connect-Timeout-Ms": "5000",
+      },
+      body: buildGetUserStatusRequest(apiKey),
+    },
+  )
+
+  if (!response.ok) {
+    throw new HTTPError(
+      "Failed to fetch Windsurf model catalog",
+      response,
+      await response.text().catch(() => "(unreadable)"),
+    )
+  }
+
+  const accountModels = extractWindsurfModelsFromPayload(
+    await readResponseBytes(response, 16 * 1024 * 1024),
+  )
+  if (accountModels.length > 0) {
+    return accountModelsToMappings(accountModels)
+  }
+  return fallbackWindsurfConnectionModels(defaultModel ?? "")
+}
+
+/**
+ * Connection 原生 fallback models。
+ */
+export function fallbackWindsurfConnectionModelsForConnection(
+  connection: ProviderConnection,
+): Array<ModelMapping> {
+  const settings = getConnectionSettings(connection) as
+    | { defaultModel?: string }
+    | undefined
+  const defaultModel =
+    settings?.defaultModel ?? state.providerDefaults.windsurf.defaultModel
+  return fallbackWindsurfConnectionModels(defaultModel ?? "")
 }

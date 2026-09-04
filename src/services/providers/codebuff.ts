@@ -1,4 +1,4 @@
-import { getCodebuffModelsForAccount } from "~/services/codebuff/get-models"
+import { getCodebuffModelsForConnection } from "~/services/codebuff/get-models"
 
 import type { ProviderRuntime } from "./runtime"
 
@@ -39,15 +39,14 @@ export const codebuffProviderRuntime: ProviderRuntime = {
       },
     ],
   },
-  supports(_account, feature) {
+  supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },
-  refreshModels(account) {
-    const models = getCodebuffModelsForAccount(account)
-    account.availableModels = models
+  refreshModels(connection) {
+    const models = getCodebuffModelsForConnection(connection)
     return Promise.resolve(models)
   },
-  getFallbackModels(account) {
-    return getCodebuffModelsForAccount(account)
+  getFallbackModels(connection) {
+    return getCodebuffModelsForConnection(connection)
   },
 }

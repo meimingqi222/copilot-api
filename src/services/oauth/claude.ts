@@ -1,8 +1,8 @@
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { claudeCodeVersion } from "~/services/claude/fingerprint"
 
-import { applyOAuthBundle } from "./apply-bundle"
+import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
 import { parseExpiresAt } from "./token-resolver"
@@ -224,10 +224,10 @@ export async function refreshClaudeTokens(
 }
 
 export function applyClaudeOAuthBundle(
-  account: OAuthAccount,
+  connection: ProviderConnection,
   bundle: ClaudeOAuthBundle,
 ): void {
-  applyOAuthBundle(account, bundle, {
+  applyOAuthBundleToCredential(connection, bundle, {
     email: bundle.email,
     accountId: bundle.accountId,
     organizationId: bundle.organizationId,

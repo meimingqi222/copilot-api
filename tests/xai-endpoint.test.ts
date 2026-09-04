@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type { Model } from "~/services/copilot/get-models"
 import type { ResponsesPayload } from "~/services/copilot/responses-api"
 
@@ -30,15 +30,33 @@ import {
 const API_BASE = "https://api.x.ai/v1"
 const CLI_BASE = "https://cli-chat-proxy.grok.com/v1"
 
-function makeXaiAccount(settings: OAuthAccount["settings"] = {}): OAuthAccount {
+function makeXaiConnection(
+  settings: Record<string, unknown> = {},
+): ProviderConnection {
   return {
     id: "xai-1",
-    label: "xai",
-    provider: "xai",
+    name: "xai",
+    protocol: "xai-native",
+    baseUrl: API_BASE,
     enabled: true,
     priority: 0,
     createdAt: 0,
-    settings,
+    credentials: [
+      {
+        id: "cred-1",
+        authMode: "bearer",
+        value: "",
+        enabled: true,
+        status: "ready",
+        createdAt: 0,
+        refresherType: "oauth-token",
+      },
+    ],
+    metadata: {
+      provider: "xai",
+      quotaState: "unknown",
+      settings,
+    },
   }
 }
 
@@ -54,48 +72,52 @@ function makePayload(
 
 describe("xai endpoint resolution", () => {
   test("xaiUsesApi defaults to false (CLI mode)", () => {
-    expect(xaiUsesApi(makeXaiAccount())).toBe(false)
-    expect(xaiUsesApi(makeXaiAccount({ baseUrl: API_BASE }))).toBe(false)
+    expect(xaiUsesApi(makeXaiConnection())).toBe(false)
+    expect(xaiUsesApi(makeXaiConnection({ baseUrl: API_BASE }))).toBe(false)
   })
 
   test("xaiUsesApi honors the explicit boolean flag", () => {
-    expect(xaiUsesApi(makeXaiAccount({ useApi: true }))).toBe(true)
-    expect(xaiUsesApi(makeXaiAccount({ useApi: false }))).toBe(false)
+    expect(xaiUsesApi(makeXaiConnection({ useApi: true }))).toBe(true)
+    expect(xaiUsesApi(makeXaiConnection({ useApi: false }))).toBe(false)
   })
 
   test("chat base URL is cli-chat-proxy in CLI mode (default base URL)", () => {
-    expect(xaiChatBaseUrl(makeXaiAccount())).toBe(CLI_BASE)
-    expect(xaiChatBaseUrl(makeXaiAccount({ baseUrl: API_BASE }))).toBe(CLI_BASE)
-    expect(xaiChatBaseUrl(makeXaiAccount({ baseUrl: `${API_BASE}/` }))).toBe(
+    expect(xaiChatBaseUrl(makeXaiConnection())).toBe(CLI_BASE)
+    expect(xaiChatBaseUrl(makeXaiConnection({ baseUrl: API_BASE }))).toBe(
+      CLI_BASE,
+    )
+    expect(xaiChatBaseUrl(makeXaiConnection({ baseUrl: `${API_BASE}/` }))).toBe(
       CLI_BASE,
     )
   })
 
   test("chat base URL is the official API when useApi is true", () => {
-    expect(xaiChatBaseUrl(makeXaiAccount({ useApi: true }))).toBe(API_BASE)
+    expect(xaiChatBaseUrl(makeXaiConnection({ useApi: true }))).toBe(API_BASE)
     expect(
-      xaiChatBaseUrl(makeXaiAccount({ useApi: true, baseUrl: API_BASE })),
+      xaiChatBaseUrl(makeXaiConnection({ useApi: true, baseUrl: API_BASE })),
     ).toBe(API_BASE)
   })
 
   test("chat base URL honors an explicit custom base URL in CLI mode", () => {
     const custom = "https://gateway.example.com/v1"
-    expect(xaiChatBaseUrl(makeXaiAccount({ baseUrl: custom }))).toBe(custom)
+    expect(xaiChatBaseUrl(makeXaiConnection({ baseUrl: custom }))).toBe(custom)
     expect(
-      xaiChatBaseUrl(makeXaiAccount({ useApi: true, baseUrl: custom })),
+      xaiChatBaseUrl(makeXaiConnection({ useApi: true, baseUrl: custom })),
     ).toBe(custom)
   })
 
   test("WS base URL always uses official API (never cli-chat-proxy)", () => {
-    expect(xaiWsBaseUrl(makeXaiAccount())).toBe(API_BASE)
-    expect(xaiWsBaseUrl(makeXaiAccount({ useApi: true }))).toBe(API_BASE)
+    expect(xaiWsBaseUrl(makeXaiConnection())).toBe(API_BASE)
+    expect(xaiWsBaseUrl(makeXaiConnection({ useApi: true }))).toBe(API_BASE)
     // cli-chat-proxy stored in baseUrl must not leak into WS (405 upstream).
-    expect(xaiWsBaseUrl(makeXaiAccount({ baseUrl: CLI_BASE }))).toBe(API_BASE)
+    expect(xaiWsBaseUrl(makeXaiConnection({ baseUrl: CLI_BASE }))).toBe(
+      API_BASE,
+    )
   })
 
   test("WS base URL honors a custom non-cli base URL", () => {
     const custom = "https://gateway.example.com/v1"
-    expect(xaiWsBaseUrl(makeXaiAccount({ baseUrl: custom }))).toBe(custom)
+    expect(xaiWsBaseUrl(makeXaiConnection({ baseUrl: custom }))).toBe(custom)
   })
 
   test("base URL classifiers ignore trailing slashes", () => {

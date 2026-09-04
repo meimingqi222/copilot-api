@@ -30,6 +30,26 @@ function pickPreferredEndpoint(model: ModelMapping): ModelEndpoint {
   return model.endpoints[0] ?? "chat"
 }
 
+// ── payload normalization for nullable fields ──────────────────────────
+
+export function normalizeNullableObject(
+  value: unknown,
+): Record<string, unknown> | null | undefined {
+  if (value === null) return null
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return undefined
+}
+
+export function normalizeNullableArray(
+  value: unknown,
+): Array<unknown> | null | undefined {
+  if (value === null) return null
+  if (Array.isArray(value)) return value as Array<unknown>
+  return undefined
+}
+
 export function modelToTestTarget(
   connection: ProviderConnection,
   model: ModelMapping,

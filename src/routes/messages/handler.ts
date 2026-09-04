@@ -8,7 +8,7 @@ import {
   thinkingConfigToAnthropic,
   thinkingConfigToReasoningEffort,
 } from "~/lib/thinking"
-import { supportsMessagesApi } from "~/services/copilot/responses-api"
+import { supportsMessagesApiForConnection } from "~/services/copilot/responses-api"
 import {
   extractMessageContentFromAnthropicPayload,
   type AnthropicMessagesPayload,
@@ -89,9 +89,11 @@ export async function handleCompletion(c: Context) {
   // Copilot's native Messages API uses the unified dispatch path so failover
   // usage is attributed to the target that actually completed the request.
   if (
-    admission.account
-    && admission.account.provider === "copilot"
-    && supportsMessagesApi(effectivePayload.model, admission.account)
+    admission.connection.protocol === "copilot-native"
+    && supportsMessagesApiForConnection(
+      effectivePayload.model,
+      admission.connection,
+    )
   ) {
     return handleAnthropicViaConnection({
       c,

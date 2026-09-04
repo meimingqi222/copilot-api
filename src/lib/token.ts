@@ -1,9 +1,9 @@
 import fs from "node:fs/promises"
 
-import { getActiveAccount } from "~/lib/account-selection"
-import { refreshCopilotToken } from "~/lib/account-store"
+import { getFirstAvailableAccountManagedConnection } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
+import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refresh"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { getGitHubUser } from "~/services/github/get-user"
 import { pollAccessToken } from "~/services/github/poll-access-token"
@@ -19,12 +19,19 @@ const writeGithubToken = (token: string) => {
 }
 
 /**
- * Refresh the Copilot token for the active account.
- * Delegates to accounts.ts which handles per-account token refresh + scheduling.
+ * Refresh the Copilot token for the active account-managed connection.
+ * Phase 1.7:直接用 connection 原生刷新,不再经由 getActiveAccount() →
+ * Account 快照 → refreshCopilotToken(account) 桥接反查 connection。
  */
 export const setupCopilotToken = async () => {
-  const account = getActiveAccount()
-  await refreshCopilotToken(account)
+  const connection = getFirstAvailableAccountManagedConnection()
+  if (!connection) {
+    throw new HTTPError(
+      "No available accounts (all disabled or no accounts configured)",
+      new Response("Service Unavailable", { status: 503 }),
+    )
+  }
+  await refreshCopilotTokenForConnection(connection)
   logger.debug("GitHub Copilot Token fetched successfully!")
 }
 

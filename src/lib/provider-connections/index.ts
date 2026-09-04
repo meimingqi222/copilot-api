@@ -24,6 +24,25 @@ export {
 } from "./availability"
 export type { RateLimitInfo, UpstreamErrorKind } from "./availability"
 export {
+  connectionHasCredentials,
+  getConnectionCodebuffAuthToken,
+  getConnectionCopilotToken,
+  getConnectionGithubToken,
+  getConnectionMimoPh,
+  getConnectionMimoServiceToken,
+  getConnectionMimoWsToken,
+  getConnectionOAuthAccessToken,
+  getConnectionOAuthAccountId,
+  getConnectionOAuthApiKey,
+  getConnectionOAuthDeviceId,
+  getConnectionOAuthProjectId,
+  getConnectionOAuthRefreshToken,
+  getConnectionWindsurfApiKey,
+  getCredentialValue,
+  getCredentialValueRaw,
+  isOAuthConnection,
+} from "./connection-accessors"
+export {
   buildAccountLegacyMetadata,
   ensureLegacyMetadata,
   getConnectionAuthError,
@@ -36,6 +55,7 @@ export {
   getConnectionLastRateLimitAt,
   getConnectionLastRateLimitReason,
   getConnectionModelPrefix,
+  getConnectionProvider,
   getConnectionProxy,
   getConnectionProxyUrl,
   getConnectionQuotaExhaustedAt,
@@ -55,6 +75,7 @@ export {
   setConnectionCooldownUntil,
   setConnectionCredentialExtra,
   setConnectionExhausted,
+  setConnectionQuotaInfo,
   setConnectionQuotaState,
   setConnectionRateLimitInfo,
   setConnectionSetting,
@@ -63,7 +84,6 @@ export {
   syncAccountToConnection,
 } from "./connection-metadata"
 export type { AccountLegacyMetadata } from "./connection-metadata"
-export { connectionToAccount } from "./connection-to-account"
 export {
   refreshAllConnectionModels,
   refreshConnectionModels,
@@ -74,6 +94,14 @@ export {
   accountToConnectionForPersistence,
   migrateAccountsToConnections,
 } from "./migrate-from-accounts"
+export {
+  accountManagedModelPrefix,
+  accountManagedProvider,
+  accountManagedProviderFromId,
+  connectionProvider,
+  listAccountManagedConnections,
+  providerFromProtocol,
+} from "./protocol-provider"
 export {
   __resetProviderConnectionsForTest,
   addCredential,
@@ -90,6 +118,7 @@ export {
   listProviderConnections,
   persistProviderConnections,
   removeProviderConnection,
+  setConnectionModels,
   setDiscoveryError,
   setProviderConnectionsForMigration,
   updateConnection,
@@ -108,6 +137,7 @@ export {
   sanitizeConnection,
   sanitizeCredential,
   saveProviderConnections,
+  upgradeConnectionV1ToV2,
 } from "./store"
 export type { SanitizedConnection, SanitizedCredential } from "./store"
 export * from "./types"

@@ -1,7 +1,8 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
+import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { isOAuthAccount } from "~/lib/accounts"
+import { getConnectionProvider } from "~/lib/provider-connections"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 
 export interface SimpleQuotaDescriptor {
@@ -11,7 +12,7 @@ export interface SimpleQuotaDescriptor {
   url: string
   headers: Record<string, string>
   /** Parse response body and assemble a QuotaSnapshot; throw on parse failure */
-  buildSnapshot(body: string, account: Account): QuotaSnapshot
+  buildSnapshot(body: string, connection: ProviderConnection): QuotaSnapshot
 }
 
 /**
@@ -19,18 +20,18 @@ export interface SimpleQuotaDescriptor {
  * status check → delegate snapshot assembly to the descriptor.
  */
 export async function fetchQuotaByDescriptor(
-  account: Account,
+  connection: ProviderConnection,
   descriptor: SimpleQuotaDescriptor,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
   const { provider, displayName } = descriptor
-  if (!isOAuthAccount(account) || account.provider !== provider) {
+  if (getConnectionProvider(connection) !== provider) {
     throw new Error(
-      `fetch${displayName}Quota requires a ${displayName} OAuth account`,
+      `fetch${displayName}Quota requires a ${displayName} OAuth connection`,
     )
   }
 
-  const response = await executeUpstreamProxyCall(account, {
+  const response = await executeUpstreamProxyCall(connection, {
     method: "GET",
     url: descriptor.url,
     headers: { ...descriptor.headers },
@@ -43,5 +44,5 @@ export async function fetchQuotaByDescriptor(
     )
   }
 
-  return descriptor.buildSnapshot(response.body, account)
+  return descriptor.buildSnapshot(response.body, connection)
 }

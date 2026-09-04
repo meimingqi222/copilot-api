@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { OAuthAccount } from "~/lib/legacy-accounts"
 
-import { listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { listAccounts } from "~/lib/legacy-accounts"
+import { getMutableProviderConnection } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
@@ -339,6 +340,9 @@ describe("Codex and xAI quota parsers", () => {
         idToken: CODEX_ID_TOKEN,
       },
     }
+    setTestAccounts([account])
+    const connection = getMutableProviderConnection(account.id)
+    if (!connection) throw new Error("connection not found")
     const payload = parseCodexUsagePayload({
       plan_type: "team",
       rate_limit: {
@@ -351,7 +355,7 @@ describe("Codex and xAI quota parsers", () => {
       throw new Error("expected Codex usage payload")
     }
 
-    const meta = buildCodexQuotaMeta(account, payload)
+    const meta = buildCodexQuotaMeta(connection, payload)
     expect(meta.planType).toBe("team")
     expect(meta.rateLimitResetCreditsAvailableCount).toBe(2)
     expect(meta.windows).toHaveLength(2)
@@ -446,8 +450,11 @@ describe("Codex and xAI quota parsers", () => {
       createdAt: Date.now(),
       credentials: { accessToken: "token" },
     }
+    setTestAccounts([account])
+    const connection = getMutableProviderConnection(account.id)
+    if (!connection) throw new Error("connection not found")
 
-    applyOAuthQuotaSnapshot(account, {
+    applyOAuthQuotaSnapshot(connection, {
       fetchedAt: Date.now(),
       provider: "xai",
       unlimited: false,
@@ -457,9 +464,11 @@ describe("Codex and xAI quota parsers", () => {
       details: {},
     })
 
-    expect(account.quotaState).toBe("available")
+    expect((connection.metadata as { quotaState?: string }).quotaState).toBe(
+      "available",
+    )
 
-    applyOAuthQuotaSnapshot(account, {
+    applyOAuthQuotaSnapshot(connection, {
       fetchedAt: Date.now(),
       provider: "xai",
       unlimited: false,
@@ -469,7 +478,9 @@ describe("Codex and xAI quota parsers", () => {
       details: {},
     })
 
-    expect(account.quotaState).toBe("exhausted")
+    expect((connection.metadata as { quotaState?: string }).quotaState).toBe(
+      "exhausted",
+    )
   })
 })
 

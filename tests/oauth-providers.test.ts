@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { OAuthAccount } from "~/lib/legacy-accounts"
 
 import {
   buildAccountModelAliases,
@@ -8,7 +8,7 @@ import {
   getAccountModelPrefix,
   listAccounts,
   parseModelReference,
-} from "~/lib/accounts"
+} from "~/lib/legacy-accounts"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { parseThinkingModel } from "~/lib/thinking"
 import { getCodexModelsForAccount } from "~/services/codex/get-models"
@@ -125,7 +125,7 @@ describe("OAuth model prefix helpers", () => {
       "claude-sonnet-4-6",
     )
     expect(
-      parseModelReference("work/claude-sonnet-4-6", account).nativeModelId,
+      parseModelReference("work/claude-sonnet-4-6", "work").nativeModelId,
     ).toBe("claude-sonnet-4-6")
     expect(canonicalModelId("claude/claude-sonnet-4-6")).toBe(
       "claude/claude-sonnet-4-6",
@@ -234,6 +234,7 @@ describe("Codex model discovery", () => {
         accountId: "acct_123",
       },
     })
+    setTestAccounts([account])
 
     const models = await getCodexModelsForAccount(account)
     expect(models.map((model) => model.id)).toEqual(["gpt-5.4", "gpt-5.5"])

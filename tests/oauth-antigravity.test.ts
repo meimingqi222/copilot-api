@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { OAuthAccount } from "~/lib/legacy-accounts"
 import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
 
-import { listAccounts } from "~/lib/accounts"
+import { connectionToAccount, listAccounts } from "~/lib/legacy-accounts"
+import {
+  getConnectionAuthStatus,
+  migrateAccountsToConnections,
+} from "~/lib/provider-connections"
 import {
   parseAntigravityQuotaPayload,
   summarizeAntigravityQuota,
@@ -391,15 +395,18 @@ describe("OAuth refresh scheduler", () => {
       createdAt: Date.now(),
       credentials: {},
     }
+    const connection = migrateAccountsToConnections([account])[0]
+    if (!connection) throw new Error("migration failed")
 
-    applyAntigravityOAuthBundle(account, {
+    applyAntigravityOAuthBundle(connection, {
       accessToken: "token",
       projectId: "project-99",
       redirectUri: "http://localhost:51121/oauth-callback",
     })
 
-    expect(account.credentials?.projectId).toBe("project-99")
-    expect(account.runtimeState?.authStatus).toBe("ready")
+    const refreshed = connectionToAccount(connection)
+    expect(refreshed.credentials?.projectId).toBe("project-99")
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
   })
 })
 
