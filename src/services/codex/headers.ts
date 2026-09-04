@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto"
 
-const CODEX_USER_AGENT =
-  "codex-tui/0.144.1 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.144.1)"
+// Codex CLI client version advertised to the ChatGPT backend. Upstream filters
+// the /models catalog by this value, so it must stay aligned with the current
+// Codex CLI release to receive new models (e.g. gpt-6-astra requires >= 0.153.0).
+// Keep in sync with CPA cmd/fetch_codex_models defaultClientVersion.
+export const CODEX_CLIENT_VERSION = "0.153.3"
+
+const CODEX_USER_AGENT = `codex-tui/${CODEX_CLIENT_VERSION} (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; ${CODEX_CLIENT_VERSION})`
 
 export interface CodexHeaderOptions {
   /**
