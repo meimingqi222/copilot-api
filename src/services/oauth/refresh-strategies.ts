@@ -1,11 +1,16 @@
-import type { OAuthAccount } from "~/lib/accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { getOAuthDeviceId, setOAuthCredentials } from "~/lib/accounts"
+import {
+  getCredentialContextString,
+  getConnectionRedirectUri,
+  setCredentialContextField,
+} from "~/lib/provider-connections"
 
 import type { OAuthFetchOptions } from "./fetch"
 
 import {
+  ANTIGRAVITY_REDIRECT_URI,
   applyAntigravityOAuthBundle,
   refreshAntigravityTokens,
 } from "./antigravity"
@@ -23,50 +28,67 @@ import {
 } from "./xai"
 
 export type OAuthRefreshFn = (
-  account: OAuthAccount,
+  connection: ProviderConnection,
   refreshToken: string,
   fetchOptions: OAuthFetchOptions,
 ) => Promise<void>
 
+/**
+ * 读取 connection 上的 kimi deviceId。
+ * 刷新路径写入 credential.context.deviceId;迁移路径可能仅存在于
+ * credentialExtras.deviceId,两处都检查。
+ */
+export function getConnectionOAuthDeviceId(
+  connection: ProviderConnection,
+): string | undefined {
+  const fromContext = getCredentialContextString(connection, "deviceId")
+  if (fromContext) return fromContext
+  const extras = connection.metadata?.credentialExtras as
+    | Record<string, unknown>
+    | undefined
+  const value = extras?.deviceId
+  return typeof value === "string" && value ? value : undefined
+}
+
 export const OAUTH_REFRESH_STRATEGIES: Record<OAuthProviderId, OAuthRefreshFn> =
   {
-    claude: async (account, refreshToken, fetchOptions) => {
+    claude: async (connection, refreshToken, fetchOptions) => {
       const bundle = await refreshClaudeTokens(refreshToken, fetchOptions)
-      applyClaudeOAuthBundle(account, bundle)
+      applyClaudeOAuthBundle(connection, bundle)
     },
-    kimi: async (account, refreshToken, fetchOptions) => {
-      const deviceId = createKimiDeviceId(getOAuthDeviceId(account))
+    kimi: async (connection, refreshToken, fetchOptions) => {
+      const existingDeviceId = getConnectionOAuthDeviceId(connection)
+      const deviceId = createKimiDeviceId(existingDeviceId)
       const bundle = await refreshKimiTokens(
         refreshToken,
         deviceId,
         fetchOptions,
       )
-      applyKimiOAuthBundle(account, bundle)
-      if (!getOAuthDeviceId(account)) {
-        setOAuthCredentials(account, { deviceId })
+      applyKimiOAuthBundle(connection, bundle)
+      if (!existingDeviceId) {
+        setCredentialContextField(connection, "deviceId", deviceId)
       }
     },
-    codex: async (account, refreshToken, fetchOptions) => {
+    codex: async (connection, refreshToken, fetchOptions) => {
       const bundle = await refreshCodexTokens(refreshToken, fetchOptions)
-      applyCodexOAuthBundle(account, bundle)
+      applyCodexOAuthBundle(connection, bundle)
     },
-    antigravity: async (account, refreshToken, fetchOptions) => {
+    antigravity: async (connection, refreshToken, fetchOptions) => {
       const bundle = await refreshAntigravityTokens(refreshToken, fetchOptions)
-      applyAntigravityOAuthBundle(account, {
+      applyAntigravityOAuthBundle(connection, {
         ...bundle,
         redirectUri:
-          account.settings?.redirectUri
-          ?? "http://localhost:51121/oauth-callback",
+          getConnectionRedirectUri(connection) ?? ANTIGRAVITY_REDIRECT_URI,
       })
     },
-    xai: async (account, refreshToken, fetchOptions) => {
-      const tokenEndpoint = getXaiTokenEndpoint(account) ?? ""
+    xai: async (connection, refreshToken, fetchOptions) => {
+      const tokenEndpoint = getXaiTokenEndpoint(connection) ?? ""
       const bundle = await refreshXaiTokens(
         refreshToken,
         tokenEndpoint,
         fetchOptions,
       )
-      applyXaiOAuthBundle(account, bundle)
+      applyXaiOAuthBundle(connection, bundle)
     },
   }
 

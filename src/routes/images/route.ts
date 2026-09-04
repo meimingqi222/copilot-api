@@ -1,6 +1,6 @@
 import { Hono } from "hono"
 
-import { forwardError, HTTPError } from "~/lib/error"
+import { forwardError } from "~/lib/error"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
@@ -24,25 +24,22 @@ imageRoutes.post("/generations", async (c) => {
       model: payload.model,
       endpoint: "images",
     })
-    if (!admission.account) {
-      throw new HTTPError(
-        "Images API requires an Account-based admission",
-        new Response("Not Implemented", { status: 501 }),
-      )
-    }
 
     const idempotencyKey = c.req.header("x-idempotency-key")
     const response = await createXaiImageGeneration(
-      admission.account,
+      {
+        connection: admission.connection,
+        credential: admission.credential,
+      },
       payload,
       c.req.raw.signal,
       idempotencyKey,
     )
 
-    c.set("accountId", admission.account.id)
+    c.set("accountId", admission.connection.id)
     recordUsage({
       c,
-      accountId: admission.account.id,
+      accountId: admission.connection.id,
       model: payload.model,
       promptTokens: 0,
       completionTokens: 0,
@@ -66,25 +63,22 @@ imageRoutes.post("/edits", async (c) => {
       model: payload.model,
       endpoint: "images",
     })
-    if (!admission.account) {
-      throw new HTTPError(
-        "Images API requires an Account-based admission",
-        new Response("Not Implemented", { status: 501 }),
-      )
-    }
 
     const idempotencyKey = c.req.header("x-idempotency-key")
     const response = await createXaiImageEdit(
-      admission.account,
+      {
+        connection: admission.connection,
+        credential: admission.credential,
+      },
       payload,
       c.req.raw.signal,
       idempotencyKey,
     )
 
-    c.set("accountId", admission.account.id)
+    c.set("accountId", admission.connection.id)
     recordUsage({
       c,
-      accountId: admission.account.id,
+      accountId: admission.connection.id,
       model: payload.model,
       promptTokens: 0,
       completionTokens: 0,

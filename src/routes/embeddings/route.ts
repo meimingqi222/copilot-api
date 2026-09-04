@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
 import { forwardError, HTTPError } from "~/lib/error"
+import { isAccountManagedConnection } from "~/lib/provider-connections"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
@@ -19,14 +20,15 @@ embeddingRoutes.post("/", async (c) => {
       model: payload.model,
       endpoint: "embeddings",
     })
-    if (!admission.account) {
+    if (!isAccountManagedConnection(admission.connection)) {
       throw new HTTPError(
-        "Embeddings API requires an Account-based admission",
+        "Embeddings API requires an account-managed connection",
         new Response("Not Implemented", { status: 501 }),
       )
     }
     const result = await createEmbeddings(payload, {
-      account: admission.account,
+      connection: admission.connection,
+      credential: admission.credential,
       signal: c.req.raw.signal,
     })
 

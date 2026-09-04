@@ -1,6 +1,9 @@
 /**
  * 统一路由测试:验证 Connection + Account 候选池合并,
  * 跨系统 failover,以及 priority/weight 调度。
+ *
+ * Phase 1:fixture 已从 Account 转为 ProviderConnection(models 三态:
+ * undefined/[]/非空),直接验证 connection 原生路由路径。
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
@@ -9,16 +12,15 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import type { Account } from "~/lib/accounts"
 import type { ProviderAdmission } from "~/lib/request-admission"
 
-import { accountToConnection } from "~/lib/account-adapter"
 import { HTTPError } from "~/lib/error"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
   type ProviderConnection,
+  type ModelMapping,
 } from "~/lib/provider-connections"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import {
@@ -30,7 +32,7 @@ import {
 import { executeWithFailover } from "~/services/dispatch/failover"
 import { WindsurfFirstFrameTimeoutError } from "~/services/windsurf/stream-start"
 
-import { setTestAccounts } from "./helpers/set-accounts"
+import { setTestConnections } from "./helpers/set-connections"
 
 const isolationRoot = PATHS.APP_DIR
 let tempAppDir: string
@@ -47,35 +49,61 @@ afterEach(async () => {
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
   resetAdaptiveRateLimiterForTest()
-  setTestAccounts([])
+  setTestConnections([])
   await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
 })
 
-function createTestAccount(
+/**
+ * 创建 account-managed copilot-native connection(替代 createTestAccount)。
+ * models 三态:
+ * - modelId 为 WILDCARD → models=undefined(通配)
+ * - modelId 为 "" → models=[](跳过)
+ * - modelId 为非空字符串 → models=[...](专用 target)
+ */
+const WILDCARD = Symbol("wildcard")
+function createTestCopilotConnection(
   id: string,
   priority: number,
-  modelId = "gpt-5-mini",
-): Account {
+  modelId: string | typeof WILDCARD = "gpt-5-mini",
+): ProviderConnection {
+  const now = Date.now()
+  let models: Array<ModelMapping> | undefined
+  if (modelId === WILDCARD) {
+    models = undefined
+  } else if (modelId === "") {
+    models = []
+  } else {
+    models = [
+      {
+        publicId: modelId,
+        upstreamId: modelId,
+        endpoints: ["chat"],
+        enabled: true,
+      },
+    ]
+  }
   return {
     id,
-    label: id,
-    provider: "copilot",
+    name: id,
+    protocol: "copilot-native",
+    baseUrl: "",
     enabled: true,
     priority,
-    isExhausted: false,
-    createdAt: Date.now(),
-    credentials: { githubToken: `token-${id}` },
-    availableModels: [
+    credentials: [
       {
-        id: modelId,
-        name: modelId,
-        vendor: "openai",
-        pickerEnabled: true,
-        supportedEndpoints: ["/chat/completions"],
-        provider: "copilot",
+        id: `${id}-cred`,
+        authMode: "bearer",
+        value: "",
+        enabled: true,
+        status: "ready",
+        createdAt: now,
+        context: { githubToken: `token-${id}` },
       },
     ],
-  } as Account
+    models,
+    metadata: {},
+    createdAt: now,
+  }
 }
 
 async function setupConnection(
@@ -109,8 +137,8 @@ describe("unified buildRouteTargets", () => {
 
   test("returns both connection and account candidates for the same model", async () => {
     await setupConnection("deepseek", 0, "gpt-5-mini")
-    const account = createTestAccount("copilot-acc", 1)
-    setTestAccounts([account])
+    const copilotConn = createTestCopilotConnection("copilot-acc", 1)
+    setTestConnections([copilotConn])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -134,8 +162,8 @@ describe("unified buildRouteTargets", () => {
 
   test("account candidates carry correct priority from account.priority", async () => {
     await setupConnection("conn", 5, "model-x")
-    const acc = createTestAccount("acc", 2, "model-x")
-    setTestAccounts([acc])
+    const acc = createTestCopilotConnection("acc", 2, "model-x")
+    setTestConnections([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -150,9 +178,9 @@ describe("unified buildRouteTargets", () => {
   })
 
   test("disabled account is excluded when onlyAvailable=true", () => {
-    const acc = createTestAccount("disabled-acc", 0)
+    const acc = createTestCopilotConnection("disabled-acc", 0)
     acc.enabled = false
-    setTestAccounts([acc])
+    setTestConnections([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -162,9 +190,10 @@ describe("unified buildRouteTargets", () => {
   })
 
   test("account in cooldown is excluded when onlyAvailable=true", () => {
-    const acc = createTestAccount("cooldown-acc", 0)
-    acc.cooldownUntil = Date.now() + 60_000
-    setTestAccounts([acc])
+    const acc = createTestCopilotConnection("cooldown-acc", 0)
+    acc.credentials[0].cooldownUntil = Date.now() + 60_000
+    acc.credentials[0].status = "cooldown"
+    setTestConnections([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
@@ -175,13 +204,28 @@ describe("unified buildRouteTargets", () => {
 
   test("connectionId filter excludes account candidates", async () => {
     await setupConnection("deepseek", 0, "gpt-5-mini")
-    setTestAccounts([createTestAccount("copilot-acc", 1)])
+    setTestConnections([createTestCopilotConnection("copilot-acc", 1)])
 
     const targets = buildRouteTargets({
       publicModelId: "gpt-5-mini",
       endpoint: "chat",
       connectionId: "deepseek",
     })
+    expect(targets).toHaveLength(1)
+    expect(targets[0].connectionId).toBe("deepseek")
+  })
+
+  test("models: [] (skip) produces no targets for that connection", async () => {
+    // 三态测试:models 为空数组表示已加载但无可用模型,应跳过
+    await setupConnection("deepseek", 0, "gpt-5-mini")
+    const skipConn = createTestCopilotConnection("skip-acc", 1, "")
+    setTestConnections([skipConn])
+
+    const targets = buildRouteTargets({
+      publicModelId: "gpt-5-mini",
+      endpoint: "chat",
+    })
+    // skip-acc 的 models 为 [],不产生 target;只有 deepseek 产生 target
     expect(targets).toHaveLength(1)
     expect(targets[0].connectionId).toBe("deepseek")
   })
@@ -374,7 +418,7 @@ describe("unified selectRouteTarget", () => {
 
   test("picks highest priority from mixed pool", async () => {
     await setupConnection("conn", 0, "model-x")
-    setTestAccounts([createTestAccount("acc", 5, "model-x")])
+    setTestConnections([createTestCopilotConnection("acc", 5, "model-x")])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -387,7 +431,7 @@ describe("unified selectRouteTarget", () => {
 
   test("picks account when it has higher priority", async () => {
     await setupConnection("conn", 10, "model-x")
-    setTestAccounts([createTestAccount("acc", 0, "model-x")])
+    setTestConnections([createTestCopilotConnection("acc", 0, "model-x")])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -400,7 +444,7 @@ describe("unified selectRouteTarget", () => {
 
   test("exclude set skips tried targets across systems", async () => {
     await setupConnection("conn", 0, "model-x")
-    setTestAccounts([createTestAccount("acc", 5, "model-x")])
+    setTestConnections([createTestCopilotConnection("acc", 5, "model-x")])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -417,14 +461,12 @@ describe("unified selectRouteTarget", () => {
     expect(second?.connectionId).toBe("acc")
   })
 
-  test("wildcard account (availableModels=undefined) does not preempt dedicated connection", async () => {
-    // 复现 edu 场景:copilot 账号模型列表为空(availableModels=undefined)
+  test("wildcard account (models=undefined) does not preempt dedicated connection", async () => {
+    // 复现 edu 场景:copilot 账号模型列表为空(models=undefined 即 WILDCARD)
     // 触发通配匹配,但不应抢占声明了该模型的专用 connection(如火山引擎)。
     await setupConnection("volcengine", 10, "glm-5.2")
-    const wildcardAcc = createTestAccount("copilot-edu", 0)
-    // 模拟模型加载失败:availableModels 设为 undefined 触发通配
-    wildcardAcc.availableModels = undefined
-    setTestAccounts([wildcardAcc])
+    const wildcardAcc = createTestCopilotConnection("copilot-edu", 0, WILDCARD)
+    setTestConnections([wildcardAcc])
 
     const targets = buildRouteTargets({
       publicModelId: "glm-5.2",
@@ -448,9 +490,8 @@ describe("unified selectRouteTarget", () => {
   test("wildcard account is used as fallback when dedicated connection is excluded", async () => {
     // 所有专用 connection 都失败/排除后,通配 target 作为兜底被选中
     await setupConnection("volcengine", 10, "glm-5.2")
-    const wildcardAcc = createTestAccount("copilot-edu", 0)
-    wildcardAcc.availableModels = undefined
-    setTestAccounts([wildcardAcc])
+    const wildcardAcc = createTestCopilotConnection("copilot-edu", 0, WILDCARD)
+    setTestConnections([wildcardAcc])
 
     const targets = buildRouteTargets({
       publicModelId: "glm-5.2",
@@ -470,11 +511,9 @@ describe("unified selectRouteTarget", () => {
   test("wildcard priority preserves account.priority relative order", async () => {
     // 多个通配 account 之间按 account.priority 区分:priority 越小越高
     await setupConnection("volcengine", 10, "glm-5.2")
-    const highAcc = createTestAccount("copilot-high", 0)
-    highAcc.availableModels = undefined
-    const lowAcc = createTestAccount("copilot-low", 5)
-    lowAcc.availableModels = undefined
-    setTestAccounts([highAcc, lowAcc])
+    const highAcc = createTestCopilotConnection("copilot-high", 0, WILDCARD)
+    const lowAcc = createTestCopilotConnection("copilot-low", 5, WILDCARD)
+    setTestConnections([highAcc, lowAcc])
 
     const targets = buildRouteTargets({
       publicModelId: "glm-5.2",
@@ -506,8 +545,8 @@ describe("cross-system failover via executeWithFailover", () => {
 
   test("fails over from connection to account when connection returns 502", async () => {
     await setupConnection("conn", 0, "model-x")
-    const account = createTestAccount("acc", 5, "model-x")
-    setTestAccounts([account])
+    const accConn = createTestCopilotConnection("acc", 5, "model-x")
+    setTestConnections([accConn])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -552,8 +591,8 @@ describe("cross-system failover via executeWithFailover", () => {
 
   test("fails over while a Windsurf first-frame timeout is still pre-output", async () => {
     await setupConnection("conn", 0, "model-x")
-    const account = createTestAccount("acc", 5, "model-x")
-    setTestAccounts([account])
+    const accConn = createTestCopilotConnection("acc", 5, "model-x")
+    setTestConnections([accConn])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -592,8 +631,8 @@ describe("cross-system failover via executeWithFailover", () => {
 
   test("fails over from account to connection when account returns 429", async () => {
     await setupConnection("conn", 5, "model-x")
-    const account = createTestAccount("acc", 0, "model-x")
-    setTestAccounts([account])
+    const accConn = createTestCopilotConnection("acc", 0, "model-x")
+    setTestConnections([accConn])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -603,16 +642,18 @@ describe("cross-system failover via executeWithFailover", () => {
     expect(selected).not.toBeNull()
     expect(selected?.connectionId).toBe("acc")
 
-    // Step B: account-backed 路径用 accountToConnection 构造虚拟 ProviderConnection
-    const virtualConnection = accountToConnection(account)
-    const virtualCredential = virtualConnection.credentials[0]
-    expect(virtualCredential).toBeDefined()
+    // account-managed connection 直接作为 admission 的 connection
+    const accConnection = await import("~/lib/provider-connections").then((m) =>
+      m.getProviderConnection("acc"),
+    )
+    expect(accConnection).not.toBeNull()
+    const accCredential = (accConnection as NonNullable<typeof accConnection>)
+      .credentials[0]
 
     const admission: ProviderAdmission = {
       target: selected as NonNullable<typeof selected>,
-      connection: virtualConnection,
-      credential: virtualCredential,
-      account,
+      connection: accConnection as NonNullable<typeof accConnection>,
+      credential: accCredential,
       initiator: "user",
     }
 
@@ -640,8 +681,8 @@ describe("cross-system failover via executeWithFailover", () => {
 
   test("throws when all candidates exhausted", async () => {
     await setupConnection("conn", 0, "model-x")
-    const account = createTestAccount("acc", 1, "model-x")
-    setTestAccounts([account])
+    const accConn = createTestCopilotConnection("acc", 1, "model-x")
+    setTestConnections([accConn])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",
@@ -688,8 +729,8 @@ describe("cross-system failover via executeWithFailover", () => {
 describe("account targetKey uniqueness", () => {
   test("account and connection targets produce different targetKeys", async () => {
     await setupConnection("conn", 0, "model-x")
-    const acc = createTestAccount("acc", 0, "model-x")
-    setTestAccounts([acc])
+    const acc = createTestCopilotConnection("acc", 0, "model-x")
+    setTestConnections([acc])
 
     const targets = buildRouteTargets({
       publicModelId: "model-x",

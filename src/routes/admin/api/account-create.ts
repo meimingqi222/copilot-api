@@ -1,18 +1,22 @@
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
-import type { Account, AccountProvider } from "~/lib/accounts"
+import type { Account, AccountProvider } from "~/lib/legacy-accounts"
 
 import { saveAccounts } from "~/lib/account-store"
-import { addAccount, listAccounts } from "~/lib/accounts"
+import { addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { isProviderId } from "~/lib/provider-config"
+import {
+  getProviderConnection,
+  listAccountManagedConnections,
+} from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { initializeProviderRegistry } from "~/services/providers"
 
-import { publicAccount } from "./accounts"
+import { publicAccountFromConnection } from "./account-views"
 import { registerPendingFlow } from "./device-flow"
 
 export const createAccountRoutes = new Hono()
@@ -37,7 +41,9 @@ createAccountRoutes.post("/", async (c) => {
 
   const provider =
     isProviderId(String(body.provider)) ? body.provider : "copilot"
-  const label = body.label ?? `account-${listAccounts().length + 1}`
+  // 使用 connection 原生列表生成默认 label(替代 listAccounts().length)
+  const label =
+    body.label ?? `account-${listAccountManagedConnections().length + 1}`
 
   if (provider === "codebuff") {
     const authToken =
@@ -68,10 +74,11 @@ createAccountRoutes.post("/", async (c) => {
     await refreshModelsForAccount(account)
     await saveAccounts()
 
+    const conn = getProviderConnection(account.id)
     return c.json({
       status: "complete",
       accountId: account.id,
-      account: publicAccount(account),
+      account: conn ? publicAccountFromConnection(conn) : undefined,
     })
   }
 
@@ -104,10 +111,11 @@ createAccountRoutes.post("/", async (c) => {
     await refreshModelsForAccount(account)
     await saveAccounts()
 
+    const conn = getProviderConnection(account.id)
     return c.json({
       status: "complete",
       accountId: account.id,
-      account: publicAccount(account),
+      account: conn ? publicAccountFromConnection(conn) : undefined,
     })
   }
 
@@ -156,10 +164,11 @@ createAccountRoutes.post("/", async (c) => {
     await refreshModelsForAccount(account)
     await saveAccounts()
 
+    const conn = getProviderConnection(account.id)
     return c.json({
       status: "complete",
       accountId: account.id,
-      account: publicAccount(account),
+      account: conn ? publicAccountFromConnection(conn) : undefined,
     })
   }
 

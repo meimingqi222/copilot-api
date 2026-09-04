@@ -15,6 +15,7 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import { connectionProvider } from "~/lib/provider-connections"
 import {
   getSensitiveWordMatcherFromEnv,
   obfuscateOpenAiMessages,
@@ -70,10 +71,10 @@ function decorateResult(
   current: RequestAdmission,
 ): DispatchResult {
   const identity: DispatchIdentity = {
-    ownerId: current.account?.id ?? current.connection.id,
+    ownerId: current.connection.id,
     connectionId: current.target.connectionId,
     credentialId: current.target.credentialId,
-    provider: current.account?.provider ?? current.target.protocol,
+    provider: connectionProvider(current.connection),
   }
   return { ...result, identity } as DispatchResult
 }

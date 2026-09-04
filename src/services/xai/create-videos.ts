@@ -1,10 +1,14 @@
-import type { Account, OAuthAccount } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { getConnectionSettings } from "~/lib/provider-connections"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { XAI_API_BASE_URL } from "~/services/oauth/xai"
 
 import { buildXaiHeaders } from "./headers"
@@ -102,8 +106,13 @@ function mapVideoSize(size: string | undefined): {
   return map[lower] ?? { aspect_ratio: "16:9", resolution: "720p" }
 }
 
-function resolveBaseUrl(account: OAuthAccount): string {
-  return (account.settings?.baseUrl ?? XAI_API_BASE_URL).replace(/\/+$/, "")
+function resolveBaseUrl(connection: ProviderConnection): string {
+  const settingsBase = getConnectionSettings(connection)?.baseUrl
+  return (
+    typeof settingsBase === "string" ? settingsBase : XAI_API_BASE_URL).replace(
+    /\/+$/,
+    "",
+  )
 }
 
 function parseDuration(seconds: string | number | undefined): number {
@@ -118,22 +127,33 @@ function parseDuration(seconds: string | number | undefined): number {
  * Returns a request_id that can be polled via `retrieveXaiVideo`.
  */
 export async function createXaiVideoGeneration(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: VideoGenerationRequest,
   idempotencyKey?: string,
   signal?: AbortSignal,
 ): Promise<VideoCreationResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "xai") {
-    throw new Error("xAI video generation requires an xAI OAuth account")
+  if (connection.protocol !== "xai-native") {
+    throw new Error("xAI video generation requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`xAI access token missing for account "${account.label}"`)
+    throw new Error(
+      `xAI access token missing for connection "${connection.name}"`,
+    )
   }
 
   const model = canonicalNativeModelId(payload.model)
-  const baseUrl = resolveBaseUrl(account)
+  const baseUrl = resolveBaseUrl(connection)
   const url = `${baseUrl}/videos/generations`
   const { aspect_ratio, resolution } = mapVideoSize(payload.size)
   let duration = parseDuration(payload.seconds)
@@ -167,7 +187,7 @@ export async function createXaiVideoGeneration(
     headers["x-idempotency-key"] = idempotencyKey
   }
 
-  const response = await fetchWithOAuthProxy(account, url, {
+  const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
     body: JSON.stringify(upstreamBody),
@@ -177,7 +197,7 @@ export async function createXaiVideoGeneration(
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "(unreadable)")
     logger.warn(
-      `xAI video generation failed for account "${account.label}" model "${model}": ${response.status} ${response.statusText}`,
+      `xAI video generation failed for connection "${connection.name}" model "${model}": ${response.status} ${response.statusText}`,
     )
     throw new HTTPError(
       "Failed to create xAI video generation",
@@ -205,23 +225,34 @@ export async function createXaiVideoGeneration(
  * `GET /videos/{request_id}` endpoint.
  */
 export async function retrieveXaiVideo(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   requestId: string,
   signal?: AbortSignal,
 ): Promise<VideoRetrieveResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "xai") {
-    throw new Error("xAI video retrieval requires an xAI OAuth account")
+  if (connection.protocol !== "xai-native") {
+    throw new Error("xAI video retrieval requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`xAI access token missing for account "${account.label}"`)
+    throw new Error(
+      `xAI access token missing for connection "${connection.name}"`,
+    )
   }
 
-  const baseUrl = resolveBaseUrl(account)
+  const baseUrl = resolveBaseUrl(connection)
   const url = `${baseUrl}/videos/${encodeURIComponent(requestId)}`
 
-  const response = await fetchWithOAuthProxy(account, url, {
+  const response = await fetchWithConnectionProxy(connection, url, {
     method: "GET",
     headers: buildXaiHeaders(accessToken, false),
     signal,
@@ -230,7 +261,7 @@ export async function retrieveXaiVideo(
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "(unreadable)")
     logger.warn(
-      `xAI video retrieval failed for account "${account.label}" request "${requestId}": ${response.status} ${response.statusText}`,
+      `xAI video retrieval failed for connection "${connection.name}" request "${requestId}": ${response.status} ${response.statusText}`,
     )
     throw new HTTPError(
       "Failed to retrieve xAI video status",

@@ -7,8 +7,9 @@ import type {
   MimoAccount,
   OAuthAccount,
   WindsurfAccount,
-} from "~/lib/accounts"
+} from "~/lib/legacy-accounts"
 
+import { connectionToAccount } from "~/lib/legacy-accounts"
 import {
   getConnectionProvider,
   getConnectionQuotaState,
@@ -18,7 +19,6 @@ import {
   getConnectionProxyUrl,
   getConnectionModelPrefix,
 } from "~/lib/provider-connections/connection-metadata"
-import { connectionToAccount } from "~/lib/provider-connections/connection-to-account"
 import { accountToConnectionForPersistence } from "~/lib/provider-connections/migrate-from-accounts"
 
 // ── Test fixtures (mirror account-adapter.test.ts) ────────────────
@@ -38,7 +38,7 @@ function makeCopilotAccount(
     },
     enabled: true,
     priority: 0,
-    quotaState: "available",
+    quotaState: "unknown",
     createdAt: 1700000000000,
     runtimeState: {
       copilotToken: "copilot_token_abc",
@@ -68,7 +68,7 @@ function makeCodebuffAccount(
     },
     enabled: true,
     priority: 0,
-    quotaState: "available",
+    quotaState: "unknown",
     createdAt: 1700000000000,
     ...overrides,
   }
@@ -90,7 +90,7 @@ function makeWindsurfAccount(
     },
     enabled: true,
     priority: 0,
-    quotaState: "available",
+    quotaState: "unknown",
     createdAt: 1700000000000,
     runtimeState: {
       windsurfJwt: "jwt_abc",
@@ -116,7 +116,7 @@ function makeMimoAccount(overrides?: Partial<MimoAccount>): MimoAccount {
     },
     enabled: true,
     priority: 0,
-    quotaState: "available",
+    quotaState: "unknown",
     createdAt: 1700000000000,
     ...overrides,
   }
@@ -151,7 +151,7 @@ function makeOAuthAccount(overrides?: Partial<OAuthAccount>): OAuthAccount {
     },
     enabled: true,
     priority: 0,
-    quotaState: "available",
+    quotaState: "unknown",
     createdAt: 1700000000000,
     ...overrides,
   }
@@ -251,7 +251,7 @@ describe("accountToConnectionForPersistence", () => {
 
     // metadata 完整性
     expect(getConnectionProvider(conn)).toBe("copilot")
-    expect(getConnectionQuotaState(conn)).toBe("available")
+    expect(getConnectionQuotaState(conn)).toBe("unknown")
     expect(getConnectionSettings(conn)).toEqual({ accountType: "individual" })
   })
 

@@ -1,18 +1,22 @@
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { getActiveAccount } from "~/lib/account-selection"
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { copilotBaseUrl, copilotHeadersForConnection } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
-export const getModels = async () => {
-  const account = getActiveAccount()
-  return getModelsForAccount(account)
-}
-
-export const getModelsForAccount = async (account: Account) => {
+/**
+ * Connection 原生版本:getModelsForConnection 直接用 credential.value
+ * 作为 Copilot token,不经过 Account 派生。
+ *
+ * Phase 1.7:已删除 getModels() / getModelsForAccount(account) 桥接版本
+ * (无调用方)。内部路由如需获取 active connection 的模型,应使用
+ * getFirstAvailableAccountManagedConnection() + getModelsForConnection()。
+ */
+export const getModelsForConnection = async (
+  connection: ProviderConnection,
+) => {
   const response = await fetch(`${copilotBaseUrl(state)}/models`, {
-    headers: copilotHeaders(account),
+    headers: copilotHeadersForConnection(connection),
   })
 
   if (!response.ok) throw new HTTPError("Failed to get models", response)

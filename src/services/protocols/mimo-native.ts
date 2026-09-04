@@ -1,17 +1,16 @@
 /**
  * Mimo Native Protocol Adapter。
  *
- * 把 legacy Mimo Account 路径(WebSocket)封装为 ProtocolAdapter,
- * 使 executeWithFailover 统一调度。
+ * Phase 2c:纯 (connection, credential) 热路径,不再经由
+ * connectionToAccount 派生 Account。
  */
 
 import { randomUUID } from "node:crypto"
 
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
-import { parseModelReference } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { connectionToAccount } from "~/lib/provider-connections"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
   type MimoMessage,
   type MimoConnection,
@@ -553,13 +552,12 @@ async function collectMessagesResponse(
 export const mimoNativeAdapter: ProtocolAdapter = {
   protocol: "mimo-native",
 
-  async createChatCompletions({ connection, payload, signal }) {
-    const account = connectionToAccount(connection)
-    const conn = mimoConnections.get(account.id)
+  async createChatCompletions({ connection, credential, payload, signal }) {
+    const conn = mimoConnections.get(connection.id)
     if (!conn) {
-      markAccountFailed(account.id, "Claw node is offline or initializing")
+      markAccountFailed(connection.id, "Claw node is offline or initializing")
       throw new HTTPError(
-        `Claw node for account "${account.label}" is offline or initializing. Please wait.`,
+        `Claw node for connection "${connection.name}" is offline or initializing. Please wait.`,
         new Response(null, { status: 503 }),
       )
     }
@@ -586,7 +584,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
       conn.ws.send(JSON.stringify(wsPayload))
       const response = await safeMimoStream(gen)
       return {
-        credentialId: account.id,
+        credentialId: credential.id,
         response,
       }
     }
@@ -595,18 +593,17 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     conn.ws.send(JSON.stringify(wsPayload))
     const response = await responsePromise
     return {
-      credentialId: account.id,
+      credentialId: credential.id,
       response,
     }
   },
 
-  async createMessages({ connection, payload, signal }) {
-    const account = connectionToAccount(connection)
-    const conn = mimoConnections.get(account.id)
+  async createMessages({ connection, credential, payload, signal }) {
+    const conn = mimoConnections.get(connection.id)
     if (!conn) {
-      markAccountFailed(account.id, "Claw node is offline or initializing")
+      markAccountFailed(connection.id, "Claw node is offline or initializing")
       throw new HTTPError(
-        `Claw node for account "${account.label}" is offline or initializing. Please wait.`,
+        `Claw node for connection "${connection.name}" is offline or initializing. Please wait.`,
         new Response(null, { status: 503 }),
       )
     }
@@ -629,7 +626,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
       conn.ws.send(JSON.stringify(wsPayload))
       const response = await safeMimoMessagesStream(gen)
       return {
-        credentialId: account.id,
+        credentialId: credential.id,
         response,
       }
     }
@@ -638,7 +635,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     conn.ws.send(JSON.stringify(wsPayload))
     const response = await responsePromise
     return {
-      credentialId: account.id,
+      credentialId: credential.id,
       response,
     }
   },

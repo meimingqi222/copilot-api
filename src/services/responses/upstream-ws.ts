@@ -10,13 +10,17 @@
  *   - xai_websockets_executor.go
  */
 
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 
-import { getOAuthProxyUrl } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
+import {
+  getConnectionCpaMetadata,
+  getConnectionProxyUrl,
+  getConnectionSettings,
+} from "~/lib/provider-connections"
 import { globalTimers } from "~/lib/timer-registry"
 import {
   buildUpstreamResponsesCreateBody,
@@ -104,27 +108,33 @@ export function buildResponsesWebsocketUrl(httpUrl: string): string {
 }
 
 /**
- * Whether this account should use upstream Responses WebSocket transport.
+ * Whether this connection should use upstream Responses WebSocket transport.
  *
  * Explicit `settings.websockets` / `cpaMetadata.websockets` wins.
  * For codex/xai, default is **true** (native WS supported) so WS clients
  * get the correct path without admin configuration. Set `websockets: false`
  * to force HTTP.
  */
-export function isAccountWebsocketsEnabled(
-  account: Account,
+export function isConnectionWebsocketsEnabled(
+  connection: ProviderConnection,
   _provider: UpstreamWsProvider,
 ): boolean {
-  const explicit = readWebsocketsFlag(account)
+  const explicit = readWebsocketsFlag(connection)
   if (explicit !== undefined) return explicit
   // codex/xai callers only — default on so WS clients get upstream WSS.
   return true
 }
 
-function readWebsocketsFlag(account: Account): boolean | undefined {
-  const fromSettings = parseBoolish(account.settings?.["websockets"])
+function readWebsocketsFlag(
+  connection: ProviderConnection,
+): boolean | undefined {
+  const fromSettings = parseBoolish(
+    getConnectionSettings(connection)?.["websockets"],
+  )
   if (fromSettings !== undefined) return fromSettings
-  const fromMeta = parseBoolish(account.cpaMetadata?.["websockets"])
+  const fromMeta = parseBoolish(
+    getConnectionCpaMetadata(connection)?.["websockets"],
+  )
   if (fromMeta !== undefined) return fromMeta
   return undefined
 }
@@ -140,14 +150,14 @@ function parseBoolish(value: unknown): boolean | undefined {
 }
 
 export function shouldUseUpstreamResponsesWebsocket(
-  account: Account,
+  connection: ProviderConnection,
   provider: UpstreamWsProvider,
   ctx?: { downstreamWebsocket?: boolean },
 ): boolean {
   if (!ctx?.downstreamWebsocket) return false
-  if (!isAccountWebsocketsEnabled(account, provider)) return false
+  if (!isConnectionWebsocketsEnabled(connection, provider)) return false
   // Bun WebSocket does not support HTTP CONNECT proxies yet — fall back.
-  if (getOAuthProxyUrl(account)) {
+  if (getConnectionProxyUrl(connection)) {
     logger.warn(
       `${provider} websockets: account proxy is set; falling back to HTTP POST (proxy not supported for upstream WS)`,
     )
@@ -215,7 +225,8 @@ function sessionKey(
 
 export interface UpstreamWsTurnOptions {
   provider: UpstreamWsProvider
-  account: Account
+  /** 主体标识(Phase 2d:原 account.id),用于 session key 与日志。 */
+  accountId: string
   httpResponsesUrl: string
   headers: Record<string, string>
   body: Record<string, unknown>
@@ -296,7 +307,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
 ): Promise<AsyncIterable<CopilotStreamEventLike>> {
   const {
     provider,
-    account,
+    accountId,
     httpResponsesUrl,
     headers,
     body,
@@ -309,7 +320,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
   }
 
   const wsUrl = buildResponsesWebsocketUrl(httpResponsesUrl)
-  const key = sessionKey(provider, account.id, executionSessionId)
+  const key = sessionKey(provider, accountId, executionSessionId)
   const wsBody = buildUpstreamResponsesCreateBody(body, { provider })
 
   const prevId =
@@ -325,7 +336,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
     : "default"
   logger.info(
     `${provider} websockets: upstream request session=${executionSessionId} `
-      + `auth=${account.id} url=${wsUrl} event=response.create `
+      + `auth=${accountId} url=${wsUrl} event=response.create `
       + `previous_response_id=${prevId} generate=${generateLog} `
       + `input_items=${Array.isArray(wsBody.input) ? wsBody.input.length : 0}`,
   )
@@ -347,7 +358,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       provider,
       executionSessionId,
       url: wsUrl,
-      accountId: account.id,
+      accountId,
       ws: null,
       chain: Promise.resolve(),
       closed: true,
@@ -404,7 +415,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
         provider,
         executionSessionId,
         url: wsUrl,
-        accountId: account.id,
+        accountId,
         headers,
         signal,
       })
@@ -443,7 +454,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       logger.info(
         `${provider} websockets: fresh socket cannot resolve previous_response_id=`
           + `${options.previousResponseId ?? ""}; replaying full input `
-          + `session=${executionSessionId} auth=${account.id} `
+          + `session=${executionSessionId} auth=${accountId} `
           + `input_items=${Array.isArray(effectiveBody.input) ? effectiveBody.input.length : 0}`,
       )
       // Own stage (not just a detail field on the stringify/send stages below)
@@ -457,7 +468,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
     // responses must not race past the first-event gate.
     consumer = createTurnConsumer({
       provider,
-      accountId: account.id,
+      accountId,
       executionSessionId,
       key,
       sess,
@@ -506,7 +517,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
         key,
         provider,
         executionSessionId,
-        accountId: account.id,
+        accountId,
         attempt,
         alreadyReplayed: replayState.replayed,
         error,
@@ -535,7 +546,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
         key,
         provider,
         executionSessionId,
-        accountId: account.id,
+        accountId,
         attempt,
         alreadyReplayed: replayState.replayed,
         error,

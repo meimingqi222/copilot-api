@@ -2,8 +2,11 @@ import { Hono } from "hono"
 
 import type { ProviderId } from "~/lib/provider-config"
 
-import { getAccount, listAccounts } from "~/lib/accounts"
-import { getProviderConnection } from "~/lib/provider-connections"
+import {
+  getProviderConnection,
+  listAccountManagedConnections,
+  providerFromProtocol,
+} from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -17,19 +20,21 @@ import { statsStore } from "~/lib/stats-store"
  */
 function buildModelProviderHints(): Map<string, ProviderId> {
   const hints = new Map<string, ProviderId>()
-  const sortedAccounts = listAccounts()
-    .map((account, originalIndex) => ({ account, originalIndex }))
+  // 使用 connection 原生列表(替代 listAccounts())
+  const sortedConnections = listAccountManagedConnections()
+    .map((conn, originalIndex) => ({ conn, originalIndex }))
     .sort((left, right) => {
-      if (left.account.priority !== right.account.priority) {
-        return left.account.priority - right.account.priority
+      if (left.conn.priority !== right.conn.priority) {
+        return left.conn.priority - right.conn.priority
       }
       return left.originalIndex - right.originalIndex
     })
 
-  for (const { account } of sortedAccounts) {
-    for (const model of account.availableModels ?? []) {
-      if (!hints.has(model.id)) {
-        hints.set(model.id, account.provider)
+  for (const { conn } of sortedConnections) {
+    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+    for (const model of conn.models ?? []) {
+      if (!hints.has(model.publicId)) {
+        hints.set(model.publicId, provider as ProviderId)
       }
     }
   }
@@ -425,12 +430,9 @@ function aggregateByAccount(startDate: string, endDate: string) {
     }
   > = {}
 
-  for (const account of listAccounts()) {
-    const accountStats = statsStore.getUsageStats(
-      account.id,
-      startDate,
-      endDate,
-    )
+  // 使用 connection 原生列表(替代 listAccounts())
+  for (const conn of listAccountManagedConnections()) {
+    const accountStats = statsStore.getUsageStats(conn.id, startDate, endDate)
     const totals = createUsageMetrics()
     const models: Record<string, UsageMetricsBase> = {}
 
@@ -439,8 +441,8 @@ function aggregateByAccount(startDate: string, endDate: string) {
       aggregateModelUsage(models, stat.models)
     }
 
-    byAccount[account.id] = {
-      label: account.label,
+    byAccount[conn.id] = {
+      label: conn.name,
       ...enrichUsageMetrics(totals),
       models: enrichMetricsMap(models),
     }
@@ -512,19 +514,13 @@ function aggregateByProvider(startDate: string, endDate: string) {
       }
     > = {}
     for (const [accountId, account] of Object.entries(provider.accounts)) {
-      // "live" check must cover BOTH account-managed connections (accounts)
-      // and external provider connections (plain *-compatible connections).
-      // getAccount() only resolves account-managed connections, so external
-      // providers' usage would otherwise be mislabeled as deleted.
+      // "live" check 必须同时覆盖 account-managed connections 和外部 provider
+      // connections(plain *-compatible connections)。getProviderConnection 解析
+      // 所有 connection,外部 provider 的 usage 不会因此被误标为 deleted。
       const liveConnection = getProviderConnection(accountId)
-      const liveAccount =
-        liveConnection ?
-          (getAccount(accountId) ?? {
-            label: liveConnection.name,
-          })
-        : undefined
       accounts[accountId] = {
-        label: liveAccount?.label ?? accountId,
+        // 使用 connection.name 作为 label(替代 getAccount()?.label)
+        label: liveConnection?.name ?? accountId,
         ...(liveConnection ? {} : { deleted: true }),
         ...enrichUsageMetrics({
           requests: account.requests,

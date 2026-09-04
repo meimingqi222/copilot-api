@@ -1,64 +1,49 @@
-import { saveAccounts } from "~/lib/account-store"
-import {
-  getAccount,
-  getMimoPh,
-  getMimoProxy,
-  getMimoServiceToken,
-  getMimoUserId,
-  listAccounts,
-} from "~/lib/accounts"
 import { logger } from "~/lib/logger"
 import {
+  getConnectionAuthStatus,
+  getConnectionMimoPh,
+  getConnectionMimoServiceToken,
+  getConnectionProxy,
+  getConnectionUserId,
   getMutableProviderConnection,
-  syncAccountToConnection,
+  listAccountManagedConnections,
+  persistProviderConnections,
+  providerFromProtocol,
+  setConnectionAuthStatus,
 } from "~/lib/provider-connections"
 import { sleep } from "~/lib/utils"
 import { MimoAccountManager } from "~/services/mimo/account-lifecycle"
 
+/**
+ * Phase 2c:mark* 函数改为 connection 原生写入,
+ * 不再经由 Account 派生 + syncAccountToConnection 写回。
+ */
 export function markAccountFailed(accountId: string, errorMsg: string) {
-  const acc = getAccount(accountId)
-  if (acc) {
-    acc.runtimeState = {
-      ...acc.runtimeState,
-      authStatus: "error",
-      lastError: errorMsg,
-    }
-    const conn = getMutableProviderConnection(acc.id)
-    if (conn) syncAccountToConnection(conn, acc)
-    saveAccounts().catch((err: unknown) => {
-      logger.error("Failed to save accounts after marking failed:", err)
+  const conn = getMutableProviderConnection(accountId)
+  if (conn) {
+    setConnectionAuthStatus(conn, "error", errorMsg)
+    persistProviderConnections().catch((err: unknown) => {
+      logger.error("Failed to save connections after marking failed:", err)
     })
   }
 }
 
 export function markAccountReady(accountId: string) {
-  const acc = getAccount(accountId)
-  if (acc && acc.runtimeState?.authStatus !== "ready") {
-    acc.runtimeState = {
-      ...acc.runtimeState,
-      authStatus: "ready",
-      lastError: undefined,
-    }
-    const conn = getMutableProviderConnection(acc.id)
-    if (conn) syncAccountToConnection(conn, acc)
-    saveAccounts().catch((err: unknown) => {
-      logger.error("Failed to save accounts after marking ready:", err)
+  const conn = getMutableProviderConnection(accountId)
+  if (conn && getConnectionAuthStatus(conn) !== "ready") {
+    setConnectionAuthStatus(conn, "ready", null)
+    persistProviderConnections().catch((err: unknown) => {
+      logger.error("Failed to save connections after marking ready:", err)
     })
   }
 }
 
 export function markAccountResting(accountId: string) {
-  const acc = getAccount(accountId)
-  if (acc) {
-    acc.runtimeState = {
-      ...acc.runtimeState,
-      authStatus: "pending",
-      lastError: undefined,
-    }
-    const conn = getMutableProviderConnection(acc.id)
-    if (conn) syncAccountToConnection(conn, acc)
-    saveAccounts().catch((err: unknown) => {
-      logger.error("Failed to save accounts after marking resting:", err)
+  const conn = getMutableProviderConnection(accountId)
+  if (conn) {
+    setConnectionAuthStatus(conn, "pending", null)
+    persistProviderConnections().catch((err: unknown) => {
+      logger.error("Failed to save connections after marking resting:", err)
     })
   }
 }
@@ -121,28 +106,33 @@ class MimoRotator {
     this.lastAccountRefresh = now
 
     const newSlots: Array<RotatorSlot> = []
-    for (const account of listAccounts()) {
-      if (account.provider !== "mimo-aistudio" || !account.enabled) continue
+    // 直接遍历 account-managed connections,不再经由 listAccounts() 派生 Account
+    for (const conn of listAccountManagedConnections()) {
+      if (
+        providerFromProtocol(conn.protocol) !== "mimo-aistudio"
+        || !conn.enabled
+      )
+        continue
 
-      const serviceToken = getMimoServiceToken(account)
-      const ph = getMimoPh(account)
-      const userId = getMimoUserId(account)
+      const serviceToken = getConnectionMimoServiceToken(conn)
+      const ph = getConnectionMimoPh(conn)
+      const userId = getConnectionUserId(conn)
       if (!serviceToken || !ph || !userId) {
         logger.warn(
-          `[MimoRotator] Account "${account.label}" missing credentials, skipping`,
+          `[MimoRotator] Account "${conn.name}" missing credentials, skipping`,
         )
         continue
       }
 
-      // Preserve consecutiveFailure count if slot already exists
-      const existing = this.slots.find((s) => s.accountId === account.id)
+      // 保留已有 slot 的连续失败计数
+      const existing = this.slots.find((s) => s.accountId === conn.id)
       newSlots.push({
-        accountId: account.id,
-        label: account.label,
+        accountId: conn.id,
+        label: conn.name,
         serviceToken,
         ph,
         userId,
-        proxy: getMimoProxy(account),
+        proxy: getConnectionProxy(conn),
         consecutiveFailures: existing?.consecutiveFailures ?? 0,
       })
     }
@@ -271,26 +261,25 @@ const rotator = new MimoRotator()
 export function startMimoManager() {
   logger.info("🚀 Mimo AI Studio control engine (Manager) initialized.")
 
-  // Reset stale error states from previous runs
+  // 重置上次运行遗留的 error 状态
+  // 直接遍历 account-managed connections,不再经由 listAccounts() 派生 Account
   let changed = false
-  for (const account of listAccounts()) {
+  for (const conn of listAccountManagedConnections()) {
     if (
-      account.provider === "mimo-aistudio"
-      && account.enabled
-      && account.runtimeState?.authStatus === "error"
+      providerFromProtocol(conn.protocol) === "mimo-aistudio"
+      && conn.enabled
+      && getConnectionAuthStatus(conn) === "error"
     ) {
-      account.runtimeState = {
-        ...account.runtimeState,
-        authStatus: "pending",
-      }
-      const conn = getMutableProviderConnection(account.id)
-      if (conn) syncAccountToConnection(conn, account)
+      setConnectionAuthStatus(conn, "pending", null)
       changed = true
     }
   }
   if (changed) {
-    saveAccounts().catch((err: unknown) => {
-      logger.error("Failed to save accounts after resetting stale errors:", err)
+    persistProviderConnections().catch((err: unknown) => {
+      logger.error(
+        "Failed to save connections after resetting stale errors:",
+        err,
+      )
     })
   }
 

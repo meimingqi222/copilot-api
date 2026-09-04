@@ -1,4 +1,7 @@
-import type { Account, CopilotAccount } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
@@ -6,17 +9,18 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { getCopilotToken, parseModelReference } from "~/lib/accounts"
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { parseModelReference } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import {
-  shouldUseResponsesApi,
+  shouldUseResponsesApiForConnection,
   translateResponsesStreamToChatCompletions,
   translateResponsesToChatCompletion,
   translateToResponsesPayload,
 } from "~/services/copilot/responses-api"
+import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
   detectOpenAIStreamError,
   detectResponsesStreamError,
@@ -45,13 +49,16 @@ function sanitizeReasoningEffortForCopilot(
 }
 
 export async function createCopilotChatCompletionsOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: { connection: ProviderConnection; credential: ApiCredential },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
-  const copilotAccount = account as CopilotAccount
-  if (!getCopilotToken(copilotAccount)) {
+  const token = copilotTokenFromCredential(credential)
+  if (!token) {
     throw new Error("Copilot token not found")
   }
 
@@ -65,9 +72,9 @@ export async function createCopilotChatCompletionsOnce(
       payload.reasoning_effort,
     ),
   }
-  const useResponsesApi = shouldUseResponsesApi(
+  const useResponsesApi = shouldUseResponsesApiForConnection(
     normalizedPayload.model,
-    copilotAccount,
+    connection,
   )
   const enableVision = ctx?.enableVision ?? hasImageContent(normalizedPayload)
 
@@ -77,7 +84,7 @@ export async function createCopilotChatCompletionsOnce(
     : JSON.stringify(normalizedPayload)
 
   const headers: Record<string, string> = {
-    ...copilotHeaders(copilotAccount, enableVision),
+    ...copilotHeadersForToken(token, enableVision),
     "editor-version": `vscode/${state.vsCodeVersion}`,
   }
   if (ctx?.initiator) {

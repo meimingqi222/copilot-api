@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
@@ -8,18 +11,18 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import {
   cacheReasoningReplayItems,
   getReasoningReplayItems,
   injectReasoningReplayItems,
 } from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { resolveXaiModelId } from "~/services/oauth/model-catalog"
 import {
   detectResponsesStreamError,
@@ -141,32 +144,43 @@ function logCachePrefixDiag(
 }
 
 export async function createXaiResponsesOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ResponsesPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "xai") {
-    throw new Error("xAI responses requires an xAI OAuth account")
+  if (connection.protocol !== "xai-native") {
+    throw new Error("xAI responses requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`xAI access token missing for account "${account.label}"`)
+    throw new Error(
+      `xAI access token missing for connection "${connection.name}"`,
+    )
   }
 
   const model = resolveXaiModelId(canonicalNativeModelId(payload.model))
   // WebSocket always uses the official API (cli-chat-proxy rejects WS with 405).
   // HTTP chat uses the resolved chat endpoint: Grok CLI chat-proxy in CLI mode
   // (the default) or the official API when settings.useApi is true.
-  const wsUrl = `${xaiWsBaseUrl(account).replace(/\/+$/, "")}/responses`
-  const chatBaseUrl = xaiChatBaseUrl(account)
+  const wsUrl = `${xaiWsBaseUrl(connection).replace(/\/+$/, "")}/responses`
+  const chatBaseUrl = xaiChatBaseUrl(connection)
   const chatUrl = `${chatBaseUrl.replace(/\/+$/, "")}/responses`
   const useCliIdentity = isXaiCliChatProxyBaseUrl(chatBaseUrl)
   const clientStream = payload.stream === true
   const useUpstreamWs =
     !ctx?.forceUpstreamHttp
-    && shouldUseUpstreamResponsesWebsocket(account, "xai", ctx)
+    && shouldUseUpstreamResponsesWebsocket(connection, "xai", ctx)
   const sessionId = resolveXaiSessionId(payload, model, ctx)
 
   // Log cache-prefix diagnostic so we can compare prefix stability across
@@ -219,7 +233,7 @@ export async function createXaiResponsesOnce(
   // full self-contained input (not the client's delta) so the tool-result turn
   // is not an orphan.
   const executionSessionId =
-    ctx?.executionSessionId?.trim() || sessionId || account.id
+    ctx?.executionSessionId?.trim() || sessionId || connection.id
   const transcriptSessionId = resolveSocketResponsesTranscriptSessionId(
     executionSessionId,
     sessionId,
@@ -262,7 +276,8 @@ export async function createXaiResponsesOnce(
       previous_response_id: previousResponseId,
     }
     const wsTurn = await runXaiWebSocketTurn({
-      account,
+      connection,
+      credential,
       accessToken,
       wsUrl,
       sessionId,
@@ -310,7 +325,7 @@ export async function createXaiResponsesOnce(
   })
 
   let currentAccessToken = accessToken
-  let response = await fetchWithOAuthProxy(account, chatUrl, {
+  let response = await fetchWithConnectionProxy(connection, chatUrl, {
     method: "POST",
     headers: buildXaiHeaders(
       currentAccessToken,
@@ -334,15 +349,19 @@ export async function createXaiResponsesOnce(
       /unauthenticated:bad-credentials|could not be validated/i.test(errorBody)
     ) {
       logger.warn(
-        `xAI returned 403 bad-credentials for account "${account.label}". Forcing token refresh...`,
+        `xAI returned 403 bad-credentials for connection "${connection.name}". Forcing token refresh...`,
       )
-      const refreshedToken = await ensureOAuthAccessToken(account, {
-        forceRefresh: true,
-        failedAccessToken: currentAccessToken,
-      })
+      const refreshedToken = await ensureOAuthConnectionAccessToken(
+        connection,
+        credential,
+        {
+          forceRefresh: true,
+          failedAccessToken: currentAccessToken,
+        },
+      )
       if (refreshedToken && refreshedToken !== currentAccessToken) {
         currentAccessToken = refreshedToken
-        response = await fetchWithOAuthProxy(account, chatUrl, {
+        response = await fetchWithConnectionProxy(connection, chatUrl, {
           method: "POST",
           headers: buildXaiHeaders(
             currentAccessToken,
@@ -428,7 +447,8 @@ type XaiWsTurnOutcome =
   | { handled: false }
 
 interface RunXaiWebSocketTurnOptions {
-  account: Account
+  connection: ProviderConnection
+  credential: ApiCredential
   accessToken: string
   wsUrl: string
   sessionId?: string
@@ -465,7 +485,7 @@ async function runXaiWebSocketTurn(
       // Eager open+send so handshake failures hit this catch (streaming-safe).
       const wsStream = await openUpstreamResponsesWebsocketTurn({
         provider: "xai",
-        account: opts.account,
+        accountId: opts.connection.id,
         httpResponsesUrl: opts.wsUrl,
         headers: buildWsHeaders(),
         body: opts.wsBody,
@@ -515,7 +535,7 @@ async function runXaiWebSocketTurn(
 
       // xAI 403 bad-credentials → force OAuth refresh and retry once.
       const refreshed = await maybeRefreshXaiWsToken(
-        opts.account,
+        { connection: opts.connection, credential: opts.credential },
         opts.executionSessionId,
         wsAttempt,
         wsToken,
@@ -539,7 +559,7 @@ async function runXaiWebSocketTurn(
       if (failure.kind === "connection_limit") {
         destroyUpstreamWebsocketSession(
           "xai",
-          opts.account.id,
+          opts.connection.id,
           opts.executionSessionId,
         )
       }
@@ -560,7 +580,7 @@ async function runXaiWebSocketTurn(
  * refreshed once, or the refresh did not produce a new token.
  */
 async function maybeRefreshXaiWsToken(
-  account: Account,
+  subject: { connection: ProviderConnection; credential: ApiCredential },
   executionSessionId: string,
   wsAttempt: number,
   wsToken: string,
@@ -568,15 +588,23 @@ async function maybeRefreshXaiWsToken(
 ): Promise<string | undefined> {
   if (wsAttempt !== 0 || !isXaiBadCredentialsHttpError(error)) return undefined
   logger.warn(
-    `xai websockets: bad-credentials for account "${account.label}". `
+    `xai websockets: bad-credentials for connection "${subject.connection.name}". `
       + "Forcing token refresh and retrying...",
   )
-  const refreshedToken = await ensureOAuthAccessToken(account, {
-    forceRefresh: true,
-    failedAccessToken: wsToken,
-  })
+  const refreshedToken = await ensureOAuthConnectionAccessToken(
+    subject.connection,
+    subject.credential,
+    {
+      forceRefresh: true,
+      failedAccessToken: wsToken,
+    },
+  )
   if (!refreshedToken || refreshedToken === wsToken) return undefined
-  destroyUpstreamWebsocketSession("xai", account.id, executionSessionId)
+  destroyUpstreamWebsocketSession(
+    "xai",
+    subject.connection.id,
+    executionSessionId,
+  )
   return refreshedToken
 }
 

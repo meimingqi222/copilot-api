@@ -3,8 +3,13 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import { buildAccountModelAliases, listAccounts } from "~/lib/accounts"
-import { listProviderConnections } from "~/lib/provider-connections"
+import { isOAuthProviderId } from "~/lib/provider-config"
+import {
+  accountManagedModelPrefix,
+  accountManagedProvider,
+  isAccountManagedConnection,
+  listProviderConnections,
+} from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 import { emitStateChangeSync } from "~/lib/state-events"
 import { statsStore } from "~/lib/stats-store"
@@ -347,6 +352,24 @@ function getSortedActiveRules(): Array<ModelAliasRule> {
   return activeRulesCache
 }
 
+/**
+ * account-managed connection 的模型别名集合。
+ * 镜像 buildAccountModelAliases:原生 id + `prefix/id`(+ OAuth 自定义前缀时
+ * 追加 `provider/id`)。
+ */
+export function buildConnectionModelAliases(
+  conn: ProviderConnection,
+  nativeModelId: string,
+): Array<string> {
+  const provider = accountManagedProvider(conn)
+  const prefix = accountManagedModelPrefix(conn)
+  const aliases = [nativeModelId, `${prefix}/${nativeModelId}`]
+  if (isOAuthProviderId(provider) && prefix !== provider) {
+    aliases.push(`${provider}/${nativeModelId}`)
+  }
+  return aliases
+}
+
 function modelIsReal(modelId: string, connectionId?: string): boolean {
   const connections =
     connectionId ?
@@ -358,24 +381,21 @@ function modelIsReal(modelId: string, connectionId?: string): boolean {
   for (const connection of connections) {
     for (const model of connection.models ?? []) {
       if (!model.enabled) continue
-      const ids = [model.publicId, ...(model.aliases ?? [])]
+      // account-managed connection 额外匹配 prefix 别名集合
+      // (原 listAccounts + buildAccountModelAliases 路径，已迁移到 listAccountManagedConnections)
+      const ids = [
+        model.publicId,
+        ...(model.aliases ?? []),
+        ...(isAccountManagedConnection(connection) ?
+          buildConnectionModelAliases(connection, model.publicId)
+        : []),
+      ]
       if (ids.some((id) => id.toLowerCase() === modelId.toLowerCase())) {
         return true
       }
     }
   }
-
-  const accounts =
-    connectionId ?
-      listAccounts().filter((account) => account.id === connectionId)
-    : listAccounts()
-  return accounts.some((account) =>
-    (account.availableModels ?? []).some((model) =>
-      buildAccountModelAliases(account, model.id).some(
-        (id) => id.toLowerCase() === modelId.toLowerCase(),
-      ),
-    ),
-  )
+  return false
 }
 
 export function resolveModelAlias(

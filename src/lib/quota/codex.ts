@@ -1,11 +1,14 @@
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type {
   CodexRateLimitInfo,
   CodexUsagePayload,
   CodexUsageWindow,
 } from "~/lib/quota/parsers"
 
-import { getOAuthAccountId, isOAuthAccount } from "~/lib/accounts"
+import {
+  getConnectionProvider,
+  getCredentialContextString,
+} from "~/lib/provider-connections"
 import {
   CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL,
   CODEX_RATE_LIMIT_RESET_CREDITS_URL,
@@ -18,6 +21,30 @@ import {
   extractCodexPlanTypeFromIdToken,
   extractCodexSubscriptionActiveUntilFromIdToken,
 } from "~/services/oauth/jwt"
+
+/** 读取 codex accountId(context.oauthAccountId 优先,回退 extras)。 */
+function readCodexAccountId(
+  connection: ProviderConnection,
+): string | undefined {
+  const fromContext = getCredentialContextString(connection, "oauthAccountId")
+  if (fromContext) return fromContext
+  const extras = connection.metadata?.credentialExtras as
+    | Record<string, unknown>
+    | undefined
+  const value = extras?.accountId
+  return typeof value === "string" && value ? value : undefined
+}
+
+/** 读取 codex idToken(context 优先,回退 extras)。 */
+function readCodexIdToken(connection: ProviderConnection): string | undefined {
+  const fromContext = getCredentialContextString(connection, "idToken")
+  if (fromContext) return fromContext
+  const extras = connection.metadata?.credentialExtras as
+    | Record<string, unknown>
+    | undefined
+  const value = extras?.idToken
+  return typeof value === "string" && value ? value : undefined
+}
 
 const FIVE_HOUR_SECONDS = 18_000
 const WEEK_SECONDS = 604_800
@@ -366,17 +393,14 @@ export function buildCodexQuotaWindows(
 }
 
 export function resolveCodexSubscriptionActiveUntil(
-  account: Account,
+  connection: ProviderConnection,
 ): string | number | null {
-  if (!isOAuthAccount(account)) {
-    return null
-  }
-  const idToken = account.credentials?.idToken
+  const idToken = readCodexIdToken(connection)
   return extractCodexSubscriptionActiveUntilFromIdToken(idToken) ?? null
 }
 
 export function resolveCodexPlanType(
-  account: Account,
+  connection: ProviderConnection,
   payload?: CodexUsagePayload | null,
 ): string | null {
   const planTypeFromUsage = normalizePlanType(
@@ -385,10 +409,7 @@ export function resolveCodexPlanType(
   if (planTypeFromUsage) {
     return planTypeFromUsage
   }
-  if (!isOAuthAccount(account)) {
-    return null
-  }
-  return extractCodexPlanTypeFromIdToken(account.credentials?.idToken) ?? null
+  return extractCodexPlanTypeFromIdToken(readCodexIdToken(connection)) ?? null
 }
 
 function asTrimmedString(value: unknown): string {
@@ -448,7 +469,7 @@ export function parseCodexResetCreditsPayload(payload: unknown): {
 }
 
 export function buildCodexQuotaMeta(
-  account: Account,
+  connection: ProviderConnection,
   payload: CodexUsagePayload,
   resetCreditsDetails?: {
     availableCount: number | null
@@ -470,8 +491,8 @@ export function buildCodexQuotaMeta(
     resetCreditsDetails?.availableCount ?? detailsCount ?? usageAvailableCount
 
   return {
-    planType: resolveCodexPlanType(account, payload),
-    subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(account),
+    planType: resolveCodexPlanType(connection, payload),
+    subscriptionActiveUntil: resolveCodexSubscriptionActiveUntil(connection),
     rateLimitResetCreditsAvailableCount,
     rateLimitResetCredits: resetCreditsDetails?.credits ?? [],
     rateLimitResetCreditsError: resetCreditsDetails?.error ?? null,
@@ -490,9 +511,11 @@ function createCodexRedeemRequestId(): string {
   })
 }
 
-function buildCodexRequestHeaders(account: Account): Record<string, string> {
+function buildCodexRequestHeaders(
+  connection: ProviderConnection,
+): Record<string, string> {
   const headers: Record<string, string> = { ...CODEX_REQUEST_HEADERS }
-  const accountId = getOAuthAccountId(account)
+  const accountId = readCodexAccountId(connection)
   if (accountId) {
     headers["Chatgpt-Account-Id"] = accountId
   }
@@ -500,7 +523,7 @@ function buildCodexRequestHeaders(account: Account): Record<string, string> {
 }
 
 export async function fetchCodexResetCredits(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<{
   availableCount: number | null
@@ -508,10 +531,10 @@ export async function fetchCodexResetCredits(
   error: string | null
 }> {
   try {
-    const response = await executeUpstreamProxyCall(account, {
+    const response = await executeUpstreamProxyCall(connection, {
       method: "GET",
       url: CODEX_RATE_LIMIT_RESET_CREDITS_URL,
-      headers: buildCodexRequestHeaders(account),
+      headers: buildCodexRequestHeaders(connection),
       signal,
     })
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -537,19 +560,19 @@ export async function fetchCodexResetCredits(
 }
 
 export async function consumeCodexRateLimitResetCredit(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (!isOAuthAccount(account) || account.provider !== "codex") {
+  if (getConnectionProvider(connection) !== "codex") {
     throw new Error(
-      "consumeCodexRateLimitResetCredit requires a Codex OAuth account",
+      "consumeCodexRateLimitResetCredit requires a Codex OAuth connection",
     )
   }
 
-  const response = await executeUpstreamProxyCall(account, {
+  const response = await executeUpstreamProxyCall(connection, {
     method: "POST",
     url: CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL,
-    headers: buildCodexRequestHeaders(account),
+    headers: buildCodexRequestHeaders(connection),
     body: JSON.stringify({
       redeem_request_id: createCodexRedeemRequestId(),
     }),
@@ -564,13 +587,13 @@ export async function consumeCodexRateLimitResetCredit(
 }
 
 export async function fetchCodexUsagePayload(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<CodexUsagePayload> {
-  const response = await executeUpstreamProxyCall(account, {
+  const response = await executeUpstreamProxyCall(connection, {
     method: "GET",
     url: CODEX_USAGE_URL,
-    headers: buildCodexRequestHeaders(account),
+    headers: buildCodexRequestHeaders(connection),
     signal,
   })
 
@@ -589,11 +612,11 @@ export async function fetchCodexUsagePayload(
 }
 
 export async function resetCodexQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<CodexUsagePayload> {
-  await consumeCodexRateLimitResetCredit(account, signal)
-  return fetchCodexUsagePayload(account, signal)
+  await consumeCodexRateLimitResetCredit(connection, signal)
+  return fetchCodexUsagePayload(connection, signal)
 }
 
 export function canResetCodexQuota(meta: CodexQuotaMeta | undefined): boolean {

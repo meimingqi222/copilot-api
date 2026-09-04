@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 
 import {
   __resetModelAliasesForTest,
@@ -121,7 +121,6 @@ describe("global model aliases", () => {
       publicModelId: routing.modelId,
       aliasRestriction: routing.aliasRestriction,
       endpoint: "chat",
-      accounts: [],
     })
     expect(targets.map((target) => target.connectionId)).toEqual(["xai-1"])
   })
@@ -144,7 +143,6 @@ describe("global model aliases", () => {
       ...routing,
       publicModelId: routing.modelId,
       endpoint: "chat",
-      accounts: [],
     })
     expect(targets[0]?.upstreamModelId).toBe("grok-4.5-build")
   })

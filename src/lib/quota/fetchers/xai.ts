@@ -1,21 +1,22 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
+import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type { XaiBillingPayload } from "~/lib/quota/parsers"
 
-import { isOAuthAccount } from "~/lib/accounts"
+import { getConnectionProvider } from "~/lib/provider-connections"
 import { XAI_BILLING_URL, XAI_REQUEST_HEADERS } from "~/lib/quota/constants"
 import { parseXaiBillingPayload, summarizeXaiQuota } from "~/lib/quota/parsers"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 
 export async function fetchXaiQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
-  if (!isOAuthAccount(account) || account.provider !== "xai") {
-    throw new Error("fetchXaiQuota requires an xAI OAuth account")
+  if (getConnectionProvider(connection) !== "xai") {
+    throw new Error("fetchXaiQuota requires an xAI OAuth connection")
   }
 
-  const baseResponse = await executeUpstreamProxyCall(account, {
+  const baseResponse = await executeUpstreamProxyCall(connection, {
     method: "GET",
     url: XAI_BILLING_URL,
     headers: { ...XAI_REQUEST_HEADERS },
@@ -35,7 +36,7 @@ export async function fetchXaiQuota(
 
   let creditsPayload: XaiBillingPayload | null = null
   try {
-    const creditsResponse = await executeUpstreamProxyCall(account, {
+    const creditsResponse = await executeUpstreamProxyCall(connection, {
       method: "GET",
       url: `${XAI_BILLING_URL}?format=credits`,
       headers: { ...XAI_REQUEST_HEADERS },

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { resolveWindsurfRequestModel } from "~/services/windsurf/create-chat-completions"
 import { extractWindsurfModelsFromPayload } from "~/services/windsurf/get-models"
@@ -161,51 +161,43 @@ test("extractWindsurfModelsFromPayload extracts mixed-provider catalog entries",
 })
 
 test("resolveWindsurfRequestModel uses upstream ids and keeps fast models intact", () => {
-  const account = {
+  const connection = {
     id: "windsurf-account",
-    label: "Windsurf",
-    provider: "windsurf",
+    name: "Windsurf",
+    protocol: "windsurf-native",
+    baseUrl: "",
     enabled: true,
     priority: 0,
-    isExhausted: false,
     createdAt: 0,
-    credentials: { apiKey: "token" },
-    settings: {
-      baseUrl: "https://server.self-serve.windsurf.com",
-      appVersion: "1.48.2",
-      lsVersion: "1.9544.35",
-      defaultModel: "swe-1-6-fast",
-      clientName: "windsurf",
-    },
-    availableModels: [
+    models: [
       {
-        id: "gpt-5.1-codex-low",
+        publicId: "gpt-5.1-codex-low",
+        upstreamId: "MODEL_GPT_5_1_CODEX_LOW",
         name: "GPT-5.1-Codex Low",
         vendor: "OpenAI",
         pickerEnabled: true,
-        supportedEndpoints: ["/chat/completions", "/v1/messages"],
-        provider: "windsurf",
-        upstreamId: "MODEL_GPT_5_1_CODEX_LOW",
+        endpoints: ["chat", "messages"],
+        enabled: true,
       },
       {
-        id: "swe-1-6-fast",
+        publicId: "swe-1-6-fast",
+        upstreamId: "swe-1-6-fast",
         name: "SWE-1.6 Fast",
         vendor: "Windsurf",
         pickerEnabled: true,
-        supportedEndpoints: ["/chat/completions", "/v1/messages"],
-        provider: "windsurf",
-        upstreamId: "swe-1-6-fast",
+        endpoints: ["chat", "messages"],
+        enabled: true,
       },
     ],
-  } as Account
+  } as ProviderConnection
 
-  expect(resolveWindsurfRequestModel(account, "gpt-5.1-codex-low")).toBe(
+  expect(resolveWindsurfRequestModel(connection, "gpt-5.1-codex-low")).toBe(
     "MODEL_GPT_5_1_CODEX_LOW",
   )
-  expect(resolveWindsurfRequestModel(account, "swe-1-6-fast")).toBe(
+  expect(resolveWindsurfRequestModel(connection, "swe-1-6-fast")).toBe(
     "swe-1-6-fast",
   )
-  expect(resolveWindsurfRequestModel(account, "MODEL_PRIVATE_9")).toBe(
+  expect(resolveWindsurfRequestModel(connection, "MODEL_PRIVATE_9")).toBe(
     "MODEL_PRIVATE_9",
   )
 })

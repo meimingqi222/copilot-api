@@ -1,11 +1,15 @@
 import type { Context } from "hono"
 
-import type { Account, AccountModel, QuotaSnapshot } from "~/lib/accounts"
 import type {
   ProviderDescriptor,
   ProviderFeature,
   ProviderId,
 } from "~/lib/provider-config"
+import type {
+  ModelMapping,
+  ProviderConnection,
+} from "~/lib/provider-connections"
+import type { QuotaSnapshot } from "~/lib/provider-connections/types"
 import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
@@ -68,9 +72,11 @@ export interface ProviderRuntime {
   descriptor: ProviderDescriptor
   /** 对应的协议适配器。用于消除 provider↔protocol 手动映射表。 */
   adapter?: ProtocolAdapter
-  supports(account: Account, feature: ProviderFeature): boolean
-  refreshModels(account: Account): Promise<Array<AccountModel>>
-  refreshQuota?(account: Account): Promise<QuotaSnapshot | undefined>
-  refreshAuth?(account: Account): Promise<void>
-  getFallbackModels?(account: Account): Array<AccountModel>
+  supports(connection: ProviderConnection, feature: ProviderFeature): boolean
+  refreshModels(connection: ProviderConnection): Promise<Array<ModelMapping>>
+  refreshQuota?(
+    connection: ProviderConnection,
+  ): Promise<QuotaSnapshot | undefined>
+  refreshAuth?(connection: ProviderConnection): Promise<void>
+  getFallbackModels?(connection: ProviderConnection): Array<ModelMapping>
 }

@@ -1,8 +1,11 @@
 import { Hono } from "hono"
 
-import { isAccountAvailable } from "~/lib/account-availability"
-import { listAccounts } from "~/lib/accounts"
 import { logStore } from "~/lib/log-store"
+import {
+  getConnectionQuotaInfo,
+  isConnectionAvailable,
+  listAccountManagedConnections,
+} from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 
@@ -26,9 +29,10 @@ function aggregateQuotaInfo(): AggregatedQuota {
     totalPremiumTotal: 0,
   }
 
-  for (const account of listAccounts()) {
-    if (!account.enabled) continue
-    const qi = account.quotaInfo
+  // 使用 connection 原生列表读取配额(替代 listAccounts())
+  for (const conn of listAccountManagedConnections()) {
+    if (!conn.enabled) continue
+    const qi = getConnectionQuotaInfo(conn)
     if (!qi) continue
 
     if (!qi.unlimited) {
@@ -55,10 +59,11 @@ function aggregateQuotaInfo(): AggregatedQuota {
 
 // Get active account quota info
 function getActiveQuotaInfo() {
-  const enabled = listAccounts()
-    .filter((a) => a.enabled)
+  // 按 priority 排序取第一个 enabled connection 的配额(替代 listAccounts())
+  const enabled = listAccountManagedConnections()
+    .filter((c) => c.enabled)
     .sort((a, b) => a.priority - b.priority)
-  return enabled[0]?.quotaInfo
+  return enabled[0] ? getConnectionQuotaInfo(enabled[0]) : undefined
 }
 
 // Build active account quota response
@@ -93,11 +98,12 @@ function buildDashboardResponse(aggregated: AggregatedQuota) {
   const activeUsers = state.users.filter((u) => u.enabled).length
   const totalUsers = state.users.length
   const totals = statsStore.getTodayTotals()
-  const accounts = listAccounts()
-  const activeAccounts = accounts.filter((account) =>
-    isAccountAvailable(account),
+  // 使用 connection 原生列表统计账号数(替代 listAccounts())
+  const connections = listAccountManagedConnections()
+  const activeAccounts = connections.filter((conn) =>
+    isConnectionAvailable(conn),
   ).length
-  const totalAccounts = accounts.length
+  const totalAccounts = connections.length
 
   return {
     activeUsers,

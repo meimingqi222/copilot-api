@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
@@ -9,13 +12,13 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import {
-  canonicalNativeModelId,
-  getOAuthProjectId,
-  isOAuthAccount,
-} from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import {
+  getCredentialContextString,
+  getConnectionSettings,
+} from "~/lib/provider-connections"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { generateAntigravityStableSessionId } from "~/lib/routing"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
@@ -23,7 +26,7 @@ import {
   ANTIGRAVITY_API_VERSION,
   ANTIGRAVITY_DAILY_API_BASE_URL,
 } from "~/services/oauth/antigravity"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 
 import { buildAntigravityHeaders } from "./headers"
 import {
@@ -138,7 +141,7 @@ async function* translateAntigravitySseToOpenAi(
 }
 
 async function postAntigravityRequest(
-  account: Account,
+  connection: ProviderConnection,
   accessToken: string,
   upstreamBody: ReturnType<typeof translateOpenAiChatToAntigravity>,
   stream: boolean,
@@ -147,9 +150,10 @@ async function postAntigravityRequest(
   let lastError: Error | undefined
 
   for (const baseUrl of ANTIGRAVITY_BASE_URLS) {
-    const settingsBase =
-      isOAuthAccount(account) ? account.settings?.baseUrl : undefined
-    const resolvedBase = (settingsBase ?? baseUrl).replace(/\/+$/, "")
+    const settingsBase = getConnectionSettings(connection)?.baseUrl
+    const settingsBaseUrl =
+      typeof settingsBase === "string" ? settingsBase : undefined
+    const resolvedBase = (settingsBaseUrl ?? baseUrl).replace(/\/+$/, "")
     const path =
       stream ?
         `${ANTIGRAVITY_API_VERSION}:streamGenerateContent?alt=sse`
@@ -157,7 +161,7 @@ async function postAntigravityRequest(
     const url = `${resolvedBase}/${path}`
 
     try {
-      const response = await fetchWithOAuthProxy(account, url, {
+      const response = await fetchWithConnectionProxy(connection, url, {
         method: "POST",
         headers: buildAntigravityHeaders(accessToken, stream),
         body: JSON.stringify(upstreamBody),
@@ -192,26 +196,35 @@ async function postAntigravityRequest(
 }
 
 export async function createAntigravityChatCompletionsOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "antigravity") {
-    throw new Error("Antigravity chat requires an Antigravity OAuth account")
+  if (connection.protocol !== "antigravity-native") {
+    throw new Error("Antigravity chat requires an Antigravity OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
     throw new Error(
-      `Antigravity access token missing for account "${account.label}"`,
+      `Antigravity access token missing for connection "${connection.name}"`,
     )
   }
 
-  const projectId = getOAuthProjectId(account)
+  const projectId = getCredentialContextString(connection, "projectId")
   if (!projectId) {
     throw new Error(
-      `Antigravity project_id missing for account "${account.label}"`,
+      `Antigravity project_id missing for connection "${connection.name}"`,
     )
   }
 
@@ -273,7 +286,7 @@ export async function createAntigravityChatCompletionsOnce(
   // 敏感词混淆已在 dispatch 层统一处理，无需在此重复。
 
   const response = await postAntigravityRequest(
-    account,
+    connection,
     accessToken,
     upstreamBody,
     stream,

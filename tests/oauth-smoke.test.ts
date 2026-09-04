@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { OAuthAccount } from "~/lib/legacy-accounts"
 
-import { isOAuthAccount, listAccounts } from "~/lib/accounts"
+import { isOAuthAccount, listAccounts } from "~/lib/legacy-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"

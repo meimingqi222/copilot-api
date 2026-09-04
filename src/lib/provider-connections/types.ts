@@ -6,6 +6,8 @@
  * 兼容的服务商无需新增 TypeScript runtime 文件。
  */
 
+import type { QuotaSnapshot } from "~/lib/quota/types"
+
 import type { CredentialRefresherType } from "./credential-refresher"
 
 export type ProviderProtocol =
@@ -148,7 +150,19 @@ export interface ApiCredential {
   refresherType?: CredentialRefresherType
   /** 刷新所需的源材料(githubToken / refreshToken 等)。不对外暴露。 */
   context?: Record<string, unknown>
+  // ── T5.2.5 Schema 终态归一化:从 metadata 提升的类型化字段 ──
+  /** 配额快照(原 metadata.quotaInfo)。 */
+  quota?: QuotaSnapshot
+  /** 配额耗尽时间(原 metadata.quotaExhaustedAt / exhaustedAt,二合一)。 */
+  exhaustedAt?: number
+  /** 最近限流原因(原 metadata.lastRateLimitReason)。 */
+  lastRateLimitReason?: string
 }
+
+/**
+ * 配额快照类型(Phase 5:已迁移到 lib/quota/types.ts,
+ * 此处 re-export 保持向后兼容)。
+ */
 
 export interface ModelMapping {
   /** 对客户端暴露的模型名,例如 `deepseek-v4-flash`。 */
@@ -210,6 +224,11 @@ export interface ProviderConnection {
   updatedAt?: number
   /** 扩展元数据。用于 account→connection 适配时承载 provider-specific 字段(cpaMetadata, proxyUrl 等)。 */
   metadata?: Record<string, unknown>
+  // ── T5.2.5 Schema 终态归一化:从 metadata 提升的类型化字段 ──
+  /** 代理 URL(原 metadata.proxyUrl / settings.proxyUrl)。 */
+  proxyUrl?: string
+  /** 模型前缀(原 metadata.modelPrefix / settings.modelPrefix)。 */
+  modelPrefix?: string
 }
 
 /**
@@ -264,3 +283,5 @@ export const DEFAULTS = {
   QUOTA_EXHAUSTED_AUTO_RECOVERY_MS: 24 * 60 * 60 * 1000,
   MODEL_DISCOVERY_INTERVAL_MS: 60 * 60 * 1000,
 } as const
+
+export { type QuotaSnapshot } from "~/lib/quota/types"

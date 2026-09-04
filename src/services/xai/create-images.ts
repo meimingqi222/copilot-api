@@ -1,10 +1,14 @@
-import type { Account, OAuthAccount } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { getConnectionSettings } from "~/lib/provider-connections"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { XAI_API_BASE_URL } from "~/services/oauth/xai"
 
 import { buildXaiHeaders } from "./headers"
@@ -69,8 +73,13 @@ function mapSizeToAspectRatio(size: string | undefined): {
   }
 }
 
-function resolveBaseUrl(account: OAuthAccount): string {
-  return (account.settings?.baseUrl ?? XAI_API_BASE_URL).replace(/\/+$/, "")
+function resolveBaseUrl(connection: ProviderConnection): string {
+  const settingsBase = getConnectionSettings(connection)?.baseUrl
+  return (
+    typeof settingsBase === "string" ? settingsBase : XAI_API_BASE_URL).replace(
+    /\/+$/,
+    "",
+  )
 }
 
 /**
@@ -78,22 +87,33 @@ function resolveBaseUrl(account: OAuthAccount): string {
  * Translates the OpenAI-compatible payload to xAI's format.
  */
 export async function createXaiImageGeneration(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ImageGenerationRequest,
   signal?: AbortSignal,
   idempotencyKey?: string,
 ): Promise<ImageGenerationResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "xai") {
-    throw new Error("xAI image generation requires an xAI OAuth account")
+  if (connection.protocol !== "xai-native") {
+    throw new Error("xAI image generation requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`xAI access token missing for account "${account.label}"`)
+    throw new Error(
+      `xAI access token missing for connection "${connection.name}"`,
+    )
   }
 
   const model = canonicalNativeModelId(payload.model)
-  const baseUrl = resolveBaseUrl(account)
+  const baseUrl = resolveBaseUrl(connection)
   const url = `${baseUrl}/images/generations`
   const { aspect_ratio, resolution } = mapSizeToAspectRatio(payload.size)
 
@@ -111,7 +131,7 @@ export async function createXaiImageGeneration(
     headers["x-idempotency-key"] = idempotencyKey
   }
 
-  const response = await fetchWithOAuthProxy(account, url, {
+  const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
     body: JSON.stringify(upstreamBody),
@@ -121,7 +141,7 @@ export async function createXaiImageGeneration(
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "(unreadable)")
     logger.warn(
-      `xAI image generation failed for account "${account.label}" model "${model}": ${response.status} ${response.statusText}`,
+      `xAI image generation failed for connection "${connection.name}" model "${model}": ${response.status} ${response.statusText}`,
     )
     throw new HTTPError(
       "Failed to create xAI image generation",
@@ -138,22 +158,33 @@ export async function createXaiImageGeneration(
  * Translates the OpenAI-compatible payload to xAI's format.
  */
 export async function createXaiImageEdit(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ImageEditRequest,
   signal?: AbortSignal,
   idempotencyKey?: string,
 ): Promise<ImageGenerationResponse> {
-  if (!isOAuthAccount(account) || account.provider !== "xai") {
-    throw new Error("xAI image edit requires an xAI OAuth account")
+  if (connection.protocol !== "xai-native") {
+    throw new Error("xAI image edit requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
-    throw new Error(`xAI access token missing for account "${account.label}"`)
+    throw new Error(
+      `xAI access token missing for connection "${connection.name}"`,
+    )
   }
 
   const model = canonicalNativeModelId(payload.model)
-  const baseUrl = resolveBaseUrl(account)
+  const baseUrl = resolveBaseUrl(connection)
   const url = `${baseUrl}/images/edits`
   const { aspect_ratio, resolution } = mapSizeToAspectRatio(payload.size)
 
@@ -178,7 +209,7 @@ export async function createXaiImageEdit(
     headers["x-idempotency-key"] = idempotencyKey
   }
 
-  const response = await fetchWithOAuthProxy(account, url, {
+  const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
     body: JSON.stringify(upstreamBody),
@@ -188,7 +219,7 @@ export async function createXaiImageEdit(
   if (!response.ok) {
     const bodyText = await response.text().catch(() => "(unreadable)")
     logger.warn(
-      `xAI image edit failed for account "${account.label}" model "${model}": ${response.status} ${response.statusText}`,
+      `xAI image edit failed for connection "${connection.name}" model "${model}": ${response.status} ${response.statusText}`,
     )
     throw new HTTPError("Failed to create xAI image edit", response, bodyText)
   }

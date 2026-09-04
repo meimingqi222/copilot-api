@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/accounts"
+import type { OAuthAccount } from "~/lib/legacy-accounts"
 
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
 import {
   parseClaudeUsagePayload,
   parseKimiUsagePayload,

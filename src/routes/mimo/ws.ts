@@ -1,8 +1,11 @@
 import { Hono } from "hono"
 import { upgradeWebSocket } from "hono/bun"
 
-import { getAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
+import {
+  getProviderConnection,
+  providerFromProtocol,
+} from "~/lib/provider-connections"
 import {
   isValidMimoWsTokenForAccount,
   type MimoMessage,
@@ -92,8 +95,13 @@ mimoWsRoute.get("/", async (c, next) => {
     return c.text("Unauthorized", 401)
   }
 
-  const account = getAccount(accountId)
-  if (!account || !account.enabled || account.provider !== "mimo-aistudio") {
+  // 直接从 connection 读取字段,不再经由 Account 派生
+  const conn = getProviderConnection(accountId)
+  if (
+    !conn
+    || !conn.enabled
+    || providerFromProtocol(conn.protocol) !== "mimo-aistudio"
+  ) {
     logger.debug(`Rejecting Claw WS connection: invalid account ${accountId}`)
     return c.text("Forbidden", 403)
   }

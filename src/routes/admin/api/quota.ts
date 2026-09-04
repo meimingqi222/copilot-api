@@ -1,12 +1,18 @@
 import { Hono } from "hono"
 
-import { getAccountAvailability } from "~/lib/account-availability"
-import { refreshQuotaForAccount, saveAccounts } from "~/lib/account-store"
-import { getAccount, isOAuthAccount, listAccounts } from "~/lib/accounts"
+import { refreshQuotaForConnection, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
 import {
+  getConnectionQuotaInfo,
+  getConnectionQuotaState,
   getMutableProviderConnection,
-  syncAccountToConnection,
+  getProviderConnection,
+  isAccountManagedConnection,
+  isOAuthConnection,
+  listAccountManagedConnections,
+  providerFromProtocol,
+  setConnectionCooldownUntil,
+  setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import {
@@ -20,12 +26,14 @@ import {
 } from "~/lib/quota/cycles"
 import { summarizeCodexQuota } from "~/lib/quota/parsers"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
-import {
-  getOAuthAccountSubtitle,
-  upgradeOAuthAccountLabels,
-} from "~/services/oauth/account-label"
+import { upgradeOAuthConnectionLabels } from "~/services/oauth/account-label"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
+
+import {
+  connectionSubtitle,
+  getConnectionAvailabilityForAdmin,
+} from "./account-views"
 
 export const quotaApiRoutes = new Hono()
 
@@ -34,48 +42,46 @@ export const quotaApiRoutes = new Hono()
  * Replaces the legacy state.activeAccountIndex concept.
  */
 function getActiveAccountId(): string | undefined {
-  const enabled = listAccounts()
-    .filter((a) => a.enabled)
+  // 使用 connection 原生列表(替代 listAccounts())
+  const enabled = listAccountManagedConnections()
+    .filter((c) => c.enabled)
     .sort((a, b) => a.priority - b.priority)
   return enabled[0]?.id
 }
 
 quotaApiRoutes.get("/", async (c) => {
   initializeProviderRegistry()
-  const accounts = listAccounts()
-  if (upgradeOAuthAccountLabels(accounts)) {
-    for (const account of accounts) {
-      const conn = getMutableProviderConnection(account.id)
-      if (conn) syncAccountToConnection(conn, account)
-    }
+  // 使用 connection 原生列表(替代 listAccounts())
+  const connections = listAccountManagedConnections()
+  // OAuth label 升级:直接操作 connection,不再经由 Account 快照
+  if (upgradeOAuthConnectionLabels(connections)) {
     await saveAccounts()
   }
   const activeAccountId = getActiveAccountId()
-  const response = accounts.map((account) => {
-    const availability = getAccountAvailability(account)
-    const subtitle =
-      isOAuthAccount(account) ? getOAuthAccountSubtitle(account) : undefined
+  const response = connections.map((conn) => {
+    const availability = getConnectionAvailabilityForAdmin(conn)
+    // 使用 connectionSubtitle(isOAuthConnection + getOAuthAccountSubtitle 的 compat 封装)
+    const subtitle = connectionSubtitle(conn)
+    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
     return {
       availability,
-      id: account.id,
-      label: account.label,
+      id: conn.id,
+      label: conn.name,
       subtitle,
-      provider: account.provider,
-      enabled: account.enabled,
-      priority: account.priority,
-      isActive: account.id === activeAccountId,
+      provider,
+      enabled: conn.enabled,
+      priority: conn.priority,
+      isActive: conn.id === activeAccountId,
       isExhausted:
         availability.reason === "cooldown" || availability.reason === "quota",
-      quotaState: account.quotaState ?? "unknown",
+      // 使用 connection 原生配额读取器
+      quotaState: getConnectionQuotaState(conn) ?? "unknown",
       quotaInfo: enrichQuotaInfoForResponse(
-        account.id,
-        account.provider,
-        account.quotaInfo ?? null,
+        conn.id,
+        provider,
+        getConnectionQuotaInfo(conn) ?? null,
       ),
-      supportsQuota: getProviderRuntime(account.provider).supports(
-        account,
-        "quota",
-      ),
+      supportsQuota: getProviderRuntime(provider).supports(conn, "quota"),
     }
   })
 
@@ -88,22 +94,22 @@ quotaApiRoutes.post("/refresh", async (c) => {
   const results = []
   const errors = []
 
-  for (const account of listAccounts()) {
+  // 使用 connection 原生列表(替代 listAccounts())
+  for (const conn of listAccountManagedConnections()) {
+    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
     try {
-      const runtime = getProviderRuntime(account.provider)
-      if (runtime.refreshQuota) {
-        await runtime.refreshQuota(account)
-      } else if (account.provider === "copilot") {
-        await refreshQuotaForAccount(account)
+      const runtime = getProviderRuntime(provider)
+      const mutableConn = getMutableProviderConnection(conn.id)
+      if (runtime.refreshQuota && mutableConn) {
+        await runtime.refreshQuota(mutableConn)
+      } else if (provider === "copilot") {
+        await refreshQuotaForConnection(mutableConn ?? conn)
       }
-      results.push({ id: account.id, label: account.label, success: true })
-      logger.info(`Quota refreshed for account "${account.label}"`)
+      results.push({ id: conn.id, label: conn.name, success: true })
+      logger.info(`Quota refreshed for account "${conn.name}"`)
     } catch (err) {
-      logger.warn(
-        `Failed to refresh quota for account "${account.label}":`,
-        err,
-      )
-      errors.push({ id: account.id, label: account.label, error: String(err) })
+      logger.warn(`Failed to refresh quota for account "${conn.name}":`, err)
+      errors.push({ id: conn.id, label: conn.name, error: String(err) })
     }
   }
 
@@ -125,37 +131,41 @@ quotaApiRoutes.post("/refresh", async (c) => {
 quotaApiRoutes.post("/:id/refresh", async (c) => {
   initializeProviderRegistry()
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) {
+  // 使用 connection 原生访问器(替代 getAccount())
+  const conn = getProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
     return c.json({ error: "Account not found." }, 404)
   }
 
-  const runtime = getProviderRuntime(account.provider)
-  if (!runtime.supports(account, "quota")) {
+  const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+  const runtime = getProviderRuntime(provider)
+  const mutableConn = getMutableProviderConnection(id)
+  if (!mutableConn || !runtime.supports(mutableConn, "quota")) {
     return c.json({ error: "Quota is not supported for this provider." }, 400)
   }
 
   try {
     if (runtime.refreshQuota) {
-      await runtime.refreshQuota(account)
-    } else if (account.provider === "copilot") {
-      await refreshQuotaForAccount(account)
+      await runtime.refreshQuota(mutableConn)
+    } else if (provider === "copilot") {
+      await refreshQuotaForConnection(mutableConn)
     } else {
       return c.json({ error: "Quota refresh is not available." }, 400)
     }
-    logger.info(`Quota refreshed for account "${account.label}"`)
+    logger.info(`Quota refreshed for account "${conn.name}"`)
     return c.json({
       success: true,
-      id: account.id,
+      id: conn.id,
+      // 使用 connection 原生配额读取器
       quotaInfo: enrichQuotaInfoForResponse(
-        account.id,
-        account.provider,
-        account.quotaInfo ?? null,
+        conn.id,
+        provider,
+        getConnectionQuotaInfo(conn) ?? null,
       ),
-      quotaState: account.quotaState ?? "unknown",
+      quotaState: getConnectionQuotaState(conn) ?? "unknown",
     })
   } catch (err) {
-    logger.warn(`Failed to refresh quota for account "${account.label}":`, err)
+    logger.warn(`Failed to refresh quota for account "${conn.name}":`, err)
     return c.json(
       {
         error: "Failed to refresh quota.",
@@ -169,24 +179,30 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
 quotaApiRoutes.post("/:id/reset", async (c) => {
   initializeProviderRegistry()
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) {
+  // 使用 connection 原生访问器(替代 getAccount())
+  const conn = getProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
     return c.json({ error: "Account not found." }, 404)
   }
 
-  if (!isOAuthAccount(account) || account.provider !== "codex") {
+  const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+  // 使用 isOAuthConnection 替代 isOAuthAccount;codex 是 OAuth provider
+  if (!isOAuthConnection(conn) || provider !== "codex") {
     return c.json(
       { error: "Quota reset is only supported for Codex accounts." },
       400,
     )
   }
 
-  const runtime = getProviderRuntime(account.provider)
-  if (!runtime.supports(account, "quota")) {
+  const runtime = getProviderRuntime(provider)
+  const resetConn = getProviderConnection(id)
+  if (!resetConn || !runtime.supports(resetConn, "quota")) {
     return c.json({ error: "Quota is not supported for this provider." }, 400)
   }
 
-  const existingMeta = account.quotaInfo?.details?._codexMeta as
+  // quotaInfo.details._codexMeta 仍需从 connection 读取
+  const quotaInfo = getConnectionQuotaInfo(conn)
+  const existingMeta = quotaInfo?.details?._codexMeta as
     | ReturnType<typeof buildCodexQuotaMeta>
     | undefined
   if (!canResetCodexQuota(existingMeta)) {
@@ -197,9 +213,13 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
   }
 
   try {
-    const payload = await resetCodexQuota(account)
+    const connection = getMutableProviderConnection(conn.id)
+    if (!connection) {
+      return c.json({ error: "Connection not found." }, 404)
+    }
+    const payload = await resetCodexQuota(connection)
     const summary = summarizeCodexQuota(payload)
-    const meta = buildCodexQuotaMeta(account, payload)
+    const meta = buildCodexQuotaMeta(connection, payload)
     const snapshot = {
       fetchedAt: Date.now(),
       provider: "codex" as const,
@@ -210,36 +230,35 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
         _codexMeta: meta,
       }),
     }
-    applyOAuthQuotaSnapshot(account, snapshot)
+    applyOAuthQuotaSnapshot(connection, snapshot)
     // Clear any residual cooldown state left over from the prior
     // quota-exhausted period. `applyOAuthQuotaSnapshot` flips quotaState to
     // "available" but does not touch cooldownUntil (persisted) or the
     // in-memory rate-limiter state — without clearing both, the account
     // stays flagged as unavailable ("cooldown") even though the upstream
     // quota has recovered to 100%.
-    account.cooldownUntil = undefined
-    account.lastRateLimitAt = undefined
-    account.lastRateLimitReason = undefined
-    clearAccountRateLimitState(account.id)
-    const conn = getMutableProviderConnection(account.id)
-    if (conn) syncAccountToConnection(conn, account)
+    // 直接通过 connection 原生 setter 清理,不再经由 Account 快照
+    const syncConn = getMutableProviderConnection(conn.id)
+    if (syncConn) {
+      setConnectionCooldownUntil(syncConn, undefined)
+      setConnectionRateLimitInfo(syncConn, undefined, undefined)
+    }
+    clearAccountRateLimitState(conn.id)
     await saveAccounts()
-    logger.info(`Codex quota reset for account "${account.label}"`)
+    logger.info(`Codex quota reset for account "${conn.name}"`)
     return c.json({
       success: true,
-      id: account.id,
+      id: conn.id,
+      // 使用 connection 原生配额读取器
       quotaInfo: enrichQuotaInfoForResponse(
-        account.id,
-        account.provider,
-        account.quotaInfo ?? null,
+        conn.id,
+        provider,
+        getConnectionQuotaInfo(conn) ?? null,
       ),
-      quotaState: account.quotaState ?? "unknown",
+      quotaState: getConnectionQuotaState(conn) ?? "unknown",
     })
   } catch (err) {
-    logger.warn(
-      `Failed to reset Codex quota for account "${account.label}":`,
-      err,
-    )
+    logger.warn(`Failed to reset Codex quota for account "${conn.name}":`, err)
     return c.json(
       {
         error: "Failed to reset Codex quota.",

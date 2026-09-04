@@ -4,7 +4,6 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { writeAccountsFile } from "~/lib/account-file-store"
 import { saveAccounts } from "~/lib/account-store"
 import {
   assertWritableDataPath,
@@ -53,30 +52,6 @@ describe("test data-dir isolation", () => {
     expect(() => redirectPathsToDir(PRODUCTION_APP_DIR)).toThrow(
       /Refusing to redirect PATHS to production/,
     )
-  })
-
-  test("writeAccountsFile only ever targets current isolation tree", async () => {
-    const productionAccounts = path.join(PRODUCTION_APP_DIR, "accounts.json")
-    const before =
-      (await fs.readFile(productionAccounts, "utf8").catch(() => null)) ?? null
-
-    await writeAccountsFile([
-      {
-        id: "should-not-land",
-        label: "pollution",
-        provider: "copilot",
-        enabled: true,
-        priority: 0,
-        credentials: { githubToken: "nope" },
-        settings: {},
-        createdAt: Date.now(),
-      },
-    ])
-
-    expect(isProductionDataPath(PATHS.ACCOUNTS_PATH)).toBe(false)
-    const after =
-      (await fs.readFile(productionAccounts, "utf8").catch(() => null)) ?? null
-    expect(after).toBe(before)
   })
 
   test("saveAccounts writes only under the isolation directory", async () => {

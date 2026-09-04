@@ -1,6 +1,7 @@
 import { afterEach, expect, mock, test } from "bun:test"
 
-import { listAccounts } from "~/lib/accounts"
+import { listAccounts } from "~/lib/legacy-accounts"
+import { listProviderConnections } from "~/lib/provider-connections"
 import { createEmbeddings } from "~/services/copilot/create-embeddings"
 
 import { setTestAccounts } from "./helpers/set-accounts"
@@ -53,13 +54,22 @@ test("strips copilot prefix before forwarding embeddings requests upstream", asy
     throw new Error("Expected at least one account in test state")
   }
 
+  const connection = listProviderConnections().find(
+    (conn) => conn.id === account.id,
+  )
+  if (!connection) {
+    throw new Error("Expected account-derived connection in test state")
+  }
+  const credential = connection.credentials[0]
+
   const result = await createEmbeddings(
     {
       model: "copilot/text-embedding-3-small",
       input: "hello",
     },
     {
-      account,
+      connection,
+      credential,
     },
   )
 

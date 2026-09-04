@@ -1,14 +1,13 @@
 import { Hono } from "hono"
 
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 
-import { getAccountAvailability } from "~/lib/account-availability"
 import {
   cancelTokenRefreshTimer,
-  refreshQuotaForAccount,
-  saveAccounts,
-  serializeAccountForExport,
+  refreshQuotaForConnection,
+  serializeConnectionForExport,
 } from "~/lib/account-store"
+import { getAccountAvailability } from "~/lib/legacy-accounts"
 import {
   getCodebuffAuthToken,
   getGitHubToken,
@@ -17,33 +16,42 @@ import {
   getWindsurfApiKey,
   getMimoServiceToken,
   getMimoPh,
-  getAccount,
   isOAuthAccount,
-  listAccounts,
-} from "~/lib/accounts"
+} from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import {
+  type ProviderConnection,
   getMutableProviderConnection,
+  getProviderConnection,
+  isAccountManagedConnection,
+  listProviderConnections,
+  persistProviderConnections,
+  providerFromProtocol,
   removeProviderConnection,
-  syncAccountToConnection,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
-import { refreshModelsForAccount } from "~/lib/utils"
+import { refreshModelsForConnection } from "~/lib/utils"
 import {
   getOAuthAccountSubtitle,
-  upgradeOAuthAccountLabels,
+  upgradeOAuthConnectionLabels,
 } from "~/services/oauth/account-label"
 import {
   cancelOAuthRefreshTimer,
-  scheduleOAuthRefreshForAccount,
+  scheduleOAuthRefreshForConnection,
 } from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
 import { createAccountRoutes } from "./account-create"
 import { importAccountRoutes } from "./account-import"
-import { type UpdateAccountBody, updateProviderAccount } from "./account-update"
+import {
+  type UpdateAccountBody,
+  applyConnectionPatchToConnection,
+  parseBodyToPatch,
+  patchRequiresModelRefresh,
+} from "./account-update"
+import { publicAccountFromConnection } from "./account-views"
 import { pollAccountFlow, deviceFlowRoutes } from "./device-flow"
 
 export const accountApiRoutes = new Hono()
@@ -66,37 +74,33 @@ function getHasCredentials(account: Account): boolean {
 }
 
 /**
- * Derive the "active" account: the first enabled account by priority order.
+ * Derive the "active" account: the first enabled account-managed connection by priority order.
  * Replaces the legacy state.activeAccountIndex concept.
  */
 function getActiveAccountId(): string | undefined {
-  const accounts = listAccounts()
-  const enabled = accounts
-    .filter((a) => a.enabled)
+  const connections = listAccountManagedConnections()
+  const enabled = connections
+    .filter((c) => c.enabled)
     .sort((a, b) => a.priority - b.priority)
   return enabled[0]?.id
 }
 
-/**
- * Sync an Account's mutations back to its underlying connection, then persist.
- * Receives the already-mutated Account snapshot so changes are not lost
- * (getAccount(id) would return a fresh un-mutated snapshot from the connection).
- */
-async function syncAndSave(account: Account): Promise<void> {
-  const conn = getMutableProviderConnection(account.id)
-  if (conn) {
-    syncAccountToConnection(conn, account)
-  }
-  await saveAccounts()
+function listAccountManagedConnections(): Array<ProviderConnection> {
+  return listProviderConnections().filter((c) => isAccountManagedConnection(c))
 }
 
 // Sanitize account for API response (omit sensitive tokens, compute isActive dynamically)
+// Phase 4:仍通过 connectionToAccount 派生 Account 快照再调 publicAccount,
+// 确保 JSON 形状逐字节不变。Phase 5 内联此派生。
 export function publicAccount(account: Account) {
   initializeProviderRegistry()
   const runtime = getProviderRuntime(account.provider)
   const availability = getAccountAvailability(account)
   const subtitle =
     isOAuthAccount(account) ? getOAuthAccountSubtitle(account) : undefined
+  // Phase 3:runtime.supports 翻转为收 ProviderConnection,
+  // 通过 account.id 反查 connection 传入。
+  const conn = getProviderConnection(account.id)
   return {
     id: account.id,
     label: account.label,
@@ -112,7 +116,7 @@ export function publicAccount(account: Account) {
     retryAfterSeconds: availability.retryAfterSeconds || null,
     quotaState: account.quotaState ?? "unknown",
     quotaInfo: account.quotaInfo ?? null,
-    supportsQuota: runtime.supports(account, "quota"),
+    supportsQuota: conn ? runtime.supports(conn, "quota") : false,
     createdAt: account.createdAt,
     settings: account.settings ?? {},
     providerFeatures: runtime.descriptor.features,
@@ -129,17 +133,13 @@ accountApiRoutes.route("/", importAccountRoutes)
 accountFlowApiRoutes.route("/", deviceFlowRoutes)
 
 accountApiRoutes.get("/", async (c) => {
-  const accounts = listAccounts()
-  if (upgradeOAuthAccountLabels(accounts)) {
-    // Sync label changes back to connections
-    for (const account of accounts) {
-      const conn = getMutableProviderConnection(account.id)
-      if (conn) syncAccountToConnection(conn, account)
-    }
-    await saveAccounts()
+  const connections = listAccountManagedConnections()
+  // OAuth label 升级:直接操作 connection,不再经由 Account 快照
+  if (upgradeOAuthConnectionLabels(connections)) {
+    await persistProviderConnections()
   }
   return c.json({
-    accounts: accounts.map((account) => publicAccount(account)),
+    accounts: connections.map((conn) => publicAccountFromConnection(conn)),
   })
 })
 
@@ -153,8 +153,10 @@ accountApiRoutes.post("/poll/:deviceCode", async (c) => {
 
 accountApiRoutes.put("/:id", async (c) => {
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) return c.json({ error: "Account not found." }, 404)
+  const conn = getMutableProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
+    return c.json({ error: "Account not found." }, 404)
+  }
 
   let body: UpdateAccountBody
   try {
@@ -163,31 +165,47 @@ accountApiRoutes.put("/:id", async (c) => {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
 
-  const prevEnabled = account.enabled
-  await updateProviderAccount(account, body)
+  const prevEnabled = conn.enabled
+  const patch = parseBodyToPatch(conn, body)
+  const copilotTokenRotated =
+    conn.protocol === "copilot-native" && patch.credentialValue !== undefined
+  applyConnectionPatchToConnection(conn, patch)
+
+  // Copilot token 轮换:清除旧 copilotToken 并触发刷新
+  if (copilotTokenRotated) {
+    cancelTokenRefreshTimer(id)
+    // 惰性刷新:下次请求时 ensureCopilotToken 会触发
+  }
+
   if (typeof body.enabled === "boolean" && body.enabled !== prevEnabled) {
-    if (!account.enabled) {
-      // Disabling only removes the account from request routing. Keep the
-      // OAuth token refresh running so its access token stays valid and
-      // on-demand actions (e.g. quota refresh) don't fail with 401.
-      cancelTokenRefreshTimer(account.id)
+    if (!conn.enabled) {
+      cancelTokenRefreshTimer(id)
     }
-    // (Re)schedule OAuth refresh regardless of enabled state. For non-OAuth
-    // accounts this is a no-op (cancels the timer internally).
-    scheduleOAuthRefreshForAccount(account)
+    scheduleOAuthRefreshForConnection(conn)
     logger.info(
-      `Account "${account.label}" ${account.enabled ? "enabled" : "disabled"}`,
+      `Account "${conn.name}" ${conn.enabled ? "enabled" : "disabled"}`,
     )
   }
 
-  await syncAndSave(account)
-  return c.json({ account: publicAccount(account) })
+  await persistProviderConnections()
+
+  if (patchRequiresModelRefresh(patch)) {
+    try {
+      await refreshModelsForConnection(conn)
+    } catch (err) {
+      logger.warn(`Failed to refresh models for "${conn.name}":`, err)
+    }
+  }
+
+  return c.json({ account: publicAccountFromConnection(conn) })
 })
 
 accountApiRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) return c.json({ error: "Account not found." }, 404)
+  const conn = getProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
+    return c.json({ error: "Account not found." }, 404)
+  }
 
   // Cancel any pending token refresh timer to prevent leaks
   cancelTokenRefreshTimer(id)
@@ -197,33 +215,33 @@ accountApiRoutes.delete("/:id", async (c) => {
   clearAccountRateLimitState(id)
 
   removeProviderConnection(id)
-  await saveAccounts({
-    allowEmpty: listAccounts().length === 0,
-    allowShrink: true,
-  })
+  await persistProviderConnections()
   return c.json({ ok: true })
 })
 
 accountApiRoutes.post("/:id/refresh", async (c) => {
   initializeProviderRegistry()
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) return c.json({ error: "Account not found." }, 404)
+  const conn = getMutableProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
+    return c.json({ error: "Account not found." }, 404)
+  }
 
   try {
-    const runtime = getProviderRuntime(account.provider)
+    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+    const runtime = getProviderRuntime(provider)
     if (runtime.refreshAuth) {
-      await runtime.refreshAuth(account)
+      await runtime.refreshAuth(conn)
     }
 
-    await refreshModelsForAccount(account)
+    await refreshModelsForConnection(conn)
     if (runtime.refreshQuota) {
-      await runtime.refreshQuota(account)
-    } else if (account.provider === "copilot") {
-      await refreshQuotaForAccount(account)
+      await runtime.refreshQuota(conn)
+    } else if (provider === "copilot") {
+      await refreshQuotaForConnection(conn)
     }
-    await syncAndSave(account)
-    return c.json({ account: publicAccount(account) })
+    await persistProviderConnections()
+    return c.json({ account: publicAccountFromConnection(conn) })
   } catch (e: unknown) {
     logger.error("Failed to refresh account:", e)
     return c.json({ error: "Failed to refresh account." }, 502)
@@ -233,34 +251,36 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
 // Set account priority (formerly "activate" - now sets highest priority)
 accountApiRoutes.post("/:id/activate", async (c) => {
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) return c.json({ error: "Account not found." }, 404)
+  const conn = getMutableProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
+    return c.json({ error: "Account not found." }, 404)
+  }
 
-  if (!account.enabled) {
+  if (!conn.enabled) {
     return c.json({ error: "Account is disabled." }, 409)
   }
 
-  // Find minimum priority among all accounts
-  const accounts = listAccounts()
-  const minPriority = Math.min(...accounts.map((a) => a.priority))
-  // Set this account to highest priority (lower than current minimum)
-  account.priority = Math.max(0, minPriority - 1)
-  await syncAndSave(account)
+  // Find minimum priority among all account-managed connections
+  const connections = listAccountManagedConnections()
+  const minPriority = Math.min(...connections.map((c) => c.priority))
+  // Set this connection to highest priority (lower than current minimum)
+  conn.priority = Math.max(0, minPriority - 1)
+  await persistProviderConnections()
 
   logger.info(
-    `Account "${account.label}" set to highest priority (${account.priority})`,
+    `Account "${conn.name}" set to highest priority (${conn.priority})`,
   )
 
   return c.json({
     ok: true,
-    account: publicAccount(account),
+    account: publicAccountFromConnection(conn),
   })
 })
 
 // Export all accounts (includes credentials)
 accountApiRoutes.get("/export", (c) => {
-  const exported = listAccounts().map((account) =>
-    serializeAccountForExport(account),
+  const exported = listAccountManagedConnections().map((conn) =>
+    serializeConnectionForExport(conn),
   )
   const filename = `copilot-api-accounts-${new Date().toISOString().slice(0, 10)}.json`
   c.header("Content-Disposition", `attachment; filename="${filename}"`)
@@ -271,11 +291,13 @@ accountApiRoutes.get("/export", (c) => {
 // Export a single account (includes credentials)
 accountApiRoutes.get("/:id/export", (c) => {
   const id = c.req.param("id")
-  const account = getAccount(id)
-  if (!account) return c.json({ error: "Account not found." }, 404)
+  const conn = getProviderConnection(id)
+  if (!conn || !isAccountManagedConnection(conn)) {
+    return c.json({ error: "Account not found." }, 404)
+  }
 
-  const exported = serializeAccountForExport(account)
-  const safeName = account.label.replaceAll(/[^\w-]/g, "_")
+  const exported = serializeConnectionForExport(conn)
+  const safeName = conn.name.replaceAll(/[^\w-]/g, "_")
   const filename = `copilot-api-account-${safeName}-${new Date().toISOString().slice(0, 10)}.json`
   c.header("Content-Disposition", `attachment; filename="${filename}"`)
   c.header("Content-Type", "application/json")

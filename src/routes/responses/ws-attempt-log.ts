@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 
 import { HTTPError } from "~/lib/error"
+import { connectionProvider } from "~/lib/provider-connections"
 import { safeOrigin, type RequestAdmission } from "~/lib/request-admission"
 import { getRequestLogContext, recordUpstreamAttempt } from "~/lib/request-log"
 
@@ -28,7 +29,7 @@ export function recordResponsesWsAttemptIfMissing(
       credentialLabel: admission.credential.label,
       endpoint: target.endpoint,
       protocol: target.protocol,
-      provider: admission.account?.provider ?? target.protocol,
+      provider: connectionProvider(admission.connection),
       upstreamBaseUrl: safeOrigin(admission.connection.baseUrl),
       upstreamModelId: target.upstreamModelId,
       isTranslated: target.isTranslated,

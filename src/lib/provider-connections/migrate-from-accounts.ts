@@ -8,9 +8,13 @@
  * 本模块不接入启动序列，不改变任何运行时行为（批次 0）。
  * 批次 1 在 loadAccounts/initializeProviderConnections 中调用本模块。
  */
-import type { Account, AccountModel, AccountRuntimeState } from "~/lib/accounts"
+import type {
+  Account,
+  AccountModel,
+  AccountRuntimeState,
+} from "~/lib/legacy-accounts"
 
-import { isOAuthAccount } from "~/lib/accounts"
+import { isOAuthAccount } from "~/lib/legacy-accounts"
 import { getAccountProtocol } from "~/lib/request-admission"
 
 import type { CredentialRefresherType } from "./credential-refresher"
@@ -225,6 +229,15 @@ export function accountToConnectionForPersistence(
     id: account.id,
     name: account.label,
     protocol,
+    // account 路径的 baseUrl 由 metadata.settings.baseUrl 承载
+    // (doc §1.1 字段映射表:"account 路径的 baseUrl 由 settings/proxyUrl
+    // 承载,非 connection.baseUrl")。account-managed 协议适配器
+    // (codebuff/windsurf/xai/codex/antigravity)统一读
+    // getConnectionSettings(conn)?.baseUrl,不读 connection.baseUrl。
+    // doc §3 晋升表提到的"settings.baseUrl → connection.baseUrl,终态不再
+    // 硬编码空"与 §1.1 设计决策冲突,且晋升会引入双份存储
+    // (metadata.settings.baseUrl 不可删,admin UI settings 视图依赖它),
+    // 读取路径无法干净切换,故保持 baseUrl: "" 不晋升。
     baseUrl: "",
     enabled: account.enabled,
     priority: account.priority,

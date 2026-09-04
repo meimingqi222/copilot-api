@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
-import { listAccounts } from "~/lib/accounts"
 import { bunWebsocket } from "~/lib/bun-websocket"
+import { listAccounts } from "~/lib/legacy-accounts"
 import { logStore } from "~/lib/log-store"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"

@@ -1,5 +1,6 @@
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
+import { getConnectionSettings } from "~/lib/provider-connections"
 import {
   XAI_API_BASE_URL,
   XAI_CLI_CHAT_PROXY_BASE_URL,
@@ -34,27 +35,39 @@ export function isXaiCliChatProxyBaseUrl(baseUrl: string): boolean {
   )
 }
 
+interface XaiConnectionSettings {
+  useApi?: unknown
+  baseUrl?: unknown
+}
+
 /**
- * Whether this xAI account should use the official API for HTTP chat.
- * OAuth accounts default to false (Grok CLI chat-proxy).
+ * Whether this xAI connection should use the official API for HTTP chat.
+ * OAuth connections default to false (Grok CLI chat-proxy).
  */
-export function xaiUsesApi(account: OAuthAccount): boolean {
-  const value = account.settings?.useApi
+export function xaiUsesApi(connection: ProviderConnection): boolean {
+  const value = getConnectionSettings(connection)?.useApi
   if (typeof value === "boolean") {
     return value
   }
   return false
 }
 
+function xaiSettingsBaseUrl(connection: ProviderConnection): string {
+  const baseUrl = (
+    getConnectionSettings(connection) as XaiConnectionSettings | undefined
+  )?.baseUrl
+  return typeof baseUrl === "string" ? baseUrl.trim() : ""
+}
+
 /**
  * Base URL for non-media xAI HTTP chat requests.
- * - API mode → the account's base_url (or the official API default).
- * - CLI mode (default) → cli-chat-proxy, unless the account pins an explicit
- *   non-default custom base_url (which is honored).
+ * - API mode → the connection's base_url (or the official API default).
+ * - CLI mode (default) → cli-chat-proxy, unless the connection pins an
+ *   explicit non-default custom base_url (which is honored).
  */
-export function xaiChatBaseUrl(account: OAuthAccount): string {
-  const baseUrl = account.settings?.baseUrl?.trim()
-  if (xaiUsesApi(account)) {
+export function xaiChatBaseUrl(connection: ProviderConnection): string {
+  const baseUrl = xaiSettingsBaseUrl(connection)
+  if (xaiUsesApi(connection)) {
     return baseUrl || XAI_API_BASE_URL
   }
   if (baseUrl && !isXaiDefaultApiBaseUrl(baseUrl)) {
@@ -68,8 +81,8 @@ export function xaiChatBaseUrl(account: OAuthAccount): string {
  * the official API (or an explicit non-CLI-proxy custom base_url): cli-chat-proxy
  * does not implement them.
  */
-export function xaiWsBaseUrl(account: OAuthAccount): string {
-  const baseUrl = account.settings?.baseUrl?.trim()
+export function xaiWsBaseUrl(connection: ProviderConnection): string {
+  const baseUrl = xaiSettingsBaseUrl(connection)
   if (!baseUrl || isXaiCliChatProxyBaseUrl(baseUrl)) {
     return XAI_API_BASE_URL
   }

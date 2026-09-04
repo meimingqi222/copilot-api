@@ -2,19 +2,19 @@ import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
-import type { Account, AccountProvider } from "~/lib/accounts"
+import type { Account, AccountProvider } from "~/lib/legacy-accounts"
 
 import {
   refreshCopilotToken,
   refreshQuotaForAccount,
   saveAccounts,
 } from "~/lib/account-store"
-import { addAccount } from "~/lib/accounts"
 import {
   GITHUB_BASE_URL,
   GITHUB_CLIENT_ID,
   standardHeaders,
 } from "~/lib/api-config"
+import { addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
 import { refreshModelsForAccount } from "~/lib/utils"

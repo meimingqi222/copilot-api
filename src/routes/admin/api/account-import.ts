@@ -1,7 +1,11 @@
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
-import type { Account, AccountProvider, OAuthAccount } from "~/lib/accounts"
+import type {
+  Account,
+  AccountProvider,
+  OAuthAccount,
+} from "~/lib/legacy-accounts"
 
 import {
   refreshCopilotToken,
@@ -9,18 +13,29 @@ import {
   saveAccounts,
 } from "~/lib/account-store"
 import { cancelTokenRefreshTimer } from "~/lib/account-store"
-import { setGitHubToken, addAccount, listAccounts } from "~/lib/accounts"
+import { setGitHubToken, addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
-import { removeProviderConnection } from "~/lib/provider-connections"
+import {
+  getMutableProviderConnection,
+  listAccountManagedConnections,
+  providerFromProtocol,
+  removeProviderConnection,
+} from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
-import { refreshModelsForAccount } from "~/lib/utils"
+import {
+  refreshModelsForAccount,
+  refreshModelsForConnection,
+} from "~/lib/utils"
 import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
-import { scheduleOAuthRefreshForAccount } from "~/services/oauth/refresh-scheduler"
+import {
+  scheduleOAuthRefreshForAccount,
+  scheduleOAuthRefreshForConnection,
+} from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 export const importAccountRoutes = new Hono()
@@ -130,10 +145,11 @@ importAccountRoutes.post("/import", async (c) => {
     const provider: AccountProvider =
       isProviderId(providerStr) ? providerStr : "copilot"
 
-    // Check for existing account with matching label+provider
-    const duplicate = listAccounts().find(
-      (a) => a.label === label && a.provider === provider,
-    )
+    // 检查是否存在同 label+provider 的 connection(替代 listAccounts().find)
+    const duplicate = listAccountManagedConnections().find((conn) => {
+      const connProvider = providerFromProtocol(conn.protocol) ?? "copilot"
+      return conn.name === label && connProvider === provider
+    })
     if (duplicate) {
       if (!overwrite) {
         skipped.push(label)
@@ -308,8 +324,9 @@ importAccountRoutes.post("/import", async (c) => {
         logger.warn(`Import: failed to init models for "${label}":`, err)
       })
       const runtime = getProviderRuntime(oauthAccount.provider)
-      if (runtime.refreshQuota) {
-        runtime.refreshQuota(oauthAccount).catch((err: unknown) => {
+      const conn = getMutableProviderConnection(oauthAccount.id)
+      if (runtime.refreshQuota && conn) {
+        runtime.refreshQuota(conn).catch((err: unknown) => {
           logger.warn(`Import: failed to init quota for "${label}":`, err)
         })
       }
@@ -347,25 +364,30 @@ importAccountRoutes.post("/import-cpa", async (c) => {
       return c.json({ error: "No CPA auth records provided." }, 400)
     }
 
+    // CPA 导入:使用 connection 原生列表进行重复检测
+    const existingConnections = listAccountManagedConnections()
     const result = importCpaAuthRecords(records, {
       overwrite: body.overwrite === true,
-      existingAccounts: listAccounts(),
-      onAccount: (account) => {
-        scheduleOAuthRefreshForAccount(account)
-        void refreshModelsForAccount(account).catch((err: unknown) => {
+      existingConnections,
+      onAccount: (conn) => {
+        scheduleOAuthRefreshForConnection(conn)
+        void refreshModelsForConnection(conn).catch((err: unknown) => {
           logger.warn(
-            `CPA import: failed to refresh models for "${account.label}":`,
+            `CPA import: failed to refresh models for "${conn.name}":`,
             err,
           )
         })
-        const runtime = getProviderRuntime(account.provider)
-        if (runtime.refreshQuota) {
-          void runtime.refreshQuota(account).catch((err: unknown) => {
-            logger.warn(
-              `CPA import: failed to refresh quota for "${account.label}":`,
-              err,
-            )
-          })
+        const provider = providerFromProtocol(conn.protocol)
+        if (provider) {
+          const runtime = getProviderRuntime(provider)
+          if (runtime.refreshQuota) {
+            void runtime.refreshQuota(conn).catch((err: unknown) => {
+              logger.warn(
+                `CPA import: failed to refresh quota for "${conn.name}":`,
+                err,
+              )
+            })
+          }
         }
       },
     })

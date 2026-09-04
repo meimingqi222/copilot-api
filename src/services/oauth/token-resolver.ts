@@ -1,6 +1,6 @@
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 
-import { getOAuthAccessToken, getOAuthApiKey } from "~/lib/accounts"
+import { getOAuthAccessToken, getOAuthApiKey } from "~/lib/legacy-accounts"
 import { buildAntigravityHubUserAgent } from "~/services/antigravity/version"
 
 const TOKEN_PLACEHOLDER = "$TOKEN$"

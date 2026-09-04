@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import { listAccounts } from "~/lib/accounts"
+import { connectionToAccount, listAccounts } from "~/lib/legacy-accounts"
+import { listAccountManagedConnections } from "~/lib/provider-connections"
 import {
   importCpaAuthRecords,
-  mapCpaRecordToAccount,
+  mapCpaRecordToConnection,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
 import {
@@ -25,7 +26,7 @@ afterEach(() => {
 
 describe("CPA auth import", () => {
   test("maps codex CPA record to OAuth account", () => {
-    const account = mapCpaRecordToAccount({
+    const conn = mapCpaRecordToConnection({
       type: "codex",
       access_token: "at_test",
       refresh_token: "rt_test",
@@ -33,6 +34,7 @@ describe("CPA auth import", () => {
       email: "user@example.com",
       expired: "1893456000",
     })
+    const account = connectionToAccount(conn)
 
     expect(account.provider).toBe("codex")
     expect(account.credentials?.accessToken).toBe("at_test")
@@ -43,22 +45,24 @@ describe("CPA auth import", () => {
   })
 
   test("normalizes x-ai provider alias", () => {
-    const account = mapCpaRecordToAccount({
+    const conn = mapCpaRecordToConnection({
       type: "x-ai",
       access_token: "xai_token",
     })
+    const account = connectionToAccount(conn)
 
     expect(account.provider).toBe("xai")
     expect(account.settings?.tokenEndpoint).toContain("/oauth2/token")
   })
 
   test("strips tokens from cpaMetadata", () => {
-    const account = mapCpaRecordToAccount({
+    const conn = mapCpaRecordToConnection({
       type: "claude",
       access_token: "secret-access",
       refresh_token: "secret-refresh",
       email: "user@example.com",
     })
+    const account = connectionToAccount(conn)
 
     expect(account.cpaMetadata?.email).toBe("user@example.com")
     expect(account.cpaMetadata).not.toHaveProperty("access_token")
@@ -68,7 +72,7 @@ describe("CPA auth import", () => {
   test("overwrite replaces duplicate CPA account", () => {
     importCpaAuthRecords(
       [{ type: "claude", access_token: "claude-1", email: "a@example.com" }],
-      { existingAccounts: listAccounts() },
+      { existingConnections: listAccountManagedConnections() },
     )
     expect(listAccounts()).toHaveLength(1)
     const first = listAccounts()[0] as {
@@ -78,7 +82,7 @@ describe("CPA auth import", () => {
 
     const result = importCpaAuthRecords(
       [{ type: "claude", access_token: "claude-2", email: "a@example.com" }],
-      { overwrite: true, existingAccounts: listAccounts() },
+      { overwrite: true, existingConnections: listAccountManagedConnections() },
     )
 
     expect(result.imported).toHaveLength(1)
@@ -95,7 +99,7 @@ describe("CPA auth import", () => {
         { type: "claude", access_token: "claude-1", email: "a@example.com" },
         { type: "kimi", access_token: "kimi-1", email: "b@example.com" },
       ],
-      { existingAccounts: listAccounts() },
+      { existingConnections: listAccountManagedConnections() },
     )
 
     expect(result.imported).toHaveLength(2)
@@ -103,7 +107,7 @@ describe("CPA auth import", () => {
 
     const skipped = importCpaAuthRecords(
       [{ type: "claude", access_token: "claude-2", email: "a@example.com" }],
-      { existingAccounts: listAccounts() },
+      { existingConnections: listAccountManagedConnections() },
     )
     expect(skipped.skipped).toHaveLength(1)
     expect(listAccounts()).toHaveLength(2)

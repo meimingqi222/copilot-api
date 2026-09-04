@@ -1,4 +1,4 @@
-import type { AccountModel } from "~/lib/accounts"
+import type { ModelMapping } from "~/lib/provider-connections"
 
 import type { ProviderRuntime } from "./runtime"
 
@@ -29,6 +29,18 @@ const MIMO_MODELS = [
     tts: false,
   },
 ]
+
+function toMimoModels(): Array<ModelMapping> {
+  return MIMO_MODELS.map((m) => ({
+    publicId: m.id,
+    upstreamId: m.id,
+    name: m.name,
+    vendor: m.vendor,
+    enabled: true,
+    pickerEnabled: true,
+    endpoints: m.tts ? ["chat"] : (["chat", "messages"] as const),
+  }))
+}
 
 export const mimoProviderRuntime: ProviderRuntime = {
   id: "mimo-aistudio",
@@ -69,20 +81,10 @@ export const mimoProviderRuntime: ProviderRuntime = {
       },
     ],
   },
-  supports(_account, feature) {
+  supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },
-  refreshModels(account) {
-    const models: Array<AccountModel> = MIMO_MODELS.map((m) => ({
-      id: m.id,
-      name: m.name,
-      vendor: m.vendor,
-      pickerEnabled: true,
-      supportedEndpoints:
-        m.tts ? ["/chat/completions"] : ["/chat/completions", "/v1/messages"],
-      provider: "mimo-aistudio",
-    }))
-    account.availableModels = models
-    return Promise.resolve(models)
+  refreshModels(_connection) {
+    return Promise.resolve(toMimoModels())
   },
 }

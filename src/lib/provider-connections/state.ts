@@ -562,3 +562,18 @@ export function getMutableProviderConnection(
 ): ProviderConnection | undefined {
   return stateRoot.connections.find((c) => c.id === id)
 }
+
+/**
+ * 直接设置 connection.models(同步,不持久化)。
+ * 供 ProviderRuntime.refreshModels 等需要直接写入模型列表的场景使用。
+ * 调用方负责后续 persistProviderConnections()。
+ */
+export function setConnectionModels(
+  conn: ProviderConnection,
+  models: Array<ModelMapping>,
+): void {
+  conn.models = models
+  conn.lastModelDiscoveryAt = Date.now()
+  conn.lastModelDiscoveryError = undefined
+  conn.updatedAt = Date.now()
+}

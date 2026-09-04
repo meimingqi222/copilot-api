@@ -1,15 +1,16 @@
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
-import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { parseModelReference } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { isChatCompletionResponse } from "~/lib/utils"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
   type CodebuffRuntimeSettings,
   resolveCodebuffRuntimeSettings,
@@ -38,45 +39,22 @@ interface CodebuffChatPayload
   }
 }
 
-export async function createCodebuffChatCompletions(options: {
-  account: Account
-  payload: ChatCompletionsPayload
-  signal?: AbortSignal
-  ctx?: RequestExecutionContext
-}): Promise<
-  | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
-  | { accountId: string; response: ChatCompletionResponse }
-> {
-  const { account, payload, signal } = options
-  const result = await createCodebuffChatCompletionsOnce(
-    account,
-    payload,
-    signal,
-  )
-
-  if (isChatCompletionResponse(result)) {
-    return {
-      accountId: account.id,
-      response: result,
-    }
-  }
-
-  return {
-    accountId: account.id,
-    response: result,
-  }
-}
-
 export async function createCodebuffChatCompletionsOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
-  const settings = resolveCodebuffRuntimeSettings(account)
+  const settings = resolveCodebuffRuntimeSettings(connection, credential)
   const authToken = settings.authToken
   if (!authToken) {
     throw new Error(
-      `Codebuff auth token not configured for account "${account.label}"`,
+      `Codebuff auth token not configured for connection "${connection.name}"`,
     )
   }
 

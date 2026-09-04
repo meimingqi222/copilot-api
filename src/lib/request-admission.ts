@@ -1,6 +1,6 @@
 import type { Context } from "hono"
 
-import type { Account } from "~/lib/accounts"
+import type { Account } from "~/lib/legacy-accounts"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 import type {
   ApiCredential,
@@ -9,8 +9,6 @@ import type {
   RouteTarget,
 } from "~/lib/provider-connections"
 
-import { getAccountAvailability } from "~/lib/account-availability"
-import { getAccount } from "~/lib/accounts"
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
@@ -18,13 +16,16 @@ import { logger } from "~/lib/logger"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import {
-  connectionToAccount,
+  connectionProvider,
   findCredential,
   getProviderConnection,
+  isAccountManagedConnection,
+  isAccountManagedProtocol,
   isCredentialAvailable,
   type ModelEndpoint,
+  refreshConnectionAvailability,
 } from "~/lib/provider-connections"
-import { readAccountLegacyMetadata } from "~/lib/provider-connections/connection-metadata"
+import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { patchRequestLog } from "~/lib/request-log"
 import {
   buildRouteTargets,
@@ -43,18 +44,11 @@ import { isUserAllowedModel } from "~/lib/users"
  * `selectRouteTarget` 优先级/权重选择。
  *
  * - `connection`/`credential`: 始终填充。批次 3 后统一从 getProviderConnection 获取。
- * - `account`: 仅 account-derived connection 路径下填充(通过 connectionToAccount
- *   从 connection 派生，用于 native adapter 读取 provider-specific 状态)。
  */
 export interface ProviderAdmission {
   target: RouteTarget
   connection: ProviderConnection
   credential: ApiCredential
-  /**
-   * 仅在 target 来自 state.accounts(虚拟 connection)时填充。
-   * 用于 native adapter 读取 account 的 provider-specific 状态字段。
-   */
-  account?: Account
   initiator?: "agent" | "user"
   /**
    * L0 session ids used for affinity (also needed on failover rebind so
@@ -228,21 +222,20 @@ export async function prepareRequestAdmission(
       new Response("Service Unavailable", { status: 503 }),
     )
   }
-  // 批次 3：从 connection 派生 account（仅 account-derived connections）
-  const account =
-    readAccountLegacyMetadata(connection) ?
-      connectionToAccount(connection)
-    : undefined
+  // 批次 3/Phase 2e：admission 不再携带 account。provider 通过
+  // connectionProvider 从 connection 原生派生（account-managed 走
+  // metadata.provider，plain connection 走 protocol）。
+  const provider = connectionProvider(connection)
   // Expose provider on the context so usage recording can attribute plain
   // (non-account-managed) provider connections correctly. Account-backed
   // paths derive provider from the final accountId at record time (preserving
   // failover correctness); plain connections fall back to this value.
-  c.set("provider", account?.provider ?? target.protocol)
+  c.set("provider", provider)
   patchRequestLog(c, {
     modelRequested: options.model,
     modelUpstream: target.upstreamModelId,
     endpoint: target.endpoint,
-    provider: account?.provider ?? target.protocol,
+    provider,
     protocol: target.protocol,
     connectionId: target.connectionId,
     connectionName: connection.name,
@@ -258,7 +251,6 @@ export async function prepareRequestAdmission(
     target,
     connection,
     credential: found.credential,
-    account,
     initiator,
     ...sessionFields,
   }
@@ -462,10 +454,11 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
   let retryAfterSeconds = 0
 
   for (const candidate of candidates) {
-    // 批次 3：RouteTarget.account 已删除，通过 connectionId 查找 account
-    const account = getAccount(candidate.connectionId)
-    if (account) {
-      const availability = getAccountAvailability(account)
+    // 批次 3：通过 connectionId 查找 connection，用 connection 字段直接判断可用性
+    // （替代原 getAccount + getAccountAvailability 路径）
+    const conn = getProviderConnection(candidate.connectionId)
+    if (conn && isAccountManagedConnection(conn)) {
+      const availability = getConnectionAvailability(conn)
       if (!availability.available) {
         const reason = mapAccountReason(availability.reason)
         reasons.add(reason)
@@ -534,6 +527,60 @@ function getCredentialFailureDiagnostic(
     )
   }
   return { reason, retryAfterSeconds }
+}
+
+/**
+ * 从 connection 字段直接判断可用性（替代 getAccount + getAccountAvailability）。
+ * 仅用于 account-managed connection，镜像 getAccountAvailability 的逻辑但直接读
+ * connection / credential 字段，无需 connectionToAccount 转换。
+ */
+function getConnectionAvailability(conn: ProviderConnection): {
+  available: boolean
+  reason: "available" | "disabled" | "cooldown" | "quota" | "error"
+  retryAfterSeconds: number
+} {
+  // 先刷新过期的 cooldown / quota_exhausted 状态（等价于 refreshAccountRuntimeAvailability）
+  refreshConnectionAvailability(conn)
+
+  if (!conn.enabled) {
+    return { available: false, reason: "disabled", retryAfterSeconds: 0 }
+  }
+
+  // 鉴权错误：任一 credential 处于 auth_error 即视为不可用
+  const hasAuthError = conn.credentials.some((c) => c.status === "auth_error")
+  if (hasAuthError) {
+    return { available: false, reason: "error", retryAfterSeconds: 10 }
+  }
+
+  // cooldown 检查（通过 rate limiter 的内存状态，与原 getRemainingCooldownSeconds 一致）
+  const remainingCooldown = getRemainingCooldownSeconds(conn.id)
+  if (remainingCooldown > 0) {
+    return {
+      available: false,
+      reason: "cooldown",
+      retryAfterSeconds: remainingCooldown,
+    }
+  }
+
+  // 配额耗尽：任一 credential 处于 quota_exhausted
+  const exhaustedCred = conn.credentials.find(
+    (c) => c.status === "quota_exhausted",
+  )
+  if (exhaustedCred) {
+    let retryAfterSeconds = 0
+    // credential.cooldownUntil 已包含恢复时间（markCredentialQuotaExhausted 写入）
+    if (
+      exhaustedCred.cooldownUntil
+      && exhaustedCred.cooldownUntil > Date.now()
+    ) {
+      retryAfterSeconds = Math.ceil(
+        (exhaustedCred.cooldownUntil - Date.now()) / 1000,
+      )
+    }
+    return { available: false, reason: "quota", retryAfterSeconds }
+  }
+
+  return { available: true, reason: "available", retryAfterSeconds: 0 }
 }
 
 function mapAccountReason(
@@ -605,7 +652,6 @@ function enforceUserModelAccess(c: Context, model: string): void {
 
 /**
  * 在请求失败时尝试切换到下一个候选 RouteTarget。
- * 支持 Connection 和 Account 两种 target。
  *
  * When session affinity is enabled, the rebinding options force a new pick
  * and update the session → credential map (CPA failover behavior).
@@ -644,10 +690,11 @@ export function switchToNextRouteTarget(
  *      once the pinned connection's account is exhausted).
  *   2. Keeps the same protocol as the initial target — a bare model resolving
  *      to both codex + xAI must not cross protocols mid-turn.
- *   3. Only returns account-backed candidates, since rotation resolves the
- *      account and calls `createResponses({ account })`.
+ *   3. Only returns account-managed candidates (*-native protocols), since
+ *      rotation resolves the connection and calls
+ *      `createResponses({ connection, credential })`.
  *
- * Returns null when no other same-protocol, account-backed candidate remains
+ * Returns null when no other same-protocol, account-managed candidate remains
  * (excluding those already in `tried`).
  */
 export function selectNextResponsesWsTarget(
@@ -667,7 +714,7 @@ export function selectNextResponsesWsTarget(
   }).filter(
     (candidate) =>
       candidate.protocol === initialTarget.protocol
-      && resolveConnectionFromTarget(candidate)?.account !== undefined,
+      && isAccountManagedProtocol(candidate.protocol),
   )
   return selectRouteTarget(candidates, {
     exclude: tried,
@@ -681,23 +728,18 @@ export function selectNextResponsesWsTarget(
  * 把 RouteTarget 解析为 ProviderAdmission 信息。
  *
  * 批次 3 后统一从 getProviderConnection 查找真实 connection/credential。
- * account-derived connections 通过 connectionToAccount 派生 account 字段。
+ * Phase 2e：不再派生 account 字段。
  *
  * 返回 null 表示无法解析(调用方应抛出原始错误)。
  */
 export function resolveConnectionFromTarget(target: RouteTarget): {
   connection: ProviderConnection
   credential: ApiCredential
-  account?: Account
 } | null {
   // 批次 3：target.account 已删除，统一走 getProviderConnection
   const connection = getProviderConnection(target.connectionId)
   if (!connection) return null
   const found = findCredential(target.connectionId, target.credentialId)
   if (!found) return null
-  const account =
-    readAccountLegacyMetadata(connection) ?
-      connectionToAccount(connection)
-    : undefined
-  return { connection, credential: found.credential, account }
+  return { connection, credential: found.credential }
 }

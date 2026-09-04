@@ -1,15 +1,19 @@
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   AnthropicMessagesPayload,
   AnthropicTextBlock,
   AnthropicTool,
 } from "~/services/protocols/anthropic/types"
 
-import { canonicalNativeModelId, isOAuthAccount } from "~/lib/accounts"
 import { getStableSessionId } from "~/lib/cache/session-id-cache"
 import { HTTPError } from "~/lib/error"
-import { fetchWithOAuthProxy } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthAccessToken } from "~/services/oauth/ensure-access-token"
+import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { getCredentialContextString } from "~/lib/provider-connections"
+import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import {
   detectAnthropicStreamError,
   safeSseStream,
@@ -279,21 +283,30 @@ export function buildOrderedBody(
 }
 
 export async function createClaudeMessagesOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
   payload: AnthropicMessagesPayload,
   signal?: AbortSignal,
   ctx?: {
     forwardedHeaders?: Record<string, string | undefined>
   },
 ): Promise<AsyncIterable<unknown> | Record<string, unknown>> {
-  if (!isOAuthAccount(account) || account.provider !== "claude") {
-    throw new Error(`Claude messages requires a Claude OAuth account`)
+  if (connection.protocol !== "claude-native") {
+    throw new Error(`Claude messages requires a Claude OAuth connection`)
   }
 
-  const accessToken = await ensureOAuthAccessToken(account)
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
   if (!accessToken) {
     throw new Error(
-      `Claude access token missing for account "${account.label}"`,
+      `Claude access token missing for connection "${connection.name}"`,
     )
   }
 
@@ -310,11 +323,11 @@ export async function createClaudeMessagesOnce(
   const metadataSessionId = extractClaudeMetadataSessionId(
     payload.metadata?.user_id,
   )
-  const accountId = account.credentials?.accountId
+  const accountId = getCredentialContextString(connection, "oauthAccountId")
   const effectiveSessionId =
     forwardedSessionId?.trim()
     || metadataSessionId
-    || (await getStableSessionId(account.id))
+    || (await getStableSessionId(connection.id))
 
   // --- Fingerprint body construction (CC stealth) -------------------------
   const includeClaudeCodeInstruction = !model.startsWith("claude-3-5-haiku")
@@ -362,15 +375,19 @@ export async function createClaudeMessagesOnce(
       payload.thinking?.type === "enabled"
       || payload.thinking?.type === "adaptive"
       || payload.output_config?.effort !== undefined,
-    credentialKey: account.id,
+    credentialKey: connection.id,
   })
 
-  const response = await fetchWithOAuthProxy(account, CLAUDE_MESSAGES_URL, {
-    method: "POST",
-    headers,
-    body: bodyBytes,
-    signal,
-  })
+  const response = await fetchWithConnectionProxy(
+    connection,
+    CLAUDE_MESSAGES_URL,
+    {
+      method: "POST",
+      headers,
+      body: bodyBytes,
+      signal,
+    },
+  )
 
   if (!response.ok) {
     throw new HTTPError(

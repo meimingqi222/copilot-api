@@ -17,6 +17,10 @@ import {
   updateMemoryTrace,
 } from "~/lib/memory-diagnostics"
 import {
+  connectionProvider,
+  isAccountManagedConnection,
+} from "~/lib/provider-connections"
+import {
   prepareRequestAdmission,
   resolveConnectionFromTarget,
   selectNextResponsesWsTarget,
@@ -326,12 +330,13 @@ function selectNextResponsesAdmission(
   })
   if (!next) return null
   const resolved = resolveConnectionFromTarget(next)
-  if (!resolved?.account) return null
+  if (!resolved || !isAccountManagedConnection(resolved.connection)) {
+    return null
+  }
   return {
     target: next,
     connection: resolved.connection,
     credential: resolved.credential,
-    account: resolved.account,
     initiator: current.initiator,
     sessionId: current.sessionId,
     fallbackSessionId: current.fallbackSessionId,
@@ -362,8 +367,8 @@ async function processResponseCreate(
     return signal.aborted ? "aborted" : "error"
   }
   updateMemoryTrace(memoryTraceId, "admission_ready", {
-    provider: admission.account?.provider ?? "unknown",
-    accountId: admission.account?.id ?? "unknown",
+    provider: connectionProvider(admission.connection),
+    accountId: admission.connection.id,
   })
 
   // Commit-aware, account-rotating loop. Each attempt buffers leading control
@@ -399,8 +404,8 @@ async function processResponseCreate(
     }
     if (outcome.type === "rotate") {
       updateMemoryTrace(memoryTraceId, "provider_account_rotation", {
-        provider: outcome.next.account?.provider ?? "unknown",
-        accountId: outcome.next.account?.id ?? "unknown",
+        provider: connectionProvider(outcome.next.connection),
+        accountId: outcome.next.connection.id,
       })
       current = outcome.next
       httpRecoveryTried = false
@@ -461,14 +466,13 @@ async function runResponsesAttempt(
     turnStarted,
   } = params
 
-  // Rotation is account-managed; the selector only returns account-backed
-  // candidates and the initial admission is validated as account-backed.
-  const account = current.account
-  if (!account) {
+  // Rotation is account-managed; the selector only returns account-managed
+  // candidates and the initial admission is validated as account-managed.
+  if (!isAccountManagedConnection(current.connection)) {
     await handleResponseError(
       ws,
       new HTTPError(
-        "Responses API requires an Account-based admission",
+        "Responses API requires an account-managed connection",
         new Response("Not Implemented", { status: 501 }),
       ),
       signal,
@@ -482,14 +486,15 @@ async function runResponsesAttempt(
 
   try {
     updateMemoryTrace(memoryTraceId, "provider_request_start", {
-      provider: account.provider,
-      accountId: account.id,
+      provider: connectionProvider(current.connection),
+      accountId: current.connection.id,
       httpRecovery: httpRecoveryTried,
     })
     const result = await createResponses(payload, {
       signal,
       initiatorOverride: current.initiator,
-      account,
+      connection: current.connection,
+      credential: current.credential,
       forwardedHeaders: sessionHeaders,
       c,
       downstreamWebsocket: true,
@@ -500,7 +505,7 @@ async function runResponsesAttempt(
       memoryTraceId,
     })
     updateMemoryTrace(memoryTraceId, "provider_response_open", {
-      provider: account.provider,
+      provider: connectionProvider(current.connection),
       accountId: result.accountId,
       streaming: !isNonStreaming(result.response),
     })
@@ -708,9 +713,9 @@ async function prepareResponsesAdmission(
     sessionHeaders,
     sessionPayload: payload,
   })
-  if (!admission.account) {
+  if (!isAccountManagedConnection(admission.connection)) {
     throw new HTTPError(
-      "Responses API requires an Account-based admission",
+      "Responses API requires an account-managed connection",
       new Response("Not Implemented", { status: 501 }),
     )
   }

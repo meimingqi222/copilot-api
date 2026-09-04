@@ -1,4 +1,7 @@
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
 import type {
   AnthropicMessagesPayload,
@@ -6,8 +9,7 @@ import type {
 } from "~/services/protocols/anthropic/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { getCopilotToken } from "~/lib/accounts"
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { getStableSessionId } from "~/lib/cache/session-id-cache"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
@@ -16,6 +18,7 @@ import {
   translateToCopilotMessages,
 } from "~/services/copilot/create-messages-translate"
 import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
+import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
   detectAnthropicStreamError,
   safeSseStream,
@@ -38,12 +41,16 @@ function resolveForwardedHeader(
 }
 
 export async function createCopilotMessagesOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: { connection: ProviderConnection; credential: ApiCredential },
   payload: AnthropicMessagesPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEventLike> | AnthropicResponse> {
-  if (!getCopilotToken(account)) {
+  const token = copilotTokenFromCredential(credential)
+  if (!token) {
     throw new Error("Copilot token not found")
   }
 
@@ -72,7 +79,7 @@ export async function createCopilotMessagesOnce(
   )
 
   const headers: Record<string, string> = {
-    ...copilotHeaders(account, enableVision),
+    ...copilotHeadersForToken(token, enableVision),
     "editor-version": `vscode/${state.vsCodeVersion}`,
     "X-Initiator": initiator,
     ...(anthropicBeta ? { "anthropic-beta": anthropicBeta } : {}),
@@ -84,7 +91,7 @@ export async function createCopilotMessagesOnce(
   headers["X-Claude-Code-Session-Id"] =
     typeof claudeSessionId === "string" && claudeSessionId.trim() ?
       claudeSessionId.trim()
-    : await getStableSessionId(account.id)
+    : await getStableSessionId(connection.id)
 
   const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
     method: "POST",

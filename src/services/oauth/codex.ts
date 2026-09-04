@@ -1,6 +1,11 @@
-import type { OAuthAccount } from "~/lib/accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { applyOAuthBundle } from "./apply-bundle"
+import { getConnectionSettings } from "~/lib/provider-connections"
+
+import {
+  applyOAuthBundleToCredential,
+  applyOAuthConnectionSettings,
+} from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import {
   extractCodexAccountIdFromIdToken,
@@ -149,16 +154,23 @@ export async function refreshCodexTokens(
 }
 
 export function applyCodexOAuthBundle(
-  account: OAuthAccount,
+  connection: ProviderConnection,
   bundle: CodexOAuthBundle,
 ): void {
-  applyOAuthBundle(account, bundle, {
+  applyOAuthBundleToCredential(connection, bundle, {
     idToken: bundle.idToken,
     accountId: bundle.accountId,
     email: bundle.email,
   })
-  account.settings = {
-    ...account.settings,
-    baseUrl: account.settings?.baseUrl ?? CODEX_API_BASE_URL,
-  }
+  applyOAuthConnectionSettings(connection, {
+    baseUrl: readSettingString(connection, "baseUrl") ?? CODEX_API_BASE_URL,
+  })
+}
+
+function readSettingString(
+  connection: ProviderConnection,
+  key: string,
+): string | undefined {
+  const value = getConnectionSettings(connection)?.[key]
+  return typeof value === "string" && value ? value : undefined
 }

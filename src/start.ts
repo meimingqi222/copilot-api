@@ -14,20 +14,19 @@ import { startAntigravityVersionUpdater } from "~/services/antigravity/version"
 import {
   flushAccountsOnShutdown,
   initAccounts,
-  refreshCopilotToken,
   scheduleQuotaRefresh,
 } from "./lib/account-store"
-import { listAccounts } from "./lib/accounts"
 import { hashAdminPasswordInEnv } from "./lib/admin-password"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
 import { acquireServerLock, releaseServerLock } from "./lib/process-lock"
 import {
   initializeProviderConnections,
+  listAccountManagedConnections,
   scheduleConnectionModelDiscovery,
 } from "./lib/provider-connections"
 import { initializeCredentialRefreshers } from "./lib/provider-connections/refresher-impls"
-import { ensureDirectProviderAccounts } from "./lib/provider-defaults"
+import { ensureDirectProviderConnections } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
 import {
   loadAdminPasswordFromDb,
@@ -44,6 +43,7 @@ import {
   scheduleModelsRefresh,
 } from "./lib/utils"
 import { server } from "./server"
+import { refreshCopilotTokenForConnection } from "./services/copilot/token-refresh"
 import { startMimoManager, stopMimoManager } from "./services/mimo/manager"
 import { initializeProtocolAdapters } from "./services/protocols"
 
@@ -196,7 +196,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   // Load accounts from disk (configure via Web UI)
   await initAccounts()
 
-  await ensureDirectProviderAccounts()
+  await ensureDirectProviderConnections()
 
   // Load provider connections (generic OpenAI/Anthropic-compatible providers)
   await initializeProviderConnections()
@@ -204,17 +204,17 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   initializeProtocolAdapters()
   initializeCredentialRefreshers()
 
-  // Refresh Copilot tokens for copilot accounts
-  for (const account of listAccounts()) {
-    if (account.provider !== "copilot") {
+  // Refresh Copilot tokens for copilot-native connections
+  for (const connection of listAccountManagedConnections()) {
+    if (connection.protocol !== "copilot-native") {
       continue
     }
 
     try {
-      await refreshCopilotToken(account)
+      await refreshCopilotTokenForConnection(connection)
     } catch (err) {
       logger.debug(
-        `Failed to get Copilot token for account "${account.label}"`,
+        `Failed to get Copilot token for connection "${connection.name}"`,
         err,
       )
     }

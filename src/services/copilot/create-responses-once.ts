@@ -1,4 +1,7 @@
-import type { Account, CopilotAccount } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
@@ -6,15 +9,16 @@ import type {
 } from "~/services/copilot/responses-api"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { getCopilotToken, parseModelReference } from "~/lib/accounts"
-import { copilotBaseUrl, copilotHeaders } from "~/lib/api-config"
+import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { parseModelReference } from "~/lib/legacy-accounts"
 import { state } from "~/lib/state"
 import {
   normalizeResponsesStreamIds,
-  supportsResponsesApi,
+  supportsResponsesApiForConnection,
   withDefaultReasoningSummary,
 } from "~/services/copilot/responses-api"
+import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
   detectResponsesStreamError,
   safeSseStream,
@@ -34,19 +38,22 @@ export function hasVisionInput(payload: ResponsesPayload): boolean {
 }
 
 export async function createCopilotResponsesOnce(
-  account: Account,
+  {
+    connection,
+    credential,
+  }: { connection: ProviderConnection; credential: ApiCredential },
   payload: ResponsesPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
-  const copilotAccount = account as CopilotAccount
-  if (!getCopilotToken(copilotAccount)) {
+  const token = copilotTokenFromCredential(credential)
+  if (!token) {
     throw new Error("Copilot token not found")
   }
 
   const normalizedModel = parseModelReference(payload.model).nativeModelId
 
-  if (!supportsResponsesApi(normalizedModel, copilotAccount)) {
+  if (!supportsResponsesApiForConnection(normalizedModel, connection)) {
     throw new Error(
       "createCopilotResponsesOnce expects native responses support",
     )
@@ -61,7 +68,7 @@ export async function createCopilotResponsesOnce(
   })
 
   const headers: Record<string, string> = {
-    ...copilotHeaders(copilotAccount, enableVision),
+    ...copilotHeadersForToken(token, enableVision),
     "editor-version": `vscode/${state.vsCodeVersion}`,
   }
   if (ctx?.initiator) {

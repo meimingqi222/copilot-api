@@ -1,8 +1,8 @@
 /**
  * Admin API: Provider Presets
  *
- * 预制提供商目录。内置 33 个常见主流提供商模板，
- * 并支持从数据目录的 provider-presets.json 读取用户自定义覆盖与扩展。
+ * 预制提供商目录路由。内置预设与合并逻辑已迁移至 ~/lib/provider-presets，
+ * 本文件仅保留 HTTP 路由与用户自定义预设读取。
  */
 
 import { Hono } from "hono"
@@ -13,13 +13,11 @@ import { PATHS } from "~/lib/paths"
 import {
   BUILTIN_PROVIDER_PRESETS,
   type ProviderPreset,
-} from "~/routes/admin/api/provider-presets-data"
+  mergePresets,
+} from "~/lib/provider-presets"
 
-export {
-  BUILTIN_PROVIDER_PRESETS,
-  type PresetModel,
-  type ProviderPreset,
-} from "~/routes/admin/api/provider-presets-data"
+// 向后兼容：重新导出类型
+export { type PresetModel, type ProviderPreset } from "~/lib/provider-presets"
 
 /**
  * 读取用户自定义预设配置文件。
@@ -39,32 +37,6 @@ async function readUserPresets(): Promise<Array<ProviderPreset>> {
     }
     return []
   }
-}
-
-/**
- * 合并内置预设与用户自定义预设。
- * 同 id 的用户预设覆盖内置默认，不同 id 的追加到末尾。
- */
-export function mergePresets(
-  builtin: Array<ProviderPreset>,
-  user: Array<ProviderPreset>,
-): Array<ProviderPreset> {
-  const userMap = new Map(user.map((p) => [p.id, p]))
-  const merged: Array<ProviderPreset> = []
-  const seen = new Set<string>()
-
-  for (const preset of builtin) {
-    seen.add(preset.id)
-    merged.push(userMap.get(preset.id) ?? preset)
-  }
-
-  for (const preset of user) {
-    if (!seen.has(preset.id)) {
-      merged.push(preset)
-    }
-  }
-
-  return merged
 }
 
 export const providerPresetRoutes = new Hono()

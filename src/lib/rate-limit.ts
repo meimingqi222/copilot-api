@@ -1,5 +1,5 @@
-import { getAccount } from "~/lib/accounts"
 import { logger } from "~/lib/logger"
+import { getProviderConnection } from "~/lib/provider-connections"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 
 import { sleep } from "./utils"
@@ -238,14 +238,17 @@ export function getRemainingCooldownSeconds(accountId: string): number {
   const limiterState = getAccountState(accountId)
 
   if (limiterState.cooldownUntilMs <= Date.now()) {
-    const account = getAccount(accountId)
+    // Sync persisted cooldown from connection's credential to in-memory rate
+    // limiter state. Phase 3: cooldownUntil 现存储在 credential.cooldownUntil
+    // (由 setConnectionCooldownUntil 同步写入 metadata + credential)。
+    const connection = getProviderConnection(accountId)
+    const cooldownUntil = connection?.credentials[0]?.cooldownUntil
     if (
-      account
-      && typeof account.cooldownUntil === "number"
-      && account.cooldownUntil > Date.now()
+      cooldownUntil
+      && typeof cooldownUntil === "number"
+      && cooldownUntil > Date.now()
     ) {
-      // Sync persisted cooldown from account object to in-memory rate limiter state
-      limiterState.cooldownUntilMs = account.cooldownUntil
+      limiterState.cooldownUntilMs = cooldownUntil
     }
   }
 

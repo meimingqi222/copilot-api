@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
@@ -65,24 +68,38 @@ function createSlowBody(signal?: AbortSignal): ReadableStream<Uint8Array> {
   })
 }
 
-const account: Account = {
+const credential: ApiCredential = {
   id: "windsurf-timeout-account",
-  label: "windsurf-timeout",
-  provider: "windsurf",
-  credentials: { apiKey: "windsurf-key" },
-  settings: { baseUrl: "https://windsurf.test" },
-  availableModels: [
-    {
-      id: "swe-test",
-      name: "swe-test",
-      vendor: "windsurf",
-      pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
-    },
-  ],
+  authMode: "bearer",
+  value: "windsurf-key",
+  enabled: true,
+  status: "ready",
+  createdAt: Date.now(),
+}
+
+const connection: ProviderConnection = {
+  id: "windsurf-timeout-account",
+  name: "windsurf-timeout",
+  protocol: "windsurf-native",
+  baseUrl: "",
   enabled: true,
   priority: 0,
   createdAt: Date.now(),
+  metadata: {
+    settings: { baseUrl: "https://windsurf.test" },
+  },
+  models: [
+    {
+      publicId: "swe-test",
+      upstreamId: "swe-test",
+      name: "swe-test",
+      vendor: "windsurf",
+      pickerEnabled: true,
+      endpoints: ["chat"],
+      enabled: true,
+    },
+  ],
+  credentials: [credential],
 }
 
 const payload: ChatCompletionsPayload = {
@@ -123,7 +140,10 @@ describe("Windsurf first-frame resilience", () => {
       return Promise.resolve(new Response(encodeTextFrame("recovered")))
     }) as typeof fetch
 
-    const result = await createWindsurfChatCompletionsOnce(account, payload)
+    const result = await createWindsurfChatCompletionsOnce(
+      { connection, credential },
+      payload,
+    )
     if (Symbol.asyncIterator in result) {
       const events = await collectEvents(result)
       expect(events.join("\n")).toContain("recovered")
@@ -133,7 +153,7 @@ describe("Windsurf first-frame resilience", () => {
 
     expect(chatCalls).toBe(2)
     expect(authCalls).toBe(1)
-    expect(getWindsurfConcurrencySnapshot(account.id).active).toBe(0)
+    expect(getWindsurfConcurrencySnapshot(connection.id).active).toBe(0)
   })
 
   test("does not retry an error after the first output was exposed", async () => {
@@ -155,7 +175,10 @@ describe("Windsurf first-frame resilience", () => {
       return Promise.resolve(new Response(body))
     }) as typeof fetch
 
-    const result = await createWindsurfChatCompletionsOnce(account, payload)
+    const result = await createWindsurfChatCompletionsOnce(
+      { connection, credential },
+      payload,
+    )
     if (!(Symbol.asyncIterator in result)) {
       throw new Error("expected a streaming response")
     }
@@ -168,6 +191,6 @@ describe("Windsurf first-frame resilience", () => {
     expect(failure).toBeInstanceOf(Error)
     expect((failure as Error).message).toContain("late failure")
     expect(chatCalls).toBe(1)
-    expect(getWindsurfConcurrencySnapshot(account.id).active).toBe(0)
+    expect(getWindsurfConcurrencySnapshot(connection.id).active).toBe(0)
   })
 })

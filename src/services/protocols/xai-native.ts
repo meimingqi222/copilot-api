@@ -1,4 +1,10 @@
-import { connectionToAccount } from "~/lib/provider-connections"
+/**
+ * xAI Native Protocol Adapter。
+ *
+ * Phase 2d:纯 (connection, credential) 热路径,不再经由
+ * connectionToAccount 派生 Account。
+ */
+
 import { createXaiResponsesOnce } from "~/services/xai/create-responses-once"
 
 import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
@@ -29,21 +35,27 @@ export const xaiNativeAdapter: ProtocolAdapter = {
         signal: sig,
         ctx: context,
       }) => {
-        const account = connectionToAccount(conn)
         const response = await createXaiResponsesOnce(
-          account,
+          { connection: conn, credential },
           responsesPayload,
           sig,
           context,
         )
-        return { credentialId: account.id, response } as AdapterResponsesResult
+        return {
+          credentialId: credential.id,
+          response,
+        } as AdapterResponsesResult
       },
     })
   },
 
-  async createResponses({ connection, payload, signal, ctx }) {
-    const account = connectionToAccount(connection)
-    const response = await createXaiResponsesOnce(account, payload, signal, ctx)
-    return { credentialId: account.id, response } as AdapterResponsesResult
+  async createResponses({ connection, credential, payload, signal, ctx }) {
+    const response = await createXaiResponsesOnce(
+      { connection, credential },
+      payload,
+      signal,
+      ctx,
+    )
+    return { credentialId: credential.id, response } as AdapterResponsesResult
   },
 }

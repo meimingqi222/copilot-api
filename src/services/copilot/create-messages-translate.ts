@@ -6,7 +6,7 @@ import type {
   AnthropicToolResultBlock,
 } from "~/services/protocols/anthropic/types"
 
-import { parseModelReference } from "~/lib/accounts"
+import { parseModelReference } from "~/lib/legacy-accounts"
 
 export function hoistToolResultImages(
   messages: Array<AnthropicMessage>,

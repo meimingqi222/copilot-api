@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "./accounts"
+import type { Account } from "./legacy-accounts"
+import type { ProviderConnection } from "./provider-connections"
 import type { State } from "./state"
 
-import { getCopilotToken } from "./accounts"
+import { getCopilotToken } from "./legacy-accounts"
+import { getConnectionCopilotToken } from "./provider-connections"
 import { state as globalState } from "./state"
 
 export const standardHeaders = () => ({
@@ -33,9 +35,14 @@ export const copilotBaseUrl = (state: State): string => {
   return url
 }
 
-export const copilotHeaders = (account: Account, vision: boolean = false) => {
-  const token = getCopilotToken(account)
-
+/**
+ * Connection 原生版本的 Copilot 请求头构造(Phase 2a)。
+ * token 直接来自 credential.value,不再经由 Account 派生。
+ */
+export const copilotHeadersForToken = (
+  token: string | undefined,
+  vision: boolean = false,
+) => {
   const vsCodeVersion = globalState.vsCodeVersion
 
   const headers: Record<string, string> = {
@@ -54,6 +61,23 @@ export const copilotHeaders = (account: Account, vision: boolean = false) => {
   if (vision) headers["copilot-vision-request"] = "true"
 
   return headers
+}
+
+export const copilotHeaders = (account: Account, vision: boolean = false) => {
+  const token = getCopilotToken(account)
+
+  return copilotHeadersForToken(token, vision)
+}
+
+/**
+ * Connection 原生版本的 copilotHeaders:token 直接从 credential.value 读取。
+ */
+export const copilotHeadersForConnection = (
+  connection: ProviderConnection,
+  vision: boolean = false,
+) => {
+  const token = getConnectionCopilotToken(connection)
+  return copilotHeadersForToken(token, vision)
 }
 
 export const GITHUB_API_BASE_URL = "https://api.github.com"

@@ -1,11 +1,27 @@
-import type { Account } from "~/lib/accounts"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import { canonicalModelId } from "~/lib/accounts"
-import { getAccountProtocol } from "~/lib/request-admission"
-import { delegateEmbeddingsToNativeAdapter } from "~/services/providers/delegate"
+import { canonicalModelId, parseModelReference } from "~/lib/legacy-accounts"
+import { accountManagedModelPrefix } from "~/lib/provider-connections"
+import {
+  getProtocolAdapter,
+  initializeProtocolAdapters,
+} from "~/services/protocols"
+import { buildDirectAdapterTarget } from "~/services/providers/adapter-target"
+
+import type { EmbeddingRequest, EmbeddingResponse } from "./payload-types"
+
+export {
+  type Embedding,
+  type EmbeddingRequest,
+  type EmbeddingResponse,
+} from "./payload-types"
 
 interface CreateEmbeddingsOptions {
-  account: Account
+  connection: ProviderConnection
+  credential: ApiCredential
   signal?: AbortSignal
 }
 
@@ -21,31 +37,37 @@ export const createEmbeddings = async (
     model: canonicalModelId(payload.model),
   }
 
-  return delegateEmbeddingsToNativeAdapter(
-    options.account,
-    getAccountProtocol(options.account),
-    routedPayload,
-    options.signal,
-  )
-}
+  const { connection, credential } = options
+  initializeProtocolAdapters()
+  const adapter = getProtocolAdapter(connection.protocol)
+  if (!adapter?.createEmbeddings) {
+    throw new Error(
+      `Protocol "${connection.protocol}" does not support embeddings`,
+    )
+  }
 
-export interface EmbeddingRequest {
-  input: string | Array<string>
-  model: string
-}
+  const nativeModelId = parseModelReference(
+    routedPayload.model,
+    accountManagedModelPrefix(connection),
+  ).nativeModelId
+  const target = buildDirectAdapterTarget({
+    connection,
+    credential,
+    payloadModel: routedPayload.model,
+    nativeModelId,
+    endpoint: "embeddings",
+  })
 
-export interface Embedding {
-  object: string
-  embedding: Array<number>
-  index: number
-}
+  const result = await adapter.createEmbeddings({
+    target,
+    connection,
+    credential,
+    payload: routedPayload,
+    signal: options.signal,
+  })
 
-export interface EmbeddingResponse {
-  object: string
-  data: Array<Embedding>
-  model: string
-  usage: {
-    prompt_tokens: number
-    total_tokens: number
+  return {
+    accountId: result.credentialId,
+    response: result.response,
   }
 }

@@ -2,16 +2,20 @@ import type { Context } from "hono"
 
 import { getConnInfo } from "hono/bun"
 
+import type { Account, AccountModel } from "~/lib/legacy-accounts"
+import type { ModelMapping } from "~/lib/provider-connections"
 import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
 
 import { saveAccounts } from "~/lib/account-store"
-import { listAccounts } from "~/lib/accounts"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   classifyUpstreamError,
   getProviderConnection,
+  listAccountManagedConnections,
   migrateAccountsToConnections,
+  persistProviderConnections,
+  providerFromProtocol,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { listExposedPublicModels } from "~/lib/route-target/build"
@@ -20,8 +24,6 @@ import { globalTimers } from "~/lib/timer-registry"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
-
-import type { Account } from "./accounts"
 
 import { state } from "./state"
 
@@ -61,35 +63,38 @@ export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined
 
 export function cacheModels(): void {
-  const accountModels = listAccounts()
-    .map((account, originalIndex) => ({ account, originalIndex }))
+  // 用 connection 字段直接构建模型列表（替代原 listAccounts 路径）
+  const connectionModels = listAccountManagedConnections()
+    .map((conn, originalIndex) => ({ conn, originalIndex }))
     .sort((left, right) => {
-      if (left.account.priority !== right.account.priority) {
-        return left.account.priority - right.account.priority
+      if (left.conn.priority !== right.conn.priority) {
+        return left.conn.priority - right.conn.priority
       }
       return left.originalIndex - right.originalIndex
     })
-    .flatMap(({ account }) =>
-      (account.availableModels ?? []).map((model) => ({ model, account })),
+    .flatMap(({ conn }) =>
+      (conn.models ?? []).map((model) => ({ model, conn })),
     )
 
-  if (accountModels.length > 0) {
+  if (connectionModels.length > 0) {
     const merged = new Map<
       string,
       {
-        model: (typeof accountModels)[number]["model"]
+        model: (typeof connectionModels)[number]["model"]
+        conn: (typeof connectionModels)[number]["conn"]
         publicId: string
       }
     >()
-    for (const entry of accountModels) {
+    for (const entry of connectionModels) {
       // Only the bare model id is exposed; routing/auto-LB across providers
       // happens transparently. Clients may still target a specific provider
       // by sending a prefixed id (prefix/model), resolved via
       // buildAccountModelAliases - but it is not listed here.
-      const publicId = entry.model.id
+      const publicId = entry.model.publicId
       if (!merged.has(publicId)) {
         merged.set(publicId, {
           model: entry.model,
+          conn: entry.conn,
           publicId,
         })
       }
@@ -97,18 +102,22 @@ export function cacheModels(): void {
 
     state.models = {
       object: "list",
-      data: Array.from(merged.values()).map(({ model, publicId }) => ({
+      data: Array.from(merged.values()).map(({ model, conn, publicId }) => ({
         id: publicId,
         object: "model",
-        name: model.name,
+        name: model.name ?? publicId,
         preview: false,
-        vendor: model.vendor,
+        vendor: model.vendor ?? "unknown",
         version: "1",
-        model_picker_enabled: model.pickerEnabled,
+        model_picker_enabled: model.pickerEnabled ?? true,
         model_picker_category: model.pickerCategory,
-        supported_endpoints: model.supportedEndpoints,
+        supported_endpoints: (model.endpoints ?? []).map((e) =>
+          endpointToSupported(e),
+        ),
         capabilities: {
-          family: model.provider || model.vendor.toLowerCase(),
+          family:
+            providerFromProtocol(conn.protocol)
+            ?? (model.vendor ?? "unknown").toLowerCase(),
           object: "capabilities",
           supports: { streaming: true },
           tokenizer: "unknown",
@@ -206,19 +215,71 @@ function appendProviderConnectionModels(): void {
   }
 }
 
+function modelEndpointToPath(e: string): string {
+  switch (e) {
+    case "chat": {
+      return "/chat/completions"
+    }
+    case "messages": {
+      return "/v1/messages"
+    }
+    case "responses": {
+      return "/v1/responses"
+    }
+    case "embeddings": {
+      return "/v1/embeddings"
+    }
+    case "images": {
+      return "/v1/images/generations"
+    }
+    case "videos": {
+      return "/v1/videos/generations"
+    }
+    default: {
+      return "/chat/completions"
+    }
+  }
+}
+
+function modelMappingToAccountModel(
+  m: ModelMapping,
+  provider: Account["provider"],
+): AccountModel {
+  return {
+    id: m.publicId,
+    upstreamId: m.upstreamId,
+    name: m.name ?? m.publicId,
+    vendor: m.vendor ?? "unknown",
+    pickerEnabled: m.pickerEnabled ?? true,
+    pickerCategory: m.pickerCategory,
+    supportedEndpoints: (m.endpoints ?? []).map((e) => modelEndpointToPath(e)),
+    provider,
+  }
+}
+
+/**
+ * 遗留兼容函数：接收 Account 参数刷新模型列表。
+ * 新代码应优先使用 refreshModelsForConnection（直接接收 ProviderConnection）。
+ * 保留此函数是为了渐进式迁移调用点，避免一次性破坏所有调用方。
+ */
 export async function refreshModelsForAccount(account: Account): Promise<void> {
   initializeProviderRegistry()
+  // Phase 3:通过 connection 调用 runtime.refreshModels
+  const conn = getProviderConnection(account.id)
+  if (!conn) return
   try {
-    account.availableModels = await getProviderRuntime(
-      account.provider,
-    ).refreshModels(account)
+    const models = await getProviderRuntime(account.provider).refreshModels(
+      conn,
+    )
+    // 将 ModelMapping[] 转回 AccountModel[] 以保持 account.availableModels 兼容
+    account.availableModels = models.map((m) =>
+      modelMappingToAccountModel(m, account.provider),
+    )
     logger.debug(
-      `Models for "${account.label}": ${account.availableModels.map((m) => m.id).join(", ")}`,
+      `Models for "${account.label}": ${(account.availableModels ?? []).map((m) => m.id).join(", ")}`,
     )
     // Guard against background refresh re-adding accounts that were removed
     // by test cleanup (setTestAccounts([]) / removeProviderConnection).
-    // Use migrateAccountsToConnections (accountToConnectionForPersistence)
-    // to preserve credentialExtras and all metadata fields.
     if (getProviderConnection(account.id)) {
       upsertProviderConnection(migrateAccountsToConnections([account])[0])
       await saveAccounts()
@@ -231,12 +292,14 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
 
     const fallbackModels = getProviderRuntime(
       account.provider,
-    ).getFallbackModels?.(account)
+    ).getFallbackModels?.(conn)
     if (!fallbackModels) {
       return
     }
 
-    account.availableModels = fallbackModels
+    account.availableModels = fallbackModels.map((m) =>
+      modelMappingToAccountModel(m, account.provider),
+    )
     if (getProviderConnection(account.id)) {
       upsertProviderConnection(migrateAccountsToConnections([account])[0])
       await saveAccounts()
@@ -244,13 +307,58 @@ export async function refreshModelsForAccount(account: Account): Promise<void> {
   }
 }
 
+/**
+ * Phase 3:直接从 ProviderConnection 刷新模型列表。
+ * runtime.refreshModels 现在收 ProviderConnection,返回 ModelMapping[]。
+ */
+export async function refreshModelsForConnection(
+  conn: import("~/lib/provider-connections").ProviderConnection,
+): Promise<void> {
+  // Note: ProviderConnection type imported via inline to avoid circular type issues
+  initializeProviderRegistry()
+  const provider = providerFromProtocol(conn.protocol)
+  if (!provider) return
+  try {
+    const models = await getProviderRuntime(provider).refreshModels(conn)
+    conn.models = models
+    logger.debug(
+      `Models for "${conn.name}": ${models.map((m) => m.publicId).join(", ")}`,
+    )
+    if (getProviderConnection(conn.id)) {
+      upsertProviderConnection(conn)
+      await persistProviderConnections()
+    }
+  } catch (error) {
+    logger.warn(
+      `Failed to refresh models for connection "${conn.name}":`,
+      error,
+    )
+
+    const fallbackModels =
+      getProviderRuntime(provider).getFallbackModels?.(conn)
+    if (!fallbackModels) {
+      return
+    }
+
+    conn.models = fallbackModels
+    if (getProviderConnection(conn.id)) {
+      upsertProviderConnection(conn)
+      await persistProviderConnections()
+    }
+  }
+}
+
 export async function refreshModelsForAllAccounts(): Promise<void> {
+  // 用 listAccountManagedConnections + refreshModelsForConnection 替代原
+  // listAccounts + refreshModelsForAccount 路径，直接操作 connection
   const results = await Promise.allSettled(
-    listAccounts().map((account) => refreshModelsForAccount(account)),
+    listAccountManagedConnections().map((conn) =>
+      refreshModelsForConnection(conn),
+    ),
   )
   for (const result of results) {
     if (result.status === "rejected") {
-      logger.warn("Failed to refresh models for account:", result.reason)
+      logger.warn("Failed to refresh models for connection:", result.reason)
     }
   }
 }

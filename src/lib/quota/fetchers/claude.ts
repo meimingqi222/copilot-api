@@ -1,5 +1,6 @@
-import type { Account, QuotaSnapshot } from "~/lib/accounts"
+import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { CLAUDE_REQUEST_HEADERS, CLAUDE_USAGE_URL } from "~/lib/quota/constants"
 import { enrichQuotaDetails } from "~/lib/quota/cycles"
@@ -17,7 +18,7 @@ const claudeQuotaDescriptor: SimpleQuotaDescriptor = {
   displayName: "Claude",
   url: CLAUDE_USAGE_URL,
   headers: { ...CLAUDE_REQUEST_HEADERS },
-  buildSnapshot(body, _account): QuotaSnapshot {
+  buildSnapshot(body, _connection): QuotaSnapshot {
     const payload = parseClaudeUsagePayload(body)
     if (!payload) {
       throw new Error("Claude quota response was empty or invalid")
@@ -43,8 +44,8 @@ const claudeQuotaDescriptor: SimpleQuotaDescriptor = {
 }
 
 export async function fetchClaudeQuota(
-  account: Account,
+  connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
-  return fetchQuotaByDescriptor(account, claudeQuotaDescriptor, signal)
+  return fetchQuotaByDescriptor(connection, claudeQuotaDescriptor, signal)
 }

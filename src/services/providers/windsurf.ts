@@ -1,8 +1,6 @@
-import { getWindsurfSettings } from "~/lib/accounts"
-import { state } from "~/lib/state"
 import {
-  fallbackWindsurfModels,
-  getWindsurfModelsForAccount,
+  fallbackWindsurfConnectionModelsForConnection,
+  getWindsurfModelsForConnection,
 } from "~/services/windsurf/get-models"
 
 import type { ProviderRuntime } from "./runtime"
@@ -24,18 +22,14 @@ export const windsurfProviderRuntime: ProviderRuntime = {
       },
     ],
   },
-  supports(_account, feature) {
+  supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },
-  async refreshModels(account) {
-    const models = await getWindsurfModelsForAccount(account)
-    account.availableModels = models
+  async refreshModels(connection) {
+    const models = await getWindsurfModelsForConnection(connection)
     return models
   },
-  getFallbackModels(account) {
-    const defaultModel =
-      getWindsurfSettings(account)?.defaultModel
-      ?? state.providerDefaults.windsurf.defaultModel
-    return fallbackWindsurfModels(defaultModel)
+  getFallbackModels(connection) {
+    return fallbackWindsurfConnectionModelsForConnection(connection)
   },
 }

@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto"
 
-import type { OAuthAccount } from "~/lib/accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
+
+import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
+import {
+  setConnectionSetting,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 
 import type { OAuthFetchOptions } from "./fetch"
 import type { OAuthPendingFlow } from "./flows"
@@ -39,35 +48,54 @@ import {
 
 // ── Shared helpers (moved from oauth.ts) ────────────────────────
 
-export function createOAuthAccount(
+/**
+ * Phase 3:直接创建 OAuth ProviderConnection(不经过 Account 中转)。
+ * connection 的 protocol 从 PROVIDER_PROTOCOL_MAP 派生。
+ * 使用同步构造 + upsertProviderConnection(不经过 withMutation/持久化),
+ * 调用方负责后续 saveAccounts()/persistProviderConnections()。
+ */
+export function createOAuthConnection(
   provider: OAuthProviderId,
   label: string,
-): OAuthAccount {
-  return {
-    id: randomUUID(),
-    label,
-    provider,
+): ProviderConnection {
+  const protocol = PROVIDER_PROTOCOL_MAP[provider]
+  const now = Date.now()
+  const credential: ApiCredential = {
+    id: randomUUID().slice(0, 8),
+    authMode: "header",
+    value: "",
+    enabled: true,
+    status: "ready",
+    context: {},
+    createdAt: now,
+    updatedAt: now,
+  }
+  const conn: ProviderConnection = {
+    id: randomUUID().slice(0, 8),
+    name: label,
+    protocol,
+    baseUrl: "",
     enabled: true,
     priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
-    credentials: {},
-    settings: {},
-    runtimeState: {
-      authStatus: "pending",
-    },
+    weight: 1,
+    credentials: [credential],
+    models: [],
+    metadata: {},
+    createdAt: now,
+    updatedAt: now,
   }
+  return conn
 }
 
-export function applyFlowSettingsToAccount(
-  account: OAuthAccount,
+/**
+ * Phase 3:将 flow 的 proxyUrl 等设置直接写入 connection.settings。
+ */
+export function applyFlowSettingsToConnection(
+  connection: ProviderConnection,
   flow: OAuthPendingFlow,
 ): void {
   if (flow.proxyUrl) {
-    account.settings = {
-      ...account.settings,
-      proxyUrl: flow.proxyUrl,
-    }
+    setConnectionSetting(connection, "proxyUrl", flow.proxyUrl)
   }
 }
 
@@ -117,8 +145,8 @@ export interface OAuthProviderStrategy {
   readonly flowType: OAuthFlowType
   /** Start the OAuth flow (generate auth URL or device code) */
   start(input: OAuthStartInput): Promise<OAuthStartResult>
-  /** Exchange authorization for tokens and apply bundle to a new account */
-  exchange(input: OAuthExchangeInput): Promise<OAuthAccount>
+  /** Exchange authorization for tokens and return a persisted ProviderConnection */
+  exchange(input: OAuthExchangeInput): Promise<ProviderConnection>
 }
 
 // ── Strategy implementations ────────────────────────────────────
@@ -139,8 +167,8 @@ const claudeStrategy: OAuthProviderStrategy = {
     if (!code) {
       throw new Error("Claude OAuth exchange requires an authorization code")
     }
-    const account = createOAuthAccount("claude", flow.label)
-    applyFlowSettingsToAccount(account, flow)
+    const conn = createOAuthConnection("claude", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
     const bundle = await exchangeClaudeCodeForTokens(
       code,
       flow.state,
@@ -161,8 +189,9 @@ const claudeStrategy: OAuthProviderStrategy = {
       bundle.organizationName =
         bundle.organizationName ?? identity.organizationName
     }
-    applyClaudeOAuthBundle(account, bundle)
-    return account
+    applyClaudeOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
   },
 }
 
@@ -179,15 +208,16 @@ const codexStrategy: OAuthProviderStrategy = {
     if (!code) {
       throw new Error("Codex OAuth exchange requires an authorization code")
     }
-    const account = createOAuthAccount("codex", flow.label)
-    applyFlowSettingsToAccount(account, flow)
+    const conn = createOAuthConnection("codex", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
     const bundle = await exchangeCodexCodeForTokens(
       code,
       flow.pkce,
       flowFetchOptions(flow),
     )
-    applyCodexOAuthBundle(account, bundle)
-    return account
+    applyCodexOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
   },
 }
 
@@ -215,16 +245,17 @@ const xaiStrategy: OAuthProviderStrategy = {
     if (!code) {
       throw new Error("xAI OAuth exchange requires an authorization code")
     }
-    const account = createOAuthAccount("xai", flow.label)
-    applyFlowSettingsToAccount(account, flow)
+    const conn = createOAuthConnection("xai", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
     const bundle = await exchangeXaiCodeForTokens(
       code,
       flow.pkce,
       flow.tokenEndpoint,
       flowFetchOptions(flow),
     )
-    applyXaiOAuthBundle(account, bundle)
-    return account
+    applyXaiOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
   },
 }
 
@@ -247,15 +278,16 @@ const antigravityStrategy: OAuthProviderStrategy = {
         "Antigravity OAuth exchange requires an authorization code",
       )
     }
-    const account = createOAuthAccount("antigravity", flow.label)
-    applyFlowSettingsToAccount(account, flow)
+    const conn = createOAuthConnection("antigravity", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
     const bundle = await exchangeAntigravityCodeForTokens(
       code,
       flow.redirectUri,
       flowFetchOptions(flow),
     )
-    applyAntigravityOAuthBundle(account, bundle)
-    return account
+    applyAntigravityOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
   },
 }
 
@@ -281,8 +313,8 @@ const kimiStrategy: OAuthProviderStrategy = {
     if (!flow.deviceCode) {
       throw new Error("Kimi OAuth flow is missing device code")
     }
-    const account = createOAuthAccount("kimi", flow.label)
-    applyFlowSettingsToAccount(account, flow)
+    const conn = createOAuthConnection("kimi", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
     const fetchOptions = flowFetchOptions(flow)
     // Reconstruct the device-code response shape expected by the poller.
     // deviceExpiresIn is kept in-memory on the flow (not persisted) so
@@ -298,8 +330,9 @@ const kimiStrategy: OAuthProviderStrategy = {
       flow.deviceId ?? createKimiDeviceId(),
       { ...fetchOptions, signal },
     )
-    applyKimiOAuthBundle(account, bundle)
-    return account
+    applyKimiOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
   },
 }
 
