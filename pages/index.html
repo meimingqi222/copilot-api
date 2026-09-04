@@ -2137,11 +2137,13 @@
                         </button>
                       </div>
                     </template>
-                    <span
+                    <button
                       x-show="(conn.models?.length || 0) > 20"
-                      class="tag tag-sm tag-muted"
+                      @click="openModelManager(conn)"
+                      class="tag tag-sm tag-info cursor-pointer hover:opacity-80"
                       x-text="'+' + (conn.models.length - 20) + ' more'"
-                    ></span>
+                      :title="t('connections.modelManager')"
+                    ></button>
                     <span
                       x-show="!conn.models?.length"
                       class="text-xs text-[var(--apple-text-tertiary)] italic"
@@ -2979,6 +2981,100 @@
             </div>
           </div>
 
+          <!-- Model Manager Modal (查看/搜索/启用/禁用/编辑/删除全部模型) -->
+          <div
+            x-show="showModelManager"
+            class="modal-overlay"
+            @click.self="showModelManager = false"
+            x-cloak
+          >
+            <div class="modal" style="max-width: 720px">
+              <div class="modal-header">
+                <h3 class="text-title-3" x-text="t('connections.modelManager')"></h3>
+                <button @click="showModelManager = false" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body">
+                <!-- 搜索 + 批量操作 -->
+                <div class="flex items-center gap-2 mb-3">
+                  <input
+                    type="text"
+                    x-model="modelManagerSearch"
+                    class="form-input flex-1"
+                    :placeholder="t('connections.searchModels')"
+                  />
+                  <button
+                    @click="modelManagerBatchToggle(true)"
+                    class="btn btn-sm btn-secondary"
+                    x-text="t('connections.enableAll')"
+                  ></button>
+                  <button
+                    @click="modelManagerBatchToggle(false)"
+                    class="btn btn-sm btn-secondary"
+                    x-text="t('connections.disableAll')"
+                  ></button>
+                </div>
+                <!-- 模型列表 -->
+                <div class="max-h-96 overflow-y-auto space-y-1">
+                  <template
+                    x-for="m in modelManagerFilteredModels"
+                    :key="m.publicId"
+                  >
+                    <div
+                      class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[var(--apple-gray-6)]"
+                    >
+                      <span
+                        class="tag tag-sm cursor-pointer flex-shrink-0"
+                        :class="m.enabled ? 'tag-info' : 'tag-muted'"
+                        @click="modelManagerToggle(m)"
+                        x-text="m.publicId"
+                        :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"
+                      ></span>
+                      <span
+                        class="text-xs text-[var(--apple-text-tertiary)] flex-1 truncate"
+                        x-text="m.upstreamId && m.upstreamId !== m.publicId ? '→ ' + m.upstreamId : ''"
+                      ></span>
+                      <button
+                        @click="openEditModel(modelManagerConn, m)"
+                        class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0"
+                        :title="t('edit')"
+                      >
+                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                      </button>
+                      <button
+                        @click="deleteModel(modelManagerConn, m)"
+                        class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-red)] flex-shrink-0"
+                        :title="t('delete')"
+                      >
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                      </button>
+                    </div>
+                  </template>
+                  <p
+                    x-show="modelManagerFilteredModels.length === 0"
+                    class="text-center text-sm text-[var(--apple-text-tertiary)] py-8"
+                    x-text="t('connections.noModelsFound')"
+                  ></p>
+                </div>
+                <!-- 统计 -->
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-3">
+                  <span x-text="modelManagerConn?.models?.filter(m => m.enabled).length || 0"></span>
+                  /
+                  <span x-text="modelManagerConn?.models?.length || 0"></span>
+                  <span x-text="t('connections.modelsEnabled')"></span>
+                </p>
+              </div>
+              <div class="modal-footer">
+                <button
+                  @click="showModelManager = false"
+                  class="btn btn-primary"
+                  x-text="t('close')"
+                ></button>
+              </div>
+            </div>
+          </div>
+
           <!-- Provider Connections Import Modal -->
           <div
             x-show="showImportModal"
@@ -3293,6 +3389,14 @@
                     :value="quickSelectValue"
                     @change="onQuickSelect($event.target.value)"
                   >
+                    <!-- 自定义周期占位 option:避免 dateRange=custom 时
+                         select 回退到第一个 option(today)触发 onQuickSelect
+                         覆盖自定义查询 -->
+                    <option
+                      value=""
+                      x-show="dateRange === 'custom' && !selectedMonth"
+                      x-text="t('usage.customRange')"
+                    ></option>
                     <option value="today" x-text="t('usage.today')"></option>
                     <option value="week" x-text="t('usage.week')"></option>
                     <option value="month" x-text="t('usage.month')"></option>
