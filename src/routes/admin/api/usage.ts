@@ -105,6 +105,44 @@ usageApiRoutes.get("/", (c) => {
   return c.json({ stats, period: { startDate, endDate } })
 })
 
+type PricingTierSource = {
+  contextTierAbove?: {
+    thresholdTokens: number
+    promptPricePer1k: number
+    completionPricePer1k: number
+    cacheReadPricePer1k: number
+    cacheWritePricePer1k: number
+  } | null
+}
+
+function toExtended(resolved: PricingTierSource): {
+  contextThresholdTokens: number | null
+  extendedPromptPricePer1k: number | null
+  extendedCompletionPricePer1k: number | null
+  extendedCacheReadPricePer1k: number | null
+  extendedCacheWritePricePer1k: number | null
+} {
+  return {
+    contextThresholdTokens: resolved.contextTierAbove?.thresholdTokens ?? null,
+    extendedPromptPricePer1k:
+      resolved.contextTierAbove?.promptPricePer1k ?? null,
+    extendedCompletionPricePer1k:
+      resolved.contextTierAbove?.completionPricePer1k ?? null,
+    extendedCacheReadPricePer1k:
+      resolved.contextTierAbove?.cacheReadPricePer1k ?? null,
+    extendedCacheWritePricePer1k:
+      resolved.contextTierAbove?.cacheWritePricePer1k ?? null,
+  }
+}
+
+function toNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null
+  }
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
+}
+
 // Get model pricing
 usageApiRoutes.get("/pricing", (c) => {
   const pricing: Record<
@@ -114,6 +152,11 @@ usageApiRoutes.get("/pricing", (c) => {
       completionPricePer1k: number
       cacheReadPricePer1k: number
       cacheWritePricePer1k: number
+      contextThresholdTokens: number | null
+      extendedPromptPricePer1k: number | null
+      extendedCompletionPricePer1k: number | null
+      extendedCacheReadPricePer1k: number | null
+      extendedCacheWritePricePer1k: number | null
     }
   > = {}
   const sources: Record<
@@ -127,6 +170,7 @@ usageApiRoutes.get("/pricing", (c) => {
       completionPricePer1k: item.completionPricePer1k,
       cacheReadPricePer1k: item.cacheReadPricePer1k,
       cacheWritePricePer1k: item.cacheWritePricePer1k,
+      ...toExtended(item),
     }
     sources[item.model] = "manual"
   }
@@ -147,6 +191,7 @@ usageApiRoutes.get("/pricing", (c) => {
           completionPricePer1k: resolved.completionPricePer1k,
           cacheReadPricePer1k: resolved.cacheReadPricePer1k,
           cacheWritePricePer1k: resolved.cacheWritePricePer1k,
+          ...toExtended(resolved),
         }
         sources[model.id] = resolved.source
         continue
@@ -156,6 +201,11 @@ usageApiRoutes.get("/pricing", (c) => {
         completionPricePer1k: 0,
         cacheReadPricePer1k: 0,
         cacheWritePricePer1k: 0,
+        contextThresholdTokens: null,
+        extendedPromptPricePer1k: null,
+        extendedCompletionPricePer1k: null,
+        extendedCacheReadPricePer1k: null,
+        extendedCacheWritePricePer1k: null,
       }
       sources[model.id] = "unmatched"
     }
@@ -198,6 +248,11 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
     completionPricePer1k?: number
     cacheReadPricePer1k?: number
     cacheWritePricePer1k?: number
+    contextThresholdTokens?: number | null
+    extendedPromptPricePer1k?: number | null
+    extendedCompletionPricePer1k?: number | null
+    extendedCacheReadPricePer1k?: number | null
+    extendedCacheWritePricePer1k?: number | null
   }
 
   try {
@@ -207,6 +262,17 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
   }
 
   const existing = statsStore.getModelPricing(model)
+  // 阈值区分“字段缺席”（沿用已有分档）与“显式清空”（null/非法值→无分档），
+  // 与其他按 `?? existing` 合并的字段保持一致。
+  let normalizedThreshold: number | null
+  if (body.contextThresholdTokens === undefined) {
+    normalizedThreshold = existing?.contextTierAbove?.thresholdTokens ?? null
+  } else {
+    const parsed = toNullableNumber(body.contextThresholdTokens)
+    normalizedThreshold =
+      parsed !== null && parsed > 0 ? Math.floor(parsed) : null
+  }
+
   statsStore.setModelPricing(model, {
     promptPricePer1k: body.promptPricePer1k ?? existing?.promptPricePer1k ?? 0,
     completionPricePer1k:
@@ -215,6 +281,23 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
       body.cacheReadPricePer1k ?? existing?.cacheReadPricePer1k ?? 0,
     cacheWritePricePer1k:
       body.cacheWritePricePer1k ?? existing?.cacheWritePricePer1k ?? 0,
+    contextThresholdTokens: normalizedThreshold,
+    extendedPromptPricePer1k:
+      toNullableNumber(body.extendedPromptPricePer1k)
+      ?? existing?.contextTierAbove?.promptPricePer1k
+      ?? null,
+    extendedCompletionPricePer1k:
+      toNullableNumber(body.extendedCompletionPricePer1k)
+      ?? existing?.contextTierAbove?.completionPricePer1k
+      ?? null,
+    extendedCacheReadPricePer1k:
+      toNullableNumber(body.extendedCacheReadPricePer1k)
+      ?? existing?.contextTierAbove?.cacheReadPricePer1k
+      ?? null,
+    extendedCacheWritePricePer1k:
+      toNullableNumber(body.extendedCacheWritePricePer1k)
+      ?? existing?.contextTierAbove?.cacheWritePricePer1k
+      ?? null,
   })
 
   return c.json({

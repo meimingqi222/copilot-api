@@ -1,5 +1,6 @@
 function guardView() {
   return {
+    ...ViewHelpers,
     loading: false,
     tab: "ip",
     search: "",
@@ -240,21 +241,12 @@ function guardView() {
       return `${days}d`
     },
 
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
     formatTime(ts) {
       if (!ts) return "-"
       const app = document.querySelector("[x-data^=adminApp]")
       return app ?
           Alpine.$data(app).formatTime(ts)
         : new Date(ts).toLocaleString()
-    },
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
     },
   }
 }

@@ -1,5 +1,6 @@
 function logsView() {
   return {
+    ...ViewHelpers,
     loading: false,
     entries: [],
     total: 0,
@@ -132,21 +133,12 @@ function logsView() {
       return log.finalTarget || log.connectionId || log.provider || "-"
     },
 
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
     formatTime(ts) {
       if (!ts) return "-"
       const app = document.querySelector("[x-data^=adminApp]")
       return app ?
           Alpine.$data(app).formatTime(ts)
         : new Date(ts).toLocaleString()
-    },
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
     },
   }
 }

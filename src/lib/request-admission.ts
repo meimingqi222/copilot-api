@@ -18,14 +18,13 @@ import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import {
   connectionProvider,
   findCredential,
+  getConnectionRoutability,
   getProviderConnection,
   isAccountManagedConnection,
-  isAccountManagedProtocol,
   isCredentialAvailable,
   type ModelEndpoint,
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
-import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { patchRequestLog } from "~/lib/request-log"
 import {
   buildRouteTargets,
@@ -36,6 +35,7 @@ import {
 import { extractSessionIds } from "~/lib/routing"
 import { state } from "~/lib/state"
 import { isUserAllowedModel } from "~/lib/users"
+import { safeOrigin } from "~/lib/utils"
 
 /**
  * 统一路由解析结果。
@@ -531,8 +531,8 @@ function getCredentialFailureDiagnostic(
 
 /**
  * 从 connection 字段直接判断可用性（替代 getAccount + getAccountAvailability）。
- * 仅用于 account-managed connection，镜像 getAccountAvailability 的逻辑但直接读
- * connection / credential 字段，无需 connectionToAccount 转换。
+ * 仅用于 account-managed connection 的失败诊断。调度语义委托统一定义
+ * getConnectionRoutability,此处仅做原因词汇映射(对外保持原 reason 集合)。
  */
 function getConnectionAvailability(conn: ProviderConnection): {
   available: boolean
@@ -542,45 +542,49 @@ function getConnectionAvailability(conn: ProviderConnection): {
   // 先刷新过期的 cooldown / quota_exhausted 状态（等价于 refreshAccountRuntimeAvailability）
   refreshConnectionAvailability(conn)
 
-  if (!conn.enabled) {
-    return { available: false, reason: "disabled", retryAfterSeconds: 0 }
+  const routability = getConnectionRoutability(conn)
+  if (routability.routable) {
+    return { available: true, reason: "available", retryAfterSeconds: 0 }
   }
-
-  // 鉴权错误：任一 credential 处于 auth_error 即视为不可用
-  const hasAuthError = conn.credentials.some((c) => c.status === "auth_error")
-  if (hasAuthError) {
-    return { available: false, reason: "error", retryAfterSeconds: 10 }
-  }
-
-  // cooldown 检查（通过 rate limiter 的内存状态，与原 getRemainingCooldownSeconds 一致）
-  const remainingCooldown = getRemainingCooldownSeconds(conn.id)
-  if (remainingCooldown > 0) {
-    return {
-      available: false,
-      reason: "cooldown",
-      retryAfterSeconds: remainingCooldown,
+  switch (routability.reason) {
+    case "auth_error": {
+      return {
+        available: false,
+        reason: "error",
+        retryAfterSeconds: routability.retryAfterSeconds,
+      }
+    }
+    case "quota_exhausted": {
+      return {
+        available: false,
+        reason: "quota",
+        retryAfterSeconds: routability.retryAfterSeconds,
+      }
+    }
+    case "cooldown": {
+      return {
+        available: false,
+        reason: "cooldown",
+        retryAfterSeconds: routability.retryAfterSeconds,
+      }
+    }
+    case "disabled":
+    case "available": {
+      return {
+        available: false,
+        reason: "disabled",
+        retryAfterSeconds: 0,
+      }
+    }
+    default: {
+      // 未知原因一律按不可用处理(fail-safe)。
+      return {
+        available: false,
+        reason: "disabled",
+        retryAfterSeconds: 0,
+      }
     }
   }
-
-  // 配额耗尽：任一 credential 处于 quota_exhausted
-  const exhaustedCred = conn.credentials.find(
-    (c) => c.status === "quota_exhausted",
-  )
-  if (exhaustedCred) {
-    let retryAfterSeconds = 0
-    // credential.cooldownUntil 已包含恢复时间（markCredentialQuotaExhausted 写入）
-    if (
-      exhaustedCred.cooldownUntil
-      && exhaustedCred.cooldownUntil > Date.now()
-    ) {
-      retryAfterSeconds = Math.ceil(
-        (exhaustedCred.cooldownUntil - Date.now()) / 1000,
-      )
-    }
-    return { available: false, reason: "quota", retryAfterSeconds }
-  }
-
-  return { available: true, reason: "available", retryAfterSeconds: 0 }
 }
 
 function mapAccountReason(
@@ -628,16 +632,6 @@ function mapCredentialReason(status: string | undefined): FailureReason {
   }
 }
 
-export function safeOrigin(baseUrl: string | undefined): string | undefined {
-  if (!baseUrl) return undefined
-  try {
-    return new URL(baseUrl).origin
-  } catch {
-    // 解析失败返回 undefined,避免把含 path/query 的原始串写进日志泄露信息
-    return undefined
-  }
-}
-
 function enforceUserModelAccess(c: Context, model: string): void {
   const user = c.get("user")
   if (!user || isUserAllowedModel(user, model)) {
@@ -648,98 +642,4 @@ function enforceUserModelAccess(c: Context, model: string): void {
     `Model "${model}" is not enabled for user "${user.username}"`,
     new Response("Forbidden", { status: 403 }),
   )
-}
-
-/**
- * 在请求失败时尝试切换到下一个候选 RouteTarget。
- *
- * When session affinity is enabled, the rebinding options force a new pick
- * and update the session → credential map (CPA failover behavior).
- */
-export function switchToNextRouteTarget(
-  _current: RouteTarget,
-  modelId: string,
-  endpoint: ModelEndpoint,
-  exclude: Set<string>,
-  session?: { sessionId?: string; fallbackSessionId?: string },
-): RouteTarget | null {
-  const routing = resolveModelRouting(modelId)
-  const candidates = buildRouteTargets({
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    aliasRestriction: routing.aliasRestriction,
-    endpoint,
-  })
-  return selectRouteTarget(candidates, {
-    exclude,
-    sessionId: session?.sessionId,
-    fallbackSessionId: session?.fallbackSessionId,
-    rebindAffinity: true,
-  })
-}
-
-/**
- * WS-only same-protocol account rotation selector for in-round Responses
- * failover. Deliberately separate from `switchToNextRouteTarget` (which the
- * HTTP dispatch path and its cross-system failover test depend on), because
- * this selector adds three WS-specific constraints:
- *
- *   1. Forwards `routing.connectionId` so an explicit `connectionId/model` pin
- *      is honored — never switches to a different connection (returns null
- *      once the pinned connection's account is exhausted).
- *   2. Keeps the same protocol as the initial target — a bare model resolving
- *      to both codex + xAI must not cross protocols mid-turn.
- *   3. Only returns account-managed candidates (*-native protocols), since
- *      rotation resolves the connection and calls
- *      `createResponses({ connection, credential })`.
- *
- * Returns null when no other same-protocol, account-managed candidate remains
- * (excluding those already in `tried`).
- */
-export function selectNextResponsesWsTarget(
-  initialTarget: RouteTarget,
-  modelId: string,
-  tried: Set<string>,
-  session?: { sessionId?: string; fallbackSessionId?: string },
-): RouteTarget | null {
-  const routing = resolveModelRouting(modelId)
-  const candidates = buildRouteTargets({
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    connectionId: routing.connectionId,
-    aliasRestriction: routing.aliasRestriction,
-    endpoint: "responses",
-  }).filter(
-    (candidate) =>
-      candidate.protocol === initialTarget.protocol
-      && isAccountManagedProtocol(candidate.protocol),
-  )
-  return selectRouteTarget(candidates, {
-    exclude: tried,
-    sessionId: session?.sessionId,
-    fallbackSessionId: session?.fallbackSessionId,
-    rebindAffinity: true,
-  })
-}
-
-/**
- * 把 RouteTarget 解析为 ProviderAdmission 信息。
- *
- * 批次 3 后统一从 getProviderConnection 查找真实 connection/credential。
- * Phase 2e：不再派生 account 字段。
- *
- * 返回 null 表示无法解析(调用方应抛出原始错误)。
- */
-export function resolveConnectionFromTarget(target: RouteTarget): {
-  connection: ProviderConnection
-  credential: ApiCredential
-} | null {
-  // 批次 3：target.account 已删除，统一走 getProviderConnection
-  const connection = getProviderConnection(target.connectionId)
-  if (!connection) return null
-  const found = findCredential(target.connectionId, target.credentialId)
-  if (!found) return null
-  return { connection, credential: found.credential }
 }

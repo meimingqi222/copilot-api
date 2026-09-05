@@ -1,5 +1,6 @@
 function modelAliasesView() {
   return {
+    ...ViewHelpers,
     loading: false,
     aliases: [],
     showModal: false,
@@ -14,17 +15,6 @@ function modelAliasesView() {
       exposeInModels: false,
       note: "",
       scope: "",
-    },
-
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
-    },
-
-    showToast(message, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(message, type)
     },
 
     async load() {

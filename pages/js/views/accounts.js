@@ -7,6 +7,7 @@ const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
 
 function accountsView() {
   return {
+    ...ViewHelpers,
     loading: false,
     accounts: [],
     providers: [],
@@ -762,16 +763,6 @@ function accountsView() {
       }
     },
 
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
-    t(key, params) {
-      // Access parent lang to establish reactive dependency
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
-    },
     getFilteredModels(account) {
       const q = (this.modelSearch[account.id] || "").toLowerCase()
       if (!q) return account.availableModels || []

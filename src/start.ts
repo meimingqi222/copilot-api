@@ -36,7 +36,7 @@ import { generateEnvScript } from "./lib/shell"
 import { state } from "./lib/state"
 import { statsStore } from "./lib/stats-store"
 import { globalTimers } from "./lib/timer-registry"
-import { loadUsers } from "./lib/users"
+import { flushUserTokens, loadUsers, startUserTokenFlusher } from "./lib/users"
 import {
   cacheModels,
   cacheVSCodeVersion,
@@ -244,6 +244,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   // Load users
   await loadUsers()
+  startUserTokenFlusher()
 
   // Load guard blacklist
   await loadGuard()
@@ -329,6 +330,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     try {
       await flushAllPersistentMaps()
       await flushAccountsOnShutdown()
+      await flushUserTokens()
     } catch (error) {
       logger.warn("Failed to flush state on shutdown", {
         error: (error as Error).message,

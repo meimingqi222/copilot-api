@@ -1,12 +1,16 @@
 import type { Context } from "hono"
 
 import type {
+  AnthropicMessagesPayload,
   AnthropicResponse,
   AnthropicStreamingUsage,
 } from "~/services/protocols/anthropic"
 
 import { logger } from "~/lib/logger"
+import { state } from "~/lib/state"
+import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
+import { translateToOpenAI } from "~/services/protocols/anthropic"
 
 export interface UsageInfo {
   prompt_tokens: number
@@ -23,9 +27,28 @@ export function recordStreamingUsage(
   accountId: string,
   lastUsage: UsageInfo | undefined,
   timing?: { ttftMs: number; tps: number },
+  estimatedInputTokens = 0,
 ): void {
   const model = c.get("model")
-  if (!model || !lastUsage) {
+  if (!model) {
+    return
+  }
+
+  // 上游流里没有任何 usage chunk:用本地估算记一行,否则这次请求完全不可见。
+  if (!lastUsage) {
+    if (estimatedInputTokens <= 0) return
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: estimatedInputTokens,
+      completionTokens: 0,
+      totalTokens: estimatedInputTokens,
+      tps: 0,
+      ttftMs: timing?.ttftMs,
+      streaming: true,
+      finishReason: "usage_missing",
+    })
     return
   }
 
@@ -36,7 +59,13 @@ export function recordStreamingUsage(
     c,
     accountId,
     model,
-    promptTokens: Math.max(lastUsage.prompt_tokens - cacheReadTokens, 0),
+    // prompt_tokens 是总量(含缓存读与缓存写,见 usage-translation.ts),
+    // 两者都要扣除,仅扣缓存读会把缓存写 double-bill(一次按 prompt 价,
+    // 一次按 cache-write 价)。与 chat 非流式/流式路径保持一致。
+    promptTokens: Math.max(
+      lastUsage.prompt_tokens - cacheReadTokens - cacheWriteTokens,
+      0,
+    ),
     completionTokens: lastUsage.completion_tokens,
     totalTokens: lastUsage.total_tokens,
     cacheReadTokens,
@@ -52,9 +81,27 @@ export function recordDirectStreamingUsage(
   accountId: string,
   lastUsage: AnthropicStreamingUsage | undefined,
   timing?: { ttftMs: number; tps: number },
+  estimatedInputTokens = 0,
 ): void {
   const model = c.get("model")
-  if (!model || !lastUsage) {
+  if (!model) {
+    return
+  }
+
+  if (!lastUsage) {
+    if (estimatedInputTokens <= 0) return
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: estimatedInputTokens,
+      completionTokens: 0,
+      totalTokens: estimatedInputTokens,
+      tps: 0,
+      ttftMs: timing?.ttftMs,
+      streaming: true,
+      finishReason: "usage_missing",
+    })
     return
   }
 
@@ -150,6 +197,28 @@ function pickOptionalTokenCount(
     return next
   }
   return undefined
+}
+
+/** Estimate request input tokens from an Anthropic payload (fallback when
+ * upstream reports no usage). Translates to the OpenAI shape first so the
+ * local tokenizer sees the same content the copilot path estimates. */
+export async function estimateAnthropicInputTokens(
+  anthropicPayload: AnthropicMessagesPayload,
+  opts?: { preserveHistoricalReasoning?: boolean },
+): Promise<number> {
+  const openAIPayload = translateToOpenAI(anthropicPayload, opts)
+  const selectedModel = state.models?.data.find(
+    (model) => model.id === openAIPayload.model,
+  )
+  if (!selectedModel) {
+    return 0
+  }
+  try {
+    const tokenCount = await getTokenCount(openAIPayload, selectedModel)
+    return tokenCount.input
+  } catch {
+    return 0
+  }
 }
 
 export function updateLastUsage(

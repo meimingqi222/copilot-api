@@ -93,6 +93,31 @@ export function createTables(db: Database): void {
       updated_at INTEGER NOT NULL
     )
   `)
+  ensureColumn(db, "model_pricing", "context_threshold_tokens", "INTEGER")
+  ensureColumn(
+    db,
+    "model_pricing",
+    "extended_prompt_price_per_1k",
+    "REAL DEFAULT 0",
+  )
+  ensureColumn(
+    db,
+    "model_pricing",
+    "extended_completion_price_per_1k",
+    "REAL DEFAULT 0",
+  )
+  ensureColumn(
+    db,
+    "model_pricing",
+    "extended_cache_read_price_per_1k",
+    "REAL DEFAULT 0",
+  )
+  ensureColumn(
+    db,
+    "model_pricing",
+    "extended_cache_write_price_per_1k",
+    "REAL DEFAULT 0",
+  )
   db.run(`
     CREATE TABLE IF NOT EXISTS stats_migrations (
       name TEXT PRIMARY KEY,

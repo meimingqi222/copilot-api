@@ -8,10 +8,17 @@
  */
 
 import { logger } from "~/lib/logger"
+import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 
 import type { ApiCredential, ProviderConnection } from "./types"
 
+import {
+  getConnectionAuthStatus,
+  getConnectionCooldownUntil,
+  getConnectionQuotaExhaustedAt,
+  getConnectionQuotaState,
+} from "./connection-metadata"
 import { DEFAULTS } from "./types"
 
 /**
@@ -67,6 +74,112 @@ export function isCredentialAvailable(credential: ApiCredential): boolean {
 export function isConnectionAvailable(connection: ProviderConnection): boolean {
   if (!connection.enabled) return false
   return connection.credentials.some((c) => isCredentialAvailable(c))
+}
+
+export type ConnectionUnavailabilityReason =
+  | "available"
+  | "disabled"
+  | "auth_error"
+  | "cooldown"
+  | "quota_exhausted"
+
+export interface ConnectionRoutability {
+  routable: boolean
+  reason: ConnectionUnavailabilityReason
+  /** 恢复前剩余秒数(诊断用);可路由时为 0。 */
+  retryAfterSeconds: number
+}
+
+/**
+ * Connection 可调度性的唯一定义点。
+ *
+ * 历史上有三处各自为政的判断:route-target 的
+ * isAccountManagedConnectionRoutable(布尔门禁)、request-admission 的
+ * getConnectionAvailability(诊断)与这里的 isConnectionAvailable(展示)。
+ * 本函数收敛前两者的调度语义(取并集:任一旧判断认为不可用即不可用),
+ * isConnectionAvailable 保持展示用途不变。
+ *
+ * 前提:调用方已执行 refreshConnectionAvailability(过期状态恢复),
+ * 本函数为纯判定,不产生副作用。
+ */
+export function getConnectionRoutability(
+  connection: ProviderConnection,
+): ConnectionRoutability {
+  if (!connection.enabled) {
+    return { routable: false, reason: "disabled", retryAfterSeconds: 0 }
+  }
+  // 首 credential 被禁用 → 整个 connection 不可路由(通配路径只用 credentials[0])。
+  const primary = connection.credentials[0]
+  if (primary && !primary.enabled) {
+    return { routable: false, reason: "disabled", retryAfterSeconds: 0 }
+  }
+  // 鉴权:credential 级与 connection 级(双写镜像)取并集。
+  const authError =
+    connection.credentials.some((c) => c.status === "auth_error")
+    || getConnectionAuthStatus(connection) === "error"
+  if (authError) {
+    return { routable: false, reason: "auth_error", retryAfterSeconds: 10 }
+  }
+  // 限流器冷却(内存 + credentials[0].cooldownUntil 同步)。
+  const remainingCooldown = getRemainingCooldownSeconds(connection.id)
+  if (remainingCooldown > 0) {
+    return {
+      routable: false,
+      reason: "cooldown",
+      retryAfterSeconds: remainingCooldown,
+    }
+  }
+  // 配额:credential 级与 connection 级(双写镜像)取并集。
+  const quotaWaitSeconds = getQuotaRetryAfterSeconds(connection)
+  if (quotaWaitSeconds !== null) {
+    return {
+      routable: false,
+      reason: "quota_exhausted",
+      retryAfterSeconds: quotaWaitSeconds,
+    }
+  }
+  return { routable: true, reason: "available", retryAfterSeconds: 0 }
+}
+
+/**
+ * 配额耗尽剩余秒数;未耗尽返回 null。
+ * credential 级(以 cooldownUntil 为准)与 connection 级
+ * (cooldownUntil/耗尽恢复窗口)取并集,以前者/较长者为准。
+ */
+function getQuotaRetryAfterSeconds(
+  connection: ProviderConnection,
+): number | null {
+  const now = Date.now()
+  let waitSeconds: number | null = null
+  for (const credential of connection.credentials) {
+    if (credential.status !== "quota_exhausted") continue
+    const remaining =
+      credential.cooldownUntil !== undefined && credential.cooldownUntil > now ?
+        Math.ceil((credential.cooldownUntil - now) / 1000)
+      : 0
+    waitSeconds = Math.max(waitSeconds ?? 0, remaining)
+  }
+  if (getConnectionQuotaState(connection) === "exhausted") {
+    const ends: Array<number> = []
+    const cooldownUntil = getConnectionCooldownUntil(connection)
+    if (cooldownUntil !== undefined && cooldownUntil > now) {
+      ends.push(cooldownUntil)
+    }
+    const exhaustedAt = getConnectionQuotaExhaustedAt(connection)
+    if (
+      exhaustedAt !== undefined
+      && now - exhaustedAt < DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+    ) {
+      ends.push(exhaustedAt + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
+    }
+    if (ends.length > 0) {
+      waitSeconds = Math.max(
+        waitSeconds ?? 0,
+        Math.ceil((Math.max(...ends) - now) / 1000),
+      )
+    }
+  }
+  return waitSeconds
 }
 
 export interface RateLimitInfo {

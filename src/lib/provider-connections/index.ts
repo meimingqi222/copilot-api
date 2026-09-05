@@ -10,6 +10,7 @@ export {
 } from "./account-managed"
 export {
   classifyUpstreamError,
+  getConnectionRoutability,
   isCodexUsageLimitError,
   isConnectionAvailable,
   isCredentialAvailable,
@@ -22,7 +23,12 @@ export {
   resetCredentialStatus,
   setCredentialEnabled,
 } from "./availability"
-export type { RateLimitInfo, UpstreamErrorKind } from "./availability"
+export type {
+  ConnectionRoutability,
+  ConnectionUnavailabilityReason,
+  RateLimitInfo,
+  UpstreamErrorKind,
+} from "./availability"
 export {
   connectionHasCredentials,
   getConnectionCodebuffAuthToken,
@@ -81,7 +87,6 @@ export {
   setConnectionSetting,
   setCredentialContextField,
   setCredentialValue,
-  syncAccountToConnection,
 } from "./connection-metadata"
 export type { AccountLegacyMetadata } from "./connection-metadata"
 export {

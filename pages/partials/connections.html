@@ -1,0 +1,1391 @@
+        <!-- Provider Connections View -->
+        <div
+          x-show="currentView === 'connections'"
+          x-data="connectionsView()"
+          x-init="load()"
+          style="display: none"
+        >
+          <header class="flex justify-between items-center mb-8">
+            <h2 class="text-headline" x-text="t('connections.title')"></h2>
+            <div class="flex items-center gap-3">
+              <button
+                @click="load()"
+                class="btn btn-secondary"
+                :class="{ 'opacity-60': loading }"
+              >
+                <i
+                  data-lucide="refresh-cw"
+                  class="w-4 h-4"
+                  :class="{ 'animate-spin': loading }"
+                ></i>
+                <span x-text="t('refresh')"></span>
+              </button>
+              <button @click="exportConnections()" class="btn btn-secondary">
+                <i data-lucide="download" class="w-4 h-4"></i>
+                <span x-text="t('connections.export')"></span>
+              </button>
+              <button @click="openImportModal()" class="btn btn-secondary">
+                <i data-lucide="upload" class="w-4 h-4"></i>
+                <span x-text="t('connections.import')"></span>
+              </button>
+              <button @click="testAllCreds()" class="btn btn-secondary">
+                <i data-lucide="zap" class="w-4 h-4"></i>
+                <span x-text="t('connections.testAll')"></span>
+              </button>
+              <button @click="openCreate()" class="btn btn-primary">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                <span x-text="t('connections.add')"></span>
+              </button>
+            </div>
+          </header>
+
+          <!-- Loading state -->
+          <div
+            x-show="loading && connections.length === 0"
+            class="flex justify-center py-20"
+          >
+            <div
+              class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"
+            ></div>
+          </div>
+
+          <!-- Empty state -->
+          <div
+            x-show="!loading && connections.length === 0"
+            class="card p-10 text-center space-y-6"
+          >
+            <div class="space-y-2">
+              <div
+                class="w-14 h-14 rounded-xl bg-[var(--apple-gray-6)] flex items-center justify-center mx-auto mb-2"
+              >
+                <i
+                  data-lucide="plug-zap"
+                  class="w-7 h-7 text-[var(--apple-blue)]"
+                ></i>
+              </div>
+              <p
+                class="text-title-3 font-semibold"
+                x-text="t('connections.emptyTitle')"
+              ></p>
+              <p
+                class="text-sm text-[var(--apple-text-secondary)] max-w-md mx-auto"
+                x-text="t('connections.emptyHint')"
+              ></p>
+            </div>
+            <div
+              class="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-3xl mx-auto items-stretch"
+            >
+              <template x-for="preset in popularPresets()" :key="preset.id">
+                <button
+                  @click="openCreate(preset.id)"
+                  class="p-4 rounded-xl border border-[var(--apple-gray-5)] hover:border-[var(--apple-blue)] hover:bg-[var(--apple-gray-6)] transition-colors flex flex-col justify-between group text-left"
+                >
+                  <div>
+                    <div
+                      class="text-sm font-semibold leading-snug text-balance min-h-[2.5rem] text-[var(--apple-text)] group-hover:text-[var(--apple-blue)] transition-colors"
+                      x-text="preset.name"
+                    ></div>
+                    <div
+                      class="text-xs leading-relaxed text-[var(--apple-text-tertiary)] line-clamp-2 min-h-[2rem] mt-1"
+                      :title="preset.description || preset.baseUrl"
+                      x-text="preset.description || preset.baseUrl"
+                    ></div>
+                  </div>
+                  <div
+                    class="text-xs font-medium text-[var(--apple-blue)] mt-3 flex items-center gap-1"
+                  >
+                    <span x-text="t('connections.add')"></span>
+                    <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                  </div>
+                </button>
+              </template>
+            </div>
+            <div class="pt-2">
+              <button
+                @click="openCreate()"
+                class="btn btn-secondary mx-auto text-xs py-2 px-4"
+              >
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                <span x-text="t('connections.add')"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Connection list -->
+          <div class="space-y-4">
+            <template x-for="conn in connections" :key="conn.id">
+              <div class="card p-0 overflow-hidden">
+                <!-- Card header -->
+                <div class="p-5 flex items-start gap-4">
+                  <!-- Provider avatar -->
+                  <div
+                    class="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-base font-semibold flex-shrink-0 shadow-sm"
+                    :style="'background:' + protocolColor(conn.protocol)"
+                  >
+                    <span x-text="conn.name?.[0]?.toUpperCase() || '?'"></span>
+                  </div>
+
+                  <!-- Info block -->
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap mb-1">
+                      <h3 class="text-title-3" x-text="conn.name"></h3>
+                      <span
+                        class="tag"
+                        :class="conn.enabled ? 'tag-success' : 'tag-muted'"
+                        x-text="conn.enabled ? t('enabled') : t('disabled')"
+                      ></span>
+                      <span class="tag tag-info" x-text="conn.protocol"></span>
+                    </div>
+                    <p
+                      class="text-sm text-[var(--apple-text-secondary)] font-mono break-all leading-snug"
+                      x-text="conn.baseUrl"
+                    ></p>
+                    <div class="flex items-center gap-3 mt-1.5 flex-wrap">
+                      <span class="text-xs text-[var(--apple-text-tertiary)]"
+                        >id: <span class="font-mono" x-text="conn.id"></span
+                      ></span>
+                      <span class="text-xs text-[var(--apple-text-tertiary)]"
+                        >priority
+                        <span class="font-mono" x-text="conn.priority"></span
+                      ></span>
+                      <span class="text-xs text-[var(--apple-text-tertiary)]"
+                        >weight
+                        <span class="font-mono" x-text="conn.weight ?? 1"></span
+                      ></span>
+                      <span
+                        x-show="conn.lastModelDiscoveryAt"
+                        class="text-xs text-[var(--apple-text-tertiary)]"
+                        >↻
+                        <span
+                          x-text="formatTime(conn.lastModelDiscoveryAt)"
+                        ></span
+                      ></span>
+                    </div>
+                    <p
+                      x-show="conn.lastModelDiscoveryError"
+                      class="text-xs text-[var(--apple-red)] mt-1 truncate"
+                      x-text="conn.lastModelDiscoveryError"
+                    ></p>
+                  </div>
+
+                  <!-- Action buttons -->
+                  <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      @click="refreshModels(conn)"
+                      class="btn-icon"
+                      :title="t('connections.refreshModels')"
+                    >
+                      <i data-lucide="refresh-ccw" class="w-4 h-4"></i>
+                    </button>
+                    <button
+                      @click="exportOneConnection(conn)"
+                      class="btn-icon"
+                      :title="t('connections.exportOne')"
+                    >
+                      <i data-lucide="download" class="w-4 h-4"></i>
+                    </button>
+                    <button @click="openEdit(conn)" class="btn-icon">
+                      <i data-lucide="edit-2" class="w-4 h-4"></i>
+                    </button>
+                    <button
+                      @click="deleteConn(conn)"
+                      class="btn-icon"
+                      style="color: var(--apple-red)"
+                    >
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Credentials section -->
+                <div class="border-t border-[var(--apple-gray-5)] px-5 py-4">
+                  <div class="flex items-center justify-between mb-3">
+                    <span
+                      class="text-xs font-semibold text-[var(--apple-text-tertiary)] uppercase tracking-wider"
+                      x-text="t('connections.credentials')"
+                    ></span>
+                    <button
+                      @click="openAddCredential(conn)"
+                      class="btn btn-sm btn-ghost"
+                    >
+                      <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                      <span x-text="t('connections.addCredential')"></span>
+                    </button>
+                  </div>
+                  <div class="space-y-1.5">
+                    <template x-for="cred in conn.credentials" :key="cred.id">
+                      <div
+                        class="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-[var(--apple-bg-secondary)] hover:bg-[var(--apple-gray-6)] transition-colors group"
+                      >
+                        <!-- Status dot -->
+                        <div
+                          class="w-2 h-2 rounded-full flex-shrink-0"
+                          :class="{
+                             'bg-[var(--apple-green)]': cred.enabled && cred.status === 'ready',
+                             'bg-[var(--apple-orange)]': cred.status === 'cooldown',
+                             'bg-[var(--apple-red)]': cred.status === 'auth_error' || cred.status === 'quota_exhausted',
+                             'bg-[var(--apple-gray-3)]': !cred.enabled || cred.status === 'disabled'
+                           }"
+                        ></div>
+                        <!-- Key display -->
+                        <div class="flex-1 min-w-0">
+                          <span
+                            class="text-xs font-mono text-[var(--apple-text-secondary)] break-all"
+                            x-text="revealedCreds[cred.id] || cred.secretPreview || '••••••••'"
+                          ></span>
+                          <span
+                            x-show="cred.lastError"
+                            class="block text-xs text-[var(--apple-red)] truncate"
+                            x-text="cred.lastError"
+                          ></span>
+                        </div>
+                        <!-- Actions -->
+                        <div class="flex items-center gap-0.5 flex-shrink-0">
+                          <button
+                            @click="testCred(conn, cred)"
+                            class="btn-icon"
+                            style="width: 28px; height: 28px"
+                            :class="testing[cred.id] ? 'opacity-50 pointer-events-none' : ''"
+                            :title="t('connections.testApi')"
+                          >
+                            <i
+                              :data-lucide="testing[cred.id] ? 'loader' : 'zap'"
+                              class="w-3.5 h-3.5"
+                              :class="testing[cred.id] ? 'animate-spin' : ''"
+                            ></i>
+                          </button>
+                          <button
+                            @click="revealCred(conn, cred)"
+                            class="btn-icon"
+                            style="width: 28px; height: 28px"
+                            :title="revealedCreds[cred.id] ? '隐藏' : '显示'"
+                          >
+                            <i
+                              :data-lucide="revealedCreds[cred.id] ? 'eye-off' : 'eye'"
+                              class="w-3.5 h-3.5"
+                            ></i>
+                          </button>
+                          <button
+                            x-show="cred.status !== 'ready' && cred.enabled"
+                            @click="resetCredential(conn, cred)"
+                            class="btn-icon"
+                            style="width: 28px; height: 28px"
+                            :title="t('connections.resetStatus')"
+                          >
+                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                          </button>
+                          <button
+                            @click="toggleCredential(conn, cred)"
+                            class="btn-icon"
+                            style="width: 28px; height: 28px"
+                          >
+                            <i
+                              :data-lucide="cred.enabled ? 'pause-circle' : 'play-circle'"
+                              class="w-3.5 h-3.5"
+                            ></i>
+                          </button>
+                          <button
+                            @click="openEditCredential(conn, cred)"
+                            class="btn-icon"
+                            style="width: 28px; height: 28px"
+                          >
+                            <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
+                          </button>
+                          <button
+                            @click="deleteCredential(conn, cred)"
+                            class="btn-icon"
+                            style="
+                              width: 28px;
+                              height: 28px;
+                              color: var(--apple-red);
+                            "
+                          >
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                          </button>
+                        </div>
+                      </div>
+                    </template>
+                    <p
+                      x-show="!conn.credentials || conn.credentials.length === 0"
+                      class="text-sm text-[var(--apple-text-tertiary)] italic py-1 px-1"
+                      x-text="t('connections.noCredentials')"
+                    ></p>
+                  </div>
+                </div>
+
+                <!-- Models section -->
+                <div class="border-t border-[var(--apple-gray-5)] px-5 py-3">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <span
+                        class="text-xs font-semibold text-[var(--apple-text-tertiary)] uppercase tracking-wider"
+                        x-text="t('connections.models')"
+                      ></span>
+                      <span
+                        class="tag tag-sm tag-muted"
+                        x-text="conn.models?.length || 0"
+                      ></span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button
+                        @click="openBatchAddModel(conn)"
+                        class="btn btn-sm btn-ghost"
+                        style="padding: 3px 8px; font-size: 12px"
+                        :title="t('connections.batchAddModel')"
+                      >
+                        <i data-lucide="clipboard-list" class="w-3 h-3"></i>
+                        <span x-text="t('connections.batchAddModel')"></span>
+                      </button>
+                      <button
+                        @click="openAddModel(conn)"
+                        class="btn btn-sm btn-ghost"
+                        style="padding: 3px 8px; font-size: 12px"
+                      >
+                        <i data-lucide="plus" class="w-3 h-3"></i>
+                        <span x-text="t('connections.addModel')"></span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="flex flex-wrap gap-1">
+                    <template
+                      x-for="m in (conn.models || []).slice(0, 20)"
+                      :key="m.publicId"
+                    >
+                      <div
+                        class="group relative inline-flex items-center gap-0.5"
+                      >
+                        <span
+                          class="tag tag-sm cursor-pointer"
+                          :class="m.enabled ? 'tag-info' : 'tag-muted'"
+                          @click="toggleModel(conn, m)"
+                          x-text="m.publicId"
+                          :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"
+                        ></span>
+                        <button
+                          @click.stop="openEditModel(conn, m)"
+                          class="w-4 h-4 rounded-full bg-[var(--apple-gray-4)] text-[var(--apple-text-secondary)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          style="font-size: 10px; line-height: 1"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          @click.stop="deleteModel(conn, m)"
+                          class="w-4 h-4 rounded-full bg-[var(--apple-red)] text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          style="font-size: 10px; line-height: 1"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </template>
+                    <button
+                      x-show="(conn.models?.length || 0) > 20"
+                      @click="openModelManager(conn)"
+                      class="tag tag-sm tag-info cursor-pointer hover:opacity-80"
+                      x-text="'+' + (conn.models.length - 20) + ' more'"
+                      :title="t('connections.modelManager')"
+                    ></button>
+                    <span
+                      x-show="!conn.models?.length"
+                      class="text-xs text-[var(--apple-text-tertiary)] italic"
+                      >—</span
+                    >
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Connection Modal (AxonHub-style Split Layout) -->
+          <div
+            x-show="showConnModal"
+            class="modal-overlay"
+            @click.self="showConnModal = false"
+            x-cloak
+          >
+            <div class="modal modal-split-container">
+              <!-- Modal Header -->
+              <div class="modal-header flex-shrink-0">
+                <h3
+                  class="text-title-3 font-semibold"
+                  x-text="connForm.id ? t('connections.edit') : t('connections.add')"
+                ></h3>
+                <button @click="showConnModal = false" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+
+              <!-- Modal Body (Split Layout) -->
+              <div
+                class="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden"
+              >
+                <!-- ── 左侧 Provider 选择与搜索栏 (仅新建时展示) ── -->
+                <div
+                  x-show="!connForm.id"
+                  class="w-full md:w-64 lg:w-72 border-r border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] flex flex-col min-h-0 flex-shrink-0"
+                >
+                  <!-- 顶部过滤与搜索 -->
+                  <div
+                    class="p-2.5 border-b border-[var(--apple-gray-5)] space-y-2 bg-[var(--apple-bg-secondary)]"
+                  >
+                    <!-- 分类 Tabs -->
+                    <div class="flex gap-1 flex-wrap">
+                      <button
+                        type="button"
+                        @click="presetCategory = 'popular'"
+                        :class="presetCategory === 'popular' && !presetSearchQuery ? 'btn-tab-active' : 'btn-tab'"
+                        class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                        x-text="t('connections.tabPopular')"
+                      ></button>
+                      <button
+                        type="button"
+                        @click="presetCategory = 'domestic'"
+                        :class="presetCategory === 'domestic' && !presetSearchQuery ? 'btn-tab-active' : 'btn-tab'"
+                        class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                        x-text="t('connections.tabDomestic')"
+                      ></button>
+                      <button
+                        type="button"
+                        @click="presetCategory = 'international'"
+                        :class="presetCategory === 'international' && !presetSearchQuery ? 'btn-tab-active' : 'btn-tab'"
+                        class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                        x-text="t('connections.tabInternational')"
+                      ></button>
+                      <button
+                        type="button"
+                        @click="presetCategory = 'aggregator'"
+                        :class="presetCategory === 'aggregator' && !presetSearchQuery ? 'btn-tab-active' : 'btn-tab'"
+                        class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                        x-text="t('connections.tabAggregator')"
+                      ></button>
+                      <button
+                        type="button"
+                        @click="presetCategory = 'local'"
+                        :class="presetCategory === 'local' && !presetSearchQuery ? 'btn-tab-active' : 'btn-tab'"
+                        class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                        x-text="t('connections.tabLocal')"
+                      ></button>
+                      <button
+                        type="button"
+                        @click="selectCustomPreset()"
+                        :class="selectedPresetId === 'custom' ? 'btn-tab-active' : 'btn-tab'"
+                        class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                        x-text="t('connections.tabCustom')"
+                      ></button>
+                    </div>
+
+                    <!-- 搜索框 -->
+                    <div class="relative">
+                      <i
+                        data-lucide="search"
+                        class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--apple-text-tertiary)]"
+                      ></i>
+                      <input
+                        type="text"
+                        x-model="presetSearchQuery"
+                        class="form-input text-xs pl-7 pr-6 py-1 h-7 rounded-lg"
+                        :placeholder="t('connections.searchPreset')"
+                      />
+                      <button
+                        type="button"
+                        x-show="presetSearchQuery"
+                        @click="presetSearchQuery = ''"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--apple-text-tertiary)] hover:text-[var(--apple-text)]"
+                      >
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 垂直 Provider 列表 -->
+                  <div class="flex-1 overflow-y-auto p-2 space-y-1">
+                    <template
+                      x-for="preset in filteredPresets()"
+                      :key="preset.id"
+                    >
+                      <button
+                        type="button"
+                        @click="selectPreset(preset)"
+                        :class="{ 'active': selectedPresetId === preset.id }"
+                        class="provider-sidebar-item group"
+                      >
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center justify-between gap-1">
+                            <span
+                              class="text-xs font-medium truncate text-[var(--apple-text)] provider-item-name"
+                              x-text="preset.name"
+                            ></span>
+                            <span
+                              x-show="selectedPresetId === preset.id"
+                              class="text-[var(--apple-blue)] flex-shrink-0"
+                            >
+                              <i data-lucide="check" class="w-3.5 h-3.5"></i>
+                            </span>
+                          </div>
+                          <div
+                            class="text-[11px] text-[var(--apple-text-tertiary)] truncate mt-0.5"
+                            x-text="preset.description || preset.baseUrl"
+                          ></div>
+                        </div>
+                      </button>
+                    </template>
+
+                    <div
+                      x-show="filteredPresets().length === 0"
+                      class="p-4 text-center text-xs text-[var(--apple-text-tertiary)]"
+                      x-text="t('connections.noPresetsFound')"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- ── 右侧 配置表单 + 模型管理 分栏 ── -->
+                <div
+                  class="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden"
+                >
+                  <!-- 左列: 配置表单 + 高级选项 -->
+                  <div
+                    class="flex-1 min-h-0 overflow-y-auto p-5 space-y-4 bg-[var(--apple-bg)]"
+                  >
+                  <!-- 顶部选中的 Provider 摘要卡片 -->
+                  <div
+                    x-show="selectedPreset && selectedPresetId !== 'custom'"
+                    class="flex items-center justify-between p-3 rounded-xl bg-[var(--apple-bg-secondary)] border border-[var(--apple-gray-5)]"
+                  >
+                    <div class="min-w-0 pr-2">
+                      <div
+                        class="text-xs font-semibold text-[var(--apple-text)]"
+                        x-text="selectedPreset?.name"
+                      ></div>
+                      <div
+                        class="text-[11px] text-[var(--apple-text-tertiary)] truncate mt-0.5"
+                        x-text="selectedPreset?.description"
+                      ></div>
+                    </div>
+                    <template x-if="selectedPreset && selectedPreset.portalUrl">
+                      <a
+                        :href="selectedPreset.portalUrl"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn btn-secondary text-xs py-1 px-2.5 flex items-center gap-1.5 text-[var(--apple-blue)] flex-shrink-0 hover:border-[var(--apple-blue)]"
+                      >
+                        <span x-text="t('connections.getApiKey')"></span>
+                        <i data-lucide="external-link" class="w-3 h-3"></i>
+                      </a>
+                    </template>
+                  </div>
+
+                  <!-- 基础配置 -->
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="sm:col-span-2">
+                      <label
+                        class="form-label"
+                        x-text="t('connections.name')"
+                      ></label>
+                      <input
+                        type="text"
+                        x-model="connForm.name"
+                        class="form-input"
+                        placeholder="DeepSeek Production"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        class="form-label"
+                        x-text="t('connections.protocol')"
+                      ></label>
+                      <select
+                        x-model="connForm.protocol"
+                        class="form-input text-xs"
+                      >
+                        <option value="openai-compatible">
+                          openai-compatible
+                        </option>
+                        <option value="openai-responses-compatible">
+                          openai-responses
+                        </option>
+                        <option value="anthropic-compatible">
+                          anthropic-compatible
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      class="form-label"
+                      x-text="t('connections.baseUrl')"
+                    ></label>
+                    <input
+                      type="text"
+                      x-model="connForm.baseUrl"
+                      class="form-input"
+                      placeholder="https://api.deepseek.com/v1"
+                    />
+                    <p
+                      class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                      x-text="t('connections.baseUrlHint')"
+                    ></p>
+                  </div>
+
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <label
+                        class="form-label mb-0"
+                        x-text="t('connections.apiKey')"
+                      ></label>
+                    </div>
+                    <input
+                      type="password"
+                      x-model="connForm.apiKey"
+                      class="form-input"
+                      :placeholder="connForm._credentialId ? t('connections.leaveBlank') : (selectedPreset?.keyPlaceholder || 'sk-...')"
+                    />
+                  </div>
+
+                  <!-- 高级选项折叠面板 -->
+                  <details class="group pt-1">
+                    <summary
+                      class="cursor-pointer text-xs font-semibold text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)] flex items-center gap-1 select-none"
+                    >
+                      <i
+                        data-lucide="chevron-right"
+                        class="w-3.5 h-3.5 group-open:rotate-90 transition-transform"
+                      ></i>
+                      <span x-text="t('connections.advancedOptions')"></span>
+                    </summary>
+                    <div
+                      class="mt-3 space-y-3 pl-4 border-l-2 border-[var(--apple-gray-5)]"
+                    >
+                      <div class="grid grid-cols-2 gap-3">
+                        <div>
+                          <label
+                            class="form-label"
+                            x-text="t('connections.priority')"
+                          ></label>
+                          <input
+                            type="number"
+                            x-model.number="connForm.priority"
+                            class="form-input"
+                            placeholder="10"
+                            min="0"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            class="form-label"
+                            x-text="t('connections.weight')"
+                          ></label>
+                          <input
+                            type="number"
+                            x-model.number="connForm.weight"
+                            class="form-input"
+                            placeholder="1"
+                            min="1"
+                          />
+                        </div>
+                      </div>
+                      <div class="flex items-center justify-between">
+                        <div>
+                          <label class="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              x-model="connForm.enabled"
+                              class="w-4 h-4 rounded accent-[var(--apple-blue)]"
+                            />
+                            <span
+                              class="text-xs font-medium"
+                              x-text="t('enabled')"
+                            ></span>
+                          </label>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <label class="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              x-model="connForm.discoveryEnabled"
+                              class="w-4 h-4 rounded accent-[var(--apple-blue)]"
+                            />
+                            <span
+                              class="text-xs"
+                              x-text="t('connections.discoveryEnabled')"
+                            ></span>
+                          </label>
+                          <select
+                            x-model="connForm.discoveryMode"
+                            class="form-input text-xs py-1 px-2"
+                            :disabled="!connForm.discoveryEnabled"
+                          >
+                            <option value="merge">merge</option>
+                            <option value="replace">replace</option>
+                            <option value="manual-only">manual-only</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <!-- 自定义请求头 -->
+                      <div class="space-y-1.5">
+                        <div class="flex items-center justify-between">
+                          <label
+                            class="form-label mb-0"
+                            x-text="t('connections.customHeaders')"
+                          ></label>
+                          <button
+                            type="button"
+                            @click="addCustomHeader()"
+                            class="text-xs text-[var(--apple-blue)] hover:underline flex items-center gap-0.5"
+                          >
+                            <i data-lucide="plus" class="w-3 h-3"></i>
+                            <span x-text="t('connections.addHeader')"></span>
+                          </button>
+                        </div>
+                        <p
+                          class="text-[11px] text-[var(--apple-text-tertiary)]"
+                          x-text="t('connections.customHeadersHint')"
+                        ></p>
+                        <template
+                          x-for="(h, idx) in connForm.customHeaders"
+                          :key="idx"
+                        >
+                          <div class="flex items-center gap-1.5">
+                            <input
+                              type="text"
+                              x-model="h.key"
+                              class="form-input text-xs flex-1"
+                              placeholder="X-Custom-Header"
+                            />
+                            <input
+                              type="text"
+                              x-model="h.value"
+                              class="form-input text-xs flex-1"
+                              :placeholder="t('connections.headerValue')"
+                            />
+                            <button
+                              type="button"
+                              @click="removeCustomHeader(idx)"
+                              class="text-[var(--apple-text-tertiary)] hover:text-[var(--apple-red)] flex-shrink-0 p-1"
+                            >
+                              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </details>
+                  </div>
+
+                  <!-- 右列: 模型管理面板 -->
+                  <div
+                    class="w-full md:w-72 lg:w-80 border-t md:border-t-0 md:border-l border-[var(--apple-gray-5)] flex flex-col min-h-0 bg-[var(--apple-bg-secondary)]"
+                  >
+                    <!-- 模型面板头部 -->
+                    <div
+                      class="p-3 border-b border-[var(--apple-gray-5)] space-y-2 flex-shrink-0"
+                    >
+                      <div
+                        class="flex items-center justify-between flex-wrap gap-2"
+                      >
+                        <label class="form-label mb-0 flex items-center gap-1.5">
+                          <span x-text="t('connections.supportedModels')"></span>
+                          <span
+                            class="text-xs font-semibold text-[var(--apple-blue)]"
+                            x-show="selectedModelIds.length > 0"
+                            x-text="t('connections.selectedCount', { count: selectedModelIds.length })"
+                          ></span>
+                        </label>
+                      </div>
+                      <div class="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          @click="fetchRemoteModels()"
+                          :disabled="fetchingModels || !connForm.baseUrl"
+                          class="btn btn-secondary text-xs py-1 px-2.5 flex items-center gap-1.5 flex-1"
+                          :class="{ 'opacity-70': fetchingModels }"
+                        >
+                          <i
+                            data-lucide="zap"
+                            class="w-3.5 h-3.5 text-[var(--apple-blue)]"
+                            :class="{ 'animate-spin': fetchingModels }"
+                          ></i>
+                          <span
+                            x-text="fetchingModels ? t('connections.fetching') : t('connections.fetchModels')"
+                          ></span>
+                        </button>
+                        <template
+                          x-if="showFetchedModelsPanel && fetchedModels.length > 0"
+                        >
+                          <div class="flex items-center gap-1">
+                            <button
+                              type="button"
+                              @click="toggleSelectAllModels()"
+                              class="btn btn-secondary text-xs py-1 px-2"
+                              x-text="t('connections.selectAll')"
+                            ></button>
+                            <button
+                              type="button"
+                              @click="clearModelSelection()"
+                              class="btn btn-secondary text-xs py-1 px-2"
+                              x-text="t('connections.clearAll')"
+                            ></button>
+                          </div>
+                        </template>
+                      </div>
+
+                      <!-- 模型搜索框 -->
+                      <template
+                        x-if="showFetchedModelsPanel && fetchedModels.length > 3"
+                      >
+                        <div class="relative">
+                          <i
+                            data-lucide="search"
+                            class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--apple-text-tertiary)]"
+                          ></i>
+                          <input
+                            type="text"
+                            x-model="modelSearchQuery"
+                            class="form-input text-xs pl-7 pr-6 py-1 h-7 rounded-lg"
+                            :placeholder="t('connections.searchModels')"
+                          />
+                          <button
+                            type="button"
+                            x-show="modelSearchQuery"
+                            @click="modelSearchQuery = ''"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--apple-text-tertiary)] hover:text-[var(--apple-text)]"
+                          >
+                            <i data-lucide="x" class="w-3 h-3"></i>
+                          </button>
+                        </div>
+                      </template>
+                    </div>
+
+                    <!-- 模型列表 -->
+                    <div class="flex-1 overflow-y-auto">
+                      <template
+                        x-if="showFetchedModelsPanel && fetchedModels.length > 0"
+                      >
+                        <div
+                          class="divide-y divide-[var(--apple-gray-5)] bg-[var(--apple-surface)]"
+                        >
+                          <template
+                            x-for="model in filteredFetchedModels()"
+                            :key="model.publicId"
+                          >
+                            <label
+                              class="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-[var(--apple-hover)] transition-colors"
+                            >
+                              <input
+                                type="checkbox"
+                                :checked="isModelSelected(model.publicId)"
+                                @change="toggleModelSelection(model.publicId)"
+                                class="w-4 h-4 rounded accent-[var(--apple-blue)] cursor-pointer"
+                              />
+                              <div class="flex-1 min-w-0">
+                                <div
+                                  class="text-xs font-medium truncate text-[var(--apple-text)]"
+                                  x-text="model.publicId"
+                                ></div>
+                                <div
+                                  class="text-[11px] text-[var(--apple-text-tertiary)] truncate"
+                                  x-show="model.upstreamId && model.upstreamId !== model.publicId"
+                                  x-text="model.upstreamId"
+                                ></div>
+                              </div>
+                              <div
+                                class="flex gap-1 flex-shrink-0"
+                                x-show="model.endpoints && model.endpoints.length > 0"
+                              >
+                                <template x-for="ep in model.endpoints" :key="ep">
+                                  <span
+                                    class="text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] font-mono"
+                                    x-text="ep"
+                                  ></span>
+                                </template>
+                              </div>
+                            </label>
+                          </template>
+                          <div
+                            x-show="filteredFetchedModels().length === 0"
+                            class="p-3 text-center text-xs text-[var(--apple-text-tertiary)]"
+                            x-text="t('connections.noModelsFound')"
+                          ></div>
+                        </div>
+                      </template>
+
+                      <div
+                        x-show="!showFetchedModelsPanel || fetchedModels.length === 0"
+                        class="p-6 text-center text-xs text-[var(--apple-text-tertiary)]"
+                      >
+                        <i
+                          data-lucide="package-open"
+                          class="w-8 h-8 mx-auto mb-2 opacity-40"
+                        ></i>
+                        <span x-text="t('connections.noModels')"></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Modal Footer -->
+              <div class="modal-footer flex-shrink-0">
+                <button
+                  type="button"
+                  @click="showConnModal = false"
+                  class="btn btn-secondary"
+                  x-text="t('cancel')"
+                ></button>
+                <button
+                  type="button"
+                  @click="saveConn()"
+                  class="btn btn-primary"
+                  x-text="t('save')"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Credential Modal -->
+          <div
+            x-show="showCredModal"
+            class="modal-overlay"
+            @click.self="showCredModal = false"
+            x-cloak
+          >
+            <div class="modal">
+              <div class="modal-header">
+                <h3
+                  class="text-title-3"
+                  x-text="credForm.id ? t('connections.editCredential') : t('connections.addCredential')"
+                ></h3>
+                <button @click="showCredModal = false" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body space-y-2">
+                <label
+                  class="form-label"
+                  x-text="t('connections.credValue')"
+                ></label>
+                <textarea
+                  x-show="!credForm.id"
+                  x-model="credForm.value"
+                  class="form-input"
+                  rows="5"
+                  placeholder="sk-xxx...&#10;sk-yyy...&#10;sk-zzz..."
+                  style="
+                    resize: vertical;
+                    font-family: monospace;
+                    font-size: 13px;
+                  "
+                ></textarea>
+                <input
+                  x-show="credForm.id"
+                  type="password"
+                  x-model="credForm.value"
+                  class="form-input"
+                  :placeholder="t('connections.leaveBlank')"
+                />
+                <p
+                  x-show="!credForm.id"
+                  class="text-xs text-[var(--apple-text-tertiary)]"
+                  x-text="t('connections.credBulkHint')"
+                ></p>
+              </div>
+              <div class="modal-footer">
+                <button
+                  @click="showCredModal = false"
+                  class="btn btn-secondary"
+                  x-text="t('cancel')"
+                ></button>
+                <button
+                  @click="saveCred()"
+                  class="btn btn-primary"
+                  x-text="t('save')"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model Modal -->
+          <div
+            x-show="showModelModal"
+            class="modal-overlay"
+            @click.self="showModelModal = false"
+            style="display: none"
+          >
+            <div class="modal">
+              <div class="modal-header">
+                <h3
+                  class="text-title-3"
+                  x-text="modelForm.originalPublicId ? t('connections.editModel') : t('connections.addModel')"
+                ></h3>
+                <button @click="showModelModal = false" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body space-y-4">
+                <div>
+                  <label
+                    class="form-label"
+                    x-text="t('connections.modelPublicId')"
+                  ></label>
+                  <input
+                    type="text"
+                    x-model="modelForm.publicId"
+                    class="form-input"
+                    placeholder="deepseek-chat"
+                  />
+                  <p
+                    class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+                    x-show="modelForm.originalPublicId && modelForm.publicId !== modelForm.originalPublicId"
+                    x-text="t('connections.modelPublicIdRenameHint')"
+                  ></p>
+                </div>
+                <div>
+                  <label
+                    class="form-label"
+                    x-text="t('connections.modelUpstreamId')"
+                  ></label>
+                  <input
+                    type="text"
+                    x-model="modelForm.upstreamId"
+                    class="form-input"
+                    :placeholder="modelForm.publicId || 'GLM-4'"
+                  />
+                  <p
+                    class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+                    x-text="t('connections.modelUpstreamIdHint')"
+                  ></p>
+                  <p
+                    class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+                    x-text="t('connections.modelAliasesGlobalHint')"
+                  ></p>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button
+                  @click="showModelModal = false"
+                  class="btn btn-secondary"
+                  x-text="t('cancel')"
+                ></button>
+                <button
+                  @click="saveModel()"
+                  class="btn btn-primary"
+                  x-text="t('save')"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Batch Add Models Modal -->
+          <div
+            x-show="showBatchModal"
+            class="modal-overlay"
+            @click.self="showBatchModal = false"
+            style="display: none"
+          >
+            <div class="modal" style="max-width: 640px">
+              <div class="modal-header">
+                <h3
+                  class="text-title-3"
+                  x-text="t('connections.batchAddModel')"
+                ></h3>
+                <button @click="showBatchModal = false" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body space-y-4">
+                <!-- 粘贴区 -->
+                <div>
+                  <label
+                    class="form-label"
+                    x-text="t('connections.batchPasteLabel')"
+                  ></label>
+                  <textarea
+                    x-model="batchForm.rawText"
+                    class="form-input font-mono"
+                    rows="8"
+                    :placeholder="t('connections.batchPastePlaceholder')"
+                  ></textarea>
+                  <p
+                    class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+                    x-text="t('connections.batchParseHint')"
+                  ></p>
+                </div>
+
+                <!-- 内置提示词使用说明 -->
+                <div
+                  class="rounded-lg bg-[var(--apple-gray-6)] px-3 py-2 text-xs text-[var(--apple-text-secondary)] space-y-1"
+                >
+                  <div
+                    class="font-semibold"
+                    x-text="t('connections.batchPromptTitle')"
+                  ></div>
+                  <div x-text="t('connections.batchPromptBody')"></div>
+                </div>
+
+                <div class="flex items-center gap-2 flex-wrap">
+                  <button
+                    @click="parseBatchModels()"
+                    class="btn btn-secondary btn-sm"
+                  >
+                    <i data-lucide="list" class="w-3.5 h-3.5"></i>
+                    <span x-text="t('connections.batchParse')"></span>
+                  </button>
+                  <button
+                    @click="aiParseBatchModels()"
+                    class="btn btn-primary btn-sm"
+                    :disabled="batchParsing"
+                  >
+                    <i
+                      data-lucide="sparkles"
+                      class="w-3.5 h-3.5"
+                      :class="{ 'animate-spin': batchParsing }"
+                    ></i>
+                    <span
+                      x-text="batchParsing ? t('connections.batchAiParsing') : t('connections.batchAiParse')"
+                    ></span>
+                  </button>
+                  <button
+                    @click="selectAllBatchModels()"
+                    class="btn btn-ghost btn-sm"
+                    x-show="batchForm.models.length > 0"
+                  >
+                    <span x-text="t('connections.batchSelectAll')"></span>
+                  </button>
+                  <span
+                    class="text-xs text-[var(--apple-text-tertiary)]"
+                    x-show="batchForm.models.length > 0"
+                    x-text="batchForm.models.filter(m => m.selected).length + ' / ' + batchForm.models.length + ' selected'"
+                  ></span>
+                </div>
+
+                <!-- 解析结果勾选列表(可编辑) -->
+                <div
+                  x-show="batchForm.models.length > 0"
+                  class="border border-[var(--apple-gray-5)] rounded-lg max-h-80 overflow-y-auto"
+                >
+                  <template x-for="(m, idx) in batchForm.models" :key="idx">
+                    <div
+                      class="px-3 py-2 border-b border-[var(--apple-gray-5)] last:border-b-0 hover:bg-[var(--apple-gray-6)]"
+                    >
+                      <div class="flex items-center gap-2 mb-1.5">
+                        <input
+                          type="checkbox"
+                          :checked="m.selected"
+                          @change="toggleBatchModel(m)"
+                          class="form-checkbox"
+                        />
+                        <input
+                          type="text"
+                          x-model="m.publicId"
+                          class="form-input flex-1 font-mono text-sm font-semibold"
+                          :placeholder="t('connections.batchModelPublicIdPh')"
+                        />
+                      </div>
+                      <div class="grid grid-cols-3 gap-2 pl-7">
+                        <input
+                          type="text"
+                          x-model="m.upstreamId"
+                          class="form-input text-xs"
+                          :placeholder="t('connections.batchModelUpstreamIdPh')"
+                        />
+                        <input
+                          type="text"
+                          x-model="m.name"
+                          class="form-input text-xs"
+                          :placeholder="t('connections.batchModelNamePh')"
+                        />
+                        <input
+                          type="text"
+                          x-model="m.vendor"
+                          class="form-input text-xs"
+                          :placeholder="t('connections.batchModelVendorPh')"
+                        />
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button
+                  @click="showBatchModal = false"
+                  class="btn btn-secondary"
+                  x-text="t('cancel')"
+                ></button>
+                <button
+                  @click="saveBatchModels()"
+                  class="btn btn-primary"
+                  :disabled="batchForm.models.filter(m => m.selected).length === 0"
+                  x-text="t('connections.batchSave')"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model Manager Modal (查看/搜索/启用/禁用/编辑/删除全部模型) -->
+          <div
+            x-show="showModelManager"
+            class="modal-overlay"
+            @click.self="showModelManager = false"
+            x-cloak
+          >
+            <div class="modal" style="max-width: 720px">
+              <div class="modal-header">
+                <h3 class="text-title-3" x-text="t('connections.modelManager')"></h3>
+                <button @click="showModelManager = false" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body">
+                <!-- 搜索 + 批量操作 -->
+                <div class="flex items-center gap-2 mb-3">
+                  <input
+                    type="text"
+                    x-model="modelManagerSearch"
+                    class="form-input flex-1"
+                    :placeholder="t('connections.searchModels')"
+                  />
+                  <button
+                    @click="modelManagerBatchToggle(true)"
+                    class="btn btn-sm btn-secondary"
+                    x-text="t('connections.enableAll')"
+                  ></button>
+                  <button
+                    @click="modelManagerBatchToggle(false)"
+                    class="btn btn-sm btn-secondary"
+                    x-text="t('connections.disableAll')"
+                  ></button>
+                </div>
+                <!-- 模型列表 -->
+                <div class="max-h-96 overflow-y-auto space-y-1">
+                  <template
+                    x-for="m in modelManagerFilteredModels"
+                    :key="m.publicId"
+                  >
+                    <div
+                      class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[var(--apple-gray-6)]"
+                    >
+                      <span
+                        class="tag tag-sm cursor-pointer flex-shrink-0"
+                        :class="m.enabled ? 'tag-info' : 'tag-muted'"
+                        @click="modelManagerToggle(m)"
+                        x-text="m.publicId"
+                        :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"
+                      ></span>
+                      <span
+                        class="text-xs text-[var(--apple-text-tertiary)] flex-1 truncate"
+                        x-text="m.upstreamId && m.upstreamId !== m.publicId ? '→ ' + m.upstreamId : ''"
+                      ></span>
+                      <button
+                        @click="openEditModel(modelManagerConn, m)"
+                        class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0"
+                        :title="t('edit')"
+                      >
+                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                      </button>
+                      <button
+                        @click="deleteModel(modelManagerConn, m)"
+                        class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-red)] flex-shrink-0"
+                        :title="t('delete')"
+                      >
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                      </button>
+                    </div>
+                  </template>
+                  <p
+                    x-show="modelManagerFilteredModels.length === 0"
+                    class="text-center text-sm text-[var(--apple-text-tertiary)] py-8"
+                    x-text="t('connections.noModelsFound')"
+                  ></p>
+                </div>
+                <!-- 统计 -->
+                <p class="text-xs text-[var(--apple-text-tertiary)] mt-3">
+                  <span x-text="modelManagerConn?.models?.filter(m => m.enabled).length || 0"></span>
+                  /
+                  <span x-text="modelManagerConn?.models?.length || 0"></span>
+                  <span x-text="t('connections.modelsEnabled')"></span>
+                </p>
+              </div>
+              <div class="modal-footer">
+                <button
+                  @click="showModelManager = false"
+                  class="btn btn-primary"
+                  x-text="t('close')"
+                ></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Provider Connections Import Modal -->
+          <div
+            x-show="showImportModal"
+            class="modal-overlay"
+            @click.self="closeImportModal()"
+            x-cloak
+          >
+            <div class="modal">
+              <div class="modal-header">
+                <h3
+                  class="text-title-3"
+                  x-text="t('connections.importTitle')"
+                ></h3>
+                <button @click="closeImportModal()" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body space-y-4">
+                <p
+                  class="text-sm text-[var(--apple-text-secondary)]"
+                  x-text="t('connections.importDesc')"
+                ></p>
+                <div>
+                  <label
+                    class="form-label"
+                    x-text="t('connections.importFile')"
+                  ></label>
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    @change="importFileSelected($event)"
+                    class="form-input text-sm"
+                    x-ref="connImportFileInput"
+                  />
+                </div>
+                <div class="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="connImportSkipDuplicates"
+                    x-model="importSkipDuplicates"
+                    class="w-4 h-4 mt-0.5 accent-[var(--apple-blue)]"
+                  />
+                  <div>
+                    <label
+                      for="connImportSkipDuplicates"
+                      class="text-sm cursor-pointer"
+                      x-text="t('connections.importOverwrite')"
+                    ></label>
+                    <p
+                      class="text-xs text-[var(--apple-text-tertiary)] mt-0.5"
+                      x-text="t('connections.importOverwriteHint')"
+                    ></p>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button
+                  @click="closeImportModal()"
+                  class="btn btn-secondary"
+                  x-text="t('cancel')"
+                ></button>
+                <button
+                  @click="submitImport()"
+                  class="btn btn-primary"
+                  :disabled="!importFile"
+                  :class="{ 'opacity-50 cursor-not-allowed': !importFile }"
+                >
+                  <i data-lucide="upload" class="w-4 h-4"></i>
+                  <span x-text="t('connections.import')"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>

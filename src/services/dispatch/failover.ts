@@ -25,20 +25,22 @@ import {
   setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
 import {
+  checkRateLimit,
   getRemainingCooldownSeconds,
+  RateLimitQueueFullError,
   reportUpstreamRateLimit,
   reportUpstreamRateLimitMs,
+  reportUpstreamSuccess,
 } from "~/lib/rate-limit"
-import {
-  switchToNextRouteTarget,
-  resolveConnectionFromTarget,
-  type RequestAdmission,
-} from "~/lib/request-admission"
-import { safeOrigin } from "~/lib/request-admission"
+import { type RequestAdmission } from "~/lib/request-admission"
 import { recordUpstreamAttempt } from "~/lib/request-log"
-import { targetKey } from "~/lib/route-target"
+import {
+  resolveConnectionFromTarget,
+  switchToNextRouteTarget,
+  targetKey,
+} from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
-import { isAbortError, shouldFailover } from "~/lib/utils"
+import { isAbortError, safeOrigin, shouldFailover } from "~/lib/utils"
 import {
   CredentialConcurrencyLimitError,
   isAsyncIterable,
@@ -77,17 +79,50 @@ export async function executeWithFailover<
     execute,
     logPrefix = "[dispatch]",
     c,
+    signal,
   } = options
   initializeProtocolAdapters()
 
   const tried = new Set<string>()
   let current: RequestAdmission = admission
 
+  const advanceToNextTarget = (): boolean => {
+    const next = switchToNextRouteTarget(
+      current.target,
+      payload.model,
+      routeKind,
+      tried,
+      {
+        sessionId: current.sessionId,
+        fallbackSessionId: current.fallbackSessionId,
+      },
+    )
+    if (!next) return false
+    const resolved = resolveConnectionFromTarget(next)
+    if (!resolved) return false
+    current = {
+      target: next,
+      connection: resolved.connection,
+      credential: resolved.credential,
+      initiator: current.initiator,
+      // Keep L0 session binding context so subsequent failovers rebind
+      // the same conversation to the newly selected credential.
+      sessionId: current.sessionId,
+      fallbackSessionId: current.fallbackSessionId,
+    }
+    return true
+  }
+
   let attemptIndex = 0
   while (true) {
     const adapter = getProtocolAdapter(current.target.protocol)
     const attemptStart = Date.now()
     try {
+      // Pacing gate (burst + interval per connection). Runs before lease
+      // acquisition so waiting requests don't hold credential leases.
+      // Queue-full is local saturation, not an upstream failure — it is
+      // handled in the catch block by rotating without any cooldown.
+      await checkRateLimit(current.connection.id, signal)
       const lease = tryAcquireCredentialLease(current.target)
       if (!lease) {
         throw new CredentialConcurrencyLimitError(
@@ -97,6 +132,9 @@ export async function executeWithFailover<
       let handedOffToStream = false
       try {
         const result = await execute(adapter, current.target, current)
+        // Upstream accepted the request: clear any 429 backoff pressure so
+        // the next 429 episode starts from the base backoff again.
+        await reportUpstreamSuccess(current.connection.id)
         recordUpstreamAttempt(
           c,
           {
@@ -120,6 +158,20 @@ export async function executeWithFailover<
         if (!handedOffToStream) lease.release()
       }
     } catch (error) {
+      if (error instanceof RateLimitQueueFullError) {
+        // Local pacing saturation, not an upstream failure: rotate to the
+        // next target without cooling anything down. Only when no target is
+        // left do we surface a 429 (retryable) instead of a 500.
+        tried.add(targetKey(current.target))
+        logger.warn(
+          `${logPrefix} pacing queue full for connection "${current.connection.name}", rotating to next target`,
+        )
+        if (advanceToNextTarget()) continue
+        throw new HTTPError(
+          "Rate limiter queue is full",
+          new Response(null, { status: 429 }),
+        )
+      }
       if (isAbortError(error)) throw error
 
       const latencyMs = Date.now() - attemptStart
@@ -213,30 +265,7 @@ export async function executeWithFailover<
         await markCooldown(current, error, logPrefix)
       }
 
-      const next = switchToNextRouteTarget(
-        current.target,
-        payload.model,
-        routeKind,
-        tried,
-        {
-          sessionId: current.sessionId,
-          fallbackSessionId: current.fallbackSessionId,
-        },
-      )
-      if (!next) throw error
-
-      const resolved = resolveConnectionFromTarget(next)
-      if (!resolved) throw error
-      current = {
-        target: next,
-        connection: resolved.connection,
-        credential: resolved.credential,
-        initiator: current.initiator,
-        // Keep L0 session binding context so subsequent failovers rebind
-        // the same conversation to the newly selected credential.
-        sessionId: current.sessionId,
-        fallbackSessionId: current.fallbackSessionId,
-      }
+      if (!advanceToNextTarget()) throw error
     }
   }
 }
@@ -294,8 +323,13 @@ async function markConnectionRateLimited(
   conn: ProviderConnection,
   status: number,
   logPrefix: string,
+  retryAfterMs?: number,
 ): Promise<void> {
-  await reportUpstreamRateLimit(conn.id, new Response(null, { status }))
+  // Prefer the real upstream retry hint when the caller classified one;
+  // otherwise fall back to the adaptive backoff from the status alone.
+  await (retryAfterMs !== undefined ?
+    reportUpstreamRateLimitMs(conn.id, retryAfterMs)
+  : reportUpstreamRateLimit(conn.id, new Response(null, { status })))
   applyConnectionRateLimitCooldown(
     conn,
     status === 429 ? "upstream_429" : `upstream_${status}`,
@@ -369,13 +403,17 @@ async function markAccountManagedCooldown(
     return
   }
 
-  if (isHttp && error instanceof HTTPError && error.responseBody) {
+  if (isHttp && error instanceof HTTPError) {
+    // Classify once (headers + body) and reuse: the quota check and the
+    // 429 cooldown below must see the same retryAfterMs. Header-only 429s
+    // (empty body) previously fell through to a synthetic Response and lost
+    // the real Retry-After hint.
     const classified = classifyUpstreamError({
       status,
-      retryAfterHeader: error.response.headers.get("retry-after"),
+      headers: error.response.headers,
       body: error.responseBody,
     })
-    if (classified.kind === "quota_exhausted") {
+    if (error.responseBody && classified.kind === "quota_exhausted") {
       invalidateSessionAffinityAuth(authKey)
       setConnectionQuotaState(conn, "exhausted")
       setConnectionCooldownUntil(
@@ -388,10 +426,21 @@ async function markAccountManagedCooldown(
       await persistConnectionState(logPrefix, "connection quota state")
       return
     }
+    if (status === 429) {
+      invalidateSessionAffinityAuth(authKey)
+      await markConnectionRateLimited(
+        conn,
+        status,
+        logPrefix,
+        classified.retryAfterMs,
+      )
+      return
+    }
   }
 
-  // 429 / 网络错误走 rate-limit 冷却;5xx 不冷却 connection、不打散 affinity
-  if (status === 429 || !isHttp) {
+  // HTTP 429 已在上面按真实 Retry-After 冷却;这里只处理网络错误。
+  // 5xx 不冷却 connection、不打散 affinity。
+  if (!isHttp) {
     invalidateSessionAffinityAuth(authKey)
     await markConnectionRateLimited(conn, status, logPrefix)
   }

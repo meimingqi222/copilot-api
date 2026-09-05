@@ -16,7 +16,14 @@ export {
   resolveModelsDevPrice,
   resolveModelsDevPriceDetailed,
 } from "~/lib/models-dev/resolve"
+export {
+  calculateModelCost,
+  isContextTierTriggered,
+  promptTotalForTier,
+  selectEffectivePricing,
+} from "~/lib/models-dev/tier"
 export type {
+  ContextTierPricingPer1k,
   ModelPricingPer1k,
   ModelPricingSource,
   ModelsDevCatalog,

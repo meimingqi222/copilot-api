@@ -27,10 +27,7 @@ import {
   DEFAULTS,
   accountManagedModelPrefix,
   accountManagedProvider,
-  getConnectionAuthStatus,
-  getConnectionCooldownUntil,
-  getConnectionQuotaExhaustedAt,
-  getConnectionQuotaState,
+  getConnectionRoutability,
   isAccountManagedConnection,
   isCredentialAvailable,
   listProviderConnections,
@@ -41,7 +38,6 @@ import {
   type ProviderConnection,
   type RouteTarget,
 } from "~/lib/provider-connections"
-import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -198,39 +194,13 @@ function modelsNotLoaded(connection: ProviderConnection): boolean {
 }
 
 /**
- * account-managed connection 是否可参与调度。
- * 镜像原 isAccountAvailable(connectionToAccount(conn)) 的账户级门禁:
- * enabled(credential 优先)、authStatus error、限流器冷却、配额耗尽
- * (含自动恢复窗口与 cooldownUntil 过期恢复)。
+ * account-managed connection 是否可参与调度。委托统一定义
+ * getConnectionRoutability(布尔投影),语义见该函数注释。
  */
 function isAccountManagedConnectionRoutable(
   connection: ProviderConnection,
 ): boolean {
-  const credential = connection.credentials[0]
-  if (credential && !credential.enabled) return false
-  if (getConnectionAuthStatus(connection) === "error") return false
-  if (getRemainingCooldownSeconds(connection.id) > 0) return false
-  if (activeQuotaExhausted(connection)) return false
-  return true
-}
-
-/**
- * 配额耗尽是否仍然生效(镜像 refreshAccountRuntimeAvailability 的恢复逻辑):
- * - cooldownUntil 已过期 → 恢复
- * - quotaExhaustedAt + 自动恢复窗口已过 → 恢复
- */
-function activeQuotaExhausted(connection: ProviderConnection): boolean {
-  if (getConnectionQuotaState(connection) !== "exhausted") return false
-  const cooldownUntil = getConnectionCooldownUntil(connection)
-  if (cooldownUntil !== undefined && cooldownUntil <= Date.now()) return false
-  const exhaustedAt = getConnectionQuotaExhaustedAt(connection)
-  if (
-    exhaustedAt !== undefined
-    && Date.now() - exhaustedAt >= DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-  ) {
-    return false
-  }
-  return true
+  return getConnectionRoutability(connection).routable
 }
 
 /**

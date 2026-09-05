@@ -1,5 +1,6 @@
 function connectionsView() {
   return {
+    ...ViewHelpers,
     loading: false,
     connections: [],
     showConnModal: false,
@@ -59,20 +60,9 @@ function connectionsView() {
     modelManagerConn: null,
     modelManagerSearch: "",
 
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
-    },
-
     formatTime(ts) {
       if (!ts) return ""
       return new Date(ts).toLocaleString()
-    },
-
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
     },
 
     statusTagClass(status) {

@@ -1,5 +1,6 @@
 function dashboardView() {
   return {
+    ...ViewHelpers,
     loading: false,
     lastRefresh: null,
     data: {
@@ -104,23 +105,12 @@ function dashboardView() {
       }
       return map[level] || "badge-info"
     },
-
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
     formatTime(ts) {
       if (!ts) return "-"
       const app = document.querySelector("[x-data^=adminApp]")
       return app ?
           Alpine.$data(app).formatTime(ts)
         : new Date(ts).toLocaleString()
-    },
-    t(key, params) {
-      // Access parent lang to establish reactive dependency
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
     },
   }
 }

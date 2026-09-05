@@ -26,7 +26,6 @@ export interface StreamUsageInput {
   model?: string
   lastUsage?: UsageInfo
   estimatedInputTokens: number
-  onlyWhenUsageExists?: boolean
   timing?: { ttftMs: number; tps: number }
   finishReason?: string
 }
@@ -77,7 +76,6 @@ export function recordStreamingUsage(input: StreamUsageInput): boolean {
     model,
     lastUsage,
     estimatedInputTokens,
-    onlyWhenUsageExists = false,
     timing,
     finishReason,
   } = input
@@ -109,10 +107,9 @@ export function recordStreamingUsage(input: StreamUsageInput): boolean {
     return true
   }
 
-  if (onlyWhenUsageExists) {
-    return false
-  }
-
+  // 上游流里没有任何 usage chunk:用本地估算记一行(输入估算 + 0 输出),
+  // 否则这次请求在用量统计里完全不可见。调用方以 accountId 是否落定
+  // 判断上游是否真实响应过——dispatch 抛错(accountId 未落定)时不记。
   recordUsage({
     c,
     accountId,
