@@ -169,7 +169,6 @@ export function handleStreamingResponse(
             model,
             lastUsage,
             estimatedInputTokens,
-            onlyWhenUsageExists: true,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
@@ -196,7 +195,6 @@ export function handleStreamingResponse(
           model,
           lastUsage,
           estimatedInputTokens,
-          onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,
@@ -370,7 +368,6 @@ export function handleStreamingCompletion(
             model,
             lastUsage,
             estimatedInputTokens,
-            onlyWhenUsageExists: true,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
@@ -397,7 +394,6 @@ export function handleStreamingCompletion(
           model: options.payload.model,
           lastUsage,
           estimatedInputTokens: options.estimatedInputTokens,
-          onlyWhenUsageExists: true,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,

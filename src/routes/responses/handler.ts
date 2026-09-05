@@ -328,7 +328,27 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
   const { c, accountId, response, tps, streaming, ttftMs } = opts
   const usage = response.usage
   const model = c.get("model")
-  if (!usage || !model) {
+  if (!model) {
+    return
+  }
+
+  // 上游省略 usage:记全零行(请求计数保留,费用为 0),否则这次请求完全不可见。
+  // Responses 没有本地输入估算(输入结构与 chat 差异大),零行是当前最优兜底。
+  if (!usage) {
+    recordUsage({
+      c,
+      accountId,
+      model,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      tps,
+      streaming,
+      ttftMs,
+      finishReason: "usage_missing",
+    })
     return
   }
 

@@ -13,7 +13,7 @@ import {
 } from "~/lib/request-log"
 import { forwardSseEvent, handleSseStream, writeSseEvent } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
-import { applyUsageIdentity } from "~/lib/usage"
+import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { dispatchMessages } from "~/services/dispatch/messages"
 import {
   type AnthropicMessagesPayload,
@@ -27,6 +27,7 @@ import type { HandleStreamingResponseOptions } from "./copilot-handler"
 
 import { isMessagesOutputEvent } from "./logging"
 import {
+  estimateAnthropicInputTokens,
   recordDirectStreamingUsage,
   recordAnthropicUsage,
   updateLastUsage,
@@ -87,6 +88,23 @@ export async function handleAnthropicViaConnection(
         const tps =
           elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
         recordAnthropicUsage(c, result.accountId, response, tps)
+      } else {
+        // 上游返回了非 Anthropic 形状:用本地估算记一行,与其他端点兜底一致。
+        const estimatedInputTokens =
+          await estimateAnthropicInputTokens(anthropicPayload)
+        if (estimatedInputTokens > 0) {
+          recordUsage({
+            c,
+            accountId: result.accountId,
+            model: anthropicPayload.model,
+            promptTokens: estimatedInputTokens,
+            completionTokens: 0,
+            totalTokens: estimatedInputTokens,
+            tps: 0,
+            streaming: false,
+            finishReason: "usage_missing",
+          })
+        }
       }
       return c.json(result.response as unknown as AnthropicResponse)
     }
@@ -175,6 +193,9 @@ export async function handleAnthropicViaConnection(
           outputObserved,
         )
         if (resultAccountId) {
+          // 常见情况有 usage;无 usage 时才做本地估算(惰性,零开销)。
+          const estimatedInputTokens =
+            lastUsage ? 0 : await estimateAnthropicInputTokens(anthropicPayload)
           recordDirectStreamingUsage(
             c,
             resultAccountId,
@@ -184,6 +205,7 @@ export async function handleAnthropicViaConnection(
               firstChunkTs,
               lastUsage?.output_tokens ?? 0,
             ),
+            estimatedInputTokens,
           )
         }
       }

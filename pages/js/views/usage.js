@@ -1,5 +1,6 @@
 function usageView() {
   return {
+    ...ViewHelpers,
     loading: false,
     refreshing: false,
     dateRange: "today",
@@ -8,6 +9,9 @@ function usageView() {
     modelPrices: {},
     pricingSources: {},
     modelViewMode: "aggregate",
+    modelSearch: "",
+    showAllModels: false,
+    modelTopN: 10,
     expandedAccounts: {},
     expandedProviders: {},
     expandedProviderAccounts: {},
@@ -160,7 +164,34 @@ function usageView() {
 
     setModelViewMode(mode) {
       this.modelViewMode = mode
+      this.showAllModels = false
       this.$nextTick(() => lucide.createIcons())
+    },
+
+    toggleShowAllModels() {
+      this.showAllModels = !this.showAllModels
+      this.$nextTick(() => lucide.createIcons())
+    },
+
+    get filteredModelUsage() {
+      const q = (this.modelSearch || "").trim().toLowerCase()
+      if (!q) return this.sortedModelUsage
+      return this.sortedModelUsage.filter(([model]) =>
+        model.toLowerCase().includes(q),
+      )
+    },
+
+    get displayedModelUsage() {
+      if (this.showAllModels) return this.filteredModelUsage
+      return this.filteredModelUsage.slice(0, this.modelTopN)
+    },
+
+    get sortedUserUsage() {
+      return Object.entries(this.usageSummary.byUser || {}).sort(
+        ([, left], [, right]) => {
+          return (right.totalTokens || 0) - (left.totalTokens || 0)
+        },
+      )
     },
 
     toggleAccountExpanded(accountId) {
@@ -243,6 +274,35 @@ function usageView() {
             completionPricePer1m: price.completionPricePer1k * 1000,
             cacheReadPricePer1m: price.cacheReadPricePer1k * 1000,
             cacheWritePricePer1m: price.cacheWritePricePer1k * 1000,
+            contextThresholdTokens: price.contextThresholdTokens ?? "",
+            extendedPromptPricePer1m:
+              (
+                price.extendedPromptPricePer1k !== null
+                && price.extendedPromptPricePer1k !== undefined
+              ) ?
+                price.extendedPromptPricePer1k * 1000
+              : "",
+            extendedCompletionPricePer1m:
+              (
+                price.extendedCompletionPricePer1k !== null
+                && price.extendedCompletionPricePer1k !== undefined
+              ) ?
+                price.extendedCompletionPricePer1k * 1000
+              : "",
+            extendedCacheReadPricePer1m:
+              (
+                price.extendedCacheReadPricePer1k !== null
+                && price.extendedCacheReadPricePer1k !== undefined
+              ) ?
+                price.extendedCacheReadPricePer1k * 1000
+              : "",
+            extendedCacheWritePricePer1m:
+              (
+                price.extendedCacheWritePricePer1k !== null
+                && price.extendedCacheWritePricePer1k !== undefined
+              ) ?
+                price.extendedCacheWritePricePer1k * 1000
+              : "",
           }
         }
       } catch (e) {
@@ -257,6 +317,16 @@ function usageView() {
     async saveModelPricing(model) {
       try {
         const price = this.modelPrices[model]
+        const toPer1k = (v) => {
+          if (v === "" || v === null || v === undefined) return null
+          const n = Number.parseFloat(v)
+          return Number.isFinite(n) ? n / 1000 : null
+        }
+        const toThreshold = (v) => {
+          if (v === "" || v === null || v === undefined) return null
+          const n = Number.parseInt(v, 10)
+          return Number.isFinite(n) && n > 0 ? n : null
+        }
         await API.usage.updatePricing(model, {
           promptPricePer1k:
             (Number.parseFloat(price.promptPricePer1m) || 0) / 1000,
@@ -266,6 +336,17 @@ function usageView() {
             (Number.parseFloat(price.cacheReadPricePer1m) || 0) / 1000,
           cacheWritePricePer1k:
             (Number.parseFloat(price.cacheWritePricePer1m) || 0) / 1000,
+          contextThresholdTokens: toThreshold(price.contextThresholdTokens),
+          extendedPromptPricePer1k: toPer1k(price.extendedPromptPricePer1m),
+          extendedCompletionPricePer1k: toPer1k(
+            price.extendedCompletionPricePer1m,
+          ),
+          extendedCacheReadPricePer1k: toPer1k(
+            price.extendedCacheReadPricePer1m,
+          ),
+          extendedCacheWritePricePer1k: toPer1k(
+            price.extendedCacheWritePricePer1m,
+          ),
         })
         this.showToast(this.t("usage.pricingSaved"), "success")
       } catch (e) {
@@ -533,29 +614,6 @@ function usageView() {
       if (rate >= 0.5) return "text-[var(--apple-green)]"
       if (rate >= 0.2) return "text-[var(--apple-blue)]"
       return "text-[var(--apple-orange)]"
-    },
-
-    formatTokens(tokens) {
-      const numericTokens = Number(tokens || 0)
-      if (numericTokens === 0) return "0"
-      if (numericTokens >= 1000000) {
-        return (numericTokens / 1000000).toFixed(1) + "M"
-      }
-      if (numericTokens >= 1000) {
-        return (numericTokens / 1000).toFixed(1) + "K"
-      }
-      return numericTokens.toString()
-    },
-
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
-
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
     },
   }
 }

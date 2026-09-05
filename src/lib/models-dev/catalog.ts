@@ -1,4 +1,5 @@
 import type {
+  ContextTierPricingPer1k,
   ModelPricingPer1k,
   ModelsDevCatalog,
   ModelsDevCost,
@@ -15,12 +16,61 @@ export interface ModelsDevPriceIndexes {
   >
 }
 
+function extractContextTier(
+  cost: ModelsDevCost,
+): ContextTierPricingPer1k | null {
+  const contextTiers = (cost.tiers ?? [])
+    .filter(
+      (t) =>
+        t?.tier?.type === "context"
+        && Number.isFinite(t.tier.size)
+        && t.tier.size > 0,
+    )
+    .sort((a, b) => a.tier.size - b.tier.size)
+  const first = contextTiers[0]
+  if (first) {
+    return {
+      thresholdTokens: first.tier.size,
+      promptPricePer1k: (first.input ?? cost.input) / 1000,
+      completionPricePer1k: (first.output ?? cost.output) / 1000,
+      cacheReadPricePer1k: (first.cache_read ?? cost.cache_read ?? 0) / 1000,
+      cacheWritePricePer1k: (first.cache_write ?? cost.cache_write ?? 0) / 1000,
+    }
+  }
+  if (cost.context_over_200k) {
+    const t = cost.context_over_200k
+    return {
+      thresholdTokens: 200_000,
+      promptPricePer1k: (t.input ?? cost.input) / 1000,
+      completionPricePer1k: (t.output ?? cost.output) / 1000,
+      cacheReadPricePer1k: (t.cache_read ?? cost.cache_read ?? 0) / 1000,
+      cacheWritePricePer1k: (t.cache_write ?? cost.cache_write ?? 0) / 1000,
+    }
+  }
+  return null
+}
+
 function costToPer1k(cost: ModelsDevCost): ModelPricingPer1k {
-  return {
+  const tier = extractContextTier(cost)
+  const base = {
     promptPricePer1k: cost.input / 1000,
     completionPricePer1k: cost.output / 1000,
     cacheReadPricePer1k: (cost.cache_read ?? 0) / 1000,
     cacheWritePricePer1k: (cost.cache_write ?? 0) / 1000,
+  }
+  // 跳过与基础价完全相同的“假分档”（部分网关条目会原样回填）。
+  if (
+    tier
+    && tier.promptPricePer1k === base.promptPricePer1k
+    && tier.completionPricePer1k === base.completionPricePer1k
+    && tier.cacheReadPricePer1k === base.cacheReadPricePer1k
+    && tier.cacheWritePricePer1k === base.cacheWritePricePer1k
+  ) {
+    return { ...base, contextTierAbove: null }
+  }
+  return {
+    ...base,
+    contextTierAbove: tier,
   }
 }
 

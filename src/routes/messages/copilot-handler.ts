@@ -19,15 +19,12 @@ import {
   writeSseEvent,
   writeSseEvents,
 } from "~/lib/sse"
-import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
-import { getTokenCount } from "~/lib/tokenizer"
 import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
-  type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
 import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
 import {
@@ -43,7 +40,11 @@ import {
 } from "~/services/protocols/anthropic"
 
 import { isMessagesOutputEvent } from "./logging"
-import { recordStreamingUsage, type UsageInfo } from "./usage-recorder"
+import {
+  estimateAnthropicInputTokens,
+  recordStreamingUsage,
+  type UsageInfo,
+} from "./usage-recorder"
 
 export interface HandleStreamingResponseOptions {
   stream: SSEStream
@@ -81,7 +82,13 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   logDuplicateToolCallIds(openAIPayload.messages)
 
   if (!anthropicPayload.stream) {
-    const estimatedInputTokens = await estimateInputTokens(openAIPayload)
+    const estimatedInputTokens = await estimateAnthropicInputTokens(
+      anthropicPayload,
+      {
+        preserveHistoricalReasoning:
+          admission.target.protocol !== "copilot-native",
+      },
+    )
     const nonStreamStart = Date.now()
     let result
     try {
@@ -115,12 +122,19 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
           result.accountId,
           result.response,
           elapsed,
+          estimatedInputTokens,
         ),
       )
     }
   }
 
-  const estimatedInputTokens = await estimateInputTokens(openAIPayload)
+  const estimatedInputTokens = await estimateAnthropicInputTokens(
+    anthropicPayload,
+    {
+      preserveHistoricalReasoning:
+        admission.target.protocol !== "copilot-native",
+    },
+  )
 
   beginStreamLog(c)
   return handleSseStream(
@@ -170,6 +184,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
           result.accountId,
           result.response,
           elapsed,
+          estimatedInputTokens,
         )
         markStreamTerminal(c, "message_stop", "success", true)
         return
@@ -232,6 +247,7 @@ function handleNonStreamingResponse(
   accountId: string,
   response: ChatCompletionResponse,
   elapsedMs?: number,
+  estimatedInputTokens = 0,
 ) {
   if (logger.level >= 4) {
     logger.debug(
@@ -257,6 +273,25 @@ function handleNonStreamingResponse(
       elapsedMs && elapsedMs > 0 ?
         usage.output_tokens / (elapsedMs / 1000)
       : undefined
+    // 上游省略 usage(全零):用本地估算记一行,与 chat 非流式兜底一致。
+    if (
+      usage.input_tokens === 0
+      && usage.output_tokens === 0
+      && estimatedInputTokens > 0
+    ) {
+      recordUsage({
+        c,
+        accountId,
+        model,
+        promptTokens: estimatedInputTokens,
+        completionTokens: 0,
+        totalTokens: estimatedInputTokens,
+        tps: 0,
+        streaming: false,
+        finishReason: "usage_missing",
+      })
+      return anthropicResponse
+    }
     recordUsage({
       c,
       accountId,
@@ -373,6 +408,7 @@ async function handleStreamingResponse({
           firstChunkTs,
           lastUsage?.completion_tokens ?? 0,
         ),
+        estimatedInputTokens,
       )
     }
   }
@@ -425,26 +461,6 @@ async function sendSyntheticErrorIfNeeded(
   const errorEvent = translateErrorToAnthropicErrorEvent()
   await writeSseEvent(stream, JSON.stringify(errorEvent), errorEvent.type)
   return true
-}
-
-/** Estimate request input token count using the local tokenizer as a fallback. */
-async function estimateInputTokens(
-  payload: ChatCompletionsPayload,
-): Promise<number> {
-  const selectedModel = state.models?.data.find(
-    (model) => model.id === payload.model,
-  )
-  if (!selectedModel) {
-    return 0
-  }
-  try {
-    // Full local prompt estimate (all messages + tools), including assistant
-    // history already present in the request.
-    const tokenCount = await getTokenCount(payload, selectedModel)
-    return tokenCount.input
-  } catch {
-    return 0
-  }
 }
 
 /** Returns true when the upstream error indicates the input exceeded the model context window. */

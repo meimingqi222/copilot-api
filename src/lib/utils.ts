@@ -377,6 +377,19 @@ export const cacheVSCodeVersion = async () => {
   logger.info(`Using VSCode version: ${response}`)
 }
 
+/**
+ * 取 baseUrl 的 origin(协议+host+端口),供请求日志记录上游来源。
+ * 解析失败返回 undefined,避免把含 path/query 的原始串写进日志泄露信息。
+ */
+export function safeOrigin(baseUrl: string | undefined): string | undefined {
+  if (!baseUrl) return undefined
+  try {
+    return new URL(baseUrl).origin
+  } catch {
+    return undefined
+  }
+}
+
 export function isAbortError(error: unknown): boolean {
   return (
     (error instanceof Error || error instanceof DOMException)

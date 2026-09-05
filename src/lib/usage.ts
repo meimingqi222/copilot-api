@@ -4,6 +4,7 @@ import type { RequestAdmission } from "~/lib/request-admission"
 
 import { logger } from "~/lib/logger"
 import { resolveModelAlias } from "~/lib/model-aliases"
+import { calculateModelCost } from "~/lib/models-dev"
 import { isProviderId } from "~/lib/provider-config"
 import {
   connectionProvider,
@@ -130,10 +131,12 @@ export function recordUsage(input: UsageRecordInput): void {
     )
     const cost =
       pricing ?
-        (promptTokens / 1000) * pricing.promptPricePer1k
-        + (completionTokens / 1000) * pricing.completionPricePer1k
-        + (cacheReadTokens / 1000) * pricing.cacheReadPricePer1k
-        + (cacheWriteTokens / 1000) * pricing.cacheWritePricePer1k
+        calculateModelCost(pricing, {
+          promptTokens,
+          completionTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
+        })
       : 0
 
     statsStore.recordUsage({

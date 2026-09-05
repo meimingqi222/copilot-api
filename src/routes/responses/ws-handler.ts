@@ -20,11 +20,7 @@ import {
   connectionProvider,
   isAccountManagedConnection,
 } from "~/lib/provider-connections"
-import {
-  prepareRequestAdmission,
-  resolveConnectionFromTarget,
-  selectNextResponsesWsTarget,
-} from "~/lib/request-admission"
+import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_JSON_BODY_BYTES } from "~/lib/request-body"
 import {
   ClientAbortError,
@@ -41,6 +37,10 @@ import {
 } from "~/lib/request-log"
 import { appendRequestLogSync } from "~/lib/request-log-persist"
 import { resolveTranscriptScopeId } from "~/lib/request-scope"
+import {
+  resolveConnectionFromTarget,
+  selectNextResponsesWsTarget,
+} from "~/lib/route-target"
 import { targetKey } from "~/lib/route-target"
 import { getClientIp, isAbortError } from "~/lib/utils"
 import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
@@ -510,6 +510,7 @@ async function runResponsesAttempt(
       streaming: !isNonStreaming(result.response),
     })
     c.set("accountId" as never, result.accountId)
+    c.set("model", payload.model)
     const turn = getRequestLogContext(c)
     if (turn) turn.entry.accountId = result.accountId
 

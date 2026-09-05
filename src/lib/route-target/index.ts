@@ -12,6 +12,11 @@ export {
   resolveModelRouting,
 } from "./model-reference"
 export {
+  resolveConnectionFromTarget,
+  selectNextResponsesWsTarget,
+  switchToNextRouteTarget,
+} from "./rotation"
+export {
   __resetRouteTargetRoundRobin,
   commitRouteTargetAffinity,
   selectRouteTarget,

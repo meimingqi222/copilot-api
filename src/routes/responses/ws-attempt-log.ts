@@ -2,8 +2,9 @@ import type { Context } from "hono"
 
 import { HTTPError } from "~/lib/error"
 import { connectionProvider } from "~/lib/provider-connections"
-import { safeOrigin, type RequestAdmission } from "~/lib/request-admission"
+import { type RequestAdmission } from "~/lib/request-admission"
 import { getRequestLogContext, recordUpstreamAttempt } from "~/lib/request-log"
+import { safeOrigin } from "~/lib/utils"
 
 export function recordResponsesWsAttemptIfMissing(
   c: Context,

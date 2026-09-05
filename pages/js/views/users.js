@@ -1,5 +1,6 @@
 function usersView() {
   return {
+    ...ViewHelpers,
     loading: false,
     users: [],
     models: [],
@@ -216,10 +217,6 @@ function usersView() {
       }
     },
 
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
     formatTime(ts) {
       if (!ts) return "-"
       const app = document.querySelector("[x-data^=adminApp]")
@@ -227,23 +224,6 @@ function usersView() {
           Alpine.$data(app).formatTime(ts)
         : new Date(ts).toLocaleString()
     },
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
-    },
-    formatTokens(tokens) {
-      const numericTokens = Number(tokens || 0)
-      if (numericTokens === 0) return "0"
-      if (numericTokens >= 1000000) {
-        return (numericTokens / 1000000).toFixed(1) + "M"
-      }
-      if (numericTokens >= 1000) {
-        return (numericTokens / 1000).toFixed(1) + "K"
-      }
-      return numericTokens.toString()
-    },
-
     parseQuotaToNumber(val) {
       if (val === undefined || val === null || val === "") return 0
       const str = String(val).trim().toLowerCase()

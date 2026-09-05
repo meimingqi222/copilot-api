@@ -1,5 +1,6 @@
 function quotasView() {
   return {
+    ...ViewHelpers,
     loading: false,
     refreshing: false,
     refreshingAccountId: null,
@@ -175,17 +176,6 @@ function quotasView() {
         (this.accounts || []).filter((a) => a.subtitle === subtitle).length
         === 1
       )
-    },
-
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
-
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
     },
   }
 }

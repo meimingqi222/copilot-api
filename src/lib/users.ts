@@ -1,10 +1,12 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
 import { randomUUID } from "node:crypto"
 
+import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { Repository } from "~/lib/repository"
 import { parseModelRef } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
+import { globalTimers } from "~/lib/timer-registry"
 
 export interface User {
   id: string
@@ -82,6 +84,37 @@ export async function loadUsers(): Promise<void> {
 
 export async function saveUsers(): Promise<void> {
   await usersRepository.save(state.users)
+}
+
+const USER_TOKENS_FLUSH_MS = 5_000
+let userTokensDirty = false
+let userTokensFlushTimer: ReturnType<typeof setInterval> | null = null
+
+/** Start the periodic flush of coalesced token counts. Idempotent. */
+export function startUserTokenFlusher(): void {
+  if (userTokensFlushTimer) return
+  userTokensFlushTimer = globalTimers.interval(() => {
+    void flushUserTokens()
+  }, USER_TOKENS_FLUSH_MS)
+}
+
+export function stopUserTokenFlusherForTest(): void {
+  if (userTokensFlushTimer) {
+    globalTimers.clearInterval(userTokensFlushTimer)
+    userTokensFlushTimer = null
+  }
+}
+
+/** Persist pending token counts if any. No-op when nothing changed. */
+export async function flushUserTokens(): Promise<void> {
+  if (!userTokensDirty) return
+  userTokensDirty = false
+  try {
+    await saveUsers()
+  } catch (error) {
+    userTokensDirty = true
+    logger.warn("Failed to flush user token counts:", error)
+  }
 }
 
 export function createUserSync(
@@ -168,10 +201,14 @@ export function toPublicUser(user: User): PublicUser {
 }
 
 /**
- * Increment user's usedTokens count and save to disk
- * @param userId - The user's ID
- * @param tokens - Number of tokens to add
- * @returns true if successful, false if user not found
+ * Increment user's usedTokens count (memory only; flushed on an interval).
+ *
+ * Token increments are the hottest write path (once per chat request), so
+ * they mutate `state.users` synchronously and defer the `users.json` rewrite
+ * to `flushUserTokens()`. Memory stays authoritative for quota enforcement
+ * (`verifyApiKey`/quota checks read `state.users`); a crash loses at most
+ * one flush interval of usage counts. Structural mutations
+ * (create/update/delete/resetKey/resetTokens) still save immediately.
  */
 export async function incrementUserTokens(
   userId: string,
@@ -181,7 +218,7 @@ export async function incrementUserTokens(
   if (!user) return false
   user.usedTokens += tokens
   user.lastUsedAt = Date.now()
-  await saveUsers()
+  userTokensDirty = true
   return true
 }
 

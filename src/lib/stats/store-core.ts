@@ -5,7 +5,10 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "node:fs"
 import path from "node:path"
 
-import type { ResolvedModelPricing } from "~/lib/models-dev"
+import type {
+  ContextTierPricingPer1k,
+  ResolvedModelPricing,
+} from "~/lib/models-dev"
 import type { ProviderId } from "~/lib/provider-config"
 import type {
   TimestampRangeUsage,
@@ -274,6 +277,11 @@ class StatsStore {
       completionPricePer1k: number
       cacheReadPricePer1k?: number
       cacheWritePricePer1k?: number
+      contextThresholdTokens?: number | null
+      extendedPromptPricePer1k?: number | null
+      extendedCompletionPricePer1k?: number | null
+      extendedCacheReadPricePer1k?: number | null
+      extendedCacheWritePricePer1k?: number | null
     },
   ): void {
     const db = this.ensureDb()
@@ -290,6 +298,7 @@ class StatsStore {
     completionPricePer1k: number
     cacheReadPricePer1k: number
     cacheWritePricePer1k: number
+    contextTierAbove: ContextTierPricingPer1k | null
   } | null {
     const db = this.ensureDb()
     return getManualModelPricing(db, model)
@@ -311,6 +320,7 @@ class StatsStore {
     completionPricePer1k: number
     cacheReadPricePer1k: number
     cacheWritePricePer1k: number
+    contextTierAbove: ContextTierPricingPer1k | null
   } | null {
     const db = this.ensureDb()
     return getModelPricing(db, model, provider)
@@ -322,6 +332,7 @@ class StatsStore {
     completionPricePer1k: number
     cacheReadPricePer1k: number
     cacheWritePricePer1k: number
+    contextTierAbove: ContextTierPricingPer1k | null
     updatedAt: number
   }> {
     const db = this.ensureDb()

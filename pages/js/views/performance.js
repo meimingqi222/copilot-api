@@ -1,5 +1,6 @@
 function performanceView() {
   return {
+    ...ViewHelpers,
     loading: false,
     dateRange: "today",
     selectedMonth: "",
@@ -86,16 +87,6 @@ function performanceView() {
       if (tps >= 50) return "text-[var(--apple-green)]"
       if (tps >= 20) return "text-[var(--apple-orange)]"
       return ""
-    },
-
-    showToast(msg, type) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) Alpine.$data(app).showToast(msg, type)
-    },
-    t(key, params) {
-      const app = document.querySelector("[x-data^=adminApp]")
-      if (app) void Alpine.$data(app).lang
-      return I18n.t(key, params)
     },
   }
 }
