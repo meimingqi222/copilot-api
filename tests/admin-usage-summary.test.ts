@@ -300,3 +300,25 @@ test("GET /admin/api/usage/summary keeps swe-1-6 and swe-1-6-fast separate", asy
     totalTokens: 110,
   })
 })
+
+test("GET /admin/api/usage/summary rejects invalid month and dates with 400", async () => {
+  for (const query of [
+    "month=2026-13",
+    "month=2026-00",
+    "startDate=2026-13-01&endDate=2026-13-02",
+    "startDate=2026-02-30&endDate=2026-03-01",
+    "startDate=not-a-date&endDate=2026-03-01",
+  ]) {
+    const response = await server.fetch(
+      adminRequest(`http://localhost/admin/api/usage/summary?${query}`),
+    )
+    expect(response.status).toBe(400)
+  }
+})
+
+test("GET /admin/api/usage/performance rejects invalid month with 400", async () => {
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?month=2026-13"),
+  )
+  expect(response.status).toBe(400)
+})

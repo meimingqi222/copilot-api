@@ -233,13 +233,11 @@ export function applyIdentityConfuseHeaders(
 
   if (!state.promptCacheKey) return
 
-  // Overwrite session headers. CPA's setCodexSessionHeaderCasePreserved
-  // removes all variants (session_id, session-id) and keeps only one
-  // (preferring underscore). We do the same to avoid sending duplicates.
-  const hasUnderscoreKey = "session_id" in headers
+  // Overwrite the session header. The official client sends exactly one
+  // spelling (`session-id`, hyphen); collapse any variant to it.
   delete headers["session_id"]
   delete headers["session-id"]
-  headers[hasUnderscoreKey ? "session_id" : "session-id"] = state.promptCacheKey
+  headers["session-id"] = state.promptCacheKey
 
   if (headers["Conversation_id"] || headers["conversation_id"]) {
     delete headers["Conversation_id"]

@@ -174,6 +174,18 @@ export function applyCodexWebsocketHeaders(
   if (!beta.includes("responses_websockets=")) {
     next["OpenAI-Beta"] = CODEX_WS_BETA
   }
+  // The official client sends `x-client-request-id` (with the thread id as
+  // value) only on the WebSocket handshake — never on HTTP
+  // (core/src/client.rs build_websocket_headers). Derive it from the
+  // `thread-id` the HTTP headers carry, unless identity confuse already set
+  // it to the per-account confused id.
+  if (!next["x-client-request-id"] && next["thread-id"]) {
+    next["x-client-request-id"] = next["thread-id"]
+  }
+  // The official handshake omits these: turn_state is passed as None and no
+  // installation-id header is sent on the socket (only on HTTP).
+  delete next["x-codex-turn-state"]
+  delete next["x-codex-installation-id"]
   // WS responses are event messages, not SSE.
   delete next.Accept
   return next

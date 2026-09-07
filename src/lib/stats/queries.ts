@@ -11,7 +11,10 @@ import type {
   UsageProviderRow,
   UsageProviderStats,
   ProviderAccountUsage,
+  UsageRawRow,
 } from "~/lib/stats/types"
+
+import { HTTPError } from "~/lib/error"
 
 export function queryUsageDayRows(
   db: Database,
@@ -267,6 +270,98 @@ export function getUsageStatsByProviderData(
   }
 
   return result
+}
+
+/**
+ * Maximum per-request rows pulled into JS for timestamp-range regrouping.
+ * Ranges that exceed it (e.g. `range=all` on a large instance) get a 413
+ * instead of loading the whole table into memory.
+ */
+export const MAX_USAGE_RAW_ROWS = 200_000
+
+export class UsageRangeTooLargeError extends HTTPError {
+  constructor(rowLimit: number) {
+    super(
+      `Usage range too large: exceeds ${rowLimit} rows. `
+        + `Narrow the range or pick a single month.`,
+      new Response(null, { status: 413 }),
+    )
+    this.name = "UsageRangeTooLargeError"
+  }
+}
+
+export interface UsageRawRowFilter {
+  accountId?: string
+  userId?: string
+  startMs: number
+  endMs: number
+}
+
+/**
+ * Fetch per-request rows in a UTC instant range for viewer-timezone
+ * grouping in JS. Callers regroup by `timestamp`, never by the
+ * server-local `date` column. Throws UsageRangeTooLargeError (413) when
+ * the range holds more than MAX_USAGE_RAW_ROWS rows.
+ */
+export function queryUsageRawRows(
+  db: Database,
+  filter: UsageRawRowFilter,
+): Array<UsageRawRow> {
+  const countQuery = `
+    SELECT COUNT(*) as count
+    FROM usage_stats
+    WHERE timestamp >= ?
+      AND timestamp < ?
+  `
+  const countParams: Array<string | number> = [filter.startMs, filter.endMs]
+  let countFilter = ""
+  if (filter.accountId) {
+    countFilter += " AND account_id = ?"
+    countParams.push(filter.accountId)
+  }
+  if (filter.userId) {
+    countFilter += " AND user_id = ?"
+    countParams.push(filter.userId)
+  }
+  const countRow = db.prepare(countQuery + countFilter).get(...countParams) as {
+    count: number
+  }
+  if (countRow.count > MAX_USAGE_RAW_ROWS) {
+    throw new UsageRangeTooLargeError(MAX_USAGE_RAW_ROWS)
+  }
+
+  let query = `
+    SELECT
+      model,
+      account_id,
+      user_id,
+      provider,
+      prompt_tokens,
+      completion_tokens,
+      cache_read_tokens,
+      cache_write_tokens,
+      total_tokens,
+      cost,
+      timestamp,
+      ttft_ms,
+      tps,
+      streaming
+    FROM usage_stats
+    WHERE timestamp >= ?
+      AND timestamp < ?
+  `
+  const params: Array<string | number> = [filter.startMs, filter.endMs]
+  if (filter.accountId) {
+    query += " AND account_id = ?"
+    params.push(filter.accountId)
+  }
+  if (filter.userId) {
+    query += " AND user_id = ?"
+    params.push(filter.userId)
+  }
+  query += " ORDER BY timestamp ASC"
+  const stmt = db.prepare(query)
+  return stmt.all(...params) as Array<UsageRawRow>
 }
 
 export function getUsageByTimestampRangeData(

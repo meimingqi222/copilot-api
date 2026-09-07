@@ -35,7 +35,14 @@ import {
   getUsageStatsData,
   getUsageStatsForUserData,
   getPerformanceByModelData,
+  queryUsageRawRows,
 } from "~/lib/stats/queries"
+import {
+  bucketRowsByInterval,
+  computePerformanceByModel,
+  groupRowsByProvider,
+  groupRowsByViewerDate,
+} from "~/lib/stats/range-query"
 import { createTables } from "~/lib/stats/schema"
 
 class StatsStore {
@@ -224,6 +231,63 @@ class StatsStore {
   ): Record<string, UsageProviderStats> {
     const db = this.ensureDb()
     return getUsageStatsByProviderData(db, startDate, endDate)
+  }
+
+  /**
+   * Timestamp-range usage variants grouped in the viewer's timezone.
+   * Prefer these over the `date`-column variants for display: `date` is
+   * server-local, while these key off exact UTC instants.
+   */
+  getUsageStatsByTimeRange(options: {
+    accountId?: string
+    userId?: string
+    startMs: number
+    endMs: number
+    tz: string
+  }): Array<UsageDayStats> {
+    const db = this.ensureDb()
+    const rows = queryUsageRawRows(db, options)
+    return groupRowsByViewerDate(rows, options.tz)
+  }
+
+  getUsageStatsByProviderInRange(options: {
+    startMs: number
+    endMs: number
+  }): Record<string, UsageProviderStats> {
+    const db = this.ensureDb()
+    const rows = queryUsageRawRows(db, options)
+    return groupRowsByProvider(rows)
+  }
+
+  getPerformanceByModelInRange(options: {
+    startMs: number
+    endMs: number
+  }): Array<{
+    model: string
+    requests: number
+    streamingRequests: number
+    avgTtftMs: number | null
+    avgStreamingTps: number | null
+    avgNonStreamingTps: number | null
+  }> {
+    const db = this.ensureDb()
+    const rows = queryUsageRawRows(db, options)
+    return computePerformanceByModel(rows)
+  }
+
+  getUsageStatsByIntervalInRange(options: {
+    intervalMinutes: number
+    accountId?: string
+    startMs: number
+    endMs: number
+  }): Array<UsageIntervalStats> {
+    const db = this.ensureDb()
+    const rows = queryUsageRawRows(db, options)
+    return bucketRowsByInterval({
+      rows,
+      intervalMs: options.intervalMinutes * 60 * 1000,
+      alignMs: options.startMs,
+    })
   }
 
   clearUsageStatsForTest(): void {

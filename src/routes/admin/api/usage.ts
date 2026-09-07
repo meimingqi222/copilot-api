@@ -2,14 +2,23 @@ import { Hono } from "hono"
 
 import type { ProviderId } from "~/lib/provider-config"
 
+import { forwardError, HTTPError } from "~/lib/error"
 import {
   getProviderConnection,
   listAccountManagedConnections,
   providerFromProtocol,
 } from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
+import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+import {
+  addDays,
+  resolveTimeZone,
+  startOfDayMs,
+  todayInTimeZone,
+  weekdayInTimeZone,
+} from "~/lib/stats/timezone"
 
 /**
  * Map each exposed model id to the provider of the highest-priority account
@@ -87,22 +96,34 @@ type UsageSeriesEntryBase = UsageMetricsBase & {
 
 // Get usage statistics with date range
 usageApiRoutes.get("/", (c) => {
-  const accountId = c.req.query("accountId")
-  const requestedStartDate = c.req.query("startDate")
-  const requestedEndDate = c.req.query("endDate")
-  const range = c.req.query("range")
-  const month = c.req.query("month")
+  try {
+    const accountId = c.req.query("accountId")
+    const requestedStartDate = c.req.query("startDate")
+    const requestedEndDate = c.req.query("endDate")
+    const range = c.req.query("range")
+    const month = c.req.query("month")
+    const tz = c.req.query("tz")
 
-  const { startDate, endDate } = resolveDateRange({
-    range,
-    month,
-    startDate: requestedStartDate,
-    endDate: requestedEndDate,
-  })
+    const { startMs, endMs, timeZone, startDate, endDate } = resolveDateRange({
+      range,
+      month,
+      startDate: requestedStartDate,
+      endDate: requestedEndDate,
+      tz,
+    })
 
-  const stats = statsStore.getUsageStats(accountId, startDate, endDate)
+    const stats = statsStore.getUsageStatsByTimeRange({
+      accountId,
+      startMs,
+      endMs,
+      tz: timeZone,
+    })
 
-  return c.json({ stats, period: { startDate, endDate } })
+    return c.json({ stats, period: { startDate, endDate, timeZone } })
+  } catch (error) {
+    recordTraceError(c, error)
+    return forwardError(c, error)
+  }
 })
 
 type PricingTierSource = {
@@ -305,14 +326,7 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
   })
 })
 
-function formatDate(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, "0")
-  const d = String(date.getDate()).padStart(2, "0")
-  return `${y}-${m}-${d}`
-}
-
-// Resolve a date range from query params.
+// Resolve a date range from query params (days are viewer-timezone days).
 // Supported `range` values:
 //   - "today"      : today only
 //   - "week"       : current ISO-style week (Monday→today)
@@ -323,65 +337,141 @@ function formatDate(date: Date): string {
 //   - "all"        : no bounds
 // `month=YYYY-MM` selects an arbitrary calendar month and overrides `range`.
 // Explicit `startDate`/`endDate` always override.
+// `tz` is an IANA timezone name from the browser; day boundaries are UTC
+// instants ([startMs, endMs)) in that zone so stats match the viewer's days
+// even when the server runs in another timezone.
 function resolveDateRange(opts: {
   range?: string
   month?: string
   startDate?: string
   endDate?: string
-}): { startDate: string; endDate: string } {
+  tz?: string
+}): {
+  startDate: string
+  endDate: string
+  startMs: number
+  endMs: number
+  timeZone: string
+} {
+  const timeZone = resolveTimeZone(opts.tz)
   if (opts.startDate && opts.endDate) {
-    return { startDate: opts.startDate, endDate: opts.endDate }
+    assertValidDate(opts.startDate, "startDate")
+    assertValidDate(opts.endDate, "endDate")
+    return withBounds(opts.startDate, opts.endDate, timeZone)
   }
 
   if (opts.month && /^\d{4}-\d{2}$/.test(opts.month)) {
     const [yearStr, monthStr] = opts.month.split("-")
     const year = Number.parseInt(yearStr, 10)
-    const monthIdx = Number.parseInt(monthStr, 10) - 1
-    const start = new Date(year, monthIdx, 1)
-    const end = new Date(year, monthIdx + 1, 0)
-    return { startDate: formatDate(start), endDate: formatDate(end) }
+    const monthIdx = Number.parseInt(monthStr, 10)
+    if (monthIdx < 1 || monthIdx > 12) {
+      throw new HTTPError(
+        `Invalid month "${opts.month}". Expected YYYY-MM with MM in 01-12.`,
+        new Response(null, { status: 400 }),
+      )
+    }
+    const start = `${yearStr}-${monthStr}-01`
+    const nextMonth =
+      monthIdx === 12 ?
+        `${year + 1}-01-01`
+      : `${yearStr}-${String(monthIdx + 1).padStart(2, "0")}-01`
+    return withBounds(start, addDays(nextMonth, -1), timeZone)
   }
 
-  const now = new Date()
-  const today = formatDate(now)
+  const today = todayInTimeZone(timeZone)
   const range = opts.range ?? "today"
 
   switch (range) {
     case "today": {
-      return { startDate: today, endDate: today }
+      return withBounds(today, today, timeZone)
     }
     case "week": {
-      const day = now.getDay() // 0=Sun..6=Sat
-      const offsetToMonday = (day + 6) % 7
-      const monday = new Date(now)
-      monday.setDate(now.getDate() - offsetToMonday)
-      return { startDate: formatDate(monday), endDate: today }
+      const weekday = weekdayInTimeZone(today) // 0=Sun..6=Sat
+      const offsetToMonday = (weekday + 6) % 7
+      return withBounds(addDays(today, -offsetToMonday), today, timeZone)
     }
     case "month": {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1)
-      return { startDate: formatDate(start), endDate: today }
+      return withBounds(`${today.slice(0, 7)}-01`, today, timeZone)
     }
     case "lastMonth": {
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      const end = new Date(now.getFullYear(), now.getMonth(), 0)
-      return { startDate: formatDate(start), endDate: formatDate(end) }
+      const year = Number.parseInt(today.slice(0, 4), 10)
+      const monthIdx = Number.parseInt(today.slice(5, 7), 10)
+      const prevStart =
+        monthIdx === 1 ?
+          `${year - 1}-12-01`
+        : `${year}-${String(monthIdx - 1).padStart(2, "0")}-01`
+      return withBounds(
+        prevStart,
+        addDays(`${today.slice(0, 7)}-01`, -1),
+        timeZone,
+      )
     }
     case "last7d": {
-      const ago = new Date(now)
-      ago.setDate(now.getDate() - 6)
-      return { startDate: formatDate(ago), endDate: today }
+      return withBounds(addDays(today, -6), today, timeZone)
     }
     case "last30d": {
-      const ago = new Date(now)
-      ago.setDate(now.getDate() - 29)
-      return { startDate: formatDate(ago), endDate: today }
+      return withBounds(addDays(today, -29), today, timeZone)
     }
     case "all": {
-      return { startDate: "1970-01-01", endDate: today }
+      return {
+        startDate: "1970-01-01",
+        endDate: today,
+        startMs: 0,
+        endMs: startOfDayMs(addDays(today, 1), timeZone),
+        timeZone,
+      }
     }
     default: {
-      return { startDate: opts.startDate ?? today, endDate: today }
+      const start = opts.startDate ?? today
+      assertValidDate(start, "startDate")
+      return withBounds(start, today, timeZone)
     }
+  }
+}
+
+/** Reject malformed YYYY-MM-DD input before it becomes a NaN bound. */
+function assertValidDate(value: string, name: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new HTTPError(
+      `Invalid ${name} "${value}". Expected YYYY-MM-DD.`,
+      new Response(null, { status: 400 }),
+    )
+  }
+  const [yearStr, monthStr, dayStr] = value.split("-")
+  const year = Number.parseInt(yearStr, 10)
+  const month = Number.parseInt(monthStr, 10)
+  const day = Number.parseInt(dayStr, 10)
+  const roundTrips =
+    month >= 1
+    && month <= 12
+    && day >= 1
+    && day <= 31
+    && new Date(Date.UTC(year, month - 1, day)).getUTCDate() === day
+  if (!roundTrips) {
+    throw new HTTPError(
+      `Invalid ${name} "${value}". Expected a real calendar date.`,
+      new Response(null, { status: 400 }),
+    )
+  }
+}
+
+function withBounds(
+  startDate: string,
+  endDate: string,
+  timeZone: string,
+): {
+  startDate: string
+  endDate: string
+  startMs: number
+  endMs: number
+  timeZone: string
+} {
+  return {
+    startDate,
+    endDate,
+    startMs: startOfDayMs(startDate, timeZone),
+    endMs: startOfDayMs(addDays(endDate, 1), timeZone),
+    timeZone,
   }
 }
 
@@ -504,7 +594,11 @@ function aggregateStats(allStats: ReturnType<typeof statsStore.getUsageStats>) {
 }
 
 // Helper: Aggregate by account
-function aggregateByAccount(startDate: string, endDate: string) {
+function aggregateByAccount(range: {
+  startMs: number
+  endMs: number
+  tz: string
+}) {
   const byAccount: Record<
     string,
     UsageMetrics & {
@@ -515,7 +609,12 @@ function aggregateByAccount(startDate: string, endDate: string) {
 
   // 使用 connection 原生列表(替代 listAccounts())
   for (const conn of listAccountManagedConnections()) {
-    const accountStats = statsStore.getUsageStats(conn.id, startDate, endDate)
+    const accountStats = statsStore.getUsageStatsByTimeRange({
+      accountId: conn.id,
+      startMs: range.startMs,
+      endMs: range.endMs,
+      tz: range.tz,
+    })
     const totals = createUsageMetrics()
     const models: Record<string, UsageMetricsBase> = {}
 
@@ -534,7 +633,11 @@ function aggregateByAccount(startDate: string, endDate: string) {
   return byAccount
 }
 
-function aggregateByUser(startDate: string, endDate: string) {
+function aggregateByUser(range: {
+  startMs: number
+  endMs: number
+  tz: string
+}) {
   const byUser: Record<
     string,
     UsageMetrics & {
@@ -544,11 +647,12 @@ function aggregateByUser(startDate: string, endDate: string) {
   > = {}
 
   for (const user of state.users) {
-    const userStats = statsStore.getUsageStatsForUser(
-      user.id,
-      startDate,
-      endDate,
-    )
+    const userStats = statsStore.getUsageStatsByTimeRange({
+      userId: user.id,
+      startMs: range.startMs,
+      endMs: range.endMs,
+      tz: range.tz,
+    })
     const totals = createUsageMetrics()
     const models: Record<string, UsageMetricsBase> = {}
 
@@ -570,8 +674,11 @@ function aggregateByUser(startDate: string, endDate: string) {
 // Helper: Aggregate by provider (account -> model nested under each provider).
 // Reads the persisted `provider` column directly, so usage from deleted
 // accounts is still grouped under its provider rather than disappearing.
-function aggregateByProvider(startDate: string, endDate: string) {
-  const raw = statsStore.getUsageStatsByProvider(startDate, endDate)
+function aggregateByProvider(range: { startMs: number; endMs: number }) {
+  const raw = statsStore.getUsageStatsByProviderInRange({
+    startMs: range.startMs,
+    endMs: range.endMs,
+  })
   const result: Record<
     string,
     UsageMetrics & {
@@ -652,59 +759,86 @@ function enrichIntervalSeries(
 
 // Get summary statistics
 usageApiRoutes.get("/summary", (c) => {
-  const range = c.req.query("range") || "today"
-  const month = c.req.query("month")
-  const requestedStartDate = c.req.query("startDate")
-  const requestedEndDate = c.req.query("endDate")
-  const { startDate, endDate } = resolveDateRange({
-    range,
-    month,
-    startDate: requestedStartDate,
-    endDate: requestedEndDate,
-  })
+  try {
+    const range = c.req.query("range") || "today"
+    const month = c.req.query("month")
+    const requestedStartDate = c.req.query("startDate")
+    const requestedEndDate = c.req.query("endDate")
+    const tz = c.req.query("tz")
+    const resolved = resolveDateRange({
+      range,
+      month,
+      startDate: requestedStartDate,
+      endDate: requestedEndDate,
+      tz,
+    })
+    const { startDate, endDate, startMs, endMs, timeZone } = resolved
 
-  const allStats = statsStore.getUsageStats(undefined, startDate, endDate)
-  const { totals, timeSeries, byModel } = aggregateStats(allStats)
-  const byAccount = aggregateByAccount(startDate, endDate)
-  const byUser = aggregateByUser(startDate, endDate)
-  const byProvider = aggregateByProvider(startDate, endDate)
+    const allStats = statsStore.getUsageStatsByTimeRange({
+      startMs,
+      endMs,
+      tz: timeZone,
+    })
+    const { totals, timeSeries, byModel } = aggregateStats(allStats)
+    const rangeBounds = { startMs, endMs, tz: timeZone }
+    const byAccount = aggregateByAccount(rangeBounds)
+    const byUser = aggregateByUser(rangeBounds)
+    const byProvider = aggregateByProvider(rangeBounds)
 
-  // Only show 15-minute interval breakdown when the range is a single day
-  const intervalSeries = enrichIntervalSeries(
-    startDate === endDate ?
-      statsStore.getUsageStatsByInterval(15, undefined, startDate)
-    : null,
-  )
+    // Only show 15-minute interval breakdown when the range is a single day
+    const intervalSeries = enrichIntervalSeries(
+      startDate === endDate ?
+        statsStore.getUsageStatsByIntervalInRange({
+          intervalMinutes: 15,
+          startMs,
+          endMs,
+        })
+      : null,
+    )
 
-  return c.json({
-    totals,
-    byAccount,
-    byProvider,
-    byUser,
-    byModel,
-    timeSeries,
-    intervalSeries,
-    period: { startDate, endDate },
-  })
+    return c.json({
+      totals,
+      byAccount,
+      byProvider,
+      byUser,
+      byModel,
+      timeSeries,
+      intervalSeries,
+      period: { startDate, endDate, timeZone },
+    })
+  } catch (error) {
+    recordTraceError(c, error)
+    return forwardError(c, error)
+  }
 })
 
 // Get per-model performance metrics (TTFT, TPS)
 usageApiRoutes.get("/performance", (c) => {
-  const range = c.req.query("range") || "today"
-  const month = c.req.query("month")
-  const requestedStartDate = c.req.query("startDate")
-  const requestedEndDate = c.req.query("endDate")
-  const { startDate, endDate } = resolveDateRange({
-    range,
-    month,
-    startDate: requestedStartDate,
-    endDate: requestedEndDate,
-  })
+  try {
+    const range = c.req.query("range") || "today"
+    const month = c.req.query("month")
+    const requestedStartDate = c.req.query("startDate")
+    const requestedEndDate = c.req.query("endDate")
+    const tz = c.req.query("tz")
+    const { startDate, endDate, startMs, endMs, timeZone } = resolveDateRange({
+      range,
+      month,
+      startDate: requestedStartDate,
+      endDate: requestedEndDate,
+      tz,
+    })
 
-  const performance = statsStore.getPerformanceByModel(startDate, endDate)
+    const performance = statsStore.getPerformanceByModelInRange({
+      startMs,
+      endMs,
+    })
 
-  return c.json({
-    performance,
-    period: { startDate, endDate },
-  })
+    return c.json({
+      performance,
+      period: { startDate, endDate, timeZone },
+    })
+  } catch (error) {
+    recordTraceError(c, error)
+    return forwardError(c, error)
+  }
 })

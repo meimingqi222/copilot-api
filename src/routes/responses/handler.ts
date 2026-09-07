@@ -88,9 +88,21 @@ export async function handleResponses(c: Context) {
   const forwardedHeaders: Record<string, string | undefined> = {
     session_id: c.req.header("session_id") ?? c.req.header("session-id"),
     thread_id: c.req.header("thread_id") ?? c.req.header("thread-id"),
+    // WS-spelling thread fallback (remapped to `thread-id` upstream; the
+    // official client only sends this on the WebSocket handshake).
+    "x-client-request-id": c.req.header("x-client-request-id"),
     "x-codex-turn-metadata": c.req.header("x-codex-turn-metadata"),
     "x-codex-window-id": c.req.header("x-codex-window-id"),
     "x-codex-beta-features": c.req.header("x-codex-beta-features"),
+    // Per-installation identity the official client always sends on HTTP.
+    "x-codex-installation-id": c.req.header("x-codex-installation-id"),
+    // Server-echoed turn state (forwarded on HTTP; stripped on the WS
+    // handshake where the official client never sends it).
+    "x-codex-turn-state": c.req.header("x-codex-turn-state"),
+    // Timing metrics marker (WebSocket-only upstream).
+    "x-responsesapi-include-timing-metrics": c.req.header(
+      "x-responsesapi-include-timing-metrics",
+    ),
     // Responses Lite marker — forwarded so the upstream/parallel_tool_calls
     // invariant is preserved end-to-end.
     "x-openai-internal-codex-responses-lite": c.req.header(

@@ -107,6 +107,24 @@ export type UsageProviderRow = {
   cost: number
 }
 
+/** Per-request usage row for timestamp-range aggregation (grouped in JS). */
+export type UsageRawRow = {
+  model: string
+  account_id: string
+  user_id: string | null
+  provider: string | null
+  prompt_tokens: number
+  completion_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  total_tokens: number
+  cost: number
+  timestamp: number
+  ttft_ms: number | null
+  tps: number | null
+  streaming: number | null
+}
+
 /** Per-account rollup nested under a provider, for by-provider aggregation. */
 export type ProviderAccountUsage = {
   label: string

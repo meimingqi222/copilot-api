@@ -102,16 +102,23 @@ interface ResolvedCodexSessionHeaders {
  *   3. Content-hash fallback via extractSessionIds + resolveStableSessionId
  *      (prefers turn-1 short hash so multi-turn Session_id stays stable).
  *
- * Priority for thread_id (sent as x-client-request-id):
- *   1. `thread_id` / `thread-id` from the forwarded incoming request header.
- *   2. Random UUID fallback (handled by header builder when omitted).
+ * Priority for thread_id (sent as `thread-id` on HTTP and as
+ * `x-client-request-id` on the WebSocket handshake):
+ *   1. `thread_id` / `thread-id` from the forwarded incoming request header
+ *      (the spelling the official client uses on HTTP).
+ *   2. `x-client-request-id` from the forwarded incoming request header
+ *      (proxy-fronted clients that reused the WS spelling on HTTP).
+ *   3. Omitted (the official client never invents a random thread id).
  */
 function resolveCodexSessionHeaders(
   payload: ResponsesPayload,
   ctx?: RequestExecutionContext,
 ): ResolvedCodexSessionHeaders {
   const forwarded = ctx?.forwardedHeaders
-  const threadIdRaw = forwarded?.["thread_id"] ?? forwarded?.["thread-id"]
+  const threadIdRaw =
+    forwarded?.["thread_id"]
+    ?? forwarded?.["thread-id"]
+    ?? forwarded?.["x-client-request-id"]
   const threadId =
     typeof threadIdRaw === "string" && threadIdRaw.trim() ?
       threadIdRaw.trim()
@@ -171,6 +178,13 @@ function resolveCodexExtraHeaders(
     "x-codex-turn-metadata",
     "x-codex-window-id",
     "x-codex-beta-features",
+    // Always sent by the official client on HTTP (client.rs
+    // ModelClientSession::stream): per-installation identity.
+    "x-codex-installation-id",
+    // Server-echoed turn state: the official client sends back the value
+    // received on a previous response (`x-codex-turn-state` response
+    // header). Forward the downstream client's value verbatim.
+    "x-codex-turn-state",
     "version",
     "originator",
     // Responses Lite marker. When present, upstream requires
@@ -183,6 +197,15 @@ function resolveCodexExtraHeaders(
     }
   }
   return extra
+}
+
+/** Reads a single trimmed forwarded header, if the downstream sent one. */
+function readForwardedHeader(
+  ctx: RequestExecutionContext | undefined,
+  name: string,
+): string | undefined {
+  const value = ctx?.forwardedHeaders?.[name]
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
 /** Transport a finalized Codex body is about to be sent over. */
@@ -460,6 +483,10 @@ export async function createCodexResponsesOnce(
       transcriptTrackable,
       fullInputThisTurn,
       memoryTraceId,
+      timingMetricsHeader: readForwardedHeader(
+        ctx,
+        "x-responsesapi-include-timing-metrics",
+      ),
     })
     if (wsTurn !== undefined) {
       return wsTurn
@@ -761,6 +788,11 @@ interface CodexWsTurnOptions {
   transcriptTrackable: boolean
   fullInputThisTurn: Array<unknown>
   memoryTraceId?: string
+  /**
+   * Downstream `x-responsesapi-include-timing-metrics` value. Applied to the
+   * WebSocket handshake only (the official client never sends it on HTTP).
+   */
+  timingMetricsHeader?: string
 }
 
 /**
@@ -790,6 +822,7 @@ async function attemptCodexUpstreamWsTurn(
     transcriptTrackable,
     fullInputThisTurn,
     memoryTraceId,
+    timingMetricsHeader,
   } = options
   const wsBody = finalizeCodexOutboundBody(
     { ...upstreamBody, previous_response_id: previousResponseId },
@@ -802,6 +835,9 @@ async function attemptCodexUpstreamWsTurn(
     fallbackFullInputBody
     && finalizeCodexOutboundBody(fallbackFullInputBody, "ws")
   const wsHeaders = applyCodexWebsocketHeaders({ ...httpHeaders })
+  if (timingMetricsHeader) {
+    wsHeaders["x-responsesapi-include-timing-metrics"] = timingMetricsHeader
+  }
   try {
     // Eager open+send so handshake failures hit this catch (streaming-safe).
     const wsStream = await openUpstreamResponsesWebsocketTurn({

@@ -1,4 +1,12 @@
 // API Client
+const setViewerTimezone = (qs) => {
+  const tz =
+    typeof Intl !== "undefined" ?
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    : undefined
+  if (tz) qs.set("tz", tz)
+}
+
 const API = {
   baseUrl: "/admin/api",
 
@@ -303,6 +311,9 @@ const API = {
       if (opts.month) qs.set("month", opts.month)
       if (opts.startDate) qs.set("startDate", opts.startDate)
       if (opts.endDate) qs.set("endDate", opts.endDate)
+      // Viewer timezone so day boundaries match the browser's local days
+      // even when the server runs in another timezone.
+      setViewerTimezone(qs)
       const query = qs.toString()
       return API.request(`/usage/summary${query ? "?" + query : ""}`)
     },
@@ -312,6 +323,7 @@ const API = {
       if (params.month) qs.set("month", params.month)
       if (params.startDate) qs.set("startDate", params.startDate)
       if (params.endDate) qs.set("endDate", params.endDate)
+      setViewerTimezone(qs)
       const query = qs.toString()
       return API.request(`/usage/performance${query ? "?" + query : ""}`)
     },
