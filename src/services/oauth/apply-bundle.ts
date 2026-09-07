@@ -17,8 +17,10 @@ export interface OAuthBundleCore {
 
 /**
  * Provider bundle 中除 OAuthBundleCore 外的已知字段。
- * - context 字段(刷新源材料):idToken / oauthAccountId / projectId / deviceId / apiKey
+ * - context 字段(刷新源材料):idToken / oauthAccountId / projectId / deviceId / apiKey / email
  * - credentialExtras 字段(展示用):email / organizationId / organizationName
+ *   (email 同时落入 context 与 extras:context 供 connection 原生 label/subtitle
+ *   推断读取,extras 供老路径 Account 快照合并读取)
  */
 export interface OAuthBundleExtras {
   idToken?: string
@@ -31,17 +33,19 @@ export interface OAuthBundleExtras {
   organizationName?: string
 }
 
-/** bundle 中落入 credential.context 的字段(undefined 保留旧值)。 */
+/** bundle 中落入 credential.context 的字段(undefined 保留旧值)。
+ *  这些字段同时镜像到 metadata.credentialExtras,保持迁移路径一致。 */
 const CONTEXT_KEYS = [
   "idToken",
   "accountId",
   "projectId",
   "deviceId",
   "apiKey",
+  "email",
 ] as const
 
-/** bundle 中落入 metadata.credentialExtras 的字段(undefined 保留旧值)。 */
-const EXTRA_KEYS = ["email", "organizationId", "organizationName"] as const
+/** bundle 中仅落入 metadata.credentialExtras 的字段(undefined 保留旧值)。 */
+const EXTRA_KEYS = ["organizationId", "organizationName"] as const
 
 function readContextString(
   connection: ProviderConnection,
@@ -55,7 +59,7 @@ function readContextString(
  * 通用 OAuth bundle 落库(connection 原生):
  * - credential.value = accessToken
  * - credential.context:refreshToken / expiresAt / idToken / oauthAccountId /
- *   projectId / deviceId / apiKey(undefined 字段保留旧值)
+ *   projectId / deviceId / apiKey / email(undefined 字段保留旧值)
  * - metadata.credentialExtras:同步镜像 context 字段 + email /
  *   organizationId / organizationName(迁移路径将 OAuth credentials 写入
  *   credentialExtras,connectionToAccount 的 extras 覆盖 context 读取,
