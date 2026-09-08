@@ -46,6 +46,12 @@ interface CreateResponsesOptions {
    * handler's same-account recovery after a lazy connection failure.
    */
   forceUpstreamHttp?: boolean
+  /**
+   * V2 内联压缩 turn（`compaction_trigger` 随普通 /responses 进来，含 WS
+   * 路径）：adapter 侧走 compact 分支（跳上游 WS、不注入 replay、不记
+   * transcript、不链 previous_response_id），上游一律 HTTP。
+   */
+  compact?: boolean
 }
 
 export const createResponses = async (
@@ -132,7 +138,8 @@ export const createResponses = async (
       executionSessionId: options.executionSessionId,
       transcriptScopeId: options.transcriptScopeId,
       memoryTraceId: options.memoryTraceId,
-      forceUpstreamHttp: options.forceUpstreamHttp,
+      forceUpstreamHttp: options.forceUpstreamHttp || options.compact,
+      compact: options.compact,
     },
   })
 

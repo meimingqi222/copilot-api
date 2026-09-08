@@ -75,7 +75,11 @@ export function selectNextResponsesWsTarget(
   initialTarget: RouteTarget,
   modelId: string,
   tried: Set<string>,
-  session?: { sessionId?: string; fallbackSessionId?: string },
+  session?: {
+    sessionId?: string
+    fallbackSessionId?: string
+    compact?: boolean
+  },
 ): RouteTarget | null {
   const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
@@ -85,6 +89,7 @@ export function selectNextResponsesWsTarget(
     connectionId: routing.connectionId,
     aliasRestriction: routing.aliasRestriction,
     endpoint: "responses",
+    compact: session?.compact,
   }).filter(
     (candidate) =>
       candidate.protocol === initialTarget.protocol

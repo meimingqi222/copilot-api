@@ -346,3 +346,54 @@ describe("POST /v1/responses/compact", () => {
     ])
   })
 })
+
+describe("WS /v1/responses with inline compaction_trigger", () => {
+  test("codex: routes to upstream HTTP /responses with trigger preserved", async () => {
+    await setupCodexConnection()
+    mockCompactFetch()
+
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: (await import("~/lib/bun-websocket")).bunWebsocket,
+    })
+    const ws = new WebSocket(`ws://localhost:${appServer.port}/v1/responses`)
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Timed out waiting for websocket open")),
+        2_000,
+      )
+      ws.addEventListener("open", () => {
+        clearTimeout(timeout)
+        resolve()
+      })
+      ws.addEventListener("error", () => {
+        clearTimeout(timeout)
+        reject(new Error("WebSocket failed to connect"))
+      })
+    })
+    const received: Array<string> = []
+    ws.addEventListener("message", (event: MessageEvent<string>) => {
+      received.push(String(event.data))
+    })
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          model: "gpt-5.4",
+          input: [...HISTORY_INPUT, { type: "compaction_trigger" }],
+        },
+      }),
+    )
+    await Bun.sleep(500)
+
+    // 上游走普通 HTTP /responses（SSE），trigger 原样透传。
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe("https://chatgpt.com/backend-api/codex/responses")
+    expect(calls[0].body.input).toEqual([
+      ...HISTORY_INPUT,
+      { type: "compaction_trigger" },
+    ])
+    ws.close()
+  })
+})

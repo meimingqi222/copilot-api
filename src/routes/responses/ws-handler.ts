@@ -48,6 +48,7 @@ import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
 import { recordUpstreamFailure } from "~/services/dispatch/failover"
+import { hasCompactionTrigger } from "~/services/responses/compact"
 import { closeUpstreamWebsocketSessionsByExecutionId } from "~/services/responses/upstream-ws"
 import { classifyWsFailure } from "~/services/responses/ws-failure"
 
@@ -323,10 +324,12 @@ function selectNextResponsesAdmission(
   current: RequestAdmission,
   modelId: string,
   tried: Set<string>,
+  compact?: boolean,
 ): RequestAdmission | null {
   const next = selectNextResponsesWsTarget(initial.target, modelId, tried, {
     sessionId: current.sessionId,
     fallbackSessionId: current.fallbackSessionId,
+    compact,
   })
   if (!next) return null
   const resolved = resolveConnectionFromTarget(next)
@@ -357,9 +360,18 @@ async function processResponseCreate(
   } = options
 
   const sessionHeaders = extractResponsesSessionHeaders(c)
+  // V2 内联远端压缩：input 尾巴夹带 `compaction_trigger` 时与 HTTP handler
+  // 同构——admission 预过滤到 compact-capable 协议，且执行期走 HTTP 已测通
+  // 的路径（压缩 input 本来就是全量历史 + 自包含，WS 增量优势吃不到）。
+  const isCompactRequest = hasCompactionTrigger(payload.input)
   let admission: RequestAdmission
   try {
-    admission = await prepareResponsesAdmission(c, payload, sessionHeaders)
+    admission = await prepareResponsesAdmission(
+      c,
+      payload,
+      sessionHeaders,
+      isCompactRequest,
+    )
   } catch (error) {
     recordTraceError(c, error)
     updateMemoryTrace(memoryTraceId, "admission_error")
@@ -380,6 +392,10 @@ async function processResponseCreate(
   let httpRecoveryTried = false
   const tried = new Set<string>()
   const turnStarted = Date.now()
+  // 压缩 turn 复用 HTTP 已测通的路径：首轮即强制上游 HTTP，不经过 WS 尝试。
+  // 压缩 input 本来就是全量历史 + 自包含，WS 的增量 input 优势吃不到，
+  // 且能避开上游 WS 的 transcript/链式语义坑。
+  if (isCompactRequest) httpRecoveryTried = true
 
   while (true) {
     const outcome = await runResponsesAttempt({
@@ -396,6 +412,7 @@ async function processResponseCreate(
       httpRecoveryTried,
       memoryTraceId,
       turnStarted,
+      compact: isCompactRequest || undefined,
     })
     if (outcome.type === "retry-http") {
       updateMemoryTrace(memoryTraceId, "provider_http_recovery")
@@ -432,6 +449,7 @@ interface RunResponsesAttemptParams {
   httpRecoveryTried: boolean
   memoryTraceId: string
   turnStarted: number
+  compact?: boolean
 }
 
 /**
@@ -464,6 +482,7 @@ async function runResponsesAttempt(
     httpRecoveryTried,
     memoryTraceId,
     turnStarted,
+    compact,
   } = params
 
   // Rotation is account-managed; the selector only returns account-managed
@@ -500,6 +519,9 @@ async function runResponsesAttempt(
       downstreamWebsocket: true,
       // Same-account HTTP recovery for a lazy connection failure: skip WS.
       forceUpstreamHttp: httpRecoveryTried,
+      // V2 内联压缩：adapter 侧走 compact 分支（跳 WS/跳 replay/不记
+      // transcript/不链 previous_response_id），上游一律 HTTP。
+      compact,
       executionSessionId,
       transcriptScopeId,
       memoryTraceId,
@@ -661,6 +683,7 @@ async function runResponsesAttempt(
       current,
       payload.model,
       tried,
+      compact,
     )
     if (!next) {
       recordTraceError(c, error)
@@ -697,6 +720,7 @@ async function prepareResponsesAdmission(
   c: Context,
   payload: ResponsesPayload,
   sessionHeaders: Record<string, string | undefined>,
+  compact?: boolean,
 ): Promise<RequestAdmission> {
   const messageContent = extractMessageContentFromResponsesPayload(payload)
   const admission = await prepareRequestAdmission(c, {
@@ -713,6 +737,7 @@ async function prepareResponsesAdmission(
     messageContent,
     sessionHeaders,
     sessionPayload: payload,
+    compact: compact || undefined,
   })
   if (!isAccountManagedConnection(admission.connection)) {
     throw new HTTPError(
