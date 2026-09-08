@@ -50,6 +50,7 @@ import {
   getResponsesStatusOutcome,
   hasResponsesOutput,
   isResponsesOutputEvent,
+  buildStreamFailurePatch,
 } from "./logging"
 
 type ResponsesExecutionResult =
@@ -230,6 +231,7 @@ export async function handleResponses(c: Context) {
               terminal === "response.incomplete" ? "incomplete" : "failed",
               outputObserved,
             )
+            recordStreamFailureDetail(c, parsed, terminal)
           }
 
           await forwardSseEvent(stream, event)
@@ -303,6 +305,23 @@ export function isNonStreaming(
   response: AsyncIterable<CopilotStreamEventLike> | ResponsesResponse,
 ): response is ResponsesResponse {
   return Object.hasOwn(response, "id") && Object.hasOwn(response, "model")
+}
+
+/**
+ * 流内失败（开流 200 后上游毙掉 turn）此前没有任何落盘位置：
+ * 后台只能看到终端类型 + 零输出。把事件里的错误原文记下来，
+ * 下次直接看详情就能定位（配额/上下文/脏历史）。
+ * `response.incomplete` 通常是截断而非错误，不记，避免噪音。
+ */
+function recordStreamFailureDetail(
+  c: Context,
+  parsed: Record<string, unknown>,
+  terminal: string,
+): void {
+  if (terminal !== "response.failed" && terminal !== "error") return
+  const patch = buildStreamFailurePatch(parsed)
+  if (!patch) return
+  patchRequestLog(c, patch)
 }
 
 /**

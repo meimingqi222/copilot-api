@@ -1,5 +1,7 @@
 import type { ResponsesResponse } from "~/services/copilot/responses-api"
 
+import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
+
 export type ResponsesLogOutcome = "success" | "incomplete" | "failed"
 
 export const TERMINAL_RESPONSE_TYPES = new Set([
@@ -107,4 +109,79 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ?
       (value as Record<string, unknown>)
     : undefined
+}
+
+/**
+ * 从流内终止失败事件里提取人类可读的错误摘要，持久化进请求日志。
+ *
+ * 背景：流成功打开（上游 200）后再失败的 turn，错误只存在于 SSE 事件里，
+ * 此前没有任何落盘位置——后台只能看到 `response.failed` + 零输出，
+ * 无法定位是配额、上下文还是脏历史的问题。
+ *
+ * 覆盖两种形态：
+ * - `{"type":"error","code","message"}`（标准错误事件）
+ * - `{"type":"response.failed","response":{"error":{...}}}`（压缩/推理失败）
+ */
+export function extractStreamFailureDetail(
+  event: Record<string, unknown>,
+): string | undefined {
+  const pick = (value: unknown): string | undefined =>
+    typeof value === "string" && value.trim() ? value.trim() : undefined
+  const response = asRecord(event.response)
+  const error = asRecord(event.error) ?? asRecord(response?.error)
+  const message =
+    pick(error?.message) ?? pick(response?.message) ?? pick(event.message)
+  const code =
+    pick(error?.code)
+    ?? pick(error?.type)
+    ?? pick(event.code)
+    ?? pick(response?.status)
+  let detail: string | undefined
+  if (message) {
+    detail = code ? `${code}: ${message}` : message
+  } else if (code) {
+    detail = `upstream stream failed (${code})`
+  }
+  if (!detail) return undefined
+  return detail.length > 500 ? `${detail.slice(0, 497)}…` : detail
+}
+
+/** `patchRequestLog` 能直接消费的流失败补丁形态（LogEntry 子集）。 */
+export interface StreamFailurePatch {
+  error: string
+  errorType: "upstream_stream_error"
+  errorSnippet: string | undefined
+  outcome: "failed"
+  diagnosticError: {
+    origin: "upstream"
+    kind: "stream_failed"
+    message: string
+  }
+}
+
+/**
+ * 由流内终止失败事件构造请求日志补丁；无可报告内容时返回 undefined。
+ * 纯函数：覆盖 `response.failed` / `error` 两种事件形态，
+ * 错误原文经脱敏 + 截断后同时写入 error 全文与 diagnosticError。
+ */
+export function buildStreamFailurePatch(
+  event: Record<string, unknown>,
+): StreamFailurePatch | undefined {
+  const failureDetail = extractStreamFailureDetail(event)
+  if (!failureDetail) return undefined
+  const message =
+    failureDetail.length > 500 ?
+      `${failureDetail.slice(0, 497)}…`
+    : failureDetail
+  return {
+    error: failureDetail,
+    errorType: "upstream_stream_error",
+    errorSnippet: sanitizeDiagnosticSnippet(failureDetail),
+    outcome: "failed",
+    diagnosticError: {
+      origin: "upstream",
+      kind: "stream_failed",
+      message,
+    },
+  }
 }
