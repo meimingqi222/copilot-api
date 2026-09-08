@@ -92,6 +92,11 @@ interface PrepareRequestAdmissionOptions {
    * (metadata.user_id, prompt_cache_key, messages hash, …).
    */
   sessionPayload?: unknown
+  /**
+   * 上下文压缩请求：候选池只保留原生支持 `/responses/compact` 的协议，
+   * 且跳过一切翻译 target（见 BuildRouteTargetsOptions.compact）。
+   */
+  compact?: boolean
 }
 
 export async function prepareRequestAdmission(
@@ -115,6 +120,7 @@ export async function prepareRequestAdmission(
     publicModelId: routing.modelId,
     aliasRestriction: routing.aliasRestriction,
     endpoint: options.endpoint,
+    compact: options.compact,
   })
 
   const sessionIds = extractSessionIds({
@@ -280,6 +286,7 @@ function diagnoseRouteFailure(
     aliasRestriction: routing.aliasRestriction,
     endpoint: options.endpoint,
     onlyAvailable: false,
+    compact: options.compact,
   })
 
   if (allCandidates.length === 0) {

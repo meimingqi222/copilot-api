@@ -48,6 +48,14 @@ export interface RequestExecutionContext {
    * so `createResponses` does not re-enter the WS path on the retry.
    */
   forceUpstreamHttp?: boolean
+  /**
+   * The request is a Responses `/responses/compact` context-compaction call
+   * (explicit path or `compaction_trigger` in the input). Compact-capable
+   * adapters must POST to the upstream compact endpoint over plain HTTP
+   * (never WebSocket), skip reasoning-replay injection (the input already is
+   * the full history), and return the unary compaction result.
+   */
+  compact?: boolean
 }
 
 export type ProviderChatResult =

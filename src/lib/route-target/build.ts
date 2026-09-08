@@ -32,6 +32,7 @@ import {
   isCredentialAvailable,
   listProviderConnections,
   refreshConnectionAvailability,
+  supportsCompactEndpoint,
   type ApiCredential,
   type ModelEndpoint,
   type ModelMapping,
@@ -61,6 +62,12 @@ export interface BuildRouteTargetsOptions {
   accountPrefix?: string
   /** Restrict candidates to the scope of a matched global alias rule. */
   aliasRestriction?: ModelAliasRestriction
+  /**
+   * 压缩请求：只保留上游原生支持 `/responses/compact` 的协议
+   * （supportsCompactEndpoint），且跳过一切翻译 target——compact
+   * 不能经过 chat hub 翻译，必须是 responses-native 直通。
+   */
+  compact?: boolean
 }
 
 export function buildRouteTargets(
@@ -81,6 +88,11 @@ export function buildRouteTargets(
       continue
     }
     if (onlyAvailable && !connection.enabled) continue
+    // compact 预过滤：不兼容的上游协议连候选都不进，避免执行期抛错
+    // 污染其冷却/配额状态（failover 会对一切执行错误 markCooldown）。
+    if (options.compact && !supportsCompactEndpoint(connection.protocol)) {
+      continue
+    }
     if (
       options.legacyProvider
       && !connectionMatchesProvider(connection, options.legacyProvider)
@@ -151,6 +163,13 @@ export function buildRouteTargets(
       // endpoint(如 "chat"),由 dispatch 层做跨协议翻译。
       const resolved = resolveEndpoints(model.endpoints, options.endpoint)
       if (!resolved) continue
+      // compact 不能走翻译：只要不是原生 responses endpoint 就跳过。
+      if (
+        options.compact
+        && (resolved.translated || !resolved.endpoints.includes("responses"))
+      ) {
+        continue
+      }
       if (options.publicModelId) {
         // 对 account-managed connection,使用 prefix 别名匹配;
         // 对普通 connection,使用 publicId/aliases 匹配

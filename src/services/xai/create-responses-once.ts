@@ -143,6 +143,140 @@ function logCachePrefixDiag(
   )
 }
 
+/**
+ * xAI 上游 `/responses/compact` 一元调用（服务端上下文压缩）。
+ *
+ * compact 只存在于官方 API（cli-chat-proxy 返回 404），所以强制使用
+ * 官方地址 + 标准 OAuth 头（不要 CLI 身份头），强制 HTTP（不走 WS），
+ * 不读写 transcript/replay 缓存。Body 按 CPA `executeCompactRequest`
+ * 规则剥离推理参数后透传，其余（model/input/instructions/reasoning）
+ * 保持客户端原样，并复用 responses 的加密内容校验。
+ */
+export async function createXaiCompactOnce(
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
+): Promise<ResponsesResponse> {
+  if (connection.protocol !== "xai-native") {
+    throw new Error("xAI compact requires an xAI OAuth connection")
+  }
+
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
+  if (!accessToken) {
+    throw new Error(
+      `xAI access token missing for connection "${connection.name}"`,
+    )
+  }
+
+  const rawModel = body.model
+  if (typeof rawModel !== "string" || !rawModel.trim()) {
+    throw new HTTPError(
+      "xAI compact request is missing model",
+      new Response("Bad Request", { status: 400 }),
+    )
+  }
+  const model = resolveXaiModelId(canonicalNativeModelId(rawModel))
+  // Compact transports must stay on the official API (mirrors xaiWsBaseUrl).
+  const officialBase = xaiWsBaseUrl(connection).replace(/\/+$/, "")
+  const url = `${officialBase}/responses/compact`
+  const sessionId = resolveXaiSessionId(
+    body as unknown as ResponsesPayload,
+    model,
+    ctx,
+  )
+
+  const compactInput: Record<string, unknown> = {
+    ...body,
+    model,
+    // CPA executeCompactRequest:compact 只接受压缩相关字段，推理参数
+    // 全部剥离（上游遇到会 400）。
+    stream: undefined,
+    tools: undefined,
+    max_output_tokens: undefined,
+    temperature: undefined,
+    top_p: undefined,
+    top_k: undefined,
+    stop: undefined,
+    previous_response_id: undefined,
+    stream_options: undefined,
+    safety_identifier: undefined,
+    prompt_cache_retention: undefined,
+  }
+  if (sessionId && !compactInput.prompt_cache_key) {
+    compactInput.prompt_cache_key = sessionId
+  }
+  // 复用 responses 的 body 清洗（加密内容校验、图片引用归一等）。
+  const upstreamBody = sanitizeXaiResponsesBodyWithRefs(
+    compactInput,
+    model,
+  ).body
+
+  logger.debug("[xai] compact upstream request", {
+    model,
+    inputItems:
+      Array.isArray(upstreamBody.input) ? upstreamBody.input.length : 0,
+  })
+  const httpBody = JSON.stringify(upstreamBody)
+  let currentAccessToken = accessToken
+  let response = await fetchWithConnectionProxy(connection, url, {
+    method: "POST",
+    headers: buildXaiHeaders(currentAccessToken, false, sessionId, false),
+    body: httpBody,
+    signal,
+  })
+
+  // 403 bad-credentials → 强制刷新 token 后重试一次（同普通 responses 路径）。
+  if (response.status === 403) {
+    const errorBody = await response
+      .clone()
+      .text()
+      .catch(() => "")
+    if (
+      /unauthenticated:bad-credentials|could not be validated/i.test(errorBody)
+    ) {
+      logger.warn(
+        `xAI returned 403 bad-credentials for connection "${connection.name}". Forcing token refresh...`,
+      )
+      const refreshedToken = await ensureOAuthConnectionAccessToken(
+        connection,
+        credential,
+        {
+          forceRefresh: true,
+          failedAccessToken: currentAccessToken,
+        },
+      )
+      if (refreshedToken && refreshedToken !== currentAccessToken) {
+        currentAccessToken = refreshedToken
+        response = await fetchWithConnectionProxy(connection, url, {
+          method: "POST",
+          headers: buildXaiHeaders(currentAccessToken, false, sessionId, false),
+          body: httpBody,
+          signal,
+        })
+      }
+    }
+  }
+
+  if (!response.ok) {
+    throw new HTTPError(
+      "Failed to create xAI compact response",
+      response,
+      await response.text().catch(() => "(unreadable)"),
+    )
+  }
+  return (await response.json()) as ResponsesResponse
+}
+
 export async function createXaiResponsesOnce(
   {
     connection,
@@ -157,6 +291,16 @@ export async function createXaiResponsesOnce(
 ): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
   if (connection.protocol !== "xai-native") {
     throw new Error("xAI responses requires an xAI OAuth connection")
+  }
+
+  // Compact 直通：官方 compact 端口一元调用，不走 WS、不注入 replay。
+  if (ctx?.compact) {
+    return createXaiCompactOnce(
+      { connection, credential },
+      payload as unknown as Record<string, unknown>,
+      signal,
+      ctx,
+    )
   }
 
   const accessToken = await ensureOAuthConnectionAccessToken(

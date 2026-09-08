@@ -189,7 +189,8 @@ export function withDefaultReasoningSummary(
 
 export interface ResponsesResponse {
   id: string
-  object?: "response"
+  // `/responses/compact` returns `response.compaction` instead of `response`.
+  object?: "response" | "response.compaction"
   created_at?: number
   completed_at?: number | null
   status?: "completed" | "in_progress" | "failed" | "incomplete"

@@ -83,6 +83,24 @@ export function defaultEndpointsForProtocol(
 }
 
 /**
+ * 上游提供 `/responses/compact` 服务端压缩的协议。
+ *
+ * compact 是 responses-native 的直通能力，不经过 chat hub 翻译
+ * （见 docs/translation-conventions.md R1 的例外说明）：
+ * - `codex-native`: `{base}/responses/compact`（ChatGPT 后端）。
+ * - `xai-native`: 仅官方 API `api.x.ai/v1/responses/compact`
+ *  （cli-chat-proxy 返回 404，compact 必须走官方地址）。
+ */
+const COMPACT_CAPABLE_PROTOCOLS: ReadonlySet<ProviderProtocol> = new Set([
+  "codex-native",
+  "xai-native",
+])
+
+export function supportsCompactEndpoint(protocol: ProviderProtocol): boolean {
+  return COMPACT_CAPABLE_PROTOCOLS.has(protocol)
+}
+
+/**
  * 凭据鉴权模式。
  *
  * - `bearer`: `Authorization: Bearer <value>`(默认)。

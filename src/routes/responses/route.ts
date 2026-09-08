@@ -5,6 +5,7 @@ import { forwardError } from "~/lib/error"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
 import { recordTraceError } from "~/lib/request-log"
 
+import { handleResponsesCompact } from "./compact"
 import { handleResponses } from "./handler"
 import { createResponsesWebSocketSession } from "./ws-handler"
 
@@ -32,6 +33,24 @@ const upgradeResponsesWebSocket = upgradeWebSocket((c) => {
 responsesRoutes.post("/", async (c) => {
   try {
     return await handleResponses(c)
+  } catch (error) {
+    recordTraceError(c, error)
+    const knownErrorResponse = respondToKnownRouteError(
+      c,
+      error,
+      "rate_limit_error",
+    )
+    if (knownErrorResponse) {
+      return knownErrorResponse
+    }
+
+    return forwardError(c, error)
+  }
+})
+
+responsesRoutes.post("/compact", async (c) => {
+  try {
+    return await handleResponsesCompact(c)
   } catch (error) {
     recordTraceError(c, error)
     const knownErrorResponse = respondToKnownRouteError(

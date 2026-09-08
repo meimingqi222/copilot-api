@@ -255,6 +255,118 @@ export function finalizeCodexOutboundBody(
   return sanitizeCodexInput(finalized)
 }
 
+/**
+ * Codex 上游 `/responses/compact` 一元调用（服务端上下文压缩）。
+ *
+ * 客户端（Codex CLI）已经按 compact 端口的契约构造好 body
+ * （`ApiCompactionInput`：model/input/instructions/tools/…），这里只做
+ * 最小干预：模型名映射、session/身份头、签名清洗、透传。刻意不走
+ * `buildCodexUpstreamBody`（那是 `/responses` 专用，会加 stream 相关字段），
+ * 不走 WebSocket、不读写 transcript/replay 缓存（input 本来就是全量历史）。
+ */
+export async function createCodexCompactOnce(
+  {
+    connection,
+    credential,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+  },
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
+): Promise<ResponsesResponse> {
+  if (connection.protocol !== "codex-native") {
+    throw new Error("Codex compact requires a Codex OAuth connection")
+  }
+
+  const accessToken = await ensureOAuthConnectionAccessToken(
+    connection,
+    credential,
+  )
+  if (!accessToken) {
+    throw new Error(
+      `Codex access token missing for connection "${connection.name}"`,
+    )
+  }
+
+  const rawModel = body.model
+  if (typeof rawModel !== "string" || !rawModel.trim()) {
+    throw new HTTPError(
+      "Codex compact request is missing model",
+      new Response("Bad Request", { status: 400 }),
+    )
+  }
+  const model = canonicalNativeModelId(rawModel)
+  const settingsBase = getConnectionSettings(connection)?.baseUrl
+  const baseUrl = (
+    typeof settingsBase === "string" ? settingsBase : (
+      CODEX_API_BASE_URL
+    )).replace(/\/+$/, "")
+  const url = `${baseUrl}/responses/compact`
+  const { sessionId, threadId } = resolveCodexSessionHeaders(
+    body as unknown as ResponsesPayload,
+    ctx,
+  )
+  const extraHeaders = resolveCodexExtraHeaders(ctx)
+
+  const compactBody = sanitizeCodexInput({
+    model,
+    input: body.input,
+    // CPA 用例里 instructions 可能为 null，上游接受缺省。
+    instructions:
+      typeof body.instructions === "string" ? body.instructions : undefined,
+    tools: body.tools,
+    parallel_tool_calls: body.parallel_tool_calls,
+    reasoning: body.reasoning,
+    service_tier: body.service_tier,
+    prompt_cache_key:
+      sessionId
+      ?? (typeof body.prompt_cache_key === "string" ?
+        body.prompt_cache_key
+      : undefined),
+    text: body.text,
+  })
+
+  // 身份混淆与普通 turn 保持一致（prompt_cache_key 重映射），保证压缩
+  // 请求命中同一前缀缓存。
+  const identityState = applyIdentityConfuseBody(
+    connection.id,
+    body,
+    compactBody,
+  )
+  const headers: Record<string, string> = {
+    ...buildCodexHeaders(accessToken, true, {
+      sessionId,
+      threadId,
+      accountId: getCredentialContextString(connection, "oauthAccountId"),
+    }),
+    ...extraHeaders,
+  }
+  applyIdentityConfuseHeaders(headers, identityState)
+
+  logger.debug("[codex] compact upstream request", {
+    model,
+    inputItems: countArrayItems(compactBody.input),
+  })
+  const response = await postCodexResponses({
+    connection,
+    url,
+    headers,
+    upstreamBody: compactBody,
+    signal,
+    memoryTraceId: readMemoryTraceId(ctx),
+  })
+  if (!response.ok) {
+    throw new HTTPError(
+      "Failed to create Codex compact response",
+      response,
+      await response.text().catch(() => "(unreadable)"),
+    )
+  }
+  return (await response.json()) as ResponsesResponse
+}
+
 export async function createCodexResponsesOnce(
   {
     connection,
@@ -269,6 +381,16 @@ export async function createCodexResponsesOnce(
 ): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
   if (connection.protocol !== "codex-native") {
     throw new Error("Codex responses requires a Codex OAuth connection")
+  }
+
+  // Compact 直通：上游 compact 端口一元调用，不走 WS、不注入 replay。
+  if (ctx?.compact) {
+    return createCodexCompactOnce(
+      { connection, credential },
+      payload as unknown as Record<string, unknown>,
+      signal,
+      ctx,
+    )
   }
 
   const accessToken = await ensureOAuthConnectionAccessToken(
