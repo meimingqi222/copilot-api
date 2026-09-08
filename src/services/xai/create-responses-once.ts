@@ -28,6 +28,7 @@ import {
   detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
+import { stripCompactionTrigger } from "~/services/responses/compact"
 import {
   collectResponsesFromEventStream,
   collectResponsesFromSseResponse,
@@ -198,6 +199,9 @@ export async function createXaiCompactOnce(
   const compactInput: Record<string, unknown> = {
     ...body,
     model,
+    // xAI 没有内联压缩概念：trigger 到这里必须剥离（路由层不再预处理，
+    // 各 provider 自行决定形态）。
+    input: stripCompactionTrigger(body.input),
     // CPA executeCompactRequest:compact 只接受压缩相关字段，推理参数
     // 全部剥离（上游遇到会 400）。
     stream: undefined,

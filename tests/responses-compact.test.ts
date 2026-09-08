@@ -32,8 +32,18 @@ interface RecordedCall {
 }
 
 let calls: Array<RecordedCall>
+/** 待返回的上游响应队列（默认 200 + COMPACTION_RESULT）。 */
+let fetchQueue: Array<{ status: number; body: unknown }> = []
 
-function mockCompactFetch(resultBody: Record<string, unknown>) {
+function sseCompleted(resultBody: unknown): string {
+  return (
+    `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_1" } })}\n\n`
+    + `data: ${JSON.stringify({ type: "response.completed", response: resultBody })}\n\n`
+    + "data: [DONE]\n\n"
+  )
+}
+
+function mockCompactFetch(): void {
   const fetchMock = mock((url: unknown, init?: { body?: unknown }) => {
     let parsed: Record<string, unknown> = {}
     try {
@@ -41,17 +51,24 @@ function mockCompactFetch(resultBody: Record<string, unknown>) {
     } catch {
       // leave empty
     }
-    calls.push({ url: String(url), body: parsed })
-    return {
-      ok: true,
-      status: 200,
-      headers: new Headers(),
-      json: () => Promise.resolve(resultBody),
-      text: () => Promise.resolve(""),
-      clone: () => ({
-        text: () => Promise.resolve(""),
-      }),
+    const urlString = String(url)
+    calls.push({ url: urlString, body: parsed })
+    const next = fetchQueue.shift() ?? { status: 200, body: COMPACTION_RESULT }
+    if (next.status >= 400) {
+      return new Response(JSON.stringify(next.body), {
+        status: next.status,
+        headers: { "content-type": "application/json" },
+      })
     }
+    // legacy compact 端口回纯 JSON；普通 /responses 回 SSE。
+    const text =
+      urlString.endsWith("/responses/compact") ?
+        JSON.stringify(next.body)
+      : sseCompleted(next.body)
+    return new Response(text, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    })
   })
   globalThis.fetch = fetchMock as unknown as typeof fetch
 }
@@ -133,6 +150,7 @@ beforeEach(async () => {
   resetProtectedRouteGuardForTest()
   state.legacyApiKey = undefined
   calls = []
+  fetchQueue = []
 })
 
 afterEach(async () => {
@@ -146,7 +164,7 @@ afterEach(async () => {
 describe("POST /v1/responses/compact", () => {
   test("codex: forwards to upstream /responses/compact unary", async () => {
     await setupCodexConnection()
-    mockCompactFetch(COMPACTION_RESULT)
+    mockCompactFetch()
 
     const response = await server.fetch(
       new Request("http://localhost/v1/responses/compact", {
@@ -174,9 +192,47 @@ describe("POST /v1/responses/compact", () => {
     expect(calls[0].body.input).toEqual(HISTORY_INPUT)
   })
 
+  test("codex: legacy 404 falls back to inline on the same account", async () => {
+    await setupCodexConnection()
+    mockCompactFetch()
+    // legacy 端口先 404（如 gpt-5.6 系列），再以内联形态重试。
+    fetchQueue.push(
+      { status: 404, body: { detail: "Not Found" } },
+      { status: 200, body: COMPACTION_RESULT },
+    )
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/responses/compact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gpt-5.4",
+          input: HISTORY_INPUT,
+        }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    const json = (await response.json()) as Record<string, unknown>
+    expect(json.object).toBe("response.compaction")
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0].url).toBe(
+      "https://chatgpt.com/backend-api/codex/responses/compact",
+    )
+    // 回退请求走普通 /responses，末尾补上 trigger，一元调用。
+    expect(calls[1].url).toBe("https://chatgpt.com/backend-api/codex/responses")
+    const retriedInput = calls[1].body.input as Array<unknown>
+    expect(retriedInput.slice(0, -1)).toEqual(HISTORY_INPUT)
+    expect(retriedInput.at(-1)).toEqual({
+      type: "compaction_trigger",
+    })
+    // 上游恒走流式再收集（普通 turn 行为），客户端侧仍是一元 JSON（见上）。
+    expect(calls[1].body.stream).toBe(true)
+  })
+
   test("rejects stream:true with 400", async () => {
     await setupCodexConnection()
-    mockCompactFetch(COMPACTION_RESULT)
+    mockCompactFetch()
 
     const response = await server.fetch(
       new Request("http://localhost/v1/responses/compact", {
@@ -195,11 +251,7 @@ describe("POST /v1/responses/compact", () => {
 
   test("xai: uses official API and strips inference params", async () => {
     await setupXaiConnection()
-    mockCompactFetch({
-      ...COMPACTION_RESULT,
-      object: "response.compaction",
-      model: "grok-4.6",
-    })
+    mockCompactFetch()
 
     const response = await server.fetch(
       new Request("http://localhost/v1/responses/compact", {
@@ -207,7 +259,7 @@ describe("POST /v1/responses/compact", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           model: "grok-4.6",
-          input: HISTORY_INPUT,
+          input: [...HISTORY_INPUT, { type: "compaction_trigger" }],
           temperature: 0.7,
           top_p: 0.9,
           stop: ["END"],
@@ -225,6 +277,7 @@ describe("POST /v1/responses/compact", () => {
     expect(calls[0].body.stop).toBeUndefined()
     expect(calls[0].body.tools).toBeUndefined()
     expect(calls[0].body.max_output_tokens).toBeUndefined()
+    // xAI 没有内联压缩概念：trigger 必须剥离。
     expect(calls[0].body.input).toEqual(HISTORY_INPUT)
   })
 
@@ -245,7 +298,7 @@ describe("POST /v1/responses/compact", () => {
         },
       ],
     })
-    mockCompactFetch(COMPACTION_RESULT)
+    mockCompactFetch()
 
     const response = await server.fetch(
       new Request("http://localhost/v1/responses/compact", {
@@ -265,9 +318,9 @@ describe("POST /v1/responses/compact", () => {
     ).toBeUndefined()
   })
 
-  test("inline compaction_trigger in /responses is translated to compact", async () => {
+  test("inline compaction_trigger in /responses is forwarded (V2)", async () => {
     await setupCodexConnection()
-    mockCompactFetch(COMPACTION_RESULT)
+    mockCompactFetch()
 
     const response = await server.fetch(
       new Request("http://localhost/v1/responses", {
@@ -284,11 +337,12 @@ describe("POST /v1/responses/compact", () => {
     const json = (await response.json()) as Record<string, unknown>
     expect(json.object).toBe("response.compaction")
 
+    // V2 内联：走普通 /responses，trigger 原样透传（新模型只认这个）。
     expect(calls).toHaveLength(1)
-    expect(calls[0].url).toBe(
-      "https://chatgpt.com/backend-api/codex/responses/compact",
-    )
-    // trigger 已剥离，只剩历史。
-    expect(calls[0].body.input).toEqual(HISTORY_INPUT)
+    expect(calls[0].url).toBe("https://chatgpt.com/backend-api/codex/responses")
+    expect(calls[0].body.input).toEqual([
+      ...HISTORY_INPUT,
+      { type: "compaction_trigger" },
+    ])
   })
 })

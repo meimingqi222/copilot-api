@@ -30,7 +30,6 @@ import {
   getConnectionSettings,
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
-import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 import { sanitizeCodexInput } from "~/services/codex/sanitize-input"
 import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
@@ -39,6 +38,11 @@ import {
   detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
+import {
+  COMPACTION_TRIGGER_ITEM_TYPE,
+  hasCompactionTrigger,
+  stripCompactionTrigger,
+} from "~/services/responses/compact"
 import {
   collectResponsesFromEventStream,
   collectResponsesFromSseResponse,
@@ -55,6 +59,10 @@ import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import { buildCodexHeaders } from "./headers"
 import {
+  resolveCodexExtraHeaders,
+  resolveCodexSessionHeaders,
+} from "./session-headers"
+import {
   assertChainedHttpReplayAvailable,
   buildCodexUpstreamBody,
   chainedHttpCodexRequestError,
@@ -70,134 +78,6 @@ import {
   resolveResponsesTranscriptSessionId,
   type TranscriptStoreResult,
 } from "./ws-transcript-cache"
-
-interface ResolvedCodexSessionHeaders {
-  sessionId?: string
-  threadId?: string
-  /**
-   * True when `sessionId` came from a client-supplied stable identifier
-   * (`prompt_cache_key` or a `session_id`/`session-id` header) rather than the
-   * turn-1 content-hash fallback (priority 3 below).
-   *
-   * This gates the transcript recovery cache (see ws-transcript-cache.ts):
-   * the content-hash fallback is derived from the turn's own content, so two
-   * *different* conversations that happen to open with an identical first
-   * turn would hash to the same id and collide on the same transcript key —
-   * an isolation break in a multi-user deployment, not just a cache-hit-rate
-   * concern. Only an id the client actually chose is guaranteed unique to one
-   * conversation.
-   */
-  sessionIdIsStable: boolean
-}
-
-/**
- * Resolves the session ID and thread ID for the upstream Codex request.
- *
- * Priority for session_id (used by the ChatGPT backend to group requests
- * within a session and reuse cached prompt prefixes):
- *   1. `prompt_cache_key` from the request body — this is the primary
- *      mechanism the official codex CLI uses (it sends prompt_cache_key in
- *      the body, and CPA/CLIProxyAPI mirrors it into the Session_id header).
- *   2. `session_id` / `session-id` from the forwarded incoming request header.
- *   3. Content-hash fallback via extractSessionIds + resolveStableSessionId
- *      (prefers turn-1 short hash so multi-turn Session_id stays stable).
- *
- * Priority for thread_id (sent as `thread-id` on HTTP and as
- * `x-client-request-id` on the WebSocket handshake):
- *   1. `thread_id` / `thread-id` from the forwarded incoming request header
- *      (the spelling the official client uses on HTTP).
- *   2. `x-client-request-id` from the forwarded incoming request header
- *      (proxy-fronted clients that reused the WS spelling on HTTP).
- *   3. Omitted (the official client never invents a random thread id).
- */
-function resolveCodexSessionHeaders(
-  payload: ResponsesPayload,
-  ctx?: RequestExecutionContext,
-): ResolvedCodexSessionHeaders {
-  const forwarded = ctx?.forwardedHeaders
-  const threadIdRaw =
-    forwarded?.["thread_id"]
-    ?? forwarded?.["thread-id"]
-    ?? forwarded?.["x-client-request-id"]
-  const threadId =
-    typeof threadIdRaw === "string" && threadIdRaw.trim() ?
-      threadIdRaw.trim()
-    : undefined
-
-  // 1. prompt_cache_key from body (highest priority — matches codex CLI + CPA)
-  const bodyCacheKey = (payload as unknown as { prompt_cache_key?: unknown })
-    .prompt_cache_key
-  if (typeof bodyCacheKey === "string" && bodyCacheKey.trim()) {
-    return {
-      sessionId: bodyCacheKey.trim(),
-      threadId,
-      sessionIdIsStable: true,
-    }
-  }
-
-  // 2. session_id from forwarded headers
-  const headerSession = forwarded?.["session_id"] ?? forwarded?.["session-id"]
-  if (typeof headerSession === "string" && headerSession.trim()) {
-    return {
-      sessionId: headerSession.trim(),
-      threadId,
-      sessionIdIsStable: true,
-    }
-  }
-
-  // 3. L1 Codex content-hash fallback (stable Session_id across turns).
-  //    Prefer short (turn-1) hash over full multi-turn hash so upstream
-  //    cache is not broken when the client omits prompt_cache_key.
-  //    Only used on the Codex path — never write this into Claude/AG.
-  const extracted = extractSessionIds({
-    headers: forwarded,
-    payload,
-  })
-  const stableId = resolveStableSessionId(extracted)
-  if (stableId) {
-    return { sessionId: stableId, threadId, sessionIdIsStable: false }
-  }
-
-  return { threadId, sessionIdIsStable: false }
-}
-
-/**
- * Extracts extra codex-specific headers from the forwarded request headers.
- * The official codex CLI sends these and the ChatGPT backend uses them for
- * cache routing and turn metadata. Mirrors CLIProxyAPI's EnsureHeader pattern.
- */
-function resolveCodexExtraHeaders(
-  ctx?: RequestExecutionContext,
-): Record<string, string> {
-  const forwarded = ctx?.forwardedHeaders
-  if (!forwarded) {
-    return {}
-  }
-  const extra: Record<string, string> = {}
-  for (const key of [
-    "x-codex-turn-metadata",
-    "x-codex-window-id",
-    "x-codex-beta-features",
-    // Always sent by the official client on HTTP (client.rs
-    // ModelClientSession::stream): per-installation identity.
-    "x-codex-installation-id",
-    // Server-echoed turn state: the official client sends back the value
-    // received on a previous response (`x-codex-turn-state` response
-    // header). Forward the downstream client's value verbatim.
-    "x-codex-turn-state",
-    "version",
-    "originator",
-    // Responses Lite marker. When present, upstream requires
-    // parallel_tool_calls to be false (see isResponsesLiteRequest).
-    "x-openai-internal-codex-responses-lite",
-  ]) {
-    const value = forwarded[key]
-    if (typeof value === "string" && value.trim()) {
-      extra[key] = value.trim()
-    }
-  }
-  return extra
-}
 
 /** Reads a single trimmed forwarded header, if the downstream sent one. */
 function readForwardedHeader(
@@ -312,7 +192,8 @@ export async function createCodexCompactOnce(
 
   const compactBody = sanitizeCodexInput({
     model,
-    input: body.input,
+    // legacy 端口不认 trigger：显式路径理论上不带，防御性剥离。
+    input: stripCompactionTrigger(body.input),
     // CPA 用例里 instructions 可能为 null，上游接受缺省。
     instructions:
       typeof body.instructions === "string" ? body.instructions : undefined,
@@ -367,6 +248,42 @@ export async function createCodexCompactOnce(
   return (await response.json()) as ResponsesResponse
 }
 
+/**
+ * 显式 `/responses/compact` 入口：先调 legacy 端口，404 时回退内联。
+ *
+ * legacy 端口是旧形态（gpt-5.4 时代）；新模型（如 gpt-5.6 系列）直接
+ * 404 `{"detail":"Not Found"}`。404 是路由级“不支持”，与账号无关，
+ * 所以同账号补上 trigger 按内联（V2）重试一次，而不是 failover 切账号。
+ * 内联再失败则原样抛出（404 归类为 client_error，failover 不切账号）。
+ */
+async function runLegacyCompactEntry(
+  subject: { connection: ProviderConnection; credential: ApiCredential },
+  record: Record<string, unknown>,
+  payload: ResponsesPayload,
+  signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
+): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
+  try {
+    return await createCodexCompactOnce(subject, record, signal, ctx)
+  } catch (error) {
+    if (!(error instanceof HTTPError) || error.response.status !== 404) {
+      throw error
+    }
+    const modelName =
+      typeof record.model === "string" ? record.model : payload.model
+    logger.warn(
+      `[codex] legacy /responses/compact 404 for model "${modelName}", retrying inline (V2) on the same account`,
+    )
+    const items = Array.isArray(record.input) ? record.input : []
+    const inlinePayload = {
+      ...payload,
+      input: [...items, { type: COMPACTION_TRIGGER_ITEM_TYPE }],
+      stream: false,
+    } as ResponsesPayload
+    return await createCodexResponsesOnce(subject, inlinePayload, signal, ctx)
+  }
+}
+
 export async function createCodexResponsesOnce(
   {
     connection,
@@ -383,15 +300,31 @@ export async function createCodexResponsesOnce(
     throw new Error("Codex responses requires a Codex OAuth connection")
   }
 
-  // Compact 直通：上游 compact 端口一元调用，不走 WS、不注入 replay。
+  // Compact 双形态（见 services/responses/compact.ts）：
+  // - 内联 trigger（V2）：新模型（如 gpt-5.6 系列）只认这种，原样透传
+  //   走普通 HTTP 流程；不注入 replay（历史自带）、不记 transcript
+  //   （压缩结果不能污染链式恢复）、不链 previous_response_id（自包含）。
+  // - 无 trigger（显式 /responses/compact）：调 legacy 端口；
+  //   404（新模型不支持旧端口）时补上 trigger、同账号按内联重试一次。
+  //   内联再失败则直接抛给 failover（404 归类为 client_error，不切账号）。
   if (ctx?.compact) {
-    return createCodexCompactOnce(
-      { connection, credential },
-      payload as unknown as Record<string, unknown>,
-      signal,
-      ctx,
-    )
+    const record = payload as unknown as Record<string, unknown>
+    if (!hasCompactionTrigger(record.input)) {
+      return await runLegacyCompactEntry(
+        { connection, credential },
+        record,
+        payload,
+        signal,
+        ctx,
+      )
+    }
   }
+  // 内联压缩 turn 的标记：explicit-legacy-404 回退进来的请求同样带有 trigger。
+  const compactInline =
+    ctx?.compact === true
+    && hasCompactionTrigger(
+      (payload as unknown as Record<string, unknown>).input,
+    )
 
   const accessToken = await ensureOAuthConnectionAccessToken(
     connection,
@@ -413,7 +346,8 @@ export async function createCodexResponsesOnce(
   const url = `${baseUrl}/responses`
   const clientStream = payload.stream === true
   const useUpstreamWs =
-    !ctx?.forceUpstreamHttp
+    !compactInline
+    && !ctx?.forceUpstreamHttp
     && shouldUseUpstreamResponsesWebsocket(connection, "codex", ctx)
   const { sessionId, threadId, sessionIdIsStable } = resolveCodexSessionHeaders(
     payload,
@@ -423,12 +357,20 @@ export async function createCodexResponsesOnce(
   const responsesLite = isResponsesLiteRequest(payload, ctx)
 
   // previous_response_id is WS-only (CPA). HTTP body always strips it.
-  const previousResponseIdRaw = (payload as { previous_response_id?: unknown })
-    .previous_response_id
-  const previousResponseId =
-    typeof previousResponseIdRaw === "string" ?
-      previousResponseIdRaw.trim() || undefined
-    : undefined
+  // 压缩 turn 自包含全量历史，从不链式：有 trigger 时强制丢弃，避免
+  // transcript 恢复把旧 trigger 重放进上游造成重复压缩。
+  let previousResponseId: string | undefined
+  if (!compactInline) {
+    const previousResponseIdRaw = (
+      payload as { previous_response_id?: unknown }
+    ).previous_response_id
+    if (
+      typeof previousResponseIdRaw === "string"
+      && previousResponseIdRaw.trim()
+    ) {
+      previousResponseId = previousResponseIdRaw.trim()
+    }
+  }
 
   const upstreamBody = buildCodexUpstreamBody(payload, model, responsesLite)
 
@@ -459,7 +401,8 @@ export async function createCodexResponsesOnce(
   )
 
   // Inject cached reasoning items from previous turns in this session.
-  if (scopedReplaySessionKey) {
+  // 压缩 turn 跳过：input 本来就是全量历史，再注就是重复。
+  if (scopedReplaySessionKey && !compactInline) {
     const replayItems = await getReasoningReplayItems(
       model,
       scopedReplaySessionKey,
@@ -533,16 +476,18 @@ export async function createCodexResponsesOnce(
   // replay each other's turns. Fail closed: no scope means no transcript, and
   // a chained turn degrades to the documented 409 instead. Any future entry
   // point that forgets to pass a scope loses recovery rather than isolation.
-  const transcriptKey =
-    transcriptScopeId && sessionIdIsStable && sessionId ?
-      codexTranscriptKey(
-        resolveResponsesTranscriptSessionId(
-          executionSessionId,
-          sessionId,
-          transcriptScopeId,
-        ),
-      )
-    : undefined
+  // 压缩 turn 不记 transcript：压缩输出是替换历史而不是追加，重放会
+  // 把旧 trigger 带回上游造成重复压缩；且压缩 turn 从不链式。
+  let transcriptKey: string | undefined
+  if (!compactInline && transcriptScopeId && sessionIdIsStable && sessionId) {
+    transcriptKey = codexTranscriptKey(
+      resolveResponsesTranscriptSessionId(
+        executionSessionId,
+        sessionId,
+        transcriptScopeId,
+      ),
+    )
+  }
   // Use the *raw* client input delta (not upstreamBody.input, which may have
   // reasoning-replay items injected) so full replay never double-injects it.
   const rawDelta =

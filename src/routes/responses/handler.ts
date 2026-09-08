@@ -41,10 +41,7 @@ import { isAbortError } from "~/lib/utils"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
 import { dispatchResponses } from "~/services/dispatch/responses"
-import {
-  hasCompactionTrigger,
-  stripCompactionTrigger,
-} from "~/services/responses/compact"
+import { hasCompactionTrigger } from "~/services/responses/compact"
 
 import {
   getResponsesStatusOutcome,
@@ -85,28 +82,13 @@ export async function handleResponses(c: Context) {
   }
   const messageContent =
     extractMessageContentFromResponsesPayload(effectivePayload)
-  // V2 形态的远端压缩：input 里夹带 `compaction_trigger` 条目时，
-  // 剥离标记后走上游 compact 端口（见 services/responses/compact.ts）。
-  // 上游 compact 是一元调用，这里强制非流式；客户端若以 stream:true
-  // 发来，仍走 SSE  framing，但只会收到单个结果事件（best-effort）。
+  // V2 内联形态的远端压缩：input 里夹带 `compaction_trigger` 条目时，
+  // trigger 必须原样透传给上游——新模型（如 gpt-5.6 系列）只认内联，
+  // 调 legacy /responses/compact 会直接 404；上游不支持内联的旧模型
+  // 由执行层回退到 legacy 端口。stream 保持客户端原样（V2 内联是流式的）。
   const isCompactRequest = hasCompactionTrigger(effectivePayload.input)
-  if (isCompactRequest) {
-    const stripped = stripCompactionTrigger(effectivePayload.input)
-    if (!Array.isArray(stripped) || stripped.length === 0) {
-      throw new HTTPError(
-        "Compaction request has empty input after removing compaction_trigger",
-        new Response("Bad Request", { status: 400 }),
-      )
-    }
-    effectivePayload = {
-      ...effectivePayload,
-      input: stripped as ResponsesPayload["input"],
-      stream: false,
-    }
-  }
   const forwardedHeaders = collectForwardedSessionHeaders(c)
 
-  const streamAdmission = effectivePayload.stream === true ? true : undefined
   const admission = await prepareRequestAdmission(c, {
     routeKind: "reasoning",
     model: effectivePayload.model,
@@ -115,7 +97,7 @@ export async function handleResponses(c: Context) {
       typeof effectivePayload.max_output_tokens === "number" ?
         effectivePayload.max_output_tokens
       : undefined,
-    stream: isCompactRequest ? false : streamAdmission,
+    stream: effectivePayload.stream === true ? true : undefined,
     inferredInitiator: inferInitiatorFromResponsesPayload(effectivePayload),
     messageContent,
     sessionHeaders: forwardedHeaders,
@@ -134,7 +116,8 @@ export async function handleResponses(c: Context) {
       initiator: admission.initiator,
       forwardedHeaders,
       transcriptScopeId: resolveTranscriptScopeId(c),
-      // compact 上游调用强制 HTTP（compact 端口只有 HTTP 形态）。
+      // compact 强制 HTTP：legacy 端口只有 HTTP 形态；内联形态也走 HTTP SSE，
+      // 避开上游 WS 对 trigger 条目的未知行为。
       ...(isCompactRequest ? { compact: true, forceUpstreamHttp: true } : {}),
     }) as Promise<ResponsesExecutionResult>
 
