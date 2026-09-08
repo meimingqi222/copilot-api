@@ -22,11 +22,14 @@ import {
   getConnectionQuotaInfo,
   getConnectionQuotaState,
   getMutableProviderConnection,
+  isOAuthConnection,
   listProviderConnections,
   saveProviderConnections,
   setConnectionQuotaInfo,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
+import { applyOAuthQuotaSnapshot, fetchOAuthProviderQuota } from "~/lib/quota"
+import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { emitStateChange } from "~/lib/state-events"
 import { globalTimers } from "~/lib/timer-registry"
 
@@ -59,6 +62,10 @@ export async function refreshQuotaForConnection(
     logger.info(
       `Connection "${connection.name}" quota refreshed — re-activating`,
     )
+  }
+  if (!exhausted) {
+    // 配额恢复时同步清理内存限流器的残留冷却，否则路由仍会跳过该账号。
+    clearAccountRateLimitState(connection.id)
   }
   if (!skipSave) {
     await saveProviderConnections(listProviderConnections())
@@ -114,8 +121,48 @@ async function refreshAllQuotas(): Promise<void> {
       logger.warn("Failed to refresh quota for connection:", result.reason)
     }
   }
+  // OAuth 账号之前没有任何后台配额探测：一次耗尽后只能等 24h 自动恢复
+  // 或手动点刷新。这里定期重探处于 quota_exhausted 的 OAuth 连接，
+  // 上游窗口恢复（如 Codex 5h / Claude 5h）后自动重新参与调度。
+  await refreshExhaustedOAuthQuotas()
   await saveProviderConnections(listProviderConnections())
   emitStateChange("models-stale")
+}
+
+/**
+ * 重探所有处于 quota_exhausted 的 OAuth 连接。
+ * 探测成功且上游显示有配额时，applyOAuthQuotaSnapshot 会把 credential
+ * 恢复为 ready 并清理冷却；探测失败则保持耗尽状态不变。
+ */
+async function refreshExhaustedOAuthQuotas(): Promise<void> {
+  const targets = listProviderConnections().filter(
+    (conn) =>
+      isOAuthConnection(conn)
+      && conn.credentials[0]?.status === "quota_exhausted",
+  )
+  if (targets.length === 0) return
+  const results = await Promise.allSettled(
+    targets.map(async (conn) => {
+      const snapshot = await fetchOAuthProviderQuota(conn)
+      if (snapshot) {
+        const wasExhausted = conn.credentials[0]?.status === "quota_exhausted"
+        applyOAuthQuotaSnapshot(conn, snapshot)
+        if (wasExhausted && conn.credentials[0]?.status !== "quota_exhausted") {
+          logger.info(
+            `Connection "${conn.name}" quota recovered — re-activating`,
+          )
+        }
+      }
+    }),
+  )
+  for (const result of results) {
+    if (result.status === "rejected") {
+      logger.warn(
+        "Failed to refresh OAuth quota for connection:",
+        result.reason,
+      )
+    }
+  }
 }
 
 function readQuotaState(connection: ProviderConnection): string {

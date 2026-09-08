@@ -459,8 +459,11 @@ export function setConnectionCooldownUntil(
 
 /**
  * 设置 metadata.quotaState + quotaExhaustedAt。
- * 同时镜像 syncMapQuotaStateToCredentialStatus:配额耗尽时把
- * credential.status 置为 "quota_exhausted"（auth_error 优先级更高，不覆盖）。
+ * 配额耗尽时把 credential.status 置为 "quota_exhausted"
+ * （auth_error 优先级更高，不覆盖）。
+ * 配额恢复（available/unknown）时把之前因配额耗尽锁定的 credential
+ * 恢复为 ready，并清理配额耗尽时写入的 cooldown（credential + metadata），
+ * 否则一次耗尽会永久锁死调度——即使后续刷新显示配额已恢复到 100%。
  */
 export function setConnectionQuotaState(
   conn: ProviderConnection,
@@ -475,8 +478,20 @@ export function setConnectionQuotaState(
   if (cred) {
     cred.exhaustedAt = exhaustedAt
   }
-  if (quotaState === "exhausted" && cred && cred.status !== "auth_error") {
-    cred.status = "quota_exhausted"
+  if (quotaState === "exhausted") {
+    if (cred && cred.status !== "auth_error") {
+      cred.status = "quota_exhausted"
+    }
+    return
+  }
+  // 配额恢复:只处理确实被配额锁定的 credential，不碰普通 cooldown
+  //（普通限流冷却由 refreshCredentialAvailability 按到期时间自行恢复）。
+  if (cred && cred.status === "quota_exhausted") {
+    cred.status = cred.enabled ? "ready" : "disabled"
+    cred.cooldownUntil = undefined
+    meta.cooldownUntil = undefined
+    meta.isExhausted = false
+    meta.exhaustedAt = undefined
   }
 }
 

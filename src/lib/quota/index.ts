@@ -8,6 +8,7 @@ import {
   setConnectionQuotaInfo,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
+import { clearAccountRateLimitState } from "~/lib/rate-limit"
 
 import { fetchAntigravityQuota } from "./fetchers/antigravity"
 import { fetchClaudeQuota } from "./fetchers/claude"
@@ -78,4 +79,10 @@ export function applyOAuthQuotaSnapshot(
       || countExhausted)
 
   setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
+  if (!exhausted) {
+    // 配额恢复时同步清理内存限流器的残留冷却，否则即使 credential 已
+    // 恢复为 ready，getRemainingCooldownSeconds 仍会报告旧的 24h 冷却，
+    // 路由照样跳过该账号。
+    clearAccountRateLimitState(connection.id)
+  }
 }

@@ -232,18 +232,20 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
     }
     applyOAuthQuotaSnapshot(connection, snapshot)
     // Clear any residual cooldown state left over from the prior
-    // quota-exhausted period. `applyOAuthQuotaSnapshot` flips quotaState to
-    // "available" but does not touch cooldownUntil (persisted) or the
-    // in-memory rate-limiter state — without clearing both, the account
-    // stays flagged as unavailable ("cooldown") even though the upstream
-    // quota has recovered to 100%.
+    // quota-exhausted period — but only when the fresh snapshot shows the
+    // quota actually recovered. `applyOAuthQuotaSnapshot` flips an exhausted
+    // credential back to ready on recovery; blindly clearing cooldown while
+    // still exhausted would let refreshConnectionAvailability instantly
+    // re-activate an account that has no quota.
     // 直接通过 connection 原生 setter 清理,不再经由 Account 快照
-    const syncConn = getMutableProviderConnection(conn.id)
-    if (syncConn) {
-      setConnectionCooldownUntil(syncConn, undefined)
-      setConnectionRateLimitInfo(syncConn, undefined, undefined)
+    if (getConnectionQuotaState(connection) !== "exhausted") {
+      const syncConn = getMutableProviderConnection(conn.id)
+      if (syncConn) {
+        setConnectionCooldownUntil(syncConn, undefined)
+        setConnectionRateLimitInfo(syncConn, undefined, undefined)
+      }
+      clearAccountRateLimitState(conn.id)
     }
-    clearAccountRateLimitState(conn.id)
     await saveAccounts()
     logger.info(`Codex quota reset for account "${conn.name}"`)
     return c.json({

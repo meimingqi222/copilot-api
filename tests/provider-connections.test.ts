@@ -13,6 +13,7 @@ import {
   classifyUpstreamError,
   createConnection,
   DEFAULTS,
+  getConnectionRoutability,
   getProviderConnection,
   isCodexUsageLimitError,
   isCredentialAvailable,
@@ -24,12 +25,18 @@ import {
   parseCodexUsageLimitRetryAfter,
   refreshCredentialAvailability,
   resetCredentialStatus,
+  setConnectionCooldownUntil,
+  setConnectionQuotaState,
   setCredentialEnabled,
   type ApiCredential,
   type ProviderConnection,
   updateConnection,
 } from "~/lib/provider-connections"
-import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import {
+  clearAccountRateLimitState,
+  resetAdaptiveRateLimiterForTest,
+} from "~/lib/rate-limit"
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
@@ -274,6 +281,73 @@ describe("availability state machine", () => {
     }
     refreshCredentialAvailability(cred)
     expect(cred.status).toBe("disabled")
+  })
+
+  // 回归测试:配额刷新显示有配额时必须解除 quota_exhausted 锁定。
+  // 复现场景:上游返回配额耗尽 → failover 标记 exhausted + 长冷却 →
+  // 后续刷新显示 100% 但账号仍显示"配额耗尽"且不参与调度。
+  test("setConnectionQuotaState available recovers quota_exhausted credential", async () => {
+    await setupSimpleConnection({ id: "quota-recover" })
+    const conn = getProviderConnection("quota-recover")
+    if (!conn) throw new Error("connection not found")
+    // 模拟 failover 标记:exhausted + 24h 冷却(metadata + credential 双写)
+    setConnectionQuotaState(conn, "exhausted")
+    setConnectionCooldownUntil(
+      conn,
+      Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+    )
+    expect(conn.credentials[0].status).toBe("quota_exhausted")
+    expect(getConnectionRoutability(conn).routable).toBe(false)
+
+    // 配额刷新显示已恢复(如 Codex 手动重置后 100%) + 调用方清理内存限流器
+    setConnectionQuotaState(conn, "available")
+    clearAccountRateLimitState(conn.id)
+    expect(conn.credentials[0].status).toBe("ready")
+    expect(conn.credentials[0].cooldownUntil).toBeUndefined()
+    expect(conn.credentials[0].exhaustedAt).toBeUndefined()
+    expect(getConnectionRoutability(conn)).toEqual({
+      routable: true,
+      reason: "available",
+      retryAfterSeconds: 0,
+    })
+  })
+
+  // 配额恢复不应干扰普通的限流冷却(普通冷却按到期时间自行恢复)。
+  test("setConnectionQuotaState available does not clear generic cooldown", async () => {
+    await setupSimpleConnection({ id: "quota-no-touch-cooldown" })
+    const conn = getProviderConnection("quota-no-touch-cooldown")
+    if (!conn) throw new Error("connection not found")
+    const cooldownUntil = Date.now() + 60_000
+    markCredentialCooldown(conn.credentials[0], {
+      retryAfterMs: 60_000,
+      reason: "upstream 429",
+    })
+    expect(conn.credentials[0].status).toBe("cooldown")
+
+    setConnectionQuotaState(conn, "available")
+    expect(conn.credentials[0].status).toBe("cooldown")
+    expect(conn.credentials[0].cooldownUntil).toBe(cooldownUntil)
+  })
+
+  // applyOAuthQuotaSnapshot 是 OAuth 配额刷新的收口:快照显示有配额时
+  // 必须把耗尽的 credential 恢复为 ready 并清理内存限流器残留。
+  test("applyOAuthQuotaSnapshot recovery re-activates exhausted credential", async () => {
+    await setupSimpleConnection({ id: "oauth-recover" })
+    const conn = getProviderConnection("oauth-recover")
+    if (!conn) throw new Error("connection not found")
+    markCredentialQuotaExhausted(conn.credentials[0], "plan depleted")
+    expect(conn.credentials[0].status).toBe("quota_exhausted")
+
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: Date.now(),
+      provider: "codex",
+      unlimited: false,
+      premiumInteractionsRemaining: 100,
+      details: {},
+    })
+    expect(conn.credentials[0].status).toBe("ready")
+    expect(conn.credentials[0].cooldownUntil).toBeUndefined()
+    expect(getConnectionRoutability(conn).routable).toBe(true)
   })
 
   test("setCredentialEnabled toggles disabled status", () => {
