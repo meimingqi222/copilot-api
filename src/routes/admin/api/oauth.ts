@@ -7,11 +7,15 @@ import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import {
+  getMutableProviderConnection,
   getProviderConnection,
   isAccountManagedConnection,
   listAccountManagedConnections,
   providerFromProtocol,
   removeProviderConnection,
+  setConnectionAuthStatus,
+  setConnectionCooldownUntil,
+  setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
@@ -85,29 +89,100 @@ function publicAccountForId(accountId: string) {
  * Phase 3:connection 原生版本的 finalizeOAuthAccount。
  * connection 已由 strategy.exchange 创建并 upsert,此处只做后续初始化。
  * Phase 5:直接在 connection 上做 label upgrade,不再经由 getAccount 派生 Account 快照。
+ *
+ * 原地重认证（flow.reauthAccountId）：exchange 产物是全新的临时 connection，
+ * 此处把新 token bundle 回填到目标 connection（保留 id/label/用量统计），
+ * 再丢弃临时 connection。
  */
 async function finalizeOAuthConnection(
   conn: ProviderConnection,
-): Promise<void> {
+  flow?: { reauthAccountId?: string },
+): Promise<ProviderConnection> {
+  // 原地重认证：把临时 connection 上的新凭据回填到目标 connection。
+  // 目标保留 id/name/priority/models/用量统计；仅凭据与 quota/auth 状态更新。
+  const reauthTarget =
+    flow?.reauthAccountId ?
+      getMutableProviderConnection(flow.reauthAccountId)
+    : undefined
+  const finalized = reauthTarget ?? conn
+  if (reauthTarget) {
+    applyReauthBundle(reauthTarget, conn)
+    removeProviderConnection(conn.id)
+  }
   // 直接在 connection 上做 label upgrade
-  upgradeOAuthConnectionLabelIfNeeded(conn)
-  scheduleOAuthRefreshForConnection(conn)
+  upgradeOAuthConnectionLabelIfNeeded(finalized)
+  scheduleOAuthRefreshForConnection(finalized)
   try {
-    await refreshModelsForConnection(conn)
+    await refreshModelsForConnection(finalized)
     await saveAccounts()
     initializeProviderRegistry()
-    const provider = providerFromProtocol(conn.protocol)
-    if (!provider) return
+    const provider = providerFromProtocol(finalized.protocol)
+    if (!provider) return finalized
     const runtime = getProviderRuntime(provider)
     if (runtime.refreshQuota) {
-      void runtime.refreshQuota(conn).catch((error: unknown) => {
-        logger.warn(`Failed to refresh quota for "${conn.name}":`, error)
+      void runtime.refreshQuota(finalized).catch((error: unknown) => {
+        logger.warn(`Failed to refresh quota for "${finalized.name}":`, error)
       })
     }
   } catch (error: unknown) {
-    removeOAuthAccountFromState(conn.id)
+    // 重认证失败不删除目标账号（它只是旧凭据失效），只清理临时 connection。
+    if (!reauthTarget) removeOAuthAccountFromState(conn.id)
     throw error
   }
+  return finalized
+}
+
+/**
+ * 把 exchange 产物（临时 connection）上的新凭据回填到目标 connection：
+ * credential.value/context、credentialExtras、settings、quota 快照、
+ * auth 状态。目标的 id/name/priority/enabled/models/createdAt 原样保留。
+ */
+function applyReauthBundle(
+  target: ProviderConnection,
+  fresh: ProviderConnection,
+): void {
+  const freshCred = fresh.credentials[0]
+  const targetCred = target.credentials[0]
+  if (freshCred && targetCred) {
+    targetCred.value = freshCred.value
+    if (freshCred.context) targetCred.context = { ...freshCred.context }
+    targetCred.status = "ready"
+    targetCred.cooldownUntil = undefined
+    targetCred.lastError = undefined
+    targetCred.lastErrorAt = undefined
+    targetCred.updatedAt = Date.now()
+    if (freshCred.quota !== undefined) targetCred.quota = freshCred.quota
+    targetCred.exhaustedAt =
+      freshCred.exhaustedAt !== undefined ? freshCred.exhaustedAt : undefined
+    targetCred.lastRateLimitReason = freshCred.lastRateLimitReason
+  }
+  const freshMeta = fresh.metadata
+  if (freshMeta && typeof freshMeta === "object") {
+    const targetMeta = (target.metadata ??= {}) as Record<string, unknown>
+    for (const key of [
+      "credentialExtras",
+      "cpaMetadata",
+      "authStatus",
+      "authError",
+    ]) {
+      if (key in freshMeta) {
+        targetMeta[key] = (freshMeta as Record<string, unknown>)[key]
+      }
+    }
+    const freshSettings = (freshMeta as Record<string, unknown>).settings
+    if (freshSettings && typeof freshSettings === "object") {
+      targetMeta.settings = {
+        ...(targetMeta.settings as Record<string, unknown>),
+        ...(freshSettings as Record<string, unknown>),
+      }
+    }
+  }
+  if (fresh.proxyUrl !== undefined) target.proxyUrl = fresh.proxyUrl
+  if (fresh.modelPrefix !== undefined) target.modelPrefix = fresh.modelPrefix
+  setConnectionAuthStatus(target, "ready")
+  setConnectionCooldownUntil(target, undefined)
+  setConnectionRateLimitInfo(target, undefined, undefined)
+  target.updatedAt = Date.now()
 }
 
 /**
@@ -134,12 +209,12 @@ async function executeOAuthExchange(
     signal: exchangeInput.signal,
   })
 
-  await finalizeOAuthConnection(conn)
+  const finalized = await finalizeOAuthConnection(conn, claim.flow)
   updateOAuthFlow(flowId, {
     status: "complete",
-    accountId: conn.id,
+    accountId: finalized.id,
   })
-  return conn.id
+  return finalized.id
 }
 
 oauthApiRoutes.post("/:provider/start", async (c) => {
@@ -148,7 +223,12 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
   }
 
-  let body: { label?: string; proxyUrl?: string; manual?: boolean }
+  let body: {
+    label?: string
+    proxyUrl?: string
+    manual?: boolean
+    reauthAccountId?: string
+  }
   try {
     body = await readJsonBody(c.req.raw)
   } catch {
@@ -156,6 +236,24 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
   }
 
   const manualCompletion = body.manual === true
+
+  // 原地重认证：校验目标账号存在、是 OAuth 账号且 provider 一致。
+  // 重认证 flow 与新建 flow 共享 provider 级互斥（同 provider 一次只能一个 flow）。
+  let reauthAccountId: string | undefined
+  const rawReauthId =
+    typeof body.reauthAccountId === "string" ?
+      body.reauthAccountId.trim()
+    : undefined
+  if (rawReauthId) {
+    const target = getProviderConnection(rawReauthId)
+    if (!target || !isAccountManagedConnection(target)) {
+      return c.json({ error: "Reauth target account not found." }, 404)
+    }
+    if (providerFromProtocol(target.protocol) !== provider) {
+      return c.json({ error: `Account is not a ${provider} account.` }, 400)
+    }
+    reauthAccountId = target.id
+  }
 
   if (hasActiveOAuthFlowForProvider(provider)) {
     return c.json(
@@ -191,6 +289,7 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     interval: start.interval,
     deviceExpiresIn: start.deviceExpiresIn,
     proxyUrl,
+    reauthAccountId,
   })
 
   if (strategy.flowType === "device") {

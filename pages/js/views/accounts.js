@@ -38,6 +38,8 @@ function accountsView() {
     oauthCallbackSubmitting: false,
     pollTimer: null,
     refreshingQuotaId: null,
+    /** 原地重认证目标账号（null = 新建账号流程） */
+    reauthAccount: null,
     mimoCookieInput: "",
 
     parseMimoCookie() {
@@ -264,6 +266,7 @@ function accountsView() {
 
     openAddModal() {
       this.newAccount = this.defaultNewAccount()
+      this.reauthAccount = null
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
       this.oauthFlowData = null
@@ -274,6 +277,29 @@ function accountsView() {
       this.pollTimer = null
     },
 
+    /**
+     * 原地重认证：复用 OAuth 新增流程，但把新 token 写回原账号
+     *（保留 id/label/用量统计）。仅 OAuth provider 且 authStatus=error 时展示。
+     */
+    openReauthModal(account) {
+      this.newAccount = this.defaultNewAccount()
+      this.newAccount.provider = account.provider
+      this.newAccount.label = account.label || ""
+      this.reauthAccount = account
+      this.deviceFlowStep = "input"
+      this.deviceFlowData = null
+      this.oauthFlowData = null
+      this.oauthCallbackInput = ""
+      this.oauthCallbackSubmitting = false
+      this.showAddModal = true
+      if (this.pollTimer) clearTimeout(this.pollTimer)
+      this.pollTimer = null
+    },
+
+    isReauthFlow() {
+      return Boolean(this.reauthAccount)
+    },
+
     async closeAddModal() {
       if (this.deviceFlowStep === "pending") {
         await this.cancelOAuthFlow()
@@ -281,6 +307,7 @@ function accountsView() {
 
       this.showAddModal = false
       this.newAccount = this.defaultNewAccount()
+      this.reauthAccount = null
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
       this.oauthFlowData = null
@@ -386,11 +413,15 @@ function accountsView() {
       const provider = this.newAccount.provider
       const proxyUrl = this.newAccount.settings?.proxyUrl?.trim()
       const manual = this.needsManualOAuthCallback(provider)
-      const res = await API.oauth.start(provider, {
+      const payload = {
         label: this.newAccount.label.trim() || undefined,
         proxyUrl: proxyUrl || undefined,
         manual,
-      })
+      }
+      if (this.reauthAccount) {
+        payload.reauthAccountId = this.reauthAccount.id
+      }
+      const res = await API.oauth.start(provider, payload)
       if (!res?.flowId) {
         throw new Error("Invalid OAuth flow response")
       }

@@ -67,7 +67,7 @@ export const createEmbeddings = async (
   })
 
   return {
-    accountId: result.credentialId,
+    accountId: connection.id,
     response: result.response,
   }
 }

@@ -134,6 +134,9 @@ const i18n = {
       "accounts.status.exhausted": "配额耗尽",
       "accounts.enable": "启用",
       "accounts.disable": "禁用",
+      "accounts.reauth": "重新认证",
+      "accounts.oauth.reauthHint":
+        "正在为已有账号重新授权，完成后保留原账号的用量统计。",
       "accounts.setActive": "设为当前",
       "accounts.premium": "高级交互",
       "accounts.chat": "聊天",
@@ -855,6 +858,9 @@ const i18n = {
       "accounts.status.exhausted": "Quota Exhausted",
       "accounts.enable": "Enable",
       "accounts.disable": "Disable",
+      "accounts.reauth": "Re-authenticate",
+      "accounts.oauth.reauthHint":
+        "Re-authorizing the existing account; usage history is preserved.",
       "accounts.setActive": "Set Active",
       "accounts.premium": "Premium Interactions",
       "accounts.chat": "Chat",

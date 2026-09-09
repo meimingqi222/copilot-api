@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { OAuthAccount } from "~/lib/legacy-accounts"
 
 import { listAccounts } from "~/lib/legacy-accounts"
+import {
+  __resetProviderConnectionsForTest,
+  createConnection,
+} from "~/lib/provider-connections"
 import { buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
   attachCycleUsage,
@@ -33,6 +37,7 @@ const SEVEN_DAY_MS = 7 * 86_400_000
 
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
+  __resetProviderConnectionsForTest()
   setTestAccounts([])
   clearAdminPasswordConfig()
   setupAdminAuth()
@@ -40,6 +45,7 @@ beforeEach(() => {
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
+  __resetProviderConnectionsForTest()
   setTestAccounts(originalAccounts)
   clearAdminAuth()
   clearAdminPasswordConfig()
@@ -203,6 +209,52 @@ describe("quota cycle usage aggregation", () => {
     expect(gptModel).toBeDefined()
     expect(claudeModel.cost).toBeCloseTo(1.5, 10)
     expect(gptModel.cost).toBeCloseTo(0.4, 10)
+  })
+
+  test("getUsageByTimestampRange merges credential-id rows into the connection bucket", async () => {
+    const windowStart = new Date("2026-06-24T08:00:00.000Z").getTime()
+    const windowEnd = new Date("2026-06-24T13:00:00.000Z").getTime()
+    const inside = windowStart + 60_000
+    await createConnection({
+      id: "acct-cycle-conn",
+      name: "acct-cycle-conn",
+      protocol: "codex-native",
+      baseUrl: "https://chatgpt.com/backend-api/codex",
+      priority: 0,
+      credentials: [{ id: "cred-cycle-1", value: "x", authMode: "bearer" }],
+      models: [],
+    })
+
+    statsStore.recordUsage({
+      date: "2026-06-24",
+      accountId: "acct-cycle-conn",
+      credentialId: "cred-cycle-1",
+      model: "gpt-5",
+      promptTokens: 500,
+      completionTokens: 100,
+      totalTokens: 600,
+      cost: 0.4,
+      timestamp: inside,
+    })
+    statsStore.recordUsage({
+      date: "2026-06-24",
+      accountId: "cred-cycle-1",
+      model: "gpt-5",
+      promptTokens: 1000,
+      completionTokens: 200,
+      totalTokens: 1200,
+      cost: 1.5,
+      timestamp: inside + 1,
+    })
+
+    const summary = statsStore.getUsageByTimestampRange(
+      "acct-cycle-conn",
+      windowStart,
+      windowEnd,
+    )
+    expect(summary.requests).toBe(2)
+    expect(summary.totalTokens).toBe(1800)
+    expect(summary.cost).toBeCloseTo(1.9, 10)
   })
 
   test("attachCycleUsage adds per-window cycleUsage summaries", () => {

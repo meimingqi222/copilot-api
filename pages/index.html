@@ -1395,6 +1395,14 @@
                       </div>
                       <div class="flex items-center gap-1.5 mt-auto">
                         <button
+                          x-show="account.authStatus === 'error' && ['codex','claude','xai','antigravity','kimi'].includes(account.provider)"
+                          @click="openReauthModal(account)"
+                          class="btn btn-sm flex-1"
+                          style="background: var(--apple-orange); color: white"
+                          :title="account.authError || ''"
+                          x-text="t('accounts.reauth') || '重新认证'"
+                        ></button>
+                        <button
                           @click="toggleEnabled(account)"
                           class="btn btn-sm flex-1"
                           :class="account.enabled ? 'btn-secondary' : 'btn-primary'"
@@ -1452,6 +1460,12 @@
                 x-show="deviceFlowStep === 'input'"
                 class="modal-body space-y-4"
               >
+                <div
+                  x-show="isReauthFlow()"
+                  class="p-3 rounded-lg text-sm"
+                  style="background: rgba(255, 149, 0, 0.1); color: var(--apple-orange)"
+                  x-text="t('accounts.oauth.reauthHint') || '正在为已有账号重新授权，完成后保留原账号的用量统计。'"
+                ></div>
                 <div>
                   <label
                     class="form-label"
@@ -1469,7 +1483,7 @@
                     class="form-label"
                     x-text="t('accounts.provider')"
                   ></label>
-                  <select x-model="newAccount.provider" class="form-input">
+                  <select x-model="newAccount.provider" class="form-input" :disabled="isReauthFlow()">
                     <template x-for="provider in providers" :key="provider.id">
                       <option
                         :value="provider.id"

@@ -15,6 +15,20 @@ import type {
 } from "~/lib/stats/types"
 
 import { HTTPError } from "~/lib/error"
+import { getProviderConnection } from "~/lib/provider-connections/state"
+
+/**
+ * 同一 connection 下全部 credential id（in-memory 连接表反查）。
+ * stats.db 里没有 connection 表，只能走内存态；测试里连接表为空时
+ * 返回空数组，查询退化为单 id 查。
+ */
+function findCredentialIdsForConnection(connectionId: string): Array<string> {
+  const conn = getProviderConnection(connectionId)
+  if (!conn) return []
+  return conn.credentials
+    .map((cred) => cred.id)
+    .filter((id) => id !== connectionId)
+}
 
 export function queryUsageDayRows(
   db: Database,
@@ -371,6 +385,14 @@ export function getUsageByTimestampRangeData(
   endMs: number,
 ): TimestampRangeUsage {
   const effectiveEndMs = Math.max(startMs, endMs)
+  // usage 归属列历史上混写：老行 account_id = credential.id（credential_id
+  // 为 NULL），新行 account_id = connection.id。同一 connection 的 usage
+  // 必须按 credential 归一：先经 in-memory 的 connection → credential 映射
+  // 展开 id 集合，再按 account_id IN 查。不能用 credential_id 列反查——
+  // 老行该列恰恰是 NULL。
+  const credentialIds = findCredentialIdsForConnection(accountId)
+  const accountIds = [accountId, ...credentialIds]
+  const placeholders = accountIds.map(() => "?").join(",")
   const stmt = db.prepare(`
     SELECT
       model,
@@ -382,12 +404,12 @@ export function getUsageByTimestampRangeData(
       SUM(total_tokens) as total_tokens,
       SUM(cost) as cost
     FROM usage_stats
-    WHERE account_id = ?
+    WHERE account_id IN (${placeholders})
       AND timestamp >= ?
       AND timestamp <= ?
     GROUP BY model
   `)
-  const rows = stmt.all(accountId, startMs, effectiveEndMs) as Array<{
+  const rows = stmt.all(...accountIds, startMs, effectiveEndMs) as Array<{
     model: string
     requests: number
     prompt_tokens: number

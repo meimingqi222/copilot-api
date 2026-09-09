@@ -33,6 +33,11 @@ export interface OAuthPendingFlow {
   redirectUri?: string
   proxyUrl?: string
   /**
+   * 原地重认证目标 connection id。exchange 完成后把新 token bundle
+   * 写回该 connection（保留 id/label/用量统计），而不是新建账号。
+   */
+  reauthAccountId?: string
+  /**
    * In-memory only: device-code `expires_in` (seconds) returned by the
    * device-authorization endpoint. Not persisted (excluded from
    * `flowForPersistence`) so the persistence format stays unchanged.

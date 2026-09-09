@@ -6,6 +6,7 @@ import type { OAuthAccount } from "~/lib/legacy-accounts"
 
 import { isOAuthAccount, listAccounts } from "~/lib/legacy-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
+import { getProviderConnection } from "~/lib/provider-connections"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { state } from "~/lib/state"
@@ -374,6 +375,126 @@ describe("OAuth smoke — admin API", () => {
     )
     expect(complete.status).toBe(200)
     expect(listAccounts()[0]?.provider).toBe("codex")
+  })
+
+  test("POST /admin/api/oauth/codex/start with reauthAccountId reuses the target account", async () => {
+    setTestAccounts([
+      {
+        id: "codex-reauth-target",
+        label: "Codex Old",
+        provider: "codex",
+        enabled: true,
+        priority: 0,
+        quotaState: "available",
+        createdAt: Date.now(),
+        credentials: {
+          accessToken: "stale-access",
+          refreshToken: "revoked-refresh",
+        },
+        runtimeState: { authStatus: "error", lastError: "invalid_grant" },
+      },
+    ])
+    globalThis.fetch = ((url: string | URL | Request) => {
+      const target = fetchTarget(url)
+      if (target.includes("auth.openai.com/oauth/token")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "codex-access-new",
+              refresh_token: "codex-refresh-new",
+              expires_in: 3600,
+            }),
+            { status: 200 },
+          ),
+        )
+      }
+      return Promise.resolve(new Response("{}", { status: 404 }))
+    }) as unknown as typeof fetch
+
+    const start = await adminJson(
+      "http://localhost/admin/api/oauth/codex/start",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          label: "ignored-label",
+          manual: true,
+          reauthAccountId: "codex-reauth-target",
+        }),
+      },
+    )
+    expect(start.status).toBe(200)
+    const { flowId } = (await start.json()) as { flowId: string }
+
+    const complete = await adminJson(
+      "http://localhost/admin/api/oauth/codex/complete",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          flowId,
+          callback:
+            "http://localhost:1455/auth/callback?code=codex-code-2&state=state-2",
+        }),
+      },
+    )
+    expect(complete.status).toBe(200)
+    const body = (await complete.json()) as {
+      status: string
+      accountId: string
+    }
+    expect(body.status).toBe("complete")
+    // 原地重认证：返回的仍是目标 id，不新增账号。
+    expect(body.accountId).toBe("codex-reauth-target")
+    expect(listAccounts()).toHaveLength(1)
+    const account = listAccounts()[0]
+    expect(account?.id).toBe("codex-reauth-target")
+    expect(account?.label).toBe("Codex Old")
+    // ready 状态的快照不带 runtimeState（buildRuntimeState 最小子集约定）。
+    expect(account?.runtimeState?.authStatus).toBeUndefined()
+    expect(account?.runtimeState?.lastError).toBeUndefined()
+    expect(
+      getProviderConnection("codex-reauth-target")?.credentials[0]?.value,
+    ).toBe("codex-access-new")
+  })
+
+  test("POST /admin/api/oauth/codex/start rejects reauth for unknown or mismatched account", async () => {
+    setTestAccounts([
+      {
+        id: "claude-other",
+        label: "Claude",
+        provider: "claude",
+        enabled: true,
+        priority: 0,
+        quotaState: "available",
+        createdAt: Date.now(),
+        credentials: { accessToken: "x" },
+      },
+    ])
+
+    const unknown = await adminJson(
+      "http://localhost/admin/api/oauth/codex/start",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          label: "x",
+          manual: true,
+          reauthAccountId: "no-such-account",
+        }),
+      },
+    )
+    expect(unknown.status).toBe(404)
+
+    const mismatch = await adminJson(
+      "http://localhost/admin/api/oauth/codex/start",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          label: "x",
+          manual: true,
+          reauthAccountId: "claude-other",
+        }),
+      },
+    )
+    expect(mismatch.status).toBe(400)
   })
 
   test("POST /admin/api/oauth/kimi/cancel allows restarting device flow", async () => {
