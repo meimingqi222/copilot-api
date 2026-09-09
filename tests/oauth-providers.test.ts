@@ -240,4 +240,35 @@ describe("Codex model discovery", () => {
     expect(models.map((model) => model.id)).toEqual(["gpt-5.4", "gpt-5.5"])
     expect(models[0]?.supportedEndpoints).toContain("/v1/responses")
   })
+
+  test("marks gpt-image models with the images endpoint", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              { slug: "gpt-image-2", display_name: "GPT Image 2" },
+              { slug: "gpt-5.4", display_name: "GPT-5.4" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )) as unknown as typeof fetch
+
+    const account = createOAuthAccount("codex", {
+      credentials: {
+        accessToken: "codex-token",
+        accountId: "acct_123",
+      },
+    })
+    setTestAccounts([account])
+
+    const models = await getCodexModelsForAccount(account)
+    const imageModel = models.find((model) => model.id === "gpt-image-2")
+    expect(imageModel?.supportedEndpoints).toContain("/v1/images/generations")
+    const chatModel = models.find((model) => model.id === "gpt-5.4")
+    expect(chatModel?.supportedEndpoints).not.toContain(
+      "/v1/images/generations",
+    )
+  })
 })

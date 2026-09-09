@@ -45,6 +45,18 @@ function parseCodexModelId(entry: CodexModelPayload): string | undefined {
   return canonicalNativeModelId(candidate.trim())
 }
 
+/**
+ * 上游 /models 里的图片模型（gpt-image-*）同时支持 responses 与 images 端口
+ *（对齐静态 fallback 目录 model-catalog.ts 的标注）。解析时补上 images，
+ * 否则一次模型刷新就会把 images 映射刷掉，/v1/images 再调这些模型就无路由。
+ */
+function endpointsForCodexModel(id: string): Array<string> {
+  if (id.toLowerCase().startsWith("gpt-image-")) {
+    return ["/v1/responses", "/v1/images/generations"]
+  }
+  return ["/v1/responses"]
+}
+
 function parseCodexModelsPayload(raw: string): Array<AccountModel> {
   let payload: { models?: Array<CodexModelPayload> }
   try {
@@ -66,7 +78,7 @@ function parseCodexModelsPayload(raw: string): Array<AccountModel> {
       name: entry.display_name ?? entry.displayName ?? entry.name ?? id,
       vendor: "openai",
       pickerEnabled: true,
-      supportedEndpoints: ["/v1/responses"],
+      supportedEndpoints: endpointsForCodexModel(id),
       provider: "codex",
     })
   }
