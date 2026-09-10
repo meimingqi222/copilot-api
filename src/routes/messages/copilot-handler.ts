@@ -170,7 +170,17 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
           await writeSseEvent(stream, JSON.stringify(errPayload), "error")
           return
         }
-        throw error
+        // Ordinary upstream errors (e.g. a 500 streamed as a 200 + error frame
+        // by CodeBuddy) previously fell through and killed the SSE stream with
+        // no terminal event, so the client saw a silent mid-stream cutoff and
+        // surfaced a non-retryable generic error. Emit a real Anthropic error
+        // event carrying a numeric code so clients classify it as retryable.
+        logger.warn(
+          "Streaming request failed before first event, sending error event",
+        )
+        const errPayload = translateErrorToAnthropicErrorEvent(error)
+        await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
+        return
       }
 
       applyUsageIdentity(c, result.identity)
@@ -444,6 +454,7 @@ async function handleStreamingError(input: {
     stream,
     streamState,
     "Unexpected streaming error",
+    error,
   )
   return sent
 }
@@ -452,13 +463,14 @@ async function sendSyntheticErrorIfNeeded(
   stream: SSEStream,
   streamState: AnthropicStreamState,
   reason: string,
+  error?: unknown,
 ): Promise<boolean> {
   if (!streamState.messageStartSent || streamState.messageStopSent) {
     return false
   }
 
   logger.warn(`${reason}, sending error event`)
-  const errorEvent = translateErrorToAnthropicErrorEvent()
+  const errorEvent = translateErrorToAnthropicErrorEvent(error)
   await writeSseEvent(stream, JSON.stringify(errorEvent), errorEvent.type)
   return true
 }

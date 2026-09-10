@@ -232,6 +232,14 @@ export interface AnthropicErrorEvent {
   error: {
     type: string
     message: string
+    /**
+     * Numeric status-like code letting downstream one-shot clients (ZCode,
+     * opencode, Anthropic SDK) classify the failure as retryable (`>=500`,
+     * 429). Providers that only stream a 200 + inline error event (CodeBuddy,
+     * etc.) otherwise surface as a non-retryable generic failure.
+     */
+    code?: number
+    status?: number
   }
 }
 

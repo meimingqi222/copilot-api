@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
+import { resolveRetryableCode } from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
 import { endMemoryTrace, updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
@@ -344,14 +345,26 @@ export function handleStreamingCompletion(
           ?? (error instanceof HTTPError && error.response.status === 429 ?
             "rate_limit_error"
           : "error")
+        // A numeric, status-like code lets downstream one-shot clients (ZCode,
+        // opencode, OpenAI SDKs) classify the failure. `>=500` (and 429)
+        // signals a retryable upstream error; without it, providers that only
+        // stream a 200 + inline error frame (CodeBuddy, etc.) surface as a
+        // non-retryable parse error.
+        const errorCode = resolveRetryableCode(error)
         await writeSseEvent(
           stream,
           JSON.stringify({
             error: {
               message: errorMessage,
               type: errorType,
+              code: errorCode,
+              status: errorCode,
             },
           }),
+          // Emit under `event: error` so strict SSE parsers (ZCode scans
+          // `event: error` frames; opencode decodes the JSON event) treat this
+          // as a terminal error instead of an opaque data frame.
+          "error",
         )
         throw error
       } finally {

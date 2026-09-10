@@ -1,3 +1,4 @@
+import { resolveRetryableCode } from "~/lib/error-builder"
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
   extractReasoningBlockText,
@@ -521,12 +522,25 @@ export function translateStreamEndEvents(
   return events
 }
 
-export function translateErrorToAnthropicErrorEvent(): AnthropicStreamEventData {
+export function translateErrorToAnthropicErrorEvent(
+  error?: unknown,
+): AnthropicStreamEventData {
+  // A numeric, status-like code lets downstream one-shot clients (ZCode,
+  // opencode, Anthropic SDK) classify the failure. `>=500` (and 429) is
+  // treated as a retryable upstream error; without it, providers that only
+  // pass a 200 + inline error event (CodeBuddy, etc.) surface as a
+  // non-retryable generic failure.
+  const code = resolveRetryableCode(error)
   return {
     type: "error",
     error: {
-      type: "api_error",
-      message: "An unexpected error occurred during streaming.",
+      type: code === 429 ? "rate_limit_error" : "api_error",
+      message:
+        error instanceof Error ?
+          error.message
+        : "An unexpected error occurred during streaming.",
+      code,
+      status: code,
     },
   }
 }

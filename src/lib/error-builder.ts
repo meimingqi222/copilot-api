@@ -83,3 +83,31 @@ export function buildAnthropicUpstreamError(error: HTTPError): {
     },
   }
 }
+
+/**
+ * Resolve the numeric code to attach to a streamed error frame so that
+ * downstream one-shot clients (ZCode, opencode, OpenAI SDKs) can classify the
+ * failure as retryable.
+ *
+ * These clients key retryability off a numeric field read as an HTTP status:
+ * - opencode reads `event.error.code` as a status → `>=500`/429 ⇒ retryable
+ * - ZCode decodes `code`/`providerCode`/`error_code` and maps a status in
+ *   400–599; `>=500` ⇒ `retryable: true`
+ * - The Responses API client maps a top-level `status` into its retry budget
+ *
+ * Rules:
+ * - Prefer the real upstream HTTP status when it exists (429/5xx are retryable;
+ *   4xx stay non-retryable).
+ * - When an upstream non-HTTP provider error surfaces (e.g. CodeBuddy's
+ *   OpenAI-compatible wire error), there is no HTTP status to reuse, so fall
+ *   back to 500 so the failure is treated as retryable. The upstream code (e.g.
+ *   `11134`) is preserved in the message for diagnostics.
+ * - `undefined` (no upstream status, non-HTTPError) → 500.
+ */
+export function resolveRetryableCode(error: unknown): number {
+  if (error instanceof HTTPError) {
+    const status = error.response.status
+    if (status >= 400 && status <= 599) return status
+  }
+  return 500
+}

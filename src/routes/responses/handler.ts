@@ -9,7 +9,7 @@ import type {
 } from "~/services/copilot/responses-api"
 
 import { HTTPError } from "~/lib/error"
-import { extractErrorMessage } from "~/lib/error-builder"
+import { extractErrorMessage, resolveRetryableCode } from "~/lib/error-builder"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
@@ -431,7 +431,7 @@ export function createResponsesErrorPayload(error: unknown): {
   type: "error"
   status: number
   error: {
-    code?: string
+    code?: string | number
     message: string
     param?: string
     retryable?: boolean
@@ -446,12 +446,29 @@ export function createResponsesErrorPayload(error: unknown): {
       error: {
         message: knownError.message,
         type: knownError.type,
+        // Numeric status-like code so OpenAI-compatible stream parsers
+        // (opencode reads `error.code` as an HTTP status) classify the
+        // failure correctly rather than a generic parse error.
+        ...(knownError.status >= 400 && knownError.status <= 599 ?
+          { code: knownError.status }
+        : {}),
+        ...(knownError.status >= 500 || knownError.status === 429 ?
+          { retryable: true }
+        : {}),
       },
     }
   }
 
   const structured = readStructuredResponsesError(error)
   const message = extractErrorMessage(error)
+  const status = error instanceof HTTPError ? error.response.status : 500
+  // Normalize a provider code (possibly `>=599` like CodeBuddy's `11134`)
+  // into a status-like numeric code so retryability can be inferred.
+  const code = error instanceof HTTPError ? resolveRetryableCode(error) : status
+  // Keep an upstream's explicit `retryable: true` even when the status alone
+  // would not imply retryability.
+  const retryable =
+    structured?.retryable === true || code >= 500 || code === 429
 
   return {
     type: "error",
@@ -459,13 +476,13 @@ export function createResponsesErrorPayload(error: unknown): {
     // event into an HTTP/stream failure when the status is present at the top
     // level. Without it, the client may ignore the frame until idle timeout or
     // surface a non-retryable generic error instead of using its retry budget.
-    status: error instanceof HTTPError ? error.response.status : 500,
+    status,
     error: {
       message: structured?.message ?? message,
       type: structured?.type ?? "error",
-      ...(structured?.code ? { code: structured.code } : {}),
+      ...(structured?.code ? { code: structured.code } : { code }),
+      ...(retryable ? { retryable: true } : {}),
       ...(structured?.param ? { param: structured.param } : {}),
-      ...(structured?.retryable === true ? { retryable: true } : {}),
     },
   }
 }

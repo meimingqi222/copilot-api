@@ -21,6 +21,7 @@ import {
   type AnthropicStreamingUsage,
   isAsyncIterable,
   isDirectAnthropicResponse,
+  translateErrorToAnthropicErrorEvent,
 } from "~/services/protocols/anthropic"
 
 import type { HandleStreamingResponseOptions } from "./copilot-handler"
@@ -184,7 +185,15 @@ export async function handleAnthropicViaConnection(
           )
           return
         }
-        throw error
+        // Ordinary upstream errors (e.g. a 500 streamed as a 200 + error event
+        // by CodeBuddy) previously fell through and killed the SSE stream with
+        // no terminal event, so the client saw a silent mid-stream cutoff and
+        // surfaced a non-retryable generic error. Emit a real Anthropic error
+        // event carrying a numeric code so clients classify it as retryable.
+        logger.warn("Streaming request failed, sending error event")
+        const errEvent = translateErrorToAnthropicErrorEvent(error)
+        await writeSseEvent(stream, JSON.stringify(errEvent), errEvent.type)
+        return
       } finally {
         markStreamTerminal(
           c,
