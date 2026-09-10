@@ -400,7 +400,11 @@ export function translateChunkToAnthropicEvents(
     })
   }
 
-  if (delta.tool_calls) {
+  // CodeBuddy 等 OpenAI 兼容上游会在每个 chunk 上携带空数组字段
+  // （tool_calls: []）。空数组是 truthy，若不判空，每个 reasoning token 都会
+  // 走进 tool_calls 分支：flush 出一个只含一个 delta 的 thinking 块并立刻
+  // 关闭，客户端被迫为每个 token 渲染一个独立块。
+  if (delta.tool_calls?.length) {
     if (state.bufferedThinking) {
       // If unsigned reasoning is followed directly by a tool call, flush the
       // buffered thinking before opening the tool_use block so Anthropic

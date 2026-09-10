@@ -163,6 +163,59 @@ function buildCodebuddyHeaders(
   return headers
 }
 
+// ── 上游 chunk 清洗 ─────────────────────────────────────────────────
+
+/**
+ * CodeBuddy 上游在每个 chunk 的 delta 上都携带空占位字段：
+ *
+ *   { content: "", reasoning_content: "x", function_call: null,
+ *     refusal: "", tool_calls: [], extra_fields: null }
+ *
+ * 且 choice.finish_reason 为 ""（而非 null）。按"字段是否存在"判断当前处于
+ * 思考还是正文阶段的客户端，会把每个 token 都当成一次块切换（思考块/正文块
+ * 反复开关），渲染性能极差。这里把空占位字段剥掉，使下发形状与标准
+ * OpenAI/DeepSeek 流一致：思考阶段只有 reasoning_content，正文阶段只有
+ * content，结束才有 finish_reason。
+ */
+function sanitizeCodebuddyChunk(chunk: SseChunk): SseChunk {
+  const choice = chunk.choices?.[0]
+  if (!choice) return chunk
+  const delta = choice.delta as Record<string, unknown> | undefined
+  if (!delta) return chunk
+
+  if (delta.content === "") delete delta.content
+  if (delta.reasoning_content === "") delete delta.reasoning_content
+  if (delta.refusal === "") delete delta.refusal
+  if (delta.function_call === null) delete delta.function_call
+  if (delta.extra_fields === null) delete delta.extra_fields
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) {
+    delete delta.tool_calls
+  }
+  if (choice.finish_reason === "") {
+    choice.finish_reason = null
+  }
+
+  return chunk
+}
+
+/** 逐事件清洗上游 SSE：空占位字段不透传给客户端。 */
+export async function* sanitizeCodebuddyStream(
+  stream: AsyncIterable<CopilotStreamEvent>,
+): AsyncIterable<CopilotStreamEvent> {
+  for await (const event of stream) {
+    if (!event.data || event.data === "[DONE]") {
+      yield event
+      continue
+    }
+    try {
+      const chunk = sanitizeCodebuddyChunk(JSON.parse(event.data) as SseChunk)
+      yield { ...event, data: JSON.stringify(chunk) }
+    } catch {
+      yield event
+    }
+  }
+}
+
 // ── 非流式聚合：把 SSE 流聚合成 ChatCompletionResponse ───────────────
 
 interface AggregatedToolCall {
@@ -175,6 +228,7 @@ interface AggregatedToolCall {
 interface AggregatedChoice {
   index: number
   content: string
+  reasoning_content: string
   role: "assistant"
   tool_calls: Array<AggregatedToolCall>
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null
@@ -188,6 +242,7 @@ interface SseChunk {
     index: number
     delta?: {
       content?: string | null
+      reasoning_content?: string | null
       role?: string
       tool_calls?: Array<{
         index: number
@@ -235,6 +290,7 @@ function mergeChoiceDelta(
     agg = {
       index: idx,
       content: "",
+      reasoning_content: "",
       role: "assistant",
       tool_calls: [],
       finish_reason: null,
@@ -243,7 +299,8 @@ function mergeChoiceDelta(
   }
   const delta = choice.delta
   if (delta?.content) agg.content += delta.content
-  if (delta?.tool_calls) {
+  if (delta?.reasoning_content) agg.reasoning_content += delta.reasoning_content
+  if (delta?.tool_calls?.length) {
     for (const tc of delta.tool_calls) mergeToolCallDelta(agg.tool_calls, tc)
   }
   if (choice.finish_reason) {
@@ -291,6 +348,9 @@ function aggregateSseToResponse(
           message: {
             role: c.role,
             content: c.content || null,
+            ...(c.reasoning_content && {
+              reasoning_content: c.reasoning_content,
+            }),
             tool_calls: c.tool_calls.length > 0 ? c.tool_calls : undefined,
           },
           logprobs: null,
@@ -413,10 +473,10 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       } satisfies AdapterChatResult
     }
 
-    // 流式请求：直接透传 SSE
+    // 流式请求：清洗后透传 SSE
     return {
       credentialId: credential.id,
-      response: stream as unknown as AsyncIterable<CopilotStreamEvent>,
+      response: sanitizeCodebuddyStream(stream),
     } satisfies AdapterChatResult
   },
 }
