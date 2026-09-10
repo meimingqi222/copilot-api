@@ -114,6 +114,11 @@ export const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> =
       features: ["passthrough-client-session"],
       synthesizeStableSession: false,
     },
+    lobsterai: {
+      provider: "lobsterai",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
   }
 
 /** OpenAI-compatible / generic connections: L0 only + passthrough. */

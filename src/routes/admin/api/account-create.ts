@@ -36,20 +36,86 @@ function extractJwtExp(token: string): number | undefined {
   }
 }
 
+interface CreateAccountBody {
+  label?: string
+  provider?: AccountProvider
+  authToken?: string
+  apiKey?: string
+  serviceToken?: string
+  xiaomichatbotPh?: string
+  credentials?: Record<string, unknown>
+  settings?: Record<string, unknown>
+}
+
+/**
+ * 创建 LobsterAI 账号（token 粘贴式接入）。
+ *
+ * 抽成独立函数而非内联在路由处理器里：该处理器已有多个 provider 分支，
+ * 内联会把圈复杂度推过 lint 上限。
+ */
+async function createLobsteraiAccount(
+  body: CreateAccountBody,
+  label: string,
+): Promise<{ error: string } | { accountId: string; account: unknown }> {
+  const accessToken =
+    typeof body.credentials?.accessToken === "string" ?
+      body.credentials.accessToken.trim()
+    : body.authToken?.trim()
+  const refreshToken =
+    typeof body.credentials?.refreshToken === "string" ?
+      body.credentials.refreshToken.trim()
+    : undefined
+  if (!accessToken && !refreshToken) {
+    return { error: "LobsterAI accessToken or refreshToken is required." }
+  }
+
+  const expiresAt = accessToken ? extractJwtExp(accessToken) : undefined
+  // keyfrom 归因字段（可选）：refresh 时原样回传，缺失时服务端默认 official。
+  const uuid =
+    typeof body.credentials?.uuid === "string" ?
+      body.credentials.uuid.trim()
+    : undefined
+  const userId =
+    typeof body.credentials?.userId === "string" ?
+      body.credentials.userId.trim()
+    : undefined
+
+  const account: Account = {
+    id: randomUUID(),
+    label,
+    provider: "lobsterai",
+    enabled: true,
+    priority: 0,
+    quotaState: "unknown",
+    createdAt: Date.now(),
+    credentials: {
+      accessToken: accessToken ?? "",
+      ...(refreshToken ? { refreshToken } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(uuid ? { uuid } : {}),
+      ...(userId ? { userId } : {}),
+    },
+    settings: {
+      ...body.settings,
+    },
+  }
+
+  addAccount(account)
+  await refreshModelsForAccount(account)
+  await saveAccounts()
+
+  const conn = getProviderConnection(account.id)
+  return {
+    accountId: account.id,
+    account: conn ? publicAccountFromConnection(conn) : undefined,
+  }
+}
+
 export const createAccountRoutes = new Hono()
 
 createAccountRoutes.post("/", async (c) => {
   initializeProviderRegistry()
-  let body: {
-    label?: string
-    provider?: AccountProvider
-    authToken?: string
-    apiKey?: string
-    serviceToken?: string
-    xiaomichatbotPh?: string
-    credentials?: Record<string, unknown>
-    settings?: Record<string, unknown>
-  }
+  let body: CreateAccountBody
   try {
     body = await readJsonBody(c.req.raw)
   } catch {
@@ -234,6 +300,18 @@ createAccountRoutes.post("/", async (c) => {
       status: "complete",
       accountId: account.id,
       account: conn ? publicAccountFromConnection(conn) : undefined,
+    })
+  }
+
+  if (provider === "lobsterai") {
+    const result = await createLobsteraiAccount(body, label)
+    if ("error" in result) {
+      return c.json({ error: result.error }, 400)
+    }
+    return c.json({
+      status: "complete",
+      accountId: result.accountId,
+      account: result.account,
     })
   }
 

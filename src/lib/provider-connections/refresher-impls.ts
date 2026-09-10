@@ -19,6 +19,11 @@ import {
   scheduleConnectionTokenRefresh,
 } from "~/services/copilot/token-refresh"
 import {
+  lobsteraiNeedsRefresh,
+  refreshLobsteraiTokenForConnection,
+  scheduleLobsteraiRefresh,
+} from "~/services/lobsterai/token-refresh"
+import {
   refreshOAuthConnectionToken,
   scheduleOAuthRefreshForConnection,
 } from "~/services/oauth/refresh-scheduler"
@@ -141,8 +146,31 @@ const codebuddyRefresher: CredentialRefresher = {
   },
 }
 
-// ── StaticRefresher(无刷新需求) ─────────────────────────────────
+// ── LobsteraiTokenRefresher ───────────────────────────────────────
 
+const lobsteraiRefresher: CredentialRefresher = {
+  type: "lobsterai-token",
+
+  async refresh(credential: ApiCredential): Promise<void> {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn || !conn.enabled) return
+    await refreshLobsteraiTokenForConnection(conn)
+  },
+
+  needsRefresh(credential: ApiCredential): boolean {
+    return lobsteraiNeedsRefresh(credential)
+  },
+
+  scheduleNextRefresh(credential: ApiCredential): void {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn) return
+    scheduleLobsteraiRefresh(conn)
+  },
+}
+
+// ── StaticRefresher(无刷新需求) ─────────────────────────────────
 const staticRefresher: CredentialRefresher = {
   type: "static",
   async refresh() {},
@@ -162,9 +190,10 @@ export function initializeCredentialRefreshers(): void {
   registerCredentialRefresher(oauthRefresher)
   registerCredentialRefresher(windsurfJwtRefresher)
   registerCredentialRefresher(codebuddyRefresher)
+  registerCredentialRefresher(lobsteraiRefresher)
   registerCredentialRefresher(staticRefresher)
   initialized = true
-  logger.debug("[credential-refresher] Registered 5 refresher implementations")
+  logger.debug("[credential-refresher] Registered 6 refresher implementations")
 }
 
 export function getCredentialRefresherByType(type: string) {

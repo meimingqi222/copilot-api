@@ -133,6 +133,18 @@ function getAccountContext(account: Account): Record<string, unknown> {
       expiresAt: account.credentials?.expiresAt,
     }
   }
+  if (account.provider === "lobsterai") {
+    return {
+      ...base,
+      refreshToken: readCredentialString(account, "refreshToken"),
+      expiresAt: account.credentials?.expiresAt,
+      // keyfrom 归因字段：refresh 时回传，缺失时服务端默认 official。
+      uuid: readCredentialString(account, "uuid"),
+      userId: readCredentialString(account, "userId"),
+      firstKeyfrom: readCredentialString(account, "firstKeyfrom"),
+      latestKeyfrom: readCredentialString(account, "latestKeyfrom"),
+    }
+  }
   if (isOAuthAccount(account)) {
     return {
       ...base,
@@ -158,6 +170,7 @@ function getRefresherType(account: Account): CredentialRefresherType {
   if (isOAuthAccount(account)) return "oauth-token"
   if (account.provider === "windsurf") return "windsurf-jwt"
   if (account.provider === "codebuddy") return "codebuddy-token"
+  if (account.provider === "lobsterai") return "lobsterai-token"
   return "static"
 }
 

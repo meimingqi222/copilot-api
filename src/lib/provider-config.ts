@@ -11,6 +11,7 @@ export const PROVIDER_IDS = [
   "kimi",
   "xai",
   "codebuddy",
+  "lobsterai",
 ] as const
 
 export type ProviderId = (typeof PROVIDER_IDS)[number]
@@ -35,6 +36,7 @@ export const PROVIDER_PROTOCOL_MAP: Record<ProviderId, ProviderProtocol> = {
   kimi: "kimi-native",
   xai: "xai-native",
   codebuddy: "codebuddy-native",
+  lobsterai: "lobsterai-native",
 }
 
 export const OAUTH_PROVIDER_IDS = [

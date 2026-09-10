@@ -288,6 +288,10 @@ function buildCredentials(
         credentials.accessToken = cred.value
         break
       }
+      case "lobsterai": {
+        credentials.accessToken = cred.value
+        break
+      }
       default: {
         if (isOAuthProviderId(provider)) {
           credentials.accessToken = cred.value
@@ -304,6 +308,18 @@ function buildCredentials(
         credentials.refreshToken = ctx.refreshToken
       if (typeof ctx.expiresAt === "number")
         credentials.expiresAt = ctx.expiresAt
+    }
+    if (provider === "lobsterai") {
+      if (typeof ctx.refreshToken === "string")
+        credentials.refreshToken = ctx.refreshToken
+      if (typeof ctx.expiresAt === "number")
+        credentials.expiresAt = ctx.expiresAt
+      if (typeof ctx.uuid === "string") credentials.uuid = ctx.uuid
+      if (typeof ctx.userId === "string") credentials.userId = ctx.userId
+      if (typeof ctx.firstKeyfrom === "string")
+        credentials.firstKeyfrom = ctx.firstKeyfrom
+      if (typeof ctx.latestKeyfrom === "string")
+        credentials.latestKeyfrom = ctx.latestKeyfrom
     }
     if (isOAuthProviderId(provider)) {
       if (typeof ctx.refreshToken === "string")
@@ -578,6 +594,11 @@ export function setCodebuddyAccessToken(
   value: string | undefined,
 ): void {
   writeCredentialField(account, "accessToken", value)
+}
+
+// LobsterAI
+export function getLobsteraiAccessToken(account: Account): string | undefined {
+  return readString(account.credentials?.accessToken)
 }
 
 export function getMimoProxy(account: Account): string | undefined {

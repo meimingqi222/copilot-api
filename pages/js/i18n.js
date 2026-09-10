@@ -132,6 +132,17 @@ const i18n = {
         "CodeBuddy CLI 登录后的 refreshToken，用于自动刷新 accessToken（有效期 90 天）",
       "accounts.provider.codebuddy.jsonHint":
         "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
+      "accounts.provider.lobsterai": "LobsterAI",
+      "accounts.provider.lobsterai.name": "LobsterAI",
+      "accounts.provider.lobsterai.fields.accessToken": "LobsterAI AccessToken",
+      "accounts.provider.lobsterai.fields.accessTokenHint":
+        "LobsterAI 客户端登录后的 accessToken（eyJ... 开头），有效期约 30 天",
+      "accounts.provider.lobsterai.fields.refreshToken":
+        "LobsterAI RefreshToken",
+      "accounts.provider.lobsterai.fields.refreshTokenHint":
+        "LobsterAI 客户端登录后的 refreshToken，用于自动刷新 accessToken",
+      "accounts.provider.lobsterai.jsonHint":
+        "粘贴 LobsterAI 凭证 JSON 自动解析（可选），支持 { access_token, refresh_token } 或 { accessToken, refreshToken }",
       "accounts.codebuffAuthToken": "Codebuff 授权令牌",
       "accounts.status": "状态",
       "accounts.active": "活跃账户",
@@ -871,6 +882,17 @@ const i18n = {
         "Refresh token from CodeBuddy CLI login, used to auto-refresh accessToken (valid for 90 days)",
       "accounts.provider.codebuddy.jsonHint":
         "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
+      "accounts.provider.lobsterai": "LobsterAI",
+      "accounts.provider.lobsterai.name": "LobsterAI",
+      "accounts.provider.lobsterai.fields.accessToken": "LobsterAI AccessToken",
+      "accounts.provider.lobsterai.fields.accessTokenHint":
+        "Access token from LobsterAI client login (starts with eyJ...), valid for about 30 days",
+      "accounts.provider.lobsterai.fields.refreshToken":
+        "LobsterAI RefreshToken",
+      "accounts.provider.lobsterai.fields.refreshTokenHint":
+        "Refresh token from LobsterAI client login, used to auto-refresh accessToken",
+      "accounts.provider.lobsterai.jsonHint":
+        "Paste LobsterAI credential JSON to auto-parse (optional). Supports { access_token, refresh_token } or { accessToken, refreshToken }",
       "accounts.codebuffAuthToken": "Codebuff Auth Token",
       "accounts.status": "Status",
       "accounts.active": "Active Accounts",

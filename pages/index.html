@@ -1463,7 +1463,10 @@
                 <div
                   x-show="isReauthFlow()"
                   class="p-3 rounded-lg text-sm"
-                  style="background: rgba(255, 149, 0, 0.1); color: var(--apple-orange)"
+                  style="
+                    background: rgba(255, 149, 0, 0.1);
+                    color: var(--apple-orange);
+                  "
                   x-text="t('accounts.oauth.reauthHint') || '正在为已有账号重新授权，完成后保留原账号的用量统计。'"
                 ></div>
                 <div>
@@ -1483,7 +1486,11 @@
                     class="form-label"
                     x-text="t('accounts.provider')"
                   ></label>
-                  <select x-model="newAccount.provider" class="form-input" :disabled="isReauthFlow()">
+                  <select
+                    x-model="newAccount.provider"
+                    class="form-input"
+                    :disabled="isReauthFlow()"
+                  >
                     <template x-for="provider in providers" :key="provider.id">
                       <option
                         :value="provider.id"
@@ -1522,6 +1529,22 @@
                     class="form-input font-mono text-xs"
                     rows="4"
                     placeholder='{"auth":{"accessToken":"eyJ...","refreshToken":"eyJ..."}}'
+                  ></textarea>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'lobsterai'"
+                  class="space-y-1"
+                >
+                  <label
+                    class="form-label"
+                    x-text="t('accounts.provider.lobsterai.jsonHint')"
+                  ></label>
+                  <textarea
+                    x-model="lobsteraiJsonInput"
+                    @input="parseLobsteraiJson()"
+                    class="form-input font-mono text-xs"
+                    rows="4"
+                    placeholder='{"access_token":"eyJ...","refresh_token":"eyJ..."}'
                   ></textarea>
                 </div>
                 <div x-show="selectedProviderFields().length" class="space-y-3">
@@ -1797,10 +1820,11 @@
           data-partial="partials/connections.html"
         >
           <div class="flex justify-center py-20">
-            <div class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"></div>
+            <div
+              class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"
+            ></div>
           </div>
         </div>
-
 
         <!-- Model Aliases View -->
         <div
@@ -2202,10 +2226,7 @@
             <!-- User Usage strip -->
             <div class="card p-6 mb-8">
               <div class="flex items-center justify-between mb-4">
-                <h3
-                  class="text-title-2"
-                  x-text="t('usage.userUsage')"
-                ></h3>
+                <h3 class="text-title-2" x-text="t('usage.userUsage')"></h3>
                 <span
                   class="text-xs text-[var(--apple-text-secondary)]"
                   x-show="sortedUserUsage.length"
@@ -2232,9 +2253,7 @@
                       class="text-lg font-bold mt-1"
                       x-text="formatTokens(data.totalTokens)"
                     ></p>
-                    <p
-                      class="text-xs text-[var(--apple-text-secondary)] mt-1"
-                    >
+                    <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
                       <span
                         x-text="(data.requests || 0) + ' ' + t('usage.requests')"
                       ></span>
@@ -2247,10 +2266,7 @@
                   </div>
                 </template>
               </div>
-              <div
-                x-show="!sortedUserUsage.length"
-                class="empty-state"
-              >
+              <div x-show="!sortedUserUsage.length" class="empty-state">
                 <i data-lucide="users" class="empty-state-icon"></i>
                 <p
                   class="text-body text-[var(--apple-text-secondary)]"
@@ -2316,7 +2332,9 @@
                       x-text="displayedModelUsage.length + ' / ' + filteredModelUsage.length"
                     ></span>
                   </div>
-                  <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  <div
+                    class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"
+                  >
                     <template
                       x-for="([model, data]) in displayedModelUsage"
                       :key="model"
@@ -2355,9 +2373,7 @@
                             x-text="(data.requests || 0) + ' ' + t('usage.requests')"
                           ></span>
                           <span class="mx-1">·</span>
-                          <span
-                            x-text="formatTokens(data.totalTokens)"
-                          ></span>
+                          <span x-text="formatTokens(data.totalTokens)"></span>
                           <span class="mx-1">·</span>
                           <span
                             x-text="formatTokens(data.promptTokens || 0) + '/' + formatTokens(data.completionTokens || 0)"
@@ -2662,7 +2678,6 @@
                   ></p>
                 </div>
               </div>
-
             </div>
 
             <!-- Usage Trend Chart -->

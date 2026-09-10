@@ -10,6 +10,7 @@ import {
 import { codebuddyProviderRuntime } from "./codebuddy"
 import { codebuffProviderRuntime } from "./codebuff"
 import { copilotProviderRuntime } from "./copilot"
+import { lobsteraiProviderRuntime } from "./lobsterai"
 import { mimoProviderRuntime } from "./mimo"
 import { createOAuthProviderRuntime } from "./oauth"
 import { registerProvider } from "./registry"
@@ -38,6 +39,9 @@ export function initializeProviderRegistry(): void {
 
   codebuddyProviderRuntime.adapter = getProtocolAdapter("codebuddy-native")
   registerProvider(codebuddyProviderRuntime)
+
+  lobsteraiProviderRuntime.adapter = getProtocolAdapter("lobsterai-native")
+  registerProvider(lobsteraiProviderRuntime)
 
   for (const providerId of OAUTH_PROVIDER_IDS) {
     const runtime = createOAuthProviderRuntime(providerId)

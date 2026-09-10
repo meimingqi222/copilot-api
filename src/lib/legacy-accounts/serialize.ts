@@ -4,6 +4,7 @@ import {
   getCodebuddyAccessToken,
   getCodebuffAuthToken,
   getGitHubToken,
+  getLobsteraiAccessToken,
   getMimoPh,
   getMimoServiceToken,
   getWindsurfApiKey,
@@ -89,6 +90,22 @@ function serializeAccount(account: Account): Record<string, unknown> {
         accessToken: getCodebuddyAccessToken(account),
         refreshToken: account.credentials?.refreshToken,
         expiresAt: account.credentials?.expiresAt,
+      },
+      settings: account.settings ?? {},
+    }
+  }
+
+  if (account.provider === "lobsterai") {
+    return {
+      ...base,
+      credentials: {
+        accessToken: getLobsteraiAccessToken(account),
+        refreshToken: account.credentials?.refreshToken,
+        expiresAt: account.credentials?.expiresAt,
+        uuid: account.credentials?.uuid,
+        userId: account.credentials?.userId,
+        firstKeyfrom: account.credentials?.firstKeyfrom,
+        latestKeyfrom: account.credentials?.latestKeyfrom,
       },
       settings: account.settings ?? {},
     }

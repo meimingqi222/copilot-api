@@ -42,6 +42,7 @@ function accountsView() {
     reauthAccount: null,
     mimoCookieInput: "",
     codebuddyJsonInput: "",
+    lobsteraiJsonInput: "",
 
     parseMimoCookie() {
       const str = this.mimoCookieInput
@@ -111,6 +112,48 @@ function accountsView() {
           && !this.newAccount.label
         ) {
           this.newAccount.label = `CodeBuddy-${account.nickname}`
+        }
+      } catch {
+        // JSON 解析失败时静默忽略，用户可能还在输入
+      }
+    },
+
+    /** 解析 LobsterAI 凭证 JSON，自动填充 label / accessToken / refreshToken。 */
+    parseLobsteraiJson() {
+      const str = this.lobsteraiJsonInput.trim()
+      if (!str) return
+      try {
+        const obj = JSON.parse(str)
+        // 支持多种格式：
+        //   { access_token, refresh_token, nickname }  （auto-checkin 导出格式）
+        //   { accessToken, refreshToken }              （客户端 camelCase）
+        //   { LobsterAI: { access_token, ... } }       （按站点名嵌套）
+        const inner =
+          obj.access_token || obj.accessToken ? obj
+          : obj.LobsterAI && typeof obj.LobsterAI === "object" ? obj.LobsterAI
+          : obj
+        const accessToken =
+          inner.access_token ?? inner.accessToken ?? inner.token
+        if (typeof accessToken === "string" && accessToken) {
+          this.setAccountFieldValue(
+            { key: "accessToken", type: "secret" },
+            accessToken.trim(),
+          )
+        }
+        const refreshToken = inner.refresh_token ?? inner.refreshToken
+        if (typeof refreshToken === "string" && refreshToken) {
+          this.setAccountFieldValue(
+            { key: "refreshToken", type: "secret" },
+            refreshToken.trim(),
+          )
+        }
+        const nickname = inner.nickname
+        if (
+          typeof nickname === "string"
+          && nickname
+          && !this.newAccount.label
+        ) {
+          this.newAccount.label = `LobsterAI-${nickname}`
         }
       } catch {
         // JSON 解析失败时静默忽略，用户可能还在输入
@@ -314,6 +357,7 @@ function accountsView() {
       this.oauthCallbackSubmitting = false
       this.mimoCookieInput = ""
       this.codebuddyJsonInput = ""
+      this.lobsteraiJsonInput = ""
       if (this.pollTimer) clearTimeout(this.pollTimer)
       this.pollTimer = null
     },

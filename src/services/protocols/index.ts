@@ -11,6 +11,7 @@ import { codebuffNativeAdapter } from "./codebuff-native"
 import { codexNativeAdapter } from "./codex-native"
 import { copilotNativeAdapter } from "./copilot-native"
 import { kimiNativeAdapter } from "./kimi-native"
+import { lobsteraiNativeAdapter } from "./lobsterai-native"
 import { mimoNativeAdapter } from "./mimo-native"
 import { openAICompatibleAdapter } from "./openai-compatible"
 import { openAIResponsesCompatibleAdapter } from "./openai-responses"
@@ -35,6 +36,7 @@ export function initializeProtocolAdapters(): void {
   registerProtocolAdapter(codexNativeAdapter)
   registerProtocolAdapter(xaiNativeAdapter)
   registerProtocolAdapter(codebuddyNativeAdapter)
+  registerProtocolAdapter(lobsteraiNativeAdapter)
   initialized = true
 }
 

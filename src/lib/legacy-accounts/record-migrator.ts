@@ -378,6 +378,27 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     }
   }
 
+  if (provider === "lobsterai") {
+    return {
+      ...base,
+      provider: "lobsterai",
+      credentials: {
+        accessToken: pickString(existingCredentials?.accessToken, undefined),
+        refreshToken: pickString(existingCredentials?.refreshToken, undefined),
+        expiresAt: pickNumber(existingCredentials?.expiresAt, undefined),
+        uuid: pickString(existingCredentials?.uuid, undefined),
+        userId: pickString(existingCredentials?.userId, undefined),
+        firstKeyfrom: pickString(existingCredentials?.firstKeyfrom, undefined),
+        latestKeyfrom: pickString(
+          existingCredentials?.latestKeyfrom,
+          undefined,
+        ),
+      },
+      settings: existingSettings ?? {},
+      runtimeState: existingRuntime,
+    }
+  }
+
   if (isOAuthProviderId(provider)) {
     return migrateOAuthAccount({
       base,

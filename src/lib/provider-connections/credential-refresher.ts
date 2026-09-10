@@ -16,6 +16,7 @@ export type CredentialRefresherType =
   | "oauth-token"
   | "windsurf-jwt"
   | "codebuddy-token"
+  | "lobsterai-token"
   | "static"
 
 export interface CredentialRefresher {
