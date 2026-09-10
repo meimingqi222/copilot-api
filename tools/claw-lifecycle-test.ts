@@ -16,8 +16,7 @@ const USER_ID = process.env.USER_ID || ""
 const PH = process.env.PH || ""
 const LABEL = process.env.LABEL || "test"
 const MIMO_API_HOST = process.env.MIMO_API_HOST || ""
-const MIMO_WS_URL =
-  process.env.MIMO_WS_URL || "wss://copilot-api.example.com/ws/mimo"
+const MIMO_WS_URL = process.env.MIMO_WS_URL || ""
 const MIMO_WS_TOKEN = process.env.MIMO_WS_TOKEN || "test-token"
 const PROXY_URL = process.env.PROXY_URL || ""
 
