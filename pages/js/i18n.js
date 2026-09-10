@@ -438,6 +438,10 @@ const i18n = {
       "quota.oauth.xai.payAsYouGo": "按需付费",
       "quota.oauth.xai.payAsYouGoEnabled": "已启用（上限 {cap}）",
       "quota.oauth.xai.payAsYouGoDisabled": "未启用",
+      "quota.oauth.windsurf.planLabel": "套餐",
+      "quota.oauth.windsurf.daily": "日限额",
+      "quota.oauth.windsurf.weekly": "周限额",
+      "quota.oauth.windsurf.overage": "超额余额",
 
       // Provider Connections
       "connections.title": "外部 Provider",
@@ -1173,6 +1177,10 @@ const i18n = {
       "quota.oauth.xai.payAsYouGo": "Pay as you go",
       "quota.oauth.xai.payAsYouGoEnabled": "Enabled (cap {cap})",
       "quota.oauth.xai.payAsYouGoDisabled": "Disabled",
+      "quota.oauth.windsurf.planLabel": "Plan",
+      "quota.oauth.windsurf.daily": "Daily limit",
+      "quota.oauth.windsurf.weekly": "Weekly limit",
+      "quota.oauth.windsurf.overage": "Overage balance",
 
       // Provider Connections
       "connections.title": "External Providers",

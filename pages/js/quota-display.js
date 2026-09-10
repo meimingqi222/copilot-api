@@ -277,6 +277,11 @@ const QuotaDisplay = {
 
         break
       }
+      case "windsurf": {
+        rows = this.buildWindsurfRows(info.details, t)
+
+        break
+      }
       default: {
         rows = this.buildCopilotRows(info, t)
       }
@@ -722,6 +727,59 @@ const QuotaDisplay = {
     return rows
   },
 
+  buildWindsurfRows(details, t) {
+    if (!details || typeof details !== "object") return []
+    const rows = []
+    const plan =
+      typeof details.plan === "string" && details.plan.trim() ?
+        details.plan.trim()
+      : undefined
+    if (plan) {
+      rows.push({
+        id: "windsurf-plan",
+        label: t("quota.oauth.windsurf.planLabel"),
+        valueText: plan,
+        hideBar: true,
+      })
+    }
+    const windows = [
+      {
+        id: "daily",
+        labelKey: "quota.oauth.windsurf.daily",
+        used: details.dailyUsedPercent,
+        resetAt: details.dailyResetAt,
+      },
+      {
+        id: "weekly",
+        labelKey: "quota.oauth.windsurf.weekly",
+        used: details.weeklyUsedPercent,
+        resetAt: details.weeklyResetAt,
+      },
+    ]
+    for (const window of windows) {
+      const usedPercent = this.normalizeNumber(window.used)
+      if (usedPercent === undefined) continue
+      const clampedUsed = Math.max(0, Math.min(100, usedPercent))
+      rows.push({
+        id: `windsurf-${window.id}`,
+        label: t(window.labelKey),
+        remainingPercent: Math.max(0, 100 - clampedUsed),
+        valueText: `${Math.round(100 - clampedUsed)}%`,
+        resetText: this.formatUnixSeconds(window.resetAt),
+      })
+    }
+    const overage = this.normalizeNumber(details.overageCredits)
+    if (overage !== undefined && overage > 0) {
+      rows.push({
+        id: "windsurf-overage",
+        label: t("quota.oauth.windsurf.overage"),
+        valueText: `${overage.toFixed(2)} ACU`,
+        hideBar: true,
+      })
+    }
+    return rows
+  },
+
   buildCopilotRows(info, t) {
     const rows = []
     if (info.premiumInteractionsRemaining !== undefined) {
@@ -820,6 +878,9 @@ const QuotaDisplay = {
       }
       case "copilot": {
         return "quota-card-copilot"
+      }
+      case "windsurf": {
+        return "quota-card-windsurf"
       }
       default: {
         return ""

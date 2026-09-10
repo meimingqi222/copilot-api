@@ -1,3 +1,6 @@
+import { saveAccounts } from "~/lib/account-store"
+import { getMutableProviderConnection } from "~/lib/provider-connections"
+import { refreshWindsurfQuota } from "~/lib/quota/fetchers/windsurf"
 import {
   fallbackWindsurfConnectionModelsForConnection,
   getWindsurfModelsForConnection,
@@ -12,7 +15,7 @@ export const windsurfProviderRuntime: ProviderRuntime = {
     name: "Windsurf",
     icon: "wind",
     authMode: "direct",
-    features: ["cooldown", "model_discovery"],
+    features: ["quota", "cooldown", "model_discovery"],
     accountFields: [
       {
         key: "apiKey",
@@ -28,6 +31,13 @@ export const windsurfProviderRuntime: ProviderRuntime = {
   async refreshModels(connection) {
     const models = await getWindsurfModelsForConnection(connection)
     return models
+  },
+  async refreshQuota(connection) {
+    const liveConnection = getMutableProviderConnection(connection.id)
+    if (!liveConnection) return undefined
+    const snapshot = await refreshWindsurfQuota(liveConnection)
+    await saveAccounts()
+    return snapshot
   },
   getFallbackModels(connection) {
     return fallbackWindsurfConnectionModelsForConnection(connection)

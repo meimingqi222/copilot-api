@@ -892,6 +892,11 @@ select.form-input {
   box-shadow: 0 6px 20px rgba(17, 24, 39, 0.06);
 }
 
+.quota-account-card.quota-card-windsurf:hover {
+  border-color: rgba(124, 58, 237, 0.35);
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.08);
+}
+
 .quota-account-card.quota-card-copilot:hover,
 .quota-account-card:not([class*="quota-card-"]):hover {
   border-color: rgba(0, 122, 255, 0.35);
@@ -929,6 +934,10 @@ select.form-input {
   background: linear-gradient(90deg, #111827, #4b5563);
 }
 
+.quota-account-card.quota-card-windsurf .quota-card-accent {
+  background: linear-gradient(90deg, #7c3aed, #a78bfa);
+}
+
 .quota-provider-badge {
   display: inline-flex;
   align-items: center;
@@ -964,6 +973,11 @@ select.form-input {
 .quota-provider-badge.quota-badge-xai {
   background: rgba(17, 24, 39, 0.1);
   color: #111827;
+}
+
+.quota-provider-badge.quota-badge-windsurf {
+  background: rgba(124, 58, 237, 0.12);
+  color: #6d28d9;
 }
 
 .quota-provider-badge.quota-badge-copilot {
