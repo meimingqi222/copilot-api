@@ -147,14 +147,11 @@ function applyReauthBundle(
     targetCred.value = freshCred.value
     if (freshCred.context) targetCred.context = { ...freshCred.context }
     targetCred.status = "ready"
-    targetCred.cooldownUntil = undefined
     targetCred.lastError = undefined
     targetCred.lastErrorAt = undefined
     targetCred.updatedAt = Date.now()
     if (freshCred.quota !== undefined) targetCred.quota = freshCred.quota
-    targetCred.exhaustedAt =
-      freshCred.exhaustedAt !== undefined ? freshCred.exhaustedAt : undefined
-    targetCred.lastRateLimitReason = freshCred.lastRateLimitReason
+    targetCred.exhaustedAt = freshCred.exhaustedAt
   }
   const freshMeta = fresh.metadata
   if (freshMeta && typeof freshMeta === "object") {

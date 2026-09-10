@@ -759,12 +759,12 @@ const QuotaDisplay = {
     for (const window of windows) {
       const usedPercent = this.normalizeNumber(window.used)
       if (usedPercent === undefined) continue
-      const clampedUsed = Math.max(0, Math.min(100, usedPercent))
+      const remaining = 100 - Math.max(0, Math.min(100, usedPercent))
       rows.push({
         id: `windsurf-${window.id}`,
         label: t(window.labelKey),
-        remainingPercent: Math.max(0, 100 - clampedUsed),
-        valueText: `${Math.round(100 - clampedUsed)}%`,
+        remainingPercent: remaining,
+        valueText: `${Math.round(remaining)}%`,
         resetText: this.formatUnixSeconds(window.resetAt),
       })
     }

@@ -264,7 +264,8 @@ function accountsView() {
       }
     },
 
-    openAddModal() {
+    /** 重置新增/重认证弹窗的全部临时状态。 */
+    resetAddModalState() {
       this.newAccount = this.defaultNewAccount()
       this.reauthAccount = null
       this.deviceFlowStep = "input"
@@ -272,9 +273,13 @@ function accountsView() {
       this.oauthFlowData = null
       this.oauthCallbackInput = ""
       this.oauthCallbackSubmitting = false
-      this.showAddModal = true
       if (this.pollTimer) clearTimeout(this.pollTimer)
       this.pollTimer = null
+    },
+
+    openAddModal() {
+      this.resetAddModalState()
+      this.showAddModal = true
     },
 
     /**
@@ -282,18 +287,11 @@ function accountsView() {
      *（保留 id/label/用量统计）。仅 OAuth provider 且 authStatus=error 时展示。
      */
     openReauthModal(account) {
-      this.newAccount = this.defaultNewAccount()
+      this.resetAddModalState()
       this.newAccount.provider = account.provider
       this.newAccount.label = account.label || ""
       this.reauthAccount = account
-      this.deviceFlowStep = "input"
-      this.deviceFlowData = null
-      this.oauthFlowData = null
-      this.oauthCallbackInput = ""
-      this.oauthCallbackSubmitting = false
       this.showAddModal = true
-      if (this.pollTimer) clearTimeout(this.pollTimer)
-      this.pollTimer = null
     },
 
     isReauthFlow() {
@@ -305,18 +303,8 @@ function accountsView() {
         await this.cancelOAuthFlow()
       }
 
+      this.resetAddModalState()
       this.showAddModal = false
-      this.newAccount = this.defaultNewAccount()
-      this.reauthAccount = null
-      this.deviceFlowStep = "input"
-      this.deviceFlowData = null
-      this.oauthFlowData = null
-      this.oauthCallbackInput = ""
-      this.oauthCallbackSubmitting = false
-      if (this.pollTimer) {
-        clearTimeout(this.pollTimer)
-        this.pollTimer = null
-      }
     },
 
     async submitAccount() {

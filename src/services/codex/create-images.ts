@@ -90,6 +90,11 @@ interface ImageCallResult {
   quality: string
 }
 
+export interface CodexImageSubject {
+  connection: ProviderConnection
+  credential: ApiCredential
+}
+
 const GPT_IMAGE_15_MODEL = "gpt-image-1.5"
 const DEFAULT_IMAGE_TOOL_MODEL = "gpt-image-2"
 const IMAGE_TOOL_BASE_MODEL = "gpt-5.4-mini"
@@ -112,9 +117,7 @@ function resolveImageToolModel(
   requestModel: string,
   routeModel: string,
 ): string {
-  const requested = requestModel.trim() || routeModel.trim()
-  if (requested) return requested
-  return DEFAULT_IMAGE_TOOL_MODEL
+  return requestModel.trim() || routeModel.trim() || DEFAULT_IMAGE_TOOL_MODEL
 }
 
 function normalizeResponseFormat(format: unknown): "b64_json" | "url" {
@@ -227,12 +230,13 @@ export async function parseImageEditMultipart(
     out.images = images
   }
 
-  const maskRaw = form.get("mask")
-  if (typeof maskRaw !== "string" && maskRaw) {
-    const maskFile = maskRaw as unknown as {
-      arrayBuffer(): Promise<ArrayBuffer>
-      type?: string
-      size: number
+  const maskFile = form.get("mask")
+  if (maskFile !== undefined && maskFile !== null) {
+    if (typeof maskFile === "string") {
+      throw new HTTPError(
+        "Image edit mask field must be a file",
+        new Response("Bad Request", { status: 400 }),
+      )
     }
     if (maskFile.size > 0) {
       out.mask = { image_url: await fileToDataUrl(maskFile) }
@@ -242,40 +246,47 @@ export async function parseImageEditMultipart(
   return out
 }
 
+interface ImageSignature {
+  minLength: number
+  offset: number
+  magic: Array<number>
+  mediaType: string
+}
+
+const IMAGE_SIGNATURES: Array<ImageSignature> = [
+  {
+    minLength: 8,
+    offset: 0,
+    magic: [0x89, 0x50, 0x4e, 0x47],
+    mediaType: "image/png",
+  },
+  {
+    minLength: 3,
+    offset: 0,
+    magic: [0xff, 0xd8, 0xff],
+    mediaType: "image/jpeg",
+  },
+  // WebP: "WEBP" sits after the 4-byte RIFF chunk length, so match at offset 8.
+  {
+    minLength: 12,
+    offset: 8,
+    magic: [0x57, 0x45, 0x42, 0x50],
+    mediaType: "image/webp",
+  },
+  {
+    minLength: 6,
+    offset: 0,
+    magic: [0x47, 0x49, 0x46],
+    mediaType: "image/gif",
+  },
+]
+
 function detectImageMediaType(bytes: Uint8Array): string | undefined {
-  if (
-    bytes.length >= 8
-    && bytes[0] === 0x89
-    && bytes[1] === 0x50
-    && bytes[2] === 0x4e
-    && bytes[3] === 0x47
-  ) {
-    return "image/png"
-  }
-  if (
-    bytes.length >= 3
-    && bytes[0] === 0xff
-    && bytes[1] === 0xd8
-    && bytes[2] === 0xff
-  ) {
-    return "image/jpeg"
-  }
-  if (
-    bytes.length >= 12
-    && bytes[8] === 0x57
-    && bytes[9] === 0x45
-    && bytes[10] === 0x42
-    && bytes[11] === 0x50
-  ) {
-    return "image/webp"
-  }
-  if (
-    bytes.length >= 6
-    && bytes[0] === 0x47
-    && bytes[1] === 0x49
-    && bytes[2] === 0x46
-  ) {
-    return "image/gif"
+  for (const { minLength, offset, magic, mediaType } of IMAGE_SIGNATURES) {
+    if (bytes.length < minLength) continue
+    if (magic.every((byte, index) => bytes[offset + index] === byte)) {
+      return mediaType
+    }
   }
   return undefined
 }
@@ -337,13 +348,7 @@ function buildUpstreamHeaders(
  * JSON body 透传（仅规范 model，edits 非流式删 stream）。
  */
 export async function createCodexDirectImageOnce(
-  {
-    connection,
-    credential,
-  }: {
-    connection: ProviderConnection
-    credential: ApiCredential
-  },
+  { connection, credential }: CodexImageSubject,
   endpoint: "generations" | "edits",
   body: Record<string, unknown>,
   signal?: AbortSignal,
@@ -479,10 +484,8 @@ function buildImageResponsesBody(
 ): Record<string, unknown> {
   const content: Array<Record<string, unknown>> = [
     { type: "input_text", text: prompt },
+    ...images.map((url) => ({ type: "input_image", image_url: url })),
   ]
-  for (const url of images) {
-    content.push({ type: "input_image", image_url: url })
-  }
   return {
     instructions: "",
     stream: true,
@@ -500,7 +503,6 @@ function buildImageResponsesBody(
 function buildImagesApiResponse(
   results: Array<ImageCallResult>,
   createdAt: number,
-  firstMeta: ImageCallResult,
   responseFormat: "b64_json" | "url",
 ): CodexImageGenerationResponse {
   const data = results.map((img) => {
@@ -514,14 +516,15 @@ function buildImagesApiResponse(
     }
     return item
   })
+  const meta = results[0]
   const response: CodexImageGenerationResponse = {
     created: createdAt,
     data,
   }
-  if (firstMeta.background) response.background = firstMeta.background
-  if (firstMeta.outputFormat) response.output_format = firstMeta.outputFormat
-  if (firstMeta.quality) response.quality = firstMeta.quality
-  if (firstMeta.size.length > 0) response.size = firstMeta.size
+  if (meta.background) response.background = meta.background
+  if (meta.outputFormat) response.output_format = meta.outputFormat
+  if (meta.quality) response.quality = meta.quality
+  if (meta.size.length > 0) response.size = meta.size
   return response
 }
 
@@ -570,13 +573,7 @@ function extractImageResults(response: ResponsesResponse): {
  * 上游恒走流式再收集（与普通 turn 一致），返回拼好的 images 响应。
  */
 async function createCodexImageViaResponses(
-  {
-    connection,
-    credential,
-  }: {
-    connection: ProviderConnection
-    credential: ApiCredential
-  },
+  { connection, credential }: CodexImageSubject,
   raw: Record<string, unknown>,
   action: "generate" | "edit",
   signal?: AbortSignal,
@@ -636,62 +633,60 @@ async function createCodexImageViaResponses(
   if (results.length === 0) {
     throw new Error("upstream did not return image output")
   }
-  const first = results[0] ?? {
-    result: "",
-    revisedPrompt: "",
-    outputFormat: "",
-    size: "",
-    background: "",
-    quality: "",
-  }
   return buildImagesApiResponse(
     results,
     createdAt,
-    first,
     normalizeResponseFormat(raw.response_format),
   )
 }
 
-export async function createCodexImageGeneration(
-  subject: { connection: ProviderConnection; credential: ApiCredential },
+async function createCodexImage(
+  subject: CodexImageSubject,
+  raw: Record<string, unknown>,
+  action: "generate" | "edit",
+  signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
+): Promise<CodexImageGenerationResponse> {
+  const { connection } = subject
+  if (connection.protocol !== "codex-native") {
+    throw new Error("Codex images requires a Codex OAuth connection")
+  }
+  const model = typeof raw.model === "string" ? raw.model : ""
+  if (isDirectImageModel(model)) {
+    const endpoint = action === "generate" ? "generations" : "edits"
+    return createCodexDirectImageOnce(subject, endpoint, raw, signal, ctx)
+  }
+  return createCodexImageViaResponses(subject, raw, action, signal, ctx)
+}
+
+export function createCodexImageGeneration(
+  subject: CodexImageSubject,
   raw: CodexImageGenerationRequest,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<CodexImageGenerationResponse> {
-  const { connection } = subject
-  if (connection.protocol !== "codex-native") {
-    throw new Error("Codex images requires a Codex OAuth connection")
-  }
-  const record = raw as unknown as Record<string, unknown>
-  const model = typeof record.model === "string" ? record.model : ""
-  if (isDirectImageModel(model)) {
-    return createCodexDirectImageOnce(
-      subject,
-      "generations",
-      record,
-      signal,
-      ctx,
-    )
-  }
-  return createCodexImageViaResponses(subject, record, "generate", signal, ctx)
+  return createCodexImage(
+    subject,
+    raw as unknown as Record<string, unknown>,
+    "generate",
+    signal,
+    ctx,
+  )
 }
 
-export async function createCodexImageEdit(
-  subject: { connection: ProviderConnection; credential: ApiCredential },
+export function createCodexImageEdit(
+  subject: CodexImageSubject,
   raw: CodexImageEditRequest,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<CodexImageGenerationResponse> {
-  const { connection } = subject
-  if (connection.protocol !== "codex-native") {
-    throw new Error("Codex images requires a Codex OAuth connection")
-  }
-  const record = raw as unknown as Record<string, unknown>
-  const model = typeof record.model === "string" ? record.model : ""
-  if (isDirectImageModel(model)) {
-    return createCodexDirectImageOnce(subject, "edits", record, signal, ctx)
-  }
-  return createCodexImageViaResponses(subject, record, "edit", signal, ctx)
+  return createCodexImage(
+    subject,
+    raw as unknown as Record<string, unknown>,
+    "edit",
+    signal,
+    ctx,
+  )
 }
 
 export function isCodexDirectImageModel(model: unknown): boolean {

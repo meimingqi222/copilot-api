@@ -2,7 +2,6 @@ import type { QuotaSnapshot } from "~/lib/legacy-accounts"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
 import {
   getConnectionProvider,
   getConnectionSettings,
@@ -16,36 +15,37 @@ import {
   buildWindsurfClientMetadata,
   wrapWindsurfMetadataMessage,
 } from "~/services/windsurf/metadata"
-import { parseMessage } from "~/services/windsurf/protobuf"
+import { parseMessage, type ProtobufNode } from "~/services/windsurf/protobuf"
+
+function findField(
+  nodes: Array<ProtobufNode>,
+  field: number,
+): ProtobufNode | undefined {
+  return nodes.find((node) => node.field === field)
+}
 
 function findVarint(
-  nodes: Array<{ field: number; wire: number; varint?: number }>,
+  nodes: Array<ProtobufNode>,
   field: number,
 ): number | undefined {
-  return nodes.find((node) => node.field === field && node.wire === 0)?.varint
+  const node = findField(nodes, field)
+  return node?.wire === 0 ? node.varint : undefined
 }
 
 function findSubmessage(
-  nodes: Array<{
-    field: number
-    wire: number
-    raw?: Uint8Array
-    sub?: Array<never>
-  }>,
+  data: Uint8Array,
   field: number,
 ): Uint8Array | undefined {
-  const node = nodes.find((candidate) => candidate.field === field)
-  return node?.raw
+  const node = findField(parseMessage(data), field)
+  return node?.wire === 2 ? node.raw : undefined
 }
 
 function findString(data: Uint8Array, field: number): string | undefined {
-  const nodes = parseMessage(data)
-  const node = nodes.find(
-    (candidate) => candidate.field === field && candidate.wire === 2,
-  )
-  if (!node?.raw) return undefined
+  const raw = findSubmessage(data, field)
+  if (!raw) return undefined
   try {
-    return new TextDecoder().decode(node.raw)
+    const text = new TextDecoder().decode(raw)
+    return text || undefined
   } catch {
     return undefined
   }
@@ -63,48 +63,45 @@ export interface WindsurfQuotaWindows {
 export function parseWindsurfQuotaPayload(
   payload: Uint8Array,
 ): WindsurfQuotaWindows {
-  const top = parseMessage(payload)
-  const topNodes = top as Array<{
-    field: number
-    wire: number
-    raw?: Uint8Array
-  }>
-  const userStatus = findSubmessage(topNodes, 1)
-  if (!userStatus) {
-    throw new Error("GetUserStatus response missing F1")
-  }
-  const quotaInfoRaw = parseMessage(userStatus)
-  const quotaNodes = quotaInfoRaw as Array<{
-    field: number
-    wire: number
-    raw?: Uint8Array
-  }>
-  const info = findSubmessage(quotaNodes, 13)
-  if (!info) {
-    throw new Error("GetUserStatus response missing F13 (quota)")
-  }
-  const fields = parseMessage(info)
-
-  const asPercent = (value: number | undefined): number | undefined =>
-    value === undefined ? undefined : Math.max(0, 100 - value)
-
-  const planRaw = findSubmessage(
-    fields as Array<{ field: number; wire: number; raw?: Uint8Array }>,
+  const userStatus = requireSubmessage(
+    payload,
     1,
+    "GetUserStatus response missing F1",
   )
-  const planName = planRaw ? findString(planRaw, 2)?.toLowerCase() : undefined
+  const quotaInfo = requireSubmessage(
+    userStatus,
+    13,
+    "GetUserStatus response missing F13 (quota)",
+  )
+  const fields = parseMessage(quotaInfo)
+  const plan = findSubmessage(quotaInfo, 1)
+  const planName = plan ? findString(plan, 2)?.toLowerCase() : undefined
+
+  const overageMicros = findVarint(fields, 16)
 
   return {
-    dailyUsedPercent: asPercent(findVarint(fields, 14)),
-    weeklyUsedPercent: asPercent(findVarint(fields, 15)),
+    dailyUsedPercent: toUsedPercent(findVarint(fields, 14)),
+    weeklyUsedPercent: toUsedPercent(findVarint(fields, 15)),
     dailyResetAt: findVarint(fields, 17),
     weeklyResetAt: findVarint(fields, 18),
     overageCredits:
-      findVarint(fields, 16) !== undefined ?
-        (findVarint(fields, 16) as number) / 1_000_000
-      : undefined,
+      overageMicros !== undefined ? overageMicros / 1_000_000 : undefined,
     planName,
   }
+}
+
+function requireSubmessage(
+  data: Uint8Array,
+  field: number,
+  message: string,
+): Uint8Array {
+  const raw = findSubmessage(data, field)
+  if (!raw) throw new Error(message)
+  return raw
+}
+
+function toUsedPercent(remaining: number | undefined): number | undefined {
+  return remaining === undefined ? undefined : Math.max(0, 100 - remaining)
 }
 
 export async function fetchWindsurfQuota(
@@ -151,23 +148,13 @@ export async function fetchWindsurfQuota(
   }
 
   const payload = new Uint8Array(await response.arrayBuffer())
-  let parsed: WindsurfQuotaWindows
-  try {
-    parsed = parseWindsurfQuotaPayload(payload)
-  } catch (error) {
-    logger.warn(
-      `Windsurf quota parse failed for "${connection.name}":`,
-      (error as Error).message,
-    )
-    throw error
-  }
-
-  if (
-    parsed.planName === undefined
-    && parsed.dailyUsedPercent === undefined
-    && parsed.weeklyUsedPercent === undefined
-    && (parsed.overageCredits ?? 0) <= 0
-  ) {
+  const parsed = parseWindsurfQuotaPayload(payload)
+  const hasData =
+    parsed.planName !== undefined
+    || parsed.dailyUsedPercent !== undefined
+    || parsed.weeklyUsedPercent !== undefined
+    || (parsed.overageCredits ?? 0) > 0
+  if (!hasData) {
     throw new Error("GetUserStatus returned no quota fields")
   }
 
@@ -202,11 +189,9 @@ export async function refreshWindsurfQuota(
   const snapshot = await fetchWindsurfQuota(connection, signal)
   setConnectionQuotaInfo(connection, snapshot)
   const remaining = snapshot.premiumInteractionsRemaining
-  setConnectionQuotaState(
-    connection,
-    remaining !== undefined && remaining <= 0 ? "exhausted" : "available",
-  )
-  if (remaining === undefined || remaining > 0) {
+  const exhausted = remaining !== undefined && remaining <= 0
+  setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
+  if (!exhausted) {
     clearAccountRateLimitState(connection.id)
   }
   return snapshot
