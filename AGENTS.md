@@ -106,6 +106,7 @@ src/
 │   ├── provider-defaults.ts # Managed default connections (Codebuff/Windsurf)
 │   ├── provider-presets/   # Built-in provider preset catalog (33 presets)
 │   │   ├── types.ts        # PresetModel, ProviderPreset interfaces
+│   │   ├── commandcode.ts  # Command Code dual presets (openai + anthropic, model families are endpoint-locked)
 │   │   ├── domestic-primary.ts   # DeepSeek/SiliconFlow/Moonshot/Zhipu/MiniMax/Z.AI
 │   │   ├── domestic-secondary.ts # Doubao/Bailian/Xiaomi/ModelScope/Qiniu/etc.
 │   │   ├── others.ts       # OpenAI/Anthropic/Gemini/xAI/Groq/OpenRouter/vLLM/Ollama

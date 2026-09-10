@@ -6,6 +6,8 @@
 
 import type { ProviderPreset } from "~/lib/provider-presets/types"
 
+import { COMMANDCODE_PRESETS } from "~/lib/provider-presets/commandcode"
+
 export const OTHERS_PRESETS: Array<ProviderPreset> = [
   // ── 海外大厂 (international) ──
   {
@@ -580,6 +582,8 @@ export const OTHERS_PRESETS: Array<ProviderPreset> = [
       { publicId: "minimax-m3", upstreamId: "minimax-m3", endpoints: ["chat"] },
     ],
   },
+  // Command Code:双协议拆分(独立文件,满足 max-lines),位置保持在聚合中转区
+  ...COMMANDCODE_PRESETS,
   {
     id: "vercel",
     name: "Vercel AI Gateway",
