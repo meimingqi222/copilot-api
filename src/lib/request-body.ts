@@ -48,6 +48,18 @@ export async function readTextBody(
   return new TextDecoder().decode(bytes)
 }
 
+/**
+ * Read a raw binary body under a byte cap. Used for uploaded files such as the
+ * LobsterAI client SQLite database, which must not be buffered without bound.
+ */
+export async function readBinaryBody(
+  request: Request,
+  maxBytes = MAX_JSON_BODY_BYTES,
+): Promise<Uint8Array> {
+  assertDeclaredBodySize(request.headers, maxBytes)
+  return readBodyBytes(request.body, maxBytes)
+}
+
 export async function readResponseBytes(
   response: Response,
   maxBytes: number,

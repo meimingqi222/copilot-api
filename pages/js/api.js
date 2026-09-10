@@ -137,6 +137,30 @@ const API = {
       API.request("/accounts/import", { method: "POST", body: data }),
     importCpa: (data) =>
       API.request("/accounts/import-cpa", { method: "POST", body: data }),
+    /**
+     * Upload a LobsterAI client SQLite file and get the credentials it holds.
+     * Sent as a raw binary body — the generic `request` helper would JSON-encode
+     * it, so this posts the File directly.
+     */
+    parseLobsteraiDb: async (file) => {
+      const response = await fetch(
+        `${API.baseUrl}/accounts/parse-lobsterai-db`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file,
+        },
+      )
+      if (response.status === 401 || response.status === 403) {
+        globalThis.location.href = "/admin/login"
+        throw new Error("Unauthorized")
+      }
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw API.extractErrorMessage(errorText, response.status)
+      }
+      return response.json()
+    },
   },
 
   providers: {

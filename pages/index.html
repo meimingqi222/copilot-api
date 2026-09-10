@@ -1537,6 +1537,27 @@
                 >
                   <label
                     class="form-label"
+                    x-text="t('accounts.provider.lobsterai.dbHint')"
+                  ></label>
+                  <input
+                    type="file"
+                    accept=".sqlite,.db,application/octet-stream"
+                    @change="lobsteraiDbSelected($event)"
+                    class="form-input text-sm"
+                    :disabled="lobsteraiDbLoading"
+                  />
+                  <p
+                    x-show="lobsteraiDbLoading"
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.lobsterai.dbParsing')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'lobsterai'"
+                  class="space-y-1"
+                >
+                  <label
+                    class="form-label"
                     x-text="t('accounts.provider.lobsterai.jsonHint')"
                   ></label>
                   <textarea

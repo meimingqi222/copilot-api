@@ -43,6 +43,7 @@ function accountsView() {
     mimoCookieInput: "",
     codebuddyJsonInput: "",
     lobsteraiJsonInput: "",
+    lobsteraiDbLoading: false,
 
     parseMimoCookie() {
       const str = this.mimoCookieInput
@@ -157,6 +158,50 @@ function accountsView() {
         }
       } catch {
         // JSON 解析失败时静默忽略，用户可能还在输入
+      }
+    },
+
+    /**
+     * 上传 LobsterAI 客户端数据库（lobsterai.sqlite），由服务端解析出凭证。
+     *
+     * 解析放在服务端：copilot-api 常部署在远端，读不到用户本机的库文件；
+     * 且浏览器端解析 SQLite 需要额外的 WASM 依赖。
+     */
+    async lobsteraiDbSelected(event) {
+      const file = event.target.files?.[0]
+      if (!file) return
+      this.lobsteraiDbLoading = true
+      try {
+        const result = await API.accounts.parseLobsteraiDb(file)
+        const creds = result.credentials || {}
+        for (const key of ["accessToken", "refreshToken"]) {
+          if (typeof creds[key] === "string" && creds[key]) {
+            this.setAccountFieldValue({ key, type: "secret" }, creds[key])
+          }
+        }
+        // keyfrom / uuid / userId 随创建请求一起提交，刷新 token 时回传。
+        for (const key of ["uuid", "userId", "firstKeyfrom", "latestKeyfrom"]) {
+          if (typeof creds[key] === "string" && creds[key]) {
+            this.newAccount.credentials = {
+              ...this.newAccount.credentials,
+              [key]: creds[key],
+            }
+          }
+        }
+        const nickname = result.profile?.nickname
+        if (nickname && !this.newAccount.label) {
+          this.newAccount.label = `LobsterAI-${nickname}`
+        }
+        this.showToast(
+          I18n.t("accounts.provider.lobsterai.dbParsed"),
+          "success",
+        )
+      } catch (error) {
+        this.showToast(error?.message || String(error), "error")
+      } finally {
+        this.lobsteraiDbLoading = false
+        // 允许重复选择同一个文件
+        event.target.value = ""
       }
     },
     editingLabel: null,

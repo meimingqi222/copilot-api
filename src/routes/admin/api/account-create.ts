@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import type { Account, AccountProvider } from "~/lib/legacy-accounts"
 
 import { saveAccounts } from "~/lib/account-store"
+import { HTTPError } from "~/lib/error"
 import { addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { isProviderId } from "~/lib/provider-config"
@@ -11,9 +12,10 @@ import {
   getProviderConnection,
   listAccountManagedConnections,
 } from "~/lib/provider-connections"
-import { readJsonBody } from "~/lib/request-body"
+import { readBinaryBody, readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
 import { getDeviceCode } from "~/services/github/get-device-code"
+import { parseLobsteraiClientDatabase } from "~/services/lobsterai/parse-client-db"
 import { initializeProviderRegistry } from "~/services/providers"
 
 import { publicAccountFromConnection } from "./account-views"
@@ -71,14 +73,14 @@ async function createLobsteraiAccount(
 
   const expiresAt = accessToken ? extractJwtExp(accessToken) : undefined
   // keyfrom 归因字段（可选）：refresh 时原样回传，缺失时服务端默认 official。
-  const uuid =
-    typeof body.credentials?.uuid === "string" ?
-      body.credentials.uuid.trim()
-    : undefined
-  const userId =
-    typeof body.credentials?.userId === "string" ?
-      body.credentials.userId.trim()
-    : undefined
+  const pickString = (key: string): string | undefined => {
+    const value = body.credentials?.[key]
+    return typeof value === "string" && value.trim() ? value.trim() : undefined
+  }
+  const uuid = pickString("uuid")
+  const userId = pickString("userId")
+  const firstKeyfrom = pickString("firstKeyfrom")
+  const latestKeyfrom = pickString("latestKeyfrom")
 
   const account: Account = {
     id: randomUUID(),
@@ -94,6 +96,8 @@ async function createLobsteraiAccount(
       ...(expiresAt ? { expiresAt } : {}),
       ...(uuid ? { uuid } : {}),
       ...(userId ? { userId } : {}),
+      ...(firstKeyfrom ? { firstKeyfrom } : {}),
+      ...(latestKeyfrom ? { latestKeyfrom } : {}),
     },
     settings: {
       ...body.settings,
@@ -112,6 +116,65 @@ async function createLobsteraiAccount(
 }
 
 export const createAccountRoutes = new Hono()
+
+/** 上传的客户端数据库体积上限（实测约 280 KB，留足冗余）。 */
+const MAX_LOBSTERAI_DB_BYTES = 64 * 1024 * 1024
+
+/**
+ * 解析上传的 LobsterAI 客户端数据库，返回提取到的凭证供前端填表。
+ *
+ * 只解析、不落库：前端拿到字段后仍走正常的创建流程。
+ * 之所以要传到服务端解析，是因为 copilot-api 常部署在远端，
+ * 读不到用户本机的 `lobsterai.sqlite`。
+ */
+createAccountRoutes.post("/parse-lobsterai-db", async (c) => {
+  let bytes: Uint8Array
+  try {
+    bytes = await readBinaryBody(c.req.raw, MAX_LOBSTERAI_DB_BYTES)
+  } catch (error) {
+    if (error instanceof HTTPError) {
+      return c.json({ error: error.message }, 413)
+    }
+    return c.json({ error: "Failed to read uploaded file." }, 400)
+  }
+
+  try {
+    const parsed = await parseLobsteraiClientDatabase(bytes)
+    return c.json({
+      ok: true,
+      credentials: {
+        accessToken: parsed.accessToken,
+        ...(parsed.refreshToken ? { refreshToken: parsed.refreshToken } : {}),
+        ...(parsed.expiresAt ? { expiresAt: parsed.expiresAt } : {}),
+        ...(parsed.uid ? { userId: parsed.uid } : {}),
+        ...(parsed.uuid ? { uuid: parsed.uuid } : {}),
+        ...(parsed.firstKeyfrom ? { firstKeyfrom: parsed.firstKeyfrom } : {}),
+        ...(parsed.latestKeyfrom ?
+          { latestKeyfrom: parsed.latestKeyfrom }
+        : {}),
+      },
+      profile: {
+        ...(parsed.nickname ? { nickname: parsed.nickname } : {}),
+        ...(parsed.yid ? { yid: parsed.yid } : {}),
+        ...(parsed.uid ? { userId: parsed.uid } : {}),
+      },
+    })
+  } catch (error) {
+    logger.warn(
+      "Failed to parse uploaded LobsterAI database:",
+      error instanceof Error ? error.message : error,
+    )
+    return c.json(
+      {
+        error:
+          error instanceof Error ?
+            error.message
+          : "Failed to parse LobsterAI database.",
+      },
+      400,
+    )
+  }
+})
 
 createAccountRoutes.post("/", async (c) => {
   initializeProviderRegistry()

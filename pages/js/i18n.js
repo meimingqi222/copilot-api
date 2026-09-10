@@ -143,6 +143,10 @@ const i18n = {
         "LobsterAI 客户端登录后的 refreshToken，用于自动刷新 accessToken",
       "accounts.provider.lobsterai.jsonHint":
         "粘贴 LobsterAI 凭证 JSON 自动解析（可选），支持 { access_token, refresh_token } 或 { accessToken, refreshToken }",
+      "accounts.provider.lobsterai.dbHint":
+        "或选择本机 LobsterAI 客户端数据库自动解析（可选）：~/Library/Application Support/LobsterAI/lobsterai.sqlite",
+      "accounts.provider.lobsterai.dbParsing": "正在解析数据库…",
+      "accounts.provider.lobsterai.dbParsed": "已从数据库解析出凭证",
       "accounts.codebuffAuthToken": "Codebuff 授权令牌",
       "accounts.status": "状态",
       "accounts.active": "活跃账户",
@@ -893,6 +897,11 @@ const i18n = {
         "Refresh token from LobsterAI client login, used to auto-refresh accessToken",
       "accounts.provider.lobsterai.jsonHint":
         "Paste LobsterAI credential JSON to auto-parse (optional). Supports { access_token, refresh_token } or { accessToken, refreshToken }",
+      "accounts.provider.lobsterai.dbHint":
+        "Or pick the local LobsterAI client database to auto-parse (optional): ~/Library/Application Support/LobsterAI/lobsterai.sqlite",
+      "accounts.provider.lobsterai.dbParsing": "Parsing database…",
+      "accounts.provider.lobsterai.dbParsed":
+        "Credentials parsed from the database",
       "accounts.codebuffAuthToken": "Codebuff Auth Token",
       "accounts.status": "Status",
       "accounts.active": "Active Accounts",

@@ -9,6 +9,7 @@
  * - 模型发现走 /api/models/available
  * - token 刷新走 /api/auth/refresh
  */
+import { Database } from "bun:sqlite"
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
@@ -29,6 +30,7 @@ import {
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
+import { parseLobsteraiClientDatabase } from "~/services/lobsterai/parse-client-db"
 import { refreshLobsteraiTokenForConnection } from "~/services/lobsterai/token-refresh"
 import {
   buildLobsteraiHeaders,
@@ -37,6 +39,12 @@ import {
   lobsteraiNativeAdapter,
   normalizeLobsteraiErrorStatus,
 } from "~/services/protocols/lobsterai-native"
+
+import {
+  adminRequest,
+  clearAdminAuth,
+  setupAdminAuth,
+} from "./admin-test-utils"
 
 const originalFetch = globalThis.fetch
 
@@ -540,5 +548,252 @@ describe("LobsterAI end-to-end routing", () => {
     expect(sentBody.model).toBe("deepseek-flash")
     expect(sentBody.stream).toBe(true)
     await response.text()
+  })
+})
+
+// ── 客户端数据库解析 ────────────────────────────────────────────────
+// 用户可以选择本机 lobsterai.sqlite 让服务端解析出凭证。测试在临时目录里
+// 现造一个同结构的库（kv 表 + 客户端使用的键），验证解析与错误处理。
+
+/** 在 dir 下造一个与 LobsterAI 客户端同结构的 SQLite 库，返回其字节。 */
+async function buildClientDb(
+  dir: string,
+  rows: Record<string, unknown>,
+): Promise<Uint8Array> {
+  const file = path.join(dir, `client-${randomUUID()}.sqlite`)
+  const db = new Database(file)
+  try {
+    db.run("CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT)")
+    const insert = db.query("INSERT INTO kv (key, value) VALUES (?, ?)")
+    for (const [key, value] of Object.entries(rows)) {
+      insert.run(key, typeof value === "string" ? value : JSON.stringify(value))
+    }
+  } finally {
+    db.close()
+  }
+  return new Uint8Array(await fs.readFile(file))
+}
+
+/** 生成一个带 exp 的假 JWT（不验签，只为解析 exp）。 */
+const b64url = (obj: unknown) =>
+  Buffer.from(JSON.stringify(obj)).toString("base64url")
+
+function fakeJwt(expSeconds: number): string {
+  return `${b64url({ alg: "HS512" })}.${b64url({ sub: "89559", exp: expSeconds })}.sig`
+}
+
+describe("parseLobsteraiClientDatabase", () => {
+  let tmpDir = ""
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "lobsterai-db-test-"))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+  })
+
+  test("extracts tokens, profile and keyfrom from the client database", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 86_400
+    const accessToken = fakeJwt(exp)
+    const bytes = await buildClientDb(tmpDir, {
+      auth_tokens: { accessToken, refreshToken: "rt-1" },
+      auth_user: {
+        yid: "user@example.com",
+        id: 89559,
+        nickname: "155****5978",
+      },
+      installation_uuid: '"uuid-abc"',
+      "keyfrom.attribution.v1": {
+        firstKeyfrom: "official",
+        latestKeyfrom: "partner",
+      },
+    })
+
+    const parsed = await parseLobsteraiClientDatabase(bytes)
+
+    expect(parsed.accessToken).toBe(accessToken)
+    expect(parsed.refreshToken).toBe("rt-1")
+    expect(parsed.expiresAt).toBe(exp * 1000)
+    expect(parsed.uid).toBe("89559")
+    expect(parsed.nickname).toBe("155****5978")
+    expect(parsed.yid).toBe("user@example.com")
+    expect(parsed.uuid).toBe("uuid-abc")
+    expect(parsed.firstKeyfrom).toBe("official")
+    expect(parsed.latestKeyfrom).toBe("partner")
+  })
+
+  test("accepts a camelCase userId spelling as well as the numeric id", async () => {
+    const bytes = await buildClientDb(tmpDir, {
+      auth_tokens: { accessToken: fakeJwt(1_800_000_000) },
+      auth_user: { userId: "abc-123" },
+    })
+    const parsed = await parseLobsteraiClientDatabase(bytes)
+    expect(parsed.uid).toBe("abc-123")
+  })
+
+  test("rejects a non-SQLite file", async () => {
+    const bytes = new TextEncoder().encode("this is definitely not a database")
+    await expect(parseLobsteraiClientDatabase(bytes)).rejects.toThrow(
+      /不是一个 SQLite 数据库文件/,
+    )
+  })
+
+  test("rejects an empty upload", async () => {
+    await expect(
+      parseLobsteraiClientDatabase(new Uint8Array(0)),
+    ).rejects.toThrow(/为空/)
+  })
+
+  test("explains when the database has no login tokens", async () => {
+    const bytes = await buildClientDb(tmpDir, {
+      installation_uuid: '"uuid-only"',
+    })
+    await expect(parseLobsteraiClientDatabase(bytes)).rejects.toThrow(
+      /auth_tokens/,
+    )
+  })
+})
+
+// ── 上传解析路由 ────────────────────────────────────────────────────
+
+describe("POST /admin/api/accounts/parse-lobsterai-db", () => {
+  let tmpDir = ""
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "lobsterai-route-test-"))
+    setupAdminAuth()
+  })
+
+  afterEach(async () => {
+    clearAdminAuth()
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+  })
+
+  test("returns parsed credentials for an uploaded database", async () => {
+    const exp = Math.floor(Date.now() / 1000) + 3600
+    const bytes = await buildClientDb(tmpDir, {
+      auth_tokens: { accessToken: fakeJwt(exp), refreshToken: "rt-9" },
+      auth_user: { id: 42, nickname: "tester" },
+      installation_uuid: '"uuid-xyz"',
+    })
+
+    const response = await server.fetch(
+      adminRequest("http://localhost/admin/api/accounts/parse-lobsterai-db", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: bytes,
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      ok: boolean
+      credentials: Record<string, string | number>
+      profile: Record<string, string>
+    }
+    expect(body.ok).toBe(true)
+    expect(body.credentials).toMatchObject({
+      refreshToken: "rt-9",
+      userId: "42",
+      uuid: "uuid-xyz",
+    })
+    expect(body.profile).toMatchObject({ nickname: "tester", userId: "42" })
+  })
+
+  test("returns 400 with a readable message for a junk file", async () => {
+    const response = await server.fetch(
+      adminRequest("http://localhost/admin/api/accounts/parse-lobsterai-db", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new TextEncoder().encode("not a database"),
+      }),
+    )
+
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error: string }
+    expect(body.error).toContain("SQLite")
+  })
+})
+
+// ── 账号创建后的连接落地 ────────────────────────────────────────────
+// 回归：账号创建要经过 Account → ProviderConnection 映射，而
+// getAccountTokenValue 是按 provider 分支取 token 的。漏掉 lobsterai 分支时
+// credential.value 会静默落成空串，请求时上游返回「登录已过期」——
+// mock fetch 的适配器单测绕过了这条链路，只有走真实的创建接口才会暴露。
+
+describe("LobsterAI account creation lands a usable connection", () => {
+  const isolationRoot = PATHS.APP_DIR
+  let tempDir = ""
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "lobsterai-create-"))
+    redirectPathsToDir(tempDir)
+    __resetProviderConnectionsForTest()
+    statsStore.clearUsageStatsForTest()
+    resetProtectedRouteGuardForTest()
+    state.users = []
+    state.legacyApiKey = undefined
+    setupAdminAuth()
+    // 阻止后台的模型发现打到真实网络。
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: 0, data: [] }), { status: 200 }),
+      )) as unknown as typeof fetch
+  })
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch
+    redirectPathsToDir(isolationRoot)
+    __resetProviderConnectionsForTest()
+    clearAdminAuth()
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+  })
+
+  test("stores the pasted token (not an empty string) on the connection", async () => {
+    const accessToken = fakeJwt(Math.floor(Date.now() / 1000) + 3600)
+
+    const response = await server.fetch(
+      adminRequest("http://localhost/admin/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          label: "LobsterAI-test",
+          provider: "lobsterai",
+          credentials: {
+            accessToken,
+            refreshToken: "rt-from-db",
+            userId: "89559",
+            uuid: "uuid-from-db",
+            firstKeyfrom: "official",
+            latestKeyfrom: "official",
+          },
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+
+    const { listProviderConnections } = await import(
+      "~/lib/provider-connections"
+    )
+    const conn = listProviderConnections().find(
+      (c) => c.protocol === "lobsterai-native",
+    )
+    expect(conn).toBeDefined()
+
+    // 核心断言：token 必须真的落到 credential.value 上。
+    expect(conn?.credentials[0]?.value).toBe(accessToken)
+
+    // keyfrom 等刷新材料要进 context，否则 refresh 时会退回默认值。
+    const ctx = conn?.credentials[0]?.context as
+      | Record<string, unknown>
+      | undefined
+    expect(ctx).toMatchObject({
+      refreshToken: "rt-from-db",
+      uuid: "uuid-from-db",
+      userId: "89559",
+    })
+    expect(conn?.credentials[0]?.refresherType).toBe("lobsterai-token")
   })
 })
