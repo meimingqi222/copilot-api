@@ -23,6 +23,7 @@ const CODEBUDDY_REFRESH_URL =
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_PRODUCT = "SaaS"
+const REFRESH_LEAD_MS = 5 * 60 * 1000
 
 interface CodebuddyRefreshResponse {
   code?: number
@@ -37,37 +38,24 @@ interface CodebuddyRefreshResponse {
   }
 }
 
-/** 从 JWT payload 提取 exp（秒级 → 毫秒级）。 */
-function extractExpFromJwt(token: string): number | undefined {
-  const parts = token.split(".")
-  if (parts.length !== 3) return undefined
-  try {
-    const payload = JSON.parse(
-      Buffer.from(
-        parts[1].replaceAll("-", "+").replaceAll("_", "/"),
-        "base64",
-      ).toString("utf8"),
-    ) as { exp?: number }
-    return typeof payload.exp === "number" ? payload.exp * 1000 : undefined
-  } catch {
-    return undefined
-  }
+interface JwtPayload {
+  sub?: string
+  exp?: number
+  [key: string]: unknown
 }
 
-/** 从 JWT payload 提取 sub（作为 X-User-Id）。 */
-function extractSubFromJwt(token: string): string | undefined {
+/** 解码 JWT payload（仅 payload，不验签）。 */
+function decodeJwtPayload(token: string): JwtPayload | null {
   const parts = token.split(".")
-  if (parts.length !== 3) return undefined
+  if (parts.length !== 3) return null
   try {
-    const payload = JSON.parse(
-      Buffer.from(
-        parts[1].replaceAll("-", "+").replaceAll("_", "/"),
-        "base64",
-      ).toString("utf8"),
-    ) as { sub?: string }
-    return payload.sub
+    const json = Buffer.from(
+      parts[1].replaceAll("-", "+").replaceAll("_", "/"),
+      "base64",
+    ).toString("utf8")
+    return JSON.parse(json) as JwtPayload
   } catch {
-    return undefined
+    return null
   }
 }
 
@@ -99,7 +87,8 @@ export async function refreshCodebuddyTokenForConnection(
 
   // X-User-Id 从旧 accessToken 的 JWT sub 提取
   const oldAccessToken = credential.value
-  const userId = oldAccessToken ? extractSubFromJwt(oldAccessToken) : undefined
+  const userId =
+    oldAccessToken ? decodeJwtPayload(oldAccessToken)?.sub : undefined
 
   logger.info(`[codebuddy] refreshing token for connection "${conn.name}"`)
 
@@ -148,18 +137,20 @@ export async function refreshCodebuddyTokenForConnection(
 
   const newAccessToken = body.data.accessToken
   const newRefreshToken = body.data.refreshToken ?? refreshToken
-  const newExpiresAt = extractExpFromJwt(newAccessToken)
+  const newExpiresAt = decodeJwtPayload(newAccessToken)?.exp
+  const expiresAtMs =
+    typeof newExpiresAt === "number" ? newExpiresAt * 1000 : undefined
 
   // 更新 credential
   credential.value = newAccessToken
   credential.context = {
     ...credential.context,
     refreshToken: newRefreshToken,
-    expiresAt: newExpiresAt,
+    expiresAt: expiresAtMs,
   }
 
   logger.info(
-    `[codebuddy] token refreshed for "${conn.name}", new expiry: ${newExpiresAt ? new Date(newExpiresAt).toISOString() : "unknown"}`,
+    `[codebuddy] token refreshed for "${conn.name}", new expiry: ${expiresAtMs ? new Date(expiresAtMs).toISOString() : "unknown"}`,
   )
   return true
 }
@@ -171,7 +162,6 @@ export async function refreshCodebuddyTokenForConnection(
 export function codebuddyNeedsRefresh(credential: ApiCredential): boolean {
   const ctx = credential.context as { expiresAt?: number } | undefined
   if (!ctx?.expiresAt) return true
-  const REFRESH_LEAD_MS = 5 * 60 * 1000
   return ctx.expiresAt - REFRESH_LEAD_MS <= Date.now()
 }
 
@@ -185,7 +175,7 @@ export function scheduleCodebuddyRefresh(conn: ProviderConnection): void {
   if (!ctx?.expiresAt) return
 
   const refreshInMs = Math.max(
-    ctx.expiresAt - Date.now() - 5 * 60 * 1000,
+    ctx.expiresAt - Date.now() - REFRESH_LEAD_MS,
     60_000,
   )
   const refreshInSeconds = Math.floor(refreshInMs / 1000)
@@ -205,5 +195,5 @@ export function scheduleCodebuddyRefresh(conn: ProviderConnection): void {
       // 递归安排下次刷新
       scheduleCodebuddyRefresh(mutable)
     }
-  }, refreshInMs * 1000)
+  }, refreshInMs)
 }
