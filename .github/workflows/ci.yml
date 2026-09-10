@@ -22,6 +22,13 @@ jobs:
       - name: Run linter
         run: bun run lint:all
 
+      # Prettier is run as its own tool (not via eslint-plugin-prettier), so it
+      # needs its own gate. Without this, formatting drift accumulates silently
+      # and then explodes into whole-file reformats the next time a file is
+      # touched — which shows up as unreviewable diffs and merge conflicts.
+      - name: Check formatting
+        run: bun run format:check
+
       - name: Run type check
         run: bun run typecheck
 

@@ -2,10 +2,14 @@ import config from "@echristian/eslint-config"
 
 export default config(
   {
-    prettier: {
-      plugins: ["prettier-plugin-packagejson"],
-      endOfLine: "auto",
-    },
+    // The `prettier` key is intentionally left at the shared config's defaults.
+    // It is what applies `eslint-config-prettier` (turning off every stylistic
+    // rule that would fight Prettier) — do not remove it.
+    //
+    // Its formatting options, however, are inert: `prettier/prettier` is turned
+    // off below, so Prettier is run as its own tool (see .prettierrc, which is
+    // the single source of truth). Passing duplicate options here would only
+    // create a second, silently-diverging config.
     typescript: { options: { typeChecked: false } },
   },
   {

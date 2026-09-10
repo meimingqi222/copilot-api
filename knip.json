@@ -8,8 +8,5 @@
     "**/tests/**",
     "**/pages/**"
   ],
-  "ignoreDependencies": [
-    "zod",
-    "prettier-plugin-packagejson"
-  ]
+  "ignoreDependencies": ["zod", "prettier-plugin-packagejson"]
 }

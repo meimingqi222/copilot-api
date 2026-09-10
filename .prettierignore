@@ -1,4 +1,11 @@
+# Build output
 dist/
 node_modules/
 *.min.js
 *.min.css
+
+# Local tooling state. These paths are gitignored, but Prettier does NOT read
+# .gitignore, so without these entries `prettier --check .` reports drift in
+# files no one commits (e.g. .claude/settings.local.json).
+.claude/
+.devin/

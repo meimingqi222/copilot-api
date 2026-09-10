@@ -203,11 +203,11 @@ These endpoints are designed to be compatible with the Anthropic Messages API.
 The proxy transparently converts between protocols when the upstream connection
 does not natively speak the requested API — both directions are supported:
 
-| Request route | Native (passthrough) | Fallback (auto-translated)                      |
-| ------------- | -------------------- | ----------------------------------------------- |
-| `/v1/messages` | `createMessages`     | Anthropic → Chat Completions (`messages-via-chat`) |
-| `/v1/chat/completions` | `createChatCompletions` | Chat Completions → Anthropic (`chat-via-messages`) |
-| `/v1/responses` | `createResponses`    | Responses → Chat Completions (`responses-via-chat`) |
+| Request route          | Native (passthrough)    | Fallback (auto-translated)                          |
+| ---------------------- | ----------------------- | --------------------------------------------------- |
+| `/v1/messages`         | `createMessages`        | Anthropic → Chat Completions (`messages-via-chat`)  |
+| `/v1/chat/completions` | `createChatCompletions` | Chat Completions → Anthropic (`chat-via-messages`)  |
+| `/v1/responses`        | `createResponses`       | Responses → Chat Completions (`responses-via-chat`) |
 
 Native passthrough is always preferred when the upstream implements the
 matching protocol; translation only kicks in as a fallback (e.g. a
@@ -342,9 +342,7 @@ Here is an example `.claude/settings.json` file:
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   },
   "permissions": {
-    "deny": [
-      "WebSearch"
-    ]
+    "deny": ["WebSearch"]
   }
 }
 ```
