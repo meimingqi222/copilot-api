@@ -270,7 +270,7 @@ copilot-api debug     # Show diagnostic info
   ```
 
 - **Formatting:**\
-  Follows Prettier (with `prettier-plugin-packagejson`). Run `bun run lint` to auto-fix.
+  Prettier owns formatting (with `prettier-plugin-packagejson`); `.prettierrc` is the single source of truth. ESLint does not format — `prettier/prettier` is off and `eslint-config-prettier` disables conflicting stylistic rules, so the two never fight. Use `bun run format` to auto-fix formatting and `bun run lint` to auto-fix lint issues; CI enforces both `lint:all` and `format:check`. Do not re-add Prettier options to `eslint.config.js` — they would be inert and silently diverge from `.prettierrc`.
 
 - **Types:**\
   Strict TypeScript (`strict: true`). **Avoid** **`any`** — use explicit types and interfaces.
@@ -618,6 +618,8 @@ Before committing changes:
 - [ ] Run `bun run typecheck` — no type errors
 
 - [ ] Run `bun run lint` — no lint errors
+
+- [ ] Run `bun run format:check` — formatting is Prettier-clean (enforced in CI)
 
 - [ ] Update tests for new functionality
 
