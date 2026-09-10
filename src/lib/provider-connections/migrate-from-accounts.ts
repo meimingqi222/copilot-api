@@ -97,6 +97,9 @@ function getAccountTokenValue(account: Account): string {
   if (account.provider === "mimo-aistudio") {
     return readCredentialString(account, "serviceToken") ?? ""
   }
+  if (account.provider === "codebuddy") {
+    return readCredentialString(account, "accessToken") ?? ""
+  }
   if (isOAuthAccount(account)) {
     return readCredentialString(account, "accessToken") ?? ""
   }

@@ -1,6 +1,7 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
+  getCodebuddyAccessToken,
   getCodebuffAuthToken,
   getGitHubToken,
   getMimoPh,
@@ -77,6 +78,14 @@ function serializeAccount(account: Account): Record<string, unknown> {
     return {
       ...base,
       credentials: { apiKey: getWindsurfApiKey(account) },
+      settings: account.settings ?? {},
+    }
+  }
+
+  if (account.provider === "codebuddy") {
+    return {
+      ...base,
+      credentials: { accessToken: getCodebuddyAccessToken(account) },
       settings: account.settings ?? {},
     }
   }

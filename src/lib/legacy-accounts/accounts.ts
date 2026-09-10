@@ -50,6 +50,7 @@ export type {
   AccountProvider,
   AccountQuotaState,
   AccountRuntimeState,
+  CodebuddyAccount,
   CodebuffAccountSettings,
   CopilotAccount,
   CopilotAccountCredentials,
@@ -281,6 +282,10 @@ function buildCredentials(
       }
       case "mimo-aistudio": {
         credentials.serviceToken = cred.value
+        break
+      }
+      case "codebuddy": {
+        credentials.accessToken = cred.value
         break
       }
       default: {
@@ -555,6 +560,18 @@ export function setMimoUserId(
   value: string | undefined,
 ): void {
   writeSettingsField(account, "userId", value)
+}
+
+// Codebuddy
+export function getCodebuddyAccessToken(account: Account): string | undefined {
+  return readString(account.credentials?.accessToken)
+}
+
+export function setCodebuddyAccessToken(
+  account: Account,
+  value: string | undefined,
+): void {
+  writeCredentialField(account, "accessToken", value)
 }
 
 export function getMimoProxy(account: Account): string | undefined {

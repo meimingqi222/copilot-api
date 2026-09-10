@@ -109,6 +109,11 @@ export const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> =
       features: ["passthrough-client-session"],
       synthesizeStableSession: false,
     },
+    codebuddy: {
+      provider: "codebuddy",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
   }
 
 /** OpenAI-compatible / generic connections: L0 only + passthrough. */

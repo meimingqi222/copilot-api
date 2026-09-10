@@ -7,6 +7,7 @@ import {
   initializeProtocolAdapters,
 } from "~/services/protocols"
 
+import { codebuddyProviderRuntime } from "./codebuddy"
 import { codebuffProviderRuntime } from "./codebuff"
 import { copilotProviderRuntime } from "./copilot"
 import { mimoProviderRuntime } from "./mimo"
@@ -34,6 +35,9 @@ export function initializeProviderRegistry(): void {
 
   mimoProviderRuntime.adapter = getProtocolAdapter("mimo-native")
   registerProvider(mimoProviderRuntime)
+
+  codebuddyProviderRuntime.adapter = getProtocolAdapter("codebuddy-native")
+  registerProvider(codebuddyProviderRuntime)
 
   for (const providerId of OAUTH_PROVIDER_IDS) {
     const runtime = createOAuthProviderRuntime(providerId)

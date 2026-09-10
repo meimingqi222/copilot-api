@@ -364,6 +364,18 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     )
   }
 
+  if (provider === "codebuddy") {
+    return {
+      ...base,
+      provider: "codebuddy",
+      credentials: {
+        accessToken: pickString(existingCredentials?.accessToken, undefined),
+      },
+      settings: existingSettings ?? {},
+      runtimeState: existingRuntime,
+    }
+  }
+
   if (isOAuthProviderId(provider)) {
     return migrateOAuthAccount({
       base,

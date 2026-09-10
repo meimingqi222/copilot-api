@@ -172,6 +172,43 @@ createAccountRoutes.post("/", async (c) => {
     })
   }
 
+  if (provider === "codebuddy") {
+    const accessToken =
+      typeof body.credentials?.accessToken === "string" ?
+        body.credentials.accessToken.trim()
+      : body.authToken?.trim()
+    if (!accessToken) {
+      return c.json({ error: "CodeBuddy accessToken is required." }, 400)
+    }
+
+    const account: Account = {
+      id: randomUUID(),
+      label,
+      provider,
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken,
+      },
+      settings: {
+        ...body.settings,
+      },
+    }
+
+    addAccount(account)
+    await refreshModelsForAccount(account)
+    await saveAccounts()
+
+    const conn = getProviderConnection(account.id)
+    return c.json({
+      status: "complete",
+      accountId: account.id,
+      account: conn ? publicAccountFromConnection(conn) : undefined,
+    })
+  }
+
   let deviceCodeResponse: Awaited<ReturnType<typeof getDeviceCode>>
   try {
     deviceCodeResponse = await getDeviceCode()

@@ -6,6 +6,7 @@
 import { anthropicCompatibleAdapter } from "./anthropic-compatible"
 import { antigravityNativeAdapter } from "./antigravity-native"
 import { claudeNativeAdapter } from "./claude-native"
+import { codebuddyNativeAdapter } from "./codebuddy-native"
 import { codebuffNativeAdapter } from "./codebuff-native"
 import { codexNativeAdapter } from "./codex-native"
 import { copilotNativeAdapter } from "./copilot-native"
@@ -33,6 +34,7 @@ export function initializeProtocolAdapters(): void {
   registerProtocolAdapter(kimiNativeAdapter)
   registerProtocolAdapter(codexNativeAdapter)
   registerProtocolAdapter(xaiNativeAdapter)
+  registerProtocolAdapter(codebuddyNativeAdapter)
   initialized = true
 }
 

@@ -168,6 +168,12 @@ export type MimoAccount = LegacyAccountRecord & {
   settings?: MimoAccountSettings
 }
 
+export type CodebuddyAccount = LegacyAccountRecord & {
+  provider: "codebuddy"
+  credentials?: { accessToken?: string }
+  settings?: Record<string, unknown>
+}
+
 export type OAuthAccount = LegacyAccountRecord & {
   provider: OAuthProviderId
   credentials?: OAuthAccountCredentials
