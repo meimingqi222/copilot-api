@@ -348,7 +348,7 @@
                   :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"
                 ></span>
                 <button
-                  @click.stop="openEditModel(conn, m)"
+                  @click.stop="openManagerAndRename(conn, m.publicId)"
                   class="w-4 h-4 rounded-full bg-[var(--apple-gray-4)] text-[var(--apple-text-secondary)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   style="font-size: 10px; line-height: 1"
                 >
@@ -671,28 +671,6 @@
                       ></span>
                     </label>
                   </div>
-                  <div class="flex items-center gap-2">
-                    <label class="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        x-model="connForm.discoveryEnabled"
-                        class="w-4 h-4 rounded accent-[var(--apple-blue)]"
-                      />
-                      <span
-                        class="text-xs"
-                        x-text="t('connections.discoveryEnabled')"
-                      ></span>
-                    </label>
-                    <select
-                      x-model="connForm.discoveryMode"
-                      class="form-input text-xs py-1 px-2"
-                      :disabled="!connForm.discoveryEnabled"
-                    >
-                      <option value="merge">merge</option>
-                      <option value="replace">replace</option>
-                      <option value="manual-only">manual-only</option>
-                    </select>
-                  </div>
                 </div>
 
                 <!-- 自定义请求头 -->
@@ -969,7 +947,7 @@
     </div>
   </div>
 
-  <!-- Model Modal -->
+  <!-- Model Modal (仅新增;改名统一走模型管理抽屉行内改名) -->
   <div
     x-show="showModelModal"
     class="modal-overlay"
@@ -978,10 +956,7 @@
   >
     <div class="modal">
       <div class="modal-header">
-        <h3
-          class="text-title-3"
-          x-text="modelForm.originalPublicId ? t('connections.editModel') : t('connections.addModel')"
-        ></h3>
+        <h3 class="text-title-3" x-text="t('connections.addModel')"></h3>
         <button @click="showModelModal = false" class="btn-icon">
           <i data-lucide="x" class="w-5 h-5"></i>
         </button>
@@ -998,11 +973,6 @@
             class="form-input"
             placeholder="deepseek-chat"
           />
-          <p
-            class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
-            x-show="modelForm.originalPublicId && modelForm.publicId !== modelForm.originalPublicId"
-            x-text="t('connections.modelPublicIdRenameHint')"
-          ></p>
         </div>
         <div>
           <label
@@ -1217,34 +1187,109 @@
         <!-- 模型列表 -->
         <div class="max-h-96 overflow-y-auto space-y-1">
           <template x-for="m in modelManagerFilteredModels" :key="m.publicId">
-            <div
-              class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-[var(--apple-gray-6)]"
-            >
-              <span
-                class="tag tag-sm cursor-pointer flex-shrink-0"
-                :class="m.enabled ? 'tag-info' : 'tag-muted'"
-                @click="modelManagerToggle(m)"
-                x-text="m.publicId"
-                :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"
-              ></span>
-              <span
-                class="text-xs text-[var(--apple-text-tertiary)] flex-1 truncate"
-                x-text="m.upstreamId && m.upstreamId !== m.publicId ? '→ ' + m.upstreamId : ''"
-              ></span>
-              <button
-                @click="openEditModel(modelManagerConn, m)"
-                class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0"
-                :title="t('edit')"
+            <div class="px-3 py-2 rounded-lg hover:bg-[var(--apple-gray-6)]">
+              <!-- 行内改名模式:对外 ID 统一入口 -->
+              <div
+                x-show="modelManagerEditingId === m.publicId"
+                class="flex items-center gap-1.5 flex-1 min-w-0"
               >
-                <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
-              </button>
-              <button
-                @click="deleteModel(modelManagerConn, m)"
-                class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-red)] flex-shrink-0"
-                :title="t('delete')"
+                <input
+                  type="text"
+                  data-rename-input
+                  x-model="modelManagerEditValue"
+                  @keyup.enter="saveRenameModel(m)"
+                  @keyup.escape="cancelRenameModel()"
+                  class="form-input text-xs py-1 flex-1 min-w-0"
+                />
+                <button
+                  @click="saveRenameModel(m)"
+                  class="btn btn-sm btn-primary flex-shrink-0"
+                  x-text="t('save')"
+                ></button>
+                <button
+                  @click="cancelRenameModel()"
+                  class="btn btn-sm btn-secondary flex-shrink-0"
+                  x-text="t('cancel')"
+                ></button>
+              </div>
+              <!-- 正常模式 -->
+              <div
+                x-show="modelManagerEditingId !== m.publicId"
+                class="flex items-center gap-2 flex-1 min-w-0"
               >
-                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-              </button>
+                <span
+                  class="tag tag-sm cursor-pointer flex-shrink-0"
+                  :class="m.enabled ? 'tag-info' : 'tag-muted'"
+                  @click="modelManagerToggle(m)"
+                  x-text="m.publicId"
+                  :title="m.enabled ? t('connections.modelDisable') : t('connections.modelEnable')"
+                ></span>
+                <span
+                  class="text-xs text-[var(--apple-text-tertiary)] flex-1 truncate"
+                  x-text="m.upstreamId && m.upstreamId !== m.publicId ? '→ ' + m.upstreamId : ''"
+                ></span>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] font-mono flex-shrink-0"
+                  x-show="m.endpoints && m.endpoints.length > 0"
+                  x-text="(m.endpoints || []).join(',')"
+                ></span>
+                <button
+                  @click="toggleAliasEditor(m)"
+                  class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0 flex items-center gap-0.5"
+                  :title="t('connections.modelAliases')"
+                >
+                  <i data-lucide="tags" class="w-3.5 h-3.5"></i>
+                  <span
+                    class="text-[10px] font-mono"
+                    x-show="(m.aliases || []).length > 0"
+                    x-text="(m.aliases || []).length"
+                  ></span>
+                </button>
+                <button
+                  @click="startRenameModel(m)"
+                  class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0"
+                  :title="t('edit')"
+                >
+                  <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                </button>
+                <button
+                  @click="deleteModel(modelManagerConn, m)"
+                  class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-red)] flex-shrink-0"
+                  :title="t('delete')"
+                >
+                  <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                </button>
+              </div>
+              <!-- 别名编辑区:统一别名入口之二 -->
+              <div
+                x-show="modelManagerAliasFor === m.publicId && modelManagerEditingId !== m.publicId"
+                class="flex flex-wrap items-center gap-1.5 mt-2 pl-1"
+              >
+                <template x-for="a in (m.aliases || [])" :key="a">
+                  <span class="tag tag-sm tag-info flex items-center gap-1">
+                    <span class="font-mono" x-text="a"></span>
+                    <button
+                      @click="removeModelAlias(m, a)"
+                      class="hover:opacity-70 font-bold"
+                      title="×"
+                    >
+                      ×
+                    </button>
+                  </span>
+                </template>
+                <input
+                  type="text"
+                  x-model="modelManagerAliasInput"
+                  @keyup.enter="addModelAlias(m)"
+                  class="form-input text-xs py-1 flex-1 min-w-32"
+                  :placeholder="t('connections.addAliasPlaceholder')"
+                />
+                <button
+                  @click="addModelAlias(m)"
+                  class="btn btn-sm btn-secondary flex-shrink-0"
+                  x-text="t('connections.addAlias')"
+                ></button>
+              </div>
             </div>
           </template>
           <p
@@ -1262,6 +1307,10 @@
           <span x-text="modelManagerConn?.models?.length || 0"></span>
           <span x-text="t('connections.modelsEnabled')"></span>
         </p>
+        <p
+          class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+          x-text="t('connections.namingDivisionHint')"
+        ></p>
       </div>
       <div class="modal-footer">
         <button

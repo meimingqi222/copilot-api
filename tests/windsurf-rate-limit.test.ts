@@ -167,7 +167,13 @@ describe("windsurf fetchWithRetry", () => {
 
   test("retries on 500 then succeeds", async () => {
     let callCount = 0
-    globalThis.fetch = (() => {
+    globalThis.fetch = ((input: unknown) => {
+      // 只统计本用例的请求:全局 mock 在约 1s 的重试等待窗口内,
+      // 其他测试/后台任务的杂散 fetch 也会打进来,不应计入。
+      const url = typeof input === "string" ? input : String(input)
+      if (!url.includes("http://test")) {
+        return Promise.resolve(new Response("ok", { status: 200 }))
+      }
       callCount++
       fetchCalls.push({ status: callCount === 1 ? 500 : 200 })
       return Promise.resolve(
@@ -192,7 +198,12 @@ describe("windsurf fetchWithRetry", () => {
 
   test("retries on network error then succeeds", async () => {
     let callCount = 0
-    globalThis.fetch = (() => {
+    globalThis.fetch = ((input: unknown) => {
+      // 同上:只统计本用例的请求,杂散 fetch 直接 200 放行。
+      const url = typeof input === "string" ? input : String(input)
+      if (!url.includes("http://test")) {
+        return Promise.resolve(new Response("ok", { status: 200 }))
+      }
       callCount++
       if (callCount === 1) {
         fetchCalls.push("network-error")
@@ -217,7 +228,12 @@ describe("windsurf fetchWithRetry", () => {
 
   test("throws after exhausting retries on persistent 500", async () => {
     let callCount = 0
-    globalThis.fetch = (() => {
+    globalThis.fetch = ((input: unknown) => {
+      // 同上:只统计本用例的请求,杂散 fetch 直接 200 放行。
+      const url = typeof input === "string" ? input : String(input)
+      if (!url.includes("http://test")) {
+        return Promise.resolve(new Response("ok", { status: 200 }))
+      }
       callCount++
       fetchCalls.push({ status: 500 })
       return Promise.resolve(new Response("err", { status: 500 }))

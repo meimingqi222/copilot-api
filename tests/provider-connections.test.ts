@@ -627,6 +627,48 @@ describe("route-target build + select", () => {
     expect(targets).toHaveLength(1)
   })
 
+  test("buildRouteTargets matches per-model aliases on account-managed connections", () => {
+    const now = Date.now()
+    const connection = {
+      id: "copilot-acc",
+      name: "copilot-acc",
+      protocol: "copilot-native",
+      baseUrl: "",
+      enabled: true,
+      priority: 1,
+      credentials: [
+        {
+          id: "copilot-acc-cred",
+          authMode: "bearer",
+          value: "",
+          enabled: true,
+          status: "ready",
+          createdAt: now,
+          context: { githubToken: "token-copilot-acc" },
+        },
+      ],
+      models: [
+        {
+          publicId: "gpt-4o",
+          upstreamId: "gpt-4o",
+          endpoints: ["chat"],
+          enabled: true,
+          aliases: ["my-gpt"],
+        },
+      ],
+      metadata: {},
+      createdAt: now,
+    } as unknown as ProviderConnection
+    const targets = buildRouteTargets({
+      publicModelId: "my-gpt",
+      endpoint: "chat",
+      connections: [connection],
+    })
+    expect(targets).toHaveLength(1)
+    expect(targets[0].connectionId).toBe("copilot-acc")
+    expect(targets[0].upstreamModelId).toBe("gpt-4o")
+  })
+
   test("selectRouteTarget excludes already tried", () => {
     const targets = buildRouteTargets({ endpoint: "chat" })
     const first = selectRouteTarget(targets)

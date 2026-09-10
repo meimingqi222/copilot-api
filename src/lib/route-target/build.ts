@@ -290,16 +290,21 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
 
 /**
  * account-managed connection 的模型匹配(镜像原 matchesAccountModel):
- * 用 prefix 别名集合(nativeId / prefix/nativeId / provider-nativeId)匹配。
+ * 用 prefix 别名集合(nativeId / prefix/nativeId / provider-nativeId)匹配,
+ * 外加模型自身的 aliases(与普通 connection 的 matchesPublicModelId 对齐,
+ * 否则账号抽屉里配的别名会出现在 /v1/models 却路由不到)。
  */
 function matchesConnectionModel(
   connection: ProviderConnection,
   model: ModelMapping,
   requestedId: string,
 ): boolean {
-  const aliases = buildConnectionModelAliases(connection, model.publicId)
   const normalized = requestedId.toLowerCase()
-  return aliases.some((alias) => alias.toLowerCase() === normalized)
+  const aliases = buildConnectionModelAliases(connection, model.publicId)
+  if (aliases.some((alias) => alias.toLowerCase() === normalized)) return true
+  return (
+    model.aliases?.some((alias) => alias.toLowerCase() === normalized) ?? false
+  )
 }
 
 /**

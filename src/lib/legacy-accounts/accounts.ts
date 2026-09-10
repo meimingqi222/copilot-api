@@ -216,12 +216,12 @@ export function connectionModelsToAccountModels(
   )
 }
 
-/** 从 credential.context 反构造 runtimeState(最小子集)。 */
+/** 从 credential.context 反构造 runtimeState(最小子集)。无 credential 时走无 ctx 分支。 */
 function buildRuntimeState(
   conn: ProviderConnection,
 ): AccountRuntimeState | undefined {
   const cred = conn.credentials[0]
-  const ctx = cred.context
+  const ctx = cred?.context
   if (!ctx) {
     const authStatus = getConnectionAuthStatus(conn)
     const authError = getConnectionAuthError(conn)
@@ -259,12 +259,13 @@ function buildRuntimeState(
   return runtime
 }
 
-/** 从 credential + credentialExtras + context 反构造 credentials record。 */
+/** 从 credential + credentialExtras + context 反构造 credentials record。无 credential 返回 undefined。 */
 function buildCredentials(
   conn: ProviderConnection,
   provider: string,
 ): Record<string, unknown> | undefined {
   const cred = conn.credentials[0]
+  if (!cred) return undefined
   const credentials: Record<string, unknown> = {}
   const ctx = cred.context
   if (cred.value) {
@@ -392,7 +393,7 @@ export function connectionToAccount(connection: ProviderConnection): Account {
   if (cpaMetadata !== undefined) {
     account.cpaMetadata = cpaMetadata
   }
-  if (cred.enabled !== connection.enabled) {
+  if (cred && cred.enabled !== connection.enabled) {
     account.enabled = cred.enabled
   }
   return account

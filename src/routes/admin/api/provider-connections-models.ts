@@ -20,8 +20,10 @@ import {
   listProviderConnections,
   type ModelEndpoint,
   type ModelMapping,
+  ModelConflictError,
   type ProviderConnection,
   type RouteTarget,
+  normalizeModelAliases,
   sanitizeConnection,
   setDiscoveryError,
   updateModel,
@@ -63,12 +65,14 @@ providerConnectionModelRoutes.post("/:id/refresh-models", async (c) => {
       credential: usable,
     })
     const mode = connection.modelDiscovery?.mode ?? "merge"
-    await applyDiscoveredModels(id, discovered, mode)
+    const { added } = await applyDiscoveredModels(id, discovered, mode)
     const updated = getProviderConnection(id)
     if (!updated) return c.json({ error: "Not found" }, 404)
     return c.json({
       connection: sanitizeConnection(updated),
       discovered: discovered.length,
+      added,
+      mode,
     })
   } catch (error) {
     await setDiscoveryError(id, (error as Error).message).catch(
@@ -122,6 +126,7 @@ providerConnectionModelRoutes.post("/:id/models", async (c) => {
         rawEndpoints
       : defaultEndpointsForProtocol(connection.protocol),
     enabled: typeof payload.enabled === "boolean" ? payload.enabled : true,
+    aliases: normalizeModelAliases(payload.aliases),
   }
 
   try {
@@ -134,7 +139,7 @@ providerConnectionModelRoutes.post("/:id/models", async (c) => {
 
 // 批量添加模型
 //
-// 请求体: { models: Array<{ publicId, upstreamId?, name?, vendor?, endpoints?, enabled? }> }
+// 请求体: { models: Array<{ publicId, upstreamId?, name?, vendor?, endpoints?, enabled?, aliases? }> }
 // 行为: 已存在的 publicId 跳过(不报错),返回 added / skipped 列表。
 // 便于从粘贴的模型清单一次性导入。
 providerConnectionModelRoutes.post("/:id/models/batch", async (c) => {
@@ -193,6 +198,7 @@ providerConnectionModelRoutes.post("/:id/models/batch", async (c) => {
           rawEndpoints
         : defaultEndpointsForProtocol(connection.protocol),
       enabled: typeof item.enabled === "boolean" ? item.enabled : true,
+      aliases: normalizeModelAliases(item.aliases),
     }
     try {
       await addModel(c.req.param("id"), model)
@@ -372,11 +378,16 @@ providerConnectionModelRoutes.put("/:id/models/:publicId", async (c) => {
     if (eps.length > 0) patch.endpoints = eps
   }
   if (typeof payload.enabled === "boolean") patch.enabled = payload.enabled
+  const aliases = normalizeModelAliases(payload.aliases)
+  if (aliases !== undefined) patch.aliases = aliases
 
   try {
     const model = await updateModel(c.req.param("id"), publicId, patch)
     return c.json({ connection: sanitizeConnection(connection), model })
   } catch (error) {
+    if (error instanceof ModelConflictError) {
+      return c.json({ error: (error as Error).message }, 409)
+    }
     return c.json({ error: (error as Error).message }, 404)
   }
 })

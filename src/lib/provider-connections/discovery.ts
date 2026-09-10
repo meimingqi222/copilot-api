@@ -9,7 +9,11 @@ import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
 import { getProtocolAdapter } from "~/services/protocols/registry"
 
-import { listProviderConnections, persistProviderConnections } from "./state"
+import {
+  listProviderConnections,
+  mergeDiscoveredModels,
+  persistProviderConnections,
+} from "./state"
 import { DEFAULTS, type ModelMapping, type ProviderConnection } from "./types"
 
 const DEFAULT_CHECK_INTERVAL_MS = 60 * 1000 // 每分钟扫描一次,看哪些 connection 需要刷新
@@ -124,12 +128,9 @@ function mergeModels(
     return result
   }
 
-  // merge: existing 优先,但补充新发现的
-  const byId = new Map(existing.map((m) => [m.publicId, m]))
-  for (const m of filtered) {
-    if (!byId.has(m.publicId)) byId.set(m.publicId, m)
-  }
-  return Array.from(byId.values())
+  // merge: existing 优先(含 enabled 与改名),新发现的默认禁用追加
+  // (空列表首次发现除外,保持开箱即用)。见 mergeDiscoveredModels。
+  return mergeDiscoveredModels(existing, filtered).models
 }
 
 function matchPattern(value: string, pattern: string): boolean {

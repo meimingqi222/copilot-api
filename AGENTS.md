@@ -167,6 +167,7 @@ src/
             ├── account-update.ts # applyConnectionPatchToConnection
             ├── account-create.ts # Account creation
             ├── account-import.ts # Account import (CPA + standard)
+            ├── account-models.ts # Account model mgmt (rename/toggle/aliases; upstreamId/endpoints provider-driven)
             ├── provider-connections.ts # Provider connection CRUD (split into sub-modules)
             ├── provider-connections-crud.ts       # CRUD routes
             ├── provider-connections-models.ts     # Model management routes

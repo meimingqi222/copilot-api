@@ -109,6 +109,12 @@ const API = {
     refresh: (id) => API.request(`/accounts/${id}/refresh`, { method: "POST" }),
     activate: (id) =>
       API.request(`/accounts/${id}/activate`, { method: "POST" }),
+    getModels: (id) => API.request(`/accounts/${id}/models`),
+    updateModel: (id, publicId, data) =>
+      API.request(`/accounts/${id}/models/${encodeURIComponent(publicId)}`, {
+        method: "PUT",
+        body: data,
+      }),
     export: async () => {
       const response = await fetch(`${API.baseUrl}/accounts/export`)
       if (response.status === 401 || response.status === 403) {
@@ -169,6 +175,7 @@ const API = {
 
   providerConnections: {
     list: () => API.request("/provider-connections"),
+    get: (id) => API.request(`/provider-connections/${id}`),
     presets: () => API.request("/provider-connections/presets"),
     fetchModels: (data) =>
       API.request("/provider-connections/fetch-models", {

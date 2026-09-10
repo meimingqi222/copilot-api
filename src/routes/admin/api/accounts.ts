@@ -45,6 +45,7 @@ import { getProviderRuntime } from "~/services/providers/registry"
 
 import { createAccountRoutes } from "./account-create"
 import { importAccountRoutes } from "./account-import"
+import { accountModelRoutes } from "./account-models"
 import {
   type UpdateAccountBody,
   applyConnectionPatchToConnection,
@@ -130,6 +131,7 @@ export function publicAccount(account: Account) {
 // Mount sub-routers for extracted route modules
 accountApiRoutes.route("/", createAccountRoutes)
 accountApiRoutes.route("/", importAccountRoutes)
+accountApiRoutes.route("/", accountModelRoutes)
 accountFlowApiRoutes.route("/", deviceFlowRoutes)
 
 accountApiRoutes.get("/", async (c) => {

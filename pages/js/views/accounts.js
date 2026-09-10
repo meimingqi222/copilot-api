@@ -207,6 +207,15 @@ function accountsView() {
     editingLabel: null,
     editLabelValue: "",
     modelSearch: {},
+    // 账号模型管理(与 provider 共用同一套语义:开关/改名/别名;
+    // 上游 ID 由供应商决定只读,不提供增删,后端亦有 guard)
+    showAccountModels: false,
+    accountModelsConn: null,
+    accountModelsSearch: "",
+    accountModelsEditingId: null,
+    accountModelsEditValue: "",
+    accountModelsAliasFor: null,
+    accountModelsAliasInput: "",
 
     async load() {
       this.loading = true
@@ -922,6 +931,147 @@ function accountsView() {
           || (m.vendor || "").toLowerCase().includes(q)
         )
       })
+    },
+
+    // ── 账号模型管理 ─────────────────────────────────────────────
+    // 走 accounts 模型子路由(与 provider 管理抽屉同一套语义:开关/改名/别名),
+    // 上游 ID 只读、不提供增删,卡片上的 availableModels 保持只读展示。
+
+    async openAccountModels(account) {
+      try {
+        const res = await API.accounts.getModels(account.id)
+        this.accountModelsConn = {
+          id: account.id,
+          models: res.models || [],
+        }
+        this.accountModelsSearch = ""
+        this.accountModelsEditingId = null
+        this.accountModelsEditValue = ""
+        this.accountModelsAliasFor = null
+        this.accountModelsAliasInput = ""
+        this.showAccountModels = true
+        this.$nextTick(() => lucide.createIcons())
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.load"), "error")
+      }
+    },
+
+    closeAccountModels() {
+      this.showAccountModels = false
+      this.accountModelsConn = null
+    },
+
+    get accountModelsFiltered() {
+      const models = this.accountModelsConn?.models || []
+      const q = (this.accountModelsSearch || "").trim().toLowerCase()
+      if (!q) return models
+      return models.filter(
+        (m) =>
+          (m.publicId || "").toLowerCase().includes(q)
+          || (m.upstreamId || "").toLowerCase().includes(q),
+      )
+    },
+
+    async reloadAccountModels() {
+      if (!this.accountModelsConn) return
+      try {
+        const res = await API.accounts.getModels(this.accountModelsConn.id)
+        this.accountModelsConn.models = res.models || []
+        await this.load()
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.load"), "error")
+      }
+    },
+
+    async accountModelsToggle(m) {
+      if (!this.accountModelsConn) return
+      try {
+        await API.accounts.updateModel(this.accountModelsConn.id, m.publicId, {
+          enabled: !m.enabled,
+        })
+        m.enabled = !m.enabled
+        await this.load()
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.update"), "error")
+      }
+    },
+
+    startAccountRename(m) {
+      this.accountModelsEditingId = m.publicId
+      this.accountModelsEditValue = m.publicId
+      this.accountModelsAliasFor = null
+      this.accountModelsAliasInput = ""
+    },
+
+    cancelAccountRename() {
+      this.accountModelsEditingId = null
+      this.accountModelsEditValue = ""
+    },
+
+    async saveAccountRename(m) {
+      if (!this.accountModelsConn) return
+      const next = (this.accountModelsEditValue || "").trim()
+      if (!next || next === m.publicId) {
+        this.cancelAccountRename()
+        return
+      }
+      try {
+        await API.accounts.updateModel(this.accountModelsConn.id, m.publicId, {
+          publicId: next,
+        })
+        this.cancelAccountRename()
+        await this.reloadAccountModels()
+        this.showToast(
+          I18n.t("accounts.updateSuccess") || "Account updated",
+          "success",
+        )
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.update"), "error")
+      }
+    },
+
+    toggleAccountAliasEditor(m) {
+      if (this.accountModelsAliasFor === m.publicId) {
+        this.accountModelsAliasFor = null
+        this.accountModelsAliasInput = ""
+      } else {
+        this.cancelAccountRename()
+        this.accountModelsAliasFor = m.publicId
+        this.accountModelsAliasInput = ""
+      }
+    },
+
+    async addAccountModelAlias(m) {
+      if (!this.accountModelsConn) return
+      const value = (this.accountModelsAliasInput || "").trim()
+      if (!value) return
+      const current = m.aliases || []
+      if (current.some((a) => a.toLowerCase() === value.toLowerCase())) {
+        this.accountModelsAliasInput = ""
+        return
+      }
+      try {
+        await API.accounts.updateModel(this.accountModelsConn.id, m.publicId, {
+          aliases: [...current, value],
+        })
+        m.aliases = [...current, value]
+        this.accountModelsAliasInput = ""
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.update"), "error")
+      }
+    },
+
+    async removeAccountModelAlias(m, alias) {
+      if (!this.accountModelsConn) return
+      const next = (m.aliases || []).filter((a) => a !== alias)
+      try {
+        await API.accounts.updateModel(this.accountModelsConn.id, m.publicId, {
+          aliases: next,
+        })
+        m.aliases = next
+      } catch (e) {
+        this.showToast(e.message || I18n.t("error.update"), "error")
+      }
     },
 
     isUniqueSubtitle(subtitle) {

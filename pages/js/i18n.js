@@ -235,6 +235,9 @@ const i18n = {
       "accounts.modelsLoading": "模型信息加载中...",
       "accounts.models.pickerOn": "在模型选择器中显示",
       "accounts.models.pickerOff": "在模型选择器中隐藏",
+      "accounts.manageModels": "管理模型",
+      "accounts.modelsManagedNote":
+        "开关 / 改名 / 别名在这里管,供应商刷新时保留;上游 ID 由供应商决定,删除请改用禁用。",
       "accounts.priority": "优先级",
       "accounts.priorityHint": "数值越小优先级越高，相同优先级按顺序使用",
       "accounts.prioritySuccess": "优先级已更新",
@@ -518,6 +521,8 @@ const i18n = {
       "modelAliases.previewPlaceholder": "输入模型名预览解析，例如 gk-4.5",
       "modelAliases.saved": "模型别名已保存",
       "modelAliases.deleteConfirm": "确定删除这条模型别名规则吗？",
+      "modelAliases.divisionHint":
+        "全局别名只做请求归一化:把客户端写的旧名 / 短名翻译成真实模型,可跨连接;单个连接或账号的改名、开关、别名请到对应「模型管理」里配。",
       "connections.modelName": "显示名称",
       "connections.modelVendor": "厂商",
       "connections.modelEnabled": "启用",
@@ -574,7 +579,7 @@ const i18n = {
       "connections.searchModels": "搜索模型...",
       "connections.supportedModels": "支持的模型",
       "connections.noModels":
-        "暂无模型，可点击「在线获取模型」或高级设置配置自动发现",
+        "暂无模型，可点击「在线获取模型」拉取上游模型清单",
       "connections.noModelsFound": "未找到匹配的模型",
       "connections.advancedOptions": "高级选项",
       "connections.customHeaders": "自定义请求头",
@@ -597,6 +602,11 @@ const i18n = {
       "connections.selectedCount": "({count} 已选)",
       "connections.modelPublicIdRenameHint":
         "修改对外模型 ID 将重命名,客户端需用新 ID 调用。",
+      "connections.modelAliases": "别名",
+      "connections.addAlias": "添加",
+      "connections.addAliasPlaceholder": "添加别名,回车确认",
+      "connections.namingDivisionHint":
+        "改名 / 开关 / 别名都在这里管;跨连接改路由、批量 pattern、客户端旧名兼容去「模型别名」页面。",
       "connections.batchPromptTitle":
         "AI 提示词（复制到任意 LLM 自动生成清单）",
       "connections.batchPromptBody":
@@ -995,6 +1005,9 @@ const i18n = {
       "accounts.modelsLoading": "Loading model info...",
       "accounts.models.pickerOn": "Shown in model picker",
       "accounts.models.pickerOff": "Hidden from model picker",
+      "accounts.manageModels": "Manage Models",
+      "accounts.modelsManagedNote":
+        "Toggles / renames / aliases are managed here and survive provider refreshes; upstream IDs are provider-driven, disable instead of deleting.",
       "accounts.priority": "Priority",
       "accounts.priorityHint":
         "Lower value = higher priority. Same priority uses order.",
@@ -1284,6 +1297,8 @@ const i18n = {
       "modelAliases.previewPlaceholder": "Preview a model name, e.g. gk-4.5",
       "modelAliases.saved": "Model alias saved",
       "modelAliases.deleteConfirm": "Delete this model alias rule?",
+      "modelAliases.divisionHint":
+        "Global aliases only normalize requests: translate legacy / short client names into real models, optionally across connections. Rename, enable toggles and aliases for a single connection or account belong to its Model Manager.",
       "connections.modelName": "Display Name",
       "connections.modelVendor": "Vendor",
       "connections.modelEnabled": "Enabled",
@@ -1342,7 +1357,7 @@ const i18n = {
       "connections.searchModels": "Search models...",
       "connections.supportedModels": "Supported Models",
       "connections.noModels":
-        'No models yet. Click "Fetch Models" or enable auto-discovery in Advanced Options.',
+        'No models yet. Click "Fetch Models" to pull the upstream model list.',
       "connections.noModelsFound": "No models match your search",
       "connections.advancedOptions": "Advanced Options",
       "connections.customHeaders": "Custom Headers",
@@ -1365,6 +1380,11 @@ const i18n = {
       "connections.selectedCount": "({count} selected)",
       "connections.modelPublicIdRenameHint":
         "Changing the public model ID renames it; clients must use the new ID.",
+      "connections.modelAliases": "Aliases",
+      "connections.addAlias": "Add",
+      "connections.addAliasPlaceholder": "Add alias, Enter to confirm",
+      "connections.namingDivisionHint":
+        "Rename / enable / aliases are managed here; cross-connection routing, batch patterns and legacy client names belong to the Model Aliases page.",
       "connections.batchPromptTitle":
         "AI Prompt (copy to any LLM to auto-generate list)",
       "connections.batchPromptBody":

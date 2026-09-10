@@ -359,28 +359,164 @@ export async function deleteCredential(
   })
 }
 
+/**
+ * 模型命名冲突错误。路由层映射为 409(与“不存在”的 404 区分)。
+ */
+export class ModelConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ModelConflictError"
+  }
+}
+
+/**
+ * 别名冲突检查:新 publicId 不得撞到同 connection 内其他模型的别名;
+ * 新别名不得撞到其他模型的 publicId/别名(与自身 publicId 相同者无害,跳过)。
+ * publicId 撞 publicId 由调用方原有检查覆盖,这里只查别名相关交叉。
+ * 命中抛 ModelConflictError。
+ */
+function assertNoAliasCollision(
+  models: Array<ModelMapping> | undefined,
+  self: ModelMapping | undefined,
+  newPublicId: string,
+  newAliases: Array<string> | undefined,
+): void {
+  const selfId = newPublicId.toLowerCase()
+  for (const m of models ?? []) {
+    if (m === self) continue
+    if ((m.aliases ?? []).some((a) => a.toLowerCase() === selfId)) {
+      throw new ModelConflictError(
+        `Name "${newPublicId}" is already used by model "${m.publicId}" in this connection`,
+      )
+    }
+    for (const a of newAliases ?? []) {
+      if (a.toLowerCase() === selfId) continue
+      if (m.publicId.toLowerCase() === a.toLowerCase()) {
+        throw new ModelConflictError(
+          `Name "${a}" is already used by model "${m.publicId}" in this connection`,
+        )
+      }
+      const hit = (m.aliases ?? []).find(
+        (x) => x.toLowerCase() === a.toLowerCase(),
+      )
+      if (hit !== undefined) {
+        throw new ModelConflictError(
+          `Name "${a}" is already used by model "${m.publicId}" in this connection`,
+        )
+      }
+    }
+  }
+}
+
+/**
+ * 归一化模型别名输入:去空、去重(大小写不敏感)、截断防滥用。
+ * 返回 undefined 表示输入非法/缺失(调用方保持原值);
+ * 返回空数组表示清空。
+ */
+export function normalizeModelAliases(
+  input: unknown,
+): Array<string> | undefined {
+  if (input === undefined) return undefined
+  if (!Array.isArray(input)) return undefined
+  const out: Array<string> = []
+  for (const item of input) {
+    if (typeof item !== "string") continue
+    const v = item.trim()
+    if (!v || v.length > 120) continue
+    if (out.some((x) => x.toLowerCase() === v.toLowerCase())) continue
+    out.push(v)
+    if (out.length >= 20) break
+  }
+  return out
+}
+
+/**
+ * Provider 刷新模型合并:provider 侧全量覆盖时保留用户层配置。
+ * 按 upstreamId(回退 publicId)匹配:
+ * - 用户改名:保留改名。判定以 metadata.renamedByUser 显式标记为准,
+ *   publicId!==upstreamId 字符串启发式仅作存量兼容(标记位引入前的改名)。
+ * - 用户禁用(enabled=false):粘性保留
+ * - 用户别名:保留
+ * 空列表(新账号首次加载)直接采用上游原值。
+ */
+export function mergeProviderRefreshedModels(
+  existing: Array<ModelMapping> | null | undefined,
+  fresh: Array<ModelMapping>,
+): Array<ModelMapping> {
+  if (!existing || existing.length === 0) return fresh
+  const byUpstream = new Map<string, ModelMapping>()
+  for (const m of existing) {
+    const key = (m.upstreamId || m.publicId).toLowerCase()
+    if (!byUpstream.has(key)) byUpstream.set(key, m)
+  }
+  return fresh.map((f) => {
+    const prev = byUpstream.get((f.upstreamId || f.publicId).toLowerCase())
+    if (!prev) return f
+    const userRenamed =
+      (prev.metadata?.renamedByUser as boolean | undefined) === true
+      || prev.publicId !== prev.upstreamId
+    return {
+      ...f,
+      ...(userRenamed ? { publicId: prev.publicId } : {}),
+      ...(prev.enabled === false ? { enabled: false } : {}),
+      ...(prev.aliases?.length ? { aliases: prev.aliases } : {}),
+    }
+  })
+}
+
+/**
+ * Merge 语义的模型合并:已存在的模型原样保留(含 enabled 与改名),
+ * 新发现的追加 —— 列表非空时默认禁用 + 对 picker 隐藏,
+ * 避免自动发现淹没用户手工维护的启用选择;
+ * 空列表(首次发现)保持上游原值,保留开箱即用体验。
+ *
+ * 判重同时比对 publicId 与 upstreamId:用户改名后,上游原名不再
+ * 被当成“新模型”加回来(比对大小写不敏感,上游 id 大小写偶发漂移)。
+ */
+export function mergeDiscoveredModels(
+  existing: Array<ModelMapping>,
+  discovered: Array<ModelMapping>,
+): { models: Array<ModelMapping>; added: number } {
+  const byId = new Map(existing.map((m) => [m.publicId, m]))
+  const byUpstream = new Set(
+    existing.map((m) => (m.upstreamId || m.publicId).toLowerCase()),
+  )
+  let added = 0
+  for (const m of discovered) {
+    if (byId.has(m.publicId)) continue
+    if (byUpstream.has((m.upstreamId || m.publicId).toLowerCase())) continue
+    byId.set(
+      m.publicId,
+      existing.length > 0 ? { ...m, enabled: false, pickerEnabled: false } : m,
+    )
+    added++
+  }
+  return { models: [...byId.values()], added }
+}
+
 export async function applyDiscoveredModels(
   connectionId: string,
   discovered: Array<ModelMapping>,
   mode: "merge" | "replace" | "manual-only",
-): Promise<void> {
-  await withMutation(() => {
+): Promise<{ added: number }> {
+  return withMutation(() => {
     const connection = getProviderConnection(connectionId)
     if (!connection) throw new Error(`Connection not found: ${connectionId}`)
+    let added = 0
     if (mode === "replace") {
+      const before = new Set((connection.models ?? []).map((m) => m.publicId))
       connection.models = discovered
+      added = discovered.filter((m) => !before.has(m.publicId)).length
     } else if (mode === "merge") {
-      const existing = connection.models ?? []
-      const map = new Map(existing.map((m) => [m.publicId, m]))
-      for (const m of discovered) {
-        if (!map.has(m.publicId)) map.set(m.publicId, m)
-      }
-      connection.models = [...map.values()]
+      const merged = mergeDiscoveredModels(connection.models ?? [], discovered)
+      connection.models = merged.models
+      added = merged.added
     }
     // manual-only: 不修改 models
     connection.lastModelDiscoveryAt = Date.now()
     connection.lastModelDiscoveryError = undefined
     connection.updatedAt = Date.now()
+    return { added }
   })
 }
 
@@ -406,6 +542,12 @@ export async function addModel(
     if (connection.models?.some((m) => m.publicId === model.publicId)) {
       throw new Error(`Model "${model.publicId}" already exists`)
     }
+    assertNoAliasCollision(
+      connection.models,
+      undefined,
+      model.publicId,
+      model.aliases,
+    )
     connection.models = [...(connection.models ?? []), model]
     connection.updatedAt = Date.now()
   })
@@ -417,7 +559,13 @@ export async function updateModel(
   patch: Partial<
     Pick<
       ModelMapping,
-      "publicId" | "upstreamId" | "name" | "vendor" | "endpoints" | "enabled"
+      | "publicId"
+      | "upstreamId"
+      | "name"
+      | "vendor"
+      | "endpoints"
+      | "enabled"
+      | "aliases"
     >
   >,
 ): Promise<ModelMapping> {
@@ -436,6 +584,12 @@ export async function updateModel(
       if (dup)
         throw new Error(`Model "${newId}" already exists in this connection`)
       model.publicId = newId
+      // 显式改名标记:供刷新合并时权威判定(比字符串启发式可靠);
+      // 改回与 upstreamId 一致时清除标记。
+      const meta: Record<string, unknown> = { ...model.metadata }
+      if (newId === model.upstreamId) delete meta.renamedByUser
+      else meta.renamedByUser = true
+      model.metadata = meta
     }
     if (patch.upstreamId !== undefined) model.upstreamId = patch.upstreamId
     if (patch.name !== undefined) model.name = patch.name
@@ -443,6 +597,16 @@ export async function updateModel(
     if (patch.endpoints !== undefined && patch.endpoints.length > 0)
       model.endpoints = patch.endpoints
     if (patch.enabled !== undefined) model.enabled = patch.enabled
+    if (patch.publicId !== undefined || patch.aliases !== undefined) {
+      assertNoAliasCollision(
+        connection.models,
+        model,
+        model.publicId,
+        patch.aliases ?? model.aliases,
+      )
+    }
+    if (patch.aliases !== undefined)
+      model.aliases = patch.aliases.length > 0 ? patch.aliases : undefined
     connection.updatedAt = Date.now()
     return model
   })

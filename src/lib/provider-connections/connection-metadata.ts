@@ -153,9 +153,10 @@ export function getConnectionCooldownUntil(
   conn: ProviderConnection,
 ): number | undefined {
   // cooldownUntil 同时存在于 credential.cooldownUntil 和 metadata.cooldownUntil
-  // 优先读 credential（运行时状态），回退到 metadata（持久化值）
+  // 优先读 credential（运行时状态），回退到 metadata（持久化值）。
+  // 无 credential 的 connection 合法存在（先建连接后加凭据），不得抛错。
   const cred = conn.credentials[0]
-  return cred.cooldownUntil ?? readAccountLegacyMetadata(conn)?.cooldownUntil
+  return cred?.cooldownUntil ?? readAccountLegacyMetadata(conn)?.cooldownUntil
 }
 
 export function getConnectionLastRateLimitAt(

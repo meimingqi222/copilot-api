@@ -24,8 +24,6 @@ function connectionsView() {
       priority: 10,
       weight: 1,
       enabled: true,
-      discoveryEnabled: false,
-      discoveryMode: "merge",
       apiKey: "",
       _credentialId: null,
       customHeaders: [],
@@ -39,7 +37,6 @@ function connectionsView() {
     showModelModal: false,
     modelForm: {
       connectionId: null,
-      originalPublicId: null,
       publicId: "",
       upstreamId: "",
     },
@@ -59,6 +56,12 @@ function connectionsView() {
     showModelManager: false,
     modelManagerConn: null,
     modelManagerSearch: "",
+    // 管理抽屉内行内改名状态(统一对外 ID 编辑入口)
+    modelManagerEditingId: null,
+    modelManagerEditValue: "",
+    // 管理抽屉内别名编辑器状态(统一别名入口,数据存于 ModelMapping.aliases)
+    modelManagerAliasFor: null,
+    modelManagerAliasInput: "",
 
     formatTime(ts) {
       if (!ts) return ""
@@ -167,8 +170,6 @@ function connectionsView() {
       this.connForm.name = preset.name
       this.connForm.protocol = preset.protocol
       this.connForm.baseUrl = preset.baseUrl
-      this.connForm.discoveryEnabled = Boolean(preset.discoveryEnabled)
-      this.connForm.discoveryMode = preset.discoveryMode || "merge"
       this.connForm.apiKey = ""
       this.fetchedModels = (preset.defaultModels || []).map((m) => ({
         publicId: m.publicId,
@@ -193,8 +194,6 @@ function connectionsView() {
       this.connForm.protocol = "openai-compatible"
       this.connForm.baseUrl = ""
       this.connForm.apiKey = ""
-      this.connForm.discoveryEnabled = false
-      this.connForm.discoveryMode = "merge"
       this.fetchedModels = []
       this.selectedModelIds = []
       this.showFetchedModelsPanel = false
@@ -248,10 +247,29 @@ function connectionsView() {
           this.showToast(msg, "error")
           return
         }
-        this.fetchedModels = res.models || []
-        this.showFetchedModelsPanel = true
-        this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
-        this.showToast(`Fetched ${this.fetchedModels.length} models`, "success")
+        // 编辑模式:保留已有条目(含改名/enabled),仅追加新增且默认不勾选;
+        // 新建模式:沿用旧行为(替换 + 全选)
+        if (form.id) {
+          const known = new Set(this.fetchedModels.map((m) => m.publicId))
+          const fresh = (res.models || []).filter((m) => !known.has(m.publicId))
+          this.fetchedModels = [
+            ...this.fetchedModels,
+            ...fresh.map((m) => ({ ...m, enabled: false })),
+          ]
+          this.showFetchedModelsPanel = this.fetchedModels.length > 0
+          this.showToast(
+            `Fetched ${res.models?.length || 0} models, ${fresh.length} new (unchecked)`,
+            "success",
+          )
+        } else {
+          this.fetchedModels = res.models || []
+          this.showFetchedModelsPanel = true
+          this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
+          this.showToast(
+            `Fetched ${this.fetchedModels.length} models`,
+            "success",
+          )
+        }
       } catch (e) {
         this.showToast(e.message || "Failed to fetch models", "error")
       } finally {
@@ -320,8 +338,6 @@ function connectionsView() {
         priority: 10,
         weight: 1,
         enabled: true,
-        discoveryEnabled: false,
-        discoveryMode: "merge",
         apiKey: "",
         _credentialId: null,
         customHeaders: [],
@@ -366,8 +382,6 @@ function connectionsView() {
         priority: conn.priority,
         weight: conn.weight ?? 1,
         enabled: conn.enabled,
-        discoveryEnabled: Boolean(conn.modelDiscovery?.enabled),
-        discoveryMode: conn.modelDiscovery?.mode || "merge",
         apiKey: "",
         _credentialId: conn.credentials?.[0]?.id || null,
         customHeaders: headerEntries.map(([key, value]) => ({ key, value })),
@@ -378,10 +392,21 @@ function connectionsView() {
       this.fetchedModels = (conn.models || []).map((m) => ({
         publicId: m.publicId,
         upstreamId: m.upstreamId || m.publicId,
+        name: m.name,
         vendor: m.vendor,
         endpoints: m.endpoints || [],
+        aliases: m.aliases ? [...m.aliases] : [],
+        pickerEnabled: m.pickerEnabled !== false,
+        pickerCategory: m.pickerCategory,
+        // 元数据透传:含 renamedByUser 改名标记,编辑保存不得吞掉
+        metadata: m.metadata ? { ...m.metadata } : undefined,
+        // 回显真实启用态:勾选 = 启用,保存时全量写回(不再全选全启用)
+        enabled: m.enabled !== false,
       }))
-      this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
+      // 仅勾选已启用的模型,禁用的保持不勾选
+      this.selectedModelIds = this.fetchedModels
+        .filter((m) => m.enabled)
+        .map((m) => m.publicId)
       this.showFetchedModelsPanel = this.fetchedModels.length > 0
       this.showConnModal = true
       this.$nextTick(() => lucide.createIcons())
@@ -394,21 +419,35 @@ function connectionsView() {
         return
       }
 
-      const selectedModels = this.fetchedModels
-        .filter((m) => this.selectedModelIds.includes(m.publicId))
-        .map((m) => ({
-          publicId: m.publicId,
-          upstreamId: m.upstreamId || m.publicId,
-          vendor: m.vendor,
-          endpoints:
-            m.endpoints
-            || (form.protocol === "anthropic-compatible" ?
-              ["messages"]
-            : ["chat"]),
-          enabled: true,
-          pickerEnabled: true,
-        }))
+      const isEdit = Boolean(form.id)
+      const selectedModels = (
+        isEdit ?
+          this.fetchedModels
+        : this.fetchedModels.filter((m) =>
+            this.selectedModelIds.includes(m.publicId),
+          )).map((m) => ({
+        publicId: m.publicId,
+        upstreamId: m.upstreamId || m.publicId,
+        name: m.name,
+        vendor: m.vendor,
+        endpoints:
+          m.endpoints
+          || (form.protocol === "anthropic-compatible" ?
+            ["messages"]
+          : ["chat"]),
+        // 编辑模式:勾选即启用,全量写回(不勾选=禁用而非删除);
+        // 新建模式:只写入勾选的模型
+        enabled: isEdit ? this.selectedModelIds.includes(m.publicId) : true,
+        pickerEnabled: m.pickerEnabled !== false,
+        pickerCategory: m.pickerCategory,
+        // 别名透传:编辑框打开 + 保存不再吞掉抽屉里配好的别名
+        aliases: m.aliases && m.aliases.length > 0 ? [...m.aliases] : undefined,
+        // 元数据透传:含 renamedByUser 改名标记
+        metadata: m.metadata ? { ...m.metadata } : undefined,
+      }))
 
+      // 自动发现已从弹窗移除:新建默认不开启,编辑时不触碰服务端原值。
+      // 需要拉新模型时用右侧「在线获取模型」或连接行的手动刷新。
       const payload = {
         name: form.name,
         protocol: form.protocol,
@@ -416,10 +455,6 @@ function connectionsView() {
         priority: form.priority,
         weight: form.weight,
         enabled: form.enabled,
-        modelDiscovery: {
-          enabled: form.discoveryEnabled,
-          mode: form.discoveryMode,
-        },
         models: selectedModels,
         headers: this.customHeadersToRecord(),
       }
@@ -485,8 +520,15 @@ function connectionsView() {
       try {
         const res = await API.providerConnections.refreshModels(conn.id)
         await this.load()
+        const added = res.added ?? 0
+        // 仅 merge 模式新发现默认禁用;replace/manual-only 不缀此后缀
+        const suffix =
+          added > 0 && (res.mode ?? "merge") === "merge" ?
+            `, ${added} new (added disabled)`
+          : added > 0 ? `, ${added} new`
+          : ", no new models"
         this.showToast(
-          "Discovered " + (res.discovered ?? 0) + " model(s)",
+          `Discovered ${res.discovered ?? 0} model(s)${suffix}`,
           "success",
         )
       } catch (e) {
@@ -759,7 +801,6 @@ function connectionsView() {
     openAddModel(conn) {
       this.modelForm = {
         connectionId: conn.id,
-        originalPublicId: null,
         publicId: "",
         upstreamId: "",
       }
@@ -767,17 +808,108 @@ function connectionsView() {
       this.$nextTick(() => lucide.createIcons())
     },
 
-    openEditModel(conn, model) {
-      this.modelForm = {
-        connectionId: conn.id,
-        originalPublicId: model.publicId,
-        publicId: model.publicId,
-        upstreamId: model.upstreamId || "",
-      }
-      this.showModelModal = true
-      this.$nextTick(() => lucide.createIcons())
+    // 对外 ID 统一入口:管理抽屉行内改名(替代原来的逐个小弹窗)。
+    // 列表行 ✎ 直接跳到管理抽屉并激活该行改名。
+    openManagerAndRename(conn, publicId) {
+      this.openModelManager(conn)
+      this.startRenameModel({ publicId })
     },
 
+    startRenameModel(model) {
+      this.modelManagerEditingId = model.publicId
+      this.modelManagerEditValue = model.publicId
+      this.modelManagerAliasFor = null
+      this.modelManagerAliasInput = ""
+      this.$nextTick(() => {
+        const input = document.querySelector("[data-rename-input]")
+        if (input) input.focus()
+      })
+    },
+
+    cancelRenameModel() {
+      this.modelManagerEditingId = null
+      this.modelManagerEditValue = ""
+    },
+
+    async saveRenameModel(model) {
+      const conn = this.modelManagerConn
+      if (!conn) return
+      const next = (this.modelManagerEditValue || "").trim()
+      if (!next || next === model.publicId) {
+        this.cancelRenameModel()
+        return
+      }
+      try {
+        await API.providerConnections.updateModel(conn.id, model.publicId, {
+          publicId: next,
+        })
+        await this.load()
+        this.rebindManagerConn()
+        this.cancelRenameModel()
+        this.showToast("Saved", "success")
+      } catch (e) {
+        this.showToast(e.message || "Save failed", "error")
+      }
+    },
+
+    // load() 后 modelManagerConn 指向旧对象,按 id 重新绑定
+    rebindManagerConn() {
+      if (!this.modelManagerConn) return
+      const fresh = (this.connections || []).find(
+        (c) => c.id === this.modelManagerConn.id,
+      )
+      if (fresh) this.modelManagerConn = fresh
+    },
+
+    // ── 别名编辑器(统一别名入口之二:单连接单模型多别名) ──
+    toggleAliasEditor(m) {
+      if (this.modelManagerAliasFor === m.publicId) {
+        this.modelManagerAliasFor = null
+        this.modelManagerAliasInput = ""
+      } else {
+        this.cancelRenameModel()
+        this.modelManagerAliasFor = m.publicId
+        this.modelManagerAliasInput = ""
+        this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    async addModelAlias(m) {
+      const conn = this.modelManagerConn
+      if (!conn) return
+      const value = (this.modelManagerAliasInput || "").trim()
+      if (!value) return
+      const current = m.aliases || []
+      if (current.some((a) => a.toLowerCase() === value.toLowerCase())) {
+        this.modelManagerAliasInput = ""
+        return
+      }
+      try {
+        await API.providerConnections.updateModel(conn.id, m.publicId, {
+          aliases: [...current, value],
+        })
+        m.aliases = [...current, value]
+        this.modelManagerAliasInput = ""
+      } catch (e) {
+        this.showToast(e.message || "Save failed", "error")
+      }
+    },
+
+    async removeModelAlias(m, alias) {
+      const conn = this.modelManagerConn
+      if (!conn) return
+      const next = (m.aliases || []).filter((a) => a !== alias)
+      try {
+        await API.providerConnections.updateModel(conn.id, m.publicId, {
+          aliases: next,
+        })
+        m.aliases = next
+      } catch (e) {
+        this.showToast(e.message || "Save failed", "error")
+      }
+    },
+
+    // 添加模型弹窗只负责新增;改名统一走管理抽屉行内改名
     async saveModel() {
       const f = this.modelForm
       if (!f.publicId.trim()) {
@@ -789,13 +921,7 @@ function connectionsView() {
         upstreamId: f.upstreamId.trim() || undefined,
       }
       try {
-        await (f.originalPublicId ?
-          API.providerConnections.updateModel(
-            f.connectionId,
-            f.originalPublicId,
-            payload,
-          )
-        : API.providerConnections.addModel(f.connectionId, payload))
+        await API.providerConnections.addModel(f.connectionId, payload)
         this.showModelModal = false
         await this.load()
         this.showToast("Saved", "success")
@@ -820,6 +946,7 @@ function connectionsView() {
     openModelManager(conn) {
       this.modelManagerConn = conn
       this.modelManagerSearch = ""
+      this.cancelRenameModel()
       this.showModelManager = true
       this.$nextTick(() => lucide.createIcons())
     },
@@ -1065,6 +1192,7 @@ function connectionsView() {
       try {
         await API.providerConnections.deleteModel(conn.id, model.publicId)
         await this.load()
+        this.rebindManagerConn()
         this.showToast("Deleted", "success")
       } catch (e) {
         this.showToast(e.message || "Delete failed", "error")

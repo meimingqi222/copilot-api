@@ -13,6 +13,7 @@ import {
   classifyUpstreamError,
   getProviderConnection,
   listAccountManagedConnections,
+  mergeProviderRefreshedModels,
   migrateAccountsToConnections,
   persistProviderConnections,
   providerFromProtocol,
@@ -320,9 +321,11 @@ export async function refreshModelsForConnection(
   if (!provider) return
   try {
     const models = await getProviderRuntime(provider).refreshModels(conn)
-    conn.models = models
+    // provider 全量覆盖时保留用户层配置(改名/禁用/别名),见
+    // mergeProviderRefreshedModels。
+    conn.models = mergeProviderRefreshedModels(conn.models, models)
     logger.debug(
-      `Models for "${conn.name}": ${models.map((m) => m.publicId).join(", ")}`,
+      `Models for "${conn.name}": ${(conn.models ?? []).map((m) => m.publicId).join(", ")}`,
     )
     if (getProviderConnection(conn.id)) {
       upsertProviderConnection(conn)
@@ -340,7 +343,7 @@ export async function refreshModelsForConnection(
       return
     }
 
-    conn.models = fallbackModels
+    conn.models = mergeProviderRefreshedModels(conn.models, fallbackModels)
     if (getProviderConnection(conn.id)) {
       upsertProviderConnection(conn)
       await persistProviderConnections()
