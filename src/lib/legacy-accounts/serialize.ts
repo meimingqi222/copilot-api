@@ -85,7 +85,11 @@ function serializeAccount(account: Account): Record<string, unknown> {
   if (account.provider === "codebuddy") {
     return {
       ...base,
-      credentials: { accessToken: getCodebuddyAccessToken(account) },
+      credentials: {
+        accessToken: getCodebuddyAccessToken(account),
+        refreshToken: account.credentials?.refreshToken,
+        expiresAt: account.credentials?.expiresAt,
+      },
       settings: account.settings ?? {},
     }
   }

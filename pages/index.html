@@ -1508,6 +1508,22 @@
                     placeholder='serviceToken="..."; userId=...; xiaomichatbot_ph="..."'
                   ></textarea>
                 </div>
+                <div
+                  x-show="newAccount.provider === 'codebuddy'"
+                  class="space-y-1"
+                >
+                  <label
+                    class="form-label"
+                    x-text="t('accounts.provider.codebuddy.jsonHint')"
+                  ></label>
+                  <textarea
+                    x-model="codebuddyJsonInput"
+                    @input="parseCodebuddyJson()"
+                    class="form-input font-mono text-xs"
+                    rows="4"
+                    placeholder='{"auth":{"accessToken":"eyJ...","refreshToken":"eyJ..."}}'
+                  ></textarea>
+                </div>
                 <div x-show="selectedProviderFields().length" class="space-y-3">
                   <template
                     x-for="field in selectedProviderFields()"

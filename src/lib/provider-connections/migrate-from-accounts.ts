@@ -126,6 +126,13 @@ function getAccountContext(account: Account): Record<string, unknown> {
       windsurfJwtFetchedAt: account.runtimeState?.windsurfJwtFetchedAt,
     }
   }
+  if (account.provider === "codebuddy") {
+    return {
+      ...base,
+      refreshToken: readCredentialString(account, "refreshToken"),
+      expiresAt: account.credentials?.expiresAt,
+    }
+  }
   if (isOAuthAccount(account)) {
     return {
       ...base,
@@ -150,6 +157,7 @@ function getRefresherType(account: Account): CredentialRefresherType {
   if (account.provider === "copilot") return "copilot-token"
   if (isOAuthAccount(account)) return "oauth-token"
   if (account.provider === "windsurf") return "windsurf-jwt"
+  if (account.provider === "codebuddy") return "codebuddy-token"
   return "static"
 }
 

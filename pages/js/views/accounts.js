@@ -41,6 +41,7 @@ function accountsView() {
     /** 原地重认证目标账号（null = 新建账号流程） */
     reauthAccount: null,
     mimoCookieInput: "",
+    codebuddyJsonInput: "",
 
     parseMimoCookie() {
       const str = this.mimoCookieInput
@@ -75,6 +76,44 @@ function accountsView() {
             break
           }
         }
+      }
+    },
+
+    /** 解析 CodeBuddy auth JSON，自动填充 label / accessToken / refreshToken。 */
+    parseCodebuddyJson() {
+      const str = this.codebuddyJsonInput.trim()
+      if (!str) return
+      try {
+        const obj = JSON.parse(str)
+        // 支持多种格式：
+        //   { account: { nickname }, auth: { accessToken, refreshToken } }  （CLI auth 文件完整结构）
+        //   { accessToken, refreshToken }            （auth 子对象）
+        //   { accessToken: "..." }                    （只含 accessToken）
+        const auth = obj.auth ?? obj
+        if (typeof auth.accessToken === "string" && auth.accessToken) {
+          this.setAccountFieldValue(
+            { key: "accessToken", type: "secret" },
+            auth.accessToken.trim(),
+          )
+        }
+        if (typeof auth.refreshToken === "string" && auth.refreshToken) {
+          this.setAccountFieldValue(
+            { key: "refreshToken", type: "secret" },
+            auth.refreshToken.trim(),
+          )
+        }
+        // 自动填充 label：优先用 account.nickname
+        const account = obj.account
+        if (
+          account
+          && typeof account.nickname === "string"
+          && account.nickname
+          && !this.newAccount.label
+        ) {
+          this.newAccount.label = `CodeBuddy-${account.nickname}`
+        }
+      } catch {
+        // JSON 解析失败时静默忽略，用户可能还在输入
       }
     },
     editingLabel: null,
@@ -273,6 +312,8 @@ function accountsView() {
       this.oauthFlowData = null
       this.oauthCallbackInput = ""
       this.oauthCallbackSubmitting = false
+      this.mimoCookieInput = ""
+      this.codebuddyJsonInput = ""
       if (this.pollTimer) clearTimeout(this.pollTimer)
       this.pollTimer = null
     },

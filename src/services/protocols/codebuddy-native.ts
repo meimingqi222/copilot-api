@@ -39,6 +39,20 @@ const CODEBUDDY_CONFIG_URL = "https://copilot.tencent.com/v3/config"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_PRODUCT = "SaaS"
+const CODEBUDDY_IDE_VERSION = "2.148.0"
+const CODEBUDDY_STAINLESS_PACKAGE_VERSION = "6.25.0"
+
+// ── 分布式追踪 ID 生成 ──────────────────────────────────────────────
+
+/** 生成 32 字符十六进制 trace ID（W3C / B3 格式）。 */
+function randomTraceId(): string {
+  return randomUUID().replaceAll("-", "").slice(0, 32)
+}
+
+/** 生成 16 字符十六进制 span ID。 */
+function randomSpanId(): string {
+  return randomUUID().replaceAll("-", "").slice(0, 16)
+}
 
 // ── JWT 解码（仅 payload，不验签） ──────────────────────────────────
 
@@ -65,17 +79,70 @@ function decodeJwtPayload(token: string): JwtPayload | null {
 
 // ── 请求头构造 ──────────────────────────────────────────────────────
 
+/**
+ * 构造完整的 CodeBuddy 请求头，完美伪装成 CLI 客户端。
+ *
+ * 通过 mitmproxy 抓包 CodeBuddy CLI 2.148.0 得到的完整 header 列表，
+ * 包含 OpenAI SDK 指纹（x-stainless-*）、会话追踪（X-Conversation-*）、
+ * 客户端标识（X-IDE-* / X-Agent-*）、分布式追踪（traceparent / b3）等。
+ */
 function buildCodebuddyHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
 ): Record<string, string> {
+  const requestId = randomUUID()
+  const conversationId = randomUUID()
+  const conversationRequestId = randomUUID()
+  const traceId = randomTraceId()
+  const spanId = randomSpanId()
+  const parentSpanId = randomSpanId()
+
   const headers: Record<string, string> = {
+    // 基础
     "Content-Type": "application/json",
     Accept: "application/json",
-    "X-Domain": CODEBUDDY_DOMAIN,
+    "X-Requested-With": "XMLHttpRequest",
+
+    // OpenAI SDK 指纹（x-stainless-*）
+    "x-stainless-lang": "js",
+    "x-stainless-package-version": CODEBUDDY_STAINLESS_PACKAGE_VERSION,
+    "x-stainless-os": "MacOS",
+    "x-stainless-arch": "arm64",
+    "x-stainless-runtime": "node",
+    "x-stainless-runtime-version": "v22.22.1",
+    "x-stainless-retry-count": "0",
+
+    // CodeBuddy CLI 标识
     "X-Product": CODEBUDDY_PRODUCT,
-    "X-Request-Id": randomUUID(),
+    "X-Domain": CODEBUDDY_DOMAIN,
+    "X-IDE-Type": "CLI",
+    "X-IDE-Name": "CLI",
+    "X-IDE-Version": CODEBUDDY_IDE_VERSION,
+    "X-Private-Data": "false",
+    "x-codebuddy-request": "1",
     "User-Agent": CODEBUDDY_USER_AGENT,
+
+    // 会话 / 请求追踪
+    "X-Request-Id": requestId,
+    "X-Conversation-ID": conversationId,
+    "X-Conversation-Message-ID": requestId,
+    "X-Conversation-Request-ID": conversationRequestId,
+    "X-Root-Request-ID": conversationRequestId,
+
+    // Agent 标识
+    "X-Agent-Type": "main",
+    "X-Agent-Intent": "craft",
+    "X-Agent-Purpose": "conversation",
+
+    // 分布式追踪（W3C traceparent + B3）
+    traceparent: `00-${traceId}-${spanId}-01`,
+    b3: `${traceId}-${spanId}-1-${parentSpanId}`,
+    "X-B3-TraceId": traceId,
+    "X-B3-SpanId": spanId,
+    "X-B3-ParentSpanId": parentSpanId,
+    "X-B3-Sampled": "1",
+    "X-Trace-ID": traceId,
+
     ...connection.headers,
   }
 
@@ -235,6 +302,25 @@ function aggregateSseToResponse(
   })
 }
 
+// ── 模型厂商推断 ──────────────────────────────────────────────────────
+
+/**
+ * CodeBuddy /v3/config 返回的 vendor 是单字母内部代码（v/f/e/j），
+ * 对用户无意义。这里根据模型 id 前缀推断出可读的厂商名。
+ */
+function codebuddyVendorLabel(
+  modelId: string,
+  _upstreamVendor?: string,
+): string | undefined {
+  if (modelId.startsWith("deepseek")) return "DeepSeek"
+  if (modelId.startsWith("minimax")) return "MiniMax"
+  if (modelId.startsWith("glm-")) return "Zhipu"
+  if (modelId.startsWith("kimi-")) return "Moonshot"
+  if (modelId.startsWith("hy") || modelId.startsWith("hunyuan"))
+    return "Tencent"
+  return undefined
+}
+
 // ── Adapter ──────────────────────────────────────────────────────────
 
 export const codebuddyNativeAdapter: ProtocolAdapter = {
@@ -260,6 +346,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
         models?: Array<{
           id: string
           name?: string
+          vendor?: string
         }>
       }
     }
@@ -272,6 +359,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
         publicId: m.id,
         upstreamId: m.id,
         name: m.name,
+        vendor: codebuddyVendorLabel(m.id, m.vendor),
         endpoints: ["chat"],
         enabled: true,
         pickerEnabled: true,

@@ -299,6 +299,12 @@ function buildCredentials(
     if (provider === "copilot" && typeof ctx.githubToken === "string") {
       credentials.githubToken = ctx.githubToken
     }
+    if (provider === "codebuddy") {
+      if (typeof ctx.refreshToken === "string")
+        credentials.refreshToken = ctx.refreshToken
+      if (typeof ctx.expiresAt === "number")
+        credentials.expiresAt = ctx.expiresAt
+    }
     if (isOAuthProviderId(provider)) {
       if (typeof ctx.refreshToken === "string")
         credentials.refreshToken = ctx.refreshToken

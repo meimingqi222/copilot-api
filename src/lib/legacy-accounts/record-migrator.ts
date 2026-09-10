@@ -370,6 +370,8 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
       provider: "codebuddy",
       credentials: {
         accessToken: pickString(existingCredentials?.accessToken, undefined),
+        refreshToken: pickString(existingCredentials?.refreshToken, undefined),
+        expiresAt: pickNumber(existingCredentials?.expiresAt, undefined),
       },
       settings: existingSettings ?? {},
       runtimeState: existingRuntime,

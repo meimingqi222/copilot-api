@@ -10,6 +10,11 @@ import type { ApiCredential } from "~/lib/provider-connections/types"
 
 import { logger } from "~/lib/logger"
 import {
+  codebuddyNeedsRefresh,
+  refreshCodebuddyTokenForConnection,
+  scheduleCodebuddyRefresh,
+} from "~/services/codebuddy/token-refresh"
+import {
   refreshCopilotTokenForConnection,
   scheduleConnectionTokenRefresh,
 } from "~/services/copilot/token-refresh"
@@ -112,6 +117,30 @@ const windsurfJwtRefresher: CredentialRefresher = {
   scheduleNextRefresh(_credential: ApiCredential): void {},
 }
 
+// ── CodebuddyTokenRefresher ───────────────────────────────────────
+
+const codebuddyRefresher: CredentialRefresher = {
+  type: "codebuddy-token",
+
+  async refresh(credential: ApiCredential): Promise<void> {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn || !conn.enabled) return
+    await refreshCodebuddyTokenForConnection(conn)
+  },
+
+  needsRefresh(credential: ApiCredential): boolean {
+    return codebuddyNeedsRefresh(credential)
+  },
+
+  scheduleNextRefresh(credential: ApiCredential): void {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn) return
+    scheduleCodebuddyRefresh(conn)
+  },
+}
+
 // ── StaticRefresher(无刷新需求) ─────────────────────────────────
 
 const staticRefresher: CredentialRefresher = {
@@ -132,9 +161,10 @@ export function initializeCredentialRefreshers(): void {
   registerCredentialRefresher(copilotRefresher)
   registerCredentialRefresher(oauthRefresher)
   registerCredentialRefresher(windsurfJwtRefresher)
+  registerCredentialRefresher(codebuddyRefresher)
   registerCredentialRefresher(staticRefresher)
   initialized = true
-  logger.debug("[credential-refresher] Registered 4 refresher implementations")
+  logger.debug("[credential-refresher] Registered 5 refresher implementations")
 }
 
 export function getCredentialRefresherByType(type: string) {

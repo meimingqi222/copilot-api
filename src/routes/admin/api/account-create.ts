@@ -19,6 +19,23 @@ import { initializeProviderRegistry } from "~/services/providers"
 import { publicAccountFromConnection } from "./account-views"
 import { registerPendingFlow } from "./device-flow"
 
+/** 从 JWT 的 exp 字段提取过期时间（秒 → 毫秒）。 */
+function extractJwtExp(token: string): number | undefined {
+  const parts = token.split(".")
+  if (parts.length !== 3) return undefined
+  try {
+    const payload = JSON.parse(
+      Buffer.from(
+        parts[1].replaceAll("-", "+").replaceAll("_", "/"),
+        "base64",
+      ).toString("utf8"),
+    ) as { exp?: number }
+    return typeof payload.exp === "number" ? payload.exp * 1000 : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export const createAccountRoutes = new Hono()
 
 createAccountRoutes.post("/", async (c) => {
@@ -177,9 +194,18 @@ createAccountRoutes.post("/", async (c) => {
       typeof body.credentials?.accessToken === "string" ?
         body.credentials.accessToken.trim()
       : body.authToken?.trim()
-    if (!accessToken) {
-      return c.json({ error: "CodeBuddy accessToken is required." }, 400)
+    const refreshToken =
+      typeof body.credentials?.refreshToken === "string" ?
+        body.credentials.refreshToken.trim()
+      : undefined
+    if (!accessToken && !refreshToken) {
+      return c.json(
+        { error: "CodeBuddy accessToken or refreshToken is required." },
+        400,
+      )
     }
+
+    const expiresAt = accessToken ? extractJwtExp(accessToken) : undefined
 
     const account: Account = {
       id: randomUUID(),
@@ -190,7 +216,9 @@ createAccountRoutes.post("/", async (c) => {
       quotaState: "unknown",
       createdAt: Date.now(),
       credentials: {
-        accessToken,
+        accessToken: accessToken ?? "",
+        ...(refreshToken ? { refreshToken } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
       },
       settings: {
         ...body.settings,

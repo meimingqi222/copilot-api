@@ -121,6 +121,17 @@ const i18n = {
         "xiaomichatbot_ph Cookie",
       "accounts.provider.mimo-aistudio.cookieHint":
         "粘贴 Cookie 自动解析（可选）",
+      "accounts.provider.codebuddy": "CodeBuddy",
+      "accounts.provider.codebuddy.name": "CodeBuddy",
+      "accounts.provider.codebuddy.fields.accessToken": "CodeBuddy AccessToken",
+      "accounts.provider.codebuddy.fields.accessTokenHint":
+        "CodeBuddy CLI 登录后的 accessToken（eyJ... 开头），有效期 60 天",
+      "accounts.provider.codebuddy.fields.refreshToken":
+        "CodeBuddy RefreshToken",
+      "accounts.provider.codebuddy.fields.refreshTokenHint":
+        "CodeBuddy CLI 登录后的 refreshToken，用于自动刷新 accessToken（有效期 90 天）",
+      "accounts.provider.codebuddy.jsonHint":
+        "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
       "accounts.codebuffAuthToken": "Codebuff 授权令牌",
       "accounts.status": "状态",
       "accounts.active": "活跃账户",
@@ -849,6 +860,17 @@ const i18n = {
         "xiaomichatbot_ph Cookie",
       "accounts.provider.mimo-aistudio.cookieHint":
         "Paste cookie to auto-parse (optional)",
+      "accounts.provider.codebuddy": "CodeBuddy",
+      "accounts.provider.codebuddy.name": "CodeBuddy",
+      "accounts.provider.codebuddy.fields.accessToken": "CodeBuddy AccessToken",
+      "accounts.provider.codebuddy.fields.accessTokenHint":
+        "Access token from CodeBuddy CLI login (starts with eyJ...), valid for 60 days",
+      "accounts.provider.codebuddy.fields.refreshToken":
+        "CodeBuddy RefreshToken",
+      "accounts.provider.codebuddy.fields.refreshTokenHint":
+        "Refresh token from CodeBuddy CLI login, used to auto-refresh accessToken (valid for 90 days)",
+      "accounts.provider.codebuddy.jsonHint":
+        "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
       "accounts.codebuffAuthToken": "Codebuff Auth Token",
       "accounts.status": "Status",
       "accounts.active": "Active Accounts",

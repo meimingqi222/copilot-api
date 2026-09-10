@@ -15,6 +15,7 @@ export type CredentialRefresherType =
   | "copilot-token"
   | "oauth-token"
   | "windsurf-jwt"
+  | "codebuddy-token"
   | "static"
 
 export interface CredentialRefresher {

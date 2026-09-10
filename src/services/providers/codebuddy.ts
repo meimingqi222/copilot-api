@@ -2,8 +2,9 @@
  * CodeBuddy Provider Runtime。
  *
  * CodeBuddy 是腾讯的编码助手，后端使用标准 OpenAI Chat Completions 协议。
- * 用户通过粘贴 CodeBuddy CLI 登录后的 accessToken 来接入（无 OAuth 流程）。
- * token 有效期 60 天，过期后需重新粘贴。
+ * 用户通过粘贴 CodeBuddy CLI 登录后的 accessToken + refreshToken 来接入。
+ * accessToken 有效期 60 天，refreshToken 有效期 90 天，
+ * 系统会在 accessToken 过期前自动调用 /v2/plugin/auth/token/refresh 刷新。
  */
 
 import type { ModelMapping } from "~/lib/provider-connections"
@@ -51,8 +52,14 @@ export const codebuddyProviderRuntime: ProviderRuntime = {
         type: "secret",
         labelKey: "accounts.provider.codebuddy.fields.accessToken",
         descriptionKey: "accounts.provider.codebuddy.fields.accessTokenHint",
-        required: true,
         placeholder: "eyJhbGciOiJSUzI1NiIs...",
+      },
+      {
+        key: "refreshToken",
+        type: "secret",
+        labelKey: "accounts.provider.codebuddy.fields.refreshToken",
+        descriptionKey: "accounts.provider.codebuddy.fields.refreshTokenHint",
+        placeholder: "eyJhbGciOiJIUzUxMiIs...",
       },
     ],
   },
