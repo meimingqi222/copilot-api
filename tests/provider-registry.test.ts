@@ -4,6 +4,10 @@ import path from "node:path"
 
 import { listAccounts } from "~/lib/legacy-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
+import {
+  removeProviderConnection,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { ensureDirectProviderConnections } from "~/lib/provider-defaults"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
@@ -104,6 +108,163 @@ test("cacheModels exposes only bare model ids", () => {
   expect(modelIds.includes("swe-1-6-fast")).toBe(true)
   expect(modelIds.includes("copilot/swe-1-6-fast")).toBe(false)
   expect(modelIds.includes("windsurf/swe-1-6-fast")).toBe(false)
+})
+
+test("cacheModels skips hidden and disabled models on account-managed connections", () => {
+  upsertProviderConnection({
+    id: "windsurf-hidden",
+    name: "Windsurf",
+    protocol: "windsurf-native",
+    baseUrl: "https://api.windsurf.com",
+    enabled: true,
+    priority: 0,
+    createdAt: Date.now(),
+    credentials: [
+      {
+        id: "ws-cred",
+        authMode: "bearer",
+        value: "token",
+        enabled: true,
+        status: "ready",
+        createdAt: Date.now(),
+      },
+    ],
+    models: [
+      {
+        publicId: "glm-5-2",
+        upstreamId: "glm-5-2",
+        name: "GLM-5.2",
+        vendor: "Zai",
+        endpoints: ["chat"],
+        enabled: true,
+        pickerEnabled: true,
+      },
+      {
+        publicId: "glm-5-2-max",
+        upstreamId: "glm-5-2-max",
+        name: "GLM-5.2 Max",
+        vendor: "Zai",
+        endpoints: ["chat"],
+        enabled: true,
+        pickerEnabled: false,
+        hidden: true,
+      },
+      {
+        publicId: "glm-disabled",
+        upstreamId: "glm-disabled",
+        name: "Disabled",
+        vendor: "Zai",
+        endpoints: ["chat"],
+        enabled: false,
+        pickerEnabled: false,
+      },
+    ],
+  })
+
+  cacheModels()
+
+  const modelIds = state.models?.data.map((model) => model.id) ?? []
+  expect(modelIds).toContain("glm-5-2")
+  expect(modelIds).not.toContain("glm-5-2-max")
+  expect(modelIds).not.toContain("glm-disabled")
+
+  removeProviderConnection("windsurf-hidden")
+})
+
+test("cacheModels exposes byEffort keys as supports.reasoning_effort", () => {
+  upsertProviderConnection({
+    id: "windsurf-efforts",
+    name: "Windsurf",
+    protocol: "windsurf-native",
+    baseUrl: "https://api.windsurf.com",
+    enabled: true,
+    priority: 0,
+    createdAt: Date.now(),
+    credentials: [
+      {
+        id: "ws-cred",
+        authMode: "bearer",
+        value: "token",
+        enabled: true,
+        status: "ready",
+        createdAt: Date.now(),
+      },
+    ],
+    models: [
+      {
+        publicId: "glm-5-2",
+        upstreamId: "glm-5-2",
+        name: "GLM-5.2",
+        vendor: "Zai",
+        endpoints: ["chat"],
+        enabled: true,
+        pickerEnabled: true,
+        metadata: {
+          windsurfVariants: {
+            contextTier: "standard",
+            lane: "standard",
+            defaultEffort: "high",
+            byEffort: {
+              none: "glm-5-2-none",
+              high: "glm-5-2",
+              max: "glm-5-2-max",
+            },
+          },
+        },
+      },
+      {
+        publicId: "claude-haiku-4.5",
+        upstreamId: "MODEL_PRIVATE_11",
+        name: "Claude Haiku 4.5",
+        vendor: "Anthropic",
+        endpoints: ["chat"],
+        enabled: true,
+        pickerEnabled: true,
+      },
+      {
+        publicId: "glm-5-2-1m",
+        upstreamId: "glm-5-2-1m",
+        name: "GLM-5.2 1M",
+        vendor: "Zai",
+        endpoints: ["chat"],
+        enabled: true,
+        pickerEnabled: true,
+        metadata: {
+          windsurfVariants: {
+            contextTier: "1m",
+            lane: "standard",
+            defaultEffort: "high",
+            byEffort: {
+              none: "glm-5-2-none-1m",
+              high: "glm-5-2-1m",
+              max: "glm-5-2-max-1m",
+            },
+          },
+        },
+      },
+    ],
+  })
+
+  cacheModels()
+
+  const glm = state.models?.data.find((m) => m.id === "glm-5-2")
+  // Default effort first, then ascending.
+  expect(glm?.capabilities.supports.reasoning_effort).toEqual([
+    "high",
+    "none",
+    "max",
+  ])
+  const haiku = state.models?.data.find((m) => m.id === "claude-haiku-4.5")
+  expect(haiku?.capabilities.supports.reasoning_effort).toBeUndefined()
+  // The 1m tier advertises its window through the existing Copilot limits slot;
+  // standard-tier families leave it unset.
+  expect(
+    state.models?.data.find((m) => m.id === "glm-5-2-1m")?.capabilities.limits
+      ?.max_context_window_tokens,
+  ).toBe(1_000_000)
+  expect(glm?.capabilities.limits).toBeUndefined()
+
+  removeProviderConnection("windsurf-efforts")
 })
 
 test("ensureDirectProviderConnections reapplies CLI defaults to managed direct accounts", async () => {

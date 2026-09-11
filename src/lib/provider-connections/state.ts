@@ -444,22 +444,45 @@ export function mergeProviderRefreshedModels(
   fresh: Array<ModelMapping>,
 ): Array<ModelMapping> {
   if (!existing || existing.length === 0) return fresh
-  const byUpstream = new Map<string, ModelMapping>()
+
+  // Primary key is publicId. Fallback key includes the hidden flag so a head
+  // mapping and a hidden pin that share an upstreamId (opaque default-effort
+  // SKUs) never collapse onto the same prev — that used to rewrite the pin's
+  // publicId to the head name and produce duplicates.
+  const byPublicId = new Map<string, ModelMapping>()
+  const byUpstreamKey = new Map<string, ModelMapping>()
   for (const m of existing) {
-    const key = (m.upstreamId || m.publicId).toLowerCase()
-    if (!byUpstream.has(key)) byUpstream.set(key, m)
+    const publicId = (m.publicId || "").toLowerCase()
+    if (publicId && !byPublicId.has(publicId)) byPublicId.set(publicId, m)
+    const upstreamKey = `${(m.upstreamId || m.publicId).toLowerCase()}::${m.hidden ? "1" : "0"}`
+    if (!byUpstreamKey.has(upstreamKey)) byUpstreamKey.set(upstreamKey, m)
   }
+
   return fresh.map((f) => {
-    const prev = byUpstream.get((f.upstreamId || f.publicId).toLowerCase())
+    const publicId = (f.publicId || "").toLowerCase()
+    const upstreamKey = `${(f.upstreamId || f.publicId).toLowerCase()}::${f.hidden ? "1" : "0"}`
+    const prev = byPublicId.get(publicId) ?? byUpstreamKey.get(upstreamKey)
     if (!prev) return f
-    const userRenamed =
+
+    const explicitRename =
       (prev.metadata?.renamedByUser as boolean | undefined) === true
-      || prev.publicId !== prev.upstreamId
+    // Legacy heuristic only when publicIds actually differ. Matching publicId
+    // means nothing was renamed; comparing prev.publicId to prev.upstreamId
+    // is wrong for opaque ids where they never match.
+    const legacyRename =
+      !explicitRename
+      && prev.publicId !== f.publicId
+      && prev.publicId !== prev.upstreamId
+    const userRenamed = explicitRename || legacyRename
+
     return {
       ...f,
       ...(userRenamed ? { publicId: prev.publicId } : {}),
       ...(prev.enabled === false ? { enabled: false } : {}),
       ...(prev.aliases?.length ? { aliases: prev.aliases } : {}),
+      ...(prev.hiddenAliases?.length ?
+        { hiddenAliases: prev.hiddenAliases }
+      : {}),
     }
   })
 }

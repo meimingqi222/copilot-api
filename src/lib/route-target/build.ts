@@ -285,6 +285,11 @@ function matchesPublicModelId(model: ModelMapping, requested: string): boolean {
   if (model.aliases?.some((alias) => alias.toLowerCase() === normalized)) {
     return true
   }
+  if (
+    model.hiddenAliases?.some((alias) => alias.toLowerCase() === normalized)
+  ) {
+    return true
+  }
   return false
 }
 
@@ -303,7 +308,10 @@ function matchesConnectionModel(
   const aliases = buildConnectionModelAliases(connection, model.publicId)
   if (aliases.some((alias) => alias.toLowerCase() === normalized)) return true
   return (
-    model.aliases?.some((alias) => alias.toLowerCase() === normalized) ?? false
+    (model.aliases?.some((alias) => alias.toLowerCase() === normalized)
+      ?? false)
+    || (model.hiddenAliases?.some((alias) => alias.toLowerCase() === normalized)
+      ?? false)
   )
 }
 
@@ -375,6 +383,9 @@ export function listExposedPublicModels(
     refreshConnectionAvailability(connection)
     for (const model of connection.models ?? []) {
       if (!model.enabled) continue
+      // hidden mappings are routable by publicId but never listed.
+      if (model.hidden) continue
+      // hiddenAliases 可路由但不进 /v1/models。
       const ids = [model.publicId, ...(model.aliases ?? [])]
       for (const id of ids) {
         out.push({

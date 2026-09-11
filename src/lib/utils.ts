@@ -25,6 +25,10 @@ import { globalTimers } from "~/lib/timer-registry"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
+import {
+  listWindsurfSupportedEfforts,
+  windsurfContextWindow,
+} from "~/services/windsurf/variant-collapse"
 
 import { state } from "./state"
 
@@ -74,7 +78,9 @@ export function cacheModels(): void {
       return left.originalIndex - right.originalIndex
     })
     .flatMap(({ conn }) =>
-      (conn.models ?? []).map((model) => ({ model, conn })),
+      (conn.models ?? [])
+        .filter((model) => model.enabled !== false && !model.hidden)
+        .map((model) => ({ model, conn })),
     )
 
   if (connectionModels.length > 0) {
@@ -103,28 +109,45 @@ export function cacheModels(): void {
 
     state.models = {
       object: "list",
-      data: Array.from(merged.values()).map(({ model, conn, publicId }) => ({
-        id: publicId,
-        object: "model",
-        name: model.name ?? publicId,
-        preview: false,
-        vendor: model.vendor ?? "unknown",
-        version: "1",
-        model_picker_enabled: model.pickerEnabled ?? true,
-        model_picker_category: model.pickerCategory,
-        supported_endpoints: (model.endpoints ?? []).map((e) =>
-          endpointToSupported(e),
-        ),
-        capabilities: {
-          family:
-            providerFromProtocol(conn.protocol)
-            ?? (model.vendor ?? "unknown").toLowerCase(),
-          object: "capabilities",
-          supports: { streaming: true },
-          tokenizer: "unknown",
-          type: "chat",
-        },
-      })),
+      data: Array.from(merged.values()).map(({ model, conn, publicId }) => {
+        const reasoningEfforts = listWindsurfSupportedEfforts(model)
+        const contextWindow = windsurfContextWindow(model)
+        return {
+          id: publicId,
+          object: "model",
+          name: model.name ?? publicId,
+          preview: false,
+          vendor: model.vendor ?? "unknown",
+          version: "1",
+          model_picker_enabled: model.pickerEnabled ?? true,
+          model_picker_category: model.pickerCategory,
+          supported_endpoints: (model.endpoints ?? []).map((e) =>
+            endpointToSupported(e),
+          ),
+          capabilities: {
+            family:
+              providerFromProtocol(conn.protocol)
+              ?? (model.vendor ?? "unknown").toLowerCase(),
+            object: "capabilities",
+            // Only advertised when the catalog names it (the `1m` tier);
+            // standard-tier families carry no window information.
+            ...(contextWindow === undefined ?
+              {}
+            : { limits: { max_context_window_tokens: contextWindow } }),
+            supports: {
+              streaming: true,
+              // Exact effort keys this family accepts (Windsurf collapsed
+              // variants), default first. Clients that honor this list will
+              // not send unsupported tiers.
+              ...(reasoningEfforts ?
+                { reasoning_effort: reasoningEfforts }
+              : {}),
+            },
+            tokenizer: "unknown",
+            type: "chat",
+          },
+        }
+      }),
     }
     appendProviderConnectionModels()
     return

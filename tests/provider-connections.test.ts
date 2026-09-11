@@ -685,6 +685,63 @@ describe("route-target build + select", () => {
     expect(ids).toContain("deepseek-v3")
   })
 
+  test("listExposedPublicModels hides hidden mappings but still routes them", () => {
+    const connection = {
+      id: "ws-hidden",
+      name: "Windsurf Hidden",
+      protocol: "windsurf-native",
+      baseUrl: "https://api.windsurf.com",
+      enabled: true,
+      priority: 10,
+      models: [
+        {
+          publicId: "glm-5-2",
+          upstreamId: "glm-5-2",
+          name: "GLM-5.2",
+          vendor: "Zai",
+          endpoints: ["chat", "messages"],
+          enabled: true,
+          pickerEnabled: true,
+        },
+        {
+          publicId: "glm-5-2-max",
+          upstreamId: "glm-5-2-max",
+          name: "GLM-5.2 Max",
+          vendor: "Zai",
+          endpoints: ["chat", "messages"],
+          enabled: true,
+          pickerEnabled: false,
+          hidden: true,
+        },
+      ],
+      credentials: [
+        {
+          id: "ws-cred",
+          authMode: "bearer",
+          value: "token",
+          enabled: true,
+          status: "ready",
+          createdAt: Date.now(),
+        },
+      ],
+      createdAt: Date.now(),
+    } as unknown as ProviderConnection
+
+    const exposed = listExposedPublicModels([connection]).map((m) => m.publicId)
+    expect(exposed).toContain("glm-5-2")
+    expect(exposed).not.toContain("glm-5-2-max")
+
+    const targets = buildRouteTargets({
+      publicModelId: "glm-5-2-max",
+      endpoint: "chat",
+      connections: [connection],
+    })
+    expect(targets).toHaveLength(1)
+    expect(targets[0]?.publicModelId).toBe("glm-5-2-max")
+    // Pin keeps its own upstream — dispatch overwrites payload.model with this.
+    expect(targets[0]?.upstreamModelId).toBe("glm-5-2-max")
+  })
+
   test("buildRouteTargets safely ignores connections with missing credentials", () => {
     const connection = {
       id: "broken",

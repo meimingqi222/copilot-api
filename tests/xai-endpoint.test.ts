@@ -786,6 +786,17 @@ describe("sanitizeXaiResponsesBody", () => {
   })
 })
 
+/** Minimal `capabilities` block for Grok Shell envelope tests. */
+function shellCaps(family: string) {
+  return {
+    family,
+    object: "capabilities",
+    supports: { streaming: true },
+    tokenizer: "unknown",
+    type: "chat",
+  }
+}
+
 describe("Grok Shell models format", () => {
   test("detects grok-shell user agents", () => {
     expect(isGrokShellUserAgent("grok-shell/0.2.119 (macos; aarch64)")).toBe(
@@ -839,7 +850,9 @@ describe("Grok Shell models format", () => {
       context_window: 500_000,
       api_backend: "responses",
       supported_in_api: true,
-      reasoning_efforts: [{ value: "low" }, { value: "high" }],
+      // First entry is flagged as the default; downstream menus fall back to
+      // the first entry when nothing is flagged.
+      reasoning_efforts: [{ value: "low", default: true }, { value: "high" }],
     })
 
     expect(response.data[1]).toEqual({
@@ -933,6 +946,35 @@ describe("Grok Shell models format", () => {
       context_window: 123_456,
       reasoning_efforts: [{ value: "high" }],
     })
+  })
+
+  test("buildGrokShellModelsResponse derives api_backend from supported endpoints", () => {
+    const models = [
+      {
+        id: "glm-5-2",
+        name: "GLM-5.2",
+        supported_endpoints: ["/chat/completions"],
+        capabilities: shellCaps("windsurf"),
+      },
+      {
+        id: "claude-chat",
+        name: "Claude Chat",
+        supported_endpoints: ["/v1/messages"],
+        capabilities: shellCaps("claude"),
+      },
+      {
+        id: "no-endpoints",
+        name: "No Endpoints",
+        capabilities: shellCaps("other"),
+      },
+    ] as Array<Model>
+
+    const response = buildGrokShellModelsResponse(models)
+    // A chat-only upstream (Windsurf) must not be told `responses`.
+    expect(response.data[0]?.api_backend).toBe("chat_completions")
+    expect(response.data[1]?.api_backend).toBe("messages")
+    // Models with no endpoint information keep the historical CPA default.
+    expect(response.data[2]?.api_backend).toBe("responses")
   })
 })
 

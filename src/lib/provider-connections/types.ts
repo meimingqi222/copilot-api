@@ -193,6 +193,20 @@ export interface ModelMapping {
   upstreamId: string
   /** 客户端可用的别名(也对外暴露)。 */
   aliases?: Array<string>
+  /**
+   * 可路由但不进入 `/v1/models` 的兼容 ID。
+   * 与独立的 `hidden: true` mapping 不同:这里只是同一 mapping 的附加
+   * 匹配名,upstream 仍沿用本 mapping 的 upstreamId。
+   */
+  hiddenAliases?: Array<string>
+  /**
+   * 可路由但不进入 `/v1/models`。
+   * Windsurf 折叠后的思考档位变体用独立 hidden mapping 承载,
+   * 这样 route target 能拿到该档位自己的 upstreamId——dispatch 会把
+   * payload.model 覆盖成 target.upstreamModelId,挂在 head 别名上会在
+   * 真实链路里丢档。
+   */
+  hidden?: boolean
   name?: string
   vendor?: string
   endpoints: Array<ModelEndpoint>

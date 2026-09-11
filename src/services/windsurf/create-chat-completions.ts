@@ -16,7 +16,13 @@ import { canonicalNativeModelId } from "~/lib/legacy-accounts"
 import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
+import { patchRequestLog } from "~/lib/request-log"
 import { isAbortError, sleep } from "~/lib/utils"
+
+import type {
+  WindsurfModelVariants,
+  WindsurfRequestedEffort,
+} from "./variant-collapse"
 
 import {
   createWindsurfAttempt,
@@ -58,6 +64,12 @@ import {
   WindsurfFirstFrameTimeoutError,
   withWindsurfStreamCleanup,
 } from "./stream-start"
+import {
+  pickWindsurfEffort,
+  readWindsurfVariants,
+  resolveWindsurfVariantUpstreamId,
+  windsurfEffortIsExact,
+} from "./variant-collapse"
 
 export type { WindsurfCacheDebugContext } from "./attempt"
 
@@ -66,13 +78,66 @@ export type { WindsurfCacheDebugContext } from "./attempt"
 export function resolveWindsurfRequestModel(
   connection: ProviderConnection,
   modelId: string,
+  effort?: WindsurfRequestedEffort | null,
 ): string {
   const normalizedModelId = canonicalNativeModelId(modelId)
-  const matchedModel = connection.models?.find(
-    (candidate) =>
-      canonicalNativeModelId(candidate.publicId) === normalizedModelId,
-  )
-  const upstreamId = matchedModel?.upstreamId ?? modelId
+  const matchedModel = connection.models?.find((candidate) => {
+    if (canonicalNativeModelId(candidate.publicId) === normalizedModelId) {
+      return true
+    }
+    return (
+      candidate.aliases?.some(
+        (alias) => canonicalNativeModelId(alias) === normalizedModelId,
+      ) ?? false
+    )
+  })
+
+  if (!matchedModel) {
+    return formatWindsurfUpstreamId(modelId)
+  }
+
+  // Hidden variant mapping: publicId is already the pinned SKU. Do not
+  // re-select by effort — that would defeat an explicit pin.
+  if (matchedModel.hidden) {
+    return formatWindsurfUpstreamId(matchedModel.upstreamId)
+  }
+
+  const variants = readWindsurfVariants(matchedModel)
+  if (variants) {
+    warnOnUnsupportedEffort(connection, matchedModel.publicId, effort, variants)
+    return formatWindsurfUpstreamId(
+      resolveWindsurfVariantUpstreamId(variants, effort)
+        ?? matchedModel.upstreamId,
+    )
+  }
+
+  return formatWindsurfUpstreamId(matchedModel.upstreamId)
+}
+
+/**
+ * Windsurf has no request-level thinking parameter: an effort tier is expressed
+ * only by picking a variant's model id. When the client asks for a tier the
+ * family does not have (e.g. `low`/`medium`/`xhigh` on GLM-5.2, which only has
+ * none/high/max) the request still succeeds against the nearest available tier,
+ * but the caller must be able to see that the tier it asked for was not honored.
+ */
+function warnOnUnsupportedEffort(
+  connection: ProviderConnection,
+  modelId: string,
+  requested: WindsurfRequestedEffort | undefined | null,
+  variants: WindsurfModelVariants,
+): void {
+  if (windsurfEffortIsExact(requested, variants)) return
+  logger.warn("[windsurf] reasoning_effort not supported by this model", {
+    account: connection.name,
+    model: modelId,
+    requested,
+    applied: pickWindsurfEffort(requested, variants),
+    supported: Object.keys(variants.byEffort),
+  })
+}
+
+function formatWindsurfUpstreamId(upstreamId: string): string {
   return /^model(?:_private)?_/i.test(upstreamId) ?
       upstreamId.toUpperCase()
     : canonicalNativeModelId(upstreamId)
@@ -532,6 +597,16 @@ export async function createWindsurfChatCompletionsOnce(
   }
 
   const model = canonicalNativeModelId(payload.model)
+  const requestModel = resolveWindsurfRequestModel(
+    connection,
+    payload.model,
+    payload.reasoning_effort,
+  )
+  // Route-target logs the head default upstream; overwrite with the SKU
+  // actually selected by reasoning_effort so usage stats attribute correctly.
+  if (ctx?.c) {
+    patchRequestLog(ctx.c, { modelUpstream: requestModel })
+  }
   const releaseAccountRequest = beginWindsurfAccountRequest({
     accountId: connection.id,
     accountLabel: connection.name,
@@ -554,7 +629,7 @@ export async function createWindsurfChatCompletionsOnce(
           ctx,
           settings: { apiKey, baseUrl: settings.baseUrl },
           model,
-          requestModel: resolveWindsurfRequestModel(connection, payload.model),
+          requestModel,
           fetcher: fetchWithRetry,
           streamFactory: streamToOpenAI,
         })

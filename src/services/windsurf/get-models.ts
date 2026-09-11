@@ -1,11 +1,10 @@
-import type { Account, AccountModel } from "~/lib/legacy-accounts"
+import type { AccountModel } from "~/lib/legacy-accounts"
 import type {
   ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { getWindsurfSettings } from "~/lib/legacy-accounts"
 import {
   getConnectionSettings,
   getConnectionWindsurfApiKey,
@@ -19,12 +18,14 @@ import {
   wrapWindsurfMetadataMessage,
 } from "./metadata"
 import { type ProtobufNode, parseMessage, walkNodes } from "./protobuf"
+import {
+  collapseWindsurfModelVariants,
+  type RawWindsurfCatalogEntry,
+} from "./variant-collapse"
 
 function buildGetUserStatusRequest(apiKey: string): Uint8Array {
   return wrapWindsurfMetadataMessage(buildWindsurfClientMetadata(apiKey))
 }
-
-const WINDSURF_SUPPORTED_ENDPOINTS = ["/chat/completions", "/v1/messages"]
 
 function decodeBest(raw: Uint8Array): string | undefined {
   let bestText: string | undefined
@@ -178,12 +179,32 @@ function extractProviderDisplayMap(
   return vendorByDisplayName
 }
 
+const WINDSURF_CONNECTION_ENDPOINTS: Array<ModelMapping["endpoints"][number]> =
+  // Adapter implements chat only. Declaring messages would 501; omitting it
+  // lets route-target fall messages→chat through the existing translation.
+  ["chat"]
+
 export function extractWindsurfModelsFromPayload(
   payload: Uint8Array,
 ): Array<AccountModel> {
+  // Account-facing view lists only head models; hidden variants stay routable
+  // via connection.models but are not part of this snapshot.
+  return modelMappingsToAccountModels(
+    extractWindsurfModelMappingsFromPayload(payload).filter((m) => !m.hidden),
+  )
+}
+
+/**
+ * Extract + collapse catalog entries into family-level ModelMappings.
+ * Thinking-effort siblings fold into one mapping; 1M context stays a
+ * separate public model (plan C).
+ */
+export function extractWindsurfModelMappingsFromPayload(
+  payload: Uint8Array,
+): Array<ModelMapping> {
   const rows = walkNodes(parseMessage(payload))
   const vendorByDisplayName = extractProviderDisplayMap(rows)
-  const models = new Map<string, AccountModel>()
+  const entries = new Map<string, RawWindsurfCatalogEntry>()
 
   for (const { path, node } of rows) {
     if (path !== "/1/33/1" || !node.sub) {
@@ -207,123 +228,59 @@ export function extractWindsurfModelsFromPayload(
       baseDisplayName,
     })
 
-    if (!publicId || models.has(publicId)) {
+    if (!publicId || entries.has(publicId)) {
       continue
     }
 
-    models.set(publicId, {
-      id: publicId,
+    entries.set(publicId, {
+      publicId,
       name: displayName,
+      upstreamId,
       vendor: vendorByDisplayName.get(displayName) ?? inferVendor(displayName),
       pickerEnabled: true,
-      supportedEndpoints: WINDSURF_SUPPORTED_ENDPOINTS,
-      provider: "windsurf",
-      upstreamId,
+      endpoints: [...WINDSURF_CONNECTION_ENDPOINTS],
+      baseModelId,
+      baseDisplayName,
     })
   }
 
-  return Array.from(models.values())
+  if (entries.size === 0) return []
+  return collapseWindsurfModelVariants(Array.from(entries.values()))
 }
 
-export async function getWindsurfModelsForAccount(
-  account: Account,
-): Promise<Array<AccountModel>> {
-  const settings = getWindsurfSettings(account)
-  if (!settings) {
-    return []
-  }
-  const apiKey = settings.apiKey
-  if (!apiKey) {
-    return fallbackWindsurfModels(settings.defaultModel ?? "")
-  }
-
-  const baseUrl = normalizeWindsurfBaseUrl(settings.baseUrl)
-  const response = await fetch(
-    `${baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/proto",
-        "Connect-Protocol-Version": "1",
-        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
-        "Accept-Encoding": "gzip",
-        "Connect-Timeout-Ms": "5000",
-      },
-      body: buildGetUserStatusRequest(apiKey),
-    },
-  )
-
-  if (!response.ok) {
-    throw new HTTPError(
-      "Failed to fetch Windsurf model catalog",
-      response,
-      await response.text().catch(() => "(unreadable)"),
-    )
-  }
-
-  const models = extractWindsurfModelsFromPayload(
-    await readResponseBytes(response, 16 * 1024 * 1024),
-  )
-  return models.length > 0 ?
-      models
-    : fallbackWindsurfModels(settings.defaultModel ?? "")
-}
-
-export function fallbackWindsurfModels(
-  defaultModel: string,
+function modelMappingsToAccountModels(
+  mappings: Array<ModelMapping>,
 ): Array<AccountModel> {
-  return [
-    {
-      id: defaultModel,
-      name: defaultModel,
-      vendor: "Windsurf",
-      pickerEnabled: true,
-      supportedEndpoints: WINDSURF_SUPPORTED_ENDPOINTS,
-      provider: "windsurf",
-      upstreamId: defaultModel,
-    },
-  ]
-}
-
-// ── Connection 原生版本 ───────────────────────────────────────
-
-const WINDSURF_CONNECTION_ENDPOINTS: Array<ModelMapping["endpoints"][number]> =
-  ["chat", "messages"]
-
-function accountModelsToMappings(
-  models: Array<AccountModel>,
-): Array<ModelMapping> {
-  return models.map((m) => ({
-    publicId: m.id,
-    upstreamId: m.upstreamId || m.id,
-    name: m.name,
-    vendor: m.vendor,
-    enabled: true,
-    pickerEnabled: m.pickerEnabled,
+  return mappings.map((m) => ({
+    id: m.publicId,
+    name: m.name ?? m.publicId,
+    vendor: m.vendor ?? "Other",
+    pickerEnabled: m.pickerEnabled ?? true,
     pickerCategory: m.pickerCategory,
-    endpoints: WINDSURF_CONNECTION_ENDPOINTS,
+    supportedEndpoints: m.endpoints.map((endpoint) =>
+      endpointToSupportedPath(endpoint),
+    ),
+    provider: "windsurf",
+    upstreamId: m.upstreamId || m.publicId,
   }))
 }
 
-function fallbackWindsurfConnectionModels(
-  defaultModel: string,
-): Array<ModelMapping> {
-  return [
-    {
-      publicId: defaultModel,
-      upstreamId: defaultModel,
-      name: defaultModel,
-      vendor: "Windsurf",
-      enabled: true,
-      pickerEnabled: true,
-      endpoints: WINDSURF_CONNECTION_ENDPOINTS,
-    },
-  ]
+function endpointToSupportedPath(
+  endpoint: ModelMapping["endpoints"][number],
+): string {
+  switch (endpoint) {
+    case "chat": {
+      return "/chat/completions"
+    }
+    case "messages": {
+      return "/v1/messages"
+    }
+    default: {
+      return `/${endpoint}`
+    }
+  }
 }
 
-/**
- * Connection 原生版本:从 connection 的 settings + credential 读取 windsurf 配置。
- */
 export async function getWindsurfModelsForConnection(
   connection: ProviderConnection,
 ): Promise<Array<ModelMapping>> {
@@ -361,11 +318,11 @@ export async function getWindsurfModelsForConnection(
     )
   }
 
-  const accountModels = extractWindsurfModelsFromPayload(
+  const collapsed = extractWindsurfModelMappingsFromPayload(
     await readResponseBytes(response, 16 * 1024 * 1024),
   )
-  if (accountModels.length > 0) {
-    return accountModelsToMappings(accountModels)
+  if (collapsed.length > 0) {
+    return collapsedMappingsToConnectionModels(collapsed)
   }
   return fallbackWindsurfConnectionModels(defaultModel ?? "")
 }
@@ -382,4 +339,30 @@ export function fallbackWindsurfConnectionModelsForConnection(
   const defaultModel =
     settings?.defaultModel ?? state.providerDefaults.windsurf.defaultModel
   return fallbackWindsurfConnectionModels(defaultModel ?? "")
+}
+
+function collapsedMappingsToConnectionModels(
+  mappings: Array<ModelMapping>,
+): Array<ModelMapping> {
+  return mappings.map((m) => ({
+    ...m,
+    enabled: true,
+    endpoints: [...WINDSURF_CONNECTION_ENDPOINTS],
+  }))
+}
+
+function fallbackWindsurfConnectionModels(
+  defaultModel: string,
+): Array<ModelMapping> {
+  return [
+    {
+      publicId: defaultModel,
+      upstreamId: defaultModel,
+      name: defaultModel,
+      vendor: "Windsurf",
+      enabled: true,
+      pickerEnabled: true,
+      endpoints: [...WINDSURF_CONNECTION_ENDPOINTS],
+    },
+  ]
 }

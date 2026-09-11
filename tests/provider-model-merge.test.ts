@@ -152,6 +152,54 @@ describe("mergeProviderRefreshedModels", () => {
     const merged = mergeProviderRefreshedModels(existing, fresh)
     expect(merged[0].publicId).toBe("X")
   })
+
+  test("head 与 hidden pin 共享 opaque upstream 时不互相改写 publicId", () => {
+    // Opaque default-effort SKU: head's upstreamId equals the medium pin's
+    // upstreamId. Matching only by upstream used to rewrite the pin to the
+    // head name and produce a duplicate publicId.
+    const existing = [
+      model("gpt-5.1-codex", {
+        upstreamId: "MODEL_PRIVATE_9",
+        hidden: false,
+      }),
+      model("gpt-5.1-codex-medium", {
+        upstreamId: "MODEL_PRIVATE_9",
+        hidden: true,
+        pickerEnabled: false,
+      }),
+      model("gpt-5.1-codex-low", {
+        upstreamId: "MODEL_GPT_5_1_CODEX_LOW",
+        hidden: true,
+        pickerEnabled: false,
+      }),
+    ]
+    const fresh = [
+      model("gpt-5.1-codex", {
+        upstreamId: "MODEL_PRIVATE_9",
+        hidden: false,
+      }),
+      model("gpt-5.1-codex-medium", {
+        upstreamId: "MODEL_PRIVATE_9",
+        hidden: true,
+        pickerEnabled: false,
+      }),
+      model("gpt-5.1-codex-low", {
+        upstreamId: "MODEL_GPT_5_1_CODEX_LOW",
+        hidden: true,
+        pickerEnabled: false,
+      }),
+    ]
+    const merged = mergeProviderRefreshedModels(existing, fresh)
+    expect(merged.map((m) => m.publicId)).toEqual([
+      "gpt-5.1-codex",
+      "gpt-5.1-codex-medium",
+      "gpt-5.1-codex-low",
+    ])
+    expect(merged.filter((m) => m.publicId === "gpt-5.1-codex")).toHaveLength(1)
+    expect(
+      merged.find((m) => m.publicId === "gpt-5.1-codex-medium")?.hidden,
+    ).toBe(true)
+  })
 })
 
 describe("normalizeModelAliases", () => {
