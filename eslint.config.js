@@ -13,7 +13,17 @@ export default config(
     typescript: { options: { typeChecked: false } },
   },
   {
-    ignores: ["tools/**"],
+    // Explicit ignores for build output and scratch dirs. Most of these are
+    // also gitignored (picked up via eslint-config-flat-gitignore), but
+    // explicit entries skip enumeration up front and survive .gitignore edits.
+    ignores: [
+      "tools/**",
+      "dist/**",
+      "coverage/**",
+      "temp/**",
+      "*.min.js",
+      ".tmp-*",
+    ],
   },
   // Disable projectService (TS type graph) — biggest lint performance bottleneck.
   // Type checking is handled by `tsc` (bun run typecheck).

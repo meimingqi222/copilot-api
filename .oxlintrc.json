@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // Fast path: `bun run lint` (~100ms). The full type-aware gate stays on
+  // `bun run lint:all` (eslint) for CI until rule parity is confirmed.
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {},
+  "env": {
+    "builtin": true
+  },
+  // Mirror eslint.config.js: build output and scratch dirs are never linted.
+  "ignorePatterns": [
+    "dist/**",
+    "coverage/**",
+    "temp/**",
+    "tools/**",
+    "*.min.js",
+    ".tmp-*"
+  ],
+  "overrides": [
+    {
+      // Admin dashboard view functions are global entry points referenced
+      // from HTML x-data="". Same exemption as eslint.config.js.
+      "files": ["pages/**/*.js"],
+      "rules": {
+        "no-unused-vars": "off"
+      }
+    },
+    {
+      // Optional chaining on test mocks / scripts is idiomatic here;
+      // eslint never flagged it (type-aware rules are off).
+      "files": ["tests/**/*.ts", "scripts/**/*.ts"],
+      "rules": {
+        "no-unsafe-optional-chaining": "off"
+      }
+    }
+  ]
+}

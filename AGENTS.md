@@ -27,10 +27,10 @@
   `bun run dev` (uses `bun --watch`)
 
 - **Lint:**\
-  `bun run lint` (uses @echristian/eslint-config)
+  `bun run lint` (uses oxlint, ~100ms; config in `.oxlintrc.json`)
 
 - **Lint all files:**\
-  `bun run lint:all`
+  `bun run lint:all` (uses @echristian/eslint-config, CI gate)
 
 - **Lint & Fix staged files:**\
   `bunx lint-staged`

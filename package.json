@@ -27,8 +27,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "knip": "knip-bun",
-    "lint": "eslint --cache --cache-location node_modules/.cache/eslint",
-    "lint:all": "eslint --cache --cache-location node_modules/.cache/eslint .",
+    "lint": "oxlint",
+    "lint:all": "eslint --cache --cache-location .eslintcache .",
     "prepack": "bun run build",
     "prepare": "simple-git-hooks",
     "release": "bumpp && bun publish --access public",
@@ -40,7 +40,7 @@
   },
   "lint-staged": {
     "*.{ts,js,tsx,jsx}": [
-      "eslint --cache --cache-location node_modules/.cache/eslint --fix",
+      "oxlint --fix",
       "prettier --write"
     ],
     "*.{json,md,yml,yaml}": "prettier --write"
@@ -64,6 +64,7 @@
     "eslint": "^9.37.0",
     "knip": "^5.64.1",
     "lint-staged": "^16.2.3",
+    "oxlint": "^1.82.0",
     "prettier": "3.6.2",
     "prettier-plugin-packagejson": "^2.5.19",
     "simple-git-hooks": "^2.13.1",
