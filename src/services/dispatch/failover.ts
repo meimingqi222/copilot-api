@@ -33,7 +33,11 @@ import {
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
 import { type RequestAdmission } from "~/lib/request-admission"
-import { recordUpstreamAttempt } from "~/lib/request-log"
+import {
+  getRequestLogContext,
+  patchRequestLog,
+  recordUpstreamAttempt,
+} from "~/lib/request-log"
 import {
   resolveConnectionFromTarget,
   switchToNextRouteTarget,
@@ -132,6 +136,11 @@ export async function executeWithFailover<
       let handedOffToStream = false
       try {
         const result = await execute(adapter, current.target, current)
+        // Windsurf resolves the real SKU (e.g. glm-5-2-max) from
+        // reasoning_effort inside the adapter and patches modelUpstream.
+        // recordUpstreamAttempt below would overwrite it with the head
+        // default (glm-5-2), so snapshot and restore it.
+        const sku = c ? getRequestLogContext(c)?.entry.modelUpstream : undefined
         // Upstream accepted the request: clear any 429 backoff pressure so
         // the next 429 episode starts from the base backoff again.
         await reportUpstreamSuccess(current.connection.id)
@@ -147,6 +156,9 @@ export async function executeWithFailover<
           { status: 200, latencyMs: Date.now() - attemptStart },
           ++attemptIndex,
         )
+        if (c && sku && sku !== current.target.upstreamModelId) {
+          patchRequestLog(c, { modelUpstream: sku })
+        }
         if (isAsyncIterable(result)) {
           // Hold the lease for the full stream lifetime, not until the
           // iterable is returned.
@@ -195,6 +207,8 @@ export async function executeWithFailover<
       } else if (error instanceof Error) {
         errorCode = error.name
       }
+      const failedSku =
+        c ? getRequestLogContext(c)?.entry.modelUpstream : undefined
       recordUpstreamAttempt(
         c,
         {
@@ -214,6 +228,9 @@ export async function executeWithFailover<
         },
         idx,
       )
+      if (c && failedSku && failedSku !== current.target.upstreamModelId) {
+        patchRequestLog(c, { modelUpstream: failedSku })
+      }
       tried.add(targetKey(current.target))
 
       if (
