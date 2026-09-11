@@ -54,6 +54,26 @@ describe("Antigravity thinking config (CPA parity)", () => {
     })
   })
 
+  test("max → falls back to high on level-format models", () => {
+    // Gemini levels top out at "high"; leaving "max" through would emit an
+    // unsupported thinkingLevel to the upstream.
+    const gc = generationConfigFor("gemini-3.1-flash-lite", "max")
+    expect(gc?.thinkingConfig).toEqual({
+      thinkingLevel: "high",
+      includeThoughts: true,
+    })
+  })
+
+  test("max → keeps budget format on Gemini 2.5 budget-format models", () => {
+    // Regression: unconverted, "max" missed LEVEL_TO_BUDGET and fell into the
+    // `thinkingLevel` fallback — the wrong format entirely for a 2.x model.
+    const gc = generationConfigFor("gemini-2.5-pro", "max")
+    expect(gc?.thinkingConfig).toEqual({
+      thinkingBudget: 32768,
+      includeThoughts: true,
+    })
+  })
+
   test("high → thinkingLevel on Gemini 3+", () => {
     const gc = generationConfigFor("gemini-3.1-flash-lite", "high")
     expect(gc?.thinkingConfig).toEqual({

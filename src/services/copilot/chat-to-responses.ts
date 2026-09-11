@@ -265,8 +265,12 @@ function normalizeReasoningEffort(
     case "low": {
       return "low"
     }
+    // `max` (Windsurf/Codex top tier) and `xhigh` sit above the Responses API's
+    // highest tier, so both clamp to `high`; neither may reach the `medium`
+    // catch-all below, which would be a silent downgrade from the top tier.
     case "high":
     case "xhigh":
+    case "max":
     case "auto": {
       return "high"
     }

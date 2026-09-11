@@ -231,6 +231,13 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     expect(effortFor("xhigh")).toMatchObject({
       output_config: { effort: "high" },
     })
+    // "max" (Windsurf/Codex top tier) is above Anthropic's highest tier, so it
+    // narrows to "high" instead of dropping out of the map as `undefined`
+    // (which used to serialise to an empty `output_config: {}`).
+    expect(effortFor("max")).toMatchObject({
+      thinking: { type: "adaptive" },
+      output_config: { effort: "high" },
+    })
     // "none"/"auto" → omit thinking entirely.
     expect(effortFor("none").thinking).toBeUndefined()
     expect(effortFor("none").output_config).toBeUndefined()

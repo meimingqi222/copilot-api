@@ -419,7 +419,13 @@ function buildGeminiThinkingConfig(
   effort: string,
   model: string,
 ): Record<string, unknown> | undefined {
-  const level = effort.toLowerCase()
+  // `max` (Windsurf/Codex top tier) has no Gemini equivalent — Gemini levels
+  // top out at "high" — so fold it onto xhigh, which both formats below
+  // already clamp correctly: level format → "high", budget format → the top
+  // budget. Leaving it as "max" would emit an unsupported thinkingLevel, and
+  // on budget-format models a thinkingLevel where a budget is required.
+  const raw = effort.toLowerCase()
+  const level = raw === "max" ? "xhigh" : raw
 
   // auto → thinkingBudget=-1 (CPA ModeAuto always uses the budget format)
   if (level === "auto") {

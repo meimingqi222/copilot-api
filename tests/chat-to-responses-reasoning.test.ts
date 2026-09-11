@@ -441,6 +441,30 @@ describe("responses → chat replayed reasoning items", () => {
   })
 })
 
+/** The Responses effort a chat reasoning_effort translates to. */
+function effortFor(
+  effort: NonNullable<ChatCompletionsPayload["reasoning_effort"]>,
+): string | undefined {
+  return translateToResponsesPayload({
+    model: "gpt-5",
+    messages: [{ role: "user", content: "hi" }],
+    reasoning_effort: effort,
+  }).reasoning?.effort
+}
+
+describe("chat → responses reasoning effort", () => {
+  test("max clamps to high, not the medium catch-all", () => {
+    // `default:` used to swallow "max" and return "medium" — a silent downgrade
+    // from the top tier. It must clamp to the highest available tier instead.
+    expect(effortFor("max")).toBe("high")
+    expect(effortFor("xhigh")).toBe("high")
+    expect(effortFor("high")).toBe("high")
+    expect(effortFor("low")).toBe("low")
+    expect(effortFor("minimal")).toBe("low")
+    expect(effortFor("medium")).toBe("medium")
+  })
+})
+
 describe("chat → responses input translation (historical reasoning)", () => {
   test("injects historical reasoning exactly once when top-level and content parts agree", () => {
     // The proxy's own responses→chat output carries reasoning both as

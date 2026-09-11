@@ -82,16 +82,25 @@ const SUPPORTED_IMAGE_MEDIA_TYPES = new Set([
   "image/webp",
 ])
 
-/** OpenAI reasoning_effort levels narrowed to Anthropic output_config.effort (3 tiers). */
-const CHAT_REASONING_EFFORT_TO_CLAUDE: Record<
-  string,
-  "low" | "medium" | "high"
+/**
+ * OpenAI reasoning_effort levels narrowed to Anthropic output_config.effort
+ * (3 tiers). Keyed on the real payload union so a newly added level fails to
+ * compile here instead of silently falling through to `undefined`.
+ */
+const CHAT_REASONING_EFFORT_TO_CLAUDE: Partial<
+  Record<
+    NonNullable<ChatCompletionsPayload["reasoning_effort"]>,
+    "low" | "medium" | "high"
+  >
 > = {
   minimal: "low",
   low: "low",
   medium: "medium",
   high: "high",
   xhigh: "high",
+  // `max` (Windsurf/Codex top tier) is above Claude's highest tier, so it
+  // clamps to `high` — same as xhigh — rather than being dropped.
+  max: "high",
 }
 
 export function translateChatPayloadToAnthropic(
@@ -179,9 +188,13 @@ function translateThinkingConfig(
   if (!rawEffort || rawEffort === "none" || rawEffort === "auto") {
     return {}
   }
-  // After excluding none/auto, the remaining reasoning_effort union values
-  // (minimal/low/medium/high/xhigh) all exist in the map.
   const effort = CHAT_REASONING_EFFORT_TO_CLAUDE[rawEffort]
+  // Unmapped tier: keep adaptive thinking but omit `output_config` entirely, so
+  // the upstream applies its own default instead of receiving an effort that
+  // serialises away to `undefined`.
+  if (effort === undefined) {
+    return { thinking: { type: "adaptive" } }
+  }
   return {
     thinking: { type: "adaptive" },
     output_config: { effort },

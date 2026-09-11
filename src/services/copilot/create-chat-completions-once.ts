@@ -40,11 +40,16 @@ function hasImageContent(payload: ChatCompletionsPayload): boolean {
  * accept. "none" and "auto" are intermediate values used by the translation
  * pipeline (e.g. Antigravity thinkingConfig); Copilot only accepts
  * minimal/low/medium/high/xhigh.
+ *
+ * "max" (Windsurf/Codex top tier) is a real client intent but is not in
+ * Copilot's accepted set, so it clamps to Copilot's highest tier rather than
+ * being dropped or rejected upstream.
  */
-function sanitizeReasoningEffortForCopilot(
+export function sanitizeReasoningEffortForCopilot(
   effort: ChatCompletionsPayload["reasoning_effort"],
 ): ChatCompletionsPayload["reasoning_effort"] {
   if (effort === "none" || effort === "auto") return undefined
+  if (effort === "max") return "xhigh"
   return effort
 }
 
