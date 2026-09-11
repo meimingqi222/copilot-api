@@ -309,6 +309,14 @@ async function* streamToOpenAI(
   // Non-streaming `collectChatCompletion` needs the structured `collected`
   // twin; pure streaming only forwards `data`, so skip the extra objects.
   const collect = streamOpts?.collect ?? true
+  // Single place that decides whether an event carries the twin, so the
+  // per-delta sites below stay free of the same ternary.
+  function emitEvent(
+    data: string,
+    collected: WindsurfStreamEvent["collected"],
+  ): WindsurfStreamEvent {
+    return collect ? { data, collected } : { data }
+  }
   let usage: ChatStreamFrame["usage"] | undefined
   let rawUsage: WindsurfRawUsageSignals | undefined
   let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
@@ -364,93 +372,87 @@ async function* streamToOpenAI(
     for (const delta of parsed.deltas) {
       switch (delta.kind) {
         case "content": {
-          const data = chunkFromText({
-            requestId,
-            model,
-            text: delta.text,
-            field: "content",
-            created,
-          })
-          yield collect ?
-            { data, collected: { content: delta.text } }
-          : { data }
+          yield emitEvent(
+            chunkFromText({
+              requestId,
+              model,
+              text: delta.text,
+              field: "content",
+              created,
+            }),
+            { content: delta.text },
+          )
           break
         }
         case "reasoning_text": {
-          const data = chunkFromText({
-            requestId,
-            model,
-            text: delta.text,
-            field: "reasoning_text",
-            created,
-          })
-          yield collect ?
-            { data, collected: { reasoningText: delta.text } }
-          : { data }
+          yield emitEvent(
+            chunkFromText({
+              requestId,
+              model,
+              text: delta.text,
+              field: "reasoning_text",
+              created,
+            }),
+            { reasoningText: delta.text },
+          )
           break
         }
         case "reasoning_signature": {
-          const data = chunkFromText({
-            requestId,
-            model,
-            text: delta.text,
-            field: "reasoning_opaque",
-            created,
-          })
-          yield collect ?
-            { data, collected: { reasoningOpaque: delta.text } }
-          : { data }
+          yield emitEvent(
+            chunkFromText({
+              requestId,
+              model,
+              text: delta.text,
+              field: "reasoning_opaque",
+              created,
+            }),
+            { reasoningOpaque: delta.text },
+          )
           break
         }
         case "tool_call_init": {
           currentToolCallIndex++
           toolIdToIndex.set(delta.callId, currentToolCallIndex)
           lastToolCallId = delta.callId
-          const data = chunkFromToolCallInit({
-            requestId,
-            model,
-            toolIndex: currentToolCallIndex,
-            callId: delta.callId,
-            toolName: delta.toolName,
-            created,
-          })
-          yield collect ?
+          yield emitEvent(
+            chunkFromToolCallInit({
+              requestId,
+              model,
+              toolIndex: currentToolCallIndex,
+              callId: delta.callId,
+              toolName: delta.toolName,
+              created,
+            }),
             {
-              data,
-              collected: {
-                toolCalls: [
-                  {
-                    index: currentToolCallIndex,
-                    id: delta.callId,
-                    function: { name: delta.toolName, arguments: "" },
-                  },
-                ],
-              },
-            }
-          : { data }
+              toolCalls: [
+                {
+                  index: currentToolCallIndex,
+                  id: delta.callId,
+                  function: { name: delta.toolName, arguments: "" },
+                },
+              ],
+            },
+          )
           break
         }
         case "tool_call_args": {
           if (currentToolCallIndex < 0 || !lastToolCallId) break
           const routeKey = delta.callId ?? lastToolCallId
           const toolIndex = toolIdToIndex.get(routeKey) ?? currentToolCallIndex
-          const data = chunkFromToolCallArgs({
-            requestId,
-            model,
-            toolIndex,
-            args: delta.args,
-            created,
-          })
-          yield collect ?
+          yield emitEvent(
+            chunkFromToolCallArgs({
+              requestId,
+              model,
+              toolIndex,
+              args: delta.args,
+              created,
+            }),
             {
-              data,
-              collected: {
-                toolCalls: [
-                  { index: toolIndex, function: { arguments: delta.args } },
-                ],
-              },
-            }
-          : { data }
+              toolCalls: [
+                { index: toolIndex, function: { arguments: delta.args } },
+              ],
+            },
+          )
           break
         }
         default: {
@@ -515,15 +517,10 @@ async function* streamToOpenAI(
     }
   }
   const doneData = doneChunk({ requestId, model, finishReason, usage, created })
-  yield collect ?
-    {
-      data: doneData,
-      collected: {
-        finishReason,
-        ...(usage && { usage: toOpenAIChunkUsage(usage) }),
-      },
-    }
-  : { data: doneData }
+  yield emitEvent(doneData, {
+    finishReason,
+    ...(usage && { usage: toOpenAIChunkUsage(usage) }),
+  })
   yield { data: "[DONE]" }
 }
 

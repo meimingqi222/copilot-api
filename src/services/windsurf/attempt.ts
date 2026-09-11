@@ -256,8 +256,9 @@ export async function createWindsurfAttempt(
     return {
       stream: streamFactory(response, model, cacheDebug, ctx?.memoryTraceId, {
         // Non-streaming drains via collectChatCompletion (needs `collected`);
-        // pure streaming only forwards `data`.
-        collect: !payload.stream,
+        // pure streaming only forwards `data`. Cross-protocol streaming
+        // (messages-via-chat) translates each chunk and opts back in via ctx.
+        collect: !payload.stream || ctx?.collectChatStreamTwin === true,
       }),
       abort: () => {
         if (!linkedAbort.controller.signal.aborted) {

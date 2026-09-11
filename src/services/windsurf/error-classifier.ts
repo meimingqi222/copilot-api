@@ -63,6 +63,15 @@ export function classifyWindsurfFrameError(
 }
 
 /**
+ * Transient upstream failure signals. gRPC-style codes (`deadline_exceeded`,
+ * `unavailable`) arrive in `code` while the detail sits in `message`, so both
+ * are tested. These are server-side execution timeouts/overload, not account
+ * health — retryable via failover, never quota.
+ */
+const TRANSIENT_SERVER_PATTERN =
+  /internal|server error|unavailable|deadline|timed out|timeout|overloaded|bad gateway|gateway timeout|service unavailable/
+
+/**
  * Classify from already-parsed code + message strings (also used for HTTP
  * error response bodies that share the same {error:{code,message}} shape).
  */
@@ -106,15 +115,9 @@ export function classifyWindsurfErrorText(
     return { kind: "auth_error", message, code }
   }
 
-  // Transient upstream failures: gRPC-style codes (deadline_exceeded,
-  // unavailable) arrive in `code` while the detail sits in `message`, so test
-  // both. These are server-side execution timeouts/overload, not account
-  // health — retryable via failover, never quota.
-  if (
-    /internal|server error|unavailable|deadline|timed out|timeout|overloaded|bad gateway|gateway timeout|service unavailable/.test(
-      `${lowerCode} ${lowerMsg}`,
-    )
-  ) {
+  // Transient upstream failures are server-side execution timeouts/overload,
+  // not account health — retryable via failover, never quota.
+  if (TRANSIENT_SERVER_PATTERN.test(`${lowerCode} ${lowerMsg}`)) {
     return { kind: "server_error", message, code }
   }
 

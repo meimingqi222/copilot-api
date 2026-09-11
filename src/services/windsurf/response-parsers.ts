@@ -505,17 +505,16 @@ export function parseWindsurfFrameErrorParts(
     start += 1
   }
   if (start >= frame.length || frame[start] !== 0x7b) return undefined
+  // Byte 0x7B always decodes to `{` and `trim` never strips it, so a
+  // `startsWith("{")` re-check after decoding would be redundant.
   let text: string
   try {
-    text =
-      start === 0 ?
-        LENIENT_FRAME_DECODER.decode(frame)
-      : LENIENT_FRAME_DECODER.decode(frame.subarray(start))
-    text = text.trim()
+    text = LENIENT_FRAME_DECODER.decode(
+      start === 0 ? frame : frame.subarray(start),
+    ).trim()
   } catch {
     return undefined
   }
-  if (!text.startsWith("{")) return undefined
   try {
     const parsed = JSON.parse(text) as {
       error?: { code?: string; message?: string }

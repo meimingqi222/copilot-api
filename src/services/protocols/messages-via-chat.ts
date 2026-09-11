@@ -17,6 +17,7 @@ import type {
 } from "~/lib/provider-connections"
 import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
 import type {
+  ChatCompletionChunk,
   ChatCompletionResponse,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
@@ -87,7 +88,10 @@ export async function createMessagesViaChat(
     credential,
     payload: openAIPayload,
     signal,
-    ctx,
+    // Ask the producer for its structured delta twin so the stream translator
+    // below can skip re-parsing SSE JSON it just serialized (per-token win on
+    // long streams; other adapters ignore the hint and stay on the JSON path).
+    ctx: { ...ctx, collectChatStreamTwin: true },
   })
 
   if (isChatCompletionResponse(result.response)) {
@@ -107,12 +111,73 @@ export async function createMessagesViaChat(
   return { credentialId: result.credentialId, response: anthropicStream }
 }
 
+/**
+ * Structured twin of an emitted SSE chunk, attached by chat streaming
+ * producers that opt in (Windsurf does when `collectChatStreamTwin` is set).
+ * Mirrors the producer side (`windsurf/collect-response.ts` `CollectedDelta`
+ * + `chunk-builders.ts`); `tests/messages-via-chat-twin-parity.test.ts`
+ * locks the two together. A future producer reusing the `collected` field
+ * name must match this shape or stay off the fast path.
+ */
+interface CollectedChatDelta {
+  content?: string
+  reasoningText?: string
+  reasoningOpaque?: string
+  toolCalls?: Array<{
+    index: number
+    id?: string
+    function?: { name?: string; arguments?: string }
+  }>
+  finishReason?: "stop" | "length" | "tool_calls" | "content_filter"
+  usage?: ChatCompletionChunk["usage"]
+}
+
+/**
+ * Rebuilds the chunk the producer serialized, without `JSON.parse`. `id` and
+ * `model` come from the stream's first chunk (parsed once); `created` is
+ * unread downstream so it stays zero.
+ */
+function chunkFromCollectedTwin(
+  twin: CollectedChatDelta,
+  id: string,
+  model: string,
+): ChatCompletionChunk {
+  return {
+    id,
+    object: "chat.completion.chunk",
+    created: 0,
+    model,
+    choices: [
+      {
+        index: 0,
+        delta: {
+          ...(twin.content !== undefined && { content: twin.content }),
+          ...(twin.reasoningText !== undefined && {
+            reasoning_text: twin.reasoningText,
+          }),
+          ...(twin.reasoningOpaque !== undefined && {
+            reasoning_opaque: twin.reasoningOpaque,
+          }),
+          ...(twin.toolCalls && { tool_calls: twin.toolCalls }),
+        },
+        finish_reason: twin.finishReason ?? null,
+        logprobs: null,
+      },
+    ],
+    ...(twin.usage && { usage: twin.usage }),
+  }
+}
+
 async function* translateChatStreamToAnthropicEvents(
   chatStream: AsyncIterable<CopilotStreamEvent>,
   anthropicPayload: AnthropicMessagesPayload,
 ): AsyncIterable<AnthropicStreamEventData> {
   const streamState = createInitialStreamState()
   streamState.estimatedInputTokens = estimateInputTokens(anthropicPayload)
+  // Upstream request id/model for message_start, captured once from the
+  // first chunk. Later chunks take the twin fast path when present.
+  let streamId: string | undefined
+  let streamModel: string | undefined
 
   for await (const rawEvent of chatStream) {
     if (rawEvent.data === "[DONE]") {
@@ -121,19 +186,16 @@ async function* translateChatStreamToAnthropicEvents(
     if (!rawEvent.data) {
       continue
     }
-    const chunk = JSON.parse(rawEvent.data) as {
-      choices?: Array<unknown>
-      usage?: unknown
+    const twin = (rawEvent as { collected?: CollectedChatDelta }).collected
+    let chunk: ChatCompletionChunk
+    if (twin && streamId !== undefined && streamModel !== undefined) {
+      chunk = chunkFromCollectedTwin(twin, streamId, streamModel)
+    } else {
+      chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+      streamId ??= chunk.id
+      streamModel ??= chunk.model
     }
-    if (chunk.usage) {
-      streamState.lastSeenUsage = chunk.usage as NonNullable<
-        (typeof streamState)["lastSeenUsage"]
-      >
-    }
-    const events = translateChunkToAnthropicEvents(
-      chunk as Parameters<typeof translateChunkToAnthropicEvents>[0],
-      streamState,
-    )
+    const events = translateChunkToAnthropicEvents(chunk, streamState)
     for (const event of events) {
       yield event
     }

@@ -39,6 +39,15 @@ export interface RequestExecutionContext {
   executionSessionId?: string
   /** Isolation scope for reconnectable in-memory Responses transcripts. */
   transcriptScopeId?: string
+  /**
+   * Ask a chat streaming producer to attach its structured delta twin (e.g.
+   * Windsurf's `collected`) to each stream event. Cross-protocol consumers
+   * (`messages-via-chat`) translate SSE JSON back into events; with the twin
+   * they skip the per-token `JSON.parse` of a payload the producer just
+   * serialized. Pure-chat streaming leaves this off to avoid the extra
+   * allocation per token.
+   */
+  collectChatStreamTwin?: boolean
   /** Correlates low-overhead memory checkpoints for one Responses WS turn. */
   memoryTraceId?: string
   /**
