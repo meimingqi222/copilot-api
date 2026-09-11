@@ -14,7 +14,7 @@
  * default 60s exponential backoff (which causes immediate retry → re-trigger).
  */
 
-import { parseWindsurfFrameError } from "./response-parsers"
+import { parseWindsurfFrameErrorParts } from "./response-parsers"
 
 export type WindsurfErrorKind =
   | "rate_limited" // "Reached message rate limit" — per-model message quota (recoverable)
@@ -55,26 +55,11 @@ export function parseResetsInDuration(message: string): number | undefined {
 export function classifyWindsurfFrameError(
   frame: Uint8Array,
 ): ClassifiedWindsurfError | undefined {
-  const combined = parseWindsurfFrameError(frame)
-  if (!combined) return undefined
-
-  // Re-parse the raw JSON to access code + message separately
-  let code: string | undefined
-  let message = combined
-  const text = Buffer.from(frame).toString("utf8").trim()
-  if (text.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(text) as {
-        error?: { code?: string; message?: string }
-      }
-      code = parsed.error?.code
-      message = parsed.error?.message ?? combined
-    } catch {
-      // keep combined string as message
-    }
-  }
-
-  return classifyWindsurfErrorText(code, message)
+  // Single decode+parse: parseWindsurfFrameErrorParts already extracted
+  // code/message, so do not re-decode the frame a second time here.
+  const parts = parseWindsurfFrameErrorParts(frame)
+  if (!parts) return undefined
+  return classifyWindsurfErrorText(parts.code, parts.message)
 }
 
 /**
@@ -121,7 +106,15 @@ export function classifyWindsurfErrorText(
     return { kind: "auth_error", message, code }
   }
 
-  if (/internal|server error|unavailable/.test(lowerMsg)) {
+  // Transient upstream failures: gRPC-style codes (deadline_exceeded,
+  // unavailable) arrive in `code` while the detail sits in `message`, so test
+  // both. These are server-side execution timeouts/overload, not account
+  // health — retryable via failover, never quota.
+  if (
+    /internal|server error|unavailable|deadline|timed out|timeout|overloaded|bad gateway|gateway timeout|service unavailable/.test(
+      `${lowerCode} ${lowerMsg}`,
+    )
+  ) {
     return { kind: "server_error", message, code }
   }
 

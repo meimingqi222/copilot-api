@@ -53,7 +53,22 @@ export interface ResolveWindsurfConversationKeyOptions {
   accountId?: string
 }
 
-const CLOUD_SESSION_TTL_MS = 60 * 60_000 // 1 hour, matches Claude session-id cache
+const CLOUD_SESSION_TTL_MS = readCloudSessionTtlMs()
+
+/**
+ * Long coding sessions outlive a 1h cascade rotation and then pay a full
+ * re-prefill (painful at 200k context, can trip upstream deadlines).
+ * `WINDSURF_SESSION_TTL_MS` extends it; bounds keep a typo from pinning
+ * sessions forever or churning them every minute.
+ */
+function readCloudSessionTtlMs(): number {
+  const fallback = 60 * 60_000 // 1 hour, matches Claude session-id cache
+  const raw = process.env.WINDSURF_SESSION_TTL_MS?.trim()
+  if (!raw) return fallback
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.min(24 * 60 * 60_000, Math.max(5 * 60_000, parsed))
+}
 
 interface StoredCloudSessionIds {
   cascadeId: string
@@ -95,6 +110,11 @@ function readHeaderSession(
     forwarded["x-claude-code-session-id"],
     forwarded.session_id,
     forwarded["session-id"],
+    // Generic client conversation id (ZCode sends `x-session-id` on every
+    // model request). Without this, chat clients without windsurf-specific
+    // headers fall through to a fresh random key per request and lose
+    // server-side prompt-cache affinity.
+    forwarded["x-session-id"],
     forwarded.prompt_cache_key,
   ]
   for (const value of candidates) {
@@ -107,7 +127,8 @@ function readHeaderSession(
  * Resolve the conversation bucket for cascade/session reuse.
  *
  * Priority (mirrors Codex/Claude cache routing in copilot-api):
- *   1. Session headers (x-windsurf-session-id, session_id, prompt_cache_key header)
+ *   1. Session headers (x-windsurf-session-id, session_id, x-session-id,
+ *      prompt_cache_key header)
  *   2. `prompt_cache_key` in request body
  *   3. A fresh request-scoped id when no explicit conversation key exists
  */

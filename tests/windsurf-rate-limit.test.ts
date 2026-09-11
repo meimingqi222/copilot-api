@@ -124,6 +124,31 @@ describe("classifyWindsurfFrameError", () => {
     const frame = utf8(JSON.stringify({ data: "ok" }))
     expect(classifyWindsurfFrameError(frame)).toBeUndefined()
   })
+
+  test("classifies deadline_exceeded as server_error, not unknown", () => {
+    const frame = utf8(
+      JSON.stringify({
+        error: {
+          code: "deadline_exceeded",
+          message:
+            "context deadline exceeded (error ID: 68c7e8e1ba994b019591e918c8d8240f)",
+        },
+      }),
+    )
+    const result = classifyWindsurfFrameError(frame)
+    expect(result).toBeDefined()
+    expect(result?.kind).toBe("server_error")
+    expect(result?.code).toBe("deadline_exceeded")
+  })
+
+  test("classifies upstream timeout wording as server_error", () => {
+    expect(
+      classifyWindsurfErrorText(undefined, "upstream request timed out").kind,
+    ).toBe("server_error")
+    expect(
+      classifyWindsurfErrorText("unavailable", "server overloaded").kind,
+    ).toBe("server_error")
+  })
 })
 
 // ── WindsurfUpstreamError ─────────────────────────────────────────────────────

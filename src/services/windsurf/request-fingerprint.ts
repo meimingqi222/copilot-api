@@ -5,6 +5,8 @@ import {
 
 const METADATA_STRING_FIELDS = new Set([1, 2, 3, 4, 7, 12])
 
+const FINGERPRINT_DECODER = new TextDecoder()
+
 export interface WindsurfRequestFingerprint {
   metadataFields: Array<number>
   metadata: Record<string, string | number>
@@ -42,7 +44,7 @@ function readStringField(
 ): string | undefined {
   const node = nodes.find((n) => n.field === field && n.raw)
   if (!node?.raw) return undefined
-  return new TextDecoder().decode(node.raw)
+  return FINGERPRINT_DECODER.decode(node.raw)
 }
 
 /** Summarize top-level GetChatMessage request fields for log comparison. */
@@ -60,7 +62,7 @@ export function fingerprintWindsurfRequest(
 
   for (const sub of metadataSubnodes) {
     if (sub.raw && METADATA_STRING_FIELDS.has(sub.field)) {
-      const value = new TextDecoder().decode(sub.raw)
+      const value = FINGERPRINT_DECODER.decode(sub.raw)
       metadata[`f${sub.field}`] =
         sub.field === 3 ? `${value.slice(0, 24)}…` : value.slice(0, 80)
     }

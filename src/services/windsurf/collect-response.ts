@@ -256,16 +256,17 @@ export async function collectChatCompletion(
     }
     const signatureDelta = chunk.reasoningOpaque ?? ""
     reasoningOpaque += signatureDelta
-    collectedBytes += Buffer.byteLength(signatureDelta)
+    const signatureDeltaBytes =
+      signatureDelta ? Buffer.byteLength(signatureDelta) : 0
+    collectedBytes += signatureDeltaBytes
     if (signatureDelta && orderedPartsComplete) {
       const previous = orderedParts.at(-1)
       if (
         previous?.kind === "reasoning"
-        && orderedPartsBytes + Buffer.byteLength(signatureDelta)
-          <= MAX_ORDERED_RESPONSE_BYTES
+        && orderedPartsBytes + signatureDeltaBytes <= MAX_ORDERED_RESPONSE_BYTES
       ) {
         previous.signature = `${previous.signature ?? ""}${signatureDelta}`
-        orderedPartsBytes += Buffer.byteLength(signatureDelta)
+        orderedPartsBytes += signatureDeltaBytes
       }
     }
     if (collectedBytes > MAX_COLLECTED_RESPONSE_BYTES) {

@@ -32,10 +32,15 @@ export interface ChatStreamFrame {
 
 // ── Frame text decoder ────────────────────────────────────────────────────────
 
+// Shared decoders: constructing a TextDecoder per delta (~per token) adds
+// measurable churn on long streams. "utf-8" is the canonical spelling Bun
+// accepts without a ts-expect-error.
+const STRICT_FRAME_DECODER = new TextDecoder("utf-8", { fatal: true })
+const LENIENT_FRAME_DECODER = new TextDecoder()
+
 function decodeFrameText(raw: Uint8Array): string | undefined {
   try {
-    // @ts-expect-error Bun accepts "utf8" but TypeScript types require "utf-8"
-    return new TextDecoder("utf8", { fatal: true }).decode(raw)
+    return STRICT_FRAME_DECODER.decode(raw)
   } catch {
     return undefined
   }
@@ -43,7 +48,19 @@ function decodeFrameText(raw: Uint8Array): string | undefined {
 
 // ── Float32 helper ────────────────────────────────────────────────────────────
 
+// Shared scratch avoids a DataView allocation per usage value. Only field[28]
+// usage frames reach here (rare), but the helper is still hot when they do.
+const FLOAT_SCRATCH = new ArrayBuffer(4)
+const FLOAT_VIEW = new DataView(FLOAT_SCRATCH)
+
 function parseFloat32(raw: Uint8Array): number {
+  if (raw.byteLength === 4) {
+    FLOAT_VIEW.setUint8(0, raw[0] ?? 0)
+    FLOAT_VIEW.setUint8(1, raw[1] ?? 0)
+    FLOAT_VIEW.setUint8(2, raw[2] ?? 0)
+    FLOAT_VIEW.setUint8(3, raw[3] ?? 0)
+    return FLOAT_VIEW.getFloat32(0, true)
+  }
   return new DataView(raw.buffer, raw.byteOffset, raw.byteLength).getFloat32(
     0,
     true,
@@ -104,7 +121,7 @@ function findTokenUsageFromField28(
 
     const nameNode = section.sub.find((n) => n.field === 5)
     if (!nameNode?.raw) continue
-    const name = new TextDecoder().decode(nameNode.raw)
+    const name = LENIENT_FRAME_DECODER.decode(nameNode.raw)
 
     const valueBlock = section.sub.find((n) => n.field === 4)?.sub
     if (!valueBlock) continue
@@ -141,7 +158,7 @@ function parseTokenUsageFromField28(
 
     const title = node.sub.find((n) => n.field === 1)
     if (!title?.raw) continue
-    const titleStr = new TextDecoder().decode(title.raw)
+    const titleStr = LENIENT_FRAME_DECODER.decode(title.raw)
     if (!titleStr.includes("Token Usage")) continue
 
     return findTokenUsageFromField28(node.sub)
@@ -464,18 +481,61 @@ export function mergeRawUsageSignals(
 
 // ── Error frame detection ─────────────────────────────────────────────────────
 
-export function parseWindsurfFrameError(frame: Uint8Array): string | undefined {
-  const text = Buffer.from(frame).toString("utf8").trim()
+function isWindsurfJsonWhitespace(byte: number): boolean {
+  return byte === 0x20 || byte === 0x0a || byte === 0x0d || byte === 0x09
+}
+
+export interface WindsurfFrameErrorParts {
+  code?: string
+  message: string
+  combined: string
+}
+
+/**
+ * Single-decode error parser. Normal content frames are protobuf binary whose
+ * first byte is a field tag (e.g. 0x1A), never `{`, so the leading-byte check
+ * returns before any copy/decode. Previously every frame paid a
+ * `Buffer.from(frame).toString()` just to discover it was not JSON.
+ */
+export function parseWindsurfFrameErrorParts(
+  frame: Uint8Array,
+): WindsurfFrameErrorParts | undefined {
+  let start = 0
+  while (start < frame.length && isWindsurfJsonWhitespace(frame[start] ?? 0)) {
+    start += 1
+  }
+  if (start >= frame.length || frame[start] !== 0x7b) return undefined
+  let text: string
+  try {
+    text =
+      start === 0 ?
+        LENIENT_FRAME_DECODER.decode(frame)
+      : LENIENT_FRAME_DECODER.decode(frame.subarray(start))
+    text = text.trim()
+  } catch {
+    return undefined
+  }
   if (!text.startsWith("{")) return undefined
   try {
     const parsed = JSON.parse(text) as {
       error?: { code?: string; message?: string }
     }
     if (!parsed.error) return undefined
-    return parsed.error.code ?
+    const combined =
+      parsed.error.code ?
         `${parsed.error.code}: ${parsed.error.message ?? "unknown error"}`
       : parsed.error.message
+    if (!combined) return undefined
+    return {
+      ...(parsed.error.code ? { code: parsed.error.code } : {}),
+      message: parsed.error.message ?? combined,
+      combined,
+    }
   } catch {
     return undefined
   }
+}
+
+export function parseWindsurfFrameError(frame: Uint8Array): string | undefined {
+  return parseWindsurfFrameErrorParts(frame)?.combined
 }

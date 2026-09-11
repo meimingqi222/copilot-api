@@ -75,6 +75,24 @@ describe("windsurf session cache", () => {
     expect(key).toEqual({ key: "cache-body-1", persistent: true })
   })
 
+  test("uses generic x-session-id header (ZCode conversation id)", () => {
+    const key = resolveWindsurfConversationKey({
+      forwardedHeaders: { "x-session-id": "zcode-conv-1" },
+      accountId: "acct-1",
+    })
+    expect(key).toEqual({ key: "zcode-conv-1", persistent: true })
+  })
+
+  test("windsurf-specific header wins over generic x-session-id", () => {
+    const key = resolveWindsurfConversationKey({
+      forwardedHeaders: {
+        "x-windsurf-session-id": "explicit-ws",
+        "x-session-id": "zcode-conv-1",
+      },
+    })
+    expect(key).toEqual({ key: "explicit-ws", persistent: true })
+  })
+
   test("does not use OpenAI user as an implicit conversation identity", () => {
     const key = resolveWindsurfConversationKey({
       user: "end-user-42",

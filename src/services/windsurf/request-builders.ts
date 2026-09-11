@@ -181,7 +181,11 @@ function estimateRequestBytes(payload: ChatCompletionsPayload): number {
     }
   }
   for (const tool of payload.tools ?? []) {
-    bytes += JSON.stringify(tool.function.parameters).length + 256
+    // Cheap approximation on purpose: the real schema is stringified once in
+    // buildToolDef. Stringifying here too would double that cost per tool per
+    // request just to size a hint growth already covers when missed.
+    bytes +=
+      tool.function.name.length + (tool.function.description?.length ?? 0) + 512
   }
   return bytes
 }

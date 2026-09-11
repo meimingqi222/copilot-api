@@ -5,8 +5,11 @@ export function chunkFromText(opts: {
   model: string
   text: string
   field: "content" | "reasoning_text" | "reasoning_opaque"
+  /** SSE `created` second. Defaults to now; pass a per-stream value to avoid a Date.now() per token. */
+  created?: number
 }): string {
   const { requestId, model, text, field } = opts
+  const created = opts.created ?? Math.floor(Date.now() / 1000)
   let delta: Record<string, string>
   switch (field) {
     case "content": {
@@ -28,7 +31,7 @@ export function chunkFromText(opts: {
   return JSON.stringify({
     id: requestId,
     object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
+    created,
     model,
     choices: [
       {
@@ -47,12 +50,14 @@ export function chunkFromToolCallInit(opts: {
   toolIndex: number
   callId: string
   toolName: string
+  created?: number
 }): string {
   const { requestId, model, toolIndex, callId, toolName } = opts
+  const created = opts.created ?? Math.floor(Date.now() / 1000)
   return JSON.stringify({
     id: requestId,
     object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
+    created,
     model,
     choices: [
       {
@@ -79,12 +84,14 @@ export function chunkFromToolCallArgs(opts: {
   model: string
   toolIndex: number
   args: string
+  created?: number
 }): string {
   const { requestId, model, toolIndex, args } = opts
+  const created = opts.created ?? Math.floor(Date.now() / 1000)
   return JSON.stringify({
     id: requestId,
     object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
+    created,
     model,
     choices: [
       {
@@ -141,12 +148,14 @@ export function doneChunk(opts: {
   model: string
   finishReason: "stop" | "length" | "tool_calls" | "content_filter"
   usage?: WindsurfUsageLike
+  created?: number
 }): string {
   const { requestId, model, finishReason, usage } = opts
+  const created = opts.created ?? Math.floor(Date.now() / 1000)
   return JSON.stringify({
     id: requestId,
     object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
+    created,
     model,
     choices: [
       {

@@ -428,12 +428,14 @@ export function handleStreamingCompletion(
  * - Windsurf: `x-windsurf-session-id`, `session_id`
  * - xAI: `x-grok-conv-id`
  * - Claude (via chat→messages translation): `x-claude-code-session-id`
+ * - Generic clients (ZCode sends `x-session-id` per conversation): `x-session-id`
  */
 export function extractChatForwardedHeaders(
   c: Context,
 ): Record<string, string | undefined> {
   return {
     session_id: c.req.header("session_id") ?? c.req.header("session-id"),
+    "x-session-id": c.req.header("x-session-id"),
     "x-antigravity-session-id": c.req.header("x-antigravity-session-id"),
     "x-windsurf-session-id": c.req.header("x-windsurf-session-id"),
     "x-grok-conv-id": c.req.header("x-grok-conv-id"),

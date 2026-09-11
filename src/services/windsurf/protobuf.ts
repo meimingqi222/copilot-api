@@ -363,11 +363,14 @@ export async function* decodeConnectFrames(
       let offset = bufferStart
       while (bufferEnd - offset >= 5) {
         const flags = buffer[offset]
-        const length = new DataView(
-          buffer.buffer,
-          buffer.byteOffset + offset + 1,
-          4,
-        ).getUint32(0, false)
+        // Manual big-endian u32: avoids a DataView allocation per frame on a
+        // hot streaming loop with thousands of small frames.
+        const length =
+          ((buffer[offset + 1] ?? 0) * 0x1000000
+            + ((buffer[offset + 2] ?? 0) << 16)
+            + ((buffer[offset + 3] ?? 0) << 8)
+            + (buffer[offset + 4] ?? 0))
+          >>> 0
         // 畸形 length 头(声明远超合理上限的 payload):立即拒绝,
         // 否则 buffer 会一直累积直到凑齐该 length 才消费。
         if (length > MAX_FRAME_PAYLOAD) {

@@ -297,11 +297,18 @@ async function* streamToOpenAI(
   model: string,
   cacheDebug?: WindsurfCacheDebugContext,
   memoryTraceId?: string,
+  streamOpts?: { collect?: boolean },
 ): AsyncIterable<WindsurfStreamEvent> {
   const stream = response.body
   if (!stream) throw new Error("Windsurf response body is empty")
 
   const requestId = `chatcmpl-${randomUUID().replaceAll("-", "")}`
+  // OpenAI `created` is request time, not per-token time. Hoisting saves a
+  // Date.now() per delta on long streams.
+  const created = Math.floor(Date.now() / 1000)
+  // Non-streaming `collectChatCompletion` needs the structured `collected`
+  // twin; pure streaming only forwards `data`, so skip the extra objects.
+  const collect = streamOpts?.collect ?? true
   let usage: ChatStreamFrame["usage"] | undefined
   let rawUsage: WindsurfRawUsageSignals | undefined
   let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
@@ -357,82 +364,93 @@ async function* streamToOpenAI(
     for (const delta of parsed.deltas) {
       switch (delta.kind) {
         case "content": {
-          yield {
-            data: chunkFromText({
-              requestId,
-              model,
-              text: delta.text,
-              field: "content",
-            }),
-            collected: { content: delta.text },
-          }
+          const data = chunkFromText({
+            requestId,
+            model,
+            text: delta.text,
+            field: "content",
+            created,
+          })
+          yield collect ?
+            { data, collected: { content: delta.text } }
+          : { data }
           break
         }
         case "reasoning_text": {
-          yield {
-            data: chunkFromText({
-              requestId,
-              model,
-              text: delta.text,
-              field: "reasoning_text",
-            }),
-            collected: { reasoningText: delta.text },
-          }
+          const data = chunkFromText({
+            requestId,
+            model,
+            text: delta.text,
+            field: "reasoning_text",
+            created,
+          })
+          yield collect ?
+            { data, collected: { reasoningText: delta.text } }
+          : { data }
           break
         }
         case "reasoning_signature": {
-          yield {
-            data: chunkFromText({
-              requestId,
-              model,
-              text: delta.text,
-              field: "reasoning_opaque",
-            }),
-            collected: { reasoningOpaque: delta.text },
-          }
+          const data = chunkFromText({
+            requestId,
+            model,
+            text: delta.text,
+            field: "reasoning_opaque",
+            created,
+          })
+          yield collect ?
+            { data, collected: { reasoningOpaque: delta.text } }
+          : { data }
           break
         }
         case "tool_call_init": {
           currentToolCallIndex++
           toolIdToIndex.set(delta.callId, currentToolCallIndex)
           lastToolCallId = delta.callId
-          yield {
-            data: chunkFromToolCallInit({
-              requestId,
-              model,
-              toolIndex: currentToolCallIndex,
-              callId: delta.callId,
-              toolName: delta.toolName,
-            }),
-            collected: {
-              toolCalls: [
-                {
-                  index: currentToolCallIndex,
-                  id: delta.callId,
-                  function: { name: delta.toolName, arguments: "" },
-                },
-              ],
-            },
-          }
+          const data = chunkFromToolCallInit({
+            requestId,
+            model,
+            toolIndex: currentToolCallIndex,
+            callId: delta.callId,
+            toolName: delta.toolName,
+            created,
+          })
+          yield collect ?
+            {
+              data,
+              collected: {
+                toolCalls: [
+                  {
+                    index: currentToolCallIndex,
+                    id: delta.callId,
+                    function: { name: delta.toolName, arguments: "" },
+                  },
+                ],
+              },
+            }
+          : { data }
           break
         }
         case "tool_call_args": {
           if (currentToolCallIndex < 0 || !lastToolCallId) break
           const routeKey = delta.callId ?? lastToolCallId
           const toolIndex = toolIdToIndex.get(routeKey) ?? currentToolCallIndex
-          yield {
-            data: chunkFromToolCallArgs({
-              requestId,
-              model,
-              toolIndex,
-              args: delta.args,
-            }),
-            collected: {
-              toolCalls: [
-                { index: toolIndex, function: { arguments: delta.args } },
-              ],
-            },
-          }
+          const data = chunkFromToolCallArgs({
+            requestId,
+            model,
+            toolIndex,
+            args: delta.args,
+            created,
+          })
+          yield collect ?
+            {
+              data,
+              collected: {
+                toolCalls: [
+                  { index: toolIndex, function: { arguments: delta.args } },
+                ],
+              },
+            }
+          : { data }
           break
         }
         default: {
@@ -468,35 +486,44 @@ async function* streamToOpenAI(
     }
   }
 
-  const finalMeta = { req: requestId, model, provider: "windsurf", usage }
   updateMemoryTrace(memoryTraceId, "windsurf_stream_decoded", {
     upstreamFrameCount,
     upstreamFrameBytes,
     decodedDeltaCount,
   })
-  logger.debug("usage final", finalMeta)
-  if (cacheDebug) {
-    logger.debug("[windsurf] cache summary", {
+  if (debugLogging) {
+    logger.debug("usage final", {
       req: requestId,
       model,
-      ...cacheDebug,
-      rawUsage,
-      parsedUsage: usage,
-      cacheHitPct:
-        usage && usage.prompt_tokens > 0 ?
-          Math.round(
-            ((usage.cache_read_tokens ?? 0) / usage.prompt_tokens) * 1000,
-          ) / 10
-        : null,
+      provider: "windsurf",
+      usage,
     })
+    if (cacheDebug) {
+      logger.debug("[windsurf] cache summary", {
+        req: requestId,
+        model,
+        ...cacheDebug,
+        rawUsage,
+        parsedUsage: usage,
+        cacheHitPct:
+          usage && usage.prompt_tokens > 0 ?
+            Math.round(
+              ((usage.cache_read_tokens ?? 0) / usage.prompt_tokens) * 1000,
+            ) / 10
+          : null,
+      })
+    }
   }
-  yield {
-    data: doneChunk({ requestId, model, finishReason, usage }),
-    collected: {
-      finishReason,
-      ...(usage && { usage: toOpenAIChunkUsage(usage) }),
-    },
-  }
+  const doneData = doneChunk({ requestId, model, finishReason, usage, created })
+  yield collect ?
+    {
+      data: doneData,
+      collected: {
+        finishReason,
+        ...(usage && { usage: toOpenAIChunkUsage(usage) }),
+      },
+    }
+  : { data: doneData }
   yield { data: "[DONE]" }
 }
 

@@ -6,7 +6,7 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { state } from "~/lib/state"
 
@@ -50,6 +50,7 @@ interface CreateWindsurfAttemptOptions {
     model: string,
     cacheDebug?: WindsurfCacheDebugContext,
     memoryTraceId?: string,
+    streamOpts?: { collect?: boolean },
   ) => AsyncIterable<CopilotStreamEvent>
 }
 
@@ -150,14 +151,16 @@ export async function createWindsurfAttempt(
       conversationKey: resolvedConversation.key,
       cascadeId: cloudIds.cascadeId,
     }
-    logger.debug("[windsurf] cloud-direct request", {
-      account: connection.name,
-      accountId: connection.id,
-      model: requestModel,
-      conversationKey: resolvedConversation.key,
-      cascadeId: cloudIds.cascadeId,
-      hasTools: (payload.tools?.length ?? 0) > 0,
-    })
+    if (isDebugLoggingEnabled()) {
+      logger.debug("[windsurf] cloud-direct request", {
+        account: connection.name,
+        accountId: connection.id,
+        model: requestModel,
+        conversationKey: resolvedConversation.key,
+        cascadeId: cloudIds.cascadeId,
+        hasTools: (payload.tools?.length ?? 0) > 0,
+      })
+    }
 
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_protobuf_build_start")
     let protobufBytes = 0
@@ -176,20 +179,37 @@ export async function createWindsurfAttempt(
       protobufBytes,
       wireBytes: requestBody.byteLength,
     })
+    // 200k-token histories encode to ~1MB protobuf: worth one log line so a
+    // slow/upstream-deadline failure can be correlated with payload size.
+    // Rate is bounded by request rate; threshold keeps normal chats quiet.
+    if (protobufBytes > 512 * 1024) {
+      logger.warn("[windsurf] large request payload", {
+        account: connection.name,
+        model: requestModel,
+        protobufBytes,
+        wireBytes: requestBody.byteLength,
+        messageCount: payload.messages.length,
+        toolCount: payload.tools?.length ?? 0,
+      })
+    }
 
-    const protoFingerprint = fingerprintWindsurfRequest(requestBody)
-    logger.debug("[windsurf] proto fingerprint", {
-      conversationKey: resolvedConversation.key,
-      cascadeId: cloudIds.cascadeId,
-      upstreamModel: protoFingerprint.model,
-      requestType: protoFingerprint.requestType,
-      plannerMode: protoFingerprint.plannerMode,
-      toolCount: protoFingerprint.toolCount,
-      messageCount: protoFingerprint.messageCount,
-      metadataFields: protoFingerprint.metadataFields,
-      metadata: protoFingerprint.metadata,
-      configurationFields: protoFingerprint.configurationFields,
-    })
+    // Debug-only: gunzips + re-parses the just-built request. Gated so the
+    // hot path does not pay decompress+parse on every chat call.
+    if (isDebugLoggingEnabled()) {
+      const protoFingerprint = fingerprintWindsurfRequest(requestBody)
+      logger.debug("[windsurf] proto fingerprint", {
+        conversationKey: resolvedConversation.key,
+        cascadeId: cloudIds.cascadeId,
+        upstreamModel: protoFingerprint.model,
+        requestType: protoFingerprint.requestType,
+        plannerMode: protoFingerprint.plannerMode,
+        toolCount: protoFingerprint.toolCount,
+        messageCount: protoFingerprint.messageCount,
+        metadataFields: protoFingerprint.metadataFields,
+        metadata: protoFingerprint.metadata,
+        configurationFields: protoFingerprint.configurationFields,
+      })
+    }
 
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_fetch_start", {
       wireBytes: requestBody.byteLength,
@@ -234,7 +254,11 @@ export async function createWindsurfAttempt(
       `[windsurf] HTTP ${response.status} for ${connection.name} model=${requestModel} stream=${payload.stream}`,
     )
     return {
-      stream: streamFactory(response, model, cacheDebug, ctx?.memoryTraceId),
+      stream: streamFactory(response, model, cacheDebug, ctx?.memoryTraceId, {
+        // Non-streaming drains via collectChatCompletion (needs `collected`);
+        // pure streaming only forwards `data`.
+        collect: !payload.stream,
+      }),
       abort: () => {
         if (!linkedAbort.controller.signal.aborted) {
           linkedAbort.controller.abort()

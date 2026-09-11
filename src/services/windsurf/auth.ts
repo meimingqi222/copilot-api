@@ -11,7 +11,6 @@
  * Ported from oh-my-pi packages/ai/src/providers/devin.ts (441-491).
  */
 
-import { createHash } from "node:crypto"
 import { gunzipSync } from "node:zlib"
 
 import { readResponseBytes } from "~/lib/request-body"
@@ -43,9 +42,10 @@ const MAX_AUTH_CACHE_ENTRIES = 1024
 const authCache = new Map<string, CachedDevinAuth>()
 
 function authCacheKey(apiKey: string, baseUrl: string): string {
-  return createHash("sha256")
-    .update(`${normalizeWindsurfBaseUrl(baseUrl)}\0${apiKey}`)
-    .digest("hex")
+  // Raw composite key: the apiKey already lives in memory on the connection,
+  // so hashing it per request (a SHA256 on every chat call) only burns CPU
+  // to avoid holding a string we already hold.
+  return `${normalizeWindsurfBaseUrl(baseUrl)}\0${apiKey}`
 }
 
 function readJwtExpiryMs(jwt: string): number | undefined {
