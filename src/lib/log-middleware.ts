@@ -9,6 +9,7 @@ import {
 import { pruneExpiredRequestLogs, readLogRotationConfig } from "./log-rotation"
 import { logStore } from "./log-store"
 import { isProtectedRoute } from "./protected-routes"
+import { dumpIncomingRequest } from "./request-dump"
 import {
   finalizeRequestLog,
   initRequestLog,
@@ -53,6 +54,9 @@ export const requestLogger = async (c: Context, next: Next) => {
   } catch {
     // Headers may already be committed by an upgraded or streaming response.
   }
+
+  // Body 必须在 handler 消费之前 clone 读取,否则拿不到内容。
+  await dumpIncomingRequest(c, { requestId: ctx.requestId, clientIp })
 
   const persistRequestLog = () => {
     if (!claimRequestLogFinish(c)) return

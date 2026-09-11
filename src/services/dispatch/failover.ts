@@ -254,6 +254,21 @@ export async function executeWithFailover<
         )
       }
 
+      // 内容策略拦截是请求内容问题，不是账号或线路故障：不冷却账号（否则该
+      // 账号上其他客户端的请求会跟着吃 429），也不换 target 重试（同一份
+      // prompt 在任何凭证上都会被同样拒绝）。直接以 400 抛出，让客户端拿到
+      // 可读、不可重试的错误，而不是笼统的 500。
+      if (
+        error instanceof WindsurfUpstreamError
+        && error.kind === "content_policy"
+      ) {
+        throw new HTTPError(
+          error.message,
+          new Response(null, { status: 400 }),
+          error.message,
+        )
+      }
+
       // A local per-account / per-credential concurrency rejection is not an
       // upstream failure: do not cool down or mark the account. It is safe to
       // try another route target, while preserving the 429 if no target is

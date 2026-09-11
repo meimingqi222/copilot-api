@@ -78,6 +78,17 @@ describe("classifyWindsurfErrorText", () => {
     expect(result.kind).toBe("server_error")
   })
 
+  test("classifies content policy blocks apart from account errors", () => {
+    const result = classifyWindsurfErrorText(
+      "permission_denied",
+      "Your request was blocked by our content policy. Please remove sensitive "
+        + "or unsafe content from your prompt, memories, and other settings and "
+        + "try again. (trace ID: abc123)",
+    )
+    expect(result.kind).toBe("content_policy")
+    expect(result.retryAfterMs).toBeUndefined()
+  })
+
   test("returns unknown for unrecognized messages", () => {
     const result = classifyWindsurfErrorText(undefined, "something else")
     expect(result.kind).toBe("unknown")

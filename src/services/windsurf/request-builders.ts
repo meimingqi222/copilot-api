@@ -13,6 +13,10 @@ import {
   extractSignatureAlias,
 } from "~/lib/thinking"
 
+import {
+  sanitizeWindsurfSystemPrompt,
+  sanitizeWindsurfToolDescription,
+} from "./content-policy-sanitizer"
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectFrame } from "./protobuf"
 
@@ -382,7 +386,8 @@ export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
     .filter((m) => m.role === "system")
     .map((m) => serializeMessageContent(m.content).text)
     .filter((text) => hasText(text))
-  return texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
+  const joined = texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
+  return sanitizeWindsurfSystemPrompt(joined)
 }
 
 // ── Tool-definition builder ────────────────────────────────────────────────────
@@ -391,7 +396,10 @@ export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
 const MAX_TOOL_DESC_LEN = 6998
 
 function buildToolDef(tool: Tool): ProtobufEncoder {
-  const rawDesc = tool.function.description ?? ""
+  const rawDesc = sanitizeWindsurfToolDescription(
+    tool.function.name,
+    tool.function.description ?? "",
+  )
   const desc =
     rawDesc.length > MAX_TOOL_DESC_LEN ?
       `${rawDesc.slice(0, MAX_TOOL_DESC_LEN - 24)}\n…(truncated for cloud)`

@@ -20,6 +20,7 @@ export type WindsurfErrorKind =
   | "rate_limited" // "Reached message rate limit" — per-model message quota (recoverable)
   | "quota_exhausted" // "Quota exhausted" / quota/balance keywords
   | "auth_error" // "Unauthenticated" / auth-related "Permission denied"
+  | "content_policy" // "blocked by our content policy" — prompt content, not account health
   | "server_error"
   | "client_error"
   | "unknown"
@@ -105,6 +106,15 @@ export function classifyWindsurfErrorText(
       message,
       code,
     }
+  }
+
+  // Prompt content was rejected by the upstream content policy. This is a
+  // property of the request, not of the account, so it must not be folded into
+  // the rate-limit branch: cooling the connection down over one client's prompt
+  // takes every other client of that account down with it, and failover cannot
+  // help because the same prompt is rejected on every credential.
+  if (/content policy|blocked by our/.test(lowerMsg)) {
+    return { kind: "content_policy", message, code }
   }
 
   if (/unauthenticated|invalid api key|auth/i.test(lowerCode + lowerMsg)) {
