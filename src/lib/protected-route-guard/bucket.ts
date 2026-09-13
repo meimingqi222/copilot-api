@@ -21,7 +21,7 @@ export function enforceTokenBucket(input: EnforceInput): void {
   const key = `${principal}:${isTokenRoute ? "token" : "reasoning"}`
   let bucket = buckets.get(key)
   if (!bucket) {
-    bucket = { tokens: capacity, updatedAt: now }
+    bucket = { tokens: capacity, updatedAt: now, capacity, refillPerSec }
     buckets.set(key, bucket)
   } else {
     const elapsedSec = Math.max(0, (now - bucket.updatedAt) / 1000)
@@ -30,6 +30,10 @@ export function enforceTokenBucket(input: EnforceInput): void {
       bucket.tokens + elapsedSec * refillPerSec,
     )
     bucket.updatedAt = now
+    // Config can change between requests (admin edit / env): keep the sweep
+    // honest about the currently applicable capacity and refill rate.
+    bucket.capacity = capacity
+    bucket.refillPerSec = refillPerSec
   }
 
   if (bucket.tokens >= 1) {

@@ -49,6 +49,7 @@ export interface PrincipalGuardState {
   repeatCount: number
   lastBlockAt?: number
   blockLevel?: string
+  blockStatus?: 403 | 429
   suppressUntil?: number
   suppressKey?: string
 }
@@ -72,6 +73,7 @@ export interface TempBlockInfo {
   level?: string
   repeatCount?: number
   score?: number
+  status?: 403 | 429
 }
 
 export interface GuardInput {

@@ -10,6 +10,7 @@ import {
   reportRequestError,
   reportRequestSuccess,
   getPrincipalStateForTest,
+  idleTtlMs,
   type PrincipalGuardState,
 } from "~/lib/protected-route-guard"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
@@ -452,7 +453,9 @@ describe("protected route guard - behavior analysis", () => {
     state.recentRequests = []
     state.blockedUntil = undefined
 
-    cleanupProtectedRouteGuardForTest(1000 + 40 * 60 * 1000 + 1001)
+    // Sweep just past the idle TTL. Derived from `idleTtlMs()` rather than
+    // hardcoded so it keeps tracking the configured block durations.
+    cleanupProtectedRouteGuardForTest(1000 + idleTtlMs() + 1001)
     expect(getProtectedRouteGuardSizeForTest()).toBe(0)
   })
 })

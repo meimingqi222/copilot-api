@@ -31,6 +31,8 @@ export {
   cleanupProtectedRouteGuardForTest,
   getPrincipalStateForTest,
   getProtectedRouteGuardSizeForTest,
+  idleTtlMs,
+  maxBlockMs,
   resetProtectedRouteGuardForTest,
 } from "./state"
 export type { GuardInput, PrincipalBehavior } from "./types"

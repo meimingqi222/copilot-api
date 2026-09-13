@@ -14,6 +14,10 @@ export const guardState = new Map<string, PrincipalGuardState>()
 export interface BucketState {
   tokens: number
   updatedAt: number
+  /** Capacity last applied — lets the idle sweep prove a refill is complete. */
+  capacity: number
+  /** Refill rate (tokens/sec) last applied — same purpose as capacity. */
+  refillPerSec: number
 }
 
 export const buckets = new Map<string, BucketState>()
@@ -26,8 +30,22 @@ export interface ShadowStat {
 
 export const shadowStats = new Map<string, ShadowStat>()
 
+/**
+ * How long a principal's state survives after its last request.
+ *
+ * Must be longer than the longest block `levelForScore` can hand out
+ * (`L2-short` uses `shortBlockMs`, `L3-standard`/probe use `tempBlockMs`,
+ * `L4-long` uses `longBlockMs`), otherwise an idle sweep could drop a block
+ * that is still active and silently unblock the principal. Taking the max of
+ * the three keeps that true for any configuration, not just the defaults.
+ */
+export function maxBlockMs(): number {
+  const cfg = getGuardConfig()
+  return Math.max(cfg.shortBlockMs, cfg.tempBlockMs, cfg.longBlockMs)
+}
+
 export function idleTtlMs(): number {
-  return getGuardConfig().tempBlockMs + BEHAVIOR_WINDOW_MS
+  return maxBlockMs() + BEHAVIOR_WINDOW_MS
 }
 
 export function getOrCreateState(principal: string): PrincipalGuardState {
@@ -76,6 +94,7 @@ export function pruneState(state: PrincipalGuardState, now: number): void {
     state.blockedUntil = undefined
     state.blockReason = undefined
     state.blockedAt = undefined
+    state.blockStatus = undefined
   }
 }
 
@@ -93,6 +112,26 @@ export function cleanupIdleState(now: number): void {
 
     if (now - state.lastSeen >= ttl) {
       guardState.delete(principal)
+      buckets.delete(`${principal}:reasoning`)
+      buckets.delete(`${principal}:token`)
+    }
+  }
+  // Sweep long-idle buckets (e.g. principals whose guard state was never
+  // created because the bucket rejected first). A bucket may only be dropped
+  // once refilling would provably have brought it back to full capacity —
+  // otherwise deleting it would silently hand tokens back. The `ttl * 2` lower
+  // bound keeps the common case cheap; the refill check makes it correct when
+  // a bucket was configured with a very low refill rate.
+  for (const [key, bucket] of buckets) {
+    if (now - bucket.updatedAt < ttl * 2) continue
+    // A non-refilling bucket can never be "provably full", so keep it.
+    if (bucket.refillPerSec <= 0) continue
+    const refillableSeconds =
+      (bucket.capacity - bucket.tokens) / bucket.refillPerSec
+    const fullyRefilled =
+      (now - bucket.updatedAt) / 1000 >= Math.max(0, refillableSeconds)
+    if (fullyRefilled) {
+      buckets.delete(key)
     }
   }
 }

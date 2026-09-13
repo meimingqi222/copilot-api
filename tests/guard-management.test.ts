@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
+import { buckets } from "~/lib/protected-route-guard/state"
 import { resetGuardForTest } from "~/lib/guard"
 import {
   DEFAULT_GUARD_CONFIG,
@@ -12,7 +13,9 @@ import {
 import {
   blockPrincipal,
   checkProtectedRouteGuard,
+  cleanupProtectedRouteGuardForTest,
   getPrincipalStateForTest,
+  idleTtlMs,
   listShadowStats,
   listTempBlocks,
   resetProtectedRouteGuardForTest,
@@ -108,6 +111,46 @@ describe("guard management", () => {
     )
     const good = validateGuardConfigPatch({ requestLimit: 100 })
     expect(good.ok).toBe(true)
+  })
+
+  test("guard config ordering holds for single-field patches", () => {
+    // The UI submits only changed fields, so ordering must be checked against
+    // the effective config, not just when both fields arrive together.
+    expect(
+      validateGuardConfigPatch({ trustedRequestLimit: 10 }).ok, // < requestLimit 240
+    ).toBe(false)
+    expect(
+      validateGuardConfigPatch({ scoreReviewThreshold: 80 }).ok, // > soft 50
+    ).toBe(false)
+    expect(
+      validateGuardConfigPatch({ scoreSoftThreshold: 95 }).ok, // > severe 75
+    ).toBe(false)
+    // Consistent single-field edits still pass.
+    expect(validateGuardConfigPatch({ scoreReviewThreshold: 20 }).ok).toBe(true)
+    expect(validateGuardConfigPatch({ scoreSoftThreshold: 60 }).ok).toBe(true)
+    // Unrelated fields are never blocked by existing values.
+    expect(validateGuardConfigPatch({ tempBlockMs: 60_000 }).ok).toBe(true)
+  })
+
+  test("idle sweep never refunds tokens to a partially drained bucket", () => {
+    // A bucket that cannot have refilled to full must survive the sweep;
+    // deleting and recreating it at full capacity would refund tokens.
+    // 40 tokens at 0.0001/s needs 400,000s to refill — far beyond ttl*2.
+    const drained = {
+      tokens: 0,
+      updatedAt: 1000,
+      capacity: 40,
+      refillPerSec: 0.0001,
+    }
+    const drainedKey = "user:slow:reasoning"
+    buckets.set(drainedKey, drained)
+
+    cleanupProtectedRouteGuardForTest(1000 + idleTtlMs() * 2 + 40_000)
+    expect(buckets.has(drainedKey)).toBe(true)
+
+    // Once a full refill is provably possible, the bucket is reclaimed.
+    cleanupProtectedRouteGuardForTest(1000 + 400_010 * 1000)
+    expect(buckets.has(drainedKey)).toBe(false)
   })
 
   test("guard config defaults match legacy constants", () => {
@@ -229,6 +272,13 @@ describe("guard management", () => {
     })
     expect(first.status).toBe(429)
     expect(listTempBlocks()[0]?.level).toBe("L2-short")
+
+    // Follow-ups during an L2 block stay 429 (throttle), not 403.
+    const during = await app.request("http://localhost/chat/completions", {
+      method: "POST",
+      headers,
+    })
+    expect(during.status).toBe(429)
 
     // Expire the block but stay inside the escalation window.
     const state = getPrincipalStateForTest("user:user-escalate")

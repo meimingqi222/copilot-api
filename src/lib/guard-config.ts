@@ -389,16 +389,53 @@ export function validateGuardConfigPatch(
       }
     }
   }
+  // Cross-field ordering must be validated against the *effective* config (the
+  // patch merged over current values), not only when both fields arrive in the
+  // same request: the UI sends just the changed fields, so a single-field patch
+  // could silently invert the thresholds (e.g. review > soft), making the
+  // review branch unreachable. Each pair is checked only when the patch touches
+  // one of its fields, so unrelated patches never fail on a pre-existing value.
+  const pickNumber = (
+    key:
+      | "requestLimit"
+      | "trustedRequestLimit"
+      | "scoreReviewThreshold"
+      | "scoreSoftThreshold"
+      | "scoreSevereThreshold",
+  ): number => {
+    const value = patch[key]
+    if (typeof value === "number" && Number.isFinite(value)) return value
+    return getGuardConfig()[key]
+  }
+  const inPatch = (...keys: Array<string>): boolean =>
+    keys.some((key) => key in patch)
+
   if (
-    "requestLimit" in patch
-    && "trustedRequestLimit" in patch
-    && typeof patch.requestLimit === "number"
-    && typeof patch.trustedRequestLimit === "number"
-    && patch.trustedRequestLimit < patch.requestLimit
+    inPatch("requestLimit", "trustedRequestLimit")
+    && pickNumber("trustedRequestLimit") < pickNumber("requestLimit")
   ) {
     return {
       ok: false,
       error: "trustedRequestLimit must be >= requestLimit.",
+    }
+  }
+
+  if (
+    inPatch("scoreReviewThreshold", "scoreSoftThreshold")
+    && pickNumber("scoreReviewThreshold") > pickNumber("scoreSoftThreshold")
+  ) {
+    return {
+      ok: false,
+      error: "scoreReviewThreshold must be <= scoreSoftThreshold.",
+    }
+  }
+  if (
+    inPatch("scoreSoftThreshold", "scoreSevereThreshold")
+    && pickNumber("scoreSoftThreshold") > pickNumber("scoreSevereThreshold")
+  ) {
+    return {
+      ok: false,
+      error: "scoreSoftThreshold must be <= scoreSevereThreshold.",
     }
   }
   return { ok: true, patch: sanitizeGuardConfigPatch(patch) }

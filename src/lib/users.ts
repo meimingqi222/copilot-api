@@ -1,10 +1,11 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
-import { randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
+import { randomBytes, randomUUID } from "node:crypto"
 
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { Repository } from "~/lib/repository"
 import { parseModelRef } from "~/lib/route-target/model-reference"
+import { hashSecret, verifySecret } from "~/lib/secret-hash"
 import { state } from "~/lib/state"
 import { globalTimers } from "~/lib/timer-registry"
 
@@ -12,6 +13,10 @@ export interface User {
   id: string
   username: string
   hashedApiKey: string
+  /** SHA-256 fingerprint of the raw key — fast lookup index, not a secret. */
+  keyFingerprint?: string
+  /** Epoch ms after which the key is rejected (401). Absent = never expires. */
+  expiresAt?: number
   quotaLimit: number
   usedTokens: number
   allowedModels?: Array<string>
@@ -25,19 +30,32 @@ export interface UserWithKey extends User {
   apiKey: string
 }
 
-export type PublicUser = Omit<User, "hashedApiKey">
+export type PublicUser = Omit<User, "hashedApiKey" | "keyFingerprint">
 
-const hashKey = (raw: string): string =>
+const fingerprintKey = (raw: string): string =>
   createHash("sha256").update(raw).digest("hex")
 
-const keysMatch = (raw: string, hashed: string): boolean => {
-  try {
-    const a = Buffer.from(hashKey(raw), "hex")
-    const b = Buffer.from(hashed, "hex")
-    return a.length === b.length && timingSafeEqual(a, b)
-  } catch {
-    return false
+// Short-TTL verification cache: scrypt is intentionally slow (~tens of ms),
+// so a verified key maps fingerprint → userId for 60s. Every hit re-resolves
+// the user object from state and re-checks enabled/expiry, and all mutations
+// (update/delete/reset) drop the user's entries — a revoked key is honored
+// within one request, not one TTL.
+const VERIFY_CACHE_TTL_MS = 60_000
+const verifyCache = new Map<string, { userId: string; expires: number }>()
+
+function dropVerifyCacheForUser(id: string): void {
+  for (const [fp, entry] of verifyCache) {
+    if (entry.userId === id) verifyCache.delete(fp)
   }
+}
+
+export function isUserExpired(user: User, now = Date.now()): boolean {
+  return typeof user.expiresAt === "number" && user.expiresAt <= now
+}
+
+/** Finite-number check for an expiry timestamp patch value. */
+export function isValidExpiry(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value)
 }
 
 const usersRepository = new Repository<Array<User>>({
@@ -53,22 +71,26 @@ export async function loadUsers(): Promise<void> {
   // If a legacy API key is configured, ensure the in-memory admin user exists.
   // This keeps --api-key functional even after users.json is created/modified.
   if (state.legacyApiKey) {
-    const hashedKey = hashKey(state.legacyApiKey)
-    const existingLegacyAdmin = state.users.find(
-      (u) => u.hashedApiKey === hashedKey,
+    const existingLegacyAdmin = state.users.find((u) =>
+      verifySecret(state.legacyApiKey as string, u.hashedApiKey),
     )
     if (!existingLegacyAdmin) {
-      // Check for persisted admin with stale key — update key, preserve tokens
+      // Check for persisted admin with stale key — update key, preserve tokens.
+      // Only re-hash when the persisted key no longer verifies against the
+      // configured legacy key; otherwise the existing scrypt hash (with its
+      // salt) is reused to avoid rewriting users.json on every boot.
       const persistedAdmin = state.users.find(
         (u) => u.username === "admin" && u.role === "admin",
       )
       if (persistedAdmin) {
-        persistedAdmin.hashedApiKey = hashedKey
+        persistedAdmin.hashedApiKey = hashSecret(state.legacyApiKey)
+        persistedAdmin.keyFingerprint = fingerprintKey(state.legacyApiKey)
       } else {
         const adminUser: User = {
           id: randomUUID(),
           username: "admin",
-          hashedApiKey: hashedKey,
+          hashedApiKey: hashSecret(state.legacyApiKey),
+          keyFingerprint: fingerprintKey(state.legacyApiKey),
           quotaLimit: 0,
           usedTokens: 0,
           allowedModels: [],
@@ -78,6 +100,10 @@ export async function loadUsers(): Promise<void> {
         }
         state.users.push(adminUser)
       }
+    } else if (!existingLegacyAdmin.keyFingerprint) {
+      // Backfill fingerprint on a legacy admin that already verifies, so the
+      // fast path in verifyApiKey applies on subsequent requests.
+      existingLegacyAdmin.keyFingerprint = fingerprintKey(state.legacyApiKey)
     }
   }
 }
@@ -122,12 +148,15 @@ export function createUserSync(
   quotaLimit = 0,
   role: "admin" | "user" = "user",
   allowedModels: Array<string> = [],
+  opts: { expiresAt?: number } = {},
 ): UserWithKey {
   const rawKey = `sk-${randomBytes(32).toString("hex")}`
   const user: User = {
     id: randomUUID(),
     username,
-    hashedApiKey: hashKey(rawKey),
+    hashedApiKey: hashSecret(rawKey),
+    keyFingerprint: fingerprintKey(rawKey),
+    expiresAt: opts.expiresAt,
     quotaLimit,
     usedTokens: 0,
     allowedModels: normalizeAllowedModels(allowedModels),
@@ -144,17 +173,74 @@ export async function createUser(
   quotaLimit = 0,
   role: "admin" | "user" = "user",
   allowedModels: Array<string> = [],
+  opts: { expiresAt?: number } = {},
 ): Promise<UserWithKey> {
-  const userWithKey = createUserSync(username, quotaLimit, role, allowedModels)
+  const userWithKey = createUserSync(
+    username,
+    quotaLimit,
+    role,
+    allowedModels,
+    opts,
+  )
   await saveUsers()
   return userWithKey
 }
 
+/**
+ * Find a user by raw key without fully verifying the secret.
+ *
+ * Fast path: fingerprint match (modern users store keyFingerprint).
+ * Slow path: legacy users loaded from disk have no fingerprint, so a
+ * constant-time scrypt verify is required to identify them. This is only
+ * used on the expired-key short-circuit in requireApiKey, which is rare
+ * and not in the hot auth path.
+ */
+export function findUserByKeyFingerprint(rawKey: string): User | undefined {
+  const fp = fingerprintKey(rawKey)
+  const byFp = state.users.find((u) => u.keyFingerprint === fp)
+  if (byFp) return byFp
+  // Legacy users without a fingerprint: fall back to secret verification.
+  return state.users.find(
+    (u) => !u.keyFingerprint && verifySecret(rawKey, u.hashedApiKey),
+  )
+}
+
 export function verifyApiKey(rawKey: string): User | null {
-  for (const user of state.users) {
-    if (keysMatch(rawKey, user.hashedApiKey)) {
-      return user
+  const now = Date.now()
+  const fp = fingerprintKey(rawKey)
+  const cached = verifyCache.get(fp)
+  if (cached) {
+    if (cached.expires <= now) {
+      verifyCache.delete(fp)
+    } else {
+      const user = state.users.find((u) => u.id === cached.userId)
+      // Re-resolve every hit: disabled/expired/rotated keys fall through.
+      // Legacy users loaded from disk have no keyFingerprint; cache entries
+      // are still valid because mutations drop them by userId (see
+      // dropVerifyCacheForUser), so a rotated/disabled key never survives.
+      if (
+        user
+        && !isUserExpired(user, now)
+        && (!user.keyFingerprint || user.keyFingerprint === fp)
+      ) {
+        return user
+      }
+      verifyCache.delete(fp)
     }
+  }
+  if (verifyCache.size > 5000) {
+    for (const [key, entry] of verifyCache) {
+      if (entry.expires <= now) verifyCache.delete(key)
+    }
+  }
+  for (const user of state.users) {
+    // Fingerprint-indexed fast path: skip users that provably don't match,
+    // so one scrypt (~tens of ms) runs per lookup instead of per user.
+    if (user.keyFingerprint && user.keyFingerprint !== fp) continue
+    if (!verifySecret(rawKey, user.hashedApiKey)) continue
+    if (isUserExpired(user, now)) return null
+    verifyCache.set(fp, { userId: user.id, expires: now + VERIFY_CACHE_TTL_MS })
+    return user
   }
   return null
 }
@@ -162,11 +248,22 @@ export function verifyApiKey(rawKey: string): User | null {
 export async function updateUser(
   id: string,
   patch: Partial<
-    Pick<User, "username" | "quotaLimit" | "enabled" | "role" | "allowedModels">
+    Pick<
+      User,
+      | "username"
+      | "quotaLimit"
+      | "enabled"
+      | "role"
+      | "allowedModels"
+      | "expiresAt"
+    >
   >,
 ): Promise<User | null> {
   const user = state.users.find((u) => u.id === id)
   if (!user) return null
+  if (patch.expiresAt !== undefined && !isValidExpiry(patch.expiresAt)) {
+    return null
+  }
   Object.assign(user, {
     ...patch,
     allowedModels:
@@ -174,6 +271,7 @@ export async function updateUser(
         user.allowedModels
       : normalizeAllowedModels(patch.allowedModels),
   })
+  dropVerifyCacheForUser(id)
   await saveUsers()
   return user
 }
@@ -182,6 +280,7 @@ export async function deleteUser(id: string): Promise<boolean> {
   const idx = state.users.findIndex((u) => u.id === id)
   if (idx === -1) return false
   state.users.splice(idx, 1)
+  dropVerifyCacheForUser(id)
   await saveUsers()
   return true
 }
@@ -190,13 +289,15 @@ export async function resetApiKey(id: string): Promise<string | null> {
   const user = state.users.find((u) => u.id === id)
   if (!user) return null
   const rawKey = `sk-${randomBytes(32).toString("hex")}`
-  user.hashedApiKey = hashKey(rawKey)
+  user.hashedApiKey = hashSecret(rawKey)
+  user.keyFingerprint = fingerprintKey(rawKey)
+  dropVerifyCacheForUser(id)
   await saveUsers()
   return rawKey
 }
 
 export function toPublicUser(user: User): PublicUser {
-  const { hashedApiKey: _hashed, ...rest } = user
+  const { hashedApiKey: _hashed, keyFingerprint: _fp, ...rest } = user
   return rest
 }
 

@@ -35,6 +35,7 @@ export function enforceActiveBlock(input: EnforceInput): void {
 
   const activeBlockMs = (state.blockedUntil ?? 0) - now
   if (activeBlockMs > 0) {
+    const status = state.blockStatus ?? 403
     throwLoggedGuardError({
       c,
       principal,
@@ -44,9 +45,11 @@ export function enforceActiveBlock(input: EnforceInput): void {
       reason: "active_block",
       retryAfterSeconds: Math.ceil(activeBlockMs / 1000),
       message:
-        "Forbidden. Client is temporarily blocked due to suspicious behavior.",
-      status: 403,
-      errorType: "forbidden_error",
+        status === 429 ?
+          "Rate limit exceeded due to suspicious behavior patterns detected. Retry later."
+        : "Forbidden. Client is temporarily blocked due to suspicious behavior.",
+      status,
+      errorType: status === 429 ? "rate_limit_error" : "forbidden_error",
     })
   }
 }
@@ -55,7 +58,19 @@ export function enforceBehaviorBlock(input: BehaviorBlockInput): void {
   const { c, principal, state, routeKind, guardInput, now, behavior } = input
   const cfg = getGuardConfig()
 
-  if (behavior.score < cfg.scoreSoftThreshold) return
+  if (behavior.score < cfg.scoreSoftThreshold) {
+    // Review line: suspicious enough to log, not enough to throttle.
+    if (behavior.score >= cfg.scoreReviewThreshold) {
+      logger.warn(
+        `Protected route guard review (no block): ${JSON.stringify({
+          principal,
+          score: behavior.score,
+          breakdown: behavior.breakdown,
+        })}`,
+      )
+    }
+    return
+  }
 
   const reasons = behavior.breakdown.map((b) => `${b.signal}=${b.detail}`)
   const reason = `behavior_block:${reasons.join(",") || `score=${behavior.score}`}`
@@ -99,6 +114,7 @@ export function enforceBehaviorBlock(input: BehaviorBlockInput): void {
   state.repeatCount = repeatCount
   state.lastBlockAt = now
   state.blockLevel = level
+  state.blockStatus = level === "L2-short" ? 429 : 403
 
   throwLoggedGuardError({
     c,
@@ -186,6 +202,7 @@ export function enforceProbeDetection(input: EnforceInput): void {
   state.repeatCount = repeatOffense ? state.repeatCount + 1 : 0
   state.lastBlockAt = now
   state.blockLevel = "L3-standard"
+  state.blockStatus = 403
 
   logger.warn(
     `Probe request detected and blocked: ${JSON.stringify({

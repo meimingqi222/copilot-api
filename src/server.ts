@@ -27,7 +27,48 @@ server.use("*", async (c, next) => {
 
   await honoLogger(c, next)
 })
-server.use(cors())
+
+// Baseline security headers (no-compat-risk subset; HSTS/CSP are deployment-
+// specific — see docs/security-improvement-suggestions.md §2.3).
+server.use("*", async (c, next) => {
+  if (c.req.path !== "/ws/mimo") {
+    c.header("X-Content-Type-Options", "nosniff")
+    c.header("X-Frame-Options", "DENY")
+    c.header("Referrer-Policy", "strict-origin-when-cross-origin")
+  }
+  await next()
+})
+
+// CORS is allowlist-only and API-scoped: /admin is same-origin (no CORS),
+// browser callers of the API opt in via API_ALLOWED_ORIGINS
+// (comma-separated, e.g. "https://dash.example.com"). Unlisted origins get
+// no ACAO header; non-browser clients (CLI/SDK/curl) are unaffected.
+const apiCors = cors({
+  origin: (origin) => {
+    if (!origin) return undefined
+    const allowed = (process.env.API_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim().replace(/\/$/, ""))
+      .filter(Boolean)
+    return allowed.includes(origin.replace(/\/$/, "")) ? origin : undefined
+  },
+  allowHeaders: ["Authorization", "Content-Type", "X-Api-Key"],
+  allowMethods: ["GET", "POST", "OPTIONS"],
+  credentials: true,
+})
+for (const pattern of [
+  "/v1/*",
+  "/chat/*",
+  "/responses",
+  "/responses/*",
+  "/models",
+  "/models/*",
+  "/embeddings",
+  "/embeddings/*",
+  "/token",
+]) {
+  server.use(pattern, apiCors)
+}
 server.use("*", requestLogger)
 server.use("*", guardMiddleware)
 server.use("*", requireApiKey)

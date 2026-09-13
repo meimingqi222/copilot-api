@@ -60,6 +60,10 @@ export interface State {
   adminPassword?: string
   adminSessionToken?: string
   adminSessionExpiresAt?: number
+  /** Short-lived pre-auth token for the TOTP second step (single admin). */
+  adminTotpLogin?: { token: string; expiresAt: number }
+  /** Pending TOTP secret awaiting confirmation (setup flow). */
+  adminTotpSetup?: { secret: string; expiresAt: number }
   modelAliases: Array<ModelAliasRule>
 }
 

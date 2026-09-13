@@ -4,6 +4,7 @@ import { defineCommand, runMain } from "citty"
 
 import { auth } from "./auth"
 import { debug } from "./debug"
+import { key } from "./key"
 import { start } from "./start"
 
 const main = defineCommand({
@@ -12,7 +13,7 @@ const main = defineCommand({
     description:
       "A wrapper around GitHub Copilot API to make it OpenAI compatible, making it usable for other tools.",
   },
-  subCommands: { auth, start, debug },
+  subCommands: { auth, start, debug, key },
 })
 
 await runMain(main)

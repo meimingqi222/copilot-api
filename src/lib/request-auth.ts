@@ -1,16 +1,27 @@
 import type { Context, Next } from "hono"
 
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 
+import {
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from "./login-protection"
+import { hashSecret, secretEquals, verifySecret } from "./secret-hash"
 import { state } from "./state"
 import { statsStore } from "./stats-store"
-import { verifyApiKey } from "./users"
+import { generateTotpSecret, totpSetupUri, verifyTotpCode } from "./totp"
+import { findUserByKeyFingerprint, isUserExpired, verifyApiKey } from "./users"
+import { getClientIp } from "./utils"
 
 const ADMIN_SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
 const REMEMBER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 const ADMIN_PASSWORD_CONFIG_KEY = "admin_password_hash"
+const ADMIN_TOTP_SECRET_CONFIG_KEY = "admin_totp_secret"
+const TOTP_SETUP_TTL_MS = 10 * 60 * 1000
+const TOTP_LOGIN_TTL_MS = 5 * 60 * 1000
 
 // Paths that are explicitly public and require no API key.
 // /admin route handler performs its own auth checks internally.
@@ -48,16 +59,58 @@ export async function requireApiKey(c: Context, next: Next) {
         401,
       )
     }
-    const user = verifyApiKey(rawKey)
-    if (!user) {
+    // Brute-force shield for stolen-key spraying: same graduated lockout as
+    // /admin/login (5→15m, 10→1h, 15→24h+blacklist), keyed by client IP.
+    // Missing keys are not counted (usually misconfiguration, not attacks).
+    const clientIp = getClientIp(c)
+    const gate = checkLoginAllowed(clientIp)
+    if (!gate.allowed) {
+      if (gate.retryAfterSeconds) {
+        c.header("Retry-After", String(gate.retryAfterSeconds))
+      }
       return c.json(
         {
           error: {
-            message: "Unauthorized. Invalid API key.",
+            message: gate.reason ?? "Too many authentication attempts.",
             type: "authentication_error",
           },
         },
-        401,
+        429,
+      )
+    }
+    const user = verifyApiKey(rawKey)
+    if (!user) {
+      // Expired keys are deterministic account state (stale cron job, not an
+      // attack): report 401 without feeding the brute-force counter, so a
+      // rotated replacement key works immediately instead of hitting a lock.
+      const known = findUserByKeyFingerprint(rawKey)
+      if (known && isUserExpired(known)) {
+        return c.json(
+          {
+            error: {
+              message: "Unauthorized. This API key has expired.",
+              type: "authentication_error",
+            },
+          },
+          401,
+        )
+      }
+      const failResult = await recordLoginFailure(clientIp)
+      if (!failResult.allowed && failResult.retryAfterSeconds) {
+        c.header("Retry-After", String(failResult.retryAfterSeconds))
+      }
+      const status = failResult.allowed ? 401 : 429
+      return c.json(
+        {
+          error: {
+            message:
+              status === 429 ?
+                (failResult.reason ?? "Too many authentication attempts.")
+              : "Unauthorized. Invalid API key.",
+            type: "authentication_error",
+          },
+        },
+        status,
       )
     }
     if (!user.enabled) {
@@ -83,6 +136,9 @@ export async function requireApiKey(c: Context, next: Next) {
         429,
       )
     }
+    // Only fully successful authentication clears the IP's failure record —
+    // disabled/expired/quota states must not reset an attacker's counter.
+    recordLoginSuccess(clientIp)
     // Store user info in context for logging
     c.set("userId", user.id)
     c.set("username", user.username)
@@ -93,6 +149,7 @@ export async function requireApiKey(c: Context, next: Next) {
 
   // Legacy single-key mode
   if (hasValidLegacyApiKey(c)) {
+    recordLoginSuccess(getClientIp(c))
     await next()
     return
   }
@@ -102,6 +159,24 @@ export async function requireApiKey(c: Context, next: Next) {
     await next()
     return
   }
+
+  const legacyIp = getClientIp(c)
+  const legacyGate = checkLoginAllowed(legacyIp)
+  if (!legacyGate.allowed) {
+    if (legacyGate.retryAfterSeconds) {
+      c.header("Retry-After", String(legacyGate.retryAfterSeconds))
+    }
+    return c.json(
+      {
+        error: {
+          message: legacyGate.reason ?? "Too many authentication attempts.",
+          type: "authentication_error",
+        },
+      },
+      429,
+    )
+  }
+  await recordLoginFailure(legacyIp)
 
   return c.json(
     {
@@ -239,17 +314,21 @@ function loadAdminPasswordHashFromDb(): string | undefined {
 }
 
 function hashAdminPassword(input: string): string {
-  return `sha256:${createHash("sha256").update(input).digest("hex")}`
+  return hashSecret(input)
 }
 
 /**
  * Persist a hashed admin password to stats.db. Used by the initial setup flow.
  * Env/CLI provided passwords still take precedence at runtime.
- * Accepts either a plaintext password or an already-hashed "sha256:<hex>" value.
+ * Accepts plaintext (hashed with scrypt on write) or any already-stored
+ * format (`scrypt$…` / `sha256:…`), which is preserved as-is for dual-track
+ * verification until the next password change.
  */
 export function saveAdminPasswordToDb(password: string): void {
   const normalized =
-    password.startsWith("sha256:") ? password : hashAdminPassword(password)
+    password.startsWith("scrypt$") || password.startsWith("sha256:") ?
+      password
+    : hashAdminPassword(password)
   statsStore.setConfig(ADMIN_PASSWORD_CONFIG_KEY, normalized)
 }
 
@@ -275,38 +354,96 @@ export function loadAdminPasswordFromDb(): void {
 
 /**
  * Verify a plaintext password against the configured admin password.
- * Supports two formats:
- * - Plain text: direct constant-time comparison
- * - Hashed: "sha256:<hex>" — hash the input and compare
+ * Supports every stored format via dual-track verification:
+ * - `scrypt$…` (current), `sha256:<hex>` (legacy hash), plaintext (env/CLI).
  */
 export function verifyAdminPassword(input: string): boolean {
   const configured = getAdminPassword()
   if (!configured) return false
+  return verifySecret(input, configured)
+}
 
-  if (configured.startsWith("sha256:")) {
-    const expectedHash = configured.slice(7)
-    const inputHash = createHash("sha256").update(input).digest("hex")
-    try {
-      const a = Buffer.from(inputHash)
-      const b = Buffer.from(expectedHash)
-      return a.length === b.length && timingSafeEqual(a, b)
-    } catch {
-      return false
-    }
-  }
+function createSessionToken(): string {
+  return randomBytes(32).toString("hex")
+}
 
-  // Plain text comparison
+// ── TOTP second factor (optional) ────────────────────────────────────
+
+export function isTotpEnabled(): boolean {
   try {
-    const a = Buffer.from(input)
-    const b = Buffer.from(configured)
-    return a.length === b.length && timingSafeEqual(a, b)
+    return Boolean(statsStore.getConfig(ADMIN_TOTP_SECRET_CONFIG_KEY))
   } catch {
     return false
   }
 }
 
-function createSessionToken(): string {
-  return randomBytes(32).toString("hex")
+function getTotpSecret(): string | undefined {
+  try {
+    return statsStore.getConfig(ADMIN_TOTP_SECRET_CONFIG_KEY)
+  } catch {
+    return undefined
+  }
+}
+
+/** Start setup: returns a secret + otpauth URI for the authenticator app. */
+export function beginTotpSetup(): { secret: string; uri: string } {
+  const secret = generateTotpSecret()
+  state.adminTotpSetup = { secret, expiresAt: Date.now() + TOTP_SETUP_TTL_MS }
+  return { secret, uri: totpSetupUri(secret) }
+}
+
+/** Confirm setup with a code from the app; persists the secret. */
+export function confirmTotpSetup(code: string): boolean {
+  const pending = state.adminTotpSetup
+  if (!pending || pending.expiresAt <= Date.now()) {
+    state.adminTotpSetup = undefined
+    return false
+  }
+  if (!verifyTotpCode(pending.secret, code)) return false
+  try {
+    statsStore.setConfig(ADMIN_TOTP_SECRET_CONFIG_KEY, pending.secret)
+  } catch {
+    return false
+  }
+  state.adminTotpSetup = undefined
+  return true
+}
+
+/** Disable TOTP after re-verifying the admin password. */
+export function disableTotp(password: string): boolean {
+  if (!verifyAdminPassword(password)) return false
+  try {
+    statsStore.deleteConfig(ADMIN_TOTP_SECRET_CONFIG_KEY)
+  } catch {
+    return false
+  }
+  return true
+}
+
+/** Issue a short-lived pre-auth token after a correct password (login step 1). */
+export function createTotpLoginToken(): string {
+  const token = randomBytes(32).toString("hex")
+  state.adminTotpLogin = { token, expiresAt: Date.now() + TOTP_LOGIN_TTL_MS }
+  return token
+}
+
+/** Verify the TOTP step; consumes the pre-auth token on success. */
+export function verifyTotpLogin(token: string, code: string): boolean {
+  const pending = state.adminTotpLogin
+  if (!pending || pending.expiresAt <= Date.now()) {
+    state.adminTotpLogin = undefined
+    return false
+  }
+  if (!secretEquals(token, pending.token)) return false
+  const secret = getTotpSecret()
+  if (!secret || !verifyTotpCode(secret, code)) return false
+  state.adminTotpLogin = undefined
+  return true
+}
+
+export function resetTotpForTest(): void {
+  state.adminTotpLogin = undefined
+  state.adminTotpSetup = undefined
 }
 
 /**

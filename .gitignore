@@ -28,3 +28,5 @@ agent-tools/
 temp_*
 .bun-test-data/
 .zcode
+.alma-snapshots
+.apodex/

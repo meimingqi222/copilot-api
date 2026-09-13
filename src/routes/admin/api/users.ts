@@ -5,6 +5,7 @@ import { state } from "~/lib/state"
 import {
   createUser,
   deleteUser,
+  isValidExpiry,
   resetApiKey,
   resetUserTokens,
   toPublicUser,
@@ -47,6 +48,7 @@ userApiRoutes.post("/", async (c) => {
     quotaLimit?: number
     role?: "admin" | "user"
     allowedModels?: Array<string>
+    expiresAt?: number
   }
   try {
     body = await readJsonBody(c.req.raw)
@@ -66,12 +68,20 @@ userApiRoutes.post("/", async (c) => {
     return c.json({ error: "Username already exists." }, 409)
   }
 
+  if (
+    body.expiresAt !== undefined
+    && (!isValidExpiry(body.expiresAt) || body.expiresAt <= Date.now())
+  ) {
+    return c.json({ error: "expiresAt must be a future timestamp." }, 400)
+  }
+
   const role = body.role === "admin" ? "admin" : "user"
   const userWithKey = await createUser(
     username,
     body.quotaLimit ?? 0,
     role,
     body.allowedModels ?? [],
+    body.expiresAt === undefined ? {} : { expiresAt: body.expiresAt },
   )
 
   return c.json({
@@ -89,6 +99,7 @@ userApiRoutes.put("/:id", async (c) => {
     enabled?: boolean
     role?: "admin" | "user"
     allowedModels?: Array<string>
+    expiresAt?: number | null
   }
   try {
     body = await readJsonBody(c.req.raw)
@@ -102,6 +113,16 @@ userApiRoutes.put("/:id", async (c) => {
   if (body.enabled !== undefined) patch.enabled = body.enabled
   if (body.role !== undefined) patch.role = body.role
   if (body.allowedModels !== undefined) patch.allowedModels = body.allowedModels
+  if (body.expiresAt !== undefined) {
+    if (
+      body.expiresAt !== null
+      && (!isValidExpiry(body.expiresAt) || body.expiresAt <= Date.now())
+    ) {
+      return c.json({ error: "expiresAt must be a future timestamp." }, 400)
+    }
+    // null clears the expiry.
+    patch.expiresAt = body.expiresAt ?? undefined
+  }
 
   const user = await updateUser(id, patch)
   if (!user) return c.json({ error: "User not found." }, 404)

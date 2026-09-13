@@ -9,12 +9,15 @@ import {
 } from "~/lib/login-protection"
 import {
   clearAdminSession,
+  createTotpLoginToken,
   hasAdminRole,
   isAdminPasswordConfigured,
   isAuthorizedRequest,
+  isTotpEnabled,
   saveAdminPasswordToDb,
   setAdminSession,
   verifyAdminPassword,
+  verifyTotpLogin,
 } from "~/lib/request-auth"
 import { readJsonBody, readTextBody } from "~/lib/request-body"
 import { getClientIp } from "~/lib/utils"
@@ -28,6 +31,7 @@ import { oauthApiRoutes } from "./api/oauth"
 import { providerConnectionApiRoutes } from "./api/provider-connections"
 import { providerApiRoutes } from "./api/providers"
 import { quotaApiRoutes } from "./api/quota"
+import { totpApiRoutes } from "./api/totp"
 import { usageApiRoutes } from "./api/usage"
 import { userApiRoutes } from "./api/users"
 
@@ -100,6 +104,7 @@ adminRoutes.route("/api/usage", usageApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
 adminRoutes.route("/api/users", userApiRoutes)
 adminRoutes.route("/api/guard", guardApiRoutes)
+adminRoutes.route("/api/totp", totpApiRoutes)
 
 // Serve a file from pages directory
 function serveFile(filePath: string): string {
@@ -223,6 +228,76 @@ adminRoutes.post("/login", async (c) => {
       c.header("Retry-After", String(failResult.retryAfterSeconds))
     }
     const errorMsg = failResult.reason ?? "Invalid management password."
+    const status = failResult.allowed ? 401 : 429
+    return c.json({ error: errorMsg }, status)
+  }
+
+  // Optional second factor: correct password yields a short-lived pre-auth
+  // token instead of a session; the TOTP step completes the login.
+  if (isTotpEnabled()) {
+    const totpToken = createTotpLoginToken()
+    return c.json({ totpRequired: true, totpToken })
+  }
+
+  recordLoginSuccess(clientIp)
+  setAdminSession(c, remember)
+  return c.json({ ok: true })
+})
+
+adminRoutes.post("/login/totp", async (c) => {
+  if (!isAdminPasswordConfigured()) {
+    return c.json(
+      { error: "Admin password is not configured. Use /admin/setup first." },
+      400,
+    )
+  }
+
+  const clientIp = getClientIp(c)
+
+  const protection = checkLoginAllowed(clientIp)
+  if (!protection.allowed) {
+    if (protection.retryAfterSeconds) {
+      c.header("Retry-After", String(protection.retryAfterSeconds))
+    }
+    return c.json(
+      { error: protection.reason ?? "Too many login attempts." },
+      429,
+    )
+  }
+
+  let totpToken: string | undefined
+  let code: string | undefined
+  let remember: boolean
+
+  try {
+    const contentType = c.req.header("content-type") ?? ""
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+      const body = await readTextBody(c.req.raw)
+      const params = new URLSearchParams(body)
+      totpToken = params.get("totpToken") || undefined
+      code = params.get("code") || undefined
+      remember =
+        params.get("remember") === "on" || params.get("remember") === "true"
+    } else {
+      const payload = await readJsonBody<{
+        totpToken?: string
+        code?: string
+        remember?: boolean
+      }>(c.req.raw)
+      totpToken = payload.totpToken
+      code = payload.code
+      remember = Boolean(payload.remember)
+    }
+  } catch {
+    return c.json({ error: "Invalid request payload." }, 400)
+  }
+
+  if (!totpToken || !code || !verifyTotpLogin(totpToken, code)) {
+    const failResult = await recordLoginFailure(clientIp)
+    if (!failResult.allowed && failResult.retryAfterSeconds) {
+      c.header("Retry-After", String(failResult.retryAfterSeconds))
+    }
+    const errorMsg = failResult.reason ?? "Invalid verification code."
     const status = failResult.allowed ? 401 : 429
     return c.json({ error: errorMsg }, status)
   }

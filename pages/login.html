@@ -28,6 +28,7 @@
 
       <!-- Form -->
       <form
+        x-show="!totpRequired"
         @submit.prevent="login()"
         class="space-y-6"
         method="post"
@@ -89,6 +90,55 @@
         </button>
       </form>
 
+      <!-- TOTP second step -->
+      <form
+        x-show="totpRequired"
+        @submit.prevent="loginTotp()"
+        class="space-y-6"
+        method="post"
+        action="/admin/login/totp"
+        style="display: none"
+      >
+        <div>
+          <label
+            class="block text-left text-sm text-[var(--apple-text-secondary)] mb-2 ml-1"
+          >
+            <span x-text="t('login.totp')"></span>
+          </label>
+          <input
+            x-model="totpCode"
+            type="text"
+            name="code"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            class="input text-center text-lg tracking-[0.5em]"
+            :placeholder="t('login.totpPlaceholder')"
+          />
+        </div>
+
+        <button
+          type="submit"
+          class="btn btn-primary w-full"
+          :disabled="loading"
+        >
+          <span x-show="!loading" x-text="t('login.verify')"></span>
+          <span x-show="loading" class="flex items-center justify-center gap-2">
+            <div
+              class="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"
+            ></div>
+            <span x-text="t('loading')"></span>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          @click="totpRequired = false; totpCode = ''; error = null"
+          class="btn btn-secondary w-full"
+          x-text="t('back')"
+        ></button>
+      </form>
+
       <!-- Error Message -->
       <div
         x-show="error"
@@ -133,6 +183,10 @@
           "login.submit": "登录",
           "login.error": "密码错误",
           "login.rememberMe": "记住密码",
+          "login.totp": "两步验证码",
+          "login.totpPlaceholder": "6 位验证码",
+          "login.verify": "验证",
+          back: "返回",
           loading: "加载中...",
         },
         en: {
@@ -143,6 +197,10 @@
           "login.submit": "Sign In",
           "login.error": "Invalid password",
           "login.rememberMe": "Remember me",
+          "login.totp": "Two-factor code",
+          "login.totpPlaceholder": "6-digit code",
+          "login.verify": "Verify",
+          back: "Back",
           loading: "Loading...",
         },
       }
@@ -154,6 +212,9 @@
           error: null,
           lang: "zh",
           remember: false,
+          totpRequired: false,
+          totpToken: "",
+          totpCode: "",
 
           init() {
             // Detect browser language
@@ -193,6 +254,46 @@
                 },
                 body: new URLSearchParams({
                   password: this.password,
+                  remember: this.remember ? "on" : "",
+                }),
+              })
+
+              if (res.ok) {
+                const data = await res.json().catch(() => ({}))
+                if (data.totpRequired) {
+                  this.totpRequired = true
+                  this.totpToken = data.totpToken || ""
+                  this.totpCode = ""
+                  this.$nextTick(() => lucide.createIcons())
+                } else {
+                  window.location.href = "/admin"
+                }
+              } else {
+                const data = await res.json().catch(() => ({}))
+                this.error = data.error || this.t("login.error")
+              }
+            } catch (e) {
+              this.error = "Network error"
+            } finally {
+              this.loading = false
+            }
+          },
+
+          async loginTotp() {
+            if (!this.totpCode) return
+
+            this.loading = true
+            this.error = null
+
+            try {
+              const res = await fetch("/admin/login/totp", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({
+                  totpToken: this.totpToken,
+                  code: this.totpCode,
                   remember: this.remember ? "on" : "",
                 }),
               })

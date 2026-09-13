@@ -3862,6 +3862,7 @@
                     x-text="t('guard.clientDetail')"
                   ></th>
                   <th class="text-left p-3" x-text="t('guard.lastModel')"></th>
+                  <th class="text-left p-3" x-text="t('guard.blockStatus')"></th>
                   <th
                     class="text-left p-3"
                     x-text="t('guard.blockReasonDetail')"
@@ -3907,6 +3908,13 @@
                       class="p-3 text-xs font-mono"
                       x-text="b.model || '-'"
                     ></td>
+                    <td class="p-3 text-xs">
+                      <span
+                        class="badge normal-case text-[10px]"
+                        :class="b.status === 429 ? 'badge-warning' : 'badge'"
+                        x-text="b.status ?? 403"
+                      ></span>
+                    </td>
                     <td
                       class="p-3 text-xs text-[var(--apple-text-secondary)] break-all"
                       x-text="b.reason || '-'"
@@ -4367,7 +4375,7 @@
               ></p>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <template
-                  x-for="key in ['requestLimit','trustedRequestLimit','bucketCapacity','bucketTokenRefillPerSec','bucketTokenCapacity','upstream429DenseThreshold','upstream429TotalThreshold','burstBlockThreshold','failureRateBlockThreshold','repeatedContentThreshold','repeatedContentWindowMs','tempBlockMs','shortBlockMs','longBlockMs','scoreSoftThreshold','scoreSevereThreshold','errorRateThreshold','authFailureThreshold','autoBlockScoreThreshold','modelEnumThreshold','authProbeThreshold']"
+                  x-for="key in ['requestLimit','trustedRequestLimit','bucketCapacity','bucketTokenRefillPerSec','bucketTokenCapacity','upstream429DenseThreshold','upstream429TotalThreshold','burstBlockThreshold','failureRateBlockThreshold','repeatedContentThreshold','repeatedContentWindowMs','tempBlockMs','shortBlockMs','longBlockMs','scoreReviewThreshold','scoreSoftThreshold','scoreSevereThreshold','errorRateThreshold','authFailureThreshold','autoBlockScoreThreshold','modelEnumThreshold','authProbeThreshold']"
                   :key="key"
                 >
                   <label class="block">
