@@ -18,6 +18,7 @@ function guardView() {
     guardDefaults: null,
     configDraft: {},
     configSaving: false,
+    shadowStats: [],
     blockModalOpen: false,
     blockSubmitting: false,
     blockForm: {
@@ -171,10 +172,14 @@ function guardView() {
 
     async loadGuardConfig() {
       try {
-        const data = await API.guard.guardConfig()
-        this.guardConfig = data.config
-        this.guardDefaults = data.defaults
-        this.configDraft = { ...data.config }
+        const [cfg, shadow] = await Promise.all([
+          API.guard.guardConfig(),
+          API.guard.shadowStats().catch(() => null),
+        ])
+        this.guardConfig = cfg.config
+        this.guardDefaults = cfg.defaults
+        this.configDraft = { ...cfg.config }
+        this.shadowStats = shadow?.stats || []
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {

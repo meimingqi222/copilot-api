@@ -15,5 +15,6 @@ declare module "hono" {
     protectedRouteGuardPrincipal: string | undefined
     protectedRouteGuardBehavior: PrincipalBehavior | undefined
     protectedRouteGuardRisk: string | undefined
+    guardRejected: boolean | undefined
   }
 }

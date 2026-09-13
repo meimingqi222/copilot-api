@@ -6,11 +6,14 @@ import {
   DEFAULT_GUARD_CONFIG,
   getGuardConfig,
   resetGuardConfigForTest,
+  setGuardConfig,
   validateGuardConfigPatch,
 } from "~/lib/guard-config"
 import {
   blockPrincipal,
   checkProtectedRouteGuard,
+  getPrincipalStateForTest,
+  listShadowStats,
   listTempBlocks,
   resetProtectedRouteGuardForTest,
   unblockPrincipal,
@@ -54,19 +57,26 @@ describe("guard management", () => {
     clearAdminAuth()
   })
 
-  test("repeated automation content creates a listable temp block with metadata", async () => {
+  test("persistent repeated automation content throttles (L2) with metadata", async () => {
     const app = guardedApp()
     const headers = {
       "content-type": "application/json",
       "user-agent": "curl/7.88.1",
     }
-    for (let i = 0; i < 3; i++) {
+    // Same prompt + same model: base 25pts at 8 repeats, scaling to the
+    // 50pt soft line at 13 repeats. A couple of retries never block.
+    for (let i = 0; i < 12; i++) {
       const res = await app.request("http://localhost/chat/completions", {
         method: "POST",
         headers,
       })
-      if (i < 2) expect(res.status).toBe(200)
+      expect(res.status).toBe(200)
     }
+    const throttled = await app.request("http://localhost/chat/completions", {
+      method: "POST",
+      headers,
+    })
+    expect(throttled.status).toBe(429)
     const blocks = listTempBlocks()
     expect(blocks).toHaveLength(1)
     expect(blocks[0].principal).toBe("user:user-1")
@@ -138,6 +148,100 @@ describe("guard management", () => {
     )
     expect(good.status).toBe(200)
     expect(getGuardConfig().requestLimit).toBe(123)
+  })
+
+  test("token bucket throttles bursts with 429 without temp-blocking", async () => {
+    setGuardConfig({ bucketCapacity: 10 })
+    const app = guardedApp("user-bucket")
+    const headers = {
+      "content-type": "application/json",
+      "user-agent": "claude-code/1.0.0",
+    }
+    // Trusted clients get 2x capacity (20); distinct behavior score stays 0
+    // because trusted UAs are exempt from the repeat signal.
+    for (let i = 0; i < 20; i++) {
+      const res = await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers,
+      })
+      expect(res.status).toBe(200)
+    }
+    const limited = await app.request("http://localhost/chat/completions", {
+      method: "POST",
+      headers,
+    })
+    expect(limited.status).toBe(429)
+    // Pure rate limiting never creates a temp block.
+    expect(listTempBlocks()).toHaveLength(0)
+  })
+
+  test("shadow mode logs would-block without enforcing", async () => {
+    setGuardConfig({ shadowMode: true })
+    const app = guardedApp("user-shadow")
+    const headers = {
+      "content-type": "application/json",
+      "user-agent": "curl/7.88.1",
+    }
+    for (let i = 0; i < 13; i++) {
+      const res = await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers,
+      })
+      expect(res.status).toBe(200)
+    }
+    expect(listTempBlocks()).toHaveLength(0)
+    expect(listShadowStats().some((s) => s.hits > 0)).toBe(true)
+  })
+
+  test("manual unblock suppresses same-category re-block within the window", async () => {
+    blockPrincipal("user:user-1", { reason: "behavior_block:seed" })
+    expect(unblockPrincipal("user:user-1")).toBe(true)
+    const app = guardedApp()
+    const headers = {
+      "content-type": "application/json",
+      "user-agent": "curl/7.88.1",
+    }
+    for (let i = 0; i < 13; i++) {
+      const res = await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers,
+      })
+      expect(res.status).toBe(200)
+    }
+    expect(listTempBlocks()).toHaveLength(0)
+  })
+
+  test("repeat offense within the window escalates L2 to L3", async () => {
+    const app = guardedApp("user-escalate")
+    const headers = {
+      "content-type": "application/json",
+      "user-agent": "curl/7.88.1",
+    }
+    for (let i = 0; i < 12; i++) {
+      await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers,
+      })
+    }
+    const first = await app.request("http://localhost/chat/completions", {
+      method: "POST",
+      headers,
+    })
+    expect(first.status).toBe(429)
+    expect(listTempBlocks()[0]?.level).toBe("L2-short")
+
+    // Expire the block but stay inside the escalation window.
+    const state = getPrincipalStateForTest("user:user-escalate")
+    expect(state).toBeDefined()
+    if (!state) throw new Error("expected guard state")
+    state.blockedUntil = Date.now() - 1000
+
+    const second = await app.request("http://localhost/chat/completions", {
+      method: "POST",
+      headers,
+    })
+    expect(second.status).toBe(403)
+    expect(listTempBlocks()[0]?.level).toBe("L3-standard")
   })
 
   test("temp-blocks API round-trips block/list/unblock", async () => {

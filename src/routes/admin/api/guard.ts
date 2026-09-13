@@ -19,6 +19,7 @@ import {
 } from "~/lib/guard-config"
 import {
   blockPrincipal,
+  listShadowStats,
   listTempBlocks,
   unblockPrincipal,
 } from "~/lib/protected-route-guard"
@@ -427,6 +428,14 @@ function sortPrincipals(rows: Array<Record<string, unknown>>): void {
 // GET /api/guard/config
 guardApiRoutes.get("/config", (c) => {
   return c.json({ config: getGuardConfig(), defaults: DEFAULT_GUARD_CONFIG })
+})
+
+// GET /api/guard/shadow-stats — would-block counts while shadowMode is on
+guardApiRoutes.get("/shadow-stats", (c) => {
+  return c.json({
+    shadowMode: getGuardConfig().shadowMode,
+    stats: listShadowStats(),
+  })
 })
 
 // PUT /api/guard/config  partial update, persisted to guard.json

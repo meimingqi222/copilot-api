@@ -3880,11 +3880,18 @@
                         class="font-mono text-xs break-all"
                         x-text="b.principal"
                       ></div>
-                      <div
-                        class="text-xs text-[var(--apple-text-secondary)] mt-1"
-                        x-show="b.username"
-                        x-text="b.username"
-                      ></div>
+                      <div class="flex items-center gap-1.5 mt-1">
+                        <span
+                          class="badge normal-case text-[10px]"
+                          x-show="b.level"
+                          x-text="b.level"
+                        ></span>
+                        <span
+                          class="text-xs text-[var(--apple-text-secondary)]"
+                          x-show="b.username"
+                          x-text="b.username"
+                        ></span>
+                      </div>
                     </td>
                     <td class="p-3 text-xs">
                       <div
@@ -4360,7 +4367,7 @@
               ></p>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <template
-                  x-for="key in ['requestLimit','trustedRequestLimit','upstream429DenseThreshold','upstream429TotalThreshold','burstBlockThreshold','failureRateBlockThreshold','repeatedContentThreshold','tempBlockMs','errorRateThreshold','authFailureThreshold','autoBlockScoreThreshold']"
+                  x-for="key in ['requestLimit','trustedRequestLimit','bucketCapacity','bucketTokenRefillPerSec','bucketTokenCapacity','upstream429DenseThreshold','upstream429TotalThreshold','burstBlockThreshold','failureRateBlockThreshold','repeatedContentThreshold','repeatedContentWindowMs','tempBlockMs','shortBlockMs','longBlockMs','scoreSoftThreshold','scoreSevereThreshold','errorRateThreshold','authFailureThreshold','autoBlockScoreThreshold','modelEnumThreshold','authProbeThreshold']"
                   :key="key"
                 >
                   <label class="block">
@@ -4376,6 +4383,30 @@
                     />
                   </label>
                 </template>
+              </div>
+              <label
+                class="flex items-center gap-2 mt-4 text-sm cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  class="form-checkbox"
+                  x-model="configDraft.shadowMode"
+                />
+                <span x-text="t('guard.cfg.shadowMode')"></span>
+              </label>
+              <div class="mt-4" x-show="(shadowStats || []).length">
+                <div
+                  class="text-xs text-[var(--apple-text-secondary)] mb-2"
+                  x-text="t('guard.shadowStats')"
+                ></div>
+                <div class="flex flex-wrap gap-1.5">
+                  <template x-for="s in shadowStats" :key="s.reason">
+                    <span class="badge badge-info normal-case text-[10px]">
+                      <span x-text="s.reason"></span>
+                      <span class="ml-1" x-text="'×' + s.hits"></span>
+                    </span>
+                  </template>
+                </div>
               </div>
             </div>
             <!-- Add custom pattern -->

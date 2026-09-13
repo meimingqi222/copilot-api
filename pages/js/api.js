@@ -420,6 +420,7 @@ const API = {
         body: { principal },
       }),
     guardConfig: () => API.request("/guard/config"),
+    shadowStats: () => API.request("/guard/shadow-stats"),
     updateGuardConfig: (data) =>
       API.request("/guard/config", { method: "PUT", body: data }),
     blacklist: () => API.request("/guard/blacklist"),

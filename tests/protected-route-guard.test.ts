@@ -19,7 +19,7 @@ describe("protected route guard - behavior analysis", () => {
     resetProtectedRouteGuardForTest()
   })
 
-  test("blocks after dense upstream 429 burst (5 in 1 minute)", async () => {
+  test("dense upstream 429 burst alone only logs (no block)", async () => {
     const app = new Hono()
     app.post("/chat/completions", (c) => {
       c.set("userId" as never, "user-1")
@@ -42,17 +42,19 @@ describe("protected route guard - behavior analysis", () => {
       expect(response.status).toBe(200)
     }
 
-    const blockedResponse = await app.request(
+    // A lone upstream-429 signal (25pts) stays below the soft line: the next
+    // request still passes. Upstream pressure alone must not hard-block.
+    const nextResponse = await app.request(
       "http://localhost/chat/completions",
       {
         method: "POST",
         headers: { "content-type": "application/json" },
       },
     )
-    expect(blockedResponse.status).toBe(403)
+    expect(nextResponse.status).toBe(200)
   })
 
-  test("blocks after total upstream 429 threshold (15 in 10 minutes)", async () => {
+  test("total upstream 429 threshold alone only logs (no block)", async () => {
     const app = new Hono()
     const realNow = Date.now
     let now = Date.now()
@@ -88,7 +90,7 @@ describe("protected route guard - behavior analysis", () => {
       }
 
       now += 40_000
-      const blockedResponse = await app.request(
+      const nextResponse = await app.request(
         "http://localhost/chat/completions",
         {
           method: "POST",
@@ -97,7 +99,8 @@ describe("protected route guard - behavior analysis", () => {
           },
         },
       )
-      expect(blockedResponse.status).toBe(403)
+      // 15 upstream 429s over 10min (20pts) stay below the soft line alone.
+      expect(nextResponse.status).toBe(200)
     } finally {
       Date.now = realNow
     }
@@ -124,7 +127,7 @@ describe("protected route guard - behavior analysis", () => {
       return c.json({ ok: true })
     })
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
       await app.request("http://localhost/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -132,13 +135,13 @@ describe("protected route guard - behavior analysis", () => {
       })
     }
 
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 14; i++) {
       const response = await app.request("http://localhost/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ fail: true }),
       })
-      if (i < 6) {
+      if (i < 13) {
         expect(response.status).toBe(200)
       }
     }
@@ -151,7 +154,8 @@ describe("protected route guard - behavior analysis", () => {
         body: JSON.stringify({ fail: true }),
       },
     )
-    expect(blockedResponse.status).toBe(403)
+    // High failure alone reaches the soft (L2 throttle) line: 429, retryable.
+    expect(blockedResponse.status).toBe(429)
   })
 
   test("automated clients have lower failure rate threshold (49%)", async () => {
@@ -175,7 +179,7 @@ describe("protected route guard - behavior analysis", () => {
       return c.json({ ok: true })
     })
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       await app.request("http://localhost/chat/completions", {
         method: "POST",
         headers: {
@@ -186,7 +190,7 @@ describe("protected route guard - behavior analysis", () => {
       })
     }
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       await app.request("http://localhost/chat/completions", {
         method: "POST",
         headers: {
@@ -208,7 +212,8 @@ describe("protected route guard - behavior analysis", () => {
         body: JSON.stringify({ fail: true }),
       },
     )
-    expect(blockedResponse.status).toBe(403)
+    // 50% failure clears the lowered 49% automation line → L2 throttle.
+    expect(blockedResponse.status).toBe(429)
   })
 
   test("trusted clients are not marked as automated", async () => {
@@ -314,11 +319,77 @@ describe("protected route guard - behavior analysis", () => {
 
   test("block expires after timeout", async () => {
     const app = new Hono()
-    app.post("/chat/completions", (c) => {
+    app.post("/chat/completions", async (c) => {
       c.set("userId" as never, "user-1")
+      const payload = await c.req.json<{ fail?: boolean }>().catch(() => ({}))
 
       try {
         checkProtectedRouteGuard(c, { routeKind: "reasoning" })
+      } catch (error) {
+        return respondToKnownRouteError(c, error) ?? c.text("unexpected", 500)
+      }
+
+      if ((payload as { fail?: boolean }).fail) {
+        reportRequestError(c)
+      } else {
+        reportRequestSuccess(c)
+      }
+      return c.json({ ok: true })
+    })
+
+    for (let i = 0; i < 6; i++) {
+      await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fail: false }),
+      })
+    }
+    for (let i = 0; i < 14; i++) {
+      await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fail: true }),
+      })
+    }
+
+    const blockedResponse = await app.request(
+      "http://localhost/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fail: true }),
+      },
+    )
+    expect(blockedResponse.status).toBe(429)
+
+    const state = getPrincipalStateForTest("user:user-1") as PrincipalGuardState
+    expect(state).toBeDefined()
+    const now = Date.now()
+    state.blockedUntil = now - 1000
+    state.events = state.events.filter((e) => e.type !== "error")
+
+    const recoveredResponse = await app.request(
+      "http://localhost/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fail: false }),
+      },
+    )
+    expect(recoveredResponse.status).toBe(200)
+  })
+
+  test("combined upstream429 + repeated content reaches the soft line", async () => {
+    const app = new Hono()
+    app.post("/chat/completions", (c) => {
+      c.set("userId" as never, "user-combo")
+
+      try {
+        checkProtectedRouteGuard(c, {
+          routeKind: "reasoning",
+          model: "gpt-test",
+          messageContent: "same-content",
+        })
       } catch (error) {
         return respondToKnownRouteError(c, error) ?? c.text("unexpected", 500)
       }
@@ -327,34 +398,23 @@ describe("protected route guard - behavior analysis", () => {
       return c.json({ ok: true })
     })
 
-    for (let i = 0; i < 5; i++) {
+    const headers = {
+      "content-type": "application/json",
+      "user-agent": "curl/7.88.1",
+    }
+    // 5 upstream 429s (25pts) + 8 same-content repeats (25pts) = 50 → L2.
+    for (let i = 0; i < 7; i++) {
       const response = await app.request("http://localhost/chat/completions", {
         method: "POST",
+        headers,
       })
       expect(response.status).toBe(200)
     }
-
-    const blockedResponse = await app.request(
-      "http://localhost/chat/completions",
-      {
-        method: "POST",
-      },
-    )
-    expect(blockedResponse.status).toBe(403)
-
-    const state = getPrincipalStateForTest("user:user-1") as PrincipalGuardState
-    expect(state).toBeDefined()
-    const now = Date.now()
-    state.blockedUntil = now - 1000
-    state.events = state.events.filter((e) => e.type !== "upstream_429")
-
-    const recoveredResponse = await app.request(
-      "http://localhost/chat/completions",
-      {
-        method: "POST",
-      },
-    )
-    expect(recoveredResponse.status).toBe(200)
+    const throttled = await app.request("http://localhost/chat/completions", {
+      method: "POST",
+      headers,
+    })
+    expect(throttled.status).toBe(429)
   })
 
   test("idle principals are cleaned up after their state expires", async () => {

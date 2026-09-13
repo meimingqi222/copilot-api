@@ -8,10 +8,16 @@ import {
 } from "./guard"
 import { pruneExpiredRequestLogs, readLogRotationConfig } from "./log-rotation"
 import { logStore } from "./log-store"
+import {
+  reportRequestError,
+  reportRequestSuccess,
+  reportUpstream429,
+} from "./protected-route-guard"
 import { isProtectedRoute } from "./protected-routes"
 import { dumpIncomingRequest } from "./request-dump"
 import {
   finalizeRequestLog,
+  getRequestLogContext,
   initRequestLog,
   isCoreApiPath,
   patchRequestLog,
@@ -147,6 +153,8 @@ export const requestLogger = async (c: Context, next: Next) => {
       }
     }
 
+    reportGuardOutcome(c, status)
+
     if (accountId) {
       queueMicrotask(() => {
         try {
@@ -208,6 +216,63 @@ function shouldCountGuardError(path: string, status: number): boolean {
   }
 
   return false
+}
+
+// Feed the per-principal behavior guard from the final response status.
+// Guard-generated rejections are excluded to avoid a block → error →
+// longer-block feedback loop. Only 401/403 count as failures (400/404 are
+// user confusion, 5xx is our fault); copilot upstream 429s feed the
+// upstream signal unless the log shows a quota/billing cause.
+function reportGuardOutcome(c: Context, status: number): void {
+  try {
+    if (c.get("guardRejected")) return
+    if (!c.get("protectedRouteGuardPrincipal")) return
+  } catch {
+    return
+  }
+  try {
+    if (status >= 200 && status < 300) {
+      reportRequestSuccess(c)
+      return
+    }
+    if (status === 401 || status === 403) {
+      reportRequestError(c, status)
+      return
+    }
+    if (status === 429) {
+      reportCopilotUpstream429(c)
+    }
+  } catch {
+    // Guard reporting must never break the request path.
+  }
+}
+
+function reportCopilotUpstream429(c: Context): void {
+  if (!isCopilotProvider(c)) return
+  if (hasQuotaCause(c)) return
+  reportUpstream429(c, "copilot")
+}
+
+function isCopilotProvider(c: Context): boolean {
+  try {
+    const provider = c.get("provider")
+    return typeof provider === "string" && provider.includes("copilot")
+  } catch {
+    return false
+  }
+}
+
+function hasQuotaCause(c: Context): boolean {
+  try {
+    const entry = getRequestLogContext(c)?.entry as
+      | { error?: unknown }
+      | undefined
+    const errText =
+      typeof entry?.error === "string" ? entry.error.toLowerCase() : ""
+    return /quota|rate_limit|rate limit|exhausted|billing/.test(errText)
+  } catch {
+    return false
+  }
 }
 
 const MAX_GUARD_PREVIEW_BYTES = 256 * 1024

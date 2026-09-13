@@ -12,7 +12,23 @@ export interface GuardConfig {
   failureRateBlockThreshold: number
   minSamplesFailureRate: number
   repeatedContentThreshold: number
+  repeatedContentWindowMs: number
   tempBlockMs: number
+  // ── token bucket (L0 rate limiting, per principal × route class) ──
+  bucketCapacity: number
+  bucketTokenRefillPerSec: number
+  bucketTokenCapacity: number
+  // ── behavior scoring v2 (weighted, leaky) ──
+  scoreReviewThreshold: number
+  scoreSoftThreshold: number
+  scoreSevereThreshold: number
+  shortBlockMs: number
+  longBlockMs: number
+  escalationWindowMs: number
+  repeatSuppressMs: number
+  modelEnumThreshold: number
+  authProbeThreshold: number
+  shadowMode: boolean
   // ── client-guard scoring ──
   errorRateThreshold: number
   highFrequencyThreshold: number
@@ -33,9 +49,23 @@ export const DEFAULT_GUARD_CONFIG: GuardConfig = {
   upstream429TotalThreshold: 15,
   burstBlockThreshold: 100,
   failureRateBlockThreshold: 0.7,
-  minSamplesFailureRate: 10,
-  repeatedContentThreshold: 3,
+  minSamplesFailureRate: 20,
+  repeatedContentThreshold: 8,
+  repeatedContentWindowMs: 60 * 60 * 1000,
   tempBlockMs: 30 * 60 * 1000,
+  bucketCapacity: 40,
+  bucketTokenRefillPerSec: 0.5,
+  bucketTokenCapacity: 10,
+  scoreReviewThreshold: 30,
+  scoreSoftThreshold: 50,
+  scoreSevereThreshold: 75,
+  shortBlockMs: 5 * 60 * 1000,
+  longBlockMs: 2 * 60 * 60 * 1000,
+  escalationWindowMs: 60 * 60 * 1000,
+  repeatSuppressMs: 60 * 60 * 1000,
+  modelEnumThreshold: 8,
+  authProbeThreshold: 8,
+  shadowMode: false,
   errorRateThreshold: 0.3,
   highFrequencyThreshold: 100,
   authFailureThreshold: 8,
@@ -71,7 +101,13 @@ export const DEFAULT_GUARD_CONFIG: GuardConfig = {
     "crawler",
     "spider",
   ],
-  probePatterns: [String.raw`Please repeat:\s*\w{6,}`],
+  probePatterns: [
+    String.raw`Please repeat:\s*\w{6,}`,
+    String.raw`repeat your system prompt`,
+    String.raw`reveal your (system )?instructions`,
+    String.raw`ignore all previous instructions`,
+    String.raw`you are now in developer mode`,
+  ],
 }
 
 function readNumberEnv(name: string): number | undefined {
@@ -117,6 +153,8 @@ function applyEnvOverrides(base: GuardConfig): GuardConfig {
       readNumberEnv("GUARD_REPEATED_THRESHOLD")
       ?? base.repeatedContentThreshold,
     tempBlockMs: readNumberEnv("GUARD_TEMP_BLOCK_MS") ?? base.tempBlockMs,
+    shortBlockMs: readNumberEnv("GUARD_SHORT_BLOCK_MS") ?? base.shortBlockMs,
+    longBlockMs: readNumberEnv("GUARD_LONG_BLOCK_MS") ?? base.longBlockMs,
     errorRateThreshold: (() => {
       const raw = process.env.GUARD_ERROR_RATE?.trim()
       if (!raw) return base.errorRateThreshold
@@ -159,7 +197,25 @@ export function loadGuardConfigFromPersistence(
     current = envBase
     return getGuardConfig()
   }
-  current = { ...envBase, ...sanitizeGuardConfigPatch(data) }
+  const sanitized = sanitizeGuardConfigPatch(data)
+  current = { ...envBase, ...sanitized }
+  // Migrate pre-v2 defaults that were too aggressive (persisted by earlier
+  // versions on every saveGuard): adopt the new safer defaults unless the
+  // admin explicitly changed them to a different value.
+  if (data.repeatedContentThreshold === 3) {
+    current.repeatedContentThreshold =
+      DEFAULT_GUARD_CONFIG.repeatedContentThreshold
+  }
+  if (data.minSamplesFailureRate === 10) {
+    current.minSamplesFailureRate = DEFAULT_GUARD_CONFIG.minSamplesFailureRate
+  }
+  if (
+    Array.isArray(data.probePatterns)
+    && data.probePatterns.length === 1
+    && data.probePatterns[0] === String.raw`Please repeat:\s*\w{6,}`
+  ) {
+    current.probePatterns = [...DEFAULT_GUARD_CONFIG.probePatterns]
+  }
   return getGuardConfig()
 }
 
@@ -175,7 +231,19 @@ const INT_KEYS = [
   "burstBlockThreshold",
   "minSamplesFailureRate",
   "repeatedContentThreshold",
+  "repeatedContentWindowMs",
   "tempBlockMs",
+  "bucketCapacity",
+  "bucketTokenCapacity",
+  "scoreReviewThreshold",
+  "scoreSoftThreshold",
+  "scoreSevereThreshold",
+  "shortBlockMs",
+  "longBlockMs",
+  "escalationWindowMs",
+  "repeatSuppressMs",
+  "modelEnumThreshold",
+  "authProbeThreshold",
   "highFrequencyThreshold",
   "authFailureThreshold",
   "pathScanningThreshold",
@@ -184,6 +252,10 @@ const INT_KEYS = [
 ] as const
 
 const RATE_KEYS = ["failureRateBlockThreshold", "errorRateThreshold"] as const
+
+const FLOAT_KEYS = ["bucketTokenRefillPerSec"] as const
+
+const BOOL_KEYS = ["shadowMode"] as const
 
 const PATTERN_KEYS = [
   "trustedClientPatterns",
@@ -205,6 +277,18 @@ export function sanitizeGuardConfigPatch(
     const v = patch[key]
     if (typeof v === "number" && Number.isFinite(v) && v > 0 && v <= 1) {
       ;(out as Record<string, number>)[key] = v
+    }
+  }
+  for (const key of FLOAT_KEYS) {
+    const v = patch[key]
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) {
+      ;(out as Record<string, number>)[key] = v
+    }
+  }
+  for (const key of BOOL_KEYS) {
+    const v = patch[key]
+    if (typeof v === "boolean") {
+      ;(out as Record<string, boolean>)[key] = v
     }
   }
   for (const key of PATTERN_KEYS) {
@@ -239,7 +323,13 @@ export function validateGuardConfigPatch(
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     return { ok: false, error: "Invalid JSON payload." }
   }
-  const known = new Set<string>([...INT_KEYS, ...RATE_KEYS, ...PATTERN_KEYS])
+  const known = new Set<string>([
+    ...INT_KEYS,
+    ...RATE_KEYS,
+    ...FLOAT_KEYS,
+    ...BOOL_KEYS,
+    ...PATTERN_KEYS,
+  ])
   for (const key of Object.keys(patch)) {
     if (!known.has(key)) {
       return { ok: false, error: `Unknown config key: ${key}` }
@@ -255,6 +345,9 @@ export function validateGuardConfigPatch(
       if (key === "tempBlockMs" && v < 60_000) {
         return { ok: false, error: "tempBlockMs must be >= 60000." }
       }
+      if ((key === "shortBlockMs" || key === "longBlockMs") && v < 60_000) {
+        return { ok: false, error: `${key} must be >= 60000.` }
+      }
     }
   }
   for (const key of RATE_KEYS) {
@@ -263,6 +356,19 @@ export function validateGuardConfigPatch(
       if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > 1) {
         return { ok: false, error: `${key} must be within (0, 1].` }
       }
+    }
+  }
+  for (const key of FLOAT_KEYS) {
+    if (key in patch) {
+      const v = patch[key]
+      if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+        return { ok: false, error: `${key} must be a positive number.` }
+      }
+    }
+  }
+  for (const key of BOOL_KEYS) {
+    if (key in patch && typeof patch[key] !== "boolean") {
+      return { ok: false, error: `${key} must be a boolean.` }
     }
   }
   for (const key of PATTERN_KEYS) {
