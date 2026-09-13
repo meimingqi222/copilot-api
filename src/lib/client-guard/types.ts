@@ -66,6 +66,7 @@ export interface GuardRecordResult {
 export interface GuardPersistence {
   blacklist?: Array<BlacklistEntry>
   uaWhitelist?: Array<string>
+  config?: Record<string, unknown>
 }
 
 export interface SuspiciousAssessment {

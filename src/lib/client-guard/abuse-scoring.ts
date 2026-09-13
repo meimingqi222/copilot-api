@@ -1,3 +1,4 @@
+import { getGuardConfig } from "~/lib/guard-config"
 import { logger } from "~/lib/logger"
 
 import type {
@@ -6,16 +7,7 @@ import type {
   SuspiciousSignal,
 } from "./types"
 
-import {
-  AUTH_FAILURE_THRESHOLD,
-  AUTO_BLOCK_SCORE_THRESHOLD,
-  BURST_REQUEST_THRESHOLD,
-  BURST_WINDOW_MS,
-  ERROR_RATE_THRESHOLD,
-  HIGH_FREQUENCY_THRESHOLD,
-  PATH_SCANNING_THRESHOLD,
-  RECENT_REQUEST_THRESHOLD,
-} from "./state"
+import { BURST_WINDOW_MS, RECENT_REQUEST_THRESHOLD } from "./state"
 import { isKnownUA } from "./ua-whitelist"
 
 export function detectSuspicious(snap: ClientSnapshot): SuspiciousAssessment {
@@ -69,14 +61,17 @@ function getHighErrorRateSignal(
   snap: ClientSnapshot,
   errorRate: number,
 ): SuspiciousSignal | undefined {
-  if (snap.requests < 10 || errorRate < ERROR_RATE_THRESHOLD) return undefined
+  const cfg = getGuardConfig()
+  if (snap.requests < 10 || errorRate < cfg.errorRateThreshold) {
+    return undefined
+  }
   const nonAuthErrors = snap.errors - snap.authFailures
   const nonAuthErrorRate = snap.requests > 0 ? nonAuthErrors / snap.requests : 0
   // If failures are mostly non-auth related (e.g. upstream 5xx or timeouts),
   // assign a lower suspicious score to avoid false-positive blocking of valid clients.
   const isNonAuth =
-    nonAuthErrorRate > ERROR_RATE_THRESHOLD
-    && snap.authFailures < AUTH_FAILURE_THRESHOLD
+    nonAuthErrorRate > cfg.errorRateThreshold
+    && snap.authFailures < cfg.authFailureThreshold
   const score = !isNonAuth && errorRate >= 0.6 ? 30 : 18
   return { reason: "high_error_rate", score }
 }
@@ -85,25 +80,24 @@ function getHighFrequencySignal(
   snap: ClientSnapshot,
   recentRequests: number,
 ): SuspiciousSignal | undefined {
-  if (
-    snap.requests < HIGH_FREQUENCY_THRESHOLD
-    && recentRequests < RECENT_REQUEST_THRESHOLD
-  ) {
+  const threshold = getGuardConfig().highFrequencyThreshold
+  if (snap.requests < threshold && recentRequests < RECENT_REQUEST_THRESHOLD) {
     return undefined
   }
   return {
     reason: "high_frequency",
-    score: snap.requests >= HIGH_FREQUENCY_THRESHOLD * 2 ? 25 : 15,
+    score: snap.requests >= threshold * 2 ? 25 : 15,
   }
 }
 
 function getBurstTrafficSignal(
   burstRequests: number,
 ): SuspiciousSignal | undefined {
-  if (burstRequests < BURST_REQUEST_THRESHOLD) return undefined
+  const threshold = getGuardConfig().burstRequestThreshold
+  if (burstRequests < threshold) return undefined
   return {
     reason: "burst_traffic",
-    score: burstRequests >= BURST_REQUEST_THRESHOLD * 2 ? 30 : 22,
+    score: burstRequests >= threshold * 2 ? 30 : 22,
   }
 }
 
@@ -115,10 +109,11 @@ function getNoAuthSignal(snap: ClientSnapshot): SuspiciousSignal | undefined {
 function getAuthFailureSignal(
   snap: ClientSnapshot,
 ): SuspiciousSignal | undefined {
-  if (snap.authFailures < AUTH_FAILURE_THRESHOLD) return undefined
+  const threshold = getGuardConfig().authFailureThreshold
+  if (snap.authFailures < threshold) return undefined
   return {
     reason: "auth_failures",
-    score: snap.authFailures >= AUTH_FAILURE_THRESHOLD * 2 ? 35 : 24,
+    score: snap.authFailures >= threshold * 2 ? 35 : 24,
   }
 }
 
@@ -126,7 +121,10 @@ function getPathScanningSignal(
   snap: ClientSnapshot,
   distinctPaths: number,
 ): SuspiciousSignal | undefined {
-  if (snap.notFounds < PATH_SCANNING_THRESHOLD || distinctPaths < 6) {
+  if (
+    snap.notFounds < getGuardConfig().pathScanningThreshold
+    || distinctPaths < 6
+  ) {
     return undefined
   }
   return { reason: "path_scanning", score: 24 }
@@ -142,7 +140,9 @@ function getRiskLevel(score: number): "low" | "medium" | "high" | "critical" {
 function getRecommendedAction(
   score: number,
 ): "allow" | "review" | "temporary_block" {
-  if (score >= AUTO_BLOCK_SCORE_THRESHOLD) return "temporary_block"
+  if (score >= getGuardConfig().autoBlockScoreThreshold) {
+    return "temporary_block"
+  }
   if (score >= 30) return "review"
   return "allow"
 }
@@ -161,7 +161,7 @@ function shouldAutoBlockGlobally(
     return false
   }
 
-  if (assessment.score < AUTO_BLOCK_SCORE_THRESHOLD) {
+  if (assessment.score < getGuardConfig().autoBlockScoreThreshold) {
     return false
   }
 

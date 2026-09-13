@@ -3670,7 +3670,17 @@
               <h2 class="text-headline" x-text="t('guard.title')"></h2>
               <p
                 class="text-body text-[var(--apple-text-secondary)] mt-2"
-                x-show="tab === 'ip' || tab === 'ua'"
+                x-show="tab === 'blocks'"
+              >
+                <span x-text="t('guard.tempBlocks')"></span>
+                <span class="mx-2">·</span>
+                <span
+                  x-text="overview.tempBlocked ?? (tempBlocks || []).length"
+                ></span>
+              </p>
+              <p
+                class="text-body text-[var(--apple-text-secondary)] mt-2"
+                x-show="tab === 'clients'"
               >
                 <span x-text="t('guard.recommendedBlocks')"></span>
                 <span class="mx-2">·</span>
@@ -3691,45 +3701,37 @@
             </button>
           </header>
 
-          <!-- Tab bar: IPs / UAs / Blacklist -->
+          <!-- Tab bar: Blocks / Clients / Policy -->
           <div class="flex flex-wrap gap-2 mb-6">
             <button
               class="btn min-h-[44px]"
-              :class="tab === 'ip' ? 'btn-primary' : 'btn-secondary'"
-              @click="tab = 'ip'; load()"
-            >
-              <i data-lucide="globe" class="w-4 h-4 mr-1"></i>
-              <span x-text="t('guard.clientIps')"></span>
-            </button>
-            <button
-              class="btn min-h-[44px]"
-              :class="tab === 'ua' ? 'btn-primary' : 'btn-secondary'"
-              @click="tab = 'ua'; load()"
-            >
-              <i data-lucide="monitor" class="w-4 h-4 mr-1"></i>
-              <span x-text="t('guard.clientUas')"></span>
-            </button>
-            <button
-              class="btn min-h-[44px]"
-              :class="tab === 'blacklist' ? 'btn-primary' : 'btn-secondary'"
-              @click="tab = 'blacklist'; loadBlacklist()"
+              :class="tab === 'blocks' ? 'btn-primary' : 'btn-secondary'"
+              @click="tab = 'blocks'; load()"
             >
               <i data-lucide="ban" class="w-4 h-4 mr-1"></i>
-              <span x-text="t('guard.blacklist')"></span>
+              <span x-text="t('guard.tabs.blocks')"></span>
             </button>
             <button
               class="btn min-h-[44px]"
-              :class="tab === 'whitelist' ? 'btn-primary' : 'btn-secondary'"
-              @click="tab = 'whitelist'; loadWhitelist()"
+              :class="tab === 'clients' ? 'btn-primary' : 'btn-secondary'"
+              @click="tab = 'clients'; load()"
+            >
+              <i data-lucide="globe" class="w-4 h-4 mr-1"></i>
+              <span x-text="t('guard.tabs.clients')"></span>
+            </button>
+            <button
+              class="btn min-h-[44px]"
+              :class="tab === 'policy' ? 'btn-primary' : 'btn-secondary'"
+              @click="tab = 'policy'; load()"
             >
               <i data-lucide="shield-check" class="w-4 h-4 mr-1"></i>
-              <span x-text="t('guard.whitelist')"></span>
+              <span x-text="t('guard.tabs.policy')"></span>
             </button>
           </div>
 
           <!-- Overview -->
           <div
-            x-show="!loading && (tab === 'ip' || tab === 'ua')"
+            x-show="!loading && (tab === 'blocks' || tab === 'clients')"
             class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6"
           >
             <div class="card p-5">
@@ -3752,11 +3754,11 @@
             <div class="card p-5">
               <div
                 class="text-caption text-[var(--apple-text-secondary)] mb-2"
-                x-text="t('guard.activeBlocks')"
+                x-text="t('guard.tempBlocks')"
               ></div>
               <div
                 class="text-title-1 text-[var(--apple-red)]"
-                x-text="overview.blocked"
+                x-text="overview.tempBlocked ?? (tempBlocks || []).length"
               ></div>
             </div>
             <div class="card p-5">
@@ -3773,7 +3775,7 @@
 
           <!-- Filters -->
           <div
-            x-show="!loading && (tab === 'ip' || tab === 'ua')"
+            x-show="!loading && (tab === 'blocks' || tab === 'clients')"
             class="card p-4 mb-6"
           >
             <div
@@ -3811,6 +3813,13 @@
                 </button>
                 <button
                   class="btn btn-small"
+                  :class="filter === 'tempblocked' ? 'btn-primary' : 'btn-secondary'"
+                  @click="filter = 'tempblocked'"
+                >
+                  <span x-text="t('guard.filter.tempblocked')"></span>
+                </button>
+                <button
+                  class="btn btn-small"
                   :class="filter === 'recommended' ? 'btn-primary' : 'btn-secondary'"
                   @click="filter = 'recommended'"
                 >
@@ -3825,9 +3834,105 @@
             <div class="loading-spinner mx-auto mb-4"></div>
           </div>
 
-          <!-- Clients table (IP / UA) -->
+          <!-- Temp blocks table (Blocks tab) -->
           <div
-            x-show="!loading && (tab === 'ip' || tab === 'ua')"
+            x-show="!loading && tab === 'blocks'"
+            class="card overflow-x-auto mb-6"
+          >
+            <div
+              class="p-3 border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] flex items-center justify-between"
+            >
+              <h3
+                class="text-subheadline font-medium"
+                x-text="t('guard.tempBlocks')"
+              ></h3>
+              <span
+                class="text-xs text-[var(--apple-text-secondary)]"
+                x-text="t('guard.blockExpiresHint')"
+              ></span>
+            </div>
+            <table class="w-full text-sm min-w-[900px]">
+              <thead>
+                <tr
+                  class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]"
+                >
+                  <th class="text-left p-3" x-text="t('guard.principal')"></th>
+                  <th
+                    class="text-left p-3"
+                    x-text="t('guard.clientDetail')"
+                  ></th>
+                  <th class="text-left p-3" x-text="t('guard.lastModel')"></th>
+                  <th
+                    class="text-left p-3"
+                    x-text="t('guard.blockReasonDetail')"
+                  ></th>
+                  <th class="text-left p-3" x-text="t('guard.remaining')"></th>
+                  <th class="text-left p-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="b in filteredTempBlocks" :key="b.principal">
+                  <tr
+                    class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]"
+                  >
+                    <td class="p-3">
+                      <div
+                        class="font-mono text-xs break-all"
+                        x-text="b.principal"
+                      ></div>
+                      <div
+                        class="text-xs text-[var(--apple-text-secondary)] mt-1"
+                        x-show="b.username"
+                        x-text="b.username"
+                      ></div>
+                    </td>
+                    <td class="p-3 text-xs">
+                      <div
+                        class="font-mono break-all"
+                        x-text="b.clientIp || '-'"
+                      ></div>
+                      <div
+                        class="text-[var(--apple-text-secondary)] break-all mt-1"
+                        x-text="b.userAgent || '-'"
+                      ></div>
+                    </td>
+                    <td
+                      class="p-3 text-xs font-mono"
+                      x-text="b.model || '-'"
+                    ></td>
+                    <td
+                      class="p-3 text-xs text-[var(--apple-text-secondary)] break-all"
+                      x-text="b.reason || '-'"
+                    ></td>
+                    <td
+                      class="p-3 text-xs"
+                      x-text="formatExpiry(b.blockedUntil)"
+                    ></td>
+                    <td class="p-3 text-right whitespace-nowrap">
+                      <button
+                        class="btn btn-secondary text-xs px-3 py-2 min-h-[36px]"
+                        @click="unblockTemp(b.principal)"
+                      >
+                        <i data-lucide="shield-off" class="w-3 h-3 mr-1"></i>
+                        <span x-text="t('guard.unblockTemp')"></span>
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="!filteredTempBlocks.length" class="empty-state py-12">
+              <i data-lucide="shield-check" class="empty-state-icon"></i>
+              <p
+                class="text-body text-[var(--apple-text-secondary)]"
+                x-text="t('guard.noTempBlocks')"
+              ></p>
+            </div>
+          </div>
+
+          <!-- Clients table (unified principals) -->
+          <div
+            x-show="!loading && tab === 'clients'"
             class="card overflow-x-auto"
           >
             <table class="w-full text-sm min-w-[1100px]">
@@ -3841,7 +3946,7 @@
                   ></th>
                   <th
                     class="text-left p-3 min-w-[240px]"
-                    x-text="tab === 'ip' ? 'IP' : 'User-Agent'"
+                    x-text="t('guard.principal')"
                   ></th>
                   <th
                     class="text-left p-3 min-w-[180px]"
@@ -3866,7 +3971,10 @@
                 </tr>
               </thead>
               <tbody>
-                <template x-for="client in filteredClients" :key="client.key">
+                <template
+                  x-for="client in filteredPrincipals"
+                  :key="client.principal || client.key"
+                >
                   <tr
                     class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)]"
                     :class="{ 'opacity-70': client.blocked, 'bg-red-50 dark:bg-red-950/20': client.riskLevel === 'critical' && !client.blocked }"
@@ -3899,7 +4007,22 @@
                     <td class="p-3">
                       <div
                         class="font-mono text-xs break-all leading-5"
-                        x-text="client.key"
+                        x-text="client.principal || client.key"
+                      ></div>
+                      <div
+                        class="text-xs text-[var(--apple-text-secondary)] mt-1 break-all"
+                        x-show="client.clientIp && client.clientIp !== (client.principal || client.key)"
+                        x-text="client.clientIp"
+                      ></div>
+                      <div
+                        class="text-xs text-[var(--apple-text-secondary)] break-all"
+                        x-show="client.username || (client.usernames && client.usernames.length)"
+                        x-text="client.username || (client.usernames || []).join(', ')"
+                      ></div>
+                      <div
+                        class="text-caption text-[var(--apple-text-tertiary)] break-all mt-1"
+                        x-show="client.userAgent"
+                        x-text="client.userAgent"
                       ></div>
                       <div class="mt-2">
                         <div
@@ -4063,7 +4186,7 @@
                     <td class="p-3">
                       <div
                         class="text-xs"
-                        x-text="formatTime(client.lastSeenAt)"
+                        x-text="formatTime(client.lastSeenAt || client.lastSeen)"
                       ></div>
                       <div
                         class="text-caption text-[var(--apple-text-secondary)] mt-1"
@@ -4074,28 +4197,42 @@
                       </div>
                     </td>
                     <td class="p-3 text-right whitespace-nowrap">
-                      <template x-if="client.blocked">
-                        <span
-                          class="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                          x-text="t('guard.blocked')"
-                        ></span>
-                      </template>
-                      <template x-if="!client.blocked">
-                        <button
-                          class="btn text-xs px-3 py-2 min-h-[36px]"
-                          :class="client.recommendedAction === 'temporary_block' ? 'btn-danger' : 'btn-secondary'"
-                          @click="openBlockModal(client)"
-                        >
-                          <i data-lucide="ban" class="w-3 h-3 mr-1"></i>
-                          <span x-text="t('guard.block')"></span>
-                        </button>
-                      </template>
+                      <div class="flex flex-col gap-2 items-end">
+                        <template x-if="client.tempBlocked">
+                          <button
+                            class="btn btn-secondary text-xs px-3 py-2 min-h-[36px]"
+                            @click="unblockTemp(client.principal || client.key)"
+                          >
+                            <i
+                              data-lucide="shield-off"
+                              class="w-3 h-3 mr-1"
+                            ></i>
+                            <span x-text="t('guard.unblockTemp')"></span>
+                          </button>
+                        </template>
+                        <template x-if="client.blocked && !client.tempBlocked">
+                          <span
+                            class="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                            x-text="t('guard.blocked')"
+                          ></span>
+                        </template>
+                        <template x-if="!client.blocked">
+                          <button
+                            class="btn text-xs px-3 py-2 min-h-[36px]"
+                            :class="client.recommendedAction === 'temporary_block' ? 'btn-danger' : 'btn-secondary'"
+                            @click="openBlockModal(client)"
+                          >
+                            <i data-lucide="ban" class="w-3 h-3 mr-1"></i>
+                            <span x-text="t('guard.block')"></span>
+                          </button>
+                        </template>
+                      </div>
                     </td>
                   </tr>
                 </template>
               </tbody>
             </table>
-            <div x-show="!filteredClients.length" class="empty-state py-12">
+            <div x-show="!filteredPrincipals.length" class="empty-state py-12">
               <i data-lucide="shield" class="empty-state-icon"></i>
               <p
                 class="text-body text-[var(--apple-text-secondary)]"
@@ -4104,9 +4241,9 @@
             </div>
           </div>
 
-          <!-- Blacklist table -->
+          <!-- Blacklist table (Blocks tab, below temp blocks) -->
           <div
-            x-show="!loading && tab === 'blacklist'"
+            x-show="!loading && tab === 'blocks'"
             class="card overflow-x-auto"
           >
             <table class="w-full text-sm min-w-[860px]">
@@ -4194,8 +4331,53 @@
             </div>
           </div>
 
-          <!-- Whitelist panel -->
-          <div x-show="tab === 'whitelist'" class="space-y-6">
+          <!-- Policy panel -->
+          <div x-show="tab === 'policy'" class="space-y-6">
+            <!-- Thresholds -->
+            <div class="card p-4">
+              <div class="flex items-center justify-between mb-2">
+                <h3
+                  class="text-subheadline font-medium"
+                  x-text="t('guard.policy.thresholds')"
+                ></h3>
+                <div class="flex gap-2">
+                  <button
+                    class="btn btn-secondary btn-small"
+                    @click="resetGuardConfigDraft()"
+                    x-text="t('guard.resetDraft')"
+                  ></button>
+                  <button
+                    class="btn btn-primary btn-small"
+                    @click="saveGuardConfig()"
+                    :disabled="configSaving"
+                    x-text="configSaving ? t('loading') : t('save')"
+                  ></button>
+                </div>
+              </div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] mb-4"
+                x-text="t('guard.policy.hint')"
+              ></p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <template
+                  x-for="key in ['requestLimit','trustedRequestLimit','upstream429DenseThreshold','upstream429TotalThreshold','burstBlockThreshold','failureRateBlockThreshold','repeatedContentThreshold','tempBlockMs','errorRateThreshold','authFailureThreshold','autoBlockScoreThreshold']"
+                  :key="key"
+                >
+                  <label class="block">
+                    <span
+                      class="block text-xs text-[var(--apple-text-secondary)] mb-1"
+                      x-text="t('guard.cfg.' + key)"
+                    ></span>
+                    <input
+                      type="number"
+                      step="any"
+                      class="input"
+                      x-model.number="configDraft[key]"
+                    />
+                  </label>
+                </template>
+              </div>
+            </div>
             <!-- Add custom pattern -->
             <div class="card p-4">
               <h3
@@ -4313,7 +4495,7 @@
                   <div class="card p-4 bg-[var(--apple-bg-secondary)]">
                     <div
                       class="font-mono text-xs break-all"
-                      x-text="blockForm.target?.key || '-'"
+                      x-text="blockForm.target?.principal || blockForm.target?.key || '-'"
                     ></div>
                     <div
                       class="mt-3 flex items-center gap-2"

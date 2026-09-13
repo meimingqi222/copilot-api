@@ -2,14 +2,22 @@ function guardView() {
   return {
     ...ViewHelpers,
     loading: false,
-    tab: "ip",
+    tab: "blocks",
     search: "",
     filter: "all",
+    principals: [],
     clients: [],
+    clientType: "ip",
+    tempBlocks: [],
+    overviewData: null,
     blacklist: [],
     whitelistBuiltin: [],
     whitelistCustom: [],
     newWhitelistPattern: "",
+    guardConfig: null,
+    guardDefaults: null,
+    configDraft: {},
+    configSaving: false,
     blockModalOpen: false,
     blockSubmitting: false,
     blockForm: {
@@ -19,60 +27,90 @@ function guardView() {
     },
 
     get overview() {
-      const clients = this.clients || []
+      if (this.overviewData) return this.overviewData
+      const principals = this.principals || []
       return {
-        total: clients.length,
-        suspicious: clients.filter((client) => client.suspicious).length,
-        blocked: clients.filter((client) => client.blocked).length,
-        recommended: clients.filter(
-          (client) =>
-            !client.blocked && client.recommendedAction === "temporary_block",
+        total: principals.length,
+        suspicious: principals.filter((p) => p.suspicious).length,
+        blocked: principals.filter((p) => p.tempBlocked || p.blacklisted)
+          .length,
+        tempBlocked: (this.tempBlocks || []).length,
+        recommended: principals.filter(
+          (p) =>
+            !p.tempBlocked
+            && !p.blacklisted
+            && p.recommendedAction === "temporary_block",
         ).length,
       }
     },
 
-    get filteredClients() {
+    get filteredPrincipals() {
       const query = this.search.trim().toLowerCase()
-      return (this.clients || []).filter((client) => {
-        if (this.filter === "suspicious" && !client.suspicious) return false
-        if (this.filter === "blocked" && !client.blocked) return false
+      return (this.principals || []).filter((p) => {
+        if (this.filter === "suspicious" && !p.suspicious) return false
+        if (this.filter === "blocked" && !p.tempBlocked && !p.blacklisted) {
+          return false
+        }
+        if (this.filter === "tempblocked" && !p.tempBlocked) return false
         if (
           this.filter === "recommended"
-          && client.recommendedAction !== "temporary_block"
+          && (p.tempBlocked
+            || p.blacklisted
+            || p.recommendedAction !== "temporary_block")
         ) {
           return false
         }
-
         if (!query) return true
-
         const searchable = [
-          client.key,
-          ...(client.usernames || []),
-          ...(client.topPaths || []).map((path) => path.path),
-          ...(client.suspiciousReasons || []).map((reason) =>
-            this.t("guard.reason." + reason),
-          ),
+          p.principal,
+          p.clientIp,
+          p.userAgent,
+          p.username,
+          p.lastModel,
+          p.lastPath,
+          ...(p.reasons || []).map((r) => this.t("guard.reason." + r)),
+          ...(p.tempBlock?.reason ? [p.tempBlock.reason] : []),
         ]
+          .filter(Boolean)
           .join(" ")
           .toLowerCase()
-
         return searchable.includes(query)
       })
     },
 
+    get filteredTempBlocks() {
+      const query = this.search.trim().toLowerCase()
+      if (!query) return this.tempBlocks || []
+      return (this.tempBlocks || []).filter((b) =>
+        [b.principal, b.clientIp, b.userAgent, b.username, b.reason, b.model]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query),
+      )
+    },
+
     async load() {
-      if (this.tab === "blacklist") {
-        await this.loadBlacklist()
+      if (this.tab === "blocks") {
+        await Promise.all([this.loadTempBlocks(), this.loadOverview()])
+        await this.loadBlacklist(true)
         return
       }
-      if (this.tab === "whitelist") {
-        await this.loadWhitelist()
+      if (this.tab === "clients") {
+        await this.loadPrincipals()
         return
       }
+      if (this.tab === "policy") {
+        await Promise.all([this.loadWhitelist(), this.loadGuardConfig()])
+        return
+      }
+    },
+
+    async loadTempBlocks() {
       this.loading = true
       try {
-        const data = await API.guard.clients(this.tab)
-        this.clients = data.clients || []
+        const data = await API.guard.tempBlocks()
+        this.tempBlocks = data.blocks || []
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
@@ -81,15 +119,38 @@ function guardView() {
       }
     },
 
-    async loadBlacklist() {
+    async loadOverview() {
+      try {
+        this.overviewData = await API.guard.overview()
+      } catch {
+        this.overviewData = null
+      }
+    },
+
+    async loadPrincipals() {
       this.loading = true
       try {
-        const data = await API.guard.blacklist()
-        this.blacklist = data.blacklist || []
+        const data = await API.guard.principals(500)
+        this.principals = data.principals || []
+        // Keep legacy clients in sync for the type toggle.
+        this.clients = this.principals
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
+        this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    async loadBlacklist(silent) {
+      if (!silent) this.loading = true
+      try {
+        const data = await API.guard.blacklist()
+        this.blacklist = data.blacklist || []
+      } catch {
+        if (!silent) this.showToast(I18n.t("error.load"), "error")
+      } finally {
+        if (!silent) this.loading = false
         this.$nextTick(() => lucide.createIcons())
       }
     },
@@ -106,6 +167,47 @@ function guardView() {
         this.loading = false
         this.$nextTick(() => lucide.createIcons())
       }
+    },
+
+    async loadGuardConfig() {
+      try {
+        const data = await API.guard.guardConfig()
+        this.guardConfig = data.config
+        this.guardDefaults = data.defaults
+        this.configDraft = { ...data.config }
+      } catch {
+        this.showToast(I18n.t("error.load"), "error")
+      } finally {
+        this.$nextTick(() => lucide.createIcons())
+      }
+    },
+
+    async saveGuardConfig() {
+      const patch = {}
+      for (const [k, v] of Object.entries(this.configDraft || {})) {
+        if (
+          JSON.stringify(v)
+          !== JSON.stringify(this.guardConfig ? this.guardConfig[k] : undefined)
+        ) {
+          patch[k] = v
+        }
+      }
+      if (Object.keys(patch).length === 0) return
+      this.configSaving = true
+      try {
+        const data = await API.guard.updateGuardConfig(patch)
+        this.guardConfig = data.config
+        this.configDraft = { ...data.config }
+        this.showToast(I18n.t("guard.configSaved"), "success")
+      } catch (e) {
+        this.showToast(e?.message || I18n.t("error.update"), "error")
+      } finally {
+        this.configSaving = false
+      }
+    },
+
+    resetGuardConfigDraft() {
+      this.configDraft = { ...this.guardConfig }
     },
 
     openBlockModal(client) {
@@ -127,30 +229,63 @@ function guardView() {
 
     async submitBlock() {
       if (!this.blockForm.target) return
-
-      let expiresAt
-      if (this.blockForm.duration === "1h") {
-        expiresAt = Date.now() + 60 * 60 * 1000
-      } else if (this.blockForm.duration === "24h") {
-        expiresAt = Date.now() + 24 * 60 * 60 * 1000
-      }
+      const t = this.blockForm.target
+      const key = t.principal || t.key
+      const isPrincipal =
+        typeof key === "string"
+        && (key.startsWith("user:")
+          || key.startsWith("key:")
+          || key.startsWith("ip:"))
 
       this.blockSubmitting = true
       try {
-        await API.guard.block({
-          value: this.blockForm.target.key,
-          type: this.tab,
-          reason: this.blockForm.reason.trim() || undefined,
-          expiresAt,
-        })
+        if (isPrincipal) {
+          const durations = {
+            "30m": 30 * 60 * 1000,
+            "1h": 60 * 60 * 1000,
+            "24h": 24 * 60 * 60 * 1000,
+            permanent: 7 * 24 * 60 * 60 * 1000,
+          }
+          const durationMs = durations[this.blockForm.duration]
+          await API.guard.blockPrincipal({
+            principal: key,
+            durationMs,
+            reason: this.blockForm.reason.trim() || undefined,
+          })
+        } else {
+          let expiresAt
+          if (this.blockForm.duration === "1h") {
+            expiresAt = Date.now() + 60 * 60 * 1000
+          } else if (this.blockForm.duration === "24h") {
+            expiresAt = Date.now() + 24 * 60 * 60 * 1000
+          }
+          const rawType = t.type || this.clientType
+          await API.guard.block({
+            value: key,
+            type: rawType === "ua" ? "ua" : "ip",
+            reason: this.blockForm.reason.trim() || undefined,
+            expiresAt,
+          })
+        }
         this.showToast(I18n.t("guard.blockSuccess"), "success")
         this.closeBlockModal()
         await this.load()
       } catch (e) {
-        const errorMsg = e?.message || I18n.t("error.update")
-        this.showToast(errorMsg, "error")
+        this.showToast(e?.message || I18n.t("error.update"), "error")
       } finally {
         this.blockSubmitting = false
+      }
+    },
+
+    async unblockTemp(principal) {
+      if (!confirm(I18n.t("guard.confirmUnblock"))) return
+      try {
+        await API.guard.unblockPrincipal(principal)
+        this.showToast(I18n.t("guard.unblockSuccess"), "success")
+        await Promise.all([this.loadTempBlocks(), this.loadPrincipals()])
+        await this.loadOverview()
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
       }
     },
 
@@ -163,8 +298,7 @@ function guardView() {
         this.showToast(I18n.t("guard.whitelistAdded"), "success")
         await this.loadWhitelist()
       } catch (e) {
-        const errorMsg = e?.error || I18n.t("error.update")
-        this.showToast(errorMsg, "error")
+        this.showToast(e?.error || I18n.t("error.update"), "error")
       }
     },
 
@@ -185,6 +319,7 @@ function guardView() {
         await API.guard.unblock({ value: entry.value, type: entry.type })
         this.showToast(I18n.t("guard.unblockSuccess"), "success")
         await this.loadBlacklist()
+        await this.loadOverview()
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       }
@@ -250,5 +385,3 @@ function guardView() {
     },
   }
 }
-
-// Logs View Component

@@ -408,6 +408,20 @@ const API = {
   // Guard
   guard: {
     clients: (type = "ip") => API.request(`/guard/clients?type=${type}`),
+    principals: (limit = 500) =>
+      API.request(`/guard/principals?limit=${limit}`),
+    overview: () => API.request("/guard/overview"),
+    tempBlocks: () => API.request("/guard/temp-blocks"),
+    blockPrincipal: (data) =>
+      API.request("/guard/temp-blocks", { method: "POST", body: data }),
+    unblockPrincipal: (principal) =>
+      API.request("/guard/temp-blocks", {
+        method: "DELETE",
+        body: { principal },
+      }),
+    guardConfig: () => API.request("/guard/config"),
+    updateGuardConfig: (data) =>
+      API.request("/guard/config", { method: "PUT", body: data }),
     blacklist: () => API.request("/guard/blacklist"),
     block: (data) =>
       API.request("/guard/blacklist", { method: "POST", body: data }),

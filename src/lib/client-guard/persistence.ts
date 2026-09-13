@@ -1,3 +1,9 @@
+import {
+  getGuardConfig,
+  loadGuardConfigFromPersistence,
+  resetGuardConfigForTest,
+  setGuardConfig,
+} from "~/lib/guard-config"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { Repository } from "~/lib/repository"
@@ -64,6 +70,11 @@ export async function loadGuard(): Promise<void> {
         customUaWhitelist.push(pattern)
       }
     }
+    if (data.config) {
+      loadGuardConfigFromPersistence(
+        data.config as Partial<import("~/lib/guard-config").GuardConfig>,
+      )
+    }
     logger.info(
       `Guard loaded: ${ipBlacklist.size} blocked IPs, ${uaBlacklist.size} blocked UAs, ${customUaWhitelist.length} custom UA patterns`,
     )
@@ -77,7 +88,18 @@ export async function saveGuard(): Promise<void> {
   await guardRepository.save({
     blacklist: getBlacklist(),
     uaWhitelist: [...customUaWhitelist],
+    config: { ...getGuardConfig() },
   })
+}
+
+export async function saveGuardConfig(): Promise<void> {
+  await saveGuard()
+}
+
+export function applyGuardConfigPatch(
+  patch: Partial<import("~/lib/guard-config").GuardConfig>,
+): import("~/lib/guard-config").GuardConfig {
+  return setGuardConfig(patch)
 }
 
 export function resetGuardForTest(): void {
@@ -87,6 +109,7 @@ export function resetGuardForTest(): void {
   ipSnapshots.clear()
   uaSnapshots.clear()
   customUaWhitelist.splice(0)
+  resetGuardConfigForTest()
   if (cleanupTimer) {
     clearInterval(cleanupTimer)
     cleanupTimer = undefined

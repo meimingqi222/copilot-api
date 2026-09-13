@@ -1,0 +1,201 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { Hono } from "hono"
+
+import { resetGuardForTest } from "~/lib/guard"
+import {
+  DEFAULT_GUARD_CONFIG,
+  getGuardConfig,
+  resetGuardConfigForTest,
+  validateGuardConfigPatch,
+} from "~/lib/guard-config"
+import {
+  blockPrincipal,
+  checkProtectedRouteGuard,
+  listTempBlocks,
+  resetProtectedRouteGuardForTest,
+  unblockPrincipal,
+} from "~/lib/protected-route-guard"
+import { respondToKnownRouteError } from "~/lib/request-lifecycle"
+import { server } from "~/server"
+
+import {
+  adminRequest,
+  clearAdminAuth,
+  setupAdminAuth,
+} from "./admin-test-utils"
+
+function guardedApp(userId = "user-1") {
+  const app = new Hono()
+  app.post("/chat/completions", (c) => {
+    c.set("userId" as never, userId)
+    try {
+      checkProtectedRouteGuard(c, {
+        routeKind: "reasoning",
+        model: "gpt-test",
+        messageContent: "same-content",
+      })
+    } catch (error) {
+      return respondToKnownRouteError(c, error) ?? c.text("unexpected", 500)
+    }
+    return c.json({ ok: true })
+  })
+  return app
+}
+
+describe("guard management", () => {
+  beforeEach(() => {
+    setupAdminAuth()
+  })
+
+  afterEach(() => {
+    resetProtectedRouteGuardForTest()
+    resetGuardForTest()
+    resetGuardConfigForTest()
+    clearAdminAuth()
+  })
+
+  test("repeated automation content creates a listable temp block with metadata", async () => {
+    const app = guardedApp()
+    const headers = {
+      "content-type": "application/json",
+      "user-agent": "curl/7.88.1",
+    }
+    for (let i = 0; i < 3; i++) {
+      const res = await app.request("http://localhost/chat/completions", {
+        method: "POST",
+        headers,
+      })
+      if (i < 2) expect(res.status).toBe(200)
+    }
+    const blocks = listTempBlocks()
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].principal).toBe("user:user-1")
+    expect(blocks[0].reason).toContain("repeated_content")
+    expect(blocks[0].blockedUntil).toBeGreaterThan(Date.now())
+    expect(blocks[0].retryAfterSeconds).toBeGreaterThan(0)
+  })
+
+  test("unblockPrincipal clears an active block", async () => {
+    blockPrincipal("user:user-9", { reason: "test" })
+    expect(listTempBlocks()).toHaveLength(1)
+    expect(unblockPrincipal("user:user-9")).toBe(true)
+    expect(listTempBlocks()).toHaveLength(0)
+  })
+
+  test("unblockPrincipal returns false for unknown principal", () => {
+    expect(unblockPrincipal("user:never-seen")).toBe(false)
+  })
+
+  test("guard config validation rejects bad patches", () => {
+    expect(validateGuardConfigPatch({ foo: 1 }).ok).toBe(false)
+    expect(validateGuardConfigPatch({ requestLimit: -1 }).ok).toBe(false)
+    expect(validateGuardConfigPatch({ tempBlockMs: 1000 }).ok).toBe(false)
+    expect(validateGuardConfigPatch({ failureRateBlockThreshold: 2 }).ok).toBe(
+      false,
+    )
+    expect(validateGuardConfigPatch({ trustedClientPatterns: "x" }).ok).toBe(
+      false,
+    )
+    const good = validateGuardConfigPatch({ requestLimit: 100 })
+    expect(good.ok).toBe(true)
+  })
+
+  test("guard config defaults match legacy constants", () => {
+    const cfg = getGuardConfig()
+    expect(cfg.requestLimit).toBe(DEFAULT_GUARD_CONFIG.requestLimit)
+    expect(cfg.tempBlockMs).toBe(30 * 60 * 1000)
+  })
+
+  test("GET /admin/api/guard/config returns config and defaults", async () => {
+    const res = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/config"),
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      config: Record<string, unknown>
+      defaults: Record<string, unknown>
+    }
+    expect(body.config.requestLimit).toBeDefined()
+    expect(body.defaults.tempBlockMs).toBe(30 * 60 * 1000)
+  })
+
+  test("PUT /admin/api/guard/config rejects invalid and persists valid", async () => {
+    const bad = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/config", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestLimit: -5 }),
+      }),
+    )
+    expect(bad.status).toBe(400)
+
+    const good = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/config", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestLimit: 123 }),
+      }),
+    )
+    expect(good.status).toBe(200)
+    expect(getGuardConfig().requestLimit).toBe(123)
+  })
+
+  test("temp-blocks API round-trips block/list/unblock", async () => {
+    const created = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/temp-blocks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          principal: "user:api-roundtrip",
+          durationMs: 60000,
+          reason: "test",
+        }),
+      }),
+    )
+    expect(created.status).toBe(200)
+
+    const listed = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/temp-blocks"),
+    )
+    expect(listed.status).toBe(200)
+    const listedBody = (await listed.json()) as {
+      blocks: Array<{ principal: string }>
+    }
+    expect(
+      listedBody.blocks.some((b) => b.principal === "user:api-roundtrip"),
+    ).toBe(true)
+
+    const removed = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/temp-blocks", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ principal: "user:api-roundtrip" }),
+      }),
+    )
+    expect(removed.status).toBe(200)
+  })
+
+  test("overview and principals endpoints respond", async () => {
+    blockPrincipal("user:overview-check", { reason: "test" })
+    const overview = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/overview"),
+    )
+    expect(overview.status).toBe(200)
+    const overviewBody = (await overview.json()) as { tempBlocked: number }
+    expect(overviewBody.tempBlocked).toBeGreaterThanOrEqual(1)
+
+    const principals = await server.fetch(
+      adminRequest("http://localhost/admin/api/guard/principals?limit=50"),
+    )
+    expect(principals.status).toBe(200)
+    const principalsBody = (await principals.json()) as {
+      principals: Array<{ principal: string }>
+      total: number
+    }
+    expect(
+      principalsBody.principals.some(
+        (p) => p.principal === "user:overview-check",
+      ),
+    ).toBe(true)
+  })
+})

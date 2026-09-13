@@ -5,6 +5,10 @@ import { createHash } from "node:crypto"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 
 import { HTTPError } from "~/lib/error"
+import {
+  compilePatterns,
+  getGuardConfig,
+} from "~/lib/guard-config"
 import { logger } from "~/lib/logger"
 import { getProtectedRouteKind } from "~/lib/protected-routes"
 import { globalTimers } from "~/lib/timer-registry"
@@ -35,6 +39,32 @@ export interface PrincipalGuardState {
   warned: boolean
   blockedUntil?: number
   lastSeen: number
+  lastClientIp?: string
+  lastUserAgent?: string
+  lastPath?: string
+  lastModel?: string
+  lastRouteKind?: string
+  blockReason?: string
+  blockedAt?: number
+  lastBehavior?: PrincipalBehavior
+}
+
+export interface TempBlockInfo {
+  principal: string
+  kind: "user" | "key" | "ip"
+  userId?: string
+  clientIp?: string
+  userAgent?: string
+  path?: string
+  model?: string
+  routeKind?: string
+  reason?: string
+  behavior?: PrincipalBehavior
+  blockedUntil: number
+  blockedAt?: number
+  retryAfterSeconds: number
+  recentRequestCount: number
+  lastSeen: number
 }
 
 interface GuardInput {
@@ -52,55 +82,28 @@ const guardState = new Map<string, PrincipalGuardState>()
 
 const BEHAVIOR_WINDOW_MS = 10 * 60 * 1000
 const REQUEST_WINDOW_MS = 60_000
-const REQUEST_LIMIT = 240
-const TRUSTED_CLIENT_REQUEST_LIMIT = 480
 
-const UPSTREAM_429_DENSE_THRESHOLD = 5
 const UPSTREAM_429_DENSE_WINDOW_MS = 60_000
-const UPSTREAM_429_TOTAL_THRESHOLD = 15
-const BURST_SCORE_BLOCK_THRESHOLD = 100
-const FAILURE_RATE_BLOCK_THRESHOLD = 0.7
-const MIN_SAMPLES_FOR_FAILURE_RATE = 10
 
-const REPEATED_CONTENT_THRESHOLD = 3
 const REPEATED_CONTENT_WINDOW_MS = 24 * 60 * 60 * 1000
 
-const TEMPORARY_BLOCK_MS = 30 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 5 * 60_000
-const IDLE_TTL_MS = TEMPORARY_BLOCK_MS + BEHAVIOR_WINDOW_MS
 
-const TRUSTED_CLIENT_PATTERNS = [
-  /charm-crush/i,
-  /claude-code/i,
-  /codex/i,
-  /cursor/i,
-  /windsurf/i,
-  /zed-editor/i,
-  /opencode/i,
-  /amp[\s/-]/i,
-  /droid/i,
-]
+function idleTtlMs(): number {
+  return getGuardConfig().tempBlockMs + BEHAVIOR_WINDOW_MS
+}
 
-const AUTOMATION_PATTERNS = [
-  /python-requests/i,
-  /python-httpx/i,
-  /curl/i,
-  /wget/i,
-  /http\.js/i,
-  /axios/i,
-  /node-fetch/i,
-  /got\//i,
-  /scrapy/i,
-  /selenium/i,
-  /puppeteer/i,
-  /playwright/i,
-  /headless/i,
-  /bot/i,
-  /crawler/i,
-  /spider/i,
-]
+function getTrustedPatterns(): Array<RegExp> {
+  return compilePatterns(getGuardConfig().trustedClientPatterns)
+}
 
-const PROBE_PATTERNS = [/Please repeat:\s*\w{6,}/i]
+function getAutomationPatterns(): Array<RegExp> {
+  return compilePatterns(getGuardConfig().automationPatterns)
+}
+
+function getProbePatterns(): Array<RegExp> {
+  return compilePatterns(getGuardConfig().probePatterns)
+}
 
 let cleanupTimer: ReturnType<typeof setInterval> | undefined
 
@@ -145,11 +148,16 @@ export function checkProtectedRouteGuard(
   const principal = getPrincipalKey(c)
   const now = Date.now()
   const state = getOrCreateState(principal)
-  const trustedClient =
-    input.trustedClient ?? isTrustedClient(c.req.header("user-agent"))
+  const userAgent = c.req.header("user-agent")
+  const trustedClient = input.trustedClient ?? isTrustedClient(userAgent)
 
   pruneState(state, now)
   state.lastSeen = now
+  state.lastClientIp = clientIp
+  if (userAgent !== undefined) state.lastUserAgent = userAgent
+  state.lastPath = c.req.path
+  if (input.model !== undefined) state.lastModel = input.model
+  if (routeKind !== undefined) state.lastRouteKind = routeKind
 
   c.set("protectedRouteGuardPrincipal", principal)
 
@@ -373,7 +381,7 @@ function calculateFailureRate(recentEvents: Array<BehaviorEvent>): number {
       e.type === "success" || e.type === "error" || e.type === "upstream_429",
   )
 
-  if (outcomes.length < MIN_SAMPLES_FOR_FAILURE_RATE) return 0
+  if (outcomes.length < getGuardConfig().minSamplesFailureRate) return 0
 
   const failures = outcomes.filter(
     (e) => e.type === "error" || e.type === "upstream_429",
@@ -397,7 +405,9 @@ function detectAutomation(
   userAgent: string | undefined,
   recentRequests: Array<number>,
 ): boolean {
-  if (AUTOMATION_PATTERNS.some((p) => p.test(userAgent ?? ""))) return true
+  if (getAutomationPatterns().some((p) => p.test(userAgent ?? ""))) {
+    return true
+  }
 
   if (recentRequests.length >= 20) {
     const intervals: Array<number> = []
@@ -432,8 +442,9 @@ function enforceRequestLimit(input: {
   now: number
 }): void {
   const { c, principal, state, routeKind, guardInput, now } = input
+  const cfg = getGuardConfig()
   const requestLimit =
-    guardInput.trustedClient ? TRUSTED_CLIENT_REQUEST_LIMIT : REQUEST_LIMIT
+    guardInput.trustedClient ? cfg.trustedRequestLimit : cfg.requestLimit
 
   if (state.recentRequests.length >= requestLimit) {
     const retryAfterSeconds = Math.ceil(
@@ -492,26 +503,27 @@ function enforceBehaviorBlock(input: {
   behavior: PrincipalBehavior
 }): void {
   const { c, principal, state, routeKind, guardInput, now, behavior } = input
+  const cfg = getGuardConfig()
 
   const effectiveFailureThreshold =
     behavior.automatedPattern ?
-      FAILURE_RATE_BLOCK_THRESHOLD * 0.7
-    : FAILURE_RATE_BLOCK_THRESHOLD
+      cfg.failureRateBlockThreshold * 0.7
+    : cfg.failureRateBlockThreshold
 
   const hasDense429 =
-    behavior.upstream429DenseCount >= UPSTREAM_429_DENSE_THRESHOLD
+    behavior.upstream429DenseCount >= cfg.upstream429DenseThreshold
   const hasTotal429 =
-    behavior.upstream429TotalCount >= UPSTREAM_429_TOTAL_THRESHOLD
+    behavior.upstream429TotalCount >= cfg.upstream429TotalThreshold
 
   const userAgent = c.req.header("user-agent")
   const hasRepeatedContent =
-    behavior.repeatedContentCount >= REPEATED_CONTENT_THRESHOLD
-    && (!userAgent || AUTOMATION_PATTERNS.some((p) => p.test(userAgent)))
+    behavior.repeatedContentCount >= cfg.repeatedContentThreshold
+    && (!userAgent || getAutomationPatterns().some((p) => p.test(userAgent)))
 
   const shouldBlock =
     hasDense429
     || hasTotal429
-    || behavior.burstScore >= BURST_SCORE_BLOCK_THRESHOLD
+    || behavior.burstScore >= cfg.burstBlockThreshold
     || behavior.failureRate >= effectiveFailureThreshold
     || hasRepeatedContent
 
@@ -524,7 +536,7 @@ function enforceBehaviorBlock(input: {
   if (hasTotal429) {
     reasons.push(`upstream_429_total=${behavior.upstream429TotalCount}/10min`)
   }
-  if (behavior.burstScore >= BURST_SCORE_BLOCK_THRESHOLD) {
+  if (behavior.burstScore >= cfg.burstBlockThreshold) {
     reasons.push(`burst_score=${behavior.burstScore}`)
   }
   if (behavior.failureRate >= effectiveFailureThreshold) {
@@ -539,7 +551,7 @@ function enforceBehaviorBlock(input: {
     )
   }
 
-  state.blockedUntil = now + TEMPORARY_BLOCK_MS
+  state.blockedUntil = now + cfg.tempBlockMs
 
   throwLoggedGuardError({
     c,
@@ -548,7 +560,7 @@ function enforceBehaviorBlock(input: {
     routeKind,
     guardInput,
     reason: `behavior_block:${reasons.join(",")}`,
-    retryAfterSeconds: Math.ceil(TEMPORARY_BLOCK_MS / 1000),
+    retryAfterSeconds: Math.ceil(cfg.tempBlockMs / 1000),
     message:
       "Forbidden. Client blocked due to suspicious behavior patterns detected.",
     status: 403,
@@ -570,10 +582,11 @@ function enforceProbeDetection(input: {
 
   if (!content) return
 
-  const matchedPattern = PROBE_PATTERNS.find((p) => p.test(content))
+  const matchedPattern = getProbePatterns().find((p) => p.test(content))
   if (!matchedPattern) return
 
-  state.blockedUntil = now + TEMPORARY_BLOCK_MS
+  const tempBlockMs = getGuardConfig().tempBlockMs
+  state.blockedUntil = now + tempBlockMs
 
   logger.warn(
     `Probe request detected and blocked: ${JSON.stringify({
@@ -590,7 +603,7 @@ function enforceProbeDetection(input: {
     routeKind,
     guardInput,
     reason: `probe_detection:${matchedPattern.source}`,
-    retryAfterSeconds: Math.ceil(TEMPORARY_BLOCK_MS / 1000),
+    retryAfterSeconds: Math.ceil(tempBlockMs / 1000),
     message: "Forbidden. Client blocked due to probe request pattern detected.",
     status: 403,
     errorType: "forbidden_error",
@@ -633,6 +646,8 @@ function pruneState(state: PrincipalGuardState, now: number): void {
 
   if ((state.blockedUntil ?? 0) <= now) {
     state.blockedUntil = undefined
+    state.blockReason = undefined
+    state.blockedAt = undefined
   }
 }
 
@@ -683,6 +698,11 @@ function throwLoggedGuardError(input: {
   errorType: "forbidden_error" | "rate_limit_error"
   behavior?: PrincipalBehavior
 }): never {
+  if (input.status === 403) {
+    input.state.blockReason = input.reason
+    input.state.blockedAt = Date.now()
+    if (input.behavior) input.state.lastBehavior = input.behavior
+  }
   logGuardRejection(input)
   throw new ProtectedRouteGuardError({
     message: input.message,
@@ -782,6 +802,7 @@ export function resetProtectedRouteGuardForTest(): void {
 }
 
 function cleanupIdleState(now: number): void {
+  const ttl = idleTtlMs()
   for (const [principal, state] of guardState) {
     pruneState(state, now)
     const hasActivePenalty = (state.blockedUntil ?? 0) > now
@@ -792,7 +813,7 @@ function cleanupIdleState(now: number): void {
       continue
     }
 
-    if (now - state.lastSeen >= IDLE_TTL_MS) {
+    if (now - state.lastSeen >= ttl) {
       guardState.delete(principal)
     }
   }
@@ -802,7 +823,81 @@ function isTrustedClient(userAgent: string | undefined): boolean {
   if (!userAgent) {
     return false
   }
-  return TRUSTED_CLIENT_PATTERNS.some((pattern) => pattern.test(userAgent))
+  return getTrustedPatterns().some((pattern) => pattern.test(userAgent))
+}
+
+function parsePrincipal(principal: string): TempBlockInfo["kind"] {
+  if (principal.startsWith("user:")) return "user"
+  if (principal.startsWith("key:")) return "key"
+  return "ip"
+}
+
+export function listTempBlocks(now = Date.now()): Array<TempBlockInfo> {
+  const out: Array<TempBlockInfo> = []
+  for (const [principal, state] of guardState) {
+    const blockedUntil = state.blockedUntil ?? 0
+    if (blockedUntil <= now) continue
+    const kind = parsePrincipal(principal)
+    out.push({
+      principal,
+      kind,
+      userId: kind === "user" ? principal.slice(5) : undefined,
+      clientIp: state.lastClientIp,
+      userAgent: state.lastUserAgent,
+      path: state.lastPath,
+      model: state.lastModel,
+      routeKind: state.lastRouteKind,
+      reason: state.blockReason ?? "active_block",
+      behavior: state.lastBehavior,
+      blockedUntil,
+      blockedAt: state.blockedAt,
+      retryAfterSeconds: Math.max(0, Math.ceil((blockedUntil - now) / 1000)),
+      recentRequestCount: state.recentRequests.length,
+      lastSeen: state.lastSeen,
+    })
+  }
+  return out.sort((a, b) => b.blockedUntil - a.blockedUntil)
+}
+
+export function unblockPrincipal(principal: string): boolean {
+  const state = guardState.get(principal)
+  if (!state) return false
+  const hadBlock = (state.blockedUntil ?? 0) > Date.now()
+  state.blockedUntil = undefined
+  state.blockReason = undefined
+  state.blockedAt = undefined
+  return hadBlock || true
+}
+
+export function blockPrincipal(
+  principal: string,
+  opts: { durationMs?: number; reason?: string } = {},
+): TempBlockInfo {
+  const now = Date.now()
+  const duration = opts.durationMs ?? getGuardConfig().tempBlockMs
+  const state = getOrCreateState(principal)
+  state.blockedUntil = now + duration
+  state.blockedAt = now
+  state.blockReason = opts.reason ?? "manual_block"
+  state.lastSeen = now
+  const kind = parsePrincipal(principal)
+  return {
+    principal,
+    kind,
+    userId: kind === "user" ? principal.slice(5) : undefined,
+    clientIp: state.lastClientIp,
+    userAgent: state.lastUserAgent,
+    path: state.lastPath,
+    model: state.lastModel,
+    routeKind: state.lastRouteKind,
+    reason: state.blockReason,
+    behavior: state.lastBehavior,
+    blockedUntil: state.blockedUntil,
+    blockedAt: now,
+    retryAfterSeconds: Math.ceil(duration / 1000),
+    recentRequestCount: state.recentRequests.length,
+    lastSeen: now,
+  }
 }
 
 export function cleanupProtectedRouteGuardForTest(now = Date.now()): void {
