@@ -110,7 +110,7 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
     messageContent,
     sessionHeaders,
     sessionPayload: payload,
-    reasoningEffort: suffixEffort,
+    reasoningEffort: payload.reasoning_effort ?? undefined,
   })
   updateMemoryTrace(memoryTraceId, "chat_admission_ready", {
     provider: connectionProvider(admission.connection),

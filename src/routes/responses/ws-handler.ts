@@ -165,12 +165,14 @@ export function createResponsesWebSocketSession(c: Context) {
         return
       }
 
-      // 解析模型名后缀中的思考等级（如 gpt-5(high)）
+      // 解析模型名后缀中的思考等级（如 gpt-5(high)），也读取 payload 里的 reasoning.effort
       const wsParsedThinking = parseThinkingModel(payload.model)
       const wsSuffixEffort =
         wsParsedThinking.config ?
           thinkingConfigToResponsesEffort(wsParsedThinking.config)
         : undefined
+      const wsReasoningEffort =
+        payload.reasoning?.effort ?? wsSuffixEffort
 
       updateMemoryTrace(memoryTraceId, "payload_ready", {
         model: payload.model,
@@ -195,7 +197,7 @@ export function createResponsesWebSocketSession(c: Context) {
         model: payload.model,
         streaming: true,
         outcome: "incomplete",
-        reasoningEffort: wsSuffixEffort,
+        reasoningEffort: wsReasoningEffort,
       })
       activeTurn = turnCtx
       const previousCtx = bindRequestLogContext(c, turnCtx)

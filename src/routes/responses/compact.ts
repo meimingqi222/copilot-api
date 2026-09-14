@@ -83,7 +83,7 @@ export async function handleResponsesCompact(c: Context) {
     sessionHeaders: forwardedHeaders,
     sessionPayload: effectivePayload,
     compact: true,
-    reasoningEffort: suffixEffort,
+    reasoningEffort: effectivePayload.reasoning?.effort ?? suffixEffort,
   })
 
   const start = Date.now()
