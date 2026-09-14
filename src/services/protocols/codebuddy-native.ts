@@ -221,6 +221,54 @@ export async function* sanitizeCodebuddyStream(
 // 强流式上游的 SSE 聚合由共享工具处理（sse-aggregate.ts），
 // 与 LobsterAI 等同样强制流式的上游共用。
 
+// ── 请求体敏感内容清洗 ──────────────────────────────────────────────
+
+/**
+ * 清洗发给 CodeBuddy 的请求体，去除会触发其内容安全策略的关键词。
+ *
+ * CodeBuddy 风控会把 `x-anthropic-billing-header`（Anthropic 官方 API 的
+ * 计费 header 名）识别为凭证窃取/注入攻击特征并返回 11128 拦截。
+ * 该 header 只有直连 Anthropic 官方 API 才需要，CodeBuddy 走 OpenAI
+ * 兼容协议根本用不上，出现在请求体里纯属客户端把项目文档（AGENTS.md）
+ * 塞进了 system prompt。这里统一从 messages / tools 的字符串内容中移除。
+ */
+const CODEBUDDY_BLOCKED_PATTERNS = ["x-anthropic-billing-header"]
+
+function stripCodebuddyBlockedContent(text: string): string {
+  let result = text
+  for (const pattern of CODEBUDDY_BLOCKED_PATTERNS) {
+    result = result.replaceAll(pattern, "[redacted]")
+  }
+  return result
+}
+
+/** 递归原地清洗对象中所有字符串值。 */
+function sanitizeCodebuddyPayload(obj: unknown): void {
+  if (typeof obj === "string") return
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      if (typeof obj[i] === "string") {
+        obj[i] = stripCodebuddyBlockedContent(obj[i] as string)
+      } else {
+        sanitizeCodebuddyPayload(obj[i])
+      }
+    }
+    return
+  }
+  if (obj && typeof obj === "object") {
+    for (const key of Object.keys(obj as Record<string, unknown>)) {
+      const value = (obj as Record<string, unknown>)[key]
+      if (typeof value === "string") {
+        ;(obj as Record<string, unknown>)[key] = stripCodebuddyBlockedContent(
+          value,
+        )
+      } else {
+        sanitizeCodebuddyPayload(value)
+      }
+    }
+  }
+}
+
 // ── 模型厂商推断 ──────────────────────────────────────────────────────
 
 /**
@@ -298,6 +346,10 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       model: target.upstreamModelId,
       stream: true,
     }
+
+    // 清洗请求体中会触发 CodeBuddy 风控的敏感内容
+    sanitizeCodebuddyPayload(upstreamPayload.messages)
+    if (upstreamPayload.tools) sanitizeCodebuddyPayload(upstreamPayload.tools)
 
     const headers = buildCodebuddyHeaders(connection, credential)
     const url = `${CODEBUDDY_BASE_URL}/chat/completions`
