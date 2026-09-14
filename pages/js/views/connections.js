@@ -49,6 +49,7 @@ function connectionsView() {
     batchParsing: false,
     testing: {},
     revealedCreds: {},
+    togglingConns: {},
     showImportModal: false,
     importFile: null,
     importSkipDuplicates: true,
@@ -597,6 +598,23 @@ function connectionsView() {
         this.showToast("Saved", "success")
       } catch (e) {
         this.showToast(e.message || "Save failed", "error")
+      }
+    },
+
+    async toggleConn(conn) {
+      if (this.togglingConns[conn.id]) return
+      this.togglingConns = { ...this.togglingConns, [conn.id]: true }
+      try {
+        await API.providerConnections.update(conn.id, {
+          enabled: !conn.enabled,
+        })
+        await this.load()
+      } catch (e) {
+        this.showToast(e.message || "Failed", "error")
+      } finally {
+        const next = { ...this.togglingConns }
+        delete next[conn.id]
+        this.togglingConns = next
       }
     },
 

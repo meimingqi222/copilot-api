@@ -176,6 +176,17 @@
             >
               <i data-lucide="download" class="w-4 h-4"></i>
             </button>
+            <button
+              @click="toggleConn(conn)"
+              class="btn-icon"
+              :class="togglingConns[conn.id] ? 'opacity-50 pointer-events-none' : ''"
+              :title="t(conn.enabled ? 'connections.connDisable' : 'connections.connEnable')"
+            >
+              <i
+                :data-lucide="conn.enabled ? 'pause-circle' : 'play-circle'"
+                class="w-4 h-4"
+              ></i>
+            </button>
             <button @click="openEdit(conn)" class="btn-icon">
               <i data-lucide="edit-2" class="w-4 h-4"></i>
             </button>

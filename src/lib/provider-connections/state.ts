@@ -117,6 +117,14 @@ async function withMutation<T>(operation: () => T | Promise<T>): Promise<T> {
       try {
         const result = await operation()
         await persist()
+        // connection / credential / model 的任何变更都可能影响 /v1/models
+        // (enabled 开关、增删模型/凭据)。CRUD 的 PUT/POST/DELETE 走本路径,
+        // 此前只有 persistProviderConnections() 会 emit,导致 PUT 切换
+        // conn.enabled 后缓存不刷新。这里统一 emit(debounce 合并)。
+        // 测试环境 persistenceEnabled=false 时跳过:__reset 后 persist 是
+        // no-op,此时 emit 会让 cacheModels 在 microtask 里读到下一个用例的
+        // fixtures,造成跨用例串扰(测试里显式调 cacheModels 即可)。
+        if (persistenceEnabled) emitStateChange("models-stale")
         return result
       } catch (error) {
         stateRoot.connections = previous

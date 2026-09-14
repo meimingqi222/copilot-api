@@ -380,6 +380,12 @@ export function listExposedPublicModels(
   }> = []
   for (const connection of connections) {
     if (!connection.enabled) continue
+    // 手动禁用全部 credential 的 connection 不可路由,也不应暴露模型:
+    // buildRouteTargets(onlyAvailable) 会因 isCredentialAvailable 全灭而
+    // 产出空 target,若此时仍在 /v1/models 列出,客户端会看到“可见但不可用”
+    // 的模型。注意只看手动开关 cred.enabled,不看瞬时 status(cooldown /
+    // quota_exhausted / auth_error),避免限流抖动导致模型列表频繁闪烁。
+    if (!connection.credentials?.some((c) => c.enabled)) continue
     refreshConnectionAvailability(connection)
     for (const model of connection.models ?? []) {
       if (!model.enabled) continue

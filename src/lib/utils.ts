@@ -69,7 +69,11 @@ export const isNullish = (value: unknown): value is null | undefined =>
 
 export function cacheModels(): void {
   // 用 connection 字段直接构建模型列表（替代原 listAccounts 路径）
+  // 只收录手动可用的 connection:conn.enabled + 至少一个 credential.enabled。
+  // 瞬时 status(cooldown/quota/auth_error)不影响列表,避免限流抖动导致闪烁;
+  // 它们的调度过滤由 buildRouteTargets(onlyAvailable) 负责。
   const connectionModels = listAccountManagedConnections()
+    .filter((conn) => conn.enabled && conn.credentials?.some((c) => c.enabled))
     .map((conn, originalIndex) => ({ conn, originalIndex }))
     .sort((left, right) => {
       if (left.conn.priority !== right.conn.priority) {
@@ -83,6 +87,11 @@ export function cacheModels(): void {
         .map((model) => ({ model, conn })),
     )
 
+  // 全量重建:account 部分 + 外部 provider 部分合并为一次写入。
+  // appendProviderConnectionModels 的增量追加语义会导致禁用/删除后的模型
+  // 残留在 state.models 里(尤其纯外部 provider 场景下 connectionModels
+  // 为空,旧逻辑直接 early-return,从不收缩列表)。
+  let accountData: NonNullable<typeof state.models>["data"] = []
   if (connectionModels.length > 0) {
     const merged = new Map<
       string,
@@ -107,9 +116,8 @@ export function cacheModels(): void {
       }
     }
 
-    state.models = {
-      object: "list",
-      data: Array.from(merged.values()).map(({ model, conn, publicId }) => {
+    accountData = Array.from(merged.values()).map(
+      ({ model, conn, publicId }) => {
         const reasoningEfforts = listWindsurfSupportedEfforts(model)
         const contextWindow = windsurfContextWindow(model)
         return {
@@ -147,16 +155,18 @@ export function cacheModels(): void {
             type: "chat",
           },
         }
-      }),
-    }
-    appendProviderConnectionModels()
-    return
+      },
+    )
   }
 
-  appendProviderConnectionModels()
-  if (!state.models) {
-    state.models = undefined
-  }
+  const externalData = buildProviderConnectionEntries(
+    new Set(accountData.map((m) => m.id)),
+  )
+  const combined = [...accountData, ...externalData]
+  state.models =
+    combined.length > 0 ?
+      { object: "list", data: combined }
+    : undefined
 }
 
 // 注册 models-stale 监听:saveAccounts / persistProviderConnections 完成后
@@ -210,11 +220,14 @@ function buildConnectionModelEntry(
   }
 }
 
-function appendProviderConnectionModels(): void {
+/**
+ * 基于当前已过滤的 exposed 列表构建外部 provider 条目(纯函数,不读写
+ * state.models)。调用方传入已占用的 id 集合用于去重,返回新增条目。
+ */
+function buildProviderConnectionEntries(
+  existing: Set<string>,
+): NonNullable<typeof state.models>["data"] {
   const exposed = listExposedPublicModels()
-  if (exposed.length === 0) return
-
-  const existing = new Set((state.models?.data ?? []).map((m) => m.id))
   const additions: NonNullable<typeof state.models>["data"] = []
   const autoLbSeen = new Set<string>()
 
@@ -232,11 +245,7 @@ function appendProviderConnectionModels(): void {
     }
   }
 
-  if (additions.length === 0 && state.models) return
-  state.models = {
-    object: "list",
-    data: [...(state.models?.data ?? []), ...additions],
-  }
+  return additions
 }
 
 function modelEndpointToPath(e: string): string {
