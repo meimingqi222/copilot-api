@@ -97,6 +97,8 @@ interface PrepareRequestAdmissionOptions {
    * 且跳过一切翻译 target（见 BuildRouteTargetsOptions.compact）。
    */
   compact?: boolean
+  /** 请求的思考等级，写入请求日志便于排查 */
+  reasoningEffort?: string
 }
 
 export async function prepareRequestAdmission(
@@ -175,6 +177,7 @@ export async function prepareRequestAdmission(
       endpoint: options.endpoint,
       apiKind: options.endpoint as import("~/lib/log-store").ApiKind,
       streaming: options.stream,
+      reasoningEffort: options.reasoningEffort,
       initiator,
       outcome: "failed",
       error: diagnostic.message,
@@ -252,6 +255,7 @@ export async function prepareRequestAdmission(
     isWildcard: target.isWildcard,
     initiator,
     streaming: options.stream,
+    reasoningEffort: options.reasoningEffort,
   })
   return {
     target,

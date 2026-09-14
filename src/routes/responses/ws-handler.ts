@@ -43,6 +43,10 @@ import {
 } from "~/lib/route-target"
 import { targetKey } from "~/lib/route-target"
 import { getClientIp, isAbortError } from "~/lib/utils"
+import {
+  parseThinkingModel,
+  thinkingConfigToResponsesEffort,
+} from "~/lib/thinking"
 import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
@@ -161,6 +165,13 @@ export function createResponsesWebSocketSession(c: Context) {
         return
       }
 
+      // 解析模型名后缀中的思考等级（如 gpt-5(high)）
+      const wsParsedThinking = parseThinkingModel(payload.model)
+      const wsSuffixEffort =
+        wsParsedThinking.config ?
+          thinkingConfigToResponsesEffort(wsParsedThinking.config)
+        : undefined
+
       updateMemoryTrace(memoryTraceId, "payload_ready", {
         model: payload.model,
         inputItems: Array.isArray(payload.input) ? payload.input.length : 1,
@@ -184,6 +195,7 @@ export function createResponsesWebSocketSession(c: Context) {
         model: payload.model,
         streaming: true,
         outcome: "incomplete",
+        reasoningEffort: wsSuffixEffort,
       })
       activeTurn = turnCtx
       const previousCtx = bindRequestLogContext(c, turnCtx)

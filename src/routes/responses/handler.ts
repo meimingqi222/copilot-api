@@ -103,6 +103,7 @@ export async function handleResponses(c: Context) {
     sessionHeaders: forwardedHeaders,
     sessionPayload: effectivePayload,
     compact: isCompactRequest || undefined,
+    reasoningEffort: suffixEffort,
   })
 
   // Dispatch all admissions through the unified failover path so the usage

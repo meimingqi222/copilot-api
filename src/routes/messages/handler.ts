@@ -75,6 +75,7 @@ export async function handleCompletion(c: Context) {
     messageContent,
     sessionHeaders: forwardedHeaders,
     sessionPayload: effectivePayload,
+    reasoningEffort: effectivePayload.reasoning_effort ?? undefined,
   })
 
   if (logger.level >= 4) {

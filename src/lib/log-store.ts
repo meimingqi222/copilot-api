@@ -87,6 +87,8 @@ export interface LogEntry {
   ok?: boolean
   modelRequested?: string
   modelUpstream?: string
+  /** 请求的思考等级（reasoning effort），来自模型名后缀或 payload 字段 */
+  reasoningEffort?: string
   provider?: string
   protocol?: string
   connectionId?: string
