@@ -4738,7 +4738,7 @@
                     ></td>
                     <td
                       class="p-3 font-mono text-xs"
-                      x-text="(log.apiKind || log.endpoint || '-') + ' ' + (log.modelRequested || log.model || '-')"
+                      x-text="(log.apiKind || log.endpoint || '-') + ' ' + (log.modelRequested || log.model || '-') + (log.reasoningEffort ? ' (' + log.reasoningEffort + ')' : '')"
                     ></td>
                     <td
                       class="p-3 font-mono text-xs"
@@ -4825,7 +4825,7 @@
                 <div class="font-medium mb-2">Routing</div>
                 <pre
                   class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
-                  x-text="formatJson({ initialTarget: selectedLog?.initialTarget, finalTarget: selectedLog?.finalTarget, provider: selectedLog?.provider, protocol: selectedLog?.protocol, upstreamModel: selectedLog?.modelUpstream })"
+                  x-text="formatJson({ initialTarget: selectedLog?.initialTarget, finalTarget: selectedLog?.finalTarget, provider: selectedLog?.provider, protocol: selectedLog?.protocol, upstreamModel: selectedLog?.modelUpstream, reasoningEffort: selectedLog?.reasoningEffort })"
                 ></pre>
               </div>
             </div>
