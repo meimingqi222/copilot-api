@@ -4,7 +4,7 @@ import { parseRetryAfterMs } from "~/lib/retry-after"
 
 import { sleep } from "./utils"
 
-const DEFAULT_INTERVAL_MS = 250
+const DEFAULT_INTERVAL_MS = 50
 const DEFAULT_BURST = 8
 const MAX_BACKOFF_MS = 60_000
 const BASE_BACKOFF_MS = 1_000

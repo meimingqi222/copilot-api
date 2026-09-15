@@ -35,7 +35,7 @@ export interface CredentialLease {
   release: () => void
 }
 
-const MAX_INFLIGHT_DEFAULT = 4
+const MAX_INFLIGHT_DEFAULT = 10
 
 function readMaxInflight(): number {
   const raw = process.env.COPILOT_API_CREDENTIAL_MAX_CONCURRENCY
