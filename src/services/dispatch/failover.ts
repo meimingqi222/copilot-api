@@ -14,6 +14,7 @@ import {
   connectionProvider,
   getMutableProviderConnection,
   isAccountManagedConnection,
+  markCredentialAuthError,
   markCredentialCooldown,
   markCredentialQuotaExhausted,
   persistProviderConnections,
@@ -601,26 +602,42 @@ async function markCooldown(
   // 纯 provider 路径:标记 credential cooldown / quota_exhausted
   invalidateSessionAffinityAuth(authKey)
   let classified: ReturnType<typeof classifyUpstreamError> | undefined
-  if (isHttp && error.responseBody) {
+  // isHttp 为真时 error 必为 HTTPError,别名收窄后直接取用,不再重复断言。
+  const errorBody = isHttp ? error.responseBody : undefined
+  const shortReason =
+    isHttp ?
+      `upstream ${status}: ${(errorBody ?? "").slice(0, 200)}`
+    : `upstream ${status}`
+  if (isHttp) {
     // Use classifyUpstreamError for accurate categorization, especially
     // for Codex usage_limit_reached which needs quota_exhausted treatment.
     classified = classifyUpstreamError({
       status,
       headers: error.response.headers,
-      body: error.responseBody,
+      body: errorBody,
     })
     if (classified.kind === "quota_exhausted") {
       markCredentialQuotaExhausted(
         admission.credential,
-        `upstream ${status}: ${error.responseBody.slice(0, 200)}`,
+        shortReason,
         classified.retryAfterMs,
       )
-      await persistProviderConnections().catch((err: unknown) => {
-        logger.warn(
-          `${logPrefix} failed to persist credential status:`,
-          (err as Error).message,
-        )
-      })
+      await persistCredentialState(logPrefix)
+      return
+    }
+    if (classified.kind === "auth_error") {
+      markCredentialAuthError(admission.credential, shortReason)
+      await persistCredentialState(logPrefix)
+      return
+    }
+    if (classified.kind === "client_error" || classified.kind === "unknown") {
+      // 400 等请求问题是 payload 导致的,不是上游限流/故障:只记录错误,
+      // 不进 cooldown,否则下一轮会误报 429
+      // (如 atria 不支持 previous_response_id 的 400 upstream_error)。
+      // 与 shared.handleUpstreamFailure / account-managed 路径保持一致。
+      admission.credential.lastError = shortReason
+      admission.credential.lastErrorAt = Date.now()
+      await persistCredentialState(logPrefix)
       return
     }
   }
@@ -636,6 +653,11 @@ async function markCooldown(
     reason = resolveNetworkError(error)
   }
   markCredentialCooldown(admission.credential, { retryAfterMs, reason })
+  await persistCredentialState(logPrefix)
+}
+
+/** 凭据状态写回落盘,失败只告警,不影响本次标记结果。 */
+async function persistCredentialState(logPrefix: string): Promise<void> {
   await persistProviderConnections().catch((err: unknown) => {
     logger.warn(
       `${logPrefix} failed to persist credential status:`,

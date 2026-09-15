@@ -30,6 +30,7 @@ import { openAIResponsesCompatibleAdapter } from "~/services/protocols/openai-re
 import {
   clearStatelessTranscriptsForTest,
   getStatelessTranscript,
+  sanitizeStatelessInputItems,
   snoopResponsesStreamForTranscript,
 } from "~/services/protocols/openai-responses-transcript"
 
@@ -196,6 +197,64 @@ describe("openai-responses stripPreviousResponseId", () => {
       false,
     )
   })
+
+  test("rewrites output_text history to input_text when enabled", async () => {
+    const captured: Array<{ url: string; body: string }> = []
+    mockFetchSequence(
+      [{ id: "resp_new", model: "Atria-Dawn-Preview" }],
+      captured,
+    )
+
+    await openAIResponsesCompatibleAdapter.createResponses?.({
+      target: buildTarget(),
+      connection: buildConnection({ stripPreviousResponseId: true }),
+      credential: buildCredential(),
+      payload: {
+        model: "Atria-Dawn-Preview",
+        input: [
+          { role: "user", content: "hi" },
+          {
+            role: "assistant",
+            content: [{ type: "output_text", text: "hello" }],
+          } as unknown as ResponsesInputItem,
+          { role: "user", content: "and more" },
+        ],
+        stream: false,
+      },
+    })
+
+    const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<
+      string,
+      unknown
+    >
+    expect(sent["input"]).toEqual([
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: [{ type: "input_text", text: "hello" }],
+      },
+      { role: "user", content: "and more" },
+    ])
+  })
+
+  test("leaves input_text and string input untouched", () => {
+    expect(
+      sanitizeStatelessInputItems([
+        { role: "user", content: "hi" },
+        {
+          role: "user",
+          content: [{ type: "input_text", text: "hey" }],
+        } as unknown as ResponsesInputItem,
+      ]),
+    ).toEqual([
+      { role: "user", content: "hi" },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "hey" }],
+      },
+    ])
+    expect(sanitizeStatelessInputItems("hi")).toBe("hi")
+  })
 })
 
 describe("openai-responses transcript replay", () => {
@@ -208,6 +267,15 @@ describe("openai-responses transcript replay", () => {
       type: "message",
       role: "assistant",
       content: [{ type: "output_text", text: "ok" }],
+    },
+  ]
+  // 发往无状态中转的形态:output_text 已清洗为 input_text(文本保留)。
+  const turn1OutputSanitized = [
+    {
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "input_text", text: "ok" }],
     },
   ]
 
@@ -268,7 +336,7 @@ describe("openai-responses transcript replay", () => {
     expect("previous_response_id" in sent).toBe(false)
     expect(sent["input"]).toEqual([
       ...turn1Input,
-      ...turn1Output,
+      ...turn1OutputSanitized,
       { role: "user", content: "and more" },
     ])
   })
@@ -284,7 +352,7 @@ describe("openai-responses transcript replay", () => {
 
     expect(sent["input"]).toEqual([
       { role: "user", content: "hi" },
-      ...turn1Output,
+      ...turn1OutputSanitized,
       { role: "user", content: "and more" },
     ])
   })
@@ -386,7 +454,7 @@ describe("openai-responses transcript replay", () => {
     })
     expect(sent["input"]).toEqual([
       ...turn1Input,
-      ...turn1Output,
+      ...turn1OutputSanitized,
       { role: "user", content: "and more" },
     ])
   })

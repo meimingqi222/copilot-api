@@ -217,6 +217,28 @@ describe("api key brute-force shield", () => {
     // 15-minute lockout, not the 1s pacing gate.
     expect(Number(locked.headers.get("Retry-After"))).toBeGreaterThan(60)
   })
+
+  test("legacy single-key mode returns 429 once the IP is locked", async () => {
+    state.users = []
+    state.legacyApiKey = "test-legacy-key"
+    const headers = {
+      authorization: "Bearer wrong-key",
+      "x-forwarded-for": ATTACKER,
+    }
+    const pauseMs = 1100
+    for (let i = 0; i < 4; i++) {
+      const res = await server.fetch(
+        new Request("http://localhost/v1/models", { headers }),
+      )
+      expect(res.status).toBe(401)
+      await pause(pauseMs)
+    }
+    const locked = await server.fetch(
+      new Request("http://localhost/v1/models", { headers }),
+    )
+    expect(locked.status).toBe(429)
+    expect(Number(locked.headers.get("Retry-After"))).toBeGreaterThan(60)
+  })
 })
 
 describe("security headers and cors", () => {

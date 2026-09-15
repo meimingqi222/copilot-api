@@ -132,6 +132,41 @@ export function normalizeResponsesInputToItems(
 }
 
 /**
+ * 无状态转发的输入清洗(伴随 `stripPreviousResponseId` 使用)。
+ *
+ * 部分第三方 responses 中转只接受输入形态的 content(`input_text`),历史里
+ * 的 assistant 消息若带着输出形态的 `output_text`(客户端原文如此,或本地
+ * 转录本记下的上游 output 原样)会直接 400(如 atria 的 `upstream_error`,
+ * 实测最小复现:assistant + output_text 即 400,同 payload 换 input_text
+ * 即 200)。清洗只改 part 类型并保留文本,记忆无损,客户端无感知。
+ * string input 原样返回;非 strip 链路(官方 OpenAI / xAI)不用此函数,
+ * 保持透传。
+ */
+export function sanitizeStatelessInputItems(
+  input: ResponsesPayload["input"],
+): ResponsesPayload["input"] {
+  if (typeof input === "string") return input
+  return input.map((item) => {
+    const record = asRecord(item)
+    if (!record || !Array.isArray(record.content)) return item
+    let changed = false
+    const content = record.content.map((part) => {
+      const partRecord = asRecord(part)
+      if (
+        partRecord
+        && partRecord.type === "output_text"
+        && typeof partRecord.text === "string"
+      ) {
+        changed = true
+        return { type: "input_text", text: partRecord.text }
+      }
+      return part
+    })
+    return changed ? { ...record, content } : item
+  }) as ResponsesPayload["input"]
+}
+
+/**
  * 流式嗅探:把上游事件原样透传给下游,同时从 `response.output_item.done`
  * 收集 output、`response.completed` / `response.incomplete` 落盘转录本。
  * 失败事件(`response.failed` / `error`)或提前中断不记录——下轮命中缺失时

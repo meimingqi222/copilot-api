@@ -176,17 +176,23 @@ export async function requireApiKey(c: Context, next: Next) {
       429,
     )
   }
-  await recordLoginFailure(legacyIp)
+  const failResult = await recordLoginFailure(legacyIp)
+  if (!failResult.allowed && failResult.retryAfterSeconds) {
+    c.header("Retry-After", String(failResult.retryAfterSeconds))
+  }
+  const status = failResult.allowed ? 401 : 429
 
   return c.json(
     {
       error: {
         message:
-          "Unauthorized. Provide Authorization: Bearer <API_KEY> or X-Api-Key: <API_KEY>.",
+          status === 429 ?
+            (failResult.reason ?? "Too many authentication attempts.")
+          : "Unauthorized. Provide Authorization: Bearer <API_KEY> or X-Api-Key: <API_KEY>.",
         type: "authentication_error",
       },
     },
-    401,
+    status,
   )
 }
 

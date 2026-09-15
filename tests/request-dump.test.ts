@@ -9,6 +9,7 @@ import path from "node:path"
 import {
   buildDumpFileName,
   dumpIncomingRequest,
+  dumpUpstreamResponsesWire,
   isRequestDumpEnabled,
 } from "~/lib/request-dump"
 
@@ -222,5 +223,80 @@ describe("request dump", () => {
     const file = path.join(customDir, buildDumpFileName(dateKey(), 0))
     expect(fs.existsSync(file)).toBe(true)
     expect(readDumpEntries()).toHaveLength(0)
+  })
+})
+
+describe("upstream responses wire dump", () => {
+  function readAllEntries(): Array<Record<string, unknown>> {
+    const file = path.join(dumpDir, buildDumpFileName(dateKey(), 0))
+    if (!fs.existsSync(file)) return []
+    return fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+  }
+
+  test("is disabled unless DUMP_REQUESTS is set", async () => {
+    delete process.env["DUMP_REQUESTS"]
+    await dumpUpstreamResponsesWire({
+      connectionId: "atria",
+      model: "Atria-Dawn-Preview",
+      stripMode: "replayed",
+      wire: "inputItems=3 tools=0",
+      upstreamBody: JSON.stringify({ model: "Atria-Dawn-Preview" }),
+      upstreamStatus: 400,
+      upstreamErrorBody: "upstream_error",
+    })
+
+    expect(readAllEntries()).toHaveLength(0)
+  })
+
+  test("writes the exact upstream body on failure", async () => {
+    process.env["DUMP_REQUESTS"] = "1"
+    const upstreamBody = JSON.stringify({
+      model: "Atria-Dawn-Preview",
+      input: [{ role: "user", content: "hi" }],
+      stream: true,
+    })
+
+    await dumpUpstreamResponsesWire({
+      connectionId: "atria",
+      model: "Atria-Dawn-Preview",
+      stripMode: "replayed",
+      wire: "inputItems=1[userx1] tools=0",
+      upstreamBody,
+      upstreamStatus: 400,
+      upstreamErrorBody: '{"error":{"code":"upstream_error"}}',
+    })
+
+    const entries = readAllEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.["kind"]).toBe("upstream-responses")
+    expect(entries[0]?.["connectionId"]).toBe("atria")
+    expect(entries[0]?.["stripMode"]).toBe("replayed")
+    expect(entries[0]?.["upstreamStatus"]).toBe(400)
+    expect(entries[0]?.["upstreamBody"]).toBe(upstreamBody)
+    expect(entries[0]?.["upstreamBodyTruncated"]).toBeUndefined()
+  })
+
+  test("marks oversized upstream bodies as truncated", async () => {
+    process.env["DUMP_REQUESTS"] = "1"
+    process.env["DUMP_REQUESTS_MAX_BYTES"] = "64"
+
+    await dumpUpstreamResponsesWire({
+      connectionId: "atria",
+      model: "Atria-Dawn-Preview",
+      stripMode: "replayed",
+      wire: "inputItems=1",
+      upstreamBody: `{"input":"${"x".repeat(500)}"}`,
+      upstreamStatus: 400,
+      upstreamErrorBody: "err",
+    })
+
+    const entries = readAllEntries()
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.["upstreamBodyTruncated"]).toBe(true)
+    expect(entries[0]?.["upstreamBodyBytes"]).toBeGreaterThan(64)
   })
 })

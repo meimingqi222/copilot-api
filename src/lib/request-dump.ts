@@ -6,6 +6,11 @@
  * 默认关闭，设置 `DUMP_REQUESTS=1` 开启；`DUMP_REQUESTS_MAX_BYTES` 可覆盖
  * 单请求体积上限(默认 8MB)，`DUMP_REQUESTS_DIR` 可覆盖输出目录。
  * dump 内含原始 body,属于敏感数据:仅用于本地短期排查,查完请关闭开关。
+ *
+ * 同一开关同时控制上游 wire dump(`dumpUpstreamResponsesWire`):代理实际
+ * 发往上游的请求体(经 strip/replay 改写后的形态)只在上游返回失败时落盘，
+ * 便于定位第三方中转的 400(如 atria 的 `upstream_error`)到底是历史回放
+ * 的问题还是本轮输入的问题。控制台不打印 body 全文。
  */
 
 import type { Context } from "hono"
@@ -183,4 +188,67 @@ export function buildDumpFileName(dateKey: string, segment: number): string {
   return segment === 0 ?
       `request-dumps-${dateKey}.jsonl`
     : `request-dumps-${dateKey}.${segment}.jsonl`
+}
+
+export interface UpstreamResponsesWireDump {
+  connectionId: string
+  model: string
+  stripMode: string
+  /** 无正文的形状摘要(条数/类型/tools 数),控制台可打印,落盘备用。 */
+  wire: string
+  /** 实际发往上游的完整 JSON(与 fetch body 完全一致)。 */
+  upstreamBody: string
+  upstreamStatus: number
+  /** 上游错误原文(截断上限内全量)。 */
+  upstreamErrorBody: string
+}
+
+/**
+ * 上游失败时的 wire 落盘:只在 `DUMP_REQUESTS=1` 时写入,与 incoming dump
+ * 同目录(`request-dumps-*.jsonl`,`kind: "upstream-responses"`)。
+ * 只在失败路径调用,成功请求不落盘。失败只告警,不影响错误本身的抛出。
+ */
+export async function dumpUpstreamResponsesWire(
+  dump: UpstreamResponsesWireDump,
+): Promise<void> {
+  if (!isRequestDumpEnabled()) return
+  try {
+    const maxBodyBytes = resolveMaxBodyBytes()
+    const timestamp = Date.now()
+    const entry = {
+      timestamp,
+      kind: "upstream-responses",
+      connectionId: dump.connectionId,
+      model: dump.model,
+      stripMode: dump.stripMode,
+      wire: dump.wire,
+      ...capSizedField("upstreamBody", dump.upstreamBody, maxBodyBytes),
+      upstreamStatus: dump.upstreamStatus,
+      ...capSizedField(
+        "upstreamErrorBody",
+        dump.upstreamErrorBody,
+        Math.min(maxBodyBytes, 256 * 1024),
+      ),
+    }
+    await enqueueAppend(`${JSON.stringify(entry)}\n`, timestamp)
+  } catch (error) {
+    logger.warn("[request-dump] failed to dump upstream wire:", error)
+  }
+}
+
+/** 按字节上限截断落盘字段,超限标记 `<name>Truncated` 并保留原始字节数。 */
+function capSizedField(
+  name: "upstreamBody" | "upstreamErrorBody",
+  value: string,
+  maxBodyBytes: number,
+): Record<string, unknown> {
+  const bodyBytes = Buffer.byteLength(value, "utf8")
+  if (bodyBytes <= maxBodyBytes) {
+    return { [name]: value, [`${name}Bytes`]: bodyBytes }
+  }
+  return {
+    [name]: value.slice(0, maxBodyBytes),
+    [`${name}Bytes`]: bodyBytes,
+    [`${name}Truncated`]: true,
+  }
 }

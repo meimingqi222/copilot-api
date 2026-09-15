@@ -22,6 +22,10 @@ import type {
 
 import { logger } from "~/lib/logger"
 import {
+  dumpUpstreamResponsesWire,
+  isRequestDumpEnabled,
+} from "~/lib/request-dump"
+import {
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
@@ -40,6 +44,7 @@ import {
   getStatelessTranscript,
   normalizeResponsesInputToItems,
   recordStatelessTranscript,
+  sanitizeStatelessInputItems,
   snoopResponsesStreamForTranscript,
 } from "./openai-responses-transcript"
 
@@ -170,6 +175,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     // 特性,官方 OpenAI / xAI 链路默认透传,不受影响。
     let recordedInput: Array<unknown> | undefined
     let recordedInstructions: string | undefined
+    let stripMode = "passthrough"
     if (connection.stripPreviousResponseId) {
       const previousId =
         typeof payload.previous_response_id === "string" ?
@@ -193,16 +199,26 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
           ) {
             upstreamPayload.instructions = cached.instructions
           }
+          stripMode = "replayed"
           logger.debug(
             `[openai-responses-compatible] replayed transcript for previous_response_id on connection "${connection.id}"`,
           )
         } else {
+          stripMode = "stateless-miss"
           logger.debug(
             `[openai-responses-compatible] no transcript for previous_response_id on connection "${connection.id}", sending stateless`,
           )
         }
+      } else if (!previousId && replayable) {
+        stripMode = "first-turn"
+      } else {
+        stripMode = "translated-strip"
       }
       upstreamPayload.previous_response_id = undefined
+      // 无状态中转的输入清洗:assistant 历史里的 `output_text` 改写成
+      // `input_text`(文本保留),否则严格中转直接 400。重放与直发统一在此
+      // 处理,记账也取清洗后的形态,避免脏历史滚雪球。
+      upstreamPayload.input = sanitizeStatelessInputItems(upstreamPayload.input)
       if (replayable) {
         // 记下本轮实际发出的全量,供下一轮链式引用(成功才落盘,见下)。
         recordedInput = normalizeResponsesInputToItems(upstreamPayload.input)
@@ -218,6 +234,25 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     })
 
     if (!response.ok) {
+      // 上游 400 诊断:控制台只记形状统计(条数/类型/tools),不记正文;
+      // 完整请求体在 DUMP_REQUESTS=1 时存独立文件(request-dumps-*.jsonl,
+      // kind 为 upstream-responses),成功请求不落盘。
+      const wire = summarizeResponsesWire(upstreamPayload)
+      logger.warn(
+        `[openai-responses-compatible] upstream ${response.status} for model "${target.upstreamModelId}" on connection "${connection.id}" (${stripMode}): ${wire}`,
+      )
+      // 开关关闭时跳过序列化与 body 读取,失败路径零开销(只保留上面的形状 warn)。
+      if (isRequestDumpEnabled()) {
+        await dumpUpstreamResponsesWire({
+          connectionId: connection.id,
+          model: target.upstreamModelId,
+          stripMode,
+          wire,
+          upstreamBody: safeStringify(upstreamPayload),
+          upstreamStatus: response.status,
+          upstreamErrorBody: await readUpstreamErrorBody(response),
+        })
+      }
       await handleUpstreamFailure(
         response,
         credential,
@@ -265,4 +300,71 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       response: body,
     } satisfies AdapterResponsesResult
   },
+}
+
+/**
+ * 上游失败时的 wire 摘要:条数/条目类型分布/tools 数/instructions 长度/
+ * 线上是否还带 previous_response_id。不记录任何正文内容,避免用户代码
+ * 落进 server.log。
+ */
+function summarizeResponsesWire(payload: {
+  input?: unknown
+  instructions?: unknown
+  tools?: unknown
+  stream?: unknown
+  previous_response_id?: unknown
+}): string {
+  const input = payload.input
+  let items: Array<unknown> = []
+  if (typeof input === "string") {
+    items = [input]
+  } else if (Array.isArray(input)) {
+    items = input
+  }
+  const typeCounts = new Map<string, number>()
+  for (const item of items) {
+    let key: string = typeof item
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      const record = item as Record<string, unknown>
+      const type = typeof record.type === "string" ? record.type : ""
+      const role = typeof record.role === "string" ? record.role : ""
+      key = type || role || "object"
+    }
+    typeCounts.set(key, (typeCounts.get(key) ?? 0) + 1)
+  }
+  const types = [...typeCounts.entries()]
+    .map(([key, count]) => `${key}x${count}`)
+    .join(",")
+  const tools = Array.isArray(payload.tools) ? payload.tools.length : 0
+  let instructions = "none"
+  if (typeof payload.instructions === "string") {
+    instructions = `${payload.instructions.length}ch`
+  }
+  let prevId = "absent"
+  if (
+    typeof payload.previous_response_id === "string"
+    && payload.previous_response_id.trim()
+  ) {
+    prevId = "present"
+  }
+  return `inputItems=${items.length}[${types}] tools=${tools} instructions=${instructions} stream=${payload.stream === true} previous_response_id=${prevId}`
+}
+
+/** JSON 序列化永不抛错:循环引用等极端情况降级为占位。 */
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? ""
+  } catch {
+    return "[unserializable upstream payload]"
+  }
+}
+
+/** 上游错误原文(上限 64KB),失败只返回空串,不影响错误本身的抛出。 */
+async function readUpstreamErrorBody(response: Response): Promise<string> {
+  try {
+    const text = await response.clone().text()
+    return text.length > 64 * 1024 ? text.slice(0, 64 * 1024) : text
+  } catch {
+    return ""
+  }
 }
