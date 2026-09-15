@@ -482,6 +482,10 @@ const i18n = {
       "connections.baseUrl": "Base URL",
       "connections.baseUrlHint":
         "可写服务根（如 https://ark.../api/coding），标准路径会自动补 /v1；也可直接写带 /v1 的完整根。",
+      "connections.stripPreviousResponseId":
+        "无状态 Responses（去掉 previous_response_id）",
+      "connections.stripPreviousResponseIdHint":
+        "部分第三方中转不支持有状态链式调用，带 previous_response_id 会 400。开启后代理用本地转录本把历史合并成自包含请求再转发（客户端无感知）；转录本缺失时退化为只含本轮输入。OpenAI / xAI 等官方接口请保持关闭。",
       "connections.priority": "优先级",
       "connections.weight": "权重",
       "connections.modelDiscovery": "模型发现",
@@ -1306,6 +1310,10 @@ const i18n = {
       "connections.baseUrl": "Base URL",
       "connections.baseUrlHint":
         "You can paste the service root (e.g. https://ark.../api/coding); /v1 is auto-appended for standard paths. Full roots with /v1 also work.",
+      "connections.stripPreviousResponseId":
+        "Stateless Responses (strip previous_response_id)",
+      "connections.stripPreviousResponseIdHint":
+        "Some third-party relays don't support stateful chaining and return 400 on previous_response_id. When on, the proxy replays history from a local transcript into a self-contained request (transparent to clients); falls back to current input only when no transcript exists. Keep off for OpenAI / xAI.",
       "connections.priority": "Priority",
       "connections.weight": "Weight",
       "connections.modelDiscovery": "Model Discovery",

@@ -24,6 +24,7 @@ function connectionsView() {
       priority: 10,
       weight: 1,
       enabled: true,
+      stripPreviousResponseId: false,
       apiKey: "",
       _credentialId: null,
       customHeaders: [],
@@ -172,6 +173,7 @@ function connectionsView() {
       this.connForm.protocol = preset.protocol
       this.connForm.baseUrl = preset.baseUrl
       this.connForm.apiKey = ""
+      this.connForm.stripPreviousResponseId = false
       this.fetchedModels = (preset.defaultModels || []).map((m) => ({
         publicId: m.publicId,
         upstreamId: m.upstreamId,
@@ -195,6 +197,7 @@ function connectionsView() {
       this.connForm.protocol = "openai-compatible"
       this.connForm.baseUrl = ""
       this.connForm.apiKey = ""
+      this.connForm.stripPreviousResponseId = false
       this.fetchedModels = []
       this.selectedModelIds = []
       this.showFetchedModelsPanel = false
@@ -339,6 +342,7 @@ function connectionsView() {
         priority: 10,
         weight: 1,
         enabled: true,
+        stripPreviousResponseId: false,
         apiKey: "",
         _credentialId: null,
         customHeaders: [],
@@ -383,6 +387,7 @@ function connectionsView() {
         priority: conn.priority,
         weight: conn.weight ?? 1,
         enabled: conn.enabled,
+        stripPreviousResponseId: conn.stripPreviousResponseId === true,
         apiKey: "",
         _credentialId: conn.credentials?.[0]?.id || null,
         customHeaders: headerEntries.map(([key, value]) => ({ key, value })),
@@ -456,6 +461,7 @@ function connectionsView() {
         priority: form.priority,
         weight: form.weight,
         enabled: form.enabled,
+        stripPreviousResponseId: Boolean(form.stripPreviousResponseId),
         models: selectedModels,
         headers: this.customHeadersToRecord(),
       }

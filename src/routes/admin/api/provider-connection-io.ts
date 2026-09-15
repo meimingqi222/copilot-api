@@ -189,6 +189,7 @@ interface ImportedConnectionInput {
     priority?: number
     weight?: number
   }>
+  stripPreviousResponseId?: boolean
 }
 
 function pickCredentialValue(cred: Record<string, unknown>): string {
@@ -277,5 +278,9 @@ function normalizeImportedConnection(
         (raw.models as ProviderConnection["models"])
       : undefined,
     credentials: credentials.length > 0 ? credentials : undefined,
+    stripPreviousResponseId:
+      typeof raw.stripPreviousResponseId === "boolean" ?
+        raw.stripPreviousResponseId
+      : undefined,
   }
 }

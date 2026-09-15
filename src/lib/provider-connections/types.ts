@@ -265,6 +265,16 @@ export interface ProviderConnection {
   proxyUrl?: string
   /** 模型前缀(原 metadata.modelPrefix / settings.modelPrefix)。 */
   modelPrefix?: string
+  /**
+   * 去掉 responses 转发中的 `previous_response_id`(无状态转发)。
+   * `previous_response_id` 是可选的有状态链式特性(OpenAI / xAI 支持),
+   * 部分第三方中转不支持,带上会直接 400(如 atria 的 `upstream_error`)。
+   * 开启后该 connection 的 `/v1/responses` 转发不再携带该字段,代理侧用
+   * 本地转录本把历史合并成自包含 input 再转发(记忆尽力保留,客户端无
+   * 感知);转录本缺失(重启/淘汰/首轮)时退化为无状态(只含本轮 input)。
+   * 默认 false(透传)。
+   */
+  stripPreviousResponseId?: boolean
 }
 
 /**

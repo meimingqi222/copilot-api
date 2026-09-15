@@ -684,6 +684,29 @@
                   </div>
                 </div>
 
+                <!-- 无状态 Responses:仅 openai-responses-compatible 有意义 -->
+                <div
+                  x-show="connForm.protocol === 'openai-responses-compatible'"
+                >
+                  <label class="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      x-model="connForm.stripPreviousResponseId"
+                      class="w-4 h-4 rounded accent-[var(--apple-blue)] mt-0.5"
+                    />
+                    <span>
+                      <span
+                        class="text-xs font-medium block"
+                        x-text="t('connections.stripPreviousResponseId')"
+                      ></span>
+                      <span
+                        class="text-[11px] text-[var(--apple-text-tertiary)] block"
+                        x-text="t('connections.stripPreviousResponseIdHint')"
+                      ></span>
+                    </span>
+                  </label>
+                </div>
+
                 <!-- 自定义请求头 -->
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between">

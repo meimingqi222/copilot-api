@@ -16,9 +16,11 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 import type {
   CopilotStreamEventLike,
+  ResponsesPayload,
   ResponsesResponse,
 } from "~/services/copilot/responses-api"
 
+import { logger } from "~/lib/logger"
 import {
   type ApiCredential,
   type ModelMapping,
@@ -32,6 +34,14 @@ import {
   joinUrl,
   safeSseStream,
 } from "~/services/protocols/shared"
+
+import {
+  buildStatelessRequestInput,
+  getStatelessTranscript,
+  normalizeResponsesInputToItems,
+  recordStatelessTranscript,
+  snoopResponsesStreamForTranscript,
+} from "./openai-responses-transcript"
 
 import type {
   AdapterChatResult,
@@ -152,6 +162,54 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       model: target.upstreamModelId,
     }
 
+    // 部分第三方 responses 实现不支持有状态链式调用:带
+    // `previous_response_id` 直接 400(如 atria 的 `upstream_error`)。
+    // 连接开启 `stripPreviousResponseId` 时:命中本地转录本就合并成自包含
+    // input 再转发(记忆保留,见 openai-responses-transcript.ts),未命中则
+    // 退化为无状态请求(只含本轮 input)。`previous_response_id` 是可选
+    // 特性,官方 OpenAI / xAI 链路默认透传,不受影响。
+    let recordedInput: Array<unknown> | undefined
+    let recordedInstructions: string | undefined
+    if (connection.stripPreviousResponseId) {
+      const previousId =
+        typeof payload.previous_response_id === "string" ?
+          payload.previous_response_id.trim()
+        : ""
+      // 翻译链路(target.isTranslated,即 chat 客户端经 createChatViaResponses
+      // 进来):chat 协议没有 previous_response_id,客户端拿到翻译后的 chat 响应
+      // 后绝不会链式引用——不重放(避免污染 chat 自带的全量历史)、不记账(避免
+      // 挤占真实 responses 会话的预算),只 strip 防上游 400。
+      const replayable = target.isTranslated !== true
+      if (previousId && replayable) {
+        const cached = getStatelessTranscript(connection.id, previousId)
+        if (cached) {
+          upstreamPayload.input = buildStatelessRequestInput(
+            cached.input,
+            normalizeResponsesInputToItems(payload.input),
+          ) as ResponsesPayload["input"]
+          if (
+            upstreamPayload.instructions === undefined
+            && cached.instructions !== undefined
+          ) {
+            upstreamPayload.instructions = cached.instructions
+          }
+          logger.debug(
+            `[openai-responses-compatible] replayed transcript for previous_response_id on connection "${connection.id}"`,
+          )
+        } else {
+          logger.debug(
+            `[openai-responses-compatible] no transcript for previous_response_id on connection "${connection.id}", sending stateless`,
+          )
+        }
+      }
+      upstreamPayload.previous_response_id = undefined
+      if (replayable) {
+        // 记下本轮实际发出的全量,供下一轮链式引用(成功才落盘,见下)。
+        recordedInput = normalizeResponsesInputToItems(upstreamPayload.input)
+        recordedInstructions = upstreamPayload.instructions
+      }
+    }
+
     const response = await fetch(joinUrl(connection.baseUrl, "/responses"), {
       method: "POST",
       headers: buildHeaders(connection, credential),
@@ -170,6 +228,19 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
 
     if (payload.stream) {
       const stream = await safeSseStream(response, detectResponsesStreamError)
+      if (recordedInput) {
+        return {
+          credentialId: credential.id,
+          response: snoopResponsesStreamForTranscript(
+            stream as unknown as AsyncIterable<CopilotStreamEventLike>,
+            {
+              connectionId: connection.id,
+              input: recordedInput,
+              instructions: recordedInstructions,
+            },
+          ),
+        } satisfies AdapterResponsesResult
+      }
       return {
         credentialId: credential.id,
         response: stream as unknown as AsyncIterable<CopilotStreamEventLike>,
@@ -177,6 +248,18 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     }
 
     const body = (await response.json()) as ResponsesResponse
+    if (recordedInput) {
+      const responseId = typeof body.id === "string" ? body.id.trim() : ""
+      if (responseId) {
+        recordStatelessTranscript({
+          connectionId: connection.id,
+          responseId,
+          input: recordedInput,
+          output: Array.isArray(body.output) ? body.output : [],
+          instructions: recordedInstructions,
+        })
+      }
+    }
     return {
       credentialId: credential.id,
       response: body,

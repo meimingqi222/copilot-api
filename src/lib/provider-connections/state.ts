@@ -154,6 +154,7 @@ export interface CreateConnectionInput {
   modelDiscovery?: ModelDiscoveryConfig
   models?: Array<ModelMapping>
   credentials?: Array<CreateCredentialInput>
+  stripPreviousResponseId?: boolean
 }
 
 export interface CreateCredentialInput {
@@ -194,6 +195,7 @@ export async function createConnection(
       credentials: (input.credentials ?? []).map((c) =>
         createCredentialObject(c),
       ),
+      stripPreviousResponseId: input.stripPreviousResponseId,
       createdAt: now,
     }
 
@@ -212,6 +214,7 @@ export interface UpdateConnectionInput {
   headers?: Record<string, string> | null
   modelDiscovery?: ModelDiscoveryConfig | null
   models?: Array<ModelMapping> | null
+  stripPreviousResponseId?: boolean
 }
 
 export async function updateConnection(
@@ -246,6 +249,9 @@ export async function updateConnection(
         connection.models,
         patch.protocol,
       )
+    }
+    if (patch.stripPreviousResponseId !== undefined) {
+      connection.stripPreviousResponseId = patch.stripPreviousResponseId
     }
     connection.updatedAt = Date.now()
     return connection

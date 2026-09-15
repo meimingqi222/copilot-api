@@ -107,6 +107,10 @@ providerConnectionCrudRoutes.post("/", async (c) => {
         Array.isArray(payload.credentials) ?
           (payload.credentials as Array<CreateCredentialInput>)
         : undefined,
+      stripPreviousResponseId:
+        typeof payload.stripPreviousResponseId === "boolean" ?
+          payload.stripPreviousResponseId
+        : undefined,
     })
     return c.json({ connection: sanitizeConnection(connection) }, 201)
   } catch (error) {
@@ -179,6 +183,10 @@ providerConnectionCrudRoutes.put("/:id", async (c) => {
         | Array<ModelMapping>
         | null
         | undefined,
+      stripPreviousResponseId:
+        typeof payload.stripPreviousResponseId === "boolean" ?
+          payload.stripPreviousResponseId
+        : undefined,
     })
     return c.json({ connection: sanitizeConnection(connection) })
   } catch (error) {

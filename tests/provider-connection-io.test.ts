@@ -107,6 +107,55 @@ describe("provider connection import/export + test recovery", () => {
     expect(againBody.skipped).toBe(2)
   })
 
+  test("import preserves stripPreviousResponseId through export round-trip", async () => {
+    const app = new Hono()
+    app.route("/", providerConnectionIoRoutes)
+
+    const importRes = await app.request("/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        connections: [
+          {
+            id: "atria-asi",
+            name: "atria-asi",
+            protocol: "openai-responses-compatible",
+            baseUrl: "https://api.atria-asi.ai/v1",
+            stripPreviousResponseId: true,
+            credentials: [{ value: "sk-test", authMode: "bearer" }],
+          },
+          {
+            id: "plain",
+            name: "plain",
+            protocol: "openai-responses-compatible",
+            baseUrl: "https://api.example.com/v1",
+            stripPreviousResponseId: "yes",
+            credentials: [{ value: "sk-test", authMode: "bearer" }],
+          },
+        ],
+      }),
+    })
+    expect(importRes.status).toBe(200)
+
+    const connections = listProviderConnections()
+    expect(
+      connections.find((c) => c.id === "atria-asi")?.stripPreviousResponseId,
+    ).toBe(true)
+    // 非 boolean 值直接丢弃,不透传。
+    expect(
+      connections.find((c) => c.id === "plain")?.stripPreviousResponseId,
+    ).toBeUndefined()
+
+    const exportRes = await app.request("/export")
+    const exported = (await exportRes.json()) as {
+      connections: Array<{ id: string; stripPreviousResponseId?: boolean }>
+    }
+    expect(
+      exported.connections.find((c) => c.id === "atria-asi")
+        ?.stripPreviousResponseId,
+    ).toBe(true)
+  })
+
   test("successful connectivity recovery clears sticky 429 cooldown", async () => {
     const app = new Hono()
     app.route("/", providerConnectionIoRoutes)

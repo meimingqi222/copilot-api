@@ -197,6 +197,10 @@ function normalizeConnection(value: unknown): ProviderConnection | null {
     proxyUrl: typeof obj.proxyUrl === "string" ? obj.proxyUrl : undefined,
     modelPrefix:
       typeof obj.modelPrefix === "string" ? obj.modelPrefix : undefined,
+    stripPreviousResponseId:
+      typeof obj.stripPreviousResponseId === "boolean" ?
+        obj.stripPreviousResponseId
+      : undefined,
   }
 }
 
