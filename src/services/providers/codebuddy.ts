@@ -44,6 +44,8 @@ const CODEBUDDY_CN_FALLBACK_MODELS: Array<ModelMapping> = [
 
 // ── 国际版（codebuddy）内置模型列表 ──────────────────────────────
 // 从 https://www.codebuddy.ai/v3/config 抓取，排除 image/video 专用模型。
+// 注意：/v3/config 列表不完整——hy4-preview / deepseek-v4.1-flash 等免费
+// 模型实测可调用（chat 200）但不在 config 列表中，故在此显式补充。
 const CODEBUDDY_INTL_FALLBACK_MODELS: Array<ModelMapping> = [
   // Tier slots（服务端动态解析，具体模型可变）
   "default-model",
@@ -68,7 +70,7 @@ const CODEBUDDY_INTL_FALLBACK_MODELS: Array<ModelMapping> = [
   "gemini-3.1-flash-lite",
   "gemini-2.5-pro",
   "gemini-2.5-flash",
-  // 国产模型
+  // 国产模型（config 列表内的）
   "deepseek-v3-2-volc",
   "glm-5.3",
   "glm-5.2",
@@ -78,6 +80,11 @@ const CODEBUDDY_INTL_FALLBACK_MODELS: Array<ModelMapping> = [
   "kimi-k2.5",
   "minimax-m3",
   "hy3",
+  // 免费模型：不在 /v3/config 列表但实测可用（2026-09 实测）
+  "deepseek-v4.1-flash",
+  "kimi-k2.7",
+  "hy4-preview",
+  "hy4-preview-x",
 ].map((id) => ({
   publicId: id,
   upstreamId: id,
@@ -132,7 +139,17 @@ function createCodebuddyRuntime(opts: {
             connection,
             credential: connection.credentials[0],
           })
-          if (models.length > 0) return models
+          if (models.length > 0) {
+            // /v3/config 列表不完整（免费模型如 hy4-preview 不在其中），
+            // 把 fallback 中有而发现列表没有的模型补充进去（enabled=true）。
+            const known = new Set(
+              models.map((m) => (m.upstreamId || m.publicId).toLowerCase()),
+            )
+            const missing = fallbackModels.filter(
+              (m) => !known.has((m.upstreamId || m.publicId).toLowerCase()),
+            )
+            return missing.length > 0 ? [...models, ...missing] : models
+          }
         } catch {
           // 发现失败时回退到内置列表
         }
