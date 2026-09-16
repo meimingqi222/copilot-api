@@ -92,7 +92,7 @@ describe("patchCch", () => {
     expect(new TextDecoder().decode(body)).not.toContain("cch=")
   })
 
-  test("returns unanchored when the placeholder exists but not after the marker", () => {
+  test("patches the anchored placeholder even when a distant placeholder exists", () => {
     // Placeholder present in user content (system[0] is NOT the billing header),
     // so the marker won't be found -> no-billing-header. To exercise unanchored,
     // place the marker but move the placeholder far away.

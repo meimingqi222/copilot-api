@@ -34,6 +34,16 @@ const originalEnv = {
 
 let dumpDir = ""
 
+function readAllEntries(): Array<Record<string, unknown>> {
+  const file = path.join(dumpDir, buildDumpFileName(dateKey(), 0))
+  if (!fs.existsSync(file)) return []
+  return fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+}
+
 beforeEach(() => {
   dumpDir = fs.mkdtempSync(path.join(os.tmpdir(), "request-dump-"))
   process.env["LOG_DIR"] = dumpDir
@@ -227,16 +237,6 @@ describe("request dump", () => {
 })
 
 describe("upstream responses wire dump", () => {
-  function readAllEntries(): Array<Record<string, unknown>> {
-    const file = path.join(dumpDir, buildDumpFileName(dateKey(), 0))
-    if (!fs.existsSync(file)) return []
-    return fs
-      .readFileSync(file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-  }
-
   test("is disabled unless DUMP_REQUESTS is set", async () => {
     delete process.env["DUMP_REQUESTS"]
     await dumpUpstreamResponsesWire({

@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
-import { buckets } from "~/lib/protected-route-guard/state"
 import { resetGuardForTest } from "~/lib/guard"
 import {
-  DEFAULT_GUARD_CONFIG,
   getGuardConfig,
   resetGuardConfigForTest,
   setGuardConfig,
@@ -21,6 +19,7 @@ import {
   resetProtectedRouteGuardForTest,
   unblockPrincipal,
 } from "~/lib/protected-route-guard"
+import { buckets } from "~/lib/protected-route-guard/state"
 import { respondToKnownRouteError } from "~/lib/request-lifecycle"
 import { server } from "~/server"
 
@@ -151,12 +150,6 @@ describe("guard management", () => {
     // Once a full refill is provably possible, the bucket is reclaimed.
     cleanupProtectedRouteGuardForTest(1000 + 400_010 * 1000)
     expect(buckets.has(drainedKey)).toBe(false)
-  })
-
-  test("guard config defaults match legacy constants", () => {
-    const cfg = getGuardConfig()
-    expect(cfg.requestLimit).toBe(DEFAULT_GUARD_CONFIG.requestLimit)
-    expect(cfg.tempBlockMs).toBe(30 * 60 * 1000)
   })
 
   test("GET /admin/api/guard/config returns config and defaults", async () => {

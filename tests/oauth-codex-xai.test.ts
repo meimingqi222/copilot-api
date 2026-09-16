@@ -24,10 +24,7 @@ import {
   extractCodexSubscriptionActiveUntilFromIdToken,
 } from "~/services/oauth/jwt"
 import { generatePkceCodes } from "~/services/oauth/pkce"
-import {
-  refreshOAuthAccountToken,
-  clearOAuthAuthError,
-} from "~/services/oauth/refresh-scheduler"
+import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
 import {
   buildXaiAuthUrl,
   discoverXaiOAuthEndpoints,
@@ -653,33 +650,5 @@ describe("OAuth refresh scheduler", () => {
     expect(threw).toBe(true)
     expect(account.runtimeState?.authStatus).toBe("error")
     expect(account.runtimeState?.lastError).toContain("Codex token refresh")
-  })
-
-  test("clearOAuthAuthError resets authStatus and reschedules", () => {
-    const account: OAuthAccount = {
-      id: "acct-codex-clear",
-      label: "Codex Clear",
-      provider: "codex",
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        accessToken: "access",
-        refreshToken: "refresh",
-        expiresAt: Date.now() + 3600_000,
-      },
-      runtimeState: { authStatus: "error", lastError: "broken" },
-    }
-    setTestAccounts([account])
-
-    clearOAuthAuthError(account.id)
-
-    // After clearing, the account should no longer have authStatus === "error".
-    // buildRuntimeState only sets authStatus when it's NOT "ready", so
-    // authStatus being undefined means the account is in the default ready state.
-    const updated = listAccounts().find((a) => a.id === account.id)
-    expect(updated?.runtimeState?.authStatus).not.toBe("error")
-    expect(updated?.runtimeState?.lastError).toBeUndefined()
   })
 })

@@ -22,14 +22,14 @@ import type {
 
 import { logger } from "~/lib/logger"
 import {
-  dumpUpstreamResponsesWire,
-  isRequestDumpEnabled,
-} from "~/lib/request-dump"
-import {
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
 } from "~/lib/provider-connections"
+import {
+  dumpUpstreamResponsesWire,
+  isRequestDumpEnabled,
+} from "~/lib/request-dump"
 import {
   buildBaseHeaders,
   detectOpenAIStreamError,
@@ -39,6 +39,12 @@ import {
   safeSseStream,
 } from "~/services/protocols/shared"
 
+import type {
+  AdapterChatResult,
+  AdapterResponsesResult,
+  ProtocolAdapter,
+} from "./types"
+
 import {
   buildStatelessRequestInput,
   getStatelessTranscript,
@@ -47,12 +53,6 @@ import {
   sanitizeStatelessInputItems,
   snoopResponsesStreamForTranscript,
 } from "./openai-responses-transcript"
-
-import type {
-  AdapterChatResult,
-  AdapterResponsesResult,
-  ProtocolAdapter,
-} from "./types"
 
 function buildHeaders(
   connection: ProviderConnection,

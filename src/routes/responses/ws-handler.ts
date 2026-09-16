@@ -42,11 +42,11 @@ import {
   selectNextResponsesWsTarget,
 } from "~/lib/route-target"
 import { targetKey } from "~/lib/route-target"
-import { getClientIp, isAbortError } from "~/lib/utils"
 import {
   parseThinkingModel,
   thinkingConfigToResponsesEffort,
 } from "~/lib/thinking"
+import { getClientIp, isAbortError } from "~/lib/utils"
 import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
@@ -171,8 +171,7 @@ export function createResponsesWebSocketSession(c: Context) {
         wsParsedThinking.config ?
           thinkingConfigToResponsesEffort(wsParsedThinking.config)
         : undefined
-      const wsReasoningEffort =
-        payload.reasoning?.effort ?? wsSuffixEffort
+      const wsReasoningEffort = payload.reasoning?.effort ?? wsSuffixEffort
 
       updateMemoryTrace(memoryTraceId, "payload_ready", {
         model: payload.model,

@@ -35,6 +35,7 @@ export interface ChatStreamFrame {
 // Shared decoders: constructing a TextDecoder per delta (~per token) adds
 // measurable churn on long streams. "utf-8" is the canonical spelling Bun
 // accepts without a ts-expect-error.
+// eslint-disable-next-line unicorn/text-encoding-identifier-case -- Bun 类型只接受 "utf-8"
 const STRICT_FRAME_DECODER = new TextDecoder("utf-8", { fatal: true })
 const LENIENT_FRAME_DECODER = new TextDecoder()
 

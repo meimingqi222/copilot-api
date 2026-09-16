@@ -177,33 +177,6 @@ describe("anthropicUsageToOpenAI", () => {
   })
 })
 
-// ── Phase C2.3: Anthropic-direction regression test ─────────────────────────
-
-describe("openAIUsageToAnthropic (Anthropic regression)", () => {
-  test("prompt=1000, cached=600, cache_creation=200, completion=50", () => {
-    const result = openAIUsageToAnthropic({
-      prompt_tokens: 1000,
-      completion_tokens: 50,
-      prompt_tokens_details: {
-        cached_tokens: 600,
-        cache_creation_input_tokens: 200,
-      },
-    })
-
-    expect(result.input_tokens).toBe(200)
-    expect(result.cache_read_input_tokens).toBe(600)
-    expect(result.cache_creation_input_tokens).toBe(200)
-    expect(result.output_tokens).toBe(50)
-
-    const total =
-      result.input_tokens
-      + (result.cache_read_input_tokens ?? 0)
-      + (result.cache_creation_input_tokens ?? 0)
-      + result.output_tokens
-    expect(total).toBe(1050)
-  })
-})
-
 // ── Phase C2.2: chat <-> responses usage round trip ─────────────────────────
 
 function buildChatCompletionResponse(

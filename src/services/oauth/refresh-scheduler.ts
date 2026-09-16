@@ -390,28 +390,3 @@ export function scheduleOAuthRefreshForAllConnections(): void {
     }
   }
 }
-
-/**
- * Clear auth_error state and reschedule refresh for a connection.
- * Called when user manually re-authenticates or resets account credentials.
- */
-export function clearOAuthAuthError(accountId: string): void {
-  oauthRetryCounts.delete(accountId)
-  const connection = getMutableProviderConnection(accountId)
-  if (!connection || !getOAuthConnectionProvider(connection)) {
-    return
-  }
-
-  // Reset auth state (metadata.authStatus + credential.status) so
-  // scheduleOAuthRefreshForConnection will not bail out immediately.
-  setConnectionAuthStatus(connection, "ready")
-
-  persistProviderConnections().catch((err: unknown) => {
-    logger.error(
-      `Failed to persist cleared OAuth auth_error state for "${connection.name}":`,
-      err instanceof Error ? err.message : String(err),
-    )
-  })
-
-  scheduleOAuthRefreshForConnection(connection)
-}

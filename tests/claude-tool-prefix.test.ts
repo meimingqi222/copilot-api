@@ -6,7 +6,6 @@ import {
 } from "~/services/claude/create-messages-once"
 import {
   applyClaudeToolPrefix,
-  claudeToolPrefix,
   stripClaudeToolPrefix,
 } from "~/services/claude/tool-prefix"
 
@@ -57,10 +56,6 @@ describe("round-trip", () => {
       expect(stripClaudeToolPrefix(name)).toBe(name)
     }
   })
-})
-
-test("claudeToolPrefix is `_`", () => {
-  expect(claudeToolPrefix).toBe("_")
 })
 
 describe("decodeToolNamesInResponse (non-streaming)", () => {

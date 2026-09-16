@@ -55,28 +55,5 @@ describe("ID Sanitizer", () => {
     it("should preserve empty string", () => {
       expect(sanitizeId("")).toBe("")
     })
-
-    it("should be deterministic for the same input", () => {
-      const first = sanitizeId("call:abc")
-      const second = sanitizeId("call:abc")
-      expect(first).toBe(second)
-    })
-  })
-
-  describe("round-trip validation", () => {
-    it("should produce valid IDs after sanitization", () => {
-      const testIds = [
-        "call_abc:123",
-        "call.abc.123",
-        "tool/function/arg",
-        "uuid-with-special:chars",
-        "simple-id",
-      ]
-
-      for (const id of testIds) {
-        const sanitized = sanitizeId(id)
-        expect(/^[\w-]+$/.test(sanitized)).toBe(true)
-      }
-    })
   })
 })

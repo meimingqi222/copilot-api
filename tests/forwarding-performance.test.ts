@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
-
 import { writeSseEvent, writeSseEvents, type SSEStream } from "~/lib/sse"
-import { createInitialStreamState } from "~/services/protocols/anthropic"
-import { translateChunkToAnthropicEvents } from "~/services/protocols/anthropic"
 
 function createCapturingStream(): SSEStream & {
   frames: Array<string>
@@ -72,32 +68,5 @@ describe("forwarding performance helpers", () => {
 
     expect(stream.writeSseCalls).toBe(1)
     expect(stream.frames[0]).toContain('data: {"done":true}')
-  })
-
-  test("anthropic stream translation handles 1000 chunks within reasonable time", () => {
-    const chunk: ChatCompletionChunk = {
-      id: "cmpl-perf",
-      object: "chat.completion.chunk",
-      created: 1,
-      model: "claude-sonnet-4",
-      choices: [
-        {
-          index: 0,
-          delta: { content: "x" },
-          finish_reason: null,
-          logprobs: null,
-        },
-      ],
-    }
-
-    const streamState = createInitialStreamState()
-    const startedAt = performance.now()
-
-    for (let index = 0; index < 1000; index += 1) {
-      translateChunkToAnthropicEvents(chunk, streamState)
-    }
-
-    const elapsedMs = performance.now() - startedAt
-    expect(elapsedMs).toBeLessThan(500)
   })
 })

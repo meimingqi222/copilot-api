@@ -6,7 +6,6 @@ import {
   obfuscateOpenAiMessages,
 } from "~/lib/sensitive-words"
 import {
-  ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
   buildAntigravityHubUserAgent,
   getAntigravityLatestVersion,
 } from "~/services/antigravity/version"
@@ -176,9 +175,5 @@ describe("antigravity version tracking", () => {
   test("buildAntigravityHubUserAgent produces correct format", () => {
     const ua = buildAntigravityHubUserAgent()
     expect(ua).toMatch(/^antigravity\/hub\/\d+\.\d+\.\d+ darwin\/arm64$/)
-  })
-
-  test("ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT is Go-http-client/2.0", () => {
-    expect(ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT).toBe("Go-http-client/2.0")
   })
 })

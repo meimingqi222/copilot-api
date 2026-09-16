@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test"
 
-import type { CopilotStreamEvent } from "~/services/copilot/create-chat-completions"
 import type {
   ApiCredential,
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
+import type { CopilotStreamEvent } from "~/services/copilot/create-chat-completions"
 import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
+import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
 import {
   chunkFromText,
   chunkFromToolCallArgs,
@@ -15,7 +16,6 @@ import {
   doneChunk,
   toOpenAIChunkUsage,
 } from "~/services/windsurf/chunk-builders"
-import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
 
 const REQ = "chatcmpl-twin-test"
 const MODEL = "swe-twin"

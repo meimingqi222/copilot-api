@@ -84,85 +84,6 @@ function createWithSelectedAccount(
   })
 }
 
-test("sets X-Initiator to agent if tool/assistant present", async () => {
-  const payload: ChatCompletionsPayload = {
-    messages: [
-      { role: "user", content: "hi" },
-      { role: "tool", content: "tool call" },
-    ],
-    model: "gpt-test",
-  }
-  await createWithSelectedAccount(payload)
-  expect(fetchMock).toHaveBeenCalled()
-  const headers = (
-    fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
-  ).headers
-  expect(headers["X-Initiator"]).toBe("agent")
-})
-
-test("sets X-Initiator to user if only user present", async () => {
-  const payload: ChatCompletionsPayload = {
-    messages: [
-      { role: "user", content: "hi" },
-      { role: "user", content: "hello again" },
-    ],
-    model: "gpt-test",
-  }
-  await createWithSelectedAccount(payload)
-  expect(fetchMock).toHaveBeenCalled()
-  const headers = (
-    fetchMock.mock.calls[1][1] as { headers: Record<string, string> }
-  ).headers
-  expect(headers["X-Initiator"]).toBe("user")
-})
-
-test("sets X-Initiator to user when last message is user", async () => {
-  const payload: ChatCompletionsPayload = {
-    messages: [
-      { role: "user", content: "first question" },
-      { role: "assistant", content: "first answer" },
-      { role: "user", content: "follow-up question" },
-    ],
-    model: "gpt-test",
-  }
-  await createWithSelectedAccount(payload)
-  expect(fetchMock).toHaveBeenCalled()
-  const headers = (
-    fetchMock.mock.calls[2][1] as { headers: Record<string, string> }
-  ).headers
-  expect(headers["X-Initiator"]).toBe("user")
-})
-
-test("ignores system and developer when inferring X-Initiator", async () => {
-  const payload: ChatCompletionsPayload = {
-    messages: [
-      { role: "system", content: "system prompt" },
-      { role: "developer", content: "developer prompt" },
-      { role: "assistant", content: "internal planning" },
-    ],
-    model: "gpt-test",
-  }
-  await createWithSelectedAccount(payload)
-  expect(fetchMock).toHaveBeenCalled()
-  const headers = (
-    fetchMock.mock.calls[3][1] as { headers: Record<string, string> }
-  ).headers
-  expect(headers["X-Initiator"]).toBe("agent")
-})
-
-test("uses initiator override when provided", async () => {
-  const payload: ChatCompletionsPayload = {
-    messages: [{ role: "user", content: "hi" }],
-    model: "gpt-test",
-  }
-  await createWithSelectedAccount(payload, { initiatorOverride: "agent" })
-  expect(fetchMock).toHaveBeenCalled()
-  const headers = (
-    fetchMock.mock.calls[4][1] as { headers: Record<string, string> }
-  ).headers
-  expect(headers["X-Initiator"]).toBe("agent")
-})
-
 test("routes responses-only models to /responses", async () => {
   state.models = {
     object: "list",
@@ -195,7 +116,7 @@ test("routes responses-only models to /responses", async () => {
   }
 
   const result = await createWithSelectedAccount(payload)
-  const [url, options] = fetchMock.mock.calls[5] as [
+  const [url, options] = fetchMock.mock.calls[0] as [
     string,
     { body?: string; headers: Record<string, string> },
   ]

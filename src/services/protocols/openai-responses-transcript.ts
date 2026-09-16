@@ -182,59 +182,79 @@ export async function* snoopResponsesStreamForTranscript(
 ): AsyncGenerator<CopilotStreamEventLike> {
   const byIndex = new Map<number, Record<string, unknown>>()
   const fallbackItems: Array<Record<string, unknown>> = []
-  let collectedItems = 0
-  let overflowed = false
+  const state = { collectedItems: 0, overflowed: false }
   for await (const event of source) {
     const parsed = parseEventData(event.data)
     if (parsed) {
       const type = typeof parsed.type === "string" ? parsed.type : ""
-      if (type === "response.output_item.done" && !overflowed) {
-        const item = asRecord(parsed.item)
-        const index =
-          typeof parsed.output_index === "number" ?
-            parsed.output_index
-          : undefined
-        if (item) {
-          collectedItems += 1
-          if (collectedItems > MAX_SNOOP_ITEMS) {
-            overflowed = true
-            byIndex.clear()
-            fallbackItems.length = 0
-            logger.debug(
-              `[openai-responses-transcript] output overflow for connection "${record.connectionId}", skipping record`,
-            )
-          } else if (index === undefined) {
-            fallbackItems.push(item)
-          } else {
-            byIndex.set(index, item)
-          }
-        }
+      if (type === "response.output_item.done" && !state.overflowed) {
+        collectOutputItem(parsed, byIndex, fallbackItems, state, record)
       } else if (
         (type === "response.completed" || type === "response.incomplete")
-        && !overflowed
+        && !state.overflowed
       ) {
-        const response = asRecord(parsed.response)
-        const id = typeof response?.id === "string" ? response.id.trim() : ""
-        if (id) {
-          const terminalOutput =
-            response && Array.isArray(response.output) ?
-              (response.output as Array<unknown>)
-            : []
-          recordStatelessTranscript({
-            connectionId: record.connectionId,
-            responseId: id,
-            input: record.input,
-            output:
-              terminalOutput.length > 0 ?
-                terminalOutput
-              : mergeCollectedItems(byIndex, fallbackItems),
-            instructions: record.instructions,
-          })
-        }
+        recordTerminalTranscript(parsed, byIndex, fallbackItems, record)
       }
     }
     yield event
   }
+}
+
+/** 收集单个 output item；超过上限时清空已收集内容并标记 overflow。 */
+function collectOutputItem(
+  parsed: Record<string, unknown>,
+  byIndex: Map<number, Record<string, unknown>>,
+  fallbackItems: Array<Record<string, unknown>>,
+  state: { collectedItems: number; overflowed: boolean },
+  record: { connectionId: string },
+): void {
+  const item = asRecord(parsed.item)
+  if (!item) return
+  const index =
+    typeof parsed.output_index === "number" ? parsed.output_index : undefined
+  state.collectedItems += 1
+  if (state.collectedItems > MAX_SNOOP_ITEMS) {
+    state.overflowed = true
+    byIndex.clear()
+    fallbackItems.length = 0
+    logger.debug(
+      `[openai-responses-transcript] output overflow for connection "${record.connectionId}", skipping record`,
+    )
+  } else if (index === undefined) {
+    fallbackItems.push(item)
+  } else {
+    byIndex.set(index, item)
+  }
+}
+
+/** 终态事件落盘转录本；无 response.id 时忽略。 */
+function recordTerminalTranscript(
+  parsed: Record<string, unknown>,
+  byIndex: Map<number, Record<string, unknown>>,
+  fallbackItems: Array<Record<string, unknown>>,
+  record: {
+    connectionId: string
+    input: Array<unknown>
+    instructions?: string
+  },
+): void {
+  const response = asRecord(parsed.response)
+  const id = typeof response?.id === "string" ? response.id.trim() : ""
+  if (!id) return
+  const terminalOutput =
+    response && Array.isArray(response.output) ?
+      (response.output as Array<unknown>)
+    : []
+  recordStatelessTranscript({
+    connectionId: record.connectionId,
+    responseId: id,
+    input: record.input,
+    output:
+      terminalOutput.length > 0 ?
+        terminalOutput
+      : mergeCollectedItems(byIndex, fallbackItems),
+    instructions: record.instructions,
+  })
 }
 
 function parseEventData(data: unknown): Record<string, unknown> | undefined {

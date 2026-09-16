@@ -957,7 +957,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     expect(signatureTexts).toEqual(["sig-abc"])
   })
 
-  test("should not emit thinking events when reasoning never gets a signature", () => {
+  test("emits unsigned thinking events when reasoning never gets a signature", () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-unsigned-thinking",

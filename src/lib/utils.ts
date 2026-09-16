@@ -164,9 +164,7 @@ export function cacheModels(): void {
   )
   const combined = [...accountData, ...externalData]
   state.models =
-    combined.length > 0 ?
-      { object: "list", data: combined }
-    : undefined
+    combined.length > 0 ? { object: "list", data: combined } : undefined
 }
 
 // 注册 models-stale 监听:saveAccounts / persistProviderConnections 完成后
