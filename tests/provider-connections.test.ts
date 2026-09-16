@@ -398,6 +398,58 @@ describe("classifyUpstreamError", () => {
         .kind,
     ).toBe("server_error")
   })
+
+  test("parses CodeBuddy 6004 Chinese reset time (UTC+8)", () => {
+    const future = new Date(Date.now() + 2 * 3600 * 1000)
+    const dateStr = formatOffsetWallClock(future, 8)
+    const body = JSON.stringify({
+      code: 6004,
+      msg: `您的使用量已超出频率限制，将在 ${dateStr} UTC+8 重置，您也可以切换其他模型继续使用。`,
+    })
+    const r = classifyUpstreamError({
+      status: 429,
+      retryAfterHeader: null,
+      body,
+    })
+    expect(r.kind).toBe("rate_limited")
+    expect(r.retryAfterMs).toBeDefined()
+    expect(r.retryAfterMs ?? 0).toBeGreaterThan(7_100_000)
+    expect(r.retryAfterMs ?? 0).toBeLessThanOrEqual(7_200_000)
+  })
+
+  test("parses Chinese reset time with +0800 / +08:00 offsets", () => {
+    for (const offset of ["+0800", "+08:00"]) {
+      const future = new Date(Date.now() + 3600 * 1000)
+      const dateStr = formatOffsetWallClock(future, 8)
+      const body = JSON.stringify({
+        code: 6004,
+        msg: `将在 ${dateStr} ${offset} 重置`,
+      })
+      const r = classifyUpstreamError({
+        status: 429,
+        retryAfterHeader: null,
+        body,
+      })
+      expect(r.kind).toBe("rate_limited")
+      expect(r.retryAfterMs).toBeDefined()
+      expect(r.retryAfterMs ?? 0).toBeGreaterThan(3_500_000)
+      expect(r.retryAfterMs ?? 0).toBeLessThanOrEqual(3_600_000)
+    }
+  })
+
+  test("ignores past Chinese reset time", () => {
+    const body = JSON.stringify({
+      code: 6004,
+      msg: "您的使用量已超出频率限制，将在 2020-01-01 00:00:00 UTC+8 重置。",
+    })
+    const r = classifyUpstreamError({
+      status: 429,
+      retryAfterHeader: null,
+      body,
+    })
+    expect(r.kind).toBe("rate_limited")
+    expect(r.retryAfterMs).toBeUndefined()
+  })
 })
 
 describe("isCodexUsageLimitError", () => {

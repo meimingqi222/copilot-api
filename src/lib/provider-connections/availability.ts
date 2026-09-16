@@ -390,20 +390,15 @@ export function parseRetryAfterFromBody(body?: string): number | undefined {
   }
 
   // "reset at 2026-07-16 20:27:09 +0800 CST"
+  // "将在 2026-09-17 09:24:40 UTC+8 重置" (CodeBuddy 6004 频率限制)
   const resetAtMatch = body.match(
-    /reset at (\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\s*([+-]\d{2}:?\d{2}))?/i,
+    /(?:reset at|将在)\s*(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)\s*(?:UTC\s*)?([+-]\s*\d{1,2}(?::?\d{2})?)?/i,
   )
   if (resetAtMatch) {
     const datePart = resetAtMatch[1].replaceAll(" ", "T")
-    const offsetRaw = resetAtMatch[2]
-    let offsetPart = "Z"
-    if (offsetRaw) {
-      offsetPart =
-        offsetRaw.includes(":") ? offsetRaw : (
-          `${offsetRaw.slice(0, 3)}:${offsetRaw.slice(3)}`
-        )
-    }
-    const resetTime = Date.parse(`${datePart}${offsetPart}`)
+    const resetTime = Date.parse(
+      `${datePart}${normalizeUtcOffset(resetAtMatch[2])}`,
+    )
     if (!Number.isNaN(resetTime)) {
       const diff = resetTime - Date.now()
       if (diff > 0) {
@@ -413,6 +408,18 @@ export function parseRetryAfterFromBody(body?: string): number | undefined {
   }
 
   return undefined
+}
+
+/**
+ * 规范化 "UTC+8" / "+8" / "+0800" / "+08:00" 等时区偏移写法为 "+08:00"。
+ * 缺失或无法识别时返回 "Z"（与原有逻辑一致：无偏移按 UTC 解析）。
+ */
+function normalizeUtcOffset(raw: string | undefined): string {
+  if (!raw) return "Z"
+  const compact = raw.replaceAll(/\s/g, "")
+  const parsed = compact.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/)
+  if (!parsed) return "Z"
+  return `${parsed[1]}${parsed[2].padStart(2, "0")}:${parsed[3] ?? "00"}`
 }
 
 function parseDuration(input: string): number | undefined {
