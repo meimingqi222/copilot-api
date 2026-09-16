@@ -7,7 +7,10 @@ import {
   initializeProtocolAdapters,
 } from "~/services/protocols"
 
-import { codebuddyProviderRuntime } from "./codebuddy"
+import {
+  codebuddyCnProviderRuntime,
+  codebuddyProviderRuntime,
+} from "./codebuddy"
 import { codebuffProviderRuntime } from "./codebuff"
 import { copilotProviderRuntime } from "./copilot"
 import { lobsteraiProviderRuntime } from "./lobsterai"
@@ -39,6 +42,9 @@ export function initializeProviderRegistry(): void {
 
   codebuddyProviderRuntime.adapter = getProtocolAdapter("codebuddy-native")
   registerProvider(codebuddyProviderRuntime)
+
+  codebuddyCnProviderRuntime.adapter = getProtocolAdapter("codebuddy-native")
+  registerProvider(codebuddyCnProviderRuntime)
 
   lobsteraiProviderRuntime.adapter = getProtocolAdapter("lobsterai-native")
   registerProvider(lobsteraiProviderRuntime)

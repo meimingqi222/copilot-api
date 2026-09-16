@@ -114,6 +114,11 @@ export const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> =
       features: ["passthrough-client-session"],
       synthesizeStableSession: false,
     },
+    "codebuddy-cn": {
+      provider: "codebuddy-cn",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
     lobsterai: {
       provider: "lobsterai",
       features: ["passthrough-client-session"],

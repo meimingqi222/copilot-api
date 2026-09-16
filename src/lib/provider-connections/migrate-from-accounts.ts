@@ -97,7 +97,7 @@ function getAccountTokenValue(account: Account): string {
   if (account.provider === "mimo-aistudio") {
     return readCredentialString(account, "serviceToken") ?? ""
   }
-  if (account.provider === "codebuddy") {
+  if (account.provider === "codebuddy" || account.provider === "codebuddy-cn") {
     return readCredentialString(account, "accessToken") ?? ""
   }
   if (account.provider === "lobsterai") {
@@ -129,7 +129,7 @@ function getAccountContext(account: Account): Record<string, unknown> {
       windsurfJwtFetchedAt: account.runtimeState?.windsurfJwtFetchedAt,
     }
   }
-  if (account.provider === "codebuddy") {
+  if (account.provider === "codebuddy" || account.provider === "codebuddy-cn") {
     return {
       ...base,
       refreshToken: readCredentialString(account, "refreshToken"),
@@ -172,7 +172,8 @@ function getRefresherType(account: Account): CredentialRefresherType {
   if (account.provider === "copilot") return "copilot-token"
   if (isOAuthAccount(account)) return "oauth-token"
   if (account.provider === "windsurf") return "windsurf-jwt"
-  if (account.provider === "codebuddy") return "codebuddy-token"
+  if (account.provider === "codebuddy" || account.provider === "codebuddy-cn")
+    return "codebuddy-token"
   if (account.provider === "lobsterai") return "lobsterai-token"
   return "static"
 }
@@ -252,6 +253,19 @@ export function accountToConnectionForPersistence(
     }
   }
 
+  // CodeBuddy 国内版/国际版默认 baseUrl + X-Domain header。
+  // codebuddy-native adapter 从 connection.baseUrl / connection.headers 读取，
+  // account-managed 路径需在此设置默认值（其他 account-managed 协议仍保持 baseUrl: ""）。
+  let baseUrl = ""
+  let headers: Record<string, string> | undefined
+  if (account.provider === "codebuddy") {
+    baseUrl = "https://www.codebuddy.ai/v2"
+    headers = { "X-Domain": "www.codebuddy.ai" }
+  } else if (account.provider === "codebuddy-cn") {
+    baseUrl = "https://copilot.tencent.com/v2"
+    headers = { "X-Domain": "www.codebuddy.cn" }
+  }
+
   return {
     id: account.id,
     name: account.label,
@@ -265,7 +279,10 @@ export function accountToConnectionForPersistence(
     // 硬编码空"与 §1.1 设计决策冲突,且晋升会引入双份存储
     // (metadata.settings.baseUrl 不可删,admin UI settings 视图依赖它),
     // 读取路径无法干净切换,故保持 baseUrl: "" 不晋升。
-    baseUrl: "",
+    // 例外:codebuddy/codebuddy-cn 的 adapter 从 connection.baseUrl 读取
+    // (非 getConnectionSettings),需在此设置默认值。
+    baseUrl,
+    ...(headers ? { headers } : {}),
     enabled: account.enabled,
     priority: account.priority,
     credentials: [credential],

@@ -125,12 +125,24 @@ const i18n = {
       "accounts.provider.codebuddy.name": "CodeBuddy",
       "accounts.provider.codebuddy.fields.accessToken": "CodeBuddy AccessToken",
       "accounts.provider.codebuddy.fields.accessTokenHint":
-        "CodeBuddy CLI 登录后的 accessToken（eyJ... 开头），有效期 60 天",
+        "CodeBuddy CLI（国际版 codebuddy.ai）登录后的 accessToken（eyJ... 开头），有效期 60 天",
       "accounts.provider.codebuddy.fields.refreshToken":
         "CodeBuddy RefreshToken",
       "accounts.provider.codebuddy.fields.refreshTokenHint":
-        "CodeBuddy CLI 登录后的 refreshToken，用于自动刷新 accessToken（有效期 90 天）",
+        "CodeBuddy CLI（国际版）登录后的 refreshToken，用于自动刷新 accessToken（有效期 90 天）",
       "accounts.provider.codebuddy.jsonHint":
+        "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
+      "accounts.provider.codebuddy-cn": "CodeBuddy CN",
+      "accounts.provider.codebuddy-cn.name": "CodeBuddy CN",
+      "accounts.provider.codebuddy-cn.fields.accessToken":
+        "CodeBuddy AccessToken",
+      "accounts.provider.codebuddy-cn.fields.accessTokenHint":
+        "CodeBuddy CLI（国内版 copilot.tencent.com）登录后的 accessToken（eyJ... 开头），有效期 60 天",
+      "accounts.provider.codebuddy-cn.fields.refreshToken":
+        "CodeBuddy RefreshToken",
+      "accounts.provider.codebuddy-cn.fields.refreshTokenHint":
+        "CodeBuddy CLI（国内版）登录后的 refreshToken，用于自动刷新 accessToken（有效期 90 天）",
+      "accounts.provider.codebuddy-cn.jsonHint":
         "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
       "accounts.provider.lobsterai": "LobsterAI",
       "accounts.provider.lobsterai.name": "LobsterAI",
@@ -941,12 +953,24 @@ const i18n = {
       "accounts.provider.codebuddy.name": "CodeBuddy",
       "accounts.provider.codebuddy.fields.accessToken": "CodeBuddy AccessToken",
       "accounts.provider.codebuddy.fields.accessTokenHint":
-        "Access token from CodeBuddy CLI login (starts with eyJ...), valid for 60 days",
+        "Access token from CodeBuddy CLI login (international, codebuddy.ai, starts with eyJ...), valid for 60 days",
       "accounts.provider.codebuddy.fields.refreshToken":
         "CodeBuddy RefreshToken",
       "accounts.provider.codebuddy.fields.refreshTokenHint":
-        "Refresh token from CodeBuddy CLI login, used to auto-refresh accessToken (valid for 90 days)",
+        "Refresh token from CodeBuddy CLI login (international), used to auto-refresh accessToken (valid for 90 days)",
       "accounts.provider.codebuddy.jsonHint":
+        "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
+      "accounts.provider.codebuddy-cn": "CodeBuddy CN",
+      "accounts.provider.codebuddy-cn.name": "CodeBuddy CN",
+      "accounts.provider.codebuddy-cn.fields.accessToken":
+        "CodeBuddy AccessToken",
+      "accounts.provider.codebuddy-cn.fields.accessTokenHint":
+        "Access token from CodeBuddy CLI login (China, copilot.tencent.com, starts with eyJ...), valid for 60 days",
+      "accounts.provider.codebuddy-cn.fields.refreshToken":
+        "CodeBuddy RefreshToken",
+      "accounts.provider.codebuddy-cn.fields.refreshTokenHint":
+        "Refresh token from CodeBuddy CLI login (China), used to auto-refresh accessToken (valid for 90 days)",
+      "accounts.provider.codebuddy-cn.jsonHint":
         "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
       "accounts.provider.lobsterai": "LobsterAI",
       "accounts.provider.lobsterai.name": "LobsterAI",

@@ -364,10 +364,10 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     )
   }
 
-  if (provider === "codebuddy") {
+  if (provider === "codebuddy" || provider === "codebuddy-cn") {
     return {
       ...base,
-      provider: "codebuddy",
+      provider,
       credentials: {
         accessToken: pickString(existingCredentials?.accessToken, undefined),
         refreshToken: pickString(existingCredentials?.refreshToken, undefined),

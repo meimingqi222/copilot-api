@@ -285,7 +285,8 @@ function buildCredentials(
         credentials.serviceToken = cred.value
         break
       }
-      case "codebuddy": {
+      case "codebuddy":
+      case "codebuddy-cn": {
         credentials.accessToken = cred.value
         break
       }
@@ -304,7 +305,7 @@ function buildCredentials(
     if (provider === "copilot" && typeof ctx.githubToken === "string") {
       credentials.githubToken = ctx.githubToken
     }
-    if (provider === "codebuddy") {
+    if (provider === "codebuddy" || provider === "codebuddy-cn") {
       if (typeof ctx.refreshToken === "string")
         credentials.refreshToken = ctx.refreshToken
       if (typeof ctx.expiresAt === "number")

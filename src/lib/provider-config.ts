@@ -11,6 +11,7 @@ export const PROVIDER_IDS = [
   "kimi",
   "xai",
   "codebuddy",
+  "codebuddy-cn",
   "lobsterai",
 ] as const
 
@@ -36,6 +37,7 @@ export const PROVIDER_PROTOCOL_MAP: Record<ProviderId, ProviderProtocol> = {
   kimi: "kimi-native",
   xai: "xai-native",
   codebuddy: "codebuddy-native",
+  "codebuddy-cn": "codebuddy-native",
   lobsterai: "lobsterai-native",
 }
 

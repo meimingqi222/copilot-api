@@ -318,7 +318,7 @@ createAccountRoutes.post("/", async (c) => {
     })
   }
 
-  if (provider === "codebuddy") {
+  if (provider === "codebuddy" || provider === "codebuddy-cn") {
     const accessToken =
       typeof body.credentials?.accessToken === "string" ?
         body.credentials.accessToken.trim()

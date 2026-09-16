@@ -18,12 +18,39 @@ import type {
 import { logger } from "~/lib/logger"
 import { getMutableProviderConnection } from "~/lib/provider-connections/state"
 
-const CODEBUDDY_REFRESH_URL =
-  "https://copilot.tencent.com/v2/plugin/auth/token/refresh"
+const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
+const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
-const CODEBUDDY_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_PRODUCT = "SaaS"
 const REFRESH_LEAD_MS = 5 * 60 * 1000
+
+/**
+ * 从 connection 解析 token refresh URL。
+ * refresh 端点为 `${origin}/v2/plugin/auth/token/refresh`，
+ * 与 chat completions 共用 /v2 前缀。
+ * 先剥离尾部斜杠再判断，避免 `.../v2/` 被拼成 `.../v2/v2`。
+ */
+function resolveCodebuddyRefreshUrl(conn: ProviderConnection): string {
+  const raw = conn.baseUrl?.trim() || CODEBUDDY_DEFAULT_BASE_URL
+  const base = raw.replace(/\/+$/, "")
+  const withVersion = /\/v\d+$/.test(base) ? base : `${base}/v2`
+  const origin = new URL(withVersion).origin
+  return `${origin}/v2/plugin/auth/token/refresh`
+}
+
+/**
+ * X-Domain 优先从 connection.headers 读取（大小写不敏感），否则用默认值。
+ * 大小写不敏感查找可避免用户配置 `x-domain` 时与默认 `X-Domain` 重复发送。
+ */
+function resolveCodebuddyDomain(conn: ProviderConnection): string {
+  const headers = conn.headers
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === "x-domain" && value) return value
+    }
+  }
+  return CODEBUDDY_DEFAULT_DOMAIN
+}
 
 interface CodebuddyRefreshResponse {
   code?: number
@@ -99,7 +126,7 @@ export async function refreshCodebuddyTokenForConnection(
     Authorization: `Bearer ${oldAccessToken ?? ""}`,
     "X-Refresh-Token": refreshToken,
     "X-Auth-Refresh-Source": "plugin",
-    "X-Domain": CODEBUDDY_DOMAIN,
+    "X-Domain": resolveCodebuddyDomain(conn),
     "X-Product": CODEBUDDY_PRODUCT,
     "X-Request-ID": randomUUID().replaceAll("-", ""),
     "User-Agent": CODEBUDDY_USER_AGENT,
@@ -108,7 +135,7 @@ export async function refreshCodebuddyTokenForConnection(
 
   let response: Response
   try {
-    response = await fetch(CODEBUDDY_REFRESH_URL, {
+    response = await fetch(resolveCodebuddyRefreshUrl(conn), {
       method: "POST",
       headers,
     })

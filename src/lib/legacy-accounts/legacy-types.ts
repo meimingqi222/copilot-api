@@ -169,7 +169,7 @@ export type MimoAccount = LegacyAccountRecord & {
 }
 
 export type CodebuddyAccount = LegacyAccountRecord & {
-  provider: "codebuddy"
+  provider: "codebuddy" | "codebuddy-cn"
   credentials?: {
     accessToken?: string
     refreshToken?: string

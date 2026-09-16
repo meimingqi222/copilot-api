@@ -35,13 +35,48 @@ import { aggregateSseToResponse, type SseChunk } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
 
-const CODEBUDDY_BASE_URL = "https://copilot.tencent.com/v2"
-const CODEBUDDY_CONFIG_URL = "https://copilot.tencent.com/v3/config"
+// 国内版（codebuddy-cn）默认值；国际版（codebuddy）通过 connection.baseUrl /
+// connection.headers["X-Domain"] 覆盖。
+const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
+const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
-const CODEBUDDY_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_PRODUCT = "SaaS"
 const CODEBUDDY_IDE_VERSION = "2.148.0"
 const CODEBUDDY_STAINLESS_PACKAGE_VERSION = "6.25.0"
+
+/**
+ * 从 connection 解析 chat completions base URL。
+ * connection.baseUrl 可带 /v2 前缀（如 `https://copilot.tencent.com/v2`），
+ * 也可不带（如 `https://copilot.tencent.com`），后者自动补 /v2。
+ * 先剥离尾部斜杠再判断，避免 `.../v2/` 被拼成 `.../v2/v2`。
+ */
+function resolveCodebuddyBaseUrl(connection: ProviderConnection): string {
+  const raw = connection.baseUrl?.trim() || CODEBUDDY_DEFAULT_BASE_URL
+  const base = raw.replace(/\/+$/, "")
+  if (/\/v\d+$/.test(base)) return base
+  return `${base}/v2`
+}
+
+/** 从 base URL 的 origin 派生 /v3/config 端点。 */
+function resolveCodebuddyConfigUrl(connection: ProviderConnection): string {
+  const base = resolveCodebuddyBaseUrl(connection)
+  const origin = new URL(base).origin
+  return `${origin}/v3/config`
+}
+
+/**
+ * X-Domain 优先从 connection.headers 读取（大小写不敏感），否则用默认值。
+ * 大小写不敏感查找可避免用户配置 `x-domain` 时与默认 `X-Domain` 重复发送。
+ */
+function resolveCodebuddyDomain(connection: ProviderConnection): string {
+  const headers = connection.headers
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      if (key.toLowerCase() === "x-domain" && value) return value
+    }
+  }
+  return CODEBUDDY_DEFAULT_DOMAIN
+}
 
 // ── 分布式追踪 ID 生成 ──────────────────────────────────────────────
 
@@ -115,7 +150,7 @@ function buildCodebuddyHeaders(
 
     // CodeBuddy CLI 标识
     "X-Product": CODEBUDDY_PRODUCT,
-    "X-Domain": CODEBUDDY_DOMAIN,
+    "X-Domain": resolveCodebuddyDomain(connection),
     "X-IDE-Type": "CLI",
     "X-IDE-Name": "CLI",
     "X-IDE-Version": CODEBUDDY_IDE_VERSION,
@@ -259,9 +294,8 @@ function sanitizeCodebuddyPayload(obj: unknown): void {
     for (const key of Object.keys(obj as Record<string, unknown>)) {
       const value = (obj as Record<string, unknown>)[key]
       if (typeof value === "string") {
-        ;(obj as Record<string, unknown>)[key] = stripCodebuddyBlockedContent(
-          value,
-        )
+        ;(obj as Record<string, unknown>)[key] =
+          stripCodebuddyBlockedContent(value)
       } else {
         sanitizeCodebuddyPayload(value)
       }
@@ -296,7 +330,10 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
   async discoverModels({ connection, credential, signal }) {
     const headers = buildCodebuddyHeaders(connection, credential)
     // /v3/config 不在 /v2 路径下，用独立 URL
-    const response = await fetch(CODEBUDDY_CONFIG_URL, { headers, signal })
+    const response = await fetch(resolveCodebuddyConfigUrl(connection), {
+      headers,
+      signal,
+    })
 
     if (!response.ok) {
       await handleUpstreamFailure(
@@ -352,7 +389,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     if (upstreamPayload.tools) sanitizeCodebuddyPayload(upstreamPayload.tools)
 
     const headers = buildCodebuddyHeaders(connection, credential)
-    const url = `${CODEBUDDY_BASE_URL}/chat/completions`
+    const url = `${resolveCodebuddyBaseUrl(connection)}/chat/completions`
 
     const response = await fetch(url, {
       method: "POST",

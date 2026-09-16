@@ -83,7 +83,7 @@ function serializeAccount(account: Account): Record<string, unknown> {
     }
   }
 
-  if (account.provider === "codebuddy") {
+  if (account.provider === "codebuddy" || account.provider === "codebuddy-cn") {
     return {
       ...base,
       credentials: {

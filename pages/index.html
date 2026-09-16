@@ -1524,12 +1524,12 @@
                   ></textarea>
                 </div>
                 <div
-                  x-show="newAccount.provider === 'codebuddy'"
+                  x-show="newAccount.provider === 'codebuddy' || newAccount.provider === 'codebuddy-cn'"
                   class="space-y-1"
                 >
                   <label
                     class="form-label"
-                    x-text="t('accounts.provider.codebuddy.jsonHint')"
+                    x-text="t('accounts.provider.' + newAccount.provider + '.jsonHint')"
                   ></label>
                   <textarea
                     x-model="codebuddyJsonInput"
@@ -3862,7 +3862,10 @@
                     x-text="t('guard.clientDetail')"
                   ></th>
                   <th class="text-left p-3" x-text="t('guard.lastModel')"></th>
-                  <th class="text-left p-3" x-text="t('guard.blockStatus')"></th>
+                  <th
+                    class="text-left p-3"
+                    x-text="t('guard.blockStatus')"
+                  ></th>
                   <th
                     class="text-left p-3"
                     x-text="t('guard.blockReasonDetail')"
