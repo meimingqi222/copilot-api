@@ -245,18 +245,32 @@ function guardView() {
       this.blockSubmitting = true
       try {
         if (isPrincipal) {
-          const durations = {
-            "30m": 30 * 60 * 1000,
-            "1h": 60 * 60 * 1000,
-            "24h": 24 * 60 * 60 * 1000,
-            permanent: 7 * 24 * 60 * 60 * 1000,
+          // 永久拉黑 IP 直接写入持久黑名单（guard.json），而不是内存临时
+          // 封禁——否则重启后丢失。user:/key: 主体黑名单表达不了，
+          // 仍走临时封禁（后端上限 7 天）。
+          if (
+            this.blockForm.duration === "permanent"
+            && key.startsWith("ip:")
+          ) {
+            await API.guard.block({
+              value: key.slice(3),
+              type: "ip",
+              reason: this.blockForm.reason.trim() || undefined,
+            })
+          } else {
+            const durations = {
+              "30m": 30 * 60 * 1000,
+              "1h": 60 * 60 * 1000,
+              "24h": 24 * 60 * 60 * 1000,
+              permanent: 7 * 24 * 60 * 60 * 1000,
+            }
+            const durationMs = durations[this.blockForm.duration]
+            await API.guard.blockPrincipal({
+              principal: key,
+              durationMs,
+              reason: this.blockForm.reason.trim() || undefined,
+            })
           }
-          const durationMs = durations[this.blockForm.duration]
-          await API.guard.blockPrincipal({
-            principal: key,
-            durationMs,
-            reason: this.blockForm.reason.trim() || undefined,
-          })
         } else {
           let expiresAt
           if (this.blockForm.duration === "1h") {
@@ -288,6 +302,27 @@ function guardView() {
         await API.guard.unblockPrincipal(principal)
         this.showToast(I18n.t("guard.unblockSuccess"), "success")
         await Promise.all([this.loadTempBlocks(), this.loadPrincipals()])
+        await this.loadOverview()
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
+    /**
+     * 客户端观察里黑名单行的解封（与 Blocks 页黑名单表同接口）。
+     * 该分支只可能是 ip 黑名单（user:/key: 主体表达不了，进不了黑名单）。
+     */
+    async unblockBlacklist(principal) {
+      const value =
+        typeof principal === "string" && principal.startsWith("ip:") ?
+          principal.slice(3)
+        : principal
+      if (!value) return
+      if (!confirm(I18n.t("guard.confirmUnblock"))) return
+      try {
+        await API.guard.unblock({ value, type: "ip" })
+        this.showToast(I18n.t("guard.unblockSuccess"), "success")
+        await this.loadPrincipals()
         await this.loadOverview()
       } catch {
         this.showToast(I18n.t("error.update"), "error")

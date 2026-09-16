@@ -32,6 +32,13 @@ export async function guardMiddleware(c: Context, next: Next) {
   const entry = isBlocked({ ip, ua })
   if (entry) {
     const reason = entry.reason ? `: ${entry.reason}` : ""
+    // 标记给 requestLogger：被拉黑的请求不再写入系统日志
+    //（避免黑名单 IP 持续刷屏），但 guard 快照仍会更新。
+    try {
+      c.set("guardRejected" as never, true)
+    } catch {
+      // Context 已结束时忽略
+    }
     return c.json(
       {
         error: {

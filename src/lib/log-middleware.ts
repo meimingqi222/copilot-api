@@ -3,6 +3,7 @@ import type { Context, Next } from "hono"
 import { logger } from "~/lib/logger"
 
 import {
+  isBlocked,
   recordRequest as recordGuardSnapshot,
   recordRequestPreview,
 } from "./guard"
@@ -62,10 +63,24 @@ export const requestLogger = async (c: Context, next: Next) => {
   }
 
   // Body 必须在 handler 消费之前 clone 读取,否则拿不到内容。
-  await dumpIncomingRequest(c, { requestId: ctx.requestId, clientIp })
+  // 被拉黑的请求不写 dump：guardMiddleware 在下游返回 403，这里预检一次
+  //（与拦截用同一函数、同一输入，结果一致），否则黑名单 IP 的原始 body
+  // 会在 DUMP_REQUESTS=1 时持续落盘。
+  const preBlocked =
+    !isLocalhost && isBlocked({ ip: clientIp, ua: userAgent }) !== null
+  if (!preBlocked) {
+    await dumpIncomingRequest(c, { requestId: ctx.requestId, clientIp })
+  }
 
   const persistRequestLog = () => {
     if (!claimRequestLogFinish(c)) return
+    // 被安全防护拉黑的请求不再写入系统日志（guard 快照仍会更新，
+    // 以便在安全防护页看到最后活跃时间）。
+    try {
+      if (c.get("guardRejected")) return
+    } catch {
+      // Context 已结束时按正常路径继续
+    }
     const status = c.res.status
     const finalized = finalizeRequestLog(c, status)
     const level =

@@ -4235,10 +4235,22 @@
                           </button>
                         </template>
                         <template x-if="client.blocked && !client.tempBlocked">
-                          <span
-                            class="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-                            x-text="t('guard.blocked')"
-                          ></span>
+                          <div class="flex flex-col gap-2 items-end">
+                            <span
+                              class="badge bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                              x-text="t('guard.blocked')"
+                            ></span>
+                            <button
+                              class="btn btn-secondary text-xs px-3 py-2 min-h-[36px]"
+                              @click="unblockBlacklist(client.principal || client.key)"
+                            >
+                              <i
+                                data-lucide="shield-off"
+                                class="w-3 h-3 mr-1"
+                              ></i>
+                              <span x-text="t('guard.unblock')"></span>
+                            </button>
+                          </div>
                         </template>
                         <template x-if="!client.blocked">
                           <button

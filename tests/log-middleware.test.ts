@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
-import { getBlacklist, getSnapshots, resetGuardForTest } from "~/lib/guard"
+import {
+  addBlacklistEntry,
+  getBlacklist,
+  getSnapshots,
+  resetGuardForTest,
+} from "~/lib/guard"
 import { guardMiddleware } from "~/lib/guard-middleware"
 import { requestLogger } from "~/lib/log-middleware"
 import { logStore } from "~/lib/log-store"
@@ -80,6 +85,31 @@ describe("log middleware", () => {
 
     expect(getSnapshots("ip")).toHaveLength(0)
     expect(getBlacklist()).toHaveLength(0)
+  })
+
+  test("does not write system logs for blacklisted IPs", async () => {
+    await addBlacklistEntry({ value: "203.0.113.99", type: "ip" })
+
+    const app = new Hono()
+    app.use("*", requestLogger)
+    app.use("*", guardMiddleware)
+    app.post("/v1/messages", (c) => c.json({ ok: true }))
+
+    const response = await app.request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "unit-test-client/1.0",
+        "x-forwarded-for": "203.0.113.99",
+      },
+      body: JSON.stringify({
+        model: "o1",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    })
+
+    expect(response.status).toBe(403)
+    expect(logStore.query({ limit: 10 }).entries).toHaveLength(0)
   })
 
   test("persists the protocol outcome after an HTTP 200 stream finishes", async () => {
