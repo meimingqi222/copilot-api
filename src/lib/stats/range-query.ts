@@ -102,68 +102,114 @@ export interface PerformanceByModel {
 export function computePerformanceByModel(
   rows: Array<UsageRawRow>,
 ): Array<PerformanceByModel> {
-  interface Accumulator {
-    model: string
-    requests: number
-    streamingRequests: number
-    ttftSum: number
-    ttftCount: number
-    streamTokens: number
-    streamTokenSeconds: number
-    nonStreamTokens: number
-    nonStreamTokenSeconds: number
-  }
-  const byModel = new Map<string, Accumulator>()
+  const byModel = new Map<string, PerfAccumulator>()
   for (const row of rows) {
     if (row.ttft_ms === null && row.tps === null) continue
     let acc = byModel.get(row.model)
     if (!acc) {
-      acc = {
-        model: row.model,
-        requests: 0,
-        streamingRequests: 0,
-        ttftSum: 0,
-        ttftCount: 0,
-        streamTokens: 0,
-        streamTokenSeconds: 0,
-        nonStreamTokens: 0,
-        nonStreamTokenSeconds: 0,
-      }
+      acc = newPerfAccumulator()
       byModel.set(row.model, acc)
     }
-    acc.requests += 1
-    if (row.streaming === 1) acc.streamingRequests += 1
-    if (row.ttft_ms !== null) {
-      acc.ttftSum += row.ttft_ms
-      acc.ttftCount += 1
+    accumulatePerfRow(acc, row)
+  }
+  return [...byModel.entries()]
+    .sort(([, left], [, right]) => right.requests - left.requests)
+    .map(([model, acc]) => ({ model, ...perfAverages(acc) }))
+}
+
+export interface PerformanceByProviderModel extends PerformanceByModel {
+  provider: string
+}
+
+/**
+ * Per-(provider, model) TTFT/TPS averages.同一模型在不同 provider
+ * 的速度可能差很大，聚合时不能只按 model 分组。
+ */
+export function computePerformanceByProviderModel(
+  rows: Array<UsageRawRow>,
+): Array<PerformanceByProviderModel> {
+  const byKey = new Map<string, PerfAccumulator>()
+  const meta = new Map<string, { provider: string; model: string }>()
+  for (const row of rows) {
+    if (row.ttft_ms === null && row.tps === null) continue
+    const provider = row.provider ?? "unknown"
+    const key = provider + "\0" + row.model
+    let acc = byKey.get(key)
+    if (!acc) {
+      acc = newPerfAccumulator()
+      byKey.set(key, acc)
+      meta.set(key, { provider, model: row.model })
     }
-    if (row.tps !== null && row.tps > 0) {
-      const seconds = row.completion_tokens / row.tps
-      if (row.streaming === 1) {
-        acc.streamTokens += row.completion_tokens
-        acc.streamTokenSeconds += seconds
-      } else if (row.streaming === 0) {
-        acc.nonStreamTokens += row.completion_tokens
-        acc.nonStreamTokenSeconds += seconds
-      }
+    accumulatePerfRow(acc, row)
+  }
+  return [...byKey.entries()]
+    .sort(([, left], [, right]) => right.requests - left.requests)
+    .map(([key, acc]) => ({ ...meta.get(key)!, ...perfAverages(acc) }))
+}
+
+interface PerfAccumulator {
+  requests: number
+  streamingRequests: number
+  ttftSum: number
+  ttftCount: number
+  streamTokens: number
+  streamTokenSeconds: number
+  nonStreamTokens: number
+  nonStreamTokenSeconds: number
+}
+
+function newPerfAccumulator(): PerfAccumulator {
+  return {
+    requests: 0,
+    streamingRequests: 0,
+    ttftSum: 0,
+    ttftCount: 0,
+    streamTokens: 0,
+    streamTokenSeconds: 0,
+    nonStreamTokens: 0,
+    nonStreamTokenSeconds: 0,
+  }
+}
+
+function accumulatePerfRow(acc: PerfAccumulator, row: UsageRawRow): void {
+  acc.requests += 1
+  if (row.streaming === 1) acc.streamingRequests += 1
+  if (row.ttft_ms !== null) {
+    acc.ttftSum += row.ttft_ms
+    acc.ttftCount += 1
+  }
+  if (row.tps !== null && row.tps > 0) {
+    const seconds = row.completion_tokens / row.tps
+    if (row.streaming === 1) {
+      acc.streamTokens += row.completion_tokens
+      acc.streamTokenSeconds += seconds
+    } else if (row.streaming === 0) {
+      acc.nonStreamTokens += row.completion_tokens
+      acc.nonStreamTokenSeconds += seconds
     }
   }
-  return [...byModel.values()]
-    .sort((a, b) => b.requests - a.requests)
-    .map((acc) => ({
-      model: acc.model,
-      requests: acc.requests,
-      streamingRequests: acc.streamingRequests,
-      avgTtftMs: acc.ttftCount > 0 ? acc.ttftSum / acc.ttftCount : null,
-      avgStreamingTps:
-        acc.streamTokenSeconds > 0 ?
-          acc.streamTokens / acc.streamTokenSeconds
-        : null,
-      avgNonStreamingTps:
-        acc.nonStreamTokenSeconds > 0 ?
-          acc.nonStreamTokens / acc.nonStreamTokenSeconds
-        : null,
-    }))
+}
+
+function perfAverages(acc: PerfAccumulator): {
+  requests: number
+  streamingRequests: number
+  avgTtftMs: number | null
+  avgStreamingTps: number | null
+  avgNonStreamingTps: number | null
+} {
+  return {
+    requests: acc.requests,
+    streamingRequests: acc.streamingRequests,
+    avgTtftMs: acc.ttftCount > 0 ? acc.ttftSum / acc.ttftCount : null,
+    avgStreamingTps:
+      acc.streamTokenSeconds > 0 ?
+        acc.streamTokens / acc.streamTokenSeconds
+      : null,
+    avgNonStreamingTps:
+      acc.nonStreamTokenSeconds > 0 ?
+        acc.nonStreamTokens / acc.nonStreamTokenSeconds
+      : null,
+  }
 }
 
 export interface IntervalBucketOptions {

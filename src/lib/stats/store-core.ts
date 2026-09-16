@@ -40,6 +40,7 @@ import {
 import {
   bucketRowsByInterval,
   computePerformanceByModel,
+  computePerformanceByProviderModel,
   groupRowsByProvider,
   groupRowsByViewerDate,
 } from "~/lib/stats/range-query"
@@ -273,6 +274,23 @@ class StatsStore {
     const db = this.ensureDb()
     const rows = queryUsageRawRows(db, options)
     return computePerformanceByModel(rows)
+  }
+
+  getPerformanceByProviderModelInRange(options: {
+    startMs: number
+    endMs: number
+  }): Array<{
+    provider: string
+    model: string
+    requests: number
+    streamingRequests: number
+    avgTtftMs: number | null
+    avgStreamingTps: number | null
+    avgNonStreamingTps: number | null
+  }> {
+    const db = this.ensureDb()
+    const rows = queryUsageRawRows(db, options)
+    return computePerformanceByProviderModel(rows)
   }
 
   getUsageStatsByIntervalInRange(options: {

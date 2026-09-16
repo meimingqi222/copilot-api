@@ -64,6 +64,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: "Antigravity",
   codebuff: "Codebuff",
   "mimo-aistudio": "MiMo",
+  codebuddy: "CodeBuddy",
+  "codebuddy-cn": "CodeBuddy CN",
   unknown: "Unknown",
   // Protocol values used as provider for plain (non-account-managed) connections.
   "openai-compatible": "OpenAI Compatible",
@@ -833,9 +835,13 @@ usageApiRoutes.get("/performance", (c) => {
       startMs,
       endMs,
     })
+    const byProvider = statsStore
+      .getPerformanceByProviderModelInRange({ startMs, endMs })
+      .map((row) => ({ ...row, providerLabel: providerLabel(row.provider) }))
 
     return c.json({
       performance,
+      byProvider,
       period: { startDate, endDate, timeZone },
     })
   } catch (error) {

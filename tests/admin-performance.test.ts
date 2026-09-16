@@ -24,6 +24,9 @@ type PerformanceRow = {
 
 type PerformanceResponse = {
   performance: Array<PerformanceRow>
+  byProvider: Array<
+    PerformanceRow & { provider: string; providerLabel: string }
+  >
 }
 
 const originalAccounts = listAccounts()
@@ -131,4 +134,64 @@ test("GET /admin/api/usage/performance uses a weighted TPS average", async () =>
     avgNonStreamingTps: 5,
   })
   expect(body.performance[0].avgStreamingTps).toBeCloseTo(10.1, 1)
+})
+
+test("GET /admin/api/usage/performance splits the same model by provider", async () => {
+  const ts = new Date("2026-05-23T08:00:00.000Z").getTime()
+
+  statsStore.recordUsage({
+    date: "2026-05-23",
+    accountId: "account-1",
+    model: "same-model",
+    provider: "copilot",
+    promptTokens: 10,
+    completionTokens: 100,
+    totalTokens: 110,
+    cost: 0,
+    timestamp: ts,
+    ttftMs: 400,
+    tps: 50,
+    streaming: true,
+  })
+  statsStore.recordUsage({
+    date: "2026-05-23",
+    accountId: "account-2",
+    model: "same-model",
+    provider: "codebuddy",
+    promptTokens: 10,
+    completionTokens: 100,
+    totalTokens: 110,
+    cost: 0,
+    timestamp: ts + 1,
+    ttftMs: 1200,
+    tps: 25,
+    streaming: true,
+  })
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as PerformanceResponse
+  // 汇总行仍合并（平均 TTFT 把差距抹平），明细行按 provider 拆开
+  expect(body.performance).toHaveLength(1)
+  expect(body.performance[0].avgTtftMs).toBe(800)
+  expect(body.byProvider).toHaveLength(2)
+  const copilot = body.byProvider.find((row) => row.provider === "copilot")
+  const codebuddy = body.byProvider.find((row) => row.provider === "codebuddy")
+  expect(copilot).toMatchObject({
+    model: "same-model",
+    requests: 1,
+    avgTtftMs: 400,
+    avgStreamingTps: 50,
+    providerLabel: "GitHub Copilot",
+  })
+  expect(codebuddy).toMatchObject({
+    model: "same-model",
+    requests: 1,
+    avgTtftMs: 1200,
+    avgStreamingTps: 25,
+    providerLabel: "CodeBuddy",
+  })
 })

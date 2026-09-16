@@ -3651,6 +3651,117 @@
                 </div>
               </div>
 
+              <!-- Provider Performance Table -->
+              <div class="card p-6 mt-6" x-show="byProvider.length">
+                <div
+                  class="flex items-center justify-between mb-4 gap-3 flex-wrap"
+                >
+                  <div>
+                    <h4 class="text-title-3" x-text="t('perf.byProvider')"></h4>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)] mt-1"
+                      x-text="t('perf.byProviderDesc')"
+                    ></p>
+                  </div>
+                  <select
+                    x-model="providerFilter"
+                    class="input input-small"
+                    style="max-width: 220px"
+                  >
+                    <option
+                      value="all"
+                      x-text="t('perf.allProviders')"
+                    ></option>
+                    <template
+                      x-for="opt in providerOptions"
+                      :key="opt.provider"
+                    >
+                      <option :value="opt.provider" x-text="opt.label"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="table-container">
+                  <table class="table" style="table-layout: fixed">
+                    <colgroup>
+                      <col style="width: 16%" />
+                      <col style="width: 24%" />
+                      <col style="width: 12%" />
+                      <col style="width: 12%" />
+                      <col style="width: 12%" />
+                      <col style="width: 12%" />
+                      <col style="width: 12%" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th x-text="t('perf.provider')"></th>
+                        <th x-text="t('perf.model')"></th>
+                        <th
+                          class="!text-center whitespace-nowrap"
+                          x-text="t('perf.requests')"
+                        ></th>
+                        <th
+                          class="!text-center whitespace-nowrap"
+                          x-text="t('perf.streaming')"
+                        ></th>
+                        <th
+                          class="!text-center whitespace-nowrap"
+                          x-text="t('perf.avgTtft')"
+                        ></th>
+                        <th
+                          class="!text-center whitespace-nowrap"
+                          x-text="t('perf.streamingTps')"
+                        ></th>
+                        <th
+                          class="!text-center whitespace-nowrap"
+                          x-text="t('perf.nonStreamingTps')"
+                        ></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template
+                        x-for="row in filteredByProvider"
+                        :key="row.provider + '/' + row.model"
+                      >
+                        <tr class="hover:bg-[var(--apple-gray-5)]">
+                          <td class="text-sm">
+                            <span
+                              class="badge badge-info normal-case"
+                              x-text="row.providerLabel || row.provider"
+                            ></span>
+                          </td>
+                          <td
+                            class="font-medium text-sm break-all"
+                            x-text="row.model"
+                          ></td>
+                          <td
+                            class="!text-center text-sm whitespace-nowrap"
+                            x-text="row.requests"
+                          ></td>
+                          <td
+                            class="!text-center text-sm whitespace-nowrap"
+                            x-text="row.streamingRequests || 0"
+                          ></td>
+                          <td
+                            class="!text-center text-sm font-medium whitespace-nowrap"
+                            :class="getTtftClass(row.avgTtftMs)"
+                            x-text="formatMs(row.avgTtftMs)"
+                          ></td>
+                          <td
+                            class="!text-center text-sm font-medium whitespace-nowrap"
+                            :class="getTpsClass(row.avgStreamingTps)"
+                            x-text="formatTps(row.avgStreamingTps)"
+                          ></td>
+                          <td
+                            class="!text-center text-sm font-medium whitespace-nowrap"
+                            x-text="formatTps(row.avgNonStreamingTps)"
+                          ></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
               <div x-show="!performance.length" class="empty-state">
                 <i data-lucide="gauge" class="empty-state-icon"></i>
                 <p

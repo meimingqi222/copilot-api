@@ -826,6 +826,10 @@ const i18n = {
       "perf.streamingTps": "流式 TPS",
       "perf.nonStreamingTps": "非流式 TPS",
       "perf.noData": "暂无性能数据",
+      "perf.byProvider": "按提供商",
+      "perf.byProviderDesc": "同一模型在不同提供商的速度可能差很大",
+      "perf.provider": "提供商",
+      "perf.allProviders": "全部提供商",
       "perf.ttftDesc": "流式请求中从发出请求到收到第一个 token 的耗时",
       "perf.streamingTpsDesc":
         "从请求发出到响应结束的完整 token 速率（含首字延迟和缓冲）",
@@ -1671,6 +1675,10 @@ const i18n = {
       "perf.streamingTps": "Streaming TPS",
       "perf.nonStreamingTps": "Non-Streaming TPS",
       "perf.noData": "No performance data available",
+      "perf.byProvider": "By Provider",
+      "perf.byProviderDesc": "Same model can vary a lot across providers",
+      "perf.provider": "Provider",
+      "perf.allProviders": "All Providers",
       "perf.ttftDesc":
         "Time from request dispatch to first token received (streaming)",
       "perf.streamingTpsDesc":

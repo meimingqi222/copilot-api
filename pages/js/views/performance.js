@@ -5,6 +5,8 @@ function performanceView() {
     dateRange: "today",
     selectedMonth: "",
     performance: [],
+    byProvider: [],
+    providerFilter: "all",
     period: { startDate: "", endDate: "" },
 
     init() {
@@ -54,10 +56,37 @@ function performanceView() {
           : { range: this.dateRange }
         const data = await API.usage.performance(params)
         this.performance = data.performance || []
+        this.byProvider = data.byProvider || []
+        // 当前筛选的 provider 无数据时回退到全部
+        if (
+          this.providerFilter !== "all"
+          && !this.byProvider.some((r) => r.provider === this.providerFilter)
+        ) {
+          this.providerFilter = "all"
+        }
         this.period = data.period || { startDate: "", endDate: "" }
       } catch (e) {
         console.error("Failed to load performance data:", e)
       }
+    },
+
+    get providerOptions() {
+      const seen = new Map()
+      for (const row of this.byProvider || []) {
+        if (!seen.has(row.provider)) {
+          seen.set(row.provider, row.providerLabel || row.provider)
+        }
+      }
+      return [...seen.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([provider, label]) => ({ provider, label }))
+    },
+
+    get filteredByProvider() {
+      if (this.providerFilter === "all") return this.byProvider || []
+      return (this.byProvider || []).filter(
+        (row) => row.provider === this.providerFilter,
+      )
     },
 
     formatMs(ms) {
