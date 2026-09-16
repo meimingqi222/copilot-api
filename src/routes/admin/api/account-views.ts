@@ -11,6 +11,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { connectionModelsToAccountModels } from "~/lib/legacy-accounts"
 import {
+  accountManagedProvider,
   connectionHasCredentials as connectionHasCredentialsNative,
   getConnectionAuthError,
   getConnectionAuthStatus,
@@ -21,7 +22,6 @@ import {
   getConnectionSettings,
   isOAuthConnection,
   listAccountManagedConnections,
-  providerFromProtocol,
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
@@ -34,7 +34,8 @@ import { getProviderRuntime } from "~/services/providers/registry"
  */
 export function publicAccountFromConnection(conn: ProviderConnection) {
   initializeProviderRegistry()
-  const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+  // codebuddy / codebuddy-cn 共用协议，必须用 metadata.provider 优先的派生
+  const provider = accountManagedProvider(conn)
   const runtime = getProviderRuntime(provider)
   const availability = getConnectionAvailabilityForAdmin(conn)
   const subtitle = connectionOAuthSubtitle(conn)
@@ -191,7 +192,7 @@ function connectionOAuthSubtitle(conn: ProviderConnection): string | undefined {
 
   const projectId =
     typeof ctx.projectId === "string" ? ctx.projectId.trim() : undefined
-  const provider = providerFromProtocol(conn.protocol)
+  const provider = accountManagedProvider(conn)
   if (provider === "antigravity" && projectId && projectId !== conn.name) {
     return projectId
   }

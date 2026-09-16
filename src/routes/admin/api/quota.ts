@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { refreshQuotaForConnection, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
 import {
+  accountManagedProvider,
   getConnectionQuotaInfo,
   getConnectionQuotaState,
   getMutableProviderConnection,
@@ -10,7 +11,6 @@ import {
   isAccountManagedConnection,
   isOAuthConnection,
   listAccountManagedConnections,
-  providerFromProtocol,
   setConnectionCooldownUntil,
   setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
@@ -62,7 +62,7 @@ quotaApiRoutes.get("/", async (c) => {
     const availability = getConnectionAvailabilityForAdmin(conn)
     // 使用 connectionSubtitle(isOAuthConnection + getOAuthAccountSubtitle 的 compat 封装)
     const subtitle = connectionSubtitle(conn)
-    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+    const provider = accountManagedProvider(conn)
     return {
       availability,
       id: conn.id,
@@ -96,7 +96,7 @@ quotaApiRoutes.post("/refresh", async (c) => {
 
   // 使用 connection 原生列表(替代 listAccounts())
   for (const conn of listAccountManagedConnections()) {
-    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+    const provider = accountManagedProvider(conn)
     try {
       const runtime = getProviderRuntime(provider)
       const mutableConn = getMutableProviderConnection(conn.id)
@@ -137,7 +137,7 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
     return c.json({ error: "Account not found." }, 404)
   }
 
-  const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+  const provider = accountManagedProvider(conn)
   const runtime = getProviderRuntime(provider)
   const mutableConn = getMutableProviderConnection(id)
   if (!mutableConn || !runtime.supports(mutableConn, "quota")) {
@@ -185,7 +185,7 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
     return c.json({ error: "Account not found." }, 404)
   }
 
-  const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+  const provider = accountManagedProvider(conn)
   // 使用 isOAuthConnection 替代 isOAuthAccount;codex 是 OAuth provider
   if (!isOAuthConnection(conn) || provider !== "codex") {
     return c.json(

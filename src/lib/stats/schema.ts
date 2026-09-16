@@ -3,8 +3,8 @@
 import { Database } from "bun:sqlite"
 
 import {
+  accountManagedProvider,
   listAccountManagedConnections,
-  providerFromProtocol,
 } from "~/lib/provider-connections"
 
 /** 创建所有统计相关的表与索引，并执行一次性迁移。 */
@@ -126,6 +126,7 @@ export function createTables(db: Database): void {
   `)
   migrateSwe16UsageLabels(db)
   backfillProviderColumn(db)
+  repairCodebuddyProviderAttribution(db)
 }
 
 /** One-time: drop obvious junk swe-1-6-fast test rows (tiny input, zero output). */
@@ -161,12 +162,43 @@ export function backfillProviderColumn(db: Database): void {
   const stmt = db.prepare(
     "UPDATE usage_stats SET provider = ? WHERE account_id = ? AND provider IS NULL",
   )
-  // 用 connection 字段直接回填 provider（替代原 listAccounts 路径）
+  // 用 connection 原生回填 provider（metadata.provider 优先）。
+  // 注意：codebuddy / codebuddy-cn 共用 codebuddy-native，不能用
+  // providerFromProtocol（永远得到 codebuddy-cn）。
   for (const conn of listAccountManagedConnections()) {
-    stmt.run(providerFromProtocol(conn.protocol) ?? "copilot", conn.id)
+    stmt.run(accountManagedProvider(conn), conn.id)
   }
   db.run("INSERT INTO stats_migrations (name, applied_at) VALUES (?, ?)", [
     "backfill-usage-provider",
+    Date.now(),
+  ])
+}
+
+/**
+ * One-time:修复 codebuddy / codebuddy-cn 共用协议导致的 provider 误标。
+ * recordUsage 曾用 providerFromProtocol(conn.protocol) 记录 provider，
+ * codebuddy-native 永远反查为 codebuddy-cn，导致国际版账号的用量被记到
+ * codebuddy-cn 分组下。按当前 connection 的真实 provider
+ *（metadata.provider 优先）把历史行纠正回来。
+ */
+export function repairCodebuddyProviderAttribution(db: Database): void {
+  const applied = db
+    .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
+    .get("repair-codebuddy-provider-attribution") as { ok: number } | undefined
+  if (applied) return
+
+  const stmt = db.prepare(
+    "UPDATE usage_stats SET provider = ? WHERE account_id = ? AND (provider IS NULL OR provider != ?)",
+  )
+  for (const conn of listAccountManagedConnections()) {
+    const trueProvider = accountManagedProvider(conn)
+    if (trueProvider !== "codebuddy" && trueProvider !== "codebuddy-cn") {
+      continue
+    }
+    stmt.run(trueProvider, conn.id, trueProvider)
+  }
+  db.run("INSERT INTO stats_migrations (name, applied_at) VALUES (?, ?)", [
+    "repair-codebuddy-provider-attribution",
     Date.now(),
   ])
 }

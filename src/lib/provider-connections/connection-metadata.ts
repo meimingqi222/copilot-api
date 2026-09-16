@@ -93,8 +93,13 @@ export function readAccountLegacyMetadata(
 export function getConnectionProvider(
   conn: ProviderConnection,
 ): ProviderId | undefined {
-  // T5.2.5:从 protocol 派生,不再读 metadata.provider
-  return PROTOCOL_TO_PROVIDER[conn.protocol] as ProviderId | undefined
+  // codebuddy / codebuddy-cn 共用 codebuddy-native 协议，仅靠 protocol
+  // 无法区分（PROTOCOL_TO_PROVIDER 后写覆盖）。account-managed 连接
+  // 必须优先读 metadata.provider，只有无 metadata 时才回退到 protocol。
+  return (
+    readAccountLegacyMetadata(conn)?.provider
+    ?? (PROTOCOL_TO_PROVIDER[conn.protocol] as ProviderId | undefined)
+  )
 }
 
 export function getConnectionQuotaState(

@@ -10,13 +10,13 @@ import { saveAccounts } from "~/lib/account-store"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
+  accountManagedProvider,
   classifyUpstreamError,
   getProviderConnection,
   listAccountManagedConnections,
   mergeProviderRefreshedModels,
   migrateAccountsToConnections,
   persistProviderConnections,
-  providerFromProtocol,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { listExposedPublicModels } from "~/lib/route-target/build"
@@ -133,9 +133,7 @@ export function cacheModels(): void {
             endpointToSupported(e),
           ),
           capabilities: {
-            family:
-              providerFromProtocol(conn.protocol)
-              ?? (model.vendor ?? "unknown").toLowerCase(),
+            family: accountManagedProvider(conn),
             object: "capabilities",
             // Only advertised when the catalog names it (the `1m` tier);
             // standard-tier families carry no window information.
@@ -347,8 +345,9 @@ export async function refreshModelsForConnection(
 ): Promise<void> {
   // Note: ProviderConnection type imported via inline to avoid circular type issues
   initializeProviderRegistry()
-  const provider = providerFromProtocol(conn.protocol)
-  if (!provider) return
+  // codebuddy / codebuddy-cn 共用协议，必须用 metadata 优先的派生，否则
+  // 国际版连接会拿到国内版 fallback 模型
+  const provider = accountManagedProvider(conn)
   try {
     const models = await getProviderRuntime(provider).refreshModels(conn)
     // provider 全量覆盖时保留用户层配置(改名/禁用/别名),见

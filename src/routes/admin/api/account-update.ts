@@ -2,13 +2,13 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { isOAuthProviderId } from "~/lib/provider-config"
 import {
+  accountManagedProvider,
   ensureLegacyMetadata,
   setConnectionCredentialExtra,
   setConnectionSetting,
   setCredentialContextField,
   setCredentialValue,
 } from "~/lib/provider-connections"
-import { providerFromProtocol } from "~/lib/provider-connections/protocol-provider"
 
 export interface UpdateAccountBody {
   label?: string
@@ -43,7 +43,7 @@ export function parseBodyToPatch(
   conn: ProviderConnection,
   body: UpdateAccountBody,
 ): ConnectionPatch {
-  const provider = providerFromProtocol(conn.protocol)
+  const provider = accountManagedProvider(conn)
   const patch: ConnectionPatch = {
     label: body.label,
     enabled: body.enabled,
@@ -195,7 +195,7 @@ function applyCredentialValueToConnection(
   value: string,
 ): void {
   const trimmed = value.trim() || undefined
-  const provider = providerFromProtocol(conn.protocol)
+  const provider = accountManagedProvider(conn)
   const cred = conn.credentials[0]
   if (!cred) return
 
@@ -245,7 +245,7 @@ function applyCredentialExtrasToConnection(
   conn: ProviderConnection,
   extras: Record<string, string | undefined>,
 ): void {
-  const provider = providerFromProtocol(conn.protocol)
+  const provider = accountManagedProvider(conn)
   if (provider !== "mimo-aistudio") return
 
   if ("xiaomichatbotPh" in extras) {
@@ -266,7 +266,7 @@ function applySettingsPatchToConnection(
   conn: ProviderConnection,
   settings: Record<string, unknown>,
 ): void {
-  const provider = providerFromProtocol(conn.protocol)
+  const provider = accountManagedProvider(conn)
   const meta = ensureLegacyMetadata(conn)
 
   if (provider && isOAuthProviderId(provider)) {

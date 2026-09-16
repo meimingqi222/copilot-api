@@ -257,6 +257,8 @@ function accountsView() {
      * Preferred provider order for account sections. Keeps dense providers
      * (xai/codex with many models) separate from sparse ones so card heights
      * stay consistent within each group.
+     * "codebuddy" 在这里代表 CodeBuddy 系列分组（国际版 + 国内版归在一起，
+     * 卡片上用徽标区分版本）。
      */
     PROVIDER_ORDER: [
       "copilot",
@@ -267,8 +269,55 @@ function accountsView() {
       "kimi",
       "windsurf",
       "codebuff",
+      "codebuddy",
       "mimo-aistudio",
     ],
+
+    /** CodeBuddy 系列（国际版 + 国内版）的 provider id 集合 */
+    CODEBUDDY_SERIES: ["codebuddy", "codebuddy-cn"],
+
+    /**
+     * provider → 分组 key：CodeBuddy 系列归到同一个 "codebuddy" 分组，
+     * 其他 provider 保持原样。
+     */
+    providerGroupKey(provider) {
+      const p = provider || "copilot"
+      if (this.CODEBUDDY_SERIES.includes(p)) return "codebuddy"
+      return p
+    },
+
+    /** 是否 CodeBuddy 系列（用于卡片徽标） */
+    isCodebuddySeries(provider) {
+      return this.CODEBUDDY_SERIES.includes(provider || "")
+    },
+
+    /** CodeBuddy 版本徽标文案：国际版 / 国内版 */
+    codebuddyVariantLabel(provider) {
+      if (provider === "codebuddy-cn")
+        return this.t("accounts.provider.codebuddy.variant.cn")
+      if (provider === "codebuddy")
+        return this.t("accounts.provider.codebuddy.variant.intl")
+      return ""
+    },
+
+    /** CodeBuddy 版本徽标样式：国际版蓝色 / 国内版橙色 */
+    codebuddyVariantClass(provider) {
+      if (provider === "codebuddy-cn") return "badge-warning"
+      if (provider === "codebuddy") return "badge-info"
+      return "badge-gray"
+    },
+
+    /** 分组标题：CodeBuddy 系列显示统一名称 */
+    providerGroupLabel(groupKey) {
+      if (groupKey === "codebuddy") {
+        const label = this.t("accounts.provider.codebuddy.series")
+        // I18n.t 缺 key 时原样返回 key，需显式判断
+        return label === "accounts.provider.codebuddy.series" ? "CodeBuddy" : (
+            label
+          )
+      }
+      return this.providerLabel(groupKey)
+    },
 
     getAccountsByProvider(provider) {
       return (this.accounts || []).filter(
@@ -279,12 +328,16 @@ function accountsView() {
     /**
      * Providers that currently have at least one account, sorted.
      * Dense providers (many models / quota rows) use a wider grid.
+     * CodeBuddy 系列（codebuddy / codebuddy-cn）合并为一个分组。
      */
     getProviderGroups() {
       const counts = new Map()
+      const members = new Map()
       for (const account of this.accounts || []) {
-        const provider = account.provider || "copilot"
-        counts.set(provider, (counts.get(provider) || 0) + 1)
+        const key = this.providerGroupKey(account.provider)
+        counts.set(key, (counts.get(key) || 0) + 1)
+        if (!members.has(key)) members.set(key, [])
+        members.get(key).push(account)
       }
       const known = this.PROVIDER_ORDER.filter((p) => counts.has(p))
       const extras = [...counts.keys()]
@@ -293,7 +346,7 @@ function accountsView() {
       return [...known, ...extras].map((provider) => ({
         provider,
         count: counts.get(provider) || 0,
-        accounts: this.getAccountsByProvider(provider),
+        accounts: members.get(provider) || [],
         dense: false,
       }))
     },

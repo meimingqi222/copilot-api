@@ -1100,7 +1100,7 @@
                     :data-lucide="providerIcon(group.provider)"
                     class="w-4 h-4"
                   ></i>
-                  <span x-text="providerLabel(group.provider)"></span>
+                  <span x-text="providerGroupLabel(group.provider)"></span>
                   <span
                     class="text-xs font-normal text-[var(--apple-text-tertiary)]"
                     x-text="'(' + group.count + ')'"
@@ -1127,6 +1127,12 @@
                                 class="font-medium truncate"
                                 x-text="account.label || providerLabel(account.provider || 'copilot')"
                               ></p>
+                              <span
+                                x-show="isCodebuddySeries(account.provider)"
+                                class="badge"
+                                :class="codebuddyVariantClass(account.provider)"
+                                x-text="codebuddyVariantLabel(account.provider)"
+                              ></span>
                             </div>
                             <p
                               x-show="account.subtitle && isUniqueSubtitle(account.subtitle)"

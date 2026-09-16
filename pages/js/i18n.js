@@ -132,6 +132,9 @@ const i18n = {
         "CodeBuddy CLI（国际版）登录后的 refreshToken，用于自动刷新 accessToken（有效期 90 天）",
       "accounts.provider.codebuddy.jsonHint":
         "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
+      "accounts.provider.codebuddy.series": "CodeBuddy",
+      "accounts.provider.codebuddy.variant.intl": "国际版",
+      "accounts.provider.codebuddy.variant.cn": "国内版",
       "accounts.provider.codebuddy-cn": "CodeBuddy CN",
       "accounts.provider.codebuddy-cn.name": "CodeBuddy CN",
       "accounts.provider.codebuddy-cn.fields.accessToken":
@@ -960,6 +963,9 @@ const i18n = {
         "Refresh token from CodeBuddy CLI login (international), used to auto-refresh accessToken (valid for 90 days)",
       "accounts.provider.codebuddy.jsonHint":
         "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
+      "accounts.provider.codebuddy.series": "CodeBuddy",
+      "accounts.provider.codebuddy.variant.intl": "Intl",
+      "accounts.provider.codebuddy.variant.cn": "CN",
       "accounts.provider.codebuddy-cn": "CodeBuddy CN",
       "accounts.provider.codebuddy-cn.name": "CodeBuddy CN",
       "accounts.provider.codebuddy-cn.fields.accessToken":

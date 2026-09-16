@@ -10,7 +10,6 @@ import {
   connectionProvider,
   getProviderConnection,
   isAccountManagedConnection,
-  providerFromProtocol,
 } from "~/lib/provider-connections"
 import { patchRequestLog } from "~/lib/request-log"
 import {
@@ -114,11 +113,13 @@ export function recordUsage(input: UsageRecordInput): void {
   try {
     const now = timestamp ?? Date.now()
     const usageModel = resolveUsageModelId(accountId, model)
-    // 用 connection 字段直接派生 provider（替代原 getAccount(accountId)?.provider）
+    // 用 connection 原生派生 provider（metadata.provider 优先）。
+    // 注意：codebuddy / codebuddy-cn 共用 codebuddy-native 协议，
+    // 不能用 providerFromProtocol（后写覆盖，永远得到 codebuddy-cn）。
     const conn = getProviderConnection(accountId)
     const provider =
       explicitProvider
-      ?? (conn ? providerFromProtocol(conn.protocol) : undefined)
+      ?? (conn ? connectionProvider(conn) : undefined)
       ?? (c.get("provider") as string | undefined)
       ?? "unknown"
     const resolvedConnectionId =

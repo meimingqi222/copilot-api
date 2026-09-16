@@ -17,9 +17,9 @@ import { setGitHubToken, addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
 import {
+  accountManagedProvider,
   getMutableProviderConnection,
   listAccountManagedConnections,
-  providerFromProtocol,
   removeProviderConnection,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
@@ -147,7 +147,7 @@ importAccountRoutes.post("/import", async (c) => {
 
     // 检查是否存在同 label+provider 的 connection(替代 listAccounts().find)
     const duplicate = listAccountManagedConnections().find((conn) => {
-      const connProvider = providerFromProtocol(conn.protocol) ?? "copilot"
+      const connProvider = accountManagedProvider(conn)
       return conn.name === label && connProvider === provider
     })
     if (duplicate) {
@@ -377,17 +377,15 @@ importAccountRoutes.post("/import-cpa", async (c) => {
             err,
           )
         })
-        const provider = providerFromProtocol(conn.protocol)
-        if (provider) {
-          const runtime = getProviderRuntime(provider)
-          if (runtime.refreshQuota) {
-            void runtime.refreshQuota(conn).catch((err: unknown) => {
-              logger.warn(
-                `CPA import: failed to refresh quota for "${conn.name}":`,
-                err,
-              )
-            })
-          }
+        const provider = accountManagedProvider(conn)
+        const runtime = getProviderRuntime(provider)
+        if (runtime.refreshQuota) {
+          void runtime.refreshQuota(conn).catch((err: unknown) => {
+            logger.warn(
+              `CPA import: failed to refresh quota for "${conn.name}":`,
+              err,
+            )
+          })
         }
       },
     })

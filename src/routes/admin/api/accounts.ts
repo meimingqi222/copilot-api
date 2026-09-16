@@ -21,12 +21,12 @@ import {
 import { logger } from "~/lib/logger"
 import {
   type ProviderConnection,
+  accountManagedProvider,
   getMutableProviderConnection,
   getProviderConnection,
   isAccountManagedConnection,
   listProviderConnections,
   persistProviderConnections,
-  providerFromProtocol,
   removeProviderConnection,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
@@ -230,7 +230,7 @@ accountApiRoutes.post("/:id/refresh", async (c) => {
   }
 
   try {
-    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+    const provider = accountManagedProvider(conn)
     const runtime = getProviderRuntime(provider)
     if (runtime.refreshAuth) {
       await runtime.refreshAuth(conn)

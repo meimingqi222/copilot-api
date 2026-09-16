@@ -6,7 +6,7 @@ import { forwardError, HTTPError } from "~/lib/error"
 import {
   getProviderConnection,
   listAccountManagedConnections,
-  providerFromProtocol,
+  accountManagedProvider,
 } from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
@@ -40,7 +40,8 @@ function buildModelProviderHints(): Map<string, ProviderId> {
     })
 
   for (const { conn } of sortedConnections) {
-    const provider = providerFromProtocol(conn.protocol) ?? "copilot"
+    // codebuddy / codebuddy-cn 共用协议，必须用 metadata 优先的派生
+    const provider = accountManagedProvider(conn)
     for (const model of conn.models ?? []) {
       if (!hints.has(model.publicId)) {
         hints.set(model.publicId, provider as ProviderId)
