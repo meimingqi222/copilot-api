@@ -75,6 +75,13 @@ async function loadAccountsUnlocked(): Promise<void> {
     logLoadedAccounts()
   }
 
+  // 存量 codebuddy 连接修复：provider 重命名（codebuddy → codebuddy-cn）
+  // 之前创建的连接 metadata.provider 仍是 "codebuddy" 且 baseUrl 为 ""，
+  // metadata.provider 优先的派生会把它们误当成国际版。必须在
+  // statsStore.init() 的 repair-codebuddy-provider-attribution 之前执行，
+  // 否则历史用量会被固化成错误的 provider。
+  await repairCodebuddyCnConnections()
+
   // 处理 legacy GitHub token 文件(仅在无 account 时)
   if (listAccounts().length === 0) {
     try {
@@ -222,6 +229,60 @@ function normalizeAllConnectionRuntimeFields(): void {
   for (const conn of listProviderConnections()) {
     normalizeConnectionRuntimeFields(conn)
   }
+}
+
+const CODEBUDDY_CN_BASE_URL = "https://copilot.tencent.com/v2"
+const CODEBUDDY_CN_DOMAIN = "www.codebuddy.cn"
+
+/**
+ * 判断存量 codebuddy-native 连接是否为重命名前的国内版连接。
+ *
+ * 重命名（codebuddy → codebuddy-cn）之前创建的连接：
+ * - metadata.provider === "codebuddy"（当时只有国内版）
+ * - connection.baseUrl === ""（旧版 accountToConnectionForPersistence 对
+ *   account-managed 连接硬编码空 baseUrl）
+ *
+ * 重命名后新建的国际版连接 baseUrl 必为 https://www.codebuddy.ai/v2，
+ * 不会被误伤；用户手工把 baseUrl 指到腾讯域名的连接也按国内版处理。
+ */
+function isLegacyCodebuddyCnConnection(conn: ProviderConnection): boolean {
+  if (conn.protocol !== "codebuddy-native") return false
+  const meta = conn.metadata as Record<string, unknown> | undefined
+  if (!meta || meta.provider !== "codebuddy") return false
+  const baseUrl = (conn.baseUrl ?? "").trim().toLowerCase()
+  if (baseUrl === "") return true
+  return (
+    baseUrl.includes("copilot.tencent.com") || baseUrl.includes("codebuddy.cn")
+  )
+}
+
+/**
+ * 一次性修复：把重命名前的国内版 CodeBuddy 连接改写为 codebuddy-cn
+ * （metadata.provider + 默认 baseUrl/X-Domain），有改动时落盘。
+ */
+async function repairCodebuddyCnConnections(): Promise<void> {
+  const repaired: Array<string> = []
+  for (const conn of listProviderConnections()) {
+    if (!isLegacyCodebuddyCnConnection(conn)) continue
+    const meta = conn.metadata as Record<string, unknown>
+    meta.provider = "codebuddy-cn"
+    if (!(conn.baseUrl ?? "").trim()) {
+      conn.baseUrl = CODEBUDDY_CN_BASE_URL
+    }
+    // 去掉已有的大小写变体再写入，避免 x-domain/X-Domain 双键并存
+    const headers = Object.fromEntries(
+      Object.entries(conn.headers ?? {}).filter(
+        ([key]) => key.toLowerCase() !== "x-domain",
+      ),
+    )
+    conn.headers = { ...headers, "X-Domain": CODEBUDDY_CN_DOMAIN }
+    repaired.push(conn.name)
+  }
+  if (repaired.length === 0) return
+  await saveProviderConnections(listProviderConnections())
+  logger.info(
+    `Migrated ${repaired.length} legacy CodeBuddy CN connection(s) to provider "codebuddy-cn": ${repaired.join(", ")}`,
+  )
 }
 
 function logLoadedAccounts(): void {

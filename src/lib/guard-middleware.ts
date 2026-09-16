@@ -23,8 +23,9 @@ export async function guardMiddleware(c: Context, next: Next) {
   const ip = getClientIp(c)
   const ua = c.req.header("user-agent") || undefined
 
-  // Skip guard for localhost requests
-  if (!ip || ip === "127.0.0.1" || ip === "::1") {
+  // Skip guard for localhost requests (与 getClientIp / requestLogger 的
+  // localhost 判定保持一致，含 IPv4-mapped IPv6 回环地址)
+  if (!ip || ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") {
     await next()
     return
   }

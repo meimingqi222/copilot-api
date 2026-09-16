@@ -180,25 +180,35 @@ export function backfillProviderColumn(db: Database): void {
  * codebuddy-native 永远反查为 codebuddy-cn，导致国际版账号的用量被记到
  * codebuddy-cn 分组下。按当前 connection 的真实 provider
  *（metadata.provider 优先）把历史行纠正回来。
+ *
+ * v2：v1 在存量国内版连接的 metadata.provider 修正（boot-migration 的
+ * repairCodebuddyCnConnections）之前运行过的话，会把国内版账号的历史行
+ * 误写成 "codebuddy"。改名重跑，在连接修复之后按真实 provider 再纠正一次。
  */
 export function repairCodebuddyProviderAttribution(db: Database): void {
   const applied = db
     .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
-    .get("repair-codebuddy-provider-attribution") as { ok: number } | undefined
+    .get("repair-codebuddy-provider-attribution-v2") as
+    | { ok: number }
+    | undefined
   if (applied) return
 
   const stmt = db.prepare(
     "UPDATE usage_stats SET provider = ? WHERE account_id = ? AND (provider IS NULL OR provider != ?)",
   )
-  for (const conn of listAccountManagedConnections()) {
+  const connections = listAccountManagedConnections()
+  for (const conn of connections) {
     const trueProvider = accountManagedProvider(conn)
     if (trueProvider !== "codebuddy" && trueProvider !== "codebuddy-cn") {
       continue
     }
     stmt.run(trueProvider, conn.id, trueProvider)
   }
+  // 连接尚未加载（如脚本直接 statsStore.init()）时不标记已应用，
+  // 留待下次正常启动重跑；空表重扫代价可忽略。
+  if (connections.length === 0) return
   db.run("INSERT INTO stats_migrations (name, applied_at) VALUES (?, ?)", [
-    "repair-codebuddy-provider-attribution",
+    "repair-codebuddy-provider-attribution-v2",
     Date.now(),
   ])
 }

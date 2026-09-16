@@ -332,7 +332,14 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
   const existingCredentials = acc.credentials
   const existingSettings = acc.settings
   const existingRuntime = acc.runtimeState
-  const provider = defaultProvider(acc.provider)
+  const rawProvider = defaultProvider(acc.provider)
+
+  // 历史遗留：accounts.json 时代的 "codebuddy" 只有国内版
+  // （copilot.tencent.com）。国际版 provider 是后来新增的，legacy 文件里
+  // 不可能出现，因此这里的 "codebuddy" 一律重命名为 "codebuddy-cn"。
+  // 新建的连接不走本函数（accountToConnectionForPersistence 直接读
+  // account.provider），国际版账号不受影响。
+  const provider = rawProvider === "codebuddy" ? "codebuddy-cn" : rawProvider
 
   if (provider === "copilot") {
     return migrateCopilotAccount(
@@ -364,7 +371,7 @@ function migrateAccountInternal(account: Record<string, unknown>): Account {
     )
   }
 
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
+  if (provider === "codebuddy-cn") {
     return {
       ...base,
       provider,
