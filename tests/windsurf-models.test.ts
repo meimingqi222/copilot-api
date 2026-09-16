@@ -3,6 +3,7 @@ import { expect, test } from "bun:test"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { buildRouteTargets } from "~/lib/route-target"
+import { resolveDispatchModel } from "~/services/dispatch/shared"
 import { resolveWindsurfRequestModel } from "~/services/windsurf/create-chat-completions"
 import {
   extractWindsurfModelMappingsFromPayload,
@@ -708,4 +709,104 @@ test("resolveWindsurfRequestModel keeps uncollapsed / opaque models intact", () 
   expect(resolveWindsurfRequestModel(connection, "MODEL_PRIVATE_9")).toBe(
     "MODEL_PRIVATE_9",
   )
+})
+
+test("dispatch passes the requested head (not the default SKU) for windsurf effort selection", () => {
+  const connection = {
+    id: "windsurf-account",
+    name: "Windsurf",
+    protocol: "windsurf-native",
+    baseUrl: "https://api.windsurf.com",
+    enabled: true,
+    priority: 0,
+    createdAt: 0,
+    models: collapseWindsurfModelVariants([
+      {
+        publicId: "swe-2-high",
+        name: "SWE-2 High",
+        upstreamId: "swe-2-high",
+        vendor: "Windsurf",
+        endpoints: ["chat"],
+      },
+      {
+        publicId: "swe-2-medium",
+        name: "SWE-2 Medium",
+        upstreamId: "swe-2-medium",
+        vendor: "Windsurf",
+        endpoints: ["chat"],
+      },
+      {
+        publicId: "swe-2-max",
+        name: "SWE-2 Max",
+        upstreamId: "swe-2-max",
+        vendor: "Windsurf",
+        endpoints: ["chat"],
+      },
+    ]),
+    credentials: [
+      {
+        id: "ws-cred",
+        authMode: "bearer",
+        value: "token",
+        enabled: true,
+        status: "ready",
+        createdAt: Date.now(),
+      },
+    ],
+  } as unknown as ProviderConnection
+
+  const targets = buildRouteTargets({
+    publicModelId: "swe-2",
+    endpoint: "chat",
+    connections: [connection],
+    onlyAvailable: true,
+  })
+  expect(targets).toHaveLength(1)
+  const target = targets[0]
+  if (!target) throw new Error("expected a route target for swe-2")
+  expect(target.publicModelId).toBe("swe-2")
+  // Head default is high, but dispatch must not pre-resolve it: the adapter
+  // selects the SKU from reasoning_effort.
+  expect(target.upstreamModelId).toBe("swe-2-high")
+  expect(resolveDispatchModel(target)).toBe("swe-2")
+  expect(
+    resolveWindsurfRequestModel(
+      connection,
+      resolveDispatchModel(target),
+      "medium",
+    ),
+  ).toBe("swe-2-medium")
+  // The old path (payload.model = upstreamModelId) collapsed the head into a
+  // hidden pin and dropped the effort — locked here so it cannot regress.
+  expect(
+    resolveWindsurfRequestModel(connection, target.upstreamModelId, "medium"),
+  ).toBe("swe-2-high")
+
+  // Explicit pins still pin: publicModelId === upstreamModelId there.
+  const pinTargets = buildRouteTargets({
+    publicModelId: "swe-2-high",
+    endpoint: "chat",
+    connections: [connection],
+    onlyAvailable: true,
+  })
+  expect(pinTargets).toHaveLength(1)
+  const pin = pinTargets[0]
+  if (!pin) throw new Error("expected a route target for swe-2-high")
+  expect(resolveDispatchModel(pin)).toBe("swe-2-high")
+  expect(
+    resolveWindsurfRequestModel(
+      connection,
+      resolveDispatchModel(pin),
+      "medium",
+    ),
+  ).toBe("swe-2-high")
+
+  // Non-windsurf targets keep the static upstream mapping.
+  expect(
+    resolveDispatchModel({
+      protocol: "openai-compatible",
+      publicModelId: "gpt-x",
+      upstreamModelId: "gpt-x-upstream",
+    } as unknown as Parameters<typeof resolveDispatchModel>[0]),
+  ).toBe("gpt-x-upstream")
 })

@@ -79,6 +79,23 @@ function decorateResult(
   return { ...result, identity } as DispatchResult
 }
 
+/**
+ * Dispatch-time model id for a route target.
+ *
+ * Windsurf collapses thinking-effort variants into one head (e.g. `swe-2`)
+ * whose `upstreamModelId` is the default-effort SKU (`swe-2-high`). The real
+ * SKU must be selected inside the adapter from `reasoning_effort`
+ * (`resolveWindsurfRequestModel`). Pre-resolving to `upstreamModelId` here
+ * turns a head request into a hidden pin (`swe-2-high`) and silently drops
+ * the requested effort (e.g. `medium` → `high`). Pass the requested head id
+ * through instead; explicit pins still pin because their
+ * `publicModelId === upstreamModelId`.
+ */
+export function resolveDispatchModel(target: RouteTarget): string {
+  if (target.protocol === "windsurf-native") return target.publicModelId
+  return target.upstreamModelId
+}
+
 export async function dispatchRequest(
   options: DispatchOptions,
   admission: RequestAdmission,
@@ -115,7 +132,7 @@ export async function dispatchRequest(
         }
         const chatPayload = {
           ...payload,
-          model: target.upstreamModelId,
+          model: resolveDispatchModel(target),
         }
 
         // Follow the endpoint selected by route-target resolution. Adapter
@@ -200,7 +217,7 @@ export async function dispatchRequest(
               credential: cred,
               payload: {
                 ...payload,
-                model: target.upstreamModelId,
+                model: resolveDispatchModel(target),
               },
               signal,
               ctx: executionContext,
@@ -215,7 +232,7 @@ export async function dispatchRequest(
             credential: cred,
             payload: {
               ...payload,
-              model: target.upstreamModelId,
+              model: resolveDispatchModel(target),
             },
             signal,
             ctx: executionContext,
@@ -260,7 +277,7 @@ export async function dispatchRequest(
             credential: cred,
             payload: {
               ...payload,
-              model: target.upstreamModelId,
+              model: resolveDispatchModel(target),
             },
             signal,
             ctx: messageExecutionContext,
@@ -279,7 +296,7 @@ export async function dispatchRequest(
           credential: cred,
           payload: {
             ...payload,
-            model: target.upstreamModelId,
+            model: resolveDispatchModel(target),
           },
           signal,
           ctx: messageExecutionContext,
