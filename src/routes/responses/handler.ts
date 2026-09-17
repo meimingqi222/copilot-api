@@ -129,6 +129,8 @@ export async function handleResponses(c: Context) {
       const pingInterval = createSsePingInterval(stream)
       let accountId: string | undefined
       let completedResponse: ResponsesResponse | undefined
+      // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
+      let usageRecorded = false
       let firstChunkTs: number | undefined
       let outputObserved = false
       const streamStartTs = Date.now()
@@ -160,6 +162,7 @@ export async function handleResponses(c: Context) {
             tps,
             streaming: false,
           })
+          usageRecorded = true
           await writeSseEvent(stream, JSON.stringify(result.response))
           markStreamTerminal(
             c,
@@ -239,7 +242,7 @@ export async function handleResponses(c: Context) {
         await writeResponsesErrorEvent(stream, error)
       } finally {
         clearInterval(pingInterval)
-        if (completedResponse && accountId) {
+        if (completedResponse && accountId && !usageRecorded) {
           const elapsed = Date.now() - streamStartTs
           const completionTokens = completedResponse.usage?.output_tokens ?? 0
           const tps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0

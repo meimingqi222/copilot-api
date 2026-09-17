@@ -117,6 +117,8 @@ export async function handleAnthropicViaConnection(
     async (stream, sseSignal) => {
       let lastUsage: AnthropicStreamingUsage | undefined
       let resultAccountId: string | undefined
+      // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
+      let usageRecorded = false
       let firstChunkTs: number | undefined
       let streamStart = 0
       let messageStop = false
@@ -145,6 +147,7 @@ export async function handleAnthropicViaConnection(
             const tps =
               elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
             recordAnthropicUsage(c, result.accountId, response, tps)
+            usageRecorded = true
           }
           await writeSseEvent(stream, JSON.stringify(result.response))
           markStreamTerminal(c, "message_stop", "success", true)
@@ -201,7 +204,7 @@ export async function handleAnthropicViaConnection(
           messageStop ? "success" : "incomplete",
           outputObserved,
         )
-        if (resultAccountId) {
+        if (resultAccountId && !usageRecorded) {
           // 常见情况有 usage;无 usage 时才做本地估算(惰性,零开销)。
           const estimatedInputTokens =
             lastUsage ? 0 : await estimateAnthropicInputTokens(anthropicPayload)

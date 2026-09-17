@@ -72,8 +72,26 @@ export const requestLogger = async (c: Context, next: Next) => {
     await dumpIncomingRequest(c, { requestId: ctx.requestId, clientIp })
   }
 
+  // nextError 提前声明：persistRequestLog 在流式 deferred 落盘时也需要它
+  // 来判断 500（此时 c.res.status 还没反映抛错）。
+  let nextError: unknown
   const persistRequestLog = () => {
     if (!claimRequestLogFinish(c)) return
+    // daily_stats 与 request log 同一次落盘、恰好一次：
+    // 流式请求的 accountId 在 SSE producer 里 dispatch 后才落定，
+    // middleware finally 时还拿不到，放这里才能计入流式。
+    // 非流式行为不变（finally 里同步调用，status/accountId 与原来一致）。
+    queueMicrotask(() => {
+      try {
+        const accountId = c.get("accountId")
+        if (!accountId) return
+        const status = nextError ? 500 : c.res.status
+        if (status >= 400) statsStore.incrementRequestAndError(accountId)
+        else statsStore.incrementRequests(accountId)
+      } catch {
+        logger.debug("Failed to persist stats")
+      }
+    })
     // 被安全防护拉黑的请求不再写入系统日志（guard 快照仍会更新，
     // 以便在安全防护页看到最后活跃时间）。
     try {
@@ -114,7 +132,6 @@ export const requestLogger = async (c: Context, next: Next) => {
   }
   setRequestLogFinisher(c, persistRequestLog)
 
-  let nextError: unknown
   try {
     await next()
   } catch (error) {
@@ -123,7 +140,6 @@ export const requestLogger = async (c: Context, next: Next) => {
     throw error
   } finally {
     const status = nextError ? 500 : c.res.status
-    const accountId = c.get("accountId")
     // Hono returns the SSE Response before its producer has consumed the
     // upstream stream. The producer explicitly finishes these requests after
     // observing the protocol terminal; non-stream requests finish here.
@@ -169,17 +185,6 @@ export const requestLogger = async (c: Context, next: Next) => {
     }
 
     reportGuardOutcome(c, status)
-
-    if (accountId) {
-      queueMicrotask(() => {
-        try {
-          if (status >= 400) statsStore.incrementRequestAndError(accountId)
-          else statsStore.incrementRequests(accountId)
-        } catch {
-          logger.debug("Failed to persist stats")
-        }
-      })
-    }
   }
 }
 
