@@ -756,8 +756,17 @@ function pruneIdleUpstreamSessions(now = Date.now()): void {
     }
     // Never reap a socket with a turn in flight: a long generation can run
     // past the idle timeout with events still flowing (the consumer
-    // heartbeats lastUsedAt on every upstream frame).
-    if (sess.activeTurns > 0) continue
+    // heartbeats lastUsedAt on every upstream frame). The max-age backstop
+    // covers a wedged consumer (an abandoned iterable that never releases):
+    // a live turn would already have failed on the 120s stream-idle
+    // timeout without traffic, so a busy socket this stale is dead weight
+    // and must not pin the connection past the upstream hard limit.
+    if (
+      sess.activeTurns > 0
+      && now - sess.lastUsedAt <= getUpstreamWsMaxAge(sess.provider)
+    ) {
+      continue
+    }
     if (now - sess.lastUsedAt > UPSTREAM_WS_IDLE_MS) {
       destroySession(key, "idle_timeout")
     }

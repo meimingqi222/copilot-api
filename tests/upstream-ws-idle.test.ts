@@ -59,12 +59,46 @@ describe("upstream websocket idle reaper", () => {
     const ws = makeFakeWs()
     const sess = makeSession("codex::acc-1::exec-1", ws)
     sess.activeTurns = 1
+    sess.lastUsedAt = Date.now()
     sessions.set(sess.key, sess)
 
     pruneIdleUpstreamSessionsForTest(Date.now())
 
     expect(sessions.get(sess.key)).toBe(sess)
     expect(ws.closeCalls).toBe(0)
+  })
+
+  test("keeps a busy socket past the idle timeout but within max age", () => {
+    // The reported incident: a ~6min generation with events flowing must
+    // survive the 5min idle reaper while its turn holds the socket.
+    const ws = makeFakeWs()
+    const sess = makeSession("codex::acc-1::exec-1", ws)
+    sess.activeTurns = 1
+    const now = Date.now()
+    sess.lastUsedAt = now - 6 * 60_000
+    sessions.set(sess.key, sess)
+
+    pruneIdleUpstreamSessionsForTest(now)
+
+    expect(sessions.get(sess.key)).toBe(sess)
+    expect(ws.closeCalls).toBe(0)
+  })
+
+  test("reaps a wedged busy socket past the max socket age", () => {
+    // An abandoned consumer that never releases must not pin a socket
+    // past the provider hard limit (55min for codex).
+    const ws = makeFakeWs()
+    const sess = makeSession("codex::acc-1::exec-1", ws)
+    sess.activeTurns = 1
+    const now = Date.now()
+    sess.lastUsedAt = now - 56 * 60_000
+    sessions.set(sess.key, sess)
+
+    pruneIdleUpstreamSessionsForTest(now)
+
+    expect(sessions.has(sess.key)).toBe(false)
+    expect(ws.closeCalls).toBe(1)
+    expect(sess.localCloseReason).toBe("idle_timeout")
   })
 
   test("reaps a truly idle socket", () => {
