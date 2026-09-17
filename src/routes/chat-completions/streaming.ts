@@ -3,7 +3,10 @@ import type { Context } from "hono"
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
-import { resolveRetryableCode } from "~/lib/error-builder"
+import {
+  extractUpstreamErrorMessage,
+  resolveRetryableCode,
+} from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
 import { endMemoryTrace, updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
@@ -338,8 +341,7 @@ export function handleStreamingCompletion(
           return
         }
         const errorMessage =
-          knownError?.message
-          ?? (error instanceof Error ? error.message : "Internal server error")
+          knownError?.message ?? extractUpstreamErrorMessage(error)
         const errorType =
           knownError?.type
           ?? (error instanceof HTTPError && error.response.status === 429 ?

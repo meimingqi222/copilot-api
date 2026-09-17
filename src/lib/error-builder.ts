@@ -38,6 +38,53 @@ export function extractErrorMessage(
   return defaultMessage
 }
 
+/**
+ * Display message for a failed upstream call, preferring the provider's own
+ * wording over the adapter's generic context message.
+ *
+ * Streaming error frames (chat `event: error`) can only carry what this
+ * returns: the HTTP status is already committed as 200 and
+ * `HTTPError.responseBody` never leaves the server. Downstream classifiers
+ * key overflow recovery off the provider wording (`prompt is too long`,
+ * `context_length_exceeded`), so a generic "Failed to create ..." degrades a
+ * context overflow to request_rejected and no recovery runs.
+ *
+ * Shape coverage, in order:
+ * - CodeBuddy-style `{ extError: { message }, msg }` (no `error` wrapper).
+ * - OpenAI-style `{ error: { message }, message }`.
+ * - CodeBuddy human-readable fallback `displayMsg.en`.
+ * Anything else keeps the adapter's message, exactly as before.
+ */
+export function extractUpstreamErrorMessage(error: unknown): string {
+  if (error instanceof HTTPError && error.responseBody) {
+    try {
+      const parsed = JSON.parse(error.responseBody) as {
+        error?: { message?: unknown }
+        message?: unknown
+        msg?: unknown
+        extError?: { message?: unknown }
+        displayMsg?: { en?: unknown }
+      }
+      const candidate =
+        readMessageText(parsed.extError?.message)
+        ?? readMessageText(parsed.msg)
+        ?? readMessageText(parsed.error?.message)
+        ?? readMessageText(parsed.message)
+        ?? readMessageText(parsed.displayMsg?.en)
+      if (candidate) return candidate
+    } catch {
+      // Not JSON — fall through to the adapter message below.
+    }
+  }
+  return error instanceof Error ? error.message : "Internal server error"
+}
+
+function readMessageText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed : undefined
+}
+
 export function buildAnthropicContextWindowError(error: HTTPError): {
   type: string
   error: { type: string; message: string }

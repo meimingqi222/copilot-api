@@ -13,7 +13,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
 import { HTTPError } from "~/lib/error"
-import { resolveRetryableCode } from "~/lib/error-builder"
+import {
+  extractUpstreamErrorMessage,
+  resolveRetryableCode,
+} from "~/lib/error-builder"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import {
   __resetProviderConnectionsForTest,
@@ -51,6 +54,61 @@ describe("resolveRetryableCode", () => {
     // A provider code is not a valid HTTP status, so it must not leak through
     // as-is (clients only accept 400–599).
     expect(resolveRetryableCode(jsonError(200, { error: {} }))).toBe(500)
+  })
+})
+
+describe("extractUpstreamErrorMessage", () => {
+  test("prefers CodeBuddy extError.message", () => {
+    expect(
+      extractUpstreamErrorMessage(
+        jsonError(400, {
+          code: 11115,
+          msg: "prompt is too long: 1522332 tokens > 1048576 maximum",
+          extError: {
+            code: "context_length_exceeded",
+            message: "prompt is too long: 1522332 tokens > 1048576 maximum",
+          },
+        }),
+      ),
+    ).toBe("prompt is too long: 1522332 tokens > 1048576 maximum")
+  })
+
+  test("falls back to msg, then displayMsg.en", () => {
+    expect(
+      extractUpstreamErrorMessage(jsonError(400, { code: 11115, msg: "oops" })),
+    ).toBe("oops")
+    expect(
+      extractUpstreamErrorMessage(
+        jsonError(400, { displayMsg: { en: "limit hit" } }),
+      ),
+    ).toBe("limit hit")
+  })
+
+  test("reads OpenAI-shaped error.message", () => {
+    expect(
+      extractUpstreamErrorMessage(
+        jsonError(400, { error: { message: "bad request" } }),
+      ),
+    ).toBe("bad request")
+  })
+
+  test("keeps the adapter message for non-JSON and unknown-shape bodies", () => {
+    const plain = new HTTPError(
+      "Failed to create chat completions",
+      new Response("nope", { status: 400 }),
+      "not json",
+    )
+    expect(extractUpstreamErrorMessage(plain)).toBe(
+      "Failed to create chat completions",
+    )
+    expect(extractUpstreamErrorMessage(jsonError(400, { code: 11115 }))).toBe(
+      "upstream failed",
+    )
+  })
+
+  test("passes through plain errors", () => {
+    expect(extractUpstreamErrorMessage(new Error("boom"))).toBe("boom")
+    expect(extractUpstreamErrorMessage(undefined)).toBe("Internal server error")
   })
 })
 
@@ -188,5 +246,67 @@ describe("chat-completions streamed error frame (integration)", () => {
     // `>=500` is what makes ZCode/opencode treat it as retryable.
     expect(payload.error.code).toBe(500)
     expect(payload.error.status).toBe(500)
+  })
+
+  test("CodeBuddy-style 400 surfaces the upstream overflow wording in the error frame", async () => {
+    // CodeBuddy reports context overflows as HTTP 400 with a non-OpenAI
+    // body shape (`code`/`msg`/`extError`). The streamed error frame must
+    // carry that wording: downstream classifiers key overflow recovery off
+    // `/prompt is too long/i` / `context_length_exceeded`, and a generic
+    // adapter message degrades the failure to request_rejected, so no
+    // compaction or image-omission recovery ever runs.
+    const overflowBody = {
+      code: 11115,
+      msg: "prompt is too long: 1522332 tokens > 1048576 maximum",
+      requestId: "test-request-id-11115",
+      extError: {
+        code: "context_length_exceeded",
+        message: "prompt is too long: 1522332 tokens > 1048576 maximum",
+        param: "",
+        type: "invalid_request_error",
+        StatusCode: 400,
+      },
+      displayMsg: {
+        en: "The request exceeds the model context limit. Please shorten the conversation or remove attachments.",
+        zh: "对话内容超出模型长度上限，请精简对话或减少附件后重试。",
+      },
+    }
+    const fetchMock = mock(
+      () =>
+        new Response(JSON.stringify(overflowBody), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-v4.1-flash",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    const text = await response.text()
+    expect(text).toContain("event: error")
+
+    const frame = text
+      .split("\n")
+      .find((line) => line.startsWith("data: ") && line.includes('"error"'))
+    expect(frame).toBeDefined()
+    const payload = JSON.parse((frame as string).slice("data: ".length)) as {
+      error: { message: string; code: number; status: number }
+    }
+    expect(payload.error.message).toContain("prompt is too long")
+    // Numeric status-like code is preserved: 400 stays non-retryable
+    // (overflow recovery compacts instead of retrying).
+    expect(payload.error.code).toBe(400)
+    expect(payload.error.status).toBe(400)
   })
 })
