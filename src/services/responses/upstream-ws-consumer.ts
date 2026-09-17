@@ -29,6 +29,18 @@ export interface UpstreamWsSession {
   lastUsedAt: number
   /** Wall-clock ms when the live socket was opened (0 until connected). */
   openedAt: number
+  /**
+   * In-flight turns holding this socket (consumers attached). The idle
+   * reaper must never reap a session with active turns — a long generation
+   * can legitimately run past UPSTREAM_WS_IDLE_MS with events still flowing.
+   */
+  activeTurns: number
+  /**
+   * Set when the socket was closed by us (idle reaper / client disconnect /
+   * invalidation) rather than the upstream. Lets onClose attribute the close
+   * correctly instead of misreporting our own close as an upstream drop.
+   */
+  localCloseReason: string | null
 }
 
 export const sessions = new Map<string, UpstreamWsSession>()
@@ -75,6 +87,7 @@ export function createTurnConsumer(options: {
   let listenersRemoved = false
   let chainReleased = false
   let socketErrored = false
+  sess.activeTurns += 1
 
   // Read through a getter so eslint/TS control-flow analysis does not narrow
   // `terminalError` to `undefined` (it is only assigned inside the listener
@@ -136,6 +149,9 @@ export function createTurnConsumer(options: {
     }
     queue.push(data)
     queueBytes += dataBytes
+    // Heartbeat for the idle reaper: a turn with events still flowing is
+    // busy no matter how long ago response.create was sent.
+    sess.lastUsedAt = Date.now()
     notify()
   }
   const onError = () => {
@@ -153,13 +169,26 @@ export function createTurnConsumer(options: {
       const closeCode = Number.isFinite(event.code) ? event.code : 1006
       const rawReason = typeof event.reason === "string" ? event.reason : ""
       const reason = rawReason.trim().replaceAll(/\s+/g, " ").slice(0, 200)
-      logger.warn(
-        `${provider} websockets: upstream socket closed unexpectedly `
-          + `session=${executionSessionId} auth=${accountId} code=${closeCode} `
-          + `reason=${reason || "(none)"} was_clean=${event.wasClean} `
-          + `socket_age_ms=${socketAgeMs} queue_messages=${queue.length} `
-          + `queue_bytes=${queueBytes}`,
-      )
+      const localReason = sess.localCloseReason
+      if (localReason) {
+        // We closed this socket ourselves (idle reaper / client disconnect /
+        // invalidation) — not an upstream drop. Info, not warn.
+        logger.info(
+          `${provider} websockets: upstream socket closed locally `
+            + `session=${executionSessionId} auth=${accountId} code=${closeCode} `
+            + `reason=${reason || "(none)"} was_clean=${event.wasClean} `
+            + `local_reason=${localReason} socket_age_ms=${socketAgeMs} `
+            + `queue_messages=${queue.length} queue_bytes=${queueBytes}`,
+        )
+      } else {
+        logger.warn(
+          `${provider} websockets: upstream socket closed unexpectedly `
+            + `session=${executionSessionId} auth=${accountId} code=${closeCode} `
+            + `reason=${reason || "(none)"} was_clean=${event.wasClean} `
+            + `socket_age_ms=${socketAgeMs} queue_messages=${queue.length} `
+            + `queue_bytes=${queueBytes}`,
+        )
+      }
     }
     if (!done) {
       rejectWait(
@@ -192,6 +221,8 @@ export function createTurnConsumer(options: {
   const release = () => {
     if (chainReleased) return
     chainReleased = true
+    sess.activeTurns = Math.max(0, sess.activeTurns - 1)
+    sess.lastUsedAt = Date.now()
     releaseChain()
   }
 

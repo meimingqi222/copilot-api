@@ -376,6 +376,8 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       closed: true,
       lastUsedAt: Date.now(),
       openedAt: 0,
+      activeTurns: 0,
+      localCloseReason: null,
     }
     sessions.set(key, sess)
   }
@@ -444,6 +446,8 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       sess.url = wsUrl
       sess.openedAt = Date.now()
       sess.lastUsedAt = Date.now()
+      // Fresh socket: drop any attribution left by a previous local close.
+      sess.localCloseReason = null
       openedFresh = true
     }
 
@@ -727,6 +731,9 @@ function destroySession(key: string, reason: string): void {
   if (!sess) return
   sessions.delete(key)
   sess.closed = true
+  // Attribute the coming close event to us so the turn consumer logs it as
+  // a local close instead of an upstream drop.
+  sess.localCloseReason = reason
   if (sess.ws !== null) {
     try {
       sess.ws.close()
@@ -747,6 +754,10 @@ function pruneIdleUpstreamSessions(now = Date.now()): void {
       sessions.delete(key)
       continue
     }
+    // Never reap a socket with a turn in flight: a long generation can run
+    // past the idle timeout with events still flowing (the consumer
+    // heartbeats lastUsedAt on every upstream frame).
+    if (sess.activeTurns > 0) continue
     if (now - sess.lastUsedAt > UPSTREAM_WS_IDLE_MS) {
       destroySession(key, "idle_timeout")
     }
@@ -804,6 +815,11 @@ export function clearUpstreamWebsocketSessionsForTest(): void {
 /** Test hook: live session count. */
 export function getUpstreamWebsocketSessionCountForTest(): number {
   return sessions.size
+}
+
+/** Test hook: run the idle reaper on demand. */
+export function pruneIdleUpstreamSessionsForTest(now = Date.now()): void {
+  pruneIdleUpstreamSessions(now)
 }
 
 /** Test hook for handshake cancellation without opening a real socket. */
