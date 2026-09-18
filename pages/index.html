@@ -1637,6 +1637,13 @@
                     x-text="t('cancel')"
                   ></button>
                   <button
+                    x-show="newAccount.provider === 'windsurf'"
+                    @click="startOAuthFlow()"
+                    class="btn btn-secondary"
+                    x-text="t('accounts.provider.windsurf.oauthLogin') || 'Browser login (OAuth)'"
+                    title="Login via app.devin.ai, no manual token needed"
+                  ></button>
+                  <button
                     @click="submitAccount()"
                     class="btn btn-primary"
                     x-text="selectedProvider()?.authMode === 'oauth' ? t('accounts.oauth.authorize') : (selectedProvider()?.authMode === 'device_flow' ? t('accounts.deviceFlow.step2') : t('create'))"

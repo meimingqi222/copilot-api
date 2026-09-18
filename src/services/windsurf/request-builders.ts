@@ -19,6 +19,7 @@ import {
 } from "./content-policy-sanitizer"
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectFrame } from "./protobuf"
+import { nextWindsurfSessionTurnIndex } from "./session-turn"
 
 // ── Enum constants (aligned with oh-my-pi generated protobuf) ──────────────────
 
@@ -455,6 +456,88 @@ function buildSystemPromptCacheOptions(): ProtobufEncoder {
   return opts
 }
 
+/**
+ * Thread session metadata (field 15), matching native devin-cli / CPA
+ * `BuildDevinGetChatMessageRequest`:
+ * - f15.1: sessionId (stable cascadeId, prompt-cache key)
+ * - f15.2: turnIndex, per-session monotonic ordinal, omitted when 0
+ * - f15.3: 4 (fixed)
+ * - f15.4: 14, emitted on user-turn boundaries
+ */
+function buildThreadSessionMetadata(
+  payload: ChatCompletionsPayload,
+  cascadeId: string,
+  usedTurnIndex: number,
+): ProtobufEncoder {
+  const f15 = new ProtobufEncoder()
+  f15.writeString(1, cascadeId)
+  // An explicit turn index reuses the first attempt's ordinal across
+  // same-turn retries; callers that omit it must advance the counter first.
+  if (usedTurnIndex > 0) {
+    f15.writeVarint(2, usedTurnIndex)
+  }
+  f15.writeVarint(3, 4)
+  if (isUserTurnBoundary(payload, usedTurnIndex)) {
+    f15.writeVarint(4, 14)
+  }
+  return f15
+}
+
+/**
+ * Native devin-cli emits f15.4=14 on user-turn boundaries: last turn is user
+ * and (first turn, or previous turn is not user).
+ */
+function isUserTurnBoundary(
+  payload: ChatCompletionsPayload,
+  turnIndex: number,
+): boolean {
+  const roles: Array<string> = []
+  for (const message of payload.messages) {
+    switch (message.role) {
+      case "system": {
+        continue
+      }
+      case "user":
+      case "developer": {
+        // Skip empty turns the same way writeChatMessagePrompt does.
+        const { text, images } = serializeMessageContent(message.content)
+        if (!hasText(text) && images.length === 0) continue
+        roles.push("user")
+        break
+      }
+      case "assistant": {
+        const content = serializeMessageContent(message.content)
+        const toolCalls = message.tool_calls ?? []
+        const reasoningText = resolveAssistantReasoning(message)
+        if (
+          !hasText(content.text)
+          && !reasoningText
+          && toolCalls.length === 0
+        ) {
+          continue
+        }
+        roles.push("assistant")
+        break
+      }
+      case "tool": {
+        const { text, images } = serializeMessageContent(message.content)
+        if ((!hasText(text) && images.length === 0) || !message.tool_call_id) {
+          continue
+        }
+        roles.push("tool")
+        break
+      }
+      default: {
+        break
+      }
+    }
+  }
+  if (roles.length === 0 || roles.at(-1) !== "user") return false
+  if (turnIndex === 0) return true
+  if (roles.length < 2) return true
+  return roles.at(-2) !== "user"
+}
+
 // ── Full request builder ───────────────────────────────────────────────────────
 
 export function buildRequest(opts: {
@@ -466,14 +549,32 @@ export function buildRequest(opts: {
   /** Stable per-conversation prompt_id (field 17). */
   promptId?: string
   /**
+   * Explicit per-session turn ordinal (field 15.2). When omitted, the
+   * per-session counter advances. Pass the first attempt's index to reuse
+   * it across same-turn retries instead of consuming a new ordinal.
+   */
+  turnIndex?: number
+  /**
    * Short-lived userJwt from the GetUserJwt exchange, carried in
    * Metadata.user_jwt (field 21). Real Windsurf sends it on every chat
    * request (oh-my-pi devin.ts line 514); omitting it is detectable.
    */
   userJwt?: string
-  onEncoded?: (metrics: { protobufBytes: number; wireBytes: number }) => void
+  onEncoded?: (metrics: {
+    protobufBytes: number
+    wireBytes: number
+    turnIndex: number
+  }) => void
 }): Uint8Array {
-  const { payload, apiKey, requestModel, cascadeId, promptId, userJwt } = opts
+  const {
+    payload,
+    apiKey,
+    requestModel,
+    cascadeId,
+    promptId,
+    turnIndex,
+    userJwt,
+  } = opts
   const request = new ProtobufEncoder(estimateRequestBytes(payload))
 
   request.writeMessage(1, buildWindsurfClientMetadata(apiKey, userJwt))
@@ -499,6 +600,13 @@ export function buildRequest(opts: {
   request.writeBool(11, true) // disable_parallel_tool_calls
   request.writeMessage(12, buildToolChoice())
   request.writeMessage(13, buildSystemPromptCacheOptions())
+  // Resolve here (not inside the helper) so the reported index is exactly
+  // the one placed on the wire.
+  const usedTurnIndex = turnIndex ?? nextWindsurfSessionTurnIndex(cascadeId)
+  request.writeMessage(
+    15,
+    buildThreadSessionMetadata(payload, cascadeId, usedTurnIndex),
+  )
   request.writeString(16, cascadeId)
   if (promptId) {
     request.writeString(17, promptId)
@@ -513,6 +621,7 @@ export function buildRequest(opts: {
   opts.onEncoded?.({
     protobufBytes: protobuf.byteLength,
     wireBytes: framed.byteLength,
+    turnIndex: usedTurnIndex,
   })
   return framed
 }

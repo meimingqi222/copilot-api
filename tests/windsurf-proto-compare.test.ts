@@ -93,7 +93,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     const meta = metadataFields(builtPayload)
     const fp = fingerprintWindsurfRequest(built)
 
-    expect(top).toEqual([1, 2, 3, 7, 8, 10, 11, 12, 13, 16, 17, 20, 21, 22])
+    expect(top).toEqual([1, 2, 3, 7, 8, 10, 11, 12, 13, 15, 16, 17, 20, 21, 22])
     expect(meta).toEqual([1, 2, 3, 4, 7, 12])
 
     expect(fp.requestType).toBe(5) // CASCADE

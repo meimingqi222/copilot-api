@@ -74,6 +74,10 @@ const TRANSIENT_SERVER_PATTERN =
 /**
  * Classify from already-parsed code + message strings (also used for HTTP
  * error response bodies that share the same {error:{code,message}} shape).
+ *
+ * Code-first mapping mirrors CPA `ParseDevinTrailerError` for Connect-RPC
+ * trailer codes (snake_case), while the message checks below preserve the
+ * natural-language Windsurf error frames ("Permission denied", ...).
  */
 export function classifyWindsurfErrorText(
   code: string | undefined,
@@ -81,6 +85,85 @@ export function classifyWindsurfErrorText(
 ): ClassifiedWindsurfError {
   const lowerMsg = message.toLowerCase()
   const lowerCode = (code ?? "").toLowerCase()
+
+  // Prompt content rejection is a property of the request, not the account —
+  // it must win over code-based auth mapping (live content-policy frames
+  // arrive with code `permission_denied`).
+  if (/content policy|blocked by our/.test(lowerMsg)) {
+    return { kind: "content_policy", message, code }
+  }
+
+  // Connect-RPC trailer codes (CPA parity). Checked before the
+  // natural-language message checks so a bare `resource_exhausted` /
+  // `permission_denied` code classifies correctly even when the message
+  // carries no quota keywords.
+  switch (lowerCode) {
+    case "resource_exhausted": {
+      return {
+        kind: "rate_limited",
+        retryAfterMs: parseResetsInDuration(message),
+        message,
+        code,
+      }
+    }
+    case "permission_denied": {
+      if (/high demand/.test(lowerMsg)) {
+        return {
+          kind: "rate_limited",
+          retryAfterMs: parseResetsInDuration(message),
+          message,
+          code,
+        }
+      }
+      if (
+        /internal error|unavailable|deadline|timed out|timeout|overloaded|bad gateway|gateway timeout|service unavailable/.test(
+          lowerMsg,
+        )
+      ) {
+        return { kind: "server_error", message, code }
+      }
+      return { kind: "auth_error", message, code }
+    }
+    case "failed_precondition": {
+      if (/quota|credit|acu|exhausted|limit/.test(lowerMsg)) {
+        const kind =
+          /message rate limit|resets in:/.test(lowerMsg) ? "rate_limited" : (
+            "quota_exhausted"
+          )
+        return {
+          kind,
+          retryAfterMs: parseResetsInDuration(message),
+          message,
+          code,
+        }
+      }
+      return { kind: "client_error", message, code }
+    }
+    case "invalid_argument": {
+      if (/internal error/.test(lowerMsg)) {
+        return { kind: "server_error", message, code }
+      }
+      // Fall through to message checks below; unknown invalid_argument
+      // without a message signal stays client_error via the default path.
+      break
+    }
+    case "unauthenticated": {
+      return { kind: "auth_error", message, code }
+    }
+    case "internal":
+    case "unavailable":
+    case "deadline_exceeded": {
+      return { kind: "server_error", message, code }
+    }
+    case "canceled": {
+      // Upstream cancellation (CPA maps to 499). Failover-safe to treat
+      // as transient server error rather than quota.
+      return { kind: "server_error", message, code }
+    }
+    default: {
+      break
+    }
+  }
 
   // "Permission denied" with "message rate limit" / "Resets in" → per-model
   // message quota (the 3h-reset error the user encountered).
@@ -102,14 +185,12 @@ export function classifyWindsurfErrorText(
     }
   }
 
-  // Prompt content was rejected by the upstream content policy. This is a
-  // property of the request, not of the account, so it must not be folded into
-  // the rate-limit branch: cooling the connection down over one client's prompt
-  // takes every other client of that account down with it, and failover cannot
-  // help because the same prompt is rejected on every credential.
-  if (/content policy|blocked by our/.test(lowerMsg)) {
-    return { kind: "content_policy", message, code }
-  }
+  // Prompt content rejection was already handled above (before the code
+  // switch) since live frames arrive with code `permission_denied`.
+  // Kept here as a comment to preserve the rationale: cooling the
+  // connection down over one client's prompt takes every other client of
+  // that account down with it, and failover cannot help because the same
+  // prompt is rejected on every credential.
 
   if (/unauthenticated|invalid api key|auth/i.test(lowerCode + lowerMsg)) {
     return { kind: "auth_error", message, code }

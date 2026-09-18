@@ -10,7 +10,7 @@ import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 
 import type { PkceCodes } from "./pkce"
 
-export type OAuthFlowProvider = OAuthProviderId
+export type OAuthFlowProvider = OAuthProviderId | "windsurf"
 
 export interface OAuthPendingFlow {
   id: string

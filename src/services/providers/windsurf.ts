@@ -23,6 +23,13 @@ export const windsurfProviderRuntime: ProviderRuntime = {
         labelKey: "accounts.provider.windsurf.fields.apiKey",
         required: true,
       },
+      {
+        key: "proxyUrl",
+        type: "url",
+        labelKey: "accounts.oauth.fields.proxyUrl",
+        descriptionKey: "accounts.oauth.fields.proxyUrlHint",
+        placeholder: "http://127.0.0.1:7890",
+      },
     ],
   },
   supports(_connection, feature) {

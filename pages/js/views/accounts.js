@@ -3,6 +3,7 @@ const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
   "codex",
   "xai",
   "antigravity",
+  "windsurf",
 ])
 
 function accountsView() {
@@ -443,7 +444,13 @@ function accountsView() {
     async cancelOAuthFlow() {
       const provider = this.newAccount.provider
       const flowId = this.oauthFlowData?.flowId
-      if (!flowId || this.selectedProvider()?.authMode !== "oauth") {
+      // Windsurf is dual-mode (direct descriptor + OAuth login): allow
+      // canceling its OAuth flow even though authMode is "direct".
+      if (
+        !flowId
+        || (this.selectedProvider()?.authMode !== "oauth"
+          && provider !== "windsurf")
+      ) {
         return
       }
       try {

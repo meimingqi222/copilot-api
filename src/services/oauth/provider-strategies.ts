@@ -1,18 +1,19 @@
 import { randomUUID } from "node:crypto"
 
-import type { OAuthProviderId } from "~/lib/provider-config"
+import type { OAuthProviderId, ProviderId } from "~/lib/provider-config"
 import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
+import { isOAuthProviderId, PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import {
   setConnectionSetting,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 
 import type { OAuthFetchOptions } from "./fetch"
+import type { OAuthFlowProvider } from "./flows"
 import type { OAuthPendingFlow } from "./flows"
 import type { PkceCodes } from "./pkce"
 
@@ -40,6 +41,14 @@ import {
   type KimiDeviceCodeResponse,
 } from "./kimi"
 import {
+  applyWindsurfOAuthBundle,
+  createWindsurfOAuthStart,
+  exchangeWindsurfCodeForToken,
+  fetchWindsurfSelfProfile,
+  formatWindsurfSessionToken,
+  isWindsurfSessionToken,
+} from "./windsurf"
+import {
   applyXaiOAuthBundle,
   createXaiOAuthStart,
   discoverXaiOAuthEndpoints,
@@ -55,7 +64,7 @@ import {
  * 调用方负责后续 saveAccounts()/persistProviderConnections()。
  */
 export function createOAuthConnection(
-  provider: OAuthProviderId,
+  provider: ProviderId,
   label: string,
 ): ProviderConnection {
   const protocol = PROVIDER_PROTOCOL_MAP[provider]
@@ -336,6 +345,44 @@ const kimiStrategy: OAuthProviderStrategy = {
   },
 }
 
+const windsurfStrategy: OAuthProviderStrategy = {
+  flowType: "pkce-callback",
+  start() {
+    const s = createWindsurfOAuthStart()
+    return Promise.resolve({ authUrl: s.authUrl, state: s.state, pkce: s.pkce })
+  },
+  async exchange({ flow, code }) {
+    if (!flow.pkce) {
+      throw new Error("Windsurf OAuth flow is missing PKCE codes")
+    }
+    if (!code) {
+      throw new Error("Windsurf OAuth exchange requires an authorization code")
+    }
+    const conn = createOAuthConnection("windsurf", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    // Headless manual paste may carry a session token directly
+    // (CPA `parseDevinManualPaste` parity): skip the code exchange.
+    const pasted = code.trim()
+    const sessionToken =
+      isWindsurfSessionToken(pasted) ?
+        formatWindsurfSessionToken(pasted)
+      : formatWindsurfSessionToken(
+          await exchangeWindsurfCodeForToken(
+            pasted,
+            flow.pkce.codeVerifier,
+            flowFetchOptions(flow),
+          ),
+        )
+    const profile = await fetchWindsurfSelfProfile(
+      sessionToken,
+      flowFetchOptions(flow),
+    )
+    applyWindsurfOAuthBundle(conn, { sessionToken, ...profile })
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
 // ── Registry ────────────────────────────────────────────────────
 
 export const OAUTH_PROVIDER_STRATEGIES: Record<
@@ -349,16 +396,36 @@ export const OAUTH_PROVIDER_STRATEGIES: Record<
   kimi: kimiStrategy,
 }
 
-// ── Derived sets (replace hand-maintained Sets in oauth.ts) ─────
+/**
+ * Windsurf is dual-mode: the provider stays `direct` (token paste) so legacy
+ * classification (`isOAuthAccount`, refresher types, migration) is untouched,
+ * while PKCE OAuth login is offered as an additional login path producing the
+ * same `windsurf-native` connection shape. Kept out of
+ * `OAUTH_PROVIDER_STRATEGIES` (typed by `OAuthProviderId`) on purpose.
+ */
+export const WINDSURF_OAUTH_PROVIDER_ID = "windsurf" as const
 
-export const CALLBACK_OAUTH_PROVIDERS: ReadonlySet<OAuthProviderId> = new Set(
-  (
-    Object.entries(OAUTH_PROVIDER_STRATEGIES) as Array<
-      [OAuthProviderId, OAuthProviderStrategy]
-    >
+export type WindsurfOAuthProviderId = typeof WINDSURF_OAUTH_PROVIDER_ID
+
+export function getOAuthStrategy(
+  provider: string,
+): OAuthProviderStrategy | undefined {
+  if (provider === WINDSURF_OAUTH_PROVIDER_ID) return windsurfStrategy
+  if (!isOAuthProviderId(provider)) return undefined
+  return OAUTH_PROVIDER_STRATEGIES[provider]
+}
+
+export function isOAuthCapableProvider(
+  provider: string,
+): provider is OAuthFlowProvider {
+  return getOAuthStrategy(provider) !== undefined
+}
+
+export function isCallbackOAuthCapableProvider(
+  provider: string,
+): provider is OAuthFlowProvider {
+  const strategy = getOAuthStrategy(provider)
+  return (
+    strategy?.flowType === "pkce-callback" || strategy?.flowType === "callback"
   )
-    .filter(
-      ([, s]) => s.flowType === "pkce-callback" || s.flowType === "callback",
-    )
-    .map(([p]) => p),
-)
+}

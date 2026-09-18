@@ -109,6 +109,7 @@ const i18n = {
       "accounts.provider.codebuff.fields.model": "Codebuff 默认模型",
       "accounts.provider.codebuff.fields.allowFallbacks": "允许回退模型",
       "accounts.provider.windsurf.fields.apiKey": "Windsurf API Key",
+      "accounts.provider.windsurf.oauthLogin": "浏览器登录 (OAuth)",
       "accounts.provider.windsurf.fields.baseUrl": "Windsurf Base URL",
       "accounts.provider.windsurf.fields.defaultModel": "Windsurf 默认模型",
       "accounts.provider.windsurf.fields.appVersion": "Windsurf App 版本",
@@ -216,6 +217,11 @@ const i18n = {
       "accounts.oauth.xaiCallbackHint":
         "xAI 授权完成后会在页面显示授权码，请复制后粘贴到这里。",
       "accounts.oauth.xaiCallbackRequired": "请粘贴 xAI 授权码。",
+      "accounts.oauth.windsurfCallbackLabel": "Devin 授权码 / Session Token",
+      "accounts.oauth.windsurfCallbackPlaceholder":
+        "粘贴授权码、回调 URL 或 devin-session-token$...",
+      "accounts.oauth.windsurfCallbackHint":
+        "在打开的 Devin 页面完成登录后，将授权码（或 session token）粘贴到这里；token 粘贴可跳过换取步骤。",
       "accounts.oauth.claudeCallbackLabel": "Claude 回调地址",
       "accounts.oauth.claudeCallbackPlaceholder":
         "http://localhost:54545/callback?code=...&state=...",
@@ -943,6 +949,7 @@ const i18n = {
       "accounts.provider.codebuff.fields.allowFallbacks":
         "Allow Fallback Models",
       "accounts.provider.windsurf.fields.apiKey": "Windsurf API Key",
+      "accounts.provider.windsurf.oauthLogin": "Browser login (OAuth)",
       "accounts.provider.windsurf.fields.baseUrl": "Windsurf Base URL",
       "accounts.provider.windsurf.fields.defaultModel":
         "Windsurf Default Model",
@@ -1056,6 +1063,11 @@ const i18n = {
       "accounts.oauth.xaiCallbackHint":
         "After xAI authorization, copy the code shown on the page and paste it here.",
       "accounts.oauth.xaiCallbackRequired": "Paste the xAI authorization code.",
+      "accounts.oauth.windsurfCallbackLabel": "Devin auth code / session token",
+      "accounts.oauth.windsurfCallbackPlaceholder":
+        "Paste auth code, callback URL, or devin-session-token$...",
+      "accounts.oauth.windsurfCallbackHint":
+        "After signing in on the Devin page, paste the auth code (or session token) here; pasting a token skips the exchange step.",
       "accounts.oauth.claudeCallbackLabel": "Claude callback URL",
       "accounts.oauth.claudeCallbackPlaceholder":
         "http://localhost:54545/callback?code=...&state=...",

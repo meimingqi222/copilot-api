@@ -189,6 +189,7 @@ function computeRetryDelayMs(attempt: number): number {
 async function* decodeWindsurfFrames(
   stream: ReadableStream<Uint8Array>,
   memoryTraceId?: string,
+  opts?: { onEndStream?: () => void },
 ): AsyncIterable<Uint8Array> {
   try {
     for await (const frame of decodeConnectFrames(stream, {
@@ -201,6 +202,10 @@ async function* decodeWindsurfFrames(
         updateMemoryTrace(memoryTraceId, "windsurf_first_connect_frame", {
           upstreamFrameBytes,
         })
+      },
+      onEndStream: () => {
+        updateMemoryTrace(memoryTraceId, "windsurf_end_stream_trailer", {})
+        opts?.onEndStream?.()
       },
     })) {
       yield frame
@@ -335,7 +340,12 @@ async function* streamToOpenAI(
     provider: "windsurf",
   })
 
-  for await (const frame of decodeWindsurfFrames(stream, memoryTraceId)) {
+  let sawEndStream = false
+  for await (const frame of decodeWindsurfFrames(stream, memoryTraceId, {
+    onEndStream: () => {
+      sawEndStream = true
+    },
+  })) {
     upstreamFrameCount += 1
     upstreamFrameBytes += frame.byteLength
     const classified = classifyWindsurfFrameError(frame)
@@ -492,7 +502,20 @@ async function* streamToOpenAI(
     upstreamFrameCount,
     upstreamFrameBytes,
     decodedDeltaCount,
+    sawEndStream,
   })
+  if (!sawEndStream) {
+    // Observability first (CPA parity throws here). Upstream should always
+    // terminate with an EOS trailer; log when it does not so premature-EOF
+    // truncations become visible before enforcing a hard failure.
+    logger.warn("[windsurf] stream ended without EOS trailer", {
+      req: requestId,
+      model,
+      upstreamFrameCount,
+      upstreamFrameBytes,
+      decodedDeltaCount,
+    })
+  }
   if (debugLogging) {
     logger.debug("usage final", {
       req: requestId,
@@ -641,6 +664,10 @@ export async function createWindsurfChatCompletionsOnce(
   const firstFrameTimeoutMs = getWindsurfFirstFrameTimeoutMs()
   const firstFrameRetries = getWindsurfFirstFrameRetries()
   let streamOwnsRelease = false
+  // Per-session turn ordinal (field 15.2) is consumed once per logical turn:
+  // same-turn retries reuse the first attempt's index instead of advancing
+  // the counter with an identical payload.
+  let attemptTurnIndex: number | undefined
 
   try {
     for (let attemptNumber = 1; ; attemptNumber++) {
@@ -654,9 +681,11 @@ export async function createWindsurfChatCompletionsOnce(
           settings: { apiKey, baseUrl: settings.baseUrl },
           model,
           requestModel,
+          turnIndex: attemptTurnIndex,
           fetcher: fetchWithRetry,
           streamFactory: streamToOpenAI,
         })
+        attemptTurnIndex ??= attempt.turnIndex
         const waitStartedAt = Date.now()
         const primed = await primeWindsurfStream(attempt.stream, {
           timeoutMs: firstFrameTimeoutMs,

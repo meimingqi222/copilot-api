@@ -304,6 +304,8 @@ function decodeConnectFramePayload(
 interface ConnectFrameDiagnostics {
   onFirstRead?: (bytes: number) => void
   onFirstFrame?: (bytes: number) => void
+  /** Invoked once per clean end-of-stream trailer (flag 0x02). */
+  onEndStream?: () => void
 }
 
 export async function* decodeConnectFrames(
@@ -387,6 +389,9 @@ export async function* decodeConnectFrames(
 
         // End-of-stream trailers are JSON metadata rather than protobuf.
         const decoded = decodeConnectFramePayload(flags, payload)
+        if (!decoded && (flags & CONNECT_END_STREAM_FLAG) !== 0) {
+          diagnostics?.onEndStream?.()
+        }
         if (!decoded) continue
         if (!sawFrame) diagnostics?.onFirstFrame?.(decoded.byteLength)
         sawFrame = true

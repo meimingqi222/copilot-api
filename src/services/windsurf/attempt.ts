@@ -44,6 +44,11 @@ interface CreateWindsurfAttemptOptions {
   settings: { apiKey: string; baseUrl?: string }
   model: string
   requestModel: string
+  /**
+   * Reuse a previously resolved per-session turn ordinal (field 15.2)
+   * across same-turn retries instead of consuming a new one.
+   */
+  turnIndex?: number
   fetcher: (options: AttemptFetchOptions) => Promise<Response>
   streamFactory: (
     response: Response,
@@ -59,6 +64,8 @@ export interface WindsurfAttempt {
   abort: () => void
   dispose: () => void
   authCacheKey: { apiKey: string; baseUrl: string }
+  /** Per-session turn ordinal placed on the wire (field 15.2). */
+  turnIndex: number
 }
 
 function createLinkedAbortController(parent?: AbortSignal): {
@@ -104,6 +111,7 @@ export async function createWindsurfAttempt(
     settings,
     model,
     requestModel,
+    turnIndex,
     fetcher,
     streamFactory,
   } = options
@@ -164,15 +172,18 @@ export async function createWindsurfAttempt(
 
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_protobuf_build_start")
     let protobufBytes = 0
+    let usedTurnIndex = turnIndex ?? 0
     const requestBody = buildRequest({
       payload: { ...payload, model },
       apiKey,
       requestModel,
       cascadeId: cloudIds.cascadeId,
       promptId: cloudIds.promptId,
+      turnIndex,
       userJwt: auth.userJwt,
       onEncoded: (metrics) => {
         protobufBytes = metrics.protobufBytes
+        usedTurnIndex = metrics.turnIndex
       },
     })
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_protobuf_built", {
@@ -267,6 +278,7 @@ export async function createWindsurfAttempt(
       },
       dispose: linkedAbort.dispose,
       authCacheKey: { apiKey, baseUrl },
+      turnIndex: usedTurnIndex,
     }
   } catch (error) {
     linkedAbort.dispose()

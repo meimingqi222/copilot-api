@@ -5,7 +5,6 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
-import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import {
   getMutableProviderConnection,
   getProviderConnection,
@@ -34,8 +33,9 @@ import {
   updateOAuthFlow,
 } from "~/services/oauth/flows"
 import {
-  CALLBACK_OAUTH_PROVIDERS,
-  OAUTH_PROVIDER_STRATEGIES,
+  getOAuthStrategy,
+  isCallbackOAuthCapableProvider,
+  isOAuthCapableProvider,
 } from "~/services/oauth/provider-strategies"
 import {
   cancelOAuthRefreshTimer,
@@ -187,7 +187,7 @@ function applyReauthBundle(
  * strategy, finalizes the account, and marks the flow complete.
  */
 async function executeOAuthExchange(
-  provider: OAuthProviderId,
+  provider: string,
   flowId: string,
   exchangeInput: { code?: string; signal?: AbortSignal },
 ): Promise<string> {
@@ -199,7 +199,10 @@ async function executeOAuthExchange(
     throw new Error("OAuth flow is not available for token exchange")
   }
 
-  const strategy = OAUTH_PROVIDER_STRATEGIES[provider]
+  const strategy = getOAuthStrategy(provider)
+  if (!strategy) {
+    throw new Error(`Unsupported OAuth provider: ${provider}`)
+  }
   const conn = await strategy.exchange({
     flow: claim.flow,
     code: exchangeInput.code,
@@ -216,7 +219,7 @@ async function executeOAuthExchange(
 
 oauthApiRoutes.post("/:provider/start", async (c) => {
   const provider = c.req.param("provider")
-  if (!isOAuthProviderId(provider)) {
+  if (!isOAuthCapableProvider(provider)) {
     return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
   }
 
@@ -264,7 +267,10 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
   const flowId = randomUUID()
   const expiresAt = Date.now() + FLOW_TIMEOUT_MS
 
-  const strategy = OAUTH_PROVIDER_STRATEGIES[provider]
+  const strategy = getOAuthStrategy(provider)
+  if (!strategy) {
+    return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
+  }
   const start = await strategy.start({ proxyUrl })
 
   registerOAuthFlow({
@@ -360,7 +366,7 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
 
 oauthApiRoutes.post("/:provider/complete", async (c) => {
   const provider = c.req.param("provider")
-  if (!isOAuthProviderId(provider) || !CALLBACK_OAUTH_PROVIDERS.has(provider)) {
+  if (!isCallbackOAuthCapableProvider(provider)) {
     return c.json(
       {
         error:
@@ -450,7 +456,7 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
 
 oauthApiRoutes.post("/:provider/cancel", async (c) => {
   const provider = c.req.param("provider")
-  if (!isOAuthProviderId(provider)) {
+  if (!isOAuthCapableProvider(provider)) {
     return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
   }
 
@@ -483,7 +489,7 @@ oauthApiRoutes.get("/:provider/poll/:flowId", (c) => {
   const provider = c.req.param("provider")
   const flowId = c.req.param("flowId")
 
-  if (!isOAuthProviderId(provider)) {
+  if (!isOAuthCapableProvider(provider)) {
     return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
   }
 
