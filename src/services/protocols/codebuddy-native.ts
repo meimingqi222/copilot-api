@@ -306,6 +306,21 @@ function sanitizeCodebuddyPayload(obj: unknown): void {
 // ── 模型厂商推断 ──────────────────────────────────────────────────────
 
 /**
+ * CodeBuddy 上游不支持 OpenAI 新版 `developer` 角色，直接返回 11128
+ *（Illegal API invocation from an unapproved channel）。实测 `system`
+ * 可正常通过，这里统一归一化为 `system`。
+ */
+function normalizeCodebuddyRoles(
+  messages: ChatCompletionsPayload["messages"],
+): void {
+  for (const message of messages) {
+    if (message.role === "developer") {
+      message.role = "system"
+    }
+  }
+}
+
+/**
  * CodeBuddy /v3/config 返回的 vendor 是单字母内部代码（v/f/e/j），
  * 对用户无意义。这里根据模型 id 前缀推断出可读的厂商名。
  */
@@ -384,6 +399,8 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       stream: true,
     }
 
+    // developer 角色上游直接 11128 拦截，先归一化为 system
+    normalizeCodebuddyRoles(upstreamPayload.messages)
     // 清洗请求体中会触发 CodeBuddy 风控的敏感内容
     sanitizeCodebuddyPayload(upstreamPayload.messages)
     if (upstreamPayload.tools) sanitizeCodebuddyPayload(upstreamPayload.tools)

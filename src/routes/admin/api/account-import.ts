@@ -302,6 +302,104 @@ importAccountRoutes.post("/import", async (c) => {
       continue
     }
 
+    if (provider === "codebuddy" || provider === "codebuddy-cn") {
+      const accessToken =
+        typeof raw.credentials?.accessToken === "string" ?
+          raw.credentials.accessToken.trim()
+        : undefined
+      const refreshToken =
+        typeof raw.credentials?.refreshToken === "string" ?
+          raw.credentials.refreshToken.trim()
+        : undefined
+      const expiresAt =
+        typeof raw.credentials?.expiresAt === "number" ?
+          raw.credentials.expiresAt
+        : undefined
+
+      if (!accessToken && !refreshToken) {
+        failed.push({
+          label,
+          reason: "Missing accessToken or refreshToken in credentials.",
+        })
+        continue
+      }
+
+      const codebuddyAccount: Account = {
+        id: randomUUID(),
+        label,
+        provider,
+        enabled: raw.enabled ?? true,
+        priority: raw.priority ?? 0,
+        quotaState: "unknown",
+        createdAt: raw.createdAt ?? Date.now(),
+        credentials: {
+          accessToken: accessToken ?? "",
+          ...(refreshToken ? { refreshToken } : {}),
+          ...(expiresAt ? { expiresAt } : {}),
+        },
+        settings: raw.settings ?? {},
+      }
+      addAccount(codebuddyAccount)
+      imported.push(label)
+      refreshModelsForAccount(codebuddyAccount).catch((err: unknown) => {
+        logger.warn(`Import: failed to init models for "${label}":`, err)
+      })
+      continue
+    }
+
+    if (provider === "lobsterai") {
+      const pickString = (key: string): string | undefined => {
+        const value = raw.credentials?.[key]
+        return typeof value === "string" && value.trim() ?
+            value.trim()
+          : undefined
+      }
+      const accessToken = pickString("accessToken")
+      const refreshToken = pickString("refreshToken")
+      const uuid = pickString("uuid")
+      const userId = pickString("userId")
+      const firstKeyfrom = pickString("firstKeyfrom")
+      const latestKeyfrom = pickString("latestKeyfrom")
+      const expiresAt =
+        typeof raw.credentials?.expiresAt === "number" ?
+          raw.credentials.expiresAt
+        : undefined
+
+      if (!accessToken && !refreshToken) {
+        failed.push({
+          label,
+          reason: "Missing accessToken or refreshToken in credentials.",
+        })
+        continue
+      }
+
+      const lobsterAccount: Account = {
+        id: randomUUID(),
+        label,
+        provider: "lobsterai",
+        enabled: raw.enabled ?? true,
+        priority: raw.priority ?? 0,
+        quotaState: "unknown",
+        createdAt: raw.createdAt ?? Date.now(),
+        credentials: {
+          accessToken: accessToken ?? "",
+          ...(refreshToken ? { refreshToken } : {}),
+          ...(expiresAt ? { expiresAt } : {}),
+          ...(uuid ? { uuid } : {}),
+          ...(userId ? { userId } : {}),
+          ...(firstKeyfrom ? { firstKeyfrom } : {}),
+          ...(latestKeyfrom ? { latestKeyfrom } : {}),
+        },
+        settings: raw.settings ?? {},
+      }
+      addAccount(lobsterAccount)
+      imported.push(label)
+      refreshModelsForAccount(lobsterAccount).catch((err: unknown) => {
+        logger.warn(`Import: failed to init models for "${label}":`, err)
+      })
+      continue
+    }
+
     if (isOAuthProviderId(provider)) {
       const oauthAccount = buildOAuthAccountFromImportPayload(
         raw,
@@ -332,6 +430,8 @@ importAccountRoutes.post("/import", async (c) => {
       }
       continue
     }
+
+    failed.push({ label, reason: `Unsupported provider: ${providerStr}.` })
   }
 
   if (imported.length > 0) {
