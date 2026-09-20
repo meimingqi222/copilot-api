@@ -150,4 +150,78 @@ describe("codebuddy stream sanitizer", () => {
     const last = chunks[1] as { choices: Array<{ finish_reason: string }> }
     expect(last.choices[0]?.finish_reason).toBe("stop")
   })
+
+  test("empty reasoning alias placeholders are stripped, real text kept", async () => {
+    const upstream = (async function* () {
+      yield upstreamEvent({
+        content: "",
+        reasoning_content: "",
+        reasoning_text: "",
+        reasoning: "",
+        thinking: "",
+        function_call: null,
+        refusal: "",
+        tool_calls: [],
+        extra_fields: null,
+      })
+      yield upstreamEvent({
+        content: "",
+        reasoning_content: "",
+        reasoning_text: "real thinking",
+        function_call: null,
+        refusal: "",
+        tool_calls: [],
+        extra_fields: null,
+      })
+    })()
+
+    const chunks = await collect(sanitizeCodebuddyStream(upstream))
+    const first = chunks[0] as {
+      choices: Array<{ delta: Record<string, unknown> }>
+    }
+    for (const key of [
+      "content",
+      "reasoning_content",
+      "reasoning_text",
+      "reasoning",
+      "thinking",
+    ]) {
+      expect(first.choices[0]?.delta).not.toHaveProperty(key)
+    }
+    const second = chunks[1] as {
+      choices: Array<{ delta: Record<string, unknown> }>
+    }
+    expect(second.choices[0]?.delta.reasoning_text).toBe("real thinking")
+  })
+
+  test("sanitizes every choice in a multi-choice chunk", async () => {
+    const upstream = (async function* () {
+      yield {
+        data: JSON.stringify({
+          choices: [
+            { index: 0, delta: { content: "" }, finish_reason: "" },
+            {
+              index: 1,
+              delta: { reasoning_content: "", tool_calls: [] },
+              finish_reason: "",
+            },
+          ],
+        }),
+      }
+    })()
+
+    const [chunk] = await collect(sanitizeCodebuddyStream(upstream))
+    const choices = (
+      chunk as {
+        choices: Array<{
+          delta: Record<string, unknown>
+          finish_reason: string | null
+        }>
+      }
+    ).choices
+    expect(choices[0]?.delta).toEqual({})
+    expect(choices[1]?.delta).toEqual({})
+    expect(choices[0]?.finish_reason).toBeNull()
+    expect(choices[1]?.finish_reason).toBeNull()
+  })
 })

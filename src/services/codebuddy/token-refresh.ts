@@ -21,9 +21,10 @@ import {
   listProviderConnections,
   persistProviderConnections,
 } from "~/lib/provider-connections/state"
+import { getHeader } from "~/services/protocols/shared"
 
 const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
-const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
+export const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_PRODUCT = "SaaS"
 const REFRESH_LEAD_MS = 5 * 60 * 1000
@@ -33,6 +34,21 @@ const MAX_TIMER_DELAY_MS = 2_147_000_000
 const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const persistenceRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const inflightRefreshes = new Map<string, Promise<boolean>>()
+
+function waitForRefresh(
+  refresh: Promise<boolean>,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!signal) return refresh
+  signal.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener("abort", onAbort, { once: true })
+    void refresh.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort)
+    })
+  })
+}
 
 function schedulePersistenceRetry(connectionId: string): void {
   if (persistenceRetryTimers.has(connectionId)) return
@@ -69,14 +85,8 @@ function resolveCodebuddyRefreshUrl(conn: ProviderConnection): string {
  * X-Domain 优先从 connection.headers 读取（大小写不敏感），否则用默认值。
  * 大小写不敏感查找可避免用户配置 `x-domain` 时与默认 `X-Domain` 重复发送。
  */
-function resolveCodebuddyDomain(conn: ProviderConnection): string {
-  const headers = conn.headers
-  if (headers) {
-    for (const [key, value] of Object.entries(headers)) {
-      if (key.toLowerCase() === "x-domain" && value) return value
-    }
-  }
-  return CODEBUDDY_DEFAULT_DOMAIN
+export function resolveCodebuddyDomain(conn: ProviderConnection): string {
+  return getHeader(conn.headers, "x-domain") || CODEBUDDY_DEFAULT_DOMAIN
 }
 
 interface CodebuddyRefreshResponse {
@@ -128,6 +138,7 @@ function credentialExpiryMs(credential: ApiCredential): number | undefined {
  */
 export async function refreshCodebuddyTokenForConnection(
   conn: ProviderConnection,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const credential = conn.credentials[0]
   if (!credential) {
@@ -149,7 +160,8 @@ export async function refreshCodebuddyTokenForConnection(
   // X-User-Id 从旧 accessToken 的 JWT sub 提取
   const oldAccessToken = credential.value
   const userId =
-    oldAccessToken ? decodeJwtPayload(oldAccessToken)?.sub : undefined
+    getHeader(conn.headers, "x-user-id")
+    ?? (oldAccessToken ? decodeJwtPayload(oldAccessToken)?.sub : undefined)
 
   logger.info(`[codebuddy] refreshing token for connection "${conn.name}"`)
 
@@ -172,6 +184,7 @@ export async function refreshCodebuddyTokenForConnection(
     response = await fetch(resolveCodebuddyRefreshUrl(conn), {
       method: "POST",
       headers,
+      signal,
     })
   } catch (e) {
     logger.error(
@@ -205,8 +218,16 @@ export async function refreshCodebuddyTokenForConnection(
   const newAccessToken = body.data.accessToken
   const newRefreshToken = body.data.refreshToken ?? refreshToken
   const newExpiresAt = decodeJwtPayload(newAccessToken)?.exp
-  const expiresAtMs =
-    typeof newExpiresAt === "number" ? newExpiresAt * 1000 : undefined
+  let expiresAtMs: number | undefined
+  if (typeof newExpiresAt === "number") {
+    expiresAtMs = newExpiresAt * 1000
+  } else if (
+    typeof body.data.expiresIn === "number"
+    && Number.isFinite(body.data.expiresIn)
+    && body.data.expiresIn > 0
+  ) {
+    expiresAtMs = Date.now() + body.data.expiresIn * 1000
+  }
 
   // 更新 credential
   credential.value = newAccessToken
@@ -245,6 +266,7 @@ export function codebuddyNeedsRefresh(credential: ApiCredential): boolean {
 export async function ensureCodebuddyAccessToken(
   conn: ProviderConnection,
   credential: ApiCredential,
+  signal?: AbortSignal,
 ): Promise<string | undefined> {
   if (!codebuddyNeedsRefresh(credential)) return credential.value || undefined
   const refreshToken = credential.context?.refreshToken
@@ -257,12 +279,14 @@ export async function ensureCodebuddyAccessToken(
 
   let refresh = inflightRefreshes.get(conn.id)
   if (!refresh) {
+    // Refresh is shared by all concurrent callers. Do not attach one caller's
+    // abort signal to the shared fetch; only cancel that caller's wait below.
     refresh = refreshCodebuddyTokenForConnection(live).finally(() => {
       inflightRefreshes.delete(conn.id)
     })
     inflightRefreshes.set(conn.id, refresh)
   }
-  const succeeded = await refresh
+  const succeeded = await waitForRefresh(refresh, signal)
   const liveCredential = live.credentials[0]
   if (succeeded) scheduleCodebuddyRefresh(live)
   return liveCredential?.value || credential.value || undefined
@@ -290,8 +314,9 @@ export function cancelAllCodebuddyRefreshTimers(): void {
  */
 export function scheduleCodebuddyRefresh(conn: ProviderConnection): void {
   cancelCodebuddyRefreshTimer(conn.id)
+  if (!conn.enabled) return
   const credential = conn.credentials[0]
-  if (!credential) return
+  if (!credential?.enabled) return
   const expiresAt = credentialExpiryMs(credential)
   if (!expiresAt) return
 
@@ -312,7 +337,7 @@ export function scheduleCodebuddyRefresh(conn: ProviderConnection): void {
       const mutable = getMutableProviderConnection(conn.id)
       if (!mutable || !mutable.enabled) return
       const cred = mutable.credentials[0]
-      if (!cred) return
+      if (!cred?.enabled) return
       if (!codebuddyNeedsRefresh(cred)) {
         scheduleCodebuddyRefresh(mutable)
         return

@@ -23,7 +23,10 @@ import {
   type ModelMapping,
   type ProviderConnection,
 } from "~/lib/provider-connections"
-import { ensureCodebuddyAccessToken } from "~/services/codebuddy/token-refresh"
+import {
+  ensureCodebuddyAccessToken,
+  resolveCodebuddyDomain,
+} from "~/services/codebuddy/token-refresh"
 import {
   detectOpenAIStreamError,
   handleUpstreamFailure,
@@ -39,7 +42,6 @@ import { aggregateSseToResponse, type SseChunk } from "./sse-aggregate"
 // 国内版（codebuddy-cn）默认值；国际版（codebuddy）通过 connection.baseUrl /
 // connection.headers["X-Domain"] 覆盖。
 const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
-const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_PRODUCT = "SaaS"
 const CODEBUDDY_IDE_VERSION = "2.148.0"
@@ -63,20 +65,6 @@ function resolveCodebuddyConfigUrl(connection: ProviderConnection): string {
   const base = resolveCodebuddyBaseUrl(connection)
   const origin = new URL(base).origin
   return `${origin}/v3/config`
-}
-
-/**
- * X-Domain 优先从 connection.headers 读取（大小写不敏感），否则用默认值。
- * 大小写不敏感查找可避免用户配置 `x-domain` 时与默认 `X-Domain` 重复发送。
- */
-function resolveCodebuddyDomain(connection: ProviderConnection): string {
-  const headers = connection.headers
-  if (headers) {
-    for (const [key, value] of Object.entries(headers)) {
-      if (key.toLowerCase() === "x-domain" && value) return value
-    }
-  }
-  return CODEBUDDY_DEFAULT_DOMAIN
 }
 
 // ── 分布式追踪 ID 生成 ──────────────────────────────────────────────
@@ -135,7 +123,7 @@ function buildCodebuddyHeaders(
   const spanId = randomSpanId()
   const parentSpanId = randomSpanId()
 
-  const headers: Record<string, string> = {
+  const headers = new Headers({
     // 基础
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -180,25 +168,27 @@ function buildCodebuddyHeaders(
     "X-B3-ParentSpanId": parentSpanId,
     "X-B3-Sampled": "1",
     "X-Trace-ID": traceId,
+  })
 
-    ...connection.headers,
+  for (const [name, value] of Object.entries(connection.headers ?? {})) {
+    headers.set(name, value)
   }
 
   // Authorization: Bearer <accessToken>
   if (accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`
+    headers.set("Authorization", `Bearer ${accessToken}`)
   }
 
   // X-User-Id：优先从 connection.headers 读取（用户可手动覆盖），
   // 否则从 JWT sub 字段自动提取
-  if (!headers["X-User-Id"] && accessToken) {
+  if (!headers.has("X-User-Id") && accessToken) {
     const payload = decodeJwtPayload(accessToken)
     if (payload?.sub) {
-      headers["X-User-Id"] = payload.sub
+      headers.set("X-User-Id", payload.sub)
     }
   }
 
-  return headers
+  return Object.fromEntries(headers.entries())
 }
 
 // ── 上游 chunk 清洗 ─────────────────────────────────────────────────
@@ -213,24 +203,27 @@ function buildCodebuddyHeaders(
  * 思考还是正文阶段的客户端，会把每个 token 都当成一次块切换（思考块/正文块
  * 反复开关），渲染性能极差。这里把空占位字段剥掉，使下发形状与标准
  * OpenAI/DeepSeek 流一致：思考阶段只有 reasoning_content，正文阶段只有
- * content，结束才有 finish_reason。
+ * content，结束才有 finish_reason。推理别名拼写（reasoning_text /
+ * reasoning / thinking）同理：只剥空占位，真实文本原样透传，由聚合与
+ * normalize 层按别名链收敛。
  */
 function sanitizeCodebuddyChunk(chunk: SseChunk): SseChunk {
-  const choice = chunk.choices?.[0]
-  if (!choice) return chunk
-  const delta = choice.delta as Record<string, unknown> | undefined
-  if (!delta) return chunk
-
-  if (delta.content === "") delete delta.content
-  if (delta.reasoning_content === "") delete delta.reasoning_content
-  if (delta.refusal === "") delete delta.refusal
-  if (delta.function_call === null) delete delta.function_call
-  if (delta.extra_fields === null) delete delta.extra_fields
-  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) {
-    delete delta.tool_calls
-  }
-  if (choice.finish_reason === "") {
-    choice.finish_reason = null
+  for (const choice of chunk.choices ?? []) {
+    const delta = choice.delta as Record<string, unknown> | undefined
+    if (delta) {
+      if (delta.content === "") delete delta.content
+      if (delta.reasoning_content === "") delete delta.reasoning_content
+      if (delta.reasoning_text === "") delete delta.reasoning_text
+      if (delta.reasoning === "") delete delta.reasoning
+      if (delta.thinking === "") delete delta.thinking
+      if (delta.refusal === "") delete delta.refusal
+      if (delta.function_call === null) delete delta.function_call
+      if (delta.extra_fields === null) delete delta.extra_fields
+      if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) {
+        delete delta.tool_calls
+      }
+    }
+    if (choice.finish_reason === "") choice.finish_reason = null
   }
 
   return chunk
@@ -345,7 +338,11 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
   protocol: "codebuddy-native",
 
   async discoverModels({ connection, credential, signal }) {
-    const accessToken = await ensureCodebuddyAccessToken(connection, credential)
+    const accessToken = await ensureCodebuddyAccessToken(
+      connection,
+      credential,
+      signal,
+    )
     const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     // /v3/config 不在 /v2 路径下，用独立 URL
     const response = await fetch(resolveCodebuddyConfigUrl(connection), {
@@ -410,7 +407,11 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     sanitizeCodebuddyPayload(upstreamPayload.messages)
     if (upstreamPayload.tools) sanitizeCodebuddyPayload(upstreamPayload.tools)
 
-    const accessToken = await ensureCodebuddyAccessToken(connection, credential)
+    const accessToken = await ensureCodebuddyAccessToken(
+      connection,
+      credential,
+      signal,
+    )
     const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     const url = `${resolveCodebuddyBaseUrl(connection)}/chat/completions`
 

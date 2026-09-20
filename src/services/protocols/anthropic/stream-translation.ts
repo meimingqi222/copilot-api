@@ -71,7 +71,7 @@ function isToolBlockOpen(state: AnthropicStreamState): boolean {
     return false
   }
   // Check if the current block index corresponds to any known tool call
-  return Object.values(state.toolCalls).some(
+  return Array.from(state.toolCalls.values()).some(
     (tc) => tc.anthropicBlockIndex === state.contentBlockIndex,
   )
 }
@@ -425,11 +425,11 @@ export function translateChunkToAnthropicEvents(
 
         const anthropicBlockIndex = state.contentBlockIndex
         const sanitizedId = sanitizeId(toolCall.id)
-        state.toolCalls[toolCall.index] = {
+        state.toolCalls.set(toolCall.index, {
           id: sanitizedId,
           name: toolCall.function.name,
           anthropicBlockIndex,
-        }
+        })
 
         events.push({
           type: "content_block_start",
@@ -446,7 +446,7 @@ export function translateChunkToAnthropicEvents(
       }
 
       if (toolCall.function?.arguments) {
-        const toolCallInfo = state.toolCalls[toolCall.index]
+        const toolCallInfo = state.toolCalls.get(toolCall.index)
         // Tool call can still be empty
 
         if (toolCallInfo) {

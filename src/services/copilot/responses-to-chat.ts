@@ -127,7 +127,6 @@ export function translateResponsesToChatCompletion(
           ...(reasoningTexts && reasoningTexts.length > 0 ?
             {
               reasoning_content: reasoningTexts.join(""),
-              reasoning_text: reasoningTexts.join(""),
               reasoning_details: reasoningTexts.map((text) => ({ text })),
             }
           : {}),
@@ -484,7 +483,6 @@ function buildReasoningSummaryDeltaChunk(
     model: state.model,
     delta: {
       reasoning_content: delta,
-      reasoning_text: delta,
     },
   })
 }

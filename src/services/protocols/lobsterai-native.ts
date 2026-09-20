@@ -30,8 +30,11 @@ import {
   type ProviderConnection,
 } from "~/lib/provider-connections"
 import {
+  buildBaseHeaders,
+  getHeader,
   handleUpstreamFailure,
   safeSseStream,
+  setHeader,
 } from "~/services/protocols/shared"
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
@@ -69,7 +72,10 @@ export function lobsteraiServerRoot(connection: ProviderConnection): string {
 }
 
 export function lobsteraiClientVersion(connection: ProviderConnection): string {
-  const fromHeaders = connection.headers?.[LOBSTERAI_CLIENT_VERSION_HEADER]
+  const fromHeaders = getHeader(
+    connection.headers,
+    LOBSTERAI_CLIENT_VERSION_HEADER,
+  )
   return (
     (typeof fromHeaders === "string" && fromHeaders.trim())
     || LOBSTERAI_DEFAULT_CLIENT_VERSION
@@ -80,13 +86,18 @@ export function buildLobsteraiHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
 ): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    ...connection.headers,
-    Authorization: `Bearer ${credential.value}`,
-    [LOBSTERAI_CLIENT_CAPABILITIES_HEADER]: LOBSTERAI_CLIENT_CAPABILITIES,
-    [LOBSTERAI_CLIENT_VERSION_HEADER]: lobsteraiClientVersion(connection),
-  }
+  const headers = buildBaseHeaders(connection, credential)
+  setHeader(
+    headers,
+    LOBSTERAI_CLIENT_CAPABILITIES_HEADER,
+    LOBSTERAI_CLIENT_CAPABILITIES,
+  )
+  setHeader(
+    headers,
+    LOBSTERAI_CLIENT_VERSION_HEADER,
+    lobsteraiClientVersion(connection),
+  )
+  return headers
 }
 
 // ── 流内错误检测 ────────────────────────────────────────────────────

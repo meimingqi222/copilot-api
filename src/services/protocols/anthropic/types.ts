@@ -271,13 +271,14 @@ export interface AnthropicStreamState {
   // A signature that arrives after unsigned thinking has already been closed
   // is not safely attributable to that block. A new reasoning delta resets it.
   suppressLateThinking: boolean
-  toolCalls: {
-    [openAIToolIndex: number]: {
+  toolCalls: Map<
+    number,
+    {
       id: string
       name: string
       anthropicBlockIndex: number
     }
-  }
+  >
   // Pre-calculated estimate of input tokens from the request payload.
   // Used as a fallback in message_start when the upstream API (e.g. Responses
   // API) does not include usage data until the final streaming chunk, which
@@ -301,7 +302,7 @@ export function createInitialStreamState(): AnthropicStreamState {
     bufferedThinking: "",
     bufferedThinkingBytes: 0,
     suppressLateThinking: false,
-    toolCalls: {},
+    toolCalls: new Map(),
     estimatedInputTokens: 0,
     pendingFinishReason: undefined,
     lastSeenUsage: undefined,

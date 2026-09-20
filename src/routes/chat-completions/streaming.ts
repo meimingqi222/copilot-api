@@ -143,7 +143,9 @@ export function handleStreamingResponse(
           // `choices` is typed as required but some upstreams omit it on
           // usage-only / filter chunks — same reason `normalizeChunk` guards it.
 
-          const chunkFinishReason = chunk.choices?.[0]?.finish_reason
+          const chunkFinishReason = chunk.choices?.find(
+            (c) => c.finish_reason,
+          )?.finish_reason
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
@@ -318,7 +320,9 @@ export function handleStreamingCompletion(
           // `choices` is typed as required but some upstreams omit it on
           // usage-only / filter chunks — same reason `normalizeChunk` guards it.
 
-          const chunkFinishReason = chunk.choices?.[0]?.finish_reason
+          const chunkFinishReason = chunk.choices?.find(
+            (c) => c.finish_reason,
+          )?.finish_reason
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
@@ -451,17 +455,23 @@ function signalOutcome(signal: AbortSignal | undefined): string {
 }
 
 export function hasChatChunkOutput(chunk: ChatCompletionChunk): boolean {
-  const delta = chunk.choices[0]?.delta as Record<string, unknown> | undefined
-  if (!delta) return false
-  return (
-    hasNonEmptyChatValue(delta["content"])
-    || hasNonEmptyChatValue(delta["reasoning"])
-    || hasNonEmptyChatValue(delta["reasoning_content"])
-    || hasNonEmptyChatValue(delta["reasoning_text"])
-    || hasNonEmptyChatValue(delta["refusal"])
-    || hasToolCallOutput(delta["tool_calls"])
-    || hasFunctionCallOutput(delta["function_call"])
-  )
+  if (!chunk.choices?.length) return false
+  for (const choice of chunk.choices) {
+    const delta = choice.delta as Record<string, unknown> | undefined
+    if (!delta) continue
+    if (
+      hasNonEmptyChatValue(delta["content"])
+      || hasNonEmptyChatValue(delta["reasoning"])
+      || hasNonEmptyChatValue(delta["reasoning_content"])
+      || hasNonEmptyChatValue(delta["reasoning_text"])
+      || hasNonEmptyChatValue(delta["refusal"])
+      || hasToolCallOutput(delta["tool_calls"])
+      || hasFunctionCallOutput(delta["function_call"])
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function hasNonEmptyChatValue(value: unknown): boolean {

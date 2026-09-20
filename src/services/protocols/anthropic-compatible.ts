@@ -16,7 +16,9 @@ import {
   detectAnthropicStreamError,
   handleUpstreamFailure,
   joinUrl,
+  removeHeader,
   safeSseStream,
+  setHeader,
 } from "~/services/protocols/shared"
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
@@ -32,16 +34,18 @@ function buildHeaders(
   },
 ): Record<string, string> {
   const headers = buildBaseHeaders(connection, credential)
-  headers["anthropic-version"] = ctx?.anthropicVersion ?? "2023-06-01"
+  setHeader(headers, "anthropic-version", ctx?.anthropicVersion ?? "2023-06-01")
   if (ctx?.anthropicBeta) {
-    headers["anthropic-beta"] = ctx.anthropicBeta
+    setHeader(headers, "anthropic-beta", ctx.anthropicBeta)
   }
-  if (ctx?.sessionId) headers["x-claude-code-session-id"] = ctx.sessionId
-  if (ctx?.promptCacheKey) headers["prompt_cache_key"] = ctx.promptCacheKey
+  if (ctx?.sessionId)
+    setHeader(headers, "x-claude-code-session-id", ctx.sessionId)
+  if (ctx?.promptCacheKey)
+    setHeader(headers, "prompt_cache_key", ctx.promptCacheKey)
   if (credential.authMode !== "bearer") {
-    delete headers["Authorization"]
+    removeHeader(headers, "Authorization")
     const headerName = credential.headerName ?? "x-api-key"
-    headers[headerName] = credential.value
+    setHeader(headers, headerName, credential.value)
   }
   return headers
 }

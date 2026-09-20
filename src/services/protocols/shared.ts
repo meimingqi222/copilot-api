@@ -69,22 +69,68 @@ export function joinUrl(baseUrl: string, path: string): string {
   return `${trimmedBase}${trimmedPath}`
 }
 
+/** Set a header, removing any existing header whose name matches
+ * case-insensitively. The final record keeps the casing of `name`.
+ */
+export function setHeader(
+  headers: Record<string, string>,
+  name: string,
+  value: string,
+): void {
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) {
+      Reflect.deleteProperty(headers, key)
+    }
+  }
+  headers[name] = value
+}
+
+/** Remove all headers whose names match `name` case-insensitively. */
+export function removeHeader(
+  headers: Record<string, string>,
+  name: string,
+): void {
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) {
+      Reflect.deleteProperty(headers, key)
+    }
+  }
+}
+
+/** Look up a header value case-insensitively. */
+export function getHeader(
+  headers: Record<string, string> | undefined,
+  name: string,
+): string | undefined {
+  if (!headers) return undefined
+  const lower = name.toLowerCase()
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === lower) return value
+  }
+  return undefined
+}
+
 export function buildBaseHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
 ): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    ...connection.headers,
+  const headers: Record<string, string> = {}
+
+  setHeader(headers, "Content-Type", "application/json")
+  setHeader(headers, "Accept", "application/json")
+
+  for (const [name, value] of Object.entries(connection.headers ?? {})) {
+    setHeader(headers, name, value)
   }
 
   if (credential.value) {
     if (credential.authMode === "bearer") {
-      headers["Authorization"] = `Bearer ${credential.value}`
+      setHeader(headers, "Authorization", `Bearer ${credential.value}`)
     } else {
       const headerName = credential.headerName ?? "Authorization"
-      headers[headerName] = credential.value
+      setHeader(headers, headerName, credential.value)
     }
   }
   return headers

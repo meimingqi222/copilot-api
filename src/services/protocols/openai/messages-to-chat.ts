@@ -121,7 +121,6 @@ export function translateAnthropicResponseToChat(
       : textParts.join("") || null,
     ...(reasoningParts.length > 0 && {
       reasoning_content: reasoningParts.map((part) => part.text).join(""),
-      reasoning_text: reasoningParts.map((part) => part.text).join(""),
       reasoning_details: reasoningParts.map((part) => ({
         type: "reasoning.text",
         text: part.text,

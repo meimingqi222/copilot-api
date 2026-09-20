@@ -48,7 +48,8 @@ export function handleNonStreamingResponse(
       cacheWriteTokens,
       tps,
       streaming: false,
-      finishReason: normalized.choices[0]?.finish_reason,
+      finishReason: normalized.choices.find((c) => c.finish_reason)
+        ?.finish_reason,
     })
   } else if (model && accountId) {
     recordUsage({

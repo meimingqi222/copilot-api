@@ -19,6 +19,10 @@ import { codebuddyNativeAdapter } from "~/services/protocols/codebuddy-native"
 
 const originalFetch = globalThis.fetch
 
+function encodeJwtPart(value: object): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url")
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch
   cancelAllCodebuddyRefreshTimers()
@@ -26,9 +30,7 @@ afterEach(() => {
 })
 
 function jwt(exp: number, sub = "user-1"): string {
-  const encode = (value: object) =>
-    Buffer.from(JSON.stringify(value)).toString("base64url")
-  return `${encode({ alg: "none" })}.${encode({ exp, sub })}.signature`
+  return `${encodeJwtPart({ alg: "none" })}.${encodeJwtPart({ exp, sub })}.signature`
 }
 
 function makeCredential(overrides: Partial<ApiCredential> = {}): ApiCredential {
@@ -126,6 +128,39 @@ describe("CodeBuddy request handling", () => {
       "find [redacted]",
     )
   })
+
+  test("applies custom headers case-insensitively without combining duplicates", async () => {
+    let upstreamHeaders: Headers | undefined
+    globalThis.fetch = mock((_url: string, init: RequestInit) => {
+      upstreamHeaders = new Headers(init.headers)
+      return Promise.resolve(sseResponse())
+    }) as unknown as typeof fetch
+
+    const credential = makeCredential()
+    const connection = makeConnection(credential)
+    connection.headers = {
+      "x-domain": "custom.codebuddy.example",
+      "x-user-id": "manual-user",
+      authorization: "Bearer wrong-token",
+    }
+
+    await codebuddyNativeAdapter.createChatCompletions?.({
+      target: {
+        upstreamModelId: "gpt-5.6-sol",
+      } as Parameters<
+        NonNullable<typeof codebuddyNativeAdapter.createChatCompletions>
+      >[0]["target"],
+      connection,
+      credential,
+      payload: { model: "gpt-5.6-sol", messages: [] },
+    })
+
+    expect(upstreamHeaders?.get("x-domain")).toBe("custom.codebuddy.example")
+    expect(upstreamHeaders?.get("x-user-id")).toBe("manual-user")
+    expect(upstreamHeaders?.get("authorization")).toBe(
+      `Bearer ${credential.value}`,
+    )
+  })
 })
 
 describe("CodeBuddy token refresh", () => {
@@ -179,6 +214,49 @@ describe("CodeBuddy token refresh", () => {
     expect(credential.value).toBe(newToken)
     expect(credential.context?.refreshToken).toBe("new-refresh")
     expect(credential.context?.expiresAt).toBe(newExpiry * 1000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test("uses expiresIn when a refreshed access token has no JWT expiry", async () => {
+    const credential = makeCredential({
+      value: jwt(Math.floor(Date.now() / 1000) - 60),
+      context: {
+        accountId: "codebuddy-connection",
+        refreshToken: "old-refresh",
+      },
+    })
+    const connection = makeConnection(credential)
+    connection.headers = { "x-user-id": "manual-user" }
+    upsertProviderConnection(connection)
+
+    const beforeRefresh = Date.now()
+    const fetchMock = mock((_url: string, init: RequestInit) => {
+      expect((init.headers as Record<string, string>)["X-User-Id"]).toBe(
+        "manual-user",
+      )
+      return Promise.resolve(
+        Response.json({
+          code: 0,
+          data: {
+            accessToken: "opaque-access-token",
+            refreshToken: "new-refresh",
+            expiresIn: 3600,
+          },
+        }),
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    expect(await ensureCodebuddyAccessToken(connection, credential)).toBe(
+      "opaque-access-token",
+    )
+    expect(credential.context?.expiresAt).toBeGreaterThanOrEqual(
+      beforeRefresh + 3_600_000,
+    )
+    expect(codebuddyNeedsRefresh(credential)).toBe(false)
+    expect(await ensureCodebuddyAccessToken(connection, credential)).toBe(
+      "opaque-access-token",
+    )
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

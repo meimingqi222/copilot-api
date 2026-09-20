@@ -43,6 +43,14 @@ describe("normalizeChunk", () => {
     expect(out.choices[0].delta.reasoning_content).toBe("thinking")
   })
 
+  test("drops the source alias after mapping so thinking is not duplicated", () => {
+    const out = normalizeChunk(chunk({ reasoning_text: "thinking" }))
+    const delta = out.choices[0].delta as unknown as Record<string, unknown>
+    expect("reasoning_text" in delta).toBe(false)
+    expect("reasoning" in delta).toBe(false)
+    expect("thinking" in delta).toBe(false)
+  })
+
   test("an empty reasoning_content does not shadow a populated alias", () => {
     // Upstreams routinely emit `reasoning_content: ""` under the spelling they
     // do not use. Treating that as "already present" (an `!== undefined`
@@ -59,6 +67,7 @@ describe("normalizeChunk", () => {
       chunk({ reasoning_content: "mine", reasoning_text: "theirs" }),
     )
     expect(out.choices[0].delta.reasoning_content).toBe("mine")
+    expect(out.choices[0].delta.reasoning_text).toBeUndefined()
   })
 
   test("adds nothing when no alias carries text", () => {
@@ -75,10 +84,21 @@ describe("normalizeResponse", () => {
     expect(out.choices[0].message.reasoning_content).toBe("why")
   })
 
+  test("drops the source alias after mapping so thinking is not duplicated", () => {
+    const out = normalizeResponse(
+      response({ content: "done", reasoning_content: "", reasoning: "why" }),
+    )
+    const message = out.choices[0].message as unknown as Record<string, unknown>
+    expect("reasoning" in message).toBe(false)
+    expect("reasoning_text" in message).toBe(false)
+    expect("thinking" in message).toBe(false)
+  })
+
   test("leaves a populated reasoning_content untouched", () => {
     const out = normalizeResponse(
       response({ content: "done", reasoning_content: "mine", reasoning: "x" }),
     )
     expect(out.choices[0].message.reasoning_content).toBe("mine")
+    expect(out.choices[0].message.reasoning).toBeUndefined()
   })
 })

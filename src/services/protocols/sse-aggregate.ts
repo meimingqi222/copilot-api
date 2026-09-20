@@ -15,6 +15,8 @@ import type {
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
+import { extractReasoningTextAlias } from "~/lib/thinking"
+
 interface AggregatedToolCall {
   index: number
   id: string
@@ -27,7 +29,7 @@ interface AggregatedChoice {
   content: string
   reasoning_content: string
   role: "assistant"
-  tool_calls: Array<AggregatedToolCall>
+  tool_calls: Map<number, AggregatedToolCall>
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null
 }
 
@@ -40,6 +42,14 @@ export interface SseChunk {
     delta?: {
       content?: string | null
       reasoning_content?: string | null
+      // Upstreams disagree on the reasoning spelling (Windsurf
+      // `reasoning_text`, OpenRouter `reasoning`, …). The aggregator funnels
+      // every spelling through the shared alias chain so a non-streaming
+      // client never silently loses the thinking when the upstream does not
+      // use `reasoning_content`.
+      reasoning_text?: string | null
+      reasoning?: string | null
+      thinking?: string | null
       role?: string
       tool_calls?: Array<{
         index: number
@@ -53,15 +63,16 @@ export interface SseChunk {
   usage?: ChatCompletionResponse["usage"]
 }
 
-/** 把单个 tool_call delta 合并到聚合 tool_calls 数组中。 */
+/** 把单个 tool_call delta 合并到按 index 索引的聚合 Map 中。 */
 function mergeToolCallDelta(
-  toolCalls: Array<AggregatedToolCall>,
+  toolCalls: Map<number, AggregatedToolCall>,
   tc: NonNullable<
     NonNullable<NonNullable<SseChunk["choices"]>[number]["delta"]>["tool_calls"]
   >[number],
 ): void {
   const tcIdx = tc.index
-  let existing = toolCalls[tcIdx]
+  if (!Number.isSafeInteger(tcIdx) || tcIdx < 0) return
+  let existing = toolCalls.get(tcIdx)
   if (!existing) {
     existing = {
       index: tcIdx,
@@ -69,11 +80,24 @@ function mergeToolCallDelta(
       type: "function",
       function: { name: "", arguments: "" },
     }
-    toolCalls[tcIdx] = existing
+    toolCalls.set(tcIdx, existing)
   }
   if (tc.function?.name) existing.function.name += tc.function.name
   if (tc.function?.arguments)
     existing.function.arguments += tc.function.arguments
+}
+
+/**
+ * 按上游 index 排序并输出紧凑数组。Map 避免异常的大 index 创建超长稀疏
+ * 数组并在最终聚合时触发超大线性扫描。
+ */
+function compactToolCalls(
+  toolCalls: Map<number, AggregatedToolCall>,
+): Array<AggregatedToolCall> | undefined {
+  const compacted = Array.from(toolCalls.values()).sort(
+    (left, right) => left.index - right.index,
+  )
+  return compacted.length > 0 ? compacted : undefined
 }
 
 /** 把单个 choice delta 合并到聚合 choices map 中。 */
@@ -89,14 +113,22 @@ function mergeChoiceDelta(
       content: "",
       reasoning_content: "",
       role: "assistant",
-      tool_calls: [],
+      tool_calls: new Map(),
       finish_reason: null,
     }
     choices.set(idx, agg)
   }
   const delta = choice.delta
   if (delta?.content) agg.content += delta.content
-  if (delta?.reasoning_content) agg.reasoning_content += delta.reasoning_content
+  // Must match `routes/chat-completions/normalize.ts` exactly: canonical
+  // `reasoning_content` wins over the aliases, and an empty string under
+  // either spelling falls through to the one that holds the text. Reading the
+  // alias chain first (which leads with `reasoning_text`) would make the
+  // non-streaming aggregation disagree with the streaming path whenever an
+  // upstream emits both spellings non-empty.
+  const reasoning =
+    delta && (delta.reasoning_content || extractReasoningTextAlias(delta))
+  if (reasoning) agg.reasoning_content += reasoning
   if (delta?.tool_calls?.length) {
     for (const tc of delta.tool_calls) mergeToolCallDelta(agg.tool_calls, tc)
   }
@@ -151,7 +183,7 @@ export function aggregateSseToResponse(
             ...(c.reasoning_content && {
               reasoning_content: c.reasoning_content,
             }),
-            tool_calls: c.tool_calls.length > 0 ? c.tool_calls : undefined,
+            tool_calls: compactToolCalls(c.tool_calls),
           },
           logprobs: null,
           finish_reason: c.finish_reason ?? "stop",

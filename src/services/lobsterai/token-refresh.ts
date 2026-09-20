@@ -34,6 +34,7 @@ interface LobsteraiRefreshResponse {
     refreshToken?: string
     userId?: string
     yid?: string
+    expiresIn?: number
   }
 }
 
@@ -135,7 +136,17 @@ export async function refreshLobsteraiTokenForConnection(
 
   const newAccessToken = payload.data.accessToken
   const newRefreshToken = payload.data.refreshToken ?? ctx.refreshToken
-  const expiresAt = jwtExpiryMs(newAccessToken)
+  const jwtExp = jwtExpiryMs(newAccessToken)
+  let expiresAt: number | undefined
+  if (typeof jwtExp === "number") {
+    expiresAt = jwtExp
+  } else if (
+    typeof payload.data.expiresIn === "number"
+    && Number.isFinite(payload.data.expiresIn)
+    && payload.data.expiresIn > 0
+  ) {
+    expiresAt = Date.now() + payload.data.expiresIn * 1000
+  }
 
   credential.value = newAccessToken
   credential.context = {
