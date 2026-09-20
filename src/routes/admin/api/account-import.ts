@@ -28,11 +28,11 @@ import {
   refreshModelsForAccount,
   refreshModelsForConnection,
 } from "~/lib/utils"
+import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
-import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
   scheduleOAuthRefreshForAccount,
   scheduleOAuthRefreshForConnection,
@@ -53,6 +53,273 @@ interface ImportAccountPayload {
   settings?: Record<string, unknown>
   cpaMetadata?: Record<string, unknown>
   createdAt?: number
+}
+
+/** A provider branch either yields an account to add or a failure reason. */
+type BuildResult = { account: Account } | { error: string }
+
+function credentialString(
+  raw: ImportAccountPayload,
+  key: string,
+): string | undefined {
+  const value = raw.credentials?.[key]
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+function baseAccountFields(
+  raw: ImportAccountPayload,
+  label: string,
+  provider: AccountProvider,
+): Pick<
+  Account,
+  | "id"
+  | "label"
+  | "provider"
+  | "enabled"
+  | "priority"
+  | "quotaState"
+  | "createdAt"
+> {
+  return {
+    id: randomUUID(),
+    label,
+    provider,
+    enabled: raw.enabled ?? true,
+    priority: raw.priority ?? 0,
+    quotaState: "unknown",
+    createdAt: raw.createdAt ?? Date.now(),
+  }
+}
+
+function buildCopilotAccount(
+  raw: ImportAccountPayload,
+  label: string,
+): BuildResult {
+  const githubToken = credentialString(raw, "githubToken")
+  if (!githubToken) {
+    return { error: "Missing githubToken in credentials." }
+  }
+  const account: Account = {
+    ...baseAccountFields(raw, label, "copilot"),
+    credentials: { githubToken },
+    settings: raw.settings ?? {},
+  }
+  setGitHubToken(account, githubToken)
+  return { account }
+}
+
+function buildCodebuffAccount(
+  raw: ImportAccountPayload,
+  label: string,
+): BuildResult {
+  const authToken = credentialString(raw, "authToken")
+  if (!authToken) {
+    return { error: "Missing authToken in credentials." }
+  }
+  return {
+    account: {
+      ...baseAccountFields(raw, label, "codebuff"),
+      credentials: { authToken },
+      settings: raw.settings ?? {},
+    },
+  }
+}
+
+function buildWindsurfAccount(
+  raw: ImportAccountPayload,
+  label: string,
+): BuildResult {
+  const apiKey = credentialString(raw, "apiKey")
+  if (!apiKey) {
+    return { error: "Missing apiKey in credentials." }
+  }
+  return {
+    account: {
+      ...baseAccountFields(raw, label, "windsurf"),
+      credentials: { apiKey },
+      settings: raw.settings ?? {},
+    },
+  }
+}
+
+function buildMimoAccount(
+  raw: ImportAccountPayload,
+  label: string,
+): BuildResult {
+  // Match the original ternaries exactly: a string `credentials.serviceToken`
+  // that trims to "" does NOT fall through to the top-level/settings spelling.
+  const serviceToken =
+    typeof raw.credentials?.serviceToken === "string" ?
+      raw.credentials.serviceToken.trim()
+    : (raw.serviceToken?.trim()
+      ?? (typeof raw.settings?.serviceToken === "string" ?
+        raw.settings.serviceToken.trim()
+      : undefined))
+  const xiaomichatbotPh =
+    typeof raw.credentials?.xiaomichatbotPh === "string" ?
+      raw.credentials.xiaomichatbotPh.trim()
+    : (raw.xiaomichatbotPh?.trim()
+      ?? (typeof raw.settings?.xiaomichatbotPh === "string" ?
+        raw.settings.xiaomichatbotPh.trim()
+      : undefined))
+
+  if (!serviceToken || !xiaomichatbotPh) {
+    return { error: "Missing serviceToken or xiaomichatbotPh in credentials." }
+  }
+  return {
+    account: {
+      ...baseAccountFields(raw, label, "mimo-aistudio"),
+      credentials: { serviceToken, xiaomichatbotPh },
+      settings: raw.settings ?? {},
+    },
+  }
+}
+
+function buildCodebuddyAccount(
+  raw: ImportAccountPayload,
+  label: string,
+  provider: "codebuddy" | "codebuddy-cn",
+): BuildResult {
+  const accessToken = credentialString(raw, "accessToken")
+  if (!accessToken) {
+    return { error: "Missing accessToken in credentials." }
+  }
+  const refreshToken = credentialString(raw, "refreshToken")
+  const expiresAt =
+    typeof raw.credentials?.expiresAt === "number" ?
+      raw.credentials.expiresAt
+    : undefined
+  return {
+    account: {
+      ...baseAccountFields(raw, label, provider),
+      credentials: {
+        accessToken,
+        ...(refreshToken ? { refreshToken } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+      },
+      settings: raw.settings ?? {},
+    },
+  }
+}
+
+function buildLobsteraiAccount(
+  raw: ImportAccountPayload,
+  label: string,
+): BuildResult {
+  const accessToken = credentialString(raw, "accessToken")
+  const refreshToken = credentialString(raw, "refreshToken")
+  if (!accessToken && !refreshToken) {
+    return { error: "Missing accessToken or refreshToken in credentials." }
+  }
+  const expiresAt =
+    typeof raw.credentials?.expiresAt === "number" ?
+      raw.credentials.expiresAt
+    : undefined
+  const optional = (key: string) => {
+    const value = credentialString(raw, key)
+    return value ? { [key]: value } : {}
+  }
+  return {
+    account: {
+      ...baseAccountFields(raw, label, "lobsterai"),
+      credentials: {
+        accessToken: accessToken ?? "",
+        ...(refreshToken ? { refreshToken } : {}),
+        ...(expiresAt ? { expiresAt } : {}),
+        ...optional("uuid"),
+        ...optional("userId"),
+        ...optional("firstKeyfrom"),
+        ...optional("latestKeyfrom"),
+      },
+      settings: raw.settings ?? {},
+    },
+  }
+}
+
+/** Dispatch to the provider-specific builder for a non-OAuth import row. */
+function buildProviderAccount(
+  raw: ImportAccountPayload,
+  label: string,
+  provider: AccountProvider,
+): BuildResult {
+  switch (provider) {
+    case "copilot": {
+      return buildCopilotAccount(raw, label)
+    }
+    case "codebuff": {
+      return buildCodebuffAccount(raw, label)
+    }
+    case "windsurf": {
+      return buildWindsurfAccount(raw, label)
+    }
+    case "mimo-aistudio": {
+      return buildMimoAccount(raw, label)
+    }
+    case "codebuddy":
+    case "codebuddy-cn": {
+      return buildCodebuddyAccount(raw, label, provider)
+    }
+    case "lobsterai": {
+      return buildLobsteraiAccount(raw, label)
+    }
+    default: {
+      return { error: `Unsupported provider: ${provider}.` }
+    }
+  }
+}
+
+/**
+ * Kick off post-add initialization for an imported non-OAuth account:
+ * provider-specific timers plus best-effort model discovery. Copilot refresh
+ * chains its quota fetch after the token refresh; every other provider only
+ * refreshes models. The warning wording differs per provider and is preserved
+ * from the original per-branch implementations.
+ */
+function initializeImportedAccount(
+  account: Account,
+  label: string,
+  provider: AccountProvider,
+): void {
+  const usesModelsWording =
+    provider === "codebuddy"
+    || provider === "codebuddy-cn"
+    || provider === "lobsterai"
+  const warn = (err: unknown) => {
+    logger.warn(
+      usesModelsWording ?
+        `Import: failed to init models for "${label}":`
+      : `Import: failed to init account "${label}":`,
+      err,
+    )
+  }
+  if (provider === "copilot") {
+    refreshCopilotToken(account)
+      .then(() => refreshQuotaForAccount(account))
+      .then(() => refreshModelsForAccount(account))
+      .catch(warn)
+    return
+  }
+  if (provider === "codebuddy" || provider === "codebuddy-cn") {
+    const connection = getMutableProviderConnection(account.id)
+    if (connection) scheduleCodebuddyRefresh(connection)
+  }
+  refreshModelsForAccount(account).catch(warn)
+}
+
+/** OAuth import: schedule refresh, discover models, and fetch quota if the runtime supports it. */
+function initializeOAuthAccount(account: OAuthAccount, label: string): void {
+  const warn = (err: unknown) => {
+    logger.warn(`Import: failed to init account "${label}":`, err)
+  }
+  scheduleOAuthRefreshForAccount(account)
+  refreshModelsForAccount(account).catch(warn)
+  const runtime = getProviderRuntime(account.provider)
+  const conn = getMutableProviderConnection(account.id)
+  if (runtime.refreshQuota && conn) {
+    runtime.refreshQuota(conn).catch((err: unknown) => {
+      logger.warn(`Import: failed to init quota for "${label}":`, err)
+    })
+  }
 }
 
 function buildOAuthAccountFromImportPayload(
@@ -163,246 +430,6 @@ importAccountRoutes.post("/import", async (c) => {
       removeProviderConnection(duplicate.id)
     }
 
-    if (provider === "copilot") {
-      const githubToken =
-        typeof raw.credentials?.githubToken === "string" ?
-          raw.credentials.githubToken.trim()
-        : undefined
-
-      if (!githubToken) {
-        failed.push({ label, reason: "Missing githubToken in credentials." })
-        continue
-      }
-
-      const account: Account = {
-        id: randomUUID(),
-        label,
-        provider: "copilot",
-        credentials: { githubToken },
-        settings: raw.settings ?? {},
-        enabled: raw.enabled ?? true,
-        priority: raw.priority ?? 0,
-        quotaState: "unknown",
-        createdAt: raw.createdAt ?? Date.now(),
-      }
-      setGitHubToken(account, githubToken)
-      addAccount(account)
-      imported.push(label)
-
-      // Refresh token in background
-      refreshCopilotToken(account)
-        .then(() => refreshQuotaForAccount(account))
-        .then(() => refreshModelsForAccount(account))
-        .catch((err: unknown) => {
-          logger.warn(`Import: failed to init account "${label}":`, err)
-        })
-      continue
-    }
-
-    if (provider === "codebuff") {
-      const authToken =
-        typeof raw.credentials?.authToken === "string" ?
-          raw.credentials.authToken.trim()
-        : undefined
-
-      if (!authToken) {
-        failed.push({ label, reason: "Missing authToken in credentials." })
-        continue
-      }
-
-      const account: Account = {
-        id: randomUUID(),
-        label,
-        provider: "codebuff",
-        credentials: { authToken },
-        settings: raw.settings ?? {},
-        enabled: raw.enabled ?? true,
-        priority: raw.priority ?? 0,
-        quotaState: "unknown",
-        createdAt: raw.createdAt ?? Date.now(),
-      }
-      addAccount(account)
-      imported.push(label)
-      refreshModelsForAccount(account).catch((err: unknown) => {
-        logger.warn(`Import: failed to init account "${label}":`, err)
-      })
-      continue
-    }
-
-    if (provider === "windsurf") {
-      const apiKey =
-        typeof raw.credentials?.apiKey === "string" ?
-          raw.credentials.apiKey.trim()
-        : undefined
-
-      if (!apiKey) {
-        failed.push({ label, reason: "Missing apiKey in credentials." })
-        continue
-      }
-
-      const windsurfAccount: Account = {
-        id: randomUUID(),
-        label,
-        provider: "windsurf",
-        credentials: { apiKey },
-        settings: raw.settings ?? {},
-        enabled: raw.enabled ?? true,
-        priority: raw.priority ?? 0,
-        quotaState: "unknown",
-        createdAt: raw.createdAt ?? Date.now(),
-      }
-      addAccount(windsurfAccount)
-      imported.push(label)
-      refreshModelsForAccount(windsurfAccount).catch((err: unknown) => {
-        logger.warn(`Import: failed to init account "${label}":`, err)
-      })
-      continue
-    }
-
-    if (provider === "mimo-aistudio") {
-      const serviceToken =
-        typeof raw.credentials?.serviceToken === "string" ?
-          raw.credentials.serviceToken.trim()
-        : (raw.serviceToken?.trim()
-          ?? (typeof raw.settings?.serviceToken === "string" ?
-            raw.settings.serviceToken.trim()
-          : undefined))
-      const xiaomichatbotPh =
-        typeof raw.credentials?.xiaomichatbotPh === "string" ?
-          raw.credentials.xiaomichatbotPh.trim()
-        : (raw.xiaomichatbotPh?.trim()
-          ?? (typeof raw.settings?.xiaomichatbotPh === "string" ?
-            raw.settings.xiaomichatbotPh.trim()
-          : undefined))
-
-      if (!serviceToken || !xiaomichatbotPh) {
-        failed.push({
-          label,
-          reason: "Missing serviceToken or xiaomichatbotPh in credentials.",
-        })
-        continue
-      }
-
-      const settings = raw.settings ?? {}
-      const mimoAccount: Account = {
-        id: randomUUID(),
-        label,
-        provider: "mimo-aistudio",
-        credentials: { serviceToken, xiaomichatbotPh },
-        settings,
-        enabled: raw.enabled ?? true,
-        priority: raw.priority ?? 0,
-        quotaState: "unknown",
-        createdAt: raw.createdAt ?? Date.now(),
-      }
-      addAccount(mimoAccount)
-      imported.push(label)
-      refreshModelsForAccount(mimoAccount).catch((err: unknown) => {
-        logger.warn(`Import: failed to init account "${label}":`, err)
-      })
-      continue
-    }
-
-    if (provider === "codebuddy" || provider === "codebuddy-cn") {
-      const accessToken =
-        typeof raw.credentials?.accessToken === "string" ?
-          raw.credentials.accessToken.trim()
-        : undefined
-      const refreshToken =
-        typeof raw.credentials?.refreshToken === "string" ?
-          raw.credentials.refreshToken.trim()
-        : undefined
-      const expiresAt =
-        typeof raw.credentials?.expiresAt === "number" ?
-          raw.credentials.expiresAt
-        : undefined
-
-      if (!accessToken) {
-        failed.push({
-          label,
-          reason: "Missing accessToken in credentials.",
-        })
-        continue
-      }
-
-      const codebuddyAccount: Account = {
-        id: randomUUID(),
-        label,
-        provider,
-        enabled: raw.enabled ?? true,
-        priority: raw.priority ?? 0,
-        quotaState: "unknown",
-        createdAt: raw.createdAt ?? Date.now(),
-        credentials: {
-          accessToken: accessToken ?? "",
-          ...(refreshToken ? { refreshToken } : {}),
-          ...(expiresAt ? { expiresAt } : {}),
-        },
-        settings: raw.settings ?? {},
-      }
-      addAccount(codebuddyAccount)
-      const connection = getMutableProviderConnection(codebuddyAccount.id)
-      if (connection) scheduleCodebuddyRefresh(connection)
-      imported.push(label)
-      refreshModelsForAccount(codebuddyAccount).catch((err: unknown) => {
-        logger.warn(`Import: failed to init models for "${label}":`, err)
-      })
-      continue
-    }
-
-    if (provider === "lobsterai") {
-      const pickString = (key: string): string | undefined => {
-        const value = raw.credentials?.[key]
-        return typeof value === "string" && value.trim() ?
-            value.trim()
-          : undefined
-      }
-      const accessToken = pickString("accessToken")
-      const refreshToken = pickString("refreshToken")
-      const uuid = pickString("uuid")
-      const userId = pickString("userId")
-      const firstKeyfrom = pickString("firstKeyfrom")
-      const latestKeyfrom = pickString("latestKeyfrom")
-      const expiresAt =
-        typeof raw.credentials?.expiresAt === "number" ?
-          raw.credentials.expiresAt
-        : undefined
-
-      if (!accessToken && !refreshToken) {
-        failed.push({
-          label,
-          reason: "Missing accessToken or refreshToken in credentials.",
-        })
-        continue
-      }
-
-      const lobsterAccount: Account = {
-        id: randomUUID(),
-        label,
-        provider: "lobsterai",
-        enabled: raw.enabled ?? true,
-        priority: raw.priority ?? 0,
-        quotaState: "unknown",
-        createdAt: raw.createdAt ?? Date.now(),
-        credentials: {
-          accessToken: accessToken ?? "",
-          ...(refreshToken ? { refreshToken } : {}),
-          ...(expiresAt ? { expiresAt } : {}),
-          ...(uuid ? { uuid } : {}),
-          ...(userId ? { userId } : {}),
-          ...(firstKeyfrom ? { firstKeyfrom } : {}),
-          ...(latestKeyfrom ? { latestKeyfrom } : {}),
-        },
-        settings: raw.settings ?? {},
-      }
-      addAccount(lobsterAccount)
-      imported.push(label)
-      refreshModelsForAccount(lobsterAccount).catch((err: unknown) => {
-        logger.warn(`Import: failed to init models for "${label}":`, err)
-      })
-      continue
-    }
-
     if (isOAuthProviderId(provider)) {
       const oauthAccount = buildOAuthAccountFromImportPayload(
         raw,
@@ -419,22 +446,19 @@ importAccountRoutes.post("/import", async (c) => {
 
       addAccount(oauthAccount)
       imported.push(label)
-
-      scheduleOAuthRefreshForAccount(oauthAccount)
-      refreshModelsForAccount(oauthAccount).catch((err: unknown) => {
-        logger.warn(`Import: failed to init models for "${label}":`, err)
-      })
-      const runtime = getProviderRuntime(oauthAccount.provider)
-      const conn = getMutableProviderConnection(oauthAccount.id)
-      if (runtime.refreshQuota && conn) {
-        runtime.refreshQuota(conn).catch((err: unknown) => {
-          logger.warn(`Import: failed to init quota for "${label}":`, err)
-        })
-      }
+      initializeOAuthAccount(oauthAccount, label)
       continue
     }
 
-    failed.push({ label, reason: `Unsupported provider: ${providerStr}.` })
+    const result = buildProviderAccount(raw, label, provider)
+    if ("error" in result) {
+      failed.push({ label, reason: result.error })
+      continue
+    }
+
+    addAccount(result.account)
+    imported.push(label)
+    initializeImportedAccount(result.account, label, provider)
   }
 
   if (imported.length > 0) {

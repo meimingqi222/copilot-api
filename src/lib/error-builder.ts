@@ -82,7 +82,7 @@ export function extractUpstreamErrorMessage(error: unknown): string {
 function readMessageText(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const trimmed = value.trim()
-  return trimmed ? trimmed : undefined
+  return trimmed || undefined
 }
 
 export function buildAnthropicContextWindowError(error: HTTPError): {

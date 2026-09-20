@@ -128,23 +128,28 @@ export interface PerformanceByProviderModel extends PerformanceByModel {
 export function computePerformanceByProviderModel(
   rows: Array<UsageRawRow>,
 ): Array<PerformanceByProviderModel> {
-  const byKey = new Map<string, PerfAccumulator>()
-  const meta = new Map<string, { provider: string; model: string }>()
+  const byKey = new Map<
+    string,
+    { acc: PerfAccumulator; provider: string; model: string }
+  >()
   for (const row of rows) {
     if (row.ttft_ms === null && row.tps === null) continue
     const provider = row.provider ?? "unknown"
     const key = provider + "\0" + row.model
-    let acc = byKey.get(key)
-    if (!acc) {
-      acc = newPerfAccumulator()
-      byKey.set(key, acc)
-      meta.set(key, { provider, model: row.model })
+    let entry = byKey.get(key)
+    if (!entry) {
+      entry = { acc: newPerfAccumulator(), provider, model: row.model }
+      byKey.set(key, entry)
     }
-    accumulatePerfRow(acc, row)
+    accumulatePerfRow(entry.acc, row)
   }
-  return [...byKey.entries()]
-    .sort(([, left], [, right]) => right.requests - left.requests)
-    .map(([key, acc]) => ({ ...meta.get(key)!, ...perfAverages(acc) }))
+  return [...byKey.values()]
+    .sort((left, right) => right.acc.requests - left.acc.requests)
+    .map(({ acc, provider, model }) => ({
+      provider,
+      model,
+      ...perfAverages(acc),
+    }))
 }
 
 interface PerfAccumulator {

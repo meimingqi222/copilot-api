@@ -254,25 +254,12 @@ export function createTurnConsumer(options: {
     }
   }
 
-  const waitForFirstEvent = async (timeoutMs: number): Promise<void> => {
-    if (terminalError) throw terminalError
-    if (queue.length > 0 || done) {
-      peekFirstEventError()
-      return
-    }
-    if (signal?.aborted) {
-      throw new Error(`${provider} websockets: aborted`)
-    }
-    await new Promise<void>((resolve, reject) => {
+  const waitForSignal = (timeoutMs: number, timeoutMessage: string) =>
+    new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         wake = undefined
         fail = undefined
-        reject(
-          new Error(
-            `${provider} websockets: no upstream response within `
-              + `${Math.round(timeoutMs / 1000)}s (timeout)`,
-          ),
-        )
+        reject(new Error(timeoutMessage))
       }, timeoutMs)
       wake = () => {
         clearTimeout(timer)
@@ -283,6 +270,21 @@ export function createTurnConsumer(options: {
         reject(err)
       }
     })
+
+  const waitForFirstEvent = async (timeoutMs: number): Promise<void> => {
+    if (terminalError) throw terminalError
+    if (queue.length > 0 || done) {
+      peekFirstEventError()
+      return
+    }
+    if (signal?.aborted) {
+      throw new Error(`${provider} websockets: aborted`)
+    }
+    await waitForSignal(
+      timeoutMs,
+      `${provider} websockets: no upstream response within `
+        + `${Math.round(timeoutMs / 1000)}s (timeout)`,
+    )
     peekFirstEventError()
   }
 
@@ -298,25 +300,10 @@ export function createTurnConsumer(options: {
         }
 
         if (queue.length === 0) {
-          await new Promise<void>((resolve, reject) => {
-            const timer = setTimeout(() => {
-              wake = undefined
-              fail = undefined
-              reject(
-                new Error(
-                  `${provider} websockets: upstream stream idle timeout`,
-                ),
-              )
-            }, UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS)
-            wake = () => {
-              clearTimeout(timer)
-              resolve()
-            }
-            fail = (err) => {
-              clearTimeout(timer)
-              reject(err)
-            }
-          })
+          await waitForSignal(
+            UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS,
+            `${provider} websockets: upstream stream idle timeout`,
+          )
           continue
         }
 

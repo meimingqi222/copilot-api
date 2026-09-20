@@ -28,5 +28,6 @@ agent-tools/
 temp_*
 .bun-test-data/
 .zcode
+.maka-workspace.json
 .alma-snapshots
 .apodex/
