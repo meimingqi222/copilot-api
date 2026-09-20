@@ -23,6 +23,7 @@ import {
   type ModelMapping,
   type ProviderConnection,
 } from "~/lib/provider-connections"
+import { ensureCodebuddyAccessToken } from "~/services/codebuddy/token-refresh"
 import {
   detectOpenAIStreamError,
   handleUpstreamFailure,
@@ -125,6 +126,7 @@ function decodeJwtPayload(token: string): JwtPayload | null {
 function buildCodebuddyHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
+  accessToken = credential.value,
 ): Record<string, string> {
   const requestId = randomUUID()
   const conversationId = randomUUID()
@@ -183,14 +185,14 @@ function buildCodebuddyHeaders(
   }
 
   // Authorization: Bearer <accessToken>
-  if (credential.value) {
-    headers["Authorization"] = `Bearer ${credential.value}`
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`
   }
 
   // X-User-Id：优先从 connection.headers 读取（用户可手动覆盖），
   // 否则从 JWT sub 字段自动提取
-  if (!headers["X-User-Id"] && credential.value) {
-    const payload = decodeJwtPayload(credential.value)
+  if (!headers["X-User-Id"] && accessToken) {
+    const payload = decodeJwtPayload(accessToken)
     if (payload?.sub) {
       headers["X-User-Id"] = payload.sub
     }
@@ -343,7 +345,8 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
   protocol: "codebuddy-native",
 
   async discoverModels({ connection, credential, signal }) {
-    const headers = buildCodebuddyHeaders(connection, credential)
+    const accessToken = await ensureCodebuddyAccessToken(connection, credential)
+    const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     // /v3/config 不在 /v2 路径下，用独立 URL
     const response = await fetch(resolveCodebuddyConfigUrl(connection), {
       headers,
@@ -395,6 +398,8 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     // CodeBuddy 后端只支持流式，强制 stream: true
     const upstreamPayload: ChatCompletionsPayload = {
       ...payload,
+      messages: structuredClone(payload.messages),
+      ...(payload.tools ? { tools: structuredClone(payload.tools) } : {}),
       model: target.upstreamModelId,
       stream: true,
     }
@@ -405,7 +410,8 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     sanitizeCodebuddyPayload(upstreamPayload.messages)
     if (upstreamPayload.tools) sanitizeCodebuddyPayload(upstreamPayload.tools)
 
-    const headers = buildCodebuddyHeaders(connection, credential)
+    const accessToken = await ensureCodebuddyAccessToken(connection, credential)
+    const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     const url = `${resolveCodebuddyBaseUrl(connection)}/chat/completions`
 
     const response = await fetch(url, {

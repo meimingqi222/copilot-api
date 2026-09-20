@@ -14,6 +14,7 @@ import {
 } from "~/lib/provider-connections"
 import { readBinaryBody, readJsonBody } from "~/lib/request-body"
 import { refreshModelsForAccount } from "~/lib/utils"
+import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { parseLobsteraiClientDatabase } from "~/services/lobsterai/parse-client-db"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -327,11 +328,8 @@ createAccountRoutes.post("/", async (c) => {
       typeof body.credentials?.refreshToken === "string" ?
         body.credentials.refreshToken.trim()
       : undefined
-    if (!accessToken && !refreshToken) {
-      return c.json(
-        { error: "CodeBuddy accessToken or refreshToken is required." },
-        400,
-      )
+    if (!accessToken) {
+      return c.json({ error: "CodeBuddy accessToken is required." }, 400)
     }
 
     const expiresAt = accessToken ? extractJwtExp(accessToken) : undefined
@@ -359,6 +357,7 @@ createAccountRoutes.post("/", async (c) => {
     await saveAccounts()
 
     const conn = getProviderConnection(account.id)
+    if (conn) scheduleCodebuddyRefresh(conn)
     return c.json({
       status: "complete",
       accountId: account.id,

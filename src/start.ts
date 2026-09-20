@@ -43,6 +43,7 @@ import {
   scheduleModelsRefresh,
 } from "./lib/utils"
 import { server } from "./server"
+import { scheduleCodebuddyRefreshForAllConnections } from "./services/codebuddy/token-refresh"
 import { refreshCopilotTokenForConnection } from "./services/copilot/token-refresh"
 import { startMimoManager, stopMimoManager } from "./services/mimo/manager"
 import { initializeProtocolAdapters } from "./services/protocols"
@@ -219,6 +220,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
       )
     }
   }
+
+  scheduleCodebuddyRefreshForAllConnections()
 
   // Start background quota refresh
   scheduleQuotaRefresh()

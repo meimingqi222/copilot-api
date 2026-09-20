@@ -32,6 +32,7 @@ import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
+import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
   scheduleOAuthRefreshForAccount,
   scheduleOAuthRefreshForConnection,
@@ -316,10 +317,10 @@ importAccountRoutes.post("/import", async (c) => {
           raw.credentials.expiresAt
         : undefined
 
-      if (!accessToken && !refreshToken) {
+      if (!accessToken) {
         failed.push({
           label,
-          reason: "Missing accessToken or refreshToken in credentials.",
+          reason: "Missing accessToken in credentials.",
         })
         continue
       }
@@ -340,6 +341,8 @@ importAccountRoutes.post("/import", async (c) => {
         settings: raw.settings ?? {},
       }
       addAccount(codebuddyAccount)
+      const connection = getMutableProviderConnection(codebuddyAccount.id)
+      if (connection) scheduleCodebuddyRefresh(connection)
       imported.push(label)
       refreshModelsForAccount(codebuddyAccount).catch((err: unknown) => {
         logger.warn(`Import: failed to init models for "${label}":`, err)
