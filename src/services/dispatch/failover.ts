@@ -4,6 +4,7 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
+import type { CredentialLease } from "~/services/dispatch/concurrency"
 import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
 
 import { HTTPError } from "~/lib/error"
@@ -71,6 +72,55 @@ export interface FailoverOptions<TPayload, TResult> {
   ) => Promise<TResult>
   logPrefix?: string
   c?: Context
+}
+
+/**
+ * Hold `lease` for the lifetime of a streamed result, or report that the
+ * result is not a stream so the caller can release immediately.
+ *
+ * `execute()` does NOT hand back the bare adapter result: `dispatchRequest`
+ * wraps it via `decorateResult` into `{ credentialId, response, identity }`.
+ * The stream therefore lives on `result.response`, and testing `result` itself
+ * was always false — the lease was released before the first chunk, so the
+ * per-credential in-flight gate never bounded a single streaming turn.
+ *
+ * Both shapes are handled: the wrapped shape (what the dispatcher actually
+ * returns) and a bare async iterable (so the gate still holds for any
+ * `execute()` that returns a stream directly). The wrapper's own shape is
+ * preserved — only its `response` is replaced by the lease-holding wrapper —
+ * because every caller reads `result.response`.
+ */
+function holdLeaseForStream<TResult>(
+  result: TResult,
+  lease: CredentialLease,
+): { value: TResult; handedOff: boolean } {
+  if (isWrappedStream(result)) {
+    return {
+      value: {
+        ...(result as object),
+        response: wrapLeaseStream(result.response, lease),
+      } as TResult,
+      handedOff: true,
+    }
+  }
+  if (isAsyncIterable(result)) {
+    return {
+      value: wrapLeaseStream(
+        result as AsyncIterable<unknown>,
+        lease,
+      ) as TResult,
+      handedOff: true,
+    }
+  }
+  return { value: result, handedOff: false }
+}
+
+/** True when `value` is a dispatch result whose `response` is a stream. */
+function isWrappedStream(
+  value: unknown,
+): value is { response: AsyncIterable<unknown> } {
+  if (!value || typeof value !== "object") return false
+  return isAsyncIterable((value as { response?: unknown }).response)
 }
 
 export async function executeWithFailover<
@@ -160,13 +210,12 @@ export async function executeWithFailover<
         if (c && sku && sku !== current.target.upstreamModelId) {
           patchRequestLog(c, { modelUpstream: sku })
         }
-        if (isAsyncIterable(result)) {
-          // Hold the lease for the full stream lifetime, not until the
-          // iterable is returned.
-          handedOffToStream = true
-          return wrapLeaseStream(result, lease) as TResult
-        }
-        return result
+        // Hold the lease for the full stream lifetime, not until the iterable
+        // is returned. See `holdLeaseForStream` for why the stream is not on
+        // `result` itself.
+        const leased = holdLeaseForStream(result, lease)
+        handedOffToStream = leased.handedOff
+        return leased.value
       } finally {
         if (!handedOffToStream) lease.release()
       }

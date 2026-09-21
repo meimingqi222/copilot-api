@@ -47,6 +47,11 @@ function readMaxInflight(): number {
 const MAX_INFLIGHT = readMaxInflight()
 const gates = new Map<string, { active: number }>()
 
+/** Test-only: drop all per-credential in-flight counters. */
+export function __resetCredentialGatesForTest(): void {
+  gates.clear()
+}
+
 /**
  * Acquire a lease for the given route target's credential, or return null when
  * the credential already has `MAX_INFLIGHT` turns in flight. A returned lease
