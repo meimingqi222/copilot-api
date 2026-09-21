@@ -29,6 +29,7 @@ import {
   observeUpstreamModel,
   observedResponseModel,
 } from "~/lib/upstream-model-audit"
+import { isAbortError } from "~/lib/utils"
 
 export type RequestEndpoint = LogEntry["endpoint"]
 export type TraceStage = NonNullable<LogEntry["stage"]>
@@ -304,14 +305,27 @@ export function recordUpstreamAttempt(
 export function recordTraceError(c: Context, error: unknown): void {
   const ctx = getRequestLogContext(c)
   if (ctx?.entry.diagnosticError) return
-  const classified = classifyTraceError(error, Boolean(ctx?.entry.connectionId))
+  const classified = classifyTraceError(
+    error,
+    Boolean(ctx?.entry.connectionId),
+    c.req.raw.signal.aborted,
+  )
+  // 已定的终态（cancelled / failed）优先级高于这里的分类结果：
+  // `markStreamTerminal` 已经根据协议终态或 signal 判过一次，后到的
+  // 兜底分类不得把它覆盖回去（否则会出现 protocolTerminal=client_abort
+  // 却 outcome=failed 这种自相矛盾的日志）。
+  const settled = ctx?.entry.outcome
+  const outcome: LogEntry["outcome"] =
+    settled === "cancelled" || settled === "failed" ? settled
+    : classified.stage === "abort" ? "cancelled"
+    : "failed"
   patchRequestLog(c, {
     error: classified.message,
     errorType: classified.errorType,
     upstreamStatus: classified.upstreamStatus,
     retryAfterMs: classified.retryAfterMs,
     errorSnippet: sanitizeDiagnosticSnippet(classified.errorSnippet),
-    outcome: classified.stage === "abort" ? "cancelled" : "failed",
+    outcome,
     diagnosticError: {
       origin:
         classified.stage === "abort" ? "cancelled"
@@ -330,6 +344,7 @@ export function recordTraceError(c: Context, error: unknown): void {
 function classifyTraceError(
   error: unknown,
   hasAdmission: boolean,
+  clientSignalAborted: boolean,
 ): {
   stage: TraceStage
   kind: string
@@ -344,6 +359,22 @@ function classifyTraceError(
       stage: "abort",
       kind: "abort",
       message: "Client disconnected",
+      errorType: "abort_error",
+      upstreamStatus: 499,
+    }
+  }
+  // 原生 AbortError（DOMException / undici 的 "The connection was closed."）
+  // 也必须归为 abort：上游断开和客户端断开都经此路径，不认它就会掉进下面的
+  // 兜底，被记成 origin=proxy / kind=unknown 的失败。
+  //
+  // 但裸 AbortError 也可能是**我们自己的超时**（AbortSignal.timeout、各类
+  // 内部 controller.abort()），那不是客户端取消。只有客户端 signal 确实已
+  // abort 时才判定为客户端断开；否则交给后续分支按真实原因归类。
+  if (isAbortError(error) && clientSignalAborted) {
+    return {
+      stage: "abort",
+      kind: "abort",
+      message: errorMessage(error) ?? "Client disconnected",
       errorType: "abort_error",
       upstreamStatus: 499,
     }
@@ -488,6 +519,13 @@ function classifyTraceError(
     message: error instanceof Error ? error.message : String(error),
     errorType: "dispatch_error",
   }
+}
+
+/** 安全的 message 读取：只接受非空字符串，避免把 undefined 塞进日志。 */
+function errorMessage(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined
+  const message = error.message.trim()
+  return message || undefined
 }
 
 export function finalizeRequestLog(
