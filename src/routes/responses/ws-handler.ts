@@ -30,8 +30,10 @@ import {
   bindRequestLogContext,
   createDetachedRequestLog,
   finalizeRequestLogContext,
+  finalizeUpstreamModelAuditForContext,
   getRequestLogContext,
   markStreamTerminal,
+  observeUpstreamResponseModelForContext,
   recordTraceError,
   restoreRequestLogContext,
 } from "~/lib/request-log"
@@ -204,10 +206,28 @@ export function createResponsesWebSocketSession(c: Context) {
       const finishTurn = (status: number) => {
         if (turnCtx.finished) return
         turnCtx.finished = true
+        // 上游模型审计必须在 finalize 之前结算，否则 WS turn 的日志同样会
+        // 缺 modelResponse/modelMismatch。WS 路径自己 finish，不走
+        // log-middleware，所以这里必须显式调用。
+        // 传 turnCtx 而不是依赖 c 的当前绑定：onClose/onError 可能在 turn
+        // 之间的时机触发，用显式 context 才能保证结算的总是这个 turn。
+        const modelVerdict = finalizeUpstreamModelAuditForContext(turnCtx)
         const finalized = finalizeRequestLogContext(turnCtx, status, {
           method: "WS",
           path: c.req.path,
         })
+        if (modelVerdict === "mismatch" && status < 400) {
+          finalized.level = "warn"
+          logger.warn(
+            `[upstream-model-audit] response model mismatch: sent "${finalized.modelUpstream ?? finalized.model ?? "-"}" but upstream reported "${finalized.modelResponse}"`,
+            {
+              requestId: finalized.requestId,
+              endpoint: finalized.endpoint,
+              connectionId: finalized.connectionId,
+              modelResponse: finalized.modelResponse,
+            },
+          )
+        }
         logStore.push(finalized)
         appendRequestLogSync(finalized)
       }
@@ -610,6 +630,13 @@ async function runResponsesAttempt(
     }
 
     if (state.committed && completedResponse) {
+      // 上游终态响应自报的模型：这是 WS 路径唯一的观测点（不存在逐事件
+      // 观测——pumpWithLeadingBuffer 只回传终态）。用显式 turn context，
+      // 避免依赖 c 此刻的绑定状态。
+      observeUpstreamResponseModelForContext(
+        getRequestLogContext(c),
+        completedResponse,
+      )
       recordResponsesUsage({
         c,
         accountId: result.accountId,
