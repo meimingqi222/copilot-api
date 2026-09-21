@@ -806,6 +806,15 @@ const i18n = {
       "logs.showing": "显示 {start} - {end} 条，共 {total} 条",
       "logs.previous": "上一页",
       "logs.next": "下一页",
+      "logs.modelAudit": "上游模型审计",
+      "logs.modelAuditAll": "全部模型",
+      "logs.modelAuditMismatch": "仅不一致",
+      "logs.modelAuditMatch": "仅一致",
+      "logs.sentModel": "发往上游",
+      "logs.responseModel": "上游响应",
+      "logs.modelMismatch": "模型不一致",
+      "logs.modelVariant": "疑似版本变体",
+      "logs.modelConflict": "上游声明矛盾",
 
       // Login
       "login.title": "欢迎回来",
@@ -1661,6 +1670,15 @@ const i18n = {
       "logs.showing": "Showing {start} - {end} of {total}",
       "logs.previous": "Previous",
       "logs.next": "Next",
+      "logs.modelAudit": "Upstream model audit",
+      "logs.modelAuditAll": "All models",
+      "logs.modelAuditMismatch": "Mismatched only",
+      "logs.modelAuditMatch": "Matched only",
+      "logs.sentModel": "Sent upstream",
+      "logs.responseModel": "Upstream response",
+      "logs.modelMismatch": "Model mismatch",
+      "logs.modelVariant": "Possible variant",
+      "logs.modelConflict": "Conflicting declarations",
 
       // Login
       "login.title": "Welcome Back",

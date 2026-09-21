@@ -50,6 +50,7 @@ logApiRoutes.get("/", (c) => {
   const kind = c.req.query("kind")
   const provider = c.req.query("provider")
   const model = c.req.query("model")
+  const modelMismatch = parseBool(c.req.query("modelMismatch"))
   const connectionId = c.req.query("connectionId")
   const requestId = c.req.query("requestId")
   const statusMin = parseNumber(c.req.query("statusMin"))
@@ -73,6 +74,7 @@ logApiRoutes.get("/", (c) => {
     kind: kind || undefined,
     provider: provider || undefined,
     model: model || undefined,
+    modelMismatch,
     connectionId: connectionId || undefined,
     requestId: requestId || undefined,
     statusMin: status ?? statusMin,
@@ -104,6 +106,7 @@ logApiRoutes.get("/export", (c) => {
   const kind = c.req.query("kind")
   const provider = c.req.query("provider")
   const model = c.req.query("model")
+  const modelMismatch = parseBool(c.req.query("modelMismatch"))
   const connectionId = c.req.query("connectionId")
   const requestId = c.req.query("requestId")
   const hasError = parseBool(c.req.query("hasError"))
@@ -130,6 +133,7 @@ logApiRoutes.get("/export", (c) => {
     kind: kind || undefined,
     provider: provider || undefined,
     model: model || undefined,
+    modelMismatch,
     connectionId: connectionId || undefined,
     requestId: requestId || undefined,
     statusMin: status ?? statusMin,

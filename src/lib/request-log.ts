@@ -8,6 +8,10 @@ import type {
   RequestLogRecord,
   UpstreamAttempt,
 } from "~/lib/log-store"
+import type {
+  UpstreamModelObservation,
+  UpstreamModelVerdict,
+} from "~/lib/upstream-model-audit"
 
 import { HTTPError, UpstreamTransportError } from "~/lib/error"
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
@@ -17,6 +21,14 @@ import {
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
+import {
+  compareUpstreamModels,
+  createUpstreamModelObservation,
+  extractResponseModel,
+  isTerminalResponseEvent,
+  observeUpstreamModel,
+  observedResponseModel,
+} from "~/lib/upstream-model-audit"
 
 export type RequestEndpoint = LogEntry["endpoint"]
 export type TraceStage = NonNullable<LogEntry["stage"]>
@@ -26,6 +38,11 @@ export interface RequestLogContext {
   entry: Partial<LogEntry>
   finished: boolean
   finish?: () => void
+  /**
+   * 上游响应自报模型的旁路观测器。惰性创建：只有真正观测到声明才分配。
+   * 与 `entry.modelUpstream`（我们发出去的模型）配对，在 finalize 时比对。
+   */
+  upstreamModelObservation?: UpstreamModelObservation
 }
 
 const CTX_KEY = "requestLogCtx" as never
@@ -103,6 +120,112 @@ export function patchRequestLog(c: Context, patch: Partial<LogEntry>): void {
   if (!ctx) return
   Object.assign(ctx.entry, patch)
   if (patch.requestId) ctx.requestId = patch.requestId
+}
+
+/**
+ * 记录上游响应自报的模型名（旁路观测，绝不影响转发）。
+ *
+ * `payload` 是解析后的响应对象；`eventType` 是 SSE 事件名（流式），非流式传
+ * undefined。所有协议都汇入这里，字段路径差异由 extractResponseModel 处理。
+ */
+export function observeUpstreamResponseModel(
+  c: Context,
+  payload: unknown,
+  eventType?: string,
+): void {
+  observeUpstreamResponseModelForContext(
+    getRequestLogContext(c),
+    payload,
+    eventType,
+  )
+}
+
+/**
+ * `observeUpstreamResponseModel` 的显式 context 版本。
+ *
+ * WS 路径自己管理 turn context 的绑定与恢复，这里直接传 `turnCtx` 比依赖
+ * "调用时 c 恰好还绑在哪个 ctx 上"更可靠。
+ */
+export function observeUpstreamResponseModelForContext(
+  ctx: RequestLogContext | undefined,
+  payload: unknown,
+  eventType?: string,
+): void {
+  if (!ctx) return
+  const model = extractResponseModel(payload)
+  if (!model) return
+  const observation = (ctx.upstreamModelObservation ??=
+    createUpstreamModelObservation())
+  observeUpstreamModel(
+    observation,
+    model,
+    isTerminalResponseEvent(eventType, payload),
+  )
+}
+
+/** 从 SSE 事件的 data 字符串观测（流式路径的便捷入口）。 */
+export function observeUpstreamResponseModelFromSseData(
+  c: Context,
+  data: string | undefined,
+  eventType?: string,
+): void {
+  if (!data || data === "[DONE]") return
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(data)
+  } catch {
+    return
+  }
+  observeUpstreamResponseModel(c, parsed, eventType)
+}
+
+/**
+ * 在请求收尾时结算观测结果：把上游自报模型与发出去的模型比对，写入
+ * `modelResponse` / `modelMismatch` / `modelVariant`。
+ *
+ * 幂等：重复调用只结算一次。返回判定结果，供调用方决定是否提示。
+ */
+export function finalizeUpstreamModelAudit(
+  c: Context,
+): UpstreamModelVerdict | undefined {
+  return finalizeUpstreamModelAuditForContext(getRequestLogContext(c))
+}
+
+/**
+ * `finalizeUpstreamModelAudit` 的显式 context 版本。见
+ * `observeUpstreamResponseModelForContext` 关于为何 WS 路径需要它。
+ */
+export function finalizeUpstreamModelAuditForContext(
+  ctx: RequestLogContext | undefined,
+): UpstreamModelVerdict | undefined {
+  if (!ctx) return undefined
+  if (ctx.entry.modelResponse !== undefined) {
+    return (
+      ctx.entry.modelMismatch ? "mismatch"
+      : ctx.entry.modelVariant ? "variant"
+      : "match"
+    )
+  }
+
+  const reported = observedResponseModel(ctx.upstreamModelObservation)
+  if (!reported) return undefined
+
+  // 发往上游的模型：渠道映射后的真实模型优先，回退请求模型。
+  const sent =
+    ctx.entry.modelUpstream?.trim()
+    || ctx.entry.model?.trim()
+    || ctx.entry.modelRequested?.trim()
+  const verdict = sent ? compareUpstreamModels(sent, reported) : "match"
+
+  Object.assign(ctx.entry, {
+    modelResponse: reported,
+    modelMismatch: verdict === "mismatch",
+    modelVariant: verdict === "variant",
+    // 上游在同一次响应里先后声明了不同的模型：这本身就是一个异常信号，
+    // 与"我们发出去的模型是否一致"无关，所以单独记录（即使 verdict 是 match）。
+    modelConflict: ctx.upstreamModelObservation?.conflict || undefined,
+  })
+  return verdict
 }
 
 export function addAttempt(c: Context, attempt: UpstreamAttempt): void {

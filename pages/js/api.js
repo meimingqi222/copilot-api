@@ -376,6 +376,8 @@ const API = {
       if (filters.outcome) params.set("outcome", filters.outcome)
       if (filters.provider) params.set("provider", filters.provider)
       if (filters.requestId) params.set("requestId", filters.requestId)
+      if (filters.modelMismatch !== undefined && filters.modelMismatch !== "")
+        params.set("modelMismatch", filters.modelMismatch)
       if (filters.timeFrom) params.set("timeFrom", filters.timeFrom)
       if (filters.timeTo) params.set("timeTo", filters.timeTo)
 
@@ -391,6 +393,8 @@ const API = {
       if (filters.outcome) params.set("outcome", filters.outcome)
       if (filters.provider) params.set("provider", filters.provider)
       if (filters.requestId) params.set("requestId", filters.requestId)
+      if (filters.modelMismatch !== undefined && filters.modelMismatch !== "")
+        params.set("modelMismatch", filters.modelMismatch)
       if (filters.timeFrom) params.set("timeFrom", filters.timeFrom)
       if (filters.timeTo) params.set("timeTo", filters.timeTo)
       if (filters.limit) params.set("limit", filters.limit.toString())

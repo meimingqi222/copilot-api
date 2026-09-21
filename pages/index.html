@@ -4829,6 +4829,19 @@
               :placeholder="t('logs.search')"
               class="input flex-1 min-w-[200px]"
             />
+            <select
+              x-model="filters.modelMismatch"
+              @change="filters.offset = 0; load()"
+              class="input w-40"
+              :title="t('logs.modelAudit')"
+            >
+              <option value="" x-text="t('logs.modelAuditAll')"></option>
+              <option
+                value="true"
+                x-text="t('logs.modelAuditMismatch')"
+              ></option>
+              <option value="false" x-text="t('logs.modelAuditMatch')"></option>
+            </select>
             <button
               @click="clearFilters()"
               class="btn btn-secondary"
@@ -4906,10 +4919,25 @@
                       class="p-3 text-xs"
                       x-text="log.latencyMs != null ? (log.latencyMs + 'ms') : '-'"
                     ></td>
-                    <td
-                      class="p-3 text-xs"
-                      x-text="log.modelUpstream || log.model || '-'"
-                    ></td>
+                    <td class="p-3 text-xs">
+                      <span
+                        x-text="log.modelUpstream || log.model || '-'"
+                      ></span>
+                      <span
+                        x-show="log.modelResponse"
+                        class="block break-all text-[11px]"
+                        :class="log.modelMismatch ? 'text-[var(--apple-red)]' : 'text-[var(--apple-text-secondary)]'"
+                        :title="`${t('logs.sentModel')}: ${log.modelUpstream || log.model || '-'}\n${t('logs.responseModel')}: ${log.modelResponse || '-'}`"
+                      >
+                        <span x-text="`↳ ${log.modelResponse}`"></span>
+                        <span
+                          x-show="log.modelMismatch || log.modelVariant || log.modelConflict"
+                          class="ml-1 inline-flex rounded px-1 py-px text-[10px] font-medium ring-1 ring-inset"
+                          :class="log.modelMismatch || log.modelConflict ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30' : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30'"
+                          x-text="log.modelConflict ? t('logs.modelConflict') : (log.modelMismatch ? t('logs.modelMismatch') : t('logs.modelVariant'))"
+                        ></span>
+                      </span>
+                    </td>
                     <td
                       class="p-3 font-mono text-xs"
                       :title="log.userAgent || ''"
@@ -4967,6 +4995,13 @@
                   x-text="formatJson({ initialTarget: selectedLog?.initialTarget, finalTarget: selectedLog?.finalTarget, provider: selectedLog?.provider, protocol: selectedLog?.protocol, upstreamModel: selectedLog?.modelUpstream, reasoningEffort: selectedLog?.reasoningEffort })"
                 ></pre>
               </div>
+            </div>
+            <div x-show="selectedLog?.modelResponse" class="mt-4">
+              <div class="font-medium mb-2" x-text="t('logs.modelAudit')"></div>
+              <pre
+                class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
+                x-text="formatJson({ requestedModel: selectedLog?.modelRequested, sentUpstream: selectedLog?.modelUpstream, upstreamResponse: selectedLog?.modelResponse, mismatch: selectedLog?.modelMismatch, variant: selectedLog?.modelVariant, conflict: selectedLog?.modelConflict })"
+              ></pre>
             </div>
             <div class="font-medium mt-4 mb-2">Upstream attempts</div>
             <pre

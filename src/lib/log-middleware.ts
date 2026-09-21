@@ -18,6 +18,7 @@ import { isProtectedRoute } from "./protected-routes"
 import { dumpIncomingRequest } from "./request-dump"
 import {
   finalizeRequestLog,
+  finalizeUpstreamModelAudit,
   getRequestLogContext,
   initRequestLog,
   isCoreApiPath,
@@ -100,16 +101,23 @@ export const requestLogger = async (c: Context, next: Next) => {
       // Context 已结束时按正常路径继续
     }
     const status = c.res.status
+    // 上游自报模型审计：必须在 finalizeRequestLog 之前结算，否则这一条日志
+    // 就少了 modelResponse/modelMismatch。只观测不改行为，流式路径在
+    // producer 收尾后也会走到这里。
+    const modelVerdict = finalizeUpstreamModelAudit(c)
     const finalized = finalizeRequestLog(c, status)
     const level =
       finalized.level
       ?? (status >= 500 ? "error"
       : status >= 400 ? "warn"
       : "info")
+    // 上游静默换模型是请求成功但结果可疑的情况：抬到 warn，否则会被淹没在
+    // 一片 info 里。仅在 HTTP 成功时抬升，失败请求已经有自己的 error/warn。
+    const modelMismatchWarning = modelVerdict === "mismatch" && status < 400
     const entry = {
       ...finalized,
       timestamp: finalized.timestamp ?? Date.now(),
-      level,
+      level: modelMismatchWarning ? "warn" : level,
       message: finalized.message ?? `${c.req.method} ${c.req.path} ${status}`,
       userId: finalized.userId ?? c.get("userId"),
       username: finalized.username ?? c.get("username"),
@@ -129,6 +137,20 @@ export const requestLogger = async (c: Context, next: Next) => {
     }
     logStore.push(entry)
     appendRequestLogSync(entry)
+    if (modelMismatchWarning) {
+      logger.warn(
+        `[upstream-model-audit] response model mismatch: sent "${entry.modelUpstream ?? entry.model ?? "-"}" but upstream reported "${entry.modelResponse}"`,
+        {
+          requestId: entry.requestId,
+          endpoint: entry.endpoint,
+          connectionId: entry.connectionId,
+          credentialId: entry.credentialId,
+          model: entry.model,
+          modelUpstream: entry.modelUpstream,
+          modelResponse: entry.modelResponse,
+        },
+      )
+    }
   }
   setRequestLogFinisher(c, persistRequestLog)
 

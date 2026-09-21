@@ -12,6 +12,7 @@ function logsView() {
       apiKind: "",
       outcome: "",
       search: "",
+      modelMismatch: "",
       limit: 50,
       offset: 0,
     },
@@ -65,6 +66,7 @@ function logsView() {
         apiKind: "",
         outcome: "",
         search: "",
+        modelMismatch: "",
         limit: 50,
         offset: 0,
       }

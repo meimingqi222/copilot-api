@@ -87,6 +87,14 @@ export interface LogEntry {
   ok?: boolean
   modelRequested?: string
   modelUpstream?: string
+  /** 上游响应自报的模型名（未自报时缺省）。 */
+  modelResponse?: string
+  /** 上游自报模型与发往上游的模型真正不一致（归一化后仍不同）。 */
+  modelMismatch?: boolean
+  /** 上游自报模型与发往上游的模型仅差版本/日期/latest 后缀。 */
+  modelVariant?: boolean
+  /** 上游在同一次响应里先后声明了互相矛盾的模型名。 */
+  modelConflict?: boolean
   /** 请求的思考等级（reasoning effort），来自模型名后缀或 payload 字段 */
   reasoningEffort?: string
   provider?: string
@@ -127,6 +135,8 @@ export interface LogQueryOptions {
   kind?: string
   provider?: string
   model?: string
+  /** true 只看上游自报模型不一致的请求，false 只看一致的。 */
+  modelMismatch?: boolean
   connectionId?: string
   requestId?: string
   statusMin?: number
@@ -211,6 +221,11 @@ export function matchesLogEntry(
     )
       return false
   }
+  if (
+    options.modelMismatch !== undefined
+    && entry.modelMismatch !== options.modelMismatch
+  )
+    return false
   if (options.connectionId && entry.connectionId !== options.connectionId)
     return false
   if (

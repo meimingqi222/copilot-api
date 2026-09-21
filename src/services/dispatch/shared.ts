@@ -2,6 +2,8 @@
  * Shared dispatch logic for chat-completions, messages, and responses routes.
  */
 
+import type { Context } from "hono"
+
 import type { RouteTarget } from "~/lib/provider-connections"
 import type { RequestAdmission } from "~/lib/request-admission"
 import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
@@ -17,10 +19,15 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { HTTPError } from "~/lib/error"
 import { connectionProvider } from "~/lib/provider-connections"
 import {
+  observeUpstreamResponseModel,
+  observeUpstreamResponseModelFromSseData,
+} from "~/lib/request-log"
+import {
   getSensitiveWordMatcherFromEnv,
   obfuscateOpenAiMessages,
   obfuscateResponsesPayload,
 } from "~/lib/sensitive-words"
+import { isAsyncIterable } from "~/services/dispatch/concurrency"
 import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
 import { createChatViaResponses } from "~/services/protocols/chat-via-responses"
 import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
@@ -31,7 +38,7 @@ import { executeWithFailover } from "./failover"
 export interface ChatDispatchOptions {
   routeKind: "chat"
   payload: ChatCompletionsPayload
-  c?: import("hono").Context
+  c?: Context
   executionContext?: RequestExecutionContext
 }
 
@@ -39,13 +46,13 @@ export interface MessagesDispatchOptions {
   routeKind: "messages"
   payload: AnthropicMessagesPayload
   forwardedHeaders?: Record<string, string | undefined>
-  c?: import("hono").Context
+  c?: Context
 }
 
 export interface ResponsesDispatchOptions {
   routeKind: "responses"
   payload: ResponsesPayload
-  c?: import("hono").Context
+  c?: Context
   executionContext?: RequestExecutionContext
 }
 
@@ -69,6 +76,7 @@ export type DispatchResult =
 function decorateResult(
   result: AdapterChatResult | AdapterMessagesResult | AdapterResponsesResult,
   current: RequestAdmission,
+  c?: Context,
 ): DispatchResult {
   const identity: DispatchIdentity = {
     ownerId: current.connection.id,
@@ -76,7 +84,43 @@ function decorateResult(
     credentialId: current.target.credentialId,
     provider: connectionProvider(current.connection),
   }
-  return { ...result, identity } as DispatchResult
+  const decorated = { ...result, identity } as DispatchResult
+  return c ? withUpstreamModelAudit(c, decorated) : decorated
+}
+
+/**
+ * 旁路观测上游响应自报的模型名（审计用，绝不改变转发语义）。
+ *
+ * 挂在 dispatch 的唯一收敛点 `decorateResult` 上，所以 chat / messages /
+ * responses 三条路由以及它们的所有跨协议翻译路径都被覆盖。流式结果包一层
+ * 透传生成器，逐事件观测；非流式直接读响应对象。
+ *
+ * 观测发生在翻译层**之后**：翻译层保留上游的 `model` 字段，所以这里读到的
+ * 仍是上游自报的名字（`message.model` / `response.model` / `model`）。
+ */
+function withUpstreamModelAudit<T extends { response: unknown }>(
+  c: Context,
+  result: T,
+): T {
+  const response = result.response
+  if (isAsyncIterable<{ data?: string; event?: string }>(response)) {
+    return {
+      ...result,
+      response: observeUpstreamModelStream(c, response),
+    }
+  }
+  observeUpstreamResponseModel(c, response)
+  return result
+}
+
+async function* observeUpstreamModelStream(
+  c: Context,
+  stream: AsyncIterable<{ data?: string; event?: string }>,
+): AsyncIterable<{ data?: string; event?: string }> {
+  for await (const event of stream) {
+    observeUpstreamResponseModelFromSseData(c, event?.data, event?.event)
+    yield event
+  }
 }
 
 /**
@@ -147,7 +191,7 @@ export async function dispatchRequest(
               signal,
               ctx: executionContext,
             })
-            .then((r) => decorateResult(r, current))
+            .then((r) => decorateResult(r, current, options.c))
         }
 
         if (target.endpoint === "messages") {
@@ -161,7 +205,7 @@ export async function dispatchRequest(
               signal,
               ctx: executionContext,
               messagesExecutor: (p) => createMessages(p),
-            }).then((r) => decorateResult(r, current))
+            }).then((r) => decorateResult(r, current, options.c))
           }
         }
 
@@ -176,7 +220,7 @@ export async function dispatchRequest(
               signal,
               ctx: executionContext,
               responsesExecutor: (p) => createResponses(p),
-            }).then((r) => decorateResult(r, current))
+            }).then((r) => decorateResult(r, current, options.c))
           }
         }
 
@@ -222,7 +266,7 @@ export async function dispatchRequest(
               signal,
               ctx: executionContext,
             })
-            .then((r) => decorateResult(r, current))
+            .then((r) => decorateResult(r, current, options.c))
         }
         const createChat = adapter?.createChatCompletions?.bind(adapter)
         if (target.endpoint === "chat" && createChat) {
@@ -237,7 +281,7 @@ export async function dispatchRequest(
             signal,
             ctx: executionContext,
             chatExecutor: (p) => createChat(p),
-          }).then((r) => decorateResult(r, current))
+          }).then((r) => decorateResult(r, current, options.c))
         }
         throw new HTTPError(
           `Protocol "${target.protocol}" does not support /responses`,
@@ -282,7 +326,7 @@ export async function dispatchRequest(
             signal,
             ctx: messageExecutionContext,
           })
-          .then((r) => decorateResult(r, current))
+          .then((r) => decorateResult(r, current, options.c))
       }
 
       // Cross-protocol fallback: translate Anthropic Messages -> Chat
@@ -301,7 +345,7 @@ export async function dispatchRequest(
           signal,
           ctx: messageExecutionContext,
           chatExecutor: (p) => createChat(p),
-        }).then((r) => decorateResult(r, current))
+        }).then((r) => decorateResult(r, current, options.c))
       }
 
       throw new HTTPError(
