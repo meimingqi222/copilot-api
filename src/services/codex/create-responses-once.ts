@@ -959,10 +959,16 @@ async function attemptCodexUpstreamWsTurn(
     if (isChainedTurnUpstreamError(error) && previousResponseId) {
       throw chainedHttpCodexRequestError()
     }
-    // credential (quota/auth/rate/server) and request (bad body) failures are
-    // the handler's concern — an account switch or a surfaced error. Never
-    // silently re-POST them on the same account.
-    if (failure.scope === "credential" || failure.scope === "request") {
+    // credential (quota/auth/rate/server), request (bad body), and local
+    // saturation (in-flight cap) failures are the handler's concern — an
+    // account switch or a surfaced error. Never silently re-POST them on the
+    // same account: the HTTP recovery holds no lease, so it would tunnel
+    // around the very gate that rejected the turn.
+    if (
+      failure.scope === "credential"
+      || failure.scope === "request"
+      || failure.scope === "local_saturation"
+    ) {
       throw error
     }
     // connection scope: this socket is unusable. On a connection-limit frame,

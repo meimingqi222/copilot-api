@@ -22,12 +22,65 @@
 
 import type { RouteTarget } from "~/lib/provider-connections"
 
+import { LocalConcurrencyLimitError } from "~/lib/error"
 import { targetKey } from "~/lib/route-target"
 
-export class CredentialConcurrencyLimitError extends Error {
-  constructor(message: string) {
-    super(message)
+/**
+ * A local pre-send rejection: the credential is at its in-flight cap.
+ *
+ * `HTTPError` (429) on purpose, mirroring `WindsurfConcurrencyLimitError`. Two
+ * callers depend on that shape:
+ *
+ * - The HTTP failover loop must not cool the credential and must surface a
+ *   retryable 429 when no target is left, not a 500. `executeWithFailover`
+ *   already special-cases this class; the status makes the generic
+ *   `forwardError` path correct too.
+ * - The WS handler's `handleResponseError` would otherwise serialize a plain
+ *   `Error` as a non-retryable 500.
+ *
+ * It is *not* an upstream failure, so callers must never treat it as one: see
+ * the `LocalConcurrencyLimitError` marker (which also keeps the request trace
+ * from labelling it `origin: upstream`) and `classifyWsFailure`'s
+ * `local_saturation` scope.
+ */
+export class CredentialConcurrencyLimitError extends LocalConcurrencyLimitError {
+  /** Routing key of the saturated credential; kept for logs, not for clients. */
+  readonly credentialKey: string
+
+  constructor(credentialKey: string) {
+    // Generic client-facing copy: the credential key is a routing identity
+    // (connection::credential::endpoint) and must not leak downstream. It
+    // stays on `credentialKey` for logs; mirrors `WindsurfConcurrencyLimitError`,
+    // whose `accountId` is likewise a field rather than part of the message.
+    const message = "Credential concurrency limit reached; retry shortly"
+    const headers = new Headers({
+      "Retry-After": "1",
+      "retry-after-ms": "1000",
+    })
+    // JSON body so both `forwardError` (HTTP) and
+    // `createResponsesErrorPayload` (WS) forward a typed retryable 429 instead
+    // of a generic error.
+    const body = JSON.stringify({
+      error: {
+        code: 429,
+        message,
+        retryable: true,
+        type: "rate_limit_error",
+      },
+    })
+    super(
+      message,
+      new Response(body, {
+        status: 429,
+        headers: {
+          ...Object.fromEntries(headers),
+          "Content-Type": "application/json",
+        },
+      }),
+      body,
+    )
     this.name = "CredentialConcurrencyLimitError"
+    this.credentialKey = credentialKey
   }
 }
 

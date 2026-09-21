@@ -13,13 +13,18 @@ import type {
   UpstreamModelVerdict,
 } from "~/lib/upstream-model-audit"
 
-import { HTTPError, UpstreamTransportError } from "~/lib/error"
+import {
+  HTTPError,
+  LocalConcurrencyLimitError,
+  UpstreamTransportError,
+} from "~/lib/error"
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
 import { classifyUpstreamError } from "~/lib/provider-connections/availability"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
+import { parseRetryAfterMs } from "~/lib/retry-after"
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
 import {
   compareUpstreamModels,
@@ -387,6 +392,28 @@ function classifyTraceError(
       errorType: "transport_error",
       upstreamStatus: error.response.status,
       errorSnippet: truncate(error.responseBody, 2048),
+    }
+  }
+  // A local pre-send gate rejection is NOT an upstream failure: classifying it
+  // by status alone would land it in the generic HTTPError branch below and
+  // label it `origin: upstream / kind: rate_limited`, contradicting the whole
+  // point of the `local_saturation` scope (the credential is healthy, just
+  // busy). `dispatch`/`proxy` is the correct story.
+  if (error instanceof LocalConcurrencyLimitError) {
+    // `retry-after-ms` is Anthropic-style milliseconds; `parseRetryAfterMs`
+    // would read it as delta-seconds and inflate the value 1000×.
+    const msHeader = error.response.headers.get("retry-after-ms")
+    const parsedMs = msHeader ? Number.parseInt(msHeader, 10) : Number.NaN
+    return {
+      stage: "dispatch",
+      kind: "concurrency_limit",
+      message: error.message,
+      errorType: "concurrency_limit",
+      upstreamStatus: error.response.status,
+      retryAfterMs:
+        Number.isFinite(parsedMs) && parsedMs > 0 ?
+          parsedMs
+        : parseRetryAfterMs(error.response.headers.get("Retry-After")),
     }
   }
   if (error instanceof ProtectedRouteGuardError) {

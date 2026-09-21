@@ -11,6 +11,7 @@ import {
   patchRequestLog,
   recordTraceError,
 } from "~/lib/request-log"
+import { CredentialConcurrencyLimitError } from "~/services/dispatch/concurrency"
 
 /**
  * Regression tests for the abort/outcome classification bug.
@@ -143,5 +144,41 @@ describe("trace error classification", () => {
     const entry = logStore.query({ limit: 1 }).entries[0]
     expect(entry?.outcome).toBe("failed")
     expect(entry?.diagnosticError?.origin).toBe("proxy")
+  })
+
+  test("classifies a local concurrency rejection as a dispatch condition", async () => {
+    const app = makeApp((c) => {
+      patchRequestLog(c, { model: "gpt-5.5", connectionId: "conn-1" })
+      // A per-credential in-flight cap rejection is an HTTPError(429), but it
+      // is NOT an upstream failure. Classifying it by status would label the
+      // trace `origin: upstream / kind: rate_limited` — the exact reading this
+      // fix exists to prevent.
+      recordTraceError(
+        c,
+        new CredentialConcurrencyLimitError("conn-1::cred-1::responses"),
+      )
+      return c.json({ ok: true })
+    })
+
+    await call(app)
+    const entry = logStore.query({ limit: 1 }).entries[0]
+    expect(entry?.diagnosticError?.origin).toBe("proxy")
+    expect(entry?.diagnosticError?.kind).toBe("concurrency_limit")
+    expect(entry?.errorType).toBe("concurrency_limit")
+    expect(entry?.diagnosticError?.origin).not.toBe("upstream")
+    // The retry hint is 1s (`Retry-After: 1` / `retry-after-ms: 1000`);
+    // `retry-after-ms` is milliseconds and must not be read as delta-seconds.
+    expect(entry?.retryAfterMs).toBe(1000)
+    expect(entry?.diagnosticError?.retryAfterMs).toBe(1000)
+  })
+
+  test("does not leak the credential key to clients in the error body", async () => {
+    const error = new CredentialConcurrencyLimitError(
+      "conn-1::cred-1::responses",
+    )
+    // The routing key is a field for logs, not part of the client message.
+    expect(error.credentialKey).toBe("conn-1::cred-1::responses")
+    expect(error.responseBody).not.toContain("conn-1::cred-1")
+    expect(error.message).not.toContain("conn-1::cred-1")
   })
 })

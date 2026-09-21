@@ -1,6 +1,7 @@
 # TODO: Responses WebSocket 并发门禁
 
-状态：**未开始**（等待排期）
+状态：**已完成**（见 `.agents/notes/implemented/bug-fix/2026-09-21-responses-ws-credential-gate.md`）
+
 发现于：上游模型审计改动期间的代码审阅
 
 ## 背景
@@ -35,8 +36,7 @@ N 个不同的 WS 客户端（各自一个 `executionSessionId`）可以**同时
 
 **为什么 WS 比 HTTP 更容易触发聚集**：session affinity 的键是
 `affinityAuthKey = connectionId::credentialId`（`src/lib/routing/session-affinity.ts:29`），
-其设计目的就是**把同一会话粘到同一凭证**（为了 prompt cache 命中率）。
-所以多个 Codex 会话被粘到同一账号是**预期行为**。HTTP 每次请求独立选路，天然分散；WS 是粘性选路，**主动聚集**。同一个缺失的界，在 WS 上更易触发。
+其设计目的就是**把同一会话粘到同一凭证**（为了 prompt cache 命中率）。所以多个 Codex 会话被粘到同一账号是**预期行为**。HTTP 每次请求独立选路，天然分散；WS 是粘性选路，**主动聚集**。同一个缺失的界，在 WS 上更易触发。
 
 ### 2. `CredentialConcurrencyLimitError` 在 WS 侧会被误分类（阻塞项）
 
@@ -83,31 +83,55 @@ if (failure.scope === "connection" && !httpRecoveryTried) {
 
 ### 1. 接入 lease
 
-- [ ] turn 开始：`tryAcquireCredentialLease(current.target)`（`src/services/dispatch/concurrency.ts`）
-- [ ] turn 结束释放，**两条路径都要覆盖**，否则断连会泄漏：
-  - [ ] `finishTurn`（正常完成）
-  - [ ] `cancelActiveTurn`（`onClose` / `onError` 断连）
-- [ ] 轮转（`rotate`）时先释放旧 lease 再 acquire 新的
+- [x] turn 开始：`tryAcquireCredentialLease(current.target)`（`src/services/dispatch/concurrency.ts`）
+- [x] turn 结束释放，**两条路径都要覆盖**，否则断连会泄漏：
+  - [x] `finishTurn`（正常完成）—— 由轮转循环的 `finally` 覆盖（WS turn 在 `runResponsesAttempt` 内整体 pump 完毕）
+  - [x] `cancelActiveTurn`（`onClose` / `onError` 断连）—— 额外挂 `signal` 的 `abort` 监听，客户端一断就归还额度，不等上游忽略 abort 后迟迟不 settle
+- [x] 轮转（`rotate`）时先释放旧 lease 再 acquire 新的
 
 ### 2. 补分类（**必须**，不是优化）
 
-- [ ] 给 `ClassifiedWsFailure` 增加本地饱和 scope（如 `local_saturation`）
-- [ ] `CredentialConcurrencyLimitError` 映射到该 scope，**不得**落入 `transport`
-- [ ] 确认该 scope 不触发 `retry-http`
+- [x] 给 `ClassifiedWsFailure` 增加本地饱和 scope `local_saturation`
+- [x] `CredentialConcurrencyLimitError` 映射到该 scope，**不得**落入 `transport`
+- [x] 确认该 scope 不触发 `retry-http`（ws-handler、codex/xai `create-responses-once` 三处同账号 HTTP 回退都排除它）
 
 ### 3. 补轮转语义
 
-- [ ] 拒绝时**不冷却**账号
-- [ ] 直接 rotate 到下一个账号
-- [ ] 无可用账号时返回 **429（retryable）**，对齐 HTTP 侧 `RateLimitQueueFullError` 的处理，而非 500
+- [x] 拒绝时**不冷却**账号（saturation 分支跳过 `recordUpstreamFailure`）
+- [x] 直接 rotate 到下一个账号
+- [x] 无可用账号时返回 **429（retryable）**，对齐 HTTP 侧 `RateLimitQueueFullError` 的处理，而非 500
 
 ### 4. 测试（当前 WS 并发路径零覆盖，需先建基线）
 
-- [ ] 打满 cap 后第 N+1 个 WS turn 被拒，且**不触发**同账号 HTTP 重试
-- [ ] 拒绝时账号**未被冷却**
-- [ ] 客户端断连（`onClose`）后 lease 正确释放，不泄漏
-- [ ] 空闲会话（socket 开着、无在途 turn）**不**占用配额
-- [ ] 无可用账号时返回 429 而非 500
+- [x] 打满 cap 后第 N+1 个 WS turn 被拒，且**不触发**同账号 HTTP 重试
+- [x] 拒绝时账号**未被冷却**
+- [x] 客户端断连（`onClose`）后 lease 正确释放，不泄漏
+- [x] 空闲会话（socket 开着、无在途 turn）**不**占用配额
+- [x] 无可用账号时返回 429 而非 500
+
+测试文件：
+
+- `tests/responses-ws-concurrency.test.ts`（端到端 WS，含饱和→轮转到下一个账号）
+- `tests/dispatch-credential-lease.test.ts`（HTTP 侧 lease 打满：轮转 / 无目标 429 / 不冷却）
+- `tests/trace-error-classification.test.ts`（trace 口径：本地饱和不是上游失败）
+- `tests/ws-failure.test.ts`（分类单测）
+
+## 补充说明：观测口径
+
+本地饱和是 `HTTPError(429)`（为了两端的 retryable 契约），但**不是上游失败**。
+若只按 status 分类，trace 会把它记成 `origin: upstream / kind: rate_limited`，
+HTTP attempts 会记成 `errorCode: rate_limited` —— 与语义相矛盾。
+
+现引入 `LocalConcurrencyLimitError` 标记（`src/lib/error.ts`），
+`CredentialConcurrencyLimitError` 与 `WindsurfConcurrencyLimitError` 继承它，
+`classifyTraceError` / `executeWithFailover` 在 status 分支**之前**按
+`instanceof` 归类，记 `kind/errorType: concurrency_limit`、`origin: proxy`。
+
+客户可见文案改为通用文案（`Credential concurrency limit reached; retry shortly`），
+内部 routing key 移到 `credentialKey` 字段仅供日志。
+
+`RateLimitQueueFullError` 不在本次范围：它是普通 `Error` 而非 `HTTPError`，
+要并入标记需先转换类型，建议作为独立小改动。
 
 ## 不在本次范围
 

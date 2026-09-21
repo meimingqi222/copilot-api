@@ -14,6 +14,20 @@ export class HTTPError extends Error {
   }
 }
 
+/**
+ * Marker for a *local* pre-send rejection: a proxy-side gate (per-credential
+ * in-flight cap, per-account concurrency) refused the turn because it is
+ * locally saturated, not because the upstream failed.
+ *
+ * Callers classify these by `instanceof` (never by status) so they can skip
+ * cooldown and label the trace as a dispatch/proxy condition rather than an
+ * upstream failure. Living in `lib/error` lets low-level logger code recognize
+ * them without importing the service modules that throw them (which would
+ * cycle). `RateLimitQueueFullError` is not a member yet: it is a plain `Error`
+ * today, so joining would require converting it to an `HTTPError` first.
+ */
+export abstract class LocalConcurrencyLimitError extends HTTPError {}
+
 export class UpstreamTransportError extends HTTPError {
   constructor(message: string, options: { cause?: unknown } = {}) {
     const responseBody = JSON.stringify({

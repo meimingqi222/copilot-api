@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import { HTTPError } from "~/lib/error"
 import { ClientAbortError } from "~/lib/request-lifecycle"
+import { CredentialConcurrencyLimitError } from "~/services/dispatch/concurrency"
 import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 /**
@@ -155,5 +156,23 @@ describe("classifyWsFailure — connection scope (same-account)", () => {
       new Error("codex websockets: timed out waiting for first event"),
     )
     expect(result).toEqual({ scope: "connection", kind: "transport" })
+  })
+})
+
+describe("classifyWsFailure — local saturation scope", () => {
+  test("CredentialConcurrencyLimitError → local_saturation, NOT transport", () => {
+    const result = classifyWsFailure(
+      new CredentialConcurrencyLimitError("conn::cred::responses"),
+    )
+    // Regression: this is a local pre-send rejection, not a socket problem. If
+    // it fell into `connection`/`transport` the handler would trigger the
+    // same-account HTTP recovery, which holds no lease and would bypass the
+    // gate that produced the rejection.
+    expect(result).toEqual({
+      scope: "local_saturation",
+      kind: "concurrency_limit",
+    })
+    expect(result.scope).not.toBe("connection")
+    expect(result.kind).not.toBe("transport")
   })
 })

@@ -22,10 +22,7 @@ import {
 } from "~/lib/provider-connections"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_JSON_BODY_BYTES } from "~/lib/request-body"
-import {
-  ClientAbortError,
-  getKnownRouteErrorDetails,
-} from "~/lib/request-lifecycle"
+import { ClientAbortError } from "~/lib/request-lifecycle"
 import {
   bindRequestLogContext,
   createDetachedRequestLog,
@@ -39,10 +36,6 @@ import {
 } from "~/lib/request-log"
 import { appendRequestLogSync } from "~/lib/request-log-persist"
 import { resolveTranscriptScopeId } from "~/lib/request-scope"
-import {
-  resolveConnectionFromTarget,
-  selectNextResponsesWsTarget,
-} from "~/lib/route-target"
 import { targetKey } from "~/lib/route-target"
 import {
   parseThinkingModel,
@@ -53,27 +46,25 @@ import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-tran
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { tryAcquireCredentialLease } from "~/services/dispatch/concurrency"
 import { recordUpstreamFailure } from "~/services/dispatch/failover"
 import { hasCompactionTrigger } from "~/services/responses/compact"
 import { closeUpstreamWebsocketSessionsByExecutionId } from "~/services/responses/upstream-ws"
 import { classifyWsFailure } from "~/services/responses/ws-failure"
 
-import {
-  createResponsesErrorPayload,
-  isNonStreaming,
-  recordResponsesUsage,
-} from "./handler"
+import { isNonStreaming, recordResponsesUsage } from "./handler"
 import { getResponsesStatusOutcome, hasResponsesOutput } from "./logging"
 import {
   getResponsesTerminalOutcome,
   getResponsesWsErrorSnippet,
   recordResponsesWsAttemptIfMissing,
 } from "./ws-attempt-log"
+import { handleResponseError, sendError, sendJson } from "./ws-error"
+import { pumpWithLeadingBuffer, type WebSocketSendTarget } from "./ws-pump"
 import {
-  pumpWithLeadingBuffer,
-  sendText,
-  type WebSocketSendTarget,
-} from "./ws-pump"
+  resolveSaturatedCredential,
+  selectNextResponsesAdmission,
+} from "./ws-rotation"
 
 export type { WebSocketSendTarget } from "./ws-pump"
 
@@ -347,38 +338,6 @@ interface ProcessResponseCreateOptions {
   memoryTraceId: string
 }
 
-/**
- * Same-protocol, account-backed next-target selection for the rotation loop.
- * Returns a fully resolved admission for the next candidate, or null when the
- * candidate set is exhausted (or the pinned connection has no more accounts).
- */
-function selectNextResponsesAdmission(
-  initial: RequestAdmission,
-  current: RequestAdmission,
-  modelId: string,
-  tried: Set<string>,
-  compact?: boolean,
-): RequestAdmission | null {
-  const next = selectNextResponsesWsTarget(initial.target, modelId, tried, {
-    sessionId: current.sessionId,
-    fallbackSessionId: current.fallbackSessionId,
-    compact,
-  })
-  if (!next) return null
-  const resolved = resolveConnectionFromTarget(next)
-  if (!resolved || !isAccountManagedConnection(resolved.connection)) {
-    return null
-  }
-  return {
-    target: next,
-    connection: resolved.connection,
-    credential: resolved.credential,
-    initiator: current.initiator,
-    sessionId: current.sessionId,
-    fallbackSessionId: current.fallbackSessionId,
-  }
-}
-
 async function processResponseCreate(
   options: ProcessResponseCreateOptions,
 ): Promise<"aborted" | "completed" | "error"> {
@@ -431,22 +390,62 @@ async function processResponseCreate(
   if (isCompactRequest) httpRecoveryTried = true
 
   while (true) {
-    const outcome = await runResponsesAttempt({
-      c,
-      ws,
-      payload,
-      signal,
-      executionSessionId,
-      transcriptScopeId,
-      sessionHeaders,
-      admission,
-      current,
-      tried,
-      httpRecoveryTried,
-      memoryTraceId,
-      turnStarted,
-      compact: isCompactRequest || undefined,
-    })
+    // Per-credential in-flight gate. The WS path bypasses
+    // `executeWithFailover`, so this is the only cross-session bound: session
+    // affinity deliberately pins many Codex sessions to one credential, and
+    // nothing else stops N sessions from flooding it at once. A turn holds the
+    // lease for its whole lifetime (including the streamed pump), and an idle
+    // session holds nothing.
+    const lease = tryAcquireCredentialLease(current.target)
+    if (!lease) {
+      const saturation = resolveSaturatedCredential(admission, current, {
+        modelId: payload.model,
+        tried,
+        memoryTraceId,
+        compact: isCompactRequest || undefined,
+      })
+      if (!saturation.next) {
+        recordTraceError(c, saturation.error)
+        await handleResponseError(ws, saturation.error, signal)
+        return signal.aborted ? "aborted" : "error"
+      }
+      current = saturation.next
+      httpRecoveryTried = false
+      continue
+    }
+
+    let outcome: Awaited<ReturnType<typeof runResponsesAttempt>>
+    // Release the slot the moment the turn is aborted (client close/error), not
+    // only when `runResponsesAttempt` settles: an upstream that ignores the
+    // abort signal would otherwise pin the slot until it finally resolves.
+    // `release()` is idempotent, so the `finally` below is still safe.
+    const releaseOnAbort = () => lease.release()
+    if (signal.aborted) releaseOnAbort()
+    else signal.addEventListener("abort", releaseOnAbort, { once: true })
+    try {
+      outcome = await runResponsesAttempt({
+        c,
+        ws,
+        payload,
+        signal,
+        executionSessionId,
+        transcriptScopeId,
+        sessionHeaders,
+        admission,
+        current,
+        tried,
+        httpRecoveryTried,
+        memoryTraceId,
+        turnStarted,
+        compact: isCompactRequest || undefined,
+      })
+    } finally {
+      signal.removeEventListener("abort", releaseOnAbort)
+      // A WS turn is fully pumped inside `runResponsesAttempt`, so the lease
+      // is released here for every path — success, error, and the client
+      // disconnect that aborts the turn mid-flight.
+      lease.release()
+    }
     if (outcome.type === "retry-http") {
       updateMemoryTrace(memoryTraceId, "provider_http_recovery")
       httpRecoveryTried = true
@@ -663,6 +662,8 @@ async function runResponsesAttempt(
       failureStatus = error.response.status
     } else if (failure.kind === "transport") {
       failureStatus = 503
+    } else if (failure.scope === "local_saturation") {
+      failureStatus = 429
     }
     recordResponsesWsAttemptIfMissing(
       c,
@@ -707,7 +708,10 @@ async function runResponsesAttempt(
       return { type: "retry-http" }
     }
 
-    if (failure.scope !== "credential") {
+    if (
+      failure.scope !== "credential"
+      && failure.scope !== "local_saturation"
+    ) {
       recordTraceError(c, error)
       await handleResponseError(ws, error, signal)
       return { type: "stop" }
@@ -715,9 +719,13 @@ async function runResponsesAttempt(
 
     // Credential failure → mark the current target BEFORE selecting the next
     // (mirrors executeWithFailover ordering) so it isn't re-picked and the last
-    // candidate's failure is still recorded when next is null.
+    // candidate's failure is still recorded when next is null. A local
+    // saturation rejection is deliberately NOT recorded: the credential is
+    // healthy, it is just busy, so cooling it would punish its other clients.
     tried.add(targetKey(current.target))
-    await recordUpstreamFailure(current, failure)
+    if (failure.scope === "credential") {
+      await recordUpstreamFailure(current, failure)
+    }
     const next = selectNextResponsesAdmission(
       admission,
       current,
@@ -786,82 +794,4 @@ async function prepareResponsesAdmission(
     )
   }
   return admission
-}
-
-/**
- * Leading control-frame types that carry no user-visible content. They are
- * buffered (uncommitted) until the first content event or a terminal, so a
- * `response.created → response.failed(usage_limit_reached)` quota turn can
- * still fail over silently (nothing was forwarded).
- */
-// Bounded buffer caps: overflow flushes + commits rather than buffering
-// unbounded, trading a tiny failover window for a memory guarantee.
-
-/**
- * Commit-aware pump. Leading control frames are held in a bounded buffer while
- * uncommitted; a credential/request error thrown by the generator during this
- * window propagates with nothing forwarded (retryable). The first content
- * event / terminal (or buffer overflow) flushes the buffer, forwards, and
- * calls onCommit(). A failed `sendText` (client socket gone) throws
- * ClientAbortError so the caller treats it as an abort — never a rotation.
- */
-
-async function handleResponseError(
-  ws: WebSocketSendTarget,
-  error: unknown,
-  signal: AbortSignal,
-): Promise<void> {
-  if (isAbortError(error) && signal.aborted) {
-    return
-  }
-
-  if (error instanceof ClientAbortError) {
-    return
-  }
-
-  const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-  if (knownError) {
-    await sendJson(
-      ws,
-      {
-        type: "error",
-        status: knownError.status,
-        error: {
-          message: knownError.message,
-          type: knownError.type,
-          code: knownError.type,
-          ...(knownError.retryAfterSeconds > 0 ?
-            { retry_after: knownError.retryAfterSeconds }
-          : {}),
-        },
-      },
-      signal,
-    )
-    return
-  }
-
-  await sendJson(ws, createResponsesErrorPayload(error), signal)
-}
-
-async function sendError(
-  ws: WebSocketSendTarget,
-  message: string,
-  code?: string,
-): Promise<void> {
-  await sendJson(ws, {
-    type: "error",
-    error: {
-      message,
-      type: "error",
-      ...(code ? { code } : {}),
-    },
-  })
-}
-
-async function sendJson(
-  ws: WebSocketSendTarget,
-  payload: unknown,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  return sendText(ws, JSON.stringify(payload), signal)
 }

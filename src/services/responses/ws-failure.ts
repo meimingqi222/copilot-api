@@ -14,6 +14,11 @@
  *                    first-event timeout, idle timeout, socket drop, connection
  *                    limit reached, previous_response_not_found); stay on the
  *                    same account and redial / fall back to HTTP.
+ *   - `local_saturation` — a *local* pre-send gate refused the turn (the
+ *                    credential is already at its in-flight cap). Never a
+ *                    transport problem: it must not trigger the same-account
+ *                    HTTP recovery, which bypasses the lease and would let a
+ *                    throttled turn tunnel around its own limiter.
  *
  * This is the single source of truth folding the older
  * `isUpstreamWsTransportError` heuristic and the `usage_limit_reached → 429`
@@ -23,11 +28,16 @@
  * `HTTPError`; it also accepts raw transport/abort errors.
  */
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalConcurrencyLimitError } from "~/lib/error"
 import { classifyUpstreamError } from "~/lib/provider-connections"
 import { isAbortLikeError } from "~/services/responses/upstream-ws"
 
-export type WsFailureScope = "abort" | "request" | "credential" | "connection"
+export type WsFailureScope =
+  | "abort"
+  | "request"
+  | "credential"
+  | "connection"
+  | "local_saturation"
 
 export type WsFailureKind =
   | "abort"
@@ -39,6 +49,7 @@ export type WsFailureKind =
   | "connection_limit"
   | "previous_response_not_found"
   | "transport"
+  | "concurrency_limit"
 
 export interface ClassifiedWsFailure {
   scope: WsFailureScope
@@ -108,6 +119,16 @@ function detectStreamQuota(body: string): { retryAfterMs?: number } | null {
 export function classifyWsFailure(error: unknown): ClassifiedWsFailure {
   if (isAbortLikeError(error)) {
     return { scope: "abort", kind: "abort" }
+  }
+
+  // Local pre-send gate: the credential is at its in-flight cap. This is not a
+  // transport failure — classifying it as `connection` would make the WS
+  // handler retry the same account over HTTP, and that recovery path holds no
+  // lease, so the gate would be bypassed by the very rejection it produced.
+  // Classified by the marker (not by status) so it cannot fall into the
+  // upstream-429 `credential/rate` branch below.
+  if (error instanceof LocalConcurrencyLimitError) {
+    return { scope: "local_saturation", kind: "concurrency_limit" }
   }
 
   if (error instanceof HTTPError) {

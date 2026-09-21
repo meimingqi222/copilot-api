@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 
-import { HTTPError } from "~/lib/error"
+import { LocalConcurrencyLimitError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 
@@ -39,7 +39,7 @@ function readConcurrencyLimit(): number {
   return Math.min(parsed, 16)
 }
 
-export class WindsurfConcurrencyLimitError extends HTTPError {
+export class WindsurfConcurrencyLimitError extends LocalConcurrencyLimitError {
   readonly accountId: string
 
   constructor(accountId: string, limit: number) {

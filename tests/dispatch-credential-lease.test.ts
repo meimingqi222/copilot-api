@@ -30,6 +30,7 @@ import {
 } from "~/lib/route-target"
 import {
   __resetCredentialGatesForTest,
+  CredentialConcurrencyLimitError,
   tryAcquireCredentialLease,
   type CredentialLease,
 } from "~/services/dispatch/concurrency"
@@ -59,13 +60,13 @@ afterEach(async () => {
   await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
 })
 
-async function setupConnection(id: string) {
+async function setupConnection(id: string, priority = 0) {
   return createConnection({
     id,
     name: id,
     protocol: "openai-compatible",
     baseUrl: `https://${id}.example.com/v1`,
-    priority: 0,
+    priority,
     credentials: [{ id: `${id}-cred`, value: "sk-test", authMode: "bearer" }],
     models: [
       {
@@ -314,5 +315,87 @@ describe("per-credential lease across a streaming turn", () => {
       // drain to trigger the lease release
     }
     expect(remainingLeases(admission.target)).toBe(1)
+  })
+
+  test("at the cap, failover surfaces a retryable 429 and does not cool the credential", async () => {
+    await setupConnection("conn")
+    const admission = buildAdmissionFor("model-x")
+    const cap = remainingLeases(admission.target)
+
+    // Saturate from "other turns" so the gate refuses this one outright.
+    const held: Array<CredentialLease> = []
+    for (let i = 0; i < cap; i += 1) {
+      const lease = tryAcquireCredentialLease(admission.target)
+      expect(lease).not.toBeNull()
+      held.push(lease as CredentialLease)
+    }
+
+    let executed = false
+    const error = await executeWithFailover({
+      payload: { model: "model-x" },
+      admission,
+      routeKind: "chat",
+      execute: () => {
+        executed = true
+        return Promise.resolve("unreachable")
+      },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+
+    // The turn must never reach the upstream while the gate refuses it.
+    expect(executed).toBe(false)
+    expect(error).toBeInstanceOf(CredentialConcurrencyLimitError)
+    // Retryable 429, not a 500: a saturated credential is transient.
+    const httpError = error as CredentialConcurrencyLimitError
+    expect(httpError.response.status).toBe(429)
+    expect(httpError.response.headers.get("Retry-After")).toBe("1")
+
+    // The credential is healthy, just busy: no cooldown was written.
+    const connection = getProviderConnection("conn")
+    expect(connection?.credentials[0]?.cooldownUntil).toBeUndefined()
+    expect(connection?.credentials[0]?.status).not.toBe("error")
+
+    for (const lease of held) lease.release()
+    // Once drained, the same credential serves the next turn again.
+    expect(remainingLeases(admission.target)).toBe(cap)
+  })
+
+  test("rotates to another credential at the cap without cooling the saturated one", async () => {
+    await setupConnection("conn")
+    await setupConnection("acc", 5)
+    const admission = buildAdmissionFor("model-x")
+    expect(admission.connection.id).toBe("conn")
+    const cap = remainingLeases(admission.target)
+
+    const held: Array<CredentialLease> = []
+    for (let i = 0; i < cap; i += 1) {
+      const lease = tryAcquireCredentialLease(admission.target)
+      held.push(lease as CredentialLease)
+    }
+
+    const executed: Array<string> = []
+    const result = await executeWithFailover({
+      payload: { model: "model-x" },
+      admission,
+      routeKind: "chat",
+      execute: (_adapter, target) => {
+        executed.push(target.connectionId)
+        if (target.connectionId === "conn") {
+          throw new Error("saturated connection must not execute")
+        }
+        return Promise.resolve("from-acc")
+      },
+    })
+
+    expect(result).toBe("from-acc")
+    expect(executed).toEqual(["acc"])
+    // Local saturation is not an upstream failure: the rejected credential is
+    // left untouched so its other clients keep routing to it.
+    const connection = getProviderConnection("conn")
+    expect(connection?.credentials[0]?.cooldownUntil).toBeUndefined()
+
+    for (const lease of held) lease.release()
   })
 })

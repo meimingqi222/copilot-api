@@ -7,7 +7,7 @@ import type {
 import type { CredentialLease } from "~/services/dispatch/concurrency"
 import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalConcurrencyLimitError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   DEFAULTS,
@@ -57,7 +57,6 @@ import {
   getProtocolAdapter,
   initializeProtocolAdapters,
 } from "~/services/protocols"
-import { WindsurfConcurrencyLimitError } from "~/services/windsurf/concurrency"
 import { WindsurfUpstreamError } from "~/services/windsurf/error-classifier"
 
 export interface FailoverOptions<TPayload, TResult> {
@@ -180,9 +179,7 @@ export async function executeWithFailover<
       await checkRateLimit(current.connection.id, signal)
       const lease = tryAcquireCredentialLease(current.target)
       if (!lease) {
-        throw new CredentialConcurrencyLimitError(
-          `credential ${targetKey(current.target)} at in-flight cap`,
-        )
+        throw new CredentialConcurrencyLimitError(targetKey(current.target))
       }
       let handedOffToStream = false
       try {
@@ -242,14 +239,22 @@ export async function executeWithFailover<
       let retryAfterMs: number | undefined
       let errorSnippet: string | undefined
       if (error instanceof HTTPError) {
-        const classified = classifyUpstreamError({
-          status: error.response.status,
-          headers: error.response.headers,
-          body: error.responseBody,
-        })
-        errorCode = classified.kind
-        retryAfterMs = classified.retryAfterMs
-        errorSnippet = error.responseBody
+        // A local concurrency rejection is not an upstream failure: label it as
+        // such in the attempts log instead of letting status 429 classify as
+        // `rate_limited` (which reads as an upstream rate limit).
+        if (error instanceof LocalConcurrencyLimitError) {
+          errorCode = "concurrency_limit"
+          errorSnippet = error.message
+        } else {
+          const classified = classifyUpstreamError({
+            status: error.response.status,
+            headers: error.response.headers,
+            body: error.responseBody,
+          })
+          errorCode = classified.kind
+          retryAfterMs = classified.retryAfterMs
+          errorSnippet = error.responseBody
+        }
       } else if (error instanceof WindsurfUpstreamError) {
         errorCode = error.kind
         retryAfterMs = error.retryAfterMs
@@ -285,7 +290,7 @@ export async function executeWithFailover<
 
       if (
         error instanceof HTTPError
-        && !(error instanceof WindsurfConcurrencyLimitError)
+        && !(error instanceof LocalConcurrencyLimitError)
         && !shouldFailover(error)
       ) {
         await markCooldown(current, error, logPrefix)
@@ -340,10 +345,7 @@ export async function executeWithFailover<
       // upstream failure: do not cool down or mark the account. It is safe to
       // try another route target, while preserving the 429 if no target is
       // available.
-      if (
-        !(error instanceof WindsurfConcurrencyLimitError)
-        && !(error instanceof CredentialConcurrencyLimitError)
-      ) {
+      if (!(error instanceof LocalConcurrencyLimitError)) {
         await markCooldown(current, error, logPrefix)
       }
 
