@@ -10,6 +10,7 @@ import { createResponsesErrorPayload } from "~/routes/responses/handler"
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 import {
   chainedHttpCodexRequestError,
+  pruneUnansweredToolCalls,
   stripReasoningItems,
 } from "~/services/codex/upstream-body"
 import {
@@ -102,6 +103,67 @@ describe("stripReasoningItems", () => {
   test("tolerates null / non-object entries", () => {
     const input = [null, 42, { type: "reasoning" }, { type: "message" }]
     expect(stripReasoningItems(input)).toEqual([null, 42, { type: "message" }])
+  })
+})
+
+describe("pruneUnansweredToolCalls", () => {
+  test("drops a tool call with no matching output", () => {
+    // The upstream 400 this exists to prevent: a transcript rebuilt from the
+    // cache can keep a call the client never answered (interrupted turn).
+    const input = [
+      { type: "message", role: "user", content: "hi" },
+      { type: "custom_tool_call", call_id: "call_1", name: "shell" },
+      { type: "message", role: "user", content: "next" },
+    ]
+    expect(pruneUnansweredToolCalls(input)).toEqual([
+      { type: "message", role: "user", content: "hi" },
+      { type: "message", role: "user", content: "next" },
+    ])
+  })
+
+  test("keeps a call that has its matching output", () => {
+    const input = [
+      { type: "function_call", call_id: "call_1", name: "f" },
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+    ]
+    expect(pruneUnansweredToolCalls(input)).toEqual(input)
+  })
+
+  test("pairs by type: a function output does not answer a custom call", () => {
+    const input = [
+      { type: "custom_tool_call", call_id: "call_1", name: "shell" },
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+    ]
+    // The custom call stays unanswered and is pruned; the output is kept
+    // (pruning it would just be the *other* upstream 400).
+    expect(pruneUnansweredToolCalls(input)).toEqual([
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+    ])
+  })
+
+  test("keeps calls without a call_id rather than guessing", () => {
+    const input = [
+      { type: "custom_tool_call", name: "shell" },
+      { type: "message", role: "user", content: "hi" },
+    ]
+    expect(pruneUnansweredToolCalls(input)).toEqual(input)
+  })
+
+  test("returns the same array reference when nothing is pruned", () => {
+    const input = [
+      { type: "message", role: "user", content: "hi" },
+      { type: "function_call", call_id: "c1", name: "f" },
+      { type: "function_call_output", call_id: "c1", output: "ok" },
+    ]
+    expect(pruneUnansweredToolCalls(input)).toBe(input)
+  })
+
+  test("drops every unanswered call when none are answered", () => {
+    const input = [
+      { type: "custom_tool_call", call_id: "c1", name: "shell" },
+      { type: "function_call", call_id: "c2", name: "f" },
+    ]
+    expect(pruneUnansweredToolCalls(input)).toEqual([])
   })
 })
 
@@ -299,6 +361,74 @@ describe("chained HTTP recovery", () => {
         call_id: "call_1",
         output: "ok",
       },
+    ])
+  })
+
+  test("prunes a cached tool call the client never answered", async () => {
+    // The regression this exists for: the model emitted a custom tool call,
+    // the turn was interrupted before its output existed, and the transcript
+    // cache kept the call. Replaying that transcript verbatim sends a call
+    // with no output, and the upstream rejects the whole turn with
+    // "No tool output found for custom tool call ...". The replay body is
+    // assembled by us, so we prune the half-pair we own.
+    const sessionId = "unanswered-session"
+    setCodexTranscript(codexTranscriptKey(`test-scope::${sessionId}`), [
+      { type: "message", role: "user", content: "run pwd" },
+      {
+        id: "ctc_1",
+        type: "custom_tool_call",
+        call_id: "call_never_answered",
+        name: "shell",
+        input: "pwd",
+      },
+    ])
+
+    let postedBody: Record<string, unknown> | undefined
+    globalThis.fetch = ((_url, init) => {
+      if (typeof init?.body !== "string") {
+        throw new TypeError("expected string request body")
+      }
+      postedBody = JSON.parse(init.body) as Record<string, unknown>
+      return Promise.resolve(
+        new Response(
+          [
+            'data: {"type":"response.completed","response":{"id":"resp_2","status":"completed","output":[]}}',
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      )
+    }) as typeof fetch
+
+    const stream = await createCodexResponsesOnce(
+      makeCodexSubject(),
+      {
+        model: "gpt-5",
+        input: [
+          { type: "message", role: "user", content: "continue" } as never,
+        ],
+        previous_response_id: "resp_1",
+        stream: true,
+      },
+      undefined,
+      {
+        downstreamWebsocket: true,
+        executionSessionId: "new-socket",
+        transcriptScopeId: "test-scope",
+        forwardedHeaders: { session_id: sessionId },
+        forceUpstreamHttp: true,
+      },
+    )
+    for await (const _event of stream as AsyncIterable<unknown>) {
+      // consume the recovery stream
+    }
+
+    // The cached call had no output anywhere, so the replay must not carry it.
+    expect(postedBody?.input).toEqual([
+      { type: "message", role: "user", content: "run pwd" },
+      { type: "message", role: "user", content: "continue" },
     ])
   })
 })

@@ -55,11 +55,18 @@ function stringValue(value: unknown): string {
 
 /**
  * True when an upstream WS error frame means the server-side conversation
- * chain is missing for this turn: an orphan tool-call output (the client's
- * incremental input references a call the upstream never saw — e.g. after an
- * account switch or socket redial) or an unresolvable previous_response_id.
- * These are recoverable by replaying the full conversation (server-side
- * replay from the transcript cache) or by asking the client to resend it.
+ * chain is missing for this turn: an orphan tool-call output or an unanswered
+ * tool-call (the client's incremental input references a call the upstream
+ * never saw — e.g. after an account switch or socket redial), or an
+ * unresolvable previous_response_id. These are recoverable by replaying the
+ * full conversation (server-side replay from the transcript cache) or by
+ * asking the client to resend it.
+ *
+ * The tool-call pair is checked from both sides because the upstream reports
+ * each half with its own wording, and either one means the same thing: the
+ * conversation context the turn depends on is not present upstream.
+ *   - orphan output → "No tool call found for custom tool call output ..."
+ *   - unanswered call → "No tool output found for custom tool call ..."
  */
 export function isChainedTurnUpstreamError(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return false
@@ -67,6 +74,8 @@ export function isChainedTurnUpstreamError(error: unknown): boolean {
   return (
     message.includes("no tool call found for custom tool call output")
     || message.includes("no tool call found for function call output")
+    || message.includes("no tool output found for custom tool call")
+    || message.includes("no tool output found for function call")
     || message.includes("previous_response_not_found")
     || (message.includes("previous response with id")
       && message.includes("not found"))

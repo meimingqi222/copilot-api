@@ -42,6 +42,7 @@ import {
 } from "~/services/responses/upstream-ws"
 import { classifyWsFailure } from "~/services/responses/ws-failure"
 
+import { pruneUnansweredToolCalls } from "../codex/upstream-body"
 import {
   appendResponsesTranscript,
   buildResponsesTranscriptInput,
@@ -403,7 +404,7 @@ export async function createXaiResponsesOnce(
       sanitizeXaiResponsesBodyWithRefs(
         {
           ...upstreamBody,
-          input: fullInputThisTurn,
+          input: pruneUnansweredToolCalls(fullInputThisTurn),
           previous_response_id: undefined,
         },
         model,

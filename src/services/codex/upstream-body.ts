@@ -210,6 +210,106 @@ export function stripReasoningItems(input: Array<unknown>): Array<unknown> {
 }
 
 /**
+ * Pairs of Responses tool items that the upstream requires to be complete.
+ *
+ * The Codex backend validates input as a whole and rejects *either* half of a
+ * pair on its own:
+ *   - call without output → 400 "No tool output found for custom tool call ..."
+ *   - output without call   → 400 "No tool call found for custom tool call
+ *     output with call_id ..."
+ *
+ * A self-contained replay rebuilt from the transcript cache can contain the
+ * former: the model emitted a tool call, the turn was interrupted (or the
+ * client dropped the output), and the accumulated transcript kept the call.
+ * Since the transcript is what we replay, we must prune the half we own rather
+ * than let the upstream reject the whole turn.
+ */
+const TOOL_CALL_OUTPUT_TYPES: Record<string, string> = {
+  function_call: "function_call_output",
+  custom_tool_call: "custom_tool_call_output",
+}
+
+/** Reverse of `TOOL_CALL_OUTPUT_TYPES`: output type → its call type. */
+const TOOL_OUTPUT_CALL_TYPES: Record<string, string> = {
+  function_call_output: "function_call",
+  custom_tool_call_output: "custom_tool_call",
+}
+
+/** The `_output` item type emitted for call type `type`, if it is a tool call. */
+export function toolOutputTypeForCall(type: unknown): string | undefined {
+  return typeof type === "string" ? TOOL_CALL_OUTPUT_TYPES[type] : undefined
+}
+
+function toolItemType(item: unknown): string | undefined {
+  if (item === null || typeof item !== "object" || Array.isArray(item)) {
+    return undefined
+  }
+  const type = (item as { type?: unknown }).type
+  return typeof type === "string" ? type : undefined
+}
+
+function toolItemCallId(item: unknown): string | undefined {
+  if (item === null || typeof item !== "object" || Array.isArray(item)) {
+    return undefined
+  }
+  const callId = (item as { call_id?: unknown }).call_id
+  return typeof callId === "string" && callId.trim() ? callId.trim() : undefined
+}
+
+/**
+ * Drop tool calls that have no matching output in `input`.
+ *
+ * Used on self-contained replay payloads, which are assembled by us and are
+ * therefore the only side whose half-pairs we can safely remove. Caller-
+ * supplied deltas are left untouched — the client owns their semantics.
+ *
+ * Only well-formed items participate: an entry without a `call_id` cannot be
+ * matched either way and is always kept, so this can never silently drop an
+ * item it does not understand. Outputs are never pruned (dropping one while
+ * its call remains is the *other* upstream 400, and the output is the side
+ * the client is waiting on).
+ */
+export function pruneUnansweredToolCalls(
+  input: Array<unknown>,
+): Array<unknown> {
+  const answered = answeredToolCallKeys(input)
+  const result = input.filter((entry) => !isUnansweredToolCall(entry, answered))
+  return result.length === input.length ? input : result
+}
+
+/** Count the tool calls in `input` that have no matching output. */
+export function countUnansweredToolCalls(input: Array<unknown>): number {
+  const answered = answeredToolCallKeys(input)
+  let count = 0
+  for (const entry of input) {
+    if (isUnansweredToolCall(entry, answered)) count += 1
+  }
+  return count
+}
+
+/** Keys (`<callType>:<call_id>`) of every tool call that has an output. */
+function answeredToolCallKeys(input: Array<unknown>): Set<string> {
+  const answered = new Set<string>()
+  for (const entry of input) {
+    const callType = TOOL_OUTPUT_CALL_TYPES[toolItemType(entry) ?? ""]
+    const callId = toolItemCallId(entry)
+    if (callType && callId) answered.add(`${callType}:${callId}`)
+  }
+  return answered
+}
+
+function isUnansweredToolCall(entry: unknown, answered: Set<string>): boolean {
+  const callType = toolItemType(entry)
+  if (callType !== "function_call" && callType !== "custom_tool_call") {
+    return false
+  }
+  const callId = toolItemCallId(entry)
+  // A call with no `call_id` is unmatchable; keep it rather than guess.
+  if (!callId) return false
+  return !answered.has(`${callType}:${callId}`)
+}
+
+/**
  * Reject a chained Codex /responses request that would otherwise travel over
  * plain HTTP. `previous_response_id` is WebSocket-only (CPA): a fresh HTTP
  * request has no server-side conversation chain to reference, so forwarding

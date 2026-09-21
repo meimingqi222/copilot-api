@@ -393,6 +393,22 @@ describe("chained-turn upstream error classification", () => {
     ).toBe(true)
   })
 
+  test("unanswered tool call is chained-recoverable", () => {
+    // The inverse of the orphan-output case: the input carries a tool call
+    // whose output the upstream never saw. Same broken-chain meaning, so the
+    // same full-input replay recovery applies.
+    expect(
+      isChainedTurnUpstreamError(
+        wsError("No tool output found for custom tool call call_abc."),
+      ),
+    ).toBe(true)
+    expect(
+      isChainedTurnUpstreamError(
+        wsError("No tool output found for function call call_def."),
+      ),
+    ).toBe(true)
+  })
+
   test("unrelated upstream 400s are not chained-recoverable", () => {
     expect(
       isChainedTurnUpstreamError(wsError("Unsupported parameter: temperature")),

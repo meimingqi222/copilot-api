@@ -67,7 +67,9 @@ import {
   buildCodexUpstreamBody,
   chainedHttpCodexRequestError,
   convertSystemRoleToDeveloper,
+  countUnansweredToolCalls,
   isResponsesLiteRequest,
+  pruneUnansweredToolCalls,
   stripReasoningItems,
 } from "./upstream-body"
 import {
@@ -281,6 +283,54 @@ async function runLegacyCompactEntry(
       stream: false,
     } as ResponsesPayload
     return await createCodexResponsesOnce(subject, inlinePayload, signal, ctx)
+  }
+}
+
+/**
+ * Build the self-contained replay body for a chained turn that must resend its
+ * full history (fresh socket / account switch / forced HTTP).
+ *
+ * The input is rebuilt from the transcript cache + the client's raw delta, so
+ * it is assembled by *us* and may contain a tool call the client never
+ * answered (an interrupted turn leaves the call in the cached transcript).
+ * The Codex backend rejects any input carrying half of a tool-call pair, so the
+ * unanswered calls are pruned here — the one side whose pairs we own. Returns
+ * `body: undefined` when the turn is not chained / has no cached transcript.
+ */
+function buildCodexReplayBody(options: {
+  upstreamBody: Record<string, unknown>
+  fullInputThisTurn: Array<unknown>
+  chained: boolean
+  memoryTraceId?: string
+}): { body: Record<string, unknown> | undefined } {
+  const { upstreamBody, fullInputThisTurn, chained, memoryTraceId } = options
+  if (!chained) return { body: undefined }
+
+  const strippedInput = stripReasoningItems(fullInputThisTurn)
+  const replayInput = pruneUnansweredToolCalls(strippedInput)
+  if (replayInput !== strippedInput) {
+    const droppedCalls = countUnansweredToolCalls(strippedInput)
+    updateMemoryTrace(memoryTraceId, "replay_pruned_unanswered_tool_calls", {
+      droppedCalls,
+      inputItems: replayInput.length,
+    })
+    logger.warn(
+      `[codex] replay pruned ${droppedCalls} unanswered tool call(s) `
+        + `(session with a tool call whose output was never produced)`,
+    )
+  }
+
+  return {
+    body: {
+      ...upstreamBody,
+      // The replay input is rebuilt from the *raw* client delta + transcript,
+      // so it bypasses `buildCodexUpstreamBody`'s per-field normalization.
+      // `input` itself is normalized once, at send time, by
+      // `finalizeCodexOutboundBody` (see below) — not here — so this stays
+      // in sync with the primary body's normalization automatically.
+      input: replayInput,
+      previous_response_id: undefined,
+    },
   }
 }
 
@@ -505,19 +555,13 @@ export async function createCodexResponsesOnce(
     rawDelta,
     Boolean(transcriptKey),
   )
-  const fallbackFullInputBody =
-    previousResponseId && cachedFull ?
-      {
-        ...upstreamBody,
-        // The replay input is rebuilt from the *raw* client delta + transcript,
-        // so it bypasses `buildCodexUpstreamBody`'s per-field normalization.
-        // `input` itself is normalized once, at send time, by
-        // `finalizeCodexOutboundBody` (see below) — not here — so this stays
-        // in sync with the primary body's normalization automatically.
-        input: stripReasoningItems(fullInputThisTurn),
-        previous_response_id: undefined,
-      }
-    : undefined
+  const replay = buildCodexReplayBody({
+    upstreamBody,
+    fullInputThisTurn,
+    chained: Boolean(previousResponseId && cachedFull),
+    memoryTraceId,
+  })
+  const fallbackFullInputBody = replay.body
   const httpFallbackBody = fallbackFullInputBody
 
   // A forced HTTP retry can recover a chained turn only when the socket-scoped
