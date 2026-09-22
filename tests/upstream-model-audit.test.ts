@@ -9,6 +9,7 @@ import {
   normalizeModelForAudit,
   observedResponseModel,
   observeUpstreamModel,
+  upstreamResponseSelfReportsModel,
 } from "~/lib/upstream-model-audit"
 
 describe("extractResponseModel", () => {
@@ -170,6 +171,19 @@ describe("observeUpstreamModel", () => {
     expect(
       observedResponseModel(createUpstreamModelObservation()),
     ).toBeUndefined()
+  })
+})
+
+describe("upstreamResponseSelfReportsModel", () => {
+  test("excludes protocols whose response model is a local echo", () => {
+    expect(upstreamResponseSelfReportsModel("windsurf-native")).toBe(false)
+  })
+
+  test("treats every other protocol as self-reporting", () => {
+    expect(upstreamResponseSelfReportsModel("copilot-native")).toBe(true)
+    expect(upstreamResponseSelfReportsModel("openai-compatible")).toBe(true)
+    expect(upstreamResponseSelfReportsModel("anthropic-compatible")).toBe(true)
+    expect(upstreamResponseSelfReportsModel(undefined)).toBe(true)
   })
 })
 

@@ -90,6 +90,37 @@ describe("upstream model audit in the request log", () => {
     expect(entry?.level).toBe("info")
   })
 
+  /**
+   * Windsurf encodes thinking effort into the SKU (`swe-2` head → `swe-2-high`
+   * default / `swe-2-medium` selected by `reasoning_effort`) and the adapter
+   * writes that SKU to `modelUpstream`. The response `model` is a local echo of
+   * the head id — its protobuf frames carry no model — so comparing them always
+   * produced a phantom mismatch. The audit must skip the protocol entirely.
+   */
+  test("ignores the locally synthesized model echo on windsurf-native", () => {
+    const app = makeApp((c) => {
+      patchRequestLog(c, {
+        protocol: "windsurf-native",
+        model: "swe-2-high",
+        modelRequested: "swe-2",
+        modelUpstream: "swe-2-high",
+        reasoningEffort: "high",
+      })
+      // The adapter serializes the head id it was asked for, not the SKU.
+      observeUpstreamResponseModel(c, { model: "swe-2" })
+      expect(finalizeUpstreamModelAudit(c)).toBeUndefined()
+      return c.json({ ok: true })
+    })
+
+    return call(app).then(() => {
+      const entry = logStore.query({ limit: 1 }).entries[0]
+      expect(entry?.modelResponse).toBeUndefined()
+      expect(entry?.modelMismatch).toBeUndefined()
+      expect(entry?.modelVariant).toBeUndefined()
+      expect(entry?.level).toBe("info")
+    })
+  })
+
   test("does not double-count when finalize runs twice", async () => {
     const app = makeApp((c) => {
       patchRequestLog(c, { model: "gpt-5.5", modelUpstream: "gpt-5.5" })

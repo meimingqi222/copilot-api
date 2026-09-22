@@ -19,6 +19,10 @@
  * - Responses WebSocket：`routes/responses/ws-handler.ts` 自己观测（pump 只
  *   回传终态）并自己结算（它用 detached turn ctx，不走 log-middleware）。
  *
+ * 结算前先过 `upstreamResponseSelfReportsModel`：响应里的 model 若是适配器
+ * 自己合成回显的（Windsurf），比对的是我们写进去的请求模型而不是上游自报，
+ * 必须整条跳过，否则只会产生假阳性。
+ *
  * 刻意**未**接入的两条路径（已核实，不是遗漏）：
  * - chat→responses 流式翻译：`updateChatToResponsesStateFromChunk` 每个 chunk
  *   都刷新 `state.model`，终态 `response.completed.response.model` 已经是上游
@@ -29,6 +33,28 @@
 
 /** 上游自报模型名的长度上限，防止上游塞超长字符串污染日志。 */
 const MAX_OBSERVED_MODEL_LENGTH = 200
+
+/**
+ * 上游是否会在响应体里自报它实际服务的模型名。
+ *
+ * 审计的前提是"响应里的 model 字段来自上游"。有些适配器的响应模型是我们
+ * 自己合成的本地回显，审计它只会产生假阳性，必须显式排除：
+ *
+ * - `windsurf-native`：Windsurf 的 protobuf 帧里没有模型字段，响应里的
+ *   `model` 由 `windsurf/chunk-builders.ts` / `windsurf/collect-response.ts`
+ *   用**请求模型**写入。而 Windsurf 把思考等级编码成不同的 SKU（折叠后的
+ *   头 `swe-2` → `swe-2-high` / `swe-2-medium` / `swe-2-max`），适配器按
+ *   `reasoning_effort` 选出的真实 SKU 会覆盖 `modelUpstream`。于是"本地
+ *   回显的头"与"真正发出去的 SKU"天然不同（`swe-2` vs `swe-2-high`），
+ *   这是上游的既定形态而不是静默换模型。
+ *
+ * 未列入的协议都按"上游会自报"处理。
+ */
+export function upstreamResponseSelfReportsModel(
+  protocol: string | undefined,
+): boolean {
+  return protocol !== "windsurf-native"
+}
 
 export interface UpstreamModelObservation {
   /** 第一个非 terminal 声明。 */

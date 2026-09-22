@@ -33,6 +33,7 @@ import {
   isTerminalResponseEvent,
   observeUpstreamModel,
   observedResponseModel,
+  upstreamResponseSelfReportsModel,
 } from "~/lib/upstream-model-audit"
 import { isAbortError } from "~/lib/utils"
 
@@ -211,6 +212,15 @@ export function finalizeUpstreamModelAuditForContext(
       : ctx.entry.modelVariant ? "variant"
       : "match"
     )
+  }
+
+  // 响应里的 model 是本适配器合成回显时（如 Windsurf）不结算：比对的是
+  // 我们写进去的请求模型，而不是上游的自报，只会产生假阳性。见
+  // `upstreamResponseSelfReportsModel`。观测器已经收下的声明同样丢弃，
+  // 否则它会以 `modelResponse` 的形式留在日志里。
+  if (!upstreamResponseSelfReportsModel(ctx.entry.protocol)) {
+    ctx.upstreamModelObservation = undefined
+    return undefined
   }
 
   const reported = observedResponseModel(ctx.upstreamModelObservation)
