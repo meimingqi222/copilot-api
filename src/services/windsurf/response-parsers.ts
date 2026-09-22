@@ -73,29 +73,49 @@ function parseFloat32(raw: Uint8Array): number {
 function parseUsageFromMeta(
   nodes: Array<ProtobufNode>,
 ): ChatStreamFrame["usage"] | undefined {
-  // UsageMetadata field mapping (verified against field[28] in GetChatMessage-res):
-  //   field[2] = input_tokens  (prompt)
-  //   field[3] = output_tokens (completion)
-  //   field[1] = auxiliary slice (e.g. uncached portion) — not used for totals
-  // Cache is authoritative from field[33] and field[28] cached_input_tokens only.
-  // Commit 07043c3 misread field[3] as cache; it is output_tokens, which made
-  // cache_read_tokens mirror completion_tokens in stats.
-  let promptTokens = 0
+  // ModelUsageStats (`GetChatMessageResponse.usage = field 7`), matching the
+  // upstream exa.codeium_common_pb.ModelUsageStats definition:
+  //   field[2] = input_tokens         (EXCLUDES cache, like field[28])
+  //   field[3] = output_tokens
+  //   field[4] = cache_write_tokens
+  //   field[5] = cache_read_tokens
+  //
+  // The 2026-06-27 "align with real captures" commit remapped these to
+  // 1/2/3 and dropped 4/5 on the false premise that field[28] supersedes
+  // field[7]. field[28] is ResponseDimensionGroup (an unrelated message), so
+  // that change silently discarded the real cache counters and depressed every
+  // reported cache-hit rate. Keep the authoritative mapping.
+  let inputTokens = 0
   let completionTokens = 0
+  let cacheWriteTokens: number | undefined
+  let cacheReadTokens: number | undefined
   for (const node of nodes) {
-    if (node.field === 2 && node.wire === 0 && node.varint !== undefined) {
-      promptTokens = node.varint
-    }
-    if (node.field === 3 && node.wire === 0 && node.varint !== undefined) {
-      completionTokens = node.varint
-    }
+    if (node.wire !== 0 || node.varint === undefined) continue
+    if (node.field === 2) inputTokens = node.varint
+    else if (node.field === 3) completionTokens = node.varint
+    else if (node.field === 4) cacheWriteTokens = node.varint
+    else if (node.field === 5) cacheReadTokens = node.varint
   }
-  if (promptTokens === 0 && completionTokens === 0) return undefined
+  if (
+    inputTokens === 0
+    && completionTokens === 0
+    && cacheReadTokens === undefined
+    && cacheWriteTokens === undefined
+  ) {
+    return undefined
+  }
+  // Windsurf's input_tokens excludes cache; expose OpenAI semantics where
+  // prompt_tokens includes it (same conversion as mergeField28Usage).
+  const cacheRead = cacheReadTokens ?? 0
+  const cacheWrite = cacheWriteTokens ?? 0
+  const promptTokens = inputTokens + cacheRead + cacheWrite
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: promptTokens + completionTokens,
-    cached_tokens: 0,
+    cached_tokens: cacheRead,
+    cache_read_tokens: cacheReadTokens,
+    cache_write_tokens: cacheWriteTokens,
   }
 }
 
@@ -329,11 +349,28 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
       const metaUsage = parseUsageFromMeta(field7Nodes)
       if (metaUsage) {
         if (usage) {
+          // Merge, never discard: field[7] carries the cache counters and the
+          // old spread-then-restore threw them away whenever another usage
+          // frame (e.g. field[28]) had already created `usage`.
           const prevCached = usage.cached_tokens
           const prevCacheRead = usage.cache_read_tokens
+          const prevCacheWrite = usage.cache_write_tokens
           usage = { ...usage, ...metaUsage }
-          usage.cached_tokens = prevCached
-          usage.cache_read_tokens = prevCacheRead
+          usage.cached_tokens = Math.max(prevCached, metaUsage.cached_tokens)
+          usage.cache_read_tokens = Math.max(
+            prevCacheRead ?? 0,
+            metaUsage.cache_read_tokens ?? 0,
+          )
+          if (
+            prevCacheWrite !== undefined
+            || metaUsage.cache_write_tokens !== undefined
+          ) {
+            usage.cache_write_tokens = Math.max(
+              prevCacheWrite ?? 0,
+              metaUsage.cache_write_tokens ?? 0,
+            )
+          }
+          usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
         } else {
           usage = metaUsage
         }

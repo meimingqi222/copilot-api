@@ -102,6 +102,34 @@ describe("parseChatStreamFrame - UsageMetadata field mapping", () => {
     expect(usage?.cache_read_tokens).toBeUndefined()
   })
 
+  /**
+   * `GetChatMessageResponse.usage` (= field 7) is upstream
+   * `exa.codeium_common_pb.ModelUsageStats`, whose authoritative numbers are
+   * 2=input, 3=output, 4=cache_write, 5=cache_read. A 2026-06 refactor remapped
+   * them to 1/2/3 and dropped 4/5, which silently zeroed every cache counter
+   * and depressed the reported cache-hit rate. Lock the real mapping down.
+   */
+  test("reads cache_write_tokens[4] and cache_read_tokens[5] from field[7]", () => {
+    const usageMetadata = Buffer.concat([
+      encodeVarintField(2, 1000),
+      encodeVarintField(3, 50),
+      encodeVarintField(4, 200),
+      encodeVarintField(5, 8000),
+    ])
+    const parsed = parseChatStreamFrame(
+      new Uint8Array(encodeLengthDelimited(7, usageMetadata)),
+    )
+    const usage = parsed.usage
+
+    expect(usage).toBeDefined()
+    // Windsurf input_tokens excludes cache; exposed as OpenAI prompt_tokens.
+    expect(usage?.prompt_tokens).toBe(1000 + 8000 + 200)
+    expect(usage?.completion_tokens).toBe(50)
+    expect(usage?.cache_read_tokens).toBe(8000)
+    expect(usage?.cache_write_tokens).toBe(200)
+    expect(usage?.cached_tokens).toBe(8000)
+  })
+
   test("regression: protobuf structure matches live capture", () => {
     const decoded = parseMessage(buildFramePayload(), 0, 3)
     const f7 = decoded.find((n) => n.field === 7 && n.wire === 2)

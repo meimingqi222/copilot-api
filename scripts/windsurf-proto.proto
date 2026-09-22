@@ -140,13 +140,20 @@ message RawChatMessage {
 }
 
 message UsageMetadata {
-  int32 prompt_tokens      = 1;  // input tokens
-  int32 completion_tokens  = 2;  // output tokens
-  int32 cached_tokens      = 3;  // KV cache hits (treated as cache_read_tokens)
-  // field 6 = ? (always 4 in captures, flag/enum)
-  // field 7 = upstream message id (string, e.g. "msg_01XQT3XhcxVkvWxgtvF47jY9")
-  // field 8 = repeated response headers (Date, Request-Id, …)
-  // field 9 = actual_model_uid (e.g. "MODEL_PRIVATE_11")
+  // Authoritative upstream schema: exa.codeium_common_pb.ModelUsageStats
+  // (GetChatMessageResponse.usage = field 7). Verified against the bundled
+  // upstream .proto used by the oh-my-pi Devin client.
+  int32 input_tokens       = 2;  // prompt, EXCLUDES cache
+  int32 output_tokens      = 3;  // completion
+  int32 cache_write_tokens = 4;  // KV cache writes
+  int32 cache_read_tokens  = 5;  // KV cache hits (cache_read_tokens)
+  // field 1  = deprecated Model enum
+  // field 6  = api_provider enum
+  // field 7  = message_id (string)
+  // field 8  = response_header map
+  // field 9  = model_uid (e.g. "MODEL_PRIVATE_11")
+  // field 10 = billing_model_uid
+  // field 11 = requested_model_uid
 }
 
 message Section {
