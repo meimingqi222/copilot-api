@@ -28,6 +28,19 @@ export function parseJwtPayload(token: string): Record<string, unknown> | null {
   return null
 }
 
+/** Return the JWT `exp` claim as an epoch-millisecond timestamp. */
+export function extractJwtExpiryMs(
+  token: string | undefined,
+): number | undefined {
+  if (!token) return undefined
+  const exp = parseJwtPayload(token)?.exp
+  const seconds =
+    typeof exp === "number" ? exp
+    : typeof exp === "string" && exp.trim() ? Number(exp)
+    : Number.NaN
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined
+}
+
 export function extractCodexAccountIdFromIdToken(
   idToken: string | undefined,
 ): string | undefined {

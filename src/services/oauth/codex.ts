@@ -19,6 +19,8 @@ export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 export const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
 export const CODEX_API_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
+const CODEX_REFRESH_TIMEOUT_MS = 30_000
+
 interface CodexTokenResponse {
   access_token?: string
   refresh_token?: string
@@ -136,7 +138,12 @@ export async function refreshCodexTokens(
       },
       body: body.toString(),
     },
-    options,
+    {
+      ...options,
+      // Refresh must outlive the downstream request that triggered it, but it
+      // must not hang forever. This matches CPA's independent 30s refresh ctx.
+      signal: AbortSignal.timeout(CODEX_REFRESH_TIMEOUT_MS),
+    },
   )
 
   if (!response.ok) {

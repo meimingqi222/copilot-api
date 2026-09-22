@@ -24,7 +24,10 @@ import {
   extractCodexSubscriptionActiveUntilFromIdToken,
 } from "~/services/oauth/jwt"
 import { generatePkceCodes } from "~/services/oauth/pkce"
-import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
+import {
+  cancelAllOAuthRefreshTimers,
+  refreshOAuthAccountToken,
+} from "~/services/oauth/refresh-scheduler"
 import {
   buildXaiAuthUrl,
   discoverXaiOAuthEndpoints,
@@ -67,6 +70,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cancelAllOAuthRefreshTimers()
   setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
 })
@@ -617,7 +621,7 @@ describe("OAuth refresh scheduler", () => {
     expect(account.runtimeState?.lastRefreshAt).toBeDefined()
   })
 
-  test("refreshOAuthAccountToken sets authStatus to error on failure", async () => {
+  test("refreshOAuthAccountToken preserves ready status on transient failure", async () => {
     const account: OAuthAccount = {
       id: "acct-codex-fail",
       label: "Codex Fail",
@@ -641,14 +645,41 @@ describe("OAuth refresh scheduler", () => {
         }),
       )) as unknown as typeof fetch
 
-    let threw = false
-    try {
-      await refreshOAuthAccountToken(account, "test")
-    } catch {
-      threw = true
+    await expect(refreshOAuthAccountToken(account, "test")).rejects.toThrow(
+      "Codex token refresh",
+    )
+    expect(account.runtimeState?.authStatus).toBe("ready")
+    expect(account.runtimeState?.lastError).toBeUndefined()
+  })
+
+  test("refreshOAuthAccountToken marks terminal refresh errors", async () => {
+    const account: OAuthAccount = {
+      id: "acct-codex-terminal",
+      label: "Codex Terminal",
+      provider: "codex",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "old-access",
+        refreshToken: "codex-refresh",
+      },
+      runtimeState: { authStatus: "ready" },
     }
-    expect(threw).toBe(true)
+    setTestAccounts([account])
+
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+        }),
+      )) as unknown as typeof fetch
+
+    await expect(refreshOAuthAccountToken(account, "test")).rejects.toThrow(
+      "invalid_grant",
+    )
     expect(account.runtimeState?.authStatus).toBe("error")
-    expect(account.runtimeState?.lastError).toContain("Codex token refresh")
+    expect(account.runtimeState?.lastError).toContain("invalid_grant")
   })
 })

@@ -93,6 +93,7 @@ export const OAUTH_REFRESH_STRATEGIES: Record<OAuthProviderId, OAuthRefreshFn> =
   }
 
 export const OAUTH_REFRESH_LEAD_MS: Partial<Record<OAuthProviderId, number>> = {
-  codex: 5 * 24 * 60 * 60 * 1000,
+  // Match CPA: refresh Codex credentials one day before expiry.
+  codex: 24 * 60 * 60 * 1000,
   claude: 4 * 60 * 60 * 1000,
 }

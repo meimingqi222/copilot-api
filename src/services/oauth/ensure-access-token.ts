@@ -9,6 +9,7 @@ import {
   getMutableProviderConnection,
 } from "~/lib/provider-connections"
 
+import { extractJwtExpiryMs } from "./jwt"
 import { refreshOAuthConnectionToken } from "./refresh-scheduler"
 
 const EXPIRY_SKEW_MS = 60_000
@@ -16,35 +17,10 @@ const EXPIRY_SKEW_MS = 60_000
 // before expiry to avoid sending a borderline-expired token (a 401 mid-stream
 // is costly). Other OAuth providers keep the tighter 60s skew.
 const CLAUDE_EXPIRY_SKEW_MS = 5 * 60_000
-const inflightRefresh = new Map<string, Promise<void>>()
 
 interface EnsureOAuthAccessTokenOptions {
   forceRefresh?: boolean
   failedAccessToken?: string
-}
-
-/** 以 connectionId 为键执行去重的刷新(等价旧 inflightRefresh 逻辑)。 */
-async function refreshWithInflightDedup(
-  connectionId: string,
-  connection: ProviderConnection,
-  reason: string,
-): Promise<void> {
-  const inflight = inflightRefresh.get(connectionId)
-  if (inflight) {
-    await inflight
-    return
-  }
-
-  const refreshPromise = refreshOAuthConnectionToken(connection, reason)
-    .catch((error: unknown) => {
-      throw error
-    })
-    .finally(() => {
-      inflightRefresh.delete(connectionId)
-    })
-
-  inflightRefresh.set(connectionId, refreshPromise)
-  await refreshPromise
 }
 
 /**
@@ -62,7 +38,10 @@ function connectionRefreshToken(credential: ApiCredential): string | undefined {
 
 function connectionTokenExpiry(credential: ApiCredential): number | undefined {
   const expiry = credential.context?.expiresAt
-  return typeof expiry === "number" ? expiry : undefined
+  if (typeof expiry === "number") return expiry
+  // CPA also falls back to the JWT exp claim. This is essential for imported
+  // Codex credentials whose auth file contains tokens but no `expired` field.
+  return extractJwtExpiryMs(credential.value)
 }
 
 function connectionExpirySkewMs(connection: ProviderConnection): number {
@@ -94,12 +73,21 @@ export async function ensureOAuthConnectionAccessToken(
   credential: ApiCredential,
   options: EnsureOAuthAccessTokenOptions = {},
 ): Promise<string | undefined> {
-  const provider = getConnectionProvider(connection)
+  // Admission and long-lived callers may hold snapshots. Always make refresh
+  // decisions from the latest state so a concurrent refresh is not mistaken
+  // for the token that just failed upstream.
+  const liveConnection = getMutableProviderConnection(connection.id)
+  const effectiveConnection = liveConnection ?? connection
+  const effectiveCredential =
+    effectiveConnection.credentials.find((item) => item.id === credential.id)
+    ?? credential
+
+  const provider = getConnectionProvider(effectiveConnection)
   if (!provider || !isOAuthProviderId(provider)) {
-    return connectionAccessToken(credential)
+    return connectionAccessToken(effectiveCredential)
   }
 
-  const currentToken = connectionAccessToken(credential)
+  const currentToken = connectionAccessToken(effectiveCredential)
   if (
     options.forceRefresh
     && options.failedAccessToken
@@ -109,13 +97,13 @@ export async function ensureOAuthConnectionAccessToken(
     return currentToken
   }
 
-  const refreshToken = connectionRefreshToken(credential)
-  const expiresAt = connectionTokenExpiry(credential)
+  const refreshToken = connectionRefreshToken(effectiveCredential)
+  const expiresAt = connectionTokenExpiry(effectiveCredential)
   const needsRefresh =
     !currentToken
     || (refreshToken !== undefined
       && expiresAt !== undefined
-      && expiresAt <= Date.now() + connectionExpirySkewMs(connection))
+      && expiresAt <= Date.now() + connectionExpirySkewMs(effectiveConnection))
   if (!options.forceRefresh && !needsRefresh) {
     return currentToken
   }
@@ -126,13 +114,11 @@ export async function ensureOAuthConnectionAccessToken(
   }
 
   // 刷新必须落在 stateRoot 中的 live connection 上(传入对象可能是快照)。
-  const liveConnection = getMutableProviderConnection(connection.id)
   if (!liveConnection) {
     return currentToken
   }
 
-  await refreshWithInflightDedup(
-    connection.id,
+  await refreshOAuthConnectionToken(
     liveConnection,
     options.forceRefresh ? "unauthorized" : "pre-request",
   )

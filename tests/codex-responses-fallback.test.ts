@@ -6,8 +6,13 @@ import type {
 } from "~/lib/provider-connections"
 
 import { UpstreamTransportError } from "~/lib/error"
+import {
+  removeProviderConnection,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { createResponsesErrorPayload } from "~/routes/responses/handler"
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
+import { cancelOAuthRefreshTimer } from "~/services/oauth/refresh-scheduler"
 import {
   chainedHttpCodexRequestError,
   pruneUnansweredToolCalls,
@@ -23,6 +28,8 @@ const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  cancelOAuthRefreshTimer("codex-1")
+  removeProviderConnection("codex-1")
   clearCodexTranscriptsForTest()
 })
 
@@ -196,6 +203,73 @@ function makeCodexSubject(): {
     },
   }
 }
+
+describe("Codex credential recovery", () => {
+  test("refreshes once and retries the same HTTP request after 401", async () => {
+    const subject = makeCodexSubject()
+    subject.credential.context = {
+      ...subject.credential.context,
+      refreshToken: "refresh-old",
+      expiresAt: Date.now() + 3_600_000,
+    }
+    upsertProviderConnection(subject.connection)
+
+    const authorizationHeaders: Array<string | null> = []
+    let upstreamCalls = 0
+    globalThis.fetch = ((input, init) => {
+      const url =
+        typeof input === "string" ? input
+        : input instanceof URL ? input.href
+        : input.url
+      if (url === "https://auth.openai.com/oauth/token") {
+        return Promise.resolve(
+          Response.json({
+            access_token: "token-fresh",
+            refresh_token: "refresh-fresh",
+            expires_in: 3_600,
+          }),
+        )
+      }
+
+      upstreamCalls += 1
+      authorizationHeaders.push(new Headers(init?.headers).get("Authorization"))
+      if (upstreamCalls === 1) {
+        return Promise.resolve(new Response("expired", { status: 401 }))
+      }
+      return Promise.resolve(
+        new Response(
+          [
+            'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[]}}',
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      )
+    }) as typeof fetch
+
+    const stream = await createCodexResponsesOnce(
+      subject,
+      {
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "hello" } as never],
+        stream: true,
+      },
+      undefined,
+      { forceUpstreamHttp: true },
+    )
+    for await (const _event of stream as AsyncIterable<unknown>) {
+      // consume the retried response
+    }
+
+    expect(authorizationHeaders).toEqual(["Bearer token", "Bearer token-fresh"])
+    expect(subject.credential.context?.refreshToken).toBe("refresh-fresh")
+  })
+})
 
 describe("chained HTTP recovery", () => {
   test("expands a previous_response_id delta from the stable transcript", async () => {

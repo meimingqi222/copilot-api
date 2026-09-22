@@ -20,6 +20,7 @@ import {
   setConnectionAuthStatus,
 } from "~/lib/provider-connections"
 
+import { extractJwtExpiryMs } from "./jwt"
 import {
   OAUTH_REFRESH_LEAD_MS,
   OAUTH_REFRESH_STRATEGIES,
@@ -28,15 +29,16 @@ import {
 const DEFAULT_REFRESH_LEAD_MS = 5 * 60 * 1000
 const INITIAL_RETRY_DELAY_MS = 60_000
 const MAX_RETRY_DELAY_MS = 30 * 60 * 1000
-const MAX_REFRESH_RETRIES = 3
 
 const oauthRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const oauthRetryCounts = new Map<string, number>()
+const oauthRefreshInflight = new Map<string, Promise<void>>()
 
 const TERMINAL_ERROR_PATTERNS = [
   "invalid_grant",
   "unauthorized_client",
   "invalid_client",
+  "refresh_token_reused",
 ] as const
 
 export function cancelOAuthRefreshTimer(accountId: string): void {
@@ -70,7 +72,10 @@ function getRefreshLeadMs(provider: OAuthProviderId): number {
 function getConnectionTokenExpiryMs(
   connection: ProviderConnection,
 ): number | undefined {
-  return getCredentialContextNumber(connection, "expiresAt")
+  return (
+    getCredentialContextNumber(connection, "expiresAt")
+    ?? extractJwtExpiryMs(connection.credentials[0]?.value)
+  )
 }
 
 /**
@@ -152,24 +157,18 @@ function scheduleOAuthRefreshAttempt(
             return
           }
 
-          // Track retry count with exponential backoff
+          // Transient network/server failures must not permanently revoke an
+          // otherwise recoverable credential. Keep retrying with capped
+          // exponential backoff; only explicit OAuth terminal errors above
+          // require a new login.
           const retryCount = (oauthRetryCounts.get(accountId) ?? 0) + 1
           oauthRetryCounts.set(accountId, retryCount)
-
-          if (retryCount >= MAX_REFRESH_RETRIES) {
-            await markOAuthConnectionAuthError(
-              connection,
-              `OAuth refresh failed after ${MAX_REFRESH_RETRIES} retries: ${error instanceof Error ? error.message : String(error)}`,
-            )
-            return
-          }
-
           const backoffMs = Math.min(
             INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount - 1),
             MAX_RETRY_DELAY_MS,
           )
           logger.warn(
-            `OAuth refresh failed for "${connection.name}" (attempt ${retryCount}/${MAX_REFRESH_RETRIES}), `
+            `OAuth refresh failed for "${connection.name}" (attempt ${retryCount}), `
               + `retrying in ${backoffMs / 1000}s:`,
             error instanceof Error ? error.message : String(error),
           )
@@ -193,18 +192,40 @@ export async function refreshOAuthConnectionToken(
   connection: ProviderConnection,
   reason = "scheduled",
 ): Promise<void> {
+  const existing = oauthRefreshInflight.get(connection.id)
+  if (existing) {
+    await existing
+    return
+  }
+
+  // Every refresh entry point (scheduler, request-time 401 recovery, admin,
+  // quota) shares this lock. Rotating refresh tokens must never be consumed by
+  // two concurrent requests for the same connection.
+  const liveConnection =
+    getMutableProviderConnection(connection.id) ?? connection
+  const refresh = refreshOAuthConnectionTokenOnce(
+    liveConnection,
+    reason,
+  ).finally(() => oauthRefreshInflight.delete(connection.id))
+  oauthRefreshInflight.set(connection.id, refresh)
+  await refresh
+}
+
+async function refreshOAuthConnectionTokenOnce(
+  connection: ProviderConnection,
+  reason: string,
+): Promise<void> {
   // Note: intentionally not gated on `connection.enabled` — a disabled account
   // must still be able to refresh its OAuth token so quota/token stays valid.
   const provider = getOAuthConnectionProvider(connection)
-  if (!provider) {
-    return
-  }
+  if (!provider) return
 
   const refreshToken = getCredentialContextString(connection, "refreshToken")
   const accessToken = connection.credentials[0]?.value || undefined
 
   if (!refreshToken && !accessToken) {
     setConnectionAuthStatus(connection, "error", "Missing OAuth credentials")
+    await persistProviderConnections()
     return
   }
 
@@ -222,22 +243,23 @@ export async function refreshOAuthConnectionToken(
       fetchOptions,
     )
 
-    // apply*OAuthBundle already reset authStatus to "ready" — a previous
-    // failed attempt may have set authStatus to "error". Without this reset,
-    // scheduleOAuthRefreshForConnection would skip scheduling (and
-    // availability checks would keep reporting the account unavailable).
     logger.debug(
       `OAuth refresh succeeded for "${connection.name}" (${provider}, ${reason})`,
     )
     scheduleOAuthRefreshForConnection(connection)
     await persistProviderConnections()
   } catch (error: unknown) {
-    setConnectionAuthStatus(
-      connection,
-      "error",
-      error instanceof Error ? error.message : String(error),
-    )
-    await persistProviderConnections()
+    // Do not turn a temporary DNS/TLS/upstream outage into auth_error. The old
+    // access token may still be valid, and the scheduler will retry. Only an
+    // explicit OAuth terminal response proves that re-authentication is needed.
+    if (isOAuthTerminalError(error)) {
+      setConnectionAuthStatus(
+        connection,
+        "error",
+        error instanceof Error ? error.message : String(error),
+      )
+      await persistProviderConnections()
+    }
     throw error
   }
 }
@@ -350,8 +372,14 @@ export function scheduleOAuthRefreshForConnection(
     return
   }
 
-  // Skip if the account is already in permanent auth_error state
-  if (getConnectionAuthStatus(connection) === "error") {
+  // Preserve permanent OAuth failures across restarts, but allow accounts
+  // marked by older versions after a transient outage to recover automatically.
+  const authError = getConnectionAuthError(connection)
+  if (
+    getConnectionAuthStatus(connection) === "error"
+    && authError
+    && isOAuthTerminalError(new Error(authError))
+  ) {
     return
   }
 

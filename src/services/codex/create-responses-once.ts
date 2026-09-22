@@ -90,6 +90,10 @@ function readForwardedHeader(
   return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
+function isCodexUnauthorized(error: unknown): boolean {
+  return error instanceof HTTPError && error.response.status === 401
+}
+
 /** Transport a finalized Codex body is about to be sent over. */
 type CodexOutboundTransport = "http" | "ws"
 
@@ -376,7 +380,7 @@ export async function createCodexResponsesOnce(
       (payload as unknown as Record<string, unknown>).input,
     )
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
+  let accessToken = await ensureOAuthConnectionAccessToken(
     connection,
     credential,
   )
@@ -483,16 +487,32 @@ export async function createCodexResponsesOnce(
   })
 
   // ── Build headers (HTTP-safe base; WS path clones + rewrites) ────────
-  const httpHeaders: Record<string, string> = {
-    ...buildCodexHeaders(accessToken, true, {
-      sessionId,
-      threadId,
-      accountId: getCredentialContextString(connection, "oauthAccountId"),
-    }),
-    ...extraHeaders,
+  const buildHttpHeaders = (token: string): Record<string, string> => {
+    const headers: Record<string, string> = {
+      ...buildCodexHeaders(token, true, {
+        sessionId,
+        threadId,
+        accountId: getCredentialContextString(connection, "oauthAccountId"),
+      }),
+      ...extraHeaders,
+    }
+    // Apply identity confuse to headers (remaps Session_id, turn metadata, etc.)
+    applyIdentityConfuseHeaders(headers, identityState)
+    return headers
   }
-  // Apply identity confuse to headers (remaps Session_id, turn metadata, etc.)
-  applyIdentityConfuseHeaders(httpHeaders, identityState)
+  let httpHeaders = buildHttpHeaders(accessToken)
+
+  const refreshAfterUnauthorized = async (): Promise<boolean> => {
+    const refreshed = await ensureOAuthConnectionAccessToken(
+      connection,
+      credential,
+      { forceRefresh: true, failedAccessToken: accessToken },
+    )
+    if (!refreshed || refreshed === accessToken) return false
+    accessToken = refreshed
+    httpHeaders = buildHttpHeaders(refreshed)
+    return true
+  }
 
   // ── Upstream WebSocket path (CPA CodexWebsocketsExecutor) ────────────
   // Set when a chained turn falls back to HTTP: the HTTP POST must send the
@@ -577,42 +597,62 @@ export async function createCodexResponsesOnce(
   // succeeds, or undefined when the socket is unusable and the caller should
   // fall through to a same-account HTTP POST.
   if (useUpstreamWs) {
-    const wsTurn = await attemptCodexUpstreamWsTurn({
-      connection,
-      url,
-      httpHeaders,
-      upstreamBody,
-      previousResponseId,
-      fallbackFullInputBody,
-      executionSessionId,
-      signal,
-      model,
-      clientStream,
-      scopedReplaySessionKey,
-      identityState,
-      transcriptKey,
-      transcriptTrackable,
-      fullInputThisTurn,
-      memoryTraceId,
-      timingMetricsHeader: readForwardedHeader(
-        ctx,
-        "x-responsesapi-include-timing-metrics",
-      ),
-    })
-    if (wsTurn !== undefined) {
-      return wsTurn
+    const attemptWs = () =>
+      attemptCodexUpstreamWsTurn({
+        connection,
+        url,
+        httpHeaders,
+        upstreamBody,
+        previousResponseId,
+        fallbackFullInputBody,
+        executionSessionId,
+        signal,
+        model,
+        clientStream,
+        scopedReplaySessionKey,
+        identityState,
+        transcriptKey,
+        transcriptTrackable,
+        fullInputThisTurn,
+        memoryTraceId,
+        timingMetricsHeader: readForwardedHeader(
+          ctx,
+          "x-responsesapi-include-timing-metrics",
+        ),
+      })
+
+    let wsTurn: Awaited<ReturnType<typeof attemptWs>>
+    try {
+      wsTurn = await attemptWs()
+    } catch (error) {
+      if (!isCodexUnauthorized(error) || !(await refreshAfterUnauthorized())) {
+        throw error
+      }
+      destroyUpstreamWebsocketSession(
+        "codex",
+        connection.id,
+        executionSessionId,
+      )
+      wsTurn = await attemptWs()
     }
+    if (wsTurn !== undefined) return wsTurn
   }
 
-  const response = await postCodexResponses({
-    connection,
-    url,
-    headers: httpHeaders,
-    upstreamBody,
-    httpFallbackBody,
-    signal,
-    memoryTraceId,
-  })
+  const postResponses = () =>
+    postCodexResponses({
+      connection,
+      url,
+      headers: httpHeaders,
+      upstreamBody,
+      httpFallbackBody,
+      signal,
+      memoryTraceId,
+    })
+
+  let response = await postResponses()
+  if (response.status === 401 && (await refreshAfterUnauthorized())) {
+    response = await postResponses()
+  }
 
   if (!response.ok) {
     // Clear reasoning replay cache on thinking_signature_invalid errors.
