@@ -81,6 +81,7 @@ async function loadAccountsUnlocked(): Promise<void> {
   // statsStore.init() 的 repair-codebuddy-provider-attribution 之前执行，
   // 否则历史用量会被固化成错误的 provider。
   await repairCodebuddyCnConnections()
+  await repairCodebuddyIntlConnections()
 
   // 处理 legacy GitHub token 文件(仅在无 account 时)
   if (listAccounts().length === 0) {
@@ -242,8 +243,9 @@ const CODEBUDDY_CN_DOMAIN = "www.codebuddy.cn"
  * - connection.baseUrl === ""（旧版 accountToConnectionForPersistence 对
  *   account-managed 连接硬编码空 baseUrl）
  *
- * 重命名后新建的国际版连接 baseUrl 必为 https://www.codebuddy.ai/v2，
- * 不会被误伤；用户手工把 baseUrl 指到腾讯域名的连接也按国内版处理。
+ * 重命名后新建的国际版连接 baseUrl 指向 workbuddy.ai（旧版曾误用
+ * codebuddy.ai，该域名不可达），不会被误伤；用户手工把 baseUrl 指到
+ * 腾讯域名的连接也按国内版处理。
  */
 function isLegacyCodebuddyCnConnection(conn: ProviderConnection): boolean {
   if (conn.protocol !== "codebuddy-native") return false
@@ -282,6 +284,51 @@ async function repairCodebuddyCnConnections(): Promise<void> {
   await saveProviderConnections(listProviderConnections())
   logger.info(
     `Migrated ${repaired.length} legacy CodeBuddy CN connection(s) to provider "codebuddy-cn": ${repaired.join(", ")}`,
+  )
+}
+
+const CODEBUDDY_INTL_BASE_URL = "https://www.workbuddy.ai/v2"
+const CODEBUDDY_INTL_DOMAIN = "www.workbuddy.ai"
+
+/**
+ * 一次性修复：国际版域名曾误用 www.codebuddy.ai（DNS 可解析但 443 无服务，
+ * 连接全部超时），把存量 codebuddy.ai 连接改写为 workbuddy.ai 域。
+ */
+async function repairCodebuddyIntlConnections(): Promise<void> {
+  const repaired: Array<string> = []
+  for (const conn of listProviderConnections()) {
+    if (conn.protocol !== "codebuddy-native") continue
+    const baseUrl = (conn.baseUrl ?? "").toLowerCase()
+    const domain =
+      Object.entries(conn.headers ?? {})
+        .find(([key]) => key.toLowerCase() === "x-domain")?.[1]
+        .toLowerCase() ?? ""
+    const staleBase = baseUrl.includes("codebuddy.ai")
+    const staleDomain = domain.endsWith("codebuddy.ai")
+    if (!staleBase && !staleDomain) continue
+    if (staleBase) {
+      conn.baseUrl = (conn.baseUrl ?? "").replace(
+        /codebuddy\.ai/gi,
+        "workbuddy.ai",
+      )
+      if (!(conn.baseUrl ?? "").trim()) {
+        conn.baseUrl = CODEBUDDY_INTL_BASE_URL
+      }
+    }
+    if (staleDomain) {
+      const headers = Object.fromEntries(
+        Object.entries(conn.headers ?? {}).filter(
+          ([key]) => key.toLowerCase() !== "x-domain",
+        ),
+      )
+      conn.headers = { ...headers, "X-Domain": CODEBUDDY_INTL_DOMAIN }
+    }
+    repaired.push(conn.name)
+  }
+  if (repaired.length === 0) return
+  await saveProviderConnections(listProviderConnections())
+  logger.info(
+    `Migrated ${repaired.length} CodeBuddy intl connection(s) to workbuddy.ai domain: ${repaired.join(", ")}`,
   )
 }
 

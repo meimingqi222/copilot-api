@@ -58,8 +58,8 @@ function makeConnection(credential: ApiCredential): ProviderConnection {
     id: "codebuddy-connection",
     name: "CodeBuddy",
     protocol: "codebuddy-native",
-    baseUrl: "https://www.codebuddy.ai/v2",
-    headers: { "X-Domain": "www.codebuddy.ai" },
+    baseUrl: "https://www.workbuddy.ai/v2",
+    headers: { "X-Domain": "www.workbuddy.ai" },
     enabled: true,
     priority: 0,
     credentials: [credential],
@@ -388,8 +388,8 @@ describe("CodeBuddy request handling", () => {
       payload: { model: "gpt-5.6-sol", messages: [] },
     })
 
-    expect(upstreamHeaders?.get("origin")).toBe("https://www.codebuddy.ai")
-    expect(upstreamHeaders?.get("referer")).toBe("https://www.codebuddy.ai/")
+    expect(upstreamHeaders?.get("origin")).toBe("https://www.workbuddy.ai")
+    expect(upstreamHeaders?.get("referer")).toBe("https://www.workbuddy.ai/")
     expect(upstreamHeaders?.get("accept-language")).toBe("en-US")
     expect(upstreamHeaders?.get("x-no-enterprise-id")).toBe("1")
     expect(upstreamHeaders?.get("x-machine-id")).toMatch(/^[0-9a-f]{36}$/)

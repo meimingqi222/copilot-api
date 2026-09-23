@@ -65,11 +65,11 @@ describe("codebuddy oauth realm config", () => {
     })
   })
 
-  test("intl realm points at www.codebuddy.ai", () => {
+  test("intl realm points at www.workbuddy.ai", () => {
     expect(codebuddyRealmConfig("codebuddy")).toEqual({
-      base: "https://www.codebuddy.ai",
-      origin: "https://www.codebuddy.ai",
-      domain: "www.codebuddy.ai",
+      base: "https://www.workbuddy.ai",
+      origin: "https://www.workbuddy.ai",
+      domain: "www.workbuddy.ai",
     })
   })
 
@@ -105,7 +105,7 @@ describe("startCodebuddyDeviceFlow", () => {
     ])
   })
 
-  test("intl realm uses www.codebuddy.ai", async () => {
+  test("intl realm uses www.workbuddy.ai", async () => {
     const seen: Array<string> = []
     mockFetch((url) => {
       seen.push(url)
@@ -116,7 +116,7 @@ describe("startCodebuddyDeviceFlow", () => {
     })
     await startCodebuddyDeviceFlow("codebuddy")
     expect(seen).toEqual([
-      "https://www.codebuddy.ai/v2/plugin/auth/state?platform=CLI",
+      "https://www.workbuddy.ai/v2/plugin/auth/state?platform=CLI",
     ])
   })
 
@@ -240,8 +240,8 @@ describe("applyCodebuddyOAuthBundle", () => {
       nickname: "nick",
     })
     expect(conn.name).toBe("my-label")
-    expect(conn.baseUrl).toBe("https://www.codebuddy.ai/v2")
-    expect(conn.headers?.["X-Domain"]).toBe("www.codebuddy.ai")
+    expect(conn.baseUrl).toBe("https://www.workbuddy.ai/v2")
+    expect(conn.headers?.["X-Domain"]).toBe("www.workbuddy.ai")
     expect(getConnectionProvider(conn)).toBe("codebuddy")
   })
 })

@@ -9,7 +9,7 @@
  *   4. `GET {base}/v2/plugin/login/account?state=`（带 Bearer）→ `{uid, enterpriseId, nickname}`
  *
  * 双 realm（与 provider id 对应）：
- *   - `codebuddy`（国际版）：`https://www.codebuddy.ai`
+ *   - `codebuddy`（国际版）：`https://www.workbuddy.ai`
  *   - `codebuddy-cn`（国内版）：`https://copilot.tencent.com`
  */
 
@@ -53,9 +53,9 @@ export function codebuddyRealmConfig(
     }
   }
   return {
-    base: "https://www.codebuddy.ai",
-    origin: "https://www.codebuddy.ai",
-    domain: "www.codebuddy.ai",
+    base: "https://www.workbuddy.ai",
+    origin: "https://www.workbuddy.ai",
+    domain: "www.workbuddy.ai",
   }
 }
 

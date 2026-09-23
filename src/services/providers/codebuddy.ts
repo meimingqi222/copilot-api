@@ -7,7 +7,7 @@
  * 系统会在 accessToken 过期前自动调用 /v2/plugin/auth/token/refresh 刷新。
  *
  * 两个 provider 共用 codebuddy-native 协议，仅 baseUrl / X-Domain 不同：
- * - `codebuddy`（国际版）：www.codebuddy.ai，内置 GPT/Gemini/Kimi 等国际模型
+ * - `codebuddy`（国际版）：www.workbuddy.ai，内置 GPT/Gemini/Kimi 等国际模型
  * - `codebuddy-cn`（国内版）：copilot.tencent.com，内置 DeepSeek/GLM/混元等国产模型
  */
 
@@ -44,7 +44,7 @@ const CODEBUDDY_CN_FALLBACK_MODELS: Array<ModelMapping> = [
 }))
 
 // ── 国际版（codebuddy）内置模型列表 ──────────────────────────────
-// 从 https://www.codebuddy.ai/v3/config 抓取，排除 image/video 专用模型。
+// 从 https://www.workbuddy.ai/v3/config 抓取，排除 image/video 专用模型。
 // 注意：/v3/config 列表不完整——hy4-preview / deepseek-v4.1-flash 等免费
 // 模型实测可调用（chat 200）但不在 config 列表中，故在此显式补充。
 const CODEBUDDY_INTL_FALLBACK_MODELS: Array<ModelMapping> = [
@@ -166,7 +166,7 @@ function createCodebuddyRuntime(opts: {
   }
 }
 
-// 国际版（www.codebuddy.ai）
+// 国际版（www.workbuddy.ai）
 export const codebuddyProviderRuntime: ProviderRuntime = createCodebuddyRuntime(
   {
     id: "codebuddy",

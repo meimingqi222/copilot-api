@@ -3,7 +3,7 @@
  *
  * 对齐 workbuddy2api 的 `get-user-resource` 口径：
  *   - 国内版（codebuddy-cn）：`POST https://www.codebuddy.cn/v2/billing/meter/get-user-resource`
- *   - 国际版（codebuddy）：`POST https://www.codebuddy.ai/v2/billing/meter/get-user-resource`，
+ *   - 国际版（codebuddy）：`POST https://www.workbuddy.ai/v2/billing/meter/get-user-resource`，
  *     404 时回退 `/billing/meter/get-user-resource`（workbuddy 域同款路径候选）。
  *   - 单套餐聚合逐字移植 `packageRemainUsed`：Cycle 期套餐优先，
  *     remain 钳 [0, size]，used 取 CycleUsed 与 size-remain 的较大者。
@@ -28,7 +28,7 @@ import {
 } from "./token-refresh"
 
 const CODEBUDDY_CN_BILLING_BASE = "https://www.codebuddy.cn"
-const CODEBUDDY_INTL_BILLING_BASE = "https://www.codebuddy.ai"
+const CODEBUDDY_INTL_BILLING_BASE = "https://www.workbuddy.ai"
 const CODEBUDDY_RESOURCE_PATH = "/v2/billing/meter/get-user-resource"
 const CODEBUDDY_RESOURCE_FALLBACK_PATH = "/billing/meter/get-user-resource"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
@@ -48,7 +48,8 @@ function resolveCodebuddyBillingBase(connection: ProviderConnection): {
   if (provider === "codebuddy-cn") {
     return { base: CODEBUDDY_CN_BILLING_BASE, intl: false }
   }
-  if ((connection.baseUrl ?? "").includes("codebuddy.ai")) {
+  const intlBase = connection.baseUrl ?? ""
+  if (intlBase.includes("workbuddy.ai") || intlBase.includes("codebuddy.ai")) {
     return { base: CODEBUDDY_INTL_BILLING_BASE, intl: true }
   }
   return { base: CODEBUDDY_CN_BILLING_BASE, intl: false }
@@ -198,7 +199,11 @@ export async function fetchCodebuddyQuota(
   if (provider !== "codebuddy" && provider !== "codebuddy-cn") {
     // 无 metadata 的旧连接：chat baseUrl 指向 codebuddy 系同样放行。
     const base = connection.baseUrl ?? ""
-    if (!base.includes("codebuddy.ai") && !base.includes("tencent.com")) {
+    if (
+      !base.includes("workbuddy.ai")
+      && !base.includes("codebuddy.ai")
+      && !base.includes("tencent.com")
+    ) {
       throw new Error("fetchCodebuddyQuota requires a CodeBuddy connection")
     }
   }

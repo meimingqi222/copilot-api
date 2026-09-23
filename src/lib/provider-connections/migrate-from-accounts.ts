@@ -259,8 +259,8 @@ export function accountToConnectionForPersistence(
   let baseUrl = ""
   let headers: Record<string, string> | undefined
   if (account.provider === "codebuddy") {
-    baseUrl = "https://www.codebuddy.ai/v2"
-    headers = { "X-Domain": "www.codebuddy.ai" }
+    baseUrl = "https://www.workbuddy.ai/v2"
+    headers = { "X-Domain": "www.workbuddy.ai" }
   } else if (account.provider === "codebuddy-cn") {
     baseUrl = "https://copilot.tencent.com/v2"
     headers = { "X-Domain": "www.codebuddy.cn" }

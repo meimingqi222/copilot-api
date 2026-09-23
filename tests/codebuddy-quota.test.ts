@@ -198,8 +198,8 @@ describe("fetchCodebuddyQuota", () => {
     const connection = await createConnection({
       name: "codebuddy-quota-test",
       protocol: "codebuddy-native",
-      baseUrl: "https://www.codebuddy.ai/v2",
-      headers: { "X-Domain": "www.codebuddy.ai" },
+      baseUrl: "https://www.workbuddy.ai/v2",
+      headers: { "X-Domain": "www.workbuddy.ai" },
       credentials: [{ value: "access-token", authMode: "bearer" }],
       models: [],
     })
@@ -222,8 +222,8 @@ describe("fetchCodebuddyQuota", () => {
     try {
       const snapshot = await fetchCodebuddyQuota(connection)
       expect(seen).toEqual([
-        "https://www.codebuddy.ai/v2/billing/meter/get-user-resource",
-        "https://www.codebuddy.ai/billing/meter/get-user-resource",
+        "https://www.workbuddy.ai/v2/billing/meter/get-user-resource",
+        "https://www.workbuddy.ai/billing/meter/get-user-resource",
       ])
       expect(snapshot.provider).toBe("codebuddy")
       expect(snapshot.chatRemaining).toBe(0)

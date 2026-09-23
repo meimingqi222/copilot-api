@@ -651,10 +651,10 @@ describe("account-store", () => {
             id: "new-intl",
             name: "new-intl",
             protocol: "codebuddy-native",
-            baseUrl: "https://www.codebuddy.ai/v2",
+            baseUrl: "https://www.workbuddy.ai/v2",
             enabled: true,
             priority: 0,
-            headers: { "X-Domain": "www.codebuddy.ai" },
+            headers: { "X-Domain": "www.workbuddy.ai" },
             credentials: [
               {
                 id: "new-intl",
@@ -683,12 +683,83 @@ describe("account-store", () => {
     expect(oldCn?.baseUrl).toBe("https://copilot.tencent.com/v2")
     expect(oldCn?.headers).toMatchObject({ "X-Domain": "www.codebuddy.cn" })
 
-    // 真正的国际版连接（baseUrl 指向 codebuddy.ai）不得被误改
+    // 真正的国际版连接（baseUrl 指向 workbuddy.ai）不得被误改
     const intl = connections.find((c) => c.id === "new-intl")
     expect(
       (intl?.metadata as Record<string, unknown> | undefined)?.provider,
     ).toBe("codebuddy")
-    expect(intl?.baseUrl).toBe("https://www.codebuddy.ai/v2")
-    expect(intl?.headers).toMatchObject({ "X-Domain": "www.codebuddy.ai" })
+    expect(intl?.baseUrl).toBe("https://www.workbuddy.ai/v2")
+    expect(intl?.headers).toMatchObject({ "X-Domain": "www.workbuddy.ai" })
+  })
+
+  test("loadAccounts repairs dead codebuddy.ai intl connections to workbuddy.ai", async () => {
+    // 旧版误用 www.codebuddy.ai（域名可达但 443 无服务，全部超时）。
+    // 存量连接的 baseUrl/X-Domain 应被改写为 workbuddy.ai。
+    await fs.writeFile(
+      PATHS.PROVIDER_CONNECTIONS_PATH,
+      JSON.stringify({
+        version: 2,
+        connections: [
+          {
+            id: "stale-intl",
+            name: "stale-intl",
+            protocol: "codebuddy-native",
+            baseUrl: "https://www.codebuddy.ai/v2",
+            enabled: true,
+            priority: 0,
+            headers: { "X-Domain": "www.codebuddy.ai" },
+            credentials: [
+              {
+                id: "stale-intl",
+                authMode: "bearer",
+                value: "cb-at",
+                enabled: true,
+                status: "ready",
+                createdAt: 1000,
+              },
+            ],
+            createdAt: 1000,
+            metadata: { provider: "codebuddy" },
+          },
+          {
+            id: "ok-cn",
+            name: "ok-cn",
+            protocol: "codebuddy-native",
+            baseUrl: "https://copilot.tencent.com/v2",
+            enabled: true,
+            priority: 0,
+            headers: { "X-Domain": "www.codebuddy.cn" },
+            credentials: [
+              {
+                id: "ok-cn",
+                authMode: "bearer",
+                value: "cb-at-2",
+                enabled: true,
+                status: "ready",
+                createdAt: 2000,
+              },
+            ],
+            createdAt: 2000,
+            metadata: { provider: "codebuddy-cn" },
+          },
+        ],
+      }),
+      "utf8",
+    )
+
+    await loadAccounts()
+
+    const connections = await readProviderConnectionsFile()
+    const intl = connections.find((c) => c.id === "stale-intl")
+    expect(intl?.baseUrl).toBe("https://www.workbuddy.ai/v2")
+    expect(intl?.headers).toMatchObject({ "X-Domain": "www.workbuddy.ai" })
+    // metadata.provider 保持 "codebuddy"（国际版 provider id 不变）
+    expect(
+      (intl?.metadata as Record<string, unknown> | undefined)?.provider,
+    ).toBe("codebuddy")
+
+    const cn = connections.find((c) => c.id === "ok-cn")
+    expect(cn?.baseUrl).toBe("https://copilot.tencent.com/v2")
+    expect(cn?.headers).toMatchObject({ "X-Domain": "www.codebuddy.cn" })
   })
 })
