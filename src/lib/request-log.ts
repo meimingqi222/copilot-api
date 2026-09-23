@@ -226,12 +226,29 @@ export function finalizeUpstreamModelAuditForContext(
   const reported = observedResponseModel(ctx.upstreamModelObservation)
   if (!reported) return undefined
 
-  // 发往上游的模型：渠道映射后的真实模型优先，回退请求模型。
-  const sent =
-    ctx.entry.modelUpstream?.trim()
-    || ctx.entry.model?.trim()
-    || ctx.entry.modelRequested?.trim()
-  const verdict = sent ? compareUpstreamModels(sent, reported) : "match"
+  // 发往上游的模型与用户原始请求的模型都可能是上游回显的合法来源：
+  // 用户主动定义的别名（ModelMapping.upstreamId 缩写、全局别名规则、
+  // publicId alias）会让 sent（映射后）与 requested（映射前）不同，而上游
+  // 往往回显它自己的规范 id（恰好等于 requested）。只比 sent 会把这种
+  // 预期内的别名展开误判为静默换模型。三个候选取最优（match > variant >
+  // mismatch），任一一致即不告警；三者都不同时才是真正的上游换模型。
+  const candidates = [
+    ctx.entry.modelUpstream?.trim(),
+    ctx.entry.model?.trim(),
+    ctx.entry.modelRequested?.trim(),
+  ].filter((value): value is string => Boolean(value))
+  let verdict: UpstreamModelVerdict = "match"
+  if (candidates.length > 0) {
+    verdict = "mismatch"
+    for (const candidate of candidates) {
+      const current = compareUpstreamModels(candidate, reported)
+      if (current === "match") {
+        verdict = "match"
+        break
+      }
+      if (current === "variant") verdict = "variant"
+    }
+  }
 
   Object.assign(ctx.entry, {
     modelResponse: reported,

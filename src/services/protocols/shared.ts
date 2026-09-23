@@ -266,18 +266,52 @@ interface JsonStreamEvent {
 }
 
 /**
+ * SSE 首包超时（毫秒）。上游偶发会把连接挂起很久才回包（实测 LobsterAI
+ * deepseek 曾挂 203s 才回 500），此前 `safeSseStream` 无限等首个事件，
+ * failover 迟迟不触发。超时后抛 504（归类为 server_error，会正常 failover
+ * 到下一个 target；account-managed 不冷却 connection，普通 credential 按
+ * COOLDOWN_5XX_MS 冷却 30s）。
+ *
+ * 可用 `UPSTREAM_SSE_FIRST_BYTE_TIMEOUT_MS` 覆盖，设为 0 关闭。
+ * 注意只约束首包：流一旦开始，后续消费由各路由的流式收尾负责，不影响
+ * 正常的大输出/长推理（它们的 TTFT 之后不再受此限）。
+ */
+const DEFAULT_SSE_FIRST_BYTE_TIMEOUT_MS = 120_000
+
+export function resolveSseFirstByteTimeoutMs(): number {
+  const raw = process.env["UPSTREAM_SSE_FIRST_BYTE_TIMEOUT_MS"]
+  if (raw === undefined) return DEFAULT_SSE_FIRST_BYTE_TIMEOUT_MS
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SSE_FIRST_BYTE_TIMEOUT_MS
+  }
+  return parsed
+}
+
+export interface SafeSseStreamOptions {
+  /** 覆盖首包超时（毫秒），测试用；不传则走环境变量/默认值。 */
+  firstByteTimeoutMs?: number
+}
+
+/**
  * Peek at the first SSE event from a streaming response to detect errors
  * that would otherwise bypass failover (HTTP 200 with error in SSE body).
  * If an error is detected, throws an HTTPError. Otherwise returns a new
  * async iterable that includes the first event and continues the stream.
+ *
+ * 首个事件带超时：超时未到包同样抛 HTTPError（504），调用方 failover。
  */
 export async function safeSseStream<T>(
   response: Response,
   isError: (event: T) => HTTPError | null,
+  opts?: SafeSseStreamOptions,
 ): Promise<AsyncIterable<T>> {
   const raw = events(response) as unknown as AsyncIterable<T>
   const iterator = raw[Symbol.asyncIterator]()
-  const first = await iterator.next()
+  const first = await nextWithFirstByteTimeout(
+    iterator,
+    opts?.firstByteTimeoutMs,
+  )
   if (first.done) return raw
 
   const error = isError(first.value)
@@ -303,6 +337,48 @@ export async function safeSseStream<T>(
         },
       }
     },
+  }
+}
+
+/**
+ * 带首包超时的 `iterator.next()`。超时后尝试 `iterator.return()` 释放
+ * 响应体（不断开到底层 fetch 的引用不断，连接由服务端关闭/GC 回收），
+ * 然后抛 504 让 dispatch failover。
+ */
+async function nextWithFirstByteTimeout<T>(
+  iterator: AsyncIterator<T>,
+  overrideMs?: number,
+): Promise<IteratorResult<T>> {
+  const timeoutMs = overrideMs ?? resolveSseFirstByteTimeoutMs()
+  if (!(timeoutMs > 0)) return iterator.next()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new HTTPError(
+            `Upstream timed out waiting for first response chunk (${timeoutMs}ms)`,
+            new Response(null, { status: 504 }),
+          ),
+        )
+      }, timeoutMs)
+    })
+    return await Promise.race([iterator.next(), timeout])
+  } catch (error) {
+    // Release the body without blocking failover on it: `return()` on a
+    // stalled SSE iterator may itself never settle (it waits behind the same
+    // parked read), so fire-and-forget it. The dangling socket is reclaimed
+    // when the upstream closes it or the response is GC'd.
+    void (async () => {
+      try {
+        await iterator.return?.()
+      } catch {
+        // Preserve the timeout error while still releasing the response body.
+      }
+    })()
+    throw error
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

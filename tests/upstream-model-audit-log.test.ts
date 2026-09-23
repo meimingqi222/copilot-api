@@ -148,6 +148,60 @@ describe("upstream model audit in the request log", () => {
     expect(logStore.query({ limit: 1 }).entries[0]?.modelMismatch).toBe(true)
   })
 
+  test("does not flag a user-defined alias when upstream echoes the requested id", async () => {
+    const app = makeApp((c) => {
+      patchRequestLog(c, {
+        model: "deepseek-v4.1-flash",
+        modelRequested: "deepseek-v4.1-flash",
+        modelUpstream: "deepseek-flash",
+      })
+      observeUpstreamResponseModel(c, { model: "deepseek/deepseek-v4.1-flash" })
+      return c.json({ ok: true })
+    })
+
+    await call(app)
+    const entry = logStore.query({ limit: 1 }).entries[0]
+    expect(entry?.modelResponse).toBe("deepseek/deepseek-v4.1-flash")
+    expect(entry?.modelMismatch).toBe(false)
+    expect(entry?.modelVariant).toBe(false)
+    expect(entry?.level).toBe("info")
+  })
+
+  test("downgrades to variant when upstream echoes a snapshot of the requested id", async () => {
+    const app = makeApp((c) => {
+      patchRequestLog(c, {
+        model: "claude-sonnet-4",
+        modelRequested: "claude-sonnet-4",
+        modelUpstream: "sonnet-alias",
+      })
+      observeUpstreamResponseModel(c, { model: "claude-sonnet-4-20250514" })
+      return c.json({ ok: true })
+    })
+
+    await call(app)
+    const entry = logStore.query({ limit: 1 }).entries[0]
+    expect(entry?.modelMismatch).toBe(false)
+    expect(entry?.modelVariant).toBe(true)
+    expect(entry?.level).toBe("info")
+  })
+
+  test("still flags a mismatch when upstream matches neither sent nor requested", async () => {
+    const app = makeApp((c) => {
+      patchRequestLog(c, {
+        model: "deepseek-v4.1-flash",
+        modelRequested: "deepseek-v4.1-flash",
+        modelUpstream: "deepseek-flash",
+      })
+      observeUpstreamResponseModel(c, { model: "deepseek/deepseek-v4-pro" })
+      return c.json({ ok: true })
+    })
+
+    await call(app)
+    const entry = logStore.query({ limit: 1 }).entries[0]
+    expect(entry?.modelMismatch).toBe(true)
+    expect(entry?.level).toBe("warn")
+  })
+
   test("surfaces an upstream that contradicts itself within one response", async () => {
     const app = makeApp((c) => {
       patchRequestLog(c, { model: "gpt-5.5", modelUpstream: "gpt-5.5" })

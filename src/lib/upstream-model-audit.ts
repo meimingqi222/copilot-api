@@ -5,6 +5,10 @@
  * `response.model`、Chat Completions 的 `model`、Anthropic 的
  * `message.model`、Gemini 的 `modelVersion`）。把它和我们**真正发出去**的
  * 模型名比一比，就能发现"请求 A 上游却用了 B"这类静默降级/串号。
+ * 结算时（`finalizeUpstreamModelAuditForContext`）会同时比对用户原始请求的
+ * 模型名：用户主动定义的别名（upstreamId 缩写、全局别名规则）会让"发出去"
+ * 与"请求的"不同，而上游回显的往往是它自己的规范 id（恰好等于请求的），
+ * 这种情况属于预期的别名展开，不告警。
  *
  * 设计约束（与 sub2api 的 `upstream_response_model.go` 对齐，但只做观测）：
  * - **纯旁路**：观测绝不改动转发路径，解析失败一律当作"未观测"。
