@@ -105,11 +105,17 @@ message GetChatMessageRequest {
   int32                     mode           = 7;   // 5=native slug, 15=enum ID
   SamplingConfig            sampling       = 8;
   repeated ToolDefinition   tools          = 10;
-  TraceInfo                 trace_info     = 15;
-  string                    request_id     = 16;
+  // Field 15 is thread-session metadata in native devin-cli / CPA (not TraceInfo):
+  //   f15.1 session_id (stable UUID), f15.2 turn ordinal (omit 0),
+  //   f15.3=4, f15.4=14 on user-turn boundaries
+  bytes                     thread_session = 15;
+  string                    cascade_id     = 16;  // stable prompt-cache key
+  string                    prompt_id      = 17;  // optional per-conversation prompt id
   ChatMessageRequestType    request_type   = 20;  // default: GENERAL=1
   string                    model          = 21;
-  string                    session_id     = 22;  // stable UUID for KV cache
+  // Field 22 is session_id in older captures; CPA omits it entirely.
+  // Do NOT emit a per-request random UUID here — that breaks KV cache.
+  // string                  session_id     = 22;
 }
 
 // Endpoint: /exa.language_server_pb.LanguageServerService/RawGetChatMessage

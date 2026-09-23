@@ -22,7 +22,7 @@ export interface WindsurfRequestFingerprint {
   cascadeId?: string
   /** prompt_id (field 17) */
   promptId?: string
-  /** execution_id (field 22) */
+  /** session_id / execution_id (field 22) — omitted on the wire (CPA parity) */
   executionId?: string
   hasSystemPrompt: boolean
   configurationFields: Array<number>

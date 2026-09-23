@@ -1,11 +1,10 @@
 /**
  * Per-conversation cloud-direct session IDs (opencode-windsurf-auth pattern).
  *
- * Stable cascade_id (proto field #16) and metadata session_id (field #10)
- * across turns improve server-side prompt-cache hit rate.
- * Field #22 prompt_id is also stable per conversation — verified from live
- * Devin CLI capture where the same f22 UUID is reused across 7-8 primary
- * conversation turns (17/141 requests carry f22; 124 subagent calls omit it).
+ * Stable cascade_id (field #16) and thread-session session_id (field #15.1)
+ * across turns improve server-side prompt-cache hit rate — same binding CPA
+ * uses in BuildDevinGetChatMessageRequest. Field #22 must stay omitted: a
+ * per-request random UUID there was observed to defeat KV-cache affinity.
  *
  * Conversation keys are resolved automatically when clients omit session headers
  * (same idea as Claude's getStableSessionId / Codex prompt_cache_key).

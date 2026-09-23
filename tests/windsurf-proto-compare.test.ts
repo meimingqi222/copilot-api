@@ -93,7 +93,9 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     const meta = metadataFields(builtPayload)
     const fp = fingerprintWindsurfRequest(built)
 
-    expect(top).toEqual([1, 2, 3, 7, 8, 10, 11, 12, 13, 15, 16, 17, 20, 21, 22])
+    // Field 22 omitted (CPA parity): a random per-request session_id there
+    // overrode stable f15/f16 and destroyed prompt-cache affinity.
+    expect(top).toEqual([1, 2, 3, 7, 8, 10, 11, 12, 13, 15, 16, 17, 20, 21])
     expect(meta).toEqual([1, 2, 3, 4, 7, 12])
 
     expect(fp.requestType).toBe(5) // CASCADE
@@ -101,7 +103,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.model).toBe("MODEL_PRIVATE_11")
     expect(fp.cascadeId).toBe("cc232f62-2495-407a-bd78-502af5ece433")
     expect(fp.promptId).toBe("b0f93684-49e4-4b6a-b5ed-02242d37b9ba")
-    expect(fp.executionId).toBeDefined()
+    expect(fp.executionId).toBeUndefined()
     expect(fp.toolCount).toBe(1)
     expect(fp.messageCount).toBe(1)
     expect(fp.hasSystemPrompt).toBe(true)
@@ -128,6 +130,28 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
 
     const top = topLevelFields(decodeFramedPayload(built))
     expect(top).not.toContain(17)
+  })
+
+  test("never writes field 22 (random session_id would break KV cache)", () => {
+    const first = buildRequest({
+      payload: basePayload,
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+      promptId: "b0f93684-49e4-4b6a-b5ed-02242d37b9ba",
+    })
+    const second = buildRequest({
+      payload: basePayload,
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+      promptId: "b0f93684-49e4-4b6a-b5ed-02242d37b9ba",
+    })
+
+    expect(topLevelFields(decodeFramedPayload(first))).not.toContain(22)
+    expect(topLevelFields(decodeFramedPayload(second))).not.toContain(22)
+    expect(fingerprintWindsurfRequest(first).executionId).toBeUndefined()
+    expect(fingerprintWindsurfRequest(second).executionId).toBeUndefined()
   })
 
   test("omits tools when no tools are provided", () => {

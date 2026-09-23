@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 
 import type {
   ChatCompletionsPayload,
@@ -613,7 +613,10 @@ export function buildRequest(opts: {
   }
   request.writeVarint(20, ConversationalPlannerMode.DEFAULT)
   request.writeString(21, requestModel)
-  request.writeString(22, randomUUID())
+  // Field 22 (session_id / execution_id): intentionally omitted.
+  // CPA's BuildDevinGetChatMessageRequest never writes it; KV-cache affinity
+  // rides on stable f15.1 (session) + f16 (cascade). A per-request random
+  // UUID here overrode that affinity upstream and zeroed prompt-cache hits.
 
   // Connect frame is gzip-compressed to match oh-my-pi.
   const protobuf = request.toUint8Array()
