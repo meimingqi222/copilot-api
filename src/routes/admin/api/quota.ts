@@ -14,6 +14,7 @@ import {
   setConnectionCooldownUntil,
   setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
+import { listModelCooldownsForConnection } from "~/lib/model-cooldown"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import {
   canResetCodexQuota,
@@ -81,6 +82,8 @@ quotaApiRoutes.get("/", async (c) => {
         provider,
         getConnectionQuotaInfo(conn) ?? null,
       ),
+      // 模型级冷却台账（CodeBuddy 6004）：仍在生效的 (model, 恢复秒数) 列表。
+      rateLimitedModels: listModelCooldownsForConnection(conn.id),
       supportsQuota: getProviderRuntime(provider).supports(conn, "quota"),
     }
   })
@@ -163,6 +166,7 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
         getConnectionQuotaInfo(conn) ?? null,
       ),
       quotaState: getConnectionQuotaState(conn) ?? "unknown",
+      rateLimitedModels: listModelCooldownsForConnection(conn.id),
     })
   } catch (err) {
     logger.warn(`Failed to refresh quota for account "${conn.name}":`, err)

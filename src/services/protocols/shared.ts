@@ -136,11 +136,25 @@ export function buildBaseHeaders(
   return headers
 }
 
+export interface UpstreamFailureOptions {
+  /**
+   * 跳过账号级惩罚标记（冷却/鉴权/配额状态写入与持久化），仅抛错。
+   * 调用方已做更细粒度落库时使用（如 CodeBuddy 6004 只冷却模型）。
+   */
+  skipAccountPenalty?: boolean
+  /**
+   * 显式重试间隔（毫秒）。跳过账号级惩罚时 credential.cooldownUntil 未设置，
+   * 客户端拿不到 Retry-After；调用方可用上游明示的重置时间补齐。
+   */
+  retryAfterMs?: number
+}
+
 export async function handleUpstreamFailure(
   response: Response,
   credential: ApiCredential,
   contextMessage: string,
   adapterName: string,
+  opts?: UpstreamFailureOptions,
 ): Promise<never> {
   const body = await readResponseBytes(
     response.clone() as unknown as Response,
@@ -157,54 +171,57 @@ export async function handleUpstreamFailure(
   const upstreamCode = extractUpstreamErrorCode(body)
   const reasonSuffix = upstreamCode ? `: ${upstreamCode}` : ""
 
-  switch (classified.kind) {
-    case "rate_limited": {
-      markCredentialCooldown(credential, {
-        retryAfterMs: classified.retryAfterMs,
-        reason: `HTTP ${response.status}${reasonSuffix}`,
-      })
-      break
+  if (!opts?.skipAccountPenalty) {
+    switch (classified.kind) {
+      case "rate_limited": {
+        markCredentialCooldown(credential, {
+          retryAfterMs: classified.retryAfterMs,
+          reason: `HTTP ${response.status}${reasonSuffix}`,
+        })
+        break
+      }
+      case "auth_error": {
+        markCredentialAuthError(
+          credential,
+          `HTTP ${response.status}: ${body.slice(0, 200)}`,
+        )
+        break
+      }
+      case "quota_exhausted": {
+        markCredentialQuotaExhausted(
+          credential,
+          `HTTP ${response.status}: ${body.slice(0, 200)}`,
+          classified.retryAfterMs,
+        )
+        break
+      }
+      case "server_error": {
+        markCredentialCooldown(credential, {
+          retryAfterMs: classified.retryAfterMs ?? DEFAULTS.COOLDOWN_5XX_MS,
+          reason: `HTTP ${response.status}`,
+        })
+        break
+      }
+      default: {
+        break
+      }
     }
-    case "auth_error": {
-      markCredentialAuthError(
-        credential,
-        `HTTP ${response.status}: ${body.slice(0, 200)}`,
-      )
-      break
-    }
-    case "quota_exhausted": {
-      markCredentialQuotaExhausted(
-        credential,
-        `HTTP ${response.status}: ${body.slice(0, 200)}`,
-        classified.retryAfterMs,
-      )
-      break
-    }
-    case "server_error": {
-      markCredentialCooldown(credential, {
-        retryAfterMs: classified.retryAfterMs ?? DEFAULTS.COOLDOWN_5XX_MS,
-        reason: `HTTP ${response.status}`,
-      })
-      break
-    }
-    default: {
-      break
-    }
-  }
 
-  if (!credential.id.startsWith("__")) {
-    await persistProviderConnections().catch((err: unknown) => {
-      logger.warn(
-        `[${adapterName}] failed to persist credential status:`,
-        (err as Error).message,
-      )
-    })
+    if (!credential.id.startsWith("__")) {
+      await persistProviderConnections().catch((err: unknown) => {
+        logger.warn(
+          `[${adapterName}] failed to persist credential status:`,
+          (err as Error).message,
+        )
+      })
+    }
   }
 
   const responseWithRetryAfter = buildResponseWithRetryAfter(
     response,
     body,
     credential,
+    opts?.retryAfterMs,
   )
   throw new HTTPError(contextMessage, responseWithRetryAfter, body)
 }
@@ -225,11 +242,15 @@ function buildResponseWithRetryAfter(
   response: Response,
   body: string,
   credential: ApiCredential,
+  explicitRetryAfterMs?: number,
 ): Response {
   const headers = new Headers(response.headers)
   const cooldownUntil = credential.cooldownUntil
-  if (cooldownUntil && cooldownUntil > Date.now()) {
-    const remainingMs = cooldownUntil - Date.now()
+  const remainingMs =
+    cooldownUntil && cooldownUntil > Date.now() ? cooldownUntil - Date.now()
+    : explicitRetryAfterMs && explicitRetryAfterMs > 0 ? explicitRetryAfterMs
+    : undefined
+  if (remainingMs) {
     const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000))
     headers.set("Retry-After", String(remainingSeconds))
     headers.set("retry-after-ms", String(remainingMs))
@@ -400,9 +421,14 @@ export function detectOpenAIStreamError(e: SimpleSseEvent): HTTPError | null {
     const rawCode =
       parsed.error.code ?? parsed.error.status_code ?? parsed.error.status
     const code = parseStatusCode(rawCode)
+    // 上游业务码可能超出合法 HTTP status 范围（如 CodeBuddy 6004 模型限流），
+    // Response 构造器只接受 101 或 200-599，越界直接 RangeError（此前被外层
+    // catch 吞掉返回 null，错误帧被当数据帧静默透传）。越界统一回落 500，
+    // 业务语义由 body 里的 code 字段保留给上层判定。
+    const status = code >= 200 && code <= 599 ? code : 500
     return new HTTPError(
       parsed.error.message ?? "upstream streaming error",
-      new Response(null, { status: code }),
+      new Response(null, { status }),
       e.data,
     )
   } catch {

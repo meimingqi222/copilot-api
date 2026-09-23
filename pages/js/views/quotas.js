@@ -87,6 +87,8 @@ function quotasView() {
             ...this.accounts[idx],
             quotaInfo: result.quotaInfo ?? this.accounts[idx].quotaInfo,
             quotaState: result.quotaState ?? this.accounts[idx].quotaState,
+            rateLimitedModels:
+              result.rateLimitedModels ?? this.accounts[idx].rateLimitedModels,
           }
         }
         this.showToast(I18n.t("accounts.quotaRefreshSuccess"), "success")
@@ -102,6 +104,30 @@ function quotasView() {
       return QuotaDisplay.buildRows(account, (key, params) =>
         this.t(key, params),
       )
+    },
+
+    /**
+     * 模型级冷却台账行：仍在冷却的模型 + 恢复倒计时。
+     * 后端给 retryAfterSeconds（剩余秒），这里折算成恢复时刻复用
+     * QuotaDisplay.formatResetTime 的相对时间文案。
+     */
+    getRateLimitedModelRows(account) {
+      const items =
+        Array.isArray(account?.rateLimitedModels) ?
+          account.rateLimitedModels
+        : []
+      const t = (key, params) => this.t(key, params)
+      return items
+        .filter((item) => item && typeof item.model === "string")
+        .map((item) => ({
+          id: `rate-limited-${item.model}`,
+          label: item.model,
+          valueText: QuotaDisplay.formatResetTime(
+            new Date(Date.now() + (item.retryAfterSeconds || 0) * 1000),
+            t,
+          ),
+          hideBar: true,
+        }))
     },
 
     getQuotaBarColor(row) {
@@ -141,6 +167,8 @@ function quotasView() {
       "antigravity",
       "kimi",
       "windsurf",
+      "codebuddy",
+      "codebuddy-cn",
       "codebuff",
       "mimo-aistudio",
     ],

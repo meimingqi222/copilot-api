@@ -450,6 +450,30 @@ describe("classifyUpstreamError", () => {
     expect(r.kind).toBe("rate_limited")
     expect(r.retryAfterMs).toBeUndefined()
   })
+
+  test("codebuddy 403 content block is client_error, not auth_error", () => {
+    const body = JSON.stringify({
+      code: 11128,
+      msg: "Illegal API invocation from an unapproved channel.",
+    })
+    expect(
+      classifyUpstreamError({ status: 403, retryAfterHeader: null, body }).kind,
+    ).toBe("client_error")
+  })
+
+  test("codebuddy 403 request illegal stays auth_error", () => {
+    const body = JSON.stringify({ code: 11140, msg: "request illegal" })
+    expect(
+      classifyUpstreamError({ status: 403, retryAfterHeader: null, body }).kind,
+    ).toBe("auth_error")
+  })
+
+  test("plain 403 without envelope stays auth_error", () => {
+    expect(
+      classifyUpstreamError({ status: 403, retryAfterHeader: null, body: "" })
+        .kind,
+    ).toBe("auth_error")
+  })
 })
 
 describe("isCodexUsageLimitError", () => {

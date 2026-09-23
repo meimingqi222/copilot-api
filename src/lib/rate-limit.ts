@@ -1,4 +1,5 @@
 import { logger } from "~/lib/logger"
+import { clearModelCooldownsForConnection } from "~/lib/model-cooldown"
 import { getProviderConnection } from "~/lib/provider-connections"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 
@@ -54,6 +55,7 @@ export const adaptiveRateLimitDefaults = {
  */
 export function clearAccountRateLimitState(accountId: string): void {
   accountLimiters.delete(accountId)
+  clearModelCooldownsForConnection(accountId)
 }
 
 export class RateLimitQueueFullError extends Error {

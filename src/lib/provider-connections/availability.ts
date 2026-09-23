@@ -567,6 +567,12 @@ export function classifyUpstreamError(input: {
     if (body && (/<!DOCTYPE/i.test(body) || /<html/i.test(body))) {
       return { kind: "server_error", retryAfterMs }
     }
+    // CodeBuddy 的业务信封 403 可能是内容策略拦截(code 11128)——这是请求内容
+    // 问题,不应锁死 credential（对齐 workbuddy2api ErrContentBlocked 免罚）。
+    // 真正的账号授权故障(11140 request illegal 等)仍走 auth_error。
+    if (body && isCodebuddyContentBlocked(body)) {
+      return { kind: "client_error" }
+    }
     return { kind: "auth_error" }
   }
 
@@ -589,6 +595,24 @@ export function classifyUpstreamError(input: {
   }
 
   return { kind: "unknown" }
+}
+
+/**
+ * Detects CodeBuddy content-policy blocks in an error body.
+ * Upstream audits prompt fingerprints literally and answers 400/403 with
+ * code 11128 plus one of the fixed phrases below (workbuddy2api
+ * contentBlockedRule). These are request problems — retrying with another
+ * account changes nothing and the credential must not be disabled.
+ */
+export function isCodebuddyContentBlocked(body: string): boolean {
+  if (!body) return false
+  if (/"code"\s*:\s*"?11128"?/.test(body)) return true
+  const lower = body.toLowerCase()
+  return (
+    lower.includes("blocked by security policy")
+    || lower.includes("unapproved channel")
+    || lower.includes("illegal api invocation")
+  )
 }
 
 /**

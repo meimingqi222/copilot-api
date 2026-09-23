@@ -13,6 +13,7 @@
 
 import type { ModelMapping } from "~/lib/provider-connections"
 
+import { refreshCodebuddyQuota } from "~/services/codebuddy/quota"
 import { getProtocolAdapter } from "~/services/protocols"
 
 import type { ProviderRuntime } from "./runtime"
@@ -110,7 +111,7 @@ function createCodebuddyRuntime(opts: {
       name,
       icon: "bot",
       authMode: "direct",
-      features: ["cooldown", "model_discovery"],
+      features: ["cooldown", "model_discovery", "quota"],
       accountFields: [
         {
           key: "accessToken",
@@ -158,6 +159,9 @@ function createCodebuddyRuntime(opts: {
     },
     getFallbackModels(_connection) {
       return fallbackModels
+    },
+    async refreshQuota(connection) {
+      return refreshCodebuddyQuota(connection)
     },
   }
 }

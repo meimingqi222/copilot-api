@@ -82,7 +82,10 @@ function mergeToolCallDelta(
     }
     toolCalls.set(tcIdx, existing)
   }
-  if (tc.function?.name) existing.function.name += tc.function.name
+  // name 每个 index 只出现一次是 OpenAI 官方流形态；上游若在每个分片重复
+  // 带 name，+= 会拼成 "BashBash"（workbuddy2api issue #82 同款坑）。
+  // 覆盖语义对「重复同名」与「首片带名」都正确。
+  if (tc.function?.name) existing.function.name = tc.function.name
   if (tc.function?.arguments)
     existing.function.arguments += tc.function.arguments
 }
@@ -98,6 +101,47 @@ function compactToolCalls(
     (left, right) => left.index - right.index,
   )
   return compacted.length > 0 ? compacted : undefined
+}
+
+/**
+ * 判定工具参数字符串是否因流截断而残缺（区别于「该工具本就无参数」）：
+ * 空串/纯空白是合法无参工具；能解析（任何合法 JSON）不判截断；
+ * 非空但解析失败才是截断。
+ */
+function isTruncatedArguments(raw: string): boolean {
+  const trimmed = raw.trim()
+  if (trimmed === "") return false
+  try {
+    JSON.parse(trimmed)
+    return false
+  } catch {
+    return true
+  }
+}
+
+/**
+ * 流被截断（finish_reason=="length" 或上游 EOF 未发 [DONE]）时，tool_call
+ * 的 arguments 可能只剩半截 JSON，脏参数会让客户端解析卡死会话。
+ * 丢弃残缺调用而非补成 {} 伪造合法外观。
+ */
+function dropTruncatedToolCalls(
+  calls: Array<AggregatedToolCall>,
+): Array<AggregatedToolCall> {
+  return calls.filter((call) => !isTruncatedArguments(call.function.arguments))
+}
+
+/**
+ * OpenAI 非流式 usage 必含 total_tokens。上游末帧可能只发
+ * prompt_tokens + completion_tokens，补齐 total 供严格 schema 客户端使用；
+ * 单边有值或已有 total 时不臆造。
+ */
+function ensureUsageTotal(
+  usage: NonNullable<ChatCompletionResponse["usage"]>,
+): NonNullable<ChatCompletionResponse["usage"]> {
+  if (usage.total_tokens != null) return usage
+  const { prompt_tokens: pt, completion_tokens: ct } = usage
+  if (typeof pt !== "number" || typeof ct !== "number") return usage
+  return { ...usage, total_tokens: pt + ct }
 }
 
 /** 把单个 choice delta 合并到聚合 choices map 中。 */
@@ -151,9 +195,14 @@ export function aggregateSseToResponse(
     let id = ""
     let created = 0
     let usage: ChatCompletionResponse["usage"]
+    let sawDone = false
     ;(async () => {
       for await (const event of stream) {
-        if (!event.data || event.data === "[DONE]") continue
+        if (event.data === "[DONE]") {
+          sawDone = true
+          continue
+        }
+        if (!event.data) continue
         let chunk: SseChunk
         try {
           chunk = JSON.parse(event.data) as SseChunk
@@ -175,20 +224,29 @@ export function aggregateSseToResponse(
         object: "chat.completion",
         created: created || Math.floor(Date.now() / 1000),
         model,
-        choices: choiceList.map((c) => ({
-          index: c.index,
-          message: {
-            role: c.role,
-            content: c.content || null,
-            ...(c.reasoning_content && {
-              reasoning_content: c.reasoning_content,
-            }),
-            tool_calls: compactToolCalls(c.tool_calls),
-          },
-          logprobs: null,
-          finish_reason: c.finish_reason ?? "stop",
-        })),
-        usage,
+        choices: choiceList.map((c) => {
+          // 流被截断（length 或 EOF 无 [DONE]）时丢弃残缺 arguments 的调用。
+          const truncated = c.finish_reason === "length" || !sawDone
+          let toolCalls = compactToolCalls(c.tool_calls)
+          if (truncated && toolCalls) {
+            toolCalls = dropTruncatedToolCalls(toolCalls)
+            if (toolCalls.length === 0) toolCalls = undefined
+          }
+          return {
+            index: c.index,
+            message: {
+              role: c.role,
+              content: c.content || null,
+              ...(c.reasoning_content && {
+                reasoning_content: c.reasoning_content,
+              }),
+              tool_calls: toolCalls,
+            },
+            logprobs: null,
+            finish_reason: c.finish_reason ?? "stop",
+          }
+        }),
+        usage: usage ? ensureUsageTotal(usage) : usage,
       })
     })().catch(reject)
   })

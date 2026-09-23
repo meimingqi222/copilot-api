@@ -23,6 +23,7 @@ import {
   getExposedAliasEntries,
   type ModelAliasRestriction,
 } from "~/lib/model-aliases"
+import { isModelCoolingDown } from "~/lib/model-cooldown"
 import {
   DEFAULTS,
   accountManagedModelPrefix,
@@ -43,6 +44,22 @@ import {
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
   return Array.isArray(credentials) ? (credentials as Array<ApiCredential>) : []
+}
+
+/**
+ * 模型级冷却排除：CodeBuddy 6004 只冷却 (credential, model)，同凭证其它
+ * 模型照常路由。其它协议无此语义，直接放行（不受影响）。
+ * 注意是瞬时状态过滤（与账号冷却同理），/v1/models 列表不受影响。
+ */
+function isModelCooldownExcluded(
+  connection: ProviderConnection,
+  credentialId: string,
+  upstreamModelId: string,
+): boolean {
+  return (
+    connection.protocol === "codebuddy-native"
+    && isModelCoolingDown(credentialId, upstreamModelId)
+  )
 }
 
 export interface BuildRouteTargetsOptions {
@@ -126,6 +143,16 @@ export function buildRouteTargets(
     if (accountManaged && modelsNotLoaded(connection)) {
       // 尚未加载:为请求的模型生成通配 target(publicModelId 为空则不生成)
       if (!options.publicModelId) continue
+      // 通配 target 也受模型冷却约束（upstreamModelId 即请求模型）。
+      if (
+        isModelCooldownExcluded(
+          connection,
+          credentials[0]?.id ?? connection.id,
+          options.publicModelId,
+        )
+      ) {
+        continue
+      }
       const ep: Array<ModelEndpoint> =
         options.endpoint ?
           [options.endpoint]
@@ -182,6 +209,12 @@ export function buildRouteTargets(
 
       for (const credential of credentials) {
         if (onlyAvailable && !isCredentialAvailable(credential)) continue
+        // 模型级冷却的 (credential, model) 不生成候选。
+        if (
+          isModelCooldownExcluded(connection, credential.id, model.upstreamId)
+        ) {
+          continue
+        }
 
         // account-managed connection:保留请求时的 publicModelId(可能带
         // provider/自定义前缀),upstreamModelId 用 model.upstreamId(已剥离前缀)

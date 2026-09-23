@@ -1644,6 +1644,13 @@
                     title="Login via app.devin.ai, no manual token needed"
                   ></button>
                   <button
+                    x-show="newAccount.provider === 'codebuddy' || newAccount.provider === 'codebuddy-cn'"
+                    @click="startOAuthFlow()"
+                    class="btn btn-secondary"
+                    x-text="t('accounts.provider.codebuddy.oauthLogin') || 'Browser login (OAuth)'"
+                    title="Login via CodeBuddy, no manual token needed"
+                  ></button>
+                  <button
                     @click="submitAccount()"
                     class="btn btn-primary"
                     x-text="selectedProvider()?.authMode === 'oauth' ? t('accounts.oauth.authorize') : (selectedProvider()?.authMode === 'device_flow' ? t('accounts.deviceFlow.step2') : t('create'))"
@@ -3362,6 +3369,33 @@
                               class="quota-status-pill bg-[rgba(255,59,48,0.12)] text-[#c41c14]"
                               x-text="t('accounts.status.exhausted')"
                             ></span>
+                          </div>
+
+                          <div
+                            x-show="account.rateLimitedModels && account.rateLimitedModels.length"
+                            class="mb-3 p-2.5 rounded-lg bg-[rgba(255,149,0,0.08)]"
+                          >
+                            <p
+                              class="text-xs font-medium text-[var(--apple-orange)] mb-1"
+                              x-text="t('quota.rateLimitedModels')"
+                            ></p>
+                            <template
+                              x-for="row in getRateLimitedModelRows(account)"
+                              :key="row.id"
+                            >
+                              <div
+                                class="flex items-center justify-between gap-2 py-0.5"
+                              >
+                                <span
+                                  class="text-xs font-mono text-[var(--apple-text-secondary)] truncate"
+                                  x-text="row.label"
+                                ></span>
+                                <span
+                                  class="text-xs text-[var(--apple-text-tertiary)] shrink-0"
+                                  x-text="row.valueText"
+                                ></span>
+                              </div>
+                            </template>
                           </div>
 
                           <div class="quota-card-summary flex-1">

@@ -6,11 +6,11 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
 import {
+  getConnectionProvider,
   getMutableProviderConnection,
   getProviderConnection,
   isAccountManagedConnection,
   listAccountManagedConnections,
-  providerFromProtocol,
   removeProviderConnection,
   setConnectionAuthStatus,
   setConnectionCooldownUntil,
@@ -19,8 +19,10 @@ import {
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
+import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { upgradeOAuthConnectionLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
+import { isCodebuddyOAuthProviderId } from "~/services/oauth/codebuddy"
 import {
   bindOAuthFlowAbortSignal,
   getOAuthFlow,
@@ -112,11 +114,16 @@ async function finalizeOAuthConnection(
   // 直接在 connection 上做 label upgrade
   upgradeOAuthConnectionLabelIfNeeded(finalized)
   scheduleOAuthRefreshForConnection(finalized)
+  // codebuddy 双模式：OAuth 登录产物仍走自有的 token 刷新调度
+  //（OAuth 调度只认 OAuthProviderId，codebuddy 保持 direct 描述符）。
+  if (isCodebuddyOAuthProviderId(getConnectionProvider(finalized) ?? "")) {
+    scheduleCodebuddyRefresh(finalized)
+  }
   try {
     await refreshModelsForConnection(finalized)
     await saveAccounts()
     initializeProviderRegistry()
-    const provider = providerFromProtocol(finalized.protocol)
+    const provider = getConnectionProvider(finalized)
     if (!provider) return finalized
     const runtime = getProviderRuntime(provider)
     if (runtime.refreshQuota) {
@@ -175,6 +182,12 @@ function applyReauthBundle(
     }
   }
   if (fresh.proxyUrl !== undefined) target.proxyUrl = fresh.proxyUrl
+  // codebuddy 双模式：strategy 在临时 connection 上固化了 realm 专属
+  // baseUrl / headers（同 provider 重认证，可安全回填）。
+  if (fresh.baseUrl) target.baseUrl = fresh.baseUrl
+  if (fresh.headers && Object.keys(fresh.headers).length > 0) {
+    target.headers = { ...target.headers, ...fresh.headers }
+  }
   if (fresh.modelPrefix !== undefined) target.modelPrefix = fresh.modelPrefix
   setConnectionAuthStatus(target, "ready")
   setConnectionCooldownUntil(target, undefined)
@@ -249,7 +262,7 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     if (!target || !isAccountManagedConnection(target)) {
       return c.json({ error: "Reauth target account not found." }, 404)
     }
-    if (providerFromProtocol(target.protocol) !== provider) {
+    if (getConnectionProvider(target) !== provider) {
       return c.json({ error: `Account is not a ${provider} account.` }, 400)
     }
     reauthAccountId = target.id

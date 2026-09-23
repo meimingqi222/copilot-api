@@ -6,6 +6,16 @@ const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
   "windsurf",
 ])
 
+/**
+ * 双模式 provider：描述符保持 direct（手贴 token 可用），同时提供
+ * OAuth 登录入口（windsurf / codebuddy 系列）。取消流程时同样放行。
+ */
+const DUAL_MODE_OAUTH_PROVIDERS = new Set([
+  "windsurf",
+  "codebuddy",
+  "codebuddy-cn",
+])
+
 function accountsView() {
   return {
     ...ViewHelpers,
@@ -444,12 +454,12 @@ function accountsView() {
     async cancelOAuthFlow() {
       const provider = this.newAccount.provider
       const flowId = this.oauthFlowData?.flowId
-      // Windsurf is dual-mode (direct descriptor + OAuth login): allow
-      // canceling its OAuth flow even though authMode is "direct".
+      // Dual-mode providers (direct descriptor + OAuth login): allow
+      // canceling their OAuth flow even though authMode is "direct".
       if (
         !flowId
         || (this.selectedProvider()?.authMode !== "oauth"
-          && provider !== "windsurf")
+          && !DUAL_MODE_OAUTH_PROVIDERS.has(provider))
       ) {
         return
       }

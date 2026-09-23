@@ -48,6 +48,10 @@ import {
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { isAbortError, safeOrigin, shouldFailover } from "~/lib/utils"
 import {
+  isCodebuddyModelRateLimit,
+  recordCodebuddyModelCooldown,
+} from "~/services/codebuddy/model-cooldown"
+import {
   CredentialConcurrencyLimitError,
   isAsyncIterable,
   tryAcquireCredentialLease,
@@ -632,6 +636,23 @@ async function markCooldown(
   error: unknown,
   logPrefix: string,
 ): Promise<void> {
+  // CodeBuddy 6004 模型级限流：只冷却 (credential, model)，跳过账号级标记。
+  // HTTP 错误路径 adapter 已落库（幂等复写）；流错误路径（safeSseStream
+  // 直抛 HTTPError）在补录。其它 provider 不走此分支，行为不变。
+  if (
+    error instanceof HTTPError
+    && admission.connection.protocol === "codebuddy-native"
+    && isCodebuddyModelRateLimit(error.response.status, error.responseBody)
+  ) {
+    recordCodebuddyModelCooldown({
+      connectionId: admission.connection.id,
+      credentialId: admission.credential.id,
+      model: admission.target.upstreamModelId,
+      body: error.responseBody ?? "",
+    })
+    return
+  }
+
   const isHttp = error instanceof HTTPError
   const status = isHttp ? error.response.status : 503
   const authKey = affinityAuthKey(admission.target)

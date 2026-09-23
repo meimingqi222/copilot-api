@@ -8,9 +8,13 @@ import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 
+import type { CodebuddyOAuthProviderId } from "./codebuddy"
 import type { PkceCodes } from "./pkce"
 
-export type OAuthFlowProvider = OAuthProviderId | "windsurf"
+export type OAuthFlowProvider =
+  | OAuthProviderId
+  | "windsurf"
+  | CodebuddyOAuthProviderId
 
 export interface OAuthPendingFlow {
   id: string

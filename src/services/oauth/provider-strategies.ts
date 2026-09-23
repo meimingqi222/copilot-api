@@ -29,6 +29,13 @@ import {
   fetchClaudeBootstrapIdentity,
 } from "./claude"
 import {
+  applyCodebuddyOAuthBundle,
+  isCodebuddyOAuthProviderId,
+  pollCodebuddyDeviceAuthorization,
+  startCodebuddyDeviceFlow,
+  type CodebuddyOAuthProviderId,
+} from "./codebuddy"
+import {
   applyCodexOAuthBundle,
   createCodexOAuthStart,
   exchangeCodexCodeForTokens,
@@ -345,6 +352,42 @@ const kimiStrategy: OAuthProviderStrategy = {
   },
 }
 
+/**
+ * CodeBuddy 双 realm 共用同一设备流实现，仅上游 base/origin 不同。
+ * flowType 为 device：start 返回 authUrl（浏览器登录），exchange 在后台
+ * 轮询 token 端点直到用户完成登录，前端经 poll 接口等待完成（kimi 同款）。
+ */
+function createCodebuddyStrategy(
+  provider: CodebuddyOAuthProviderId,
+): OAuthProviderStrategy {
+  return {
+    flowType: "device",
+    async start({ proxyUrl }) {
+      const loginFetchOptions = proxyUrl ? { proxyUrl } : undefined
+      const s = await startCodebuddyDeviceFlow(provider, loginFetchOptions)
+      return { authUrl: s.authUrl, state: s.state, interval: 5 }
+    },
+    async exchange({ flow, signal }) {
+      if (!flow.state) {
+        throw new Error("CodeBuddy OAuth flow is missing state")
+      }
+      const conn = createOAuthConnection(provider, flow.label)
+      applyFlowSettingsToConnection(conn, flow)
+      const bundle = await pollCodebuddyDeviceAuthorization(
+        provider,
+        flow.state,
+        { proxyUrl: flow.proxyUrl, signal },
+      )
+      applyCodebuddyOAuthBundle(conn, provider, bundle)
+      upsertProviderConnection(conn)
+      return conn
+    },
+  }
+}
+
+const codebuddyStrategy = createCodebuddyStrategy("codebuddy")
+const codebuddyCnStrategy = createCodebuddyStrategy("codebuddy-cn")
+
 const windsurfStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
   start() {
@@ -411,6 +454,9 @@ export function getOAuthStrategy(
   provider: string,
 ): OAuthProviderStrategy | undefined {
   if (provider === WINDSURF_OAUTH_PROVIDER_ID) return windsurfStrategy
+  if (isCodebuddyOAuthProviderId(provider)) {
+    return provider === "codebuddy-cn" ? codebuddyCnStrategy : codebuddyStrategy
+  }
   if (!isOAuthProviderId(provider)) return undefined
   return OAUTH_PROVIDER_STRATEGIES[provider]
 }

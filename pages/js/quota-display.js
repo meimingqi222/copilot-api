@@ -9,6 +9,7 @@ const QuotaDisplay = {
 
   getDisplayType(provider) {
     if (provider === "kimi") return "count"
+    if (provider === "codebuddy" || provider === "codebuddy-cn") return "count"
     if (provider === "xai") return "usd"
     if (this.isOAuthProvider(provider)) return "percent"
     return "copilot"
@@ -272,6 +273,12 @@ const QuotaDisplay = {
 
         break
       }
+      case "codebuddy":
+      case "codebuddy-cn": {
+        rows = this.buildCodebuddyRows(info.details, t)
+
+        break
+      }
       case "xai": {
         rows = this.buildXaiRows(info.details, t)
 
@@ -526,6 +533,45 @@ const QuotaDisplay = {
           limit && limit > 0 && remaining !== undefined ?
             Math.max(0, Math.min(100, (remaining / limit) * 100))
           : undefined,
+      })
+    }
+    return rows
+  },
+
+  buildCodebuddyRows(details, t) {
+    if (!details || typeof details !== "object") return []
+    const remain = this.normalizeNumber(details.remain)
+    const total = this.normalizeNumber(details.size)
+    const used =
+      this.normalizeNumber(details.used)
+      ?? (total !== undefined && remain !== undefined ?
+        Math.max(0, total - remain)
+      : undefined)
+    if (remain === undefined && used === undefined) return []
+    const rows = [
+      {
+        id: "credits",
+        label: t("quota.oauth.codebuddy.credits"),
+        remaining: remain,
+        total,
+        used,
+        valueText:
+          total !== undefined ?
+            `${remain ?? "N/A"} / ${total}`
+          : String(remain ?? "N/A"),
+        remainingPercent:
+          total && total > 0 && remain !== undefined ?
+            Math.max(0, Math.min(100, (remain / total) * 100))
+          : undefined,
+      },
+    ]
+    const packs = this.normalizeNumber(details.packs)
+    if (packs !== undefined) {
+      rows.push({
+        id: "packs",
+        label: t("quota.oauth.codebuddy.packages"),
+        valueText: String(packs),
+        hideBar: true,
       })
     }
     return rows
