@@ -1,9 +1,17 @@
 import type { Context } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 
-import { HTTPError } from "~/lib/error"
-import { buildAnthropicContextWindowError } from "~/lib/error-builder"
+import {
+  copyRateLimitHeaders,
+  HTTPError,
+  setRateLimitHeaders,
+} from "~/lib/error"
+import {
+  buildAnthropicContextWindowError,
+  resolveRetryableCode,
+} from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
@@ -21,7 +29,7 @@ import {
 } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
 import { applyUsageIdentity, recordUsage } from "~/lib/usage"
-import { isChatCompletionResponse } from "~/lib/utils"
+import { isAbortError, isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
   type ChatCompletionResponse,
@@ -136,52 +144,40 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     },
   )
 
+  // Phase 1: dispatch BEFORE the downstream SSE response exists (same
+  // rationale as chat handleStreamingCompletion). Pre-first-chunk failures
+  // return a real HTTP status + Retry-After headers with an Anthropic-shaped
+  // body instead of `200 + event: error` (which never carries Retry-After to
+  // header-reading clients).
+  let result: Awaited<ReturnType<typeof dispatchChatCompletions>>
+  try {
+    result = await dispatchChatCompletions(
+      openAIPayload,
+      admission,
+      signal,
+      c,
+      { forwardedHeaders },
+    )
+  } catch (error) {
+    recordTraceError(c, error)
+    if (isAbortError(error) && signal.aborted) {
+      return new Response(null, { status: 499 })
+    }
+    if (error instanceof HTTPError && isContextWindowError(error)) {
+      logger.warn("Context window exceeded")
+      return c.json(buildAnthropicContextWindowError(error), 400)
+    }
+    return respondPreStreamAnthropicError(c, error)
+  }
+
+  applyUsageIdentity(c, result.identity)
+  c.set("model", openAIPayload.model)
+
   beginStreamLog(c)
   return handleSseStream(
     c,
     async (stream, sseSignal) => {
       const streamStartTs = Date.now()
-      let result
-      try {
-        result = await dispatchChatCompletions(
-          openAIPayload,
-          admission,
-          sseSignal,
-          c,
-          { forwardedHeaders },
-        )
-      } catch (error) {
-        recordTraceError(c, error)
-        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-        if (knownError) {
-          const errPayload = {
-            type: "error",
-            error: {
-              type: knownError.type,
-              message: knownError.message,
-            },
-          }
-          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
-          return
-        }
-        if (error instanceof HTTPError && isContextWindowError(error)) {
-          logger.warn("Context window exceeded")
-          const errPayload = buildAnthropicContextWindowError(error)
-          await writeSseEvent(stream, JSON.stringify(errPayload), "error")
-          return
-        }
-        // Ordinary upstream errors (e.g. a 500 streamed as a 200 + error frame
-        // by CodeBuddy) previously fell through and killed the SSE stream with
-        // no terminal event, so the client saw a silent mid-stream cutoff and
-        // surfaced a non-retryable generic error. Emit a real Anthropic error
-        // event carrying a numeric code so clients classify it as retryable.
-        logger.warn(
-          "Streaming request failed before first event, sending error event",
-        )
-        const errPayload = translateErrorToAnthropicErrorEvent(error)
-        await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
-        return
-      }
 
       applyUsageIdentity(c, result.identity)
       c.set("model", openAIPayload.model)
@@ -213,6 +209,32 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
     },
     { onFinally: () => finishRequestLog(c) },
   )
+}
+
+/**
+ * 首包前的上游失败：SSE 尚未提交，直接返回带真实状态码的 Anthropic 错误
+ * 响应，并把限流 headers 抄过去（读头的客户端据此退避；没有头的盲重试
+ * 客户端至少能按状态码正确分类）。connection-handler 共用。
+ */
+export function respondPreStreamAnthropicError(c: Context, error: unknown) {
+  const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+  if (knownError) {
+    if (knownError.retryAfterSeconds > 0) {
+      setRateLimitHeaders(c, knownError.retryAfterSeconds * 1000)
+    }
+    return c.json(
+      {
+        type: "error",
+        error: { type: knownError.type, message: knownError.message },
+      },
+      knownError.status as ContentfulStatusCode,
+    )
+  }
+  const errPayload = translateErrorToAnthropicErrorEvent(error)
+  if (error instanceof HTTPError) {
+    copyRateLimitHeaders(c, error.response.headers)
+  }
+  return c.json(errPayload, resolveRetryableCode(error) as ContentfulStatusCode)
 }
 
 function logDuplicateToolCallIds(

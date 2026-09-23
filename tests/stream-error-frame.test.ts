@@ -3,12 +3,18 @@
  * one-shot clients can classify a 200-streamed upstream failure as retryable.
  *
  * Background: providers such as CodeBuddy force `stream: true` and can return
- * HTTP 200 followed by an inline error body. copilot-api already committed the
- * SSE response by then, so the failure cannot be surfaced as an HTTP status —
+ * HTTP 200 followed by an inline error body. Once copilot-api has committed
+ * its own SSE response the failure cannot be surfaced as an HTTP status —
  * only as an in-stream error frame. ZCode reads `event: error` frames and maps
  * `code`/`status_code` into a 400–599 status (`>=500` ⇒ retryable); opencode
  * reads `error.code` as an HTTP status. A frame carrying only
  * `message`/`type` is classified as a non-retryable generic error by both.
+ *
+ * Dispatch now runs BEFORE the downstream SSE response is committed, so a
+ * failure that arrives before the first chunk surfaces as a real HTTP status
+ * (+ Retry-After headers) instead of `200 + event: error`. The error-frame
+ * contract below still applies to failures that arrive MID-stream, after the
+ * 200 is already committed.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
@@ -203,9 +209,10 @@ describe("chat-completions streamed error frame (integration)", () => {
     __resetProviderConnectionsForTest()
   })
 
-  test("upstream 500 after a 200 stream commit emits a retryable error frame", async () => {
-    // The upstream rejects before any SSE data, exactly like CodeBuddy's
-    // `code: 11134` provider_unavailable response.
+  test("upstream 500 before the first chunk surfaces a real HTTP 500", async () => {
+    // Dispatch runs before the downstream SSE response is committed, so a
+    // pre-first-chunk failure keeps its HTTP status (previously this was
+    // `200 + event: error`, which hid the status from header-reading clients).
     const fetchMock = mock(
       () =>
         new Response(
@@ -230,12 +237,83 @@ describe("chat-completions streamed error frame (integration)", () => {
       }),
     )
 
-    // Once the SSE response is committed the status is always 200; the failure
-    // has to travel inside the stream.
+    expect(response.status).toBe(500)
+    const body = (await response.json()) as { code: number }
+    expect(body.code).toBe(11134)
+  })
+
+  test("upstream 429 with Retry-After before the first chunk keeps status and headers", async () => {
+    // The stepfun concurrency case: `429 concurrency reached` + Retry-After.
+    // Header-reading clients (opencode/ZCode) need the real 429 + Retry-After
+    // to back off for the full window; `200 + event: error` carried neither.
+    const fetchMock = mock(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "concurrency reached, current: 6, limit: 5",
+              type: "rate_limited",
+            },
+          }),
+          {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "Retry-After": "60",
+            },
+          },
+        ),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-v4.1-flash",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get("Retry-After")).toBe("60")
+    expect(response.headers.get("retry-after-ms")).not.toBeNull()
+    const body = (await response.json()) as {
+      error: { message: string; type: string }
+    }
+    expect(body.error.message).toContain("concurrency reached")
+  })
+
+  test("mid-stream failure still emits a retryable error frame on the committed 200", async () => {
+    // First chunk is fine (commits the downstream 200), the second chunk is
+    // garbage: the failure can only travel inside the stream now.
+    const fetchMock = mock(
+      () =>
+        new Response(
+          'data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"deepseek-v4.1-flash","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\ndata: not-json\n\n',
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-v4.1-flash",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    )
+
     expect(response.status).toBe(200)
     const text = await response.text()
     expect(text).toContain("event: error")
-
     const frame = text
       .split("\n")
       .find((line) => line.startsWith("data: ") && line.includes('"code"'))
@@ -248,13 +326,12 @@ describe("chat-completions streamed error frame (integration)", () => {
     expect(payload.error.status).toBe(500)
   })
 
-  test("CodeBuddy-style 400 surfaces the upstream overflow wording in the error frame", async () => {
+  test("CodeBuddy-style 400 surfaces the upstream overflow wording with a real 400", async () => {
     // CodeBuddy reports context overflows as HTTP 400 with a non-OpenAI
-    // body shape (`code`/`msg`/`extError`). The streamed error frame must
-    // carry that wording: downstream classifiers key overflow recovery off
-    // `/prompt is too long/i` / `context_length_exceeded`, and a generic
-    // adapter message degrades the failure to request_rejected, so no
-    // compaction or image-omission recovery ever runs.
+    // body shape (`code`/`msg`/`extError`). The failure now keeps its HTTP
+    // status and the upstream wording passes through untouched: downstream
+    // classifiers key overflow recovery off status 400 + `/prompt is too
+    // long/i` / `context_length_exceeded`, which all survive here.
     const overflowBody = {
       code: 11115,
       msg: "prompt is too long: 1522332 tokens > 1048576 maximum",
@@ -292,21 +369,112 @@ describe("chat-completions streamed error frame (integration)", () => {
       }),
     )
 
-    expect(response.status).toBe(200)
-    const text = await response.text()
-    expect(text).toContain("event: error")
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { msg: string }
+    expect(body.msg).toContain("prompt is too long")
+  })
+})
 
-    const frame = text
-      .split("\n")
-      .find((line) => line.startsWith("data: ") && line.includes('"error"'))
-    expect(frame).toBeDefined()
-    const payload = JSON.parse((frame as string).slice("data: ".length)) as {
-      error: { message: string; code: number; status: number }
+describe("messages/responses streamed pre-first-chunk failures (integration)", () => {
+  const originalFetch = globalThis.fetch
+
+  beforeEach(async () => {
+    statsStore.clearUsageStatsForTest()
+    resetProtectedRouteGuardForTest()
+    __resetProviderConnectionsForTest()
+    await createConnection({
+      id: "stream-err-conn",
+      name: "stream-err",
+      protocol: "openai-compatible",
+      baseUrl: "https://upstream.test/v1",
+      credentials: [{ id: "cred-1", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "stream-err-model",
+          upstreamId: "stream-err-model",
+          endpoints: ["chat"],
+          enabled: true,
+        },
+      ],
+    })
+  })
+
+  afterEach(() => {
+    statsStore.clearUsageStatsForTest()
+    globalThis.fetch = originalFetch
+    __resetProviderConnectionsForTest()
+  })
+
+  function mockConcurrency429() {
+    globalThis.fetch = mock(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "concurrency reached, current: 6, limit: 5",
+              type: "rate_limited",
+            },
+          }),
+          {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "Retry-After": "60",
+            },
+          },
+        ),
+    ) as unknown as typeof fetch
+  }
+
+  test("messages streaming keeps 429 + Retry-After with an Anthropic body", async () => {
+    mockConcurrency429()
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "stream-err-model",
+          stream: true,
+          max_tokens: 128,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get("Retry-After")).toBe("60")
+    const body = (await response.json()) as {
+      type: string
+      error: { type: string; message: string }
     }
-    expect(payload.error.message).toContain("prompt is too long")
-    // Numeric status-like code is preserved: 400 stays non-retryable
-    // (overflow recovery compacts instead of retrying).
-    expect(payload.error.code).toBe(400)
-    expect(payload.error.status).toBe(400)
+    expect(body.type).toBe("error")
+    expect(body.error.type).toBe("rate_limit_error")
+  })
+
+  test("responses streaming keeps 429 + Retry-After", async () => {
+    mockConcurrency429()
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "stream-err-model",
+          input: "hi",
+          stream: true,
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get("Retry-After")).toBe("60")
+    const body = (await response.json()) as {
+      error: { message: string }
+    }
+    expect(body.error.message).toContain("concurrency reached")
   })
 })

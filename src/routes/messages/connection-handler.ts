@@ -14,6 +14,7 @@ import {
 import { forwardSseEvent, handleSseStream, writeSseEvent } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
 import { applyUsageIdentity, recordUsage } from "~/lib/usage"
+import { isAbortError } from "~/lib/utils"
 import { dispatchMessages } from "~/services/dispatch/messages"
 import {
   type AnthropicMessagesPayload,
@@ -25,6 +26,8 @@ import {
 } from "~/services/protocols/anthropic"
 
 import type { HandleStreamingResponseOptions } from "./copilot-handler"
+
+import { respondPreStreamAnthropicError } from "./copilot-handler"
 
 import { isMessagesOutputEvent } from "./logging"
 import {
@@ -111,12 +114,34 @@ export async function handleAnthropicViaConnection(
     }
   }
 
+  // Phase 1: dispatch BEFORE the downstream SSE response exists (same
+  // rationale as chat handleStreamingCompletion / messages copilot-handler).
+  // Pre-first-chunk failures return a real HTTP status + Retry-After headers
+  // with an Anthropic-shaped body instead of `200 + event: error`.
+  let result: Awaited<ReturnType<typeof dispatchMessages>>
+  try {
+    result = await dispatchMessages({
+      payload: anthropicPayload,
+      admission,
+      signal,
+      forwardedHeaders: forwarded,
+      c,
+    })
+  } catch (error) {
+    recordTraceError(c, error)
+    if (isAbortError(error) && signal.aborted) {
+      return new Response(null, { status: 499 })
+    }
+    return respondPreStreamAnthropicError(c, error)
+  }
+  applyUsageIdentity(c, result.identity)
+  c.set("model", anthropicPayload.model)
+
   beginStreamLog(c)
   return handleSseStream(
     c,
-    async (stream, sseSignal) => {
+    async (stream) => {
       let lastUsage: AnthropicStreamingUsage | undefined
-      let resultAccountId: string | undefined
       // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
       let usageRecorded = false
       let firstChunkTs: number | undefined
@@ -125,17 +150,6 @@ export async function handleAnthropicViaConnection(
       let outputObserved = false
       try {
         streamStart = Date.now()
-        const result = await dispatchMessages({
-          payload: anthropicPayload,
-          admission,
-          signal: sseSignal,
-          forwardedHeaders: forwarded,
-          c,
-        })
-        resultAccountId = result.accountId
-        applyUsageIdentity(c, result.identity)
-        c.set("model", anthropicPayload.model)
-        patchRequestLog(c, { streaming: true })
         if (!isAsyncIterable(result.response)) {
           if (
             isDirectAnthropicResponse(
@@ -204,13 +218,13 @@ export async function handleAnthropicViaConnection(
           messageStop ? "success" : "incomplete",
           outputObserved,
         )
-        if (resultAccountId && !usageRecorded) {
+        if (result.accountId && !usageRecorded) {
           // 常见情况有 usage;无 usage 时才做本地估算(惰性,零开销)。
           const estimatedInputTokens =
             lastUsage ? 0 : await estimateAnthropicInputTokens(anthropicPayload)
           recordDirectStreamingUsage(
             c,
-            resultAccountId,
+            result.accountId,
             lastUsage,
             computeStreamingTiming(
               streamStart,

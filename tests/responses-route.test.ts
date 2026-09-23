@@ -509,7 +509,7 @@ test("POST /v1/responses streaming ignores terminal [DONE] frame", async () => {
   expect(body).toContain("response.completed")
 })
 
-test("POST /v1/responses streaming sends ping while waiting for upstream response", async () => {
+test("POST /v1/responses streaming sends ping while the stream is stalled mid-response", async () => {
   state.models = {
     object: "list",
     data: [
@@ -533,28 +533,37 @@ test("POST /v1/responses streaming sends ping while waiting for upstream respons
     ],
   }
 
+  // Dispatch (fetch) resolves immediately; the stall happens MID-stream, so
+  // the downstream SSE is already committed and keep-alive pings must flow
+  // while waiting for the next upstream chunk. (Pings can no longer cover the
+  // dispatch wait itself: nothing may be written before dispatch succeeds, or
+  // a pre-first-chunk failure could not keep its real HTTP status.)
   const fetchMock = mock(
     () =>
-      new Promise<Response>((resolve) => {
-        setTimeout(() => {
-          resolve(
-            new Response(
-              [
-                'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-responses","status":"in_progress"}}',
-                "",
-                'data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"gpt-responses","status":"completed","output_text":"ok","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
-                "",
-                "data: [DONE]",
-                "",
-              ].join("\n"),
-              {
-                status: 200,
-                headers: { "content-type": "text/event-stream" },
-              },
-            ),
-          )
-        }, 5_200)
-      }),
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            const enc = new TextEncoder()
+            controller.enqueue(
+              enc.encode(
+                'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-responses","status":"in_progress"}}\n\n',
+              ),
+            )
+            setTimeout(() => {
+              controller.enqueue(
+                enc.encode(
+                  'data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"gpt-responses","status":"completed","output_text":"ok","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\ndata: [DONE]\n\n',
+                ),
+              )
+              controller.close()
+            }, 5_200)
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        },
+      ),
   )
   globalThis.fetch = fetchMock as unknown as typeof fetch
 
@@ -575,6 +584,6 @@ test("POST /v1/responses streaming sends ping while waiting for upstream respons
   expect(body).toStartWith(": connected\n\n")
   expect(body).toContain(": keep-alive")
   expect(body.indexOf(": keep-alive")).toBeLessThan(
-    body.indexOf("response.created"),
+    body.indexOf("response.completed"),
   )
 }, 12_000)

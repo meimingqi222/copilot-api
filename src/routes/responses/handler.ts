@@ -123,11 +123,27 @@ export async function handleResponses(c: Context) {
     }) as Promise<ResponsesExecutionResult>
 
   if (payload.stream) {
+    // Phase 1: dispatch BEFORE the downstream SSE response exists (same
+    // rationale as chat handleStreamingCompletion). Pre-first-chunk failures
+    // return a real HTTP status + Retry-After headers via the route error
+    // path instead of `200 + error event` (which never carries Retry-After
+    // to header-reading clients).
+    let accountId: string | undefined
+    let result: ResponsesExecutionResult
+    try {
+      result = await executeRequest()
+    } catch (error) {
+      recordTraceError(c, error)
+      throw error
+    }
+    accountId = result.accountId
+    applyUsageIdentity(c, result.identity ?? identityFromAdmission(admission))
+    c.set("model", payload.model)
+
     beginStreamLog(c)
     return streamSSE(c, async (stream) => {
       await writeSseComment(stream)
       const pingInterval = createSsePingInterval(stream)
-      let accountId: string | undefined
       let completedResponse: ResponsesResponse | undefined
       // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
       let usageRecorded = false
@@ -140,13 +156,6 @@ export async function handleResponses(c: Context) {
       }
 
       try {
-        const result = await executeRequest()
-        accountId = result.accountId
-        applyUsageIdentity(
-          c,
-          result.identity ?? identityFromAdmission(admission),
-        )
-        c.set("model", payload.model)
         patchRequestLog(c, { streaming: true })
 
         if (isNonStreaming(result.response)) {

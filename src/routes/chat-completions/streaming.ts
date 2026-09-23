@@ -27,6 +27,7 @@ import {
   type ChatCompletionsPayload,
 } from "~/services/copilot/create-chat-completions"
 import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
+import type { ChatDispatchResult } from "~/services/dispatch/chat-completions"
 
 import { handleNonStreamingResponse } from "./non-streaming"
 import { normalizeChunk } from "./normalize"
@@ -223,13 +224,42 @@ interface StreamingCompletionOptions {
   memoryTraceId: string
 }
 
-export function handleStreamingCompletion(
+export async function handleStreamingCompletion(
   c: Context,
   options: StreamingCompletionOptions,
 ) {
+  const { payload, admission, signal, estimatedInputTokens, memoryTraceId } =
+    options
+  const model = payload.model
+  let accountId: string | undefined
+
+  // Phase 1: dispatch BEFORE the downstream SSE response exists. Any failure
+  // here (e.g. an upstream 429 concurrency rejection before the first chunk)
+  // still has a free choice of HTTP status, so it propagates to the route
+  // error path with the real status + Retry-After headers. Previously dispatch
+  // ran inside the SSE callback after `: connected` had already committed a
+  // 200, downgrading every pre-first-chunk failure to `200 + event: error`
+  // (no Retry-After ever reaches header-reading clients).
+  updateMemoryTrace(memoryTraceId, "chat_dispatch_start")
+  let result: ChatDispatchResult
+  try {
+    result = await dispatchChatCompletions(payload, admission, signal, c, {
+      forwardedHeaders: extractChatForwardedHeaders(c),
+      memoryTraceId,
+    })
+  } catch (error) {
+    recordTraceError(c, error)
+    endMemoryTrace(memoryTraceId, signalOutcome(signal))
+    throw error
+  }
+  accountId = result.accountId
+  applyUsageIdentity(c, result.identity)
+  c.set("accountId", accountId)
+  c.set("model", model)
+  patchRequestLog(c, { streaming: true })
+
   let lastUsage: UsageInfo | undefined
   let usageRecorded = false
-  let accountId: string | undefined
   let firstChunkTs: number | undefined
   let downstreamCommitted = false
   let lastFinishReason: string | undefined
@@ -239,24 +269,11 @@ export function handleStreamingCompletion(
   return handleSseStream(
     c,
     async (stream) => {
-      const { payload, admission, signal, estimatedInputTokens } = options
-      const model = payload.model
+      const dispatchStart = Date.now()
       let outcome = "completed"
 
       try {
         updateMemoryTrace(options.memoryTraceId, "chat_sse_open")
-        const dispatchStart = Date.now()
-        updateMemoryTrace(options.memoryTraceId, "chat_dispatch_start")
-        const result = await dispatchChatCompletions(
-          payload,
-          admission,
-          signal,
-          c,
-          {
-            forwardedHeaders: extractChatForwardedHeaders(c),
-            memoryTraceId: options.memoryTraceId,
-          },
-        )
         updateMemoryTrace(
           options.memoryTraceId,
           "chat_provider_response_open",
@@ -265,12 +282,6 @@ export function handleStreamingCompletion(
             streaming: !isChatCompletionResponse(result.response),
           },
         )
-        accountId = result.accountId
-        applyUsageIdentity(c, result.identity)
-
-        c.set("accountId", accountId)
-        c.set("model", model)
-        patchRequestLog(c, { streaming: true })
 
         if (isChatCompletionResponse(result.response)) {
           lastFinishReason =

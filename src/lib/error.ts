@@ -59,10 +59,7 @@ export function forwardError(c: Context, error: unknown) {
 
     // 透传所有限流相关 headers(Retry-After 标准 + retry-after-ms Anthropic +
     // x-ratelimit-reset OpenAI),客户端 SDK 据此计算退避时间。
-    for (const h of RATE_LIMIT_FORWARD_HEADERS) {
-      const v = error.response.headers.get(h)
-      if (v) c.header(h, v)
-    }
+    copyRateLimitHeaders(c, error.response.headers)
 
     // 如果 responseBody 已是合法 JSON,直接透传原样。这样调用方
     // (如 prepareRequestAdmission) 可以按 endpoint 构造 Anthropic 风格
@@ -116,3 +113,27 @@ const RATE_LIMIT_FORWARD_HEADERS = [
   "retry-after-ms",
   "x-ratelimit-reset",
 ] as const
+
+/**
+ * 把上游错误响应里的限流 headers 抄到下游响应上。流式首包失败改走正常
+ * HTTP 状态后,各协议自己的错误体翻译也要带上这组头(否则只修了状态码,
+ * 读头的客户端依然拿不到退避时间)。
+ */
+export function copyRateLimitHeaders(c: Context, source: Headers): void {
+  for (const h of RATE_LIMIT_FORWARD_HEADERS) {
+    const v = source.get(h)
+    if (v) c.header(h, v)
+  }
+}
+
+/**
+ * 按秒数直接设置下游限流 headers(用于错误本身不带上游响应头的场景,
+ * 如本地 guard 拒绝或已知路由错误自带的 retryAfterSeconds)。
+ */
+export function setRateLimitHeaders(c: Context, retryAfterMs: number): void {
+  if (!Number.isFinite(retryAfterMs) || retryAfterMs <= 0) return
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
+  c.header("Retry-After", String(seconds))
+  c.header("retry-after-ms", String(Math.round(retryAfterMs)))
+  c.header("x-ratelimit-reset", String(seconds))
+}
