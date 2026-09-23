@@ -671,6 +671,25 @@ function cleanupCodebuddyOrphanToolCalls(
 
 const CODEBUDDY_DEFAULT_DEEPSEEK_EFFORT = "high"
 
+/**
+ * DeepSeek 思维链注入总开关（默认开）。
+ * `CODEBUDDY_DEEPSEEK_THINKING=0/false/disabled/off` 时关闭：不再自动注入
+ * `thinking.type=enabled` 与默认 effort 档（客户端显式带的 thinking /
+ * reasoning_effort 原样透传）。用于排查“只思考不回答”类停顿：
+ * 关闭后对比同样提示是否恢复正常，可判定是否为 thinking 模式诱发。
+ */
+function isCodebuddyThinkingEnabled(): boolean {
+  const raw = process.env["CODEBUDDY_DEEPSEEK_THINKING"]
+  if (raw === undefined) return true
+  const value = raw.trim().toLowerCase()
+  return (
+    value !== "0"
+    && value !== "false"
+    && value !== "disabled"
+    && value !== "off"
+  )
+}
+
 function isCodebuddyDeepSeekModel(model: string): boolean {
   return model.trim().toLowerCase().startsWith("deepseek")
 }
@@ -682,6 +701,7 @@ function isCodebuddyDeepSeekModel(model: string): boolean {
  * 非 deepseek 模型零改动。
  */
 function injectCodebuddyThinking(payload: Record<string, unknown>): void {
+  if (!isCodebuddyThinkingEnabled()) return
   const model = typeof payload.model === "string" ? payload.model : ""
   if (!isCodebuddyDeepSeekModel(model)) return
   const th = payload.thinking as Record<string, unknown> | undefined
