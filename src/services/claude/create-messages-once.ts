@@ -20,6 +20,9 @@ import {
 } from "~/services/protocols/shared"
 
 import { serializeAndPatchCchBody, createClaudeBillingHeader } from "./cch"
+import { collectClaudeCliMessages, streamClaudeCliMessages } from "./cli/bridge"
+import { toHttpError } from "./cli/errors"
+import { resolveClaudeTransport } from "./cli/transport"
 import {
   CLAUDE_CODE_MAX_OUTPUT_TOKENS,
   claudeCodeSystemInstruction,
@@ -312,6 +315,38 @@ export async function createClaudeMessagesOnce(
 
   const model = canonicalNativeModelId(payload.model)
   const isStream = Boolean(payload.stream)
+
+  // ── v2: drive the genuine Claude Code binary ────────────────────────────
+  //
+  // Anthropic applies subscription eligibility checks to request *content*,
+  // not just to credentials and the cch attestation. Replaying an OAuth token
+  // with a perfect wire fingerprint still routes another harness's system
+  // prompt to Extra Usage, so v2 hands the turn to the real CLI instead.
+  // v1 below stays as the fallback (no CLI installed, or an explicit opt-out).
+  //
+  // See docs/todo-claude-cli-transport.md.
+  // `resolveClaudeTransport` throws a bare ClaudeCliUnavailableError when the
+  // connection explicitly asks for "cli" but no binary exists. Wrap it so the
+  // client gets a real 503 and failover treats it as a machine-level condition
+  // (retrying another account would fail identically), not a 500.
+  let transport: ReturnType<typeof resolveClaudeTransport>
+  try {
+    transport = resolveClaudeTransport(connection)
+  } catch (error) {
+    throw toHttpError(error)
+  }
+  if (transport === "cli") {
+    const runContext = { connection, credential, model, accessToken }
+    if (isStream) {
+      return streamClaudeCliMessages(runContext, payload)
+    }
+    // The adapter contract hands the non-streaming response back as an opaque
+    // JSON object (that is what the v1 path gets from `response.json()`).
+    return (await collectClaudeCliMessages(
+      runContext,
+      payload,
+    )) as unknown as Record<string, unknown>
+  }
 
   // Resolve one session id for both the metadata envelope and the transport
   // header. This mirrors Claude Code's session attribution behavior.

@@ -28,6 +28,18 @@ export class HTTPError extends Error {
  */
 export abstract class LocalConcurrencyLimitError extends HTTPError {}
 
+/**
+ * Marker for a *local* unavailability: the request cannot be served because of
+ * a machine-level condition (e.g. a required CLI binary is not installed), not
+ * because the credential or the upstream failed.
+ *
+ * Unlike `LocalConcurrencyLimitError` — where trying another route target can
+ * succeed — retrying a different account is pointless: every account hits the
+ * same missing binary. The failover loop must neither cool the credential nor
+ * advance to the next target; it rethrows immediately.
+ */
+export abstract class LocalUnavailableError extends HTTPError {}
+
 export class UpstreamTransportError extends HTTPError {
   constructor(message: string, options: { cause?: unknown } = {}) {
     const responseBody = JSON.stringify({

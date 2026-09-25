@@ -7,7 +7,11 @@ import type {
 import type { CredentialLease } from "~/services/dispatch/concurrency"
 import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
 
-import { HTTPError, LocalConcurrencyLimitError } from "~/lib/error"
+import {
+  HTTPError,
+  LocalConcurrencyLimitError,
+  LocalUnavailableError,
+} from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   DEFAULTS,
@@ -249,6 +253,9 @@ export async function executeWithFailover<
         if (error instanceof LocalConcurrencyLimitError) {
           errorCode = "concurrency_limit"
           errorSnippet = error.message
+        } else if (error instanceof LocalUnavailableError) {
+          errorCode = "local_unavailable"
+          errorSnippet = error.message
         } else {
           const classified = classifyUpstreamError({
             status: error.response.status,
@@ -291,6 +298,13 @@ export async function executeWithFailover<
         patchRequestLog(c, { modelUpstream: failedSku })
       }
       tried.add(targetKey(current.target))
+
+      // A local unavailability (e.g. the Claude Code binary is missing) is a
+      // machine-level condition: every account would fail identically. Do not
+      // cool the credential, do not advance to the next target — rethrow as-is.
+      if (error instanceof LocalUnavailableError) {
+        throw error
+      }
 
       if (
         error instanceof HTTPError

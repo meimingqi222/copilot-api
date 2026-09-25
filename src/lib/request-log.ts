@@ -16,6 +16,7 @@ import type {
 import {
   HTTPError,
   LocalConcurrencyLimitError,
+  LocalUnavailableError,
   UpstreamTransportError,
 } from "~/lib/error"
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
@@ -441,6 +442,19 @@ function classifyTraceError(
         Number.isFinite(parsedMs) && parsedMs > 0 ?
           parsedMs
         : parseRetryAfterMs(error.response.headers.get("Retry-After")),
+    }
+  }
+  // A local unavailability (e.g. the Claude Code binary is missing) is also
+  // not an upstream failure: the credential is healthy, the machine lacks a
+  // prerequisite. Without this branch a 503 would classify as an upstream
+  // server_error, which is exactly the story it must not tell.
+  if (error instanceof LocalUnavailableError) {
+    return {
+      stage: "dispatch",
+      kind: "local_unavailable",
+      message: error.message,
+      errorType: "local_unavailable",
+      upstreamStatus: error.response.status,
     }
   }
   if (error instanceof ProtectedRouteGuardError) {

@@ -6,6 +6,7 @@ import { guardMiddleware } from "./lib/guard-middleware"
 import { requestLogger } from "./lib/log-middleware"
 import { requireApiKey } from "./lib/request-auth"
 import { adminRoutes } from "./routes/admin/route"
+import { claudeMcpRoutes } from "./routes/claude-mcp/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
 import { imageRoutes } from "./routes/images/route"
@@ -69,6 +70,12 @@ for (const pattern of [
 ]) {
   server.use(pattern, apiCors)
 }
+// Claude CLI transport: internal MCP callback. Registered BEFORE the auth
+// middleware on purpose — the stdio helper spawned by the `claude` binary has
+// no API key and must never be given one. The route is loopback-only and
+// token-gated (see routes/claude-mcp/route.ts).
+server.route("/_internal/claude-mcp", claudeMcpRoutes)
+
 server.use("*", requestLogger)
 server.use("*", guardMiddleware)
 server.use("*", requireApiKey)

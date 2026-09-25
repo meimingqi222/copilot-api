@@ -27,10 +27,10 @@
   `bun run dev` (uses `bun --watch`)
 
 - **Lint:**\
-  `bun run lint` (uses oxlint, ~100ms; config in `.oxlintrc.json`)
+  `bun run lint` (oxlint, ~100ms; config in `.oxlintrc.json`)
 
 - **Lint all files:**\
-  `bun run lint:all` (uses @echristian/eslint-config, CI gate)
+  `bun run lint:all` (same oxlint run; kept as the CI gate's name, ESLint is gone)
 
 - **Lint & Fix staged files:**\
   `bunx lint-staged`
@@ -147,6 +147,17 @@ src/
 │   │   └── mimo.ts         # Mimo runtime
 │   ├── antigravity/        # Antigravity API client
 │   ├── claude/             # Claude API client
+│   │   ├── cch.ts, headers.ts, fingerprint.ts, …  # v1: OAuth HTTP replay + CC wire fingerprint
+│   │   └── cli/            # v2: drives the real `claude` binary (default transport)
+│   │       ├── bridge.ts       # spawn / park / resume orchestration (one process per turn)
+│   │       ├── transport.ts    # cli vs http selection (metadata + env kill-switch)
+│   │       ├── prompt.ts       # caller transcript → one CLI user message
+│   │       ├── translate.ts    # stream-json → Anthropic SSE (+ non-streaming fold)
+│   │       ├── mcp-helper.ts   # stdio MCP server spawned by Claude Code
+│   │       ├── mcp-callback.ts # HTTP side: park a tools/call until the caller answers
+│   │       ├── run-registry.ts # live runs by token / tool_use id (connection-scoped)
+│   │       ├── env.ts, args.ts, binary.ts, errors.ts, tools.ts, stream-json.ts
+│   │       └── server-address.ts # callback base URL, injected by start.ts
 │   ├── codebuff/           # Codebuff API client
 │   ├── codex/              # Codex API client
 │   ├── github/             # GitHub API client
@@ -155,6 +166,7 @@ src/
 │   ├── windsurf/           # Windsurf API client
 │   └── xai/                # xAI API client
 └── routes/                 # API route handlers
+    ├── claude-mcp/         # Internal MCP callback for the Claude CLI transport (loopback-only)
     ├── chat-completions/   # OpenAI-compatible chat (split: handler/usage/non-streaming/streaming)
     ├── messages/           # Anthropic-compatible messages
     ├── models/             # Model listing
@@ -272,7 +284,7 @@ copilot-api debug     # Show diagnostic info
   ```
 
 - **Formatting:**\
-  Prettier owns formatting (with `prettier-plugin-packagejson`); `.prettierrc` is the single source of truth. ESLint does not format — `prettier/prettier` is off and `eslint-config-prettier` disables conflicting stylistic rules, so the two never fight. Use `bun run format` to auto-fix formatting and `bun run lint` to auto-fix lint issues; CI enforces both `lint:all` and `format:check`. Do not re-add Prettier options to `eslint.config.js` — they would be inert and silently diverge from `.prettierrc`.
+  Prettier owns formatting (with `prettier-plugin-packagejson`); `.prettierrc` is the single source of truth. oxlint does not format — it is a correctness linter only, so the two never fight. Use `bun run format` to auto-fix formatting and `bun run lint` to auto-fix lint issues; CI enforces both `lint:all` and `format:check`. Do not add formatting rules to `.oxlintrc.json` — they would duplicate `.prettierrc` and silently diverge from it.
 
 - **Types:**\
   Strict TypeScript (`strict: true`). **Avoid** **`any`** — use explicit types and interfaces.
@@ -293,7 +305,7 @@ copilot-api debug     # Show diagnostic info
   Use ESNext modules, **no CommonJS** (`require`/`module.exports`).
 
 - **Functions:**\
-  Keep params ≤3 (eslint rule `max-params`). Extract options into an object if needed.
+  Keep params ≤5 (oxlint rule `max-params`). Extract options into an object if needed.
 
 - **Function length:**\
   Lint enforces reasonable line limits (except in tests).

@@ -28,6 +28,7 @@ import {
 import { initializeCredentialRefreshers } from "./lib/provider-connections/refresher-impls"
 import { ensureDirectProviderConnections } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
+import { setClaudeCallbackBaseUrl } from "./services/claude/cli/server-address"
 import {
   loadAdminPasswordFromDb,
   saveAdminPasswordToDb,
@@ -324,6 +325,10 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     hostname: process.env.HOST || undefined,
     idleTimeout: 0,
   })
+
+  // The Claude CLI transport's MCP helper calls back into this server; only
+  // here is the actually-bound port known (a `--port 0` run picks its own).
+  setClaudeCallbackBaseUrl(`http://127.0.0.1:${bunServer.port}`)
 
   let shuttingDown = false
   const shutdown = async () => {

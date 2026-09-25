@@ -233,6 +233,48 @@ Notes on translation fidelity:
 - Anthropic `max_tokens` is required; when the client omits it the proxy
   defaults to 64000.
 
+### Claude Accounts as an Upstream
+
+A `claude-native` connection is a signed-in Claude subscription (Pro/Max), not
+an API key. It has two transports:
+
+| Transport       | How it works                                                                                                                                                                  | When it is used                                                                                                   |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `cli` (default) | Drives the genuine local `claude` binary: the turn is rendered into a user message, the caller's tools are bridged in over MCP, and tool results resume the same CLI process. | Automatically, when a `claude` binary is on `PATH` (or in `~/.local/bin`, `/usr/local/bin`, `/opt/homebrew/bin`). |
+| `http`          | Replays the OAuth token against `api.anthropic.com` with a Claude Code wire fingerprint.                                                                                      | When no `claude` binary is found, or when explicitly requested.                                                   |
+
+**Why the CLI is the default.** Anthropic applies subscription eligibility
+checks to request _content_, not only to credentials and the attestation hash.
+A request that carries another harness's system prompt is classified as
+third-party traffic and routed to Extra Usage, however perfect the wire
+fingerprint is. Driving the real binary keeps the request genuinely Claude
+Code's own.
+
+The `cli` transport needs Claude Code installed and signed in
+(`claude auth login`). Overrides:
+
+```bash
+# force the legacy HTTP transport globally (also a rollback switch)
+COPILOT_API_CLAUDE_TRANSPORT=http copilot-api start
+```
+
+Per connection, set `metadata.claudeTransport` to `"cli"` or `"http"` in
+`provider-connections.json`. Opting in to `"cli"` while no binary is installed
+is an error rather than a silent fallback, so a misconfiguration cannot leave
+you unknowingly on the legacy path.
+
+Other knobs:
+
+| Environment variable                 | Default  | Meaning                                                                          |
+| ------------------------------------ | -------- | -------------------------------------------------------------------------------- |
+| `COPILOT_API_CLAUDE_MAX_RUNS`        | `4`      | Live `claude` processes per connection (each run is one process).                |
+| `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` | `300000` | How long one bridged tool call may block before it is reported as still running. |
+
+Because the CLI transport never touches the credential store, the OAuth refresh
+chain in the proxy stays the single holder of the rotating refresh token. See
+[`docs/todo-claude-cli-transport.md`](docs/todo-claude-cli-transport.md) for the
+full design.
+
 ### Usage Monitoring Endpoints
 
 New endpoints for monitoring your Copilot usage and quotas.
