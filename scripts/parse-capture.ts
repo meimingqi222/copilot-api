@@ -1,4 +1,4 @@
-/* eslint-disable unicorn/text-encoding-identifier-case, unicorn/prefer-switch */
+/* oxlint-disable unicorn/text-encoding-identifier-case, unicorn/prefer-switch */
 import { readFileSync } from "node:fs"
 import { gunzipSync } from "node:zlib"
 

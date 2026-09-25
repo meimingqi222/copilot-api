@@ -89,7 +89,7 @@ export function createTurnConsumer(options: {
   let socketErrored = false
   sess.activeTurns += 1
 
-  // Read through a getter so eslint/TS control-flow analysis does not narrow
+  // Read through a getter so linters/TS control-flow analysis does not narrow
   // `terminalError` to `undefined` (it is only assigned inside the listener
   // closures below, which the analyzer cannot see as reachable from here).
   const currentTerminalError = (): Error | undefined => terminalError

@@ -36,7 +36,7 @@ const MAX_PENDING_DEVICE_FLOWS = 256
 // Load pending flows from disk
 export async function loadPendingFlows(): Promise<void> {
   try {
-    // eslint-disable-next-line unicorn/prefer-json-parse-buffer
+    // oxlint-disable-next-line unicorn/prefer-json-parse-buffer
     const data = await fs.readFile(PATHS.PENDING_FLOWS_PATH, "utf8")
     const parsed = JSON.parse(data) as Record<string, PollState>
     for (const [key, value] of Object.entries(parsed)) {

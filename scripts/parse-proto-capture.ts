@@ -1,4 +1,4 @@
-/* eslint-disable unicorn/text-encoding-identifier-case */
+/* oxlint-disable unicorn/text-encoding-identifier-case */
 /**
  * Deep parser for Windsurf GetChatMessage request & response captures.
  * Usage: bun run scripts/parse-proto-capture.ts <temp/GetChatMessage-req|res>

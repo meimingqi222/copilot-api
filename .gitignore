@@ -12,9 +12,6 @@ node_modules/
 # aider
 .aider*
 
-# eslint cache
-.eslintcache
-
 # build output
 dist/
 deploy/

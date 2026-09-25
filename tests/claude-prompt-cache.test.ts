@@ -58,7 +58,7 @@ describe("applyPromptCaching", () => {
     expect(body.system[1].cache_control).toBeUndefined()
 
     // CC layout places a breakpoint on the LAST message only.
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    // oxlint-disable-next-line typescript/no-non-null-assertion
     const lastMsg = body.messages.at(-1)!
     expect(Array.isArray(lastMsg.content)).toBe(true)
     const lastBlock = (lastMsg.content as Array<{ cache_control?: unknown }>)[0]
