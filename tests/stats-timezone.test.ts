@@ -110,7 +110,7 @@ describe("timestamp-range stats regroup by viewer timezone", () => {
     ])
   })
 
-  test("performance ignores NULL streaming rows like the SQL variant", () => {
+  test("performance averages ignore untimed rows but still count them", () => {
     const ts = Date.UTC(2026, 8, 7, 2, 0, 0)
     insertRow(ts)
     statsStore.recordUsage({
@@ -132,7 +132,9 @@ describe("timestamp-range stats regroup by viewer timezone", () => {
       endMs,
     })
     const entry = performance.find((p) => p.model === "tz-model")
-    expect(entry?.requests).toBe(1)
+    // The untimed row is still a request for the model, so it counts toward
+    // `requests`; only the timed row feeds the averages.
+    expect(entry?.requests).toBe(2)
     expect(entry?.avgNonStreamingTps).toBe(10)
   })
 

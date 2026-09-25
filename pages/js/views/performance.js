@@ -26,14 +26,18 @@ function performanceView() {
       if (range !== "custom") {
         this.selectedMonth = ""
       }
-      this.loadPerformance()
+      this.loadPerformance().catch(() => {
+        this.showToast(this.t("error.load"), "error")
+      })
     },
 
     setMonth(month) {
       if (!month) return
       this.dateRange = "custom"
       this.selectedMonth = month
-      this.loadPerformance()
+      this.loadPerformance().catch(() => {
+        this.showToast(this.t("error.load"), "error")
+      })
     },
 
     async load() {
@@ -67,6 +71,14 @@ function performanceView() {
         this.period = data.period || { startDate: "", endDate: "" }
       } catch (e) {
         console.error("Failed to load performance data:", e)
+        // Never leave the previous range's rows on screen under the newly
+        // selected range's highlight: `range=all` can exceed the raw-row cap
+        // and return 413, which would otherwise show stale numbers as if they
+        // belonged to the new period. Clear so the empty state shows instead.
+        this.performance = []
+        this.byProvider = []
+        this.period = { startDate: "", endDate: "" }
+        throw e
       }
     },
 

@@ -119,6 +119,7 @@ export async function handleAnthropicViaConnection(
   // Pre-first-chunk failures return a real HTTP status + Retry-After headers
   // with an Anthropic-shaped body instead of `200 + event: error`.
   let result: Awaited<ReturnType<typeof dispatchMessages>>
+  const dispatchStart = Date.now()
   try {
     result = await dispatchMessages({
       payload: anthropicPayload,
@@ -145,11 +146,13 @@ export async function handleAnthropicViaConnection(
       // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
       let usageRecorded = false
       let firstChunkTs: number | undefined
-      let streamStart = 0
+      // TTFT is measured from before the upstream dispatch (see chat
+      // handleStreamingCompletion): the SSE callback opens only after
+      // dispatch resolved, so a clock captured here would be near-zero.
+      const streamStart = dispatchStart
       let messageStop = false
       let outputObserved = false
       try {
-        streamStart = Date.now()
         if (!isAsyncIterable(result.response)) {
           if (
             isDirectAnthropicResponse(

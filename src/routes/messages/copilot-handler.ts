@@ -150,6 +150,7 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   // body instead of `200 + event: error` (which never carries Retry-After to
   // header-reading clients).
   let result: Awaited<ReturnType<typeof dispatchChatCompletions>>
+  const dispatchStart = Date.now()
   try {
     result = await dispatchChatCompletions(
       openAIPayload,
@@ -177,7 +178,10 @@ export async function handleCopilotApi(opts: HandleCopilotApiOpts) {
   return handleSseStream(
     c,
     async (stream, sseSignal) => {
-      const streamStartTs = Date.now()
+      // TTFT starts before the upstream dispatch (see chat
+      // handleStreamingCompletion): the SSE callback opens only after
+      // dispatch resolved, so a clock captured here would be near-zero.
+      const streamStartTs = dispatchStart
 
       applyUsageIdentity(c, result.identity)
       c.set("model", openAIPayload.model)

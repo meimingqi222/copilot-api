@@ -34,7 +34,6 @@ import {
   getUsageStatsByProviderData,
   getUsageStatsData,
   getUsageStatsForUserData,
-  getPerformanceByModelData,
   queryUsageRawRows,
 } from "~/lib/stats/queries"
 import {
@@ -334,21 +333,6 @@ class StatsStore {
       effectiveDate,
       accountId,
     )
-  }
-
-  getPerformanceByModel(
-    startDate?: string,
-    endDate?: string,
-  ): Array<{
-    model: string
-    requests: number
-    streamingRequests: number
-    avgTtftMs: number | null
-    avgStreamingTps: number | null
-    avgNonStreamingTps: number | null
-  }> {
-    const db = this.ensureDb()
-    return getPerformanceByModelData(db, startDate, endDate)
   }
 
   // Model pricing methods

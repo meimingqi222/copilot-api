@@ -195,3 +195,57 @@ test("GET /admin/api/usage/performance splits the same model by provider", async
     providerLabel: "CodeBuddy",
   })
 })
+
+test("GET /admin/api/usage/performance counts untimed requests, averages only timed ones", async () => {
+  const ts = new Date("2026-05-23T08:00:00.000Z").getTime()
+
+  // Timed streaming row.
+  statsStore.recordUsage({
+    date: "2026-05-23",
+    accountId: "account-1",
+    model: "mixed-model",
+    provider: "copilot",
+    promptTokens: 10,
+    completionTokens: 100,
+    totalTokens: 110,
+    cost: 0,
+    timestamp: ts,
+    ttftMs: 300,
+    tps: 20,
+    streaming: true,
+  })
+  // Untimed row (e.g. a usage-missing fallback): still a request, but it must
+  // not skew the TTFT/TPS averages.
+  statsStore.recordUsage({
+    date: "2026-05-23",
+    accountId: "account-1",
+    model: "mixed-model",
+    provider: "copilot",
+    promptTokens: 10,
+    completionTokens: 0,
+    totalTokens: 10,
+    cost: 0,
+    timestamp: ts + 1,
+  })
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as PerformanceResponse
+  expect(body.performance[0]).toMatchObject({
+    model: "mixed-model",
+    requests: 2,
+    streamingRequests: 1,
+    avgTtftMs: 300,
+    avgStreamingTps: 20,
+  })
+  // The by-provider breakdown follows the same counting rule.
+  expect(body.byProvider[0]).toMatchObject({
+    provider: "copilot",
+    model: "mixed-model",
+    requests: 2,
+    streamingRequests: 1,
+  })
+})

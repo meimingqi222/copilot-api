@@ -98,13 +98,25 @@ export interface PerformanceByModel {
   avgNonStreamingTps: number | null
 }
 
-/** Per-model TTFT/TPS averages, mirroring getPerformanceByModelData. */
+/**
+ * Per-model TTFT/TPS averages.
+ *
+ * A model is listed once it has at least one timed request, but `requests` /
+ * `streamingRequests` count *every* row of that model — including rows with no
+ * timing data (an aborted stream that reported no usage, a usage-missing
+ * fallback). The count therefore matches the usage table instead of only the
+ * timed subset, while the averages still ignore untimed rows.
+ */
 export function computePerformanceByModel(
   rows: Array<UsageRawRow>,
 ): Array<PerformanceByModel> {
+  const timedModels = new Set<string>()
+  for (const row of rows) {
+    if (row.ttft_ms !== null || row.tps !== null) timedModels.add(row.model)
+  }
   const byModel = new Map<string, PerfAccumulator>()
   for (const row of rows) {
-    if (row.ttft_ms === null && row.tps === null) continue
+    if (!timedModels.has(row.model)) continue
     let acc = byModel.get(row.model)
     if (!acc) {
       acc = newPerfAccumulator()
@@ -124,18 +136,27 @@ export interface PerformanceByProviderModel extends PerformanceByModel {
 /**
  * Per-(provider, model) TTFT/TPS averages.同一模型在不同 provider
  * 的速度可能差很大，聚合时不能只按 model 分组。
+ *
+ * Same counting rule as `computePerformanceByModel`: a (provider, model) pair
+ * is listed once it has a timed request, and then counts all of its rows.
  */
 export function computePerformanceByProviderModel(
   rows: Array<UsageRawRow>,
 ): Array<PerformanceByProviderModel> {
+  const keyOf = (row: UsageRawRow): string =>
+    (row.provider ?? "unknown") + "\0" + row.model
+  const timedKeys = new Set<string>()
+  for (const row of rows) {
+    if (row.ttft_ms !== null || row.tps !== null) timedKeys.add(keyOf(row))
+  }
   const byKey = new Map<
     string,
     { acc: PerfAccumulator; provider: string; model: string }
   >()
   for (const row of rows) {
-    if (row.ttft_ms === null && row.tps === null) continue
+    const key = keyOf(row)
+    if (!timedKeys.has(key)) continue
     const provider = row.provider ?? "unknown"
-    const key = provider + "\0" + row.model
     let entry = byKey.get(key)
     if (!entry) {
       entry = { acc: newPerfAccumulator(), provider, model: row.model }

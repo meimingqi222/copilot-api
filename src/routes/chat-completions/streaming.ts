@@ -242,6 +242,7 @@ export async function handleStreamingCompletion(
   // (no Retry-After ever reaches header-reading clients).
   updateMemoryTrace(memoryTraceId, "chat_dispatch_start")
   let result: ChatDispatchResult
+  const dispatchStart = Date.now()
   try {
     result = await dispatchChatCompletions(payload, admission, signal, c, {
       forwardedHeaders: extractChatForwardedHeaders(c),
@@ -264,12 +265,15 @@ export async function handleStreamingCompletion(
   let downstreamCommitted = false
   let lastFinishReason: string | undefined
   let outputObserved = false
-  let streamStart = 0
+  // TTFT is measured from before the upstream dispatch, not from when the
+  // downstream SSE callback opens. Dispatch runs before the SSE response
+  // exists (Phase 1), so capturing the clock inside the callback would only
+  // measure downstream-open → first chunk and report a near-zero latency.
+  const streamStart = dispatchStart
   beginStreamLog(c)
   return handleSseStream(
     c,
     async (stream) => {
-      const dispatchStart = Date.now()
       let outcome = "completed"
 
       try {
@@ -306,7 +310,6 @@ export async function handleStreamingCompletion(
           return
         }
 
-        streamStart = dispatchStart
         for await (const rawEvent of result.response) {
           if (rawEvent.data === "[DONE]") {
             break

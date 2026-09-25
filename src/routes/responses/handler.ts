@@ -130,6 +130,7 @@ export async function handleResponses(c: Context) {
     // to header-reading clients).
     let accountId: string | undefined
     let result: ResponsesExecutionResult
+    const dispatchStart = Date.now()
     try {
       result = await executeRequest()
     } catch (error) {
@@ -149,7 +150,10 @@ export async function handleResponses(c: Context) {
       let usageRecorded = false
       let firstChunkTs: number | undefined
       let outputObserved = false
-      const streamStartTs = Date.now()
+      // TTFT starts before the upstream dispatch (see chat
+      // handleStreamingCompletion): the SSE callback opens only after
+      // dispatch resolved, so a clock captured here would be near-zero.
+      const streamStartTs = dispatchStart
       const markOutputObserved = () => {
         outputObserved = true
         firstChunkTs ??= Date.now()
