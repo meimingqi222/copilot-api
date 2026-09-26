@@ -135,13 +135,44 @@ describe("windsurf session cache", () => {
     const key = resolveWindsurfConversationKey({
       user: "end-user-42",
       accountId: "acct-1",
+      payload: {
+        messages: [{ role: "user", content: "unique-prefix-for-user-test" }],
+      },
     })
     expect(key.key).not.toBe("user:end-user-42")
-    expect(key.key).toMatch(/^[0-9a-f-]{36}$/)
-    expect(key.persistent).toBe(false)
+    expect(key.key).not.toMatch(/^[0-9a-f-]{36}$/)
+    expect(key.persistent).toBe(true)
   })
 
-  test("uses a fresh key when client sends no conversation identity", () => {
+  test("falls back to a stable message-prefix hash when no session id exists", () => {
+    // Live probe: random cascade per turn → 0% upstream KV hit; a stable
+    // content-hash key restores multi-turn cache affinity for clients that
+    // omit session headers (plain OpenAI-compatible callers).
+    const payload = {
+      messages: [
+        { role: "system", content: "You are helpful." },
+        { role: "user", content: "Turn 1" },
+      ],
+    }
+    const turn1 = resolveWindsurfConversationKey({ payload })
+    const turn2 = resolveWindsurfConversationKey({
+      payload: {
+        messages: [
+          { role: "system", content: "You are helpful." },
+          { role: "user", content: "Turn 1" },
+          { role: "assistant", content: "ok" },
+          { role: "user", content: "Turn 2" },
+        ],
+      },
+    })
+    expect(turn1.persistent).toBe(true)
+    expect(turn1.key).toMatch(/^msg:/)
+    // resolveStableSessionId prefers the turn-1 short hash, so appending
+    // assistant/user turns must not move the conversation key.
+    expect(turn2.key).toBe(turn1.key)
+  })
+
+  test("uses a fresh key only when there is no session id and no message prefix", () => {
     const first = resolveWindsurfConversationKey({
       accountId: "acct-stable-a",
     })

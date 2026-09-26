@@ -20,6 +20,7 @@
 import { createHash, randomUUID } from "node:crypto"
 
 import { hashKeyPart, PersistentTTLMap } from "~/lib/cache/persistent-map"
+import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 
 export interface CloudSessionIds {
   /** Stable cascade id sent on the wire. */
@@ -54,6 +55,8 @@ export interface ResolveWindsurfConversationKeyOptions {
   forwardedHeaders?: Record<string, string | undefined>
   /** OpenAI body field — primary cache key for Codex-style clients. */
   promptCacheKey?: string | null
+  /** Full chat payload — used for the content-hash session fallback. */
+  payload?: unknown
   /** OpenAI `user` field — accepted for API compatibility, not used as a key. */
   user?: string | null
   /** copilot-api authenticated user id (multi-user API key mode). */
@@ -188,7 +191,13 @@ function readHeaderSession(
  *   1. Session headers (x-windsurf-session-id, session_id, x-session-id,
  *      prompt_cache_key header)
  *   2. `prompt_cache_key` in request body
- *   3. A fresh request-scoped id when no explicit conversation key exists
+ *   3. Content-hash fallback (system + first user) — same as Codex's
+ *      `extractSessionIds` / `resolveStableSessionId`. Without this, an
+ *      OpenAI-compatible client that omits session ids gets a fresh random
+ *      cascade every turn and upstream KV cache never hits (live probe:
+ *      0% vs ~70% once the cascade is stable).
+ *   4. A request-scoped UUID only when the payload has no usable prefix
+ *      (empty/degenerate conversation).
  */
 export function resolveWindsurfConversationKey(
   opts: ResolveWindsurfConversationKeyOptions,
@@ -199,11 +208,17 @@ export function resolveWindsurfConversationKey(
   const bodyCacheKey = opts.promptCacheKey?.trim()
   if (bodyCacheKey) return { key: bodyCacheKey, persistent: true }
 
-  // Match Devin/Cascade semantics: without an explicit conversation identity,
-  // each request gets a fresh request-scoped bucket rather than sharing history
-  // by user or account across unrelated conversations. It must not be persisted:
-  // ordinary OpenAI clients do not send a session id, so persisting this UUID
-  // would create one never-reused cache entry per request.
+  if (opts.payload && typeof opts.payload === "object") {
+    const stable = resolveStableSessionId(
+      extractSessionIds({
+        payload: opts.payload,
+      }),
+    )
+    if (stable) return { key: stable, persistent: true }
+  }
+
+  // Degenerate request: no session identity and no message prefix to hash.
+  // Do not persist — this UUID is unique per request on purpose.
   return { key: randomUUID(), persistent: false }
 }
 

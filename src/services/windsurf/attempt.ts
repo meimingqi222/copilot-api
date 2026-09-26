@@ -144,6 +144,7 @@ export async function createWindsurfAttempt(
       forwardedHeaders: ctx?.forwardedHeaders,
       promptCacheKey:
         payload.prompt_cache_key ?? ctx?.forwardedHeaders?.prompt_cache_key,
+      payload,
       user: payload.user,
       clientUserId: ctx?.c?.get("userId"),
       accountId: connection.id,
