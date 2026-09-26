@@ -16,6 +16,7 @@ import {
   WindsurfUpstreamError,
   classifyWindsurfErrorText,
 } from "./error-classifier"
+import { WINDSURF_CONNECT_USER_AGENT } from "./metadata"
 import { buildRequest } from "./request-builders"
 import { fingerprintWindsurfRequest } from "./request-fingerprint"
 import {
@@ -233,7 +234,7 @@ export async function createWindsurfAttempt(
         "Connect-Accept-Encoding": "gzip",
         "Connect-Content-Encoding": "gzip",
         "Connect-Timeout-Ms": "600000",
-        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
+        "User-Agent": WINDSURF_CONNECT_USER_AGENT,
         "Accept-Encoding": "identity",
       },
       body: requestBody,

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 
 import {
   buildWindsurfClientMetadata,
+  DEVIN_CLI_IDENTITY,
   normalizeDevinApiKey,
+  WINDSURF_EDITOR_IDENTITY,
 } from "~/services/windsurf/metadata"
 import { ProtobufEncoder, parseMessage } from "~/services/windsurf/protobuf"
 
@@ -33,15 +35,37 @@ function metadataFields(
 }
 
 describe("buildWindsurfClientMetadata", () => {
-  test("sets the core Windsurf identity fields", () => {
+  test("defaults to the released Devin CLI (chisel) identity", () => {
     const fields = metadataFields(buildWindsurfClientMetadata("tok"))
+    const byField = new Map(fields.map((f) => [f.field, f.text]))
+    expect(byField.get(1)).toBe("devin-cli") // ide_name
+    expect(byField.get(2)).toBe("3000.10.21") // extension_version
+    expect(byField.get(3)).toBe("devin-session-token$tok") // api_key
+    expect(byField.get(4)).toBe("en") // locale
+    expect(byField.get(5)).toBe(DEVIN_CLI_IDENTITY.os) // os
+    expect(byField.get(7)).toBe("3000.10.21") // ide_version
+    expect(byField.get(12)).toBe("chisel") // extension_name
+    expect(byField.get(28)).toBe("chisel") // ide_type
+  })
+
+  test("os is the normalized platform word, never process.platform raw", () => {
+    expect(["darwin", "windows", "linux"]).toContain(
+      DEVIN_CLI_IDENTITY.os ?? "",
+    )
+  })
+
+  test("keeps the legacy editor identity available for catalog fallback", () => {
+    const fields = metadataFields(
+      buildWindsurfClientMetadata("tok", undefined, WINDSURF_EDITOR_IDENTITY),
+    )
     const byField = new Map(fields.map((f) => [f.field, f.text]))
     expect(byField.get(1)).toBe("windsurf") // ide_name
     expect(byField.get(2)).toBe("1.48.2") // extension_version
-    expect(byField.get(3)).toBe("devin-session-token$tok") // api_key
-    expect(byField.get(4)).toBe("en") // locale
     expect(byField.get(7)).toBe("3.2.23") // ide_version
     expect(byField.get(12)).toBe("windsurf") // extension_name
+    // The editor capture does not declare os/ide_type.
+    expect(byField.get(5)).toBeUndefined()
+    expect(byField.get(28)).toBeUndefined()
   })
 
   test("omits userJwt (field 21) when not provided", () => {

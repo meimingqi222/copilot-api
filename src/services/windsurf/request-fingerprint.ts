@@ -3,7 +3,7 @@ import {
   parseMessage,
 } from "~/services/windsurf/protobuf"
 
-const METADATA_STRING_FIELDS = new Set([1, 2, 3, 4, 7, 12])
+const METADATA_STRING_FIELDS = new Set([1, 2, 3, 4, 5, 7, 12, 28])
 
 const FINGERPRINT_DECODER = new TextDecoder()
 

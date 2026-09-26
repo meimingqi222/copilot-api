@@ -13,6 +13,7 @@ import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { normalizeWindsurfBaseUrl } from "~/services/windsurf/base-url"
 import {
   buildWindsurfClientMetadata,
+  WINDSURF_CONNECT_USER_AGENT,
   wrapWindsurfMetadataMessage,
 } from "~/services/windsurf/metadata"
 import { parseMessage, type ProtobufNode } from "~/services/windsurf/protobuf"
@@ -133,6 +134,9 @@ export async function fetchWindsurfQuota(
         "content-type": "application/proto",
         "connect-protocol-version": "1",
         accept: "*/*",
+        // Same UA as the chat and catalog calls: a missing UA here would make
+        // the quota probe the odd one out in the account's fingerprint.
+        "user-agent": WINDSURF_CONNECT_USER_AGENT,
       },
       body,
       signal,

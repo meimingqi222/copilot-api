@@ -15,6 +15,8 @@ import { state } from "~/lib/state"
 import { normalizeWindsurfBaseUrl } from "./base-url"
 import {
   buildWindsurfClientMetadata,
+  WINDSURF_CONNECT_USER_AGENT,
+  WINDSURF_EDITOR_IDENTITY,
   wrapWindsurfMetadataMessage,
 } from "./metadata"
 import { type ProtobufNode, parseMessage, walkNodes } from "./protobuf"
@@ -24,7 +26,9 @@ import {
 } from "./variant-collapse"
 
 function buildGetUserStatusRequest(apiKey: string): Uint8Array {
-  return wrapWindsurfMetadataMessage(buildWindsurfClientMetadata(apiKey))
+  return wrapWindsurfMetadataMessage(
+    buildWindsurfClientMetadata(apiKey, undefined, WINDSURF_EDITOR_IDENTITY),
+  )
 }
 
 function decodeBest(raw: Uint8Array): string | undefined {
@@ -295,6 +299,14 @@ export async function getWindsurfModelsForConnection(
   }
 
   const baseUrl = normalizeWindsurfBaseUrl(settings?.baseUrl)
+  // Catalog reads stay on the legacy editor identity on purpose. This proxy
+  // gets its roster from `GetUserStatus`, not from `GetCliModelConfigs` (the
+  // RPC the reference implementations gate on the CLI identity), and the
+  // editor identity is the one that has always returned the full
+  // credential-scoped roster here — legacy Enterprise seats are documented to
+  // publish theirs only to it (oh-my-pi
+  // `packages/catalog/src/discovery/devin.ts`). Chat and quota do use the CLI
+  // identity; see `DEVIN_CLI_IDENTITY`.
   const response = await fetch(
     `${baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
     {
@@ -302,7 +314,7 @@ export async function getWindsurfModelsForConnection(
       headers: {
         "Content-Type": "application/proto",
         "Connect-Protocol-Version": "1",
-        "User-Agent": "connect-go/1.18.1 (go1.26.3)",
+        "User-Agent": WINDSURF_CONNECT_USER_AGENT,
         "Accept-Encoding": "gzip",
         "Connect-Timeout-Ms": "5000",
       },

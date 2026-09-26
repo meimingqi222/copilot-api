@@ -96,7 +96,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     // Field 22 omitted (CPA parity): a random per-request session_id there
     // overrode stable f15/f16 and destroyed prompt-cache affinity.
     expect(top).toEqual([1, 2, 3, 7, 8, 10, 11, 12, 13, 15, 16, 17, 20, 21])
-    expect(meta).toEqual([1, 2, 3, 4, 7, 12])
+    expect(meta).toEqual([1, 2, 3, 4, 5, 7, 12, 28])
 
     expect(fp.requestType).toBe(5) // CASCADE
     expect(fp.plannerMode).toBe(1) // DEFAULT
@@ -109,14 +109,14 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.hasSystemPrompt).toBe(true)
     expect(fp.configurationFields).toEqual([1, 2, 3, 5, 6, 7, 8, 9, 11])
 
-    expect(fp.metadata.f1).toBe("windsurf")
-    expect(fp.metadata.f12).toBe("windsurf")
+    expect(fp.metadata.f1).toBe("devin-cli")
+    expect(fp.metadata.f12).toBe("chisel")
     expect(fp.metadata.f4).toBe("en")
     expect(fp.metadata.f3).toMatch(/^devin-session-token\$test/)
-    expect(fp.metadata.f5).toBeUndefined()
+    expect(fp.metadata.f5).toBeDefined()
     expect(fp.metadata.f8).toBeUndefined()
     expect(fp.metadata.f21).toBeUndefined()
-    expect(fp.metadata.f28).toBeUndefined()
+    expect(fp.metadata.f28).toBe("chisel")
     expect(fp.metadata.f31).toBeUndefined()
   })
 
