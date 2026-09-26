@@ -11,6 +11,16 @@ export const WINDSURF_API_BASE_URL = "https://api.devin.ai"
 const WINDSURF_TOKEN_PATH = "/auth/cli/token"
 const WINDSURF_SELF_PATH = "/v3/self"
 
+/**
+ * Loopback callback the Devin CLI itself listens on (oh-my-pi
+ * `packages/catalog/src/compat/rules/auth/devin.kdl`), which is also the only
+ * redirect shape Devin's authorization page accepts: `http` scheme,
+ * `127.0.0.1` host, `/callback` path.
+ */
+export const WINDSURF_CALLBACK_PORT = 59653
+export const WINDSURF_CALLBACK_PATH = "/callback"
+export const WINDSURF_REDIRECT_URI = `http://127.0.0.1:${WINDSURF_CALLBACK_PORT}${WINDSURF_CALLBACK_PATH}`
+
 const WINDSURF_SESSION_TOKEN_PREFIX = "devin-session-token$"
 
 export interface WindsurfOAuthBundle {
@@ -42,9 +52,10 @@ export function isWindsurfSessionToken(value: string): boolean {
 
 /**
  * Build the PKCE authorization URL, mirroring CPA
- * `DevinAuthService.BuildAuthorizationURL` (headless manual mode):
- * exact query ordering `prompt, code_challenge, code_challenge_method`,
- * plus `cli_pkce_marker=1` when no redirect URI is used.
+ * `DevinAuthService.BuildAuthorizationURL`: `redirect_uri` and `state` first,
+ * then the exact ordering `prompt, code_challenge, code_challenge_method`, and
+ * `cli_pkce_marker=1` only when no redirect URI is supplied (the headless
+ * variant that prints the code on the page instead of redirecting).
  */
 export function buildWindsurfAuthUrl(
   codeChallenge: string,
@@ -71,17 +82,21 @@ export function buildWindsurfAuthUrl(
   return `${base}/auth/cli/continue?${parts.join("&")}`
 }
 
-export function createWindsurfOAuthStart(): {
+export function createWindsurfOAuthStart(
+  redirectUri: string = WINDSURF_REDIRECT_URI,
+): {
   authUrl: string
   state: string
   pkce: PkceCodes
+  redirectUri: string
 } {
   const pkce = generatePkceCodes()
   const state = generateOAuthState()
   return {
-    authUrl: buildWindsurfAuthUrl(pkce.codeChallenge, state),
+    authUrl: buildWindsurfAuthUrl(pkce.codeChallenge, state, redirectUri),
     state,
     pkce,
+    redirectUri,
   }
 }
 

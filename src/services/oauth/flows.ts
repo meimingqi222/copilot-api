@@ -11,6 +11,8 @@ import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import type { CodebuddyOAuthProviderId } from "./codebuddy"
 import type { PkceCodes } from "./pkce"
 
+import { WINDSURF_CALLBACK_PATH, WINDSURF_CALLBACK_PORT } from "./windsurf"
+
 export type OAuthFlowProvider =
   | OAuthProviderId
   | "windsurf"
@@ -381,6 +383,18 @@ export const OAUTH_CALLBACK_CONFIGS: Partial<
     hostname: "localhost",
     callbackPath: "/oauth-callback",
     providerLabel: "Antigravity",
+  },
+  // Devin's authorization page only accepts a loopback redirect
+  // (`http://127.0.0.1:<port>/callback`), so the callback server has to listen
+  // on the same port the CLI identity advertises — see
+  // `WINDSURF_REDIRECT_URI`. Without this entry the flow type
+  // (`pkce-callback`) has no server to start and every non-manual login dies
+  // with "Provider \"windsurf\" does not use a callback server".
+  windsurf: {
+    port: WINDSURF_CALLBACK_PORT,
+    hostname: "127.0.0.1",
+    callbackPath: WINDSURF_CALLBACK_PATH,
+    providerLabel: "Devin",
   },
 }
 

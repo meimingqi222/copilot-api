@@ -392,7 +392,12 @@ const windsurfStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
   start() {
     const s = createWindsurfOAuthStart()
-    return Promise.resolve({ authUrl: s.authUrl, state: s.state, pkce: s.pkce })
+    return Promise.resolve({
+      authUrl: s.authUrl,
+      state: s.state,
+      pkce: s.pkce,
+      redirectUri: s.redirectUri,
+    })
   },
   async exchange({ flow, code }) {
     if (!flow.pkce) {

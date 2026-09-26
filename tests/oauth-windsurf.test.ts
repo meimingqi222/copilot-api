@@ -2,9 +2,18 @@ import { describe, expect, test } from "bun:test"
 
 import {
   buildWindsurfAuthUrl,
+  createWindsurfOAuthStart,
   formatWindsurfSessionToken,
   isWindsurfSessionToken,
+  WINDSURF_CALLBACK_PATH,
+  WINDSURF_CALLBACK_PORT,
+  WINDSURF_REDIRECT_URI,
 } from "~/services/oauth/windsurf"
+import { OAUTH_CALLBACK_CONFIGS } from "~/services/oauth/flows"
+import {
+  getOAuthStrategy,
+  isCallbackOAuthCapableProvider,
+} from "~/services/oauth/provider-strategies"
 import { classifyWindsurfErrorText } from "~/services/windsurf/error-classifier"
 
 describe("windsurf error classifier (CPA trailer-code parity)", () => {
@@ -61,6 +70,51 @@ describe("windsurf error classifier (CPA trailer-code parity)", () => {
         "Reached message rate limit. Resets in: 3h0m0s",
       ).kind,
     ).toBe("rate_limited")
+  })
+})
+
+describe("windsurf oauth loopback redirect", () => {
+  test("devin only accepts a loopback 127.0.0.1/callback redirect", () => {
+    expect(WINDSURF_REDIRECT_URI).toBe(
+      `http://127.0.0.1:${WINDSURF_CALLBACK_PORT}${WINDSURF_CALLBACK_PATH}`,
+    )
+  })
+
+  test("start advertises the loopback redirect and drops the pkce marker", () => {
+    const s = createWindsurfOAuthStart()
+    expect(s.redirectUri).toBe(WINDSURF_REDIRECT_URI)
+    expect(s.authUrl).toContain(
+      `redirect_uri=${encodeURIComponent(WINDSURF_REDIRECT_URI)}`,
+    )
+    expect(s.authUrl).not.toContain("cli_pkce_marker")
+    // CPA parity: redirect_uri and state lead, then the fixed PKCE tail.
+    expect(s.authUrl).toMatch(
+      /\?redirect_uri=[^&]+&state=[^&]+&prompt=select_account&code_challenge=[^&]+&code_challenge_method=S256$/,
+    )
+  })
+
+  test("manual paste keeps working from a full callback URL", () => {
+    const url = buildWindsurfAuthUrl(
+      "challenge123",
+      "state123",
+      WINDSURF_REDIRECT_URI,
+    )
+    expect(url).toContain("redirect_uri=")
+    expect(url).not.toContain("cli_pkce_marker=1")
+  })
+
+  test("the flow type has a callback server to run", () => {
+    // Regression: `windsurf` declared flowType `pkce-callback` without an
+    // entry here, so every non-manual start died with `Provider "windsurf"
+    // does not use a callback server`.
+    expect(isCallbackOAuthCapableProvider("windsurf")).toBe(true)
+    expect(getOAuthStrategy("windsurf")?.flowType).toBe("pkce-callback")
+    expect(OAUTH_CALLBACK_CONFIGS.windsurf).toEqual({
+      port: WINDSURF_CALLBACK_PORT,
+      hostname: "127.0.0.1",
+      callbackPath: WINDSURF_CALLBACK_PATH,
+      providerLabel: "Devin",
+    })
   })
 })
 
