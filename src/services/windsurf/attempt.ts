@@ -149,9 +149,10 @@ export async function createWindsurfAttempt(
       accountId: connection.id,
     })
     const cloudIds = await getOrAllocateCloudSessionIds({
-      host: chatBaseUrl,
-      apiKey,
       conversationKey: resolvedConversation.key,
+      // Stable connection id, not the credential token: the derived cascade has
+      // to survive a token refresh (see session-cache.ts).
+      accountId: connection.id,
       persist: resolvedConversation.persistent,
     })
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_session_ready")

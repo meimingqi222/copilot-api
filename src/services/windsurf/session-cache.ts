@@ -6,15 +6,20 @@
  * uses in BuildDevinGetChatMessageRequest. Field #22 must stay omitted: a
  * per-request random UUID there was observed to defeat KV-cache affinity.
  *
+ * The cascade id must also be **derived, never allocated**: the upstream scopes
+ * its KV cache for the `swe-*` models to the cascade, so two workers (or a
+ * restart, or an expired cache file) that invent different cascade ids for the
+ * same conversation split that cache and cut the hit rate to roughly 1/worker.
+ * Everything here is a pure function of the conversation identity, exactly like
+ * CPA's `resolveDevinSessionAndCascadeIDs` / `normalizeDevinUUID`.
+ *
  * Conversation keys are resolved automatically when clients omit session headers
  * (same idea as Claude's getStableSessionId / Codex prompt_cache_key).
  */
 
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import { hashKeyPart, PersistentTTLMap } from "~/lib/cache/persistent-map"
-
-import { normalizeWindsurfBaseUrl } from "./base-url"
 
 export interface CloudSessionIds {
   /** Stable cascade id sent on the wire. */
@@ -27,9 +32,14 @@ export interface CloudSessionIds {
 export const DEFAULT_CONVERSATION_KEY = "__default__"
 
 export interface CloudSessionCacheOpts {
-  host: string
-  apiKey: string
   conversationKey?: string
+  /**
+   * Stable upstream account identity (connection id). Part of the derivation so
+   * two accounts serving the same client session never share one cascade — and
+   * part of *that*, not of the credential token, so a token refresh cannot move
+   * the conversation onto a cold cascade.
+   */
+  accountId?: string
   cascadeIdOverride?: string
   /** Skip persistence for request-scoped keys with no client conversation id. */
   persist?: boolean
@@ -55,10 +65,9 @@ export interface ResolveWindsurfConversationKeyOptions {
 const CLOUD_SESSION_TTL_MS = readCloudSessionTtlMs()
 
 /**
- * Long coding sessions outlive a 1h cascade rotation and then pay a full
- * re-prefill (painful at 200k context, can trip upstream deadlines).
- * `WINDSURF_SESSION_TTL_MS` extends it; bounds keep a typo from pinning
- * sessions forever or churning them every minute.
+ * Lifetime of the conversation→rotation-salt entry. Since the ids are derived,
+ * expiry no longer moves a conversation off its cascade — it only forgets an
+ * explicit rotation, and `WINDSURF_SESSION_TTL_MS` bounds how long that lasts.
  */
 function readCloudSessionTtlMs(): number {
   const fallback = 60 * 60_000 // 1 hour, matches Claude session-id cache
@@ -69,10 +78,50 @@ function readCloudSessionTtlMs(): number {
   return Math.min(24 * 60 * 60_000, Math.max(5 * 60_000, parsed))
 }
 
+/**
+ * Cache-file entry for a conversation. It no longer holds the ids themselves —
+ * those are derived — only the rotation salt `clearCloudSessionCache` bumps.
+ */
 interface StoredCloudSessionIds {
-  cascadeId: string
-  promptId: string
   conversationKey: string
+  /**
+   * Rotation counter. Bumped only by `clearCloudSessionCache`, which is the one
+   * deliberate way to move a conversation onto a fresh upstream cascade.
+   */
+  salt: number
+}
+
+/** RFC 4122 UUID v5 over the OID namespace, as CPA's `uuid.NewSHA1(uuid.NameSpaceOID, …)`. */
+const UUID_V5_NAMESPACE_OID = Buffer.from(
+  "6ba7b8119dad11d180b400c04fd430c8",
+  "hex",
+)
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function uuidV5(name: string): string {
+  const bytes = createHash("sha1")
+    .update(UUID_V5_NAMESPACE_OID)
+    .update(name, "utf8")
+    .digest()
+    .subarray(0, 16)
+  bytes[6] = (bytes[6] & 0x0f) | 0x50
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = bytes.toString("hex")
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+/**
+ * Deterministic UUID for any session/conversation string (CPA `normalizeDevinUUID`).
+ * An existing UUID is passed through so a client that already sends one keeps
+ * its identity verbatim.
+ */
+export function devinSessionUuid(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return randomUUID()
+  if (UUID_RE.test(trimmed)) return trimmed.toLowerCase()
+  return uuidV5(trimmed)
 }
 
 const persistedSessions = new PersistentTTLMap<StoredCloudSessionIds>(
@@ -89,15 +138,25 @@ async function ensureCloudSessionInit(): Promise<void> {
   await initPromise
 }
 
-function normalizeHost(host: string): string {
-  return normalizeWindsurfBaseUrl(host)
-}
-
 function cacheKey(opts: CloudSessionCacheOpts): string {
-  const host = normalizeHost(opts.host)
+  // Deliberately excludes the host and the credential token: the salt lookup
+  // has to follow the same identity as the derivation, or a token refresh would
+  // read a fresh entry (salt 0) and silently rotate the conversation.
+  const accountId = opts.accountId?.trim() || ""
   const conversationKey =
     opts.conversationKey?.trim() || DEFAULT_CONVERSATION_KEY
-  return `${host}\x1f${opts.apiKey}\x1f${conversationKey}`
+  return `${accountId}\x1f${conversationKey}`
+}
+
+function cloudSessionSeed(
+  opts: CloudSessionCacheOpts,
+  conversationKey: string,
+  salt: number,
+): string {
+  const accountId = opts.accountId?.trim() || ""
+  return salt > 0 ?
+      `${accountId}\x1f${conversationKey}\x1frotate-${salt}`
+    : `${accountId}\x1f${conversationKey}`
 }
 
 function readHeaderSession(
@@ -148,59 +207,56 @@ export function resolveWindsurfConversationKey(
   return { key: randomUUID(), persistent: false }
 }
 
+/**
+ * Resolve the cascade/prompt ids for a conversation.
+ *
+ * "Allocate" is now historical: the ids are *derived* from the conversation
+ * identity (plus a rotation salt only `clearCloudSessionCache` ever bumps), so
+ * every worker and every cold start arrives at the same cascade without shared
+ * state. Only the rotation seed is persisted.
+ */
 export async function getOrAllocateCloudSessionIds(
   opts: CloudSessionCacheOpts,
 ): Promise<CloudSessionIds> {
   const conversationKey =
     opts.conversationKey?.trim() || DEFAULT_CONVERSATION_KEY
+
+  // Request-scoped keys are already unique per request, so nothing has to be
+  // remembered: the derivation itself yields a fresh, non-reused cascade.
   if (opts.persist === false) {
+    const seed = cloudSessionSeed(opts, conversationKey, 0)
     return {
-      cascadeId: opts.cascadeIdOverride ?? randomUUID(),
-      promptId: randomUUID(),
+      cascadeId: opts.cascadeIdOverride ?? devinSessionUuid(seed),
+      promptId: devinSessionUuid(`${seed}\x1fprompt`),
     }
   }
 
   await ensureCloudSessionInit()
   const key = hashKeyPart(cacheKey(opts))
-  let stored = persistedSessions.get(key)
-
-  if (!stored) {
-    stored = {
-      cascadeId: opts.cascadeIdOverride ?? randomUUID(),
-      promptId: randomUUID(),
-      conversationKey,
-    }
-    stored = persistedSessions.setNX(key, stored)
-  } else if (
-    opts.cascadeIdOverride
-    && stored.cascadeId !== opts.cascadeIdOverride
-  ) {
-    stored = {
-      ...stored,
-      cascadeId: opts.cascadeIdOverride,
-    }
-    persistedSessions.set(key, stored)
-  } else {
-    persistedSessions.set(key, stored)
+  const existing = persistedSessions.get(key)
+  const salt = existing?.salt ?? 0
+  if (!existing) {
+    persistedSessions.setNX(key, { conversationKey, salt: 0 })
   }
 
+  const seed = cloudSessionSeed(opts, conversationKey, salt)
   return {
-    cascadeId: stored.cascadeId,
-    promptId: stored.promptId,
+    cascadeId: opts.cascadeIdOverride ?? devinSessionUuid(seed),
+    promptId: devinSessionUuid(`${seed}\x1fprompt`),
   }
 }
 
 export function clearCloudSessionCache(conversationKey?: string): void {
   if (!conversationKey) {
-    for (const [key] of persistedSessions.entries()) {
-      persistedSessions.delete(key)
+    for (const [key, stored] of persistedSessions.entries()) {
+      persistedSessions.set(key, { ...stored, salt: stored.salt + 1 })
     }
     return
   }
   const trimmed = conversationKey.trim()
   for (const [key, stored] of persistedSessions.entries()) {
     if (stored.conversationKey === trimmed) {
-      persistedSessions.delete(key)
+      persistedSessions.set(key, { ...stored, salt: stored.salt + 1 })
     }
   }
 }
