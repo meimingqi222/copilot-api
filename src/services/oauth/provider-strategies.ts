@@ -48,6 +48,11 @@ import {
   type KimiDeviceCodeResponse,
 } from "./kimi"
 import {
+  applyLobsteraiOAuthTokens,
+  createLobsteraiOAuthStart,
+  exchangeLobsteraiCode,
+} from "./lobsterai"
+import {
   applyWindsurfOAuthBundle,
   createWindsurfOAuthStart,
   exchangeWindsurfCodeForToken,
@@ -431,6 +436,37 @@ const windsurfStrategy: OAuthProviderStrategy = {
   },
 }
 
+const lobsteraiStrategy: OAuthProviderStrategy = {
+  flowType: "callback",
+  start({ proxyUrl }) {
+    return createLobsteraiOAuthStart(proxyUrl ? { proxyUrl } : undefined).then(
+      ({ authUrl, state, installationUuid }) => ({
+        authUrl,
+        state,
+        nonce: installationUuid,
+      }),
+    )
+  },
+  async exchange({ flow, code }) {
+    if (!code || !flow.nonce) {
+      throw new Error(
+        "LobsterAI OAuth flow is missing code or installation UUID",
+      )
+    }
+    const conn = createOAuthConnection("lobsterai", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    const tokens = await exchangeLobsteraiCode(
+      code,
+      flow.nonce,
+      flowFetchOptions(flow),
+    )
+    if (!tokens) throw new Error("LobsterAI exchange returned no token data")
+    applyLobsteraiOAuthTokens(conn, tokens, flow.nonce)
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
 // ── Registry ────────────────────────────────────────────────────
 
 export const OAUTH_PROVIDER_STRATEGIES: Record<
@@ -459,6 +495,7 @@ export function getOAuthStrategy(
   provider: string,
 ): OAuthProviderStrategy | undefined {
   if (provider === WINDSURF_OAUTH_PROVIDER_ID) return windsurfStrategy
+  if (provider === "lobsterai") return lobsteraiStrategy
   if (isCodebuddyOAuthProviderId(provider)) {
     return provider === "codebuddy-cn" ? codebuddyCnStrategy : codebuddyStrategy
   }

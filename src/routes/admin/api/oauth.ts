@@ -20,9 +20,11 @@ import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
+import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import { upgradeOAuthConnectionLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
 import { isCodebuddyOAuthProviderId } from "~/services/oauth/codebuddy"
+import { lobsteraiCallbackStateMatches } from "~/services/oauth/lobsterai"
 import {
   bindOAuthFlowAbortSignal,
   getOAuthFlow,
@@ -119,6 +121,9 @@ async function finalizeOAuthConnection(
   if (isCodebuddyOAuthProviderId(getConnectionProvider(finalized) ?? "")) {
     scheduleCodebuddyRefresh(finalized)
   }
+  if (getConnectionProvider(finalized) === "lobsterai") {
+    scheduleLobsteraiRefresh(finalized)
+  }
   try {
     await refreshModelsForConnection(finalized)
     await saveAccounts()
@@ -152,6 +157,8 @@ function applyReauthBundle(
   const targetCred = target.credentials[0]
   if (freshCred && targetCred) {
     targetCred.value = freshCred.value
+    targetCred.authMode = freshCred.authMode
+    targetCred.refresherType = freshCred.refresherType
     if (freshCred.context) targetCred.context = { ...freshCred.context }
     targetCred.status = "ready"
     targetCred.lastError = undefined
@@ -413,6 +420,15 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
   const flow = getOAuthFlow(flowId)
   if (!flow || flow.provider !== provider) {
     return c.json({ error: `Unknown ${provider} OAuth flow.` }, 404)
+  }
+
+  if (provider === "lobsterai") {
+    if (
+      !flow.state
+      || !lobsteraiCallbackStateMatches(callbackInput, flow.state)
+    ) {
+      return c.json({ error: "LobsterAI OAuth callback state mismatch." }, 400)
+    }
   }
 
   if (flow.status === "error" || flow.status === "expired") {

@@ -40,6 +40,13 @@ export abstract class LocalConcurrencyLimitError extends HTTPError {}
  */
 export abstract class LocalUnavailableError extends HTTPError {}
 
+/** This target cannot honor a requested wire contract; another target may. */
+export class LocalPayloadUnsupportedError extends HTTPError {
+  constructor(message: string) {
+    super(message, new Response(null, { status: 422 }), message)
+  }
+}
+
 export class UpstreamTransportError extends HTTPError {
   constructor(message: string, options: { cause?: unknown } = {}) {
     const responseBody = JSON.stringify({

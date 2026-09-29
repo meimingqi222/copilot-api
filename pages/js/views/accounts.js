@@ -4,6 +4,7 @@ const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
   "xai",
   "antigravity",
   "windsurf",
+  "lobsterai",
 ])
 
 /**
@@ -14,6 +15,7 @@ const DUAL_MODE_OAUTH_PROVIDERS = new Set([
   "windsurf",
   "codebuddy",
   "codebuddy-cn",
+  "lobsterai",
 ])
 
 function accountsView() {

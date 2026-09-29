@@ -11,11 +11,13 @@ import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import type { CodebuddyOAuthProviderId } from "./codebuddy"
 import type { PkceCodes } from "./pkce"
 
+import { LOBSTERAI_CALLBACK_PATH, LOBSTERAI_CALLBACK_PORT } from "./lobsterai"
 import { WINDSURF_CALLBACK_PATH, WINDSURF_CALLBACK_PORT } from "./windsurf"
 
 export type OAuthFlowProvider =
   | OAuthProviderId
   | "windsurf"
+  | "lobsterai"
   | CodebuddyOAuthProviderId
 
 export interface OAuthPendingFlow {
@@ -395,6 +397,12 @@ export const OAUTH_CALLBACK_CONFIGS: Partial<
     hostname: "127.0.0.1",
     callbackPath: WINDSURF_CALLBACK_PATH,
     providerLabel: "Devin",
+  },
+  lobsterai: {
+    port: LOBSTERAI_CALLBACK_PORT,
+    hostname: "127.0.0.1",
+    callbackPath: LOBSTERAI_CALLBACK_PATH,
+    providerLabel: "LobsterAI",
   },
 }
 

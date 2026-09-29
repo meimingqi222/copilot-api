@@ -16,7 +16,7 @@ import path from "node:path"
 
 import type { ProviderAdmission } from "~/lib/request-admission"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
@@ -104,6 +104,31 @@ function httpError(status: number, body: string): HTTPError {
 }
 
 describe("executeWithFailover client-error cooldown", () => {
+  test("local payload incompatibility tries another target without cooldown", async () => {
+    await setupResponsesConnection("first")
+    await setupResponsesConnection("second")
+    const admission = buildResponsesAdmission()
+    const rejectedId = admission.connection.id
+    const result = await executeWithFailover({
+      payload: { model: "Atria-Dawn-Preview" },
+      admission,
+      routeKind: "responses",
+      execute: async (_adapter, _target, current) => {
+        if (current.connection.id === rejectedId) {
+          throw new LocalPayloadUnsupportedError("unsupported JSON contract")
+        }
+        return current.connection.id
+      },
+    })
+    expect(result).not.toBe(rejectedId)
+    expect(getProviderConnection(rejectedId)?.credentials[0]?.status).toBe(
+      "ready",
+    )
+    expect(
+      getProviderConnection(rejectedId)?.credentials[0]?.cooldownUntil,
+    ).toBeUndefined()
+  })
+
   test("400 upstream_error does not cool down the credential", async () => {
     await setupResponsesConnection("atria")
     const admission = buildResponsesAdmission()

@@ -30,6 +30,10 @@ import {
 } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
+  scheduleLobsteraiRefresh,
+  scheduleLobsteraiRefreshForAllConnections,
+} from "~/services/lobsterai/token-refresh"
+import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
@@ -303,6 +307,10 @@ function initializeImportedAccount(
     const connection = getMutableProviderConnection(account.id)
     if (connection) scheduleCodebuddyRefresh(connection)
   }
+  if (provider === "lobsterai") {
+    const connection = getMutableProviderConnection(account.id)
+    if (connection) scheduleLobsteraiRefresh(connection)
+  }
   refreshModelsForAccount(account).catch(warn)
 }
 
@@ -520,6 +528,7 @@ importAccountRoutes.post("/import-cpa", async (c) => {
     if (result.imported.length > 0) {
       initializeProviderRegistry()
       await saveAccounts()
+      scheduleLobsteraiRefreshForAllConnections()
       logger.info(
         `Imported ${result.imported.length} CPA auth account(s): ${result.imported.join(", ")}`,
       )

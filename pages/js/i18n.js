@@ -150,6 +150,7 @@ const i18n = {
       "accounts.provider.codebuddy-cn.jsonHint":
         "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
       "accounts.provider.lobsterai": "LobsterAI",
+      "accounts.provider.lobsterai.oauthLogin": "浏览器登录 (OAuth)",
       "accounts.provider.lobsterai.name": "LobsterAI",
       "accounts.provider.lobsterai.fields.accessToken": "LobsterAI AccessToken",
       "accounts.provider.lobsterai.fields.accessTokenHint":
@@ -1004,6 +1005,7 @@ const i18n = {
       "accounts.provider.codebuddy-cn.jsonHint":
         "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
       "accounts.provider.lobsterai": "LobsterAI",
+      "accounts.provider.lobsterai.oauthLogin": "Browser login (OAuth)",
       "accounts.provider.lobsterai.name": "LobsterAI",
       "accounts.provider.lobsterai.fields.accessToken": "LobsterAI AccessToken",
       "accounts.provider.lobsterai.fields.accessTokenHint":

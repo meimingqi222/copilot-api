@@ -338,7 +338,7 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
       model: "deepseek-flash",
       stream: true,
       max_completion_tokens: 4096,
-      tool_choice: { type: "function", function: { name: "get_time" } },
+      tool_choice: "auto",
       messages: [
         { role: "developer", content: "be helpful" },
         { role: "assistant", content: null },
@@ -409,8 +409,26 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
     // 上游只认 max_tokens；max_completion_tokens 会被静默忽略。
     expect(sentBody?.max_completion_tokens).toBeUndefined()
     expect(sentBody?.max_tokens).toBe(4096)
-    // 具名 tool_choice 在严格后端回 500（同日的裸字符串同样 500）：降为 auto。
+    // 可满足的 auto 工具选择保持原样。
     expect(sentBody?.tool_choice).toBe("auto")
+  })
+
+  test("rejects unsupported strict contracts before sending upstream", async () => {
+    const fetchMock = mock(() => Promise.resolve(sseResponse([])))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+    await expect(
+      lobsteraiNativeAdapter.createChatCompletions?.({
+        target,
+        connection: makeConnection(),
+        credential: makeCredential(),
+        payload: {
+          model: "deepseek-flash",
+          messages: [{ role: "user", content: "hi" }],
+          tool_choice: "required",
+        } as never,
+      }),
+    ).rejects.toMatchObject({ response: { status: 422 } })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   test("leaves non-deepseek lobsterai models on the lenient path", async () => {

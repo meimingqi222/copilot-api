@@ -17,6 +17,7 @@ import { refreshModelsForAccount } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { parseLobsteraiClientDatabase } from "~/services/lobsterai/parse-client-db"
+import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import { initializeProviderRegistry } from "~/services/providers"
 
 import { publicAccountFromConnection } from "./account-views"
@@ -110,6 +111,7 @@ async function createLobsteraiAccount(
   await saveAccounts()
 
   const conn = getProviderConnection(account.id)
+  if (conn) scheduleLobsteraiRefresh(conn)
   return {
     accountId: account.id,
     account: conn ? publicAccountFromConnection(conn) : undefined,

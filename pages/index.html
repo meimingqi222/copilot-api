@@ -1409,7 +1409,7 @@
                       </div>
                       <div class="flex items-center gap-1.5 mt-auto">
                         <button
-                          x-show="account.authStatus === 'error' && ['codex','claude','xai','antigravity','kimi'].includes(account.provider)"
+                          x-show="account.authStatus === 'error' && ['codex','claude','xai','antigravity','kimi','lobsterai'].includes(account.provider)"
                           @click="openReauthModal(account)"
                           class="btn btn-sm flex-1"
                           style="background: var(--apple-orange); color: white"
@@ -1651,7 +1651,14 @@
                     title="Login via CodeBuddy, no manual token needed"
                   ></button>
                   <button
+                    x-show="newAccount.provider === 'lobsterai'"
+                    @click="startOAuthFlow()"
+                    class="btn btn-secondary"
+                    x-text="t('accounts.provider.lobsterai.oauthLogin')"
+                  ></button>
+                  <button
                     @click="submitAccount()"
+                    x-show="!isReauthFlow() || selectedProvider()?.authMode === 'oauth'"
                     class="btn btn-primary"
                     x-text="selectedProvider()?.authMode === 'oauth' ? t('accounts.oauth.authorize') : (selectedProvider()?.authMode === 'device_flow' ? t('accounts.deviceFlow.step2') : t('create'))"
                   ></button>

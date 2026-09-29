@@ -280,7 +280,7 @@ export function pruneCompatOrphanToolCalls(
   return changed ? kept : messages
 }
 
-// ── 严格后端降级与工具历史摊平（LobsterAI 的 deepseek 系） ─────────
+// ── LobsterAI 严格后端的工具 ID 兼容与请求约束 ─────────
 
 /**
  * 严格后端实测矩阵（2026-09-29，直连 LobsterAI 上游
@@ -295,106 +295,14 @@ export function pruneCompatOrphanToolCalls(
  * | 历史回放非本后端签发的 tool_call id | 500（0.9s 校验型） | 200 |
  * | 声明了非空 `tools` 且末尾（跳过尾部 system）是 assistant | 500 | 200 |
  *
- * 最后一条是根因：deepseek-flash 后端**会话状态绑定**，只认自己签发过的
- * tool_call id。A/B 实测：同一段两轮工具对话，仅把 tool_call id 换成本后端
- * 上一轮返回的值 → 200；换成 CodeBuddy / Command Code 签发的 id → 500
- * `{"code":500,"message":"服务器内部错误"}`。多供应商故障转移必然回放别家
- * 签发的 id，所以不摊平就必然 500，并连带 30s 凭证冷却（随后同一模型直接
- * 429 "all providers are temporarily rate-limited"）。
- *
- * 摊平后（assistant 文本说明调用 + tool 结果并入 user 消息）同一段历史实测
- * 200。CodeBuddy 对以上四种形状全部接受（同日实测 200），故这些降级只在严格
- * 后端调用，不并入通用归一化。
+ * 外来工具 ID 确定性改写成它接受的形状，保持调用与结果配对。其它形状涉及
+ * tool_choice、JSON 格式、候选数量或消息历史的语义，不能静默降级；路由器
+ * 跳过该 target，若没有兼容 target 则向客户端返回可读的 422。
  */
 
 export interface StrictBackendRewriteReport {
   /** 重写为上游可接受形状（`call_<n>_ET_…`）的 tool_call id 个数。 */
   toolCallIdsRewritten: number
-  /** 因"声明 tools 时末尾不得是 assistant"而丢弃的尾部 assistant 条数。 */
-  trailingAssistantDropped: number
-  toolChoiceDegraded: boolean
-  responseFormatDropped: boolean
-  choiceCountClamped: boolean
-}
-
-/**
- * 具名 / `required` 的 `tool_choice` 一律降为 `"auto"`。
- *
- * deepseek-flash 只认 `auto` / `none` / 缺省：具名（对象或裸字符串）与
- * `required` 都回笼统 500。裸字符串形态恰恰是 `normalizeCompatToolChoice`
- * 的产物（对象 → 裸 name），所以严格后端必须在通用归一化之后再降一级。
- */
-export function degradeStrictCompatToolChoice(
-  payload: Record<string, unknown>,
-): boolean {
-  const toolChoice = payload.tool_choice
-  if (toolChoice === undefined) return false
-  if (typeof toolChoice === "string") {
-    const value = toolChoice.trim().toLowerCase()
-    // `none` 已由通用归一化删掉（连同 tools），`auto` 本就合法。
-    if (value === "auto" || value === "none") return false
-    payload.tool_choice = "auto"
-    return true
-  }
-  // 对象或其它形态：通用归一化已覆盖，这里兜底。
-  payload.tool_choice = "auto"
-  return true
-}
-
-/** 删除严格后端不认的 json 型 `response_format`（`text` 形态保留）。 */
-export function dropStrictCompatResponseFormat(
-  payload: Record<string, unknown>,
-): boolean {
-  const responseFormat = payload.response_format
-  if (!responseFormat || typeof responseFormat !== "object") return false
-  const type = (responseFormat as Record<string, unknown>).type
-  const value = typeof type === "string" ? type.trim().toLowerCase() : ""
-  if (value !== "json_object" && value !== "json_schema") return false
-  delete payload.response_format
-  return true
-}
-
-/** `n > 1` 对严格后端是 500；删掉字段回落上游默认（1）。 */
-export function clampStrictCompatChoiceCount(
-  payload: Record<string, unknown>,
-): boolean {
-  const n = payload.n
-  if (typeof n !== "number" || !Number.isFinite(n) || n <= 1) return false
-  delete payload.n
-  return true
-}
-
-export function dropTrailingAssistantForStrictTools(
-  payload: Record<string, unknown>,
-): number {
-  const tools = payload.tools
-  if (!Array.isArray(tools) || tools.length === 0) return 0
-  const messages = payload.messages as
-    | Array<Record<string, unknown>>
-    | undefined
-  if (!Array.isArray(messages) || messages.length === 0) return 0
-
-  const dropIndexes: Array<number> = []
-  let index = messages.length - 1
-  while (index >= 0) {
-    const role = messages[index]?.role
-    // 尾部 system 不参与判定（实测 `[user, system]` + tools 正常）。
-    if (role === "system") {
-      index--
-      continue
-    }
-    if (role !== "assistant") break
-    dropIndexes.push(index)
-    index--
-  }
-  // 至少给上游留一条消息，避免空 messages 触发另一种拒绝。
-  while (dropIndexes.length > 0 && dropIndexes.length >= messages.length) {
-    dropIndexes.pop()
-  }
-  for (const dropIndex of dropIndexes) {
-    messages.splice(dropIndex, 1)
-  }
-  return dropIndexes.length
 }
 
 /**
@@ -464,11 +372,34 @@ export function applyStrictBackendNormalization(
   const raw = payload as unknown as Record<string, unknown>
   return {
     toolCallIdsRewritten: normalizeStrictToolCallIds(raw),
-    trailingAssistantDropped: dropTrailingAssistantForStrictTools(raw),
-    toolChoiceDegraded: degradeStrictCompatToolChoice(raw),
-    responseFormatDropped: dropStrictCompatResponseFormat(raw),
-    choiceCountClamped: clampStrictCompatChoiceCount(raw),
   }
+}
+
+/** Return the first contract a strict backend cannot preserve. */
+export function strictBackendUnsupportedReason(
+  payload: ChatCompletionsPayload,
+): string | undefined {
+  const raw = payload as unknown as Record<string, unknown>
+  const choice = raw.tool_choice
+  if (choice !== undefined && choice !== "auto" && choice !== "none") {
+    return "tool_choice requires a tool selection this LobsterAI model cannot guarantee"
+  }
+  const format = raw.response_format as { type?: string } | undefined
+  if (format?.type === "json_object" || format?.type === "json_schema") {
+    return "response_format requires JSON output this LobsterAI model cannot guarantee"
+  }
+  if (typeof raw.n === "number" && raw.n > 1) {
+    return "n > 1 is unsupported by this LobsterAI model"
+  }
+  if (Array.isArray(raw.tools) && raw.tools.length > 0) {
+    const messages = payload.messages
+    let index = messages.length - 1
+    while (index >= 0 && messages[index]?.role === "system") index--
+    if (messages[index]?.role === "assistant") {
+      return "a trailing assistant message with tools is unsupported by this LobsterAI model"
+    }
+  }
+  return undefined
 }
 
 // ── 编排 ────────────────────────────────────────────────────────────

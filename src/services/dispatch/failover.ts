@@ -10,6 +10,7 @@ import type { ClassifiedWsFailure } from "~/services/responses/ws-failure"
 import {
   HTTPError,
   LocalConcurrencyLimitError,
+  LocalPayloadUnsupportedError,
   LocalUnavailableError,
 } from "~/lib/error"
 import { logger } from "~/lib/logger"
@@ -303,6 +304,11 @@ export async function executeWithFailover<
       // machine-level condition: every account would fail identically. Do not
       // cool the credential, do not advance to the next target — rethrow as-is.
       if (error instanceof LocalUnavailableError) {
+        throw error
+      }
+
+      if (error instanceof LocalPayloadUnsupportedError) {
+        if (advanceToNextTarget()) continue
         throw error
       }
 

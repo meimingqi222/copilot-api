@@ -11,10 +11,6 @@ import type { Message } from "~/services/copilot/create-chat-completions"
 
 import {
   applyStrictBackendNormalization,
-  clampStrictCompatChoiceCount,
-  degradeStrictCompatToolChoice,
-  dropStrictCompatResponseFormat,
-  dropTrailingAssistantForStrictTools,
   fillCompatNullAssistantContent,
   normalizeCompatImageUrls,
   normalizeCompatRoles,
@@ -24,8 +20,67 @@ import {
   pruneCompatOrphanToolCalls,
   repackCompatToolResults,
   strictToolCallId,
+  strictBackendUnsupportedReason,
   translateCompatMaxCompletionTokens,
 } from "~/services/protocols/openai-compat-payload"
+
+describe("strict LobsterAI contract", () => {
+  test("keeps requested tool, JSON, and choice semantics explicit", () => {
+    const base = {
+      model: "deepseek-flash",
+      messages: [msg({ role: "user", content: "hi" })],
+    }
+    expect(
+      strictBackendUnsupportedReason({
+        ...base,
+        tool_choice: "required",
+      } as never),
+    ).toContain("tool_choice")
+    expect(
+      strictBackendUnsupportedReason({
+        ...base,
+        response_format: { type: "json_schema" },
+      } as never),
+    ).toContain("response_format")
+    expect(
+      strictBackendUnsupportedReason({ ...base, n: 2 } as never),
+    ).toContain("n > 1")
+    expect(
+      strictBackendUnsupportedReason({
+        ...base,
+        tools: [{ type: "function", function: { name: "read" } }],
+        messages: [
+          ...base.messages,
+          msg({ role: "assistant", content: "answer" }),
+        ],
+      } as never),
+    ).toContain("trailing assistant")
+    expect(strictBackendUnsupportedReason(base as never)).toBeUndefined()
+  })
+
+  test("only rewrites tool IDs and preserves all other fields", () => {
+    const payload = {
+      model: "deepseek-flash",
+      n: 2,
+      tool_choice: "required",
+      response_format: { type: "json_object" },
+      messages: [
+        msg({
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall("foreign")],
+        }),
+        msg({ role: "tool", tool_call_id: "foreign", content: "ok" }),
+      ],
+    }
+    expect(applyStrictBackendNormalization(payload as never)).toEqual({
+      toolCallIdsRewritten: 2,
+    })
+    expect(payload.n).toBe(2)
+    expect(payload.tool_choice).toBe("required")
+    expect(payload.response_format).toEqual({ type: "json_object" })
+  })
+})
 
 const msg = (value: Record<string, unknown>) => value as unknown as Message
 
@@ -470,152 +525,6 @@ describe("normalizeOpenAICompatChatPayload", () => {
     )
     expect(out.messages).toEqual(payload.messages)
     expect("tools" in out).toBe(false)
-  })
-})
-
-describe("strict backend parameter degradations", () => {
-  test("degrades named and required tool_choice to auto", () => {
-    for (const toolChoice of [
-      "get_time",
-      "required",
-      { type: "function", function: { name: "get_time" } },
-    ]) {
-      const payload: Record<string, unknown> = { tool_choice: toolChoice }
-      expect(degradeStrictCompatToolChoice(payload)).toBe(true)
-      expect(payload.tool_choice).toBe("auto")
-    }
-    const auto: Record<string, unknown> = { tool_choice: "auto" }
-    expect(degradeStrictCompatToolChoice(auto)).toBe(false)
-    expect(auto.tool_choice).toBe("auto")
-    const absent: Record<string, unknown> = {}
-    expect(degradeStrictCompatToolChoice(absent)).toBe(false)
-  })
-
-  test("drops only json response_format", () => {
-    const json: Record<string, unknown> = {
-      response_format: { type: "json_object" },
-    }
-    expect(dropStrictCompatResponseFormat(json)).toBe(true)
-    expect("response_format" in json).toBe(false)
-
-    const schema: Record<string, unknown> = {
-      response_format: { type: "json_schema", json_schema: { name: "x" } },
-    }
-    expect(dropStrictCompatResponseFormat(schema)).toBe(true)
-
-    const text: Record<string, unknown> = { response_format: { type: "text" } }
-    expect(dropStrictCompatResponseFormat(text)).toBe(false)
-    expect(text.response_format).toEqual({ type: "text" })
-  })
-
-  test("clamps n>1 to the upstream default", () => {
-    const n2: Record<string, unknown> = { n: 2 }
-    expect(clampStrictCompatChoiceCount(n2)).toBe(true)
-    expect("n" in n2).toBe(false)
-    const n1: Record<string, unknown> = { n: 1 }
-    expect(clampStrictCompatChoiceCount(n1)).toBe(false)
-    expect(n1.n).toBe(1)
-  })
-
-  test("applyStrictBackendNormalization reports every rewrite at once", () => {
-    const payload = {
-      model: "deepseek-flash",
-      stream: true,
-      n: 2,
-      response_format: { type: "json_object" },
-      tool_choice: { type: "function", function: { name: "get_time" } },
-      messages: [
-        msg({ role: "user", content: "u" }),
-        msg({ role: "assistant", content: null, tool_calls: [toolCall("c1")] }),
-        msg({ role: "tool", tool_call_id: "c1", content: "r" }),
-      ],
-    } as unknown as Parameters<typeof applyStrictBackendNormalization>[0]
-    const report = applyStrictBackendNormalization(payload)
-    expect(report).toEqual({
-      toolCallIdsRewritten: 2,
-      trailingAssistantDropped: 0,
-      toolChoiceDegraded: true,
-      responseFormatDropped: true,
-      choiceCountClamped: true,
-    })
-    const raw = payload as unknown as Record<string, unknown>
-    expect(raw.tool_choice).toBe("auto")
-    expect("response_format" in raw).toBe(false)
-    expect("n" in raw).toBe(false)
-    // 工具历史保持结构化，只把 id 换成上游认得的形状（配对一致）。
-    const messages = raw.messages as Array<Record<string, unknown>>
-    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool"])
-    const rewrittenId = strictToolCallId("c1")
-    expect(rewrittenId.startsWith("call_00_ET_")).toBe(true)
-    expect((messages[1]?.tool_calls as Array<{ id: string }>)[0]?.id).toBe(
-      rewrittenId,
-    )
-    expect(messages[2]?.tool_call_id).toBe(rewrittenId)
-  })
-})
-
-describe("dropTrailingAssistantForStrictTools", () => {
-  const tools = [
-    {
-      type: "function",
-      function: { name: "read", parameters: { type: "object" } },
-    },
-  ]
-  const run = (messages: Array<Record<string, unknown>>, withTools = true) => {
-    const payload: Record<string, unknown> = { messages }
-    if (withTools) payload.tools = tools
-    const dropped = dropTrailingAssistantForStrictTools(payload)
-    return { dropped, roles: messages.map((m) => m.role) }
-  }
-
-  test("drops a trailing assistant when tools are declared", () => {
-    expect(
-      run([
-        { role: "user", content: "u" },
-        { role: "assistant", content: "" },
-      ]),
-    ).toEqual({ dropped: 1, roles: ["user"] })
-    expect(
-      run([
-        { role: "user", content: "u" },
-        { role: "assistant", content: "ok" },
-      ]),
-    ).toEqual({ dropped: 1, roles: ["user"] })
-  })
-
-  test("skips trailing system messages when judging the tail", () => {
-    expect(
-      run([
-        { role: "user", content: "u" },
-        { role: "assistant", content: "ok" },
-        { role: "system", content: "s" },
-      ]),
-    ).toEqual({ dropped: 1, roles: ["user", "system"] })
-    // 末尾是 user：不动。
-    expect(
-      run([
-        { role: "user", content: "u" },
-        { role: "assistant", content: "ok" },
-        { role: "user", content: "more" },
-      ]),
-    ).toEqual({ dropped: 0, roles: ["user", "assistant", "user"] })
-  })
-
-  test("is a no-op without a non-empty tools array", () => {
-    const messages = [
-      { role: "user", content: "u" },
-      { role: "assistant", content: "ok" },
-    ]
-    expect(run(structuredClone(messages), false).dropped).toBe(0)
-    const emptyTools: Record<string, unknown> = { messages, tools: [] }
-    expect(dropTrailingAssistantForStrictTools(emptyTools)).toBe(0)
-  })
-
-  test("never empties the message list", () => {
-    expect(run([{ role: "assistant", content: "ok" }])).toEqual({
-      dropped: 0,
-      roles: ["assistant"],
-    })
   })
 })
 

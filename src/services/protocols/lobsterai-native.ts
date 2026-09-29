@@ -22,8 +22,14 @@ import type {
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import {
+  LOBSTERAI_CLIENT_VERSION_HEADER,
+  lobsteraiClientVersion,
+  lobsteraiServerRoot,
+} from "~/services/lobsterai/config"
+import { ensureLobsteraiAccessToken } from "~/services/lobsterai/token-refresh"
 import {
   isStrictOpenAICompatBackend,
   type ApiCredential,
@@ -32,7 +38,6 @@ import {
 } from "~/lib/provider-connections"
 import {
   buildBaseHeaders,
-  getHeader,
   handleUpstreamFailure,
   safeSseStream,
   setHeader,
@@ -43,49 +48,31 @@ import type { AdapterChatResult, ProtocolAdapter } from "./types"
 import {
   applyStrictBackendNormalization,
   normalizeOpenAICompatChatPayload,
+  strictBackendUnsupportedReason,
 } from "./openai-compat-payload"
 import { aggregateSseToResponse } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
 
-export const LOBSTERAI_DEFAULT_BASE_URL = "https://lobsterai-server.youdao.com"
+export {
+  LOBSTERAI_CLIENT_VERSION_HEADER,
+  LOBSTERAI_DEFAULT_BASE_URL,
+  LOBSTERAI_DEFAULT_CLIENT_VERSION,
+  lobsteraiClientVersion,
+  lobsteraiServerRoot,
+} from "~/services/lobsterai/config"
 
 /** 官方客户端声明的能力集合，原样透传以对齐行为。 */
 export const LOBSTERAI_CLIENT_CAPABILITIES =
   "kimi-k3-agentic-v1,thinking-level-control-v1"
 
-/** 客户端版本兜底值（可用 connection.headers 覆盖）。 */
-export const LOBSTERAI_DEFAULT_CLIENT_VERSION = "2026.9.4"
-
 export const LOBSTERAI_CLIENT_CAPABILITIES_HEADER =
   "X-LobsterAI-Client-Capabilities"
-export const LOBSTERAI_CLIENT_VERSION_HEADER = "X-LobsterAI-Client-Version"
 
 const CHAT_PATH = "/api/proxy/v1/chat/completions"
 const MODELS_PATH = "/api/models/available"
 
 // ── URL / 请求头构造 ────────────────────────────────────────────────
-
-/**
- * 服务根地址。`connection.baseUrl` 配置的是服务根
- * （如 `https://lobsterai-server.youdao.com`），**不含** `/api/proxy/v1`，
- * 因为模型发现端点 `/api/models/available` 不在该前缀下。
- */
-export function lobsteraiServerRoot(connection: ProviderConnection): string {
-  const base = connection.baseUrl?.trim() || LOBSTERAI_DEFAULT_BASE_URL
-  return base.replace(/\/+$/, "")
-}
-
-export function lobsteraiClientVersion(connection: ProviderConnection): string {
-  const fromHeaders = getHeader(
-    connection.headers,
-    LOBSTERAI_CLIENT_VERSION_HEADER,
-  )
-  return (
-    (typeof fromHeaders === "string" && fromHeaders.trim())
-    || LOBSTERAI_DEFAULT_CLIENT_VERSION
-  )
-}
 
 export function buildLobsteraiHeaders(
   connection: ProviderConnection,
@@ -177,9 +164,16 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
   protocol: "lobsterai-native",
 
   async discoverModels({ connection, credential, signal }) {
+    const accessToken = await ensureLobsteraiAccessToken(connection, credential)
     const response = await fetch(
       `${lobsteraiServerRoot(connection)}${MODELS_PATH}`,
-      { headers: buildLobsteraiHeaders(connection, credential), signal },
+      {
+        headers: buildLobsteraiHeaders(connection, {
+          ...credential,
+          value: accessToken ?? credential.value,
+        }),
+        signal,
+      },
     )
 
     if (!response.ok) {
@@ -236,32 +230,36 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
       stream: true,
     })
 
-    // 严格归一的兜底：把外来 tool_call id 重写成上游认得的形状（关键，否则凡是
-    // 回放别家签发 id 的工具历史都 500），并降级具名 tool_choice、json 型
-    // response_format、n>1、结尾 assistant 等它拒收的形状（实测矩阵见
-    // openai-compat-payload.ts）。
-    // 仅 deepseek 系需要：glm/kimi/qwen/MiniMax 实测原生接受这些形状，payload
-    // 保持原样。
+    // 对 DeepSeek 严格后端：先拒绝无法保留语义的参数/尾部 assistant，让路由
+    // 尝试其它 target；外来 tool_call id 则确定性改写并保持 tool 配对。
+    const strictBackend = isStrictOpenAICompatBackend(
+      "lobsterai-native",
+      target.upstreamModelId,
+    )
+    const unsupportedReason =
+      strictBackend ?
+        strictBackendUnsupportedReason(upstreamPayload)
+      : undefined
+    if (unsupportedReason) {
+      throw new LocalPayloadUnsupportedError(unsupportedReason)
+    }
     const strictRewrites =
-      isStrictOpenAICompatBackend("lobsterai-native", target.upstreamModelId) ?
+      strictBackend ?
         applyStrictBackendNormalization(upstreamPayload)
       : undefined
-    if (
-      strictRewrites
-      && (strictRewrites.toolCallIdsRewritten > 0
-        || strictRewrites.trailingAssistantDropped
-        || strictRewrites.toolChoiceDegraded
-        || strictRewrites.responseFormatDropped
-        || strictRewrites.choiceCountClamped)
-    ) {
+    if (strictRewrites && strictRewrites.toolCallIdsRewritten > 0) {
       logger.debug("[lobsterai] strict backend rewrites:", strictRewrites)
     }
 
+    const accessToken = await ensureLobsteraiAccessToken(connection, credential)
     const response = await fetch(
       `${lobsteraiServerRoot(connection)}${CHAT_PATH}`,
       {
         method: "POST",
-        headers: buildLobsteraiHeaders(connection, credential),
+        headers: buildLobsteraiHeaders(connection, {
+          ...credential,
+          value: accessToken ?? credential.value,
+        }),
         body: JSON.stringify(upstreamPayload),
         signal,
       },
