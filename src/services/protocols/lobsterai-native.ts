@@ -19,7 +19,6 @@
 
 import type {
   ChatCompletionResponse,
-  ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/copilot/create-chat-completions"
 
@@ -39,6 +38,7 @@ import {
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
 
+import { normalizeOpenAICompatChatPayload } from "./openai-compat-payload"
 import { aggregateSseToResponse } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
@@ -218,11 +218,18 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
     signal,
   }) {
     // 后端恒定流式：强制 stream: true，非流式请求稍后本地聚合。
-    const upstreamPayload: ChatCompletionsPayload = {
+    //
+    // 通用归一化（克隆 + 角色/tool_choice/image_url/空 content/tool 配对）
+    // 对 LobsterAI 的 deepseek 系后端是必需的：上游对 `developer` 角色、
+    // tool_choice 对象形式、image_url 字符串形态、`content: null` 的 assistant
+    // 消息、以及任何 tool_call↔tool 配对断裂都只回一个笼统的
+    // `{"code":500,"message":"服务器内部错误"}`。详见
+    // openai-compat-payload.ts 文件头记录的实测矩阵。
+    const upstreamPayload = normalizeOpenAICompatChatPayload({
       ...payload,
       model: target.upstreamModelId,
       stream: true,
-    }
+    })
 
     const response = await fetch(
       `${lobsteraiServerRoot(connection)}${CHAT_PATH}`,

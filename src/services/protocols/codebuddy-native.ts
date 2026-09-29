@@ -11,13 +11,14 @@
  * 3. 模型发现走 /v3/config（而非标准 /v1/models），返回 CodeBuddy 专属模型列表。
  * 4. 请求体兼容改写：tool_choice 归一化（上游该字段是 string，对象形式 400）、
  *    max_completion_tokens→max_tokens、image_url 字符串→对象、tool_call↔tool
- *    孤儿配对清理、deepseek 系 thinking 注入与 reasoning_content 回填。
+ *    孤儿配对清理、developer→system、空 assistant content，以及 deepseek 系
+ *    thinking 注入与 reasoning_content 回填。前六项与 LobsterAI 上游共用，
+ *    已抽到 openai-compat-payload.ts；这里只保留 CodeBuddy 特有的部分。
  */
 
 import { createHash, randomUUID } from "node:crypto"
 
 import type {
-  ChatCompletionsPayload,
   CopilotStreamEvent,
   Message,
 } from "~/services/copilot/create-chat-completions"
@@ -45,6 +46,7 @@ import {
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
 
+import { normalizeOpenAICompatChatPayload } from "./openai-compat-payload"
 import { aggregateSseToResponse, type SseChunk } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
@@ -462,210 +464,10 @@ function sanitizeCodebuddyPayload(obj: unknown): void {
   }
 }
 
-// ── 模型厂商推断 ──────────────────────────────────────────────────────
-
-/**
- * CodeBuddy 上游不支持 OpenAI 新版 `developer` 角色，直接返回 11128
- *（Illegal API invocation from an unapproved channel）。实测 `system`
- * 可正常通过，这里统一归一化为 `system`。
- */
-function normalizeCodebuddyRoles(
-  messages: ChatCompletionsPayload["messages"],
-): void {
-  for (const message of messages) {
-    if (message.role === "developer") {
-      message.role = "system"
-    }
-  }
-}
-
-// ── 请求体字段归一化 ────────────────────────────────────────────────
-
-/**
- * 上游 tool_choice 字段是 string 类型，OpenAI 对象形式会 400（code=11101）。
- *   - "none" / {"type":"none"} → 删 tool_choice + 删 tools/functions
- *   - {"type":"auto"/"required"} → 字符串 "auto"/"required"
- *   - {"type":"function","function":{"name":"x"}} → 字符串 "x"
- *   - 其他对象/非标量 → 删 tool_choice
- */
-function normalizeCodebuddyToolChoice(payload: Record<string, unknown>): void {
-  if (!("tool_choice" in payload)) return
-  const suppressTools = () => {
-    delete payload.tools
-    delete payload.functions
-  }
-  const tc = payload.tool_choice
-  if (typeof tc === "string") {
-    if (tc.trim().toLowerCase() === "none") {
-      delete payload.tool_choice
-      suppressTools()
-    }
-    return
-  }
-  if (tc && typeof tc === "object") {
-    const v = tc as Record<string, unknown>
-    const typ = typeof v.type === "string" ? v.type.trim().toLowerCase() : ""
-    switch (typ) {
-      case "none": {
-        delete payload.tool_choice
-        suppressTools()
-        return
-      }
-      case "auto":
-      case "required": {
-        payload.tool_choice = typ
-        return
-      }
-      case "function": {
-        const fn = v.function as Record<string, unknown> | undefined
-        let name =
-          typeof fn?.name === "string" ? fn.name
-          : typeof v.name === "string" ? v.name
-          : ""
-        name = name.trim()
-        payload.tool_choice = name || "auto"
-        return
-      }
-      default: {
-        delete payload.tool_choice
-        return
-      }
-    }
-  }
-  delete payload.tool_choice
-}
-
-/**
- * OpenAI 新字段 max_completion_tokens → 上游只认的 max_tokens。
- * 别名透传会被上游忽略并回落默认输出上限，长输出任务被截断。
- * 显式 max_tokens 优先（别名只删不译）；0/null/负数/非数值不翻译。
- */
-function translateCodebuddyMaxTokens(payload: Record<string, unknown>): void {
-  if (!("max_completion_tokens" in payload)) return
-  const alias = payload.max_completion_tokens
-  delete payload.max_completion_tokens
-  if (payload.max_tokens != null) return
-  if (typeof alias === "number" && Number.isInteger(alias) && alias > 0) {
-    payload.max_tokens = alias
-  }
-}
-
-/**
- * 上游只认 image_url 对象形态 {"url": "..."}；部分客户端发字符串形态，
- * 原样透传会 400（code=11101）。仅做形状转换，不补默认值。
- */
-function normalizeCodebuddyImageUrls(messages: Array<Message>): void {
-  for (const msg of messages) {
-    if (!Array.isArray(msg.content)) continue
-    for (const part of msg.content as unknown as Array<
-      Record<string, unknown>
-    >) {
-      if (part?.type !== "image_url") continue
-      if (typeof part.image_url === "string" && part.image_url) {
-        part.image_url = { url: part.image_url }
-      }
-    }
-  }
-}
-
-// ── tool_call ↔ tool 配对修复 ────────────────────────────────────────
-
-/**
- * 把插在 assistant.tool_calls 与其 tool 结果之间的非 tool 消息挪到整组之后，
- * 保证同一批 tool_call 的结果在 wire 上连续。OpenAI 兼容协议要求 tool 结果
- * 紧跟 assistant，中间插任何消息（如 Codex 的 image_resize_notice）都算配对
- * 断裂，上游判 11148 并顶死整条会话。
- */
-function repackCodebuddyToolResults(messages: Array<Message>): Array<Message> {
-  if (messages.length < 3) return messages
-  const out: Array<Message> = []
-  let changed = false
-  let i = 0
-  while (i < messages.length) {
-    const m = messages[i]
-    if (m.role !== "assistant" || !m.tool_calls?.length) {
-      out.push(m)
-      i++
-      continue
-    }
-    const want = new Set(
-      m.tool_calls.map((tc) => tc.id).filter((id) => id !== ""),
-    )
-    out.push(m)
-    i++
-    const results: Array<Message> = []
-    const between: Array<Message> = []
-    let sawNonTool = false
-    while (i < messages.length) {
-      const mm = messages[i]
-      if (mm.role === "tool") {
-        if (!want.has(mm.tool_call_id ?? "")) break
-        results.push(mm)
-        if (sawNonTool) changed = true
-        i++
-        continue
-      }
-      if (results.length === 0) break
-      // 下一组 assistant.tool_calls 是新组头，不能当插入物吞掉。
-      if (mm.role === "assistant" && mm.tool_calls?.length) break
-      between.push(mm)
-      sawNonTool = true
-      i++
-    }
-    out.push(...results, ...between)
-  }
-  return changed ? out : messages
-}
-
-/**
- * 剔除无法配对的 tool_call 与 tool 结果。缺任一侧上游都 400 拒绝整个请求；
- * 工具执行失败后客户端把无结果的 tool_calls 持久化进历史并每次重放，
- * 导致之后每条消息都 400、整条会话报废。按 id 对称裁剪：只保留两侧齐全
- * 的配对，宁可丢一轮工具上下文也好过会话死亡。
- */
-function cleanupCodebuddyOrphanToolCalls(
-  messages: Array<Message>,
-): Array<Message> {
-  const callIDs = new Set<string>()
-  const resultIDs = new Set<string>()
-  for (const m of messages) {
-    if (m.role === "tool" && m.tool_call_id) {
-      resultIDs.add(m.tool_call_id)
-    } else if (m.role === "assistant" && m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        if (tc.id) callIDs.add(tc.id)
-      }
-    }
-  }
-  if (callIDs.size === 0 && resultIDs.size === 0) return messages
-
-  const keepCalls = new Set<string>()
-  for (const id of callIDs) {
-    if (resultIDs.has(id)) keepCalls.add(id)
-  }
-
-  let changed = false
-  for (const m of messages) {
-    if (m.role !== "assistant" || !m.tool_calls?.length) continue
-    const kept = m.tool_calls.filter((tc) => tc.id && keepCalls.has(tc.id))
-    if (kept.length === m.tool_calls.length) continue
-    changed = true
-    if (kept.length === 0) {
-      delete m.tool_calls
-    } else {
-      m.tool_calls = kept
-    }
-  }
-  const kept = messages.filter((m) => {
-    if (m.role !== "tool") return true
-    if (!keepCalls.has(m.tool_call_id ?? "")) {
-      changed = true
-      return false
-    }
-    return true
-  })
-  return changed ? kept : messages
-}
+// ── 通用请求体归一化 ────────────────────────────────────────────────
+// 角色、tool_choice 形状、image_url 形状、空 assistant content、tool 配对
+// 这些改写与 LobsterAI 上游共用，实现见 openai-compat-payload.ts（文件头
+// 记录了触发这些改写的实测矩阵）。这里只保留 CodeBuddy 特有的部分。
 
 // ── DeepSeek thinking 注入与 reasoning 回填 ──────────────────────────
 
@@ -849,33 +651,20 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     payload,
     signal,
   }) {
-    // CodeBuddy 后端只支持流式，强制 stream: true
-    const upstreamPayload: ChatCompletionsPayload = {
+    // CodeBuddy 后端只支持流式，强制 stream: true。
+    // 通用归一化（克隆 + 角色/tool_choice/image_url/空 content/tool 配对）
+    // 由共享模块完成，且不污染调用方用于 failover 的原始 payload。
+    const upstreamPayload = normalizeOpenAICompatChatPayload({
       ...payload,
-      messages: structuredClone(payload.messages),
-      ...(payload.tools ? { tools: structuredClone(payload.tools) } : {}),
       model: target.upstreamModelId,
       stream: true,
-    }
+    })
     const raw = upstreamPayload as unknown as Record<string, unknown>
 
-    // max_completion_tokens 别名 → max_tokens（上游只认后者）
-    translateCodebuddyMaxTokens(raw)
     // 官方 CLI 流式必发 stream_options，上游据此在末帧返回 usage
     if (raw.stream_options === undefined) {
       raw.stream_options = { include_usage: true }
     }
-    // tool_choice 对象形式上游 400（上游该字段是 string）
-    normalizeCodebuddyToolChoice(raw)
-    // developer 角色上游直接 11128 拦截，先归一化为 system
-    normalizeCodebuddyRoles(upstreamPayload.messages)
-    // image_url 字符串形态上游 400，归一化为 {"url": ...}
-    normalizeCodebuddyImageUrls(upstreamPayload.messages)
-    // tool_call↔tool 配对修复：先重排（插在结果中间的插入消息后移），
-    // 再按 id 对称裁剪孤儿，防坏历史让之后每条消息都 400/11148。
-    upstreamPayload.messages = cleanupCodebuddyOrphanToolCalls(
-      repackCodebuddyToolResults(upstreamPayload.messages),
-    )
     // deepseek 系：开思考需 thinking.type=enabled + effort 档位；
     // assistant 消息回填 reasoning_content/reasoning 过多轮校验。
     injectCodebuddyThinking(raw)

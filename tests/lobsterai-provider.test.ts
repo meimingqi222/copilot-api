@@ -315,6 +315,99 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
     })
   })
 
+  test("normalizes the upstream-rejected shapes without mutating the caller payload", async () => {
+    let sentBody: Record<string, unknown> | undefined
+    globalThis.fetch = mock((_url: string, init: { body: string }) => {
+      sentBody = JSON.parse(init.body) as Record<string, unknown>
+      return Promise.resolve(
+        sseResponse([
+          `data: ${JSON.stringify({
+            choices: [{ index: 0, delta: { content: "ok" } }],
+          })}\n\n`,
+          "data: [DONE]\n\n",
+        ]),
+      )
+    }) as unknown as typeof fetch
+
+    const toolCall = (id: string) => ({
+      id,
+      type: "function" as const,
+      function: { name: "get_time", arguments: "{}" },
+    })
+    const payload = {
+      model: "deepseek-flash",
+      stream: true,
+      max_completion_tokens: 4096,
+      tool_choice: { type: "function", function: { name: "get_time" } },
+      messages: [
+        { role: "developer", content: "be helpful" },
+        { role: "assistant", content: null },
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: "data:image/png;base64,xx" },
+          ],
+        },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall("c00"), toolCall("c01")],
+        },
+        { role: "tool", tool_call_id: "c00", content: "12:00" },
+        { role: "system", content: "image_resize_notice" },
+        { role: "tool", tool_call_id: "c01", content: "12:01" },
+        { role: "tool", tool_call_id: "orphan", content: "rx" },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: { name: "get_time", parameters: { type: "object" } },
+        },
+      ],
+    }
+    const original = structuredClone(payload)
+
+    await lobsteraiNativeAdapter.createChatCompletions?.({
+      target,
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: payload as never,
+    })
+
+    // failover 会重放调用方的原始 payload，归一化不得原地改写它。
+    expect(payload).toEqual(original)
+
+    const msgs = sentBody?.messages as Array<{
+      role: string
+      content: unknown
+      tool_call_id?: string
+      tool_calls?: Array<{ id: string }>
+    }>
+    // developer→system；空 assistant 补 ""；插入消息后移；孤儿结果剔除。
+    expect(msgs.map((m) => m.role)).toEqual([
+      "system",
+      "assistant",
+      "user",
+      "assistant",
+      "tool",
+      "tool",
+      "system",
+    ])
+    expect(msgs[0]?.content).toBe("be helpful")
+    expect(msgs[1]?.content).toBe("")
+    expect(
+      (msgs[2]?.content as Array<{ image_url: unknown }>)[0]?.image_url,
+    ).toEqual({ url: "data:image/png;base64,xx" })
+    expect(msgs[4]?.tool_call_id).toBe("c00")
+    expect(msgs[5]?.tool_call_id).toBe("c01")
+
+    // 上游只认 max_tokens；max_completion_tokens 会被静默忽略。
+    expect(sentBody?.max_completion_tokens).toBeUndefined()
+    expect(sentBody?.max_tokens).toBe(4096)
+    // 上游 tool_choice 只认字符串。
+    expect(sentBody?.tool_choice).toBe("get_time")
+  })
+
   test("passes the SSE stream through for a streaming request", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve(
