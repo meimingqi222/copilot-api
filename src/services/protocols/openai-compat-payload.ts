@@ -279,6 +279,243 @@ export function pruneCompatOrphanToolCalls(
   return changed ? kept : messages
 }
 
+// ── 严格后端降级与工具历史摊平（LobsterAI 的 deepseek 系） ─────────
+
+/**
+ * 严格后端实测矩阵（2026-09-29，直连 LobsterAI 上游
+ * `/api/proxy/v1/chat/completions` 复现，同一 token）：
+ *
+ * | 形状 | deepseek-flash | glm/kimi/qwen 系 |
+ * | ---- | -------------- | ---------------- |
+ * | 具名 tool_choice（对象形态或裸 name 字符串） | 500 | 200 |
+ * | `tool_choice: "required"` | 500 | 200 |
+ * | response_format: json_object / json_schema | 500 | 200 |
+ * | `n > 1` | 500 | 200 |
+ * | 历史回放非本后端签发的 tool_call id | 500（0.9s 校验型） | 200 |
+ * | 声明了非空 `tools` 且末尾（跳过尾部 system）是 assistant | 500 | 200 |
+ *
+ * 最后一条是根因：deepseek-flash 后端**会话状态绑定**，只认自己签发过的
+ * tool_call id。A/B 实测：同一段两轮工具对话，仅把 tool_call id 换成本后端
+ * 上一轮返回的值 → 200；换成 CodeBuddy / Command Code 签发的 id → 500
+ * `{"code":500,"message":"服务器内部错误"}`。多供应商故障转移必然回放别家
+ * 签发的 id，所以不摊平就必然 500，并连带 30s 凭证冷却（随后同一模型直接
+ * 429 "all providers are temporarily rate-limited"）。
+ *
+ * 摊平后（assistant 文本说明调用 + tool 结果并入 user 消息）同一段历史实测
+ * 200。CodeBuddy 对以上四种形状全部接受（同日实测 200），故这些降级只在严格
+ * 后端调用，不并入通用归一化。
+ */
+
+export interface StrictBackendRewriteReport {
+  /** 被摊平的 assistant.tool_calls / tool 结果消息条数。 */
+  flattenedToolMessages: number
+  /** 因"声明 tools 时末尾不得是 assistant"而丢弃的尾部 assistant 条数。 */
+  trailingAssistantDropped: number
+  toolChoiceDegraded: boolean
+  responseFormatDropped: boolean
+  choiceCountClamped: boolean
+}
+
+/**
+ * 具名 / `required` 的 `tool_choice` 一律降为 `"auto"`。
+ *
+ * deepseek-flash 只认 `auto` / `none` / 缺省：具名（对象或裸字符串）与
+ * `required` 都回笼统 500。裸字符串形态恰恰是 `normalizeCompatToolChoice`
+ * 的产物（对象 → 裸 name），所以严格后端必须在通用归一化之后再降一级。
+ */
+export function degradeStrictCompatToolChoice(
+  payload: Record<string, unknown>,
+): boolean {
+  const toolChoice = payload.tool_choice
+  if (toolChoice === undefined) return false
+  if (typeof toolChoice === "string") {
+    const value = toolChoice.trim().toLowerCase()
+    // `none` 已由通用归一化删掉（连同 tools），`auto` 本就合法。
+    if (value === "auto" || value === "none") return false
+    payload.tool_choice = "auto"
+    return true
+  }
+  // 对象或其它形态：通用归一化已覆盖，这里兜底。
+  payload.tool_choice = "auto"
+  return true
+}
+
+/** 删除严格后端不认的 json 型 `response_format`（`text` 形态保留）。 */
+export function dropStrictCompatResponseFormat(
+  payload: Record<string, unknown>,
+): boolean {
+  const responseFormat = payload.response_format
+  if (!responseFormat || typeof responseFormat !== "object") return false
+  const type = (responseFormat as Record<string, unknown>).type
+  const value = typeof type === "string" ? type.trim().toLowerCase() : ""
+  if (value !== "json_object" && value !== "json_schema") return false
+  delete payload.response_format
+  return true
+}
+
+/** `n > 1` 对严格后端是 500；删掉字段回落上游默认（1）。 */
+export function clampStrictCompatChoiceCount(
+  payload: Record<string, unknown>,
+): boolean {
+  const n = payload.n
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 1) return false
+  delete payload.n
+  return true
+}
+
+/** 把 content 部件里的文本拼起来（无文本时返回空串）。 */
+function compatTextFromContent(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  const texts: Array<string> = []
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue
+    const text = (part as Record<string, unknown>).text
+    if (typeof text === "string") texts.push(text)
+  }
+  return texts.join("\n")
+}
+
+/** 把一次 tool_call 渲染成一行可读文本，id 一并保留便于对照日志。 */
+function compatToolCallSummary(call: Record<string, unknown>): string {
+  const fn = call.function as Record<string, unknown> | undefined
+  const name =
+    typeof fn?.name === "string" && fn.name ? fn.name
+    : typeof call.name === "string" && call.name ? call.name
+    : "tool"
+  const args = typeof fn?.arguments === "string" ? fn.arguments : ""
+  const id = typeof call.id === "string" ? call.id : ""
+  return `[tool_call${id ? ` id=${id}` : ""}] ${name}(${args})`
+}
+
+/**
+ * 把工具轮次摊平成纯文本：`assistant.tool_calls` → assistant 文本摘要，
+ * `role: "tool"` 结果 → user 文本（保留图片部件）。返回改写的消息条数。
+ *
+ * 文本化而不是删除：工具调用的语义（调了什么、返回了什么）对后续推理仍然
+ * 有用，只是不能再以结构化 id 形态回放给会话状态绑定的后端。
+ */
+export function flattenStrictToolHistory(messages: Array<Message>): number {
+  let rewritten = 0
+  for (const message of messages) {
+    const loose = message as unknown as Record<string, unknown>
+    if (message.role === "assistant" && message.tool_calls?.length) {
+      const text = (
+        message.tool_calls as unknown as Array<Record<string, unknown>>
+      )
+        .map(compatToolCallSummary)
+        .join("\n")
+      if (Array.isArray(message.content)) {
+        ;(message.content as unknown as Array<Record<string, unknown>>).push({
+          type: "text",
+          text,
+        })
+      } else {
+        const existing = compatTextFromContent(message.content)
+        message.content = existing.trim() ? `${existing}\n${text}` : text
+      }
+      delete message.tool_calls
+      rewritten++
+      continue
+    }
+    // 宽松读取：Message 的 role 联合类型不含历史遗留的 "function"。
+    const role = loose.role
+    if (role !== "tool" && role !== "function") continue
+    const label =
+      typeof loose.name === "string" && loose.name ? loose.name
+      : typeof loose.tool_call_id === "string" && loose.tool_call_id ?
+        loose.tool_call_id
+      : "tool"
+    const prefix = `[tool_result ${label}]`
+    if (Array.isArray(message.content)) {
+      ;(message.content as unknown as Array<Record<string, unknown>>).unshift({
+        type: "text",
+        text: prefix,
+      })
+    } else {
+      const text = compatTextFromContent(message.content)
+      message.content = text ? `${prefix} ${text}` : prefix
+    }
+    loose.role = "user"
+    delete loose.tool_call_id
+    delete loose.name
+    rewritten++
+  }
+  return rewritten
+}
+
+/**
+ * 对一个"严格后端"目标一次性施加全部降级，返回改写报告。
+ *
+ * 只应由会话状态绑定 / 参数挑剔的后端（当前仅 LobsterAI 的 deepseek 系）调用。
+ */
+/**
+ * 声明了非空 `tools` 时，丢掉结尾的 assistant 消息（跳过尾部 system）。
+ *
+ * 实测（同一 token 直连 LobsterAI deepseek-flash）：
+ *
+ * | 消息序列 + `tools` | 结果 |
+ * | ------------------ | ---- |
+ * | `[user, assistant]`（内容空或非空） | 500 |
+ * | `[user, assistant, system]` | 500 |
+ * | `[user, assistant, assistant]` | 500 |
+ * | `[user, assistant, user]` / `[user]` / `[user, system]` | 200 |
+ * | `[system]`（无 user）、`tools: []`、无 `tools`、老式 `functions` | 200 |
+ *
+ * 也就是说：只要声明了工具，末尾（跳过尾部 system）就不能是 assistant。
+ * 结尾 assistant 只有两种来路：孤儿 tool_calls 被裁剪后留下的空占位，或客户端
+ * 发起的 prefill/续写（后端本就不支持）。丢掉它之后模型会接着上一条 user 消息
+ * 作答，总好过整条请求 500。**不会**把 messages 清空——只剩一条 assistant 时保留。
+ */
+export function dropTrailingAssistantForStrictTools(
+  payload: Record<string, unknown>,
+): number {
+  const tools = payload.tools
+  if (!Array.isArray(tools) || tools.length === 0) return 0
+  const messages = payload.messages as
+    | Array<Record<string, unknown>>
+    | undefined
+  if (!Array.isArray(messages) || messages.length === 0) return 0
+
+  const dropIndexes: Array<number> = []
+  let index = messages.length - 1
+  while (index >= 0) {
+    const role = messages[index]?.role
+    // 尾部 system 不参与判定（实测 `[user, system]` + tools 正常）。
+    if (role === "system") {
+      index--
+      continue
+    }
+    if (role !== "assistant") break
+    dropIndexes.push(index)
+    index--
+  }
+  // 至少给上游留一条消息，避免空 messages 触发另一种拒绝。
+  while (dropIndexes.length > 0 && dropIndexes.length >= messages.length) {
+    dropIndexes.pop()
+  }
+  for (const dropIndex of dropIndexes) {
+    messages.splice(dropIndex, 1)
+  }
+  return dropIndexes.length
+}
+
+export function applyStrictBackendNormalization(
+  payload: ChatCompletionsPayload,
+): StrictBackendRewriteReport {
+  const raw = payload as unknown as Record<string, unknown>
+  const flattenedToolMessages = flattenStrictToolHistory(payload.messages)
+  return {
+    flattenedToolMessages,
+    // 顺序要紧：摊平会把 tool 结果变成 user 消息，从而改变"末尾是不是
+    // assistant"的判定，所以放在摊平之后。
+    trailingAssistantDropped: dropTrailingAssistantForStrictTools(raw),
+    toolChoiceDegraded: degradeStrictCompatToolChoice(raw),
+    responseFormatDropped: dropStrictCompatResponseFormat(raw),
+    choiceCountClamped: clampStrictCompatChoiceCount(raw),
+  }
+}
+
 // ── 编排 ────────────────────────────────────────────────────────────
 
 /**
@@ -307,6 +544,11 @@ export function normalizeOpenAICompatChatPayload(
   normalized.messages = pruneCompatOrphanToolCalls(
     repackCompatToolResults(normalized.messages),
   )
+  // 顺序陷阱：裁剪孤儿 tool_calls 会把 assistant 还原成"`content: null` 且无
+  // tool_calls"，而上面的补空步骤跑在裁剪之前，于是漏掉这一类（严格后端对它
+  // 同样回 500）。客户端把工具执行失败/中断后的无结果 tool_calls 持久化进历史
+  // 并每次重放，正好走这条路径，所以裁剪后必须再补一次（幂等）。
+  fillCompatNullAssistantContent(normalized.messages)
   return normalized
 }
 

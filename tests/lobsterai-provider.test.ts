@@ -383,14 +383,15 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
       tool_call_id?: string
       tool_calls?: Array<{ id: string }>
     }>
-    // developer→system；空 assistant 补 ""；插入消息后移；孤儿结果剔除。
+    // developer→system；空 assistant 补 ""；插入消息后移；孤儿结果剔除；
+    // 最后工具轮次摊平成文本（严格后端只认自己签发的 tool_call id）。
     expect(msgs.map((m) => m.role)).toEqual([
       "system",
       "assistant",
       "user",
       "assistant",
-      "tool",
-      "tool",
+      "user",
+      "user",
       "system",
     ])
     expect(msgs[0]?.content).toBe("be helpful")
@@ -398,14 +399,19 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
     expect(
       (msgs[2]?.content as Array<{ image_url: unknown }>)[0]?.image_url,
     ).toEqual({ url: "data:image/png;base64,xx" })
-    expect(msgs[4]?.tool_call_id).toBe("c00")
-    expect(msgs[5]?.tool_call_id).toBe("c01")
+    expect(msgs[3]?.tool_calls).toBeUndefined()
+    expect(msgs[3]?.content).toBe(
+      "[tool_call id=c00] get_time({})\n[tool_call id=c01] get_time({})",
+    )
+    expect(msgs[4]?.tool_call_id).toBeUndefined()
+    expect(msgs[4]?.content).toBe("[tool_result c00] 12:00")
+    expect(msgs[5]?.content).toBe("[tool_result c01] 12:01")
 
     // 上游只认 max_tokens；max_completion_tokens 会被静默忽略。
     expect(sentBody?.max_completion_tokens).toBeUndefined()
     expect(sentBody?.max_tokens).toBe(4096)
-    // 上游 tool_choice 只认字符串。
-    expect(sentBody?.tool_choice).toBe("get_time")
+    // 具名 tool_choice 在严格后端回 500（同日的裸字符串同样 500）：降为 auto。
+    expect(sentBody?.tool_choice).toBe("auto")
   })
 
   test("passes the SSE stream through for a streaming request", async () => {

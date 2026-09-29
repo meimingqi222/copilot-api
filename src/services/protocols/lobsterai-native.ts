@@ -23,6 +23,7 @@ import type {
 } from "~/services/copilot/create-chat-completions"
 
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import {
   type ApiCredential,
   type ModelMapping,
@@ -38,7 +39,10 @@ import {
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
 
-import { normalizeOpenAICompatChatPayload } from "./openai-compat-payload"
+import {
+  applyStrictBackendNormalization,
+  normalizeOpenAICompatChatPayload,
+} from "./openai-compat-payload"
 import { aggregateSseToResponse } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
@@ -230,6 +234,20 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
       model: target.upstreamModelId,
       stream: true,
     })
+
+    // 会话状态绑定 + 严格参数的兜底降级：回放非本后端签发的 tool_call id、具名
+    // tool_choice、json 型 response_format、n>1 都只回一个笼统的
+    // `{"code":500,"message":"服务器内部错误"}`（实测矩阵见
+    // openai-compat-payload.ts）。摊平成文本后同一段历史实测 200。
+    const strictRewrites = applyStrictBackendNormalization(upstreamPayload)
+    if (
+      strictRewrites.flattenedToolMessages
+      || strictRewrites.toolChoiceDegraded
+      || strictRewrites.responseFormatDropped
+      || strictRewrites.choiceCountClamped
+    ) {
+      logger.debug("[lobsterai] strict backend rewrites:", strictRewrites)
+    }
 
     const response = await fetch(
       `${lobsteraiServerRoot(connection)}${CHAT_PATH}`,

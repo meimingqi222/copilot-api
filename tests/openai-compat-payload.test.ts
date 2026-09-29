@@ -10,7 +10,13 @@ import { describe, expect, test } from "bun:test"
 import type { Message } from "~/services/copilot/create-chat-completions"
 
 import {
+  applyStrictBackendNormalization,
+  clampStrictCompatChoiceCount,
+  degradeStrictCompatToolChoice,
+  dropStrictCompatResponseFormat,
+  dropTrailingAssistantForStrictTools,
   fillCompatNullAssistantContent,
+  flattenStrictToolHistory,
   normalizeCompatImageUrls,
   normalizeCompatRoles,
   normalizeCompatToolChoice,
@@ -423,6 +429,31 @@ describe("normalizeOpenAICompatChatPayload", () => {
     expect(raw.stream).toBe(false)
   })
 
+  test("backfills null assistant content after orphan pruning", () => {
+    // 工具执行失败/中断后，客户端把"无结果"的 tool_calls 持久化进历史并每次
+    // 重放：裁剪掉这些调用后，assistant 会停在 `content: null` 且没有
+    // tool_calls —— 严格后端（LobsterAI 的 deepseek 系）对它回 500。
+    const payload = {
+      model: "deepseek-flash",
+      messages: [
+        msg({ role: "user", content: "go" }),
+        msg({
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall("c1")],
+        }),
+        msg({ role: "tool", tool_call_id: "orphan", content: "rx" }),
+      ],
+    }
+    const out = normalizeOpenAICompatChatPayload(
+      payload as unknown as Parameters<
+        typeof normalizeOpenAICompatChatPayload
+      >[0],
+    )
+    expect(out.messages.map((m) => m.role)).toEqual(["user", "assistant"])
+    expect((out.messages[1] as { content: unknown }).content).toBe("")
+  })
+
   test("leaves an already-clean payload structurally identical", () => {
     const payload = {
       model: "glm-5.2",
@@ -438,5 +469,220 @@ describe("normalizeOpenAICompatChatPayload", () => {
     )
     expect(out.messages).toEqual(payload.messages)
     expect("tools" in out).toBe(false)
+  })
+})
+
+describe("flattenStrictToolHistory", () => {
+  test("turns assistant tool_calls and tool results into text", () => {
+    const messages = [
+      msg({ role: "user", content: "read config.yaml" }),
+      msg({
+        role: "assistant",
+        content: null,
+        tool_calls: [toolCall("call_00_FOREIGNxyz", "read")],
+      }),
+      msg({
+        role: "tool",
+        tool_call_id: "call_00_FOREIGNxyz",
+        name: "read",
+        content: "port: 4141",
+      }),
+    ]
+    expect(flattenStrictToolHistory(messages)).toBe(2)
+    // 不再回放任何 tool_call id（严格后端只认自己签发的 id）。
+    expect(messages[1].tool_calls).toBeUndefined()
+    expect(String(messages[1].content)).toContain("call_00_FOREIGNxyz")
+    expect(String(messages[1].content)).toContain("read(")
+    expect(messages[1].role).toBe("assistant")
+    // tool 结果降级为 user 文本，id 字段一并清掉。
+    expect(messages[2].role).toBe("user")
+    expect(messages[2].tool_call_id).toBeUndefined()
+    expect(String(messages[2].content)).toBe("[tool_result read] port: 4141")
+  })
+
+  test("keeps existing assistant text and image parts", () => {
+    const image = {
+      type: "image_url" as const,
+      image_url: { url: "data:image/png;base64,AA" },
+    }
+    const textPart = (text: string) => ({ type: "text" as const, text })
+    const withText = msg({
+      role: "assistant",
+      content: "here you go",
+      tool_calls: [toolCall("c1", "read")],
+    })
+    const withParts = msg({
+      role: "assistant",
+      content: [image],
+      tool_calls: [toolCall("c2", "read")],
+    })
+    const toolWithParts = msg({
+      role: "tool",
+      tool_call_id: "c2",
+      content: [image],
+    })
+    expect(flattenStrictToolHistory([withText, withParts, toolWithParts])).toBe(
+      3,
+    )
+    expect(String(withText.content)).toBe(
+      "here you go\n[tool_call id=c1] read({})",
+    )
+    expect(withParts.content).toEqual([
+      image,
+      textPart("[tool_call id=c2] read({})"),
+    ])
+    expect(toolWithParts.content).toEqual([textPart("[tool_result c2]"), image])
+    expect(toolWithParts.role).toBe("user")
+  })
+
+  test("is a no-op when there is no tool history", () => {
+    const messages = [
+      msg({ role: "system", content: "s" }),
+      msg({ role: "user", content: "u" }),
+    ]
+    expect(flattenStrictToolHistory(messages)).toBe(0)
+    expect(messages[1].content).toBe("u")
+  })
+})
+
+describe("strict backend parameter degradations", () => {
+  test("degrades named and required tool_choice to auto", () => {
+    for (const toolChoice of [
+      "get_time",
+      "required",
+      { type: "function", function: { name: "get_time" } },
+    ]) {
+      const payload: Record<string, unknown> = { tool_choice: toolChoice }
+      expect(degradeStrictCompatToolChoice(payload)).toBe(true)
+      expect(payload.tool_choice).toBe("auto")
+    }
+    const auto: Record<string, unknown> = { tool_choice: "auto" }
+    expect(degradeStrictCompatToolChoice(auto)).toBe(false)
+    expect(auto.tool_choice).toBe("auto")
+    const absent: Record<string, unknown> = {}
+    expect(degradeStrictCompatToolChoice(absent)).toBe(false)
+  })
+
+  test("drops only json response_format", () => {
+    const json: Record<string, unknown> = {
+      response_format: { type: "json_object" },
+    }
+    expect(dropStrictCompatResponseFormat(json)).toBe(true)
+    expect("response_format" in json).toBe(false)
+
+    const schema: Record<string, unknown> = {
+      response_format: { type: "json_schema", json_schema: { name: "x" } },
+    }
+    expect(dropStrictCompatResponseFormat(schema)).toBe(true)
+
+    const text: Record<string, unknown> = { response_format: { type: "text" } }
+    expect(dropStrictCompatResponseFormat(text)).toBe(false)
+    expect(text.response_format).toEqual({ type: "text" })
+  })
+
+  test("clamps n>1 to the upstream default", () => {
+    const n2: Record<string, unknown> = { n: 2 }
+    expect(clampStrictCompatChoiceCount(n2)).toBe(true)
+    expect("n" in n2).toBe(false)
+    const n1: Record<string, unknown> = { n: 1 }
+    expect(clampStrictCompatChoiceCount(n1)).toBe(false)
+    expect(n1.n).toBe(1)
+  })
+
+  test("applyStrictBackendNormalization reports every rewrite at once", () => {
+    const payload = {
+      model: "deepseek-flash",
+      stream: true,
+      n: 2,
+      response_format: { type: "json_object" },
+      tool_choice: { type: "function", function: { name: "get_time" } },
+      messages: [
+        msg({ role: "user", content: "u" }),
+        msg({ role: "assistant", content: null, tool_calls: [toolCall("c1")] }),
+        msg({ role: "tool", tool_call_id: "c1", content: "r" }),
+      ],
+    } as unknown as Parameters<typeof applyStrictBackendNormalization>[0]
+    const report = applyStrictBackendNormalization(payload)
+    expect(report).toEqual({
+      flattenedToolMessages: 2,
+      trailingAssistantDropped: 0,
+      toolChoiceDegraded: true,
+      responseFormatDropped: true,
+      choiceCountClamped: true,
+    })
+    const raw = payload as unknown as Record<string, unknown>
+    expect(raw.tool_choice).toBe("auto")
+    expect("response_format" in raw).toBe(false)
+    expect("n" in raw).toBe(false)
+    expect(raw.messages).toEqual([
+      { role: "user", content: "u" },
+      { role: "assistant", content: "[tool_call id=c1] get_time({})" },
+      { role: "user", content: "[tool_result c1] r" },
+    ])
+  })
+})
+
+describe("dropTrailingAssistantForStrictTools", () => {
+  const tools = [
+    {
+      type: "function",
+      function: { name: "read", parameters: { type: "object" } },
+    },
+  ]
+  const run = (messages: Array<Record<string, unknown>>, withTools = true) => {
+    const payload: Record<string, unknown> = { messages }
+    if (withTools) payload.tools = tools
+    const dropped = dropTrailingAssistantForStrictTools(payload)
+    return { dropped, roles: messages.map((m) => m.role) }
+  }
+
+  test("drops a trailing assistant when tools are declared", () => {
+    expect(
+      run([
+        { role: "user", content: "u" },
+        { role: "assistant", content: "" },
+      ]),
+    ).toEqual({ dropped: 1, roles: ["user"] })
+    expect(
+      run([
+        { role: "user", content: "u" },
+        { role: "assistant", content: "ok" },
+      ]),
+    ).toEqual({ dropped: 1, roles: ["user"] })
+  })
+
+  test("skips trailing system messages when judging the tail", () => {
+    expect(
+      run([
+        { role: "user", content: "u" },
+        { role: "assistant", content: "ok" },
+        { role: "system", content: "s" },
+      ]),
+    ).toEqual({ dropped: 1, roles: ["user", "system"] })
+    // 末尾是 user：不动。
+    expect(
+      run([
+        { role: "user", content: "u" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "more" },
+      ]),
+    ).toEqual({ dropped: 0, roles: ["user", "assistant", "user"] })
+  })
+
+  test("is a no-op without a non-empty tools array", () => {
+    const messages = [
+      { role: "user", content: "u" },
+      { role: "assistant", content: "ok" },
+    ]
+    expect(run(structuredClone(messages), false).dropped).toBe(0)
+    const emptyTools: Record<string, unknown> = { messages, tools: [] }
+    expect(dropTrailingAssistantForStrictTools(emptyTools)).toBe(0)
+  })
+
+  test("never empties the message list", () => {
+    expect(run([{ role: "assistant", content: "ok" }])).toEqual({
+      dropped: 0,
+      roles: ["assistant"],
+    })
   })
 })
