@@ -16,11 +16,11 @@ import {
   dropStrictCompatResponseFormat,
   dropTrailingAssistantForStrictTools,
   fillCompatNullAssistantContent,
-  flattenStrictToolHistory,
   normalizeCompatImageUrls,
   normalizeCompatRoles,
   normalizeCompatToolChoice,
   normalizeOpenAICompatChatPayload,
+  payloadHasToolCalling,
   pruneCompatOrphanToolCalls,
   repackCompatToolResults,
   translateCompatMaxCompletionTokens,
@@ -472,79 +472,6 @@ describe("normalizeOpenAICompatChatPayload", () => {
   })
 })
 
-describe("flattenStrictToolHistory", () => {
-  test("turns assistant tool_calls and tool results into text", () => {
-    const messages = [
-      msg({ role: "user", content: "read config.yaml" }),
-      msg({
-        role: "assistant",
-        content: null,
-        tool_calls: [toolCall("call_00_FOREIGNxyz", "read")],
-      }),
-      msg({
-        role: "tool",
-        tool_call_id: "call_00_FOREIGNxyz",
-        name: "read",
-        content: "port: 4141",
-      }),
-    ]
-    expect(flattenStrictToolHistory(messages)).toBe(2)
-    // 不再回放任何 tool_call id（严格后端只认自己签发的 id）。
-    expect(messages[1].tool_calls).toBeUndefined()
-    expect(String(messages[1].content)).toContain("call_00_FOREIGNxyz")
-    expect(String(messages[1].content)).toContain("read(")
-    expect(messages[1].role).toBe("assistant")
-    // tool 结果降级为 user 文本，id 字段一并清掉。
-    expect(messages[2].role).toBe("user")
-    expect(messages[2].tool_call_id).toBeUndefined()
-    expect(String(messages[2].content)).toBe("[tool_result read] port: 4141")
-  })
-
-  test("keeps existing assistant text and image parts", () => {
-    const image = {
-      type: "image_url" as const,
-      image_url: { url: "data:image/png;base64,AA" },
-    }
-    const textPart = (text: string) => ({ type: "text" as const, text })
-    const withText = msg({
-      role: "assistant",
-      content: "here you go",
-      tool_calls: [toolCall("c1", "read")],
-    })
-    const withParts = msg({
-      role: "assistant",
-      content: [image],
-      tool_calls: [toolCall("c2", "read")],
-    })
-    const toolWithParts = msg({
-      role: "tool",
-      tool_call_id: "c2",
-      content: [image],
-    })
-    expect(flattenStrictToolHistory([withText, withParts, toolWithParts])).toBe(
-      3,
-    )
-    expect(String(withText.content)).toBe(
-      "here you go\n[tool_call id=c1] read({})",
-    )
-    expect(withParts.content).toEqual([
-      image,
-      textPart("[tool_call id=c2] read({})"),
-    ])
-    expect(toolWithParts.content).toEqual([textPart("[tool_result c2]"), image])
-    expect(toolWithParts.role).toBe("user")
-  })
-
-  test("is a no-op when there is no tool history", () => {
-    const messages = [
-      msg({ role: "system", content: "s" }),
-      msg({ role: "user", content: "u" }),
-    ]
-    expect(flattenStrictToolHistory(messages)).toBe(0)
-    expect(messages[1].content).toBe("u")
-  })
-})
-
 describe("strict backend parameter degradations", () => {
   test("degrades named and required tool_choice to auto", () => {
     for (const toolChoice of [
@@ -604,7 +531,6 @@ describe("strict backend parameter degradations", () => {
     } as unknown as Parameters<typeof applyStrictBackendNormalization>[0]
     const report = applyStrictBackendNormalization(payload)
     expect(report).toEqual({
-      flattenedToolMessages: 2,
       trailingAssistantDropped: 0,
       toolChoiceDegraded: true,
       responseFormatDropped: true,
@@ -614,10 +540,11 @@ describe("strict backend parameter degradations", () => {
     expect(raw.tool_choice).toBe("auto")
     expect("response_format" in raw).toBe(false)
     expect("n" in raw).toBe(false)
+    // 工具历史保持结构化：严格后端不再改写历史（带工具的请求在路由层被跳过）。
     expect(raw.messages).toEqual([
       { role: "user", content: "u" },
-      { role: "assistant", content: "[tool_call id=c1] get_time({})" },
-      { role: "user", content: "[tool_result c1] r" },
+      { role: "assistant", content: null, tool_calls: [toolCall("c1")] },
+      { role: "tool", tool_call_id: "c1", content: "r" },
     ])
   })
 })
@@ -684,5 +611,49 @@ describe("dropTrailingAssistantForStrictTools", () => {
       dropped: 0,
       roles: ["assistant"],
     })
+  })
+})
+
+describe("payloadHasToolCalling", () => {
+  test("detects declared tools, declared functions and tool history", () => {
+    expect(payloadHasToolCalling({ messages: [], tools: [{}] })).toBe(true)
+    expect(payloadHasToolCalling({ messages: [], functions: [{}] })).toBe(true)
+    expect(payloadHasToolCalling({ messages: [], tools: [] })).toBe(false)
+    expect(
+      payloadHasToolCalling({
+        messages: [msg({ role: "user", content: "u" })],
+        tools: [],
+      }),
+    ).toBe(false)
+    expect(
+      payloadHasToolCalling({
+        messages: [msg({ role: "tool", tool_call_id: "c1", content: "r" })],
+      }),
+    ).toBe(true)
+    expect(
+      payloadHasToolCalling({
+        messages: [
+          msg({
+            role: "assistant",
+            content: null,
+            tool_calls: [toolCall("c1")],
+          }),
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  test("is false for plain chat payloads and non-objects", () => {
+    expect(
+      payloadHasToolCalling({
+        messages: [
+          msg({ role: "system", content: "s" }),
+          msg({ role: "user", content: "hi" }),
+        ],
+      }),
+    ).toBe(false)
+    expect(payloadHasToolCalling(undefined)).toBe(false)
+    expect(payloadHasToolCalling(null)).toBe(false)
+    expect(payloadHasToolCalling("hi")).toBe(false)
   })
 })

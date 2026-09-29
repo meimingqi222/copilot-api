@@ -39,6 +39,7 @@ import {
   type ModelMapping,
   type ProviderConnection,
   type RouteTarget,
+  rejectsReplayedToolHistory,
 } from "~/lib/provider-connections"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
@@ -79,6 +80,12 @@ export interface BuildRouteTargetsOptions {
   accountPrefix?: string
   /** Restrict candidates to the scope of a matched global alias rule. */
   aliasRestriction?: ModelAliasRestriction
+  /**
+   * 请求携带工具调用 / 工具历史（见 payloadHasToolCalling）：跳过"会话状态
+   * 绑定"的后端（见 rejectsReplayedToolHistory）。显式 pin 了 connectionId 时
+   * 不过滤，尊重调用方的显式意图。
+   */
+  requireStructuredTools?: boolean
   /**
    * 压缩请求：只保留上游原生支持 `/responses/compact` 的协议
    * （supportsCompactEndpoint），且跳过一切翻译 target——compact
@@ -205,6 +212,16 @@ export function buildRouteTargets(
             matchesConnectionModel(connection, model, options.publicModelId)
           : matchesPublicModelId(model, options.publicModelId)
         if (!matched) continue
+      }
+
+      // 带工具调用的请求跳过会话状态绑定的后端（LobsterAI 的 deepseek 系）：
+      // 它们只认自己签发的 tool_call id，回放别家 id 一律 500。
+      if (
+        options.requireStructuredTools
+        && !options.connectionId
+        && rejectsReplayedToolHistory(connection.protocol, model.upstreamId)
+      ) {
+        continue
       }
 
       for (const credential of credentials) {

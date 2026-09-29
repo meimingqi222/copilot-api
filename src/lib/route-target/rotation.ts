@@ -35,7 +35,16 @@ export function switchToNextRouteTarget(
   modelId: string,
   endpoint: ModelEndpoint,
   exclude: Set<string>,
-  session?: { sessionId?: string; fallbackSessionId?: string },
+  session?: {
+    sessionId?: string
+    fallbackSessionId?: string
+    /**
+     * 准入层的 "需要结构化工具调用" 判定：failover 重建候选时必须同样跳过
+     * 会话状态绑定的后端，否则工具请求仍可能在轮转后落到它们身上（实测
+     * codebuddy 429 后 failover 选中了 lobsterai deepseek）。
+     */
+    requireStructuredTools?: boolean
+  },
 ): RouteTarget | null {
   const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
@@ -44,6 +53,7 @@ export function switchToNextRouteTarget(
     publicModelId: routing.modelId,
     aliasRestriction: routing.aliasRestriction,
     endpoint,
+    requireStructuredTools: session?.requireStructuredTools,
   })
   return selectRouteTarget(candidates, {
     exclude,

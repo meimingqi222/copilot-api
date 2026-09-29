@@ -11,6 +11,7 @@ import type {
 
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
+import { payloadHasToolCalling } from "~/services/protocols/openai-compat-payload"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { logger } from "~/lib/logger"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
@@ -123,6 +124,9 @@ export async function prepareRequestAdmission(
     aliasRestriction: routing.aliasRestriction,
     endpoint: options.endpoint,
     compact: options.compact,
+    // 带工具调用/工具历史的请求不发给会话状态绑定的严格后端（LobsterAI 的
+    // deepseek 系）——它只认自己签发的 tool_call id。
+    requireStructuredTools: payloadHasToolCalling(options.sessionPayload),
   })
 
   const sessionIds = extractSessionIds({

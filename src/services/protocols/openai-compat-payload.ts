@@ -307,8 +307,6 @@ export function pruneCompatOrphanToolCalls(
  */
 
 export interface StrictBackendRewriteReport {
-  /** 被摊平的 assistant.tool_calls / tool 结果消息条数。 */
-  flattenedToolMessages: number
   /** 因"声明 tools 时末尾不得是 assistant"而丢弃的尾部 assistant 条数。 */
   trailingAssistantDropped: number
   toolChoiceDegraded: boolean
@@ -363,110 +361,6 @@ export function clampStrictCompatChoiceCount(
   return true
 }
 
-/** 把 content 部件里的文本拼起来（无文本时返回空串）。 */
-function compatTextFromContent(content: unknown): string {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  const texts: Array<string> = []
-  for (const part of content) {
-    if (!part || typeof part !== "object") continue
-    const text = (part as Record<string, unknown>).text
-    if (typeof text === "string") texts.push(text)
-  }
-  return texts.join("\n")
-}
-
-/** 把一次 tool_call 渲染成一行可读文本，id 一并保留便于对照日志。 */
-function compatToolCallSummary(call: Record<string, unknown>): string {
-  const fn = call.function as Record<string, unknown> | undefined
-  const name =
-    typeof fn?.name === "string" && fn.name ? fn.name
-    : typeof call.name === "string" && call.name ? call.name
-    : "tool"
-  const args = typeof fn?.arguments === "string" ? fn.arguments : ""
-  const id = typeof call.id === "string" ? call.id : ""
-  return `[tool_call${id ? ` id=${id}` : ""}] ${name}(${args})`
-}
-
-/**
- * 把工具轮次摊平成纯文本：`assistant.tool_calls` → assistant 文本摘要，
- * `role: "tool"` 结果 → user 文本（保留图片部件）。返回改写的消息条数。
- *
- * 文本化而不是删除：工具调用的语义（调了什么、返回了什么）对后续推理仍然
- * 有用，只是不能再以结构化 id 形态回放给会话状态绑定的后端。
- */
-export function flattenStrictToolHistory(messages: Array<Message>): number {
-  let rewritten = 0
-  for (const message of messages) {
-    const loose = message as unknown as Record<string, unknown>
-    if (message.role === "assistant" && message.tool_calls?.length) {
-      const text = (
-        message.tool_calls as unknown as Array<Record<string, unknown>>
-      )
-        .map(compatToolCallSummary)
-        .join("\n")
-      if (Array.isArray(message.content)) {
-        ;(message.content as unknown as Array<Record<string, unknown>>).push({
-          type: "text",
-          text,
-        })
-      } else {
-        const existing = compatTextFromContent(message.content)
-        message.content = existing.trim() ? `${existing}\n${text}` : text
-      }
-      delete message.tool_calls
-      rewritten++
-      continue
-    }
-    // 宽松读取：Message 的 role 联合类型不含历史遗留的 "function"。
-    const role = loose.role
-    if (role !== "tool" && role !== "function") continue
-    const label =
-      typeof loose.name === "string" && loose.name ? loose.name
-      : typeof loose.tool_call_id === "string" && loose.tool_call_id ?
-        loose.tool_call_id
-      : "tool"
-    const prefix = `[tool_result ${label}]`
-    if (Array.isArray(message.content)) {
-      ;(message.content as unknown as Array<Record<string, unknown>>).unshift({
-        type: "text",
-        text: prefix,
-      })
-    } else {
-      const text = compatTextFromContent(message.content)
-      message.content = text ? `${prefix} ${text}` : prefix
-    }
-    loose.role = "user"
-    delete loose.tool_call_id
-    delete loose.name
-    rewritten++
-  }
-  return rewritten
-}
-
-/**
- * 对一个"严格后端"目标一次性施加全部降级，返回改写报告。
- *
- * 只应由会话状态绑定 / 参数挑剔的后端（当前仅 LobsterAI 的 deepseek 系）调用。
- */
-/**
- * 声明了非空 `tools` 时，丢掉结尾的 assistant 消息（跳过尾部 system）。
- *
- * 实测（同一 token 直连 LobsterAI deepseek-flash）：
- *
- * | 消息序列 + `tools` | 结果 |
- * | ------------------ | ---- |
- * | `[user, assistant]`（内容空或非空） | 500 |
- * | `[user, assistant, system]` | 500 |
- * | `[user, assistant, assistant]` | 500 |
- * | `[user, assistant, user]` / `[user]` / `[user, system]` | 200 |
- * | `[system]`（无 user）、`tools: []`、无 `tools`、老式 `functions` | 200 |
- *
- * 也就是说：只要声明了工具，末尾（跳过尾部 system）就不能是 assistant。
- * 结尾 assistant 只有两种来路：孤儿 tool_calls 被裁剪后留下的空占位，或客户端
- * 发起的 prefill/续写（后端本就不支持）。丢掉它之后模型会接着上一条 user 消息
- * 作答，总好过整条请求 500。**不会**把 messages 清空——只剩一条 assistant 时保留。
- */
 export function dropTrailingAssistantForStrictTools(
   payload: Record<string, unknown>,
 ): number {
@@ -504,11 +398,7 @@ export function applyStrictBackendNormalization(
   payload: ChatCompletionsPayload,
 ): StrictBackendRewriteReport {
   const raw = payload as unknown as Record<string, unknown>
-  const flattenedToolMessages = flattenStrictToolHistory(payload.messages)
   return {
-    flattenedToolMessages,
-    // 顺序要紧：摊平会把 tool 结果变成 user 消息，从而改变"末尾是不是
-    // assistant"的判定，所以放在摊平之后。
     trailingAssistantDropped: dropTrailingAssistantForStrictTools(raw),
     toolChoiceDegraded: degradeStrictCompatToolChoice(raw),
     responseFormatDropped: dropStrictCompatResponseFormat(raw),
@@ -951,4 +841,32 @@ export async function inlineCompatImageReferences(
   }
 
   return { inlined, degraded }
+}
+
+/**
+ * 请求是否携带工具调用：声明了非空 `tools`/`functions`，或历史里已有
+ * `tool_calls` / `tool`(function) 结果消息。
+ *
+ * 路由用：这类请求不能交给会话状态绑定的后端（`rejectsReplayedToolHistory`）——
+ * 它只认自己签发过的 tool_call id，回放别家 id 一律 5xx；而把工具历史改写成
+ * 文本又会让模型模仿出 "[tool_call ...]" 的假约定，直接把工具调用写成文本。
+ */
+export function payloadHasToolCalling(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false
+  const raw = payload as Record<string, unknown>
+  for (const key of ["tools", "functions"]) {
+    const value = raw[key]
+    if (Array.isArray(value) && value.length > 0) return true
+  }
+  const messages = raw.messages
+  if (!Array.isArray(messages)) return false
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue
+    const entry = message as Record<string, unknown>
+    const role = typeof entry.role === "string" ? entry.role : ""
+    if (role === "tool" || role === "function") return true
+    if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0)
+      return true
+  }
+  return false
 }

@@ -100,6 +100,25 @@ const COMPACT_CAPABLE_PROTOCOLS: ReadonlySet<ProviderProtocol> = new Set([
   "xai-native",
 ])
 
+/**
+ * 会话状态绑定的后端：只认自己签发过的 tool_call id，历史里回放别家签发的 id
+ * 一律 5xx。LobsterAI 的 deepseek 系实测如此：同一段两轮工具对话，仅替换
+ * tool_call_id（原生 → 200，外来 → 500 "服务器内部错误"，0.9s 即回）。
+ *
+ * 这类 target 不能接带工具调用的请求：摊平成文本会让模型学会 "[tool_call ...]"
+ * 这种假约定，把工具调用直接写成文本（实测 Hermes 会话经该后端后丢结构化
+ * tool_calls）。路由层直接跳过，交给能原生支持结构化工具调用的 provider。
+ */
+export function rejectsReplayedToolHistory(
+  protocol: ProviderProtocol,
+  upstreamModelId: string,
+): boolean {
+  return (
+    protocol === "lobsterai-native"
+    && /^deepseek/i.test((upstreamModelId ?? "").trim())
+  )
+}
+
 export function supportsCompactEndpoint(protocol: ProviderProtocol): boolean {
   return COMPACT_CAPABLE_PROTOCOLS.has(protocol)
 }

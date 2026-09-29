@@ -383,15 +383,16 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
       tool_call_id?: string
       tool_calls?: Array<{ id: string }>
     }>
-    // developer→system；空 assistant 补 ""；插入消息后移；孤儿结果剔除；
-    // 最后工具轮次摊平成文本（严格后端只认自己签发的 tool_call id）。
+    // developer→system；空 assistant 补 ""；插入消息后移；孤儿结果剔除。
+    // 工具历史保持结构化：带工具调用的请求在路由层就绕开了这类会话状态绑定的
+    // 后端（见 rejectsReplayedToolHistory），adapter 不再改写历史。
     expect(msgs.map((m) => m.role)).toEqual([
       "system",
       "assistant",
       "user",
       "assistant",
-      "user",
-      "user",
+      "tool",
+      "tool",
       "system",
     ])
     expect(msgs[0]?.content).toBe("be helpful")
@@ -399,19 +400,52 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
     expect(
       (msgs[2]?.content as Array<{ image_url: unknown }>)[0]?.image_url,
     ).toEqual({ url: "data:image/png;base64,xx" })
-    expect(msgs[3]?.tool_calls).toBeUndefined()
-    expect(msgs[3]?.content).toBe(
-      "[tool_call id=c00] get_time({})\n[tool_call id=c01] get_time({})",
-    )
-    expect(msgs[4]?.tool_call_id).toBeUndefined()
-    expect(msgs[4]?.content).toBe("[tool_result c00] 12:00")
-    expect(msgs[5]?.content).toBe("[tool_result c01] 12:01")
+    expect(msgs[4]?.tool_call_id).toBe("c00")
+    expect(msgs[5]?.tool_call_id).toBe("c01")
 
     // 上游只认 max_tokens；max_completion_tokens 会被静默忽略。
     expect(sentBody?.max_completion_tokens).toBeUndefined()
     expect(sentBody?.max_tokens).toBe(4096)
     // 具名 tool_choice 在严格后端回 500（同日的裸字符串同样 500）：降为 auto。
     expect(sentBody?.tool_choice).toBe("auto")
+  })
+
+  test("leaves non-deepseek lobsterai models on the lenient path", async () => {
+    // glm/kimi/qwen/MiniMax 系实测原生接受具名 tool_choice、外来 tool_call id
+    // 与结尾 assistant：只跑通用归一化，不做严格后端降级。
+    let sentBody: Record<string, unknown> | undefined
+    globalThis.fetch = mock((_url: string, init: { body: string }) => {
+      sentBody = JSON.parse(init.body) as Record<string, unknown>
+      return Promise.resolve(
+        sseResponse([
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "ok" } }] })}\n\n`,
+          "data: [DONE]\n\n",
+        ]),
+      )
+    }) as unknown as typeof fetch
+
+    const payload = {
+      model: "glm-5.3-flashx",
+      stream: true,
+      tool_choice: { type: "function", function: { name: "get_time" } },
+      messages: [
+        { role: "user", content: "u" },
+        { role: "assistant", content: "ok" },
+      ],
+    }
+    await lobsteraiNativeAdapter.createChatCompletions?.({
+      target: { upstreamModelId: "glm-5.3-flashx" } as never,
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: payload as never,
+    })
+
+    // 具名 tool_choice 原样保留（对象形态由通用归一化转成裸字符串）。
+    expect(sentBody?.tool_choice).toBe("get_time")
+    // 结尾 assistant 不被丢弃（只有严格后端要求末尾非 assistant）。
+    expect(
+      (sentBody?.messages as Array<{ role: string }>).map((m) => m.role),
+    ).toEqual(["user", "assistant"])
   })
 
   test("passes the SSE stream through for a streaming request", async () => {

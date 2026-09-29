@@ -25,6 +25,7 @@ import type {
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
+  rejectsReplayedToolHistory,
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
@@ -239,12 +240,18 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
     // tool_choice、json 型 response_format、n>1 都只回一个笼统的
     // `{"code":500,"message":"服务器内部错误"}`（实测矩阵见
     // openai-compat-payload.ts）。摊平成文本后同一段历史实测 200。
-    const strictRewrites = applyStrictBackendNormalization(upstreamPayload)
+    // 仅 deepseek 系后端需要降级：glm/kimi/qwen/MiniMax 实测原生接受具名
+    // tool_choice、外来 tool_call id 与结尾 assistant，payload 不必改。
+    const strictRewrites =
+      rejectsReplayedToolHistory("lobsterai-native", target.upstreamModelId) ?
+        applyStrictBackendNormalization(upstreamPayload)
+      : undefined
     if (
-      strictRewrites.flattenedToolMessages
-      || strictRewrites.toolChoiceDegraded
-      || strictRewrites.responseFormatDropped
-      || strictRewrites.choiceCountClamped
+      strictRewrites
+      && (strictRewrites.trailingAssistantDropped
+        || strictRewrites.toolChoiceDegraded
+        || strictRewrites.responseFormatDropped
+        || strictRewrites.choiceCountClamped)
     ) {
       logger.debug("[lobsterai] strict backend rewrites:", strictRewrites)
     }
