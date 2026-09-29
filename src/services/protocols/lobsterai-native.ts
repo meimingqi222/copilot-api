@@ -25,7 +25,7 @@ import type {
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
-  rejectsReplayedToolHistory,
+  isStrictOpenAICompatBackend,
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
@@ -236,19 +236,20 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
       stream: true,
     })
 
-    // 会话状态绑定 + 严格参数的兜底降级：回放非本后端签发的 tool_call id、具名
-    // tool_choice、json 型 response_format、n>1 都只回一个笼统的
-    // `{"code":500,"message":"服务器内部错误"}`（实测矩阵见
-    // openai-compat-payload.ts）。摊平成文本后同一段历史实测 200。
-    // 仅 deepseek 系后端需要降级：glm/kimi/qwen/MiniMax 实测原生接受具名
-    // tool_choice、外来 tool_call id 与结尾 assistant，payload 不必改。
+    // 严格归一的兜底：把外来 tool_call id 重写成上游认得的形状（关键，否则凡是
+    // 回放别家签发 id 的工具历史都 500），并降级具名 tool_choice、json 型
+    // response_format、n>1、结尾 assistant 等它拒收的形状（实测矩阵见
+    // openai-compat-payload.ts）。
+    // 仅 deepseek 系需要：glm/kimi/qwen/MiniMax 实测原生接受这些形状，payload
+    // 保持原样。
     const strictRewrites =
-      rejectsReplayedToolHistory("lobsterai-native", target.upstreamModelId) ?
+      isStrictOpenAICompatBackend("lobsterai-native", target.upstreamModelId) ?
         applyStrictBackendNormalization(upstreamPayload)
       : undefined
     if (
       strictRewrites
-      && (strictRewrites.trailingAssistantDropped
+      && (strictRewrites.toolCallIdsRewritten > 0
+        || strictRewrites.trailingAssistantDropped
         || strictRewrites.toolChoiceDegraded
         || strictRewrites.responseFormatDropped
         || strictRewrites.choiceCountClamped)

@@ -51,7 +51,6 @@ import {
 } from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { isAbortError, safeOrigin, shouldFailover } from "~/lib/utils"
-import { payloadHasToolCalling } from "~/services/protocols/openai-compat-payload"
 import {
   isCodebuddyModelRateLimit,
   recordCodebuddyModelCooldown,
@@ -158,8 +157,6 @@ export async function executeWithFailover<
       {
         sessionId: current.sessionId,
         fallbackSessionId: current.fallbackSessionId,
-        // 工具请求在 failover 时同样不能落到会话状态绑定的后端。
-        requireStructuredTools: payloadHasToolCalling(payload),
       },
     )
     if (!next) return false

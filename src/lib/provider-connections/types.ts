@@ -101,15 +101,21 @@ const COMPACT_CAPABLE_PROTOCOLS: ReadonlySet<ProviderProtocol> = new Set([
 ])
 
 /**
- * 会话状态绑定的后端：只认自己签发过的 tool_call id，历史里回放别家签发的 id
- * 一律 5xx。LobsterAI 的 deepseek 系实测如此：同一段两轮工具对话，仅替换
- * tool_call_id（原生 → 200，外来 → 500 "服务器内部错误"，0.9s 即回）。
+ * LobsterAI 的 deepseek 系后端对 OpenAI 兼容 payload 格外挑剔，需要额外的严格
+ * 归一化（applyStrictBackendNormalization）。直连上游逐项实测（同一账号、同一
+ * payload 只改一处）：
  *
- * 这类 target 不能接带工具调用的请求：摊平成文本会让模型学会 "[tool_call ...]"
- * 这种假约定，把工具调用直接写成文本（实测 Hermes 会话经该后端后丢结构化
- * tool_calls）。路由层直接跳过，交给能原生支持结构化工具调用的 provider。
+ * - 非自家形状的 `tool_call_id`：它无条件接受自家 `call_<n>_ET_…` 形状，外来 id
+ *   回 500 "服务器内部错误"；按此形状确定性重写后 10/10 通过（含同轮多调用、
+ *   多轮回放、它自己签发的 id 重写后回放）。
+ * - 具名 / `required` 的 tool_choice、`n > 1`、json 型 response_format、
+ *   裸字符串 image_url、role=developer、孤儿 tool 结果、声明 tools 时末尾为
+ *   assistant → 均 500。
+ * - 同一 payload 复测偶见 200（上游有滚动发布），故每项都按"曾 500"处理。
+ *
+ * glm/kimi/qwen/MiniMax 等其余模型对上述形状照收，不做归一化。
  */
-export function rejectsReplayedToolHistory(
+export function isStrictOpenAICompatBackend(
   protocol: ProviderProtocol,
   upstreamModelId: string,
 ): boolean {

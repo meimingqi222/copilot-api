@@ -20,9 +20,10 @@ import {
   normalizeCompatRoles,
   normalizeCompatToolChoice,
   normalizeOpenAICompatChatPayload,
-  payloadHasToolCalling,
+  normalizeStrictToolCallIds,
   pruneCompatOrphanToolCalls,
   repackCompatToolResults,
+  strictToolCallId,
   translateCompatMaxCompletionTokens,
 } from "~/services/protocols/openai-compat-payload"
 
@@ -531,6 +532,7 @@ describe("strict backend parameter degradations", () => {
     } as unknown as Parameters<typeof applyStrictBackendNormalization>[0]
     const report = applyStrictBackendNormalization(payload)
     expect(report).toEqual({
+      toolCallIdsRewritten: 2,
       trailingAssistantDropped: 0,
       toolChoiceDegraded: true,
       responseFormatDropped: true,
@@ -540,12 +542,15 @@ describe("strict backend parameter degradations", () => {
     expect(raw.tool_choice).toBe("auto")
     expect("response_format" in raw).toBe(false)
     expect("n" in raw).toBe(false)
-    // 工具历史保持结构化：严格后端不再改写历史（带工具的请求在路由层被跳过）。
-    expect(raw.messages).toEqual([
-      { role: "user", content: "u" },
-      { role: "assistant", content: null, tool_calls: [toolCall("c1")] },
-      { role: "tool", tool_call_id: "c1", content: "r" },
-    ])
+    // 工具历史保持结构化，只把 id 换成上游认得的形状（配对一致）。
+    const messages = raw.messages as Array<Record<string, unknown>>
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool"])
+    const rewrittenId = strictToolCallId("c1")
+    expect(rewrittenId.startsWith("call_00_ET_")).toBe(true)
+    expect((messages[1]?.tool_calls as Array<{ id: string }>)[0]?.id).toBe(
+      rewrittenId,
+    )
+    expect(messages[2]?.tool_call_id).toBe(rewrittenId)
   })
 })
 
@@ -614,46 +619,61 @@ describe("dropTrailingAssistantForStrictTools", () => {
   })
 })
 
-describe("payloadHasToolCalling", () => {
-  test("detects declared tools, declared functions and tool history", () => {
-    expect(payloadHasToolCalling({ messages: [], tools: [{}] })).toBe(true)
-    expect(payloadHasToolCalling({ messages: [], functions: [{}] })).toBe(true)
-    expect(payloadHasToolCalling({ messages: [], tools: [] })).toBe(false)
-    expect(
-      payloadHasToolCalling({
-        messages: [msg({ role: "user", content: "u" })],
-        tools: [],
-      }),
-    ).toBe(false)
-    expect(
-      payloadHasToolCalling({
-        messages: [msg({ role: "tool", tool_call_id: "c1", content: "r" })],
-      }),
-    ).toBe(true)
-    expect(
-      payloadHasToolCalling({
-        messages: [
-          msg({
-            role: "assistant",
-            content: null,
-            tool_calls: [toolCall("c1")],
-          }),
-        ],
-      }),
-    ).toBe(true)
+describe("normalizeStrictToolCallIds", () => {
+  test("重写外来 id，并保持 assistant/tool 配对一致", () => {
+    const payload = {
+      messages: [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall("toolu_01Abc"), toolCall("call_zzz")],
+        },
+        { role: "tool", tool_call_id: "toolu_01Abc", content: "1" },
+        { role: "tool", tool_call_id: "call_zzz", content: "2" },
+      ],
+    } as unknown as Record<string, unknown>
+
+    expect(normalizeStrictToolCallIds(payload)).toBe(4)
+
+    const messages = payload.messages as Array<Record<string, unknown>>
+    const ids = (messages[0]?.tool_calls as Array<{ id: string }>).map(
+      (call) => call.id,
+    )
+    expect(ids.every((id) => id.startsWith("call_00_ET_"))).toBe(true)
+    expect(ids[0]).not.toBe(ids[1])
+    expect(messages[1]?.tool_call_id).toBe(ids[0])
+    expect(messages[2]?.tool_call_id).toBe(ids[1])
   })
 
-  test("is false for plain chat payloads and non-objects", () => {
+  test("确定性：同一原始 id 永远映射到同一新 id", () => {
+    const once = strictToolCallId("call_00_FOREIGNxyz")
+    expect(strictToolCallId("call_00_FOREIGNxyz")).toBe(once)
+    expect(strictToolCallId("call_00_FOREIGNxyz")).toBe(once)
+    expect(strictToolCallId("toolu_other")).not.toBe(once)
+  })
+
+  test("已是上游形状的 id 原样保留、不计入重写数", () => {
+    const payload = {
+      messages: [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [toolCall("call_00_ET_abc123")],
+        },
+        { role: "tool", tool_call_id: "call_00_ET_abc123", content: "1" },
+      ],
+    } as unknown as Record<string, unknown>
+    expect(normalizeStrictToolCallIds(payload)).toBe(0)
+    const messages = payload.messages as Array<Record<string, unknown>>
+    expect((messages[0]?.tool_calls as Array<{ id: string }>)[0]?.id).toBe(
+      "call_00_ET_abc123",
+    )
+  })
+
+  test("无 messages / 怪形状不抛错", () => {
+    expect(normalizeStrictToolCallIds({})).toBe(0)
     expect(
-      payloadHasToolCalling({
-        messages: [
-          msg({ role: "system", content: "s" }),
-          msg({ role: "user", content: "hi" }),
-        ],
-      }),
-    ).toBe(false)
-    expect(payloadHasToolCalling(undefined)).toBe(false)
-    expect(payloadHasToolCalling(null)).toBe(false)
-    expect(payloadHasToolCalling("hi")).toBe(false)
+      normalizeStrictToolCallIds({ messages: [null, "x", { role: "user" }] }),
+    ).toBe(0)
   })
 })

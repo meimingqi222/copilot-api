@@ -384,8 +384,8 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
       tool_calls?: Array<{ id: string }>
     }>
     // developer→system；空 assistant 补 ""；插入消息后移；孤儿结果剔除。
-    // 工具历史保持结构化：带工具调用的请求在路由层就绕开了这类会话状态绑定的
-    // 后端（见 rejectsReplayedToolHistory），adapter 不再改写历史。
+    // 工具历史保持结构化，只把外来 tool_call id 重写成上游认得的形状，且
+    // assistant↔tool 配对保持一致（这是它肯接工具调用的前提）。
     expect(msgs.map((m) => m.role)).toEqual([
       "system",
       "assistant",
@@ -400,8 +400,11 @@ describe("lobsteraiNativeAdapter.createChatCompletions", () => {
     expect(
       (msgs[2]?.content as Array<{ image_url: unknown }>)[0]?.image_url,
     ).toEqual({ url: "data:image/png;base64,xx" })
-    expect(msgs[4]?.tool_call_id).toBe("c00")
-    expect(msgs[5]?.tool_call_id).toBe("c01")
+    const calls = msgs[3]?.tool_calls ?? []
+    expect(calls.length).toBe(2)
+    expect(calls.every((c) => c.id.startsWith("call_00_ET_"))).toBe(true)
+    expect(msgs[4]?.tool_call_id).toBe(calls[0]?.id)
+    expect(msgs[5]?.tool_call_id).toBe(calls[1]?.id)
 
     // 上游只认 max_tokens；max_completion_tokens 会被静默忽略。
     expect(sentBody?.max_completion_tokens).toBeUndefined()

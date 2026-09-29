@@ -33,6 +33,7 @@
  * 因此这里**不按模型名 gate**，一律归一化。
  */
 
+import { createHash } from "node:crypto"
 import { lookup } from "node:dns/promises"
 import { readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -307,6 +308,8 @@ export function pruneCompatOrphanToolCalls(
  */
 
 export interface StrictBackendRewriteReport {
+  /** 重写为上游可接受形状（`call_<n>_ET_…`）的 tool_call id 个数。 */
+  toolCallIdsRewritten: number
   /** 因"声明 tools 时末尾不得是 assistant"而丢弃的尾部 assistant 条数。 */
   trailingAssistantDropped: number
   toolChoiceDegraded: boolean
@@ -394,11 +397,73 @@ export function dropTrailingAssistantForStrictTools(
   return dropIndexes.length
 }
 
+/**
+ * 上游自己签发的 tool_call id 的标记段。
+ *
+ * 直连上游实测：`call_<n>_ET_…` 形状的 id 被无条件接受（随机生成、前缀数字改成
+ * `call_11`、大写化、缩短到 20 字符都通过），而不含该标记的外来 id（
+ * `toolu_…`、`call_00_FOREIGNxyz`、同账号别的模型签发的 id）一律回
+ * `{"code":500,"message":"服务器内部错误"}`——它只对自己签发的 id 走缓存路径。
+ */
+const STRICT_TOOL_ID_PATTERN = /^call_\d+_ET_/i
+
+/**
+ * 由原始 id 确定性派生一个上游认得的 tool_call id。
+ *
+ * 用摘要而不是随机数：同一条历史里的 `assistant.tool_calls[].id` 与
+ * `tool.tool_call_id` 必须映射到同一个新 id、跨轮重发也要稳定，否则配对断裂会
+ * 换来另一个 500。
+ */
+export function strictToolCallId(original: string): string {
+  const trimmed = original.trim()
+  if (STRICT_TOOL_ID_PATTERN.test(trimmed)) return trimmed
+  const hex = createHash("sha256").update(trimmed).digest("hex").slice(0, 24)
+  return `call_00_ET_${hex}`
+}
+
+/**
+ * 把历史里上游不认的 tool_call id 重写成它认得的形状（见 strictToolCallId）。
+ *
+ * 这是让 LobsterAI 的 deepseek 系真正能接工具调用的关键一步：不重写则凡是
+ * 回放别家签发的 id 的历史都 500（多供应商轮转下必然发生），重写后 10/10 通过
+ * （含同轮多工具调用、多轮回放、以及它自己签发的 id 重写后回放）。
+ */
+export function normalizeStrictToolCallIds(
+  payload: Record<string, unknown>,
+): number {
+  const messages = payload.messages
+  if (!Array.isArray(messages)) return 0
+  let rewritten = 0
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue
+    const entry = message as Record<string, unknown>
+    if (Array.isArray(entry.tool_calls)) {
+      for (const call of entry.tool_calls) {
+        if (!call || typeof call !== "object") continue
+        const toolCall = call as Record<string, unknown>
+        if (typeof toolCall.id !== "string") continue
+        const next = strictToolCallId(toolCall.id)
+        if (next === toolCall.id) continue
+        toolCall.id = next
+        rewritten += 1
+      }
+    }
+    if (entry.role === "tool" && typeof entry.tool_call_id === "string") {
+      const next = strictToolCallId(entry.tool_call_id)
+      if (next === entry.tool_call_id) continue
+      entry.tool_call_id = next
+      rewritten += 1
+    }
+  }
+  return rewritten
+}
+
 export function applyStrictBackendNormalization(
   payload: ChatCompletionsPayload,
 ): StrictBackendRewriteReport {
   const raw = payload as unknown as Record<string, unknown>
   return {
+    toolCallIdsRewritten: normalizeStrictToolCallIds(raw),
     trailingAssistantDropped: dropTrailingAssistantForStrictTools(raw),
     toolChoiceDegraded: degradeStrictCompatToolChoice(raw),
     responseFormatDropped: dropStrictCompatResponseFormat(raw),
@@ -841,32 +906,4 @@ export async function inlineCompatImageReferences(
   }
 
   return { inlined, degraded }
-}
-
-/**
- * 请求是否携带工具调用：声明了非空 `tools`/`functions`，或历史里已有
- * `tool_calls` / `tool`(function) 结果消息。
- *
- * 路由用：这类请求不能交给会话状态绑定的后端（`rejectsReplayedToolHistory`）——
- * 它只认自己签发过的 tool_call id，回放别家 id 一律 5xx；而把工具历史改写成
- * 文本又会让模型模仿出 "[tool_call ...]" 的假约定，直接把工具调用写成文本。
- */
-export function payloadHasToolCalling(payload: unknown): boolean {
-  if (!payload || typeof payload !== "object") return false
-  const raw = payload as Record<string, unknown>
-  for (const key of ["tools", "functions"]) {
-    const value = raw[key]
-    if (Array.isArray(value) && value.length > 0) return true
-  }
-  const messages = raw.messages
-  if (!Array.isArray(messages)) return false
-  for (const message of messages) {
-    if (!message || typeof message !== "object") continue
-    const entry = message as Record<string, unknown>
-    const role = typeof entry.role === "string" ? entry.role : ""
-    if (role === "tool" || role === "function") return true
-    if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0)
-      return true
-  }
-  return false
 }
