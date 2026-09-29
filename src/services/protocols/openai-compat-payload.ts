@@ -33,6 +33,11 @@
  * 因此这里**不按模型名 gate**，一律归一化。
  */
 
+import { lookup } from "node:dns/promises"
+import { readFile, stat } from "node:fs/promises"
+import { homedir } from "node:os"
+import { isAbsolute, join, normalize } from "node:path"
+
 import type {
   ChatCompletionsPayload,
   Message,
@@ -303,4 +308,405 @@ export function normalizeOpenAICompatChatPayload(
     repackCompatToolResults(normalized.messages),
   )
   return normalized
+}
+
+// ── image_url 引用形态：内联，或降级为文本 ────────────────────────────
+
+/** 内联图片引用的字节上限，本地文件与远程响应共用。 */
+export const COMPAT_INLINE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+
+/** 远程取回的超时上限。 */
+export const COMPAT_INLINE_IMAGE_TIMEOUT_MS = 10_000
+
+/** 跟随重定向的跳数上限；每一跳都重新做地址检查。 */
+export const COMPAT_INLINE_IMAGE_MAX_REDIRECTS = 3
+
+const COMPAT_PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+const COMPAT_REDIRECT_STATUS = new Set([301, 302, 303, 307, 308])
+
+export interface InlineCompatImageOptions {
+  maxBytes?: number
+  /** 家目录，仅用于展开 `~`。 */
+  home?: string
+  /** 是否代客户端取回 `http(s)` 引用，默认 `true`。 */
+  remote?: boolean
+  /** 是否允许取回环回 / 私有 / 链路本地地址，默认 `false`。 */
+  allowPrivateHosts?: boolean
+  timeoutMs?: number
+  maxRedirects?: number
+  /** 注入用：HTTP 取回实现，默认全局 `fetch`。 */
+  fetch?: typeof globalThis.fetch
+  /** 注入用：主机名解析，默认 `node:dns/promises` 的 `lookup`。 */
+  lookup?: (hostname: string) => Promise<Array<string>>
+}
+
+export interface InlineCompatImageResult {
+  /** 变成内联字节的引用数量。 */
+  inlined: number
+  /** 变成文本占位（无法内联，但请求本身必须仍然成立）的数量。 */
+  degraded: number
+}
+
+/**
+ * 总开关：`COMPAT_INLINE_IMAGE_REFERENCES=0` 回到"逐字节透传"，也就是引用形态
+ * 重新以上游 400 收场。默认开启。
+ */
+export function compatImageReferenceInliningEnabled(): boolean {
+  return process.env.COMPAT_INLINE_IMAGE_REFERENCES !== "0"
+}
+
+function compatAsciiAt(
+  bytes: Uint8Array,
+  offset: number,
+  text: string,
+): boolean {
+  return [...text].every(
+    (character, index) => bytes[offset + index] === character.charCodeAt(0),
+  )
+}
+
+/**
+ * 按签名判断图片类型，只认上游确实接受的内联类型：PNG / JPEG / GIF / WebP。
+ * 这是**闸门**而不是校验器——它决定"要不要把这段字节读进请求体"，坏图由上游
+ * 自己拒绝。
+ */
+function detectCompatImageMimeType(bytes: Uint8Array): string | undefined {
+  if (
+    bytes[0] === 0xff
+    && bytes[1] === 0xd8
+    && bytes[2] === 0xff
+    && bytes[3] !== 0xf7
+  ) {
+    return "image/jpeg"
+  }
+  if (COMPAT_PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)) {
+    return "image/png"
+  }
+  if (compatAsciiAt(bytes, 0, "GIF87a") || compatAsciiAt(bytes, 0, "GIF89a")) {
+    return "image/gif"
+  }
+  if (compatAsciiAt(bytes, 0, "RIFF") && compatAsciiAt(bytes, 8, "WEBP")) {
+    return "image/webp"
+  }
+  return undefined
+}
+
+/**
+ * 私有 / 环回 / 链路本地 / CGNAT 地址判定，用于挡住"用图片 URL 探内网"。
+ * `169.254.0.0/16` 一并拒绝：云元数据服务就在那里。
+ */
+function isPrivateAddress(address: string): boolean {
+  if (address.includes(":")) {
+    const lower = address.toLowerCase()
+    if (lower === "::" || lower === "::1") return true
+    if (lower.startsWith("::ffff:")) return isPrivateAddress(lower.slice(7))
+    return (
+      lower.startsWith("fe80")
+      || lower.startsWith("fc")
+      || lower.startsWith("fd")
+    )
+  }
+  const [a, b] = address.split(".").map(Number)
+  if (a === undefined || b === undefined) return true
+  if (a === 0 || a === 10 || a === 127) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 169 && b === 254) return true
+  if (a === 100 && b >= 64 && b <= 127) return true
+  return false
+}
+
+async function compatDefaultLookup(hostname: string): Promise<Array<string>> {
+  const entries = await lookup(hostname, { all: true })
+  return entries.map((entry) => entry.address)
+}
+
+/**
+ * 引用字符串 → 本机路径，或 `undefined`（不是本地引用 / 无法定位）。
+ *
+ * 只接受能无歧义定位的形态：`file://`、POSIX 绝对路径、`~`、Windows 盘符路径。
+ * 相对路径与裸文件名**不**解析——那会按代理进程的 cwd 解释客户端发来的路径，
+ * 读到的可能是完全无关的同名文件。
+ */
+function compatLocalImagePath(url: string, home: string): string | undefined {
+  const trimmed = url.trim()
+  if (trimmed === "" || trimmed.startsWith("data:")) return undefined
+
+  const fileUrl = /^file:\/\/(.*)$/iu.exec(trimmed)
+  if (fileUrl === null) {
+    if (trimmed === "~") return home
+    if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+      return join(home, trimmed.slice(2))
+    }
+    if (isAbsolute(trimmed) || /^[a-zA-Z]:[\\/]/u.test(trimmed)) {
+      return normalize(trimmed)
+    }
+    return undefined
+  }
+
+  const withoutAuthority = fileUrl[1]!.replace(/^localhost/iu, "")
+  let expression = withoutAuthority
+  try {
+    expression = decodeURIComponent(withoutAuthority)
+  } catch {
+    expression = withoutAuthority
+  }
+  if (expression === "~") return home
+  if (expression.startsWith("~/") || expression.startsWith("~\\")) {
+    return join(home, expression.slice(2))
+  }
+  return isAbsolute(expression) ? normalize(expression) : undefined
+}
+
+/**
+ * 校验一个 `http(s)` 引用，返回规范化的 URL 或 `undefined`。
+ *
+ * 拒绝清单：非 http(s) 协议、带凭据的 URL、字面量私有地址、解析结果里出现任何
+ * 私有地址的主机名、解析失败的主机名。`allowPrivateHosts` 是给内网图床留的
+ * 逃生口，默认关闭。
+ */
+async function compatValidateRemoteUrl(
+  value: string,
+  options: {
+    allowPrivateHosts: boolean
+    lookup: (hostname: string) => Promise<Array<string>>
+  },
+): Promise<string | undefined> {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return undefined
+  }
+  if (parsed.username !== "" || parsed.password !== "") return undefined
+  if (options.allowPrivateHosts) return parsed.toString()
+
+  const hostname = parsed.hostname.replace(/^\[|\]$/gu, "")
+  if (hostname === "") return undefined
+  if (isPrivateAddress(hostname)) return undefined
+  if (/^[0-9.]+$/u.test(hostname) || hostname.includes(":")) {
+    return parsed.toString()
+  }
+  let addresses: Array<string>
+  try {
+    addresses = await options.lookup(hostname)
+  } catch {
+    return undefined
+  }
+  if (addresses.length === 0) return undefined
+  if (addresses.some((address) => isPrivateAddress(address))) return undefined
+  return parsed.toString()
+}
+
+/** 按上限读取响应体；超过上限立刻取消，不把大文件读进内存。 */
+async function compatReadBoundedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array | undefined> {
+  const body = response.body
+  if (body === null) {
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    return bytes.byteLength > maxBytes ? undefined : bytes
+  }
+  const reader = body.getReader()
+  const chunks: Array<Uint8Array> = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      return undefined
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
+async function compatFetchRemoteImageDataUrl(
+  url: string,
+  options: Required<
+    Pick<
+      InlineCompatImageOptions,
+      "allowPrivateHosts" | "maxBytes" | "timeoutMs" | "maxRedirects" | "lookup"
+    >
+  > & { fetch: typeof globalThis.fetch },
+): Promise<string | undefined> {
+  let target = await compatValidateRemoteUrl(url, options)
+  if (target === undefined) return undefined
+
+  try {
+    for (let hop = 0; hop <= options.maxRedirects; hop++) {
+      const response = await options.fetch(target, {
+        // 手动跟随：每一跳都要重新过地址检查，否则一个 302 就能绕过它。
+        redirect: "manual",
+        headers: { accept: "image/*" },
+        signal: AbortSignal.timeout(options.timeoutMs),
+      })
+      if (COMPAT_REDIRECT_STATUS.has(response.status)) {
+        const location = response.headers.get("location")
+        if (location === null || location === "") return undefined
+        const next = await compatValidateRemoteUrl(
+          new URL(location, target).toString(),
+          options,
+        )
+        if (next === undefined) return undefined
+        target = next
+        continue
+      }
+      if (!response.ok) return undefined
+      const contentType = response.headers.get("content-type") ?? ""
+      if (!contentType.toLowerCase().startsWith("image/")) return undefined
+      const declared = Number(response.headers.get("content-length") ?? "")
+      if (Number.isFinite(declared) && declared > options.maxBytes) {
+        return undefined
+      }
+      const bytes = await compatReadBoundedBody(response, options.maxBytes)
+      if (bytes === undefined) return undefined
+      // 以签名为准：Content-Type 是响应方自称，签名是事实。
+      const mimeType =
+        detectCompatImageMimeType(bytes)
+        ?? contentType.split(";")[0]!.trim().toLowerCase()
+      return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`
+    }
+    return undefined
+  } catch {
+    // 超时、连接失败、TLS、解析异常：一律当作"取不到"。
+    return undefined
+  }
+}
+
+async function compatReadLocalImageDataUrl(
+  filePath: string,
+  maxBytes: number,
+): Promise<string | undefined> {
+  try {
+    const stats = await stat(filePath)
+    if (!stats.isFile() || stats.size === 0 || stats.size > maxBytes) {
+      return undefined
+    }
+    const bytes = await readFile(filePath)
+    const mimeType = detectCompatImageMimeType(bytes)
+    if (mimeType === undefined) return undefined
+    return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 把引用从请求体里**去掉**，换成一段说明文字。
+ *
+ * 只接受内联字节的上游会把引用形态顶死整条会话（实测：`file://` / 裸路径 /
+ * 裸文件名 → `400 11133`，`https://` → `400 11135`，只有 `data:` → 200），
+ * 所以"取不到就原样透传"等于把失败也一起透传。降级成文本是最后一次兜底：
+ * 请求成立，模型知道这里本该有张图，客户端也不需要猜为什么整条会话崩了。
+ */
+function compatDegradeImagePart(
+  part: Record<string, unknown>,
+  url: string,
+  reason: string,
+): void {
+  delete part.image_url
+  part.type = "text"
+  part.text = `[image not inlined: ${url} (${reason})]`
+}
+
+/**
+ * 把 `image_url` 引用内联成 `data:` URL；内联不了的降级为文本占位。
+ *
+ * 为什么需要它：只接受内联字节的上游会把引用形态顶死整条会话。实测
+ * CodeBuddy（2026-09-29）：`file://…`、裸绝对路径、裸文件名都回
+ * `400 11133 Invalid request parameters`（941 字节），`https://…` 回
+ * `400 11135 Please start a new conversation, replace the image…`（962 字节），
+ * 只有 `data:image/png;base64,…` 回 200。引用在 `image_url` 里原样透传，一次
+ * 失败就是整条会话失败。
+ *
+ * 处理顺序：
+ *
+ * 1. `data:` —— 已经内联，逐字节不动。
+ * 2. 本地路径（`file://`、绝对路径、`~`、Windows 盘符）—— 读文件内联。
+ * 3. `http(s)` —— 代客户端取回后内联，**默认开启**，带地址闸门（见
+ *    `compatValidateRemoteUrl`），`COMPAT_INLINE_IMAGE_REFERENCES=0` 可整体关掉。
+ * 4. 以上都做不到 —— 降级成 `[image not inlined: …]` 文本，请求仍然成立。
+ *
+ * 本地路径与远程取回都是**语义无损**的：同一批字节换成等价的内联表示。只有
+ * 第 4 步是有损的，所以它必须显式留痕（文本里写明 URL 和原因），不能悄悄丢。
+ *
+ * 在 `normalizeOpenAICompatChatPayload` **之后**调用：那时 `image_url` 的形状
+ * 已经归一化为对象；本函数也接受字符串形态，便于单独调用与测试。
+ */
+export async function inlineCompatImageReferences(
+  messages: Array<Message>,
+  options: InlineCompatImageOptions = {},
+): Promise<InlineCompatImageResult> {
+  const maxBytes = options.maxBytes ?? COMPAT_INLINE_IMAGE_MAX_BYTES
+  const home = options.home ?? homedir()
+  const remote = options.remote ?? true
+  const remoteOptions = {
+    allowPrivateHosts: options.allowPrivateHosts ?? false,
+    maxBytes,
+    timeoutMs: options.timeoutMs ?? COMPAT_INLINE_IMAGE_TIMEOUT_MS,
+    maxRedirects: options.maxRedirects ?? COMPAT_INLINE_IMAGE_MAX_REDIRECTS,
+    lookup: options.lookup ?? compatDefaultLookup,
+    fetch: options.fetch ?? globalThis.fetch,
+  }
+  let inlined = 0
+  let degraded = 0
+
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue
+    for (const part of message.content as unknown as Array<
+      Record<string, unknown>
+    >) {
+      if (part?.type !== "image_url") continue
+      const holder = part.image_url
+      const url =
+        typeof holder === "string" ? holder : (
+          (holder as { url?: unknown } | undefined)?.url
+        )
+      if (typeof url !== "string" || url === "") {
+        compatDegradeImagePart(part, String(url ?? ""), "empty reference")
+        degraded++
+        continue
+      }
+      if (url.startsWith("data:")) continue
+
+      let dataUrl: string | undefined
+      let reason = "reference could not be resolved"
+      const filePath = compatLocalImagePath(url, home)
+      if (filePath !== undefined) {
+        dataUrl = await compatReadLocalImageDataUrl(filePath, maxBytes)
+        reason = "local file missing, not an image, or too large"
+      } else if (remote) {
+        dataUrl = await compatFetchRemoteImageDataUrl(url, remoteOptions)
+        reason = "remote fetch failed, blocked, or not an image"
+      } else {
+        reason = "remote inlining is disabled"
+      }
+
+      if (dataUrl === undefined) {
+        compatDegradeImagePart(part, url, reason)
+        degraded++
+        continue
+      }
+      part.image_url =
+        typeof holder === "string" ? dataUrl : (
+          { ...(holder as Record<string, unknown>), url: dataUrl }
+        )
+      inlined++
+    }
+  }
+
+  return { inlined, degraded }
 }

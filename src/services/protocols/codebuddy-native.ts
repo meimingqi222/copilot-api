@@ -46,7 +46,11 @@ import {
 
 import type { AdapterChatResult, ProtocolAdapter } from "./types"
 
-import { normalizeOpenAICompatChatPayload } from "./openai-compat-payload"
+import {
+  compatImageReferenceInliningEnabled,
+  inlineCompatImageReferences,
+  normalizeOpenAICompatChatPayload,
+} from "./openai-compat-payload"
 import { aggregateSseToResponse, type SseChunk } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
@@ -672,6 +676,16 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     // 清洗请求体中会触发 CodeBuddy 风控的敏感内容
     sanitizeCodebuddyPayload(upstreamPayload.messages)
     if (upstreamPayload.tools) sanitizeCodebuddyPayload(upstreamPayload.tools)
+
+    // 图片引用内联：本地路径读文件、`http(s)` 代取回，都换成语义等价的
+    // `data:` URL；实在取不到的降级为文本占位。CodeBuddy 只认内联字节，引用
+    // 形态（`file://`、裸路径回 400 11133，`https://` 回 400 11135）会顶死整条
+    // 会话。放在风控清洗之后：清洗看到的是用户原本的文本，而不是几百 KB 的
+    // base64。`COMPAT_INLINE_IMAGE_REFERENCES=0` 可整体回到逐字节透传。
+    // 详见 openai-compat-payload.ts 里 inlineCompatImageReferences 的注释。
+    if (compatImageReferenceInliningEnabled()) {
+      await inlineCompatImageReferences(upstreamPayload.messages)
+    }
 
     const accessToken = await ensureCodebuddyAccessToken(
       connection,
