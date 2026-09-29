@@ -27,12 +27,14 @@ import { isCodebuddyOAuthProviderId } from "~/services/oauth/codebuddy"
 import { lobsteraiCallbackStateMatches } from "~/services/oauth/lobsterai"
 import {
   bindOAuthFlowAbortSignal,
+  findReplaceableOAuthFlowForProvider,
   getOAuthFlow,
   hasActiveOAuthFlowForProvider,
   pollOAuthFlow,
   registerOAuthFlow,
   removeOAuthFlow,
   startProviderCallbackServer,
+  stopOAuthCallbackServer,
   tryBeginOAuthExchange,
   updateOAuthFlow,
 } from "~/services/oauth/flows"
@@ -273,6 +275,25 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
       return c.json({ error: `Account is not a ${provider} account.` }, 400)
     }
     reauthAccountId = target.id
+  }
+
+  // 正在兑换 token 的 flow 不能被打断；残留的 pending flow（浏览器侧丢了
+  // flowId、或管理端会话在重启后失效导致 poll 拿不到结果）必须可被替换，否则
+  // 用户会永久卡在 "already in progress"，只能等 15 分钟 TTL 过期——重启也
+  // 不解决（flow 落盘在 pending_oauth_flows.json）。
+  const staleFlow = findReplaceableOAuthFlowForProvider(provider)
+  if (staleFlow) {
+    const ageSeconds =
+      staleFlow.createdAt ?
+        Math.round((Date.now() - staleFlow.createdAt) / 1000)
+      : undefined
+    logger.warn(
+      `Replacing stale ${provider} OAuth flow ${staleFlow.id} (status=${staleFlow.status}${
+        ageSeconds === undefined ? "" : `, age=${ageSeconds}s`
+      }) with a new one.`,
+    )
+    stopOAuthCallbackServer(staleFlow.id)
+    removeOAuthFlow(staleFlow.id)
   }
 
   if (hasActiveOAuthFlowForProvider(provider)) {

@@ -53,7 +53,24 @@ export interface OAuthPendingFlow {
    * device code's actual lifetime.
    */
   deviceExpiresIn?: number
+  /**
+   * 创建时刻，用于判定残留 pending flow 是否可被新的 start 替换。
+   * 持久化格式里缺失时按"陈旧"处理——重启后从磁盘载入的 flow 正是没人再
+   * poll 的那种。
+   */
+  createdAt?: number
 }
+
+/**
+ * 残留 pending flow 的可替换窗口。
+ *
+ * 浏览器侧丢了 flowId（或管理端会话在进程重启后失效导致 poll 拿不到结果）时，
+ * 这个 flow 会一直占着 provider 级互斥，让用户永久卡在
+ * "An OAuth flow for <provider> is already in progress."——实测卡满 15 分钟 TTL，
+ * 且 flow 是持久化的，重启也不会自愈。刚创建 60 秒内的 flow 仍视为"用户正在
+ * 操作"，保持原来的 409 互斥。
+ */
+export const OAUTH_FLOW_REPLACE_AFTER_MS = 60_000
 
 const pendingOAuthFlows = new Map<string, OAuthPendingFlow>()
 const oauthCallbackServers = new Map<string, Server>()
@@ -119,9 +136,10 @@ function purgeStaleOAuthFlows(): void {
   }
 }
 
-export function hasActiveOAuthFlowForProvider(
+/** 该 provider 当前活跃的 flow（pending 或 exchanging）。 */
+export function getActiveOAuthFlowForProvider(
   provider: OAuthFlowProvider,
-): boolean {
+): OAuthPendingFlow | undefined {
   purgeStaleOAuthFlows()
   const now = Date.now()
   for (const flow of pendingOAuthFlows.values()) {
@@ -132,16 +150,44 @@ export function hasActiveOAuthFlowForProvider(
       continue
     }
     if (flow.status === "pending" || flow.status === "exchanging") {
-      return true
+      return flow
     }
   }
-  return false
+  return undefined
+}
+
+export function hasActiveOAuthFlowForProvider(
+  provider: OAuthFlowProvider,
+): boolean {
+  return getActiveOAuthFlowForProvider(provider) !== undefined
+}
+
+/**
+ * 可以安全替换掉的残留 pending flow（见 OAUTH_FLOW_REPLACE_AFTER_MS）。
+ *
+ * `exchanging` 永不返回——那是在兑换 token，替换会打断正在进行的登录。
+ */
+export function findReplaceableOAuthFlowForProvider(
+  provider: OAuthFlowProvider,
+): OAuthPendingFlow | undefined {
+  const active = getActiveOAuthFlowForProvider(provider)
+  if (!active || active.status !== "pending") {
+    return undefined
+  }
+  if (
+    active.createdAt !== undefined
+    && Date.now() - active.createdAt <= OAUTH_FLOW_REPLACE_AFTER_MS
+  ) {
+    return undefined
+  }
+  return active
 }
 
 void loadPendingOAuthFlows()
 
 export function registerOAuthFlow(flow: OAuthPendingFlow): void {
   purgeStaleOAuthFlows()
+  flow.createdAt ??= Date.now()
   if (pendingOAuthFlows.size >= MAX_PENDING_OAUTH_FLOWS) {
     const oldest = pendingOAuthFlows.keys().next().value
     if (typeof oldest === "string") removeOAuthFlow(oldest)

@@ -20,6 +20,8 @@ const REMEMBER_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 export const ADMIN_SESSION_COOKIE = "copilot_api_admin"
 const ADMIN_PASSWORD_CONFIG_KEY = "admin_password_hash"
 const ADMIN_TOTP_SECRET_CONFIG_KEY = "admin_totp_secret"
+/** 管理端会话的落盘键：cookie 生命周期(12h / remember)本应跨越进程重启。 */
+const ADMIN_SESSION_CONFIG_KEY = "admin_session"
 const TOTP_SETUP_TTL_MS = 10 * 60 * 1000
 const TOTP_LOGIN_TTL_MS = 5 * 60 * 1000
 
@@ -265,6 +267,7 @@ export function setAdminSession(c: Context, remember = false) {
   const sessionToken = createSessionToken()
   state.adminSessionToken = sessionToken
   state.adminSessionExpiresAt = Date.now() + maxAgeSeconds * 1000
+  persistAdminSession(sessionToken, state.adminSessionExpiresAt)
 
   const isHttps =
     c.req.url.startsWith("https://")
@@ -289,10 +292,70 @@ export function setAdminSession(c: Context, remember = false) {
 export function clearAdminSession(c: Context) {
   state.adminSessionToken = undefined
   state.adminSessionExpiresAt = undefined
+  try {
+    statsStore.deleteConfig(ADMIN_SESSION_CONFIG_KEY)
+  } catch {
+    // 配置库不可用时也不影响登出（内存状态已清）。
+  }
   deleteCookie(c, ADMIN_SESSION_COOKIE, { path: "/" })
 }
 
+/**
+ * 会话令牌落盘。
+ *
+ * 会话原来只存在内存里：服务一重启，浏览器手里那张 cookie 就永远对不上，
+ * 用户被静默登出——如果此时正在走 OAuth 重新认证，页面上的 poll 会拿到
+ * 403、流程又占着 provider 互斥，于是彻底卡死。cookie 本身的生命周期就是
+ * 12h（remember 更长），落盘才与之一致。
+ */
+function persistAdminSession(token: string, expiresAt: number): void {
+  try {
+    statsStore.setConfig(
+      ADMIN_SESSION_CONFIG_KEY,
+      JSON.stringify({ token, expiresAt }),
+    )
+  } catch {
+    // 配置库不可用时退化为旧的纯内存行为。
+  }
+}
+
+/** 读取落盘会话（进程重启后恢复）。 */
+function loadPersistedAdminSession():
+  | {
+      token: string
+      expiresAt: number
+    }
+  | undefined {
+  try {
+    const raw = statsStore.getConfig(ADMIN_SESSION_CONFIG_KEY)
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as { token?: unknown; expiresAt?: unknown }
+    if (typeof parsed.token !== "string" || !parsed.token) return undefined
+    if (typeof parsed.expiresAt !== "number") return undefined
+    if (parsed.expiresAt <= Date.now()) {
+      statsStore.deleteConfig(ADMIN_SESSION_CONFIG_KEY)
+      return undefined
+    }
+    return { token: parsed.token, expiresAt: parsed.expiresAt }
+  } catch {
+    return undefined
+  }
+}
+
 function hasValidAdminSession(c: Context): boolean {
+  // 进程重启后内存态为空：从落盘会话恢复（同一张 cookie 继续有效）。
+  if (
+    !state.adminSessionToken
+    || !state.adminSessionExpiresAt
+    || Date.now() > state.adminSessionExpiresAt
+  ) {
+    const persisted = loadPersistedAdminSession()
+    if (persisted) {
+      state.adminSessionToken = persisted.token
+      state.adminSessionExpiresAt = persisted.expiresAt
+    }
+  }
+
   const sessionExpiresAt = state.adminSessionExpiresAt
   if (!sessionExpiresAt || Date.now() > sessionExpiresAt) {
     state.adminSessionToken = undefined
