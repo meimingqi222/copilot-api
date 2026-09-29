@@ -39,7 +39,41 @@ const TERMINAL_ERROR_PATTERNS = [
   "unauthorized_client",
   "invalid_client",
   "refresh_token_reused",
+  // 实测（OpenAI/Codex 刷新端点）：会话被作废时回
+  // `{"error":{"code":"refresh_token_invalidated","message":"Your session has ended. Please log in again."}}`，
+  // ChatGPT 上游失效 token 时回 `code: "token_revoked"`。两者都只认裸
+  // RFC 6749 的 invalid_grant 集合会漏判 → 被当成瞬态错误无限退避重试，
+  // WebUI 永远不显示"重新认证"。
+  "refresh_token_invalidated",
+  "token_revoked",
 ] as const
+
+/** OAuth 错误体里的 code 字段形状（不同上游嵌套层级不一）。 */
+function oauthErrorCodesFromBody(body: string): Array<string> {
+  const start = body.indexOf("{")
+  if (start < 0) return []
+  try {
+    const parsed = JSON.parse(body.slice(start)) as Record<string, unknown>
+    const nested =
+      parsed.error && typeof parsed.error === "object" ?
+        (parsed.error as Record<string, unknown>)
+      : {}
+    const codes: Array<string> = []
+    for (const value of [
+      parsed.code,
+      parsed.error_code,
+      parsed.error,
+      nested.code,
+      nested.type,
+    ]) {
+      if (typeof value === "string") codes.push(value.toLowerCase())
+    }
+    return codes
+  } catch {
+    // 非 JSON（或已被截断）——退回纯文本匹配。
+    return []
+  }
+}
 
 export function cancelOAuthRefreshTimer(accountId: string): void {
   const timer = oauthRefreshTimers.get(accountId)
@@ -84,23 +118,25 @@ function getConnectionTokenExpiryMs(
  * mean the refresh token has been revoked or expired — retrying will
  * never succeed and the account must be re-authenticated.
  */
-function isOAuthTerminalError(error: unknown): boolean {
+export function isOAuthTerminalError(error: unknown): boolean {
+  const matches = (body: string): boolean => {
+    // 能解析出 OAuth code 时只认 code 字段，避免被 message/description 里偶然
+    // 出现的同名词误判；解析不出（非 JSON、被截断）才退回全文匹配。
+    const codes = oauthErrorCodesFromBody(body)
+    const haystack = codes.length > 0 ? codes.join(" ") : body.toLowerCase()
+    return TERMINAL_ERROR_PATTERNS.some((pattern) =>
+      haystack.includes(pattern.toLowerCase()),
+    )
+  }
+
   if (error instanceof HTTPError) {
     if (error.response.status === 400 || error.response.status === 401) {
-      const body = error.responseBody.toLowerCase()
-      return TERMINAL_ERROR_PATTERNS.some((pattern) =>
-        body.includes(pattern.toLowerCase()),
-      )
+      return matches(error.responseBody)
     }
     return false
   }
-  const message =
-    error instanceof Error ?
-      error.message.toLowerCase()
-    : String(error).toLowerCase()
-  return TERMINAL_ERROR_PATTERNS.some((pattern) =>
-    message.includes(pattern.toLowerCase()),
-  )
+  const message = error instanceof Error ? error.message : String(error)
+  return matches(message)
 }
 
 /**
@@ -253,12 +289,13 @@ async function refreshOAuthConnectionTokenOnce(
     // access token may still be valid, and the scheduler will retry. Only an
     // explicit OAuth terminal response proves that re-authentication is needed.
     if (isOAuthTerminalError(error)) {
-      setConnectionAuthStatus(
+      // 终态：refresh token 已作废，重试永远不会成功。必须停掉退避重试并把
+      // auth_error 落到磁盘，WebUI 才会出现"重新认证"（availability 也会因此
+      // 把该连接移出路由）。请求期（401 → forceRefresh）与调度期共用这一条。
+      await markOAuthConnectionAuthError(
         connection,
-        "error",
         error instanceof Error ? error.message : String(error),
       )
-      await persistProviderConnections()
     }
     throw error
   }

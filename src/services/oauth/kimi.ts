@@ -201,7 +201,9 @@ export async function refreshKimiTokens(
   if (!response.ok) {
     const text = await response.text()
     throw new Error(
-      `Kimi token refresh failed (${response.status}): ${text.slice(0, 200)}`,
+      // 不要截太狠：上游把错误码放在 JSON 尾部（如
+      // `"code":"refresh_token_invalidated"`），截断会让终态判定漏判成瞬态错误。
+      `Kimi token refresh failed (${response.status}): ${text.slice(0, 1000)}`,
     )
   }
 
