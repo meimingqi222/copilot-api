@@ -29,3 +29,6 @@ temp_*
 .alma-snapshots
 .apodex/
 .trae/
+# local caches
+.eslintcache
+.playwright-cli/
