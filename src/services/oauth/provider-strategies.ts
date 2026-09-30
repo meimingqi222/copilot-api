@@ -11,11 +11,14 @@ import {
   setConnectionSetting,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { QODER_API_HOST } from "~/services/qoder/endpoints"
 
 import type { OAuthFetchOptions } from "./fetch"
 import type { OAuthFlowProvider } from "./flows"
 import type { OAuthPendingFlow } from "./flows"
 import type { PkceCodes } from "./pkce"
+
+import { generatePkceCodes } from "./pkce"
 
 import {
   applyAntigravityOAuthBundle,
@@ -52,6 +55,23 @@ import {
   createLobsteraiOAuthStart,
   exchangeLobsteraiCode,
 } from "./lobsterai"
+import {
+  applyMinimaxOAuthBundle,
+  normalizeMinimaxRegion,
+  pollMinimaxDeviceAuthorization,
+  startMinimaxDeviceFlow,
+  type MinimaxDeviceCodeResponse,
+} from "./minimax"
+import {
+  applyQoderOAuthBundle,
+  createQoderAuthRequest,
+  exchangeQoderJobToken,
+  fetchQoderUserInfo,
+  pollQoderDeviceToken,
+  QODER_DEVICE_FLOW_DEADLINE_MS,
+  QODER_DEVICE_POLL_INTERVAL_MS,
+  qoderJobTokenLifetimeMs,
+} from "./qoder"
 import {
   applyWindsurfOAuthBundle,
   createWindsurfOAuthStart,
@@ -132,6 +152,12 @@ export type OAuthFlowType = "pkce-callback" | "callback" | "device"
 
 export interface OAuthStartInput {
   proxyUrl?: string
+  /**
+   * Provider 专属账号域。目前只有 MiniMax Code 用：
+   * `cn`（国内版，默认）/ `en`（国际版）。两套区域的凭证互不通用，
+   * 所以必须在取设备码之前就定下来。
+   */
+  region?: string
 }
 
 export interface OAuthStartResult {
@@ -436,6 +462,134 @@ const windsurfStrategy: OAuthProviderStrategy = {
   },
 }
 
+/**
+ * MiniMax Code：设备码 + PKCE，区域（国内版 / 国际版）在 start 时定下。
+ *
+ * flowType 为 device：start 返回 verificationUri/userCode，exchange 在后台
+ * 轮询 token 端点直到用户在浏览器确认（kimi 同款）。
+ * PKCE 的 code_verifier 挂在 flow.pkce 上——MiniMax 的 token 端点强制要求它。
+ */
+const minimaxStrategy: OAuthProviderStrategy = {
+  flowType: "device",
+  async start({ proxyUrl, region }) {
+    const resolved = normalizeMinimaxRegion(region)
+    const pkce = generatePkceCodes()
+    const deviceCode = await startMinimaxDeviceFlow(
+      resolved,
+      pkce,
+      proxyUrl ? { proxyUrl } : undefined,
+    )
+    return {
+      verificationUri:
+        deviceCode.verification_uri_complete ?? deviceCode.verification_uri,
+      userCode: deviceCode.user_code,
+      deviceCode: deviceCode.device_code,
+      interval: deviceCode.interval ?? 5,
+      deviceExpiresIn: deviceCode.expires_in ?? undefined,
+      responseExpiresIn: deviceCode.expires_in ?? undefined,
+      pkce,
+    }
+  },
+  async exchange({ flow, signal }) {
+    if (!flow.deviceCode) {
+      throw new Error("MiniMax OAuth flow is missing device code")
+    }
+    if (!flow.pkce) {
+      throw new Error("MiniMax OAuth flow is missing PKCE codes")
+    }
+    const region = normalizeMinimaxRegion(flow.region)
+    const conn = createOAuthConnection("minimax", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    // 重构出轮询器期望的设备码响应形状（deviceExpiresIn 只存在内存里，
+    // 用它约束轮询截止时间而不是永远回退到 MAX_POLL_DURATION_MS）。
+    const deviceCodeResponse: MinimaxDeviceCodeResponse = {
+      device_code: flow.deviceCode,
+      user_code: flow.userCode ?? "",
+      verification_uri: flow.verificationUri ?? "",
+      interval: flow.interval,
+      expires_in: flow.deviceExpiresIn,
+    }
+    const bundle = await pollMinimaxDeviceAuthorization(
+      deviceCodeResponse,
+      flow.pkce,
+      region,
+      { ...flowFetchOptions(flow), signal },
+    )
+    applyMinimaxOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
+/**
+ * Qoder：PKCE 设备流（非 loopback 回调、非手动粘贴）。
+ *
+ * 授权页把用户送到 `qoder.com/device/selectAccounts`，然后轮询
+ * `openapi.qoder.sh/api/v1/deviceToken/poll` 直到确认；拿到设备 token 后再换
+ * chat 用的 job token。machine_id 是账号身份，必须随 flow 一起保存（COSY 头用它），
+ * 所以放在 `flow.deviceId` 上（kimi 的 deviceId 也是同一种“登录期身份”）。
+ */
+const qoderStrategy: OAuthProviderStrategy = {
+  flowType: "device",
+  start() {
+    const request = createQoderAuthRequest()
+    return Promise.resolve({
+      authUrl: request.authUrl,
+      nonce: request.nonce,
+      deviceId: request.machineId,
+      pkce: request.pkce,
+      interval: Math.round(QODER_DEVICE_POLL_INTERVAL_MS / 1000),
+      responseExpiresIn: Math.round(QODER_DEVICE_FLOW_DEADLINE_MS / 1000),
+    })
+  },
+  async exchange({ flow, signal }) {
+    if (!flow.nonce || !flow.deviceId || !flow.pkce) {
+      throw new Error("Qoder OAuth flow is missing its device-flow state")
+    }
+    const options: OAuthFetchOptions = { proxyUrl: flow.proxyUrl, signal }
+    const device = await pollQoderDeviceToken({
+      nonce: flow.nonce,
+      verifier: flow.pkce.codeVerifier,
+      intervalMs:
+        flow.interval === undefined ?
+          QODER_DEVICE_POLL_INTERVAL_MS
+        : flow.interval * 1000,
+      deadlineMs: QODER_DEVICE_FLOW_DEADLINE_MS,
+      signal,
+      proxyUrl: flow.proxyUrl,
+    })
+    const job = await exchangeQoderJobToken(device.token, options)
+    // 身份是 best-effort：拿不到也不影响 chat（只影响展示名）。
+    let name: string | undefined
+    let email: string | undefined
+    let userId = device.userId
+    try {
+      const info = await fetchQoderUserInfo(device.token, options)
+      name = info.name || undefined
+      email = info.email || undefined
+      userId = userId || info.id
+    } catch {
+      // 忽略：userinfo 只是展示信息。
+    }
+    const conn = createOAuthConnection("qoder", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    conn.baseUrl = QODER_API_HOST
+    applyQoderOAuthBundle(conn, {
+      jobToken: job.token,
+      jobRefreshToken: job.refreshToken,
+      expiresAt: Date.now() + qoderJobTokenLifetimeMs(job),
+      deviceToken: device.token,
+      deviceRefreshToken: device.refreshToken,
+      uid: userId,
+      machineId: flow.deviceId,
+      name,
+      email,
+    })
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
 const lobsteraiStrategy: OAuthProviderStrategy = {
   flowType: "callback",
   start({ proxyUrl }) {
@@ -478,6 +632,8 @@ export const OAUTH_PROVIDER_STRATEGIES: Record<
   xai: xaiStrategy,
   antigravity: antigravityStrategy,
   kimi: kimiStrategy,
+  minimax: minimaxStrategy,
+  qoder: qoderStrategy,
 }
 
 /**
@@ -488,8 +644,6 @@ export const OAUTH_PROVIDER_STRATEGIES: Record<
  * `OAUTH_PROVIDER_STRATEGIES` (typed by `OAuthProviderId`) on purpose.
  */
 export const WINDSURF_OAUTH_PROVIDER_ID = "windsurf" as const
-
-export type WindsurfOAuthProviderId = typeof WINDSURF_OAUTH_PROVIDER_ID
 
 export function getOAuthStrategy(
   provider: string,

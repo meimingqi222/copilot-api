@@ -4,7 +4,7 @@ import type {
 } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import { getConnectionSettings } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"

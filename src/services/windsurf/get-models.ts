@@ -1,4 +1,4 @@
-import type { AccountModel } from "~/lib/legacy-accounts"
+import type { AccountModel } from "~/lib/provider-connections"
 import type {
   ModelMapping,
   ProviderConnection,

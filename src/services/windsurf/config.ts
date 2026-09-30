@@ -43,9 +43,3 @@ export function getWindsurfUserJwtCacheTtlMs(): number {
     MAX_USER_JWT_CACHE_TTL_MS,
   )
 }
-
-export const WINDSURF_CONFIG_DEFAULTS = {
-  firstFrameTimeoutMs: DEFAULT_FIRST_FRAME_TIMEOUT_MS,
-  firstFrameRetries: DEFAULT_FIRST_FRAME_RETRIES,
-  userJwtCacheTtlMs: DEFAULT_USER_JWT_CACHE_TTL_MS,
-} as const

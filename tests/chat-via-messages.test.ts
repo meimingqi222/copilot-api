@@ -9,23 +9,34 @@ import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
 } from "~/services/protocols/anthropic"
 
 import {
-  createInitialStreamState,
-  translateChunkToAnthropicEvents,
-} from "~/services/protocols/anthropic"
+  decodeChatRequest,
+  decodeChatStream,
+  decodeMessagesResponse,
+  decodeMessagesStream,
+  encodeChatResponse,
+  encodeChatStream,
+  encodeMessagesRequest,
+  encodeMessagesStream,
+} from "~/services/ir/codecs/messages-chat"
 import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
-import {
-  DEFAULT_VIA_MESSAGES_MAX_TOKENS,
-  translateAnthropicResponseToChat,
-  translateAnthropicStreamToChatEvents,
-  translateChatPayloadToAnthropic,
-} from "~/services/protocols/openai"
+
+/** Chat → Messages request via the IR codec (the shared translation kernel). */
+const chatToMessages = (
+  payload: ChatCompletionsPayload,
+): AnthropicMessagesPayload => encodeMessagesRequest(decodeChatRequest(payload))
+
+/** Messages → Chat response via the IR codec. */
+const messagesToChatResponse = (
+  response: AnthropicResponse,
+): ChatCompletionResponse =>
+  encodeChatResponse(decodeMessagesResponse(response))
 
 const basePayload = (
   overrides: Partial<ChatCompletionsPayload> = {},
@@ -44,7 +55,7 @@ async function translateFullStream(
     for (const event of events) yield event
   })() as unknown as AsyncIterable<{ data?: string }>
   const frames: Array<string> = []
-  for await (const frame of translateAnthropicStreamToChatEvents(stream)) {
+  for await (const frame of encodeChatStream(decodeMessagesStream(stream))) {
     frames.push(frame.data ?? "")
   }
   expect(frames.at(-1)).toBe("[DONE]")
@@ -88,9 +99,9 @@ function makeChatChunk(
   }
 }
 
-describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
+describe("chat → messages request (IR codec)", () => {
   test("maps system/developer, params, tools, and user metadata", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           { role: "system", content: "You are helpful" },
@@ -137,7 +148,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("merges consecutive tool messages and following user text into one user turn", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -190,7 +201,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
 
   test("maps tool_choice required/function to any/tool", () => {
     expect(
-      translateChatPayloadToAnthropic(
+      chatToMessages(
         basePayload({
           tool_choice: "required",
           tools: [
@@ -200,7 +211,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
       ).tool_choice,
     ).toEqual({ type: "any" })
     expect(
-      translateChatPayloadToAnthropic(
+      chatToMessages(
         basePayload({
           tool_choice: { type: "function", function: { name: "f" } },
         }),
@@ -210,7 +221,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
 
   test("maps reasoning_effort to adaptive thinking + narrowed effort", () => {
     const effortFor = (effort: string) =>
-      translateChatPayloadToAnthropic(
+      chatToMessages(
         basePayload({
           reasoning_effort:
             effort as ChatCompletionsPayload["reasoning_effort"],
@@ -246,14 +257,12 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("defaults max_tokens to 64000 when the client omits it", () => {
-    const result = translateChatPayloadToAnthropic(
-      basePayload({ max_tokens: undefined }),
-    )
-    expect(result.max_tokens).toBe(DEFAULT_VIA_MESSAGES_MAX_TOKENS)
+    const result = chatToMessages(basePayload({ max_tokens: undefined }))
+    expect(result.max_tokens).toBe(64_000)
   })
 
   test("preserves signed historical reasoning as thinking, strips unsigned", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -277,12 +286,14 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     )
 
     // C3: consecutive assistant messages are merged to satisfy Anthropic's
-    // "roles must alternate" constraint.
+    // "roles must alternate" constraint. The middle turn's unsigned thinking
+    // is stripped; the merge stays clean without a placeholder because the
+    // merged turn is non-empty anyway (see pitfalls §2.2 — the placeholder
+    // only guards turns that would otherwise be empty).
     expect(result.messages[0]).toEqual({
       role: "assistant",
       content: [
         { type: "thinking", thinking: "step 1", signature: "sig_1" },
-        { type: "text", text: "(no content)" },
         { type: "text", text: "plain text" },
       ],
     })
@@ -297,7 +308,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     // tool-call-only turn) must collapse into a single assistant message —
     // Anthropic rejects consecutive assistant roles, and neither turn's
     // tool calls may be lost in the merge.
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           { role: "user", content: "list files" },
@@ -355,7 +366,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     // A client replaying an OpenRouter assistant turn verbatim sends top-level
     // `reasoning`, not `reasoning_content`. Without that alias the signed block
     // is dropped entirely, not merely downgraded.
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -379,7 +390,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("accepts a Windsurf reply's `reasoning_opaque` as the signature", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -403,7 +414,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("keeps user content valid when all image parts are unsupported", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -428,7 +439,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     // Anthropic rejects a final assistant message ending in trailing
     // whitespace, so an all-stripped turn in last position must not collapse
     // to " ".
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           { role: "user", content: "hi" },
@@ -449,7 +460,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("does not inject a placeholder when merging empty user content into a tool-result turn", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -491,7 +502,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("maps base64 image parts to base64 sources and remote URLs to url sources", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -543,7 +554,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
     // Anthropic tool_use.input must be an object, so a response truncated
     // mid-JSON has no faithful representation. The substitution stands, but it
     // is logged rather than silent — see parseToolCallArguments.
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -573,7 +584,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 
   test("drops data: images whose media type Anthropic does not accept", () => {
-    const result = translateChatPayloadToAnthropic(
+    const result = chatToMessages(
       basePayload({
         messages: [
           {
@@ -596,7 +607,7 @@ describe("translateChatPayloadToAnthropic (chat → messages request)", () => {
   })
 })
 
-describe("translateAnthropicResponseToChat (non-streaming response)", () => {
+describe("messages → chat response (IR codec)", () => {
   const response: AnthropicResponse = {
     id: "msg_1",
     type: "message",
@@ -613,7 +624,7 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
   }
 
   test("maps thinking → reasoning_content, tool_use → tool_calls, stop_reason → finish_reason", () => {
-    const result = translateAnthropicResponseToChat(response)
+    const result = messagesToChatResponse(response)
 
     expect(result.id).toBe("msg_1")
     expect(result.object).toBe("chat.completion")
@@ -631,7 +642,7 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
   })
 
   test("preserves interleaved thinking order in non-streaming responses", () => {
-    const result = translateAnthropicResponseToChat({
+    const result = messagesToChatResponse({
       ...response,
       content: [
         { type: "text", text: "before" },
@@ -647,19 +658,24 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
     ])
   })
 
-  test("preserves thinking signatures in reasoning_details", () => {
-    const result = translateAnthropicResponseToChat({
+  test("keeps a single thinking signature lossless and accepts a reasoning_details replay", () => {
+    // Pitfalls §3.5: with exactly one thinking block the joined
+    // `reasoning_content` + top-level `signature` is already lossless, so no
+    // `reasoning_details` is added — only 2+ blocks need the per-block form.
+    const result = messagesToChatResponse({
       ...response,
       content: [
         { type: "thinking", thinking: "step 1", signature: "sig_1" },
         { type: "text", text: "Answer" },
       ],
     })
-    expect(result.choices[0].message.reasoning_details).toEqual([
-      { type: "reasoning.text", text: "step 1", signature: "sig_1" },
-    ])
+    expect(result.choices[0].message.reasoning_content).toBe("step 1")
+    expect(result.choices[0].message.signature).toBe("sig_1")
+    expect(result.choices[0].message.reasoning_details).toBeUndefined()
 
-    const nextRequest = translateChatPayloadToAnthropic(
+    // A client that does replay the ordered per-block form round-trips the
+    // signed thinking block either way.
+    const nextRequest = chatToMessages(
       basePayload({
         messages: [
           {
@@ -683,7 +699,7 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
   })
 
   test("reverse-maps usage with cache buckets folded into prompt_tokens", () => {
-    const result = translateAnthropicResponseToChat(response)
+    const result = messagesToChatResponse(response)
     expect(result.usage).toEqual({
       prompt_tokens: 13,
       completion_tokens: 5,
@@ -694,14 +710,14 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
 
   test("maps end_turn/max_tokens stop reasons", () => {
     expect(
-      translateAnthropicResponseToChat({
+      messagesToChatResponse({
         ...response,
         content: [{ type: "text", text: "ok" }],
         stop_reason: "end_turn",
       }).choices[0].finish_reason,
     ).toBe("stop")
     expect(
-      translateAnthropicResponseToChat({
+      messagesToChatResponse({
         ...response,
         content: [{ type: "text", text: "ok" }],
         stop_reason: "max_tokens",
@@ -710,7 +726,7 @@ describe("translateAnthropicResponseToChat (non-streaming response)", () => {
   })
 })
 
-describe("translateAnthropicStreamToChatEvents (streaming)", () => {
+describe("messages → chat stream (IR codec)", () => {
   test("emits text chunks and a terminal chunk with usage", async () => {
     const chunks = await translateFullStream([
       messageStart("msg_1"),
@@ -915,46 +931,41 @@ describe("translateAnthropicStreamToChatEvents (streaming)", () => {
     })
   })
 
-  test("preserves interleaved reasoning segments after visible text", () => {
-    const state = createInitialStreamState()
-
-    const events = [
-      ...translateChunkToAnthropicEvents(
-        makeChatChunk({ reasoning_text: "first thought" }),
-        state,
-      ),
-      ...translateChunkToAnthropicEvents(
-        makeChatChunk({ content: "first answer" }),
-        state,
-      ),
-      ...translateChunkToAnthropicEvents(
-        makeChatChunk({ reasoning_text: "second thought" }),
-        state,
-      ),
-      ...translateChunkToAnthropicEvents(
-        makeChatChunk({ content: "second answer" }),
-        state,
-      ),
-      ...translateChunkToAnthropicEvents(
-        makeChatChunk({}, "stop", {
-          prompt_tokens: 10,
-          completion_tokens: 4,
-          total_tokens: 14,
-        }),
-        state,
-      ),
+  test("preserves interleaved reasoning segments after visible text", async () => {
+    const chunks = [
+      makeChatChunk({ reasoning_text: "first thought" }),
+      makeChatChunk({ content: "first answer" }),
+      makeChatChunk({ reasoning_text: "second thought" }),
+      makeChatChunk({ content: "second answer" }),
+      makeChatChunk({}, "stop", {
+        prompt_tokens: 10,
+        completion_tokens: 4,
+        total_tokens: 14,
+      }),
     ]
+    const frames = (async function* () {
+      for (const chunk of chunks) yield { data: JSON.stringify(chunk) }
+    })()
+
+    const events: Array<{
+      type: string
+      content_block?: { type: string }
+      delta?: { type: string; thinking?: string }
+    }> = []
+    for await (const event of encodeMessagesStream(decodeChatStream(frames))) {
+      events.push(event as (typeof events)[number])
+    }
 
     const blockTypes = events.flatMap((event) => {
       if (event.type !== "content_block_start") return []
-      return [event.content_block.type === "thinking" ? "thinking" : "text"]
+      return [event.content_block?.type === "thinking" ? "thinking" : "text"]
     })
     expect(blockTypes).toEqual(["thinking", "text", "thinking", "text"])
 
     const thinkingTexts = events.flatMap((event) => {
       if (
         event.type !== "content_block_delta"
-        || event.delta.type !== "thinking_delta"
+        || event.delta?.type !== "thinking_delta"
       ) {
         return []
       }

@@ -10,9 +10,6 @@
  * 只碰 `<configDir>/projects` 下的 `*.jsonl`。整个 configDir 归我们所有，
  * 所以不会误删用户自己的 Claude 数据 —— 这是设置 `CLAUDE_CONFIG_DIR`
  * 换来的最重要的性质。
- *
- * 参考 magpie 的做法：它用一次性 temp cwd，转录散落在系统 temp 里随系统清理；
- * 我们要保留稳定 cwd（prompt cache 需要），所以必须自己清理。
  */
 
 import fs from "node:fs/promises"

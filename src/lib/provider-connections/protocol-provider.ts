@@ -21,7 +21,7 @@ import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import type { ProviderConnection, ProviderProtocol } from "./types"
 
 import { isAccountManagedConnection } from "./account-managed"
-import { readAccountLegacyMetadata } from "./connection-metadata"
+import { readConnectionMetadata } from "./connection-metadata"
 import { listProviderConnections } from "./state"
 
 /**
@@ -52,15 +52,20 @@ export function listAccountManagedConnections(): Array<ProviderConnection> {
 
 /**
  * account-managed connection 的 provider 派生。
- * 镜像 connectionToAccount:metadata.provider 优先,protocol 反查兜底,
- * 最终兜底 "copilot"。
+ * 镜像 connectionToAccount:metadata.provider 优先,protocol 反查兜底。
+ *
+ * Account-managed protocol 都来自 PROVIDER_PROTOCOL_MAP 的值域,反查必然
+ * 命中;命中不了只可能是把非 account-managed 协议传了进来 —— 那是调用方
+ * 的错误,直接报错而不是静默当成 copilot。
  */
 export function accountManagedProvider(conn: ProviderConnection): ProviderId {
-  return (
-    readAccountLegacyMetadata(conn)?.provider
-    ?? providerFromProtocol(conn.protocol)
-    ?? "copilot"
-  )
+  const fromMetadata = readConnectionMetadata(conn)?.provider
+  if (fromMetadata) return fromMetadata
+  const provider = providerFromProtocol(conn.protocol)
+  if (!provider) {
+    throw new Error(`No provider registered for protocol "${conn.protocol}"`)
+  }
+  return provider
 }
 
 /**
@@ -94,7 +99,7 @@ export function accountManagedProviderFromId(
  * 否则用 provider 本身。
  */
 export function accountManagedModelPrefix(conn: ProviderConnection): string {
-  const meta = readAccountLegacyMetadata(conn)
+  const meta = readConnectionMetadata(conn)
   if (meta) {
     if (isOAuthProviderId(meta.provider)) {
       const custom =
@@ -105,5 +110,5 @@ export function accountManagedModelPrefix(conn: ProviderConnection): string {
     }
     return meta.provider
   }
-  return providerFromProtocol(conn.protocol) ?? "copilot"
+  return accountManagedProvider(conn)
 }

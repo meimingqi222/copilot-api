@@ -2,7 +2,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"

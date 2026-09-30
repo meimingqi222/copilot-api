@@ -1,63 +1,18 @@
-import type { Account, AccountModel, OAuthAccount } from "~/lib/legacy-accounts"
+import type { AccountModel } from "~/lib/provider-connections"
 import type {
   ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import { getOAuthAccessToken, isOAuthAccount } from "~/lib/legacy-accounts"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import {
   getConnectionOAuthAccessToken,
   getConnectionProvider,
 } from "~/lib/provider-connections"
-import {
-  getAntigravityModelsForAccount,
-  getAntigravityModelsForConnection,
-} from "~/services/antigravity/get-models"
-import {
-  getCodexModelsForAccount,
-  getCodexModelsForConnection,
-} from "~/services/codex/get-models"
+import { getAntigravityModelsForConnection } from "~/services/antigravity/get-models"
+import { getCodexModelsForConnection } from "~/services/codex/get-models"
 
-import {
-  getOAuthFallbackModels,
-  getOAuthFallbackModelsForConnection,
-} from "./model-catalog"
-
-export async function discoverOAuthModels(
-  account: Account,
-  signal?: AbortSignal,
-): Promise<Array<AccountModel>> {
-  if (!isOAuthAccount(account)) {
-    return []
-  }
-
-  if (!getOAuthAccessToken(account)) {
-    return getOAuthFallbackModels(account)
-  }
-
-  try {
-    switch (account.provider) {
-      case "codex": {
-        return await getCodexModelsForAccount(account, signal)
-      }
-      case "antigravity": {
-        return await getAntigravityModelsForAccount(account, signal)
-      }
-      default: {
-        return getOAuthFallbackModels(account)
-      }
-    }
-  } catch {
-    return getOAuthFallbackModels(account)
-  }
-}
-
-export function getOAuthCatalogModels(
-  account: OAuthAccount,
-): Array<AccountModel> {
-  return getOAuthFallbackModels(account)
-}
+import { getOAuthFallbackModelsForConnection } from "./model-catalog"
 
 // ── Connection 原生版本 ───────────────────────────────────────
 
@@ -123,6 +78,9 @@ export async function discoverOAuthModelsForConnection(
         )
       }
       default: {
+        // 没有上游模型端点的 provider：catalog 兜底。
+        // minimax 的 fallback 会先查 models.dev 的 coding-plan 条目，
+        // 所以这里拿到的其实是热更新的目录而非纯粹内嵌表。
         return getOAuthFallbackModelsForConnection(provider)
       }
     }

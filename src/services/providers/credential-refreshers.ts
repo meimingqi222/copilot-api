@@ -1,0 +1,202 @@
+/**
+ * CredentialRefresher 装配。
+ *
+ * 原位于 `lib/provider-connections/refresher-impls.ts`：注册表本身在 lib
+ * （`credential-refresher.ts`），但各 provider 的刷新实现属于 services ——
+ * 装配模块放在 services 侧，"lib 不依赖 provider 实现"才成立。
+ *
+ * Phase 3 之后所有刷新路径直调 connection 原生实现
+ * （refreshCopilotTokenForConnection / refreshOAuthConnectionToken 等），
+ * credential.value / credential.context 为唯一真相,不再反查 Account。
+ */
+import type { ApiCredential } from "~/lib/provider-connections/types"
+
+import { logger } from "~/lib/logger"
+import { getMutableProviderConnection } from "~/lib/provider-connections"
+import {
+  registerCredentialRefresher,
+  type CredentialRefresher,
+} from "~/lib/provider-connections/credential-refresher"
+import {
+  codebuddyNeedsRefresh,
+  refreshCodebuddyTokenForConnection,
+  scheduleCodebuddyRefresh,
+} from "~/services/codebuddy/token-refresh"
+import {
+  refreshCopilotTokenForConnection,
+  scheduleConnectionTokenRefresh,
+} from "~/services/copilot/token-refresh"
+import {
+  lobsteraiNeedsRefresh,
+  refreshLobsteraiTokenForConnection,
+  scheduleLobsteraiRefresh,
+} from "~/services/lobsterai/token-refresh"
+import {
+  refreshOAuthConnectionToken,
+  scheduleOAuthRefreshForConnection,
+} from "~/services/oauth/refresh-scheduler"
+
+const REFRESH_LEAD_MS = 5 * 60 * 1000
+
+function getConnectionId(credential: ApiCredential): string | undefined {
+  const ctx = credential.context
+  if (!ctx || typeof ctx !== "object") return undefined
+  const id = ctx.accountId
+  return typeof id === "string" ? id : undefined
+}
+
+// ── CopilotTokenRefresher ────────────────────────────────────────
+
+const copilotRefresher: CredentialRefresher = {
+  type: "copilot-token",
+
+  async refresh(credential: ApiCredential): Promise<void> {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn || conn.protocol !== "copilot-native" || !conn.enabled) return
+    // refreshCopilotTokenForConnection 直接写 credential.value +
+    // context.copilotTokenExpiry,无需再手动同步回 credential。
+    await refreshCopilotTokenForConnection(conn)
+  },
+
+  needsRefresh(credential: ApiCredential): boolean {
+    const ctx = credential.context as
+      | { copilotTokenExpiry?: number }
+      | undefined
+    if (!ctx?.copilotTokenExpiry) return true
+    return ctx.copilotTokenExpiry - REFRESH_LEAD_MS <= Date.now()
+  },
+
+  scheduleNextRefresh(credential: ApiCredential): void {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const ctx = credential.context as
+      | { copilotTokenExpiry?: number }
+      | undefined
+    if (!ctx?.copilotTokenExpiry) return
+    const refreshInSeconds = Math.max(
+      Math.floor((ctx.copilotTokenExpiry - Date.now()) / 1000),
+      60,
+    )
+    scheduleConnectionTokenRefresh(connectionId, refreshInSeconds)
+  },
+}
+
+// ── OAuthTokenRefresher ──────────────────────────────────────────
+
+const oauthRefresher: CredentialRefresher = {
+  type: "oauth-token",
+
+  async refresh(credential: ApiCredential): Promise<void> {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn || !conn.enabled) return
+    // refreshOAuthConnectionToken 直接写 credential.value / context /
+    // metadata.authStatus,无需再手动同步回 credential。
+    await refreshOAuthConnectionToken(conn, "connection-driven")
+  },
+
+  needsRefresh(credential: ApiCredential): boolean {
+    const ctx = credential.context as { expiresAt?: number } | undefined
+    if (!ctx?.expiresAt) return true
+    return ctx.expiresAt - REFRESH_LEAD_MS <= Date.now()
+  },
+
+  scheduleNextRefresh(credential: ApiCredential): void {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn) return
+    scheduleOAuthRefreshForConnection(conn)
+  },
+}
+
+// ── WindsurfJwtRefresher(占位,Windsurf JWT 刷新由 mimo/windsurf manager 处理) ──
+
+const windsurfJwtRefresher: CredentialRefresher = {
+  type: "windsurf-jwt",
+  async refresh(_credential: ApiCredential): Promise<void> {
+    // Windsurf JWT 刷新由 services/windsurf 模块独立管理(类似 mimo manager),
+    // 此处不做任何操作,保留接口契约。
+  },
+  needsRefresh(_credential: ApiCredential): boolean {
+    return false
+  },
+  scheduleNextRefresh(_credential: ApiCredential): void {},
+}
+
+// ── CodebuddyTokenRefresher ───────────────────────────────────────
+
+const codebuddyRefresher: CredentialRefresher = {
+  type: "codebuddy-token",
+
+  async refresh(credential: ApiCredential): Promise<void> {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn || !conn.enabled) return
+    await refreshCodebuddyTokenForConnection(conn)
+  },
+
+  needsRefresh(credential: ApiCredential): boolean {
+    return codebuddyNeedsRefresh(credential)
+  },
+
+  scheduleNextRefresh(credential: ApiCredential): void {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn) return
+    scheduleCodebuddyRefresh(conn)
+  },
+}
+
+// ── LobsteraiTokenRefresher ───────────────────────────────────────
+
+const lobsteraiRefresher: CredentialRefresher = {
+  type: "lobsterai-token",
+
+  async refresh(credential: ApiCredential): Promise<void> {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn || !conn.enabled) return
+    await refreshLobsteraiTokenForConnection(conn)
+  },
+
+  needsRefresh(credential: ApiCredential): boolean {
+    return lobsteraiNeedsRefresh(credential)
+  },
+
+  scheduleNextRefresh(credential: ApiCredential): void {
+    const connectionId = getConnectionId(credential) ?? credential.id
+    const conn = getMutableProviderConnection(connectionId)
+    if (!conn) return
+    scheduleLobsteraiRefresh(conn)
+  },
+}
+
+// ── StaticRefresher(无刷新需求) ─────────────────────────────────
+const staticRefresher: CredentialRefresher = {
+  type: "static",
+  async refresh() {},
+  needsRefresh() {
+    return false
+  },
+  scheduleNextRefresh() {},
+}
+
+// ── 注册 ──────────────────────────────────────────────────────────
+
+let initialized = false
+
+export function initializeCredentialRefreshers(): void {
+  if (initialized) return
+  for (const refresher of [
+    copilotRefresher,
+    oauthRefresher,
+    windsurfJwtRefresher,
+    codebuddyRefresher,
+    lobsteraiRefresher,
+    staticRefresher,
+  ]) {
+    registerCredentialRefresher(refresher)
+  }
+  initialized = true
+  logger.debug("[credential-refresher] Registered 6 refresher implementations")
+}

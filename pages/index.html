@@ -1409,7 +1409,7 @@
                       </div>
                       <div class="flex items-center gap-1.5 mt-auto">
                         <button
-                          x-show="account.authStatus === 'error' && ['codex','claude','xai','antigravity','kimi','lobsterai'].includes(account.provider)"
+                          x-show="account.authStatus === 'error' && ['codex','claude','xai','antigravity','kimi','lobsterai','minimax','qoder'].includes(account.provider)"
                           @click="openReauthModal(account)"
                           class="btn btn-sm flex-1"
                           style="background: var(--apple-orange); color: white"
@@ -1629,6 +1629,24 @@
                       </template>
                     </div>
                   </template>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'minimax'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.minimax.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'qoder'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.qoder.deviceHint')"
+                  ></p>
                 </div>
                 <div class="modal-footer">
                   <button

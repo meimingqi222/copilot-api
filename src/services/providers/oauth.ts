@@ -1,9 +1,9 @@
-import { saveAccounts } from "~/lib/account-store"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import { getOAuthProviderDescriptor } from "~/lib/provider-config"
 import {
   getConnectionProvider,
   getMutableProviderConnection,
+  persistProviderConnections,
   setConnectionModels,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot, fetchOAuthProviderQuota } from "~/lib/quota"
@@ -62,7 +62,7 @@ export function createOAuthProviderRuntime(
       }
 
       applyOAuthQuotaSnapshot(liveConnection, snapshot)
-      await saveAccounts()
+      await persistProviderConnections()
       return snapshot
     },
     refreshAuth(connection) {

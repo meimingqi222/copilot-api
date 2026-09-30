@@ -1,4 +1,4 @@
-import type { Message } from "~/services/copilot/create-chat-completions"
+import type { Message } from "~/services/protocols/chat/types"
 
 type CopilotInitiator = "agent" | "user"
 

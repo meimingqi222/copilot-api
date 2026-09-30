@@ -7,7 +7,7 @@ import type {
 import { HTTPError } from "~/lib/error"
 import { getConnectionProxyUrl } from "~/lib/provider-connections"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
-import { oauthFetch, withProxyUrl } from "~/services/oauth/fetch"
+import { oauthFetch } from "~/services/oauth/fetch"
 import { substituteTokenInHeaders } from "~/services/oauth/token-resolver"
 
 /**
@@ -23,14 +23,6 @@ export async function fetchWithConnectionProxy(
   return oauthFetch(url, init ?? {}, {
     proxyUrl: getConnectionProxyUrl(connection),
   })
-}
-
-/** withProxyUrl 的 connection 版本(读取 metadata 顶层 proxyUrl)。 */
-export function withConnectionProxy(
-  connection: ProviderConnection,
-  init: RequestInit = {},
-): ReturnType<typeof withProxyUrl> {
-  return withProxyUrl(init, getConnectionProxyUrl(connection))
 }
 
 function headersToRecord(headers: Headers): Record<string, string> {

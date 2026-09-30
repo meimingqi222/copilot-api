@@ -11,7 +11,7 @@
  */
 
 import type { ProviderConnection } from "~/lib/provider-connections"
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
@@ -819,11 +819,6 @@ export function clearUpstreamWebsocketSessionsForTest(): void {
     destroySession(key, "test_clear")
   }
   sessions.clear()
-}
-
-/** Test hook: live session count. */
-export function getUpstreamWebsocketSessionCountForTest(): number {
-  return sessions.size
 }
 
 /** Test hook: run the idle reaper on demand. */

@@ -6,17 +6,20 @@ import type { Context } from "hono"
 
 import type { RouteTarget } from "~/lib/provider-connections"
 import type { RequestAdmission } from "~/lib/request-admission"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
-import type { ResponsesPayload } from "~/services/copilot/responses-api"
+import type { IRWire } from "~/services/ir/types"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type {
   AdapterChatResult,
+  AdapterGeminiResult,
   AdapterMessagesResult,
   AdapterResponsesResult,
   AnthropicMessagesPayload,
 } from "~/services/protocols"
+import type { GeminiGenerateContentRequest } from "~/services/protocols/gemini"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { HTTPError } from "~/lib/error"
+import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { connectionProvider } from "~/lib/provider-connections"
 import {
   observeUpstreamResponseModel,
@@ -31,9 +34,127 @@ import { isAsyncIterable } from "~/services/dispatch/concurrency"
 import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
 import { createChatViaResponses } from "~/services/protocols/chat-via-responses"
 import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
+import { createMessagesViaResponses } from "~/services/protocols/messages-via-responses"
 import { createResponsesViaChat } from "~/services/protocols/responses-via-chat"
+import { createResponsesViaMessages } from "~/services/protocols/responses-via-messages"
+import { decodeChatRequest } from "~/services/ir/codecs/messages-chat/request"
+import { getProtocolAdapter } from "~/services/protocols/registry"
+import {
+  createTranslatedCall,
+  wireSpec,
+  type WireExecutor,
+} from "~/services/protocols/wire-pairs"
+import {
+  needsSearchOrchestration,
+  runSearchAwareResult,
+  runSearchAwareStream,
+  type SearchAwareExecutor,
+} from "~/services/search/orchestrate"
+import { listSearchers } from "~/services/search/searcher"
 
 import { executeWithFailover } from "./failover"
+
+type Adapter = ReturnType<typeof getProtocolAdapter>
+
+/**
+ * Binds the adapter method that serves an endpoint, for the table-driven
+ * translation path. Returns `undefined` when the endpoint has no wire (or the
+ * protocol does not implement it), so the caller reports an unsupported
+ * target instead of dispatching into a missing method.
+ */
+function wireExecutor(
+  adapter: Adapter,
+  endpoint: RouteTarget["endpoint"],
+): { wire: IRWire; executor: WireExecutor } | undefined {
+  if (
+    endpoint !== "chat"
+    && endpoint !== "messages"
+    && endpoint !== "responses"
+    && endpoint !== "gemini"
+  ) {
+    return undefined
+  }
+  const executor =
+    endpoint === "chat" ? adapter?.createChatCompletions?.bind(adapter)
+    : endpoint === "messages" ? adapter?.createMessages?.bind(adapter)
+    : endpoint === "responses" ? adapter?.createResponses?.bind(adapter)
+    : adapter?.createGeminiGenerateContent?.bind(adapter)
+  // Each adapter method declares its own payload type; the table-driven path
+  // erases it and re-encodes into the target wire before calling.
+  return executor ?
+      { wire: endpoint, executor: executor as unknown as WireExecutor }
+    : undefined
+}
+
+/**
+ * Detours a native chat call through the IR whenever the payload carries a web
+ * search intent the chat wire cannot express.
+ *
+ * Returns `undefined` when nothing needs orchestrating, so the caller keeps
+ * its original single call (the common case, with zero added latency).
+ */
+function chatSearchDetour(params: {
+  payload: ChatCompletionsPayload
+  target: RouteTarget
+  execute: SearchAwareExecutor
+}): Promise<{ credentialId: string; response: unknown }> | undefined {
+  const searchers = listSearchers()
+  if (searchers.length === 0) return undefined
+  const request = decodeChatRequest(params.payload)
+  if (!needsSearchOrchestration(request, "chat")) return undefined
+
+  const spec = wireSpec("chat")
+  const searchParams = {
+    request,
+    spec,
+    searchers,
+    execute: params.execute,
+  }
+  if (params.payload.stream === true) {
+    return Promise.resolve({
+      credentialId: params.target.credentialId,
+      response: spec.encodeStream(runSearchAwareStream(searchParams), {
+        model: params.target.upstreamModelId,
+        request,
+        estimatedInputTokens: 0,
+      }),
+    })
+  }
+  return runSearchAwareResult(searchParams).then(
+    ({ credentialId, result }) => ({
+      credentialId,
+      response: spec.encodeResult(result, {
+        model: params.target.upstreamModelId,
+        request,
+      }),
+    }),
+  )
+}
+
+function translatedCall(
+  source: IRWire,
+  bound: { wire: IRWire; executor: WireExecutor },
+  params: {
+    target: RouteTarget
+    payload: unknown
+    connection: RequestAdmission["connection"]
+    credential: RequestAdmission["credential"]
+    signal?: AbortSignal
+    ctx?: RequestExecutionContext
+  },
+) {
+  return createTranslatedCall({
+    source,
+    target: bound.wire,
+    targetPayload: params.payload,
+    connection: params.connection,
+    credential: params.credential,
+    routeTarget: params.target,
+    signal: params.signal,
+    ctx: params.ctx,
+    executor: bound.executor,
+  })
+}
 
 export interface ChatDispatchOptions {
   routeKind: "chat"
@@ -56,10 +177,75 @@ export interface ResponsesDispatchOptions {
   executionContext?: RequestExecutionContext
 }
 
+export interface GeminiDispatchOptions {
+  routeKind: "gemini"
+  /** `model` is resolved from the URL path by the route, never from the body. */
+  payload: GeminiGenerateContentRequest & { model: string }
+  c?: Context
+  executionContext?: RequestExecutionContext
+}
+
+/**
+ * Dispatches one candidate for a Gemini client request: native passthrough on a
+ * gemini endpoint, otherwise the shared codec table translates to the target's
+ * wire. Extracted so `dispatchRequest` stays within its size budget.
+ */
+function dispatchGeminiTarget(
+  options: GeminiDispatchOptions,
+  adapter: Adapter,
+  target: RouteTarget,
+  current: RequestAdmission,
+  signal?: AbortSignal,
+): Promise<DispatchResult> {
+  const { connection: conn, credential: cred } = current
+  const executionContext = {
+    initiator: current.initiator,
+    c: options.c,
+    ...options.executionContext,
+  }
+  const geminiPayload = {
+    ...options.payload,
+    model: resolveDispatchModel(target),
+  }
+
+  if (target.endpoint === "gemini") {
+    const createGemini = adapter?.createGeminiGenerateContent?.bind(adapter)
+    if (createGemini) {
+      return createGemini({
+        target,
+        connection: conn,
+        credential: cred,
+        payload: geminiPayload,
+        signal,
+        ctx: executionContext,
+      }).then((r) => decorateResult(r, current, options.c))
+    }
+  }
+
+  // Cross-protocol fallback: a Gemini client reaching a chat/messages/
+  // responses-only target, served by the shared codec table.
+  const bound = wireExecutor(adapter, target.endpoint)
+  if (bound) {
+    return translatedCall("gemini", bound, {
+      target,
+      payload: geminiPayload,
+      connection: conn,
+      credential: cred,
+      signal,
+      ctx: executionContext,
+    }).then((r) => decorateResult(r, current, options.c))
+  }
+
+  throw new LocalPayloadUnsupportedError(
+    `Protocol "${target.protocol}" does not support the Gemini generateContent endpoint via ${target.endpoint}`,
+  )
+}
+
 export type DispatchOptions =
   | ChatDispatchOptions
   | MessagesDispatchOptions
   | ResponsesDispatchOptions
+  | GeminiDispatchOptions
 
 export interface DispatchIdentity {
   ownerId: string
@@ -72,9 +258,10 @@ export type DispatchResult =
   | (AdapterChatResult & { identity: DispatchIdentity })
   | (AdapterMessagesResult & { identity: DispatchIdentity })
   | (AdapterResponsesResult & { identity: DispatchIdentity })
+  | (AdapterGeminiResult & { identity: DispatchIdentity })
 
 function decorateResult(
-  result: AdapterChatResult | AdapterMessagesResult | AdapterResponsesResult,
+  result: { credentialId: string; response: unknown },
   current: RequestAdmission,
   c?: Context,
 ): DispatchResult {
@@ -182,8 +369,26 @@ export async function dispatchRequest(
         // Follow the endpoint selected by route-target resolution. Adapter
         // method availability alone must not bypass a protocol fallback.
         if (target.endpoint === "chat" && adapter?.createChatCompletions) {
-          return adapter
-            .createChatCompletions({
+          const createChat = adapter.createChatCompletions.bind(adapter)
+          // A chat client can ask for web search (OpenRouter's `plugins`); the
+          // chat wire cannot carry it, so the native path detours through the
+          // IR loop instead of silently dropping the intent.
+          const searchAware = chatSearchDetour({
+            payload: chatPayload,
+            target,
+            execute: (payload: unknown) =>
+              createChat({
+                target,
+                connection: conn,
+                credential: cred,
+                payload: payload as ChatCompletionsPayload,
+                signal,
+                ctx: executionContext,
+              }),
+          })
+          const call =
+            searchAware
+            ?? createChat({
               target,
               connection: conn,
               credential: cred,
@@ -191,7 +396,7 @@ export async function dispatchRequest(
               signal,
               ctx: executionContext,
             })
-            .then((r) => decorateResult(r, current, options.c))
+          return call.then((r) => decorateResult(r, current, options.c))
         }
 
         if (target.endpoint === "messages") {
@@ -224,9 +429,23 @@ export async function dispatchRequest(
           }
         }
 
-        throw new HTTPError(
+        // Gemini has no dedicated wrapper: the shared codec table carries it.
+        if (target.endpoint === "gemini") {
+          const bound = wireExecutor(adapter, "gemini")
+          if (bound) {
+            return translatedCall("chat", bound, {
+              target,
+              payload: chatPayload,
+              connection: conn,
+              credential: cred,
+              signal,
+              ctx: executionContext,
+            }).then((r) => decorateResult(r, current, options.c))
+          }
+        }
+
+        throw new LocalPayloadUnsupportedError(
           `Protocol "${target.protocol}" does not support chat completions via ${target.endpoint}`,
-          new Response("Not Implemented", { status: 501 }),
         )
       },
     })
@@ -283,11 +502,56 @@ export async function dispatchRequest(
             chatExecutor: (p) => createChat(p),
           }).then((r) => decorateResult(r, current, options.c))
         }
-        throw new HTTPError(
+        const createMessages = adapter?.createMessages?.bind(adapter)
+        if (target.endpoint === "messages" && createMessages) {
+          return createResponsesViaMessages({
+            target,
+            connection: conn,
+            credential: cred,
+            payload: {
+              ...payload,
+              model: resolveDispatchModel(target),
+            },
+            signal,
+            ctx: executionContext,
+            messagesExecutor: (p) => createMessages(p),
+          }).then((r) => decorateResult(r, current, options.c))
+        }
+        if (target.endpoint === "gemini") {
+          const bound = wireExecutor(adapter, "gemini")
+          if (bound) {
+            return translatedCall("responses", bound, {
+              target,
+              payload: { ...payload, model: resolveDispatchModel(target) },
+              connection: conn,
+              credential: cred,
+              signal,
+              ctx: executionContext,
+            }).then((r) => decorateResult(r, current, options.c))
+          }
+        }
+        throw new LocalPayloadUnsupportedError(
           `Protocol "${target.protocol}" does not support /responses`,
-          new Response("Not Implemented", { status: 501 }),
         )
       },
+    })
+  }
+
+  if (options.routeKind === "gemini") {
+    // The Gemini wire has its own contents shape; sensitive-word obfuscation
+    // is defined for the OpenAI payloads only, so it is a no-op here.
+    return executeWithFailover<
+      GeminiDispatchOptions["payload"],
+      DispatchResult
+    >({
+      payload: options.payload,
+      admission,
+      signal,
+      routeKind: "gemini",
+      logPrefix: "[dispatch/gemini]",
+      c: options.c,
+      execute: (adapter, target, current) =>
+        dispatchGeminiTarget(options, adapter, target, current, signal),
     })
   }
 
@@ -309,6 +573,7 @@ export async function dispatchRequest(
       const messageExecutionContext = {
         initiator: current.initiator,
         forwardedHeaders: options.forwardedHeaders,
+        c: options.c,
       }
 
       // Follow the endpoint selected by route-target resolution. Native
@@ -348,9 +613,41 @@ export async function dispatchRequest(
         }).then((r) => decorateResult(r, current, options.c))
       }
 
-      throw new HTTPError(
+      // Cross-protocol fallback: translate Anthropic Messages -> Responses,
+      // delegate to createResponses, then translate the response back. Enables
+      // /v1/messages to reach responses-only targets (codex/xai).
+      const createResponses = adapter?.createResponses?.bind(adapter)
+      if (target.endpoint === "responses" && createResponses) {
+        return createMessagesViaResponses({
+          target,
+          connection: conn,
+          credential: cred,
+          payload: {
+            ...payload,
+            model: resolveDispatchModel(target),
+          },
+          signal,
+          ctx: messageExecutionContext,
+          responsesExecutor: (p) => createResponses(p),
+        }).then((r) => decorateResult(r, current, options.c))
+      }
+
+      if (target.endpoint === "gemini") {
+        const bound = wireExecutor(adapter, "gemini")
+        if (bound) {
+          return translatedCall("messages", bound, {
+            target,
+            payload: { ...payload, model: resolveDispatchModel(target) },
+            connection: conn,
+            credential: cred,
+            signal,
+            ctx: messageExecutionContext,
+          }).then((r) => decorateResult(r, current, options.c))
+        }
+      }
+
+      throw new LocalPayloadUnsupportedError(
         `Protocol "${target.protocol}" does not support /messages via ${target.endpoint}`,
-        new Response("Not Implemented", { status: 501 }),
       )
     },
   })
@@ -362,7 +659,7 @@ export async function dispatchRequest(
  */
 function applySensitiveWords<T>(
   payload: T,
-  routeKind: "chat" | "messages" | "responses",
+  routeKind: "chat" | "messages" | "responses" | "gemini",
   matcher: ReturnType<typeof getSensitiveWordMatcherFromEnv>,
 ): T {
   if (!matcher) return payload

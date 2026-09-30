@@ -4,26 +4,28 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
+import type {
+  CopilotStreamEventLike,
+  ResponsesPayload,
+  ResponsesResponse,
+} from "~/services/protocols/responses/types"
 
-import { canonicalModelId, parseModelReference } from "~/lib/legacy-accounts"
-import { accountManagedModelPrefix } from "~/lib/provider-connections"
-import { isChatCompletionResponse } from "~/lib/utils"
-import { createChatCompletions } from "~/services/copilot/create-chat-completions"
-import { hasVisionInput } from "~/services/copilot/create-responses-once"
-import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
 import {
-  supportsResponsesApiForConnection,
-  translateChatCompletionToResponses,
-  translateChatCompletionsStreamToResponses,
-  translateResponsesToChatPayload,
-  type CopilotStreamEventLike,
-  type ResponsesPayload,
-  type ResponsesResponse,
-} from "~/services/copilot/responses-api"
+  canonicalModelId,
+  parseModelReference,
+} from "~/lib/route-target/model-reference"
+import {
+  inferInitiatorFromChatMessages,
+  inferInitiatorFromResponsesPayload,
+} from "~/lib/initiator-header"
+import { accountManagedModelPrefix } from "~/lib/provider-connections"
+import { connectionModelSupportsEndpoint } from "~/lib/route-target/model-support"
+import { hasVisionInput } from "~/services/copilot/create-responses-once"
 import {
   getProtocolAdapter,
   initializeProtocolAdapters,
 } from "~/services/protocols"
+import { createResponsesViaChat } from "~/services/protocols/responses-via-chat"
 import { buildDirectAdapterTarget } from "~/services/providers/adapter-target"
 
 interface CreateResponsesOptions {
@@ -67,35 +69,76 @@ export const createResponses = async (
   }
   const { connection, credential } = options
 
-  if (!supportsResponsesApiForConnection(routedPayload.model, connection)) {
-    const chatPayload = translateResponsesToChatPayload(routedPayload)
-    const result = await createChatCompletions(chatPayload, {
+  initializeProtocolAdapters()
+  const adapter = getProtocolAdapter(connection.protocol)
+
+  // 该模型在这个 connection 上不支持 responses 端点时，走共享的
+  // Responses→Chat 翻译路径（IR codec），而不是 adapter 私有翻译器。
+  if (
+    !connectionModelSupportsEndpoint(
+      routedPayload.model,
+      connection,
+      "responses",
+    )
+  ) {
+    const createChat = adapter?.createChatCompletions?.bind(adapter)
+    if (!createChat) {
+      throw new Error(
+        `Protocol "${connection.protocol}" does not support responses via chat`,
+      )
+    }
+
+    const target = buildDirectAdapterTarget({
       connection,
       credential,
-      signal: options.signal,
-      initiatorOverride: options.initiatorOverride,
-      c: options.c,
-      forwardedHeaders: options.forwardedHeaders,
-      memoryTraceId: options.memoryTraceId,
+      payloadModel: routedPayload.model,
+      nativeModelId: parseModelReference(
+        routedPayload.model,
+        accountManagedModelPrefix(connection),
+      ).nativeModelId,
+      endpoint: "chat",
     })
 
-    if (isChatCompletionResponse(result.response)) {
-      return {
-        accountId: result.accountId,
-        response: translateChatCompletionToResponses(
-          result.response,
-          routedPayload,
-        ),
-      }
-    }
+    const result = await createResponsesViaChat({
+      target,
+      connection,
+      credential,
+      payload: routedPayload,
+      signal: options.signal,
+      ctx: {
+        initiator:
+          options.initiatorOverride
+          ?? inferInitiatorFromResponsesPayload(routedPayload),
+        forwardedHeaders: options.forwardedHeaders,
+        c: options.c,
+        memoryTraceId: options.memoryTraceId,
+      },
+      chatExecutor: ({ payload: chatPayload }) =>
+        createChat({
+          target,
+          connection,
+          credential,
+          payload: chatPayload,
+          signal: options.signal,
+          ctx: {
+            initiator:
+              options.initiatorOverride
+              ?? inferInitiatorFromChatMessages(chatPayload.messages),
+            enableVision: chatPayload.messages.some(
+              (message) =>
+                typeof message.content !== "string"
+                && message.content?.some(
+                  (content) => content.type === "image_url",
+                ),
+            ),
+            forwardedHeaders: options.forwardedHeaders,
+            c: options.c,
+            memoryTraceId: options.memoryTraceId,
+          },
+        }),
+    })
 
-    return {
-      accountId: result.accountId,
-      response: translateChatCompletionsStreamToResponses(
-        result.response,
-        routedPayload,
-      ),
-    }
+    return { accountId: connection.id, response: result.response }
   }
 
   const enableVision = hasVisionInput(routedPayload)
@@ -103,8 +146,6 @@ export const createResponses = async (
     options.initiatorOverride
     ?? inferInitiatorFromResponsesPayload(routedPayload)
 
-  initializeProtocolAdapters()
-  const adapter = getProtocolAdapter(connection.protocol)
   if (!adapter?.createResponses) {
     throw new Error(
       `Protocol "${connection.protocol}" does not support responses`,

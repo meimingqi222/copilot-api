@@ -3,7 +3,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { isOAuthProviderId } from "~/lib/provider-config"
 import {
   accountManagedProvider,
-  ensureLegacyMetadata,
+  ensureConnectionMetadata,
   setConnectionCredentialExtra,
   setConnectionSetting,
   setCredentialContextField,
@@ -267,16 +267,19 @@ function applySettingsPatchToConnection(
   settings: Record<string, unknown>,
 ): void {
   const provider = accountManagedProvider(conn)
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
 
   if (provider && isOAuthProviderId(provider)) {
     // OAuth settings 有字段白名单 + 空字符串清除为 undefined 的语义
+    // （MiniMax Code 的 region 也在这里：它是与凭证绑定的账号域，
+    //  修复写错的区域时必须能改）。
     for (const key of [
       "baseUrl",
       "proxyUrl",
       "modelPrefix",
       "tokenEndpoint",
       "redirectUri",
+      "region",
     ]) {
       if (typeof settings[key] === "string") {
         const value = (settings[key] as string).trim() || undefined

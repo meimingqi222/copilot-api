@@ -4,15 +4,13 @@ import type {
 } from "~/lib/provider-connections"
 
 import {
-  refreshCopilotTokenForConnection,
-  refreshQuotaForConnection,
-} from "~/lib/account-store"
-import {
   getConnectionCopilotToken,
   getConnectionProvider,
   setConnectionModels,
 } from "~/lib/provider-connections"
+import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refresh"
 import { getModelsForConnection } from "~/services/copilot/get-models"
 
 import type { ProviderRuntime } from "./runtime"

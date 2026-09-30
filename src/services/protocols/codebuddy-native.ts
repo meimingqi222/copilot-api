@@ -21,7 +21,7 @@ import { createHash, randomUUID } from "node:crypto"
 import type {
   CopilotStreamEvent,
   Message,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import {
   type ApiCredential,

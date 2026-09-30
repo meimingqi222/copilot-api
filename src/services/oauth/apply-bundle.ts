@@ -1,7 +1,7 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
-  ensureLegacyMetadata,
+  ensureConnectionMetadata,
   setConnectionAuthStatus,
   setConnectionCredentialExtra,
   setConnectionSetting,
@@ -121,7 +121,7 @@ export function applyOAuthConnectionSettings(
     redirectUri?: string
   },
 ): void {
-  const meta = ensureLegacyMetadata(connection)
+  const meta = ensureConnectionMetadata(connection)
   for (const [key, value] of Object.entries(settings)) {
     if (value === undefined) continue
     setConnectionSetting(connection, key, value)

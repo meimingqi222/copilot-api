@@ -2,27 +2,27 @@ import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 
-import type { Account, AccountProvider } from "~/lib/legacy-accounts"
-
-import {
-  refreshCopilotToken,
-  refreshQuotaForAccount,
-  saveAccounts,
-} from "~/lib/account-store"
 import {
   GITHUB_BASE_URL,
   GITHUB_CLIENT_ID,
   standardHeaders,
 } from "~/lib/api-config"
-import { addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
-import { refreshModelsForAccount } from "~/lib/utils"
+import type { ProviderId } from "~/lib/provider-config"
+import {
+  managedConnectionFromInput,
+  persistProviderConnections,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
+import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
+import { refreshModelsForConnection } from "~/lib/utils"
+import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refresh"
 
 // Persisted map of pending device-code flows: deviceCode → pollState
 export interface PollState {
   label: string
-  provider: AccountProvider
+  provider: ProviderId
   interval: number
   expiresAt: number
   status: "pending" | "complete" | "expired"
@@ -163,43 +163,39 @@ export async function pollAccountFlow(flowId: string): Promise<{
     return { status: "pending" }
   }
 
-  // Create account
-  const account: Account = {
+  // Create account (copilot connection; token 由后台刷新补齐)
+  const connection = managedConnectionFromInput({
     id: randomUUID(),
-    label: flow.label,
+    name: flow.label,
     provider: "copilot",
-    credentials: {
-      githubToken: json.access_token,
-    },
+    credentials: { githubToken: json.access_token },
     settings: {},
     enabled: true,
     priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
-  }
+  })
 
-  addAccount(account)
-  await saveAccounts()
+  upsertProviderConnection(connection)
+  await persistProviderConnections()
 
   // Refresh Copilot token and quota in background
-  refreshCopilotToken(account)
-    .then(() => refreshQuotaForAccount(account))
-    .then(() => refreshModelsForAccount(account))
+  refreshCopilotTokenForConnection(connection)
+    .then(() => refreshQuotaForConnection(connection))
+    .then(() => refreshModelsForConnection(connection))
     .then(() => {
-      logger.info(`GitHub account added: ${account.label}`)
+      logger.info(`GitHub account added: ${connection.name}`)
     })
     .catch((err: unknown) => {
-      logger.warn(`Failed to initialize account "${account.label}":`, err)
+      logger.warn(`Failed to initialize account "${connection.name}":`, err)
     })
 
   flow.status = "complete"
-  flow.accountId = account.id
+  flow.accountId = connection.id
   await savePendingFlows()
 
-  // 模型缓存由 saveAccounts / refreshModelsForAccount 内部的
+  // 模型缓存由 persistProviderConnections / refreshModelsForConnection 内部的
   // emitStateChange("models-stale") 自动触发,无需手动调用 cacheModels()。
 
-  return { status: "complete", accountId: account.id }
+  return { status: "complete", accountId: connection.id }
 }
 
 export const deviceFlowRoutes = new Hono()

@@ -9,11 +9,11 @@ import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
   Message,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
-import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import {
   getCredentialContextString,
   getConnectionSettings,

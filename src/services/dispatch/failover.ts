@@ -24,7 +24,7 @@ import {
   markCredentialCooldown,
   markCredentialQuotaExhausted,
   persistProviderConnections,
-  readAccountLegacyMetadata,
+  readConnectionMetadata,
   setConnectionAuthStatus,
   setConnectionCooldownUntil,
   setConnectionExhausted,
@@ -72,7 +72,7 @@ export interface FailoverOptions<TPayload, TResult> {
   payload: TPayload
   admission: RequestAdmission
   signal?: AbortSignal
-  routeKind: "chat" | "messages" | "responses" | "embeddings"
+  routeKind: "chat" | "messages" | "responses" | "gemini" | "embeddings"
   execute: (
     adapter: ReturnType<typeof getProtocolAdapter>,
     target: RouteTarget,
@@ -254,6 +254,9 @@ export async function executeWithFailover<
         if (error instanceof LocalConcurrencyLimitError) {
           errorCode = "concurrency_limit"
           errorSnippet = error.message
+        } else if (error instanceof LocalPayloadUnsupportedError) {
+          errorCode = "semantic_unsupported"
+          errorSnippet = error.message
         } else if (error instanceof LocalUnavailableError) {
           errorCode = "local_unavailable"
           errorSnippet = error.message
@@ -388,7 +391,7 @@ function resolveStateConnection(id: string) {
 
 /** syncLegacyExhaustedState 的 connection 级镜像。 */
 function syncConnectionExhaustedState(conn: ProviderConnection): void {
-  const meta = readAccountLegacyMetadata(conn)
+  const meta = readConnectionMetadata(conn)
   const remainingCooldown = getRemainingCooldownSeconds(conn.id)
   const exhausted = remainingCooldown > 0 || meta?.quotaState === "exhausted"
   if (!exhausted) {
@@ -561,8 +564,8 @@ async function markAccountManagedCooldown(
  * authoritative — quota is quota, 5xx is cooled, 401/403 is auth.
  *
  * Phase 1:直接通过 connection 写入器落在 ProviderConnection +
- * AccountLegacyMetadata 上,使下一次 availability 检查
- * (isAccountAvailable / isConnectionAvailable)看到不可用状态。
+ * ConnectionMetadata 上,使下一次 availability 检查
+ * (isConnectionAvailable / getConnectionRoutability)看到不可用状态。
  *
  * WS rotation is account-managed only, so this targets account-managed
  * connections; plain connections fall back to a direct credential cooldown.

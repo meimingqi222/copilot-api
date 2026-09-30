@@ -1,4 +1,4 @@
-import type { ResponsesResponse } from "~/services/copilot/responses-api"
+import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
 

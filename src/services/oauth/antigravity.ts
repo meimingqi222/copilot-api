@@ -356,19 +356,6 @@ export async function fetchAntigravityProjectId(
   )
 }
 
-/**
- * @deprecated 使用 buildAntigravityHubUserAgent 以获取动态版本追踪。
- * 保留此函数仅为向后兼容；新代码应直接调用
- * ~/services/antigravity/version 中的 buildAntigravityHubUserAgent。
- */
-export function buildAntigravityUserAgent(version?: string): string {
-  if (version) {
-    return `antigravity/hub/${version} darwin/arm64`
-  }
-  // 动态版本：从 Hub manifest 缓存中读取
-  return buildAntigravityHubUserAgent()
-}
-
 export function applyAntigravityOAuthBundle(
   connection: ProviderConnection,
   bundle: AntigravityOAuthBundle,

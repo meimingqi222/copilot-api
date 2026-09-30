@@ -8,10 +8,8 @@
  * - 按 `tool_use id` 索引 → 下一轮 `/v1/messages` 用它找到该唤醒哪个 run。
  *
  * `tool_use id` 由 Claude Code 通过 MCP 的 `params._meta["claudecode/toolUseId"]`
- * 传下来（见 `internal/claudebridge/mcp.go:110`），同时也会出现在我们返回给
- * 调用方的 `content_block_start` 里。两侧靠它对齐。
- *
- * 参考 magpie 的 `findRun()`（`internal/gateway/claude_subscription.go:436`）。
+ * 传下来，同时也会出现在我们返回给调用方的 `content_block_start` 里。
+ * 两侧靠它对齐。
  */
 
 /** MCP 工具调用的结果，形态与 MCP 的 `tools/call` 返回一致。 */
@@ -78,12 +76,11 @@ export class RunRegistry {
   /**
    * 找到正阻塞在这些 `tool_use id` 上的 run。
    *
-   * 规则（照 magpie）：只看真正挂起的那些 id；如果它们指向**不同的** run
+   * 规则：只看真正挂起的那些 id；如果它们指向**不同的** run
    * 就当作没匹配（有歧义时宁可重开一轮，也不要错配）。
    *
    * `scope` 是**多租户隔离**：copilot-api 是代理，不是单用户本机工具。
    * 不校验归属的话，A 用户可以用 B 的 `tool_use id` 劫持 B 的挂起进程。
-   * magpie 不需要这层是因为它只服务本机一个人。
    */
   findParked(
     toolUseIds: ReadonlyArray<string>,

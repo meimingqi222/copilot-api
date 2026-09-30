@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/legacy-accounts"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
+import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
-import { connectionToAccount, listAccounts } from "~/lib/legacy-accounts"
+import {
+  connectionToTestAccount as connectionToAccount,
+  listTestAccounts as listAccounts,
+} from "./helpers/set-accounts"
 import {
   getConnectionAuthStatus,
-  migrateAccountsToConnections,
+  getMutableProviderConnection,
+  managedConnectionFromInput,
 } from "~/lib/provider-connections"
 import {
   parseAntigravityQuotaPayload,
@@ -26,7 +30,7 @@ import {
   refreshAntigravityTokens,
 } from "~/services/oauth/antigravity"
 import { generateOAuthState } from "~/services/oauth/pkce"
-import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
+import { refreshOAuthConnectionToken } from "~/services/oauth/refresh-scheduler"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -347,7 +351,7 @@ describe("Antigravity quota parsers", () => {
 })
 
 describe("OAuth refresh scheduler", () => {
-  test("refreshOAuthAccountToken refreshes Antigravity account tokens", async () => {
+  test("refreshOAuthConnectionToken refreshes Antigravity account tokens", async () => {
     const account: OAuthAccount = {
       id: "acct-ag",
       label: "Antigravity Test",
@@ -378,10 +382,12 @@ describe("OAuth refresh scheduler", () => {
         ),
       )) as unknown as typeof fetch
 
-    await refreshOAuthAccountToken(account, "test")
-    expect(account.credentials?.accessToken).toBe("new-access")
-    expect(account.credentials?.refreshToken).toBe("new-refresh")
-    expect(account.runtimeState?.authStatus).toBe("ready")
+    const connection = getMutableProviderConnection("acct-ag")
+    if (!connection) throw new Error("connection not found")
+    await refreshOAuthConnectionToken(connection, "test")
+    expect(connection.credentials[0]?.value).toBe("new-access")
+    expect(connection.credentials[0]?.context?.refreshToken).toBe("new-refresh")
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
   })
 
   test("applyAntigravityOAuthBundle stores project id", () => {
@@ -395,8 +401,10 @@ describe("OAuth refresh scheduler", () => {
       createdAt: Date.now(),
       credentials: {},
     }
-    const connection = migrateAccountsToConnections([account])[0]
-    if (!connection) throw new Error("migration failed")
+    const connection = managedConnectionFromInput({
+      ...account,
+      name: account.label,
+    })
 
     applyAntigravityOAuthBundle(connection, {
       accessToken: "token",

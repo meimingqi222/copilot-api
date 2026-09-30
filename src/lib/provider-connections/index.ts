@@ -49,8 +49,7 @@ export {
   isOAuthConnection,
 } from "./connection-accessors"
 export {
-  buildAccountLegacyMetadata,
-  ensureLegacyMetadata,
+  ensureConnectionMetadata,
   getConnectionAuthError,
   getConnectionAuthStatus,
   getConnectionCooldownUntil,
@@ -76,7 +75,7 @@ export {
   getCredentialContextString,
   getCredentialExtraNumber,
   getCredentialExtraString,
-  readAccountLegacyMetadata,
+  readConnectionMetadata,
   setConnectionAuthStatus,
   setConnectionCooldownUntil,
   setConnectionCredentialExtra,
@@ -88,17 +87,30 @@ export {
   setCredentialContextField,
   setCredentialValue,
 } from "./connection-metadata"
-export type { AccountLegacyMetadata } from "./connection-metadata"
+export type {
+  ConnectionMetadata,
+  ConnectionQuotaState,
+} from "./connection-metadata"
+export {
+  flushManagedConnectionsOnShutdown,
+  initializeManagedConnections,
+} from "./boot"
+export {
+  connectionModelsToAccountModels,
+  managedConnectionFromInput,
+  serializeConnectionForExport,
+} from "./managed-connection"
+export type {
+  AccountModel,
+  ManagedConnectionInput,
+  ManagedConnectionRuntimeState,
+} from "./managed-connection"
 export {
   refreshAllConnectionModels,
   refreshConnectionModels,
   scheduleConnectionModelDiscovery,
   stopConnectionModelDiscovery,
 } from "./discovery"
-export {
-  accountToConnectionForPersistence,
-  migrateAccountsToConnections,
-} from "./migrate-from-accounts"
 export {
   accountManagedModelPrefix,
   accountManagedProvider,
@@ -107,6 +119,7 @@ export {
   listAccountManagedConnections,
   providerFromProtocol,
 } from "./protocol-provider"
+export { getFirstAvailableAccountManagedConnection } from "./selection"
 export {
   __resetProviderConnectionsForTest,
   addCredential,

@@ -90,7 +90,7 @@ copy_paths \
   src/services/antigravity \
   src/services/protocols/antigravity-native.ts \
   src/services/responses \
-  src/services/copilot/responses-api-types.ts \
+  src/services/protocols/responses \
   tests/oauth-antigravity.test.ts
 commit_pr "feat(oauth): PR4 Antigravity Gemini native provider"
 

@@ -24,7 +24,7 @@ import type {
   CopilotStreamEventLike,
   ResponsesInputItem,
   ResponsesPayload,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 
 import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
@@ -356,9 +356,4 @@ globalTimers.interval(() => pruneIdleTranscripts(), 5 * 60_000)
 export function clearStatelessTranscriptsForTest(): void {
   transcripts.clear()
   transcriptBytes = 0
-}
-
-/** Test hook: live transcript count. */
-export function getStatelessTranscriptCountForTest(): number {
-  return transcripts.size
 }

@@ -20,7 +20,7 @@
 import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import { logger } from "~/lib/logger"

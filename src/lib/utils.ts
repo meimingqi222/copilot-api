@@ -2,11 +2,8 @@ import type { Context } from "hono"
 
 import { getConnInfo } from "hono/bun"
 
-import type { Account, AccountModel } from "~/lib/legacy-accounts"
-import type { ModelMapping } from "~/lib/provider-connections"
-import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
-import { saveAccounts } from "~/lib/account-store"
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
@@ -15,7 +12,6 @@ import {
   getProviderConnection,
   listAccountManagedConnections,
   mergeProviderRefreshedModels,
-  migrateAccountsToConnections,
   persistProviderConnections,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
@@ -244,98 +240,6 @@ function buildProviderConnectionEntries(
   return additions
 }
 
-function modelEndpointToPath(e: string): string {
-  switch (e) {
-    case "chat": {
-      return "/chat/completions"
-    }
-    case "messages": {
-      return "/v1/messages"
-    }
-    case "responses": {
-      return "/v1/responses"
-    }
-    case "embeddings": {
-      return "/v1/embeddings"
-    }
-    case "images": {
-      return "/v1/images/generations"
-    }
-    case "videos": {
-      return "/v1/videos/generations"
-    }
-    default: {
-      return "/chat/completions"
-    }
-  }
-}
-
-function modelMappingToAccountModel(
-  m: ModelMapping,
-  provider: Account["provider"],
-): AccountModel {
-  return {
-    id: m.publicId,
-    upstreamId: m.upstreamId,
-    name: m.name ?? m.publicId,
-    vendor: m.vendor ?? "unknown",
-    pickerEnabled: m.pickerEnabled ?? true,
-    pickerCategory: m.pickerCategory,
-    supportedEndpoints: (m.endpoints ?? []).map((e) => modelEndpointToPath(e)),
-    provider,
-  }
-}
-
-/**
- * 遗留兼容函数：接收 Account 参数刷新模型列表。
- * 新代码应优先使用 refreshModelsForConnection（直接接收 ProviderConnection）。
- * 保留此函数是为了渐进式迁移调用点，避免一次性破坏所有调用方。
- */
-export async function refreshModelsForAccount(account: Account): Promise<void> {
-  initializeProviderRegistry()
-  // Phase 3:通过 connection 调用 runtime.refreshModels
-  const conn = getProviderConnection(account.id)
-  if (!conn) return
-  try {
-    const models = await getProviderRuntime(account.provider).refreshModels(
-      conn,
-    )
-    // 将 ModelMapping[] 转回 AccountModel[] 以保持 account.availableModels 兼容
-    account.availableModels = models.map((m) =>
-      modelMappingToAccountModel(m, account.provider),
-    )
-    logger.debug(
-      `Models for "${account.label}": ${(account.availableModels ?? []).map((m) => m.id).join(", ")}`,
-    )
-    // Guard against background refresh re-adding accounts that were removed
-    // by test cleanup (setTestAccounts([]) / removeProviderConnection).
-    if (getProviderConnection(account.id)) {
-      upsertProviderConnection(migrateAccountsToConnections([account])[0])
-      await saveAccounts()
-    }
-  } catch (error) {
-    logger.warn(
-      `Failed to refresh models for account "${account.label}":`,
-      error,
-    )
-
-    const fallbackModels = getProviderRuntime(
-      account.provider,
-    ).getFallbackModels?.(conn)
-    if (!fallbackModels) {
-      return
-    }
-
-    account.availableModels = fallbackModels.map((m) =>
-      modelMappingToAccountModel(m, account.provider),
-    )
-    if (getProviderConnection(account.id)) {
-      upsertProviderConnection(migrateAccountsToConnections([account])[0])
-      await saveAccounts()
-    }
-  }
-}
-
 /**
  * Phase 3:直接从 ProviderConnection 刷新模型列表。
  * runtime.refreshModels 现在收 ProviderConnection,返回 ModelMapping[]。
@@ -381,8 +285,6 @@ export async function refreshModelsForConnection(
 }
 
 export async function refreshModelsForAllAccounts(): Promise<void> {
-  // 用 listAccountManagedConnections + refreshModelsForConnection 替代原
-  // listAccounts + refreshModelsForAccount 路径，直接操作 connection
   const results = await Promise.allSettled(
     listAccountManagedConnections().map((conn) =>
       refreshModelsForConnection(conn),

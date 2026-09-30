@@ -17,6 +17,15 @@ export const MODELS_DEV_PROVIDER_PRIORITY: Partial<
     "xiaomi-token-plan-ams",
     "xiaomi-token-plan-sgp",
   ],
+  // MiniMax Code（订阅制）：models.dev 有两个 coding-plan 专属条目
+  // （api 字段即订阅 Anthropic 端点），后面两个是平台 API 条目，
+  // 对订阅凭证只是最接近的价格参照。
+  minimax: [
+    "minimax-cn-coding-plan",
+    "minimax-coding-plan",
+    "minimax-cn",
+    "minimax",
+  ],
 }
 
 export const GLOBAL_MODEL_PROVIDER_PRIORITY = [

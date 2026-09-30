@@ -1,6 +1,14 @@
 // Provider-aware quota display helpers for the admin dashboard.
 const QuotaDisplay = {
-  OAUTH_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi", "xai"]),
+  OAUTH_PROVIDERS: new Set([
+    "codex",
+    "claude",
+    "antigravity",
+    "kimi",
+    "xai",
+    "minimax",
+    "qoder",
+  ]),
   CYCLE_USAGE_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi"]),
 
   isOAuthProvider(provider) {
@@ -273,6 +281,16 @@ const QuotaDisplay = {
 
         break
       }
+      case "minimax": {
+        rows = this.buildMinimaxRows(info.details, t)
+
+        break
+      }
+      case "qoder": {
+        rows = this.buildQoderRows(info.details, t)
+
+        break
+      }
       case "codebuddy":
       case "codebuddy-cn": {
         rows = this.buildCodebuddyRows(info.details, t)
@@ -532,6 +550,84 @@ const QuotaDisplay = {
         remainingPercent:
           limit && limit > 0 && remaining !== undefined ?
             Math.max(0, Math.min(100, (remaining / limit) * 100))
+          : undefined,
+      })
+    }
+    return rows
+  },
+
+  /**
+   * MiniMax Code 的额度来自 `coding_plan/remains`：`general` 桶带两个窗口
+   * （5 小时滚动 + 每周）。窗口的 remainingPercent 已按 `weekly_boost_permille`
+   * 放大过（周窗口可超过 100%），所以只夹到 100 做进度条，文字照实显示。
+   */
+  buildMinimaxRows(details, t) {
+    if (!details || typeof details !== "object") return []
+    const block = details.minimax
+    if (!block || typeof block !== "object") return []
+    const rows = []
+    const windows = Array.isArray(block.windows) ? block.windows : []
+    for (const window of windows) {
+      if (!window || typeof window !== "object") continue
+      const unlimited = window.unlimited === true
+      const percent = this.normalizeNumber(window.remainingPercent)
+      if (percent === undefined && !unlimited) continue
+      const remaining = this.normalizeNumber(window.remaining)
+      const total = this.normalizeNumber(window.total)
+      rows.push({
+        id: `minimax-${window.key ?? "window"}`,
+        label: t(`quota.oauth.minimax.${window.key ?? "interval"}`),
+        remainingPercent:
+          unlimited ? undefined : Math.max(0, Math.min(100, percent ?? 0)),
+        remaining,
+        total,
+        valueText:
+          unlimited ? t("quota.unlimited") : `${Math.round(percent ?? 0)}%`,
+        amountText:
+          !unlimited && remaining !== undefined && total !== undefined ?
+            `${Math.round(remaining)} / ${Math.round(total)}`
+          : undefined,
+        hideBar: unlimited,
+        resetText: this.formatResetTime(window.resetsAtMs, t),
+      })
+    }
+    return rows
+  },
+
+  /**
+   * Qoder 的额度来自 `sash/api/v2/me/usage` 的 `qoderUsage`：若干 credits 窗口
+   * （userQuota / addOnQuota / orgResourcePackage / dedicatedResourcePackages[]）。
+   */
+  buildQoderRows(details, t) {
+    if (!details || typeof details !== "object") return []
+    const block = details.qoder
+    if (!block || typeof block !== "object") return []
+    const windows = Array.isArray(block.windows) ? block.windows : []
+    const rows = []
+    for (const [index, window] of windows.entries()) {
+      if (!window || typeof window !== "object") continue
+      const usedPercent = this.normalizeNumber(window.usedPercent)
+      const used = this.normalizeNumber(window.used)
+      const total = this.normalizeNumber(window.total)
+      if (usedPercent === undefined && used === undefined) continue
+      const remainingPercent =
+        usedPercent === undefined ? undefined : (
+          Math.max(0, Math.min(100, 100 - usedPercent))
+        )
+      rows.push({
+        id: `qoder-${index}`,
+        label: window.name || t("quota.oauth.qoder.credits"),
+        remainingPercent,
+        remaining:
+          total !== undefined && used !== undefined ? total - used : undefined,
+        total,
+        valueText:
+          remainingPercent === undefined ? "N/A" : (
+            `${Math.round(remainingPercent)}%`
+          ),
+        amountText:
+          typeof window.display === "string" && window.display ?
+            window.display
           : undefined,
       })
     }
@@ -891,6 +987,12 @@ const QuotaDisplay = {
       return t("quota.noData")
     }
     if (this.isOAuthProvider(provider)) {
+      if (
+        provider === "minimax"
+        && info.premiumInteractionsRemaining !== undefined
+      ) {
+        return `${Math.round(info.premiumInteractionsRemaining)}%`
+      }
       if (info.premiumInteractionsRemaining !== undefined) {
         return `${info.premiumInteractionsRemaining}%`
       }
@@ -918,6 +1020,9 @@ const QuotaDisplay = {
       }
       case "kimi": {
         return "quota-card-kimi"
+      }
+      case "minimax": {
+        return "quota-card-minimax"
       }
       case "xai": {
         return "quota-card-xai"

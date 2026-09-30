@@ -10,7 +10,6 @@ export const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
 export const KIMI_OAUTH_HOST = "https://auth.kimi.com"
 export const KIMI_DEVICE_CODE_URL = `${KIMI_OAUTH_HOST}/api/oauth/device_authorization`
 export const KIMI_TOKEN_URL = `${KIMI_OAUTH_HOST}/api/oauth/token`
-export const KIMI_API_BASE_URL = "https://api.kimi.com/coding"
 
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const MAX_POLL_DURATION_MS = 15 * 60 * 1000

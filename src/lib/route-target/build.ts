@@ -41,6 +41,8 @@ import {
   type RouteTarget,
 } from "~/lib/provider-connections"
 
+import { connectionModelEndpoints } from "./model-support"
+
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
   return Array.isArray(credentials) ? (credentials as Array<ApiCredential>) : []
@@ -153,11 +155,23 @@ export function buildRouteTargets(
       ) {
         continue
       }
-      const ep: Array<ModelEndpoint> =
-        options.endpoint ?
-          [options.endpoint]
-        : (["chat"] as Array<ModelEndpoint>)
-      for (const endpoint of ep) {
+      // models 尚未加载，但目录可能已经知道该模型支持哪些端点：按目录
+      // 解析端点，让 responses-only 模型在 chat 请求下也能落到 chat 候选
+      // 之外的正确端点上。目录也未知时才退回“请求什么就用什么”。
+      const supported = connectionModelEndpoints(
+        options.publicModelId,
+        connection,
+      )
+      const resolved =
+        supported.length > 0 ?
+          resolveEndpoints(supported, options.endpoint)
+        : [
+            {
+              endpoint: options.endpoint ?? ("chat" as ModelEndpoint),
+              translated: false,
+            },
+          ]
+      for (const { endpoint, translated } of resolved) {
         targets.push({
           connectionId: connection.id,
           connectionName: connection.name,
@@ -176,6 +190,7 @@ export function buildRouteTargets(
             credentials[0]?.priority ?? DEFAULTS.CREDENTIAL_PRIORITY,
           credentialWeight:
             credentials[0]?.weight ?? DEFAULTS.CREDENTIAL_WEIGHT,
+          ...(translated && { isTranslated: true }),
           isWildcard: true,
         })
       }
@@ -189,11 +204,13 @@ export function buildRouteTargets(
       // endpoint(如 "messages")可以回退到 connection 实际支持的另一个
       // endpoint(如 "chat"),由 dispatch 层做跨协议翻译。
       const resolved = resolveEndpoints(model.endpoints, options.endpoint)
-      if (!resolved) continue
+      if (resolved.length === 0) continue
       // compact 不能走翻译：只要不是原生 responses endpoint 就跳过。
       if (
         options.compact
-        && (resolved.translated || !resolved.endpoints.includes("responses"))
+        && !resolved.some(
+          ({ endpoint, translated }) => endpoint === "responses" && !translated,
+        )
       ) {
         continue
       }
@@ -222,13 +239,18 @@ export function buildRouteTargets(
           accountManaged ?
             (options.publicModelId ?? model.publicId)
           : model.publicId
-        pushResolvedTargets(targets, resolved.endpoints, {
-          connection,
-          credential,
-          model,
-          publicModelId,
-          isTranslated: resolved.translated,
-        })
+        for (const { endpoint, translated } of resolved) {
+          if (options.compact && (translated || endpoint !== "responses")) {
+            continue
+          }
+          pushResolvedTargets(targets, [endpoint], {
+            connection,
+            credential,
+            model,
+            publicModelId,
+            isTranslated: translated,
+          })
+        }
       }
     }
   }
@@ -351,40 +373,36 @@ function matchesConnectionModel(
 /**
  * 根据请求的 endpoint 从模型支持的 endpoint 列表中解析出实际执行的 endpoint 列表。
  * 不支持时可 fallback 到语义等价的 endpoint；embeddings 不做 fallback。
- * 返回 null 表示该模型不支持此 endpoint，应跳过。
- * `translated` 表示走的是 fallback 分支（dispatch 层需做协议翻译），
+ * 返回空数组表示该模型不支持此 endpoint，应跳过。
+ * `translated` 表示候选走的是 fallback 分支（dispatch 层需做协议翻译），
  * 供 `selectRouteTarget` 在同级候选中优先选原生 endpoint。
  *
- * fallback 映射（ordered candidates，首个命中的优先）：
- * - responses → [chat]：上游只支持 chat completions 但客户端用 responses API，
- *   由 dispatch 的 createResponsesViaChat 自动转换
- * - messages  → [chat]：上游只支持 chat completions 但客户端用 anthropic
- *   messages API，由 createMessagesViaChat 自动转换
- * - chat      → [responses, messages]：上游只支持 responses API（xAI/Codex
- *   native_responses，由 adapter 的 createChatViaResponses 转换），或只支持
- *   messages API（claude-native/anthropic-compatible，由 chat-via-messages 转换）
+ * fallback 映射（ordered candidates，所有命中的端点均作为候选）：
+ * - 每个客户端端点都能回退到其余三个端点：同名 wire 的 codec 已具备
+ *   双向 decode/encode，`wire-pairs.ts` 的表驱动路径负责组装。
+ * - chat ↔ messages ↔ responses 之间与某条路径有专属行为的组合（缓存断点、
+ *   结构化流 twin、memory trace、SSE 帧形状）仍走原手写 wrapper；
+ *   Gemini 方向统一走表驱动路径。
+ * - embeddings/images/videos 不参与协议翻译。
  */
 function resolveEndpoints(
   supported: Array<ModelEndpoint>,
   requested: ModelEndpoint | undefined,
-): { endpoints: Array<ModelEndpoint>; translated: boolean } | null {
-  if (!requested) return { endpoints: supported, translated: false }
-  if (supported.includes(requested)) {
-    return { endpoints: [requested], translated: false }
+): Array<{ endpoint: ModelEndpoint; translated: boolean }> {
+  if (!requested) {
+    return supported.map((endpoint) => ({ endpoint, translated: false }))
   }
   const fallbackCandidates: Partial<
     Record<ModelEndpoint, Array<ModelEndpoint>>
   > = {
-    responses: ["chat"],
-    messages: ["chat"],
-    chat: ["responses", "messages"],
+    responses: ["chat", "messages", "gemini"],
+    messages: ["chat", "responses", "gemini"],
+    chat: ["responses", "messages", "gemini"],
+    gemini: ["chat", "messages", "responses"],
   }
-  for (const candidate of fallbackCandidates[requested] ?? []) {
-    if (supported.includes(candidate)) {
-      return { endpoints: [candidate], translated: true }
-    }
-  }
-  return null
+  return [requested, ...(fallbackCandidates[requested] ?? [])]
+    .filter((endpoint) => supported.includes(endpoint))
+    .map((endpoint) => ({ endpoint, translated: endpoint !== requested }))
 }
 
 /**

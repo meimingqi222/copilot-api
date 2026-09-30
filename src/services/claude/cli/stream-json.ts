@@ -12,8 +12,6 @@
  *
  * 只有 `type === "stream_event"` 的行带内容；`event` 里是**原样的 Anthropic
  * 流式事件**（这正是 CLI 转发上游 SSE 的形态），所以翻译层基本是透传。
- *
- * 参考 magpie 的 `readOutput()`（`internal/gateway/claude_subscription.go:284`）。
  */
 
 /** CLI 报的 usage，字段名与 Anthropic 一致。 */

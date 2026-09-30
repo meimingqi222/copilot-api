@@ -166,6 +166,7 @@ function quotasView() {
       "claude",
       "antigravity",
       "kimi",
+      "minimax",
       "windsurf",
       "codebuddy",
       "codebuddy-cn",

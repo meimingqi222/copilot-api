@@ -13,7 +13,7 @@ import type {
   CopilotStreamEventLike,
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import type { DispatchIdentity } from "./shared"

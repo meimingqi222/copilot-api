@@ -3,6 +3,9 @@
  *
  * Phase 2a:纯 (connection, credential) 热路径,不再经由
  * connectionToAccount 派生 Account。
+ *
+ * 端点不匹配的跨协议翻译由调度层(route-target 选端点 + IR wrapper)
+ * 统一处理:本 adapter 只按 target.endpoint 调用 Copilot 对应端点。
  */
 
 import type {
@@ -13,17 +16,10 @@ import type {
   ProtocolAdapter,
 } from "~/services/protocols/types"
 
-import { isChatCompletionResponse } from "~/lib/utils"
 import { createCopilotChatCompletionsOnce } from "~/services/copilot/create-chat-completions-once"
 import { createCopilotEmbeddingsOnce } from "~/services/copilot/create-embeddings-once"
 import { createCopilotMessagesOnce } from "~/services/copilot/create-messages-once"
 import { createCopilotResponsesOnce } from "~/services/copilot/create-responses-once"
-import {
-  supportsResponsesApiForConnection,
-  translateChatCompletionToResponses,
-  translateChatCompletionsStreamToResponses,
-  translateResponsesToChatPayload,
-} from "~/services/copilot/responses-api"
 import { ensureCopilotToken } from "~/services/copilot/token-refresh"
 
 export const copilotNativeAdapter: ProtocolAdapter = {
@@ -48,27 +44,6 @@ export const copilotNativeAdapter: ProtocolAdapter = {
 
   async createResponses({ connection, credential, payload, signal, ctx }) {
     await ensureCopilotToken(connection, credential)
-    if (!supportsResponsesApiForConnection(payload.model, connection)) {
-      const chatResponse = await createCopilotChatCompletionsOnce(
-        { connection, credential },
-        translateResponsesToChatPayload(payload),
-        signal,
-        ctx,
-      )
-      if (isChatCompletionResponse(chatResponse)) {
-        return {
-          credentialId: credential.id,
-          response: translateChatCompletionToResponses(chatResponse, payload),
-        } as AdapterResponsesResult
-      }
-      return {
-        credentialId: credential.id,
-        response: translateChatCompletionsStreamToResponses(
-          chatResponse,
-          payload,
-        ),
-      } as AdapterResponsesResult
-    }
     const response = await createCopilotResponsesOnce(
       { connection, credential },
       payload,

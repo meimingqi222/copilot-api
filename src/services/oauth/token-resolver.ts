@@ -1,20 +1,7 @@
-import type { Account } from "~/lib/legacy-accounts"
-
-import { getOAuthAccessToken, getOAuthApiKey } from "~/lib/legacy-accounts"
 import { buildAntigravityHubUserAgent } from "~/services/antigravity/version"
 
 const TOKEN_PLACEHOLDER = "$TOKEN$"
 const ANTIGRAVITY_UA_PLACEHOLDER = "$ANTIGRAVITY_UA$"
-
-export function resolveAccountAccessToken(
-  account: Account,
-): string | undefined {
-  const apiKey = getOAuthApiKey(account)
-  if (apiKey) {
-    return apiKey
-  }
-  return getOAuthAccessToken(account)
-}
 
 export function substituteTokenInHeaders(
   headers: Record<string, string> | undefined,

@@ -1,9 +1,6 @@
 /**
  * 调用方的工具 → MCP 工具定义。
  *
- * 直译 magpie 的 `bridgeTools()`（`internal/gateway/cursor_subscription.go:150`，
- * Claude 路径复用同一个）。
- *
  * 两个要点：
  *
  * - `tool_choice: "none"` 时不暴露任何工具；`tool_choice: {type:"tool", name}`
@@ -36,6 +33,9 @@ export function bridgeTools(
   for (const tool of payload.tools ?? []) {
     if (choice?.type === "none") continue
     if (only && tool.name !== only) continue
+    // The Claude CLI executes client tools itself; upstream server tools
+    // (e.g. web_search) have no bridge representation.
+    if (!("input_schema" in tool)) continue
     out.push({
       name: tool.name,
       ...(tool.description ? { description: tool.description } : {}),

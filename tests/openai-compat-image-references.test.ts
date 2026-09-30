@@ -13,7 +13,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import type { Message } from "~/services/copilot/create-chat-completions"
+import type { Message } from "~/services/protocols/chat/types"
 
 import {
   inlineCompatImageReferences,

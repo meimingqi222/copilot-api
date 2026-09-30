@@ -4,7 +4,11 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { saveAccounts } from "~/lib/account-store"
+import {
+  __resetProviderConnectionsForTest,
+  listProviderConnections,
+  saveProviderConnections,
+} from "~/lib/provider-connections"
 import {
   assertWritableDataPath,
   isProductionDataPath,
@@ -13,7 +17,6 @@ import {
   PRODUCTION_APP_DIR,
   redirectPathsToDir,
 } from "~/lib/paths"
-import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -31,20 +34,27 @@ describe("test data-dir isolation", () => {
   test("preload enables isolation and points PATHS off production", () => {
     expect(isTestDataIsolationEnabled()).toBe(true)
     expect(isProductionDataPath(PATHS.APP_DIR)).toBe(false)
-    expect(isProductionDataPath(PATHS.ACCOUNTS_PATH)).toBe(false)
-    expect(PATHS.ACCOUNTS_PATH.startsWith(PRODUCTION_APP_DIR)).toBe(false)
+    expect(isProductionDataPath(PATHS.PROVIDER_CONNECTIONS_PATH)).toBe(false)
+    expect(PATHS.PROVIDER_CONNECTIONS_PATH.startsWith(PRODUCTION_APP_DIR)).toBe(
+      false,
+    )
   })
 
-  test("assertWritableDataPath blocks production accounts.json", () => {
+  test("assertWritableDataPath blocks production data files", () => {
     expect(() =>
-      assertWritableDataPath(path.join(PRODUCTION_APP_DIR, "accounts.json")),
+      assertWritableDataPath(
+        path.join(PRODUCTION_APP_DIR, "provider-connections.json"),
+      ),
     ).toThrow(/Refusing to write production data path during tests/)
   })
 
-  test("PATHS.ACCOUNTS_PATH assignment is not allowed", () => {
+  test("PATHS.PROVIDER_CONNECTIONS_PATH assignment is not allowed", () => {
     expect(() => {
       // @ts-expect-error PATHS keys are read-only getters
-      PATHS.ACCOUNTS_PATH = path.join(PRODUCTION_APP_DIR, "accounts.json")
+      PATHS.PROVIDER_CONNECTIONS_PATH = path.join(
+        PRODUCTION_APP_DIR,
+        "provider-connections.json",
+      )
     }).toThrow()
   })
 
@@ -54,7 +64,7 @@ describe("test data-dir isolation", () => {
     )
   })
 
-  test("saveAccounts writes only under the isolation directory", async () => {
+  test("connection persistence writes only under the isolation directory", async () => {
     const tempDir = await fs.mkdtemp(
       path.join(os.tmpdir(), "copilot-api-isolation-"),
     )
@@ -73,9 +83,9 @@ describe("test data-dir isolation", () => {
       },
     ])
 
-    await saveAccounts()
+    await saveProviderConnections(listProviderConnections())
 
-    // 批次 1：saveAccounts 写入 provider-connections.json（不再写 accounts.json）
+    // 批次 1：持久化只写 provider-connections.json（accounts.json 已退役）
     const written = await fs.readFile(PATHS.PROVIDER_CONNECTIONS_PATH, "utf8")
     expect(written).toContain("isolated-only")
     expect(isProductionDataPath(PATHS.PROVIDER_CONNECTIONS_PATH)).toBe(false)

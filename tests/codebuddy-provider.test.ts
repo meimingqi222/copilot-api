@@ -4,7 +4,7 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
 import {
   __resetProviderConnectionsForTest,

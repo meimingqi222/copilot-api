@@ -6,19 +6,16 @@ import type {
   CopilotStreamEventLike,
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import { parseModelReference } from "~/lib/legacy-accounts"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
-import {
-  normalizeResponsesStreamIds,
-  supportsResponsesApiForConnection,
-  withDefaultReasoningSummary,
-} from "~/services/copilot/responses-api"
+import { normalizeResponsesStreamIds } from "~/services/protocols/responses/normalize-stream"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
+import { withDefaultReasoningSummary } from "~/services/protocols/responses/types"
 import {
   detectResponsesStreamError,
   safeSseStream,
@@ -38,10 +35,7 @@ export function hasVisionInput(payload: ResponsesPayload): boolean {
 }
 
 export async function createCopilotResponsesOnce(
-  {
-    connection,
-    credential,
-  }: { connection: ProviderConnection; credential: ApiCredential },
+  { credential }: { connection: ProviderConnection; credential: ApiCredential },
   payload: ResponsesPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
@@ -52,13 +46,6 @@ export async function createCopilotResponsesOnce(
   }
 
   const normalizedModel = parseModelReference(payload.model).nativeModelId
-
-  if (!supportsResponsesApiForConnection(normalizedModel, connection)) {
-    throw new Error(
-      "createCopilotResponsesOnce expects native responses support",
-    )
-  }
-
   const enableVision = ctx?.enableVision ?? hasVisionInput(payload)
 
   const responsesBody = JSON.stringify({

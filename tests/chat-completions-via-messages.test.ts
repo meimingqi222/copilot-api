@@ -147,8 +147,10 @@ test("POST /v1/chat/completions streaming translates Anthropic SSE to OpenAI chu
   expect(text).toStartWith(": connected\n\n")
   expect(text).toContain("chat.completion.chunk")
   expect(text).toContain("Hello from Claude")
-  // The route consumes the upstream [DONE] and closes the stream (matching
-  // the native chat path), so [DONE] itself is not forwarded to the client.
+  // The route consumes the upstream [DONE] and emits its own terminator:
+  // `data: [DONE]` is the explicit end-of-stream frame in the OpenAI SSE
+  // contract, and strict SDKs hang waiting for it when it is missing.
+  expect(text).toContain("data: [DONE]")
   const [url] = fetchMock.mock.calls[0] as [string]
   expect(url).toContain("/messages")
 })

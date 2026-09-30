@@ -7,8 +7,6 @@
  *   不该冷却账号，也不该换账号重试（换哪个都一样）。
  * - `ClaudeCliQuotaError`：配额或限流 → 应该换下一个账号（failover）。
  * - `ClaudeCliError`：其余（非零退出、协议错乱）→ 按可重试处理。
- *
- * 参考 magpie 的 `quotaWords`（`internal/gateway/fallback.go:191`）。
  */
 
 import {

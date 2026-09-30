@@ -1,11 +1,9 @@
 import type { Context } from "hono"
 
-import type { Account } from "~/lib/legacy-accounts"
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 import type {
   ApiCredential,
   ProviderConnection,
-  ProviderProtocol,
   RouteTarget,
 } from "~/lib/provider-connections"
 
@@ -14,7 +12,6 @@ import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { logger } from "~/lib/logger"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
-import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import {
   connectionProvider,
   findCredential,
@@ -63,16 +60,6 @@ export interface ProviderAdmission {
  * 保留导出便于渐进式迁移调用点。
  */
 export type RequestAdmission = ProviderAdmission
-
-/**
- * 从 PROVIDER_PROTOCOL_MAP 获取 account 对应的协议。
- *
- * 纯数据表查询,无 services 依赖,测试环境也无需初始化 registry。
- * 新增 provider 时只需在 provider-config.ts 的 PROVIDER_PROTOCOL_MAP 追加一行。
- */
-export function getAccountProtocol(account: Account): ProviderProtocol {
-  return PROVIDER_PROTOCOL_MAP[account.provider]
-}
 
 interface PrepareRequestAdmissionOptions {
   routeKind?: ProtectedRouteKind

@@ -8,9 +8,9 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/legacy-accounts"
+import type { TestAccount as Account } from "./helpers/set-accounts"
 
-import { listAccounts } from "~/lib/legacy-accounts"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { statsStore } from "~/lib/stats-store"

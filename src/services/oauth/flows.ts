@@ -2,11 +2,10 @@ import type { Server } from "bun"
 
 import fs from "node:fs/promises"
 
-import type { AccountProvider } from "~/lib/legacy-accounts"
+import type { OAuthProviderId } from "~/lib/provider-config"
 
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
-import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 
 import type { CodebuddyOAuthProviderId } from "./codebuddy"
 import type { PkceCodes } from "./pkce"
@@ -40,6 +39,11 @@ export interface OAuthPendingFlow {
   tokenEndpoint?: string
   redirectUri?: string
   proxyUrl?: string
+  /**
+   * Provider 专属账号域（目前只有 MiniMax Code：`cn` / `en`）。
+   * 设备码 flow 在 start 时存入，exchange 轮询 token 端点要用同一个区域。
+   */
+  region?: string
   /**
    * 原地重认证目标 connection id。exchange 完成后把新 token bundle
    * 写回该 connection（保留 id/label/用量统计），而不是新建账号。
@@ -107,6 +111,7 @@ function flowForPersistence(flow: OAuthPendingFlow): OAuthPendingFlow {
     verificationUri: flow.verificationUri,
     userCode: flow.userCode,
     proxyUrl: flow.proxyUrl,
+    region: flow.region,
     redirectUri: flow.redirectUri,
   }
 }
@@ -204,12 +209,6 @@ export function bindOAuthFlowAbortSignal(flowId: string): AbortSignal {
   const controller = new AbortController()
   oauthFlowAbortControllers.set(flowId, controller)
   return controller.signal
-}
-
-export function getOAuthFlowAbortSignal(
-  flowId: string,
-): AbortSignal | undefined {
-  return oauthFlowAbortControllers.get(flowId)?.signal
 }
 
 export function getOAuthFlow(flowId: string): OAuthPendingFlow | undefined {
@@ -398,12 +397,6 @@ export function stopOAuthCallbackServer(flowId: string): void {
   }
 }
 
-export function stopAllOAuthCallbackServers(): void {
-  for (const flowId of oauthCallbackServers.keys()) {
-    stopOAuthCallbackServer(flowId)
-  }
-}
-
 export interface OAuthCallbackConfig {
   port: number
   hostname?: string
@@ -520,10 +513,4 @@ export function resetOAuthFlowsForTest(): void {
   for (const flowId of pendingOAuthFlows.keys()) {
     removeOAuthFlow(flowId)
   }
-}
-
-export function getOAuthFlowProvider(
-  provider: AccountProvider,
-): OAuthFlowProvider | undefined {
-  return isOAuthProviderId(provider) ? provider : undefined
 }

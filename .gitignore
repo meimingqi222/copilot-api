@@ -28,3 +28,4 @@ temp_*
 .maka-workspace.json
 .alma-snapshots
 .apodex/
+.trae/

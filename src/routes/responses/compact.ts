@@ -3,7 +3,7 @@ import type { Context } from "hono"
 import type {
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 import type { ResponsesCompactPayload } from "~/services/responses/compact"
 
 import { HTTPError } from "~/lib/error"
@@ -17,8 +17,8 @@ import {
 } from "~/lib/thinking"
 import { identityFromAdmission } from "~/lib/usage"
 import { applyUsageIdentity } from "~/lib/usage"
-import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
-import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { inferInitiatorFromResponsesPayload } from "~/lib/initiator-header"
+import { extractMessageContentFromResponsesPayload } from "~/services/protocols/responses/types"
 import { dispatchResponses } from "~/services/dispatch/responses"
 import { collectResponsesFromEventStream } from "~/services/responses/sse-collector"
 

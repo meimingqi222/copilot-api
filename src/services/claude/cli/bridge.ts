@@ -6,7 +6,7 @@
  * `tool_use` 交给调用方；调用方下一轮带着 `tool_result` 回来，我们把结果
  * 投递给那个阻塞中的调用，CLI 继续跑同一轮。
  *
- * 为什么跨回合不复用进程（magpie 也不复用）：
+ * 为什么跨回合不复用进程：
  *
  * - 工具集在 `Bun.spawn` 时就通过 `tools.json` 固化了，复用会把过期的工具
  *   定义留在进程里。
@@ -14,9 +14,6 @@
  *
  * 进程内的多次工具往返**必须**复用进程：每次重开都要重发整段 transcript，
  * prompt cache 会全部作废。
- *
- * 参考 magpie 的 `serveSubscription()` / `findRun()` / `continueWith()`
- * （`internal/gateway/claude_subscription.go`）。
  */
 
 import { randomUUID } from "node:crypto"
@@ -59,7 +56,7 @@ import {
   translateClaudeStreamJson,
 } from "./translate"
 
-/** 一个 run 最多活 30 分钟，然后连进程一起清掉（照 magpie）。 */
+/** 一个 run 最多活 30 分钟，然后连进程一起清掉。 */
 const RUN_TIMEOUT_MS = 30 * 60_000
 
 /**
@@ -155,8 +152,6 @@ export async function collectClaudeCliMessages(
  * `executeWithFailover` 只能在"还没向下游写出任何字节"时换账号。所以必须
  * 在把流交给下游之前先确认这一轮真的开始了：如果第一个实质事件是错误
  * （配额 / 限流 / 未登录），就地抛出带状态码的 `HTTPError`。
- *
- * 照 magpie 的 `serveSubscription()`（`internal/gateway/claude_subscription.go:676`）。
  */
 async function withHeadPeek(
   segment: AsyncIterable<AnthropicStreamEventData>,

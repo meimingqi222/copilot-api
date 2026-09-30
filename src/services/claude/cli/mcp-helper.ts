@@ -5,7 +5,7 @@
  * HTTP POST，阻塞等结果，再把结果包成 MCP 的返回。真正的工具执行在调用方
  * 那边（Pi / OpenCode / …），网关只是把结果接起来。
  *
- * 直译 magpie 的 `internal/claudebridge/mcp.go`。几个必须照做的细节：
+ * 几个必须照做的细节：
  *
  * - 传输是**换行分隔的 JSON-RPC**，不是 LSP 的 `Content-Length` 分帧。
  * - 没有 `id` 的通知**不得回包**（回了会让 CLI 的 JSON-RPC 解析错位）。

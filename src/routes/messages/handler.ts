@@ -8,22 +8,13 @@ import {
   thinkingConfigToAnthropic,
   thinkingConfigToReasoningEffort,
 } from "~/lib/thinking"
-import { supportsMessagesApiForConnection } from "~/services/copilot/responses-api"
 import {
   extractMessageContentFromAnthropicPayload,
   type AnthropicMessagesPayload,
 } from "~/services/protocols/anthropic"
 
 import { handleAnthropicViaConnection } from "./connection-handler"
-import { handleCopilotApi } from "./copilot-handler"
 import { inferInitiatorFromAnthropicMessages } from "./initiator"
-
-/** Protocols whose adapter supports native Anthropic Messages passthrough. */
-const NATIVE_MESSAGES_PROTOCOLS = new Set([
-  "anthropic-compatible",
-  "mimo-native",
-  "claude-native",
-])
 
 export async function handleCompletion(c: Context) {
   const signal = c.req.raw.signal
@@ -87,46 +78,18 @@ export async function handleCompletion(c: Context) {
     })
   }
 
-  // Copilot's native Messages API uses the unified dispatch path so failover
-  // usage is attributed to the target that actually completed the request.
-  if (
-    admission.connection.protocol === "copilot-native"
-    && supportsMessagesApiForConnection(
-      effectivePayload.model,
-      admission.connection,
-    )
-  ) {
-    return handleAnthropicViaConnection({
-      c,
-      anthropicPayload: effectivePayload,
-      signal,
-      admission,
-      anthropicBeta,
-      anthropicVersion,
-      forwardedHeaders,
-    })
-  }
-
-  // Native Messages passthrough: if the upstream protocol supports
-  // Anthropic Messages natively, pass the payload through without translation.
-  if (NATIVE_MESSAGES_PROTOCOLS.has(admission.target.protocol)) {
-    return handleAnthropicViaConnection({
-      c,
-      anthropicPayload: effectivePayload,
-      signal,
-      admission,
-      anthropicBeta,
-      anthropicVersion,
-      forwardedHeaders,
-    })
-  }
-
-  // Fallback: translate Anthropic → OpenAI and dispatch as chat completions
-  return handleCopilotApi({
+  // Unified dispatch path: every target (native Messages passthrough, the
+  // Copilot Messages API, and chat-endpoint failover via messages-via-chat)
+  // is served by dispatchMessages, so failover usage is attributed to the
+  // target that actually completed the request and each target is translated
+  // at most once.
+  return handleAnthropicViaConnection({
     c,
     anthropicPayload: effectivePayload,
     signal,
     admission,
+    anthropicBeta,
+    anthropicVersion,
     forwardedHeaders,
   })
 }

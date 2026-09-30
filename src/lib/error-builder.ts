@@ -115,22 +115,6 @@ export function buildAnthropicContextWindowError(error: HTTPError): {
   }
 }
 
-export function buildAnthropicUpstreamError(error: HTTPError): {
-  type: string
-  error: { type: string; message: string }
-} {
-  const msg = extractErrorMessage(error)
-  const prefix = `Upstream API error (${error.response.status}): `
-  const message = msg.startsWith(prefix) ? msg : `${prefix}${msg}`
-  return {
-    type: "error",
-    error: {
-      type: "api_error",
-      message,
-    },
-  }
-}
-
 /**
  * Resolve the numeric code to attach to a streamed error frame so that
  * downstream one-shot clients (ZCode, opencode, OpenAI SDKs) can classify the

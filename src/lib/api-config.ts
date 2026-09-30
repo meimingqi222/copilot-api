@@ -1,10 +1,8 @@
 import { randomUUID } from "node:crypto"
 
-import type { Account } from "./legacy-accounts"
 import type { ProviderConnection } from "./provider-connections"
 import type { State } from "./state"
 
-import { getCopilotToken } from "./legacy-accounts"
 import { getConnectionCopilotToken } from "./provider-connections"
 import { state as globalState } from "./state"
 
@@ -61,12 +59,6 @@ export const copilotHeadersForToken = (
   if (vision) headers["copilot-vision-request"] = "true"
 
   return headers
-}
-
-export const copilotHeaders = (account: Account, vision: boolean = false) => {
-  const token = getCopilotToken(account)
-
-  return copilotHeadersForToken(token, vision)
 }
 
 /**

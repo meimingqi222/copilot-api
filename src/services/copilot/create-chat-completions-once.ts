@@ -6,24 +6,17 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import { parseModelReference } from "~/lib/legacy-accounts"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
-import {
-  shouldUseResponsesApiForConnection,
-  translateResponsesStreamToChatCompletions,
-  translateResponsesToChatCompletion,
-  translateToResponsesPayload,
-} from "~/services/copilot/responses-api"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
   detectOpenAIStreamError,
-  detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
 
@@ -54,10 +47,7 @@ export function sanitizeReasoningEffortForCopilot(
 }
 
 export async function createCopilotChatCompletionsOnce(
-  {
-    connection,
-    credential,
-  }: { connection: ProviderConnection; credential: ApiCredential },
+  { credential }: { connection: ProviderConnection; credential: ApiCredential },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
@@ -77,16 +67,9 @@ export async function createCopilotChatCompletionsOnce(
       payload.reasoning_effort,
     ),
   }
-  const useResponsesApi = shouldUseResponsesApiForConnection(
-    normalizedPayload.model,
-    connection,
-  )
   const enableVision = ctx?.enableVision ?? hasImageContent(normalizedPayload)
 
-  const body =
-    useResponsesApi ?
-      JSON.stringify(translateToResponsesPayload(normalizedPayload))
-    : JSON.stringify(normalizedPayload)
+  const body = JSON.stringify(normalizedPayload)
 
   const headers: Record<string, string> = {
     ...copilotHeadersForToken(token, enableVision),
@@ -96,7 +79,7 @@ export async function createCopilotChatCompletionsOnce(
     headers["X-Initiator"] = ctx.initiator
   }
 
-  const url = `${copilotBaseUrl(state)}${useResponsesApi ? "/responses" : "/chat/completions"}`
+  const url = `${copilotBaseUrl(state)}/chat/completions`
   let retryCount = 0
   const maxRetries = 3
   const maxDelayMs = 60_000
@@ -165,29 +148,11 @@ export async function createCopilotChatCompletionsOnce(
   }
 
   if (normalizedPayload.stream) {
-    if (useResponsesApi) {
-      const rawStream = (await safeSseStream(
-        response,
-        detectResponsesStreamError,
-      )) as unknown as AsyncIterable<CopilotStreamEvent>
-      return translateResponsesStreamToChatCompletions(
-        rawStream,
-        normalizedPayload.model,
-      ) as AsyncIterable<CopilotStreamEvent>
-    }
-
     return (await safeSseStream(
       response,
       detectOpenAIStreamError,
     )) as unknown as AsyncIterable<CopilotStreamEvent>
   }
 
-  const responseBody = await response.json()
-  return useResponsesApi ?
-      translateResponsesToChatCompletion(
-        responseBody as Parameters<
-          typeof translateResponsesToChatCompletion
-        >[0],
-      )
-    : (responseBody as ChatCompletionResponse)
+  return (await response.json()) as ChatCompletionResponse
 }

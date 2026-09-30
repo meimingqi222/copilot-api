@@ -37,6 +37,7 @@ import {
   upstreamResponseSelfReportsModel,
 } from "~/lib/upstream-model-audit"
 import { isAbortError } from "~/lib/utils"
+import { flushTranslationLossesForContext } from "~/services/ir/loss-logging"
 
 export type RequestEndpoint = LogEntry["endpoint"]
 export type TraceStage = NonNullable<LogEntry["stage"]>
@@ -612,6 +613,7 @@ export function finalizeRequestLogContext(
   status: number,
   defaults: { method: string; path: string; requestId?: string },
 ): RequestLogRecord {
+  flushTranslationLossesForContext(ctx)
   const base: Partial<LogEntry> & { requestId: string } =
     ctx ?
       { ...ctx.entry, requestId: ctx.requestId }

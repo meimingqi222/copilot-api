@@ -8,7 +8,6 @@ import { assertWritableDataPath } from "~/lib/paths"
 
 /**
  * 互斥锁,确保异步操作串行执行。
- * 来自 account-store.ts 的 Mutex 类,提取为独立模块供 Repository 使用。
  */
 export class Mutex {
   private queue: Promise<void> = Promise.resolve()
@@ -83,10 +82,11 @@ interface RepositoryConfig<T> {
  * 统一持久化基类。
  *
  * 提供两种并发模式以匹配现有语义:
- * - `save()` — 仅锁文件写,不串行化内存状态变更(匹配 account-store 行为)
+ * - `save()` — 仅锁文件写,不串行化内存状态变更(匹配 provider-connections 的
+ *   "调用方自行串行化"语义)
  * - `mutate()` — 串行化 mutation + 持久化 + 失败回滚(匹配 provider-connections 行为)
  *
- * 原子写入特性(来自 account-file-store 基线):
+ * 原子写入特性:
  * - tmp file + rename
  * - .bak 备份
  * - Windows EPERM/EBUSY/EACCES 重试
@@ -105,7 +105,7 @@ export class Repository<T> {
     return typeof filePath === "function" ? filePath() : filePath
   }
 
-  /** 仅锁文件写,不串行化内存状态变更。匹配 account-store 现有语义。 */
+  /** 仅锁文件写,不串行化内存状态变更。 */
   async save(data: T): Promise<void> {
     return this.mutex.runExclusive(async () => {
       await this.atomicWrite(this.config.serialize(data))

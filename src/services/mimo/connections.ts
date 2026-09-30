@@ -35,11 +35,8 @@ function readConnectionWsToken(connId: string): string | undefined {
  * Returns the per-account WS token. If none exists, generates one
  * and persists it to the credential.
  *
- * 写入正位 credential.context.mimoWsToken;同时镜像写入
- * credentialExtras —— 过渡期 syncAccountToConnection 会用
- * buildAccountLegacyMetadata 重建 credential.context(mimo 无 context
- * 字段映射,会被清空),extras 是唯一能经 Account 往返存活的位置。
- * Phase 5 删除 Account 后Extras 镜像可移除。
+ * 写入正位 credential.context.mimoWsToken;credentialExtras 只在需要
+ * 导出/导入往返时作为镜像存在。
  */
 export function getOrCreateAccountWsToken(accountId: string): string {
   // Check for globally-configured token first (backward compat)

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
+import type { Model } from "~/lib/model-catalog"
 import type { ProviderConnection } from "~/lib/provider-connections"
-import type { Model } from "~/services/copilot/get-models"
-import type { ResponsesPayload } from "~/services/copilot/responses-api"
+import type { ResponsesPayload } from "~/services/protocols/responses/types"
 
 import {
   isXaiCliChatProxyBaseUrl,

@@ -118,13 +118,6 @@
       }
     },
     {
-      // The hub translator with many protocol variants.
-      "files": ["src/services/copilot/chat-to-responses.ts"],
-      "rules": {
-        "max-lines": "off"
-      }
-    },
-    {
       // Request trace: per-file pragmatic exemptions, scoped to what fires.
       "files": ["src/lib/request-log.ts"],
       "rules": {

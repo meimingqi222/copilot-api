@@ -25,7 +25,7 @@ import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
   type ChatCompletionsPayload,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
 import type { ChatDispatchResult } from "~/services/dispatch/chat-completions"
 
@@ -157,6 +157,14 @@ export function handleStreamingResponse(
               responseMode: "streaming",
             })
           }
+        }
+        // OpenAI SSE 契约的显式终止帧：上游的 [DONE] 在上面被消费成 break，
+        // 不会原样出现在我们的流里。不带它时严格 SDK（等终止帧才能释放
+        // EventSource）只能干挂 EOF。
+        try {
+          await writeSseEvent(stream, "[DONE]")
+        } catch {
+          // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
         }
       } catch (error) {
         outcome = signalOutcome(c.req.raw.signal)
@@ -307,6 +315,12 @@ export async function handleStreamingCompletion(
               responseMode: "non_streaming",
             },
           )
+          // 单发 JSON 也是这条 SSE 响应的唯一事件，终止帧照旧。
+          try {
+            await writeSseEvent(stream, "[DONE]")
+          } catch {
+            // 客户端已经断开：终止帧没有落点。
+          }
           return
         }
 
@@ -349,6 +363,12 @@ export async function handleStreamingCompletion(
               { responseMode: "streaming" },
             )
           }
+        }
+        // 同上：OpenAI SSE 的显式终止帧，转译链路的 [DONE] 只在翻译器内消费。
+        try {
+          await writeSseEvent(stream, "[DONE]")
+        } catch {
+          // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
         }
       } catch (error) {
         outcome = signalOutcome(signal)

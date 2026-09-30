@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { CopilotStreamEvent } from "~/services/copilot/create-chat-completions"
+import type { CopilotStreamEvent } from "~/services/protocols/chat/types"
 
 import { aggregateSseToResponse } from "~/services/protocols/sse-aggregate"
 

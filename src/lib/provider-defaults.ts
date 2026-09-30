@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto"
 
 import { persistProviderConnections } from "~/lib/provider-connections"
 import {
-  ensureLegacyMetadata,
+  ensureConnectionMetadata,
   getConnectionSettings,
   listProviderConnections,
   setCredentialValue,
@@ -87,7 +87,7 @@ function applyCodebuffDefaultsIfChanged(conn: ProviderConnection): boolean {
     return false
   }
   // 直接写 metadata.settings(支持 string/boolean/number 等非 string 值)
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.settings = { ...meta.settings, ...nextSettings }
   return true
 }
@@ -178,7 +178,7 @@ function applyWindsurfDefaultsIfChanged(conn: ProviderConnection): boolean {
   if (settingsEqual(settings, nextSettings)) {
     return false
   }
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.settings = { ...meta.settings, ...nextSettings }
   return true
 }

@@ -9,6 +9,7 @@ import { adminRoutes } from "./routes/admin/route"
 import { claudeMcpRoutes } from "./routes/claude-mcp/route"
 import { completionRoutes } from "./routes/chat-completions/route"
 import { embeddingRoutes } from "./routes/embeddings/route"
+import { geminiRoutes } from "./routes/gemini/route"
 import { imageRoutes } from "./routes/images/route"
 import { messageRoutes } from "./routes/messages/route"
 import { mimoWsRoute } from "./routes/mimo/ws"
@@ -106,3 +107,6 @@ server.route("/v1/videos", videoRoutes)
 
 // Anthropic compatible endpoints
 server.route("/v1/messages", messageRoutes)
+
+// Gemini compatible endpoints (generateContent / streamGenerateContent)
+server.route("/v1beta", geminiRoutes)

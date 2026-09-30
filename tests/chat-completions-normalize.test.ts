@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import {
   normalizeChunk,

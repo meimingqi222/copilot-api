@@ -4,28 +4,38 @@ import { z } from "zod"
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
-} from "~/services/copilot/create-chat-completions"
-
-import {
-  createInitialStreamState,
-  type AnthropicStreamEventData,
-} from "~/services/protocols/anthropic"
-import { translateToAnthropic } from "~/services/protocols/anthropic"
-import {
-  translateChunkToAnthropicEvents,
-  translateStreamEndEvents,
+} from "~/services/protocols/chat/types"
+import type {
+  AnthropicResponse,
+  AnthropicStreamEventData,
 } from "~/services/protocols/anthropic"
 
-function translateFullStream(
+import {
+  decodeChatResponse,
+  decodeChatStream,
+  encodeMessagesResponse,
+  encodeMessagesStream,
+} from "~/services/ir/codecs/messages-chat"
+
+/** Chat → Anthropic response via the IR codec. */
+const chatToAnthropic = (response: ChatCompletionResponse): AnthropicResponse =>
+  encodeMessagesResponse(decodeChatResponse(response))
+
+async function translateFullStream(
   openAIStream: Array<ChatCompletionChunk>,
   estimatedInputTokens = 0,
-): Array<AnthropicStreamEventData> {
-  const streamState = createInitialStreamState()
-  streamState.estimatedInputTokens = estimatedInputTokens
-  const events = openAIStream.flatMap((chunk) =>
-    translateChunkToAnthropicEvents(chunk, streamState),
-  )
-  return [...events, ...translateStreamEndEvents(streamState)]
+): Promise<Array<AnthropicStreamEventData>> {
+  const frames = (async function* () {
+    for (const chunk of openAIStream) yield { data: JSON.stringify(chunk) }
+  })()
+  const events: Array<AnthropicStreamEventData> = []
+  for await (const event of encodeMessagesStream(
+    decodeChatStream(frames),
+    estimatedInputTokens,
+  )) {
+    events.push(event)
+  }
+  return events
 }
 
 const anthropicUsageSchema = z.object({
@@ -117,7 +127,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (basic)", () =>
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(isValidAnthropicResponse(anthropicResponse)).toBe(true)
 
@@ -168,7 +178,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (basic)", () =>
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(isValidAnthropicResponse(anthropicResponse)).toBe(true)
 
@@ -209,7 +219,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (basic)", () =>
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(isValidAnthropicResponse(anthropicResponse)).toBe(true)
     expect(anthropicResponse.stop_reason).toBe("max_tokens")
@@ -250,7 +260,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(anthropicResponse.stop_reason).toBe("end_turn")
     expect(anthropicResponse.content).toEqual([
@@ -298,7 +308,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(anthropicResponse.content).toContainEqual({
       type: "text",
@@ -349,7 +359,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(anthropicResponse.content).toEqual([
       {
@@ -395,7 +405,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(anthropicResponse.content[0]?.type).toBe("tool_use")
     if (anthropicResponse.content[0]?.type === "tool_use") {
@@ -439,7 +449,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     expect(anthropicResponse.content).toContainEqual({
       type: "thinking",
@@ -479,7 +489,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
       },
     }
 
-    const anthropicResponse = translateToAnthropic(openAIResponse)
+    const anthropicResponse = chatToAnthropic(openAIResponse)
 
     // Unsigned thinking is preserved (without signature field) so that
     // multi-turn conversations can include the thinking context.
@@ -493,7 +503,7 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation (extended)", ()
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
-  test("should translate a simple text stream correctly", () => {
+  test("should translate a simple text stream correctly", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-1",
@@ -548,14 +558,14 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     for (const event of translatedStream) {
       expect(isValidAnthropicStreamEvent(event)).toBe(true)
     }
   })
 
-  test("should translate a stream with tool calls", () => {
+  test("should translate a stream with tool calls", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-2",
@@ -639,14 +649,14 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     for (const event of translatedStream) {
       expect(isValidAnthropicStreamEvent(event)).toBe(true)
     }
   })
 
-  test("should defer message_delta until usage arrives after finish_reason", () => {
+  test("should defer message_delta until usage arrives after finish_reason", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-usage-late",
@@ -688,23 +698,15 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    const streamState = createInitialStreamState()
-    const finishChunkEvents = translateChunkToAnthropicEvents(
-      openAIStream[1],
-      streamState,
-    )
-    expect(
-      finishChunkEvents.some((event) => event.type === "message_delta"),
-    ).toBe(false)
+    const translatedStream = await translateFullStream(openAIStream)
 
-    const usageChunkEvents = translateChunkToAnthropicEvents(
-      openAIStream[2],
-      streamState,
-    )
-    const messageDelta = usageChunkEvents.find(
+    // message_delta must not fire on the finish_reason chunk itself; it lands
+    // only once the late usage-only chunk has been folded in.
+    const messageDeltas = translatedStream.filter(
       (event) => event.type === "message_delta",
     )
-    expect(messageDelta).toMatchObject({
+    expect(messageDeltas).toHaveLength(1)
+    expect(messageDeltas[0]).toMatchObject({
       type: "message_delta",
       delta: { stop_reason: "end_turn" },
       usage: {
@@ -714,11 +716,11 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     })
     expect(
-      usageChunkEvents.some((event) => event.type === "message_stop"),
+      translatedStream.some((event) => event.type === "message_stop"),
     ).toBe(true)
   })
 
-  test("should fall back to estimated input tokens when stream ends without usage", () => {
+  test("should fall back to estimated input tokens when stream ends without usage", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-estimate",
@@ -745,7 +747,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream, 42_000)
+    const translatedStream = await translateFullStream(openAIStream, 42_000)
     const messageStart = translatedStream.find(
       (event) => event.type === "message_start",
     )
@@ -773,7 +775,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (basic)", () => {
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () => {
-  test("should emit thinking and signature deltas for reasoning chunks", () => {
+  test("should emit thinking and signature deltas for reasoning chunks", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-thinking",
@@ -839,7 +841,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     const hasThinkingStart = translatedStream.some(
       (event) =>
@@ -879,7 +881,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     expect(hasTextDelta).toBe(true)
   })
 
-  test("should not duplicate thinking echoed under both a top-level alias and reasoning_details", () => {
+  test("should not duplicate thinking echoed under both a top-level alias and reasoning_details", async () => {
     // Upstreams that mirror Copilot/OpenRouter conventions can echo the same
     // reasoning under the top-level alias AND reasoning_details in one chunk.
     // getThinkingDelta must take the top-level text and not concatenate the
@@ -931,7 +933,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     const thinkingText = translatedStream
       .flatMap((event) =>
@@ -957,7 +959,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     expect(signatureTexts).toEqual(["sig-abc"])
   })
 
-  test("emits unsigned thinking events when reasoning never gets a signature", () => {
+  test("emits unsigned thinking events when reasoning never gets a signature", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-unsigned-thinking",
@@ -1001,7 +1003,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     const hasThinkingEvent = translatedStream.some(
       (event) =>
@@ -1025,7 +1027,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     expect(hasTextDelta).toBe(true)
   })
 
-  test("should flush unsigned thinking before a direct tool_use block", () => {
+  test("should flush unsigned thinking before a direct tool_use block", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-thinking-tool",
@@ -1072,7 +1074,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     expect(translatedStream).toEqual([
       {
@@ -1150,7 +1152,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
     ])
   })
 
-  test("should ignore late signatures after text has started", () => {
+  test("should ignore late signatures after text has started", async () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {
         id: "cmpl-late-signature",
@@ -1205,7 +1207,7 @@ describe("OpenAI to Anthropic Streaming Response Translation (reasoning)", () =>
       },
     ]
 
-    const translatedStream = translateFullStream(openAIStream)
+    const translatedStream = await translateFullStream(openAIStream)
 
     const thinkingEvents = translatedStream.filter(
       (event) =>

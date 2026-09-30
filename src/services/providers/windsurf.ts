@@ -1,5 +1,7 @@
-import { saveAccounts } from "~/lib/account-store"
-import { getMutableProviderConnection } from "~/lib/provider-connections"
+import {
+  getMutableProviderConnection,
+  persistProviderConnections,
+} from "~/lib/provider-connections"
 import { refreshWindsurfQuota } from "~/lib/quota/fetchers/windsurf"
 import {
   fallbackWindsurfConnectionModelsForConnection,
@@ -43,7 +45,7 @@ export const windsurfProviderRuntime: ProviderRuntime = {
     const liveConnection = getMutableProviderConnection(connection.id)
     if (!liveConnection) return undefined
     const snapshot = await refreshWindsurfQuota(liveConnection)
-    await saveAccounts()
+    await persistProviderConnections()
     return snapshot
   },
   getFallbackModels(connection) {

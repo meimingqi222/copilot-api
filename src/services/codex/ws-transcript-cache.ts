@@ -251,9 +251,7 @@ export function clearCodexTranscript(key: string): void {
 // Provider-agnostic aliases (the store is keyed by a provider-scoped key, so
 // the same get/set/clear serve codex and xAI without cross-provider bleed).
 export const getResponsesTranscript = getCodexTranscript
-export const setResponsesTranscript = setCodexTranscript
 export const appendResponsesTranscript = appendCodexTranscript
-export const clearResponsesTranscript = clearCodexTranscript
 
 /**
  * Clears every socket-scoped transcript bound to a downstream client WS id,

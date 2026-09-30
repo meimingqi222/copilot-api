@@ -124,6 +124,20 @@ export const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> =
       features: ["passthrough-client-session"],
       synthesizeStableSession: false,
     },
+    // MiniMax Code 的模型面是 Anthropic Messages，但上游是否认
+    // X-Claude-Code-Session-Id / prompt_cache_key 未实测，所以不伪造会话键，
+    // 只透传客户端自己带来的（generic L0 行为）。
+    minimax: {
+      provider: "minimax",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
+    // Qoder 的私有 SSE 协议未实测是否认会话键，不伪造：只透传客户端带来的。
+    qoder: {
+      provider: "qoder",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
   }
 
 /** OpenAI-compatible / generic connections: L0 only + passthrough. */

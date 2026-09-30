@@ -11,7 +11,7 @@
  * Mirrors CPA's `xaiInternalXSearchResponseFilter` (xai_executor_response.go).
  */
 
-import type { ResponsesResponse } from "~/services/copilot/responses-api"
+import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 export interface XaiClientToolKey {
   namespace: string

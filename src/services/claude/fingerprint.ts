@@ -22,11 +22,6 @@ export const claudeCodeVersion = "2.1.220"
 /** User-Agent emitted by Cowork's claude-desktop inference entrypoint. */
 export const claudeCoworkUserAgent = `claude-cli/${claudeCodeVersion} (external, claude-desktop)`
 
-/** @deprecated Retained for callers that still import the legacy constants. */
-export const claudeAgentSdkVersion = "0.3.220"
-/** @deprecated Cowork no longer emits this client header. */
-export const claudeClientVersion = "1.11187.4"
-
 export const claudeCodeSystemInstruction =
   "You are a Claude agent, built on Anthropic's Claude Agent SDK."
 

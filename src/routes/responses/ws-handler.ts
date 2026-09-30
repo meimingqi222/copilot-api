@@ -6,7 +6,7 @@ import type { RequestAdmission } from "~/lib/request-admission"
 import type {
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 
 import { HTTPError, UpstreamTransportError } from "~/lib/error"
 import { logStore } from "~/lib/log-store"
@@ -44,8 +44,8 @@ import {
 import { getClientIp, isAbortError } from "~/lib/utils"
 import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
-import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
-import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { inferInitiatorFromResponsesPayload } from "~/lib/initiator-header"
+import { extractMessageContentFromResponsesPayload } from "~/services/protocols/responses/types"
 import { tryAcquireCredentialLease } from "~/services/dispatch/concurrency"
 import { recordUpstreamFailure } from "~/services/dispatch/failover"
 import { hasCompactionTrigger } from "~/services/responses/compact"

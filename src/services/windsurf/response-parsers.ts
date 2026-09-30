@@ -572,7 +572,3 @@ export function parseWindsurfFrameErrorParts(
     return undefined
   }
 }
-
-export function parseWindsurfFrameError(frame: Uint8Array): string | undefined {
-  return parseWindsurfFrameErrorParts(frame)?.combined
-}

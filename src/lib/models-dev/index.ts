@@ -1,5 +1,6 @@
 export { buildModelsDevPriceIndexes } from "~/lib/models-dev/catalog"
 export {
+  getModelsDevCatalog,
   getModelsDevIndexes,
   initModelsDevPricing,
   refreshModelsDevCatalog,

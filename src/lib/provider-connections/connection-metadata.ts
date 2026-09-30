@@ -1,13 +1,10 @@
 /**
- * AccountLegacyMetadata 类型化读取器。
+ * ConnectionMetadata 类型化读取器。
  *
- * Step D 迁移后，原 Account 的 provider-specific 字段（quotaInfo、settings、
- * credentialExtras 等）承载于 `ProviderConnection.metadata` 内的
- * `AccountLegacyMetadata` 子结构。本模块提供类型安全的字段读取器，
- * 替代散装 `metadata.xxx as string` 强转。
+ * provider-specific 字段（provider、quotaState、settings、credentialExtras 等）
+ * 承载于 `ProviderConnection.metadata` 内的 `ConnectionMetadata` 子结构。
+ * 本模块提供类型安全的字段读取器，替代散装 `metadata.xxx as string` 强转。
  */
-import type { Account, AccountQuotaState } from "~/lib/legacy-accounts"
-
 import {
   isOAuthProviderId,
   PROVIDER_PROTOCOL_MAP,
@@ -28,7 +25,7 @@ import type {
 
 /**
  * protocol → provider 反向映射,从 PROVIDER_PROTOCOL_MAP 派生。
- * 用于 ensureLegacyMetadata 的默认 provider 推导。
+ * 用于 ensureConnectionMetadata 的默认 provider 推导。
  */
 const PROTOCOL_TO_PROVIDER_ID: Partial<Record<ProviderProtocol, ProviderId>> =
   {}
@@ -36,16 +33,18 @@ for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
   PROTOCOL_TO_PROVIDER_ID[protocol] = providerId as ProviderId
 }
 
+/** 配额状态(credential.status 的粗粒度投影)。 */
+export type ConnectionQuotaState = "unknown" | "available" | "exhausted"
+
 /**
- * 迁移后 provider-connections.json 中 migrated connection 的 metadata 形状。
+ * provider-connections.json 中 connection.metadata 的形状。
  *
- * 原 Account 顶层字段（除 id/label/enabled/priority/createdAt 已映射到
- * ProviderConnection 标准字段外）的承载区。
+ * ProviderConnection 标准字段之外的 provider-specific 数据:
+ * quota 状态、settings、credentialExtras、OAuth routing 字段等。
  */
-export interface AccountLegacyMetadata {
-  // ── 原 Account 顶层字段 ──
+export interface ConnectionMetadata {
   provider: ProviderId
-  quotaState: AccountQuotaState
+  quotaState: ConnectionQuotaState
   quotaInfo?: QuotaSnapshot | null
   quotaExhaustedAt?: number
   exhaustedAt?: number
@@ -76,16 +75,16 @@ export interface AccountLegacyMetadata {
 }
 
 /**
- * 从 connection.metadata 读取 AccountLegacyMetadata。
- * 若 metadata 不存在或不包含 legacy 字段，返回 undefined。
+ * 从 connection.metadata 读取 ConnectionMetadata。
+ * 若 metadata 不存在或不包含 provider 字段，返回 undefined。
  */
-export function readAccountLegacyMetadata(
+export function readConnectionMetadata(
   connection: ProviderConnection,
-): AccountLegacyMetadata | undefined {
+): ConnectionMetadata | undefined {
   const meta = connection.metadata
   if (!meta || typeof meta !== "object") return undefined
   if (!("provider" in meta)) return undefined
-  return meta as unknown as AccountLegacyMetadata
+  return meta as unknown as ConnectionMetadata
 }
 
 // ── 类型安全的字段读取器 ──────────────────────────────────────────
@@ -97,14 +96,14 @@ export function getConnectionProvider(
   // 无法区分（PROTOCOL_TO_PROVIDER 后写覆盖）。account-managed 连接
   // 必须优先读 metadata.provider，只有无 metadata 时才回退到 protocol。
   return (
-    readAccountLegacyMetadata(conn)?.provider
+    readConnectionMetadata(conn)?.provider
     ?? (PROTOCOL_TO_PROVIDER[conn.protocol] as ProviderId | undefined)
   )
 }
 
 export function getConnectionQuotaState(
   conn: ProviderConnection,
-): AccountQuotaState {
+): ConnectionQuotaState {
   // T5.2.5:从 credential.status 派生,不再读 metadata.quotaState
   const cred = conn.credentials[0]
   if (!cred) return "unknown"
@@ -119,7 +118,7 @@ export function getConnectionQuotaInfo(
   // T5.2.5:优先读 credential.quota(类型化字段),回退到 metadata.quotaInfo
   const cred = conn.credentials[0]
   if (cred?.quota) return cred.quota
-  const meta = readAccountLegacyMetadata(conn)
+  const meta = readConnectionMetadata(conn)
   if (!meta) return undefined
   const info = meta.quotaInfo
   return info ?? undefined
@@ -142,7 +141,7 @@ export function getConnectionQuotaExhaustedAt(
   // T5.2.5:优先读 credential.exhaustedAt,回退到 metadata
   const cred = conn.credentials[0]
   if (cred?.exhaustedAt !== undefined) return cred.exhaustedAt
-  return readAccountLegacyMetadata(conn)?.quotaExhaustedAt
+  return readConnectionMetadata(conn)?.quotaExhaustedAt
 }
 
 export function getConnectionExhaustedAt(
@@ -151,7 +150,7 @@ export function getConnectionExhaustedAt(
   // T5.2.5:优先读 credential.exhaustedAt,回退到 metadata
   const cred = conn.credentials[0]
   if (cred?.exhaustedAt !== undefined) return cred.exhaustedAt
-  return readAccountLegacyMetadata(conn)?.exhaustedAt
+  return readConnectionMetadata(conn)?.exhaustedAt
 }
 
 export function getConnectionCooldownUntil(
@@ -161,13 +160,13 @@ export function getConnectionCooldownUntil(
   // 优先读 credential（运行时状态），回退到 metadata（持久化值）。
   // 无 credential 的 connection 合法存在（先建连接后加凭据），不得抛错。
   const cred = conn.credentials[0]
-  return cred?.cooldownUntil ?? readAccountLegacyMetadata(conn)?.cooldownUntil
+  return cred?.cooldownUntil ?? readConnectionMetadata(conn)?.cooldownUntil
 }
 
 export function getConnectionLastRateLimitAt(
   conn: ProviderConnection,
 ): number | undefined {
-  return readAccountLegacyMetadata(conn)?.lastRateLimitAt
+  return readConnectionMetadata(conn)?.lastRateLimitAt
 }
 
 export function getConnectionLastRateLimitReason(
@@ -176,19 +175,19 @@ export function getConnectionLastRateLimitReason(
   // T5.2.5:优先读 credential.lastRateLimitReason,回退到 metadata
   const cred = conn.credentials[0]
   if (cred?.lastRateLimitReason) return cred.lastRateLimitReason
-  return readAccountLegacyMetadata(conn)?.lastRateLimitReason
+  return readConnectionMetadata(conn)?.lastRateLimitReason
 }
 
 export function getConnectionIsExhausted(
   conn: ProviderConnection,
 ): boolean | undefined {
-  return readAccountLegacyMetadata(conn)?.isExhausted
+  return readConnectionMetadata(conn)?.isExhausted
 }
 
 export function getConnectionCpaMetadata(
   conn: ProviderConnection,
 ): Record<string, unknown> | undefined {
-  return readAccountLegacyMetadata(conn)?.cpaMetadata
+  return readConnectionMetadata(conn)?.cpaMetadata
 }
 
 export function getConnectionSubtitle(
@@ -212,61 +211,61 @@ export function getConnectionSubtitle(
 export function getConnectionSettings(
   conn: ProviderConnection,
 ): Record<string, unknown> | undefined {
-  return readAccountLegacyMetadata(conn)?.settings
+  return readConnectionMetadata(conn)?.settings
 }
 
 export function getConnectionCredentialExtras(
   conn: ProviderConnection,
 ): Record<string, unknown> | undefined {
-  return readAccountLegacyMetadata(conn)?.credentialExtras
+  return readConnectionMetadata(conn)?.credentialExtras
 }
 
 export function getConnectionAuthStatus(conn: ProviderConnection): string {
-  return readAccountLegacyMetadata(conn)?.authStatus ?? "ready"
+  return readConnectionMetadata(conn)?.authStatus ?? "ready"
 }
 
 export function getConnectionAuthError(
   conn: ProviderConnection,
 ): string | null {
-  return readAccountLegacyMetadata(conn)?.authError ?? null
+  return readConnectionMetadata(conn)?.authError ?? null
 }
 
 export function getConnectionProxyUrl(
   conn: ProviderConnection,
 ): string | undefined {
   // T5.2.5:优先读 connection.proxyUrl(类型化字段),回退到 metadata
-  return conn.proxyUrl ?? readAccountLegacyMetadata(conn)?.proxyUrl
+  return conn.proxyUrl ?? readConnectionMetadata(conn)?.proxyUrl
 }
 
 export function getConnectionModelPrefix(
   conn: ProviderConnection,
 ): string | undefined {
   // T5.2.5:优先读 connection.modelPrefix(类型化字段),回退到 metadata
-  return conn.modelPrefix ?? readAccountLegacyMetadata(conn)?.modelPrefix
+  return conn.modelPrefix ?? readConnectionMetadata(conn)?.modelPrefix
 }
 
 export function getConnectionTokenEndpoint(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.tokenEndpoint
+  return readConnectionMetadata(conn)?.tokenEndpoint
 }
 
 export function getConnectionRedirectUri(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.redirectUri
+  return readConnectionMetadata(conn)?.redirectUri
 }
 
 export function getConnectionProxy(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.proxy
+  return readConnectionMetadata(conn)?.proxy
 }
 
 export function getConnectionUserId(
   conn: ProviderConnection,
 ): string | undefined {
-  return readAccountLegacyMetadata(conn)?.userId
+  return readConnectionMetadata(conn)?.userId
 }
 
 /**
@@ -319,14 +318,10 @@ export function getCredentialContextNumber(
 }
 
 /**
- * 从 Account 构建完整的 AccountLegacyMetadata（供 accountToConnectionForPersistence 使用）。
- */
-
-/**
  * 返回 provider 对应的 primary token 字段名（credential.value 的来源）。
  * 该字段不放入 credentialExtras（它在 credential.value 或 context 中）。
  */
-function getPrimaryTokenKey(provider: string): string | undefined {
+export function getPrimaryTokenKey(provider: string): string | undefined {
   switch (provider) {
     case "copilot": {
       return "githubToken"
@@ -347,83 +342,17 @@ function getPrimaryTokenKey(provider: string): string | undefined {
   }
 }
 
-export function buildAccountLegacyMetadata(
-  account: Account,
-): AccountLegacyMetadata {
-  const meta: AccountLegacyMetadata = {
-    provider: account.provider,
-    authStatus: account.runtimeState?.authStatus ?? "ready",
-    authError: account.runtimeState?.lastError ?? null,
-    exhaustedAt: account.exhaustedAt,
-    isExhausted: account.isExhausted,
-    quotaState: account.quotaState ?? "unknown",
-    quotaInfo: account.quotaInfo ?? null,
-    quotaExhaustedAt: account.quotaExhaustedAt,
-    cooldownUntil: account.cooldownUntil,
-    lastRateLimitAt: account.lastRateLimitAt,
-    lastRateLimitReason: account.lastRateLimitReason,
-    settings: account.settings ?? {},
-  }
-
-  // credentialExtras: 非 primary token 的 credentials 字段
-  // primary token 字段按 provider 区分：
-  //   copilot→githubToken / codebuff→authToken / windsurf→apiKey /
-  //   mimo→serviceToken / OAuth→accessToken
-  // 其余 credentials 字段（如 OAuth 的 refreshToken/idToken/expiresAt/
-  // accountId/projectId/deviceId/apiKey/email / mimo 的 xiaomichatbotPh/mimoWsToken）
-  // 放入 credentialExtras 供 connectionToAccount 反构造。
-  const primaryTokenKey = getPrimaryTokenKey(account.provider)
-  const extras: Record<string, unknown> = {}
-  if (account.credentials) {
-    for (const [key, value] of Object.entries(account.credentials)) {
-      if (key === primaryTokenKey) continue
-      if (value !== undefined) {
-        extras[key] = value
-      }
-    }
-  }
-  if (Object.keys(extras).length > 0) {
-    meta.credentialExtras = extras
-  }
-
-  // OAuth-specific
-  if (account.cpaMetadata) {
-    meta.cpaMetadata = account.cpaMetadata
-  }
-
-  // OAuth routing 字段从 settings 提取到 metadata 顶层
-  const settings = account.settings
-  if (settings) {
-    if (typeof settings.proxyUrl === "string") meta.proxyUrl = settings.proxyUrl
-    if (typeof settings.modelPrefix === "string") {
-      meta.modelPrefix = settings.modelPrefix
-    }
-    if (typeof settings.tokenEndpoint === "string") {
-      meta.tokenEndpoint = settings.tokenEndpoint
-    }
-    if (typeof settings.redirectUri === "string") {
-      meta.redirectUri = settings.redirectUri
-    }
-    // mimo-specific
-    if (typeof settings.proxy === "string") meta.proxy = settings.proxy
-    if (typeof settings.userId === "string") meta.userId = settings.userId
-  }
-
-  return meta
-}
-
-// ── 批次 2：Connection 级别写入器（替代 Account in-place mutation） ──
-// 这些函数直接修改 ProviderConnection 的 metadata / credential 字段，
-// 替代原来对 Account 对象的 in-place mutation。
+// ── Connection 级别写入器 ─────────────────────────────────────────
+// 这些函数直接修改 ProviderConnection 的 metadata / credential 字段。
 // 调用方负责后续 persistProviderConnections() 持久化。
 
 /**
- * 确保 connection.metadata 存在且包含 AccountLegacyMetadata 基础字段。
+ * 确保 connection.metadata 存在且包含 ConnectionMetadata 基础字段。
  * 若 metadata 不存在，创建空壳。
  */
-export function ensureLegacyMetadata(
+export function ensureConnectionMetadata(
   conn: ProviderConnection,
-): AccountLegacyMetadata {
+): ConnectionMetadata {
   if (
     !conn.metadata
     || typeof conn.metadata !== "object"
@@ -437,7 +366,7 @@ export function ensureLegacyMetadata(
       ...conn.metadata,
     }
   }
-  return conn.metadata as unknown as AccountLegacyMetadata
+  return conn.metadata as unknown as ConnectionMetadata
 }
 
 /**
@@ -449,7 +378,7 @@ export function setConnectionCooldownUntil(
   conn: ProviderConnection,
   value: number | undefined,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.cooldownUntil = value
   const cred = conn.credentials[0]
   cred.cooldownUntil = value
@@ -473,9 +402,9 @@ export function setConnectionCooldownUntil(
  */
 export function setConnectionQuotaState(
   conn: ProviderConnection,
-  quotaState: AccountQuotaState,
+  quotaState: ConnectionQuotaState,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.quotaState = quotaState
   const exhaustedAt = quotaState === "exhausted" ? Date.now() : undefined
   meta.quotaExhaustedAt = exhaustedAt
@@ -507,7 +436,7 @@ export function setConnectionExhausted(
   isExhausted: boolean,
   exhaustedAt?: number,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.isExhausted = isExhausted
   const at = !isExhausted ? undefined : (exhaustedAt ?? meta.exhaustedAt)
   meta.exhaustedAt = at
@@ -524,7 +453,7 @@ export function setConnectionRateLimitInfo(
   at: number | undefined,
   reason: string | undefined,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.lastRateLimitAt = at
   meta.lastRateLimitReason = reason
   // T5.2.5:同时写入 credential.lastRateLimitReason(类型化字段)
@@ -540,7 +469,7 @@ export function setConnectionAuthStatus(
   status: string | undefined,
   error?: string | null,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   meta.authStatus = status ?? "ready"
   meta.authError = error ?? null
   const cred = conn.credentials[0]
@@ -582,7 +511,7 @@ export function setConnectionSetting(
   key: string,
   value: string | undefined,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   if (!meta.settings) meta.settings = {}
   if (value === undefined) {
     meta.settings = removeFromRecord(meta.settings, key)
@@ -597,7 +526,7 @@ export function setConnectionCredentialExtra(
   key: string,
   value: string | number | undefined,
 ): void {
-  const meta = ensureLegacyMetadata(conn)
+  const meta = ensureConnectionMetadata(conn)
   if (!meta.credentialExtras) meta.credentialExtras = {}
   if (value === undefined) {
     meta.credentialExtras = removeFromRecord(meta.credentialExtras, key)

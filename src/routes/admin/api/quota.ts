@@ -1,6 +1,5 @@
 import { Hono } from "hono"
 
-import { refreshQuotaForConnection, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
 import {
   accountManagedProvider,
@@ -11,11 +10,13 @@ import {
   isAccountManagedConnection,
   isOAuthConnection,
   listAccountManagedConnections,
+  persistProviderConnections,
   setConnectionCooldownUntil,
   setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
 import { listModelCooldownsForConnection } from "~/lib/model-cooldown"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import {
   canResetCodexQuota,
   resetCodexQuota,
@@ -56,7 +57,7 @@ quotaApiRoutes.get("/", async (c) => {
   const connections = listAccountManagedConnections()
   // OAuth label 升级:直接操作 connection,不再经由 Account 快照
   if (upgradeOAuthConnectionLabels(connections)) {
-    await saveAccounts()
+    await persistProviderConnections()
   }
   const activeAccountId = getActiveAccountId()
   const response = connections.map((conn) => {
@@ -250,7 +251,7 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
       }
       clearAccountRateLimitState(conn.id)
     }
-    await saveAccounts()
+    await persistProviderConnections()
     logger.info(`Codex quota reset for account "${conn.name}"`)
     return c.json({
       success: true,

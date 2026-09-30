@@ -1,4 +1,4 @@
-import type { QuotaSnapshot } from "~/lib/legacy-accounts"
+import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 

@@ -2,33 +2,33 @@ import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
 import type {
-  Account,
-  AccountProvider,
-  OAuthAccount,
-} from "~/lib/legacy-accounts"
+  ManagedConnectionInput,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import {
-  refreshCopilotToken,
-  refreshQuotaForAccount,
-  saveAccounts,
-} from "~/lib/account-store"
-import { cancelTokenRefreshTimer } from "~/lib/account-store"
-import { setGitHubToken, addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
-import { isOAuthProviderId, isProviderId } from "~/lib/provider-config"
+import {
+  isOAuthProviderId,
+  isProviderId,
+  type ProviderId,
+} from "~/lib/provider-config"
 import {
   accountManagedProvider,
-  getMutableProviderConnection,
   listAccountManagedConnections,
+  managedConnectionFromInput,
+  persistProviderConnections,
   removeProviderConnection,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
-import {
-  refreshModelsForAccount,
-  refreshModelsForConnection,
-} from "~/lib/utils"
+import { refreshModelsForConnection } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
+import {
+  cancelConnectionTokenRefresh,
+  refreshCopilotTokenForConnection,
+} from "~/services/copilot/token-refresh"
 import {
   scheduleLobsteraiRefresh,
   scheduleLobsteraiRefreshForAllConnections,
@@ -37,10 +37,7 @@ import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
-import {
-  scheduleOAuthRefreshForAccount,
-  scheduleOAuthRefreshForConnection,
-} from "~/services/oauth/refresh-scheduler"
+import { scheduleOAuthRefreshForConnection } from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 export const importAccountRoutes = new Hono()
@@ -59,8 +56,8 @@ interface ImportAccountPayload {
   createdAt?: number
 }
 
-/** A provider branch either yields an account to add or a failure reason. */
-type BuildResult = { account: Account } | { error: string }
+/** A provider branch either yields a connection input or a failure reason. */
+type BuildResult = { input: ManagedConnectionInput } | { error: string }
 
 function credentialString(
   raw: ImportAccountPayload,
@@ -73,24 +70,17 @@ function credentialString(
 function baseAccountFields(
   raw: ImportAccountPayload,
   label: string,
-  provider: AccountProvider,
+  provider: ProviderId,
 ): Pick<
-  Account,
-  | "id"
-  | "label"
-  | "provider"
-  | "enabled"
-  | "priority"
-  | "quotaState"
-  | "createdAt"
+  ManagedConnectionInput,
+  "id" | "name" | "provider" | "enabled" | "priority" | "createdAt"
 > {
   return {
     id: randomUUID(),
-    label,
+    name: label,
     provider,
     enabled: raw.enabled ?? true,
     priority: raw.priority ?? 0,
-    quotaState: "unknown",
     createdAt: raw.createdAt ?? Date.now(),
   }
 }
@@ -103,13 +93,13 @@ function buildCopilotAccount(
   if (!githubToken) {
     return { error: "Missing githubToken in credentials." }
   }
-  const account: Account = {
-    ...baseAccountFields(raw, label, "copilot"),
-    credentials: { githubToken },
-    settings: raw.settings ?? {},
+  return {
+    input: {
+      ...baseAccountFields(raw, label, "copilot"),
+      credentials: { githubToken },
+      settings: raw.settings ?? {},
+    },
   }
-  setGitHubToken(account, githubToken)
-  return { account }
 }
 
 function buildCodebuffAccount(
@@ -121,7 +111,7 @@ function buildCodebuffAccount(
     return { error: "Missing authToken in credentials." }
   }
   return {
-    account: {
+    input: {
       ...baseAccountFields(raw, label, "codebuff"),
       credentials: { authToken },
       settings: raw.settings ?? {},
@@ -138,7 +128,7 @@ function buildWindsurfAccount(
     return { error: "Missing apiKey in credentials." }
   }
   return {
-    account: {
+    input: {
       ...baseAccountFields(raw, label, "windsurf"),
       credentials: { apiKey },
       settings: raw.settings ?? {},
@@ -171,7 +161,7 @@ function buildMimoAccount(
     return { error: "Missing serviceToken or xiaomichatbotPh in credentials." }
   }
   return {
-    account: {
+    input: {
       ...baseAccountFields(raw, label, "mimo-aistudio"),
       credentials: { serviceToken, xiaomichatbotPh },
       settings: raw.settings ?? {},
@@ -194,7 +184,7 @@ function buildCodebuddyAccount(
       raw.credentials.expiresAt
     : undefined
   return {
-    account: {
+    input: {
       ...baseAccountFields(raw, label, provider),
       credentials: {
         accessToken,
@@ -224,7 +214,7 @@ function buildLobsteraiAccount(
     return value ? { [key]: value } : {}
   }
   return {
-    account: {
+    input: {
       ...baseAccountFields(raw, label, "lobsterai"),
       credentials: {
         accessToken: accessToken ?? "",
@@ -244,7 +234,7 @@ function buildLobsteraiAccount(
 function buildProviderAccount(
   raw: ImportAccountPayload,
   label: string,
-  provider: AccountProvider,
+  provider: ProviderId,
 ): BuildResult {
   switch (provider) {
     case "copilot": {
@@ -273,16 +263,16 @@ function buildProviderAccount(
 }
 
 /**
- * Kick off post-add initialization for an imported non-OAuth account:
+ * Kick off post-add initialization for an imported non-OAuth connection:
  * provider-specific timers plus best-effort model discovery. Copilot refresh
  * chains its quota fetch after the token refresh; every other provider only
  * refreshes models. The warning wording differs per provider and is preserved
  * from the original per-branch implementations.
  */
 function initializeImportedAccount(
-  account: Account,
+  conn: ProviderConnection,
   label: string,
-  provider: AccountProvider,
+  provider: ProviderId,
 ): void {
   const usesModelsWording =
     provider === "codebuddy"
@@ -297,33 +287,30 @@ function initializeImportedAccount(
     )
   }
   if (provider === "copilot") {
-    refreshCopilotToken(account)
-      .then(() => refreshQuotaForAccount(account))
-      .then(() => refreshModelsForAccount(account))
+    refreshCopilotTokenForConnection(conn)
+      .then(() => refreshQuotaForConnection(conn))
+      .then(() => refreshModelsForConnection(conn))
       .catch(warn)
     return
   }
   if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    const connection = getMutableProviderConnection(account.id)
-    if (connection) scheduleCodebuddyRefresh(connection)
+    scheduleCodebuddyRefresh(conn)
   }
   if (provider === "lobsterai") {
-    const connection = getMutableProviderConnection(account.id)
-    if (connection) scheduleLobsteraiRefresh(connection)
+    scheduleLobsteraiRefresh(conn)
   }
-  refreshModelsForAccount(account).catch(warn)
+  void refreshModelsForConnection(conn).catch(warn)
 }
 
 /** OAuth import: schedule refresh, discover models, and fetch quota if the runtime supports it. */
-function initializeOAuthAccount(account: OAuthAccount, label: string): void {
+function initializeOAuthAccount(conn: ProviderConnection, label: string): void {
   const warn = (err: unknown) => {
     logger.warn(`Import: failed to init account "${label}":`, err)
   }
-  scheduleOAuthRefreshForAccount(account)
-  refreshModelsForAccount(account).catch(warn)
-  const runtime = getProviderRuntime(account.provider)
-  const conn = getMutableProviderConnection(account.id)
-  if (runtime.refreshQuota && conn) {
+  scheduleOAuthRefreshForConnection(conn)
+  void refreshModelsForConnection(conn).catch(warn)
+  const runtime = getProviderRuntime(accountManagedProvider(conn))
+  if (runtime.refreshQuota) {
     runtime.refreshQuota(conn).catch((err: unknown) => {
       logger.warn(`Import: failed to init quota for "${label}":`, err)
     })
@@ -333,8 +320,8 @@ function initializeOAuthAccount(account: OAuthAccount, label: string): void {
 function buildOAuthAccountFromImportPayload(
   raw: ImportAccountPayload,
   label: string,
-  provider: OAuthAccount["provider"],
-): OAuthAccount | null {
+  provider: ProviderId,
+): ManagedConnectionInput | null {
   const accessToken =
     typeof raw.credentials?.accessToken === "string" ?
       raw.credentials.accessToken.trim()
@@ -360,11 +347,10 @@ function buildOAuthAccountFromImportPayload(
 
   return {
     id: randomUUID(),
-    label,
+    name: label,
     provider,
     enabled: raw.enabled ?? true,
     priority: raw.priority ?? 0,
-    quotaState: "unknown",
     createdAt: raw.createdAt ?? Date.now(),
     credentials: {
       accessToken,
@@ -392,7 +378,6 @@ function buildOAuthAccountFromImportPayload(
       raw.cpaMetadata && typeof raw.cpaMetadata === "object" ?
         raw.cpaMetadata
       : undefined,
-    runtimeState: { authStatus: "ready" },
   }
 }
 
@@ -418,10 +403,10 @@ importAccountRoutes.post("/import", async (c) => {
   for (const raw of body.accounts) {
     const label = raw.label ?? `imported-${imported.length + 1}`
     const providerStr = raw.provider ?? "copilot"
-    const provider: AccountProvider =
+    const provider: ProviderId =
       isProviderId(providerStr) ? providerStr : "copilot"
 
-    // 检查是否存在同 label+provider 的 connection(替代 listAccounts().find)
+    // 检查是否存在同 label+provider 的 connection
     const duplicate = listAccountManagedConnections().find((conn) => {
       const connProvider = accountManagedProvider(conn)
       return conn.name === label && connProvider === provider
@@ -432,19 +417,18 @@ importAccountRoutes.post("/import", async (c) => {
         continue
       }
       // overwrite=true: remove existing account before importing new one
-      cancelTokenRefreshTimer(duplicate.id)
+      cancelConnectionTokenRefresh(duplicate.id)
       clearAccountRateLimitState(duplicate.id)
-      // 批次 2：通过 removeProviderConnection + 重建 state.accounts
       removeProviderConnection(duplicate.id)
     }
 
     if (isOAuthProviderId(provider)) {
-      const oauthAccount = buildOAuthAccountFromImportPayload(
+      const oauthInput = buildOAuthAccountFromImportPayload(
         raw,
         label,
         provider,
       )
-      if (!oauthAccount) {
+      if (!oauthInput) {
         failed.push({
           label,
           reason: "Missing accessToken or apiKey in credentials.",
@@ -452,9 +436,10 @@ importAccountRoutes.post("/import", async (c) => {
         continue
       }
 
-      addAccount(oauthAccount)
+      const conn = managedConnectionFromInput(oauthInput)
+      upsertProviderConnection(conn)
       imported.push(label)
-      initializeOAuthAccount(oauthAccount, label)
+      initializeOAuthAccount(conn, label)
       continue
     }
 
@@ -464,13 +449,14 @@ importAccountRoutes.post("/import", async (c) => {
       continue
     }
 
-    addAccount(result.account)
+    const conn = managedConnectionFromInput(result.input)
+    upsertProviderConnection(conn)
     imported.push(label)
-    initializeImportedAccount(result.account, label, provider)
+    initializeImportedAccount(conn, label, provider)
   }
 
   if (imported.length > 0) {
-    await saveAccounts()
+    await persistProviderConnections()
     logger.info(
       `Imported ${imported.length} account(s): ${imported.join(", ")}`,
     )
@@ -527,7 +513,7 @@ importAccountRoutes.post("/import-cpa", async (c) => {
 
     if (result.imported.length > 0) {
       initializeProviderRegistry()
-      await saveAccounts()
+      await persistProviderConnections()
       scheduleLobsteraiRefreshForAllConnections()
       logger.info(
         `Imported ${result.imported.length} CPA auth account(s): ${result.imported.join(", ")}`,

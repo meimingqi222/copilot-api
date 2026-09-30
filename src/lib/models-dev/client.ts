@@ -15,6 +15,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000
 
 let indexes: ModelsDevPriceIndexes | null = null
+let catalog: ModelsDevCatalog | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight: Promise<void> | null = null
 
@@ -44,7 +45,17 @@ function parseCatalog(text: string): ModelsDevCatalog {
 }
 
 function setCatalog(nextCatalog: ModelsDevCatalog): void {
+  catalog = nextCatalog
   indexes = buildModelsDevPriceIndexes(nextCatalog)
+}
+
+/**
+ * 当前生效的 models.dev 目录原文（含每个 provider 的模型表）。
+ * 价格索引只是它的一种投影；像 MiniMax Code 这类上游没有模型发现端点的
+ * provider 会直接从这份目录读模型清单。
+ */
+export function getModelsDevCatalog(): ModelsDevCatalog | null {
+  return catalog
 }
 
 function loadCatalogFromDisk(): ModelsDevCatalog | null {
@@ -83,6 +94,7 @@ export function setModelsDevCatalogForTest(
   nextCatalog: ModelsDevCatalog | null,
 ): void {
   if (!nextCatalog) {
+    catalog = null
     indexes = null
     return
   }

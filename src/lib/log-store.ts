@@ -4,6 +4,7 @@ export type LogEndpoint =
   | "chat"
   | "messages"
   | "responses"
+  | "gemini"
   | "embeddings"
   | "images"
   | "videos"

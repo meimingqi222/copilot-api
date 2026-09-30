@@ -1,75 +1,72 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/legacy-accounts"
+import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
+import { buildConnectionModelAliases } from "~/lib/model-aliases"
 import {
-  buildAccountModelAliases,
+  accountManagedModelPrefix,
+  listAccountManagedConnections,
+  managedConnectionFromInput,
+} from "~/lib/provider-connections"
+import {
   canonicalModelId,
-  getAccountModelPrefix,
-  listAccounts,
   parseModelReference,
-} from "~/lib/legacy-accounts"
+} from "~/lib/route-target/model-reference"
 import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { parseThinkingModel } from "~/lib/thinking"
-import { getCodexModelsForAccount } from "~/services/codex/get-models"
-import { getOAuthCatalogModels } from "~/services/oauth/discover-models"
-import { getOAuthFallbackModels } from "~/services/oauth/model-catalog"
+import { getCodexModelsForConnection } from "~/services/codex/get-models"
+import { getOAuthFallbackModelsForConnection } from "~/services/oauth/model-catalog"
 
-import { setTestAccounts } from "./helpers/set-accounts"
+import { setTestConnections } from "./helpers/set-connections"
 
-const originalAccounts = listAccounts()
+const originalConnections = listAccountManagedConnections()
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {
-  setTestAccounts([])
+  setTestConnections([])
 })
 
 afterEach(() => {
-  setTestAccounts(originalAccounts)
+  setTestConnections(originalConnections)
   globalThis.fetch = originalFetch
 })
 
-function createOAuthAccount(
-  provider: OAuthAccount["provider"],
-  overrides: Partial<OAuthAccount> = {},
-): OAuthAccount {
-  return {
+function oauthConnection(
+  provider: OAuthProviderId,
+  overrides: Partial<ProviderConnection> = {},
+): ProviderConnection {
+  const conn = managedConnectionFromInput({
     id: `${provider}-account`,
-    label: provider,
+    name: provider,
     provider,
     enabled: true,
     priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
-    credentials: {
-      accessToken: "token",
-    },
+    credentials: { accessToken: "token" },
     settings: {},
-    runtimeState: { authStatus: "ready" },
-    availableModels: getOAuthFallbackModels({
-      provider,
-      settings: {},
-    } as OAuthAccount),
-    ...overrides,
-  }
+  })
+  conn.models = getOAuthFallbackModelsForConnection(provider)
+  return { ...conn, ...overrides }
 }
 
 describe("OAuth model catalog", () => {
   test("returns provider-specific fallback models", () => {
-    const claude = getOAuthCatalogModels(createOAuthAccount("claude"))
-    expect(claude.some((model) => model.id === "claude-sonnet-4-6")).toBe(true)
-    expect(claude[0]?.supportedEndpoints).toContain("/v1/messages")
+    const claude = getOAuthFallbackModelsForConnection("claude")
+    expect(claude.some((model) => model.publicId === "claude-sonnet-4-6")).toBe(
+      true,
+    )
+    expect(claude[0]?.endpoints).toContain("messages")
 
-    const kimi = getOAuthCatalogModels(createOAuthAccount("kimi"))
-    expect(kimi.some((model) => model.id === "kimi-k2.5")).toBe(true)
-    expect(kimi[0]?.supportedEndpoints).toContain("/chat/completions")
+    const kimi = getOAuthFallbackModelsForConnection("kimi")
+    expect(kimi.some((model) => model.publicId === "kimi-k2.5")).toBe(true)
+    expect(kimi[0]?.endpoints).toContain("chat")
 
-    const xai = getOAuthCatalogModels(createOAuthAccount("xai"))
-    expect(xai.some((model) => model.id === "grok-4.3")).toBe(true)
-    expect(xai[0]?.supportedEndpoints).toContain("/v1/responses")
+    const xai = getOAuthFallbackModelsForConnection("xai")
+    expect(xai.some((model) => model.publicId === "grok-4.3")).toBe(true)
+    expect(xai[0]?.endpoints).toContain("responses")
 
-    const codex = getOAuthCatalogModels(createOAuthAccount("codex"))
-    const codexIds = codex.map((model) => model.id)
+    const codex = getOAuthFallbackModelsForConnection("codex")
+    const codexIds = codex.map((model) => model.publicId)
     for (const id of [
       "gpt-5.6-sol",
       "gpt-5.6-terra",
@@ -82,20 +79,25 @@ describe("OAuth model catalog", () => {
     ]) {
       expect(codexIds).toContain(id)
     }
-    expect(codex[0]?.supportedEndpoints).toContain("/v1/responses")
+    expect(codex[0]?.endpoints).toContain("responses")
   })
 })
 
 describe("OAuth model prefix helpers", () => {
-  test("getAccountModelPrefix defaults to provider id", () => {
-    expect(getAccountModelPrefix(createOAuthAccount("claude"))).toBe("claude")
+  test("accountManagedModelPrefix defaults to provider id", () => {
+    expect(accountManagedModelPrefix(oauthConnection("claude"))).toBe("claude")
   })
 
-  test("getAccountModelPrefix uses custom CPA prefix", () => {
-    const account = createOAuthAccount("claude", {
-      settings: { modelPrefix: "work" },
+  test("accountManagedModelPrefix uses custom CPA prefix", () => {
+    const conn = oauthConnection("claude", {
+      metadata: {
+        provider: "claude",
+        quotaState: "unknown",
+        modelPrefix: "work",
+      },
+      modelPrefix: "work",
     })
-    expect(getAccountModelPrefix(account)).toBe("work")
+    expect(accountManagedModelPrefix(conn)).toBe("work")
   })
 
   test("parses thinking suffixes without changing ordinary model ids", () => {
@@ -118,9 +120,6 @@ describe("OAuth model prefix helpers", () => {
   })
 
   test("parseModelReference strips provider and custom prefixes", () => {
-    const account = createOAuthAccount("claude", {
-      settings: { modelPrefix: "work" },
-    })
     expect(parseModelReference("claude/claude-sonnet-4-6").nativeModelId).toBe(
       "claude-sonnet-4-6",
     )
@@ -130,16 +129,21 @@ describe("OAuth model prefix helpers", () => {
     expect(canonicalModelId("claude/claude-sonnet-4-6")).toBe(
       "claude/claude-sonnet-4-6",
     )
-    expect(canonicalModelId("work/claude-sonnet-4-6", account)).toBe(
+    expect(canonicalModelId("work/claude-sonnet-4-6", "work")).toBe(
       "work/claude-sonnet-4-6",
     )
   })
 
-  test("buildAccountModelAliases includes native and prefixed ids", () => {
-    const account = createOAuthAccount("codex", {
-      settings: { modelPrefix: "team-a" },
+  test("buildConnectionModelAliases includes native and prefixed ids", () => {
+    const conn = oauthConnection("codex", {
+      metadata: {
+        provider: "codex",
+        quotaState: "unknown",
+        modelPrefix: "team-a",
+      },
+      modelPrefix: "team-a",
     })
-    expect(buildAccountModelAliases(account, "gpt-5.4")).toEqual([
+    expect(buildConnectionModelAliases(conn, "gpt-5.4")).toEqual([
       "gpt-5.4",
       "team-a/gpt-5.4",
       "codex/gpt-5.4",
@@ -155,18 +159,22 @@ describe("OAuth provider routing", () => {
   })
 
   test("resolveModelRouting maps custom account prefix", () => {
-    setTestAccounts([
-      createOAuthAccount("kimi", { settings: { modelPrefix: "lab" } }),
-    ])
+    const conn = oauthConnection("kimi")
+    conn.metadata = {
+      ...conn.metadata,
+      modelPrefix: "lab",
+    }
+    conn.modelPrefix = "lab"
+    setTestConnections([conn])
     const routing = resolveModelRouting("lab/kimi-k2.5")
     expect(routing.accountPrefix).toBe("lab")
     expect(routing.modelId).toBe("kimi-k2.5")
   })
 
   test("buildRouteTargets filters by legacy provider prefix", () => {
-    const claude = createOAuthAccount("claude")
-    const kimi = createOAuthAccount("kimi", { id: "kimi-account" })
-    setTestAccounts([claude, kimi])
+    const claude = oauthConnection("claude")
+    const kimi = oauthConnection("kimi", { id: "kimi-account" })
+    setTestConnections([claude, kimi])
 
     const targets = buildRouteTargets({
       legacyProvider: "claude",
@@ -180,7 +188,7 @@ describe("OAuth provider routing", () => {
   })
 
   test("buildRouteTargets matches prefixed model ids", () => {
-    setTestAccounts([createOAuthAccount("codex")])
+    setTestConnections([oauthConnection("codex")])
 
     const targets = buildRouteTargets({
       legacyProvider: "codex",
@@ -194,13 +202,11 @@ describe("OAuth provider routing", () => {
   })
 
   test("buildRouteTargets routes custom prefix only to matching account", () => {
-    setTestAccounts([
-      createOAuthAccount("claude", {
-        id: "work-claude",
-        settings: { modelPrefix: "work" },
-      }),
-      createOAuthAccount("claude", { id: "personal-claude" }),
-    ])
+    const work = oauthConnection("claude", { id: "work-claude" })
+    work.metadata = { ...work.metadata, modelPrefix: "work" }
+    work.modelPrefix = "work"
+    const personal = oauthConnection("claude", { id: "personal-claude" })
+    setTestConnections([work, personal])
 
     const targets = buildRouteTargets({
       accountPrefix: "work",
@@ -228,15 +234,11 @@ describe("Codex model discovery", () => {
         ),
       )) as unknown as typeof fetch
 
-    const account = createOAuthAccount("codex", {
-      credentials: {
-        accessToken: "codex-token",
-        accountId: "acct_123",
-      },
-    })
-    setTestAccounts([account])
+    const conn = oauthConnection("codex")
+    conn.credentials[0].value = "codex-token"
+    setTestConnections([conn])
 
-    const models = await getCodexModelsForAccount(account)
+    const models = await getCodexModelsForConnection(conn)
     expect(models.map((model) => model.id)).toEqual(["gpt-5.4", "gpt-5.5"])
     expect(models[0]?.supportedEndpoints).toContain("/v1/responses")
   })
@@ -255,15 +257,11 @@ describe("Codex model discovery", () => {
         ),
       )) as unknown as typeof fetch
 
-    const account = createOAuthAccount("codex", {
-      credentials: {
-        accessToken: "codex-token",
-        accountId: "acct_123",
-      },
-    })
-    setTestAccounts([account])
+    const conn = oauthConnection("codex")
+    conn.credentials[0].value = "codex-token"
+    setTestConnections([conn])
 
-    const models = await getCodexModelsForAccount(account)
+    const models = await getCodexModelsForConnection(conn)
     const imageModel = models.find((model) => model.id === "gpt-image-2")
     expect(imageModel?.supportedEndpoints).toContain("/v1/images/generations")
     const chatModel = models.find((model) => model.id === "gpt-5.4")

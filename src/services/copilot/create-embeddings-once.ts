@@ -9,7 +9,7 @@ import type {
 
 import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import { parseModelReference } from "~/lib/legacy-accounts"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 

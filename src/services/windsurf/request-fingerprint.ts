@@ -88,26 +88,3 @@ export function fingerprintWindsurfRequest(
     ].sort((a, b) => a - b),
   }
 }
-
-export interface ProtoFieldDiff {
-  onlyInCapture: Array<number>
-  onlyInBuilt: Array<number>
-  shared: Array<number>
-}
-
-/** Compare metadata / top-level field numbers between capture and built request. */
-export function diffProtoFieldSets(
-  captureFields: Array<number>,
-  builtFields: Array<number>,
-): ProtoFieldDiff {
-  const capture = new Set(captureFields)
-  const built = new Set(builtFields)
-  const onlyInCapture = [...capture]
-    .filter((f) => !built.has(f))
-    .sort((a, b) => a - b)
-  const onlyInBuilt = [...built]
-    .filter((f) => !capture.has(f))
-    .sort((a, b) => a - b)
-  const shared = [...capture].filter((f) => built.has(f)).sort((a, b) => a - b)
-  return { onlyInCapture, onlyInBuilt, shared }
-}

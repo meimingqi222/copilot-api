@@ -14,6 +14,8 @@ import { fetchAntigravityQuota } from "./fetchers/antigravity"
 import { fetchClaudeQuota } from "./fetchers/claude"
 import { fetchCodexQuota } from "./fetchers/codex"
 import { fetchKimiQuota } from "./fetchers/kimi"
+import { fetchMinimaxQuota } from "./fetchers/minimax"
+import { fetchQoderQuota } from "./fetchers/qoder"
 import { fetchXaiQuota } from "./fetchers/xai"
 
 const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
@@ -31,6 +33,8 @@ const QUOTA_FETCHERS: Record<
   kimi: fetchKimiQuota,
   codex: fetchCodexQuota,
   xai: fetchXaiQuota,
+  minimax: fetchMinimaxQuota,
+  qoder: fetchQoderQuota,
 }
 
 /**

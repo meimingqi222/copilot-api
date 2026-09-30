@@ -10,7 +10,7 @@ import type {
 
 import { getStableSessionId } from "~/lib/cache/session-id-cache"
 import { HTTPError } from "~/lib/error"
-import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { getCredentialContextString } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
@@ -202,9 +202,13 @@ export function buildOrderedBody(
     || payload.thinking?.type === "adaptive"
 
   // Tools: apply CC `_` prefix to non-builtin tool names (OAuth fingerprint).
+  // Server tools (no `input_schema`) are forwarded untouched so the upstream
+  // still sees the search declaration.
   const encodedTools =
     payload.tools && payload.tools.length > 0 ?
-      encodeTools(payload.tools)
+      payload.tools.map((tool) =>
+        "input_schema" in tool ? encodeTools([tool])[0] : tool,
+      )
     : undefined
   const encodedToolChoice =
     payload.tool_choice?.type === "tool" && payload.tool_choice.name ?

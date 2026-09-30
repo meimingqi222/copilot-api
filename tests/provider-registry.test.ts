@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-import { listAccounts } from "~/lib/legacy-accounts"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   removeProviderConnection,

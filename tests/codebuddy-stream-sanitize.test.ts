@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test"
 
-import type { CopilotStreamEvent } from "~/services/copilot/create-chat-completions"
+import type { CopilotStreamEvent } from "~/services/protocols/chat/types"
 
 import { sanitizeCodebuddyStream } from "~/services/protocols/codebuddy-native"
 

@@ -68,6 +68,23 @@ function pickFillFirst(targets: Array<RouteTarget>): RouteTarget {
   return sorted[0]
 }
 
+/** Keep one endpoint per credential while preserving the ordered fallback. */
+function preferredEndpoints(targets: Array<RouteTarget>): Array<RouteTarget> {
+  const best = new Map<string, RouteTarget>()
+  const rank = (target: RouteTarget): number => {
+    if (!target.isTranslated) return 0
+    if (target.endpoint === "responses") return 1
+    if (target.endpoint === "messages") return 2
+    return 3
+  }
+  for (const target of targets) {
+    const key = `${target.connectionId}::${target.credentialId}::${target.publicModelId}`
+    const previous = best.get(key)
+    if (!previous || rank(target) < rank(previous)) best.set(key, target)
+  }
+  return [...best.values()]
+}
+
 function findByAuthKey(
   pool: Array<RouteTarget>,
   authKey: string,
@@ -138,7 +155,7 @@ export function selectRouteTarget(
   const dedicatedPool = allPool.filter((t) => !t.isWildcard)
   const tierPool = dedicatedPool.length > 0 ? dedicatedPool : allPool
   const nativePool = tierPool.filter((t) => !t.isTranslated)
-  const pool = nativePool.length > 0 ? nativePool : tierPool
+  const pool = preferredEndpoints(nativePool.length > 0 ? nativePool : tierPool)
 
   // 1) connection priority 最小值
   const minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))

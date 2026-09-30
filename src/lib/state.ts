@@ -1,7 +1,7 @@
 import type { ModelAliasRule } from "~/lib/model-aliases"
+import type { ModelsResponse } from "~/lib/model-catalog"
 import type { ProviderId } from "~/lib/provider-config"
 import type { User } from "~/lib/users"
-import type { ModelsResponse } from "~/services/copilot/get-models"
 
 import { CACHE_UTILIZATION_DEFAULTS } from "~/lib/routing/provider-cache"
 

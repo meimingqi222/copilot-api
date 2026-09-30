@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/legacy-accounts"
+import type { TestAccount as Account } from "./helpers/set-accounts"
 
 import {
   __resetModelAliasesForTest,

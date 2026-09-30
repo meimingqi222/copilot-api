@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { cancelTokenRefreshTimer, saveAccounts } from "~/lib/account-store"
 import { logger } from "~/lib/logger"
 import {
   getConnectionProvider,
@@ -11,6 +10,7 @@ import {
   getProviderConnection,
   isAccountManagedConnection,
   listAccountManagedConnections,
+  persistProviderConnections,
   removeProviderConnection,
   setConnectionAuthStatus,
   setConnectionCooldownUntil,
@@ -20,6 +20,7 @@ import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
+import { cancelConnectionTokenRefresh } from "~/services/copilot/token-refresh"
 import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import { upgradeOAuthConnectionLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
@@ -74,7 +75,7 @@ function removeOAuthAccountFromState(accountId: string): void {
     return
   }
 
-  cancelTokenRefreshTimer(accountId)
+  cancelConnectionTokenRefresh(accountId)
   cancelOAuthRefreshTimer(accountId)
   clearAccountRateLimitState(accountId)
   // 批次 2：通过 removeProviderConnection + 重建 state.accounts
@@ -128,7 +129,7 @@ async function finalizeOAuthConnection(
   }
   try {
     await refreshModelsForConnection(finalized)
-    await saveAccounts()
+    await persistProviderConnections()
     initializeProviderRegistry()
     const provider = getConnectionProvider(finalized)
     if (!provider) return finalized
@@ -250,6 +251,11 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     proxyUrl?: string
     manual?: boolean
     reauthAccountId?: string
+    /**
+     * Provider 专属账号域（目前只有 MiniMax Code：`cn` / `en`）。
+     * 未传时由 strategy 取默认值（MiniMax 为国内版）。
+     */
+    region?: string
   }
   try {
     body = await readJsonBody(c.req.raw)
@@ -305,6 +311,10 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
 
   const label = parseLabel(body, provider)
   const proxyUrl = parseProxyUrl(body)
+  const region =
+    typeof body.region === "string" && body.region.trim() ?
+      body.region.trim()
+    : undefined
   const flowId = randomUUID()
   const expiresAt = Date.now() + FLOW_TIMEOUT_MS
 
@@ -312,7 +322,7 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
   if (!strategy) {
     return c.json({ error: `Unsupported OAuth provider: ${provider}` }, 400)
   }
-  const start = await strategy.start({ proxyUrl })
+  const start = await strategy.start({ proxyUrl, region })
 
   registerOAuthFlow({
     id: flowId,
@@ -333,6 +343,7 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
     interval: start.interval,
     deviceExpiresIn: start.deviceExpiresIn,
     proxyUrl,
+    region,
     reauthAccountId,
   })
 

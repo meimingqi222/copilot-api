@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { getCodebuffAuthToken, listAccounts } from "~/lib/legacy-accounts"
-import { listProviderConnections } from "~/lib/provider-connections"
+import {
+  getConnectionCodebuffAuthToken,
+  listProviderConnections,
+} from "~/lib/provider-connections"
 import { ensureDirectProviderConnections } from "~/lib/provider-defaults"
 import { state } from "~/lib/state"
 
@@ -39,8 +41,11 @@ describe("provider-defaults", () => {
 
     await ensureDirectProviderConnections()
 
-    expect(listAccounts()).toHaveLength(1)
-    expect(getCodebuffAuthToken(listAccounts()[0])).toBe("new-token")
+    const codebuffConns = listProviderConnections().filter(
+      (c) => c.protocol === "codebuff-native" && c.name === "codebuff-default",
+    )
+    expect(codebuffConns).toHaveLength(1)
+    expect(getConnectionCodebuffAuthToken(codebuffConns[0])).toBe("new-token")
   })
 
   test("creates and persists codebuff managed default when none exists", async () => {

@@ -39,9 +39,3 @@ export function registerCredentialRefresher(
 ): void {
   registry.set(refresher.type, refresher)
 }
-
-export function getCredentialRefresher(
-  type: CredentialRefresherType,
-): CredentialRefresher | undefined {
-  return registry.get(type)
-}

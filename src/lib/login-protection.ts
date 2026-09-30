@@ -171,12 +171,6 @@ export async function recordLoginFailure(
   }
 }
 
-export function getLoginProtectionState(
-  ip: string,
-): LoginAttemptState | undefined {
-  return attempts.get(ip)
-}
-
 export function resetLoginProtectionForTest(): void {
   attempts.clear()
   if (cleanupTimer) {

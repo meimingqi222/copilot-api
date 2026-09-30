@@ -1,15 +1,8 @@
-import type { Account, AccountModel } from "~/lib/legacy-accounts"
+import type { AccountModel } from "~/lib/provider-connections"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import {
-  canonicalNativeModelId,
-  getOAuthProjectId,
-  isOAuthAccount,
-} from "~/lib/legacy-accounts"
-import {
-  getConnectionProvider,
-  getMutableProviderConnection,
-} from "~/lib/provider-connections"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import { getConnectionProvider } from "~/lib/provider-connections"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 import {
   ANTIGRAVITY_API_BASE_URL,
@@ -70,57 +63,8 @@ function parseAntigravityModelsPayload(body: string): Array<AccountModel> {
   return models
 }
 
-export async function getAntigravityModelsForAccount(
-  account: Account,
-  signal?: AbortSignal,
-): Promise<Array<AccountModel>> {
-  if (!isOAuthAccount(account) || account.provider !== "antigravity") {
-    return []
-  }
-
-  const accessToken = account.credentials?.accessToken
-  if (!accessToken) {
-    return []
-  }
-
-  const projectId = getOAuthProjectId(account)
-  const requestBody = JSON.stringify(projectId ? { project: projectId } : {})
-  let lastError = "Antigravity models request failed"
-
-  const connection = getMutableProviderConnection(account.id)
-  if (!connection) {
-    return []
-  }
-
-  for (const baseUrl of ANTIGRAVITY_MODEL_BASE_URLS) {
-    const response = await executeUpstreamProxyCall(connection, {
-      method: "POST",
-      url: `${baseUrl}/${ANTIGRAVITY_API_VERSION}:fetchAvailableModels`,
-      headers: buildAntigravityHeaders(accessToken),
-      body: requestBody,
-      signal,
-    })
-
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      lastError = `Antigravity models request failed (${response.statusCode}): ${response.body.slice(0, 200)}`
-      continue
-    }
-
-    const models = parseAntigravityModelsPayload(response.body)
-    if (models.length === 0) {
-      lastError = "Antigravity models response did not include any models"
-      continue
-    }
-
-    return models
-  }
-
-  throw new Error(lastError)
-}
-
 /**
  * Connection 原生版本:直接从 ProviderConnection 发现 antigravity 模型。
- * Phase 2d:消除 connectionToAccount 依赖。
  */
 export async function getAntigravityModelsForConnection(
   connection: ProviderConnection,

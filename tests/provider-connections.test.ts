@@ -5,9 +5,6 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
-import type { Account } from "~/lib/legacy-accounts"
-
-import { refreshAccountRuntimeAvailability } from "~/lib/legacy-accounts"
 import {
   __resetProviderConnectionsForTest,
   classifyUpstreamError,
@@ -33,10 +30,7 @@ import {
   updateConnection,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
-import {
-  clearAccountRateLimitState,
-  resetAdaptiveRateLimiterForTest,
-} from "~/lib/rate-limit"
+import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
@@ -53,19 +47,6 @@ const originalFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = originalFetch
 })
-
-function buildAccount(overrides?: Partial<Account>): Account {
-  return {
-    id: "acct-test",
-    label: "Test",
-    provider: "codex",
-    enabled: true,
-    priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
-    ...overrides,
-  }
-}
 
 const pad2 = (n: number): string => String(n).padStart(2, "0")
 
@@ -598,86 +579,6 @@ describe("parseCodexUsageLimitRetryAfter", () => {
   })
 })
 
-describe("refreshAccountRuntimeAvailability", () => {
-  beforeEach(() => {
-    __resetProviderConnectionsForTest()
-    resetAdaptiveRateLimiterForTest()
-  })
-
-  afterEach(() => {
-    resetAdaptiveRateLimiterForTest()
-  })
-
-  test("recovers from cooldown after cooldownUntil expires", () => {
-    const account = buildAccount({
-      cooldownUntil: Date.now() - 1000,
-      lastRateLimitReason: "upstream_429",
-      quotaState: "unknown",
-    })
-    const recovered = refreshAccountRuntimeAvailability(account)
-    expect(recovered).toBe(true)
-    expect(account.cooldownUntil).toBeUndefined()
-    expect(account.lastRateLimitReason).toBeUndefined()
-  })
-
-  test("does not recover while cooldownUntil is in the future", () => {
-    const future = Date.now() + 60_000
-    const account = buildAccount({
-      cooldownUntil: future,
-      lastRateLimitReason: "upstream_429",
-    })
-    const recovered = refreshAccountRuntimeAvailability(account)
-    expect(recovered).toBe(false)
-    expect(account.cooldownUntil).toBe(future)
-  })
-
-  test("auto-recovers quota_exhausted after DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS", () => {
-    const account = buildAccount({
-      quotaState: "exhausted",
-      quotaExhaustedAt:
-        Date.now() - DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS - 1000,
-      // No cooldownUntil — simulates upstream 429 with quota body but no reset time
-      cooldownUntil: undefined,
-    })
-    const recovered = refreshAccountRuntimeAvailability(account)
-    expect(recovered).toBe(true)
-    expect(account.quotaState).toBe("unknown")
-    expect(account.quotaExhaustedAt).toBeUndefined()
-  })
-
-  test("does not auto-recover quota_exhausted before recovery window", () => {
-    const account = buildAccount({
-      quotaState: "exhausted",
-      quotaExhaustedAt: Date.now() - 1000,
-      cooldownUntil: undefined,
-    })
-    const recovered = refreshAccountRuntimeAvailability(account)
-    expect(recovered).toBe(false)
-    expect(account.quotaState).toBe("exhausted")
-  })
-
-  test("recovers quota_exhausted via cooldownUntil expiry (resets quotaState)", () => {
-    const account = buildAccount({
-      quotaState: "exhausted",
-      cooldownUntil: Date.now() - 1000,
-      quotaExhaustedAt: Date.now() - 2000,
-    })
-    const recovered = refreshAccountRuntimeAvailability(account)
-    expect(recovered).toBe(true)
-    expect(account.cooldownUntil).toBeUndefined()
-    expect(account.quotaState).toBe("unknown")
-    expect(account.quotaExhaustedAt).toBeUndefined()
-  })
-
-  test("returns false for healthy account with no cooldown", () => {
-    const account = buildAccount()
-    const recovered = refreshAccountRuntimeAvailability(account)
-    expect(recovered).toBe(false)
-    expect(account.cooldownUntil).toBeUndefined()
-    expect(account.quotaState).toBe("unknown")
-  })
-})
-
 describe("route-target build + select", () => {
   beforeEach(async () => {
     __resetProviderConnectionsForTest()
@@ -812,7 +713,10 @@ describe("route-target build + select", () => {
       endpoint: "chat",
       connections: [connection],
     })
-    expect(targets).toHaveLength(1)
+    expect(targets.map((target) => target.endpoint)).toEqual([
+      "chat",
+      "messages",
+    ])
     expect(targets[0]?.publicModelId).toBe("glm-5-2-max")
     // Pin keeps its own upstream — dispatch overwrites payload.model with this.
     expect(targets[0]?.upstreamModelId).toBe("glm-5-2-max")

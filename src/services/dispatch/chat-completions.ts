@@ -9,7 +9,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import type { DispatchIdentity } from "./shared"

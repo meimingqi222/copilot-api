@@ -4,7 +4,7 @@ import type {
 } from "~/lib/models-dev/types"
 import type { ProviderId } from "~/lib/provider-config"
 
-import { parseModelReference } from "~/lib/legacy-accounts"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
   lookupGlobalModelPrice,
   lookupProviderModelPrice,

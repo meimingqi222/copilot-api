@@ -1,13 +1,19 @@
 import { describe, test, expect } from "bun:test"
 
-import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
 import {
   anthropicUsageToOpenAI,
   openAIUsageToAnthropic,
 } from "~/lib/usage-translation"
-import { translateChatCompletionToResponses } from "~/services/copilot/chat-to-responses"
-import { translateResponsesToChatCompletion } from "~/services/copilot/responses-to-chat"
+import {
+  decodeChatResponse,
+  encodeChatResponse,
+} from "~/services/ir/codecs/messages-chat/response"
+import {
+  decodeResponsesResult,
+  encodeResponsesResult,
+} from "~/services/ir/codecs/responses/result"
 
 // ── Phase C2.1: openAIUsageToAnthropic unit tests ───────────────────────────
 
@@ -211,8 +217,8 @@ describe("chat -> responses -> chat usage round trip", () => {
       },
     })
 
-    const responses = translateChatCompletionToResponses(original)
-    const backToChat = translateResponsesToChatCompletion(responses)
+    const responses = encodeResponsesResult(decodeChatResponse(original))
+    const backToChat = encodeChatResponse(decodeResponsesResult(responses))
 
     expect(backToChat.usage?.prompt_tokens).toBe(1000)
     expect(backToChat.usage?.completion_tokens).toBe(50)
@@ -238,8 +244,8 @@ describe("chat -> responses -> chat usage round trip", () => {
       },
     })
 
-    const responses = translateChatCompletionToResponses(original)
-    const backToChat = translateResponsesToChatCompletion(responses)
+    const responses = encodeResponsesResult(decodeChatResponse(original))
+    const backToChat = encodeChatResponse(decodeResponsesResult(responses))
 
     const anthropicUsage = openAIUsageToAnthropic({
       prompt_tokens: backToChat.usage?.prompt_tokens ?? 0,

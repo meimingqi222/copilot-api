@@ -13,7 +13,7 @@ import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
   ToolCall,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { state } from "~/lib/state"
 import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"

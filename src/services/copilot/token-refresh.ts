@@ -9,8 +9,8 @@
  * - 过期时间写入 `credential.context.copilotTokenExpiry`
  * - 定时器以 connectionId 为键
  *
- * `account-store.ts` 中的 `refreshCopilotToken(account)` 仍服务控制路径
- * (启动调度/管理端手动刷新),Phase 3 统一收编到本模块。
+ * 启动调度与"管理端手动刷新"等控制路径统一走本模块的
+ * `refreshCopilotTokenForConnection(connection)`。
  */
 
 import type {

@@ -1,12 +1,32 @@
 import { describe, test, expect } from "bun:test"
 import { z } from "zod"
 
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
-import { translateToResponsesPayload } from "../src/services/copilot/chat-to-responses"
+import { planTranslation } from "~/services/ir"
+import { encodeResponsesRequest } from "~/services/ir/codecs/responses/request"
 import { translateToCopilotMessages } from "../src/services/copilot/create-messages-translate"
-import { translateToOpenAI } from "../src/services/protocols/anthropic"
-import { translateChatPayloadToAnthropic } from "../src/services/protocols/openai"
+import {
+  decodeChatRequest,
+  decodeMessagesRequest,
+  encodeChatRequest,
+  encodeMessagesRequest,
+} from "../src/services/ir/codecs/messages-chat"
+
+/** Messages → Chat via the IR codec (the shared translation kernel). */
+const messagesToChat = (
+  payload: AnthropicMessagesPayload,
+  opts?: { preserveHistoricalReasoning?: boolean },
+): ChatCompletionsPayload =>
+  encodeChatRequest(decodeMessagesRequest(payload), {
+    preserveHistoricalReasoning: opts?.preserveHistoricalReasoning,
+  })
+
+/** Chat → Messages via the IR codec. */
+const chatToMessages = (
+  payload: ChatCompletionsPayload,
+): AnthropicMessagesPayload => encodeMessagesRequest(decodeChatRequest(payload))
 
 // Zod schema for a single message in the chat completion request.
 const messageSchema = z.object({
@@ -86,7 +106,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       max_tokens: 0,
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
   })
 
@@ -115,7 +135,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       ],
       tool_choice: { type: "auto" },
     }
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
   })
 
@@ -127,7 +147,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       max_tokens: 0,
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     expect(openAIPayload.messages[0]).toEqual({
       role: "system",
       content: "You are helpful.",
@@ -145,7 +165,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       max_tokens: 0,
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     expect(openAIPayload.messages[0]).toEqual({
       role: "system",
       content: "You are helpful.",
@@ -170,7 +190,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       ],
       max_tokens: 100,
     }
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
     // Historical assistant messages must not carry reasoning_text.
@@ -206,7 +226,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       ],
       max_tokens: 100,
     }
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     expect(isValidChatCompletionRequest(openAIPayload)).toBe(true)
 
     // reasoning_text is stripped for all historical assistant messages.
@@ -236,7 +256,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       max_tokens: 100,
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     const assistantMessage = openAIPayload.messages[0]
 
     expect(assistantMessage.role).toBe("assistant")
@@ -261,7 +281,7 @@ describe("Anthropic to OpenAI translation logic", () => {
       max_tokens: 128,
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
     const historicalAssistantMessage = openAIPayload.messages[1]
 
     expect(historicalAssistantMessage.role).toBe("assistant")
@@ -283,7 +303,7 @@ describe("Anthropic thinking and model mapping", () => {
       },
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
 
     expect(openAIPayload.reasoning_effort).toBe("minimal")
     expect(openAIPayload.temperature).toBe(1)
@@ -301,7 +321,7 @@ describe("Anthropic thinking and model mapping", () => {
       },
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
 
     // "auto" is not a valid reasoning_effort value for most upstreams;
     // adaptive → omit so each upstream falls back to its own default.
@@ -329,7 +349,7 @@ describe("Anthropic thinking and model mapping", () => {
     }
 
     // Default (Copilot path): historical thinking is stripped.
-    const stripped = translateToOpenAI(anthropicPayload)
+    const stripped = messagesToChat(anthropicPayload)
     expect(stripped.messages[0]).toMatchObject({
       role: "assistant",
       content: "thought done",
@@ -337,7 +357,7 @@ describe("Anthropic thinking and model mapping", () => {
     expect(stripped.messages[0].reasoning_content).toBeUndefined()
 
     // Opt-in (non-Copilot path): preserved for DeepSeek/Kimi/Qwen/xAI.
-    const preserved = translateToOpenAI(anthropicPayload, {
+    const preserved = messagesToChat(anthropicPayload, {
       preserveHistoricalReasoning: true,
     })
     expect(preserved.messages[0]).toMatchObject({
@@ -368,7 +388,7 @@ describe("Anthropic thinking and model mapping", () => {
       max_tokens: 128,
     }
 
-    const hub = translateToOpenAI(anthropicPayload, {
+    const hub = messagesToChat(anthropicPayload, {
       preserveHistoricalReasoning: true,
     })
     // A signature only validates against the exact text it was issued for, so
@@ -381,7 +401,7 @@ describe("Anthropic thinking and model mapping", () => {
 
     // Back through the hub: blocks are reassembled one-for-one, each keeping
     // the signature it was issued with.
-    const back = translateChatPayloadToAnthropic(hub)
+    const back = chatToMessages(hub)
     expect(back.messages[1].content).toEqual([
       { type: "thinking", thinking: "step one", signature: "sig-a" },
       { type: "thinking", thinking: "step two", signature: "sig-b" },
@@ -415,7 +435,7 @@ describe("Anthropic thinking and model mapping", () => {
       max_tokens: 128,
     }
 
-    const preserved = translateToOpenAI(anthropicPayload, {
+    const preserved = messagesToChat(anthropicPayload, {
       preserveHistoricalReasoning: true,
     })
 
@@ -460,7 +480,7 @@ describe("Anthropic thinking and model mapping", () => {
         },
       }
 
-      const openAIPayload = translateToOpenAI(anthropicPayload)
+      const openAIPayload = messagesToChat(anthropicPayload)
       expect(openAIPayload.reasoning_effort).toBe(
         expected as "none" | "minimal" | "low" | "medium" | "high" | "xhigh",
       )
@@ -468,7 +488,7 @@ describe("Anthropic thinking and model mapping", () => {
   })
 
   test("omits explicit none while preserving budget-zero none", () => {
-    const explicitNone = translateToOpenAI({
+    const explicitNone = messagesToChat({
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
       max_tokens: 128,
@@ -476,7 +496,7 @@ describe("Anthropic thinking and model mapping", () => {
     })
     expect(explicitNone.reasoning_effort).toBeUndefined()
 
-    const budgetZero = translateToOpenAI({
+    const budgetZero = messagesToChat({
       model: "claude-sonnet-4",
       messages: [{ role: "user", content: "hello" }],
       max_tokens: 128,
@@ -497,7 +517,7 @@ describe("Anthropic thinking and model mapping", () => {
       },
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
 
     expect(openAIPayload.temperature).toBe(1)
     expect(openAIPayload.reasoning_effort).toBe("medium")
@@ -511,7 +531,7 @@ describe("Anthropic thinking and model mapping", () => {
       temperature: 0.7,
     }
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = messagesToChat(anthropicPayload)
 
     expect(openAIPayload.temperature).toBe(0.7)
     expect(openAIPayload.reasoning_effort).toBeUndefined()
@@ -534,9 +554,9 @@ describe("Anthropic thinking and model mapping", () => {
       max_tokens: 16,
     }
 
-    const normalized = translateToOpenAI(numericSnapshotPayload)
-    const minorVersion = translateToOpenAI(minorVersionPayload)
-    const preserved = translateToOpenAI(nonNumericSuffixPayload)
+    const normalized = messagesToChat(numericSnapshotPayload)
+    const minorVersion = messagesToChat(minorVersionPayload)
+    const preserved = messagesToChat(nonNumericSuffixPayload)
 
     expect(normalized.model).toBe("claude-sonnet-4")
     expect(minorVersion.model).toBe("claude-sonnet-4-6")
@@ -700,16 +720,18 @@ describe("Copilot /v1/messages endpoint translation", () => {
   })
 })
 
-describe("Responses API endpoint translation (through OpenAI payload)", () => {
+describe("Responses API endpoint translation (through IR codec)", () => {
   test("should translate reasoning_effort to Responses reasoning format", () => {
-    const openAIPayload = {
+    const openAIPayload: ChatCompletionsPayload = {
       model: "claude-sonnet-4",
-      messages: [{ role: "user" as const, content: "hello" }],
+      messages: [{ role: "user", content: "hello" }],
       max_tokens: 128,
-      reasoning_effort: "high" as const,
+      reasoning_effort: "high",
     }
 
-    const responsesPayload = translateToResponsesPayload(openAIPayload)
+    const responsesPayload = encodeResponsesRequest(
+      decodeChatRequest(openAIPayload),
+    )
 
     expect(responsesPayload.reasoning).toEqual({
       effort: "high",
@@ -717,67 +739,77 @@ describe("Responses API endpoint translation (through OpenAI payload)", () => {
     })
   })
 
-  test("should normalize reasoning_effort values for Responses API", () => {
-    const testCases = [
-      { input: "minimal" as const, expected: "low" as const },
-      { input: "low" as const, expected: "low" as const },
-      { input: "medium" as const, expected: "medium" as const },
-      { input: "high" as const, expected: "high" as const },
-      { input: "xhigh" as const, expected: "high" as const },
-    ]
-
-    for (const { input, expected } of testCases) {
-      const openAIPayload = {
+  test("should reject reasoning efforts a Responses target cannot express", () => {
+    // The pre-IR translator silently folded these onto the nearest level. The
+    // capability preflight now rejects them instead, so the caller can pick a
+    // different candidate or surface the loss rather than shipping a level the
+    // target never advertised.
+    for (const effort of ["minimal", "xhigh", "max"] as const) {
+      const request = decodeChatRequest({
         model: "claude-sonnet-4",
-        messages: [{ role: "user" as const, content: "test" }],
+        messages: [{ role: "user", content: "test" }],
         max_tokens: 128,
-        reasoning_effort: input,
-      }
+        reasoning_effort: effort,
+      })
+      expect(planTranslation(request, { wire: "responses" }).accepted).toBe(
+        false,
+      )
+    }
 
-      const responsesPayload = translateToResponsesPayload(openAIPayload)
-      expect(responsesPayload.reasoning?.effort).toBe(expected)
+    for (const effort of ["low", "medium", "high"] as const) {
+      const request = decodeChatRequest({
+        model: "claude-sonnet-4",
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 128,
+        reasoning_effort: effort,
+      })
+      expect(planTranslation(request, { wire: "responses" }).accepted).toBe(
+        true,
+      )
     }
   })
 
   test("should not include reasoning when reasoning_effort is not specified", () => {
-    const openAIPayload = {
+    const openAIPayload: ChatCompletionsPayload = {
       model: "claude-sonnet-4",
-      messages: [{ role: "user" as const, content: "hello" }],
+      messages: [{ role: "user", content: "hello" }],
       max_tokens: 128,
     }
 
-    const responsesPayload = translateToResponsesPayload(openAIPayload)
+    const responsesPayload = encodeResponsesRequest(
+      decodeChatRequest(openAIPayload),
+    )
 
     expect(responsesPayload.reasoning).toBeUndefined()
   })
 
   test("should preserve other fields in Responses payload", () => {
-    const openAIPayload = {
+    const openAIPayload: ChatCompletionsPayload = {
       model: "claude-sonnet-4",
       messages: [
-        { role: "user" as const, content: "hello" },
-        { role: "assistant" as const, content: "hi there" },
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "hi there" },
       ],
       max_tokens: 256,
       temperature: 0.7,
       top_p: 0.9,
-      stream: true,
-      reasoning_effort: "medium" as const,
+      reasoning_effort: "medium",
       tools: [
         {
-          type: "function" as const,
+          type: "function",
           function: { name: "test", parameters: {} },
         },
       ],
     }
 
-    const responsesPayload = translateToResponsesPayload(openAIPayload)
+    const responsesPayload = encodeResponsesRequest(
+      decodeChatRequest(openAIPayload),
+    )
 
     expect(responsesPayload.model).toBe("claude-sonnet-4")
     expect(responsesPayload.max_output_tokens).toBe(256)
     expect(responsesPayload.temperature).toBe(0.7)
     expect(responsesPayload.top_p).toBe(0.9)
-    expect(responsesPayload.stream).toBe(true)
     expect(responsesPayload.reasoning).toEqual({
       effort: "medium",
       summary: "auto",

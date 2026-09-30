@@ -1,9 +1,6 @@
 /**
  * `claude` 子进程的命令行参数构造。
  *
- * 直译 magpie 的 `claudeCLIArgs()`
- * （`internal/gateway/claude_subscription.go:209`）。
- *
  * 几个参数不是可选的：
  *
  * - `--include-partial-messages`：没有它只能拿到整块消息，没有 token 级流。

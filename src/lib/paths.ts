@@ -25,9 +25,9 @@ function pathUnderApp(fileName: string): string {
 
 /**
  * All data-dir paths. Individual keys are read-only getters so tests cannot
- * partially reassign `PATHS.ACCOUNTS_PATH` back to production while another
- * async save is still in flight (that race previously polluted real data).
- * Use {@link redirectPathsToDir} to relocate the whole tree.
+ * partially reassign `PATHS.PROVIDER_CONNECTIONS_PATH` back to production while
+ * another async save is still in flight (that race previously polluted real
+ * data). Use {@link redirectPathsToDir} to relocate the whole tree.
  */
 export const PATHS = {
   get APP_DIR(): string {
@@ -35,9 +35,6 @@ export const PATHS = {
   },
   get GITHUB_TOKEN_PATH(): string {
     return pathUnderApp("github_token")
-  },
-  get ACCOUNTS_PATH(): string {
-    return pathUnderApp("accounts.json")
   },
   get USERS_PATH(): string {
     return pathUnderApp("users.json")

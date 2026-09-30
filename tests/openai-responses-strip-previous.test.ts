@@ -18,7 +18,7 @@ import type {
   CopilotStreamEventLike,
   ResponsesInputItem,
   ResponsesPayload,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 
 import {
   __resetProviderConnectionsForTest,

@@ -2,15 +2,15 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
-import type { ResponsesResponse } from "~/services/copilot/responses-api"
+import type { ResponsesResponse } from "~/services/protocols/responses/types"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
-} from "~/services/copilot/responses-api-types"
+} from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
-import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import {
   getCredentialContextString,
@@ -687,8 +687,4 @@ export function createCodexImageEdit(
     signal,
     ctx,
   )
-}
-
-export function isCodexDirectImageModel(model: unknown): boolean {
-  return typeof model === "string" && isDirectImageModel(model)
 }

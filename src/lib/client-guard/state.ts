@@ -29,15 +29,9 @@ export const BUILTIN_UA_PATTERNS = [
 export const customUaWhitelist: Array<string> = []
 
 // Suspicious thresholds
-export const ERROR_RATE_THRESHOLD = 0.3
-export const HIGH_FREQUENCY_THRESHOLD = 100
-export const AUTH_FAILURE_THRESHOLD = 8
-export const PATH_SCANNING_THRESHOLD = 8
 export const BURST_WINDOW_MS = 60_000
-export const BURST_REQUEST_THRESHOLD = 20
 export const RECENT_WINDOW_MS = 10 * 60 * 1000
 export const RECENT_REQUEST_THRESHOLD = 60
-export const AUTO_BLOCK_SCORE_THRESHOLD = 80
 export const MAX_SNAPSHOT_ENTRIES = 10_000
 export const MAX_SNAPSHOT_PATHS = 256
 export const MAX_SNAPSHOT_USERNAMES = 256

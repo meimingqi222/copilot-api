@@ -14,6 +14,7 @@ export type ProviderProtocol =
   | "openai-compatible"
   | "openai-responses-compatible"
   | "anthropic-compatible"
+  | "gemini-compatible"
   | "copilot-native"
   | "windsurf-native"
   | "codebuff-native"
@@ -25,11 +26,14 @@ export type ProviderProtocol =
   | "xai-native"
   | "codebuddy-native"
   | "lobsterai-native"
+  | "minimax-native"
+  | "qoder-native"
 
 export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "openai-compatible",
   "openai-responses-compatible",
   "anthropic-compatible",
+  "gemini-compatible",
   "copilot-native",
   "windsurf-native",
   "codebuff-native",
@@ -41,6 +45,8 @@ export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "xai-native",
   "codebuddy-native",
   "lobsterai-native",
+  "minimax-native",
+  "qoder-native",
 ]
 
 export function isProviderProtocol(value: string): value is ProviderProtocol {
@@ -51,6 +57,7 @@ export type ModelEndpoint =
   | "chat"
   | "responses"
   | "messages"
+  | "gemini"
   | "embeddings"
   | "images"
   | "videos"
@@ -59,6 +66,7 @@ export const MODEL_ENDPOINTS: ReadonlyArray<ModelEndpoint> = [
   "chat",
   "responses",
   "messages",
+  "gemini",
   "embeddings",
   "images",
   "videos",
@@ -75,6 +83,7 @@ export function isModelEndpoint(value: string): value is ModelEndpoint {
  * 确保默认 endpoint 与 protocol adapter 实际支持的能力匹配。
  *
  * - `anthropic-compatible` / `claude-native`: adapter 只实现 createMessages → `["messages"]`
+ * - `gemini-compatible`: adapter 只实现 createGeminiGenerateContent → `["gemini"]`
  * - 其他所有 protocol: adapter 至少实现 createChatCompletions → `["chat"]`
  */
 export function defaultEndpointsForProtocol(
@@ -82,6 +91,9 @@ export function defaultEndpointsForProtocol(
 ): Array<ModelEndpoint> {
   if (protocol === "anthropic-compatible" || protocol === "claude-native") {
     return ["messages"]
+  }
+  if (protocol === "gemini-compatible") {
+    return ["gemini"]
   }
   return ["chat"]
 }
@@ -166,14 +178,6 @@ export type CredentialStatus =
   | "auth_error"
   | "quota_exhausted"
   | "disabled"
-
-export const CREDENTIAL_STATUSES: ReadonlyArray<CredentialStatus> = [
-  "ready",
-  "cooldown",
-  "auth_error",
-  "quota_exhausted",
-  "disabled",
-]
 
 export interface ApiCredential {
   id: string

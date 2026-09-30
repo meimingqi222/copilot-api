@@ -10,15 +10,6 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/provider-connections/types"
-import type {
-  ChatCompletionResponse,
-  CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
-import type { EmbeddingResponse } from "~/services/copilot/create-embeddings"
-import type {
-  CopilotStreamEventLike,
-  ResponsesResponse,
-} from "~/services/copilot/responses-api"
 import type { ProtocolAdapter } from "~/services/protocols/types"
 
 export interface RequestExecutionContext {
@@ -66,23 +57,6 @@ export interface RequestExecutionContext {
    */
   compact?: boolean
 }
-
-export type ProviderChatResult =
-  | { accountId: string; response: AsyncIterable<CopilotStreamEvent> }
-  | { accountId: string; response: ChatCompletionResponse }
-
-export type ProviderResponsesResult =
-  | { accountId: string; response: AsyncIterable<CopilotStreamEventLike> }
-  | { accountId: string; response: ResponsesResponse }
-
-export type ProviderEmbeddingsResult = {
-  accountId: string
-  response: EmbeddingResponse
-}
-
-export type ProviderMessagesResult =
-  | { accountId: string; response: AsyncIterable<unknown> }
-  | { accountId: string; response: Record<string, unknown> }
 
 export interface ProviderRuntime {
   id: ProviderId

@@ -2,7 +2,7 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
 import type {
   AnthropicMessagesPayload,
   AnthropicResponse,
@@ -17,7 +17,7 @@ import {
   hoistToolResultImages,
   translateToCopilotMessages,
 } from "~/services/copilot/create-messages-translate"
-import { inferInitiatorFromAnthropicPayload } from "~/services/copilot/initiator"
+import { inferInitiatorFromAnthropicPayload } from "~/lib/initiator-header"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
   detectAnthropicStreamError,

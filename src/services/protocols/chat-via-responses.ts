@@ -14,18 +14,21 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type {
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { translateToResponsesPayload } from "~/services/copilot/chat-to-responses"
-import {
-  translateResponsesStreamToChatCompletions,
-  translateResponsesToChatCompletion,
-} from "~/services/copilot/responses-to-chat"
+import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { planTranslation, recordTranslationLosses } from "~/services/ir"
+import { decodeChatRequest } from "~/services/ir/codecs/messages-chat/request"
+import { encodeChatResponse } from "~/services/ir/codecs/messages-chat/response"
+import { encodeChatStream } from "~/services/ir/codecs/messages-chat/stream"
+import { encodeResponsesRequest } from "~/services/ir/codecs/responses/request"
+import { decodeResponsesResult } from "~/services/ir/codecs/responses/result"
+import { decodeResponsesStream } from "~/services/ir/codecs/responses/stream"
 
 import type { AdapterChatResult, AdapterResponsesResult } from "./types"
 
@@ -79,7 +82,23 @@ export async function createChatViaResponses(
     responsesExecutor,
   } = params
 
-  const responsesPayload = translateToResponsesPayload(payload)
+  const requestIR = decodeChatRequest(payload)
+  const plan = planTranslation(requestIR, {
+    wire: "responses",
+    issuer: connection.id,
+    model: target.upstreamModelId,
+  })
+  recordTranslationLosses(ctx?.c, plan.losses)
+  if (!plan.accepted) {
+    throw new LocalPayloadUnsupportedError(
+      plan.losses.records.find((record) => record.action === "reject")?.reason
+        ?? "Responses target cannot preserve this request",
+    )
+  }
+  const responsesPayload = {
+    ...encodeResponsesRequest(requestIR),
+    stream: payload.stream,
+  }
   const result = await responsesExecutor({
     target,
     connection,
@@ -90,13 +109,14 @@ export async function createChatViaResponses(
   })
 
   if (isResponsesResponse(result.response)) {
-    const chatResponse = translateResponsesToChatCompletion(result.response)
+    const chatResponse = encodeChatResponse(
+      decodeResponsesResult(result.response),
+    )
     return { credentialId: result.credentialId, response: chatResponse }
   }
 
-  const chatStream = translateResponsesStreamToChatCompletions(
-    result.response,
-    payload.model,
+  const chatStream = encodeChatStream(
+    decodeResponsesStream(result.response, payload.model),
   )
   return { credentialId: result.credentialId, response: chatStream }
 }

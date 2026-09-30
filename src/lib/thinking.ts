@@ -92,8 +92,7 @@ interface ReasoningPartLike {
  * concatenated in order.
  *
  * This is the shape our own translators emit whenever reasoning interleaves
- * with text (`protocols/openai/messages-to-chat.ts`,
- * `windsurf/collect-response.ts`, `copilot/responses-to-chat.ts`), so a
+ * with text (`ir/codecs/messages-chat`, `windsurf/collect-response.ts`), so a
  * request-side reader that only checks top-level fields misses it.
  */
 export function extractReasoningPartsText(
@@ -184,15 +183,6 @@ export function thinkingConfigToReasoningEffort(
     return config.effort
   }
   return budgetToLevel(config.budget)
-}
-
-export function thinkingConfigToBudget(
-  config: ThinkingSuffixConfig,
-): number | undefined {
-  if (config.mode === "budget") return config.budget
-  if (config.mode === "none") return 0
-  if (config.mode === "auto") return -1
-  return LEVEL_TO_BUDGET[config.effort]
 }
 
 export function thinkingConfigToAnthropic(config: ThinkingSuffixConfig): {

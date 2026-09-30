@@ -92,7 +92,7 @@ describe("RunRegistry", () => {
   /**
    * Multi-tenant isolation: copilot-api is a shared proxy, so a caller must not
    * be able to hijack another connection's parked process by replaying its
-   * tool_use id. magpie has no equivalent because it serves one local user.
+   * tool_use id.
    */
   test("refuses a match from another connection", () => {
     const run = fakeRun("tok-1", { connectionId: "conn-other" })

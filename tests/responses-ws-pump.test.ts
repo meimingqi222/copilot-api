@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
 
 import { pumpWithLeadingBuffer, sendText } from "~/routes/responses/ws-pump"
 import { collectResponsesFromEventStream } from "~/services/responses/sse-collector"

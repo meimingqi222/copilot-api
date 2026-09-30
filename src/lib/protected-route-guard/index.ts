@@ -6,7 +6,7 @@ import { HTTPError } from "~/lib/error"
 import { getProtectedRouteKind } from "~/lib/protected-routes"
 import { getClientIp } from "~/lib/utils"
 
-import type { GuardInput, PrincipalBehavior } from "./types"
+import type { GuardInput } from "./types"
 
 import { enforceTokenBucket } from "./bucket"
 import {
@@ -261,20 +261,4 @@ function extractBearerToken(
 
 function getClientIpFromRequest(c: Context): string {
   return getClientIp(c)
-}
-
-export function getPrincipalBehaviorForTest(
-  c: Context,
-): PrincipalBehavior | undefined {
-  const principal = c.get("protectedRouteGuardPrincipal")
-  if (!principal) return undefined
-
-  const state = guardState.get(principal)
-  if (!state) return undefined
-
-  const trustedClient = isTrustedClient(c.req.header("user-agent"))
-  return analyzeBehavior(state, Date.now(), {
-    userAgent: c.req.header("user-agent"),
-    trustedClient,
-  })
 }

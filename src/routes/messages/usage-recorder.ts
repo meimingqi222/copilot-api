@@ -10,71 +10,10 @@ import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import { recordUsage } from "~/lib/usage"
-import { translateToOpenAI } from "~/services/protocols/anthropic"
-
-export interface UsageInfo {
-  prompt_tokens: number
-  completion_tokens: number
-  total_tokens: number
-  prompt_tokens_details?: {
-    cached_tokens?: number
-    cache_creation_input_tokens?: number
-  }
-}
-
-export function recordStreamingUsage(
-  c: Context,
-  accountId: string,
-  lastUsage: UsageInfo | undefined,
-  timing?: { ttftMs: number; tps: number },
-  estimatedInputTokens = 0,
-): void {
-  const model = c.get("model")
-  if (!model) {
-    return
-  }
-
-  // 上游流里没有任何 usage chunk:用本地估算记一行,否则这次请求完全不可见。
-  if (!lastUsage) {
-    if (estimatedInputTokens <= 0) return
-    recordUsage({
-      c,
-      accountId,
-      model,
-      promptTokens: estimatedInputTokens,
-      completionTokens: 0,
-      totalTokens: estimatedInputTokens,
-      tps: 0,
-      ttftMs: timing?.ttftMs,
-      streaming: true,
-      finishReason: "usage_missing",
-    })
-    return
-  }
-
-  const cacheReadTokens = lastUsage.prompt_tokens_details?.cached_tokens ?? 0
-  const cacheWriteTokens =
-    lastUsage.prompt_tokens_details?.cache_creation_input_tokens ?? 0
-  recordUsage({
-    c,
-    accountId,
-    model,
-    // prompt_tokens 是总量(含缓存读与缓存写,见 usage-translation.ts),
-    // 两者都要扣除,仅扣缓存读会把缓存写 double-bill(一次按 prompt 价,
-    // 一次按 cache-write 价)。与 chat 非流式/流式路径保持一致。
-    promptTokens: Math.max(
-      lastUsage.prompt_tokens - cacheReadTokens - cacheWriteTokens,
-      0,
-    ),
-    completionTokens: lastUsage.completion_tokens,
-    totalTokens: lastUsage.total_tokens,
-    cacheReadTokens,
-    cacheWriteTokens,
-    ttftMs: timing?.ttftMs,
-    tps: timing?.tps,
-    streaming: true,
-  })
-}
+import {
+  decodeMessagesRequest,
+  encodeChatRequest,
+} from "~/services/ir/codecs/messages-chat"
 
 export function recordDirectStreamingUsage(
   c: Context,
@@ -206,7 +145,12 @@ export async function estimateAnthropicInputTokens(
   anthropicPayload: AnthropicMessagesPayload,
   opts?: { preserveHistoricalReasoning?: boolean },
 ): Promise<number> {
-  const openAIPayload = translateToOpenAI(anthropicPayload, opts)
+  const openAIPayload = encodeChatRequest(
+    decodeMessagesRequest(anthropicPayload),
+    {
+      preserveHistoricalReasoning: opts?.preserveHistoricalReasoning ?? false,
+    },
+  )
   const selectedModel = state.models?.data.find(
     (model) => model.id === openAIPayload.model,
   )

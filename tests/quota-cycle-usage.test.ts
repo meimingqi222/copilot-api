@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/legacy-accounts"
+import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
 
-import { listAccounts } from "~/lib/legacy-accounts"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import {
   __resetProviderConnectionsForTest,
   createConnection,

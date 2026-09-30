@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/legacy-accounts"
+import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
 
-import { listAccounts } from "~/lib/legacy-accounts"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import {
   parseClaudeUsagePayload,
   parseKimiUsagePayload,
   summarizeClaudeQuota,
   summarizeKimiQuota,
 } from "~/lib/quota/parsers"
+import {
+  getConnectionAuthStatus,
+  getMutableProviderConnection,
+} from "~/lib/provider-connections"
 import {
   buildClaudeAuthUrl,
   exchangeClaudeCodeForTokens,
@@ -21,7 +25,7 @@ import {
   stripKimiModelPrefix,
 } from "~/services/oauth/kimi"
 import { generatePkceCodes } from "~/services/oauth/pkce"
-import { refreshOAuthAccountToken } from "~/services/oauth/refresh-scheduler"
+import { refreshOAuthConnectionToken } from "~/services/oauth/refresh-scheduler"
 
 import { setTestAccounts } from "./helpers/set-accounts"
 
@@ -202,7 +206,7 @@ describe("OAuth quota parsers", () => {
 })
 
 describe("OAuth refresh scheduler", () => {
-  test("refreshOAuthAccountToken refreshes Claude account tokens", async () => {
+  test("refreshOAuthConnectionToken refreshes Claude account tokens", async () => {
     const account: OAuthAccount = {
       id: "acct-claude",
       label: "Claude Test",
@@ -230,9 +234,11 @@ describe("OAuth refresh scheduler", () => {
         ),
       )) as unknown as typeof fetch
 
-    await refreshOAuthAccountToken(account, "test")
-    expect(account.credentials?.accessToken).toBe("new-access")
-    expect(account.credentials?.refreshToken).toBe("new-refresh")
-    expect(account.runtimeState?.authStatus).toBe("ready")
+    const connection = getMutableProviderConnection("acct-claude")
+    if (!connection) throw new Error("connection not found")
+    await refreshOAuthConnectionToken(connection, "test")
+    expect(connection.credentials[0]?.value).toBe("new-access")
+    expect(connection.credentials[0]?.context?.refreshToken).toBe("new-refresh")
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
   })
 })

@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { OAuthAccount } from "~/lib/legacy-accounts"
+import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
+import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { listAccounts } from "~/lib/legacy-accounts"
-import { getMutableProviderConnection } from "~/lib/provider-connections"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
+import {
+  getConnectionAuthError,
+  getConnectionAuthStatus,
+  getMutableProviderConnection,
+} from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
@@ -13,7 +18,7 @@ import {
   summarizeCodexQuota,
   summarizeXaiQuota,
 } from "~/lib/quota/parsers"
-import { supportsResponsesApi } from "~/services/copilot/responses-api-types"
+import { connectionModelSupportsEndpoint } from "~/lib/route-target/model-support"
 import {
   buildCodexAuthUrl,
   exchangeCodexCodeForTokens,
@@ -26,7 +31,7 @@ import {
 import { generatePkceCodes } from "~/services/oauth/pkce"
 import {
   cancelAllOAuthRefreshTimers,
-  refreshOAuthAccountToken,
+  refreshOAuthConnectionToken,
 } from "~/services/oauth/refresh-scheduler"
 import {
   buildXaiAuthUrl,
@@ -485,36 +490,55 @@ describe("Codex and xAI quota parsers", () => {
   })
 })
 
-describe("supportsResponsesApi", () => {
-  test("returns true for Codex and xAI OAuth accounts", () => {
-    const codexAccount: OAuthAccount = {
-      id: "acct-codex",
-      label: "Codex",
-      provider: "codex",
+describe("connectionModelSupportsEndpoint", () => {
+  test("advertises responses for OAuth Codex and xAI connections", () => {
+    const makeConnection = (
+      protocol: ProviderConnection["protocol"],
+    ): ProviderConnection => ({
+      id: `conn-${protocol}`,
+      name: protocol,
+      protocol,
+      baseUrl: "https://example.test",
       enabled: true,
       priority: 0,
-      quotaState: "unknown",
+      credentials: [],
       createdAt: Date.now(),
-      credentials: { accessToken: "token" },
-    }
-    const xaiAccount: OAuthAccount = {
-      id: "acct-xai",
-      label: "xAI",
-      provider: "xai",
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: { accessToken: "token" },
-    }
+    })
 
-    expect(supportsResponsesApi("gpt-5", codexAccount)).toBe(true)
-    expect(supportsResponsesApi("grok-3", xaiAccount)).toBe(true)
+    expect(
+      connectionModelSupportsEndpoint(
+        "gpt-5",
+        makeConnection("codex-native"),
+        "responses",
+      ),
+    ).toBe(true)
+    expect(
+      connectionModelSupportsEndpoint(
+        "grok-3",
+        makeConnection("xai-native"),
+        "responses",
+      ),
+    ).toBe(true)
+    // Copilot's responses support comes from its model catalog, not a
+    // provider-wide feature, so an unloaded catalog advertises nothing.
+    expect(
+      connectionModelSupportsEndpoint(
+        "gpt-4o",
+        makeConnection("copilot-native"),
+        "responses",
+      ),
+    ).toBe(false)
   })
 })
 
 describe("OAuth refresh scheduler", () => {
-  test("refreshOAuthAccountToken refreshes Codex account tokens", async () => {
+  function liveConnection(id: string): ProviderConnection {
+    const connection = getMutableProviderConnection(id)
+    if (!connection) throw new Error(`connection not found: ${id}`)
+    return connection
+  }
+
+  test("refreshes Codex connection tokens", async () => {
     const account: OAuthAccount = {
       id: "acct-codex",
       label: "Codex Test",
@@ -542,13 +566,14 @@ describe("OAuth refresh scheduler", () => {
         ),
       )) as unknown as typeof fetch
 
-    await refreshOAuthAccountToken(account, "test")
-    expect(account.credentials?.accessToken).toBe("new-access")
-    expect(account.credentials?.refreshToken).toBe("new-refresh")
-    expect(account.runtimeState?.authStatus).toBe("ready")
+    const connection = liveConnection("acct-codex")
+    await refreshOAuthConnectionToken(connection, "test")
+    expect(connection.credentials[0]?.value).toBe("new-access")
+    expect(connection.credentials[0]?.context?.refreshToken).toBe("new-refresh")
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
   })
 
-  test("refreshOAuthAccountToken refreshes xAI account tokens", async () => {
+  test("refreshes xAI connection tokens", async () => {
     const account: OAuthAccount = {
       id: "acct-xai",
       label: "xAI Test",
@@ -579,13 +604,16 @@ describe("OAuth refresh scheduler", () => {
         ),
       )) as unknown as typeof fetch
 
-    await refreshOAuthAccountToken(account, "test")
-    expect(account.credentials?.accessToken).toBe("xai-new-access")
-    expect(account.credentials?.refreshToken).toBe("xai-new-refresh")
-    expect(account.runtimeState?.authStatus).toBe("ready")
+    const connection = liveConnection("acct-xai")
+    await refreshOAuthConnectionToken(connection, "test")
+    expect(connection.credentials[0]?.value).toBe("xai-new-access")
+    expect(connection.credentials[0]?.context?.refreshToken).toBe(
+      "xai-new-refresh",
+    )
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
   })
 
-  test("refreshOAuthAccountToken resets authStatus to ready on success after prior error", async () => {
+  test("resets authStatus to ready on success after prior error", async () => {
     const account: OAuthAccount = {
       id: "acct-codex-recover",
       label: "Codex Recover",
@@ -614,14 +642,14 @@ describe("OAuth refresh scheduler", () => {
         ),
       )) as unknown as typeof fetch
 
-    await refreshOAuthAccountToken(account, "test")
-    expect(account.credentials?.accessToken).toBe("new-access")
-    expect(account.runtimeState?.authStatus).toBe("ready")
-    expect(account.runtimeState?.lastError).toBeUndefined()
-    expect(account.runtimeState?.lastRefreshAt).toBeDefined()
+    const connection = liveConnection("acct-codex-recover")
+    await refreshOAuthConnectionToken(connection, "test")
+    expect(connection.credentials[0]?.value).toBe("new-access")
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
+    expect(getConnectionAuthError(connection)).toBeNull()
   })
 
-  test("refreshOAuthAccountToken preserves ready status on transient failure", async () => {
+  test("preserves ready status on transient failure", async () => {
     const account: OAuthAccount = {
       id: "acct-codex-fail",
       label: "Codex Fail",
@@ -645,14 +673,15 @@ describe("OAuth refresh scheduler", () => {
         }),
       )) as unknown as typeof fetch
 
-    await expect(refreshOAuthAccountToken(account, "test")).rejects.toThrow(
-      "Codex token refresh",
-    )
-    expect(account.runtimeState?.authStatus).toBe("ready")
-    expect(account.runtimeState?.lastError).toBeUndefined()
+    const connection = liveConnection("acct-codex-fail")
+    await expect(
+      refreshOAuthConnectionToken(connection, "test"),
+    ).rejects.toThrow("Codex token refresh")
+    expect(getConnectionAuthStatus(connection)).toBe("ready")
+    expect(getConnectionAuthError(connection)).toBeNull()
   })
 
-  test("refreshOAuthAccountToken marks terminal refresh errors", async () => {
+  test("marks terminal refresh errors", async () => {
     const account: OAuthAccount = {
       id: "acct-codex-terminal",
       label: "Codex Terminal",
@@ -676,10 +705,11 @@ describe("OAuth refresh scheduler", () => {
         }),
       )) as unknown as typeof fetch
 
-    await expect(refreshOAuthAccountToken(account, "test")).rejects.toThrow(
-      "invalid_grant",
-    )
-    expect(account.runtimeState?.authStatus).toBe("error")
-    expect(account.runtimeState?.lastError).toContain("invalid_grant")
+    const connection = liveConnection("acct-codex-terminal")
+    await expect(
+      refreshOAuthConnectionToken(connection, "test"),
+    ).rejects.toThrow("invalid_grant")
+    expect(getConnectionAuthStatus(connection)).toBe("error")
+    expect(getConnectionAuthError(connection)).toContain("invalid_grant")
   })
 })

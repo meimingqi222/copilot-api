@@ -4,7 +4,7 @@ import type {
   ChatCompletionsPayload,
   Message,
   Tool,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import {
   extractReasoningBlockText,
@@ -325,7 +325,7 @@ function resolveAssistantReasoning(message: Message): string {
  * signature — so a signature may only be sent when it signs the entire string
  * written to field 11. History that arrives as several separately signed
  * segments (an Anthropic client with interleaved thinking and tool use, via
- * `protocols/openai/messages-to-chat.ts`) has no such signature: `reasoningText`
+ * the IR messages→chat encoder) has no such signature: `reasoningText`
  * is their concatenation, and attaching the first segment's signature to it
  * yields a pair the upstream rejects. Dropping the signature degrades
  * gracefully; mismatching it does not.

@@ -1,6 +1,6 @@
 import type { Context } from "hono"
 
-import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
 import { logger } from "~/lib/logger"
 import { recordUsage } from "~/lib/usage"

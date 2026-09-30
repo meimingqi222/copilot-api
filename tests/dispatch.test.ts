@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import type { Account } from "~/lib/legacy-accounts"
+import type { TestAccount as Account } from "./helpers/set-accounts"
 import type {
   RouteTarget,
   ProviderConnection,
@@ -10,10 +10,10 @@ import type { ProviderAdmission } from "~/lib/request-admission"
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
-import { listAccounts } from "~/lib/legacy-accounts"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { executeWithFailover } from "~/services/dispatch/failover"
 import { dispatchRequest } from "~/services/dispatch/shared"

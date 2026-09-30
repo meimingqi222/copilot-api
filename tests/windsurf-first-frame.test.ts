@@ -7,7 +7,7 @@ import type {
 import type {
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { clearDevinUserJwtCacheForTest } from "~/services/windsurf/auth"
 import {

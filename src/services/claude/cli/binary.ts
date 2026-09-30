@@ -16,7 +16,7 @@ import path from "node:path"
 
 import { PATHS } from "~/lib/paths"
 
-/** 版本号缓存 TTL：10 分钟（照 magpie 的 `claudeClaimedVersion`）。 */
+/** 版本号缓存 TTL：10 分钟。 */
 const VERSION_TTL_MS = 10 * 60_000
 /** 探测版本的超时；CLI 冷启动可能慢，但不该拖住请求路径。 */
 const VERSION_TIMEOUT_MS = 5_000
@@ -155,7 +155,6 @@ export function claudeVersion(): string | undefined {
  * 必须是持久的，不能用 `mkdtemp`：Claude Code 的 system prompt 里带
  * working directory，每回合换一个随机目录会让 token 流的第一个 token 就变，
  * Anthropic 的前缀 prompt cache 于是每回合全量 miss。
- * 参考 magpie 的 `cursorHome()`（`internal/gateway/cursor_subscription.go:167`）。
  */
 export function claudeHome(connectionId: string): string {
   return path.join(PATHS.CACHE_DIR, "claude-home", safeSegment(connectionId))
@@ -169,7 +168,7 @@ export function claudeHome(connectionId: string): string {
  * Claude Code 把**完整对话正文**写进 `<configDir>/projects/<cwd-slug>/*.jsonl`。
  * 不设置时那是用户的 `~/.claude/projects/`；而 `claudeHome` 是持久目录，
  * 于是一个固定的 cwd slug 会把**所有**对话的转录永久累积在用户真实的
- * Claude 数据目录里（magpie 用一次性 temp cwd 恰好避开了这点）。
+ * Claude 数据目录里。
  *
  * 指向我们自己的数据目录后：
  *

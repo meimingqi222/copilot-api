@@ -1,7 +1,6 @@
 import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { cancelTokenRefreshTimer } from "~/lib/account-store"
 import {
   providerFromProtocol,
   removeProviderConnection,
@@ -9,6 +8,7 @@ import {
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { cancelConnectionTokenRefresh } from "~/services/copilot/token-refresh"
 import { cancelOAuthRefreshTimer } from "~/services/oauth/refresh-scheduler"
 import { XAI_DEFAULT_TOKEN_ENDPOINT } from "~/services/oauth/xai"
 
@@ -88,7 +88,7 @@ function removeDuplicateConnection(
   }
 
   const existing = connections[duplicateIndex]
-  cancelTokenRefreshTimer(existing.id)
+  cancelConnectionTokenRefresh(existing.id)
   cancelOAuthRefreshTimer(existing.id)
   clearAccountRateLimitState(existing.id)
   removeProviderConnection(existing.id)

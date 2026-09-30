@@ -15,25 +15,34 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
 import type {
-  ChatCompletionChunk,
   ChatCompletionResponse,
+  ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
+import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { planTranslation, recordTranslationLosses } from "~/services/ir"
+import {
+  decodeChatResponse,
+  decodeChatStream,
+  decodeMessagesRequest,
+  encodeChatRequest,
+  encodeMessagesResponse,
+  encodeMessagesStream,
+} from "~/services/ir/codecs/messages-chat"
+import {
+  needsSearchOrchestration,
+  runSearchAwareResult,
+  runSearchAwareStream,
+} from "~/services/search/orchestrate"
+import { listSearchers } from "~/services/search/searcher"
+
+import { wireSpec } from "./wire-pairs"
 
 import type { AdapterChatResult, AdapterMessagesResult } from "./types"
 
-import {
-  createInitialStreamState,
-  translateChunkToAnthropicEvents,
-  translateStreamEndEvents,
-  translateToAnthropic,
-  translateToOpenAI,
-  type AnthropicMessagesPayload,
-  type AnthropicStreamEventData,
-} from "./anthropic"
+import type { AnthropicMessagesPayload } from "./anthropic"
 
 interface ChatExecutorParams {
   target: RouteTarget
@@ -79,151 +88,130 @@ export async function createMessagesViaChat(
   // Kimi/Qwen/xAI accept it. copilot-native rejects reasoning in history,
   // but it never reaches this path (it implements createMessages natively) —
   // the guard keeps the behavior explicit and future-proof.
-  const openAIPayload = translateToOpenAI(payload, {
-    preserveHistoricalReasoning: target.protocol !== "copilot-native",
+  const request = decodeMessagesRequest(payload)
+  const searchers = listSearchers()
+  const orchestrate =
+    searchers.length > 0 && needsSearchOrchestration(request, "chat")
+  const plan = planTranslation(request, {
+    wire: "chat",
+    providerId: connection.protocol,
+    model: target.upstreamModelId,
+    issuer: connection.id,
+    ...(orchestrate && { orchestratedWebSearch: true }),
   })
-  const result = await chatExecutor({
-    target,
-    connection,
-    credential,
-    payload: openAIPayload,
-    signal,
-    // Ask the producer for its structured delta twin so the stream translator
-    // below can skip re-parsing SSE JSON it just serialized (per-token win on
-    // long streams; other adapters ignore the hint and stay on the JSON path).
-    ctx: { ...ctx, collectChatStreamTwin: true },
-  })
+  recordTranslationLosses(ctx?.c, plan.losses)
+  if (!plan.accepted) {
+    throw new LocalPayloadUnsupportedError(
+      plan.losses.records
+        .filter((record) => record.action === "reject")
+        .map((record) => record.reason)
+        .join("; ") || "Chat target cannot preserve the request",
+    )
+  }
+  // Ask the producer for its structured delta twin so the stream translator
+  // below can skip re-parsing SSE JSON it just serialized (per-token win on
+  // long streams; other adapters ignore the hint and stay on the JSON path).
+  const executeChat = (chatPayload: ChatCompletionsPayload) =>
+    chatExecutor({
+      target,
+      connection,
+      credential,
+      payload: chatPayload,
+      signal,
+      ctx: { ...ctx, collectChatStreamTwin: true },
+    })
+
+  if (orchestrate) {
+    const searchParams = {
+      request,
+      spec: wireSpec("chat"),
+      searchers,
+      execute: (chatPayload: unknown) =>
+        executeChat(chatPayload as ChatCompletionsPayload),
+      signal,
+      initiator: ctx?.initiator,
+    }
+    if (payload.stream === true) {
+      const anthropicStream = (async function* (): AsyncIterable<{
+        data: string
+        event: string
+      }> {
+        for await (const event of encodeMessagesStream(
+          runSearchAwareStream(searchParams),
+          estimateInputTokens(payload),
+        ))
+          yield { data: JSON.stringify(event), event: event.type }
+      })()
+      return { credentialId: credential.id, response: anthropicStream }
+    }
+    const { credentialId, result: orchestrated } =
+      await runSearchAwareResult(searchParams)
+    return {
+      credentialId,
+      response: encodeMessagesResponse(orchestrated) as unknown as Record<
+        string,
+        unknown
+      >,
+    }
+  }
+
+  let openAIPayload: ChatCompletionsPayload
+  try {
+    openAIPayload = encodeChatRequest(request, {
+      preserveHistoricalReasoning: target.protocol !== "copilot-native",
+      stream: payload.stream,
+    })
+  } catch (error) {
+    throw new LocalPayloadUnsupportedError(
+      error instanceof Error ?
+        error.message
+      : "Chat target cannot encode the request",
+    )
+  }
+  const result = await executeChat(openAIPayload)
 
   if (isChatCompletionResponse(result.response)) {
-    const anthropicResponse = translateToAnthropic(result.response)
+    const anthropicResponse = encodeMessagesResponse(
+      decodeChatResponse(result.response),
+    )
     return {
       credentialId: result.credentialId,
       response: anthropicResponse as unknown as Record<string, unknown>,
     }
   }
 
-  // Streaming: translate each CopilotStreamEvent chunk into Anthropic SSE
-  // events, yielding them as an AsyncIterable<AnthropicStreamEventData>.
-  const anthropicStream = translateChatStreamToAnthropicEvents(
-    result.response,
-    payload,
-  )
+  // Streaming: translate each Chat chunk into Anthropic events and yield them
+  // as SSE frames ({data, event}) — the shape every messages-protocol
+  // consumer (connection-handler) and sibling adapters (safeSseStream) use.
+  // Yielding raw event objects instead silently drops every frame at the
+  // consumer's `if (!event.data) continue` guard.
+  const upstream = result.response as AsyncIterable<CopilotStreamEvent>
+  const anthropicStream = (async function* (): AsyncIterable<{
+    data: string
+    event: string
+  }> {
+    for await (const event of encodeMessagesStream(
+      decodeChatStream(upstream),
+      estimateInputTokens(payload),
+    )) {
+      yield { data: JSON.stringify(event), event: event.type }
+    }
+  })()
   return { credentialId: result.credentialId, response: anthropicStream }
 }
 
-/**
- * Structured twin of an emitted SSE chunk, attached by chat streaming
- * producers that opt in (Windsurf does when `collectChatStreamTwin` is set).
- * Mirrors the producer side (`windsurf/collect-response.ts` `CollectedDelta`
- * + `chunk-builders.ts`); `tests/messages-via-chat-twin-parity.test.ts`
- * locks the two together. A future producer reusing the `collected` field
- * name must match this shape or stay off the fast path.
- */
-interface CollectedChatDelta {
-  content?: string
-  reasoningText?: string
-  reasoningOpaque?: string
-  toolCalls?: Array<{
-    index: number
-    id?: string
-    function?: { name?: string; arguments?: string }
-  }>
-  finishReason?: "stop" | "length" | "tool_calls" | "content_filter"
-  usage?: ChatCompletionChunk["usage"]
-}
-
-/**
- * Rebuilds the chunk the producer serialized, without `JSON.parse`. `id` and
- * `model` come from the stream's first chunk (parsed once); `created` is
- * unread downstream so it stays zero.
- */
-function chunkFromCollectedTwin(
-  twin: CollectedChatDelta,
-  id: string,
-  model: string,
-): ChatCompletionChunk {
-  return {
-    id,
-    object: "chat.completion.chunk",
-    created: 0,
-    model,
-    choices: [
-      {
-        index: 0,
-        delta: {
-          ...(twin.content !== undefined && { content: twin.content }),
-          ...(twin.reasoningText !== undefined && {
-            reasoning_text: twin.reasoningText,
-          }),
-          ...(twin.reasoningOpaque !== undefined && {
-            reasoning_opaque: twin.reasoningOpaque,
-          }),
-          ...(twin.toolCalls && { tool_calls: twin.toolCalls }),
-        },
-        finish_reason: twin.finishReason ?? null,
-        logprobs: null,
-      },
-    ],
-    ...(twin.usage && { usage: twin.usage }),
-  }
-}
-
-async function* translateChatStreamToAnthropicEvents(
-  chatStream: AsyncIterable<CopilotStreamEvent>,
-  anthropicPayload: AnthropicMessagesPayload,
-): AsyncIterable<AnthropicStreamEventData> {
-  const streamState = createInitialStreamState()
-  streamState.estimatedInputTokens = estimateInputTokens(anthropicPayload)
-  // Upstream request id/model for message_start, captured once from the
-  // first chunk. Later chunks take the twin fast path when present.
-  let streamId: string | undefined
-  let streamModel: string | undefined
-
-  for await (const rawEvent of chatStream) {
-    if (rawEvent.data === "[DONE]") {
-      break
-    }
-    if (!rawEvent.data) {
-      continue
-    }
-    const twin = (rawEvent as { collected?: CollectedChatDelta }).collected
-    let chunk: ChatCompletionChunk
-    if (twin && streamId !== undefined && streamModel !== undefined) {
-      chunk = chunkFromCollectedTwin(twin, streamId, streamModel)
-    } else {
-      chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-      streamId ??= chunk.id
-      streamModel ??= chunk.model
-    }
-    const events = translateChunkToAnthropicEvents(chunk, streamState)
-    for (const event of events) {
-      yield event
-    }
-  }
-
-  for (const event of translateStreamEndEvents(streamState)) {
-    yield event
-  }
-}
-
 /** Rough input-token estimate for message_start fallback (char/4 heuristic). */
-function estimateInputTokens(payload: AnthropicMessagesPayload): number {
+export function estimateInputTokens(payload: AnthropicMessagesPayload): number {
   let chars = 0
   if (payload.system) {
-    if (typeof payload.system === "string") {
-      chars += payload.system.length
-    } else {
-      for (const block of payload.system) chars += block.text.length
-    }
+    if (typeof payload.system === "string") chars += payload.system.length
+    else for (const block of payload.system) chars += block.text.length
   }
-  for (const msg of payload.messages) {
-    if (typeof msg.content === "string") {
-      chars += msg.content.length
-    } else if (Array.isArray(msg.content)) {
-      for (const block of msg.content) {
+  for (const message of payload.messages) {
+    if (typeof message.content === "string") chars += message.content.length
+    else
+      for (const block of message.content)
         if ("text" in block) chars += block.text.length
-      }
-    }
   }
   return Math.ceil(chars / 4)
 }

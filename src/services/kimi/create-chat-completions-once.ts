@@ -8,10 +8,10 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
-import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { isChatCompletionResponse } from "~/lib/utils"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"

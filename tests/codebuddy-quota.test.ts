@@ -3,7 +3,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
-  ensureLegacyMetadata,
+  ensureConnectionMetadata,
 } from "~/lib/provider-connections"
 import {
   fetchCodebuddyQuota,
@@ -148,7 +148,7 @@ describe("fetchCodebuddyQuota", () => {
       credentials: [{ value: "access-token", authMode: "bearer" }],
       models: [],
     })
-    ensureLegacyMetadata(connection).provider = "codebuddy-cn"
+    ensureConnectionMetadata(connection).provider = "codebuddy-cn"
 
     const seen: Array<string> = []
     const fetchMock = mock((input: unknown) => {
@@ -203,7 +203,7 @@ describe("fetchCodebuddyQuota", () => {
       credentials: [{ value: "access-token", authMode: "bearer" }],
       models: [],
     })
-    ensureLegacyMetadata(connection).provider = "codebuddy"
+    ensureConnectionMetadata(connection).provider = "codebuddy"
 
     const seen: Array<string> = []
     const fetchMock = mock((input: unknown) => {
@@ -241,7 +241,7 @@ describe("fetchCodebuddyQuota", () => {
       credentials: [{ value: "access-token", authMode: "bearer" }],
       models: [],
     })
-    ensureLegacyMetadata(connection).provider = "codebuddy-cn"
+    ensureConnectionMetadata(connection).provider = "codebuddy-cn"
     const fetchMock = mock(() =>
       Promise.resolve(
         new Response(JSON.stringify({ code: 40001, msg: "auth failed" }), {
@@ -268,7 +268,7 @@ describe("fetchCodebuddyQuota", () => {
       credentials: [{ value: "", authMode: "bearer" }],
       models: [],
     })
-    ensureLegacyMetadata(connection).provider = "codebuddy-cn"
+    ensureConnectionMetadata(connection).provider = "codebuddy-cn"
     await expect(fetchCodebuddyQuota(connection)).rejects.toThrow(
       /access token/,
     )
@@ -286,7 +286,7 @@ describe("codebuddy provider runtime quota wiring", () => {
       credentials: [{ value: "access-token", authMode: "bearer" }],
       models: [],
     })
-    ensureLegacyMetadata(connection).provider = "codebuddy-cn"
+    ensureConnectionMetadata(connection).provider = "codebuddy-cn"
     const runtime = getProviderRuntime("codebuddy-cn")
     expect(runtime.supports(connection, "quota")).toBe(true)
     expect(typeof runtime.refreshQuota).toBe("function")

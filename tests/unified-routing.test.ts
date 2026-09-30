@@ -14,7 +14,7 @@ import path from "node:path"
 
 import type { ProviderAdmission } from "~/lib/request-admission"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
@@ -305,8 +305,16 @@ describe("unified endpoint fallback (cross-protocol)", () => {
       connections: [connection],
     })
 
-    expect(targets).toHaveLength(1)
-    expect(targets[0].endpoint).toBe("responses")
+    expect(targets.map((target) => target.endpoint)).toEqual([
+      "responses",
+      "messages",
+    ])
+    const preferred = selectRouteTarget(targets)
+    expect(preferred?.endpoint).toBe("responses")
+    const fallback = selectRouteTarget(targets, {
+      exclude: new Set([targetKey(preferred as NonNullable<typeof preferred>)]),
+    })
+    expect(fallback?.endpoint).toBe("messages")
   })
 
   test("messages request still resolves to chat-only connections (existing fallback)", async () => {
@@ -333,6 +341,64 @@ describe("unified endpoint fallback (cross-protocol)", () => {
 
     expect(targets).toHaveLength(1)
     expect(targets[0]).toMatchObject({ endpoint: "chat", isTranslated: true })
+  })
+
+  test("messages request resolves to a responses-only connection via messages→responses fallback", async () => {
+    await createConnection({
+      id: "responses-only",
+      name: "responses",
+      protocol: "openai-responses-compatible",
+      baseUrl: "https://responses.example.com/v1",
+      credentials: [{ id: "cred", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "gpt-5.2",
+          upstreamId: "gpt-5.2",
+          endpoints: ["responses"],
+          enabled: true,
+        },
+      ],
+    })
+
+    const targets = buildRouteTargets({
+      publicModelId: "gpt-5.2",
+      endpoint: "messages",
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      endpoint: "responses",
+      isTranslated: true,
+    })
+  })
+
+  test("responses request resolves to a messages-only connection via responses→messages fallback", async () => {
+    await createConnection({
+      id: "anthropic",
+      name: "anthropic",
+      protocol: "anthropic-compatible",
+      baseUrl: "https://api.anthropic.test",
+      credentials: [{ id: "cred", value: "sk-test", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "claude-sonnet-4",
+          upstreamId: "claude-sonnet-4",
+          endpoints: ["messages"],
+          enabled: true,
+        },
+      ],
+    })
+
+    const targets = buildRouteTargets({
+      publicModelId: "claude-sonnet-4",
+      endpoint: "responses",
+    })
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      endpoint: "messages",
+      isTranslated: true,
+    })
   })
 
   test("native-endpoint target wins over a same-priority translated target", async () => {
@@ -538,6 +604,49 @@ describe("unified selectRouteTarget", () => {
 })
 
 describe("cross-system failover via executeWithFailover", () => {
+  test("semantic rejection tries the next endpoint on the same credential without cooldown", async () => {
+    const connection = createTestCopilotConnection("multi", 0, "model-x")
+    connection.protocol = "openai-responses-compatible"
+    connection.baseUrl = "https://multi.example.com/v1"
+    connection.credentials[0].value = "sk-test"
+    connection.models![0].endpoints = ["responses", "messages"]
+    setTestConnections([connection])
+
+    const targets = buildRouteTargets({
+      publicModelId: "model-x",
+      endpoint: "chat",
+    })
+    expect(targets.map((target) => target.endpoint)).toEqual([
+      "responses",
+      "messages",
+    ])
+    const selected = selectRouteTarget(targets)
+    expect(selected?.endpoint).toBe("responses")
+    const admission: ProviderAdmission = {
+      target: selected as NonNullable<typeof selected>,
+      connection,
+      credential: connection.credentials[0],
+      initiator: "user",
+    }
+    const attempts: Array<string> = []
+    const result = await executeWithFailover({
+      payload: { model: "model-x" },
+      admission,
+      routeKind: "chat",
+      execute: (_adapter, target) => {
+        attempts.push(target.endpoint)
+        if (target.endpoint === "responses") {
+          throw new LocalPayloadUnsupportedError("required tools unsupported")
+        }
+        return Promise.resolve("recovered")
+      },
+    })
+
+    expect(result).toBe("recovered")
+    expect(attempts).toEqual(["responses", "messages"])
+    expect(connection.credentials[0].status).toBe("ready")
+  })
+
   beforeEach(() => {
     __resetProviderConnectionsForTest()
     __resetRouteTargetRoundRobin()

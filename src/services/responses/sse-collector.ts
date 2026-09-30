@@ -1,7 +1,7 @@
 import type {
   CopilotStreamEventLike,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 
 import { HTTPError } from "~/lib/error"
 import { readResponseBytes } from "~/lib/request-body"

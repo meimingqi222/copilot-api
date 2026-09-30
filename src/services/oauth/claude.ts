@@ -5,7 +5,6 @@ import { claudeCodeVersion } from "~/services/claude/fingerprint"
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
-import { parseExpiresAt } from "./token-resolver"
 
 export const CLAUDE_AUTH_URL = "https://claude.ai/oauth/authorize"
 export const CLAUDE_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
@@ -248,8 +247,4 @@ export function createClaudeOAuthStart(pkce = generatePkceCodes()): {
     pkce,
     authUrl: buildClaudeAuthUrl(state, pkce),
   }
-}
-
-export function expiresAtFromClaudeExpired(value: unknown): number | undefined {
-  return parseExpiresAt(value)
 }

@@ -11,21 +11,19 @@ import { startMemoryDiagnostics } from "~/lib/memory-diagnostics"
 import { loadModelAliases } from "~/lib/model-aliases"
 import { startAntigravityVersionUpdater } from "~/services/antigravity/version"
 
-import {
-  flushAccountsOnShutdown,
-  initAccounts,
-  scheduleQuotaRefresh,
-} from "./lib/account-store"
 import { hashAdminPasswordInEnv } from "./lib/admin-password"
 import { loadGuard } from "./lib/guard"
 import { ensurePaths } from "./lib/paths"
 import { acquireServerLock, releaseServerLock } from "./lib/process-lock"
 import {
+  flushManagedConnectionsOnShutdown,
+  initializeManagedConnections,
   initializeProviderConnections,
   listAccountManagedConnections,
   scheduleConnectionModelDiscovery,
 } from "./lib/provider-connections"
-import { initializeCredentialRefreshers } from "./lib/provider-connections/refresher-impls"
+import { scheduleQuotaRefresh } from "./lib/quota/scheduler"
+import { initializeCredentialRefreshers } from "./services/providers/credential-refreshers"
 import { ensureDirectProviderConnections } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
 import { setClaudeCallbackBaseUrl } from "./services/claude/cli/server-address"
@@ -196,8 +194,8 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   }
   await cacheVSCodeVersion()
 
-  // Load accounts from disk (configure via Web UI)
-  await initAccounts()
+  // Load account-managed connections from disk (configure via Web UI)
+  await initializeManagedConnections()
 
   await ensureDirectProviderConnections()
 
@@ -231,6 +229,11 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   cacheModels()
 
+  // models.dev 目录要在首次模型刷新前就绪（磁盘缓存是同步加载的，
+  // 网络刷新在后台进行）：MiniMax 等 provider 的模型表会从这里取。
+  const { initModelsDevPricing } = await import("~/lib/models-dev")
+  initModelsDevPricing()
+
   // Refresh models for all accounts and schedule periodic refresh
   scheduleModelsRefresh()
   scheduleConnectionModelDiscovery()
@@ -257,9 +260,6 @@ export async function runServer(options: RunServerOptions): Promise<void> {
 
   // Initialize stats store
   statsStore.init()
-
-  const { initModelsDevPricing } = await import("~/lib/models-dev")
-  initModelsDevPricing()
 
   const serverUrl = `http://localhost:${options.port}`
 
@@ -339,7 +339,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     logger.info("Shutting down...")
     try {
       await flushAllPersistentMaps()
-      await flushAccountsOnShutdown()
+      await flushManagedConnectionsOnShutdown()
       await flushUserTokens()
     } catch (error) {
       logger.warn("Failed to flush state on shutdown", {

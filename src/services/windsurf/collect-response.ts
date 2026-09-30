@@ -13,7 +13,7 @@ import type {
   ContentPart,
   CopilotStreamEvent,
   ToolCall,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"

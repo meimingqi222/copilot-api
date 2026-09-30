@@ -1,11 +1,11 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
+import { getPublicModelData } from "~/lib/model-catalog"
 import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
 import { isUserAllowedModel, type User } from "~/lib/users"
 import { refreshModelsForAllAccounts } from "~/lib/utils"
-import { getPublicModelData } from "~/services/copilot/responses-api"
 import {
   buildGrokShellModelsResponse,
   isGrokShellUserAgent,

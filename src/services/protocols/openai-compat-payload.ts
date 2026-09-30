@@ -42,7 +42,7 @@ import { isAbsolute, join, normalize } from "node:path"
 import type {
   ChatCompletionsPayload,
   Message,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 // ── 角色 ────────────────────────────────────────────────────────────
 

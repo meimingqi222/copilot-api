@@ -1,23 +1,5 @@
 import { Hono } from "hono"
 
-import type { Account } from "~/lib/legacy-accounts"
-
-import {
-  cancelTokenRefreshTimer,
-  refreshQuotaForConnection,
-  serializeConnectionForExport,
-} from "~/lib/account-store"
-import { getAccountAvailability } from "~/lib/legacy-accounts"
-import {
-  getCodebuffAuthToken,
-  getGitHubToken,
-  getOAuthAccessToken,
-  getOAuthApiKey,
-  getWindsurfApiKey,
-  getMimoServiceToken,
-  getMimoPh,
-  isOAuthAccount,
-} from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import {
   type ProviderConnection,
@@ -28,14 +10,14 @@ import {
   listProviderConnections,
   persistProviderConnections,
   removeProviderConnection,
+  serializeConnectionForExport,
 } from "~/lib/provider-connections"
+import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
-import {
-  getOAuthAccountSubtitle,
-  upgradeOAuthConnectionLabels,
-} from "~/services/oauth/account-label"
+import { cancelConnectionTokenRefresh } from "~/services/copilot/token-refresh"
+import { upgradeOAuthConnectionLabels } from "~/services/oauth/account-label"
 import {
   cancelOAuthRefreshTimer,
   scheduleOAuthRefreshForConnection,
@@ -58,74 +40,8 @@ import { pollAccountFlow, deviceFlowRoutes } from "./device-flow"
 export const accountApiRoutes = new Hono()
 export const accountFlowApiRoutes = new Hono()
 
-function getHasCredentials(account: Account): boolean {
-  if (account.provider === "copilot") {
-    return Boolean(getGitHubToken(account))
-  }
-  if (account.provider === "codebuff") {
-    return Boolean(getCodebuffAuthToken(account))
-  }
-  if (account.provider === "windsurf") {
-    return Boolean(getWindsurfApiKey(account))
-  }
-  if (isOAuthAccount(account)) {
-    return Boolean(getOAuthAccessToken(account) || getOAuthApiKey(account))
-  }
-  return Boolean(getMimoServiceToken(account) && getMimoPh(account))
-}
-
-/**
- * Derive the "active" account: the first enabled account-managed connection by priority order.
- * Replaces the legacy state.activeAccountIndex concept.
- */
-function getActiveAccountId(): string | undefined {
-  const connections = listAccountManagedConnections()
-  const enabled = connections
-    .filter((c) => c.enabled)
-    .sort((a, b) => a.priority - b.priority)
-  return enabled[0]?.id
-}
-
 function listAccountManagedConnections(): Array<ProviderConnection> {
   return listProviderConnections().filter((c) => isAccountManagedConnection(c))
-}
-
-// Sanitize account for API response (omit sensitive tokens, compute isActive dynamically)
-// Phase 4:仍通过 connectionToAccount 派生 Account 快照再调 publicAccount,
-// 确保 JSON 形状逐字节不变。Phase 5 内联此派生。
-export function publicAccount(account: Account) {
-  initializeProviderRegistry()
-  const runtime = getProviderRuntime(account.provider)
-  const availability = getAccountAvailability(account)
-  const subtitle =
-    isOAuthAccount(account) ? getOAuthAccountSubtitle(account) : undefined
-  // Phase 3:runtime.supports 翻转为收 ProviderConnection,
-  // 通过 account.id 反查 connection 传入。
-  const conn = getProviderConnection(account.id)
-  return {
-    id: account.id,
-    label: account.label,
-    subtitle,
-    provider: account.provider,
-    availableModels: account.availableModels,
-    enabled: account.enabled,
-    priority: account.priority,
-    isExhausted:
-      availability.reason === "cooldown" || availability.reason === "quota",
-    exhaustedAt: account.exhaustedAt,
-    availabilityReason: availability.reason,
-    retryAfterSeconds: availability.retryAfterSeconds || null,
-    quotaState: account.quotaState ?? "unknown",
-    quotaInfo: account.quotaInfo ?? null,
-    supportsQuota: conn ? runtime.supports(conn, "quota") : false,
-    createdAt: account.createdAt,
-    settings: account.settings ?? {},
-    providerFeatures: runtime.descriptor.features,
-    authStatus: account.runtimeState?.authStatus ?? "ready",
-    authError: account.runtimeState?.lastError ?? null,
-    hasCredentials: getHasCredentials(account),
-    isActive: account.id === getActiveAccountId(),
-  }
 }
 
 // Mount sub-routers for extracted route modules
@@ -175,13 +91,13 @@ accountApiRoutes.put("/:id", async (c) => {
 
   // Copilot token 轮换:清除旧 copilotToken 并触发刷新
   if (copilotTokenRotated) {
-    cancelTokenRefreshTimer(id)
+    cancelConnectionTokenRefresh(id)
     // 惰性刷新:下次请求时 ensureCopilotToken 会触发
   }
 
   if (typeof body.enabled === "boolean" && body.enabled !== prevEnabled) {
     if (!conn.enabled) {
-      cancelTokenRefreshTimer(id)
+      cancelConnectionTokenRefresh(id)
     }
     scheduleOAuthRefreshForConnection(conn)
     logger.info(
@@ -210,7 +126,7 @@ accountApiRoutes.delete("/:id", async (c) => {
   }
 
   // Cancel any pending token refresh timer to prevent leaks
-  cancelTokenRefreshTimer(id)
+  cancelConnectionTokenRefresh(id)
   cancelOAuthRefreshTimer(id)
 
   // Clear rate limit state for this account

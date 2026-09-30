@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
 
-import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
+import { normalizeResponsesStreamIds } from "~/services/protocols/responses/normalize-stream"
 
 async function collect(events: Array<Record<string, unknown>>) {
   const stream = {

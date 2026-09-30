@@ -1,19 +1,20 @@
 import { Hono } from "hono"
 import { randomUUID } from "node:crypto"
 
-import type { Account, AccountProvider } from "~/lib/legacy-accounts"
+import type { ManagedConnectionInput } from "~/lib/provider-connections"
 
-import { saveAccounts } from "~/lib/account-store"
 import { HTTPError } from "~/lib/error"
-import { addAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
-import { isProviderId } from "~/lib/provider-config"
+import { isProviderId, type ProviderId } from "~/lib/provider-config"
 import {
   getProviderConnection,
   listAccountManagedConnections,
+  managedConnectionFromInput,
+  persistProviderConnections,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { readBinaryBody, readJsonBody } from "~/lib/request-body"
-import { refreshModelsForAccount } from "~/lib/utils"
+import { refreshModelsForConnection } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { getDeviceCode } from "~/services/github/get-device-code"
 import { parseLobsteraiClientDatabase } from "~/services/lobsterai/parse-client-db"
@@ -42,13 +43,33 @@ function extractJwtExp(token: string): number | undefined {
 
 interface CreateAccountBody {
   label?: string
-  provider?: AccountProvider
+  provider?: ProviderId
   authToken?: string
   apiKey?: string
   serviceToken?: string
   xiaomichatbotPh?: string
   credentials?: Record<string, unknown>
   settings?: Record<string, unknown>
+}
+
+/**
+ * 落库新建的 account-managed connection:写入内存、刷新模型、持久化,
+ * 返回 admin API 的账户视图。刷新失败时 models 保持为空但不阻断创建
+ * (与其他 provider 的 init 失败语义一致:仅 warn)。
+ */
+async function finalizeCreatedConnection(
+  input: ManagedConnectionInput,
+): Promise<{ accountId: string; account: unknown }> {
+  const conn = managedConnectionFromInput(input)
+  upsertProviderConnection(conn)
+  await refreshModelsForConnection(conn)
+  await persistProviderConnections()
+  return {
+    accountId: conn.id,
+    account: publicAccountFromConnection(
+      getProviderConnection(conn.id) ?? conn,
+    ),
+  }
 }
 
 /**
@@ -84,14 +105,11 @@ async function createLobsteraiAccount(
   const firstKeyfrom = pickString("firstKeyfrom")
   const latestKeyfrom = pickString("latestKeyfrom")
 
-  const account: Account = {
-    id: randomUUID(),
-    label,
+  const id = randomUUID()
+  const result = await finalizeCreatedConnection({
+    id,
+    name: label,
     provider: "lobsterai",
-    enabled: true,
-    priority: 0,
-    quotaState: "unknown",
-    createdAt: Date.now(),
     credentials: {
       accessToken: accessToken ?? "",
       ...(refreshToken ? { refreshToken } : {}),
@@ -101,21 +119,11 @@ async function createLobsteraiAccount(
       ...(firstKeyfrom ? { firstKeyfrom } : {}),
       ...(latestKeyfrom ? { latestKeyfrom } : {}),
     },
-    settings: {
-      ...body.settings,
-    },
-  }
-
-  addAccount(account)
-  await refreshModelsForAccount(account)
-  await saveAccounts()
-
-  const conn = getProviderConnection(account.id)
+    settings: { ...body.settings },
+  })
+  const conn = getProviderConnection(id)
   if (conn) scheduleLobsteraiRefresh(conn)
-  return {
-    accountId: account.id,
-    account: conn ? publicAccountFromConnection(conn) : undefined,
-  }
+  return result
 }
 
 export const createAccountRoutes = new Hono()
@@ -188,9 +196,8 @@ createAccountRoutes.post("/", async (c) => {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
 
-  const provider =
-    isProviderId(String(body.provider)) ? body.provider : "copilot"
-  // 使用 connection 原生列表生成默认 label(替代 listAccounts().length)
+  const provider: ProviderId =
+    body.provider && isProviderId(body.provider) ? body.provider : "copilot"
   const label =
     body.label ?? `account-${listAccountManagedConnections().length + 1}`
 
@@ -203,32 +210,14 @@ createAccountRoutes.post("/", async (c) => {
       return c.json({ error: "Codebuff auth token is required." }, 400)
     }
 
-    const account: Account = {
+    const result = await finalizeCreatedConnection({
       id: randomUUID(),
-      label,
+      name: label,
       provider,
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        authToken,
-      },
-      settings: {
-        ...body.settings,
-      },
-    }
-
-    addAccount(account)
-    await refreshModelsForAccount(account)
-    await saveAccounts()
-
-    const conn = getProviderConnection(account.id)
-    return c.json({
-      status: "complete",
-      accountId: account.id,
-      account: conn ? publicAccountFromConnection(conn) : undefined,
+      credentials: { authToken },
+      settings: { ...body.settings },
     })
+    return c.json({ status: "complete", ...result })
   }
 
   if (provider === "windsurf") {
@@ -240,32 +229,14 @@ createAccountRoutes.post("/", async (c) => {
       return c.json({ error: "Windsurf API key is required." }, 400)
     }
 
-    const account: Account = {
+    const result = await finalizeCreatedConnection({
       id: randomUUID(),
-      label,
+      name: label,
       provider,
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        apiKey,
-      },
-      settings: {
-        ...body.settings,
-      },
-    }
-
-    addAccount(account)
-    await refreshModelsForAccount(account)
-    await saveAccounts()
-
-    const conn = getProviderConnection(account.id)
-    return c.json({
-      status: "complete",
-      accountId: account.id,
-      account: conn ? publicAccountFromConnection(conn) : undefined,
+      credentials: { apiKey },
+      settings: { ...body.settings },
     })
+    return c.json({ status: "complete", ...result })
   }
 
   if (provider === "mimo-aistudio") {
@@ -289,36 +260,19 @@ createAccountRoutes.post("/", async (c) => {
     }
 
     const settings = body.settings ?? {}
-    const account: Account = {
+    const result = await finalizeCreatedConnection({
       id: randomUUID(),
-      label,
+      name: label,
       provider,
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
-      credentials: {
-        serviceToken,
-        xiaomichatbotPh,
-      },
+      credentials: { serviceToken, xiaomichatbotPh },
       settings: {
         ...settings,
         userId:
           typeof settings.userId === "string" ? settings.userId : undefined,
         proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
       },
-    }
-
-    addAccount(account)
-    await refreshModelsForAccount(account)
-    await saveAccounts()
-
-    const conn = getProviderConnection(account.id)
-    return c.json({
-      status: "complete",
-      accountId: account.id,
-      account: conn ? publicAccountFromConnection(conn) : undefined,
     })
+    return c.json({ status: "complete", ...result })
   }
 
   if (provider === "codebuddy" || provider === "codebuddy-cn") {
@@ -334,37 +288,23 @@ createAccountRoutes.post("/", async (c) => {
       return c.json({ error: "CodeBuddy accessToken is required." }, 400)
     }
 
-    const expiresAt = accessToken ? extractJwtExp(accessToken) : undefined
+    const expiresAt = extractJwtExp(accessToken)
 
-    const account: Account = {
-      id: randomUUID(),
-      label,
+    const id = randomUUID()
+    const result = await finalizeCreatedConnection({
+      id,
+      name: label,
       provider,
-      enabled: true,
-      priority: 0,
-      quotaState: "unknown",
-      createdAt: Date.now(),
       credentials: {
-        accessToken: accessToken ?? "",
+        accessToken,
         ...(refreshToken ? { refreshToken } : {}),
         ...(expiresAt ? { expiresAt } : {}),
       },
-      settings: {
-        ...body.settings,
-      },
-    }
-
-    addAccount(account)
-    await refreshModelsForAccount(account)
-    await saveAccounts()
-
-    const conn = getProviderConnection(account.id)
-    if (conn) scheduleCodebuddyRefresh(conn)
-    return c.json({
-      status: "complete",
-      accountId: account.id,
-      account: conn ? publicAccountFromConnection(conn) : undefined,
+      settings: { ...body.settings },
     })
+    const conn = getProviderConnection(id)
+    if (conn) scheduleCodebuddyRefresh(conn)
+    return c.json({ status: "complete", ...result })
   }
 
   if (provider === "lobsterai") {
@@ -372,11 +312,7 @@ createAccountRoutes.post("/", async (c) => {
     if ("error" in result) {
       return c.json({ error: result.error }, 400)
     }
-    return c.json({
-      status: "complete",
-      accountId: result.accountId,
-      account: result.account,
-    })
+    return c.json({ status: "complete", ...result })
   }
 
   let deviceCodeResponse: Awaited<ReturnType<typeof getDeviceCode>>

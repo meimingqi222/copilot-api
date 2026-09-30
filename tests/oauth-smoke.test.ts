@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-import type { OAuthAccount } from "~/lib/legacy-accounts"
+import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
 
-import { isOAuthAccount, listAccounts } from "~/lib/legacy-accounts"
+import { isOAuthProviderId } from "~/lib/provider-config"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { getProviderConnection } from "~/lib/provider-connections"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
@@ -21,10 +21,18 @@ import {
   clearAdminPasswordConfig,
   setupAdminAuth,
 } from "./admin-test-utils"
-import { setTestAccounts } from "./helpers/set-accounts"
+import {
+  listTestAccounts as listAccounts,
+  setTestAccounts,
+} from "./helpers/set-accounts"
 
 const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
+
+/** 测试断言辅助:account 视图的 provider 是否为 OAuth 系。 */
+const isOAuthAccount = (account: OAuthAccount): boolean =>
+  isOAuthProviderId(account.provider)
+
 const isolationRoot = PATHS.APP_DIR
 const testDir = path.join(process.cwd(), ".tmp-oauth-smoke")
 

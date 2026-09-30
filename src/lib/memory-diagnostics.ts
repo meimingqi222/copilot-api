@@ -382,14 +382,3 @@ export function parseLinuxMemoryPressure(input: string): LinuxMemoryPressure {
   }
   return { someAvg10: read("some"), fullAvg10: read("full") }
 }
-
-/** Test hook. */
-export function resetMemoryDiagnosticsForTest(): void {
-  activeTraces.clear()
-  recentCheckpoints.length = 0
-  previousSwap = undefined
-  diagnosticsStarted = false
-  sampleInFlight = false
-  nextExpectedTick = 0
-  lastWarningAt = 0
-}

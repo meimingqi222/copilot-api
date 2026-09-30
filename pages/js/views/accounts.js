@@ -280,6 +280,8 @@ function accountsView() {
       "claude",
       "antigravity",
       "kimi",
+      "minimax",
+      "qoder",
       "windsurf",
       "codebuff",
       "codebuddy",
@@ -501,6 +503,11 @@ function accountsView() {
       this.resetAddModalState()
       this.newAccount.provider = account.provider
       this.newAccount.label = account.label || ""
+      // provider 专属设置沿用原账号：MiniMax Code 的国内版 / 国际版凭证互不通用，
+      // 重新认证必须打同一个账号域（区域存在 settings.region）。
+      if (account.settings && typeof account.settings === "object") {
+        this.newAccount.settings = { ...account.settings }
+      }
       this.reauthAccount = account
       this.showAddModal = true
     },
@@ -612,10 +619,16 @@ function accountsView() {
       const provider = this.newAccount.provider
       const proxyUrl = this.newAccount.settings?.proxyUrl?.trim()
       const manual = this.needsManualOAuthCallback(provider)
+      const settings = this.newAccount.settings || {}
       const payload = {
         label: this.newAccount.label.trim() || undefined,
         proxyUrl: proxyUrl || undefined,
         manual,
+      }
+      // MiniMax Code 需要在取设备码之前定下版本（国内版 cn / 国际版 en），
+      // 不传时后端按国内版处理。
+      if (provider === "minimax") {
+        payload.region = settings.region || undefined
       }
       if (this.reauthAccount) {
         payload.reauthAccountId = this.reauthAccount.id

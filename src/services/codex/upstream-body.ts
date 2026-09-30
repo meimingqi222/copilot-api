@@ -5,7 +5,7 @@ import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import {
   type ResponsesPayload,
   withDefaultReasoningSummary,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 
 /**
  * Codex outbound body assembly, extracted from create-responses-once.ts so
@@ -224,20 +224,10 @@ export function stripReasoningItems(input: Array<unknown>): Array<unknown> {
  * Since the transcript is what we replay, we must prune the half we own rather
  * than let the upstream reject the whole turn.
  */
-const TOOL_CALL_OUTPUT_TYPES: Record<string, string> = {
-  function_call: "function_call_output",
-  custom_tool_call: "custom_tool_call_output",
-}
-
-/** Reverse of `TOOL_CALL_OUTPUT_TYPES`: output type → its call type. */
+/** Output type → its call type, for pairing tool calls with their outputs. */
 const TOOL_OUTPUT_CALL_TYPES: Record<string, string> = {
   function_call_output: "function_call",
   custom_tool_call_output: "custom_tool_call",
-}
-
-/** The `_output` item type emitted for call type `type`, if it is a tool call. */
-export function toolOutputTypeForCall(type: unknown): string | undefined {
-  return typeof type === "string" ? TOOL_CALL_OUTPUT_TYPES[type] : undefined
 }
 
 function toolItemType(item: unknown): string | undefined {

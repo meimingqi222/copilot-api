@@ -6,7 +6,7 @@ import type {
   CopilotStreamEventLike,
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 
 import { HTTPError } from "~/lib/error"
 import { extractErrorMessage, resolveRetryableCode } from "~/lib/error-builder"
@@ -38,8 +38,8 @@ import {
   recordUsage,
 } from "~/lib/usage"
 import { isAbortError } from "~/lib/utils"
-import { inferInitiatorFromResponsesPayload } from "~/services/copilot/initiator"
-import { extractMessageContentFromResponsesPayload } from "~/services/copilot/responses-api"
+import { inferInitiatorFromResponsesPayload } from "~/lib/initiator-header"
+import { extractMessageContentFromResponsesPayload } from "~/services/protocols/responses/types"
 import { dispatchResponses } from "~/services/dispatch/responses"
 import { hasCompactionTrigger } from "~/services/responses/compact"
 

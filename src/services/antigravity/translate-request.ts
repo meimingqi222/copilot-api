@@ -2,7 +2,7 @@ import type {
   ChatCompletionsPayload,
   Message,
   Tool,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { cleanJsonSchemaForAntigravityTool } from "~/lib/gemini-schema"
 import {

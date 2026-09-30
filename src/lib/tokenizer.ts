@@ -1,11 +1,11 @@
+import type { Model } from "~/lib/model-catalog"
 import type {
   ChatCompletionsPayload,
   ContentPart,
   Message,
   Tool,
   ToolCall,
-} from "~/services/copilot/create-chat-completions"
-import type { Model } from "~/services/copilot/get-models"
+} from "~/services/protocols/chat/types"
 
 /**
  * Cheap token estimate used on the request path.
@@ -45,7 +45,7 @@ function calculateToolCallsTokens(
 
 /**
  * Wire-only placeholder — must match EMPTY_TEXT_PLACEHOLDER in
- * services/protocols/openai/chat-to-messages.ts (lib→services import would
+ * services/ir/codecs/messages-chat/request.ts (lib→services import would
  * violate repo layering, cf. ReasoningPartLike in lib/thinking.ts).
  * Defensive on current call sites: getTokenCount only sees client payloads,
  * never the translated outbound payload where this placeholder is synthesized,

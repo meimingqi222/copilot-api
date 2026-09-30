@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionChunk } from "~/services/protocols/chat/types"
 
 import { hasChatChunkOutput } from "~/routes/chat-completions/handler"
 import { isMessagesOutputEvent } from "~/routes/messages/logging"

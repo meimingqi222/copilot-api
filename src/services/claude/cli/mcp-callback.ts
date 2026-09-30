@@ -10,8 +10,6 @@
  * ```jsonc
  * {"tool_call_id":"toolu_...","name":"get_weather","arguments":{...}}
  * ```
- *
- * 参考 magpie 的 `mcpCall()`（`internal/gateway/claude_subscription.go:502`）。
  */
 
 import { logger } from "~/lib/logger"

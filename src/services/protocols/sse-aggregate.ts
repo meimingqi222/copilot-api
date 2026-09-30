@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto"
 import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { extractReasoningTextAlias } from "~/lib/thinking"
 

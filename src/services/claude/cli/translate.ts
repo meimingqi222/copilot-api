@@ -12,9 +12,6 @@
  *
  * 流式与非流式走**同一条翻译路径**：非流式是把这里产出的事件折叠起来。
  * 两条路径共用翻译，才不会各自漂移。
- *
- * 参考 magpie 的 `readOutput()`（`internal/gateway/claude_subscription.go:284`）
- * 与 `collector`。
  */
 
 import type {
@@ -372,8 +369,11 @@ export async function collectAnthropicResponse(
           }
         } else if (block.type === "thinking") {
           current = { kind: "thinking", thinking: "", signature: "" }
-        } else {
+        } else if (block.type === "text") {
           current = { kind: "text", text: block.text ?? "" }
+        } else {
+          // Server tools (web search) have no CLI-visible representation.
+          current = undefined
         }
         break
       }

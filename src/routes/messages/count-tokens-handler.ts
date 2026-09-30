@@ -5,9 +5,10 @@ import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
 import { getTokenCount } from "~/lib/tokenizer"
 import {
-  type AnthropicMessagesPayload,
-  translateToOpenAI,
-} from "~/services/protocols/anthropic"
+  decodeMessagesRequest,
+  encodeChatRequest,
+} from "~/services/ir/codecs/messages-chat"
+import { type AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
 import { hasClaudeCodeBeta } from "./anthropic-beta"
 
@@ -22,7 +23,9 @@ export async function handleCountTokens(c: Context) {
       c.req.raw,
     )
 
-    const openAIPayload = translateToOpenAI(anthropicPayload)
+    const openAIPayload = encodeChatRequest(
+      decodeMessagesRequest(anthropicPayload),
+    )
 
     const selectedModel = state.models?.data.find(
       (model) => model.id === anthropicPayload.model,

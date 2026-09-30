@@ -11,8 +11,6 @@
  * 2. **注入账号**：`CLAUDE_CODE_OAUTH_TOKEN` 是 CLI 的"直接给定 OAuth token、
  *    绕过凭证存储"开关。旁挂账号靠它注入，CLI 因此不读也不写 `~/.claude`
  *    里的凭证 —— refresh token 的唯一持有者仍然是 copilot-api 的刷新链路。
- *
- * 参考 magpie 的 `cleanClaudeEnv()`（`internal/gateway/claude_subscription.go:225`）。
  */
 
 /** 必须从子进程环境里剔除的变量。 */

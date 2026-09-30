@@ -1,11 +1,6 @@
 import consola, { type ConsolaReporter, type LogObject } from "consola"
 
-import {
-  RotatingLogFileSink,
-  type LogRotationConfig,
-  readLogRotationConfig,
-} from "~/lib/log-rotation"
-import { PATHS } from "~/lib/paths"
+import { RotatingLogFileSink, readLogRotationConfig } from "~/lib/log-rotation"
 
 export type FileLogLevel =
   | "debug"
@@ -264,25 +259,6 @@ export function resetLoggerForTest(): void {
 export function writeTestLogLine(logObj: FileLogInput): void {
   const line = formatLogLine(logObj)
   if (line) writeLogLine(line)
-}
-
-/** Test hook: construct a rotating sink with explicit config. */
-export function createRotatingLogSinkForTest(options: {
-  logDir: string
-  maxFileBytes: number
-  retentionDays: number
-  now?: Date
-}): RotatingLogFileSink {
-  const config: LogRotationConfig = {
-    logDir: options.logDir,
-    maxFileBytes: options.maxFileBytes,
-    retentionDays: options.retentionDays,
-  }
-  return new RotatingLogFileSink({ config, now: options.now })
-}
-
-export function getActiveLogFilePath(): string {
-  return logSink?.getActivePath() ?? PATHS.LOG_FILE
 }
 
 export const logger = consola

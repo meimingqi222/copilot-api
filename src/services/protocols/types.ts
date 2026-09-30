@@ -17,24 +17,15 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
-import type {
   EmbeddingRequest,
   EmbeddingResponse,
-} from "~/services/copilot/create-embeddings"
+} from "~/services/protocols/chat/types"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
-
-export interface AdapterRouteIdentity {
-  connectionId: string
-  credentialId: string
-  ownerId: string
-  provider: string
-}
 
 export type AdapterChatResult =
   | { credentialId: string; response: AsyncIterable<CopilotStreamEvent> }
@@ -46,6 +37,11 @@ export type AdapterEmbeddingsResult = {
 }
 
 import type { AnthropicMessagesPayload } from "./anthropic/types"
+import type {
+  GeminiGenerateContentRequest,
+  GeminiGenerateContentResponse,
+  GeminiStreamEvent,
+} from "./gemini/types"
 
 export type AdapterMessagesResult =
   | { credentialId: string; response: AsyncIterable<unknown> }
@@ -54,6 +50,10 @@ export type AdapterMessagesResult =
 export type AdapterResponsesResult =
   | { credentialId: string; response: AsyncIterable<CopilotStreamEventLike> }
   | { credentialId: string; response: ResponsesResponse }
+
+export type AdapterGeminiResult =
+  | { credentialId: string; response: AsyncIterable<GeminiStreamEvent> }
+  | { credentialId: string; response: GeminiGenerateContentResponse }
 
 /** Shared parameters for all adapter create* methods. */
 interface AdapterParams<TPayload> {
@@ -89,6 +89,10 @@ export interface ProtocolAdapter {
   createResponses?(
     params: AdapterParams<ResponsesPayload>,
   ): Promise<AdapterResponsesResult>
+
+  createGeminiGenerateContent?(
+    params: AdapterParams<GeminiGenerateContentRequest>,
+  ): Promise<AdapterGeminiResult>
 
   createEmbeddings?(
     params: Omit<AdapterParams<EmbeddingRequest>, "ctx">,

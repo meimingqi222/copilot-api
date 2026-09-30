@@ -60,20 +60,6 @@ src/
 ├── debug.ts                # Debug command implementation
 ├── server.ts               # Hono server setup + routes
 ├── lib/                    # Core utilities and middleware
-│   ├── account-store.ts    # Account persistence facade (delegates to legacy-accounts + provider-connections)
-│   ├── legacy-accounts/    # Legacy Account compatibility boundary (Phase 5)
-│   │   ├── accounts.ts     # Account compat layer (derives from connections) + provider-specific getters
-│   │   ├── account-availability.ts # Account availability/cooldown checks (compat)
-│   │   ├── account-selection.ts # Active account selection (connection-first)
-│   │   ├── boot-migration.ts # Startup migration orchestration (accounts.json → connections)
-│   │   ├── file-store.ts   # Read-only accounts.json parser + .bak recovery
-│   │   ├── legacy-types.ts # LegacyAccountRecord — sole surviving Account shape (module-private)
-│   │   ├── persistence.ts  # saveAccounts facade (delegates to saveProviderConnections)
-│   │   ├── record-migrator.ts # Raw account record → typed Account migration
-│   │   ├── serialize.ts    # Account serialization for export
-│   │   ├── to-connection.ts # Account → Connection forward mapper
-│   │   ├── token-bridge.ts # Copilot token refresh bridge
-│   │   └── index.ts        # Public barrel
 │   ├── api-config.ts       # API configuration (copilotHeadersForConnection)
 │   ├── approval.ts         # Manual approval logic
 │   ├── error.ts            # HTTPError class + forwardError handler
@@ -90,17 +76,18 @@ src/
 │   ├── paths.ts            # File paths (data directory)
 │   ├── provider-config.ts  # ProviderId, ProviderProtocol, OAuthProviderId definitions
 │   ├── provider-connections/ # Provider Connection system (truth source)
-│   │   ├── types.ts        # ProviderConnection, ApiCredential, QuotaSnapshot, RouteTarget types
+│   │   ├── types.ts        # ProviderConnection, ApiCredential, RouteTarget types
 │   │   ├── state.ts        # stateRoot.connections + mutation helpers
 │   │   ├── store.ts        # Disk persistence (provider-connections.json, v2 schema)
+│   │   ├── boot.ts         # Startup load + one-time repairs + shutdown flush
+│   │   ├── managed-connection.ts # Account-managed connection creation/public view/export
+│   │   ├── selection.ts    # getFirstAvailableAccountManagedConnection
 │   │   ├── connection-accessors.ts # Connection-native credential accessors
-│   │   ├── connection-metadata.ts   # Typed readers/writers (v2: reads typed fields first)
-│   │   ├── migrate-from-accounts.ts # Account → Connection migration (one-time)
+│   │   ├── connection-metadata.ts   # ConnectionMetadata typed readers/writers
 │   │   ├── protocol-provider.ts     # Protocol ↔ Provider mapping
 │   │   ├── account-managed.ts       # isAccountManagedConnection/Protocol
 │   │   ├── availability.ts # Credential availability checks
-│   │   ├── credential-refresher.ts  # Credential refresher interface
-│   │   ├── refresher-impls.ts       # Connection-native credential refreshers
+│   │   ├── credential-refresher.ts  # Credential refresher registry (impls wired in services/)
 │   │   ├── discovery.ts    # Model discovery helpers
 │   │   └── index.ts        # Public barrel
 │   ├── provider-defaults.ts # Managed default connections (Codebuff/Windsurf)
@@ -112,7 +99,10 @@ src/
 │   │   ├── others.ts       # OpenAI/Anthropic/Gemini/xAI/Groq/OpenRouter/vLLM/Ollama
 │   │   └── index.ts        # BUILTIN_PROVIDER_PRESETS + mergePresets + readUserPresets
 │   ├── proxy.ts            # Proxy configuration
-│   ├── quota/              # Quota fetchers per provider (copilot/claude/codex/xai/etc.)
+│   ├── model-catalog.ts    # App-wide model catalog types (state.models) + getPublicModelData
+│   ├── quota/              # Quota subsystem: per-provider fetchers + refresh scheduler
+│   │   ├── fetchers/       # Quota fetchers per provider (copilot/claude/codex/xai/etc.)
+│   │   └── scheduler.ts    # refreshQuotaForConnection + periodic re-probe
 │   ├── rate-limit.ts       # Adaptive rate limiter (connection-native cooldown)
 │   ├── request-admission.ts # Route target resolution + admission
 │   ├── request-auth.ts     # API key authentication
@@ -130,10 +120,22 @@ src/
 │   ├── users.ts            # User management
 │   └── utils.ts            # Shared utilities (refreshModelsForConnection)
 ├── services/               # External API clients
-│   ├── protocols/          # Protocol wire adapters (12: 3 *-compatible + 9 *-native)
+│   ├── ir/                 # Translation IR: types, capabilities, loss records
+│   │   └── codecs/         # Chat/Messages/Responses/Gemini wire codecs
+│   │       ├── messages-chat/  # Chat <-> Messages codec (request/response/stream)
+│   │       ├── responses/      # Responses codec (request/result/stream)
+│   │       └── gemini/         # Gemini generateContent codec (request/result/stream)
+│   ├── protocols/          # Protocol wire adapters + cross-endpoint translators
 │   │   ├── registry.ts     # Protocol adapter registry (wire adapters)
-│   │   ├── anthropic/      # Anthropic protocol translations
-│   │   └── openai/         # OpenAI protocol translations
+│   │   ├── wire-pairs.ts   # Table-driven pair translator (Gemini directions)
+│   │   ├── cast-*/…-via-*.ts # Cross-endpoint wrappers with per-wire behavior
+│   │   ├── chat/, responses/  # OpenAI wire types (moved out of services/copilot)
+│   │   ├── gemini/         # Gemini generateContent wire types
+│   │   └── anthropic/      # Anthropic wire types + stop-reason/error helpers
+│   ├── search/             # Proxy-side web search orchestration
+│   │   ├── searcher.ts     # Ranked searcher accounts (codex first, then claude/anthropic/responses)
+│   │   ├── execute.ts      # Runs one search via a search-capable account
+│   │   └── orchestrate.ts  # Wire-agnostic search loop (max 6 rounds) + result shaping
 │   ├── copilot/            # Copilot API calls (token-refresh: connection-native)
 │   ├── dispatch/           # Request dispatch + failover
 │   ├── oauth/              # OAuth flows (provider-strategies: connection-native)
@@ -143,6 +145,7 @@ src/
 │   │   ├── copilot.ts      # Copilot runtime
 │   │   ├── oauth.ts        # OAuth runtime (Claude/Codex/xAI/Kimi/Antigravity)
 │   │   ├── windsurf.ts     # Windsurf runtime
+│   │   ├── credential-refreshers.ts # Wires per-provider refreshers into the lib registry
 │   │   ├── codebuff.ts     # Codebuff runtime
 │   │   └── mimo.ts         # Mimo runtime
 │   ├── antigravity/        # Antigravity API client
@@ -163,12 +166,16 @@ src/
 │   ├── github/             # GitHub API client
 │   ├── kimi/               # Kimi API client
 │   ├── mimo/               # Mimo API client
+│   ├── qoder/              # Qoder protocol primitives (HTTP only): endpoints,
+│   │                       # body codec, COSY signing, envelope, model list,
+│   │                       # embedded <tool_call> splitter
 │   ├── windsurf/           # Windsurf API client
 │   └── xai/                # xAI API client
 └── routes/                 # API route handlers
     ├── claude-mcp/         # Internal MCP callback for the Claude CLI transport (loopback-only)
     ├── chat-completions/   # OpenAI-compatible chat (split: handler/usage/non-streaming/streaming)
     ├── messages/           # Anthropic-compatible messages
+    ├── gemini/             # Gemini-compatible generateContent / streamGenerateContent
     ├── models/             # Model listing
     ├── embeddings/         # Embeddings endpoint
     ├── responses/          # OpenAI Responses API
@@ -207,9 +214,11 @@ The codebase uses a **Provider Connection-centric** architecture.
   refresh context. T5.2.5 promoted `quota`, `exhaustedAt`,
   `lastRateLimitReason` from metadata to typed credential fields.
 
-- **Account compat layer** (`src/lib/legacy-accounts/accounts.ts`): `listAccounts()` and
-  `getAccount(id)` derive Account snapshots on-demand from
-  `listProviderConnections()` (filtered by `isAccountManagedConnection`).
+- **Account-managed connections**: `listAccountManagedConnections()` returns the
+  connections owned by the accounts admin surface (protocols in
+  `PROVIDER_PROTOCOL_MAP`). Create/import/device-flow build them with
+  `managedConnectionFromInput()` (`provider-connections/managed-connection.ts`)
+  and persist via `upsertProviderConnection` + `persistProviderConnections`.
   All mutations go through connection helpers (`upsertProviderConnection`,
   `removeProviderConnection`, `getMutableProviderConnection`).
 
@@ -217,21 +226,23 @@ The codebase uses a **Provider Connection-centric** architecture.
   in T5.2.3. Protocol adapters operate directly on `ProviderConnection` /
   `ApiCredential` (Phase 2 complete).
 
-- **AccountLegacyMetadata**: Stored in `connection.metadata`, holds
-  account-specific fields during the transition. Typed readers/writers in
-  `connection-metadata.ts` prefer typed connection/credential fields (v2)
-  and fall back to metadata (v1 compat).
+- **ConnectionMetadata**: Stored in `connection.metadata`, holds
+  provider-specific fields (provider, quotaState, settings, credentialExtras,
+  OAuth routing keys). Typed readers/writers in `connection-metadata.ts`
+  prefer typed connection/credential fields (v2) and fall back to metadata
+  (v1 compat).
 
 - **Admin API** (`src/routes/admin/api/`): Account routes operate on
   connections directly via `publicAccountFromConnection(conn)` and
   `applyConnectionPatchToConnection(conn, patch)`. JSON response shape is
   frozen (G1) — identical to pre-refactor.
 
-- **Persistence**: `saveAccounts()` delegates to
-  `saveProviderConnections(listProviderConnections())`. `accounts.json` is
-  never revived — on startup, if `accounts.json` exists alongside
-  `provider-connections.json`, connections take priority (set
-  `COPILOT_API_FORCE_REMIGRATE=1` to re-migrate from accounts.json).
+- **Persistence**: `persistProviderConnections()` writes
+  `provider-connections.json` (threaded through the connection mutation
+  queue). `accounts.json` is retired — the legacy Account compat layer
+  (`src/lib/legacy-accounts/`, `src/lib/account-store.ts`) and the
+  accounts.json migration path were removed; `provider-connections.json` is
+  the only truth source.
 
 - **Schema v2** (T5.2.5): `provider-connections.json` version bumped from
   1 to 2. V1 files are lazily upgraded on load via
@@ -426,47 +437,61 @@ Accounts are managed as **Provider Connections** in
 
 ```typescript
 import {
-  listProviderConnections,
-  isAccountManagedConnection,
+  getFirstAvailableAccountManagedConnection,
+  listAccountManagedConnections,
 } from "~/lib/provider-connections"
 
 // List account-managed connections
-const accounts = listProviderConnections().filter(isAccountManagedConnection)
+const accounts = listAccountManagedConnections()
 
-// Active account selection (connection-first)
-import { getActiveAccount } from "~/lib/legacy-accounts"
-const account = getActiveAccount() // Returns Account snapshot from connection
+// Active account selection (first enabled connection by priority)
+const connection = getFirstAvailableAccountManagedConnection()
 ```
 
 ### Request Translation
 
-OpenAI **Chat Completions is the hub format** — every client protocol translates
-to and from it, never directly to another client protocol
-(`docs/translation-conventions.md`, rule R1).
+Same-endpoint requests use their existing protocol adapter. Cross-endpoint
+requests use the typed request/result IR and incremental stream events in
+`src/services/ir/`; Chat Completions is an external wire format, not the
+translation hub. See `docs/translation-conventions.md` for the current rules.
 
-- `src/services/protocols/anthropic/non-stream-translation.ts` — Messages ↔ Chat
+- `src/services/ir/` — shared semantic types, feature inspection, capability
+  preflight, loss records and stream collection
 
-- `src/services/protocols/anthropic/stream-translation.ts` — Chat stream → Messages stream
+- `src/services/ir/codecs/` — Chat, Messages, Responses and Gemini wire codecs
 
-- `src/services/protocols/openai/chat-to-messages.ts` — Chat → Messages (request)
-
-- `src/services/protocols/openai/messages-to-chat.ts` — Messages → Chat (response)
-
-- `src/services/copilot/chat-to-responses.ts` / `responses-to-chat.ts` — Chat ↔ Responses
+- `src/services/protocols/` — upstream adapters and the cross-endpoint wrappers
 
 - `src/routes/chat-completions/normalize.ts` — OpenAI payload normalization
 
 - `src/services/protocols/{chat-via-messages,chat-via-responses,messages-via-chat,responses-via-chat}.ts`
-  — cross-protocol adapters the dispatch layer picks when the route target's
-  endpoint differs from the requested one
+  — cross-protocol adapters with per-wire behavior (prompt-cache breakpoints,
+  structured stream twins, memory traces, SSE frame shapes) that the dispatch
+  layer picks when the route target's endpoint differs from the requested one
+
+- `src/services/protocols/wire-pairs.ts` — the table-driven path for the
+  remaining combinations (all Gemini directions). Each wire contributes one
+  decode/encode codec; `createTranslatedCall` is the single place that plans
+  the translation, runs the capability preflight and dispatches. Prefer adding
+  a `WireSpec` entry over writing another hand-rolled wrapper
+
+- `src/routes/gemini/` — Gemini `generateContent` / `streamGenerateContent`
+  (`POST /v1beta/models/{model}:{action}`). The method name, not a body field,
+  selects streaming; `stream` is synthesized before dispatch
+
+- `src/services/search/` — proxy-side web search. When the client asks for
+  search and the target wire cannot carry it (only `chat` cannot), the proxy
+  injects its own `web_search` tool, executes each call through a
+  search-capable account (codex first) and loops up to 6 rounds. Native
+  search on a messages/responses/gemini target is passed through untouched.
+  `SEARCH_ORCHESTRATION=0` disables it. Read
+  `docs/protocol-translation-pitfalls.md` §6 before changing it
 
 > **Before touching any of these, read
 > [`docs/protocol-translation-pitfalls.md`](docs/protocol-translation-pitfalls.md).**
-> It records the irreducible losses in the Chat/Messages/Responses matrix (do
-> **not** try to "fix" those) and the bugs already fixed there with the tests
-> that lock them down (do **not** regress those). It also covers prompt-cache
-> breakpoint placement on translated payloads and why `messages ↔ responses`
-> has no direct path.
+> It records semantic boundaries and regressions for the Chat, Messages and
+> Responses matrix. Preserve those behaviors or explicitly revise their
+> capability and loss contracts with tests.
 
 ## Important Gotchas
 
@@ -475,7 +500,7 @@ to and from it, never directly to another client protocol
 Anthropic requests may include `x-anthropic-billing-header` in the system message. This **must** be stripped before forwarding to Copilot:
 
 ```typescript
-// From src/routes/messages/non-stream-translation.ts
+// Applied by the Messages request codec before forwarding to Copilot
 if (system.includes("x-anthropic-billing-header:")) {
   system = system.split("\n\n").slice(1).join("\n\n")
 }
@@ -485,9 +510,10 @@ if (system.includes("x-anthropic-billing-header:")) {
 
 Anthropic's `thinking` blocks in assistant messages must be:
 
-- Stripped from historical messages (not sent to Copilot)
+- Retained as separate IR blocks; a target requiring signed thinking receives
+  only blocks with a signature valid for the unchanged text and issuer
 
-- Preserved only in the final response
+- New response blocks are preserved for client output
 
 - Converted to OpenAI's `reasoning_text` field
 
@@ -517,9 +543,12 @@ connection-native:
 - `src/services/copilot/token-refresh.ts`: `refreshCopilotTokenForConnection(conn)`
   and `scheduleConnectionTokenRefresh(connId, seconds)` operate directly on
   `ProviderConnection`.
-- `src/lib/provider-connections/refresher-impls.ts`: Credential refreshers
-  resolve connection ID from `credential.context.accountId` or `credential.id`,
-  then call connection-native refresh functions.
+- `src/services/providers/credential-refreshers.ts`: wires the per-provider
+  refreshers into the lib registry (`lib/provider-connections/credential-refresher`).
+  They resolve the connection ID from `credential.context.accountId` or
+  `credential.id`, then call connection-native refresh functions.
+- `src/lib/initiator-header.ts`: initiator inference (client request → agent/user)
+  lives here, not in a provider — every route needs it.
 - `src/services/oauth/refresh-scheduler.ts`: `scheduleOAuthRefreshForConnection(conn)`
   schedules OAuth token refresh by connection.
 - Handles refresh failures gracefully (sets `credential.status = "auth_error"`)

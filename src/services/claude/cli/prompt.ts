@@ -1,9 +1,6 @@
 /**
  * 调用方的 Anthropic messages → CLI 的一条 user 消息内容。
  *
- * 直译 magpie 的 `renderClaudePrompt()`
- * （`internal/gateway/claude_subscription.go:382`）。
- *
  * ## 为什么把整段 transcript 压成一条 user 文本
  *
  * 真 Claude Code 自己持有会话状态，而我们每回合起一个新进程。所以每回合

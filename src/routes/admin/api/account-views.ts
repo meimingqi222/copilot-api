@@ -9,10 +9,10 @@
  */
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { connectionModelsToAccountModels } from "~/lib/legacy-accounts"
 import {
   accountManagedProvider,
   connectionHasCredentials as connectionHasCredentialsNative,
+  connectionModelsToAccountModels,
   getConnectionAuthError,
   getConnectionAuthStatus,
   getConnectionCooldownUntil,
@@ -25,6 +25,7 @@ import {
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
+import { resolveMinimaxRegion } from "~/services/oauth/minimax"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
 
@@ -153,16 +154,6 @@ export function connectionHasCredentials(conn: ProviderConnection): boolean {
   return connectionHasCredentialsNative(conn)
 }
 
-/**
- * 确保 provider registry 已初始化并获取 runtime。
- */
-export function ensureProviderRuntime(
-  provider: Parameters<typeof getProviderRuntime>[0],
-) {
-  initializeProviderRegistry()
-  return getProviderRuntime(provider)
-}
-
 // ── 内部辅助函数 ─────────────────────────────────────────────────
 
 /**
@@ -201,6 +192,15 @@ function connectionOAuthSubtitle(conn: ProviderConnection): string | undefined {
     typeof ctx.oauthAccountId === "string" ?
       ctx.oauthAccountId.trim()
     : undefined
+
+  // MiniMax Code 的凭证按区域签发（国内版 / 国际版），同名卡片靠域名区分。
+  // 域名文案中英文界面下都不会歧义。
+  if (provider === "minimax") {
+    return resolveMinimaxRegion(conn) === "en" ?
+        "Global (minimax.io)"
+      : "CN (minimax.cn)"
+  }
+
   if (oauthAccountId && oauthAccountId !== conn.name) {
     return oauthAccountId
   }

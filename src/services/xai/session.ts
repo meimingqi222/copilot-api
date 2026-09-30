@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 
-import type { ResponsesPayload } from "~/services/copilot/responses-api"
+import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 const COMPOSER_MODEL_PREFIX = "grok-composer-"

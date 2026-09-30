@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { Message } from "~/services/copilot/create-chat-completions"
+import type { Message } from "~/services/protocols/chat/types"
 
 import { translateOpenAiChatToAntigravity } from "~/services/antigravity/translate-request"
 import { convertAntigravityNonStreamResponse } from "~/services/antigravity/translate-response"

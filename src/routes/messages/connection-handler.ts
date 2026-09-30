@@ -1,7 +1,17 @@
 import type { Context } from "hono"
+import type { ContentfulStatusCode } from "hono/utils/http-status"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 
+import {
+  copyRateLimitHeaders,
+  HTTPError,
+  setRateLimitHeaders,
+} from "~/lib/error"
+import {
+  buildAnthropicContextWindowError,
+  resolveRetryableCode,
+} from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
@@ -24,10 +34,6 @@ import {
   isDirectAnthropicResponse,
   translateErrorToAnthropicErrorEvent,
 } from "~/services/protocols/anthropic"
-
-import type { HandleStreamingResponseOptions } from "./copilot-handler"
-
-import { respondPreStreamAnthropicError } from "./copilot-handler"
 
 import { isMessagesOutputEvent } from "./logging"
 import {
@@ -71,13 +77,18 @@ export async function handleAnthropicViaConnection(
 
   if (!anthropicPayload.stream) {
     const nonStreamStart = Date.now()
-    const result = await dispatchMessages({
-      payload: anthropicPayload,
-      admission,
-      signal,
-      forwardedHeaders: forwarded,
-      c,
-    })
+    let result: Awaited<ReturnType<typeof dispatchMessages>>
+    try {
+      result = await dispatchMessages({
+        payload: anthropicPayload,
+        admission,
+        signal,
+        forwardedHeaders: forwarded,
+        c,
+      })
+    } catch (error) {
+      return handlePreStreamDispatchError(c, error, signal)
+    }
     applyUsageIdentity(c, result.identity)
     c.set("model", anthropicPayload.model)
     patchRequestLog(c, { streaming: false })
@@ -115,9 +126,9 @@ export async function handleAnthropicViaConnection(
   }
 
   // Phase 1: dispatch BEFORE the downstream SSE response exists (same
-  // rationale as chat handleStreamingCompletion / messages copilot-handler).
-  // Pre-first-chunk failures return a real HTTP status + Retry-After headers
-  // with an Anthropic-shaped body instead of `200 + event: error`.
+  // rationale as chat handleStreamingCompletion): pre-first-chunk failures
+  // return a real HTTP status + Retry-After headers with an Anthropic-shaped
+  // body instead of `200 + event: error`.
   let result: Awaited<ReturnType<typeof dispatchMessages>>
   const dispatchStart = Date.now()
   try {
@@ -129,11 +140,7 @@ export async function handleAnthropicViaConnection(
       c,
     })
   } catch (error) {
-    recordTraceError(c, error)
-    if (isAbortError(error) && signal.aborted) {
-      return new Response(null, { status: 499 })
-    }
-    return respondPreStreamAnthropicError(c, error)
+    return handlePreStreamDispatchError(c, error, signal)
   }
   applyUsageIdentity(c, result.identity)
   c.set("model", anthropicPayload.model)
@@ -243,93 +250,55 @@ export async function handleAnthropicViaConnection(
   )
 }
 
-export async function handleDirectStreamingResponse({
-  stream,
-  response,
-  clientSignal,
-  c,
-  accountId,
-  streamStartTs,
-}: HandleStreamingResponseOptions): Promise<void> {
-  let lastUsage: AnthropicStreamingUsage | undefined
-
-  let receivedMessageStop = false
-  let firstChunkTs: number | undefined
-  const streamStart = streamStartTs ?? Date.now()
-
-  try {
-    for await (const rawEvent of response) {
-      if (!rawEvent.data || rawEvent.data === "[DONE]") {
-        continue
-      }
-
-      const dataStr = rawEvent.data
-      try {
-        const parsed = JSON.parse(dataStr) as { type?: string }
-        if (isMessagesOutputEvent(parsed)) firstChunkTs ??= Date.now()
-      } catch {
-        // Malformed frames do not count toward TTFT.
-      }
-      if (dataStr.includes('"usage"')) {
-        lastUsage = updateLastUsage(dataStr, lastUsage)
-      }
-      if (dataStr.includes('"message_stop"')) {
-        receivedMessageStop = receivedMessageStop || isMessageStopChunk(dataStr)
-      }
-
-      await forwardSseEvent(stream, rawEvent)
-    }
-
-    if (!receivedMessageStop) {
-      logger.warn(
-        "Direct streaming: upstream closed without message_stop, sending synthetic error",
-      )
-      const errPayload = {
-        type: "error",
-        error: {
-          type: "api_error",
-          message:
-            "Upstream closed the stream unexpectedly. The model may not support images in tool results for this endpoint.",
-        },
-      }
-      await writeSseEvent(stream, JSON.stringify(errPayload), errPayload.type)
-    }
-  } catch (error) {
-    if (
-      error instanceof DOMException
-      && error.name === "AbortError"
-      && clientSignal.aborted
-    ) {
-      return
-    }
-    throw error
-  } finally {
-    if (c) {
-      markStreamTerminal(
-        c,
-        receivedMessageStop ? "message_stop" : "missing",
-        receivedMessageStop ? "success" : "incomplete",
-        Boolean(firstChunkTs),
-      )
-      recordDirectStreamingUsage(
-        c,
-        accountId,
-        lastUsage,
-        computeStreamingTiming(
-          streamStart,
-          firstChunkTs,
-          lastUsage?.output_tokens ?? 0,
-        ),
-      )
-    }
+/** Dispatch failure before any bytes were committed to the client (both the
+ * non-streaming and pre-SSE streaming paths). Returns a real HTTP status +
+ * Retry-After headers with an Anthropic-shaped body. */
+function handlePreStreamDispatchError(
+  c: Context,
+  error: unknown,
+  signal: AbortSignal,
+) {
+  recordTraceError(c, error)
+  if (isAbortError(error) && signal.aborted) {
+    return new Response(null, { status: 499 })
   }
+  if (error instanceof HTTPError && isContextWindowError(error)) {
+    logger.warn("Context window exceeded")
+    return c.json(buildAnthropicContextWindowError(error), 400)
+  }
+  return respondPreStreamAnthropicError(c, error)
 }
 
-function isMessageStopChunk(dataStr: string): boolean {
-  try {
-    const parsed = JSON.parse(dataStr) as { type?: string }
-    return parsed.type === "message_stop"
-  } catch {
-    return false
+/**
+ * 首包前的上游失败：SSE 尚未提交，直接返回带真实状态码的 Anthropic 错误
+ * 响应，并把限流 headers 抄过去（读头的客户端据此退避；没有头的盲重试
+ * 客户端至少能按状态码正确分类）。
+ */
+export function respondPreStreamAnthropicError(c: Context, error: unknown) {
+  const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+  if (knownError) {
+    if (knownError.retryAfterSeconds > 0) {
+      setRateLimitHeaders(c, knownError.retryAfterSeconds * 1000)
+    }
+    return c.json(
+      {
+        type: "error",
+        error: { type: knownError.type, message: knownError.message },
+      },
+      knownError.status as ContentfulStatusCode,
+    )
   }
+  const errPayload = translateErrorToAnthropicErrorEvent(error)
+  if (error instanceof HTTPError) {
+    copyRateLimitHeaders(c, error.response.headers)
+  }
+  return c.json(errPayload, resolveRetryableCode(error) as ContentfulStatusCode)
+}
+
+/** Returns true when the upstream error indicates the input exceeded the model context window. */
+function isContextWindowError(error: HTTPError): boolean {
+  return (
+    error.response.status === 400
+    && error.responseBody.toLowerCase().includes("context window")
+  )
 }

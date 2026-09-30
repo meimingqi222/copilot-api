@@ -2,7 +2,7 @@ import type { Context } from "hono"
 
 import { randomUUID } from "node:crypto"
 
-import { canonicalModelId } from "~/lib/legacy-accounts"
+import { canonicalModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import {
   beginMemoryTrace,
@@ -23,7 +23,7 @@ import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionsPayload,
   extractMessageContentFromChatCompletionsPayload,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
 
 import { inferInitiatorFromOpenAIMessages } from "./initiator"

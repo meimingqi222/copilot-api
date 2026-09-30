@@ -1,7 +1,6 @@
 // Anthropic API Types
 
-import type { ChatCompletionChunk } from "~/services/copilot/create-chat-completions"
-import type { CopilotStreamEventLike } from "~/services/copilot/responses-api"
+import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
 
 export interface AnthropicMessagesPayload {
   model: string
@@ -16,7 +15,7 @@ export interface AnthropicMessagesPayload {
   temperature?: number
   top_p?: number
   top_k?: number
-  tools?: Array<AnthropicTool>
+  tools?: Array<AnthropicTool | AnthropicServerTool>
   tool_choice?: {
     type: "auto" | "any" | "tool" | "none"
     name?: string
@@ -70,7 +69,7 @@ export type AnthropicImageMediaType =
  * Anthropic accepts two image sources. `base64` is the original inline form;
  * `url` lets the API fetch a remote image itself, which is the only way an
  * OpenAI `image_url` pointing at http(s) can survive the translation to
- * Messages (see `openai/chat-to-messages.ts`). Consumers must switch on
+ * Messages (see the IR messages encoder). Consumers must switch on
  * `source.type` — a `url` source carries no `media_type`/`data`.
  */
 export type AnthropicImageSource =
@@ -109,15 +108,52 @@ export interface AnthropicThinkingBlock {
   signature?: string
 }
 
+/**
+ * A tool Anthropic ran server-side (e.g. `web_search`). The client does not
+ * execute it; the results arrive in a following `web_search_tool_result`
+ * block, which is a *user* block per the Messages wire.
+ */
+export interface AnthropicServerToolUseBlock {
+  type: "server_tool_use"
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
+export interface AnthropicWebSearchResult {
+  type: "web_search_result"
+  url: string
+  title?: string
+  page_age?: string
+  encrypted_content?: string
+}
+
+export interface AnthropicWebSearchToolResultBlock {
+  type: "web_search_tool_result"
+  tool_use_id: string
+  content: Array<AnthropicWebSearchResult>
+}
+
+/** Declaration of a server tool, e.g. `{ type: "web_search_20250305", … }`. */
+export interface AnthropicServerTool {
+  type: string
+  name: string
+  max_uses?: number
+  allowed_domains?: Array<string>
+  blocked_domains?: Array<string>
+}
+
 export type AnthropicUserContentBlock =
   | AnthropicTextBlock
   | AnthropicImageBlock
   | AnthropicToolResultBlock
+  | AnthropicWebSearchToolResultBlock
 
 export type AnthropicAssistantContentBlock =
   | AnthropicTextBlock
   | AnthropicToolUseBlock
   | AnthropicThinkingBlock
+  | AnthropicServerToolUseBlock
 
 export interface AnthropicUserMessage {
   role: "user"
@@ -141,7 +177,9 @@ export interface AnthropicResponse {
   id: string
   type: "message"
   role: "assistant"
-  content: Array<AnthropicAssistantContentBlock>
+  content: Array<
+    AnthropicAssistantContentBlock | AnthropicWebSearchToolResultBlock
+  >
   model: string
   stop_reason:
     | "end_turn"
@@ -160,8 +198,6 @@ export interface AnthropicResponse {
     service_tier?: "standard" | "priority" | "batch"
   }
 }
-
-export type AnthropicResponseContentBlock = AnthropicAssistantContentBlock
 
 // Anthropic Stream Event Types
 export interface AnthropicMessageStartEvent {
@@ -188,6 +224,10 @@ export interface AnthropicContentBlockStartEvent {
         input: Record<string, unknown>
       })
     | { type: "thinking"; thinking: string }
+    | (Omit<AnthropicServerToolUseBlock, "input"> & {
+        input: Record<string, unknown>
+      })
+    | AnthropicWebSearchToolResultBlock
 }
 
 export interface AnthropicContentBlockDeltaEvent {
@@ -252,62 +292,6 @@ export type AnthropicStreamEventData =
   | AnthropicMessageStopEvent
   | AnthropicPingEvent
   | AnthropicErrorEvent
-
-// State for streaming translation
-export interface AnthropicStreamState {
-  messageStartSent: boolean
-  messageStopSent: boolean
-  messageDeltaSent: boolean
-  contentBlockIndex: number
-  contentBlockOpen: boolean
-  currentContentBlockType?: "text" | "thinking" | "tool_use"
-  // Buffer for thinking content that arrives before signature
-  // (Copilot sends reasoning first, signature later)
-  bufferedThinking: string
-  // Running UTF-8 size of `bufferedThinking`. Measuring the accumulated string
-  // on every delta is O(n) per chunk (it flattens the rope), which makes a long
-  // reasoning stream quadratic in both time and allocation.
-  bufferedThinkingBytes: number
-  // A signature that arrives after unsigned thinking has already been closed
-  // is not safely attributable to that block. A new reasoning delta resets it.
-  suppressLateThinking: boolean
-  toolCalls: Map<
-    number,
-    {
-      id: string
-      name: string
-      anthropicBlockIndex: number
-    }
-  >
-  // Pre-calculated estimate of input tokens from the request payload.
-  // Used as a fallback in message_start when the upstream API (e.g. Responses
-  // API) does not include usage data until the final streaming chunk, which
-  // would otherwise cause message_start to report input_tokens = 0.
-  estimatedInputTokens: number
-  // Set when finish_reason arrives; message_delta is deferred until usage is
-  // available or the stream ends (matching CPA behavior).
-  pendingFinishReason?: AnthropicResponse["stop_reason"]
-  lastSeenUsage?: NonNullable<ChatCompletionChunk["usage"]>
-}
-
-/** Factory to create a fresh AnthropicStreamState with all fields at their default values. */
-export function createInitialStreamState(): AnthropicStreamState {
-  return {
-    messageStartSent: false,
-    messageStopSent: false,
-    messageDeltaSent: false,
-    contentBlockIndex: 0,
-    contentBlockOpen: false,
-    currentContentBlockType: undefined,
-    bufferedThinking: "",
-    bufferedThinkingBytes: 0,
-    suppressLateThinking: false,
-    toolCalls: new Map(),
-    estimatedInputTokens: 0,
-    pendingFinishReason: undefined,
-    lastSeenUsage: undefined,
-  }
-}
 
 export function extractMessageContentFromAnthropicPayload(
   payload: AnthropicMessagesPayload,

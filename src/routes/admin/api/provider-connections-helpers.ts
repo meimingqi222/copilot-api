@@ -19,8 +19,6 @@ import {
   persistProviderConnections,
   resetCredentialStatus,
 } from "~/lib/provider-connections"
-import { listProviderConnections } from "~/lib/provider-connections"
-import { isCredentialAvailable } from "~/lib/provider-connections/availability"
 
 // ── model → RouteTarget ────────────────────────────────────────────────
 
@@ -169,29 +167,6 @@ export async function probeModelsEndpoint(
 }
 
 // ── AI parse helpers ───────────────────────────────────────────────────
-
-/** 找一个可用的 chat 调用源用于 AI 解析。 */
-export function findChatTargetForParse():
-  | {
-      connection: ProviderConnection
-      credential: ApiCredential
-      target: RouteTarget
-    }
-  | undefined {
-  for (const conn of listProviderConnections()) {
-    if (!conn.enabled) continue
-    const cred = conn.credentials.find((cr) => isCredentialAvailable(cr))
-    if (!cred) continue
-    const model = conn.models?.find(
-      (m) => m.enabled && m.endpoints.includes("chat"),
-    )
-    if (!model) continue
-    const target = modelToTestTarget(conn, model)
-    target.credentialId = cred.id
-    return { connection: conn, credential: cred, target }
-  }
-  return undefined
-}
 
 /** 从 LLM 返回内容中提取 JSON 数组,容忍 markdown code fence。 */
 export function extractJsonArray(

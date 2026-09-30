@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { Message } from "~/services/copilot/create-chat-completions"
+import type { Message } from "~/services/protocols/chat/types"
 
 import { inferInitiatorFromOpenAIMessages } from "~/routes/chat-completions/initiator"
 

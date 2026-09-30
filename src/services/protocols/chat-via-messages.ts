@@ -24,19 +24,23 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
-import type { ChatCompletionsPayload } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
+import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { applyPromptCaching } from "~/services/claude/prompt-cache"
+import { planTranslation, recordTranslationLosses } from "~/services/ir"
+import {
+  decodeChatRequest,
+  decodeMessagesResponse,
+  decodeMessagesStream,
+  encodeChatResponse,
+  encodeChatStream,
+  encodeMessagesRequest,
+} from "~/services/ir/codecs/messages-chat"
 
 import type { AnthropicMessagesPayload, AnthropicResponse } from "./anthropic"
 import type { AdapterChatResult, AdapterMessagesResult } from "./types"
-
-import {
-  translateAnthropicResponseToChat,
-  translateAnthropicStreamToChatEvents,
-  translateChatPayloadToAnthropic,
-} from "./openai"
 
 interface MessagesExecutorParams {
   target: RouteTarget
@@ -120,7 +124,37 @@ export async function createChatViaMessages(
     messagesExecutor,
   } = params
 
-  const translated = translateChatPayloadToAnthropic(payload)
+  const request = decodeChatRequest(payload)
+  const plan = planTranslation(request, {
+    wire: "messages",
+    providerId: connection.protocol,
+    model: target.upstreamModelId,
+    issuer: connection.id,
+    cacheControlPolicy:
+      SELF_CACHING_PROTOCOLS.has(target.protocol) ? "target" : "caller",
+  })
+  recordTranslationLosses(ctx?.c, plan.losses)
+  if (!plan.accepted) {
+    throw new LocalPayloadUnsupportedError(
+      plan.losses.records
+        .filter((record) => record.action === "reject")
+        .map((record) => record.reason)
+        .join("; ") || "Messages target cannot preserve the request",
+    )
+  }
+  let translated: AnthropicMessagesPayload
+  try {
+    translated = encodeMessagesRequest(request, {
+      stream: payload.stream ?? undefined,
+      issuer: connection.id,
+    })
+  } catch (error) {
+    throw new LocalPayloadUnsupportedError(
+      error instanceof Error ?
+        error.message
+      : "Messages target cannot encode the request",
+    )
+  }
   const anthropicPayload =
     SELF_CACHING_PROTOCOLS.has(target.protocol) ? translated : (
       withPromptCacheBreakpoints(translated)
@@ -137,12 +171,12 @@ export async function createChatViaMessages(
   if (isAnthropicResponse(result.response)) {
     return {
       credentialId: result.credentialId,
-      response: translateAnthropicResponseToChat(result.response),
+      response: encodeChatResponse(decodeMessagesResponse(result.response)),
     }
   }
 
-  const chatStream = translateAnthropicStreamToChatEvents(
-    result.response as AsyncIterable<unknown>,
+  const chatStream = encodeChatStream(
+    decodeMessagesStream(result.response as AsyncIterable<unknown>),
   )
   return { credentialId: result.credentialId, response: chatStream }
 }

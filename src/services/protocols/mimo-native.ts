@@ -7,7 +7,7 @@
 
 import { randomUUID } from "node:crypto"
 
-import type { ChatCompletionResponse } from "~/services/copilot/create-chat-completions"
+import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
 import { parseModelReference } from "~/lib/route-target/model-reference"

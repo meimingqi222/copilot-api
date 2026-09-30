@@ -6,7 +6,7 @@ import type {
   CopilotStreamEventLike,
   ResponsesPayload,
   ResponsesResponse,
-} from "~/services/copilot/responses-api"
+} from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import {
@@ -22,7 +22,7 @@ import {
   injectReasoningReplayItems,
 } from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
-import { canonicalNativeModelId } from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import {
@@ -31,7 +31,7 @@ import {
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { sanitizeCodexInput } from "~/services/codex/sanitize-input"
-import { normalizeResponsesStreamIds } from "~/services/copilot/normalize-responses-stream"
+import { normalizeResponsesStreamIds } from "~/services/protocols/responses/normalize-stream"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import {

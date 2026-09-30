@@ -6,7 +6,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
-} from "~/services/copilot/create-chat-completions"
+} from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"

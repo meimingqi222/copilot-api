@@ -3,7 +3,7 @@
  *
  * 从 create-responses-once.ts 拆出：压缩与普通 turn 共用，且与主流程无耦合。
  */
-import type { ResponsesPayload } from "~/services/copilot/responses-api"
+import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"

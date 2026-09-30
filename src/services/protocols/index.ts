@@ -10,11 +10,14 @@ import { codebuddyNativeAdapter } from "./codebuddy-native"
 import { codebuffNativeAdapter } from "./codebuff-native"
 import { codexNativeAdapter } from "./codex-native"
 import { copilotNativeAdapter } from "./copilot-native"
+import { geminiCompatibleAdapter } from "./gemini-compatible"
 import { kimiNativeAdapter } from "./kimi-native"
 import { lobsteraiNativeAdapter } from "./lobsterai-native"
 import { mimoNativeAdapter } from "./mimo-native"
+import { minimaxNativeAdapter } from "./minimax-native"
 import { openAICompatibleAdapter } from "./openai-compatible"
 import { openAIResponsesCompatibleAdapter } from "./openai-responses"
+import { qoderNativeAdapter } from "./qoder-native"
 import { registerProtocolAdapter } from "./registry"
 import { windsurfNativeAdapter } from "./windsurf-native"
 import { xaiNativeAdapter } from "./xai-native"
@@ -26,10 +29,12 @@ export function initializeProtocolAdapters(): void {
   registerProtocolAdapter(openAICompatibleAdapter)
   registerProtocolAdapter(openAIResponsesCompatibleAdapter)
   registerProtocolAdapter(anthropicCompatibleAdapter)
+  registerProtocolAdapter(geminiCompatibleAdapter)
   registerProtocolAdapter(copilotNativeAdapter)
   registerProtocolAdapter(codebuffNativeAdapter)
   registerProtocolAdapter(windsurfNativeAdapter)
   registerProtocolAdapter(mimoNativeAdapter)
+  registerProtocolAdapter(minimaxNativeAdapter)
   registerProtocolAdapter(antigravityNativeAdapter)
   registerProtocolAdapter(claudeNativeAdapter)
   registerProtocolAdapter(kimiNativeAdapter)
@@ -37,6 +42,7 @@ export function initializeProtocolAdapters(): void {
   registerProtocolAdapter(xaiNativeAdapter)
   registerProtocolAdapter(codebuddyNativeAdapter)
   registerProtocolAdapter(lobsteraiNativeAdapter)
+  registerProtocolAdapter(qoderNativeAdapter)
   initialized = true
 }
 
@@ -46,6 +52,7 @@ export { createResponsesViaChat } from "./responses-via-chat"
 export type {
   AdapterChatResult,
   AdapterEmbeddingsResult,
+  AdapterGeminiResult,
   AdapterMessagesResult,
   AdapterResponsesResult,
   AnthropicMessagesPayload,

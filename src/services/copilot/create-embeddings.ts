@@ -3,7 +3,10 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import { canonicalModelId, parseModelReference } from "~/lib/legacy-accounts"
+import {
+  canonicalModelId,
+  parseModelReference,
+} from "~/lib/route-target/model-reference"
 import { accountManagedModelPrefix } from "~/lib/provider-connections"
 import {
   getProtocolAdapter,
@@ -11,13 +14,16 @@ import {
 } from "~/services/protocols"
 import { buildDirectAdapterTarget } from "~/services/providers/adapter-target"
 
-import type { EmbeddingRequest, EmbeddingResponse } from "./payload-types"
+import type {
+  EmbeddingRequest,
+  EmbeddingResponse,
+} from "~/services/protocols/chat/types"
 
 export {
   type Embedding,
   type EmbeddingRequest,
   type EmbeddingResponse,
-} from "./payload-types"
+} from "~/services/protocols/chat/types"
 
 interface CreateEmbeddingsOptions {
   connection: ProviderConnection

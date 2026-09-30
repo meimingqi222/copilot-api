@@ -887,6 +887,11 @@ select.form-input {
   box-shadow: 0 6px 20px rgba(124, 58, 237, 0.08);
 }
 
+.quota-account-card.quota-card-minimax:hover {
+  border-color: rgba(255, 108, 55, 0.35);
+  box-shadow: 0 6px 20px rgba(255, 108, 55, 0.08);
+}
+
 .quota-account-card.quota-card-xai:hover {
   border-color: rgba(17, 24, 39, 0.3);
   box-shadow: 0 6px 20px rgba(17, 24, 39, 0.06);
@@ -930,6 +935,10 @@ select.form-input {
   background: linear-gradient(90deg, #7c3aed, #a78bfa);
 }
 
+.quota-account-card.quota-card-minimax .quota-card-accent {
+  background: linear-gradient(90deg, #ff6c37, #ffa176);
+}
+
 .quota-account-card.quota-card-xai .quota-card-accent {
   background: linear-gradient(90deg, #111827, #4b5563);
 }
@@ -968,6 +977,11 @@ select.form-input {
 .quota-provider-badge.quota-badge-kimi {
   background: rgba(124, 58, 237, 0.12);
   color: #6d28d9;
+}
+
+.quota-provider-badge.quota-badge-minimax {
+  background: rgba(255, 108, 55, 0.12);
+  color: #d9541f;
 }
 
 .quota-provider-badge.quota-badge-xai {

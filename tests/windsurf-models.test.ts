@@ -604,7 +604,7 @@ test("route target upstream for a pin survives the dispatch model overwrite", ()
     connections: [connection],
     onlyAvailable: true,
   })
-  expect(targets).toHaveLength(1)
+  expect(targets.map((target) => target.endpoint)).toEqual(["chat", "messages"])
   expect(targets[0]?.publicModelId).toBe("glm-5-2-max")
   expect(targets[0]?.upstreamModelId).toBe("glm-5-2-max")
 
@@ -660,7 +660,7 @@ test("route target for opaque pin carries the opaque upstream", () => {
     endpoint: "chat",
     connections: [connection],
   })
-  expect(targets).toHaveLength(1)
+  expect(targets.map((target) => target.endpoint)).toEqual(["chat", "messages"])
   const target = targets[0]
   if (!target) throw new Error("expected a route target for gpt-5.1-codex-low")
   expect(target.upstreamModelId).toBe("MODEL_GPT_5_1_CODEX_LOW")

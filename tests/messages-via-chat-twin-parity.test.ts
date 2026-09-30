@@ -5,7 +5,7 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
-import type { CopilotStreamEvent } from "~/services/copilot/create-chat-completions"
+import type { CopilotStreamEvent } from "~/services/protocols/chat/types"
 import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 
 import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
@@ -133,7 +133,14 @@ const payload: AnthropicMessagesPayload = {
   messages: [{ role: "user", content: "hi" }],
 }
 
-async function runWith(events: Array<TwinEvent>): Promise<Array<unknown>> {
+interface AnthropicSseFrame {
+  data: string
+  event: string
+}
+
+async function runWith(
+  events: Array<TwinEvent>,
+): Promise<Array<AnthropicSseFrame>> {
   const result = await createMessagesViaChat({
     target,
     connection,
@@ -142,11 +149,24 @@ async function runWith(events: Array<TwinEvent>): Promise<Array<unknown>> {
     chatExecutor: () =>
       Promise.resolve({ credentialId: "cred-1", response: toStream(events) }),
   })
-  const out: Array<unknown> = []
-  for await (const event of result.response as AsyncIterable<unknown>) {
-    out.push(event)
+  const out: Array<AnthropicSseFrame> = []
+  for await (const frame of result.response as AsyncIterable<AnthropicSseFrame>) {
+    out.push(frame)
   }
   return out
+}
+
+/** Consume frames the way connection-handler does — proves the frame shape. */
+async function forwardedEventTypes(
+  events: Array<TwinEvent>,
+): Promise<Array<string | undefined>> {
+  const frames = await runWith(events)
+  const types: Array<string | undefined> = []
+  for (const frame of frames) {
+    if (!frame.data) continue
+    types.push((JSON.parse(frame.data) as { type?: string }).type)
+  }
+  return types
 }
 
 describe("messages-via-chat structured twin", () => {
@@ -160,13 +180,26 @@ describe("messages-via-chat structured twin", () => {
   })
 
   test("twin path carries tool calls and usage to the end", async () => {
-    const events = await runWith(buildEvents())
-    const types = events.map((e) => (e as { type?: string }).type)
+    const frames = await runWith(buildEvents())
+    const types = frames.map((frame) => {
+      expect(frame.data).toBeString()
+      return (JSON.parse(frame.data) as { type?: string }).type
+    })
     expect(types).toContain("message_start")
     expect(types).toContain("message_stop")
-    const deltas = events.filter(
-      (e) => (e as { type?: string }).type === "message_delta",
-    )
+    const deltas = types.filter((type) => type === "message_delta")
     expect(deltas.length).toBeGreaterThan(0)
+  })
+
+  test("stream yields SSE frames the connection-handler loop can forward", async () => {
+    // Regression: the wrapper used to yield raw Anthropic event objects, which
+    // the consumer's `if (!event.data) continue` guard silently dropped —
+    // clients received only the synthetic terminal error.
+    const types = await forwardedEventTypes(buildEvents())
+    expect(types).toContain("message_start")
+    expect(types).toContain("message_stop")
+    for (const frameType of types) {
+      expect(frameType).toBeString()
+    }
   })
 })

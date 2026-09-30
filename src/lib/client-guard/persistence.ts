@@ -2,7 +2,6 @@ import {
   getGuardConfig,
   loadGuardConfigFromPersistence,
   resetGuardConfigForTest,
-  setGuardConfig,
 } from "~/lib/guard-config"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
@@ -90,16 +89,6 @@ export async function saveGuard(): Promise<void> {
     uaWhitelist: [...customUaWhitelist],
     config: { ...getGuardConfig() },
   })
-}
-
-export async function saveGuardConfig(): Promise<void> {
-  await saveGuard()
-}
-
-export function applyGuardConfigPatch(
-  patch: Partial<import("~/lib/guard-config").GuardConfig>,
-): import("~/lib/guard-config").GuardConfig {
-  return setGuardConfig(patch)
 }
 
 export function resetGuardForTest(): void {

@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from "bun:test"
 
-import { listAccounts } from "~/lib/legacy-accounts"
+import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { listProviderConnections } from "~/lib/provider-connections"
 import { createEmbeddings } from "~/services/copilot/create-embeddings"
 

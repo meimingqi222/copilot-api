@@ -1,9 +1,7 @@
-import type { Account } from "~/lib/legacy-accounts"
 import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { isOAuthAccount } from "~/lib/legacy-accounts"
 import { logger } from "~/lib/logger"
 import { isOAuthProviderId } from "~/lib/provider-config"
 import {
@@ -11,7 +9,6 @@ import {
   getConnectionAuthStatus,
   getConnectionProvider,
   getConnectionProxyUrl,
-  getConnectionSettings,
   getCredentialContextNumber,
   getCredentialContextString,
   getMutableProviderConnection,
@@ -301,102 +298,7 @@ async function refreshOAuthConnectionTokenOnce(
   }
 }
 
-/**
- * Account 桥接层:从 connection 反查刷新,并把结果同步回调用方持有的
- * Account 快照(等价旧版对 account 的 in-place mutation)。
- */
-export async function refreshOAuthAccountToken(
-  account: Account,
-  reason = "scheduled",
-): Promise<void> {
-  // Note: intentionally not gated on `account.enabled` — a disabled account
-  // must still be able to refresh its OAuth token so quota/token stays valid.
-  if (!isOAuthAccount(account)) {
-    return
-  }
-
-  const connection = getMutableProviderConnection(account.id)
-  if (!connection) {
-    return
-  }
-
-  let succeeded = false
-  try {
-    await refreshOAuthConnectionToken(connection, reason)
-    succeeded = true
-  } finally {
-    // 无论成功或失败,都把 connection 上的最新状态同步回 Account 快照
-    // (refreshOAuthConnectionToken 内部已通过 setConnectionAuthStatus 写入
-    // ready/error,失败时也会 rethrow,所以用 finally 保证同步)。
-    syncConnectionToAccountSnapshot(connection, account, succeeded)
-  }
-}
-
-/**
- * 把 connection 的最新状态同步回 Account 快照(桥接层专用,Phase 4 删)。
- * 不再通过 connectionToAccount 派生完整快照,而是直接从 connection 字段
- * 读取刷新后会变化的凭据字段(accessToken/refreshToken/expiresAt)、
- * settings(metadata.settings)以及 authStatus/lastError。
- */
-function syncConnectionToAccountSnapshot(
-  connection: ProviderConnection,
-  account: Account,
-  succeeded: boolean,
-): void {
-  // credentials:刷新后只有 accessToken/refreshToken/expiresAt 会变化,直接从 credential 读取
-  if (isOAuthAccount(account)) {
-    const cred = connection.credentials[0]
-    if (cred) {
-      account.credentials = {
-        ...account.credentials,
-        accessToken: cred.value || undefined,
-        refreshToken:
-          typeof cred.context?.refreshToken === "string" ?
-            cred.context.refreshToken
-          : account.credentials?.refreshToken,
-        expiresAt:
-          typeof cred.context?.expiresAt === "number" ?
-            cred.context.expiresAt
-          : account.credentials?.expiresAt,
-      }
-    }
-  }
-
-  // settings:从 connection.metadata.settings 同步
-  const settings = getConnectionSettings(connection)
-  if (settings) {
-    account.settings = { ...settings }
-  }
-
-  // authStatus / lastError 手动写入 runtimeState
-  // (connectionToAccount 在 authStatus === "ready" 时不写 runtimeState.authStatus,
-  //  旧版 API 契约要求刷新后显式可见,这里补回)
-  const authStatus = getConnectionAuthStatus(connection)
-  if (authStatus) {
-    account.runtimeState = {
-      ...account.runtimeState,
-      authStatus: authStatus as "ready" | "pending" | "error",
-    }
-  }
-  const authError = getConnectionAuthError(connection)
-  if (authError) {
-    account.runtimeState = {
-      ...account.runtimeState,
-      lastError: authError,
-    }
-  } else if (account.runtimeState) {
-    delete account.runtimeState.lastError
-  }
-  // 旧版 Account 契约:成功刷新后写 lastRefreshAt(新版 connection 不存此字段,
-  // 桥接层补回,Phase 4 删)。
-  if (succeeded) {
-    account.runtimeState = {
-      ...account.runtimeState,
-      lastRefreshAt: Date.now(),
-    }
-  }
-}
-
+/** 安排 connection 的 OAuth token 刷新。 */
 export function scheduleOAuthRefreshForConnection(
   connection: ProviderConnection,
 ): void {
@@ -432,20 +334,6 @@ export function scheduleOAuthRefreshForConnection(
   const delayMs = refreshAt - Date.now()
 
   scheduleOAuthRefreshAttempt(connection.id, delayMs, "scheduled")
-}
-
-/** Account 桥接层:等价 scheduleOAuthRefreshForConnection(account.id)。 */
-export function scheduleOAuthRefreshForAccount(account: Account): void {
-  if (!isOAuthAccount(account)) {
-    cancelOAuthRefreshTimer(account.id)
-    return
-  }
-  const connection = getMutableProviderConnection(account.id)
-  if (!connection) {
-    cancelOAuthRefreshTimer(account.id)
-    return
-  }
-  scheduleOAuthRefreshForConnection(connection)
 }
 
 export function scheduleOAuthRefreshForAllConnections(): void {

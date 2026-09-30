@@ -16,6 +16,7 @@ import { copilotProviderRuntime } from "./copilot"
 import { lobsteraiProviderRuntime } from "./lobsterai"
 import { mimoProviderRuntime } from "./mimo"
 import { createOAuthProviderRuntime } from "./oauth"
+import { qoderProviderRuntime } from "./qoder"
 import { registerProvider } from "./registry"
 import { windsurfProviderRuntime } from "./windsurf"
 
@@ -49,7 +50,13 @@ export function initializeProviderRegistry(): void {
   lobsteraiProviderRuntime.adapter = getProtocolAdapter("lobsterai-native")
   registerProvider(lobsteraiProviderRuntime)
 
+  // Qoder 需要自己的 runtime（模型发现走 adapter），单独注册；
+  // 其余 OAuth provider 用通用 runtime 即可。
+  qoderProviderRuntime.adapter = getProtocolAdapter("qoder-native")
+  registerProvider(qoderProviderRuntime)
+
   for (const providerId of OAUTH_PROVIDER_IDS) {
+    if (providerId === "qoder") continue
     const runtime = createOAuthProviderRuntime(providerId)
     runtime.adapter = getProtocolAdapter(PROVIDER_PROTOCOL_MAP[providerId])
     registerProvider(runtime)

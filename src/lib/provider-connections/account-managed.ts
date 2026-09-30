@@ -7,9 +7,8 @@
  * - *-compatible(openai/openai-responses/anthropic 3 个)→ 外部 Provider
  *   管理面(/admin/api/provider-connections),手工配置的上游端点。
  *
- * 此判别器从 protocol 派生,不依赖 AccountLegacyMetadata(后者是过渡态,
- * T5.2.5 会删除 metadata.provider 字段)。protocol 是 ProviderConnection
- * 的本体字段,不会被 Schema 归一化删除,因此此谓词在 T5.2.5 后仍然有效。
+ * 此判别器从 protocol 派生,不依赖 metadata.provider。protocol 是
+ * ProviderConnection 的本体字段,新连接一律由 protocol 决定归属。
  */
 
 import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"

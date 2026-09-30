@@ -105,14 +105,6 @@ export function buildAntigravityHubUserAgent(): string {
 }
 
 /**
- * 构建长 UA（用于 onboardUser 控制面请求）。
- * 在短 UA 基础上追加 google-api-nodejs-client 版本。
- */
-export function buildAntigravityOnboardUserAgent(): string {
-  return `${buildAntigravityHubUserAgent()} google-api-nodejs-client/10.3.0`
-}
-
-/**
  * OAuth token refresh 专用 UA。
  * 原生 Antigravity 使用 Go 的默认 HTTP 客户端刷新 token，
  * 因此 User-Agent 是 Go-http-client/2.0 而非 antigravity/hub/...。

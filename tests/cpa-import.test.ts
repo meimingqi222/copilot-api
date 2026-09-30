@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
-import { connectionToAccount, listAccounts } from "~/lib/legacy-accounts"
+import {
+  connectionToTestAccount as connectionToAccount,
+  listTestAccounts as listAccounts,
+} from "./helpers/set-accounts"
 import { listAccountManagedConnections } from "~/lib/provider-connections"
 import {
   importCpaAuthRecords,

@@ -1,17 +1,12 @@
-import type { Account, AccountModel } from "~/lib/legacy-accounts"
+import type { AccountModel } from "~/lib/provider-connections"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import {
-  canonicalNativeModelId,
-  getOAuthAccountId,
-  isOAuthAccount,
-} from "~/lib/legacy-accounts"
+import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import {
   getConnectionProvider,
   getConnectionProxyUrl,
   getConnectionSettings,
-  getMutableProviderConnection,
 } from "~/lib/provider-connections"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
@@ -154,47 +149,8 @@ async function fetchCodexModelsFromUpstream(
   return parseCodexModelsPayload(response.body)
 }
 
-export async function getCodexModelsForAccount(
-  account: Account,
-  signal?: AbortSignal,
-): Promise<Array<AccountModel>> {
-  if (!isOAuthAccount(account) || account.provider !== "codex") {
-    return []
-  }
-
-  const accessToken = account.credentials?.accessToken
-  if (!accessToken) {
-    return []
-  }
-
-  const connection = getMutableProviderConnection(account.id)
-  if (!connection) {
-    return []
-  }
-
-  // Prefer the CPA mirror catalog (more complete, includes pre-release models
-  // like gpt-6-astra). Fall back to the upstream /models endpoint.
-  const mirrored = await fetchCodexModelsFromMirror(connection, signal)
-  if (mirrored) {
-    logger.debug(
-      `Codex models for "${account.label}" sourced from CPA mirror (${mirrored.length} models)`,
-    )
-    return mirrored
-  }
-
-  const baseUrl = account.settings?.baseUrl ?? CODEX_API_BASE_URL
-  return fetchCodexModelsFromUpstream(
-    connection,
-    accessToken,
-    baseUrl,
-    getOAuthAccountId(account),
-    signal,
-  )
-}
-
 /**
  * Connection 原生版本:直接从 ProviderConnection 发现 codex 模型。
- * Phase 2d:消除 connectionToAccount 依赖。
  */
 export async function getCodexModelsForConnection(
   connection: ProviderConnection,

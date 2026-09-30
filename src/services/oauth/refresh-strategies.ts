@@ -22,6 +22,12 @@ import {
   refreshKimiTokens,
 } from "./kimi"
 import {
+  applyMinimaxOAuthBundle,
+  refreshMinimaxTokens,
+  resolveMinimaxRegion,
+} from "./minimax"
+import { applyQoderJobTokenRefresh, refreshQoderJobToken } from "./qoder"
+import {
   applyXaiOAuthBundle,
   getXaiTokenEndpoint,
   refreshXaiTokens,
@@ -90,10 +96,33 @@ export const OAUTH_REFRESH_STRATEGIES: Record<OAuthProviderId, OAuthRefreshFn> =
       )
       applyXaiOAuthBundle(connection, bundle)
     },
+    minimax: async (connection, refreshToken, fetchOptions) => {
+      // 账号域由 connection 上的 region 决定（baseUrl 里也带着区域，
+      // resolveMinimaxRegion 会在 context 缺失时从那里反查）。
+      const region = resolveMinimaxRegion(connection)
+      const bundle = await refreshMinimaxTokens(
+        refreshToken,
+        region,
+        fetchOptions,
+      )
+      applyMinimaxOAuthBundle(connection, bundle)
+    },
+    // Qoder 的 refresh token 只刷 job token（chat 用）；设备 token 及其 refresh
+    // 由 quota fetcher 在 401 时自行惰性轮换，不走这条调度路径。
+    qoder: async (connection, refreshToken, fetchOptions) => {
+      const job = await refreshQoderJobToken(refreshToken, fetchOptions)
+      applyQoderJobTokenRefresh(connection, job)
+    },
   }
 
 export const OAUTH_REFRESH_LEAD_MS: Partial<Record<OAuthProviderId, number>> = {
   // Match CPA: refresh Codex credentials one day before expiry.
   codex: 24 * 60 * 60 * 1000,
   claude: 4 * 60 * 60 * 1000,
+  // MiniMax Code 的 accessToken 只有 1 小时，提前量必须很小（实测 3600s），
+  // 否则会出现“有效期比提前量还短”导致每次请求都续期。默认 5 分钟即可。
+  minimax: 5 * 60 * 1000,
+  // Qoder 的 job token 寿命由响应的 expires_in（毫秒）决定，可能很短；
+  // 提前量取 5 分钟（也是 expires_in/2 的上限）。
+  qoder: 5 * 60 * 1000,
 }

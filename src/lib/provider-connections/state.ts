@@ -44,8 +44,7 @@ export async function initializeProviderConnections(): Promise<void> {
     stateRoot.loaded = true
     // 启动时对所有 connection 做 availability refresh,
     // 把已过期的 cooldown / quota_exhausted 自动恢复为 ready。
-    // 这覆盖了外部 provider connection(account-store 的
-    // normalizeAllConnectionRuntimeFields 只处理 account connection)。
+    // 外部 provider connection 与 account-managed connection 一并覆盖。
     for (const conn of stateRoot.connections) {
       refreshConnectionAvailability(conn)
     }
@@ -277,6 +276,13 @@ function normalizeEndpointsForProtocol(
       endpoints.map((endpoint) =>
         endpoint === "chat" ? "messages" : endpoint,
       ),
+    )
+  }
+  if (protocol === "gemini-compatible") {
+    // A Gemini-wire upstream never speaks chat; a stale "chat" entry would
+    // silently route a Gemini client into a chat executor.
+    return uniqueEndpoints(
+      endpoints.map((endpoint) => (endpoint === "chat" ? "gemini" : endpoint)),
     )
   }
   if (
@@ -722,14 +728,13 @@ export function __resetProviderConnectionsForTest(): void {
   persistenceEnabled = false
 }
 
-// ── 批次 2：同步 mutation helpers（替代 state.accounts.push/splice） ──
+// ── 同步 mutation helpers ─────────────────────────────────────────
 // 这些函数直接操作 stateRoot.connections，不经过 withMutation 串行化。
 // 调用方负责后续 persistProviderConnections() 持久化。
-// 用于 account-store.ts / admin routes 等需要在批量操作后统一持久化的场景。
+// 用于 admin routes / 批量导入等需要在批量操作后统一持久化的场景。
 
 /**
  * 按 id 插入或替换 connection（upsert）。
- * 替代 state.accounts.push(account) + saveAccounts()。
  */
 export function upsertProviderConnection(conn: ProviderConnection): void {
   const idx = stateRoot.connections.findIndex((c) => c.id === conn.id)
