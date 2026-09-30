@@ -57,6 +57,8 @@ export interface ConnectionMetadata {
   subtitle?: string
   // provider-specific settings（原 account.settings）
   settings?: Record<string, unknown>
+  /** Claude 账号选定的生成请求传输方式。 */
+  claudeTransport?: "cli" | "http"
   // provider-specific credentials extras（非 token 字段）
   // 如 mimo 的 xiaomichatbotPh / mimoWsToken
   // OAuth 的 email / accountId / projectId / deviceId / apiKey / idToken / refreshToken

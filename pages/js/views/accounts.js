@@ -7,17 +7,6 @@ const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
   "lobsterai",
 ])
 
-/**
- * 双模式 provider：描述符保持 direct（手贴 token 可用），同时提供
- * OAuth 登录入口（windsurf / codebuddy 系列）。取消流程时同样放行。
- */
-const DUAL_MODE_OAUTH_PROVIDERS = new Set([
-  "windsurf",
-  "codebuddy",
-  "codebuddy-cn",
-  "lobsterai",
-])
-
 function accountsView() {
   return {
     ...ViewHelpers,
@@ -458,13 +447,9 @@ function accountsView() {
     async cancelOAuthFlow() {
       const provider = this.newAccount.provider
       const flowId = this.oauthFlowData?.flowId
-      // Dual-mode providers (direct descriptor + OAuth login): allow
-      // canceling their OAuth flow even though authMode is "direct".
-      if (
-        !flowId
-        || (this.selectedProvider()?.authMode !== "oauth"
-          && !DUAL_MODE_OAUTH_PROVIDERS.has(provider))
-      ) {
+      // A live OAuth flow can be canceled only for providers whose login is
+      // OAuth (authMode "oauth"); a direct provider has no flow to cancel.
+      if (!flowId || this.selectedProvider()?.authMode !== "oauth") {
         return
       }
       try {
@@ -525,11 +510,11 @@ function accountsView() {
       this.showAddModal = false
     },
 
-    async submitAccount() {
+    async submitAccount(forceManual = false) {
       this.pollTimer = null
       try {
         const authMode = this.selectedProvider()?.authMode
-        if (authMode === "oauth") {
+        if (authMode === "oauth" && !forceManual) {
           try {
             await this.startOAuthFlow()
           } catch (error) {
@@ -807,6 +792,24 @@ function accountsView() {
           I18n.t("accounts.updateSuccess") || "Account updated",
           "success",
         )
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
+    claudeTransport(account) {
+      return account.settings?.claudeTransport === "http" ? "http" : "cli"
+    },
+
+    async toggleClaudeTransport(account) {
+      const nextTransport =
+        this.claudeTransport(account) === "cli" ? "http" : "cli"
+      try {
+        const result = await API.accounts.update(account.id, {
+          settings: { claudeTransport: nextTransport },
+        })
+        account.settings = result.account.settings
+        this.showToast(I18n.t("accounts.claudeTransportSuccess"), "success")
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       }

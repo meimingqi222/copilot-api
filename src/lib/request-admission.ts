@@ -6,6 +6,7 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
+import type { RouteCandidate, RouteCandidateStatus } from "~/lib/log-store"
 
 import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
@@ -22,12 +23,14 @@ import {
   type ModelEndpoint,
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
-import { patchRequestLog } from "~/lib/request-log"
+import { patchRequestLog, publishTraceSnapshot } from "~/lib/request-log"
 import {
   buildRouteTargets,
   commitRouteTargetAffinity,
   resolveModelRouting,
+  routeEvidenceFor,
   selectRouteTarget,
+  targetKey,
 } from "~/lib/route-target"
 import { extractSessionIds } from "~/lib/routing"
 import { state } from "~/lib/state"
@@ -244,6 +247,26 @@ export async function prepareRequestAdmission(
     streaming: options.stream,
     reasoningEffort: options.reasoningEffort,
   })
+
+  // Candidate paths: every route routing could have taken, so the admin trace
+  // view can show the chosen one plus why the alternates were passed over.
+  // Built from the *unfiltered* pool so temporarily-unavailable candidates
+  // (cooldown / quota / disabled) still appear.
+  const allCandidates = buildRouteTargets({
+    connectionId: routing.connectionId,
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
+    aliasRestriction: routing.aliasRestriction,
+    endpoint: options.endpoint,
+    onlyAvailable: false,
+    compact: options.compact,
+  })
+  patchRequestLog(c, {
+    candidates: describeCandidates(allCandidates, targetKey(target)),
+  })
+  publishTraceSnapshot(c, "update")
+
   return {
     target,
     connection,
@@ -487,6 +510,121 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
   }
 
   return { reasons, retryAfterSeconds }
+}
+
+/**
+ * Describe every route the gateway could have taken, chosen one first.
+ *
+ * Built from the *unfiltered* candidate pool so candidates that were skipped
+ * for being unavailable still show up (magpie-style: the alternates stay
+ * visible with why they lost). One row per connection/credential, preferring
+ * the native endpoint, mirroring how the pool is shaped before selection.
+ */
+function describeCandidates(
+  allCandidates: Array<RouteTarget>,
+  chosenKey: string | undefined,
+  limit = 12,
+): Array<RouteCandidate> {
+  const byKey = new Map<string, RouteTarget>()
+  for (const candidate of allCandidates) {
+    const key = targetKey(candidate)
+    const previous = byKey.get(key)
+    if (!previous || (previous.isTranslated && !candidate.isTranslated)) {
+      byKey.set(key, candidate)
+    }
+  }
+
+  const rows: Array<RouteCandidate> = []
+  for (const [key, candidate] of byKey) {
+    const connection = getProviderConnection(candidate.connectionId)
+    const credential = connection?.credentials.find(
+      (c) => c.id === candidate.credentialId,
+    )
+    let status: RouteCandidateStatus
+    let retryAfterMs: number | undefined
+
+    if (key === chosenKey) {
+      status = "chosen"
+    } else if (connection && isAccountManagedConnection(connection)) {
+      const availability = getConnectionAvailability(connection)
+      if (!availability.available) {
+        status = mapAccountReason(availability.reason)
+      } else {
+        status = candidateAvailability(candidate)
+      }
+      if (availability.retryAfterSeconds > 0) {
+        retryAfterMs = availability.retryAfterSeconds * 1000
+      }
+    } else {
+      const diagnostic = getCredentialFailureDiagnostic(
+        candidate.connectionId,
+        candidate.credentialId,
+      )
+      if (diagnostic && diagnostic.reason !== "disabled") {
+        status = diagnostic.reason
+        if (diagnostic.retryAfterSeconds > 0) {
+          retryAfterMs = diagnostic.retryAfterSeconds * 1000
+        }
+      } else if (connection && !connection.enabled) {
+        status = "disabled"
+      } else {
+        status = candidateAvailability(candidate)
+      }
+    }
+
+    const evidence =
+      candidate.credentialId ?
+        routeEvidenceFor(candidate.connectionId, candidate.credentialId)
+      : undefined
+
+    rows.push({
+      connectionId: candidate.connectionId,
+      connectionName: connection?.name ?? candidate.connectionName,
+      provider: connection ? connectionProvider(connection) : undefined,
+      credentialId: candidate.credentialId,
+      credentialLabel: credential?.label,
+      protocol: candidate.protocol,
+      endpoint: candidate.endpoint,
+      model: candidate.upstreamModelId,
+      priority: candidate.connectionPriority,
+      status,
+      retryAfterMs,
+      why: evidence?.rest?.reason ?? status,
+      quotaUsedPct:
+        evidence?.quota?.usedFraction === undefined ?
+          undefined
+        : Math.round(evidence.quota.usedFraction * 1000) / 10,
+      renewAtMs: evidence?.quota?.renewsAtMs[0],
+      servedTokens: evidence ? Math.round(evidence.servedTokens) : undefined,
+      restReason: evidence?.rest?.reason,
+      restUntilMs: evidence?.rest?.untilMs,
+    })
+  }
+
+  const rank: Record<RouteCandidateStatus, number> = {
+    chosen: 0,
+    available: 1,
+    translated: 2,
+    wildcard: 3,
+    cooldown: 4,
+    quota: 5,
+    auth: 6,
+    disabled: 7,
+    unknown: 8,
+  }
+  rows.sort(
+    (a, b) =>
+      rank[a.status] - rank[b.status]
+      || (a.priority ?? 99) - (b.priority ?? 99),
+  )
+  return rows.slice(0, limit)
+}
+
+/** Why an otherwise-available candidate was not the one picked. */
+function candidateAvailability(candidate: RouteTarget): RouteCandidateStatus {
+  if (candidate.isWildcard) return "wildcard"
+  if (candidate.isTranslated) return "translated"
+  return "available"
 }
 
 function getCredentialFailureDiagnostic(

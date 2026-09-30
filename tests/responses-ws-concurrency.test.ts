@@ -10,7 +10,7 @@
  * holds no lease and would tunnel around the gate.
  */
 
-import { afterEach, beforeEach, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, expect, mock } from "bun:test"
 
 import type { RouteTarget } from "~/lib/provider-connections"
 
@@ -34,6 +34,7 @@ import {
   type CredentialLease,
 } from "~/services/dispatch/concurrency"
 
+import { loopbackTest } from "./helpers/loopback-test"
 import { setTestAccounts } from "./helpers/set-accounts"
 
 const ACCOUNT_ID = "test-account-id"
@@ -148,221 +149,230 @@ function occupy(target: RouteTarget, count: number): Array<CredentialLease> {
   return held
 }
 
-test("a WS turn at the in-flight cap is rejected without a same-account HTTP retry", async () => {
-  const target = responsesTarget()
-  const cap = remainingLeases(target)
-  expect(cap).toBeGreaterThan(1)
+loopbackTest(
+  "a WS turn at the in-flight cap is rejected without a same-account HTTP retry",
+  async () => {
+    const target = responsesTarget()
+    const cap = remainingLeases(target)
+    expect(cap).toBeGreaterThan(1)
 
-  const fetchMock = mock(() => Promise.resolve(new Response("nope")))
-  globalThis.fetch = fetchMock as unknown as typeof fetch
+    const fetchMock = mock(() => Promise.resolve(new Response("nope")))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
 
-  // Saturate the credential from "other sessions".
-  const held = occupy(target, cap)
+    // Saturate the credential from "other sessions".
+    const held = occupy(target, cap)
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
-
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: { model: MODEL, input: "hi" },
-    }),
-  )
-
-  const message = JSON.parse(await queue.next()) as {
-    type: string
-    status: number
-    error: { type: string; code?: number; retryable?: boolean }
-  }
-
-  expect(message.type).toBe("error")
-  // Local saturation is a retryable 429, not a 500.
-  expect(message.status).toBe(429)
-  expect(message.error.type).toBe("rate_limit_error")
-  expect(message.error.retryable).toBe(true)
-
-  // The rejection must NOT be treated as a lazy connection failure: the
-  // same-account HTTP recovery bypasses the lease, so reaching it would let a
-  // throttled turn tunnel around its own limiter.
-  expect(fetchMock).not.toHaveBeenCalled()
-
-  // The saturated credential is healthy, just busy: it must not be cooled.
-  const connection = getProviderConnection(ACCOUNT_ID)
-  expect(connection?.credentials[0]?.cooldownUntil).toBeUndefined()
-  expect(connection?.credentials[0]?.status).toBe("ready")
-
-  for (const lease of held) lease.release()
-  ws.close()
-})
-
-test("a saturated WS turn rotates to the next account instead of being refused", async () => {
-  // Two accounts, the first pinned by session affinity and locally saturated.
-  // The session must fail over to the second, not surface a 429 while a
-  // healthy second account sits idle.
-  setTestAccounts([
-    {
-      id: ACCOUNT_ID,
-      label: "test",
-      provider: "copilot",
-      credentials: { githubToken: "gh-test-token" },
-      runtimeState: { copilotToken: "test-token" },
-      enabled: true,
-      priority: 0,
-      isExhausted: false,
-      createdAt: Date.now(),
-    },
-    {
-      id: "second-account-id",
-      label: "second",
-      provider: "copilot",
-      credentials: { githubToken: "gh-test-token-2" },
-      runtimeState: { copilotToken: "test-token-2" },
-      enabled: true,
-      priority: 1,
-      isExhausted: false,
-      createdAt: Date.now(),
-    },
-  ])
-
-  const first = responsesTarget()
-  expect(first.connectionId).toBe(ACCOUNT_ID)
-  const cap = remainingLeases(first)
-  expect(cap).toBeGreaterThan(1)
-
-  // The upstream returns a normal non-streaming response; the point is which
-  // credential served it. One POST means the turn executed once, on the
-  // rotated-to account rather than being refused.
-  let upstreamCalls = 0
-  globalThis.fetch = mock(() => {
-    upstreamCalls += 1
-    return Promise.resolve(
-      new Response(
-        JSON.stringify({
-          id: crypto.randomUUID(),
-          object: "response",
-          model: MODEL,
-          status: "completed",
-          output: [],
-          output_text: "rotated",
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        }),
-        { status: 200 },
-      ),
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
     )
-  }) as unknown as typeof fetch
 
-  // Saturate the affinity-bound first account from "other sessions".
-  const held = occupy(first, cap)
-
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
-
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: { model: MODEL, input: "rotate-me" },
-    }),
-  )
-
-  const message = JSON.parse(await queue.next()) as {
-    type?: string
-    object?: string
-    output_text?: string
-  }
-
-  // Served (rotated to the second account), not refused with a 429.
-  expect(message.type).toBeUndefined()
-  expect(message.object).toBe("response")
-  expect(message.output_text).toBe("rotated")
-  expect(upstreamCalls).toBe(1)
-
-  // And it was the *second* account that served it — proving the rotation
-  // moved the turn rather than re-hitting the saturated account.
-  await waitFor(() =>
-    logStore
-      .query({ endpoint: "responses", limit: 10 })
-      .entries.some((entry) => entry.method === "WS"),
-  )
-  const turn = logStore
-    .query({ endpoint: "responses", limit: 10 })
-    .entries.find((entry) => entry.method === "WS")
-  expect(turn?.accountId).toBe("second-account-id")
-
-  // The rotation must not have cooled the saturated-but-healthy first account.
-  const firstConnection = getProviderConnection(ACCOUNT_ID)
-  expect(firstConnection?.credentials[0]?.cooldownUntil).toBeUndefined()
-  expect(firstConnection?.credentials[0]?.status).toBe("ready")
-
-  for (const lease of held) lease.release()
-  ws.close()
-})
-
-test("a WS turn holds a slot while in flight and releases it on client close", async () => {
-  const target = responsesTarget()
-  const cap = remainingLeases(target)
-  expect(cap).toBeGreaterThan(1)
-
-  // Leave exactly one slot for the WS turn.
-  const held = occupy(target, cap - 1)
-  const freeSlots = remainingLeases(target)
-  expect(freeSlots).toBe(1)
-
-  globalThis.fetch = mock(
-    (_url: string, opts?: { signal?: AbortSignal }) =>
-      new Promise<Response>((_resolve, reject) => {
-        opts?.signal?.addEventListener(
-          "abort",
-          () => {
-            const err = new Error("The operation was aborted")
-            err.name = "AbortError"
-            reject(err)
-          },
-          { once: true },
-        )
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { model: MODEL, input: "hi" },
       }),
-  ) as unknown as typeof fetch
+    )
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-  const { ws } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
+    const message = JSON.parse(await queue.next()) as {
+      type: string
+      status: number
+      error: { type: string; code?: number; retryable?: boolean }
+    }
 
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: { model: MODEL, input: "slow" },
-    }),
-  )
+    expect(message.type).toBe("error")
+    // Local saturation is a retryable 429, not a 500.
+    expect(message.status).toBe(429)
+    expect(message.error.type).toBe("rate_limit_error")
+    expect(message.error.retryable).toBe(true)
 
-  // The in-flight turn takes the last slot: nothing is available any more.
-  await waitFor(() => remainingLeases(target) === 0)
+    // The rejection must NOT be treated as a lazy connection failure: the
+    // same-account HTTP recovery bypasses the lease, so reaching it would let a
+    // throttled turn tunnel around its own limiter.
+    expect(fetchMock).not.toHaveBeenCalled()
 
-  ws.close()
+    // The saturated credential is healthy, just busy: it must not be cooled.
+    const connection = getProviderConnection(ACCOUNT_ID)
+    expect(connection?.credentials[0]?.cooldownUntil).toBeUndefined()
+    expect(connection?.credentials[0]?.status).toBe("ready")
 
-  // The disconnected turn must not leak its slot: exactly the one it held must
-  // come back, while the `cap - 1` test-held slots stay occupied.
-  await waitFor(() => remainingLeases(target) === freeSlots)
+    for (const lease of held) lease.release()
+    ws.close()
+  },
+)
 
-  for (const lease of held) lease.release()
-})
+loopbackTest(
+  "a saturated WS turn rotates to the next account instead of being refused",
+  async () => {
+    // Two accounts, the first pinned by session affinity and locally saturated.
+    // The session must fail over to the second, not surface a 429 while a
+    // healthy second account sits idle.
+    setTestAccounts([
+      {
+        id: ACCOUNT_ID,
+        label: "test",
+        provider: "copilot",
+        credentials: { githubToken: "gh-test-token" },
+        runtimeState: { copilotToken: "test-token" },
+        enabled: true,
+        priority: 0,
+        isExhausted: false,
+        createdAt: Date.now(),
+      },
+      {
+        id: "second-account-id",
+        label: "second",
+        provider: "copilot",
+        credentials: { githubToken: "gh-test-token-2" },
+        runtimeState: { copilotToken: "test-token-2" },
+        enabled: true,
+        priority: 1,
+        isExhausted: false,
+        createdAt: Date.now(),
+      },
+    ])
 
-test("an idle WS session holds no credential slot", async () => {
+    const first = responsesTarget()
+    expect(first.connectionId).toBe(ACCOUNT_ID)
+    const cap = remainingLeases(first)
+    expect(cap).toBeGreaterThan(1)
+
+    // The upstream returns a normal non-streaming response; the point is which
+    // credential served it. One POST means the turn executed once, on the
+    // rotated-to account rather than being refused.
+    let upstreamCalls = 0
+    globalThis.fetch = mock(() => {
+      upstreamCalls += 1
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: crypto.randomUUID(),
+            object: "response",
+            model: MODEL,
+            status: "completed",
+            output: [],
+            output_text: "rotated",
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200 },
+        ),
+      )
+    }) as unknown as typeof fetch
+
+    // Saturate the affinity-bound first account from "other sessions".
+    const held = occupy(first, cap)
+
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
+
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { model: MODEL, input: "rotate-me" },
+      }),
+    )
+
+    const message = JSON.parse(await queue.next()) as {
+      type?: string
+      object?: string
+      output_text?: string
+    }
+
+    // Served (rotated to the second account), not refused with a 429.
+    expect(message.type).toBeUndefined()
+    expect(message.object).toBe("response")
+    expect(message.output_text).toBe("rotated")
+    expect(upstreamCalls).toBe(1)
+
+    // And it was the *second* account that served it — proving the rotation
+    // moved the turn rather than re-hitting the saturated account.
+    await waitFor(() =>
+      logStore
+        .query({ endpoint: "responses", limit: 10 })
+        .entries.some((entry) => entry.method === "WS"),
+    )
+    const turn = logStore
+      .query({ endpoint: "responses", limit: 10 })
+      .entries.find((entry) => entry.method === "WS")
+    expect(turn?.accountId).toBe("second-account-id")
+
+    // The rotation must not have cooled the saturated-but-healthy first account.
+    const firstConnection = getProviderConnection(ACCOUNT_ID)
+    expect(firstConnection?.credentials[0]?.cooldownUntil).toBeUndefined()
+    expect(firstConnection?.credentials[0]?.status).toBe("ready")
+
+    for (const lease of held) lease.release()
+    ws.close()
+  },
+)
+
+loopbackTest(
+  "a WS turn holds a slot while in flight and releases it on client close",
+  async () => {
+    const target = responsesTarget()
+    const cap = remainingLeases(target)
+    expect(cap).toBeGreaterThan(1)
+
+    // Leave exactly one slot for the WS turn.
+    const held = occupy(target, cap - 1)
+    const freeSlots = remainingLeases(target)
+    expect(freeSlots).toBe(1)
+
+    globalThis.fetch = mock(
+      (_url: string, opts?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          opts?.signal?.addEventListener(
+            "abort",
+            () => {
+              const err = new Error("The operation was aborted")
+              err.name = "AbortError"
+              reject(err)
+            },
+            { once: true },
+          )
+        }),
+    ) as unknown as typeof fetch
+
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
+
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { model: MODEL, input: "slow" },
+      }),
+    )
+
+    // The in-flight turn takes the last slot: nothing is available any more.
+    await waitFor(() => remainingLeases(target) === 0)
+
+    ws.close()
+
+    // The disconnected turn must not leak its slot: exactly the one it held must
+    // come back, while the `cap - 1` test-held slots stay occupied.
+    await waitFor(() => remainingLeases(target) === freeSlots)
+
+    for (const lease of held) lease.release()
+  },
+)
+
+loopbackTest("an idle WS session holds no credential slot", async () => {
   const target = responsesTarget()
   const cap = remainingLeases(target)
 
@@ -383,51 +393,54 @@ test("an idle WS session holds no credential slot", async () => {
   ws.close()
 })
 
-test("the WS gate counts only in-flight turns, not open upstream sockets", async () => {
-  const target = responsesTarget()
-  const cap = remainingLeases(target)
+loopbackTest(
+  "the WS gate counts only in-flight turns, not open upstream sockets",
+  async () => {
+    const target = responsesTarget()
+    const cap = remainingLeases(target)
 
-  // Two completed turns in a row must return to a full pool: the lease is
-  // acquired per turn, not per session.
-  globalThis.fetch = mock(() =>
-    Promise.resolve(
-      new Response(
-        JSON.stringify({
-          id: crypto.randomUUID(),
-          object: "response",
-          model: MODEL,
-          status: "completed",
-          output: [],
-          output_text: "",
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        }),
-        { status: 200 },
+    // Two completed turns in a row must return to a full pool: the lease is
+    // acquired per turn, not per session.
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: crypto.randomUUID(),
+            object: "response",
+            model: MODEL,
+            status: "completed",
+            output: [],
+            output_text: "",
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200 },
+        ),
       ),
-    ),
-  ) as unknown as typeof fetch
+    ) as unknown as typeof fetch
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
-
-  for (let i = 0; i < 2; i += 1) {
-    ws.send(
-      JSON.stringify({
-        type: "response.create",
-        response: { model: MODEL, input: `turn-${i}` },
-      }),
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
     )
-    await queue.next()
-  }
 
-  await waitFor(() => remainingLeases(target) === cap)
-  ws.close()
-})
+    for (let i = 0; i < 2; i += 1) {
+      ws.send(
+        JSON.stringify({
+          type: "response.create",
+          response: { model: MODEL, input: `turn-${i}` },
+        }),
+      )
+      await queue.next()
+    }
+
+    await waitFor(() => remainingLeases(target) === cap)
+    ws.close()
+  },
+)
 
 interface SocketQueue {
   next: (timeoutMs?: number) => Promise<string>

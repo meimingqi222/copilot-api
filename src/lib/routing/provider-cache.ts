@@ -44,8 +44,8 @@ export interface ProviderCacheProfile {
 }
 
 /**
- * Account-backed native providers (state.accounts).
- * Connection protocols without a native account map use GENERIC_CACHE_PROFILE.
+ * Cache profiles keyed by native provider.
+ * Connection protocols without a native provider profile use GENERIC_CACHE_PROFILE.
  */
 export const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> =
   {
@@ -138,6 +138,36 @@ export const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> =
       features: ["passthrough-client-session"],
       synthesizeStableSession: false,
     },
+    factory: {
+      provider: "factory",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
+    zcode: {
+      provider: "zcode",
+      features: ["claude-session-header", "passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
+    "commandcode-plan": {
+      provider: "commandcode-plan",
+      features: ["claude-session-header", "passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
+    zed: {
+      provider: "zed",
+      features: ["claude-session-header", "passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
+    dimagent: {
+      provider: "dimagent",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
+    gemini: {
+      provider: "gemini",
+      features: ["passthrough-client-session"],
+      synthesizeStableSession: false,
+    },
   }
 
 /** OpenAI-compatible / generic connections: L0 only + passthrough. */
@@ -209,9 +239,11 @@ export const CACHE_UTILIZATION_DEFAULTS: {
   sessionAffinity: boolean
   sessionAffinityTtlMs: number
   identityConfuse: boolean
+  affinity: "session" | "turn" | "auto" | "off"
 } = {
   strategy: "fill-first",
   sessionAffinity: true,
   sessionAffinityTtlMs: 2 * 60 * 60_000,
   identityConfuse: false,
+  affinity: "session",
 }

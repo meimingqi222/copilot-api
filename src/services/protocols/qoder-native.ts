@@ -128,28 +128,40 @@ export function qoderStreamError(
   return new HTTPError(message, new Response(null, { status }), inner || outer)
 }
 
+/** 外层信封的业务错误（statusCodeValue ≠ 200）；没有则 null。 */
+function outerError(
+  outer: Record<string, unknown>,
+  raw: string,
+): HTTPError | null {
+  const status = outer.statusCodeValue
+  if (typeof status === "number" && status !== 200) {
+    const inner = typeof outer.body === "string" ? outer.body : ""
+    return qoderStreamError(status, inner, raw)
+  }
+  return null
+}
+
 /** 首帧错误检测（safeSseStream 用）：外层信封的错误在这里就要 failover。 */
 export function detectQoderStreamError(
   event: SimpleSseEventLike,
 ): HTTPError | null {
   if (!event.data) return null
   const outer = asRecord(safeJson(event.data))
-  if (!outer) return null
-  const status = outer.statusCodeValue
-  if (typeof status === "number" && status !== 200) {
-    const inner = typeof outer.body === "string" ? outer.body : ""
-    return qoderStreamError(status, inner, event.data)
-  }
-  return null
+  return outer ? outerError(outer, event.data) : null
 }
 
-/** 取外层信封里的内层 OpenAI chunk（不是合法 JSON 时 undefined）。 */
-function innerChunk(data: string | undefined): QoderInnerChunk | undefined {
+/**
+ * 一次 parse 外层信封：业务错误抛出，否则返回内层 OpenAI chunk
+ * （不是合法 JSON 时 undefined）。
+ */
+function parseQoderFrame(
+  data: string | undefined,
+): QoderInnerChunk | undefined {
   if (!data) return undefined
   const outer = asRecord(safeJson(data))
   if (!outer) return undefined
-  const status = outer.statusCodeValue
-  if (typeof status === "number" && status !== 200) return undefined
+  const error = outerError(outer, data)
+  if (error) throw error
   const body = typeof outer.body === "string" ? outer.body : ""
   if (!body) return undefined
   const inner = asRecord(safeJson(body))
@@ -234,10 +246,7 @@ async function* decodeQoderStream(
   }
 
   for await (const event of upstream) {
-    const error = detectQoderStreamError(event)
-    if (error) throw error
-
-    const chunk = innerChunk(event.data)
+    const chunk = parseQoderFrame(event.data)
     if (!chunk) continue
     if (chunk.id) id = chunk.id
     if (typeof chunk.created === "number") created = chunk.created
@@ -386,6 +395,14 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     }
 
     const plaintext = buildChatEnvelope(payload, model)
+    if (process.env.QODER_DUMP) {
+      // 调试用：把发往 Qoder 的明文信封落盘，便于和 magpie 对比。
+      try {
+        await Bun.write("temp/qoder-envelope.json", plaintext)
+      } catch {
+        // 忽略
+      }
+    }
     const wire = encodeRequestBody(new TextEncoder().encode(plaintext))
     const url = qoderChatUrl()
     const headers = buildQoderHeaders(connection, credential.value, url, wire)

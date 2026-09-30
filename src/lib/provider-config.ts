@@ -15,6 +15,12 @@ export const PROVIDER_IDS = [
   "lobsterai",
   "minimax",
   "qoder",
+  "factory",
+  "zcode",
+  "commandcode-plan",
+  "zed",
+  "dimagent",
+  "gemini",
 ] as const
 
 export type ProviderId = (typeof PROVIDER_IDS)[number]
@@ -43,6 +49,12 @@ export const PROVIDER_PROTOCOL_MAP: Record<ProviderId, ProviderProtocol> = {
   lobsterai: "lobsterai-native",
   minimax: "minimax-native",
   qoder: "qoder-native",
+  factory: "factory-native",
+  zcode: "zcode-native",
+  "commandcode-plan": "commandcode-native",
+  zed: "zed-native",
+  dimagent: "dimagent-native",
+  gemini: "gemini-native",
 }
 
 export const OAUTH_PROVIDER_IDS = [
@@ -53,6 +65,12 @@ export const OAUTH_PROVIDER_IDS = [
   "xai",
   "minimax",
   "qoder",
+  "factory",
+  "zcode",
+  "commandcode-plan",
+  "zed",
+  "dimagent",
+  "gemini",
 ] as const
 
 export type OAuthProviderId = (typeof OAUTH_PROVIDER_IDS)[number]
@@ -228,6 +246,87 @@ const OAUTH_PROVIDER_DESCRIPTORS: Record<OAuthProviderId, ProviderDescriptor> =
         "device_flow",
       ],
       accountFields: [],
+    },
+    // Factory (factory.ai / Droid)：WorkOS 设备流登录，模型分走
+    // Messages(/api/llm/a) 与 Responses/Chat(/api/llm/o/v1) 三种 wire。
+    factory: {
+      id: "factory",
+      name: "Factory",
+      icon: "factory",
+      authMode: "oauth",
+      features: [
+        "quota",
+        "cooldown",
+        "native_messages",
+        "native_responses",
+        "oauth",
+        "model_discovery",
+        "device_flow",
+      ],
+      accountFields: OAUTH_ACCOUNT_FIELDS,
+    },
+    // ZCode (Z.ai GLM Coding Plan)：轮询登录换铸出的 API key，走
+    // Anthropic 兼容端点（api.z.ai/api/anthropic）。无刷新（key 长期有效）。
+    zcode: {
+      id: "zcode",
+      name: "ZCode",
+      icon: "zcode",
+      authMode: "oauth",
+      features: [
+        "quota",
+        "cooldown",
+        "native_messages",
+        "oauth",
+        "model_discovery",
+        "device_flow",
+      ],
+      accountFields: OAUTH_ACCOUNT_FIELDS,
+    },
+    // Command Code Plan：CLI 浏览器登录（Studio 把 key POST 到 loopback），
+    // 走 Provider API（/provider/v1 的 Chat/Responses/Anthropic）。无刷新。
+    "commandcode-plan": {
+      id: "commandcode-plan",
+      name: "Command Code Plan",
+      icon: "commandcode",
+      authMode: "oauth",
+      features: [
+        "quota",
+        "cooldown",
+        "native_messages",
+        "native_responses",
+        "oauth",
+        "model_discovery",
+      ],
+      accountFields: OAUTH_ACCOUNT_FIELDS,
+    },
+    // Zed：编辑器登录（RSA + loopback 回调），模型走 cloud.zed.dev/completions。
+    zed: {
+      id: "zed",
+      name: "Zed",
+      icon: "zed",
+      authMode: "oauth",
+      features: ["cooldown", "native_messages", "oauth", "model_discovery"],
+      accountFields: OAUTH_ACCOUNT_FIELDS,
+    },
+    // DimAgent (dimagent.cn)：授权码 + PKCE（固定 client + localhost:54321
+    // 回调），OpenAI 兼容 chat。
+    dimagent: {
+      id: "dimagent",
+      name: "DimAgent",
+      icon: "dimagent",
+      authMode: "oauth",
+      features: ["quota", "cooldown", "oauth", "model_discovery"],
+      accountFields: OAUTH_ACCOUNT_FIELDS,
+    },
+    // Gemini（Gemini CLI）：Google OAuth 登录，走 Code Assist 信封
+    // （cloudcode-pa 的 /v1internal:*）。仅 Code Assist Standard/Enterprise 可用。
+    gemini: {
+      id: "gemini",
+      name: "Gemini CLI",
+      icon: "gemini",
+      authMode: "oauth",
+      features: ["cooldown", "oauth", "model_discovery"],
+      accountFields: OAUTH_ACCOUNT_FIELDS,
     },
   }
 

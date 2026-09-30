@@ -17,6 +17,7 @@ import { lobsteraiProviderRuntime } from "./lobsterai"
 import { mimoProviderRuntime } from "./mimo"
 import { createOAuthProviderRuntime } from "./oauth"
 import { qoderProviderRuntime } from "./qoder"
+import { commandCodeProviderRuntime } from "./commandcode"
 import { registerProvider } from "./registry"
 import { windsurfProviderRuntime } from "./windsurf"
 
@@ -55,8 +56,13 @@ export function initializeProviderRegistry(): void {
   qoderProviderRuntime.adapter = getProtocolAdapter("qoder-native")
   registerProvider(qoderProviderRuntime)
 
+  // Command Code 的模型走 adapter 的 discoverModels，同样单独注册。
+  commandCodeProviderRuntime.adapter = getProtocolAdapter("commandcode-native")
+  registerProvider(commandCodeProviderRuntime)
+
   for (const providerId of OAUTH_PROVIDER_IDS) {
     if (providerId === "qoder") continue
+    if (providerId === "commandcode-plan") continue
     const runtime = createOAuthProviderRuntime(providerId)
     runtime.adapter = getProtocolAdapter(PROVIDER_PROTOCOL_MAP[providerId])
     registerProvider(runtime)

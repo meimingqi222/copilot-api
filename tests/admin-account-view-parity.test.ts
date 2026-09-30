@@ -173,6 +173,28 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
     expect(account.quotaInfo).toBe(null)
   })
 
+  test("Claude transport selection is returned after an account update", async () => {
+    setTestAccounts([oauthAccount()])
+    const putRes = await adminJson(
+      "http://localhost/admin/api/accounts/oauth-parity-1",
+      {
+        method: "PUT",
+        body: JSON.stringify({ settings: { claudeTransport: "http" } }),
+      },
+    )
+    expect(putRes.status).toBe(200)
+    const updated = (await putRes.json()) as {
+      account: { settings: Record<string, unknown> }
+    }
+    expect(updated.account.settings.claudeTransport).toBe("http")
+
+    const listRes = await adminJson("http://localhost/admin/api/accounts")
+    const listed = (await listRes.json()) as {
+      accounts: Array<{ settings: Record<string, unknown> }>
+    }
+    expect(listed.accounts[0].settings.claudeTransport).toBe("http")
+  })
+
   test("windsurf account: publicAccountFromConnection produces expected JSON shape", async () => {
     setTestAccounts([windsurfAccount()])
     initializeProviderRegistry()

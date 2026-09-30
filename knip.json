@@ -5,8 +5,10 @@
     "**/.git/**",
     "**/scripts/**",
     "**/tools/**",
-    "**/tests/**",
-    "**/pages/**"
+    "**/pages/**",
+    "tests/fixtures/**",
+    "tests/setup/**"
   ],
-  "ignoreDependencies": ["zod", "prettier-plugin-packagejson"]
+  "entry": ["tests/**/*.test.ts"],
+  "ignoreBinaries": ["publish"]
 }

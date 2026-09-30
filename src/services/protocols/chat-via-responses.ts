@@ -1,12 +1,11 @@
 /**
- * Shared helper for protocol adapters that only implement `createResponses`
- * but need to accept Chat Completions requests.
+ * Serves Chat Completions requests via a Responses upstream.
  *
- * Converts Chat Completions payload → Responses payload, delegates to the
- * adapter's `createResponses`, then converts the Responses result back to
- * Chat Completions format (streaming or non-streaming).
- *
- * Used by xAI, Codex, and other `native_responses`-only providers.
+ * Thin delegate over {@link createTranslatedCall}: the generic IR pipeline does
+ * the decode/plan/encode/execute/back-translate work, and this file only binds
+ * the source/target wires and the adapter executor. Used by xAI, Codex, and
+ * other `native_responses`-only providers, and by the dispatch layer when a
+ * `/v1/chat/completions` request fails over to a responses-only target.
  */
 
 import type {
@@ -15,20 +14,10 @@ import type {
   RouteTarget,
 } from "~/lib/provider-connections"
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
-import type {
-  ResponsesPayload,
-  ResponsesResponse,
-} from "~/services/protocols/responses/types"
+import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { LocalPayloadUnsupportedError } from "~/lib/error"
-import { planTranslation, recordTranslationLosses } from "~/services/ir"
-import { decodeChatRequest } from "~/services/ir/codecs/messages-chat/request"
-import { encodeChatResponse } from "~/services/ir/codecs/messages-chat/response"
-import { encodeChatStream } from "~/services/ir/codecs/messages-chat/stream"
-import { encodeResponsesRequest } from "~/services/ir/codecs/responses/request"
-import { decodeResponsesResult } from "~/services/ir/codecs/responses/result"
-import { decodeResponsesStream } from "~/services/ir/codecs/responses/stream"
+import { createTranslatedCall } from "./wire-pairs"
 
 import type { AdapterChatResult, AdapterResponsesResult } from "./types"
 
@@ -55,20 +44,6 @@ interface ChatViaResponsesParams {
   responsesExecutor: ResponsesExecutor
 }
 
-/**
- * Type guard: distinguishes a non-streaming ResponsesResponse object from
- * an AsyncIterable stream. A ResponsesResponse is a plain object; a stream
- * has `Symbol.asyncIterator`.
- */
-function isResponsesResponse(value: unknown): value is ResponsesResponse {
-  return (
-    typeof value === "object"
-    && value !== null
-    && !Array.isArray(value)
-    && !(Symbol.asyncIterator in value)
-  )
-}
-
 export async function createChatViaResponses(
   params: ChatViaResponsesParams,
 ): Promise<AdapterChatResult> {
@@ -81,42 +56,23 @@ export async function createChatViaResponses(
     ctx,
     responsesExecutor,
   } = params
-
-  const requestIR = decodeChatRequest(payload)
-  const plan = planTranslation(requestIR, {
-    wire: "responses",
-    issuer: connection.id,
-    model: target.upstreamModelId,
-  })
-  recordTranslationLosses(ctx?.c, plan.losses)
-  if (!plan.accepted) {
-    throw new LocalPayloadUnsupportedError(
-      plan.losses.records.find((record) => record.action === "reject")?.reason
-        ?? "Responses target cannot preserve this request",
-    )
-  }
-  const responsesPayload = {
-    ...encodeResponsesRequest(requestIR),
-    stream: payload.stream,
-  }
-  const result = await responsesExecutor({
-    target,
+  return (await createTranslatedCall({
+    source: "chat",
+    target: "responses",
+    targetPayload: payload,
     connection,
     credential,
-    payload: responsesPayload,
+    routeTarget: target,
     signal,
     ctx,
-  })
-
-  if (isResponsesResponse(result.response)) {
-    const chatResponse = encodeChatResponse(
-      decodeResponsesResult(result.response),
-    )
-    return { credentialId: result.credentialId, response: chatResponse }
-  }
-
-  const chatStream = encodeChatStream(
-    decodeResponsesStream(result.response, payload.model),
-  )
-  return { credentialId: result.credentialId, response: chatStream }
+    executor: (p) =>
+      responsesExecutor({
+        target: p.target,
+        connection: p.connection,
+        credential: p.credential,
+        payload: p.payload as ResponsesPayload,
+        signal: p.signal,
+        ctx: p.ctx,
+      }),
+  })) as unknown as AdapterChatResult
 }

@@ -27,6 +27,13 @@ import {
   resolveMinimaxRegion,
 } from "./minimax"
 import { applyQoderJobTokenRefresh, refreshQoderJobToken } from "./qoder"
+import { applyFactoryTokenRefresh, refreshFactoryTokens } from "./factory"
+import {
+  applyDimagentOAuthBundle,
+  dimagentBundle,
+  refreshDimagentTokens,
+} from "./dimagent"
+import { applyGeminiOAuthBundle, refreshGeminiTokens } from "./gemini"
 import {
   applyXaiOAuthBundle,
   getXaiTokenEndpoint,
@@ -113,6 +120,42 @@ export const OAUTH_REFRESH_STRATEGIES: Record<OAuthProviderId, OAuthRefreshFn> =
       const job = await refreshQoderJobToken(refreshToken, fetchOptions)
       applyQoderJobTokenRefresh(connection, job)
     },
+    // Factory 的 WorkOS 刷新会轮换 refresh token，写回由 applyFactoryTokenRefresh
+    // 完成（串行由刷新调度保证）。
+    factory: async (connection, refreshToken, fetchOptions) => {
+      const tokens = await refreshFactoryTokens(refreshToken, fetchOptions)
+      applyFactoryTokenRefresh(connection, tokens)
+    },
+    // ZCode 的 key `<id>.<secret>` 是长期凭证，不轮换；这里保留 no-op 以满足
+    // 穷尽表（只有存在 refreshToken 时调度才会调用，zcode 没有）。
+    zcode: async () => {
+      // no-op: the minted API key does not rotate
+    },
+    // Command Code 的 key 也是长期凭证，不轮换。
+    "commandcode-plan": async () => {
+      // no-op: the minted API key does not rotate
+    },
+    // Zed 的账号 token 长期有效（直到 401 才要重登），不轮换。
+    zed: async () => {
+      // no-op: the Zed account token does not rotate
+    },
+    // DimAgent 的 refresh token 会轮换，写回新对。
+    dimagent: async (connection, refreshToken, fetchOptions) => {
+      const tokens = await refreshDimagentTokens(refreshToken, fetchOptions)
+      applyDimagentOAuthBundle(connection, dimagentBundle(tokens))
+    },
+    // Gemini 的 Google token 会轮换 refresh token，写回新对（project 保留）。
+    gemini: async (connection, refreshToken, fetchOptions) => {
+      const tokens = await refreshGeminiTokens(refreshToken, fetchOptions)
+      const cred = connection.credentials[0]
+      const project = cred?.context?.projectId as string | undefined
+      applyGeminiOAuthBundle(connection, {
+        accessToken: tokens.access_token ?? "",
+        refreshToken: tokens.refresh_token,
+        expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+        project: project ?? "",
+      })
+    },
   }
 
 export const OAUTH_REFRESH_LEAD_MS: Partial<Record<OAuthProviderId, number>> = {
@@ -125,4 +168,6 @@ export const OAUTH_REFRESH_LEAD_MS: Partial<Record<OAuthProviderId, number>> = {
   // Qoder 的 job token 寿命由响应的 expires_in（毫秒）决定，可能很短；
   // 提前量取 5 分钟（也是 expires_in/2 的上限）。
   qoder: 5 * 60 * 1000,
+  // Factory 的 WorkOS access token 约 1 小时，droid 提前 1 分钟续期；这里留宽。
+  factory: 2 * 60 * 1000,
 }

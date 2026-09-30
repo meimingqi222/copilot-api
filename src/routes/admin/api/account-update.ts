@@ -187,7 +187,13 @@ export function applyConnectionPatchToConnection(
  * 是否需要根据补丁内容触发 model 刷新。
  */
 export function patchRequiresModelRefresh(patch: ConnectionPatch): boolean {
-  return patch.credentialValue !== undefined || Boolean(patch.settings)
+  return (
+    patch.credentialValue !== undefined
+    || Boolean(
+      patch.settings
+        && Object.keys(patch.settings).some((key) => key !== "claudeTransport"),
+    )
+  )
 }
 
 function applyCredentialValueToConnection(
@@ -270,6 +276,13 @@ function applySettingsPatchToConnection(
   const meta = ensureConnectionMetadata(conn)
 
   if (provider && isOAuthProviderId(provider)) {
+    if (
+      provider === "claude"
+      && (settings.claudeTransport === "cli"
+        || settings.claudeTransport === "http")
+    ) {
+      meta.claudeTransport = settings.claudeTransport
+    }
     // OAuth settings 有字段白名单 + 空字符串清除为 undefined 的语义
     // （MiniMax Code 的 region 也在这里：它是与凭证绑定的账号域，
     //  修复写错的区域时必须能改）。

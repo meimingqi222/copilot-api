@@ -43,7 +43,11 @@ import {
   toHttpError,
 } from "./errors"
 import { EventQueue, takeSegment } from "./event-queue"
-import { CLAUDE_MCP_SERVER_NAME } from "./mcp-names"
+import {
+  CLAUDE_MCP_SERVER_NAME,
+  CLAUDE_WAIT_TOOL_NAME,
+  mcpToolNamePrefix,
+} from "./mcp-names"
 import { renderClaudePrompt } from "./prompt"
 import { redactAndTruncate } from "./redact"
 import { runRegistry, type BridgeRun, type McpToolResult } from "./run-registry"
@@ -124,10 +128,10 @@ export async function streamClaudeCliMessages(
   }
   const parked = runRegistry.findParked(toolResultIds(payload), scope)
   if (parked?.run instanceof ClaudeCliRun) {
-    const results = toolResults(payload).filter((result) =>
-      parked.toolUseIds.includes(result.toolUseId),
-    )
-    return withHeadPeek(parked.run.resume(results), parked.run)
+    // 全部结果都交过去：命中挂起调用的直接交付，其余(调用尚未发出 / 已经
+    // 回过"还在跑")由 run 自己存起来。先前按 parked.toolUseIds 过滤会让那些
+    // 结果永远丢失 —— 一次回复里两个工具调用就会踩到。
+    return withHeadPeek(parked.run.resume(toolResults(payload)), parked.run)
   }
   const run = await startRun(context, payload)
   return withHeadPeek(run.attach(), run)
@@ -270,6 +274,25 @@ export class ClaudeCliRun implements BridgeRun {
 
   private readonly queue = new EventQueue<AnthropicStreamEventData>()
   private readonly waiters = new Map<string, Waiter>()
+  /**
+   * 已经送达、但此刻没有 MCP 调用在等的结果。
+   *
+   * 两种来源，同一个出口:
+   *
+   * 1. Claude Code 的 MCP 调用是**串行**的(一次回复里两个工具调用，第二个
+   *    要等第一个有结果才会发出)，而调用方可能把两个结果一起送回来 ——
+   *    早到的那个先存这里，等 CLI 真的调了再交付。
+   * 2. MCP 调用已经答过"还在跑"，结果稍后才回来 —— 同样存这里，等模型调
+   *    `wait_for_tool` 时取出。
+   */
+  private readonly pendingResults = new Map<string, McpToolResult>()
+  /**
+   * 已经登记过、结果还没到的 tool_use id。
+   *
+   * `wait_for_tool` 要靠它区分"还在跑"和"这个 id 我根本不认识"：前者继续等，
+   * 后者立刻回一条错误，而不是白等一个 patience。
+   */
+  private readonly awaitingResult = new Set<string>()
   private readonly proc: Bun.Subprocess<"pipe", "pipe", "pipe">
   private readonly tmpDir: string
   private readonly patience: number
@@ -388,18 +411,14 @@ export class ClaudeCliRun implements BridgeRun {
       throw toHttpError(new ClaudeCliError("the Claude Code run has ended"))
     }
     for (const result of results) {
-      const delivered = this.deliver(result.toolUseId, {
+      // deliver 在没有 MCP 调用等待时会先把结果存起来(调用尚未发出 / 已经
+      // 回过"还在跑")。早先这里遇到"没人等"会 abort 整条 run —— 而 Claude
+      // Code 的 MCP 调用是串行的，一次回复里两个工具调用、调用方把两个结果
+      // 一起送回来时，后到的那个会把进程连结果一起丢掉。
+      this.deliver(result.toolUseId, {
         content: [{ type: "text", text: result.text }],
         is_error: result.isError,
       })
-      if (!delivered) {
-        this.abort()
-        throw toHttpError(
-          new ClaudeCliError(
-            `the agent is not waiting for tool result ${result.toolUseId}`,
-          ),
-        )
-      }
     }
     this.arm()
     return this.attach()
@@ -409,10 +428,23 @@ export class ClaudeCliRun implements BridgeRun {
     return this.waiters.has(toolUseId)
   }
 
+  /**
+   * 把结果交给正在等它的 MCP 调用；没有调用在等时先存起来。
+   *
+   * 返回 false 只表示 run 已经结束(存进去也没人能取了)。
+   */
   deliver(toolUseId: string, result: McpToolResult): boolean {
+    if (this.finished) return false
     const waiter = this.waiters.get(toolUseId)
-    if (!waiter) return false
+    if (!waiter) {
+      // 调用还没发出(Claude Code 的 MCP 调用是串行的)，或那次调用已经回过
+      // "还在跑"：留给 awaitToolCall / awaitWaitRequest 取。
+      this.pendingResults.set(toolUseId, result)
+      runRegistry.unpark(toolUseId, this)
+      return true
+    }
     this.waiters.delete(toolUseId)
+    this.awaitingResult.delete(toolUseId)
     runRegistry.unpark(toolUseId, this)
     waiter({ kind: "result", result })
     return true
@@ -423,11 +455,58 @@ export class ClaudeCliRun implements BridgeRun {
     if (this.finished) {
       throw new ClaudeCliError("the Claude Code run has ended")
     }
+    const ready = this.takePending(toolUseId)
+    if (ready) return ready
+    this.awaitingResult.add(toolUseId)
     runRegistry.park(toolUseId, this)
+    return this.waitForResult(toolUseId, name)
+  }
+
+  /**
+   * `wait_for_tool` 的入口：取一个已经回过"还在跑"的调用的结果。
+   *
+   * 与 awaitToolCall 共用同一套等待；区别是它不 park —— 那条调用早已登记过，
+   * 也不能再被 `findParked` 当成"一次新回合"的唤醒目标。
+   */
+  async awaitWaitRequest(toolUseId: string): Promise<McpToolResult> {
+    if (this.finished) {
+      throw new ClaudeCliError("the Claude Code run has ended")
+    }
+    const ready = this.takePending(toolUseId)
+    if (ready) return ready
+    if (!this.awaitingResult.has(toolUseId)) {
+      // 不认识的 id：立刻说清楚，不要白等一个 patience（magpie 同款行为）。
+      return {
+        is_error: true,
+        content: [
+          {
+            type: "text",
+            text: `No tool call "${toolUseId}" is running.`,
+          },
+        ],
+      }
+    }
+    return this.waitForResult(toolUseId, "")
+  }
+
+  private takePending(toolUseId: string): McpToolResult | undefined {
+    const ready = this.pendingResults.get(toolUseId)
+    if (!ready) return undefined
+    this.pendingResults.delete(toolUseId)
+    this.awaitingResult.delete(toolUseId)
+    return ready
+  }
+
+  /** 等一次结果；到点就摘掉 waiter 并回"还在跑"，让模型自己回来取。 */
+  private async waitForResult(
+    toolUseId: string,
+    name: string,
+  ): Promise<McpToolResult> {
     const outcome = await new Promise<WaiterOutcome>((resolve) => {
       const timer = setTimeout(() => {
+        // 必须摘掉自己：之后送来的结果要落进 pendingResults 等 wait_for_tool
+        // 来取。留着 waiter 会让结果兑现给一个已经答复过的请求，等于丢掉。
         this.waiters.delete(toolUseId)
-        runRegistry.unpark(toolUseId, this)
         resolve({ kind: "timeout" })
       }, this.patience)
       timer.unref?.()
@@ -437,6 +516,8 @@ export class ClaudeCliRun implements BridgeRun {
       })
     })
     if (outcome.kind === "gone") {
+      this.waiters.delete(toolUseId)
+      this.awaitingResult.delete(toolUseId)
       throw new ClaudeCliError(
         "the Claude Code run ended before the tool result",
       )
@@ -444,6 +525,8 @@ export class ClaudeCliRun implements BridgeRun {
     if (outcome.kind === "timeout") {
       return stillRunning(toolUseId, name)
     }
+    this.waiters.delete(toolUseId)
+    this.awaitingResult.delete(toolUseId)
     return outcome.result
   }
 
@@ -469,21 +552,33 @@ export class ClaudeCliRun implements BridgeRun {
     if (this.timer) clearTimeout(this.timer)
     for (const waiter of this.waiters.values()) waiter({ kind: "gone" })
     this.waiters.clear()
+    this.pendingResults.clear()
+    this.awaitingResult.clear()
     runRegistry.unregister(this)
     this.queue.close()
     void fs.rm(this.tmpDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 
-/** 工具调用还在跑时的答复（`wait_for_tool` 是 Phase 4 的增强项）。 */
+/**
+ * 工具调用还在跑时的答复。
+ *
+ * 让模型用 `wait_for_tool` 回来取结果 —— 不能靠继续阻塞来等：CLI 的 MCP
+ * 客户端对单次调用有约一分钟上限，而 patience 比它长。工具名要写成 CLI 眼里
+ * 的形态(`mcp__<server>__wait_for_tool`)，模型看到的工具表就是这个。
+ */
 function stillRunning(toolUseId: string, name: string): McpToolResult {
   const what = name ? `The ${name} call` : "The tool call"
+  const waitName = `${mcpToolNamePrefix()}${CLAUDE_WAIT_TOOL_NAME}`
   return {
     is_error: true,
     content: [
       {
         type: "text",
-        text: `${what} is still running in the user's environment (${toolUseId}). Do not call it again.`,
+        text:
+          `${what} is still running in the user's environment (${toolUseId}). `
+          + `Call ${waitName} with {"call": "${toolUseId}"} to wait for its result. `
+          + "Do not call it again.",
       },
     ],
   }

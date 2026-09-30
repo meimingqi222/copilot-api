@@ -75,6 +75,7 @@ import {
   decodeResponsesStream,
   encodeResponsesStream,
 } from "~/services/ir/codecs/responses/stream"
+import { isPlainResult } from "./result-shape"
 
 /** Every codec reads SSE frames off `.data`; the rest of the frame is ignored. */
 type SseLike = { data?: string }
@@ -112,17 +113,8 @@ export interface WireSpec {
   ): AsyncIterable<unknown>
 }
 
-function isPlainResult(value: unknown): boolean {
-  return (
-    typeof value === "object"
-    && value !== null
-    && !Array.isArray(value)
-    && !(Symbol.asyncIterator in value)
-  )
-}
-
 /** Char/4 heuristic over the IR text, wire-agnostic. */
-function estimateIrTokens(ir: RequestIR): number {
+export function estimateIrTokens(ir: RequestIR): number {
   let chars = 0
   for (const instruction of ir.instructions)
     for (const part of instruction.parts) chars += part.text.length
@@ -235,6 +227,19 @@ export type WireExecutor = (params: ExecutorParams) => Promise<{
   response: unknown
 }>
 
+/** Observability hooks the cross-endpoint wrappers attach to the pipeline. */
+export type TranslationPhase =
+  | "request_decoded"
+  | "request_encoded"
+  | "result_decoded"
+  | "complete"
+
+export interface TranslationPhaseDetails {
+  request?: RequestIR
+  /** The encoded target request, available from `request_encoded` on. */
+  targetPayload?: unknown
+}
+
 export interface TranslatedCallParams {
   /** Wire the client speaks. */
   source: IRWire
@@ -248,6 +253,23 @@ export interface TranslatedCallParams {
   ctx?: RequestExecutionContext
   executor: WireExecutor
   preserveHistoricalReasoning?: boolean
+  /**
+   * Who owns prompt-cache breakpoints on the target wire. Forwarded to
+   * `planTranslation`; omitted means "the caller decides".
+   */
+  cacheControlPolicy?: "caller" | "target"
+  /**
+   * Rewrites the encoded target request before dispatch — used by
+   * `chat-via-messages` to inject Anthropic cache breakpoints the Chat schema
+   * cannot express.
+   */
+  transformTargetRequest?: (payload: unknown) => unknown
+  /** Adjusts the ctx handed to the executor (e.g. request the stream twin). */
+  decorateExecutorContext?: (
+    ctx: RequestExecutionContext | undefined,
+  ) => RequestExecutionContext | undefined
+  /** Observes translation phases (memory diagnostics). */
+  onPhase?: (phase: TranslationPhase, details: TranslationPhaseDetails) => void
 }
 
 /**
@@ -256,6 +278,11 @@ export interface TranslatedCallParams {
  *
  * The client-visible stream shape is whatever the source wire's encoder
  * produces, which is exactly what that route's consumer already expects.
+ *
+ * The six `*-via-*` wrappers are thin delegates over this function; the only
+ * per-direction behavior they carry is expressed through the optional hooks
+ * above, so there is exactly one place that plans, enforces the capability
+ * preflight, and dispatches a translation.
  */
 export async function createTranslatedCall(
   params: TranslatedCallParams,
@@ -264,6 +291,7 @@ export async function createTranslatedCall(
   const sourceSpec = WIRE_SPECS[source]
   const targetSpec = WIRE_SPECS[target]
   const requestIR = sourceSpec.decodeRequest(targetPayload)
+  params.onPhase?.("request_decoded", { request: requestIR })
   const searchers = listSearchers()
   const orchestrate =
     searchers.length > 0 && needsSearchOrchestration(requestIR, target)
@@ -272,6 +300,9 @@ export async function createTranslatedCall(
     providerId: connection.protocol,
     model: routeTarget.upstreamModelId,
     issuer: connection.id,
+    ...(params.cacheControlPolicy && {
+      cacheControlPolicy: params.cacheControlPolicy,
+    }),
     ...(orchestrate && { orchestratedWebSearch: true }),
   })
   recordTranslationLosses(params.ctx?.c, plan.losses)
@@ -296,7 +327,10 @@ export async function createTranslatedCall(
       credential: params.credential,
       payload,
       signal: params.signal,
-      ctx: params.ctx,
+      ctx:
+        params.decorateExecutorContext ?
+          params.decorateExecutorContext(params.ctx)
+        : params.ctx,
     })
 
   // A chat target cannot carry web search, so the proxy runs the search itself
@@ -333,10 +367,18 @@ export async function createTranslatedCall(
     }
   }
 
-  const targetRequest = targetSpec.encodeRequest(requestIR, {
+  const encoded = targetSpec.encodeRequest(requestIR, {
     stream,
     issuer: connection.id,
     preserveHistoricalReasoning,
+  })
+  const targetRequest =
+    params.transformTargetRequest ?
+      params.transformTargetRequest(encoded)
+    : encoded
+  params.onPhase?.("request_encoded", {
+    request: requestIR,
+    targetPayload: targetRequest,
   })
   const result = await executor(targetRequest)
   if (targetSpec.isResult(result.response)) {
@@ -344,13 +386,13 @@ export async function createTranslatedCall(
       model: routeTarget.upstreamModelId,
       request: requestIR,
     })
-    return {
-      credentialId: result.credentialId,
-      response: sourceSpec.encodeResult(decoded, {
-        model: routeTarget.upstreamModelId,
-        request: requestIR,
-      }),
-    }
+    params.onPhase?.("result_decoded", { request: requestIR })
+    const response = sourceSpec.encodeResult(decoded, {
+      model: routeTarget.upstreamModelId,
+      request: requestIR,
+    })
+    params.onPhase?.("complete", { request: requestIR })
+    return { credentialId: result.credentialId, response }
   }
   const streamResponse = targetSpec.decodeStream(
     result.response as AsyncIterable<SseLike>,

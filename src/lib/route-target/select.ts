@@ -24,9 +24,13 @@ import {
   affinityCacheKey,
   getSessionAffinity,
   isFillFirstEnabled,
+  isLeastUsedStrategyEnabled,
+  isQuotaStrategyEnabled,
   isSessionAffinityEnabled,
   setSessionAffinity,
 } from "~/lib/routing"
+
+import { orderByLeastUsed, orderByQuota } from "./evidence"
 
 interface RoundRobinState {
   cursors: Map<string, number>
@@ -98,7 +102,9 @@ function commitAffinityIfEnabled(
   target: RouteTarget,
 ): void {
   if (options.commitAffinity === false) return
-  setSessionAffinity(cacheKey, affinityAuthKey(target))
+  setSessionAffinity(cacheKey, affinityAuthKey(target), {
+    turnKey: options.fallbackSessionId,
+  })
 }
 
 /** Commit affinity for a target that was selected during a side-effect-free preview. */
@@ -171,7 +177,9 @@ export function selectRouteTarget(
     && !options.rebindAffinity
   ) {
     const primaryKey = affinityCacheKey(options.sessionId, modelId, protocol)
-    const bound = getSessionAffinity(primaryKey)
+    const bound = getSessionAffinity(primaryKey, {
+      turnKey: options.fallbackSessionId,
+    })
     if (bound) {
       const hit = findByAuthKey(topConn, bound) ?? findByAuthKey(pool, bound)
       // 两阶段过滤后,pool 要么全是专用、要么全是通配。
@@ -193,7 +201,10 @@ export function selectRouteTarget(
         modelId,
         protocol,
       )
-      const fallbackBound = getSessionAffinity(fallbackKey, { refresh: false })
+      const fallbackBound = getSessionAffinity(fallbackKey, {
+        refresh: false,
+        turnKey: options.fallbackSessionId,
+      })
       if (fallbackBound) {
         const hit =
           findByAuthKey(topConn, fallbackBound)
@@ -219,7 +230,9 @@ export function selectRouteTarget(
       chosen.publicModelId,
       chosen.protocol,
     )
-    setSessionAffinity(primaryKey, affinityAuthKey(chosen))
+    setSessionAffinity(primaryKey, affinityAuthKey(chosen), {
+      turnKey: options.fallbackSessionId,
+    })
   }
 
   return chosen
@@ -231,6 +244,16 @@ function pickFromPriorityPool(
 ): RouteTarget {
   if (isFillFirstEnabled()) {
     return pickFillFirst(topConn)
+  }
+
+  // Quota-aware strategies order the same layer by allowance pressure and
+  // take the head — connection and credential are chosen together, the way
+  // magpie weighs a provider's candidates.
+  if (isQuotaStrategyEnabled()) {
+    return orderByQuota(topConn)[0]
+  }
+  if (isLeastUsedStrategyEnabled()) {
+    return orderByLeastUsed(topConn)[0]
   }
 
   // Weighted RR on connections, then credentials

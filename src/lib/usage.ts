@@ -12,6 +12,8 @@ import {
   isAccountManagedConnection,
 } from "~/lib/provider-connections"
 import { patchRequestLog } from "~/lib/request-log"
+import { noteSessionAffinityCacheRead } from "~/lib/routing"
+import { recordServedTokens } from "~/lib/route-target"
 import {
   canonicalModelId,
   canonicalNativeModelId,
@@ -159,6 +161,19 @@ export function recordUsage(input: UsageRecordInput): void {
       tps,
       streaming,
     })
+    if (resolvedConnectionId && resolvedCredentialId) {
+      recordServedTokens(
+        resolvedConnectionId,
+        resolvedCredentialId,
+        completionTokens,
+      )
+      // Phase 4: record how much the vendor's prompt cache served, so the
+      // `auto` affinity mode can decide whether sticking is worth it.
+      noteSessionAffinityCacheRead(
+        `${resolvedConnectionId}::${resolvedCredentialId}`,
+        cacheReadTokens,
+      )
+    }
     patchRequestLog(c, {
       model: usageModel,
       promptTokens,

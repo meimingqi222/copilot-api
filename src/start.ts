@@ -59,10 +59,12 @@ interface RunServerOptions {
   proxyEnv: boolean
   apiKey?: string
   adminPassword?: string
-  /** fill-first (default, best cache) | round-robin */
+  /** fill-first (default, best cache) | round-robin | quota | least-used */
   routingStrategy?: string
   /** Stick session → credential for prompt-cache hits (default true). */
   sessionAffinity?: boolean
+  /** Affinity stickiness mode: session (default) | turn | auto | off. */
+  affinity?: string
   /** Codex-only identity confuse; requires affinity or fill-first. */
   identityConfuse?: boolean
   codebuffBaseUrl?: string
@@ -145,17 +147,26 @@ export async function runServer(options: RunServerOptions): Promise<void> {
     .trim()
     .toLowerCase()
   state.routing.strategy =
-    strategyRaw === "round-robin" || strategyRaw === "rr" ?
-      "round-robin"
+    strategyRaw === "round-robin" || strategyRaw === "rr" ? "round-robin"
+    : strategyRaw === "quota" ? "quota"
+    : strategyRaw === "least-used" || strategyRaw === "leastused" ? "least-used"
     : "fill-first"
   if (options.sessionAffinity !== undefined) {
     state.routing.sessionAffinity = options.sessionAffinity
+  }
+  if (options.affinity !== undefined) {
+    const affinityRaw = options.affinity.trim().toLowerCase()
+    state.routing.affinity =
+      affinityRaw === "turn" ? "turn"
+      : affinityRaw === "auto" ? "auto"
+      : affinityRaw === "off" ? "off"
+      : "session"
   }
   if (options.identityConfuse !== undefined) {
     state.routing.identityConfuse = options.identityConfuse
   }
   logger.info(
-    `Cache routing (L0): strategy=${state.routing.strategy}, session-affinity=${state.routing.sessionAffinity}, ttlMs=${state.routing.sessionAffinityTtlMs}, identity-confuse=${state.routing.identityConfuse} (Codex L1 only)`,
+    `Cache routing (L0): strategy=${state.routing.strategy}, session-affinity=${state.routing.sessionAffinity}, affinity=${state.routing.affinity}, ttlMs=${state.routing.sessionAffinityTtlMs}, identity-confuse=${state.routing.identityConfuse} (Codex L1 only)`,
   )
 
   if (state.legacyApiKey) {
@@ -497,13 +508,19 @@ export const start = defineCommand({
       // fill-first maximizes cache hits: new sessions land on one credential.
       default: process.env.ROUTING_STRATEGY ?? "fill-first",
       description:
-        "Credential selection: fill-first (default, best cache) or round-robin",
+        "Credential selection: fill-first (default, best cache), round-robin, quota, or least-used",
     },
     "session-affinity": {
       type: "boolean",
       default: process.env.SESSION_AFFINITY !== "false",
       description:
         "Stick sessions to the same credential for prompt-cache hits (default true)",
+    },
+    affinity: {
+      type: "string",
+      default: process.env.AFFINITY ?? "session",
+      description:
+        "Session affinity mode: session (default) | turn | auto | off",
     },
     "identity-confuse": {
       type: "boolean",
@@ -527,6 +544,7 @@ export const start = defineCommand({
       adminPassword: args["admin-password"] || process.env.ADMIN_PASSWORD,
       routingStrategy: args["routing-strategy"],
       sessionAffinity: args["session-affinity"],
+      affinity: args["affinity"],
       identityConfuse: args["identity-confuse"],
       codebuffBaseUrl: args["codebuff-base-url"],
       codebuffAuthToken: args["codebuff-auth-token"],

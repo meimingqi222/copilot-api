@@ -41,7 +41,15 @@ export function publicAccountFromConnection(conn: ProviderConnection) {
   const availability = getConnectionAvailabilityForAdmin(conn)
   const subtitle = connectionOAuthSubtitle(conn)
   const availableModels = connectionModelsToAccountModels(conn)
-  const settings = getConnectionSettings(conn) ?? {}
+  const settings = { ...getConnectionSettings(conn) }
+  if (provider === "claude") delete settings.claudeTransport
+  if (
+    provider === "claude"
+    && (conn.metadata?.claudeTransport === "cli"
+      || conn.metadata?.claudeTransport === "http")
+  ) {
+    settings.claudeTransport = conn.metadata.claudeTransport
+  }
   const authStatus = getConnectionAuthStatus(conn)
   const authError = getConnectionAuthError(conn)
   const quotaState = getConnectionQuotaState(conn)

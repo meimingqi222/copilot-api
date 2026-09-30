@@ -78,7 +78,7 @@ function removeOAuthAccountFromState(accountId: string): void {
   cancelConnectionTokenRefresh(accountId)
   cancelOAuthRefreshTimer(accountId)
   clearAccountRateLimitState(accountId)
-  // 批次 2：通过 removeProviderConnection + 重建 state.accounts
+  // connection 是唯一真相源：直接移除，不再维护 state.accounts 镜像
   removeProviderConnection(accountId)
 }
 

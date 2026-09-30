@@ -31,13 +31,14 @@ const i18n = {
       // Navigation
       "nav.dashboard": "仪表盘",
       "nav.users": "用户管理",
-      "nav.accounts": "账户管理",
-      "nav.connections": "外部 Provider",
+      "nav.accounts": "账户连接",
+      "nav.connections": "端点连接",
       "nav.modelAliases": "模型别名",
       "nav.usage": "用量统计",
       "nav.quotas": "账户配额",
       "nav.performance": "性能监控",
       "nav.logs": "系统日志",
+      "nav.traces": "请求追踪",
 
       // Dashboard
       "dashboard.title": "仪表盘",
@@ -93,7 +94,7 @@ const i18n = {
       "users.resetSuccess": "API 密钥重置成功",
 
       // Accounts
-      "accounts.title": "账户管理",
+      "accounts.title": "账户连接",
       "accounts.addAccount": "添加账户",
       "accounts.label": "标签",
       "accounts.labelPlaceholder": "work, personal...",
@@ -134,6 +135,9 @@ const i18n = {
       "accounts.provider.codebuddy.jsonHint":
         "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
       "accounts.provider.codebuddy.oauthLogin": "浏览器登录 (OAuth)",
+      "accounts.provider.codebuddy.oauthHint":
+        "点击「授权」会打开 CodeBuddy 登录页完成设备码确认；也可用下方 JSON 手动创建。",
+      "accounts.provider.codebuddy.manualImport": "从粘贴的 token 创建",
       "accounts.provider.codebuddy.series": "CodeBuddy",
       "accounts.provider.codebuddy.variant.intl": "国际版",
       "accounts.provider.codebuddy.variant.cn": "国内版",
@@ -151,6 +155,9 @@ const i18n = {
         "粘贴 CodeBuddy CLI 的 auth JSON 自动解析（可选），支持 { auth: { accessToken, refreshToken } } 或直接 { accessToken, refreshToken }",
       "accounts.provider.lobsterai": "LobsterAI",
       "accounts.provider.lobsterai.oauthLogin": "浏览器登录 (OAuth)",
+      "accounts.provider.lobsterai.oauthHint":
+        "点击「授权」会打开 LobsterAI 登录页完成授权；也可用下方 JSON / sqlite 手动创建。",
+      "accounts.provider.lobsterai.manualImport": "从粘贴的 token 创建",
       "accounts.provider.lobsterai.name": "LobsterAI",
       "accounts.provider.lobsterai.fields.accessToken": "LobsterAI AccessToken",
       "accounts.provider.lobsterai.fields.accessTokenHint":
@@ -178,6 +185,26 @@ const i18n = {
       "accounts.provider.qoder.oauthLogin": "浏览器登录 (OAuth)",
       "accounts.provider.qoder.deviceHint":
         "点击「授权」后会打开 Qoder 授权页选择账号，确认完即可，无需手工粘贴 token。",
+      "accounts.provider.factory.name": "Factory",
+      "accounts.provider.factory.deviceHint":
+        "点击「授权」后会打开 Factory (WorkOS) 设备码页面，输入设备码确认即可，无需手工粘贴 token。",
+      "accounts.provider.zcode.name": "ZCode",
+      "accounts.provider.zcode.deviceHint":
+        "点击「授权」后会打开 Z.ai 登录页；登录完成后自动为账号铸出 GLM Coding Plan 的 API key，无需手工粘贴 token。",
+      "accounts.provider.commandcode-plan.name": "Command Code Plan",
+      "accounts.provider.commandcode-plan.deviceHint":
+        "点击「授权」后会打开 Command Code 的 Studio 授权页；在页面上确认后，铸出的 API key 会自动回传，无需手工粘贴。",
+      "accounts.provider.zed.name": "Zed",
+      "accounts.provider.zed.deviceHint":
+        "点击「授权」后会打开 Zed 的登录页；完成登录后访问令牌会自动回传，无需手工粘贴。",
+      "accounts.provider.dimagent.name": "DimAgent",
+      "accounts.provider.dimagent.deviceHint":
+        "点击「授权」后会打开 DimAgent 的登录页；完成登录后访问令牌会自动回传，无需手工粘贴。",
+      "accounts.provider.gemini.name": "Gemini CLI",
+      "accounts.provider.gemini.deviceHint":
+        "点击「授权」后会打开 Google 登录页（Gemini CLI 的 client）；仅 Code Assist Standard/Enterprise 账号可用。",
+      "accounts.provider.windsurf.oauthHint":
+        "点击「授权」会打开 Devin (app.devin.ai) 登录页；完成登录即可，无需手工粘贴 token（如需，可在下一步粘贴授权码或 session token）。",
       "accounts.codebuffAuthToken": "Codebuff 授权令牌",
       "accounts.status": "状态",
       "accounts.active": "活跃账户",
@@ -282,6 +309,12 @@ const i18n = {
       "accounts.xaiEndpoint.api": "官方 API",
       "accounts.xaiEndpointHint":
         "默认走 Grok CLI 端点（cli-chat-proxy），开启后 HTTP 请求改走官方 API（api.x.ai）。WebSocket 始终使用官方 API。",
+      "accounts.claudeTransport": "Claude 接入方式",
+      "accounts.claudeTransport.cli": "Claude Code CLI",
+      "accounts.claudeTransport.http": "HTTP（旧版）",
+      "accounts.claudeTransportHint":
+        "默认固定走 Claude Code CLI；未安装时会报错，不会自动改走 HTTP。点击按钮可切换。全局 HTTP 环境变量会覆盖此设置。",
+      "accounts.claudeTransportSuccess": "Claude 接入方式已更新",
       "accounts.export": "导出账户",
       "accounts.exportSuccess": "账户导出成功",
       "accounts.exportOne": "导出此账户",
@@ -514,10 +547,10 @@ const i18n = {
       "quota.oauth.windsurf.overage": "超额余额",
 
       // Provider Connections
-      "connections.title": "外部 Provider",
+      "connections.title": "端点连接",
       "connections.add": "添加连接",
       "connections.edit": "编辑 Provider",
-      "connections.empty": "暂未配置外部 Provider",
+      "connections.empty": "暂未配置端点连接",
       "connections.name": "名称",
       "connections.protocol": "协议",
       "connections.baseUrl": "Base URL",
@@ -591,7 +624,7 @@ const i18n = {
       "connections.import": "导入连接",
       "connections.importTitle": "导入 Provider 连接",
       "connections.importDesc":
-        '从 JSON 批量导入外部 Provider。支持 { "connections": [...] }、数组，或单条连接对象。',
+        '从 JSON 批量导入端点连接。支持 { "connections": [...] }、数组，或单条连接对象。',
       "connections.importFile": "选择 JSON 文件",
       "connections.importOverwrite": "跳过已存在的同 ID 连接",
       "connections.importOverwriteHint":
@@ -634,7 +667,7 @@ const i18n = {
       "connections.headerValue": "值",
       "connections.customHeadersHint":
         "随上游请求附加的固定请求头（不应包含 API Key，鉴权由凭据自动处理）",
-      "connections.emptyTitle": "暂未配置外部 Provider",
+      "connections.emptyTitle": "暂未配置端点连接",
       "connections.emptyHint":
         "选择下方常用 Provider 快速接入，或点击上方添加连接自定义配置",
       "connections.tabPopular": "常用热门",
@@ -869,6 +902,83 @@ const i18n = {
       "perf.streamingTpsDesc":
         "从请求发出到响应结束的完整 token 速率（含首字延迟和缓冲）",
       "perf.nonStreamingTpsDesc": "完整的请求-响应周期 token 速率",
+
+      // Trace (请求追踪)
+      "trace.title": "请求追踪",
+      "trace.subtitle":
+        "实时看每个请求走了哪条连接、哪张凭据，以及在哪儿慢下来",
+      "trace.live": "实时",
+      "trace.paused": "已暂停",
+      "trace.resume": "继续",
+      "trace.pause": "暂停",
+      "trace.today": "今天",
+      "trace.keepNote": "保留最近 {n} 个请求",
+      "trace.empty": "还没有请求。发起一次调用后这里会实时出现。",
+      "trace.connecting": "正在连接实时流…",
+      "trace.disconnected": "实时流已断开，正在重连…",
+      "trace.client": "客户端",
+      "trace.gateway": "网关",
+      "trace.connection": "连接",
+      "trace.credential": "凭据",
+      "trace.upstream": "上游模型",
+      "trace.answered": "回答了这个请求",
+      "trace.rejected": "拒绝，改道下一个",
+      "trace.inflight": "进行中",
+      "trace.request": "请求",
+      "trace.requests": "请求",
+      "trace.failover": "改道",
+      "trace.errors": "收到的错误",
+      "trace.firstToken": "首字",
+      "trace.total": "总耗时",
+      "trace.tokens": "Token",
+      "trace.status": "状态",
+      "trace.latency": "延迟",
+      "trace.timeline": "请求时间线",
+      "trace.stages": "阶段",
+      "trace.stageGate": "准入",
+      "trace.stageDispatch": "调度",
+      "trace.stageUpstream": "上游",
+      "trace.stageFirstToken": "首字",
+      "trace.stageGenerate": "生成",
+      "trace.attempts": "尝试",
+      "trace.attempt": "第 {n} 次",
+      "trace.noModel": "（无模型）",
+      "trace.unknownClient": "未知客户端",
+      "trace.routing": "这次请求是怎么路由的",
+      "trace.replay": "重放",
+      "trace.replayAll": "全部重放",
+      "trace.backToLive": "回到实时",
+      "trace.success": "成功",
+      "trace.failed": "失败",
+      "trace.cancelled": "已取消",
+      "trace.incomplete": "未完成",
+      "trace.streaming": "流式",
+      "trace.nonStreaming": "非流式",
+      "trace.selectHint": "点击左侧任一请求，查看它的完整旅程",
+      "trace.failoverNone": "无需改道——首个候选就应答了。",
+      "trace.failoverN": "改道 {n} 次后由 {target} 应答。",
+      "trace.routeSummary": "由 {provider} 提供，发往 {target}，模型 {model}。",
+      "trace.timingSummary": "首字 {ttft}，总耗时 {total}。",
+      "trace.candidates": "候选路径",
+      "trace.candidatesNote": "该模型可用的全部路由，第一条为实际选中",
+      "trace.cand.selectedPath": "回答了这个请求",
+      "trace.cand.chosen": "已选中",
+      "trace.cand.available": "可用备用",
+      "trace.cand.translated": "需协议转换",
+      "trace.cand.wildcard": "通配兜底",
+      "trace.cand.cooldown": "冷却中",
+      "trace.cand.quota": "配额耗尽",
+      "trace.cand.auth": "鉴权失败",
+      "trace.cand.disabled": "已禁用",
+      "trace.cand.unknown": "不可用",
+      "trace.cand.credit": "欠费",
+      "trace.cand.rate": "限流中",
+      "trace.cand.verify": "待验证",
+      "trace.cand.network": "网络异常",
+      "trace.ev.quota": "额度 {n}%",
+      "trace.ev.renew": "重置 {t}",
+      "trace.ev.rest": "还需 {t}",
+      "trace.ev.served": "近期服务 {n} tok",
     },
 
     en: {
@@ -897,13 +1007,14 @@ const i18n = {
       // Navigation
       "nav.dashboard": "Dashboard",
       "nav.users": "Users",
-      "nav.accounts": "Accounts",
-      "nav.connections": "External Providers",
+      "nav.accounts": "Account Connections",
+      "nav.connections": "Endpoint Connections",
       "nav.modelAliases": "Model Aliases",
       "nav.usage": "Usage",
       "nav.quotas": "Account Quotas",
       "nav.performance": "Performance",
       "nav.logs": "Logs",
+      "nav.traces": "Requests",
 
       // Dashboard
       "dashboard.title": "Dashboard",
@@ -961,7 +1072,7 @@ const i18n = {
       "users.resetSuccess": "API key reset successfully",
 
       // Accounts
-      "accounts.title": "Account Management",
+      "accounts.title": "Account Connections",
       "accounts.addAccount": "Add Account",
       "accounts.label": "Label",
       "accounts.labelPlaceholder": "work, personal...",
@@ -1004,6 +1115,9 @@ const i18n = {
       "accounts.provider.codebuddy.jsonHint":
         "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
       "accounts.provider.codebuddy.oauthLogin": "Browser login (OAuth)",
+      "accounts.provider.codebuddy.oauthHint":
+        "Authorize opens the CodeBuddy device sign-in; you can also create one from the pasted JSON below.",
+      "accounts.provider.codebuddy.manualImport": "Create from pasted tokens",
       "accounts.provider.codebuddy.series": "CodeBuddy",
       "accounts.provider.codebuddy.variant.intl": "Intl",
       "accounts.provider.codebuddy.variant.cn": "CN",
@@ -1021,6 +1135,9 @@ const i18n = {
         "Paste CodeBuddy CLI auth JSON to auto-parse (optional). Supports { auth: { accessToken, refreshToken } } or { accessToken, refreshToken }",
       "accounts.provider.lobsterai": "LobsterAI",
       "accounts.provider.lobsterai.oauthLogin": "Browser login (OAuth)",
+      "accounts.provider.lobsterai.oauthHint":
+        "Authorize opens the LobsterAI sign-in; you can also create one from the pasted JSON / sqlite below.",
+      "accounts.provider.lobsterai.manualImport": "Create from pasted tokens",
       "accounts.provider.lobsterai.name": "LobsterAI",
       "accounts.provider.lobsterai.fields.accessToken": "LobsterAI AccessToken",
       "accounts.provider.lobsterai.fields.accessTokenHint":
@@ -1049,6 +1166,26 @@ const i18n = {
       "accounts.provider.qoder.oauthLogin": "Browser login (OAuth)",
       "accounts.provider.qoder.deviceHint":
         "Clicking Authorize opens the Qoder account picker; confirm there and no token paste is needed.",
+      "accounts.provider.factory.name": "Factory",
+      "accounts.provider.factory.deviceHint":
+        "Clicking Authorize opens the Factory (WorkOS) device-code page; enter the code and confirm — no token paste is needed.",
+      "accounts.provider.zcode.name": "ZCode",
+      "accounts.provider.zcode.deviceHint":
+        "Clicking Authorize opens the Z.ai sign-in; once signed in, the GLM Coding Plan API key is minted for the account — no token paste is needed.",
+      "accounts.provider.commandcode-plan.name": "Command Code Plan",
+      "accounts.provider.commandcode-plan.deviceHint":
+        "Clicking Authorize opens Command Code's Studio page; approve there and the minted API key is delivered back automatically — no token paste is needed.",
+      "accounts.provider.zed.name": "Zed",
+      "accounts.provider.zed.deviceHint":
+        "Clicking Authorize opens Zed's sign-in page; once signed in, the access token is delivered back automatically — no token paste is needed.",
+      "accounts.provider.dimagent.name": "DimAgent",
+      "accounts.provider.dimagent.deviceHint":
+        "Clicking Authorize opens DimAgent's sign-in page; once signed in, the access token is delivered back automatically — no token paste is needed.",
+      "accounts.provider.gemini.name": "Gemini CLI",
+      "accounts.provider.gemini.deviceHint":
+        "Clicking Authorize opens Google sign-in (Gemini CLI's client); only Code Assist Standard/Enterprise accounts are served.",
+      "accounts.provider.windsurf.oauthHint":
+        "Clicking Authorize opens the Devin (app.devin.ai) sign-in page; finish there and no token paste is needed (you can still paste an authorization code or session token in the next step if you prefer).",
       "accounts.codebuffAuthToken": "Codebuff Auth Token",
       "accounts.status": "Status",
       "accounts.active": "Active Accounts",
@@ -1159,6 +1296,12 @@ const i18n = {
       "accounts.xaiEndpoint.api": "Official API",
       "accounts.xaiEndpointHint":
         "Defaults to the Grok CLI endpoint (cli-chat-proxy). When enabled, HTTP requests use the official API (api.x.ai). WebSocket always uses the official API.",
+      "accounts.claudeTransport": "Claude transport",
+      "accounts.claudeTransport.cli": "Claude Code CLI",
+      "accounts.claudeTransport.http": "HTTP (legacy)",
+      "accounts.claudeTransportHint":
+        "Claude Code CLI is the fixed default. If it is missing, requests fail instead of switching to HTTP. Click to change transport. The global HTTP environment setting overrides this choice.",
+      "accounts.claudeTransportSuccess": "Claude transport updated",
       "accounts.export": "Export Accounts",
       "accounts.exportSuccess": "Accounts exported successfully",
       "accounts.exportOne": "Export this account",
@@ -1397,10 +1540,10 @@ const i18n = {
       "quota.oauth.windsurf.overage": "Overage balance",
 
       // Provider Connections
-      "connections.title": "External Providers",
+      "connections.title": "Endpoint Connections",
       "connections.add": "Add Connection",
       "connections.edit": "Edit Provider",
-      "connections.empty": "No external providers configured.",
+      "connections.empty": "No endpoint connections configured.",
       "connections.name": "Name",
       "connections.protocol": "Protocol",
       "connections.baseUrl": "Base URL",
@@ -1474,7 +1617,7 @@ const i18n = {
       "connections.import": "Import",
       "connections.importTitle": "Import Provider Connections",
       "connections.importDesc":
-        'Batch-import external providers from JSON. Accepts { "connections": [...] }, an array, or a single connection object.',
+        'Batch-import endpoint connections from JSON. Accepts { "connections": [...] }, an array, or a single connection object.',
       "connections.importFile": "Select JSON file",
       "connections.importOverwrite": "Skip connections with the same id",
       "connections.importOverwriteHint":
@@ -1519,7 +1662,7 @@ const i18n = {
       "connections.headerValue": "Value",
       "connections.customHeadersHint":
         "Fixed headers appended to upstream requests (do not include API Key — auth is handled by credentials)",
-      "connections.emptyTitle": "No external provider connections yet",
+      "connections.emptyTitle": "No endpoint connections yet",
       "connections.emptyHint":
         "Quick-add a popular provider below, or click Add to customize.",
       "connections.tabPopular": "Popular",
@@ -1756,6 +1899,86 @@ const i18n = {
         "Full response rate including TTFT and buffering (request to last token)",
       "perf.nonStreamingTpsDesc":
         "Overall tokens-per-second for the full request-response cycle",
+
+      // Trace (Requests)
+      "trace.title": "Requests",
+      "trace.subtitle":
+        "Watch every request live — which connection and credential it took, and where it slowed down",
+      "trace.live": "Live",
+      "trace.paused": "Paused",
+      "trace.resume": "Resume",
+      "trace.pause": "Pause",
+      "trace.today": "Today",
+      "trace.keepNote": "Keeping the latest {n} requests",
+      "trace.empty":
+        "No requests yet. Send one and it will appear here in real time.",
+      "trace.connecting": "Connecting to the live feed…",
+      "trace.disconnected": "Live feed dropped, reconnecting…",
+      "trace.client": "Client",
+      "trace.gateway": "Gateway",
+      "trace.connection": "Connection",
+      "trace.credential": "Credential",
+      "trace.upstream": "Upstream",
+      "trace.answered": "answered this request",
+      "trace.rejected": "rejected, rerouted to the next",
+      "trace.inflight": "in flight",
+      "trace.request": "Request",
+      "trace.requests": "Requests",
+      "trace.failover": "Rerouted",
+      "trace.errors": "Errors",
+      "trace.firstToken": "First token",
+      "trace.total": "Total",
+      "trace.tokens": "Tokens",
+      "trace.status": "Status",
+      "trace.latency": "Latency",
+      "trace.timeline": "Request timeline",
+      "trace.stages": "Stages",
+      "trace.stageGate": "Admission",
+      "trace.stageDispatch": "Dispatch",
+      "trace.stageUpstream": "Upstream",
+      "trace.stageFirstToken": "First token",
+      "trace.stageGenerate": "Generate",
+      "trace.attempts": "Attempts",
+      "trace.attempt": "Attempt {n}",
+      "trace.noModel": "(no model)",
+      "trace.unknownClient": "Unknown client",
+      "trace.routing": "How this request was routed",
+      "trace.replay": "Replay",
+      "trace.replayAll": "Replay all",
+      "trace.backToLive": "Back to live",
+      "trace.success": "Success",
+      "trace.failed": "Failed",
+      "trace.cancelled": "Cancelled",
+      "trace.incomplete": "Incomplete",
+      "trace.streaming": "Streaming",
+      "trace.nonStreaming": "Non-streaming",
+      "trace.selectHint": "Pick a request on the left to see its full journey",
+      "trace.failoverNone": "No reroute — the first candidate answered.",
+      "trace.failoverN": "Rerouted {n}×, answered by {target}.",
+      "trace.routeSummary":
+        "Served by {provider}, sent to {target}, model {model}.",
+      "trace.timingSummary": "First token {ttft}, total {total}.",
+      "trace.candidates": "Candidate paths",
+      "trace.candidatesNote":
+        "Every route this model can take; the first is the one actually used",
+      "trace.cand.selectedPath": "answered this request",
+      "trace.cand.chosen": "Chosen",
+      "trace.cand.available": "Standby",
+      "trace.cand.translated": "Needs protocol translation",
+      "trace.cand.wildcard": "Wildcard fallback",
+      "trace.cand.cooldown": "Cooling down",
+      "trace.cand.quota": "Quota used up",
+      "trace.cand.auth": "Auth failed",
+      "trace.cand.disabled": "Disabled",
+      "trace.cand.unknown": "Unavailable",
+      "trace.cand.credit": "Out of credit",
+      "trace.cand.rate": "Rate limited",
+      "trace.cand.verify": "Needs verification",
+      "trace.cand.network": "Network error",
+      "trace.ev.quota": "quota {n}%",
+      "trace.ev.renew": "renews in {t}",
+      "trace.ev.rest": "back in {t}",
+      "trace.ev.served": "{n} tok lately",
     },
   },
 

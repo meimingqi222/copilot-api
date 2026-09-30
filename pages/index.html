@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Copilot API Admin</title>
     <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
+    <link rel="stylesheet" href="/admin/static/css/traces.css" />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
@@ -19,6 +20,26 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/zh.js"></script>
+    <!-- 请求追踪视图：motion 驱动数据包飞行，auto-animate 处理列表增删。版本已锁定，
+         两者缺失时 traces.js 回退到原生 Web Animations API，不影响核心交互。
+         auto-animate 只发 ESM，无 UMD 构建，故以 module 方式引入并挂到全局。 -->
+    <script type="module">
+      import autoAnimate from "https://cdn.jsdelivr.net/npm/@formkit/auto-animate@0.8.2/index.min.mjs"
+      globalThis.autoAnimate = autoAnimate
+      const apply = () => {
+        const el = document.querySelector(".trace-view .tr-list")
+        if (el && !el.__autoAnimated) {
+          autoAnimate(el, { duration: 260 })
+          el.__autoAnimated = true
+        }
+      }
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", apply)
+      } else {
+        apply()
+      }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/motion@11.11.13/dist/motion.min.js"></script>
     <script src="/admin/static/js/i18n.js"></script>
     <script src="/admin/static/js/api.js"></script>
     <script src="/admin/static/js/view-helpers.js"></script>
@@ -1307,6 +1328,34 @@
                       </div>
                       <!-- Available Models -->
                       <div
+                        x-show="account.provider === 'claude'"
+                        class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg"
+                      >
+                        <div class="flex items-center justify-between">
+                          <div class="flex items-center gap-2">
+                            <i
+                              data-lucide="route"
+                              class="w-4 h-4 text-[var(--apple-text-secondary)]"
+                            ></i>
+                            <span
+                              class="text-sm text-[var(--apple-text-secondary)]"
+                              x-text="t('accounts.claudeTransport')"
+                            ></span>
+                          </div>
+                          <button
+                            @click="toggleClaudeTransport(account)"
+                            type="button"
+                            class="btn btn-sm"
+                            :class="claudeTransport(account) === 'cli' ? 'btn-primary' : 'btn-secondary'"
+                            x-text="t('accounts.claudeTransport.' + claudeTransport(account))"
+                          ></button>
+                        </div>
+                        <p
+                          class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                          x-text="t('accounts.claudeTransportHint')"
+                        ></p>
+                      </div>
+                      <div
                         x-show="account.availableModels && account.availableModels.length"
                         class="mb-4 flex-1"
                       >
@@ -1648,6 +1697,87 @@
                     x-text="t('accounts.provider.qoder.deviceHint')"
                   ></p>
                 </div>
+                <div
+                  x-show="newAccount.provider === 'factory'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.factory.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'zcode'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.zcode.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'commandcode-plan'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.commandcode-plan.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'zed'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.zed.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'dimagent'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.dimagent.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'gemini'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.gemini.deviceHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'windsurf'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.windsurf.oauthHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'codebuddy' || newAccount.provider === 'codebuddy-cn'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.codebuddy.oauthHint')"
+                  ></p>
+                </div>
+                <div
+                  x-show="newAccount.provider === 'lobsterai'"
+                  class="space-y-1"
+                >
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('accounts.provider.lobsterai.oauthHint')"
+                  ></p>
+                </div>
                 <div class="modal-footer">
                   <button
                     @click="closeAddModal()"
@@ -1655,24 +1785,16 @@
                     x-text="t('cancel')"
                   ></button>
                   <button
-                    x-show="newAccount.provider === 'windsurf'"
-                    @click="startOAuthFlow()"
-                    class="btn btn-secondary"
-                    x-text="t('accounts.provider.windsurf.oauthLogin') || 'Browser login (OAuth)'"
-                    title="Login via app.devin.ai, no manual token needed"
-                  ></button>
-                  <button
                     x-show="newAccount.provider === 'codebuddy' || newAccount.provider === 'codebuddy-cn'"
-                    @click="startOAuthFlow()"
+                    @click="submitAccount(true)"
                     class="btn btn-secondary"
-                    x-text="t('accounts.provider.codebuddy.oauthLogin') || 'Browser login (OAuth)'"
-                    title="Login via CodeBuddy, no manual token needed"
+                    x-text="t('accounts.provider.codebuddy.manualImport') || 'Create from pasted tokens'"
                   ></button>
                   <button
                     x-show="newAccount.provider === 'lobsterai'"
-                    @click="startOAuthFlow()"
+                    @click="submitAccount(true)"
                     class="btn btn-secondary"
-                    x-text="t('accounts.provider.lobsterai.oauthLogin')"
+                    x-text="t('accounts.provider.lobsterai.manualImport') || 'Create from pasted tokens'"
                   ></button>
                   <button
                     @click="submitAccount()"
@@ -4803,6 +4925,322 @@
           </div>
         </div>
 
+        <!-- Requests / 请求追踪 View -->
+        <div
+          x-show="currentView === 'traces'"
+          x-data="tracesView()"
+          x-init="init()"
+          style="display: none"
+          class="trace-view"
+        >
+          <header class="flex justify-between items-start mb-6 gap-4 flex-wrap">
+            <div>
+              <h2 class="text-headline" x-text="t('trace.title')"></h2>
+              <p class="tr-subtitle" x-text="t('trace.subtitle')"></p>
+            </div>
+            <div class="tr-stats">
+              <div class="tr-stat">
+                <div class="tr-stat-value" x-text="stats.requests"></div>
+                <div class="tr-stat-label" x-text="t('trace.requests')"></div>
+              </div>
+              <div class="tr-stat" x-show="stats.inFlight > 0">
+                <div
+                  class="tr-stat-value"
+                  style="color: var(--apple-blue)"
+                  x-text="stats.inFlight"
+                ></div>
+                <div class="tr-stat-label" x-text="t('trace.inflight')"></div>
+              </div>
+              <div class="tr-stat">
+                <div class="tr-stat-value" x-text="stats.failover"></div>
+                <div class="tr-stat-label" x-text="t('trace.failover')"></div>
+              </div>
+              <div class="tr-stat">
+                <div class="tr-stat-value" x-text="stats.errors"></div>
+                <div class="tr-stat-label" x-text="t('trace.errors')"></div>
+              </div>
+            </div>
+          </header>
+
+          <!-- Live stage -->
+          <div class="tr-stage mb-6">
+            <div class="tr-lane" x-ref="lane">
+              <div class="tr-packets" x-ref="packets"></div>
+              <template x-for="item in laneItems" :key="item.key">
+                <div style="display: contents">
+                  <template x-if="item.rail">
+                    <div class="tr-rail"></div>
+                  </template>
+                  <template x-if="!item.rail">
+                    <div class="tr-node" :class="`tr-node-${item.kind}`">
+                      <span class="tr-node-icon">
+                        <i :data-lucide="item.icon"></i>
+                      </span>
+                      <span class="tr-node-body">
+                        <span class="tr-node-title" x-text="item.title"></span>
+                        <span class="tr-node-sub" x-text="item.sub"></span>
+                      </span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+            <!-- candidate paths: chosen route highlighted, alternates dimmed -->
+            <div class="tr-cands" x-show="candidates.length">
+              <div class="tr-cands-head">
+                <span x-text="t('trace.candidates')"></span>
+                <span
+                  class="tr-cands-note"
+                  x-text="t('trace.candidatesNote')"
+                ></span>
+              </div>
+              <div class="tr-cand-list">
+                <template
+                  x-for="c in candidates"
+                  :key="c.connectionId + '::' + (c.credentialId || '')"
+                >
+                  <div
+                    class="tr-cand"
+                    :class="{ chosen: c.status === 'chosen' }"
+                  >
+                    <span class="tr-dot" :class="candDot(c)"></span>
+                    <span class="tr-cand-main">
+                      <span class="tr-cand-route">
+                        <span x-text="c.connectionName || c.connectionId"></span>
+                        <span
+                          x-show="c.credentialLabel"
+                          x-text="` · ${c.credentialLabel}`"
+                        ></span>
+                      </span>
+                      <span class="tr-cand-sub" x-text="candSub(c)"></span>
+                      <span
+                        class="tr-cand-ev"
+                        x-show="candEvidence(c)"
+                        x-text="candEvidence(c)"
+                      ></span>
+                    </span>
+                    <span class="tr-cand-status" x-text="candLabel(c)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div class="tr-return">
+              <span
+                class="tr-live-dot"
+                :class="{ on: connected && !paused }"
+              ></span>
+              <span
+                x-text="paused ? t('trace.paused') : (connecting ? t('trace.connecting') : t('trace.live'))"
+              ></span>
+            </div>
+
+            <!-- explanations -->
+            <div class="tr-explain">
+              <template x-for="(line, i) in explanations" :key="i">
+                <div class="tr-explain-line" :class="line.cls">
+                  <span class="dot"></span>
+                  <span x-text="line.text"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- request list -->
+            <div class="card p-4">
+              <div class="flex items-center justify-between mb-3 gap-2">
+                <div class="flex items-center gap-2">
+                  <button
+                    class="btn btn-small"
+                    :class="paused ? 'btn-secondary' : 'btn-primary'"
+                    @click="paused = !paused"
+                  >
+                    <span
+                      x-text="paused ? t('trace.resume') : t('trace.pause')"
+                    ></span>
+                  </button>
+                  <span
+                    class="text-xs"
+                    style="color: var(--apple-text-secondary)"
+                    x-text="t('trace.keepNote', { n: keep })"
+                  ></span>
+                </div>
+                <button
+                  class="btn btn-secondary btn-small"
+                  @click="replayAll()"
+                  :disabled="replaying || !traces.length"
+                >
+                  <span x-text="t('trace.replayAll')"></span>
+                </button>
+              </div>
+
+              <div
+                x-show="!traces.length"
+                class="py-10 text-center text-sm"
+                style="color: var(--apple-text-secondary)"
+                x-text="t('trace.empty')"
+              ></div>
+
+              <div class="tr-list" x-ref="list" x-show="traces.length">
+                <template x-for="frame in visibleTraces" :key="frame.requestId">
+                  <div
+                    class="tr-row"
+                    :class="{ selected: frame.requestId === selectedId }"
+                    @click="select(frame)"
+                  >
+                    <span
+                      class="tr-row-time"
+                      x-text="fmtTime(frame.timestamp)"
+                    ></span>
+                    <span
+                      class="tr-dot"
+                      :class="rowDotClass(frame)"
+                    ></span>
+                    <span class="tr-row-main">
+                      <span
+                        class="tr-row-model block"
+                        x-text="frame.model || frame.modelUpstream || '-'"
+                      ></span>
+                      <span
+                        class="tr-row-route block"
+                        x-text="`. ${rowRoute(frame)}`"
+                      ></span>
+                    </span>
+                    <span class="tr-row-timing">
+                      <template x-if="frame.inFlight">
+                        <span
+                          class="tr-inflight"
+                          x-text="`${t('trace.inflight')} ${took(now - (frame.timestamp || now))}`"
+                        ></span>
+                      </template>
+                      <template x-if="!frame.inFlight">
+                        <span>
+                          <b x-text="took(frame.latencyMs)"></b>
+                          <span
+                            x-show="frame.ttftMs"
+                            x-text="` · ${t('trace.firstToken')} ${took(frame.ttftMs)}`"
+                          ></span>
+                        </span>
+                      </template>
+                    </span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- detail -->
+            <div class="card p-4">
+              <div
+                x-show="!selected"
+                class="py-10 text-center text-sm"
+                style="color: var(--apple-text-secondary)"
+                x-text="t('trace.selectHint')"
+              ></div>
+
+              <div x-show="selected">
+                <h3 class="text-title-2 mb-3" x-text="t('trace.timeline')"></h3>
+
+                <div class="tr-waterfall" x-show="timeline">
+                  <div class="tr-wf-track">
+                    <template x-for="(seg, i) in (timeline?.segs || [])" :key="i">
+                      <div
+                        class="tr-wf-seg"
+                        :class="seg.cls"
+                        :style="`left: ${seg.left}%; width: ${seg.pct}%`"
+                        :title="seg.label"
+                      ></div>
+                    </template>
+                    <div
+                      class="tr-wf-marker"
+                      x-show="timeline?.markerPct !== null"
+                      :style="`left: ${timeline?.markerPct || 0}%`"
+                    ></div>
+                  </div>
+                  <div class="tr-wf-legend">
+                    <span>
+                      <i style="background: color-mix(in srgb, var(--apple-orange) 70%, transparent)"></i>
+                      <span
+                        x-text="`${t('trace.stageFirstToken')} ${selected?.ttftMs ? took(selected.ttftMs) : '-'}`"
+                      ></span>
+                    </span>
+                    <span>
+                      <i style="background: color-mix(in srgb, var(--apple-green) 55%, transparent)"></i>
+                      <span
+                        x-text="`${t('trace.total')} ${took(selected?.latencyMs)}`"
+                      ></span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- attempts -->
+                <div class="mt-4" x-show="selected?.attempts?.length">
+                  <h4
+                    class="text-sm font-medium mb-2"
+                    x-text="t('trace.attempts')"
+                  ></h4>
+                  <div class="flex flex-col gap-1.5">
+                    <template x-for="(att, i) in (selected?.attempts || [])" :key="i">
+                      <div
+                        class="tr-attempt"
+                        :class="att.result === 'failed' ? 'fail' : 'ok'"
+                      >
+                        <span class="n" x-text="att.n"></span>
+                        <span
+                          x-text="att.connectionName || att.provider || att.connectionId"
+                        ></span>
+                        <span
+                          class="text-xs"
+                          style="color: var(--apple-text-secondary)"
+                          x-text="att.credentialLabel || ''"
+                        ></span>
+                        <span class="lat" x-text="took(att.latencyMs)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+
+                <!-- route detail -->
+                <div class="mt-4">
+                  <h4
+                    class="text-sm font-medium mb-2"
+                    x-text="t('trace.routing')"
+                  ></h4>
+                  <dl class="tr-kv">
+                    <dt x-text="t('trace.status')"></dt>
+                    <dd>
+                      <span
+                        x-text="`${selected?.statusCode ?? '-'} · ${t('trace.' + (selected?.outcome || 'success'))}`"
+                      ></span>
+                    </dd>
+                    <dt x-text="t('trace.streaming')"></dt>
+                    <dd
+                      x-text="selected?.streaming ? t('trace.streaming') : t('trace.nonStreaming')"
+                    ></dd>
+                    <dt x-text="t('trace.connection')"></dt>
+                    <dd x-text="selected?.connectionName || selected?.provider || '—'"></dd>
+                    <dt x-text="t('trace.credential')"></dt>
+                    <dd x-text="selected?.credentialLabel || selected?.credentialId || '—'"></dd>
+                    <dt x-text="t('trace.upstream')"></dt>
+                    <dd x-text="selected?.modelUpstream || selected?.model || '—'"></dd>
+                    <dt x-text="t('trace.tokens')"></dt>
+                    <dd
+                      x-text="`${selected?.promptTokens ?? 0} → ${selected?.completionTokens ?? 0}`"
+                    ></dd>
+                    <dt x-show="selected?.error">Error</dt>
+                    <dd
+                      x-show="selected?.error"
+                      class="break-all"
+                      style="color: var(--apple-red)"
+                      x-text="selected?.error"
+                    ></dd>
+                  </dl>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Logs View -->
         <div
           x-show="currentView === 'logs'"
@@ -5108,6 +5546,7 @@
     <script src="/admin/static/js/views/usage.js"></script>
     <script src="/admin/static/js/views/quotas.js"></script>
     <script src="/admin/static/js/views/performance.js"></script>
+    <script src="/admin/static/js/views/traces.js"></script>
     <script src="/admin/static/js/views/guard.js"></script>
     <script src="/admin/static/js/views/logs.js"></script>
     <script src="/admin/static/js/partials.js"></script>

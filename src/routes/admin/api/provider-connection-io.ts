@@ -25,8 +25,8 @@ export const providerConnectionIoRoutes = new Hono()
 
 /** Export all provider connections including credential secrets. */
 providerConnectionIoRoutes.get("/export", (c) => {
-  // 过滤 account-managed connection(*-native protocol):它们由账号管理路径
-  // 管理,不应通过外部 provider export 导出。
+  // 过滤 account-managed connection(*-native protocol):它们由账户连接路径
+  // 管理,不应通过端点连接 export 导出。
   // 判别器用 protocol 派生,T5.2.5 后仍然有效。
   const connections = listProviderConnections().filter(
     (conn) => !isAccountManagedConnection(conn),
@@ -238,7 +238,7 @@ function normalizeImportedConnection(
 
   if (!name) throw new Error("Missing connection name")
   if (!protocol) throw new Error("Invalid or missing protocol")
-  // 写入不变量:不允许通过外部 provider import 创建 account-managed connection
+  // 写入不变量:不允许通过端点连接 import 创建 account-managed connection
   if (isAccountManagedProtocol(protocol)) {
     throw new Error(
       `Protocol "${protocol}" is account-managed. Use the accounts API to create this type of connection.`,

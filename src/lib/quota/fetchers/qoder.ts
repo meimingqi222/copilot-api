@@ -99,7 +99,8 @@ function pushWindow(
     total,
     unit,
     usedPercent: Math.min(100, (100 * used) / total),
-    display: `${used} / ${total} ${unit}`,
+    // 与 valueText/进度条的「剩余」口径一致：剩余 / 总量 单位。
+    display: `${Math.max(0, total - used)} / ${total} ${unit}`,
   })
 }
 
@@ -170,7 +171,7 @@ function buildSnapshot(parsed: ParsedQoderQuota, host: string): QuotaSnapshot {
   const primary = parsed.windows[0]!
   return {
     ...base,
-    premiumInteractionsRemaining: Math.max(0, 100 - usedPercent),
+    premiumInteractionsRemaining: Math.round(Math.max(0, 100 - usedPercent)),
     premiumInteractionsTotal: 100,
     chatRemaining: Math.max(0, Math.round(primary.total - primary.used)),
     chatTotal: Math.round(primary.total),

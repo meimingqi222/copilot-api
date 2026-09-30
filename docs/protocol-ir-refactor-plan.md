@@ -9,7 +9,7 @@
 - `src/services/ir/` 已包含类型化请求/结果、增量事件、collector、能力预检和脱敏损失记录；四个 `via-*` wrapper 已切换到 IR codec。
 - 路由现在枚举可用端点；原生路径优先，语义拒绝会尝试下一候选且不冷却凭证。`AGENTS.md` 与翻译规约已更新。
 - 历史 pair translator 已全部删除。Copilot adapter 内部按模型能力自行做 Chat↔Responses 翻译的私有实现（`chat-to-responses*`、`responses-to-chat`）也随之移除：端点选择统一由 `buildRouteTargets` 负责，翻译统一走 IR wrapper，Copilot 与其它 provider 一样只按 `target.endpoint` 调用本协议端点。WS 直连路径（`createResponses`）的 chat 回退同样改走 `createResponsesViaChat`。
-- Gemini 公共协议试点、`messages ↔ responses` 路由和代理级 `web_search` 编排属于新增能力，待有明确客户端需求时实施；不引入未被调用的 codec。
+- 本次提交只落地 IR 内核与既有四方向；Gemini 公共协议试点、`messages ↔ responses` 路由和代理级 `web_search` 编排随后在 Phase 4/5 实施完成（见下文），核心约束仍是「不引入未被调用的 codec」。
 
 实施记录（Phase 4，2026-09-30）：
 

@@ -11,6 +11,8 @@
 
 import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/types"
 
+import { CLAUDE_WAIT_TOOL_NAME } from "./mcp-names"
+
 /** MCP `tools/list` 里的一个工具。 */
 export interface BridgeTool {
   name: string
@@ -22,6 +24,30 @@ export interface BridgeTool {
 const EMPTY_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {},
+}
+
+/**
+ * 迟到结果的收集入口，只给 CLI 看(见 `CLAUDE_WAIT_TOOL_NAME`)。
+ *
+ * schema 与 magpie 的 `magpie_wait` 同形:模型把"还在跑"那条答复里给出的
+ * tool_use id 原样填进 `call`。
+ */
+const WAIT_TOOL: BridgeTool = {
+  name: CLAUDE_WAIT_TOOL_NAME,
+  description:
+    "Collect the result of a tool call that is still running in the user's "
+    + 'environment. Call this only with the id from a "still running" reply, '
+    + "and never repeat the original call.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      call: {
+        type: "string",
+        description: "The tool_use id of the call that is still running.",
+      },
+    },
+    required: ["call"],
+  },
 }
 
 export function bridgeTools(
@@ -42,6 +68,9 @@ export function bridgeTools(
       inputSchema: tool.input_schema ?? EMPTY_SCHEMA,
     })
   }
+  // 只有存在调用方工具时才加:没有工具就没有"等调用方执行"这回事,而多一个
+  // 工具定义会改变 prompt 前缀(§6.1 的 cache 约束)。
+  if (out.length > 0) out.push(WAIT_TOOL)
   out.sort((a, b) =>
     a.name < b.name ? -1
     : a.name > b.name ? 1

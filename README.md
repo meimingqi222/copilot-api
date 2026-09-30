@@ -258,10 +258,11 @@ The `cli` transport needs Claude Code installed and signed in
 COPILOT_API_CLAUDE_TRANSPORT=http copilot-api start
 ```
 
-Per connection, set `metadata.claudeTransport` to `"cli"` or `"http"` in
-`provider-connections.json`. Opting in to `"cli"` while no binary is installed
-is an error rather than a silent fallback, so a misconfiguration cannot leave
-you unknowingly on the legacy path.
+The Claude account card in the admin dashboard switches each connection between
+Claude Code CLI and legacy HTTP. CLI is the fixed default; a missing binary is
+an error and does not silently switch to HTTP. You can also set
+`metadata.claudeTransport` to `"cli"` or `"http"` in
+`provider-connections.json`. The global HTTP override above takes precedence.
 
 Other knobs:
 
@@ -408,6 +409,13 @@ bun run dev
 ```sh
 bun run start
 ```
+
+### Tests in a restricted local sandbox
+
+`bun test` runs the complete suite, including tests that listen on a temporary
+loopback port. If a local sandbox prohibits listening sockets, run
+`COPILOT_API_TEST_SKIP_LOOPBACK=1 bun test` to skip only those socket tests.
+The skip is explicit and is ignored in CI.
 
 ## Usage Tips
 

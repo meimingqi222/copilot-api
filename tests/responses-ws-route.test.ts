@@ -11,6 +11,7 @@ import { sendResponsesWebSocketTextForTest } from "~/routes/responses/ws-handler
 import { server } from "~/server"
 
 import { setTestAccounts } from "./helpers/set-accounts"
+import { loopbackTest } from "./helpers/loopback-test"
 
 const originalFetch = globalThis.fetch
 const originalAccounts = listAccounts()
@@ -76,106 +77,109 @@ afterEach(() => {
   state.users = originalUsers
 })
 
-test("WS /responses supports sequential response.create requests", async () => {
-  state.legacyApiKey = "secret"
+loopbackTest(
+  "WS /responses supports sequential response.create requests",
+  async () => {
+    state.legacyApiKey = "secret"
 
-  const fetchMock = mock((_url: string, opts: { body?: string }) => {
-    const payload = JSON.parse(opts.body ?? "{}") as {
-      model?: string
-      input?: string
-    }
+    const fetchMock = mock((_url: string, opts: { body?: string }) => {
+      const payload = JSON.parse(opts.body ?? "{}") as {
+        model?: string
+        input?: string
+      }
 
-    return {
-      ok: true,
-      json: () => ({
-        id: crypto.randomUUID(),
-        object: "response",
-        model: payload.model ?? "gpt-responses",
-        status: "completed",
-        output: [
-          {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: payload.input ?? "ok" }],
+      return {
+        ok: true,
+        json: () => ({
+          id: crypto.randomUUID(),
+          object: "response",
+          model: payload.model ?? "gpt-responses",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: payload.input ?? "ok" }],
+            },
+          ],
+          output_text: payload.input ?? "ok",
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            total_tokens: 2,
           },
-        ],
-        output_text: payload.input ?? "ok",
-        usage: {
-          input_tokens: 1,
-          output_tokens: 1,
-          total_tokens: 2,
+        }),
+        text: () => Promise.resolve(""),
+        status: 200,
+      }
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/responses`,
+      { Authorization: "Bearer secret" },
+    )
+
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          model: "gpt-responses",
+          input: "first",
         },
       }),
-      text: () => Promise.resolve(""),
-      status: 200,
+    )
+    const first = JSON.parse(await queue.next()) as {
+      object: string
+      output_text: string
     }
-  })
-  globalThis.fetch = fetchMock as unknown as typeof fetch
+    expect(first.object).toBe("response")
+    expect(first.output_text).toBe("first")
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          model: "gpt-responses",
+          input: "second",
+        },
+      }),
+    )
+    const second = JSON.parse(await queue.next()) as {
+      object: string
+      output_text: string
+    }
+    expect(second.object).toBe("response")
+    expect(second.output_text).toBe("second")
 
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/responses`,
-    { Authorization: "Bearer secret" },
-  )
+    await waitFor(
+      () =>
+        logStore
+          .query({ endpoint: "responses", limit: 10 })
+          .entries.filter((entry) => entry.method === "WS").length === 2,
+    )
+    const turns = logStore
+      .query({ endpoint: "responses", limit: 10 })
+      .entries.filter((entry) => entry.method === "WS")
+    expect(new Set(turns.map((entry) => entry.requestId)).size).toBe(2)
+    expect(turns[0]?.parentRequestId).toBeDefined()
+    expect(turns[0]?.parentRequestId).toBe(turns[1]?.parentRequestId)
+    for (const turn of turns) {
+      expect(turn.model).toBe("gpt-responses")
+      expect(turn.outcome).toBe("success")
+      expect(turn.attempts?.length).toBeGreaterThan(0)
+      expect(turn.totalTokens).toBe(2)
+    }
 
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: {
-        model: "gpt-responses",
-        input: "first",
-      },
-    }),
-  )
-  const first = JSON.parse(await queue.next()) as {
-    object: string
-    output_text: string
-  }
-  expect(first.object).toBe("response")
-  expect(first.output_text).toBe("first")
-
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: {
-        model: "gpt-responses",
-        input: "second",
-      },
-    }),
-  )
-  const second = JSON.parse(await queue.next()) as {
-    object: string
-    output_text: string
-  }
-  expect(second.object).toBe("response")
-  expect(second.output_text).toBe("second")
-
-  await waitFor(
-    () =>
-      logStore
-        .query({ endpoint: "responses", limit: 10 })
-        .entries.filter((entry) => entry.method === "WS").length === 2,
-  )
-  const turns = logStore
-    .query({ endpoint: "responses", limit: 10 })
-    .entries.filter((entry) => entry.method === "WS")
-  expect(new Set(turns.map((entry) => entry.requestId)).size).toBe(2)
-  expect(turns[0]?.parentRequestId).toBeDefined()
-  expect(turns[0]?.parentRequestId).toBe(turns[1]?.parentRequestId)
-  for (const turn of turns) {
-    expect(turn.model).toBe("gpt-responses")
-    expect(turn.outcome).toBe("success")
-    expect(turn.attempts?.length).toBeGreaterThan(0)
-    expect(turn.totalTokens).toBe(2)
-  }
-
-  ws.close()
-})
+    ws.close()
+  },
+)
 
 test("WS /v1/responses handshake requires API key middleware", async () => {
   state.legacyApiKey = "secret"
@@ -195,215 +199,229 @@ test("WS /v1/responses handshake requires API key middleware", async () => {
   expect(response.status).toBe(401)
 })
 
-test("WS /v1/responses returns busy error on concurrent response.create", async () => {
-  const fetchMock = mock(
-    () =>
-      new Promise<Response>((resolve) => {
-        setTimeout(() => {
-          resolve(
-            new Response(
-              [
-                'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-responses","status":"in_progress"}}',
-                "",
-                'data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"gpt-responses","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
-                "",
-                "data: [DONE]",
-                "",
-              ].join("\n"),
-              {
-                status: 200,
-                headers: { "content-type": "text/event-stream" },
-              },
-            ),
-          )
-        }, 80)
+loopbackTest(
+  "WS /v1/responses returns busy error on concurrent response.create",
+  async () => {
+    const fetchMock = mock(
+      () =>
+        new Promise<Response>((resolve) => {
+          setTimeout(() => {
+            resolve(
+              new Response(
+                [
+                  'data: {"type":"response.created","response":{"id":"resp_123","model":"gpt-responses","status":"in_progress"}}',
+                  "",
+                  'data: {"type":"response.completed","response":{"id":"resp_123","object":"response","model":"gpt-responses","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"output_text":"ok","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
+                  "",
+                  "data: [DONE]",
+                  "",
+                ].join("\n"),
+                {
+                  status: 200,
+                  headers: { "content-type": "text/event-stream" },
+                },
+              ),
+            )
+          }, 80)
+        }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
+
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          model: "gpt-responses",
+          input: "first",
+          stream: true,
+        },
       }),
-  )
-  globalThis.fetch = fetchMock as unknown as typeof fetch
+    )
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          model: "gpt-responses",
+          input: "second",
+        },
+      }),
+    )
 
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
+    let sawBusy = false
+    let sawCompleted = false
 
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: {
-        model: "gpt-responses",
-        input: "first",
-        stream: true,
-      },
-    }),
-  )
+    for (let i = 0; i < 6 && (!sawBusy || !sawCompleted); i += 1) {
+      const message = JSON.parse(await queue.next(4_000)) as {
+        type?: string
+        error?: {
+          code?: string
+        }
+      }
 
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: {
-        model: "gpt-responses",
-        input: "second",
-      },
-    }),
-  )
+      if (message.type === "error" && message.error?.code === "busy") {
+        sawBusy = true
+      }
 
-  let sawBusy = false
-  let sawCompleted = false
-
-  for (let i = 0; i < 6 && (!sawBusy || !sawCompleted); i += 1) {
-    const message = JSON.parse(await queue.next(4_000)) as {
-      type?: string
-      error?: {
-        code?: string
+      if (message.type === "response.completed") {
+        sawCompleted = true
       }
     }
 
-    if (message.type === "error" && message.error?.code === "busy") {
-      sawBusy = true
-    }
+    expect(sawBusy).toBe(true)
+    expect(sawCompleted).toBe(true)
 
-    if (message.type === "response.completed") {
-      sawCompleted = true
-    }
-  }
+    ws.close()
+  },
+)
 
-  expect(sawBusy).toBe(true)
-  expect(sawCompleted).toBe(true)
+loopbackTest(
+  "WS /v1/responses forwards upstream errors as error events",
+  async () => {
+    const fetchMock = mock(
+      () =>
+        new Response("upstream failed", {
+          status: 500,
+        }),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
 
-  ws.close()
-})
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
 
-test("WS /v1/responses forwards upstream errors as error events", async () => {
-  const fetchMock = mock(
-    () =>
-      new Response("upstream failed", {
-        status: 500,
-      }),
-  )
-  globalThis.fetch = fetchMock as unknown as typeof fetch
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
-
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: {
-        model: "gpt-responses",
-        input: "hi",
-      },
-    }),
-  )
-
-  const message = JSON.parse(await queue.next()) as {
-    type: string
-    status: number
-    error: {
-      message: string
-      type: string
-    }
-  }
-
-  expect(message.type).toBe("error")
-  expect(message.status).toBe(500)
-  expect(message.error.type).toBe("error")
-  expect(message.error.message).toContain("upstream failed")
-
-  ws.close()
-})
-
-test("WS /v1/responses logs an active turn as cancelled on client close", async () => {
-  globalThis.fetch = mock(
-    () =>
-      new Promise<Response>((resolve) =>
-        setTimeout(() => resolve(new Response("late")), 500),
-      ),
-  ) as unknown as typeof fetch
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-  const { ws } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: { model: "gpt-responses", input: "cancel me" },
-    }),
-  )
-  await Bun.sleep(20)
-  ws.close()
-
-  await waitFor(() =>
-    logStore
-      .query({ endpoint: "responses", outcome: "cancelled", limit: 10 })
-      .entries.some(
-        (entry) => entry.method === "WS" && entry.statusCode === 499,
-      ),
-  )
-})
-
-test("WS /v1/responses retries a truncated pre-output stream over HTTP", async () => {
-  const fetchMock = mock(
-    () =>
-      new Response(
-        [
-          'data: {"type":"response.created","response":{"id":"resp_truncated","status":"in_progress"}}',
-          "",
-          'data: {"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}',
-          "",
-          'data: {"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}}',
-          "",
-          "data: [DONE]",
-          "",
-        ].join("\n"),
-        {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          model: "gpt-responses",
+          input: "hi",
         },
-      ),
-  )
-  globalThis.fetch = fetchMock as unknown as typeof fetch
+      }),
+    )
 
-  using appServer = Bun.serve({
-    port: 0,
-    fetch: server.fetch,
-    websocket: bunWebsocket,
-  })
-  const { ws, queue } = await openSocket(
-    `ws://localhost:${appServer.port}/v1/responses`,
-  )
+    const message = JSON.parse(await queue.next()) as {
+      type: string
+      status: number
+      error: {
+        message: string
+        type: string
+      }
+    }
 
-  ws.send(
-    JSON.stringify({
-      type: "response.create",
-      response: { model: "gpt-responses", input: "hi", stream: true },
-    }),
-  )
+    expect(message.type).toBe("error")
+    expect(message.status).toBe(500)
+    expect(message.error.type).toBe("error")
+    expect(message.error.message).toContain("upstream failed")
 
-  const message = JSON.parse(await queue.next()) as {
-    type?: string
-    error?: { message?: string }
-  }
-  expect(message.type).toBe("error")
-  expect(message.error?.message).toContain("without a terminal response event")
-  expect(fetchMock).toHaveBeenCalledTimes(2)
-  ws.close()
-})
+    ws.close()
+  },
+)
+
+loopbackTest(
+  "WS /v1/responses logs an active turn as cancelled on client close",
+  async () => {
+    globalThis.fetch = mock(
+      () =>
+        new Promise<Response>((resolve) =>
+          setTimeout(() => resolve(new Response("late")), 500),
+        ),
+    ) as unknown as typeof fetch
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { model: "gpt-responses", input: "cancel me" },
+      }),
+    )
+    await Bun.sleep(20)
+    ws.close()
+
+    await waitFor(() =>
+      logStore
+        .query({ endpoint: "responses", outcome: "cancelled", limit: 10 })
+        .entries.some(
+          (entry) => entry.method === "WS" && entry.statusCode === 499,
+        ),
+    )
+  },
+)
+
+loopbackTest(
+  "WS /v1/responses retries a truncated pre-output stream over HTTP",
+  async () => {
+    const fetchMock = mock(
+      () =>
+        new Response(
+          [
+            'data: {"type":"response.created","response":{"id":"resp_truncated","status":"in_progress"}}',
+            "",
+            'data: {"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}',
+            "",
+            'data: {"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}}',
+            "",
+            "data: [DONE]",
+            "",
+          ].join("\n"),
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
+
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { model: "gpt-responses", input: "hi", stream: true },
+      }),
+    )
+
+    const message = JSON.parse(await queue.next()) as {
+      type?: string
+      error?: { message?: string }
+    }
+    expect(message.type).toBe("error")
+    expect(message.error?.message).toContain(
+      "without a terminal response event",
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    ws.close()
+  },
+)
 
 test("Responses WS send detects a message dropped by Bun", async () => {
   const accepted = await sendResponsesWebSocketTextForTest(

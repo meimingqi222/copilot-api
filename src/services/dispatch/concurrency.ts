@@ -134,14 +134,7 @@ export function tryAcquireCredentialLease(
 }
 
 /** True when a value is an async iterable (a streaming response). */
-export function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
-  return Boolean(
-    value
-      && typeof value === "object"
-      && (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator]
-        !== undefined,
-  )
-}
+export { isAsyncIterable } from "~/services/protocols/result-shape"
 
 /**
  * Passthrough wrapper that holds the lease for the full lifetime of a streamed

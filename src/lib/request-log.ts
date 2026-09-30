@@ -37,6 +37,7 @@ import {
   upstreamResponseSelfReportsModel,
 } from "~/lib/upstream-model-audit"
 import { isAbortError } from "~/lib/utils"
+import { publishTrace, type TracePhase } from "~/lib/trace-bus"
 import { flushTranslationLossesForContext } from "~/services/ir/loss-logging"
 
 export type RequestEndpoint = LogEntry["endpoint"]
@@ -276,26 +277,86 @@ export function addAttempt(c: Context, attempt: UpstreamAttempt): void {
   if (attempt.errorCode) ctx.entry.failoverReason = attempt.errorCode
 }
 
+/**
+ * Publish the request's current in-memory state to the live trace feed.
+ *
+ * Best-effort and side-effect free with respect to the request: it only reads
+ * the log context. Used so the admin 请求追踪 view can show a request while it
+ * is still running (start / routing update) instead of only once it finishes.
+ */
+export function publishTraceSnapshot(
+  c: Context | undefined,
+  phase: TracePhase,
+): void {
+  if (!c) return
+  const ctx = getRequestLogContext(c)
+  if (!ctx) return
+  publishTrace({ ...ctx.entry, requestId: ctx.requestId }, phase)
+}
+
+export interface AttemptTarget {
+  connectionId: string
+  connectionName?: string
+  credentialId: string
+  credentialLabel?: string
+  endpoint: string
+  protocol: string
+  provider: string
+  upstreamBaseUrl?: string
+  upstreamModelId?: string
+  isTranslated?: boolean
+}
+
+/** Copy the routing target onto the log entry (which connection/credential). */
+function applyTargetFields(
+  ctx: RequestLogContext,
+  target: AttemptTarget,
+): void {
+  const key = `${target.connectionId}/${target.credentialId}`
+  ctx.entry.initialTarget ??= key
+  ctx.entry.finalTarget = key
+  ctx.entry.connectionId = target.connectionId
+  if (target.connectionName) ctx.entry.connectionName = target.connectionName
+  ctx.entry.credentialId = target.credentialId
+  ctx.entry.credentialLabel = target.credentialLabel
+  ctx.entry.provider = target.provider
+  ctx.entry.protocol = target.protocol
+  ctx.entry.upstreamBaseUrl = target.upstreamBaseUrl
+  ctx.entry.endpoint = target.endpoint as LogEntry["endpoint"]
+  ctx.entry.modelUpstream = target.upstreamModelId
+  ctx.entry.isTranslated = target.isTranslated
+}
+
+/**
+ * Announce that a target is about to be contacted, before the upstream call.
+ *
+ * `recordUpstreamAttempt` only runs once the upstream answers, so without this
+ * a live trace would show an in-flight request with no connection/credential
+ * for the whole upstream wait. Publishes an `update` snapshot only — it does
+ * not add an attempt row (that still happens when the call settles).
+ */
+export function markAttemptStarting(
+  c: Context | undefined,
+  target: AttemptTarget,
+): void {
+  if (!c) return
+  const ctx = getRequestLogContext(c)
+  if (!ctx) return
+  applyTargetFields(ctx, target)
+  publishTrace({ ...ctx.entry, requestId: ctx.requestId }, "update")
+}
+
 export function recordUpstreamAttempt(
   c: Context | undefined,
-  target: {
-    connectionId: string
-    connectionName?: string
-    credentialId: string
-    credentialLabel?: string
-    endpoint: string
-    protocol: string
-    provider: string
-    upstreamBaseUrl?: string
-    upstreamModelId?: string
-    isTranslated?: boolean
-  },
+  target: AttemptTarget,
   result: {
     status?: number
     latencyMs?: number
     errorCode?: string
     errorSnippet?: string
     retryAfterMs?: number
+    restReason?: string
+    restUntilMs?: number
   },
   index: number,
 ): void {
@@ -315,25 +376,15 @@ export function recordUpstreamAttempt(
     errorCode: result.errorCode,
     errorSnippet: result.errorSnippet,
     retryAfterMs: result.retryAfterMs,
+    restReason: result.restReason,
+    restUntilMs: result.restUntilMs,
     result: result.errorCode ? "failed" : "opened",
   })
-  const key = `${target.connectionId}/${target.credentialId}`
   const logCtx = getRequestLogContext(c)
-  if (logCtx) {
-    logCtx.entry.initialTarget ??= key
-    logCtx.entry.finalTarget = key
-    logCtx.entry.connectionId = target.connectionId
-    if (target.connectionName)
-      logCtx.entry.connectionName = target.connectionName
-    logCtx.entry.credentialId = target.credentialId
-    logCtx.entry.credentialLabel = target.credentialLabel
-    logCtx.entry.provider = target.provider
-    logCtx.entry.protocol = target.protocol
-    logCtx.entry.upstreamBaseUrl = target.upstreamBaseUrl
-    logCtx.entry.endpoint = target.endpoint as LogEntry["endpoint"]
-    logCtx.entry.modelUpstream = target.upstreamModelId
-    logCtx.entry.isTranslated = target.isTranslated
-  }
+  if (logCtx) applyTargetFields(logCtx, target)
+  // Routing resolved (or an attempt failed and the next is about to open):
+  // push the now-known connection/credential/model to the live trace view.
+  publishTraceSnapshot(c, "update")
 }
 
 export function recordTraceError(c: Context, error: unknown): void {

@@ -23,6 +23,7 @@ import {
   initRequestLog,
   isCoreApiPath,
   patchRequestLog,
+  publishTraceSnapshot,
   recordTraceError,
   claimRequestLogFinish,
   setRequestLogFinisher,
@@ -30,6 +31,7 @@ import {
 import { appendRequestLogSync } from "./request-log-persist"
 import { sanitizeJson } from "./security-sanitizer"
 import { statsStore } from "./stats-store"
+import { publishTrace } from "./trace-bus"
 import { getClientIp } from "./utils"
 
 export const requestLogger = async (c: Context, next: Next) => {
@@ -57,6 +59,9 @@ export const requestLogger = async (c: Context, next: Next) => {
     userId: c.get("userId"),
     username: c.get("username"),
   })
+  // Show the request on the live trace view the moment it opens, before
+  // routing resolves and long before it finishes.
+  publishTraceSnapshot(c, "start")
   try {
     c.header("X-Request-Id", ctx.requestId)
   } catch {
@@ -137,6 +142,14 @@ export const requestLogger = async (c: Context, next: Next) => {
     }
     logStore.push(entry)
     appendRequestLogSync(entry)
+    // Live trace feed for the admin "请求追踪" view: same finalized entry, no
+    // second computation. Best-effort — never let it affect the response.
+    try {
+      if (entry.requestId)
+        publishTrace({ ...entry, requestId: entry.requestId }, "final")
+    } catch {
+      logger.debug("Failed to publish trace")
+    }
     if (modelMismatchWarning) {
       logger.warn(
         `[upstream-model-audit] response model mismatch: sent "${entry.modelUpstream ?? entry.model ?? "-"}" but upstream reported "${entry.modelResponse}"`,

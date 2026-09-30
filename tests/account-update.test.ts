@@ -6,7 +6,11 @@ import { getCredentialContextString } from "~/lib/provider-connections"
 import {
   applyConnectionPatchToConnection,
   parseBodyToPatch,
+  patchRequiresModelRefresh,
 } from "~/routes/admin/api/account-update"
+import { publicAccountFromConnection } from "~/routes/admin/api/account-views"
+import { resolveClaudeTransport } from "~/services/claude/cli/transport"
+import { setClaudeCliTestHooks } from "~/services/claude/cli/binary"
 
 function makeCopilotConnection(): ProviderConnection {
   return {
@@ -116,5 +120,38 @@ describe("parseBodyToPatch + applyConnectionPatchToConnection", () => {
     }
     const patch = parseBodyToPatch(conn, { githubToken: "ghp_wrong" })
     expect(patch.credentialValue).toBeUndefined()
+  })
+
+  test("claude: card choice updates the metadata used by transport selection", () => {
+    const conn: ProviderConnection = {
+      ...makeCopilotConnection(),
+      id: "claude-1",
+      protocol: "claude-native",
+      metadata: { provider: "claude", quotaState: "unknown", settings: {} },
+    }
+    setClaudeCliTestHooks({ findBinary: () => undefined })
+    try {
+      const httpPatch = parseBodyToPatch(conn, {
+        settings: { claudeTransport: "http" },
+      })
+      expect(patchRequiresModelRefresh(httpPatch)).toBe(false)
+      applyConnectionPatchToConnection(conn, httpPatch)
+      expect(conn.metadata?.claudeTransport).toBe("http")
+      expect(publicAccountFromConnection(conn).settings.claudeTransport).toBe(
+        "http",
+      )
+      expect(resolveClaudeTransport(conn)).toBe("http")
+
+      applyConnectionPatchToConnection(
+        conn,
+        parseBodyToPatch(conn, { settings: { claudeTransport: "cli" } }),
+      )
+      expect(publicAccountFromConnection(conn).settings.claudeTransport).toBe(
+        "cli",
+      )
+      expect(() => resolveClaudeTransport(conn)).toThrow()
+    } finally {
+      setClaudeCliTestHooks({})
+    }
   })
 })

@@ -16,6 +16,10 @@ const alphabetIndex = (() => {
   return m
 })()
 
+const ALPHABET_BYTES = Uint8Array.from(QODER_BODY_ALPHABET, (ch) =>
+  ch.charCodeAt(0),
+)
+
 /**
  * 解一组 4 字符：返回 N = floor(6*k/8) 个字节，k 是非 pad 字符数。
  * '$' 跳过，'!' 映射为 63。
@@ -48,7 +52,9 @@ function groupBytes(grp: string): Uint8Array | null {
  * 6-bit 值 63 输出为 '!'。
  */
 export function segmentEncode(data: Uint8Array): string {
-  let out = ""
+  const chars = Math.ceil((data.length * 8) / 6)
+  const out = Buffer.allocUnsafe(Math.ceil(chars / 4) * 4)
+  let n = 0
   let acc = 0
   let nb = 0
   for (const b of data) {
@@ -56,16 +62,14 @@ export function segmentEncode(data: Uint8Array): string {
     nb += 8
     while (nb >= 6) {
       nb -= 6
-      out += QODER_BODY_ALPHABET[(acc >> nb) & 0x3f]
+      out[n++] = ALPHABET_BYTES[(acc >> nb) & 0x3f]
     }
   }
   if (nb > 0) {
-    out += QODER_BODY_ALPHABET[(acc << (6 - nb)) & 0x3f]
+    out[n++] = ALPHABET_BYTES[(acc << (6 - nb)) & 0x3f]
   }
-  while (out.length % 4 !== 0) {
-    out += "$"
-  }
-  return out
+  out.fill(0x24, n) // '$' 补位
+  return out.toString("latin1")
 }
 
 /** 自定义 base64 编码（不含首尾 1/3 互换）。 */

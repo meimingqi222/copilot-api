@@ -13,22 +13,90 @@ interface CatalogEntry {
   upstreamId?: string
 }
 
+/**
+ * Claude 目录的**离线兜底**。
+ *
+ * 正常路径由 `services/claude/get-models.ts` 从上游 `GET /v1/models` 实时发现,
+ * 这里只在发现失败(网络/上游变更)时兜底,所以它应该与上游保持一致 ——
+ * 但不该是唯一真相:写死的列表迟早会落后于上游发版(这份表就曾经停在
+ * sonnet-4-6 / opus-4-6 / haiku-4-5,导致新模型在 UI 里完全不可见)。
+ */
 const CLAUDE_CATALOG: Array<CatalogEntry> = [
   {
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-opus-5",
+    name: "Claude Opus 5",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
     id: "claude-sonnet-4-6",
-    name: "Claude 4.6 Sonnet",
+    name: "Claude Sonnet 4.6",
     vendor: "anthropic",
     supportedEndpoints: ["/v1/messages"],
   },
   {
     id: "claude-opus-4-6",
-    name: "Claude 4.6 Opus",
+    name: "Claude Opus 4.6",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-opus-4-5-20251101",
+    name: "Claude Opus 4.5",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-sonnet-4-5-20250929",
+    name: "Claude Sonnet 4.5",
     vendor: "anthropic",
     supportedEndpoints: ["/v1/messages"],
   },
   {
     id: "claude-haiku-4-5-20251001",
-    name: "Claude 4.5 Haiku",
+    name: "Claude Haiku 4.5",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    vendor: "anthropic",
+    supportedEndpoints: ["/v1/messages"],
+  },
+  {
+    id: "claude-fable-5",
+    name: "Claude Fable 5",
     vendor: "anthropic",
     supportedEndpoints: ["/v1/messages"],
   },
@@ -352,6 +420,82 @@ const ANTIGRAVITY_CATALOG: Array<CatalogEntry> = [
   },
 ]
 
+const FACTORY_CATALOG: Array<CatalogEntry> = (
+  [
+    // Anthropic Messages wire (/api/llm/a)
+    ["claude-fable-5.1", "Fable 5.1", "anthropic", "/v1/messages"],
+    ["claude-fable-5", "Fable 5", "anthropic", "/v1/messages"],
+    ["claude-opus-5-5", "Opus 5.5", "anthropic", "/v1/messages"],
+    ["claude-opus-5", "Opus 5", "anthropic", "/v1/messages"],
+    ["claude-opus-4-8", "Opus 4.8", "anthropic", "/v1/messages"],
+    ["claude-sonnet-5-5", "Sonnet 5.5", "anthropic", "/v1/messages"],
+    ["claude-sonnet-5", "Sonnet 5", "anthropic", "/v1/messages"],
+    ["claude-sonnet-4-6", "Sonnet 4.6", "anthropic", "/v1/messages"],
+    ["claude-haiku-4-5-20251001", "Haiku 4.5", "anthropic", "/v1/messages"],
+    ["minimax-m2.7", "MiniMax M2.7", "minimax", "/v1/messages"],
+    // OpenAI Responses wire (/api/llm/o/v1)
+    ["gpt-6-sol", "GPT-6 Sol", "openai", "/v1/responses"],
+    ["gpt-6-astra", "GPT-6 Astra", "openai", "/v1/responses"],
+    ["gpt-6-luna", "GPT-6 Luna", "openai", "/v1/responses"],
+    ["gpt-5.6-sol", "GPT-5.6 Sol", "openai", "/v1/responses"],
+    ["gpt-5.6-terra", "GPT-5.6 Terra", "openai", "/v1/responses"],
+    ["gpt-5.6-luna", "GPT-5.6 Luna", "openai", "/v1/responses"],
+    ["gpt-5.5", "GPT-5.5", "openai", "/v1/responses"],
+    ["gpt-5.4", "GPT-5.4", "openai", "/v1/responses"],
+    ["gpt-5.3-codex", "GPT-5.3-Codex", "openai", "/v1/responses"],
+    ["grok-4.7", "Grok 4.7", "xai", "/v1/responses"],
+    ["grok-4.6", "Grok 4.6", "xai", "/v1/responses"],
+    // Chat Completions wire (/api/llm/o/v1) — Factory 自托管的开源模型
+    ["glm-5.3", "GLM-5.3", "zhipu", "/chat/completions"],
+    ["glm-5.3-flash", "GLM-5.3-Flash", "zhipu", "/chat/completions"],
+    ["glm-5.2", "GLM-5.2", "zhipu", "/chat/completions"],
+    ["kimi-k3", "Kimi K3", "moonshot", "/chat/completions"],
+    [
+      "deepseek-v4.1-flash",
+      "DeepSeek V4.1 Flash",
+      "deepseek",
+      "/chat/completions",
+    ],
+    ["qwen3.8-max", "Qwen3.8 Max", "qwen", "/chat/completions"],
+    ["minimax-m3", "MiniMax M3", "minimax", "/chat/completions"],
+    [
+      "mistral-medium-3.5",
+      "Mistral Medium 3.5",
+      "mistral",
+      "/chat/completions",
+    ],
+    ["nemotron-3-ultra", "Nemotron 3 Ultra", "nvidia", "/chat/completions"],
+  ] as const
+).map(([id, name, vendor, endpoint]) => ({
+  id,
+  name,
+  vendor,
+  supportedEndpoints: [endpoint],
+}))
+
+const ZCODE_CATALOG: Array<CatalogEntry> = [
+  ["GLM-5.3", "GLM-5.3"],
+  ["GLM-5.3-Flash", "GLM-5.3-Flash"],
+  ["GLM-5.2", "GLM-5.2"],
+  ["GLM-5-Turbo", "GLM-5-Turbo"],
+].map(([id, name]) => ({
+  id,
+  name,
+  vendor: "zhipu",
+  supportedEndpoints: ["/v1/messages"],
+}))
+
+const ZED_CATALOG: Array<CatalogEntry> = [
+  ["claude-sonnet-4-6", "Claude 4.6 Sonnet"],
+  ["claude-opus-4-6", "Claude 4.6 Opus"],
+  ["claude-haiku-4-5-20251001", "Claude 4.5 Haiku"],
+].map(([id, name]) => ({
+  id,
+  name,
+  vendor: "anthropic",
+  supportedEndpoints: ["/v1/messages"],
+}))
+
 const CATALOGS: Record<OAuthProviderId, Array<CatalogEntry>> = {
   claude: CLAUDE_CATALOG,
   kimi: KIMI_CATALOG,
@@ -362,6 +506,17 @@ const CATALOGS: Record<OAuthProviderId, Array<CatalogEntry>> = {
   // Qoder 没有静态模型表：模型只能由登录后的 `model/list` 实时发现
   // （adapter 的 discoverModels），发现失败即“无模型”，不编造目录。
   qoder: [],
+  factory: FACTORY_CATALOG,
+  zcode: ZCODE_CATALOG,
+  // Command Code 的模型来自 Provider API 的列表（discoverModels）；这里不
+  // 编造静态目录，发现失败即无模型。
+  "commandcode-plan": [],
+  // Zed 只支持 Anthropic Messages wire（Claude 系模型）；其余 wire 后续补。
+  zed: ZED_CATALOG,
+  // DimAgent 的模型来自 /v1/models?type=dim（discoverModels）；不编造目录。
+  dimagent: [],
+  // Gemini 的模型来自 Code Assist 的 fetchAvailableModels（discoverModels）。
+  gemini: [],
 }
 
 function compareVersionArrays(a: Array<number>, b: Array<number>): number {

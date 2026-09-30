@@ -6,7 +6,7 @@
  * (e.g. `https://generativelanguage.googleapis.com/v1beta`).
  *
  * The "-compatible" suffix follows this repo's taxonomy for
- * externally-configured connections (the `*-native` suffix is reserved for
+ * endpoint connections (the `*-native` suffix is reserved for
  * account-managed providers); it says nothing about the wire, which is
  * Google's own generateContent protocol.
  *

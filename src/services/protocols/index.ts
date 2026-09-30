@@ -10,6 +10,12 @@ import { codebuddyNativeAdapter } from "./codebuddy-native"
 import { codebuffNativeAdapter } from "./codebuff-native"
 import { codexNativeAdapter } from "./codex-native"
 import { copilotNativeAdapter } from "./copilot-native"
+import { factoryNativeAdapter } from "./factory-native"
+import { zcodeNativeAdapter } from "./zcode-native"
+import { commandCodeNativeAdapter } from "./commandcode-native"
+import { zedNativeAdapter } from "./zed-native"
+import { dimagentNativeAdapter } from "./dimagent-native"
+import { geminiNativeAdapter } from "./gemini-native"
 import { geminiCompatibleAdapter } from "./gemini-compatible"
 import { kimiNativeAdapter } from "./kimi-native"
 import { lobsteraiNativeAdapter } from "./lobsterai-native"
@@ -43,6 +49,12 @@ export function initializeProtocolAdapters(): void {
   registerProtocolAdapter(codebuddyNativeAdapter)
   registerProtocolAdapter(lobsteraiNativeAdapter)
   registerProtocolAdapter(qoderNativeAdapter)
+  registerProtocolAdapter(factoryNativeAdapter)
+  registerProtocolAdapter(zcodeNativeAdapter)
+  registerProtocolAdapter(commandCodeNativeAdapter)
+  registerProtocolAdapter(zedNativeAdapter)
+  registerProtocolAdapter(dimagentNativeAdapter)
+  registerProtocolAdapter(geminiNativeAdapter)
   initialized = true
 }
 

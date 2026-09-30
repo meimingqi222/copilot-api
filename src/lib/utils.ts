@@ -83,9 +83,9 @@ export function cacheModels(): void {
         .map((model) => ({ model, conn })),
     )
 
-  // 全量重建:account 部分 + 外部 provider 部分合并为一次写入。
+  // 全量重建:account 部分 + 端点连接部分合并为一次写入。
   // appendProviderConnectionModels 的增量追加语义会导致禁用/删除后的模型
-  // 残留在 state.models 里(尤其纯外部 provider 场景下 connectionModels
+  // 残留在 state.models 里(尤其纯端点连接场景下 connectionModels
   // 为空,旧逻辑直接 early-return,从不收缩列表)。
   let accountData: NonNullable<typeof state.models>["data"] = []
   if (connectionModels.length > 0) {
@@ -153,10 +153,10 @@ export function cacheModels(): void {
     )
   }
 
-  const externalData = buildProviderConnectionEntries(
+  const endpointData = buildProviderConnectionEntries(
     new Set(accountData.map((m) => m.id)),
   )
-  const combined = [...accountData, ...externalData]
+  const combined = [...accountData, ...endpointData]
   state.models =
     combined.length > 0 ? { object: "list", data: combined } : undefined
 }
@@ -213,7 +213,7 @@ function buildConnectionModelEntry(
 }
 
 /**
- * 基于当前已过滤的 exposed 列表构建外部 provider 条目(纯函数,不读写
+ * 基于当前已过滤的 exposed 列表构建端点连接条目(纯函数,不读写
  * state.models)。调用方传入已占用的 id 集合用于去重,返回新增条目。
  */
 function buildProviderConnectionEntries(

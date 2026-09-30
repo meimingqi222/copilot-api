@@ -1,5 +1,5 @@
 /**
- * Provider connection 路由守卫:拒绝通过外部 provider API 操作
+ * Provider connection 路由守卫:拒绝通过端点连接 API 操作
  * account-managed connection(*-native protocol)。
  *
  * 拆分自 provider-connections.ts 以满足行数限制。

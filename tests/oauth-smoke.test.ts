@@ -12,7 +12,10 @@ import { buildRouteTargets, resolveModelRouting } from "~/lib/route-target"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
-import { resetOAuthFlowsForTest } from "~/services/oauth/flows"
+import {
+  flushOAuthFlowSavesForTest,
+  resetOAuthFlowsForTest,
+} from "~/services/oauth/flows"
 import { initializeProviderRegistry } from "~/services/providers"
 
 import {
@@ -34,7 +37,8 @@ const isOAuthAccount = (account: OAuthAccount): boolean =>
   isOAuthProviderId(account.provider)
 
 const isolationRoot = PATHS.APP_DIR
-const testDir = path.join(process.cwd(), ".tmp-oauth-smoke")
+const testRoot = path.join(process.cwd(), "temp")
+let testDir: string
 
 function fetchTarget(url: string | URL | Request): string {
   if (typeof url === "string") {
@@ -58,7 +62,8 @@ async function adminJson(url: string, init?: RequestInit): Promise<Response> {
 }
 
 beforeEach(async () => {
-  await fs.mkdir(testDir, { recursive: true })
+  await fs.mkdir(testRoot, { recursive: true })
+  testDir = await fs.mkdtemp(path.join(testRoot, "oauth-smoke-"))
   redirectPathsToDir(testDir)
   await fs.writeFile(PATHS.PENDING_OAUTH_FLOWS_PATH, "{}")
   initializeProviderRegistry()
@@ -73,6 +78,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   resetOAuthFlowsForTest()
+  await flushOAuthFlowSavesForTest()
   setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
   redirectPathsToDir(isolationRoot)

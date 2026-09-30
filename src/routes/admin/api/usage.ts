@@ -707,9 +707,9 @@ function aggregateByProvider(range: { startMs: number; endMs: number }) {
       }
     > = {}
     for (const [accountId, account] of Object.entries(provider.accounts)) {
-      // "live" check 必须同时覆盖 account-managed connections 和外部 provider
+      // "live" check 必须同时覆盖 account-managed connections 和端点连接
       // connections(plain *-compatible connections)。getProviderConnection 解析
-      // 所有 connection,外部 provider 的 usage 不会因此被误标为 deleted。
+      // 所有 connection,端点连接的 usage 不会因此被误标为 deleted。
       const liveConnection = getProviderConnection(accountId)
       accounts[accountId] = {
         // 使用 connection.name 作为 label(替代 getAccount()?.label)

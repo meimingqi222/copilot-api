@@ -101,8 +101,7 @@ function findClaudeBinaryOnDisk(): string | undefined {
 /**
  * 找到本机的 `claude` 可执行文件；找不到返回 undefined。
  *
- * 返回 undefined 是**正常情况**（用户没装 CLI），调用方据此回落到 v1，
- * 不要把它当成错误。
+ * 返回 undefined 表示 CLI 不可用，调用方应报错而非自动切换到 HTTP。
  */
 export function findClaudeBinary(): string | undefined {
   // 不能用 `?.() ?? ...`：hook 返回 undefined（"这台机器没装"）会被

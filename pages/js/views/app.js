@@ -10,6 +10,7 @@ function adminApp() {
       "logs",
       "performance",
       "quotas",
+      "traces",
       "usage",
       "users",
     ],
@@ -125,6 +126,7 @@ function adminApp() {
         { id: "usage", icon: "bar-chart-3", label: this.t("nav.usage") },
         { id: "quotas", icon: "battery-charging", label: this.t("nav.quotas") },
         { id: "performance", icon: "gauge", label: this.t("nav.performance") },
+        { id: "traces", icon: "route", label: this.t("nav.traces") },
         { id: "guard", icon: "shield", label: this.t("nav.guard") },
         { id: "logs", icon: "scroll-text", label: this.t("nav.logs") },
       ]

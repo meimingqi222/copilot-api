@@ -32,8 +32,8 @@ export const providerConnectionCrudRoutes = new Hono()
 
 providerConnectionCrudRoutes.get("/", (c) => {
   // 过滤 account-managed connection(*-native protocol):这些 connection
-  // 由账号管理路径(/admin/api/accounts)管理,不应出现在外部 provider 列表中,
-  // 避免用户在外部 provider 页面误编辑而破坏 account 路径的 metadata。
+  // 由账户连接路径(/admin/api/accounts)管理,不应出现在端点连接列表中,
+  // 避免用户在端点连接页面误编辑而破坏 account 路径的 metadata。
   // 判别器用 protocol 派生,T5.2.5 后仍然有效。
   //
   // 列表请求时先 refresh 一次:把已过期的 cooldown / quota_exhausted
@@ -69,8 +69,8 @@ providerConnectionCrudRoutes.post("/", async (c) => {
   if (!protocol || !isProviderProtocol(protocol)) {
     return c.json({ error: "Invalid `protocol`" }, 400)
   }
-  // 写入不变量:*-native protocol 只能由账号管理路径创建,
-  // 外部 provider API 不允许创建 account-managed connection。
+  // 写入不变量:*-native protocol 只能由账户连接路径创建,
+  // 端点连接 API 不允许创建 account-managed connection。
   if (isAccountManagedProtocol(protocol)) {
     return c.json(
       {
@@ -140,7 +140,7 @@ providerConnectionCrudRoutes.put("/:id", async (c) => {
   ) {
     return c.json({ error: "Invalid `protocol`" }, 400)
   }
-  // 写入不变量:不允许通过外部 provider API 把 protocol 改成 *-native
+  // 写入不变量:不允许通过端点连接 API 把 protocol 改成 *-native
   if (
     typeof payload.protocol === "string"
     && isProviderProtocol(payload.protocol)

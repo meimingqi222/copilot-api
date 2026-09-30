@@ -34,10 +34,60 @@ export interface UpstreamAttempt {
   errorCode?: string
   errorSnippet?: string
   retryAfterMs?: number
+  /** Why this attempt rested (Phase 3): credit/quota/rate/verify/… */
+  restReason?: string
+  /** When the rest lifts, ms epoch (0/undefined = no rest). */
+  restUntilMs?: number
   result: "opened" | "failed"
 }
 
 export type RequestOutcome = "success" | "incomplete" | "failed" | "cancelled"
+
+/**
+ * How a routing candidate fared. `chosen` is the one that answered; the rest
+ * explain why they were passed over (lower priority, needs protocol
+ * translation, a fallback wildcard, or temporarily unavailable).
+ */
+export type RouteCandidateStatus =
+  | "chosen"
+  | "available"
+  | "translated"
+  | "wildcard"
+  | "cooldown"
+  | "quota"
+  | "auth"
+  | "disabled"
+  | "unknown"
+
+/** One route the gateway could have taken for this request. */
+export interface RouteCandidate {
+  connectionId: string
+  connectionName?: string
+  provider?: string
+  credentialId?: string
+  credentialLabel?: string
+  protocol?: string
+  endpoint?: string
+  model?: string
+  priority?: number
+  status: RouteCandidateStatus
+  retryAfterMs?: number
+  /**
+   * Compact reason tag: the rest reason for resting candidates
+   * (quota/rate/verify/…), the status token otherwise. Always set.
+   */
+  why?: string
+  /** Share of the quota allowance used, 0..100. Undefined when unknown. */
+  quotaUsedPct?: number
+  /** Furthest quota renewal instant (biggest window), ms epoch. */
+  renewAtMs?: number
+  /** Tokens this (connection, credential) served lately (decayed). */
+  servedTokens?: number
+  /** Semantic rest reason when resting; refines `status`. */
+  restReason?: string
+  /** When the rest lifts, ms epoch. */
+  restUntilMs?: number
+}
 export interface RequestLogError {
   origin: "client" | "admission" | "upstream" | "proxy" | "cancelled"
   kind: string
@@ -117,6 +167,8 @@ export interface LogEntry {
   attempts?: Array<UpstreamAttempt>
   failoverCount?: number
   failoverReason?: string
+  /** Candidate routes considered for this request, chosen first. */
+  candidates?: Array<RouteCandidate>
 }
 
 export type RequestLogRecord = Omit<LogEntry, "id">

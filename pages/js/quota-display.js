@@ -307,6 +307,17 @@ const QuotaDisplay = {
 
         break
       }
+      case "commandcode-plan":
+      case "factory":
+      case "zcode":
+      case "dimagent":
+      case "zed":
+      case "gemini": {
+        const key = provider === "commandcode-plan" ? "commandcode" : provider
+        rows = this.buildOAuthWindowsRows(info.details, key, t)
+
+        break
+      }
       default: {
         rows = this.buildCopilotRows(info, t)
       }
@@ -589,6 +600,35 @@ const QuotaDisplay = {
           : undefined,
         hideBar: unlimited,
         resetText: this.formatResetTime(window.resetsAtMs, t),
+      })
+    }
+    return rows
+  },
+
+  /**
+   * 通用 OAuth provider 窗口渲染（commandcode / factory / zcode / dimagent）：
+   * 读 `details[<key>].windows`，每项用已算好的 usedPercent / display。
+   */
+  buildOAuthWindowsRows(details, key, t) {
+    if (!details || typeof details !== "object") return []
+    const block = details[key]
+    if (!block || typeof block !== "object") return []
+    const windows = Array.isArray(block.windows) ? block.windows : []
+    const rows = []
+    for (const [index, window] of windows.entries()) {
+      if (!window || typeof window !== "object") continue
+      const usedPercent = this.normalizeNumber(window.usedPercent)
+      if (usedPercent === undefined) continue
+      const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+      rows.push({
+        id: `${key}-${index}`,
+        label: window.name || key,
+        remainingPercent,
+        valueText: `${Math.round(remainingPercent)}%`,
+        amountText:
+          typeof window.display === "string" && window.display ?
+            window.display
+          : undefined,
       })
     }
     return rows

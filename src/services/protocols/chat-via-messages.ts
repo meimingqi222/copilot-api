@@ -1,22 +1,15 @@
 /**
- * Shared helper for serving OpenAI Chat Completions requests via an Anthropic
- * Messages upstream. Mirrors `messages-via-chat.ts`: converts a Chat
- * Completions payload -> Anthropic Messages payload, delegates to the
- * adapter's `createMessages`, then converts the Anthropic result back to
- * OpenAI format (streaming or non-streaming).
+ * Serves Chat Completions requests via an Anthropic Messages upstream.
  *
- * Used by the dispatch layer when a `/v1/chat/completions` request fails over
- * to a target whose adapter only implements `createMessages` (e.g. a
- * claude-native or anthropic-compatible connection), so cross-protocol
- * fallback is transparent.
- *
- * Prompt caching: the Chat Completions schema has no way to express Anthropic
- * `cache_control` breakpoints, so a translated payload would otherwise reach
- * the upstream with none at all — the `anthropic-compatible` adapter forwards
- * the body verbatim and never adds any. That leaves such requests relying on
- * whatever implicit prefix caching the upstream does, measurably below what
- * the direct `/v1/messages` path gets from a client that places its own
- * breakpoints. We place the standard set here instead.
+ * Thin delegate over {@link createTranslatedCall}. The only per-direction
+ * behavior it carries is prompt caching: the Chat Completions schema has no way
+ * to express Anthropic `cache_control` breakpoints, so a translated payload
+ * would otherwise reach the upstream with none at all — the
+ * `anthropic-compatible` adapter forwards the body verbatim and never adds any.
+ * That leaves such requests relying on whatever implicit prefix caching the
+ * upstream does, measurably below what the direct `/v1/messages` path gets from
+ * a client that places its own breakpoints. We place the standard set here
+ * instead, via `transformTargetRequest`.
  */
 
 import type {
@@ -27,19 +20,11 @@ import type {
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { applyPromptCaching } from "~/services/claude/prompt-cache"
-import { planTranslation, recordTranslationLosses } from "~/services/ir"
-import {
-  decodeChatRequest,
-  decodeMessagesResponse,
-  decodeMessagesStream,
-  encodeChatResponse,
-  encodeChatStream,
-  encodeMessagesRequest,
-} from "~/services/ir/codecs/messages-chat"
 
-import type { AnthropicMessagesPayload, AnthropicResponse } from "./anthropic"
+import { createTranslatedCall } from "./wire-pairs"
+
+import type { AnthropicMessagesPayload } from "./anthropic"
 import type { AdapterChatResult, AdapterMessagesResult } from "./types"
 
 interface MessagesExecutorParams {
@@ -101,16 +86,6 @@ function withPromptCacheBreakpoints(
   return next
 }
 
-/** A non-streaming AnthropicResponse is a plain object; a stream has asyncIterator. */
-function isAnthropicResponse(value: unknown): value is AnthropicResponse {
-  return (
-    typeof value === "object"
-    && value !== null
-    && !Array.isArray(value)
-    && !(Symbol.asyncIterator in value)
-  )
-}
-
 export async function createChatViaMessages(
   params: ChatViaMessagesParams,
 ): Promise<AdapterChatResult> {
@@ -123,60 +98,29 @@ export async function createChatViaMessages(
     ctx,
     messagesExecutor,
   } = params
-
-  const request = decodeChatRequest(payload)
-  const plan = planTranslation(request, {
-    wire: "messages",
-    providerId: connection.protocol,
-    model: target.upstreamModelId,
-    issuer: connection.id,
-    cacheControlPolicy:
-      SELF_CACHING_PROTOCOLS.has(target.protocol) ? "target" : "caller",
-  })
-  recordTranslationLosses(ctx?.c, plan.losses)
-  if (!plan.accepted) {
-    throw new LocalPayloadUnsupportedError(
-      plan.losses.records
-        .filter((record) => record.action === "reject")
-        .map((record) => record.reason)
-        .join("; ") || "Messages target cannot preserve the request",
-    )
-  }
-  let translated: AnthropicMessagesPayload
-  try {
-    translated = encodeMessagesRequest(request, {
-      stream: payload.stream ?? undefined,
-      issuer: connection.id,
-    })
-  } catch (error) {
-    throw new LocalPayloadUnsupportedError(
-      error instanceof Error ?
-        error.message
-      : "Messages target cannot encode the request",
-    )
-  }
-  const anthropicPayload =
-    SELF_CACHING_PROTOCOLS.has(target.protocol) ? translated : (
-      withPromptCacheBreakpoints(translated)
-    )
-  const result = await messagesExecutor({
-    target,
+  const selfCaching = SELF_CACHING_PROTOCOLS.has(target.protocol)
+  return (await createTranslatedCall({
+    source: "chat",
+    target: "messages",
+    targetPayload: payload,
     connection,
     credential,
-    payload: anthropicPayload,
+    routeTarget: target,
     signal,
     ctx,
-  })
-
-  if (isAnthropicResponse(result.response)) {
-    return {
-      credentialId: result.credentialId,
-      response: encodeChatResponse(decodeMessagesResponse(result.response)),
-    }
-  }
-
-  const chatStream = encodeChatStream(
-    decodeMessagesStream(result.response as AsyncIterable<unknown>),
-  )
-  return { credentialId: result.credentialId, response: chatStream }
+    cacheControlPolicy: selfCaching ? "target" : "caller",
+    transformTargetRequest: (encoded) =>
+      selfCaching ? encoded : (
+        withPromptCacheBreakpoints(encoded as AnthropicMessagesPayload)
+      ),
+    executor: (p) =>
+      messagesExecutor({
+        target: p.target,
+        connection: p.connection,
+        credential: p.credential,
+        payload: p.payload as AnthropicMessagesPayload,
+        signal: p.signal,
+        ctx: p.ctx,
+      }),
+  })) as unknown as AdapterChatResult
 }

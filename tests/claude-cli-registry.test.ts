@@ -24,6 +24,7 @@ function fakeRun(
       return true
     },
     awaitToolCall: () => Promise.resolve({ content: [] }),
+    awaitWaitRequest: () => Promise.resolve({ content: [] }),
     delivered,
   }
 }

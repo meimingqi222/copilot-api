@@ -22,5 +22,5 @@
       "~/*": ["./src/*"]
     }
   },
-  "exclude": ["tools"]
+  "exclude": ["tools", "temp"]
 }

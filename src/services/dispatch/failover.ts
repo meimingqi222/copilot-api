@@ -42,11 +42,16 @@ import {
 import { type RequestAdmission } from "~/lib/request-admission"
 import {
   getRequestLogContext,
+  markAttemptStarting,
   patchRequestLog,
   recordUpstreamAttempt,
 } from "~/lib/request-log"
 import {
+  type RestDecision,
   resolveConnectionFromTarget,
+  restDecisionFor,
+  restDecisionForReason,
+  restReasonForErrorKind,
   switchToNextRouteTarget,
   targetKey,
 } from "~/lib/route-target"
@@ -192,6 +197,16 @@ export async function executeWithFailover<
       }
       let handedOffToStream = false
       try {
+        // Tell the live trace view which connection/credential is being
+        // contacted *before* the upstream call, so an in-flight request is
+        // not shown with an empty route for the whole upstream wait.
+        markAttemptStarting(c, {
+          ...current.target,
+          connectionName: current.connection.name,
+          credentialLabel: current.credential.label,
+          provider: connectionProvider(current.connection),
+          upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
+        })
         const result = await execute(adapter, current.target, current)
         // Windsurf resolves the real SKU (e.g. glm-5-2-max) from
         // reasoning_effort inside the adapter and patches modelUpstream.
@@ -247,6 +262,7 @@ export async function executeWithFailover<
       let errorCode: string | undefined
       let retryAfterMs: number | undefined
       let errorSnippet: string | undefined
+      let rest: RestDecision | undefined
       if (error instanceof HTTPError) {
         // A local concurrency rejection is not an upstream failure: label it as
         // such in the attempts log instead of letting status 429 classify as
@@ -269,13 +285,32 @@ export async function executeWithFailover<
           errorCode = classified.kind
           retryAfterMs = classified.retryAfterMs
           errorSnippet = error.responseBody
+          // Semantic rest reason + duration (Phase 3): reads the vendor's
+          // words so quota rests its real window and credit its own band,
+          // instead of one flat backoff.
+          rest = restDecisionFor({
+            status: error.response.status,
+            headers: error.response.headers,
+            body: error.responseBody,
+            fallbackMs:
+              classified.retryAfterMs ?? DEFAULTS.COOLDOWN_429_FALLBACK_MS,
+          })
         }
       } else if (error instanceof WindsurfUpstreamError) {
         errorCode = error.kind
         retryAfterMs = error.retryAfterMs
         errorSnippet = error.message
+        rest = restDecisionForReason({
+          reason: restReasonForErrorKind(error.kind),
+          retryAfterMs: error.retryAfterMs,
+          fallbackMs: DEFAULTS.COOLDOWN_429_FALLBACK_MS,
+        })
       } else if (error instanceof Error) {
         errorCode = error.name
+        rest = restDecisionForReason({
+          reason: "network",
+          fallbackMs: DEFAULTS.COOLDOWN_NETWORK_MS,
+        })
       }
       const failedSku =
         c ? getRequestLogContext(c)?.entry.modelUpstream : undefined
@@ -295,6 +330,8 @@ export async function executeWithFailover<
           errorCode,
           retryAfterMs,
           errorSnippet,
+          restReason: rest?.reason,
+          restUntilMs: rest?.untilMs,
         },
         idx,
       )
@@ -320,7 +357,7 @@ export async function executeWithFailover<
         && !(error instanceof LocalConcurrencyLimitError)
         && !shouldFailover(error)
       ) {
-        await markCooldown(current, error, logPrefix)
+        await markCooldown(current, error, logPrefix, rest)
         throw error
       }
 
@@ -373,7 +410,7 @@ export async function executeWithFailover<
       // try another route target, while preserving the 429 if no target is
       // available.
       if (!(error instanceof LocalConcurrencyLimitError)) {
-        await markCooldown(current, error, logPrefix)
+        await markCooldown(current, error, logPrefix, rest)
       }
 
       if (!advanceToNextTarget()) throw error
@@ -476,9 +513,10 @@ async function markAccountManagedCooldown(
     isHttp: boolean
     authKey: string
     logPrefix: string
+    rest?: RestDecision
   },
 ): Promise<void> {
-  const { status, isHttp, authKey, logPrefix } = ctx
+  const { status, isHttp, authKey, logPrefix, rest } = ctx
   // Windsurf in-stream / HTTP error frames carry the parsed kind +
   // retryAfterMs (e.g. "Resets in: 3h0m0s" → 10800000ms). Apply the real
   // cooldown instead of the default 60s exponential backoff.
@@ -524,13 +562,33 @@ async function markAccountManagedCooldown(
       headers: error.response.headers,
       body: error.responseBody,
     })
+    // Phase 3: credit (out of balance) and verify (vendor wants the account
+    // verified) rest their own bands; a true quota reads the real window from
+    // the vendor's words (rest.restMs), capped at 8d.
+    if (rest?.reason === "credit") {
+      invalidateSessionAffinityAuth(authKey)
+      setConnectionQuotaState(conn, "exhausted")
+      setConnectionCooldownUntil(conn, Date.now() + rest.restMs)
+      syncConnectionExhaustedState(conn)
+      await persistConnectionState(logPrefix, "connection credit state")
+      return
+    }
+    if (rest?.reason === "verify") {
+      invalidateSessionAffinityAuth(authKey)
+      await markConnectionRateLimitedMs(conn, {
+        retryAfterMs: rest.restMs,
+        reason: "upstream_verify",
+        logPrefix,
+      })
+      return
+    }
     if (error.responseBody && classified.kind === "quota_exhausted") {
       invalidateSessionAffinityAuth(authKey)
       setConnectionQuotaState(conn, "exhausted")
       setConnectionCooldownUntil(
         conn,
-        classified.retryAfterMs ?
-          Date.now() + classified.retryAfterMs
+        rest?.reason === "quota" ? Date.now() + rest.restMs
+        : classified.retryAfterMs ? Date.now() + classified.retryAfterMs
         : Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
       )
       syncConnectionExhaustedState(conn)
@@ -543,7 +601,7 @@ async function markAccountManagedCooldown(
         conn,
         status,
         logPrefix,
-        classified.retryAfterMs,
+        rest?.reason === "rate" ? rest.restMs : classified.retryAfterMs,
       )
       return
     }
@@ -658,6 +716,7 @@ async function markCooldown(
   admission: RequestAdmission,
   error: unknown,
   logPrefix: string,
+  rest?: RestDecision,
 ): Promise<void> {
   // CodeBuddy 6004 模型级限流：只冷却 (credential, model)，跳过账号级标记。
   // HTTP 错误路径 adapter 已落库（幂等复写）；流错误路径（safeSseStream
@@ -680,6 +739,16 @@ async function markCooldown(
   const status = isHttp ? error.response.status : 503
   const authKey = affinityAuthKey(admission.target)
 
+  // Phase 3: a semantic refusal (the vendor's safety filter, an unapproved
+  // channel) rests nothing — same prompt fails everywhere — so leave the
+  // credential ready and let the caller rotate / surface it.
+  if (rest?.reason === "refused") {
+    admission.credential.lastError = "upstream refused"
+    admission.credential.lastErrorAt = Date.now()
+    await persistCredentialState(logPrefix)
+    return
+  }
+
   // account-managed 路径:直接写回 ProviderConnection + 持久化
   if (isAccountManagedConnection(admission.connection)) {
     const conn = resolveStateConnection(admission.connection.id)
@@ -689,6 +758,7 @@ async function markCooldown(
         isHttp,
         authKey,
         logPrefix,
+        rest,
       })
     }
     return
@@ -711,11 +781,30 @@ async function markCooldown(
       headers: error.response.headers,
       body: errorBody,
     })
+    // Phase 3: credit and verify are their own rest bands, told apart from a
+    // true quota by the vendor's words.
+    if (rest?.reason === "credit") {
+      markCredentialQuotaExhausted(
+        admission.credential,
+        shortReason,
+        rest.restMs,
+      )
+      await persistCredentialState(logPrefix)
+      return
+    }
+    if (rest?.reason === "verify") {
+      markCredentialCooldown(admission.credential, {
+        retryAfterMs: rest.restMs,
+        reason: `upstream verify: ${shortReason}`,
+      })
+      await persistCredentialState(logPrefix)
+      return
+    }
     if (classified.kind === "quota_exhausted") {
       markCredentialQuotaExhausted(
         admission.credential,
         shortReason,
-        classified.retryAfterMs,
+        rest?.reason === "quota" ? rest.restMs : classified.retryAfterMs,
       )
       await persistCredentialState(logPrefix)
       return
@@ -737,7 +826,9 @@ async function markCooldown(
     }
   }
   const retryAfterMs =
-    classified?.retryAfterMs ?? resolveRetryAfterMs(isHttp, status)
+    rest?.reason === "rate" ?
+      rest.restMs
+    : (classified?.retryAfterMs ?? resolveRetryAfterMs(isHttp, status))
   const errorCode =
     isHttp ? extractUpstreamErrorCode(error.responseBody) : undefined
   let reason: string

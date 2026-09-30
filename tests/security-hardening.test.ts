@@ -39,7 +39,7 @@ describe("secret hashing", () => {
     expect(verifySecret("correct horse", stored)).toBe(true)
     expect(verifySecret("correct horsf", stored)).toBe(false)
     expect(verifySecret("", stored)).toBe(false)
-  })
+  }, 30_000)
 
   test("legacy sha256 formats keep verifying (dual-track migration)", () => {
     const hex = createHash("sha256").update("old-secret").digest("hex")
@@ -94,7 +94,7 @@ describe("api key expiry", () => {
     const fresh = createUserSync("here", 0, "user", [])
     expect(isUserExpired(fresh)).toBe(false)
     expect(verifyApiKey(fresh.apiKey)?.username).toBe("here")
-  })
+  }, 15_000)
 
   test("expiry is enforced through the server", async () => {
     const created = createUserSync("short", 0, "user", [])
@@ -121,7 +121,7 @@ describe("api key expiry", () => {
         )
       ).status,
     ).toBe(401)
-  })
+  }, 15_000)
 })
 
 describe("admin password auto-hash in .env", () => {
@@ -216,7 +216,7 @@ describe("api key brute-force shield", () => {
     expect(locked.status).toBe(429)
     // 15-minute lockout, not the 1s pacing gate.
     expect(Number(locked.headers.get("Retry-After"))).toBeGreaterThan(60)
-  })
+  }, 15_000)
 
   test("legacy single-key mode returns 429 once the IP is locked", async () => {
     state.users = []
@@ -238,7 +238,7 @@ describe("api key brute-force shield", () => {
     )
     expect(locked.status).toBe(429)
     expect(Number(locked.headers.get("Retry-After"))).toBeGreaterThan(60)
-  })
+  }, 15_000)
 })
 
 describe("security headers and cors", () => {

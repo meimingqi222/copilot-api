@@ -18,7 +18,7 @@ import type { OAuthFlowProvider } from "./flows"
 import type { OAuthPendingFlow } from "./flows"
 import type { PkceCodes } from "./pkce"
 
-import { generatePkceCodes } from "./pkce"
+import { generateOAuthState, generatePkceCodes } from "./pkce"
 
 import {
   applyAntigravityOAuthBundle,
@@ -72,6 +72,47 @@ import {
   QODER_DEVICE_POLL_INTERVAL_MS,
   qoderJobTokenLifetimeMs,
 } from "./qoder"
+import {
+  applyFactoryOAuthBundle,
+  pollFactoryDeviceAuthorization,
+  startFactoryDeviceFlow,
+} from "./factory"
+import {
+  applyZcodeOAuthBundle,
+  normalizeZcodeSite,
+  startZcodeSignIn,
+  zcodeSignInAndMint,
+} from "./zcode"
+import {
+  applyCommandCodeOAuthBundle,
+  buildCommandCodeAuthUrl,
+  finalizeCommandCodeBundle,
+} from "./commandcode"
+import {
+  applyZedOAuthBundle,
+  decryptZedToken,
+  fetchZedMe,
+  newZedKey,
+  newZedSystemId,
+  ZED_CALLBACK_PORT,
+  zedSignInUrl,
+} from "./zed"
+import {
+  applyDimagentOAuthBundle,
+  buildDimagentAuthUrl,
+  dimagentBundle,
+  exchangeDimagentCode,
+  newDimagentPkce,
+} from "./dimagent"
+import {
+  applyGeminiOAuthBundle,
+  buildGeminiAuthUrl,
+  exchangeGeminiCode,
+  fetchGeminiUserInfo,
+  geminiBundle,
+  newGeminiPkce,
+  resolveGeminiProject,
+} from "./gemini"
 import {
   applyWindsurfOAuthBundle,
   createWindsurfOAuthStart,
@@ -623,6 +664,230 @@ const lobsteraiStrategy: OAuthProviderStrategy = {
 
 // ── Registry ────────────────────────────────────────────────────
 
+const factoryStrategy: OAuthProviderStrategy = {
+  flowType: "device",
+  async start({ proxyUrl }) {
+    const device = await startFactoryDeviceFlow(
+      proxyUrl ? { proxyUrl } : undefined,
+    )
+    return {
+      verificationUri:
+        device.verification_uri_complete || device.verification_uri,
+      userCode: device.user_code,
+      deviceCode: device.device_code,
+      interval: device.interval ?? 5,
+      deviceExpiresIn: device.expires_in ?? undefined,
+      responseExpiresIn: device.expires_in ?? undefined,
+    }
+  },
+  async exchange({ flow, signal }) {
+    if (!flow.deviceCode) {
+      throw new Error("Factory OAuth flow is missing device code")
+    }
+    const conn = createOAuthConnection("factory", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    // 重构出轮询器期望的设备码形状（deviceExpiresIn 只在内存里）。
+    const bundle = await pollFactoryDeviceAuthorization(
+      {
+        device_code: flow.deviceCode,
+        user_code: flow.userCode ?? "",
+        verification_uri: flow.verificationUri ?? "",
+        interval: flow.interval,
+        expires_in: flow.deviceExpiresIn,
+      },
+      { ...flowFetchOptions(flow), signal },
+    )
+    applyFactoryOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
+const zcodeStrategy: OAuthProviderStrategy = {
+  flowType: "device",
+  async start({ proxyUrl, region }) {
+    const site = normalizeZcodeSite(region)
+    const s = await startZcodeSignIn(site, proxyUrl ? { proxyUrl } : undefined)
+    const expiresInSec = Math.max(
+      Math.round((s.expiresAtMs - Date.now()) / 1000),
+      1,
+    )
+    return {
+      authUrl: s.authUrl,
+      verificationUri: s.authUrl,
+      deviceCode: s.flowId,
+      nonce: s.pollToken,
+      interval: Math.max(Math.round(s.intervalMs / 1000), 1),
+      deviceExpiresIn: expiresInSec,
+      responseExpiresIn: expiresInSec,
+      region: site,
+    }
+  },
+  async exchange({ flow, signal }) {
+    if (!flow.deviceCode || !flow.nonce) {
+      throw new Error("ZCode OAuth flow is missing its sign-in state")
+    }
+    const site = normalizeZcodeSite(flow.region)
+    const conn = createOAuthConnection("zcode", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    const bundle = await zcodeSignInAndMint(
+      {
+        flowId: flow.deviceCode,
+        authUrl: flow.authUrl ?? "",
+        pollToken: flow.nonce,
+        intervalMs: Math.max(flow.interval ?? 3, 1) * 1000,
+        expiresAtMs:
+          Date.now() + Math.max(flow.deviceExpiresIn ?? 300, 1) * 1000,
+      },
+      site,
+      { ...flowFetchOptions(flow), signal },
+    )
+    applyZcodeOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
+const commandCodeStrategy: OAuthProviderStrategy = {
+  flowType: "callback",
+  start() {
+    const state = generateOAuthState()
+    return Promise.resolve({ authUrl: buildCommandCodeAuthUrl(state), state })
+  },
+  async exchange({ flow, code }) {
+    if (!code) {
+      throw new Error(
+        "Command Code OAuth exchange requires the API key Studio posted",
+      )
+    }
+    const conn = createOAuthConnection("commandcode-plan", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    const bundle = await finalizeCommandCodeBundle(code, flowFetchOptions(flow))
+    applyCommandCodeOAuthBundle(conn, bundle)
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
+/** Zed 的私钥只存在内存里（回调后一次性用完），不落盘。 */
+const zedPendingKeys = new Map<
+  string,
+  { privateKeyPem: string; systemId: string }
+>()
+
+const zedStrategy: OAuthProviderStrategy = {
+  flowType: "callback",
+  start() {
+    const key = newZedKey()
+    const systemId = newZedSystemId()
+    // 用 systemId 当 state：Zed 不回我们的 state，回调里只做去重/取 key 用。
+    zedPendingKeys.set(systemId, {
+      privateKeyPem: key.privateKeyPem,
+      systemId,
+    })
+    return Promise.resolve({
+      authUrl: zedSignInUrl(ZED_CALLBACK_PORT, key.publicKeyB64, systemId),
+      state: systemId,
+    })
+  },
+  async exchange({ flow, code }) {
+    // code = `<user_id>\u0000<encrypted access token>`（combineIntoCode）。
+    const [userId, ciphertext] = (code ?? "").split("\u0000")
+    if (!userId || !ciphertext) {
+      throw new Error("Zed OAuth exchange requires the callback values")
+    }
+    const pending = zedPendingKeys.get(flow.state ?? "")
+    if (!pending) {
+      throw new Error("Zed OAuth flow is missing its key")
+    }
+    zedPendingKeys.delete(flow.state ?? "")
+    const accessToken = decryptZedToken(pending.privateKeyPem, ciphertext)
+    const conn = createOAuthConnection("zed", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    const me = await fetchZedMe(
+      userId,
+      accessToken,
+      pending.systemId,
+      flowFetchOptions(flow),
+    )
+    applyZedOAuthBundle(conn, {
+      userId,
+      accessToken,
+      systemId: pending.systemId,
+      org: me.org,
+      login: me.login,
+      name: me.name,
+      plan: me.plan,
+    })
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
+const dimagentStrategy: OAuthProviderStrategy = {
+  flowType: "pkce-callback",
+  start() {
+    const pkce = newDimagentPkce()
+    const state = generateOAuthState()
+    return Promise.resolve({
+      authUrl: buildDimagentAuthUrl(state, pkce),
+      state,
+      pkce,
+    })
+  },
+  async exchange({ flow, code }) {
+    if (!flow.pkce) {
+      throw new Error("DimAgent OAuth flow is missing PKCE codes")
+    }
+    if (!code) {
+      throw new Error("DimAgent OAuth exchange requires an authorization code")
+    }
+    const conn = createOAuthConnection("dimagent", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    const tokens = await exchangeDimagentCode(
+      code,
+      flow.pkce,
+      flowFetchOptions(flow),
+    )
+    applyDimagentOAuthBundle(conn, dimagentBundle(tokens))
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
+const geminiStrategy: OAuthProviderStrategy = {
+  flowType: "pkce-callback",
+  start() {
+    const pkce = newGeminiPkce()
+    const state = generateOAuthState()
+    return Promise.resolve({
+      authUrl: buildGeminiAuthUrl(state, pkce),
+      state,
+      pkce,
+    })
+  },
+  async exchange({ flow, code }) {
+    if (!flow.pkce) {
+      throw new Error("Gemini OAuth flow is missing PKCE codes")
+    }
+    if (!code) {
+      throw new Error("Gemini OAuth exchange requires an authorization code")
+    }
+    const options = flowFetchOptions(flow)
+    const tokens = await exchangeGeminiCode(code, flow.pkce, options)
+    const project = await resolveGeminiProject(
+      tokens.access_token ?? "",
+      options,
+    )
+    const user = await fetchGeminiUserInfo(tokens.access_token ?? "", options)
+    const conn = createOAuthConnection("gemini", flow.label)
+    applyFlowSettingsToConnection(conn, flow)
+    applyGeminiOAuthBundle(conn, geminiBundle(tokens, project, user))
+    upsertProviderConnection(conn)
+    return conn
+  },
+}
+
 export const OAUTH_PROVIDER_STRATEGIES: Record<
   OAuthProviderId,
   OAuthProviderStrategy
@@ -634,6 +899,12 @@ export const OAUTH_PROVIDER_STRATEGIES: Record<
   kimi: kimiStrategy,
   minimax: minimaxStrategy,
   qoder: qoderStrategy,
+  factory: factoryStrategy,
+  zcode: zcodeStrategy,
+  "commandcode-plan": commandCodeStrategy,
+  zed: zedStrategy,
+  dimagent: dimagentStrategy,
+  gemini: geminiStrategy,
 }
 
 /**

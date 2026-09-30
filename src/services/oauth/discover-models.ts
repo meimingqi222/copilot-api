@@ -10,6 +10,7 @@ import {
   getConnectionProvider,
 } from "~/lib/provider-connections"
 import { getAntigravityModelsForConnection } from "~/services/antigravity/get-models"
+import { getClaudeModelsForConnection } from "~/services/claude/get-models"
 import { getCodexModelsForConnection } from "~/services/codex/get-models"
 
 import { getOAuthFallbackModelsForConnection } from "./model-catalog"
@@ -49,7 +50,7 @@ function accountModelEndpointsToMappingEndpoints(
 
 /**
  * Connection 原生版本:发现 OAuth connection 的模型列表。
- * codex/antigravity 使用 connection 原生发现函数,
+ * codex/antigravity/claude 使用 connection 原生发现函数(上游模型端点),
  * 其余 provider 直接使用 connection 原生 fallback。
  */
 export async function discoverOAuthModelsForConnection(
@@ -75,6 +76,14 @@ export async function discoverOAuthModelsForConnection(
       case "antigravity": {
         return accountModelsToMappings(
           await getAntigravityModelsForConnection(connection, signal),
+        )
+      }
+      case "claude": {
+        // 上游 /v1/models 是权威目录。失败时下面的 catch 会回落到静态
+        // catalog —— 宁可给出可能过期的列表,也不要因为一次网络抖动把
+        // 模型表清空。
+        return accountModelsToMappings(
+          await getClaudeModelsForConnection(connection, signal),
         )
       }
       default: {

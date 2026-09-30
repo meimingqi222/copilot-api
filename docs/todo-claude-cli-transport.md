@@ -1,6 +1,8 @@
 # TODO: Claude 账号接入 v2 — CLI 传输层（claude-cli）
 
-状态：**已实现，待真机验证**（代码完成且全量验收通过；真机验证待 Claude 账号续费，见 §10）
+> 以下记录最初的实施方案。当前 Claude 账号默认固定走 CLI；找不到二进制会报错，不再自动回落 HTTP。管理界面的 Claude 账户卡片可显式切换 CLI/HTTP，详见 README 的 Claude transport 说明。
+
+状态：**已实现，并通过真机验证**（2026-09-30 用真 `claude` 2.1.285 + Pro 订阅跑通；结论见 §0 与 §10）
 
 ---
 
@@ -31,24 +33,43 @@
 
 ## 0. Definition of Done
 
-状态：**8 项中 6 项已核验，2 项需真机**。
+状态：**8 项全部核验通过**（第 1、2、3 项已用真 `claude` 二进制补测，见下）。
 
-| #   | 判据                                       | 状态      | 证据                                                                                   |
-| --- | ------------------------------------------ | --------- | -------------------------------------------------------------------------------------- |
-| 1   | 无工具单回合（流式 + 非流式）              | ⚠️ 待真机 | 假 CLI 集成测试通过（`tests/claude-cli-bridge.test.ts`）；真 `claude` 二进制未验证     |
-| 2   | 带工具调用的多回合，唤醒**同一** CLI 进程  | ⚠️ 待真机 | 假 CLI 同时扮演 CLI 与 helper，POST 到**真实回调路由**，断言 `runRegistry.size` 保持 1 |
-| 3   | 挂起超过 60 秒的工具调用不会导致 MCP 超时  | ❌ 未做   | `patience`（默认 5 分钟）已实现；`wait_for_tool` 按 §5 Phase 3 的允许延后              |
-| 4   | 首字节前失败返回真实 HTTP 状态码           | ✅        | 配额 → 429、非零退出 → 502、无二进制 → 503                                             |
-| 5   | usage 映射 `cache_read` / `cache_creation` | ✅        | 并修掉一个覆盖 bug，见 §10                                                             |
-| 6   | 找不到二进制时回落 v1                      | ✅        | `tests/claude-cli-transport.test.ts`（10 条）                                          |
-| 7   | lint / typecheck / format / test 全绿      | ✅        | oxlint exit 0 · format 干净 · typecheck 干净 · **1567 pass / 0 fail**                  |
-| 8   | v1 测试全部不受影响                        | ✅        | 全量套件含 v1 的 `claude-*` 测试全绿                                                   |
+| #   | 判据                                       | 状态 | 证据                                                                                                    |
+| --- | ------------------------------------------ | ---- | ------------------------------------------------------------------------------------------------------- |
+| 1   | 无工具单回合（流式 + 非流式）              | ✅   | 真机：非流式 `claude-sonnet-5-5` 返回 `PONG`；流式修掉帧形状 bug 后出完整 SSE（见 §10「真机实测」）     |
+| 2   | 带工具调用的多回合，唤醒**同一** CLI 进程  | ✅   | 真机：turn 1 得 `tool_use`（MCP 前缀已剥），进程挂起；turn 2 送 `tool_result` 后**同一 PID** 复述出结果 |
+| 3   | 挂起超过 60 秒的工具调用不会导致 MCP 超时  | ✅   | 真机：压 65s（>60s）仍续跑同一进程；越过 `patience` 走 `wait_for_tool` 回收，见 §10                     |
+| 4   | 首字节前失败返回真实 HTTP 状态码           | ✅   | 配额 → 429、非零退出 → 502、无二进制 → 503                                                              |
+| 5   | usage 映射 `cache_read` / `cache_creation` | ✅   | 并修掉一个覆盖 bug；真机两次连续回合确认 `cache_write 2116` → `cache_read 2121`，见 §10                 |
+| 6   | 找不到二进制时回落 v1                      | ✅   | `tests/claude-cli-transport.test.ts`（10 条）                                                           |
+| 7   | lint / typecheck / format / test 全绿      | ✅   | oxlint exit 0 · format 干净 · typecheck 干净 · **1818 pass / 0 fail**（189 文件）                       |
+| 8   | v1 测试全部不受影响                        | ✅   | 全量套件含 v1 的 `claude-*` 测试全绿                                                                    |
 
-> ⚠️ 第 1、2 项在真机上还有一件**只能**在真机验证的事：
-> Claude Code 是否真的在 MCP `tools/call` 里带
-> `params._meta["claudecode/toolUseId"]`。假 CLI 是按该机制模拟的，未真机确认。若真机发来的是
-> `call_...` 而不是 `toolu_...`，说明字段名变了，关联机制要按 §9 第 2 条重新设计。
-> 验证方法见 §10「续费后的验证清单」。
+**真机验证结论（2026-09-30，`claude` 2.1.285 + Pro 订阅）**
+
+- `params._meta["claudecode/toolUseId"]` **确实存在**，实测值形如
+  `toolu_01UXiCZh1GqqN63CXMktRQxT`（另带 `progressToken`），与 stream-json 里
+  `tool_use` 块的 id 是同一个字符串 —— 关联机制的支点成立，§9 第 2 条不触发。
+- `CLAUDE_CODE_OAUTH_TOKEN` 注入可行：给全新 `CLAUDE_CONFIG_DIR`、不给 CLI 自己的
+  登录态，仍能正常出结果 —— 即**服务器上只需安装 `claude` 二进制，不需要
+  `claude auth login`**。
+
+**后续跟进（真机验证中暴露/补齐，各自有 Agent Note）**
+
+1. **流式帧形状 bug** —— CLI 传输产出的是类型化事件，而 messages 端点的流式契约是
+   `{data, event}` 帧，结果每个事件都被路由层丢弃（`200` + 只有 `: connected`）。
+   见 `.agents/notes/implemented/bug-fix/2026-09-30-claude-cli-stream-frame-shape.md`。
+2. **`wait_for_tool` 已实现** —— 原先延后的增强项补齐；越过 `patience` 后由模型自己
+   回来取结果，不再重开进程。见
+   `.agents/notes/implemented/feature/2026-09-30-claude-cli-wait-for-tool.md`。
+3. **没有 MCP 调用在等时的工具结果会被丢弃** —— 一次回复里多个工具调用（MCP 串行、
+   调用方一次性回全部结果）会踩到；已改为暂存待取。见
+   `.agents/notes/implemented/bug-fix/2026-09-30-claude-cli-dropped-tool-results.md`。
+4. **claude 模型表改为上游发现** —— 静态 `CLAUDE_CATALOG` 会过期且无法从 UI 补
+   （`mergeProviderRefreshedModels` 只保留、不新增），现由
+   `GET /v1/models` 实时发现。见
+   `.agents/notes/implemented/feature/2026-09-30-claude-model-discovery.md`。
 
 ---
 
@@ -429,6 +450,11 @@ MCP 客户端大约 1 分钟就放弃一次 `tools/call`。所以：
 > 那 `patience` 可以设得很大（如 5 分钟）并**先不实现 `wait_for_tool`**，
 > 在 Phase 3 的验收里记为已知限制。请先按简单版本实现，把 `wait_for_tool`
 > 留成 Phase 4 的增强项。
+>
+> **实施结果（2026-09-30）**：当时按简化选项落地；真机验证时发现代价不小 —— 越过
+> `patience` 后迟到的结果既无法接回原进程（只能重开并重放整段 transcript，prompt
+> cache 全废），也可能被静默丢弃。遂补齐 `wait_for_tool`（并修掉结果丢弃的 bug）。
+> 见 §0「后续跟进」2、3。
 
 **测试**
 
@@ -625,7 +651,9 @@ bun run dev -- --verbose
   不要顺手改。
 - **admin UI**：本轮不加传输方式的开关界面。切换靠
   `connection.metadata.claudeTransport` 直接改 JSON，或 `COPILOT_API_CLAUDE_TRANSPORT`。
-- **`wait_for_tool`**：Phase 4 的增强项，Phase 3 先用大 `patience` 顶。
+- **`wait_for_tool`**：Phase 4 的增强项，Phase 3 先用大 `patience` 顶 ——
+  **已于 2026-09-30 补齐**（真机验证时发现"越过 `patience` 只能重开进程"这一代价，
+  遂按 magpie 的形态实现）。见 §0「后续跟进」2。
 - **删除 v1 代码**：不删。v1 是 fallback，也是没装 CLI 用户的唯一路径。
 - **进程池化**：不做。理由见 §4.4 —— 一回合一个进程是刻意的（工具集在
   `cmd.Start()` 时就固化了，池化会把 stale 的工具定义留在进程里）。
@@ -650,7 +678,10 @@ bun run dev -- --verbose
 
 ### 完成日期
 
-2026-09-25 —— 代码完成、全量验收通过；**真机验证待 Claude 账号续费**。
+2026-09-25 —— 代码完成、全量验收通过。
+2026-09-30 —— **真机验证完成**（真 `claude` 2.1.285 + Pro 订阅）：DoD 第 1、2、3 项
+补测通过，并顺带修掉一个流式 bug、补齐 `wait_for_tool`、修掉结果丢弃、把 claude 模型
+表改成上游发现（见 §0「后续跟进」）。
 
 ### 实际落地的文件
 
@@ -685,8 +716,10 @@ bun run dev -- --verbose
 2. **`main.ts` 用前置分发而非 citty 子命令** —— helper 的 stdout 只能有 JSON-RPC；
    citty 的 help 输出和 app 启动横幅都会污染它。改为 `argv[0] === "claude-mcp-helper"`
    前置判断，且不加载 app。
-3. **`wait_for_tool` 未实现** —— §5 Phase 3 自己把它标为 Phase 4 增强项并允许先不做；
-   用 `patience`（默认 5 分钟，`COPILOT_API_CLAUDE_MCP_PATIENCE_MS`）顶。
+3. **`wait_for_tool` 当时未实现** —— §5 Phase 3 自己把它标为 Phase 4 增强项并允许先
+   不做；用 `patience`（默认 5 分钟，`COPILOT_API_CLAUDE_MCP_PATIENCE_MS`）顶。
+   **2026-09-30 已补齐**（真机验证发现"越过 patience 后迟到结果只能靠重开进程接"的
+   代价），见 §0「后续跟进」2。
 4. **Phase 5 的粘性选路无需新写** —— `src/lib/route-target/select.ts:84,200` 的
    session affinity 已覆盖 messages 路径。
 5. **并发上限新建 `ClaudeCliConcurrencyLimitError`** —— 文档只说"复用既有形态"。
@@ -702,18 +735,28 @@ bun run dev -- --verbose
 **覆盖成 0**。已拆成 `startUsage` / `deltaUsage`，并加定向回归测试
 `message_delta does not clobber the input tokens from message_start`。
 
-### 实测数据（5 回合对话的 input / cache_read / cache_write）
+### 实测数据（真机，2026-09-30）
 
-**未取到** —— 本机 Claude 账号未续费，无法发起真实请求。
-§5 Phase 5 要求的"跨回合 `cache_read` 增长趋势"需要在续费后补测。
+单回合（`claude-sonnet-5-5`，非流式）：`input_tokens 2 / output_tokens 5 /
+cache_creation_input_tokens 2116` —— 首轮把整段 CC system prompt 写进 cache。
+
+紧接的下一回合（同一 connection 连续两次请求）：`cache_read_input_tokens 2121 /
+cache_creation 0` —— **跨回合 cache 命中**。§5 Phase 5 要的"`cache_read` 增长趋势"
+成立，说明 `claudeHome` 持久化 + `--setting-sources ""` 那套确实生效。
+
+单工具的多回合（非流式）：turn 1 得到 `tool_use`（`toolu_01HznS6z…`，MCP 前缀已剥成
+`get_secret`）→ 进程挂起 → turn 2 送 `tool_result` 后**同一 PID** 续跑并复述出结果。
 
 ### 遗留问题
 
-1. **`_meta["claudecode/toolUseId"]` 未真机验证**（最高优先级，见下）。
-2. **真机单回合未跑**（goal 验收标准第 2 条）。
-3. **跨回合 prompt cache 未实测**。设计上已避开随机 cwd 陷阱
-   （`claudeHome` 持久化 + `--setting-sources ""`），但未用数据确认。
-4. **挂起超 60s 的路径未验证**（DoD 第 3 项）。
+原四项**均已解决**（编号保留便于对照）：
+
+1. `_meta["claudecode/toolUseId"]` **已真机确认**存在，形如 `toolu_…`。
+2. 真机单回合**已跑通**（非流式与流式）。
+3. 跨回合 prompt cache **已实测命中**（见上）。
+4. 挂起超 60s 的路径**已验证**：压 65s 仍续跑同一进程。
+
+真机验证中新发现并已修复/补齐的四项见 §0「后续跟进」（各带 Agent Note 与回归测试）。
 
 ---
 
@@ -721,20 +764,25 @@ bun run dev -- --verbose
 
 **模型选择**：CLI 传输层**没有默认模型** —— 模型来自调用方请求的 `payload.model`，
 直接作为 `--model` 传给 CLI（`AnthropicMessagesPayload.model` 必填，无回落）。
-冒烟测试建议用 **`claude-haiku-4-5-20251001`**：最便宜，且支持工具调用，
-能同时覆盖工具桥那条路。仓库 catalog 只有三个：`claude-sonnet-4-6`、
-`claude-opus-4-6`、`claude-haiku-4-5-20251001`。
+冒烟测试建议用最便宜的档位（`claude-haiku-4-5-20251001` / `claude-sonnet-5-5`），
+两者都支持工具调用，能同时覆盖工具桥那条路。
 
-- [ ] **无工具单回合**：以 `claude-haiku-4-5-20251001` 发一条
-      "Reply with exactly: PONG"，确认流式出 token、`message_stop` 正常。
-- [ ] **usage 正确**：同一次响应里 `input_tokens` 不为 0，且 `cache_read_input_tokens`
-      字段存在（首轮可能为 0，字段本身必须出现）。
-- [ ] **`_meta["claudecode/toolUseId"]` 真机确认**（最关键）：
-      给一个工具，看 `mcp-callback.ts` 的 `logger.debug` 打出的 `tool_call_id`。- 形如 `toolu_...` → 机制成立，工具桥可信任；- 形如 `call_...` → Claude Code 未传该字段，**停下来**按 §9 第 2 条重新设计。
-- [ ] **工具多回合**：确认第二轮带 `tool_result` 时唤醒的是**同一个** CLI 进程
-      （`runRegistry.size` 保持 1），且回复里包含工具结果。
-- [ ] **跨回合 cache**：跑 5 回合，导出 usage，看 `cache_read` 是否逐回合增长。
-      若恒为 0 且 `cache_write ≈ 全量 input`，先查 `claudeHome` 是否真的持久化。
-- [ ] **配额耗尽路径**：用一个额度已耗尽的账号，确认返回可重试状态码（429）
-      而不是 `200 + event: error`（failover 能否换账号取决于此）。
+> 模型表已不再是静态的：claude 的 connection 现在由 `GET /v1/models` 实时发现
+> （见 §0「后续跟进」4）。原先那段"仓库 catalog 只有三个"的描述已作废 —— 那份静态
+> 表当时就落后于上游，且 `mergeProviderRefreshedModels` 只保留、不新增，导致新模型
+> 在 UI 里根本无法出现。
+
+- [x] **无工具单回合**：`claude-sonnet-5-5` 发"Reply with exactly: PONG" → 非流式返回
+      `PONG`；流式（`stream: true`）出完整 SSE（`message_start → … → message_stop`）。
+- [x] **usage 正确**：同一次响应里 `input_tokens` 不为 0，`cache_read_input_tokens` /
+      `cache_creation_input_tokens` 字段都存在（实测见上）。
+- [x] **`_meta["claudecode/toolUseId"]` 真机确认**（最关键）：形如 `toolu_…`
+      （实测 `toolu_01UXiCZh1GqqN63CXMktRQxT`），**机制成立**，§9 第 2 条不触发。
+- [x] **工具多回合**：第二轮带 `tool_result` 时唤醒的是**同一个** CLI 进程
+      （实测 PID 全程不变），且回复里包含工具结果。
+- [x] **跨回合 cache**：连续两回合已确认命中（`cache_write 2116` → `cache_read 2121`）。
+      原计划的 5 回合曲线未跑 —— 命中已足以说明 `claudeHome` 持久化生效。
+- [ ] **配额耗尽路径**：仍未验证。返回可重试状态码（429）而不是
+      `200 + event: error` —— failover 能否换账号取决于此。真机验证时账号额度充足。
 - [ ] **回落 v1**：`COPILOT_API_CLAUDE_TRANSPORT=http` 跑同一请求，确认 v1 路径行为不变。
+      单测覆盖了传输选择，未在真机上对比两种传输的输出。

@@ -110,22 +110,19 @@ function createCodebuddyRuntime(opts: {
       id,
       name,
       icon: "bot",
-      authMode: "direct",
-      features: ["cooldown", "model_discovery", "quota"],
+      authMode: "oauth",
+      features: ["cooldown", "model_discovery", "quota", "oauth"],
+      // CodeBuddy device-flow sign-in is the primary path; the manual
+      // JSON/accessToken paste stays available as a fallback (see the add
+      // modal). Kept out of `OAUTH_PROVIDER_IDS` so legacy direct-token
+      // classification is untouched.
       accountFields: [
         {
-          key: "accessToken",
-          type: "secret",
-          labelKey: `accounts.provider.${id}.fields.accessToken`,
-          descriptionKey: `accounts.provider.${id}.fields.accessTokenHint`,
-          placeholder: "eyJhbGciOiJSUzI1NiIs...",
-        },
-        {
-          key: "refreshToken",
-          type: "secret",
-          labelKey: `accounts.provider.${id}.fields.refreshToken`,
-          descriptionKey: `accounts.provider.${id}.fields.refreshTokenHint`,
-          placeholder: "eyJhbGciOiJIUzUxMiIs...",
+          key: "proxyUrl",
+          type: "url",
+          labelKey: "accounts.oauth.fields.proxyUrl",
+          descriptionKey: "accounts.oauth.fields.proxyUrlHint",
+          placeholder: "http://127.0.0.1:7890",
         },
       ],
     },

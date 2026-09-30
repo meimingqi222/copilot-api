@@ -16,6 +16,12 @@ import { fetchCodexQuota } from "./fetchers/codex"
 import { fetchKimiQuota } from "./fetchers/kimi"
 import { fetchMinimaxQuota } from "./fetchers/minimax"
 import { fetchQoderQuota } from "./fetchers/qoder"
+import { fetchFactoryQuota } from "./fetchers/factory"
+import { fetchZcodeQuota } from "./fetchers/zcode"
+import { fetchCommandCodeQuota } from "./fetchers/commandcode"
+import { fetchZedQuota } from "./fetchers/zed"
+import { fetchDimagentQuota } from "./fetchers/dimagent"
+import { fetchGeminiQuota } from "./fetchers/gemini"
 import { fetchXaiQuota } from "./fetchers/xai"
 
 const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
@@ -35,6 +41,12 @@ const QUOTA_FETCHERS: Record<
   xai: fetchXaiQuota,
   minimax: fetchMinimaxQuota,
   qoder: fetchQoderQuota,
+  factory: fetchFactoryQuota,
+  zcode: fetchZcodeQuota,
+  "commandcode-plan": fetchCommandCodeQuota,
+  zed: fetchZedQuota,
+  dimagent: fetchDimagentQuota,
+  gemini: fetchGeminiQuota,
 }
 
 /**

@@ -149,6 +149,20 @@ describe("OAuth model prefix helpers", () => {
       "codex/gpt-5.4",
     ])
   })
+
+  test("buildConnectionModelAliases adds the bare name for vendor-namespaced ids", () => {
+    // Aggregators namespace ids by vendor; a bare request must still match.
+    const conn = oauthConnection("codex", {
+      metadata: { provider: "commandcode-plan", quotaState: "unknown" },
+    })
+    const aliases = buildConnectionModelAliases(
+      conn,
+      "deepseek/deepseek-v4.1-flash",
+    )
+    expect(aliases).toContain("deepseek/deepseek-v4.1-flash")
+    expect(aliases).toContain("commandcode-plan/deepseek/deepseek-v4.1-flash")
+    expect(aliases).toContain("deepseek-v4.1-flash")
+  })
 })
 
 describe("OAuth provider routing", () => {

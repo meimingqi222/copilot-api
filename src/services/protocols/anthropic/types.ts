@@ -334,13 +334,7 @@ export interface AnthropicStreamingUsage {
   cache_read_input_tokens?: number
 }
 
-export function isAsyncIterable(
-  value: unknown,
-): value is AsyncIterable<unknown> {
-  return (
-    typeof value === "object" && value !== null && Symbol.asyncIterator in value
-  )
-}
+export { isAsyncIterable } from "../result-shape"
 
 export function isDirectAnthropicResponse(
   response: AsyncIterable<CopilotStreamEventLike> | AnthropicResponse,

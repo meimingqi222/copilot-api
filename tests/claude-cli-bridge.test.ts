@@ -5,7 +5,10 @@ import { HTTPError } from "~/lib/error"
 import { claudeMcpRoutes } from "~/routes/claude-mcp/route"
 import { ClaudeCliUnavailableError } from "~/services/claude/cli/errors"
 import { runRegistry } from "~/services/claude/cli/run-registry"
-import { setClaudeCallbackBaseUrl } from "~/services/claude/cli/server-address"
+import {
+  resetClaudeCallbackBaseUrlForTest,
+  setClaudeCallbackBaseUrl,
+} from "~/services/claude/cli/server-address"
 import {
   collectClaudeCliMessages,
   streamClaudeCliMessages,
@@ -19,6 +22,7 @@ import {
   testConnection,
   testCredential,
 } from "./claude-cli-fixtures"
+import { loopbackTest } from "./helpers/loopback-test"
 
 const TOOL_USE_ID = "toolu_fake_1"
 
@@ -36,9 +40,14 @@ function startCallbackGateway(): string {
   return `http://127.0.0.1:${callbackServer.port}`
 }
 
+function useCallbackGateway(): void {
+  setClaudeCallbackBaseUrl(startCallbackGateway())
+}
+
 beforeEach(async () => {
   runRegistry.clear()
-  setClaudeCallbackBaseUrl(startCallbackGateway())
+  // Most scenarios do not call a tool; only tool scenarios need a listener.
+  setClaudeCallbackBaseUrl("http://127.0.0.1:1")
   const launcher = await installFakeClaude()
   setClaudeCliTestHooks({
     findBinary: () => launcher,
@@ -56,6 +65,7 @@ afterEach(() => {
   runRegistry.clear()
   callbackServer?.stop(true)
   callbackServer = undefined
+  resetClaudeCallbackBaseUrlForTest()
   setClaudeCliTestHooks({})
   delete process.env.FAKE_CLAUDE_SCENARIO
   delete process.env.FAKE_CLAUDE_TOOL_ID
@@ -174,7 +184,8 @@ describe("claude cli bridge", () => {
     ).toBe("claude-sonnet-4-6")
   })
 
-  test("strips the MCP prefix from the tool name", async () => {
+  loopbackTest("strips the MCP prefix from the tool name", async () => {
+    useCallbackGateway()
     process.env.FAKE_CLAUDE_SCENARIO = "tool"
     process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
     const events = await drain(
@@ -196,53 +207,61 @@ describe("claude cli bridge", () => {
    * If the bridge had restarted a process, `findParked` would not have matched
    * and the registry would hold two runs.
    */
-  test("resumes the same run when the caller returns the tool result", async () => {
-    process.env.FAKE_CLAUDE_SCENARIO = "tool"
-    process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
+  loopbackTest(
+    "resumes the same run when the caller returns the tool result",
+    async () => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool"
+      process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
 
-    const first = await drain(
-      await streamClaudeCliMessages(context, userPayload("weather?")),
-    )
-    expect(first.at(-1)?.type).toBe("message_stop")
+      const first = await drain(
+        await streamClaudeCliMessages(context, userPayload("weather?")),
+      )
+      expect(first.at(-1)?.type).toBe("message_stop")
 
-    await waitFor(
-      () =>
-        runRegistry.findParked([TOOL_USE_ID], {
-          connectionId: context.connection.id,
-          credentialId: context.credential.id,
-        }) !== undefined,
-    )
-    expect(runRegistry.size).toBe(1)
+      await waitFor(
+        () =>
+          runRegistry.findParked([TOOL_USE_ID], {
+            connectionId: context.connection.id,
+            credentialId: context.credential.id,
+          }) !== undefined,
+      )
+      expect(runRegistry.size).toBe(1)
 
-    const second = await drain(
-      await streamClaudeCliMessages(
+      const second = await drain(
+        await streamClaudeCliMessages(
+          context,
+          toolResultPayload(TOOL_USE_ID, "sunny"),
+        ),
+      )
+      expect(runRegistry.size).toBe(1)
+      expect(textOf(second)).toContain("sunny")
+    },
+  )
+
+  loopbackTest(
+    "collects the resumed turn for a non-streaming caller",
+    async () => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool"
+      process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
+
+      await collectClaudeCliMessages(context, userPayload("weather?", false))
+      await waitFor(
+        () =>
+          runRegistry.findParked([TOOL_USE_ID], {
+            connectionId: context.connection.id,
+            credentialId: context.credential.id,
+          }) !== undefined,
+      )
+      const response = await collectClaudeCliMessages(
         context,
-        toolResultPayload(TOOL_USE_ID, "sunny"),
-      ),
-    )
-    expect(runRegistry.size).toBe(1)
-    expect(textOf(second)).toContain("sunny")
-  })
-
-  test("collects the resumed turn for a non-streaming caller", async () => {
-    process.env.FAKE_CLAUDE_SCENARIO = "tool"
-    process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
-
-    await collectClaudeCliMessages(context, userPayload("weather?", false))
-    await waitFor(
-      () =>
-        runRegistry.findParked([TOOL_USE_ID], {
-          connectionId: context.connection.id,
-          credentialId: context.credential.id,
-        }) !== undefined,
-    )
-    const response = await collectClaudeCliMessages(
-      context,
-      toolResultPayload(TOOL_USE_ID, "sunny", false),
-    )
-    expect(response.content[0]).toMatchObject({ type: "text" })
-    expect(JSON.stringify(response.content)).toContain("sunny")
-  })
+        toolResultPayload(TOOL_USE_ID, "sunny", false),
+      )
+      expect(response.content[0]).toMatchObject({ type: "text" })
+      expect(JSON.stringify(response.content)).toContain("sunny")
+    },
+  )
 
   test("starts a fresh run when the tool result matches nothing parked", async () => {
     process.env.FAKE_CLAUDE_SCENARIO = "text"
@@ -270,42 +289,51 @@ describe("claude cli run lifecycle", () => {
    * Each run is a whole node process, so a connection must be capped. A parked
    * run still counts: it is holding a process while it waits for the caller.
    */
-  test("refuses a new run once the connection is at its cap", async () => {
-    process.env.FAKE_CLAUDE_SCENARIO = "tool"
-    process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
-    process.env.COPILOT_API_CLAUDE_MAX_RUNS = "1"
-    try {
-      await drain(await streamClaudeCliMessages(context, userPayload("a")))
-      await waitFor(() => runRegistry.size === 1)
-      await expect(
-        streamClaudeCliMessages(context, userPayload("b")),
-      ).rejects.toThrow(/concurrency limit reached/)
-    } finally {
-      delete process.env.COPILOT_API_CLAUDE_MAX_RUNS
-    }
-  })
-
-  test("the cap is per connection, not global", async () => {
-    process.env.FAKE_CLAUDE_SCENARIO = "tool"
-    process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
-    process.env.COPILOT_API_CLAUDE_MAX_RUNS = "1"
-    try {
-      await drain(await streamClaudeCliMessages(context, userPayload("a")))
-      await waitFor(() => runRegistry.size === 1)
-      const other = {
-        ...context,
-        connection: testConnection({ id: "conn-other" }),
+  loopbackTest(
+    "refuses a new run once the connection is at its cap",
+    async () => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool"
+      process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
+      process.env.COPILOT_API_CLAUDE_MAX_RUNS = "1"
+      try {
+        await drain(await streamClaudeCliMessages(context, userPayload("a")))
+        await waitFor(() => runRegistry.size === 1)
+        await expect(
+          streamClaudeCliMessages(context, userPayload("b")),
+        ).rejects.toThrow(/concurrency limit reached/)
+      } finally {
+        delete process.env.COPILOT_API_CLAUDE_MAX_RUNS
       }
-      const events = await drain(
-        await streamClaudeCliMessages(other, userPayload("b")),
-      )
-      expect(events.at(-1)?.type).toBe("message_stop")
-    } finally {
-      delete process.env.COPILOT_API_CLAUDE_MAX_RUNS
-    }
-    // Two sequential fake-CLI spawns; each costs ~2.4s on Windows, which
-    // straddles the default 5s timeout.
-  }, 15_000)
+    },
+  )
+
+  loopbackTest(
+    "the cap is per connection, not global",
+    async () => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool"
+      process.env.FAKE_CLAUDE_TOOL_ID = TOOL_USE_ID
+      process.env.COPILOT_API_CLAUDE_MAX_RUNS = "1"
+      try {
+        await drain(await streamClaudeCliMessages(context, userPayload("a")))
+        await waitFor(() => runRegistry.size === 1)
+        const other = {
+          ...context,
+          connection: testConnection({ id: "conn-other" }),
+        }
+        const events = await drain(
+          await streamClaudeCliMessages(other, userPayload("b")),
+        )
+        expect(events.at(-1)?.type).toBe("message_stop")
+      } finally {
+        delete process.env.COPILOT_API_CLAUDE_MAX_RUNS
+      }
+      // Two sequential fake-CLI spawns; each costs ~2.4s on Windows, which
+      // straddles the default 5s timeout.
+    },
+    15_000,
+  )
 })
 
 // ── failure paths ───────────────────────────────────────────────────────────

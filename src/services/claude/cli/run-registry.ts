@@ -30,6 +30,8 @@ export interface BridgeRun {
   deliver(toolUseId: string, result: McpToolResult): boolean
   /** 阻塞等待调用方把结果送回来（MCP `tools/call` 的处理入口）。 */
   awaitToolCall(toolUseId: string, name: string): Promise<McpToolResult>
+  /** 取一个已经回过"still running"的调用的结果（`wait_for_tool` 的入口）。 */
+  awaitWaitRequest(toolUseId: string): Promise<McpToolResult>
 }
 
 export interface ParkedMatch {

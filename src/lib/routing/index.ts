@@ -18,13 +18,17 @@ export {
 export {
   affinityAuthKey,
   affinityCacheKey,
+  affinityMode,
   clearSessionAffinityForTest,
   getSessionAffinity,
   getSessionAffinitySizeForTest,
   invalidateSessionAffinityAuth,
   isCodexIdentityConfuseEnabled,
   isFillFirstEnabled,
+  isLeastUsedStrategyEnabled,
+  isQuotaStrategyEnabled,
   isSessionAffinityEnabled,
+  noteSessionAffinityCacheRead,
   pruneSessionAffinityForTest,
   setSessionAffinity,
 } from "./session-affinity"

@@ -20,14 +20,16 @@ function withoutBinary(): void {
 }
 
 describe("resolveClaudeTransport", () => {
-  test("auto-selects the CLI when the binary is installed", () => {
+  test("defaults to CLI when the binary is installed", () => {
     withBinary()
     expect(resolveClaudeTransport(testConnection())).toBe("cli")
   })
 
-  test("falls back to v1 when the binary is missing", () => {
+  test("fails instead of switching to HTTP when the binary is missing", () => {
     withoutBinary()
-    expect(resolveClaudeTransport(testConnection())).toBe("http")
+    expect(() => resolveClaudeTransport(testConnection())).toThrow(
+      ClaudeCliUnavailableError,
+    )
   })
 
   test("honours an explicit per-connection opt-out", () => {
@@ -69,7 +71,7 @@ describe("resolveClaudeTransport", () => {
     expect(resolveClaudeTransport(connection)).toBe("http")
   })
 
-  test("the global kill-switch beats auto-selection", () => {
+  test("the global kill-switch beats the CLI default", () => {
     withBinary()
     process.env.COPILOT_API_CLAUDE_TRANSPORT = "http"
     expect(resolveClaudeTransport(testConnection())).toBe("http")
@@ -90,6 +92,8 @@ describe("resolveClaudeTransport", () => {
   test("ignores metadata of the wrong type", () => {
     withoutBinary()
     const connection = testConnection({ metadata: { claudeTransport: true } })
-    expect(resolveClaudeTransport(connection)).toBe("http")
+    expect(() => resolveClaudeTransport(connection)).toThrow(
+      ClaudeCliUnavailableError,
+    )
   })
 })

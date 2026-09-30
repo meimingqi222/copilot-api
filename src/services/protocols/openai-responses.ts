@@ -6,7 +6,7 @@
  * 端点,便于在同一 connection 上为不同模型分别启用 `chat` / `responses`。
  *
  * 与 `openai-compatible` 的区别:本 adapter 额外实现 `createResponses`,
- * 让 `/v1/responses` 客户端请求可直接路由到外部 Provider Connection,无需
+ * 让 `/v1/responses` 客户端请求可直接路由到 Endpoint Connection,无需
  * Account 路径或 chat→responses 翻译。
  */
 

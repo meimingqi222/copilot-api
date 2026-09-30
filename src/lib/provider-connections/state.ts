@@ -44,7 +44,7 @@ export async function initializeProviderConnections(): Promise<void> {
     stateRoot.loaded = true
     // 启动时对所有 connection 做 availability refresh,
     // 把已过期的 cooldown / quota_exhausted 自动恢复为 ready。
-    // 外部 provider connection 与 account-managed connection 一并覆盖。
+    // 端点连接与 account-managed connection 一并覆盖。
     for (const conn of stateRoot.connections) {
       refreshConnectionAvailability(conn)
     }

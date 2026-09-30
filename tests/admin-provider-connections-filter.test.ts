@@ -1,7 +1,7 @@
 /**
  * 验证 /admin/api/provider-connections API 过滤 account-derived connection:
- * 导入的账号(copilot/OAuth 等)不应出现在外部 provider 列表中,
- * 也不允许通过外部 provider API 操作(GET/PUT/DELETE /:id)。
+ * 导入的账号(copilot/OAuth 等)不应出现在端点连接列表中,
+ * 也不允许通过端点连接 API 操作(GET/PUT/DELETE /:id)。
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import fs from "node:fs/promises"
@@ -198,7 +198,7 @@ describe("provider-connections API filters account-derived connections", () => {
   })
 
   test("PUT /admin/api/provider-connections/:id rejects changing to *-native protocol", async () => {
-    // 先创建一个合法的外部 provider connection
+    // 先创建一个合法的端点连接
     await adminJson("http://localhost/admin/api/provider-connections", {
       method: "POST",
       body: JSON.stringify({

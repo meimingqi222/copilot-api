@@ -409,6 +409,27 @@ const API = {
     },
   },
 
+  // Trace (live request feed for the 请求追踪 view)
+  trace: {
+    recent: (limit = 60) => API.request(`/trace/recent?limit=${limit}`),
+    /** Subscribe to the live SSE feed. Returns the EventSource (call .close()). */
+    stream: (handlers = {}) => {
+      const source = new EventSource(`${API.baseUrl}/trace/stream`)
+      if (handlers.onTrace) {
+        source.addEventListener("trace", (event) => {
+          try {
+            handlers.onTrace(JSON.parse(event.data))
+          } catch {
+            // Ignore malformed frames; the next one will carry the truth.
+          }
+        })
+      }
+      if (handlers.onOpen) source.addEventListener("open", handlers.onOpen)
+      if (handlers.onError) source.addEventListener("error", handlers.onError)
+      return source
+    },
+  },
+
   // Guard
   guard: {
     clients: (type = "ip") => API.request(`/guard/clients?type=${type}`),

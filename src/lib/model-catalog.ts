@@ -2,7 +2,7 @@
  * 应用级模型目录（`state.models`）的类型与对外投影。
  *
  * 目录由所有 account-managed connection 的模型映射汇总而成（见
- * `lib/utils.ts` 的 cacheModels），外加外部 provider connection，属于应用
+ * `lib/utils.ts` 的 cacheModels），外加端点连接，属于应用
  * 层概念而非任何单一 provider —— 因此放在 lib 层，各 provider 的客户端
  * 只负责把它自己的上游 /models 响应转成这些类型。
  */

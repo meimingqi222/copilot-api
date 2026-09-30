@@ -367,6 +367,16 @@ export function buildConnectionModelAliases(
   if (isOAuthProviderId(provider) && prefix !== provider) {
     aliases.push(`${provider}/${nativeModelId}`)
   }
+  // Aggregators namespace their ids by vendor (`deepseek/deepseek-v4.1-flash`)
+  // while other providers expose the same model bare (`deepseek-v4.1-flash`).
+  // Alias the bare name too, so one unprefixed request fans out across every
+  // provider that offers the model instead of matching only the ones that
+  // happen to store it without the vendor namespace.
+  const slash = nativeModelId.lastIndexOf("/")
+  if (slash > 0 && slash < nativeModelId.length - 1) {
+    const bare = nativeModelId.slice(slash + 1)
+    if (!aliases.includes(bare)) aliases.push(bare)
+  }
   return aliases
 }
 

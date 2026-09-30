@@ -101,7 +101,10 @@ export function parseQoderToolCall(value: string): QoderToolCall | undefined {
  */
 export class QoderToolCallSplitter {
   private textBuf = ""
-  private callBuf = ""
+  /** 调用块已收到的分片；闭合时才 join，避免逐帧复制整个缓冲。 */
+  private callParts: Array<string> = []
+  /** 已收内容的末尾（<= 标记长度 - 1），用来发现被切开的闭合标记。 */
+  private callTail = ""
   private inCall = false
   /** 这段流里出现过 XML 形式的调用（用于判定 finish_reason）。 */
   sawTool = false
@@ -135,24 +138,26 @@ export class QoderToolCallSplitter {
         continue
       }
 
-      const combined = this.callBuf + rest
-      this.callBuf = ""
-      const close = combined.indexOf(CALL_CLOSE)
+      const scan = this.callTail + rest
+      const close = scan.indexOf(CALL_CLOSE)
       if (close < 0) {
-        this.callBuf = combined
+        this.callParts.push(rest)
+        this.callTail = scan.slice(-(CALL_CLOSE.length - 1))
         break
       }
-      const call = parseQoderToolCall(combined.slice(0, close))
+      const closeAt = close - this.callTail.length
+      const full = this.callParts.join("") + rest
+      const body = full.slice(0, full.length - rest.length + closeAt)
+      this.callParts = []
+      this.callTail = ""
+      const call = parseQoderToolCall(body)
       if (call) {
         this.sawTool = true
         out.push({ kind: "call", call })
       } else {
-        out.push({
-          kind: "text",
-          text: CALL_OPEN + combined.slice(0, close) + CALL_CLOSE,
-        })
+        out.push({ kind: "text", text: CALL_OPEN + body + CALL_CLOSE })
       }
-      rest = combined.slice(close + CALL_CLOSE.length)
+      rest = rest.slice(closeAt + CALL_CLOSE.length)
       this.inCall = false
     }
     return out
@@ -161,9 +166,10 @@ export class QoderToolCallSplitter {
   /** 流结束：未闭合的调用按原文吐出，残余文本照发。 */
   flush(): Array<QoderFragment> {
     if (this.inCall) {
-      const text = CALL_OPEN + this.callBuf
+      const text = CALL_OPEN + this.callParts.join("")
       this.inCall = false
-      this.callBuf = ""
+      this.callParts = []
+      this.callTail = ""
       return [{ kind: "text", text }]
     }
     if (this.textBuf !== "") {

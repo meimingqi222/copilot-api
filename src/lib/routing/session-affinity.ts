@@ -6,6 +6,7 @@
  */
 
 import type { RouteTarget } from "~/lib/provider-connections"
+import type { AffinityMode } from "~/lib/state"
 
 import { state } from "~/lib/state"
 
@@ -21,7 +22,18 @@ interface AffinityEntry {
   /** connectionId::credentialId */
   authKey: string
   expiresAt: number
+  /** Tokens read from the vendor's prompt cache on the last answer. */
+  lastCacheRead?: number
+  /** When that last answer landed (ms epoch). */
+  lastAt?: number
+  /** Turn the binding was made in (for the `turn` mode). */
+  turnKey?: string
 }
+
+/** A cache read worth keeping a session pinned for. */
+const CACHE_WORTH_TOKENS = 1024
+/** A binding colder than this is dropped: the prompt cache likely lapsed. */
+const CACHE_COLD_MS = 5 * 60_000
 
 const entries = new Map<string, AffinityEntry>()
 let lastPruneAt = 0
@@ -41,7 +53,7 @@ export function affinityCacheKey(
 
 export function getSessionAffinity(
   cacheKey: string,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; turnKey?: string } = {},
 ): string | undefined {
   maybePruneAffinityEntries()
   const entry = entries.get(cacheKey)
@@ -51,6 +63,25 @@ export function getSessionAffinity(
     entries.delete(cacheKey)
     return undefined
   }
+  // `turn`: a binding made in another turn is released.
+  const mode = affinityMode()
+  if (
+    mode === "turn"
+    && entry.turnKey !== undefined
+    && options.turnKey !== entry.turnKey
+  ) {
+    entries.delete(cacheKey)
+    return undefined
+  }
+  // `auto`: keep only while the vendor's cache is worth it and still warm.
+  if (mode === "auto" && entry.lastAt !== undefined) {
+    const worth = (entry.lastCacheRead ?? 0) >= CACHE_WORTH_TOKENS
+    const warm = now - entry.lastAt <= CACHE_COLD_MS
+    if (!worth || !warm) {
+      entries.delete(cacheKey)
+      return undefined
+    }
+  }
   if (options.refresh !== false) {
     entry.expiresAt = now + getAffinityTtlMs()
     entries.set(cacheKey, entry)
@@ -58,14 +89,46 @@ export function getSessionAffinity(
   return entry.authKey
 }
 
-export function setSessionAffinity(cacheKey: string, authKey: string): void {
+export function setSessionAffinity(
+  cacheKey: string,
+  authKey: string,
+  meta: { turnKey?: string } = {},
+): void {
   if (!cacheKey || !authKey) return
   maybePruneAffinityEntries()
+  const previous = entries.get(cacheKey)
+  const sameAuth = previous?.authKey === authKey
   entries.set(cacheKey, {
     authKey,
     expiresAt: Date.now() + getAffinityTtlMs(),
+    lastCacheRead: sameAuth ? previous.lastCacheRead : undefined,
+    lastAt: sameAuth ? previous.lastAt : undefined,
+    turnKey: meta.turnKey ?? (sameAuth ? previous.turnKey : undefined),
   })
   enforceAffinityEntryCap()
+}
+
+/**
+ * Record how much the vendor's prompt cache served for an auth key, so the
+ * `auto` mode can decide whether sticking is still worth it next turn.
+ */
+export function noteSessionAffinityCacheRead(
+  authKey: string,
+  cacheReadTokens: number,
+  now = Date.now(),
+): void {
+  if (!authKey) return
+  for (const entry of entries.values()) {
+    if (entry.authKey === authKey) {
+      entry.lastCacheRead = cacheReadTokens
+      entry.lastAt = now
+    }
+  }
+}
+
+/** The active affinity mode, honouring the legacy boolean switch. */
+export function affinityMode(): AffinityMode {
+  return state.routing.affinity
 }
 
 /** Drop all bindings for a connection/credential (e.g. when it cools down). */
@@ -123,6 +186,7 @@ function enforceAffinityEntryCap(): void {
 }
 
 export function isSessionAffinityEnabled(): boolean {
+  if (state.routing.affinity === "off") return false
   return state.routing.sessionAffinity
 }
 
@@ -131,6 +195,16 @@ export function isFillFirstEnabled(): boolean {
   return (
     strategy === "fill-first" || strategy === "fillfirst" || strategy === "ff"
   )
+}
+
+/** Quota-aware ordering: use the allowance that renews soonest first. */
+export function isQuotaStrategyEnabled(): boolean {
+  return state.routing.strategy === "quota"
+}
+
+/** Least-used ordering: fewest used allowance, then fewest tokens lately. */
+export function isLeastUsedStrategyEnabled(): boolean {
+  return state.routing.strategy === "least-used"
 }
 
 /**

@@ -32,6 +32,7 @@ import { providerConnectionApiRoutes } from "./api/provider-connections"
 import { providerApiRoutes } from "./api/providers"
 import { quotaApiRoutes } from "./api/quota"
 import { totpApiRoutes } from "./api/totp"
+import { traceApiRoutes } from "./api/trace"
 import { usageApiRoutes } from "./api/usage"
 import { userApiRoutes } from "./api/users"
 
@@ -101,6 +102,7 @@ adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/model-aliases", modelAliasApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
 adminRoutes.route("/api/usage", usageApiRoutes)
+adminRoutes.route("/api/trace", traceApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
 adminRoutes.route("/api/users", userApiRoutes)
 adminRoutes.route("/api/guard", guardApiRoutes)

@@ -4,6 +4,29 @@ export {
   listExposedPublicModels,
 } from "./build"
 export {
+  orderByLeastUsed,
+  orderByQuota,
+  type QuotaEvidence,
+  type RouteEvidence,
+  routeEvidenceFor,
+} from "./evidence"
+export {
+  clearRecentServeForTest,
+  recordServedTokens,
+  servedTokensOf,
+} from "./recent-serve"
+export {
+  classifyRestReason,
+  type RestDecision,
+  type RestInfo,
+  type RestReason,
+  restDecisionFor,
+  restDecisionForReason,
+  restInfoForCredential,
+  restReasonForErrorKind,
+  restReasonForStatus,
+} from "./rest-reason"
+export {
   canonicalNativeModelId,
   type ParsedModelRef,
   parseModelRef,

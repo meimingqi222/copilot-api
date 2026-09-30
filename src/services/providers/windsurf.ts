@@ -16,15 +16,14 @@ export const windsurfProviderRuntime: ProviderRuntime = {
     id: "windsurf",
     name: "Windsurf",
     icon: "wind",
-    authMode: "direct",
-    features: ["quota", "cooldown", "model_discovery"],
+    authMode: "oauth",
+    features: ["quota", "cooldown", "oauth", "model_discovery"],
+    // Devin/Windsurf sign-in is the primary path (PKCE OAuth against
+    // app.devin.ai). The provider deliberately stays out of
+    // `OAUTH_PROVIDER_IDS` (see `provider-strategies.ts`) so legacy
+    // direct-token classification is untouched; a session token can still be
+    // pasted through the OAuth flow's manual completion.
     accountFields: [
-      {
-        key: "apiKey",
-        type: "secret",
-        labelKey: "accounts.provider.windsurf.fields.apiKey",
-        required: true,
-      },
       {
         key: "proxyUrl",
         type: "url",

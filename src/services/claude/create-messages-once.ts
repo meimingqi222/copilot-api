@@ -4,6 +4,7 @@ import type {
 } from "~/lib/provider-connections"
 import type {
   AnthropicMessagesPayload,
+  AnthropicStreamEventData,
   AnthropicTextBlock,
   AnthropicTool,
 } from "~/services/protocols/anthropic/types"
@@ -178,6 +179,23 @@ export async function* decodeToolNamesInStream(
 }
 
 /**
+ * CLI 传输产出的是**类型化** Anthropic 事件(`{ type, index, delta, … }`),
+ * 而 messages 端点的流式契约是 SSE 帧(`{ data, event }`) —— v1(HTTP)路径也
+ * 是按帧产出的(见上面 `yield { ...raw, data: JSON.stringify(parsed) }`)。
+ *
+ * 不转换的话,路由层会用 `if (!event.data) continue` 把每一个事件都丢掉,
+ * 客户端只收到一条保活注释就断流。真机实测(claude-sonnet-5-5)就是这个症状:
+ * HTTP 200 + 只有 `: connected`。
+ */
+export async function* cliEventsAsSseFrames(
+  events: AsyncIterable<AnthropicStreamEventData>,
+): AsyncIterable<{ data: string; event: string }> {
+  for await (const event of events) {
+    yield { data: JSON.stringify(event), event: event.type }
+  }
+}
+
+/**
  * Builds the upstream request body in canonical Claude Code field order, with
  * CC tool-name prefixing, max_tokens clamp, context_management for thinking,
  * and prompt-caching breakpoints.
@@ -326,11 +344,11 @@ export async function createClaudeMessagesOnce(
   // not just to credentials and the cch attestation. Replaying an OAuth token
   // with a perfect wire fingerprint still routes another harness's system
   // prompt to Extra Usage, so v2 hands the turn to the real CLI instead.
-  // v1 below stays as the fallback (no CLI installed, or an explicit opt-out).
+  // v1 below is used only when HTTP is explicitly selected.
   //
   // See docs/todo-claude-cli-transport.md.
   // `resolveClaudeTransport` throws a bare ClaudeCliUnavailableError when the
-  // connection explicitly asks for "cli" but no binary exists. Wrap it so the
+  // connection uses CLI but no binary exists. Wrap it so the
   // client gets a real 503 and failover treats it as a machine-level condition
   // (retrying another account would fail identically), not a 500.
   let transport: ReturnType<typeof resolveClaudeTransport>
@@ -342,7 +360,11 @@ export async function createClaudeMessagesOnce(
   if (transport === "cli") {
     const runContext = { connection, credential, model, accessToken }
     if (isStream) {
-      return streamClaudeCliMessages(runContext, payload)
+      // 流式契约是 `{ data, event }` 帧;CLI 产出的是类型化 Anthropic 事件,
+      // 必须在这里转帧,否则路由层会把每一个事件都丢掉(见 cliEventsAsSseFrames)。
+      return cliEventsAsSseFrames(
+        await streamClaudeCliMessages(runContext, payload),
+      )
     }
     // The adapter contract hands the non-streaming response back as an opaque
     // JSON object (that is what the v1 path gets from `response.json()`).

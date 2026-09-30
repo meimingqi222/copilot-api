@@ -1,10 +1,13 @@
 /**
  * Protocol Adapter 注册表(Wire Adapters)。
  *
- * 本注册表注册的是 **wire adapters**(协议适配层):
- * 12 个 adapter = 3 个 `*-compatible`(openai/openai-responses/anthropic)
- * + 9 个 `*-native`(copilot/claude/codex/xai/kimi/antigravity/windsurf/codebuff/mimo)。
- * 每个 adapter 按 ProviderProtocol 注册,connection 根据自身 protocol 字段查找。
+ * 本注册表注册的是 **wire adapters**(协议适配层),按 ProviderProtocol 注册,
+ * connection 根据自身 protocol 字段查找。既有通用 `*-compatible`
+ * (openai / openai-responses / anthropic / gemini),也有各家 `*-native`
+ * (copilot / claude / codex / xai / kimi / antigravity / windsurf / codebuff /
+ * mimo / minimax / codebuddy / lobsterai / qoder / factory / zcode /
+ * commandcode / zed / dimagent / gemini-native 等)。
+ * 具体清单以 `services/protocols/index.ts` 的注册调用为准。
  *
  * 与 services/providers/registry.ts 的区别:
  * - 本注册表 → wire adapters(协议适配:请求/响应格式转换)

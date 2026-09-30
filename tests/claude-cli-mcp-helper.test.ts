@@ -3,6 +3,8 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
+import { loopbackTest } from "./helpers/loopback-test"
+
 /**
  * Integration tests for the stdio MCP helper.
  *
@@ -149,10 +151,15 @@ const TOOLS = [
   },
 ]
 
+// Protocol-only requests never use the callback; keep them independent of a
+// local listening socket. tools/call tests below still start a real gateway.
+const UNUSED_CALLBACK_URL = "http://127.0.0.1:1/callback"
+
 describe("claude-mcp-helper", () => {
   test("answers initialize with the protocol version and server info", async () => {
-    const { url } = startCallback(() => Response.json({ content: [] }))
-    const harness = await startHelper(await writeBridge(url, TOOLS))
+    const harness = await startHelper(
+      await writeBridge(UNUSED_CALLBACK_URL, TOOLS),
+    )
     harness.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
     const response = await harness.next()
     expect(response.id).toBe(1)
@@ -163,43 +170,47 @@ describe("claude-mcp-helper", () => {
   })
 
   test("lists the tools it was given", async () => {
-    const { url } = startCallback(() => Response.json({ content: [] }))
-    const harness = await startHelper(await writeBridge(url, TOOLS))
+    const harness = await startHelper(
+      await writeBridge(UNUSED_CALLBACK_URL, TOOLS),
+    )
     harness.send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })
     const response = await harness.next()
     expect(response.result).toEqual({ tools: TOOLS })
   })
 
-  test("posts a tools/call to the gateway and returns its content", async () => {
-    const callback = startCallback(() =>
-      Response.json({ content: [{ type: "text", text: "sunny" }] }),
-    )
-    const harness = await startHelper(await writeBridge(callback.url, TOOLS))
-    harness.send({
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: {
-        name: "get_weather",
-        arguments: { city: "SF" },
-        _meta: { "claudecode/toolUseId": "toolu_abc" },
-      },
-    })
-    const response = await harness.next()
-    expect(response.result).toEqual({
-      content: [{ type: "text", text: "sunny" }],
-      isError: false,
-    })
-    expect(callback.calls).toEqual([
-      {
-        tool_call_id: "toolu_abc",
-        name: "get_weather",
-        arguments: { city: "SF" },
-      },
-    ])
-  })
+  loopbackTest(
+    "posts a tools/call to the gateway and returns its content",
+    async () => {
+      const callback = startCallback(() =>
+        Response.json({ content: [{ type: "text", text: "sunny" }] }),
+      )
+      const harness = await startHelper(await writeBridge(callback.url, TOOLS))
+      harness.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "get_weather",
+          arguments: { city: "SF" },
+          _meta: { "claudecode/toolUseId": "toolu_abc" },
+        },
+      })
+      const response = await harness.next()
+      expect(response.result).toEqual({
+        content: [{ type: "text", text: "sunny" }],
+        isError: false,
+      })
+      expect(callback.calls).toEqual([
+        {
+          tool_call_id: "toolu_abc",
+          name: "get_weather",
+          arguments: { city: "SF" },
+        },
+      ])
+    },
+  )
 
-  test("passes is_error through as isError", async () => {
+  loopbackTest("passes is_error through as isError", async () => {
     const callback = startCallback(() =>
       Response.json({
         content: [{ type: "text", text: "boom" }],
@@ -221,22 +232,25 @@ describe("claude-mcp-helper", () => {
     expect(response.result).toMatchObject({ isError: true })
   })
 
-  test("invents a call id when Claude Code did not supply one", async () => {
-    const callback = startCallback(() =>
-      Response.json({ content: [{ type: "text", text: "ok" }] }),
-    )
-    const harness = await startHelper(await writeBridge(callback.url, TOOLS))
-    harness.send({
-      jsonrpc: "2.0",
-      id: 5,
-      method: "tools/call",
-      params: { name: "get_weather", arguments: {} },
-    })
-    await harness.next()
-    expect(callback.calls[0]?.tool_call_id).toMatch(/^call_/)
-  })
+  loopbackTest(
+    "invents a call id when Claude Code did not supply one",
+    async () => {
+      const callback = startCallback(() =>
+        Response.json({ content: [{ type: "text", text: "ok" }] }),
+      )
+      const harness = await startHelper(await writeBridge(callback.url, TOOLS))
+      harness.send({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: { name: "get_weather", arguments: {} },
+      })
+      await harness.next()
+      expect(callback.calls[0]?.tool_call_id).toMatch(/^call_/)
+    },
+  )
 
-  test("turns a non-200 callback into a JSON-RPC error", async () => {
+  loopbackTest("turns a non-200 callback into a JSON-RPC error", async () => {
     const callback = startCallback(() =>
       Response.json({ error: "unknown run" }, { status: 404 }),
     )
@@ -256,8 +270,9 @@ describe("claude-mcp-helper", () => {
   })
 
   test("does not answer a notification that has no id", async () => {
-    const { url } = startCallback(() => Response.json({ content: [] }))
-    const harness = await startHelper(await writeBridge(url, TOOLS))
+    const harness = await startHelper(
+      await writeBridge(UNUSED_CALLBACK_URL, TOOLS),
+    )
     harness.send({ jsonrpc: "2.0", method: "notifications/initialized" })
     harness.send({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} })
     // The first response must be the tools/list one: the notification was
@@ -267,8 +282,9 @@ describe("claude-mcp-helper", () => {
   })
 
   test("rejects an unknown method", async () => {
-    const { url } = startCallback(() => Response.json({ content: [] }))
-    const harness = await startHelper(await writeBridge(url, TOOLS))
+    const harness = await startHelper(
+      await writeBridge(UNUSED_CALLBACK_URL, TOOLS),
+    )
     harness.send({
       jsonrpc: "2.0",
       id: 8,
