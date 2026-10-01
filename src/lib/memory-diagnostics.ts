@@ -17,30 +17,27 @@ interface MemoryTrace {
   details: MemoryTraceDetails
 }
 
-export type MemoryTraceDetails = Record<
-  string,
-  boolean | number | string | undefined
->
+type MemoryTraceDetails = Record<string, boolean | number | string | undefined>
 
-export interface LinuxProcessMemory {
+interface LinuxProcessMemory {
   vmRssBytes: number
   vmHwmBytes: number
   vmSwapBytes: number
 }
 
-export interface LinuxSystemMemory {
+interface LinuxSystemMemory {
   memTotalBytes: number
   memAvailableBytes: number
   swapTotalBytes: number
   swapFreeBytes: number
 }
 
-export interface LinuxSwapCounters {
+interface LinuxSwapCounters {
   pageIn: number
   pageOut: number
 }
 
-export interface LinuxMemoryPressure {
+interface LinuxMemoryPressure {
   someAvg10: number
   fullAvg10: number
 }

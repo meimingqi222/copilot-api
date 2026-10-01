@@ -14,9 +14,9 @@ import { state } from "~/lib/state"
 import { emitStateChangeSync } from "~/lib/state-events"
 import { statsStore } from "~/lib/stats-store"
 
-export type ModelAliasKind = "exact" | "prefix" | "pattern"
+type ModelAliasKind = "exact" | "prefix" | "pattern"
 
-export interface ModelAliasScope {
+interface ModelAliasScope {
   connectionIds?: Array<string>
   providers?: Array<string>
 }
@@ -37,7 +37,7 @@ export interface ModelAliasRestriction {
   providers?: Array<string>
 }
 
-export interface ModelAliasResolution {
+interface ModelAliasResolution {
   modelId: string
   resolvedModelId: string
   aliasChain: Array<string>
@@ -88,7 +88,7 @@ function normalizeScope(value: unknown): ModelAliasScope | undefined {
   }
 }
 
-export function validateModelAliasRule(
+function validateModelAliasRule(
   input: Partial<ModelAliasRule>,
 ): ModelAliasRule {
   if (!input.kind || !["exact", "pattern", "prefix"].includes(input.kind)) {

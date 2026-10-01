@@ -24,7 +24,7 @@ interface OpenAIUsageLike {
   }
 }
 
-export interface AnthropicUsageLike {
+interface AnthropicUsageLike {
   input_tokens: number
   output_tokens: number
   cache_read_input_tokens?: number

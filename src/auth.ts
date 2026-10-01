@@ -13,7 +13,7 @@ interface RunAuthOptions {
   showToken: boolean
 }
 
-export async function runAuth(options: RunAuthOptions): Promise<void> {
+async function runAuth(options: RunAuthOptions): Promise<void> {
   state.showToken = options.showToken
 
   await ensurePaths()

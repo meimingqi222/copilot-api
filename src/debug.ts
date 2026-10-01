@@ -101,7 +101,7 @@ function printDebugInfoJson(info: DebugInfo): void {
   console.log(JSON.stringify(info, null, 2))
 }
 
-export async function runDebug(options: RunDebugOptions): Promise<void> {
+async function runDebug(options: RunDebugOptions): Promise<void> {
   await ensurePaths()
   initLogger()
   const debugInfo = await getDebugInfo()

@@ -13,7 +13,7 @@ const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024
 const DEFAULT_RETENTION_DAYS = 7
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
 
-export interface LogRotationConfig {
+interface LogRotationConfig {
   logDir: string
   maxFileBytes: number
   retentionDays: number
@@ -122,7 +122,7 @@ export function pruneExpiredLogFiles(
   return removed
 }
 
-export function ensureLogDir(logDir: string): void {
+function ensureLogDir(logDir: string): void {
   fs.mkdirSync(logDir, { recursive: true })
 }
 

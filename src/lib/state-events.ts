@@ -11,10 +11,7 @@
  * - `onStateChange(event, fn)` — 注册监听,返回 unsubscribe 函数
  * - `clearStateChangeListeners()` — 清空所有监听,供测试隔离使用
  */
-export type StateEvent =
-  | "accounts-changed"
-  | "connections-changed"
-  | "models-stale"
+type StateEvent = "accounts-changed" | "connections-changed" | "models-stale"
 
 const listeners = new Map<StateEvent, Set<() => void>>()
 let pending = new Set<StateEvent>()
@@ -80,14 +77,4 @@ export function emitStateChangeSync(event: StateEvent): void {
       // 同上,异常不阻塞
     }
   }
-}
-
-/**
- * 清空所有 state 变更监听。
- * 供测试隔离使用,避免跨用例状态泄漏。
- */
-export function clearStateChangeListeners(): void {
-  listeners.clear()
-  pending.clear()
-  scheduled = false
 }

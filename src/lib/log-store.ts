@@ -88,7 +88,7 @@ export interface RouteCandidate {
   /** When the rest lifts, ms epoch. */
   restUntilMs?: number
 }
-export interface RequestLogError {
+interface RequestLogError {
   origin: "client" | "admission" | "upstream" | "proxy" | "cancelled"
   kind: string
   message: string

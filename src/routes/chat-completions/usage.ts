@@ -20,7 +20,7 @@ export interface UsageInfo {
   }
 }
 
-export interface StreamUsageInput {
+interface StreamUsageInput {
   c: Context
   accountId?: string
   model?: string

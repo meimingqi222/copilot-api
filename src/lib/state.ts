@@ -55,7 +55,7 @@ export type AffinityMode = "session" | "turn" | "auto" | "off"
  * Defaults target maximum prompt-cache utilization (see CACHE_UTILIZATION_DEFAULTS).
  * L1 provider rewrites are NOT configured here — they live in services/<provider>/.
  */
-export interface RoutingConfig {
+interface RoutingConfig {
   strategy: RoutingStrategy
   sessionAffinity: boolean
   /** Affinity stickiness mode; overrides `sessionAffinity` when `off`. */

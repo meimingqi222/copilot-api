@@ -71,7 +71,7 @@ export function applyUsageIdentity(c: Context, identity: UsageIdentity): void {
   c.set("credentialId", identity.credentialId)
 }
 
-export interface UsageRecordInput {
+interface UsageRecordInput {
   c: Context
   accountId: string
   provider?: string

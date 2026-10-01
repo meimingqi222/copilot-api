@@ -79,7 +79,7 @@ interface RunServerOptions {
   windsurfModel?: string
 }
 
-export async function runServer(options: RunServerOptions): Promise<void> {
+async function runServer(options: RunServerOptions): Promise<void> {
   // 启动 Antigravity 版本动态追踪（从 Hub manifest 拉取最新版本号）
   startAntigravityVersionUpdater()
 

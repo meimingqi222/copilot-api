@@ -108,16 +108,11 @@ export function extractReasoningPartsText(
 }
 
 /** Standard reasoning effort levels from lowest to highest. */
-export type ReasoningEffortLevel =
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
+type ReasoningEffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh"
 
 export type ReasoningEffort = ReasoningEffortLevel | "none" | "auto"
 
-export type ThinkingSuffixConfig =
+type ThinkingSuffixConfig =
   | { mode: "level"; effort: ReasoningEffortLevel }
   | { mode: "budget"; budget: number }
   | { mode: "none"; effort: "none" }

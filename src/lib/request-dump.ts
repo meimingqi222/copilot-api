@@ -56,7 +56,7 @@ function resolveDumpDir(logDir: string): string {
   return fromEnv || logDir
 }
 
-export interface RequestDumpMeta {
+interface RequestDumpMeta {
   requestId: string
   clientIp?: string
 }
@@ -190,7 +190,7 @@ export function buildDumpFileName(dateKey: string, segment: number): string {
     : `request-dumps-${dateKey}.${segment}.jsonl`
 }
 
-export interface UpstreamResponsesWireDump {
+interface UpstreamResponsesWireDump {
   connectionId: string
   model: string
   stripMode: string

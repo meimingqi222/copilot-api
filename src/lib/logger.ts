@@ -2,7 +2,7 @@ import consola, { type ConsolaReporter, type LogObject } from "consola"
 
 import { RotatingLogFileSink, readLogRotationConfig } from "~/lib/log-rotation"
 
-export type FileLogLevel =
+type FileLogLevel =
   | "debug"
   | "error"
   | "fail"
@@ -141,7 +141,7 @@ export function shouldWriteToFile(
   return FILE_LEVEL_RANK[fileType] <= FILE_LEVEL_RANK[minLevel]
 }
 
-export type FileLogInput = Pick<LogObject, "args" | "date" | "type"> & {
+type FileLogInput = Pick<LogObject, "args" | "date" | "type"> & {
   tag?: string
 }
 
@@ -177,7 +177,7 @@ const fileReporter: ConsolaReporter = {
   },
 }
 
-export interface InitLoggerOptions {
+interface InitLoggerOptions {
   verbose?: boolean
 }
 
@@ -212,11 +212,6 @@ export function initLogger(options: InitLoggerOptions = {}): void {
     maxFileBytes: rotation.maxFileBytes,
     retentionDays: rotation.retentionDays,
   })
-}
-
-/** Tagged child logger, e.g. createLogger("windsurf") → [windsurf] prefix. */
-export function createLogger(tag: string) {
-  return logger.withTag(tag)
 }
 
 /**

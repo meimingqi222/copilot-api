@@ -11,7 +11,7 @@ export function generateTotpSecret(bytes = 20): string {
   return base32Encode(randomBytes(bytes))
 }
 
-export function base32Encode(data: Buffer): string {
+function base32Encode(data: Buffer): string {
   let bits = 0
   let value = 0
   let out = ""

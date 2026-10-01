@@ -274,7 +274,7 @@ function handlePreStreamDispatchError(
  * 响应，并把限流 headers 抄过去（读头的客户端据此退避；没有头的盲重试
  * 客户端至少能按状态码正确分类）。
  */
-export function respondPreStreamAnthropicError(c: Context, error: unknown) {
+function respondPreStreamAnthropicError(c: Context, error: unknown) {
   const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
   if (knownError) {
     if (knownError.retryAfterSeconds > 0) {

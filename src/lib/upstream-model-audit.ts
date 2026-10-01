@@ -260,7 +260,7 @@ function isSameModelSpelling(a: string, b: string): boolean {
  * 刻意保留日期快照与 `-latest`：那是版本差异，由 `normalizeModelForAudit`
  * 处理成 `variant` 而非 `match`。
  */
-export function normalizeModelIdentity(model: string): string {
+function normalizeModelIdentity(model: string): string {
   let value = model.trim().toLowerCase()
   if (!value) return ""
 

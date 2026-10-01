@@ -246,7 +246,7 @@ function calculateToolTokens(
 }
 
 /** Estimate tokens for tools based on the existing chat-format overheads. */
-export function numTokensForTools(
+function numTokensForTools(
   tools: Array<Tool>,
   constants: ReturnType<typeof getModelConstants>,
 ): number {

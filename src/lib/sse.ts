@@ -10,7 +10,7 @@ export interface SSEStream {
   write?(input: string | Uint8Array): Promise<unknown>
 }
 
-export interface SSEEventLike {
+interface SSEEventLike {
   data?: string
   event?: string
 }

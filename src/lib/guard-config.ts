@@ -263,7 +263,7 @@ const PATTERN_KEYS = [
   "probePatterns",
 ] as const
 
-export function sanitizeGuardConfigPatch(
+function sanitizeGuardConfigPatch(
   patch: Record<string, unknown>,
 ): Partial<GuardConfig> {
   const out: Partial<GuardConfig> = {}

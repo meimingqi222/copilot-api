@@ -63,7 +63,7 @@ export interface TestAccount {
 }
 
 /** 写入用输入:与 TestAccount 同形(缺省字段由 managedConnectionFromInput 补齐)。 */
-export type TestAccountInput = Partial<
+type TestAccountInput = Partial<
   Omit<TestAccount, "id" | "label" | "provider">
 > & { id: string; label: string; provider: ProviderId }
 
@@ -101,27 +101,6 @@ export function listTestAccounts(): Array<TestAccount> {
   )
 }
 
-/** 按 id 查找 account 视图。 */
-export function getTestAccount(id: string): TestAccount | undefined {
-  const conn = listAccountManagedConnections().find((c) => c.id === id)
-  return conn ? connectionToTestAccount(conn) : undefined
-}
-
-/** 写入断言用的运行时状态(如 authStatus),供测试构造异常账号。 */
-export function getTestAccountRuntimeState(id: string):
-  | {
-      authStatus: string
-      lastError: string | null
-    }
-  | undefined {
-  const conn = listAccountManagedConnections().find((c) => c.id === id)
-  if (!conn) return undefined
-  return {
-    authStatus: getConnectionAuthStatus(conn),
-    lastError: getConnectionAuthError(conn),
-  }
-}
-
 /**
  * 设置测试账号列表（替代 state.accounts = accounts）。
  * 仅清空 account-managed connections，保留非 account 来源的 connection
@@ -138,16 +117,11 @@ export function setTestAccounts(accounts: Array<TestAccountInput>): void {
 }
 
 /** 追加账号到现有 connections。 */
-export function addTestAccounts(accounts: Array<TestAccountInput>): void {
+function addTestAccounts(accounts: Array<TestAccountInput>): void {
   for (const account of accounts) {
     const { label, ...rest } = account
     upsertProviderConnection(
       managedConnectionFromInput({ ...rest, name: label }),
     )
   }
-}
-
-/** 按 id 移除 account/connection。 */
-export function removeTestAccount(id: string): void {
-  removeProviderConnection(id)
 }

@@ -88,12 +88,12 @@ export const PROVIDER_FEATURES = [
 
 export type ProviderFeature = (typeof PROVIDER_FEATURES)[number]
 
-export interface ProviderFieldOption {
+interface ProviderFieldOption {
   label: string
   value: string
 }
 
-export interface ProviderFieldSchema {
+interface ProviderFieldSchema {
   key: string
   type: "secret" | "text" | "select" | "url" | "checkbox"
   labelKey: string

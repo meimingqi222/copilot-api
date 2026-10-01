@@ -44,7 +44,7 @@ function isLocalhost(ip: string): boolean {
   )
 }
 
-export interface LoginProtectionResult {
+interface LoginProtectionResult {
   allowed: boolean
   retryAfterSeconds?: number
   reason?: string

@@ -353,14 +353,14 @@ export function shouldFailover(error: unknown): boolean {
   return false
 }
 
-export function isValidIp(ip: string): boolean {
+function isValidIp(ip: string): boolean {
   if (!ip) return false
   const ipv4Regex = /^(?:\d{1,3}\.){3}\d{1,3}$/
   const ipv6Regex = /^(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}$/i
   return ipv4Regex.test(ip) || ipv6Regex.test(ip)
 }
 
-export function isPrivateIp(ip: string): boolean {
+function isPrivateIp(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1" || ip === "localhost") {
     return true
   }

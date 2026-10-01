@@ -31,21 +31,3 @@ export function setTestConnections(
     upsertProviderConnection(conn)
   }
 }
-
-/**
- * 追加 connections 到现有 stateRoot。
- */
-export function addTestConnections(
-  connections: Array<ProviderConnection>,
-): void {
-  for (const conn of connections) {
-    upsertProviderConnection(conn)
-  }
-}
-
-/**
- * 按 id 移除 connection。
- */
-export function removeTestConnection(id: string): void {
-  removeProviderConnection(id)
-}

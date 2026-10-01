@@ -43,7 +43,7 @@ function obfuscateWord(word: string): string {
   )
 }
 
-export type SensitiveWordMatcher = {
+type SensitiveWordMatcher = {
   obfuscate: (text: string) => string
 }
 

@@ -53,7 +53,3 @@ class TimerRegistry {
 }
 
 export const globalTimers = new TimerRegistry()
-
-export function createTimerRegistry(): TimerRegistry {
-  return new TimerRegistry()
-}

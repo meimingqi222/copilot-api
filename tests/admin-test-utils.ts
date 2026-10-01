@@ -34,11 +34,3 @@ export function adminRequest(url: string, init?: RequestInit): Request {
     headers: adminHeaders(init?.headers),
   })
 }
-
-export async function adminFetch(
-  url: string,
-  init?: RequestInit,
-): Promise<Response> {
-  const { server } = await import("~/server")
-  return server.fetch(adminRequest(url, init))
-}

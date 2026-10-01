@@ -30,7 +30,7 @@ export interface UserWithKey extends User {
   apiKey: string
 }
 
-export type PublicUser = Omit<User, "hashedApiKey" | "keyFingerprint">
+type PublicUser = Omit<User, "hashedApiKey" | "keyFingerprint">
 
 const fingerprintKey = (raw: string): string =>
   createHash("sha256").update(raw).digest("hex")
@@ -108,7 +108,7 @@ export async function loadUsers(): Promise<void> {
   }
 }
 
-export async function saveUsers(): Promise<void> {
+async function saveUsers(): Promise<void> {
   await usersRepository.save(state.users)
 }
 

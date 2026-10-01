@@ -40,7 +40,7 @@ import { isAbortError } from "~/lib/utils"
 import { publishTrace, type TracePhase } from "~/lib/trace-bus"
 import { flushTranslationLossesForContext } from "~/services/ir/loss-logging"
 
-export type RequestEndpoint = LogEntry["endpoint"]
+type RequestEndpoint = LogEntry["endpoint"]
 export type TraceStage = NonNullable<LogEntry["stage"]>
 export interface RequestLogContext {
   requestId: string
@@ -264,7 +264,7 @@ export function finalizeUpstreamModelAuditForContext(
   return verdict
 }
 
-export function addAttempt(c: Context, attempt: UpstreamAttempt): void {
+function addAttempt(c: Context, attempt: UpstreamAttempt): void {
   const ctx = getRequestLogContext(c)
   if (!ctx) return
   const list = (ctx.entry.attempts ??= [])
@@ -294,7 +294,7 @@ export function publishTraceSnapshot(
   publishTrace({ ...ctx.entry, requestId: ctx.requestId }, phase)
 }
 
-export interface AttemptTarget {
+interface AttemptTarget {
   connectionId: string
   connectionName?: string
   credentialId: string
@@ -740,7 +740,7 @@ export function finishRequestLog(c: Context): void {
   getRequestLogContext(c)?.finish?.()
 }
 
-export function inferEndpoint(path: string): RequestEndpoint {
+function inferEndpoint(path: string): RequestEndpoint {
   if (
     path === "/chat/completions"
     || path === "/v1/chat/completions"

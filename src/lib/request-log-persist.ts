@@ -69,10 +69,7 @@ async function selectAppendFile(
     : candidate
 }
 
-export function buildRequestLogFileName(
-  dateKey: string,
-  segment: number,
-): string {
+function buildRequestLogFileName(dateKey: string, segment: number): string {
   return segment === 0 ?
       `requests-${dateKey}.jsonl`
     : `requests-${dateKey}.${segment}.jsonl`
