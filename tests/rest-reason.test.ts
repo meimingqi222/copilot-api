@@ -1,7 +1,7 @@
 /**
  * 失败语义分档（Phase 3）：rest-reason 分类器与时长表。
  *
- * 对齐 magpie routing.go 的 failure()/restAfter()：靠厂商措辞（而非仅
+ * 靠厂商措辞（而非仅
  * 状态码）区分 credit / quota / rate / verify / refused，并按档给时长，
  * quota 读真实重置窗口（封顶 8d），refused 不休息。
  */

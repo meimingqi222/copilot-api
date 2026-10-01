@@ -1,5 +1,8 @@
 import { Hono } from "hono"
 
+import { logStore } from "~/lib/log-store"
+import { readPersistedRequestLogs } from "~/lib/request-log-persist"
+
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import {
   latestTraceForSession,
@@ -21,6 +24,8 @@ export const traceApiRoutes = new Hono()
 function toFrame(entry: TraceRecord): Record<string, unknown> {
   return {
     requestId: entry.requestId,
+    seq: entry.seq,
+    stage: entry.stage,
     timestamp: entry.timestamp,
     /** Still running: show it live, don't play the finished journey yet. */
     inFlight: Boolean(entry.inFlight),
@@ -67,6 +72,12 @@ function toFrame(entry: TraceRecord): Record<string, unknown> {
     failoverReason: entry.failoverReason,
     // candidate paths considered, chosen first
     candidates: entry.candidates,
+    // routing group metadata
+    routingGroupId: entry.routingGroupId,
+    routingGroupName: entry.routingGroupName,
+    routingGroupMembers: entry.routingGroupMembers,
+    routingGroupSelectedMember: entry.routingGroupSelectedMember,
+    routingStrategy: entry.routingStrategy,
     // tokens
     promptTokens: entry.promptTokens,
     completionTokens: entry.completionTokens,
@@ -81,6 +92,38 @@ traceApiRoutes.get("/recent", (c) => {
     traces: recentTraces(limit).map(toFrame),
     keep: TRACE_KEEP,
   })
+})
+
+/** History survives a gateway restart; live in-flight records stay on the bus. */
+traceApiRoutes.get("/history", async (c) => {
+  const parseTime = (value: string | undefined): number | undefined => {
+    if (!value) return undefined
+    const time = Number(value)
+    return Number.isFinite(time) ? time : undefined
+  }
+  const timeFrom = parseTime(c.req.query("timeFrom"))
+  const timeTo = parseTime(c.req.query("timeTo"))
+  const limit = 500
+  const persisted = await readPersistedRequestLogs({ timeFrom, timeTo, limit })
+  const memory = logStore.query({
+    timeFrom,
+    timeTo,
+    limit,
+  }).entries
+  const records = new Map<string, TraceRecord>()
+  for (const entry of [...persisted, ...memory]) {
+    if (entry.requestId)
+      records.set(entry.requestId, {
+        ...entry,
+        requestId: entry.requestId,
+        inFlight: false,
+      })
+  }
+  const traces = [...records.values()]
+    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0))
+    .slice(-limit)
+    .map(toFrame)
+  return c.json({ traces, limit })
 })
 
 /**

@@ -706,6 +706,14 @@ export function beginStreamLog(c: Context): void {
   patchRequestLog(c, { streaming: true, outcome: "incomplete" })
 }
 
+/** Publish once at the first semantic output, before the stream finishes. */
+export function markTraceFirstOutput(c: Context, ttftMs: number): void {
+  const ctx = getRequestLogContext(c)
+  if (!ctx || ctx.finished || ctx.entry.ttftMs !== undefined) return
+  patchRequestLog(c, { ttftMs, outputObserved: true })
+  publishTraceSnapshot(c, "update")
+}
+
 export function markStreamTerminal(
   c: Context,
   terminal: string,

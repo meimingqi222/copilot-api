@@ -12,7 +12,8 @@
   --rg-chip-bg: var(--apple-gray-6);
   --rg-chip-text: var(--apple-text);
   --rg-accent: var(--apple-blue);
-  --rg-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --rg-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* ---------- page header ---------- */
@@ -40,10 +41,10 @@
 }
 
 .rg-row {
-  padding: 1rem 1.125rem;
+  padding: 0.875rem 1.125rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.625rem;
 }
 
 .rg-row-head {
@@ -55,6 +56,9 @@
 
 .rg-row-main {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .rg-row-title {
@@ -68,7 +72,6 @@
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  margin-top: 0.125rem;
   font-size: 0.75rem;
   color: var(--apple-text-secondary);
 }
@@ -91,8 +94,8 @@
 }
 
 .rg-copy {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
 /* ---------- members ---------- */
@@ -367,11 +370,301 @@
   margin: 0;
 }
 
+/* The model picker: a searchable panel over the member rows. */
+.rg-picker {
+  margin-bottom: 0.5rem;
+}
+
+.rg-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.3125rem 0.625rem;
+  border: 1px dashed var(--apple-gray-3);
+  border-radius: 0.5rem;
+  background: transparent;
+  font-size: 0.8125rem;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+}
+
+.rg-picker-trigger:hover {
+  border-color: var(--rg-accent);
+  color: var(--rg-accent);
+}
+
+.rg-picker-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  width: min(32rem, calc(100vw - 48px));
+  max-height: 22rem;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 0.75rem;
+  background: var(--apple-bg);
+  box-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.22),
+    0 0 0 1px var(--apple-gray-4);
+  overflow: hidden;
+  transform-origin: top left;
+  animation: rg-pop-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rg-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.rg-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-bottom: 1px solid var(--apple-gray-4);
+  color: var(--apple-text-secondary);
+}
+
+.rg-picker-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  font-size: 0.8125rem !important;
+  color: var(--apple-text) !important;
+  height: 28px !important;
+  box-shadow: none !important;
+}
+
+/* Providers on the left, their models on the right. */
+.rg-picker-panes {
+  display: flex;
+  min-height: 0;
+}
+
+.rg-picker-providers {
+  display: flex;
+  flex: 0 0 11rem;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-height: 20rem;
+  padding: 0.375rem;
+  border-right: 1px solid var(--apple-gray-4);
+  overflow-y: auto;
+}
+
+.rg-provider-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4375rem 0.5rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  text-align: left;
+  color: var(--apple-text);
+  cursor: pointer;
+}
+
+.rg-provider-tab:hover {
+  background: color-mix(in srgb, var(--apple-text) 6%, transparent);
+}
+
+.rg-provider-tab.active {
+  background: color-mix(in srgb, var(--rg-accent) 14%, transparent);
+  color: var(--rg-accent);
+}
+
+.rg-provider-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+
+.rg-provider-count {
+  flex: none;
+  font-size: 0.6875rem;
+  color: var(--apple-text-secondary);
+}
+
+.rg-picker-models {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 20rem;
+  padding: 0.375rem;
+  overflow-y: auto;
+}
+
+.rg-picker-badges {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.rg-picker-badges .rg-badge {
+  margin-left: 0;
+  padding: 0.0625rem 0.3125rem;
+  border-radius: 0.375rem;
+  font-size: 0.625rem;
+  cursor: default;
+}
+
+.rg-picker-group-title {
+  margin: 0.375rem 0.5rem 0.1875rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--apple-text-secondary);
+}
+
+.rg-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4375rem 0.5rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rg-picker-row:hover {
+  background: color-mix(in srgb, var(--apple-text) 6%, transparent);
+}
+
+.rg-picker-row.added {
+  opacity: 0.5;
+}
+
+.rg-picker-icon {
+  flex: none;
+  color: var(--apple-text-secondary);
+}
+
+.rg-picker-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--apple-text);
+}
+
+.rg-picker-id {
+  flex: none;
+  font-size: 0.6875rem;
+  color: var(--apple-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.rg-picker-raw .rg-picker-id {
+  color: var(--rg-accent);
+}
+
+.rg-picker-empty {
+  margin: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--apple-text-secondary);
+  text-align: center;
+}
+
+/* Segmented controls: the routing / affinity / effort pickers. */
+.rg-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  padding: 0.1875rem;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 0.625rem;
+}
+
+.rg-seg-btn {
+  padding: 0.25rem 0.625rem;
+  border: none;
+  border-radius: 0.4375rem;
+  background: transparent;
+  font-size: 0.75rem;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+}
+
+.rg-seg-btn:hover {
+  color: var(--apple-text);
+}
+
+.rg-seg-btn.active {
+  background: color-mix(in srgb, var(--rg-accent) 14%, transparent);
+  color: var(--rg-accent);
+  font-weight: 500;
+}
+
 /* Levels the group may be served at. */
 .rg-levels {
   display: flex;
   flex-wrap: wrap;
   gap: 0.375rem;
+}
+
+/* The "auto" tag on a group derived from the connection catalog. */
+.rg-badge {
+  margin-left: 0.375rem;
+  padding: 0.0625rem 0.375rem;
+  border-radius: 9999px;
+  border: 1px solid var(--apple-gray-4);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--apple-text-secondary);
+  vertical-align: middle;
+  cursor: help;
+}
+
+/* Derived groups the user hid, offered back for restore. */
+.rg-hidden {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--apple-gray-5, var(--apple-gray-4));
+}
+
+.rg-hidden-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--apple-text-secondary);
+}
+
+.rg-hidden-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.rg-hidden-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 0.5rem;
 }
 
 @media (width <= 640px) {
@@ -385,5 +678,401 @@
 
   .rg-rule-when {
     grid-column: 2;
+  }
+}
+
+/* ---------- compact editor styles ---------- */
+
+.rg-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 24px;
+}
+
+.rg-editor-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.rg-editor-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--apple-text-secondary);
+  text-align: right;
+  padding-top: 5px;
+  user-select: none;
+}
+
+.rg-editor-control {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Compact inputs for routing groups modal */
+.rg-modal .form-input,
+.rg-input-sm {
+  height: 32px !important;
+  padding: 4px 10px !important;
+  font-size: 13px !important;
+  border-radius: 6px !important;
+  border: 1px solid var(--apple-gray-4) !important;
+  background: var(--apple-bg) !important;
+  color: var(--apple-text) !important;
+  line-height: normal !important;
+  box-sizing: border-box !important;
+}
+
+.rg-modal select.form-input {
+  height: 32px !important;
+  padding: 4px 28px 4px 10px !important;
+  font-size: 13px !important;
+  border-radius: 6px !important;
+  background-position: right 10px center !important;
+}
+
+.rg-hint {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--apple-text-tertiary);
+  margin-top: 2px;
+}
+
+/* Model list cards */
+.rg-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.rg-model-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--apple-bg-secondary, var(--apple-gray-6));
+  border: 1px solid var(--apple-gray-5);
+  font-size: 12.5px;
+}
+
+.rg-model-idx {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--apple-text-tertiary);
+  width: 14px;
+  text-align: center;
+  flex: none;
+}
+
+.rg-model-icon {
+  flex: none;
+  color: var(--apple-text-secondary);
+}
+
+.rg-model-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rg-model-title {
+  font-weight: 500;
+  color: var(--apple-text);
+  font-size: 12.5px;
+}
+
+.rg-model-vendor {
+  font-size: 11px;
+  color: var(--apple-text-tertiary);
+}
+
+.rg-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.rg-mini-select {
+  height: 24px;
+  padding: 0 18px 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--apple-gray-4);
+  background: var(--apple-bg);
+  font-size: 11.5px;
+  color: var(--apple-text-secondary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%2386868b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+  appearance: none;
+  cursor: pointer;
+}
+
+.rg-btn-ghost {
+  background: none;
+  border: none;
+  font-size: 11.5px;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.rg-btn-ghost:hover {
+  background: color-mix(in srgb, var(--apple-text) 8%, transparent);
+  color: var(--apple-text);
+}
+.rg-btn-ghost.danger {
+  color: var(--apple-red);
+}
+.rg-btn-ghost.danger:hover {
+  background: color-mix(in srgb, var(--apple-red) 12%, transparent);
+}
+
+.rg-btn-add-model,
+.rg-btn-dashed {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--apple-gray-4);
+  background: transparent;
+  color: var(--apple-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.rg-btn-add-model:hover,
+.rg-btn-dashed:hover {
+  border-color: var(--rg-accent);
+  color: var(--rg-accent);
+  background: color-mix(in srgb, var(--rg-accent) 8%, transparent);
+}
+
+/* Segmented controls */
+.rg-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--apple-gray-6);
+  border: 1px solid var(--apple-gray-5);
+  align-self: flex-start;
+}
+
+.rg-seg-btn {
+  padding: 3px 10px;
+  height: 25px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rg-seg-btn:hover {
+  color: var(--apple-text);
+}
+
+.rg-seg-btn.active {
+  background: var(--apple-bg);
+  color: var(--apple-text);
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Compact Rules */
+.rg-rules-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--apple-gray-5);
+  padding-top: 8px;
+}
+
+.rg-rule-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--apple-bg-secondary, var(--apple-gray-6));
+  border: 1px solid var(--apple-gray-5);
+  font-size: 12px;
+}
+
+.rg-rule-compact-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rg-rule-compact-idx {
+  font-size: 11px;
+  color: var(--apple-text-tertiary);
+  width: 12px;
+  text-align: center;
+  flex: none;
+}
+
+.rg-rule-when-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rg-rule-tag-label {
+  font-size: 11px;
+  color: var(--apple-text-tertiary);
+  margin-right: 2px;
+}
+
+.rg-cond-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 9999px;
+  border: 1px dashed var(--apple-gray-4);
+  background: var(--apple-bg);
+  color: var(--apple-text-secondary);
+  font-size: 11.5px;
+}
+.rg-cond-pill.active {
+  border-style: solid;
+  border-color: var(--apple-gray-3);
+  color: var(--apple-text);
+}
+
+.rg-cond-input {
+  width: 48px;
+  border: none;
+  background: transparent;
+  font-size: 11.5px;
+  color: inherit;
+  outline: none;
+  padding: 0;
+  text-align: center;
+}
+
+.rg-cond-input-text {
+  width: 90px;
+  border: none;
+  background: transparent;
+  font-size: 11.5px;
+  color: inherit;
+  outline: none;
+  padding: 0;
+}
+
+.rg-cond-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 9999px;
+  border: 1px dashed var(--apple-gray-4);
+  background: var(--apple-bg);
+  color: var(--apple-text-secondary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.rg-cond-btn:hover {
+  border-color: var(--apple-gray-3);
+  color: var(--apple-text);
+}
+.rg-cond-btn.active {
+  border-style: solid;
+  border-color: var(--rg-accent);
+  background: color-mix(in srgb, var(--rg-accent) 10%, transparent);
+  color: var(--rg-accent);
+}
+
+.rg-cond-select {
+  height: 24px;
+  padding: 0 16px 0 6px;
+  border-radius: 9999px;
+  border: 1px dashed var(--apple-gray-4);
+  background: var(--apple-bg);
+  color: var(--apple-text-secondary);
+  font-size: 11.5px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%2386868b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 5px center;
+  appearance: none;
+  cursor: pointer;
+}
+.rg-cond-select.active {
+  border-style: solid;
+  border-color: var(--apple-gray-3);
+  color: var(--apple-text);
+}
+
+.rg-rule-compact-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex: none;
+}
+
+.rg-rule-compact-use {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 20px;
+}
+
+.rg-picker-container {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+@media (width <= 640px) {
+  .rg-editor-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .rg-editor-label {
+    text-align: left;
+    padding-top: 0;
+  }
+  .rg-picker-panel {
+    position: fixed;
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-height: 60vh;
+    z-index: 1000;
   }
 }

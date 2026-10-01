@@ -475,7 +475,7 @@ export class ClaudeCliRun implements BridgeRun {
     const ready = this.takePending(toolUseId)
     if (ready) return ready
     if (!this.awaitingResult.has(toolUseId)) {
-      // 不认识的 id：立刻说清楚，不要白等一个 patience（magpie 同款行为）。
+      // 不认识的 id：立刻说清楚，不要白等一个 patience。
       return {
         is_error: true,
         content: [

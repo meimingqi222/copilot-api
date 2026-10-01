@@ -15,6 +15,15 @@ export {
   resetIntentClassifierForTest,
 } from "./classifier"
 export {
+  collectServedModels,
+  deriveAutoGroups,
+  groupReferenceFor,
+  listMemberOptions,
+  sameModel,
+  slug,
+  type ServedModel,
+} from "./auto"
+export {
   cleanMember,
   isNestedGroupMember,
   nestedGroupId,
@@ -28,8 +37,10 @@ export {
   clearRoutingGroupsCacheForTest,
   deleteRoutingGroup,
   getRoutingGroup,
+  listHiddenAutoGroups,
   listRoutingGroups,
   replaceRoutingGroups,
+  restoreAutoGroup,
   RoutingGroupValidationError,
   routingGroupsPath,
   upsertRoutingGroup,
@@ -46,4 +57,9 @@ export {
   TimeWindowError,
   windowText,
 } from "./time-window"
-export { EFFORT_LEVELS, type RoutingGroup } from "./types"
+export {
+  EFFORT_LEVELS,
+  isEffortLevel,
+  type GroupAffinityMode,
+  type RoutingGroup,
+} from "./types"

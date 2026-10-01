@@ -1,7 +1,7 @@
 /**
  * 额度感知选路（Phase 2）：`quota` / `least-used` 策略。
  *
- * 对齐 magpie weigh():fine(<90%)/low(≥90%)/spent(≥98%) 分档,fine 内按
+ * allowance 分档:fine(<90%)/low(≥90%)/spent(≥98%),fine 内按
  * 最早重置的大窗口优先 + learners 先放行一次,low/spent 按使用率升序。
  * 锁定的前提:默认 fill-first 行为不变。
  */

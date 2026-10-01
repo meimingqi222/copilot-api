@@ -42,6 +42,7 @@ export {
   getConnectionCpaMetadata,
   getConnectionCredentialExtras,
   getConnectionExhaustedAt,
+  getConnectionLastRateLimitReason,
   getConnectionProvider,
   getConnectionProxy,
   getConnectionProxyUrl,

@@ -13,6 +13,8 @@ import type {
   ProviderConnection,
   RouteTarget,
 } from "~/lib/provider-connections"
+import type { AffinityMode } from "~/lib/state"
+import type { GroupRoutingMode } from "~/lib/routing-groups/types"
 
 import {
   findCredential,
@@ -21,6 +23,7 @@ import {
 } from "~/lib/provider-connections"
 
 import { buildRouteTargets } from "./build"
+import { selectGroupRouteTarget } from "./group-select"
 import { resolveModelRouting } from "./model-reference"
 import { selectRouteTarget } from "./select"
 
@@ -39,8 +42,30 @@ export function switchToNextRouteTarget(
     sessionId?: string
     fallbackSessionId?: string
     turnKey?: string
+    /** The group's affinity override, when the request came through one. */
+    affinityMode?: AffinityMode
+    /** The group's members in order, so failover walks the whole group. */
+    groupMembers?: Array<string>
+    groupRouting?: GroupRoutingMode
+    groupId?: string
   },
 ): RouteTarget | null {
+  const sessionOptions = {
+    sessionId: session?.sessionId,
+    fallbackSessionId: session?.fallbackSessionId,
+    turnKey: session?.turnKey,
+    rebindAffinity: true,
+    affinityMode: session?.affinityMode,
+  }
+  if (session?.groupMembers && session.groupMembers.length > 0) {
+    return selectGroupRouteTarget(session.groupMembers, {
+      routing: session.groupRouting,
+      groupId: session.groupId,
+      endpoint,
+      exclude,
+      ...sessionOptions,
+    })
+  }
   const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
     legacyProvider: routing.legacyProvider,
@@ -49,13 +74,7 @@ export function switchToNextRouteTarget(
     aliasRestriction: routing.aliasRestriction,
     endpoint,
   })
-  return selectRouteTarget(candidates, {
-    exclude,
-    sessionId: session?.sessionId,
-    fallbackSessionId: session?.fallbackSessionId,
-    turnKey: session?.turnKey,
-    rebindAffinity: true,
-  })
+  return selectRouteTarget(candidates, { exclude, ...sessionOptions })
 }
 
 /**
@@ -85,8 +104,29 @@ export function selectNextResponsesWsTarget(
     fallbackSessionId?: string
     turnKey?: string
     compact?: boolean
+    groupMembers?: Array<string>
+    groupRouting?: GroupRoutingMode
+    groupId?: string
+    affinityMode?: AffinityMode
   },
 ): RouteTarget | null {
+  if (session?.groupMembers?.length) {
+    return selectGroupRouteTarget(session.groupMembers, {
+      endpoint: "responses",
+      compact: session.compact,
+      routing: session.groupRouting,
+      groupId: session.groupId,
+      affinityMode: session.affinityMode,
+      sessionId: session.sessionId,
+      fallbackSessionId: session.fallbackSessionId,
+      turnKey: session.turnKey,
+      rebindAffinity: true,
+      exclude: tried,
+      acceptTarget: (target) =>
+        target.protocol === initialTarget.protocol
+        && isAccountManagedProtocol(target.protocol),
+    })
+  }
   const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
     legacyProvider: routing.legacyProvider,

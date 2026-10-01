@@ -59,7 +59,7 @@ interface RunServerOptions {
   proxyEnv: boolean
   apiKey?: string
   adminPassword?: string
-  /** fill-first (default, best cache) | round-robin | quota | least-used */
+  /** quota (default) | fill-first | round-robin | least-used */
   routingStrategy?: string
   /** Stick session → credential for prompt-cache hits (default true). */
   sessionAffinity?: boolean
@@ -142,10 +142,8 @@ async function runServer(options: RunServerOptions): Promise<void> {
   state.legacyApiKey = options.apiKey
   state.adminPassword = options.adminPassword ?? options.apiKey
 
-  // L0 routing defaults maximize prompt-cache utilization (fill-first + affinity).
-  const strategyRaw = (options.routingStrategy ?? "fill-first")
-    .trim()
-    .toLowerCase()
+  // Same-model pools use quota-aware routing with session affinity by default.
+  const strategyRaw = (options.routingStrategy ?? "quota").trim().toLowerCase()
   state.routing.strategy =
     strategyRaw === "round-robin" || strategyRaw === "rr" ? "round-robin"
     : strategyRaw === "quota" ? "quota"
@@ -505,10 +503,9 @@ export const start = defineCommand({
     },
     "routing-strategy": {
       type: "string",
-      // fill-first maximizes cache hits: new sessions land on one credential.
-      default: process.env.ROUTING_STRATEGY ?? "fill-first",
+      default: process.env.ROUTING_STRATEGY ?? "quota",
       description:
-        "Credential selection: fill-first (default, best cache), round-robin, quota, or least-used",
+        "Credential selection: quota (default), fill-first, round-robin, or least-used",
     },
     "session-affinity": {
       type: "boolean",

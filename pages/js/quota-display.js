@@ -60,6 +60,15 @@ const QuotaDisplay = {
     }).format(cents / 100)
   },
 
+  /** 积分只是个计数（不带货币符号），去掉多余小数位照实显示。 */
+  formatCredits(value) {
+    const amount = this.normalizeNumber(value)
+    if (amount === undefined) return "N/A"
+    return new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 2,
+    }).format(amount)
+  },
+
   formatCycleUsageCost(cost) {
     if (cost === undefined || cost === null || !Number.isFinite(cost)) {
       return "$0.00"
@@ -568,9 +577,13 @@ const QuotaDisplay = {
   },
 
   /**
-   * MiniMax Code 的额度来自 `coding_plan/remains`：`general` 桶带两个窗口
-   * （5 小时滚动 + 每周）。窗口的 remainingPercent 已按 `weekly_boost_permille`
+   * MiniMax Code 的钱分两笔：Token Plan 的额度窗口来自 `coding_plan/remains`
+   * （`general` 桶带两个窗口：5 小时滚动 + 每周），积分（Credits）则来自
+   * `get_membership_info`。窗口的 remainingPercent 已按 `weekly_boost_permille`
    * 放大过（周窗口可超过 100%），所以只夹到 100 做进度条，文字照实显示。
+   *
+   * 没有订阅的账号只有积分这一行：积分是余额而不是窗口占比，所以不画进度条
+   * （没有分母可画），照实报数。
    */
   buildMinimaxRows(details, t) {
     if (!details || typeof details !== "object") return []
@@ -602,7 +615,32 @@ const QuotaDisplay = {
         resetText: this.formatResetTime(window.resetsAtMs, t),
       })
     }
+    const credits = this.buildMinimaxCreditRow(block.credits, t)
+    if (credits) rows.push(credits)
     return rows
+  },
+
+  /** 积分行：余额本身没有总额可算占比，所以只报数。 */
+  buildMinimaxCreditRow(credits, t) {
+    if (!credits || typeof credits !== "object") return undefined
+    const total = this.normalizeNumber(credits.total)
+    if (total === undefined) return undefined
+    const free = this.normalizeNumber(credits.free)
+    const purchased = this.normalizeNumber(credits.purchased)
+    return {
+      id: "minimax-credits",
+      label: t("quota.oauth.minimax.credits"),
+      remaining: total,
+      valueText: this.formatCredits(total),
+      amountText:
+        free !== undefined && purchased !== undefined && purchased > 0 ?
+          t("quota.oauth.minimax.creditsBreakdown", {
+            free: this.formatCredits(free),
+            purchased: this.formatCredits(purchased),
+          })
+        : undefined,
+      hideBar: true,
+    }
   },
 
   /**
@@ -1027,6 +1065,21 @@ const QuotaDisplay = {
       return t("quota.noData")
     }
     if (this.isOAuthProvider(provider)) {
+      // MiniMax 没有订阅时卡片上只有积分：那是余额，不是某个窗口的百分比，
+      // 报成百分比就是编数。
+      if (
+        provider === "minimax"
+        && info.premiumInteractionsRemaining === undefined
+      ) {
+        const credits = this.normalizeNumber(
+          info.details?.minimax?.credits?.total,
+        )
+        if (credits !== undefined) {
+          return t("quota.oauth.minimax.creditsValue", {
+            count: this.formatCredits(credits),
+          })
+        }
+      }
       if (
         provider === "minimax"
         && info.premiumInteractionsRemaining !== undefined

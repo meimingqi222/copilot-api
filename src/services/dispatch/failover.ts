@@ -39,7 +39,11 @@ import {
   reportUpstreamRateLimitMs,
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
-import { type RequestAdmission } from "~/lib/request-admission"
+import {
+  retargetGroupDecision,
+  type RequestAdmission,
+} from "~/lib/request-admission"
+import { applyGroupOverrides } from "~/lib/routing-groups/apply"
 import {
   getRequestLogContext,
   markAttemptStarting,
@@ -167,21 +171,32 @@ export async function executeWithFailover<
         sessionId: current.sessionId,
         fallbackSessionId: current.fallbackSessionId,
         turnKey: current.turnKey,
+        affinityMode: current.group?.affinity,
+        groupMembers: current.groupMembers,
+        groupRouting: current.group?.routing,
+        groupId: current.group?.groupId,
       },
     )
     if (!next) return false
     const resolved = resolveConnectionFromTarget(next)
     if (!resolved) return false
     current = {
+      ...current,
       target: next,
       connection: resolved.connection,
       credential: resolved.credential,
-      initiator: current.initiator,
-      // Keep L0 session binding context so subsequent failovers rebind
-      // the same conversation to the newly selected credential.
-      sessionId: current.sessionId,
-      fallbackSessionId: current.fallbackSessionId,
-      turnKey: current.turnKey,
+    }
+    if (current.group) {
+      current.group = retargetGroupDecision(current.group, next)
+      current.groupOverrides = applyGroupOverrides(payload, current.group, {
+        endpoint: routeKind,
+        baseline: current.groupOverrideBaseline,
+      })
+      if (c)
+        patchRequestLog(c, {
+          routingGroupSelectedMember: current.group.member,
+          reasoningEffort: current.groupOverrides.effort,
+        })
     }
     return true
   }

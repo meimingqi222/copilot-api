@@ -10,6 +10,7 @@
  */
 
 import type { RequestAdmission } from "~/lib/request-admission"
+import { retargetGroupDecision } from "~/lib/request-admission"
 
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
@@ -39,6 +40,11 @@ export function selectNextResponsesAdmission(
   const next = selectNextResponsesWsTarget(initial.target, modelId, tried, {
     sessionId: current.sessionId,
     fallbackSessionId: current.fallbackSessionId,
+    turnKey: current.turnKey,
+    groupMembers: current.groupMembers,
+    groupRouting: current.group?.routing,
+    groupId: current.group?.groupId,
+    affinityMode: current.group?.affinity,
     compact,
   })
   if (!next) return null
@@ -47,12 +53,13 @@ export function selectNextResponsesAdmission(
     return null
   }
   return {
+    ...current,
+    ...(current.group ?
+      { group: retargetGroupDecision(current.group, next) }
+    : {}),
     target: next,
     connection: resolved.connection,
     credential: resolved.credential,
-    initiator: current.initiator,
-    sessionId: current.sessionId,
-    fallbackSessionId: current.fallbackSessionId,
   }
 }
 

@@ -66,16 +66,32 @@ adminRoutes.get("/static/*", (c) => {
     }
 
     try {
-      const content = readFileSync(fullPath, "utf8")
-      let contentType: string
+      const content = readFileSync(fullPath)
+      let contentType = "application/octet-stream"
       if (filePath.endsWith(".css")) {
-        contentType = "text/css"
+        contentType = "text/css; charset=utf-8"
       } else if (filePath.endsWith(".js")) {
-        contentType = "application/javascript"
+        contentType = "application/javascript; charset=utf-8"
+      } else if (filePath.endsWith(".svg")) {
+        contentType = "image/svg+xml"
+      } else if (filePath.endsWith(".png")) {
+        contentType = "image/png"
+      } else if (filePath.endsWith(".ico")) {
+        contentType = "image/x-icon"
+      } else if (filePath.endsWith(".html")) {
+        contentType = "text/html; charset=utf-8"
       } else {
-        contentType = "text/plain"
+        contentType = "text/plain; charset=utf-8"
       }
-      return c.body(content, 200, { "Content-Type": contentType })
+      const isCodeFile =
+        filePath.endsWith(".js")
+        || filePath.endsWith(".css")
+        || filePath.endsWith(".html")
+      return c.body(content, 200, {
+        "Content-Type": contentType,
+        "Cache-Control":
+          isCodeFile ? "no-cache, must-revalidate" : "public, max-age=86400",
+      })
     } catch {
       continue
     }

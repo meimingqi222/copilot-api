@@ -6,8 +6,12 @@ import {
   deleteRoutingGroup,
   EFFORT_LEVELS,
   getRoutingGroup,
+  groupReferenceFor,
+  listHiddenAutoGroups,
+  listMemberOptions,
   listRoutingGroups,
   replaceRoutingGroups,
+  restoreAutoGroup,
   RoutingGroupValidationError,
   upsertRoutingGroup,
   type RoutingGroup,
@@ -54,6 +58,26 @@ routingGroupsApiRoutes.get("/references", async (c) => {
   })
 })
 
+// The group a bare model name resolves to, so the editor (and any client) can
+// ask "which group does `claude-opus-5.5` belong to?" without a group id in hand.
+routingGroupsApiRoutes.get("/lookup", async (c) => {
+  const model = c.req.query("model") ?? ""
+  const reference = groupReferenceFor(model, await listRoutingGroups())
+  if (!reference) return c.json({ error: "No group for that model" }, 404)
+  return c.json({ model, reference })
+})
+
+// The derived groups the user removed, so the editor can offer to restore them.
+routingGroupsApiRoutes.get("/hidden", async (c) =>
+  c.json({ hidden: await listHiddenAutoGroups() }),
+)
+
+// The models a member may name, so the editor can offer a picker instead of a
+// free-text `provider/model` box.
+routingGroupsApiRoutes.get("/models", (c) =>
+  c.json({ models: listMemberOptions() }),
+)
+
 routingGroupsApiRoutes.get("/:id", async (c) => {
   const group = await getRoutingGroup(c.req.param("id"))
   if (!group) return c.json({ error: "Group not found" }, 404)
@@ -92,6 +116,15 @@ routingGroupsApiRoutes.put("/", async (c) => {
 routingGroupsApiRoutes.delete("/:id", async (c) => {
   if (!(await deleteRoutingGroup(c.req.param("id")))) {
     return c.json({ error: "Group not found" }, 404)
+  }
+  return c.json({ ok: true })
+})
+
+// Bring back a derived group the user removed (a hidden one). A stored group is
+// not restorable this way — it was deleted, not hidden.
+routingGroupsApiRoutes.post("/:id/restore", async (c) => {
+  if (!(await restoreAutoGroup(c.req.param("id")))) {
+    return c.json({ error: "No hidden group with that id" }, 404)
   }
   return c.json({ ok: true })
 })

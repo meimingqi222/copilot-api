@@ -7,6 +7,14 @@
  * shape/ordering and the API projecting a finalized request into a frame.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import { Hono } from "hono"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { join, resolve } from "node:path"
+import {
+  bindRequestLogContext,
+  createDetachedRequestLog,
+  markTraceFirstOutput,
+} from "~/lib/request-log"
 
 import { logStore } from "~/lib/log-store"
 import type { RequestLogRecord } from "~/lib/log-store"
@@ -37,6 +45,7 @@ import {
 
 const originalAdminPassword = state.adminPassword
 const originalLegacyApiKey = state.legacyApiKey
+const originalFetch = globalThis.fetch
 
 beforeEach(() => {
   clearTraceBusForTest()
@@ -51,6 +60,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  globalThis.fetch = originalFetch
   clearTraceBusForTest()
   logStore.clearForTest()
   __resetProviderConnectionsForTest()
@@ -62,7 +72,7 @@ afterEach(() => {
 
 function frame(
   overrides: Partial<RequestLogRecord> & { requestId: string },
-): TraceInput {
+): RequestLogRecord & { requestId: string } {
   return {
     timestamp: Date.now(),
     level: "info",
@@ -73,6 +83,53 @@ function frame(
 }
 
 describe("trace bus", () => {
+  test("first semantic output publishes once while a stream is still running", async () => {
+    const app = new Hono()
+    const events: Array<TraceInput> = []
+    const unsubscribe = subscribeTrace(({ entry }) => events.push(entry))
+    app.get("/", (c) => {
+      const ctx = createDetachedRequestLog({
+        requestId: "output",
+        streaming: true,
+      })
+      bindRequestLogContext(c, ctx)
+      markTraceFirstOutput(c, 120)
+      markTraceFirstOutput(c, 180)
+      return c.text("ok")
+    })
+    await app.request("/")
+    unsubscribe()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      requestId: "output",
+      ttftMs: 120,
+      inFlight: true,
+      outputObserved: true,
+    })
+  })
+  test("concurrent updates publish the updated request with its merged fields", () => {
+    publishTrace({ requestId: "older", model: "kept-model" }, "start")
+    publishTrace({ requestId: "newer" }, "start")
+    const seen: Array<TraceInput> = []
+    const unsubscribe = subscribeTrace(({ entry }) => seen.push(entry))
+    publishTrace({ requestId: "older", connectionName: "chosen" }, "update")
+    publishTrace({ requestId: "older", latencyMs: 42 }, "final")
+    unsubscribe()
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).toMatchObject({
+      requestId: "older",
+      model: "kept-model",
+      connectionName: "chosen",
+      inFlight: true,
+    })
+    expect(seen[1]).toMatchObject({
+      requestId: "older",
+      model: "kept-model",
+      latencyMs: 42,
+      inFlight: false,
+    })
+  })
+
   test("keeps the most recent traces, oldest first, bounded by TRACE_KEEP", () => {
     for (let i = 0; i < TRACE_KEEP + 10; i++) {
       publishTrace(frame({ requestId: `req-${i}` }))
@@ -327,5 +384,74 @@ describe("GET /admin/api/trace/recent", () => {
     // The frame carries timing, not the full diagnostic entry.
     expect("ttftMs" in (trace ?? {})).toBe(true)
     expect("message" in (trace ?? {})).toBe(false)
+  })
+})
+
+describe("GET /admin/api/trace/history", () => {
+  test("requires admin role", async () => {
+    clearAdminAuth()
+    const response = await server.fetch(
+      new Request("http://localhost/admin/api/trace/history"),
+    )
+    expect(response.status).toBe(403)
+  })
+
+  test("merges persisted history and finalized memory records, filters dates and deduplicates", async () => {
+    const originalLogDir = process.env.LOG_DIR
+    const root = resolve("temp")
+    await mkdir(root, { recursive: true })
+    const directory = await mkdtemp(join(root, "trace-history-"))
+    process.env.LOG_DIR = directory
+    const timestamp = new Date("2026-10-01T12:00:00Z").getTime()
+    const kept = {
+      ...frame({ requestId: "persisted", timestamp, model: "history-model" }),
+      id: 1,
+    }
+    try {
+      await writeFile(
+        join(directory, "requests-2026-10-01.jsonl"),
+        JSON.stringify(kept) + "\n",
+      )
+      logStore.push({ ...kept, connectionName: "memory-wins" })
+      logStore.push(
+        frame({ requestId: "memory-only", timestamp: timestamp + 1 }),
+      )
+      logStore.push(frame({ requestId: "outside", timestamp: timestamp - 100 }))
+      publishTrace({ requestId: "still-running", timestamp }, "start")
+      const response = await server.fetch(
+        adminRequest(
+          `http://localhost/admin/api/trace/history?timeFrom=${timestamp}&timeTo=${timestamp + 50}`,
+        ),
+      )
+      const data = (await response.json()) as {
+        traces: Array<Record<string, unknown>>
+      }
+      expect(data.traces.map((t) => t.requestId)).toEqual([
+        "persisted",
+        "memory-only",
+      ])
+      expect(data.traces[0]).toMatchObject({
+        connectionName: "memory-wins",
+        model: "history-model",
+        inFlight: false,
+      })
+      expect(data.traces[0]).not.toHaveProperty("message")
+      logStore.clearForTest()
+      const persistedResponse = await server.fetch(
+        adminRequest(
+          `http://localhost/admin/api/trace/history?timeFrom=${timestamp}`,
+        ),
+      )
+      const persistedData = (await persistedResponse.json()) as {
+        traces: Array<Record<string, unknown>>
+      }
+      expect(persistedData.traces).toHaveLength(1)
+      expect(persistedData.traces[0]?.requestId).toBe("persisted")
+    } finally {
+      if (originalLogDir === undefined) delete process.env.LOG_DIR
+      else process.env.LOG_DIR = originalLogDir
+      if (directory.startsWith(root + "\\"))
+        await rm(directory, { recursive: true, force: true })
+    }
   })
 })

@@ -5,9 +5,12 @@
   x-init="load()"
   style="display: none"
 >
-  <header class="flex justify-between items-center mb-8">
-    <h2 class="text-headline" x-text="t('connections.title')"></h2>
-    <div class="flex items-center gap-3">
+  <header class="page-header">
+    <div class="page-heading">
+      <h2 class="text-headline" x-text="t('connections.title')"></h2>
+      <p class="page-description" x-text="t('connections.subtitle')"></p>
+    </div>
+    <div class="page-actions">
       <button
         @click="load()"
         class="btn btn-secondary"
@@ -20,24 +23,71 @@
         ></i>
         <span x-text="t('refresh')"></span>
       </button>
-      <button @click="exportConnections()" class="btn btn-secondary">
-        <i data-lucide="download" class="w-4 h-4"></i>
-        <span x-text="t('connections.export')"></span>
-      </button>
-      <button @click="openImportModal()" class="btn btn-secondary">
-        <i data-lucide="upload" class="w-4 h-4"></i>
-        <span x-text="t('connections.import')"></span>
-      </button>
-      <button @click="testAllCreds()" class="btn btn-secondary">
-        <i data-lucide="zap" class="w-4 h-4"></i>
-        <span x-text="t('connections.testAll')"></span>
-      </button>
+      <details
+        class="action-menu"
+        @click.outside="$el.open = false"
+        @keydown.escape="$el.open = false"
+      >
+        <summary class="btn btn-secondary" x-text="t('layout.more')"></summary>
+        <div
+          class="action-menu-panel"
+          @click="$el.closest('details').open = false"
+        >
+          <button @click="openImportModal()" class="btn">
+            <i data-lucide="upload" class="w-4 h-4"></i
+            ><span x-text="t('connections.import')"></span>
+          </button>
+          <button @click="exportConnections()" class="btn">
+            <i data-lucide="download" class="w-4 h-4"></i
+            ><span x-text="t('connections.export')"></span>
+          </button>
+          <button @click="testAllCreds()" class="btn">
+            <i data-lucide="zap" class="w-4 h-4"></i
+            ><span x-text="t('connections.testAll')"></span>
+          </button>
+        </div>
+      </details>
       <button @click="openCreate()" class="btn btn-primary">
         <i data-lucide="plus" class="w-4 h-4"></i>
         <span x-text="t('connections.add')"></span>
       </button>
     </div>
   </header>
+
+  <div class="connection-filters" x-show="connections.length">
+    <input
+      type="search"
+      class="input"
+      x-model.debounce.150ms="searchQuery"
+      :placeholder="t('connections.searchPlaceholder')"
+      :aria-label="t('connections.searchPlaceholder')"
+    />
+    <select
+      class="input"
+      x-model="enabledFilter"
+      :aria-label="t('layout.allStatuses')"
+    >
+      <option value="" x-text="t('layout.allStatuses')"></option>
+      <option value="true" x-text="t('layout.enabled')"></option>
+      <option value="false" x-text="t('layout.disabled')"></option>
+    </select>
+    <span
+      class="filter-count"
+      aria-live="polite"
+      x-text="t('layout.resultCount', { visible: filteredConnections.length, total: connections.length })"
+    ></span>
+  </div>
+  <div
+    class="card p-6 mb-6"
+    x-show="!loading && connections.length && !filteredConnections.length"
+  >
+    <p class="text-body" x-text="t('layout.noMatches')"></p>
+    <button
+      class="btn btn-secondary mt-3"
+      @click="searchQuery = ''; enabledFilter = ''"
+      x-text="t('layout.clearFilters')"
+    ></button>
+  </div>
 
   <!-- Loading state -->
   <div
@@ -110,10 +160,10 @@
 
   <!-- Connection list -->
   <div class="space-y-4">
-    <template x-for="conn in connections" :key="conn.id">
+    <template x-for="conn in filteredConnections" :key="conn.id">
       <div class="card p-0 overflow-hidden">
         <!-- Card header -->
-        <div class="p-5 flex items-start gap-4">
+        <div class="connection-header p-5 flex items-start gap-4">
           <!-- Provider avatar -->
           <div
             class="w-11 h-11 rounded-2xl flex items-center justify-center text-white text-base font-semibold flex-shrink-0 shadow-sm"
@@ -123,13 +173,13 @@
           </div>
 
           <!-- Info block -->
-          <div class="flex-1 min-w-0">
+          <div class="connection-info">
             <div class="flex items-center gap-2 flex-wrap mb-1">
               <h3 class="text-title-3" x-text="conn.name"></h3>
               <span
                 class="tag"
                 :class="conn.enabled ? 'tag-success' : 'tag-muted'"
-                x-text="conn.enabled ? t('enabled') : t('disabled')"
+                x-text="conn.enabled ? t('layout.enabled') : t('layout.disabled')"
               ></span>
               <span class="tag tag-info" x-text="conn.protocol"></span>
             </div>
@@ -161,7 +211,9 @@
           </div>
 
           <!-- Action buttons -->
-          <div class="flex items-center gap-1.5 flex-shrink-0">
+          <div
+            class="connection-actions flex items-center gap-1.5 flex-shrink-0"
+          >
             <button
               @click="refreshModels(conn)"
               class="btn-icon"

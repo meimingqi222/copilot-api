@@ -308,6 +308,11 @@ function spentShare(): number {
   return typeof v === "number" && v > 0 && v <= 1 ? v : 0.98
 }
 
+/** Spent accounts cannot retain a conversation merely to preserve its cache. */
+export function isQuotaSpent(target: RouteTarget): boolean {
+  return (weighRowOf(target).used ?? 0) >= spentShare()
+}
+
 interface WeighRow {
   /** Allowance used, 0..1; undefined when the provider reports none. */
   used?: number

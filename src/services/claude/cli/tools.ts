@@ -29,7 +29,7 @@ const EMPTY_SCHEMA: Record<string, unknown> = {
 /**
  * 迟到结果的收集入口，只给 CLI 看(见 `CLAUDE_WAIT_TOOL_NAME`)。
  *
- * schema 与 magpie 的 `magpie_wait` 同形:模型把"还在跑"那条答复里给出的
+ * schema：模型把"还在跑"那条答复里给出的
  * tool_use id 原样填进 `call`。
  */
 const WAIT_TOOL: BridgeTool = {

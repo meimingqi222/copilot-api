@@ -8,9 +8,10 @@
  *    b. 同层内优先原生 endpoint(isTranslated 为假),仅当没有原生候选时
  *       才用需要协议转换的 target。
  *    connectionPriority 只在最终层级内比较。
- * 1. 按 connectionPriority 找到最低数字层(优先级最高)。
+ * 1. 智能策略先排除接近耗尽的账号（全耗尽时保留后备），再按 connectionPriority 找到最低数字层。
  * 2. 在该层内按 strategy:
- *    - fill-first (default): 固定选排序后第一个 (CPA FillFirstSelector, best cache)
+ *    - quota (default): 额度压力与重置时间；least-used: 使用量。
+ *    - fill-first: 固定选排序后第一个 (CPA FillFirstSelector)
  *    - round-robin: connectionWeight weighted RR
  * 3. 在选中 connection 的 credential 中,按 credentialPriority + weight 同理选 credential。
  * 4. 可选 session affinity: 同一 session 粘到同一 connection/credential。
@@ -18,6 +19,7 @@
  */
 
 import type { RouteTarget } from "~/lib/provider-connections"
+import type { AffinityMode } from "~/lib/state"
 
 import {
   affinityAuthKey,
@@ -34,7 +36,11 @@ import {
 } from "~/lib/routing/connection-routing-override"
 import { state } from "~/lib/state"
 
-import { orderByLeastUsed, orderByQuota } from "./evidence"
+import {
+  isQuotaSpent,
+  orderByLeastUsed,
+  orderByQuota,
+} from "~/lib/route-target/evidence"
 
 interface RoundRobinState {
   cursors: Map<string, number>
@@ -93,6 +99,16 @@ function preferredEndpoints(targets: Array<RouteTarget>): Array<RouteTarget> {
   return [...best.values()]
 }
 
+/** Shared compatibility tiers; group policies weigh all accounts in the tier. */
+function preferredRouteTargets(
+  targets: Array<RouteTarget>,
+): Array<RouteTarget> {
+  const dedicated = targets.filter((t) => !t.isWildcard)
+  const tier = dedicated.length > 0 ? dedicated : targets
+  const native = tier.filter((t) => !t.isTranslated)
+  return preferredEndpoints(native.length > 0 ? native : tier)
+}
+
 function findByAuthKey(
   pool: Array<RouteTarget>,
   authKey: string,
@@ -109,7 +125,7 @@ function commitAffinityIfEnabled(
   setSessionAffinity(cacheKey, affinityAuthKey(target), {
     turnKey: options.turnKey ?? options.fallbackSessionId,
     sessionKey:
-      options.sessionId ?
+      options.sessionId && !options.affinityScope ?
         affinitySessionKey(options.sessionId, target.protocol)
       : undefined,
   })
@@ -119,19 +135,35 @@ function commitAffinityIfEnabled(
 export function commitRouteTargetAffinity(
   target: RouteTarget,
   sessionId?: string,
+  options: {
+    affinityMode?: AffinityMode
+    affinityScope?: string
+    turnKey?: string
+  } = {},
 ): void {
-  if (!isSessionAffinityEnabled() || !sessionId) return
+  const mode =
+    options.affinityMode ?? effectiveAffinityFor([target.connectionId])
+  const enabled =
+    mode === undefined ? isSessionAffinityEnabled() : mode !== "off"
+  if (!enabled || !sessionId) return
   const cacheKey = affinityCacheKey(
     sessionId,
-    target.publicModelId,
-    target.protocol,
+    options.affinityScope ?? target.publicModelId,
+    options.affinityScope ? "group" : target.protocol,
   )
   setSessionAffinity(cacheKey, affinityAuthKey(target), {
-    sessionKey: affinitySessionKey(sessionId, target.protocol),
+    turnKey: options.turnKey,
+    sessionKey:
+      options.affinityScope ? undefined : (
+        affinitySessionKey(sessionId, target.protocol)
+      ),
   })
 }
 
 interface SelectRouteTargetOptions {
+  /** A group changes policy and binding scope, never the selection algorithm. */
+  strategy?: "quota" | "least-used"
+  affinityScope?: string
   exclude?: Set<string>
   /**
    * Primary session id for affinity (from extractSessionIds).
@@ -154,6 +186,12 @@ interface SelectRouteTargetOptions {
   rebindAffinity?: boolean
   /** When false, selection does not persist a new session binding. */
   commitAffinity?: boolean
+  /**
+   * Overrides the global affinity mode for this selection (a group's own
+   * `affinity`). `off` skips affinity entirely; otherwise the named mode's
+   * stickiness is used.
+   */
+  affinityMode?: AffinityMode
 }
 
 /**
@@ -174,47 +212,73 @@ export function selectRouteTarget(
   //       转换是有损的(丢 cache_control 断点、字段降级),同优先级下
   //       不应抢占一个原生支持该 endpoint 的 provider。
   //       failover 把原生 target 排除后,转换 target 仍会作为后备被选中。
-  const dedicatedPool = allPool.filter((t) => !t.isWildcard)
-  const tierPool = dedicatedPool.length > 0 ? dedicatedPool : allPool
-  const nativePool = tierPool.filter((t) => !t.isTranslated)
-  const pool = preferredEndpoints(nativePool.length > 0 ? nativePool : tierPool)
+  const pool = preferredRouteTargets(allPool)
 
   // 1) connection priority 最小值
-  const minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))
-  const topConn = pool.filter((t) => t.connectionPriority === minConnPrio)
+  let minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))
+  let topConn = pool.filter((t) => t.connectionPriority === minConnPrio)
+  const strategy =
+    options.strategy
+    ?? effectiveStrategyFor(
+      topConn.map((t) => t.connectionId),
+      state.routing.strategy,
+    )
+  // Smart routing uses a healthy backup before a nearly exhausted primary.
+  if (strategy === "quota" || strategy === "least-used") {
+    const unspent = pool.filter((target) => !isQuotaSpent(target))
+    if (unspent.length) {
+      minConnPrio = Math.min(
+        ...unspent.map((target) => target.connectionPriority),
+      )
+      topConn = unspent.filter(
+        (target) => target.connectionPriority === minConnPrio,
+      )
+    }
+  }
 
   const modelId = topConn[0]?.publicModelId ?? ""
   const protocol = topConn[0]?.protocol
+  const scope = options.affinityScope ?? modelId
+  const bindingProtocol = options.affinityScope ? "group" : protocol
   const turnKey = options.turnKey ?? options.fallbackSessionId
   const sessionKey =
-    options.sessionId ?
+    options.sessionId && !options.affinityScope ?
       affinitySessionKey(options.sessionId, protocol)
     : undefined
   // 该层的亲和开关：连接一致声明覆盖时以覆盖为准（`off` 即不粘），
   // 否则沿用全局 `sessionAffinity` + `affinity` 组合。
   const poolAffinity = effectiveAffinityFor(topConn.map((t) => t.connectionId))
+  const affinityMode = options.affinityMode ?? poolAffinity
   const affinityOn =
-    poolAffinity === undefined ?
-      isSessionAffinityEnabled()
+    options.affinityMode !== undefined ? options.affinityMode !== "off"
+    : poolAffinity === undefined ? isSessionAffinityEnabled()
     : poolAffinity !== "off"
 
   // Session affinity: the model-scoped binding first, then the model-agnostic
   // session binding (so a group that changed model keeps the account), then
   // turn-1 inheritance from the short hash.
   if (affinityOn && options.sessionId && !options.rebindAffinity) {
-    const primaryKey = affinityCacheKey(options.sessionId, modelId, protocol)
+    const primaryKey = affinityCacheKey(
+      options.sessionId,
+      scope,
+      bindingProtocol,
+    )
     const bound =
-      getSessionAffinity(primaryKey, { turnKey })
+      getSessionAffinity(primaryKey, {
+        turnKey,
+        mode: affinityMode,
+        refresh: options.commitAffinity !== false,
+      })
       ?? (sessionKey ?
-        getSessionAffinityBySession(sessionKey, { turnKey })
+        getSessionAffinityBySession(sessionKey, {
+          turnKey,
+          mode: affinityMode,
+        })
       : undefined)
     if (bound) {
-      const hit = findByAuthKey(topConn, bound) ?? findByAuthKey(pool, bound)
-      // 两阶段过滤后,pool 要么全是专用、要么全是通配。
-      // 若 pool 是专用池,hit 一定是专用 target,直接命中。
-      // 若 pool 是通配池(无专用可用),hit 一定是通配 target,放行。
-      // 旧的"通配不粘 affinity"守卫已由两阶段过滤在 pool 选择时完成。
-      if (hit) {
+      const hit = findByAuthKey(topConn, bound)
+      // Explicit primary/backup changes and spent allowances release bindings.
+      if (hit && !isQuotaSpent(hit)) {
         return hit
       }
       // Bound auth unavailable — fall through to reselect
@@ -226,18 +290,17 @@ export function selectRouteTarget(
     ) {
       const fallbackKey = affinityCacheKey(
         options.fallbackSessionId,
-        modelId,
-        protocol,
+        scope,
+        bindingProtocol,
       )
       const fallbackBound = getSessionAffinity(fallbackKey, {
         refresh: false,
         turnKey,
+        mode: affinityMode,
       })
       if (fallbackBound) {
-        const hit =
-          findByAuthKey(topConn, fallbackBound)
-          ?? findByAuthKey(pool, fallbackBound)
-        if (hit) {
+        const hit = findByAuthKey(topConn, fallbackBound)
+        if (hit && !isQuotaSpent(hit)) {
           commitAffinityIfEnabled(options, primaryKey, hit)
           return hit
         }
@@ -245,18 +308,21 @@ export function selectRouteTarget(
     }
   }
 
-  const chosen = pickFromPriorityPool(topConn, minConnPrio)
+  const chosen = pickFromPriorityPool(topConn, minConnPrio, strategy)
 
   // Record affinity binding for this session
   if (options.commitAffinity !== false && affinityOn && options.sessionId) {
     const primaryKey = affinityCacheKey(
       options.sessionId,
-      chosen.publicModelId,
-      chosen.protocol,
+      options.affinityScope ?? chosen.publicModelId,
+      options.affinityScope ? "group" : chosen.protocol,
     )
     setSessionAffinity(primaryKey, affinityAuthKey(chosen), {
       turnKey,
-      sessionKey: affinitySessionKey(options.sessionId, chosen.protocol),
+      sessionKey:
+        options.affinityScope ? undefined : (
+          affinitySessionKey(options.sessionId, chosen.protocol)
+        ),
     })
   }
 
@@ -266,13 +332,8 @@ export function selectRouteTarget(
 function pickFromPriorityPool(
   topConn: Array<RouteTarget>,
   minConnPrio: number,
+  strategy: ReturnType<typeof effectiveStrategyFor>,
 ): RouteTarget {
-  // 单连接可覆盖全局策略：同层声明者一致时用覆盖，否则用全局。
-  const strategy = effectiveStrategyFor(
-    topConn.map((t) => t.connectionId),
-    state.routing.strategy,
-  )
-
   if (strategy === "fill-first") {
     return pickFillFirst(topConn)
   }

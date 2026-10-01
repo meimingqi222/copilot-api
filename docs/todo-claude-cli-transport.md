@@ -652,8 +652,8 @@ bun run dev -- --verbose
 - **admin UI**：本轮不加传输方式的开关界面。切换靠
   `connection.metadata.claudeTransport` 直接改 JSON，或 `COPILOT_API_CLAUDE_TRANSPORT`。
 - **`wait_for_tool`**：Phase 4 的增强项，Phase 3 先用大 `patience` 顶 ——
-  **已于 2026-09-30 补齐**（真机验证时发现"越过 `patience` 只能重开进程"这一代价，
-  遂按 magpie 的形态实现）。见 §0「后续跟进」2。
+  **已于 2026-09-30 补齐**（真机验证时发现"越过 `patience` 只能重开进程"这一代价）。
+  见 §0「后续跟进」2。
 - **删除 v1 代码**：不删。v1 是 fallback，也是没装 CLI 用户的唯一路径。
 - **进程池化**：不做。理由见 §4.4 —— 一回合一个进程是刻意的（工具集在
   `cmd.Start()` 时就固化了，池化会把 stale 的工具定义留在进程里）。

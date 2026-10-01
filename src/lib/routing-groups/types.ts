@@ -29,6 +29,72 @@ type EffortSpec = EffortLevel | typeof EFFORT_ANY
 /** Spellings that mean "no reasoning": neither satisfies an effort rule. */
 export const EFFORT_OFF_VALUES = ["off", "none", "disabled"] as const
 
+/**
+ * How a group picks among its members. Mirrors the routing vocabulary a group's
+ * card offers:
+ * - `smart`: all members' actual accounts weighed together, spare quota and
+ *   soonest-renewing windows first. Legacy groups without a mode keep order.
+ * - `order`: the members in the order written, the first until it cannot answer.
+ * - `rotate`: each conversation's next turn goes to the next member.
+ * - `usage`: all members' accounts by allowance left, then recent tokens served.
+ * - `manual`: only the member the user picked (`pick`).
+ */
+const GROUP_ROUTING_MODES = [
+  "smart",
+  "order",
+  "rotate",
+  "usage",
+  "manual",
+] as const
+
+export type GroupRoutingMode = (typeof GROUP_ROUTING_MODES)[number]
+
+/** How long a conversation stays with the account that answered it. */
+const GROUP_AFFINITY_MODES = ["auto", "session", "turn", "off"] as const
+
+export type GroupAffinityMode = (typeof GROUP_AFFINITY_MODES)[number]
+
+/**
+ * Who decides each request's reasoning effort:
+ * - `agent` (default): whatever the agent asked for.
+ * - `auto`: the group's classifier rates the turn and the request reasons at
+ *   the level it reports. Needs a `classifier`.
+ */
+const GROUP_EFFORT_SOURCES = ["agent", "auto"] as const
+
+export type GroupEffortSource = (typeof GROUP_EFFORT_SOURCES)[number]
+
+export function isRoutingMode(value: unknown): value is GroupRoutingMode {
+  return (
+    typeof value === "string"
+    && (GROUP_ROUTING_MODES as readonly string[]).includes(
+      value.trim().toLowerCase(),
+    )
+  )
+}
+
+export function isGroupAffinityMode(
+  value: unknown,
+): value is GroupAffinityMode {
+  return (
+    typeof value === "string"
+    && (GROUP_AFFINITY_MODES as readonly string[]).includes(
+      value.trim().toLowerCase(),
+    )
+  )
+}
+
+export function isGroupEffortSource(
+  value: unknown,
+): value is GroupEffortSource {
+  return (
+    typeof value === "string"
+    && (GROUP_EFFORT_SOURCES as readonly string[]).includes(
+      value.trim().toLowerCase(),
+    )
+  )
+}
+
 export function isEffortLevel(value: unknown): value is EffortLevel {
   return (
     typeof value === "string"
@@ -109,6 +175,8 @@ export interface Rule {
 export interface RoutingGroup {
   id: string
   name: string
+  /** Opt in to advertising group/<id> in the public model catalog. */
+  expose?: boolean
   /** Members, in preference order. */
   members: Array<string>
   /** Ordered rule list; the first match wins. */
@@ -121,4 +189,26 @@ export interface RoutingGroup {
   levels?: Array<string>
   /** Where to ask for an intent classification when a rule needs one. */
   classifier?: { provider: string; model: string }
+  /**
+   * How the group picks among its members. Absent means the members are tried
+   * in the order they are written (`order`) — a legacy group written before
+   * modes existed keeps routing as-is; see {@link GROUP_ROUTING_MODES}.
+   */
+  routing?: GroupRoutingMode
+  /**
+   * How long a conversation stays with the account that answered it. Absent
+   * follows the global session-affinity setting; see {@link GROUP_AFFINITY_MODES}.
+   */
+  affinity?: GroupAffinityMode
+  /**
+   * Who decides each request's reasoning effort. Absent means the agent's
+   * own; see {@link GROUP_EFFORT_SOURCES}.
+   */
+  effort?: GroupEffortSource
+  /**
+   * Set on a group derived from the connection catalog (a model several
+   * connections serve), never on a stored one. It is what the editor badges as
+   * auto, and what {@link deleteRoutingGroup} hides rather than deletes.
+   */
+  auto?: boolean
 }

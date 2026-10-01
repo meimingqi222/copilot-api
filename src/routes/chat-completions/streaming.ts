@@ -14,6 +14,7 @@ import {
   beginStreamLog,
   finishRequestLog,
   markStreamTerminal,
+  markTraceFirstOutput,
   patchRequestLog,
   recordTraceError,
 } from "~/lib/request-log"
@@ -133,6 +134,7 @@ export function handleStreamingResponse(
           outputObserved ||= isOutput
           if (isOutput && !firstChunkTs) {
             firstChunkTs = Date.now()
+            markTraceFirstOutput(c, firstChunkTs - streamStart)
             updateMemoryTrace(memoryTraceId, "chat_first_chunk")
           }
           if (logger.level >= 4) {
@@ -338,6 +340,7 @@ export async function handleStreamingCompletion(
           if (isOutput && !firstChunkTs) {
             firstChunkTs = Date.now()
             updateMemoryTrace(options.memoryTraceId, "chat_first_chunk")
+            markTraceFirstOutput(c, firstChunkTs - streamStart)
           }
           if (logger.level >= 4) {
             logger.debug("Streaming raw event:", JSON.stringify(rawEvent))

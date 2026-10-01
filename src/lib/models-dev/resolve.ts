@@ -6,10 +6,15 @@ import type { ProviderId } from "~/lib/provider-config"
 
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
+  lookupGlobalModelContext,
   lookupGlobalModelPrice,
+  lookupProviderModelContext,
   lookupProviderModelPrice,
 } from "~/lib/models-dev/catalog"
-import { getModelsDevIndexes } from "~/lib/models-dev/client"
+import {
+  getModelsDevContextIndexes,
+  getModelsDevIndexes,
+} from "~/lib/models-dev/client"
 import {
   buildPricingLookupCandidates,
   inferWindsurfVendorBucket,
@@ -177,4 +182,51 @@ export function resolveModelsDevPriceDetailed(
     ...resolvedPricing,
     source: "models-dev",
   }
+}
+
+/**
+ * The context window models.dev names for a model, or undefined when the
+ * catalog has not loaded or does not know it. Mirrors the price lookup's
+ * candidate + provider-bucket walk, so a connection that stores only a bare or
+ * vendor-namespaced id still matches.
+ */
+export function resolveModelsDevContext(
+  modelId: string,
+  providerHint?: ProviderId,
+): number | undefined {
+  const indexes = getModelsDevContextIndexes()
+  if (!indexes) return undefined
+
+  const parsed = parseModelReference(modelId)
+  const provider = parsed.provider ?? providerHint
+  const candidates = buildPricingLookupCandidates(
+    parsed.nativeModelId,
+    provider,
+  )
+  if (candidates.length === 0) return undefined
+
+  const providerBuckets =
+    provider ? (MODELS_DEV_PROVIDER_PRIORITY[provider] ?? []) : []
+  const windsurfBuckets =
+    provider === "windsurf" ?
+      inferWindsurfVendorBucket(parsed.nativeModelId)
+    : []
+  const orderedProviderIds = [
+    ...providerBuckets,
+    ...windsurfBuckets.filter((bucket) => !providerBuckets.includes(bucket)),
+  ]
+
+  for (const candidate of candidates) {
+    const providerMatch = lookupProviderModelContext(
+      indexes,
+      orderedProviderIds,
+      candidate,
+    )
+    if (providerMatch !== undefined) return providerMatch
+  }
+  for (const candidate of candidates) {
+    const globalMatch = lookupGlobalModelContext(indexes, candidate)
+    if (globalMatch !== undefined) return globalMatch
+  }
+  return undefined
 }

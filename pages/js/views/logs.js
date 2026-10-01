@@ -18,6 +18,15 @@ function logsView() {
     },
 
     init() {
+      globalThis.addEventListener("admin:inspect-errors", () => {
+        this.filters.outcome = "failed"
+        this.filters.level = ""
+        this.filters.apiKind = ""
+        this.filters.search = ""
+        this.filters.modelMismatch = ""
+        this.filters.offset = 0
+        this.load()
+      })
       this.$watch("autoRefresh", (enabled) => {
         if (enabled) {
           this.startAutoRefresh()

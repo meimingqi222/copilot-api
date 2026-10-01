@@ -4,7 +4,11 @@ import { streamSSE } from "hono/streaming"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { beginStreamLog, markStreamTerminal } from "~/lib/request-log"
+import {
+  beginStreamLog,
+  markStreamTerminal,
+  markTraceFirstOutput,
+} from "~/lib/request-log"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import {
@@ -113,7 +117,10 @@ export async function handleGenerateContent(c: Context) {
         if (frame?.usageMetadata) usageMetadata = frame.usageMetadata
         if (frame?.hasContent) {
           outputObserved = true
-          firstChunkTs ??= Date.now()
+          if (firstChunkTs === undefined) {
+            firstChunkTs = Date.now()
+            markTraceFirstOutput(c, firstChunkTs - dispatchStart)
+          }
         }
         await writeSseEvent(stream, event.data, event.event)
         if (frame?.finishReason) {

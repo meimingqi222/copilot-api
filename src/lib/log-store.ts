@@ -87,6 +87,8 @@ export interface RouteCandidate {
   restReason?: string
   /** When the rest lifts, ms epoch. */
   restUntilMs?: number
+  /** Group member spec when candidate belongs to a routing group. */
+  member?: string
 }
 interface RequestLogError {
   origin: "client" | "admission" | "upstream" | "proxy" | "cancelled"
@@ -169,6 +171,12 @@ export interface LogEntry {
   failoverReason?: string
   /** Candidate routes considered for this request, chosen first. */
   candidates?: Array<RouteCandidate>
+  /** Routing group information when request hits a group. */
+  routingGroupId?: string
+  routingGroupName?: string
+  routingGroupMembers?: Array<string>
+  routingGroupSelectedMember?: string
+  routingStrategy?: string
 }
 
 export type RequestLogRecord = Omit<LogEntry, "id">

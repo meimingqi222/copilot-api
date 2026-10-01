@@ -355,7 +355,7 @@ export async function* translateClaudeStreamJson(
         for (const closed of closeOpenBlocks()) yield closed
         if (!own.endsResponse()) {
           // 这一轮只是在等网关自己的调用，答复尚未成形：**不**结束这一段，
-          // 让结果到了之后的内容落在同一个流里（magpie 的 inside 同款处理）。
+          // 让结果到了之后的内容落在同一个流里。
           break
         }
         messageEnded = true

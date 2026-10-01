@@ -180,20 +180,6 @@ function stepfunReader(currency: string) {
   }
 }
 
-/**
- * Command Code reports plan/credit buckets rather than a wallet. The spendable
- * side is the topped-up plus free credits; the plan allowance is usage, not
- * money, so it is left out.
- */
-function readCommandCodeCredits(body: string): BalanceResult | undefined {
-  const root = asRecord(parseJson(body))
-  const credits = recordField(root, "credits") ?? root
-  const free = numberFrom(credits?.freeCredits)
-  const purchased = numberFrom(credits?.purchasedCredits)
-  if (free === undefined && purchased === undefined) return undefined
-  return result((free ?? 0) + (purchased ?? 0), "USD", root)
-}
-
 /** aihubmix's dashboard summary is small and shape-shifts; stay permissive. */
 function readRemain(body: string): BalanceResult | undefined {
   const parsed = parseJson(body)
@@ -260,8 +246,6 @@ const SILICONFLOW_CN_BALANCE_URL = "https://api.siliconflow.cn/v1/user/info"
 const SILICONFLOW_COM_BALANCE_URL = "https://api.siliconflow.com/v1/user/info"
 const STEPFUN_COM_BALANCE_URL = "https://api.stepfun.com/v1/accounts"
 const STEPFUN_AI_BALANCE_URL = "https://api.stepfun.ai/v1/accounts"
-const COMMANDCODE_CREDITS_URL =
-  "https://api.commandcode.ai/alpha/billing/credits"
 const AIHUBMIX_ACCOUNT_URL = "https://aihubmix.com/api/user/self"
 const AIHUBMIX_REMAIN_URL = "https://aihubmix.com/dashboard/billing/remain"
 
@@ -276,6 +260,8 @@ function aihubmixBalanceSource(token?: string): BalanceSource {
 /**
  * Resolve a known vendor from the hosts a connection uses. Checks chat,
  * responses and anthropic in turn and returns the first match.
+ * Command Code is excluded: zero extra credits do not mean its subscription
+ * allowance is exhausted.
  */
 export function knownBalanceSource(
   hosts: BalanceHosts,
@@ -311,9 +297,6 @@ export function knownBalanceSource(
     }
     if (host === "api.stepfun.ai") {
       return { url: STEPFUN_AI_BALANCE_URL, read: stepfunReader("USD") }
-    }
-    if (host === "api.commandcode.ai") {
-      return { url: COMMANDCODE_CREDITS_URL, read: readCommandCodeCredits }
     }
     if (host === "aihubmix.com") {
       return aihubmixBalanceSource(token)

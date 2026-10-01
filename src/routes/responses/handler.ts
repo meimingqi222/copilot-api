@@ -17,6 +17,7 @@ import {
   beginStreamLog,
   finishRequestLog,
   markStreamTerminal,
+  markTraceFirstOutput,
   patchRequestLog,
   recordTraceError,
 } from "~/lib/request-log"
@@ -156,7 +157,10 @@ export async function handleResponses(c: Context) {
       const streamStartTs = dispatchStart
       const markOutputObserved = () => {
         outputObserved = true
-        firstChunkTs ??= Date.now()
+        if (firstChunkTs === undefined) {
+          firstChunkTs = Date.now()
+          markTraceFirstOutput(c, firstChunkTs - streamStartTs)
+        }
       }
 
       try {

@@ -67,16 +67,6 @@ const SILICONFLOW = {
 
 const STEPFUN = { object: "account", balance: 20.5 }
 
-const COMMANDCODE = {
-  credits: {
-    planId: "pro",
-    monthlyCredits: 100,
-    purchasedCredits: 12.5,
-    freeCredits: 2.5,
-  },
-  windowLimits: { limited: false },
-}
-
 const NEW_API_USER_SELF = {
   success: true,
   message: "",
@@ -213,13 +203,8 @@ describe("knownBalanceSource", () => {
     expect(ai.read(JSON.stringify(STEPFUN))?.display).toBe("$20.50")
   })
 
-  test("Command Code sums purchased and free credits", () => {
-    const source = knownBalanceSource({ chat: "api.commandcode.ai" })!
-    expect(source.url).toBe("https://api.commandcode.ai/alpha/billing/credits")
-    expect(source.read(JSON.stringify(COMMANDCODE))).toMatchObject({
-      amount: 15,
-      display: "$15.00",
-    })
+  test("Command Code credits are not a wallet balance source", () => {
+    expect(knownBalanceSource({ chat: "api.commandcode.ai" })).toBeUndefined()
   })
 
   test("aihubmix without a token reads the public remain summary", () => {

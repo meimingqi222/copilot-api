@@ -231,6 +231,61 @@ describe("balance gate", () => {
 })
 
 describe("balance sync tick", () => {
+  test("Command Code endpoints discard a persisted balance lock without probing billing", async () => {
+    const conn = testConnection("commandcode", {
+      baseUrl: "https://api.commandcode.ai/v1",
+    })
+    pushBalance(conn, 0)
+    const credential = conn.credentials[0]!
+    credential.status = "quota_exhausted"
+    credential.cooldownUntil = Date.now() + 1_666_000
+    credential.lastError = "balance depleted ($0.00)"
+    upsertProviderConnection(conn)
+    let calls = 0
+    setBalanceFetcher(() => {
+      calls += 1
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            credits: {
+              monthlyCredits: 100,
+              freeCredits: 0,
+              purchasedCredits: 0,
+            },
+          }),
+        ),
+      )
+    })
+
+    expect(await syncBalances()).toBe(0)
+    expect(calls).toBe(0)
+    expect(getConnectionBalance(conn)).toBeUndefined()
+    expect(liveConnection(conn.id).credentials[0]?.status).toBe("ready")
+    expect(credential.cooldownUntil).toBeUndefined()
+    expect(credential.lastError).toBeUndefined()
+    expect(buildRouteTargets({ connectionId: conn.id }).length).toBeGreaterThan(
+      0,
+    )
+  })
+
+  test("removing an inferred balance source preserves an upstream quota refusal", async () => {
+    const conn = testConnection("commandcode", {
+      baseUrl: "https://api.commandcode.ai/v1",
+    })
+    pushBalance(conn, 0)
+    const credential = conn.credentials[0]!
+    credential.status = "quota_exhausted"
+    credential.cooldownUntil = Date.now() + 1_666_000
+    credential.lastError = "upstream insufficient credits"
+    upsertProviderConnection(conn)
+
+    expect(await syncBalances()).toBe(0)
+    expect(getConnectionBalance(conn)).toBeUndefined()
+    expect(credential.status).toBe("quota_exhausted")
+    expect(credential.lastError).toBe("upstream insufficient credits")
+    expect(credential.cooldownUntil).toBeGreaterThan(Date.now())
+  })
+
   test("reads each wallet once per window", async () => {
     let calls = 0
     setBalanceFetcher(() => {

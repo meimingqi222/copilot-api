@@ -48,7 +48,7 @@ function upsert(entry: TraceRecord, phase: TracePhase): void {
     recent.push(stamped)
   }
   if (recent.length > TRACE_KEEP) recent.splice(0, recent.length - TRACE_KEEP)
-  const stored = recent.at(-1) ?? stamped
+  const stored = existing >= 0 ? recent[existing]! : stamped
   bus.emit("trace", { entry: stored, phase })
 }
 

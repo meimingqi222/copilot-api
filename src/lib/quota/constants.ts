@@ -46,6 +46,29 @@ export const MINIMAX_REQUEST_HEADERS = {
   Accept: "application/json",
 } as const
 
+/**
+ * MiniMax Code 的**积分钱包**端点。
+ *
+ * 积分（Credits）与 Token Plan 是两笔独立的钱：`coding_plan/remains` 只描述
+ * 订阅窗口，从未订阅（或订阅已到期）的账号在那里拿到的是
+ * `2062 no active token plan subscription`，而积分仍在。官方客户端的账号页
+ * 读的就是这两个端点：
+ *
+ *   POST {agent}/matrix/api/v1/commerce/get_membership_info   ← 首选
+ *        `op_credit_summary.total_remaining_amount`（迁移到 OP 后的现行口径）
+ *   POST {agent}/matrix/api/v1/user/get_user_extra_info       ← 兜底
+ *        个人工作区（`workspace_type === 0`）上的 `opcredit_balance`
+ *
+ * 与 remains 不同，这两个路径挂在 **agent 域**（模型面同域，见
+ * `MINIMAX_REGIONS[region].agent`），且只认 Bearer：实测不发送官方客户端那组
+ * `yy` / `x-timestamp` / `x-signature` 第一方标识头也能正常返回。
+ */
+export const MINIMAX_MEMBERSHIP_INFO_PATH =
+  "/matrix/api/v1/commerce/get_membership_info"
+
+export const MINIMAX_USER_EXTRA_INFO_PATH =
+  "/matrix/api/v1/user/get_user_extra_info"
+
 export const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 export const CODEX_RATE_LIMIT_RESET_CREDITS_URL =
   "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"

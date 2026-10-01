@@ -11,12 +11,12 @@ Status: implemented
 网关也就只能**重开一个新进程**、把整段 transcript 重放一遍，prompt cache 全废。
 
 而这个"等"又不能靠继续阻塞来做：CLI 的 MCP 客户端对单次调用有约 **一分钟**上限
-（magpie 的注释把这条写得很直白：`its MCP client gives up on a call at a minute`），
+（`its MCP client gives up on a call at a minute`），
 而 `patience` 默认是 5 分钟 —— 阻塞得比客户端的上限还久，客户端先放弃。
 
 ## Decision
 
-按 magpie 的 `magpie_wait` 形态补上 `wait_for_tool`：
+补上 `wait_for_tool`：
 
 - `bridgeTools()` 在调用方本来就有工具时，额外暴露一个合成工具
   `wait_for_tool`（`{call: <tool_use id>}`）。调用方工具为空时不暴露 —— 没有工具
@@ -33,7 +33,7 @@ Do not call it again.` 工具名按 CLI 眼里的形态写全，模型看到的�
   `OwnWaitBlocks`：认出自己那块就整块不下发（含 `input_json_delta` 与
   `content_block_stop`），并且当一轮答复**只**带自己的调用时，`message_delta` 不报
   `tool_use`、`message_stop` 也不下发 —— 否则调用方会收到一个没有任何内容的完整回复，
-  而真正的答案还在后面（这一点与 magpie 的 `own` / `inside` 处理同构）。
+  而真正的答案还在后面。
 - 等待到哪里为止：`patience` 到点时 waiter 会把自己摘掉，所以之后送来的结果落进
   `pendingResults`，等下一次 `wait_for_tool` 来取。**不**把 waiter 留着，否则结果会
   兑现给一个已经答复完的请求，等于丢掉。
@@ -43,8 +43,7 @@ Do not call it again.` 工具名按 CLI 眼里的形态写全，模型看到的�
 **把 `patience` 调大到覆盖长任务。** 治不了根：MCP 客户端一分钟就放弃了，阻塞再久
 也没人听。
 
-**不设 patience，无限等。** 这正是 magpie 目前发布出去的实际行为 —— `patience` 字段
-在整个仓库里没有任何赋值点，`magpie_wait` 与"到点"那条路都是死代码。一个卡住的工具
+**不设 patience，无限等。** 一个卡住的工具
 会把 MCP 调用和 CLI 进程一直举着。
 
 **让调用方在长任务期间轮询 `/v1/messages`。** 那是把网关的内部状态机推给每一个调用
@@ -58,8 +57,7 @@ prompt cache 与对话状态都保住。代价是多一个只对 CLI 可见的�
 而不是出错。
 
 阻塞时长始终压在 `patience`（默认 5 分钟）以内，且每次 `wait_for_tool` 重新计时；
-若要让它严格短于客户端的一分钟上限，把 `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` 调小即可
-（magpie 自己的搜索工具就是用 55s 压在那个上限下面）。
+若要让它严格短于客户端的一分钟上限，把 `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` 调小即可。
 
 ## Verification
 

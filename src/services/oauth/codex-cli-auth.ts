@@ -36,7 +36,7 @@ interface CodexCliAuthFile {
   [key: string]: unknown
 }
 
-export interface CodexCliCredentials {
+interface CodexCliCredentials {
   accessToken: string
   idToken?: string
   refreshToken?: string

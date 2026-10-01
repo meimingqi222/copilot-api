@@ -52,6 +52,32 @@ export interface AppliedGroupOverrides {
 interface ApplyGroupOverridesOptions {
   /** Endpoint the payload is written for; decides which spellings apply. */
   endpoint?: ModelEndpoint
+  baseline?: GroupOverrideBaseline
+}
+
+const OVERRIDE_FIELDS = [
+  "reasoning_effort",
+  "reasoning",
+  "service_tier",
+] as const
+export type GroupOverrideBaseline = Partial<
+  Record<(typeof OVERRIDE_FIELDS)[number], unknown>
+>
+
+/** Preserve the caller's fields so a retry does not inherit another member's suffixes. */
+export function captureGroupOverrideBaseline(
+  payload: unknown,
+): GroupOverrideBaseline {
+  const record = asRecord(payload)
+  const baseline: GroupOverrideBaseline = {}
+  if (!record) return baseline
+  for (const key of OVERRIDE_FIELDS) {
+    if (Object.hasOwn(record, key)) {
+      baseline[key] =
+        asRecord(record[key]) ? { ...asRecord(record[key]) } : record[key]
+    }
+  }
+  return baseline
 }
 
 /**
@@ -102,6 +128,15 @@ export function applyGroupOverrides(
   const applied: AppliedGroupOverrides = { fast: false }
   const record = asRecord(payload)
   if (!record) return applied
+
+  if (options.baseline) {
+    for (const key of OVERRIDE_FIELDS) {
+      if (Object.hasOwn(options.baseline, key)) {
+        const original = options.baseline[key]
+        record[key] = asRecord(original) ? { ...asRecord(original) } : original
+      } else delete record[key]
+    }
+  }
 
   const { endpoint } = options
 

@@ -1,4 +1,4 @@
-import { afterEach, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
 import type { ProviderAdmission } from "~/lib/request-admission"
 import type {
@@ -34,7 +34,24 @@ state.accountType = "individual"
 
 const originalProviderDefaults = structuredClone(state.providerDefaults)
 
+/**
+ * The pristine `fetch`, snapshotted by the test preload before any test file
+ * loaded (see `tests/setup/isolate-data-dir.ts`). This file installed its stub
+ * at module scope and never restored it, so the stub leaked into every file Bun
+ * ran afterwards; `oauth-commandcode`'s callback tests ran into it and failed on
+ * a response that has no `status`.
+ */
+const realFetch =
+  (globalThis as unknown as { __realFetch?: typeof fetch }).__realFetch
+  ?? globalThis.fetch
+
+/** Swap the global `fetch`; `afterEach` always puts the real one back. */
+function setGlobalFetch(next: typeof fetch): void {
+  ;(globalThis as unknown as { fetch: typeof fetch }).fetch = next
+}
+
 afterEach(() => {
+  setGlobalFetch(realFetch)
   resetAdaptiveRateLimiterForTest()
   statsStore.clearUsageStatsForTest()
   state.providerDefaults = structuredClone(originalProviderDefaults)
@@ -67,8 +84,11 @@ const fetchMock = mock(
     }
   },
 )
-// @ts-expect-error - Mock fetch doesn't implement all fetch properties
-;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock
+// Installed per test rather than at module scope: the stub must not outlive this
+// file, and the in-test swaps below expect to start from it.
+beforeEach(() => {
+  setGlobalFetch(fetchMock as unknown as typeof fetch)
+})
 
 /**
  * Dispatch a chat request through the real routing layer so the test covers

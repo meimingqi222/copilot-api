@@ -109,33 +109,55 @@ function adminApp() {
       )
     },
 
-    get navItems() {
+    get navGroups() {
       return [
         {
-          id: "dashboard",
-          icon: "layout-dashboard",
-          label: this.t("nav.dashboard"),
-        },
-        { id: "users", icon: "key", label: this.t("nav.users") },
-        { id: "accounts", icon: "users", label: this.t("nav.accounts") },
-        { id: "connections", icon: "plug", label: this.t("nav.connections") },
-        {
-          id: "model-aliases",
-          icon: "shuffle",
-          label: this.t("nav.modelAliases"),
+          id: "overview",
+          items: [{ id: "dashboard", icon: "layout-dashboard" }],
         },
         {
-          id: "routing-groups",
-          icon: "git-branch",
-          label: this.t("nav.routingGroups"),
+          id: "upstream",
+          items: [
+            { id: "accounts", icon: "users" },
+            { id: "connections", icon: "plug" },
+            { id: "quotas", icon: "battery-charging" },
+          ],
         },
-        { id: "usage", icon: "bar-chart-3", label: this.t("nav.usage") },
-        { id: "quotas", icon: "battery-charging", label: this.t("nav.quotas") },
-        { id: "performance", icon: "gauge", label: this.t("nav.performance") },
-        { id: "traces", icon: "route", label: this.t("nav.traces") },
-        { id: "guard", icon: "shield", label: this.t("nav.guard") },
-        { id: "logs", icon: "scroll-text", label: this.t("nav.logs") },
-      ]
+        {
+          id: "models",
+          items: [
+            { id: "model-aliases", icon: "shuffle", labelKey: "modelAliases" },
+            {
+              id: "routing-groups",
+              icon: "git-branch",
+              labelKey: "routingGroups",
+            },
+          ],
+        },
+        {
+          id: "monitoring",
+          items: [
+            { id: "usage", icon: "bar-chart-3" },
+            { id: "performance", icon: "gauge" },
+            { id: "traces", icon: "route" },
+            { id: "logs", icon: "scroll-text" },
+          ],
+        },
+        {
+          id: "access",
+          items: [
+            { id: "users", icon: "key" },
+            { id: "guard", icon: "shield" },
+          ],
+        },
+      ].map((group) => ({
+        ...group,
+        label: this.t(`nav.group.${group.id}`),
+        items: group.items.map((item) => ({
+          ...item,
+          label: this.t(`nav.${item.labelKey || item.id}`),
+        })),
+      }))
     },
 
     // Toast notifications

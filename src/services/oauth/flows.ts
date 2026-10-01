@@ -629,7 +629,7 @@ export const OAUTH_CALLBACK_CONFIGS: Partial<
     corsOrigins: ["https://commandcode.ai", "https://staging.commandcode.ai"],
   },
   // Zed comes back on whatever path, with user_id + access_token in the
-  // query (the token encrypted to the key magpie made); it then sends the
+  // query (the token encrypted to the key it made); it then sends the
   // browser on to its own "succeeded" page.
   zed: {
     port: ZED_CALLBACK_PORT,

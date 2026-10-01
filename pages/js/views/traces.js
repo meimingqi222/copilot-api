@@ -1,59 +1,71 @@
-/**
- * Requests / 请求追踪 view.
- *
- * A live trace of the gateway: each finalized request replays its journey as a
- * packet crossing client -> gateway -> connection -> credential -> upstream,
- * with a warm packet coming back (or hopping to the next candidate on
- * failover). Data comes from /admin/api/trace (recent + SSE stream); every row
- * and number is what the request log already recorded — nothing is recomputed
- * here.
- *
- * Motion is used for the packet travel when the Motion global is present
- * (CDN, pinned); otherwise the Web Animations API drives the same paths so the
- * view never depends on the network for its core interaction.
- */
+/** Three-column routing stage, driven by live snapshots or a history clock. */
 function tracesView() {
   return {
     ...ViewHelpers,
     traces: [],
+    history: [],
+    historyDate: "",
+    historyError: "",
+    historyLoading: false,
     keep: 60,
     selectedId: null,
+    mode: "live",
     paused: false,
     connected: false,
     connecting: true,
     source: null,
     replaying: false,
     replayIndex: 0,
+    replaySpeed: 2,
+    replayElapsed: 0,
+    replayDuration: 0,
+    replayFrame: null,
     now: Date.now(),
-    _animToken: 0,
-    _timers: [],
     _ticker: null,
+    _resize: null,
     _laneKey: null,
+    _drawKey: null,
+    _replayToken: 0,
+    _historyToken: 0,
+    _flightFrames: new Map(),
+    _flights: new Map(),
+    _flightPaths: new Map(),
+    _flightRaf: null,
+    _completedFlights: new Set(),
 
     init() {
       this.load()
       this.connect()
       this.$watch("paused", (p) => (p ? this.disconnect() : this.connect()))
-      // Tick only while something is in flight, so an in-flight row's elapsed
-      // counter looks live without re-rendering the idle view every second.
+      this.$watch("currentView", (view) => {
+        if (view === "traces") this.refreshStage()
+      })
       this._ticker = globalThis.setInterval(() => {
         if (this.traces.some((t) => t.inFlight)) this.now = Date.now()
-      }, 500)
-      this.$nextTick(() => this.renderIconsIfNeeded())
+      }, 250)
+      this.$nextTick(() => {
+        this._resize = new ResizeObserver(() => this.drawStage(true))
+        if (this.$refs.lane) this._resize.observe(this.$refs.lane)
+      })
+    },
+
+    destroy() {
+      this.clearFlights()
+      this.disconnect()
+      this.stopReplay()
+      globalThis.clearInterval(this._ticker)
+      this._resize?.disconnect()
     },
 
     async load() {
       try {
         const data = await API.trace.recent(this.keep)
         this.keep = data.keep || this.keep
-        this.traces = (data.traces || []).slice()
-        if (!this.selectedId && this.traces.length) {
-          this.select(this.traces[this.traces.length - 1])
-        }
-      } catch {
-        // The live stream will repopulate; a failed snapshot is not fatal.
+        // SSE may arrive before this snapshot. Keep the newest sequence.
+        for (const frame of data.traces || []) this.push(frame)
+      } catch (error) {
+        console.warn("Trace snapshot unavailable", error)
       }
-      this.$nextTick(() => this.renderIconsIfNeeded())
     },
 
     connect() {
@@ -66,7 +78,6 @@ function tracesView() {
         },
         onTrace: (frame) => this.push(frame),
         onError: () => {
-          // EventSource auto-reconnects; surface the gap instead of erroring.
           this.connected = false
           this.connecting = true
         },
@@ -74,168 +85,298 @@ function tracesView() {
     },
 
     disconnect() {
-      if (this.source) {
-        this.source.close()
-        this.source = null
-      }
+      this.source?.close()
+      this.source = null
       this.connected = false
       this.connecting = false
     },
 
     push(frame) {
-      if (!frame || !frame.requestId) return
-      const existing = this.traces.findIndex(
+      if (!frame?.requestId) return
+      const index = this.traces.findIndex(
         (t) => t.requestId === frame.requestId,
       )
-      if (existing >= 0) this.traces.splice(existing, 1, frame)
+      const previous = this.traces[index]
+      if (previous?.seq && frame.seq && previous.seq >= frame.seq) return
+      if (index >= 0) this.traces.splice(index, 1, { ...previous, ...frame })
       else this.traces.push(frame)
-      if (this.traces.length > this.keep) {
+      this.traces.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+      if (this.traces.length > this.keep)
         this.traces.splice(0, this.traces.length - this.keep)
+      if (this.mode !== "live") return
+      const merged = this.traces.find((t) => t.requestId === frame.requestId)
+      if (merged.inFlight || this._flightFrames.has(frame.requestId)) {
+        this._flightFrames.set(frame.requestId, this.cloneFrame(merged))
       }
-      // A fresh arrival takes the stage unless the user is inspecting another.
-      if (!this.selectedId || this.selectedId === frame.requestId) {
-        this.select(frame)
+      // Bound backlog without interrupting any of the four visible flights.
+      if (this._flightFrames.size > this.keep) {
+        for (const id of this._flightFrames.keys()) {
+          if (!this._flights.has(id)) this._flightFrames.delete(id)
+          if (this._flightFrames.size <= this.keep) break
+        }
       }
+      // A late completion of an older concurrent request must not steal focus.
+      const latest = this.traces.at(-1)
+      this.selectedId = latest?.requestId || null
+      this.refreshStage()
     },
 
     select(frame) {
+      this.clearFlights()
+      this.stopReplay()
+      if (frame.inFlight) {
+        this.mode = "live"
+        this.selectedId = frame.requestId
+        this.refreshStage()
+        return
+      }
+      if (this.mode === "live") this.history = []
+      this.mode = "history"
+      if (!this.history.length)
+        this.history = this.traces
+          .filter((t) => !t.inFlight)
+          .map((t) => this.cloneFrame(t))
       this.selectedId = frame.requestId
-      this.$nextTick(() => {
-        this.renderIconsIfNeeded()
-        // In-flight: hold a waiting packet at the frontier node. Once the
-        // final frame lands (same requestId), replay the whole journey.
-        if (frame.inFlight) this.playInFlight(frame)
-        else this.playJourney(frame)
-      })
+      this.refreshStage()
     },
 
-    /**
-     * lucide.createIcons() walks the whole document and swaps every
-     * `[data-lucide]` node for an SVG — far too heavy to run on each selection
-     * or arrival. The lane's nodes only change when their identity changes, so
-     * only re-render when that key does.
-     */
-    renderIconsIfNeeded() {
-      const key = this.laneNodes
-        .map((n) => `${n.key}:${n.kind}:${n.title}`)
-        .join("|")
-      if (key === this._laneKey) return
-      this._laneKey = key
-      lucide.createIcons()
+    async showHistory() {
+      this.clearFlights()
+      this.stopReplay()
+      this.mode = "history"
+      this.historyLoading = true
+      this.historyError = ""
+      const token = ++this._historyToken
+      try {
+        const filters = { limit: 500 }
+        if (this.historyDate) {
+          const start = new Date(this.historyDate + "T00:00:00")
+          const end = new Date(start)
+          end.setDate(end.getDate() + 1)
+          filters.timeFrom = start.getTime()
+          filters.timeTo = end.getTime()
+        }
+        const data = await API.trace.history(filters)
+        if (this.mode !== "history" || token !== this._historyToken) return
+        const records = new Map()
+        for (const f of data.traces || []) {
+          if (f.requestId) records.set(f.requestId, { ...f, inFlight: false })
+        }
+        for (const f of this.traces.filter((t) => !t.inFlight)) {
+          if (
+            !this.historyDate
+            || this.dateKey(f.timestamp) === this.historyDate
+          )
+            records.set(f.requestId, this.cloneFrame(f))
+        }
+        this.history = [...records.values()]
+          .sort((a, b) => a.timestamp - b.timestamp)
+          .slice(-500)
+        this.selectedId = this.history.at(-1)?.requestId || null
+        this.refreshStage()
+      } catch (error) {
+        if (token === this._historyToken)
+          this.historyError = String(error.message || error)
+      } finally {
+        if (token === this._historyToken) this.historyLoading = false
+      }
     },
 
-    // ---------- derived: the lane ----------
+    dateKey(timestamp) {
+      const d = new Date(timestamp)
+      return [
+        d.getFullYear(),
+        String(d.getMonth() + 1).padStart(2, "0"),
+        String(d.getDate()).padStart(2, "0"),
+      ].join("-")
+    },
 
     get visibleTraces() {
-      // Newest first, matching the list.
-      return [...this.traces].reverse()
+      return [
+        ...(this.mode === "history" ? this.history : this.traces),
+      ].reverse()
     },
 
     get selected() {
-      return this.traces.find((t) => t.requestId === this.selectedId) || null
+      if (this.replayFrame) return this.replayFrame
+      const list = this.mode === "history" ? this.history : this.traces
+      return list.find((t) => t.requestId === this.selectedId) || null
     },
 
     get laneNodes() {
       const f = this.selected
-      const nodes = []
-      if (!f) return nodes
-      nodes.push({
-        key: "client",
-        kind: "client",
-        icon: "monitor",
-        title: this.clientName(f),
-        sub: f.clientIp || "",
-      })
-      nodes.push({
-        key: "gateway",
-        kind: "gateway",
-        icon: "server",
-        title: "Copilot API",
-        sub: this.apiLabel(f),
-      })
-      // Connection + credential are one route node: the credential is the
-      // account the connection routes over, so splitting them only added a
-      // second long (often UUID) card that pushed the lane off-screen.
-      if (f.connectionName || f.provider || f.connectionId) {
-        const hasLabel = Boolean(f.credentialLabel)
-        nodes.push({
-          key: "route",
-          kind: "connection",
-          icon: hasLabel ? "key" : "plug",
-          title:
-            (hasLabel ?
-              f.credentialLabel
-            : f.connectionName || f.provider || f.connectionId) || "",
-          sub: (hasLabel ?
-            [f.connectionName, f.provider]
-          : [f.provider, f.protocol]
-          )
-            .filter(Boolean)
-            .join(" · "),
-        })
-      }
-      nodes.push({
-        key: "upstream",
-        kind: "upstream",
-        icon: "cpu",
-        title: f.modelUpstream || f.model || this.t("trace.noModel"),
-        sub: f.upstreamBaseUrl ? this.shorten(f.upstreamBaseUrl) : "",
-      })
-      return nodes
+      if (!f) return []
+      return [
+        {
+          key: "client",
+          kind: "client",
+          icon: "monitor",
+          title: this.clientName(f),
+          sub: f.modelRequested || f.model || this.apiLabel(f),
+        },
+        {
+          key: "gateway",
+          kind: "gateway",
+          icon: "server",
+          title: "Copilot API",
+          sub: this.apiLabel(f),
+        },
+      ]
     },
 
-    get laneItems() {
-      const items = []
-      this.laneNodes.forEach((node, i) => {
-        if (i > 0) items.push({ key: `rail-${i}`, rail: true })
-        items.push({ ...node, rail: false })
-      })
-      return items
+    candidateKey(c) {
+      return [c.connectionId || "", c.credentialId || "", c.model || ""].join(
+        "::",
+      )
     },
-
-    // ---------- derived: candidate paths ----------
 
     get candidates() {
-      return this.selected?.candidates ?? []
+      const f = this.selected
+      if (!f) return []
+      const rows = (f.candidates || []).map((c) => ({ ...c }))
+      // Include attempted paths even when the admission snapshot predates failover.
+      for (const a of f.attempts || []) {
+        if (!rows.some((c) => this.matchesTarget(c, a)))
+          rows.push({
+            ...a,
+            model: a.upstreamModelId || f.modelUpstream,
+            status: "available",
+          })
+      }
+      if (f.connectionId && !rows.some((c) => this.matchesTarget(c, f))) {
+        rows.push({
+          connectionId: f.connectionId,
+          connectionName: f.connectionName,
+          credentialId: f.credentialId,
+          credentialLabel: f.credentialLabel,
+          provider: f.provider,
+          model: f.modelUpstream || f.model,
+          status: "chosen",
+        })
+      }
+      // Keep seats used by packets still flying, even when a new request's
+      // routing group differs. A new arrival changes the story, not the sky.
+      for (const frame of this._flightFrames.values()) {
+        for (const c of frame.candidates || []) {
+          if (
+            !rows.some((row) => this.candidateKey(row) === this.candidateKey(c))
+          )
+            rows.push({ ...c })
+        }
+        const target = this.frameTarget(frame)
+        if (
+          target
+          && !rows.some(
+            (c) => this.candidateKey(c) === this.candidateKey(target),
+          )
+        )
+          rows.push(target)
+      }
+      for (const flight of this._flights.values()) {
+        if (
+          flight.target
+          && !rows.some((c) => this.candidateKey(c) === flight.routeKey)
+        )
+          rows.push({ ...flight.target })
+      }
+      return rows
+    },
+
+    get showCandidatePlaceholder() {
+      return Boolean(this.selected && this.candidates.length === 0)
+    },
+
+    frameTarget(frame) {
+      if (!frame?.connectionId) return null
+      return (
+        frame.candidates?.find((c) => this.matchesTarget(c, frame)) || {
+          connectionId: frame.connectionId,
+          connectionName: frame.connectionName,
+          credentialId: frame.credentialId,
+          credentialLabel: frame.credentialLabel,
+          model: frame.modelUpstream || frame.model,
+          provider: frame.provider,
+          status: "chosen",
+        }
+      )
+    },
+
+    matchesTarget(c, target) {
+      return (
+        c.connectionId === target.connectionId
+        && (!target.credentialId || c.credentialId === target.credentialId)
+        && (!target.modelUpstream
+          || !c.model
+          || c.model === target.modelUpstream)
+      )
+    },
+
+    candidateState(c) {
+      for (const frame of this._flightFrames.values()) {
+        if (this.matchesTarget(c, frame) && frame.inFlight) {
+          return frame.ttftMs !== undefined ? "streaming" : "waiting"
+        }
+      }
+      const f = this.selected
+      const active =
+        f?.connectionId ? this.matchesTarget(c, f) : c.status === "chosen"
+      if (active) {
+        if (f.inFlight) return f.ttftMs !== undefined ? "streaming" : "waiting"
+        if (f.outcome === "failed" || f.statusCode >= 400) return "failed"
+        if (f.outcome === "cancelled") return "cancelled"
+        if (f.outcome === "incomplete") return "incomplete"
+        return "answered"
+      }
+      if (
+        f?.attempts?.some(
+          (a) => this.matchesTarget(c, a) && a.result === "failed",
+        )
+      )
+        return "failed"
+      if (
+        ["quota", "auth", "disabled", "cooldown", "unknown"].includes(c.status)
+      )
+        return "resting"
+      return "standby"
     },
 
     candLabel(c) {
-      const status = c?.status
-      const reason = c?.restReason
-      // A resting candidate reads better by its semantic reason (credit /
-      // rate / verify) than by the generic status bucket.
-      if (
-        reason
-        && status !== "chosen"
-        && status !== "available"
-        && status !== "translated"
-        && status !== "wildcard"
-      ) {
-        return this.t(`trace.cand.${reason}`)
-      }
-      return this.t(`trace.cand.${status}`)
+      const state = this.candidateState(c)
+      if (state === "answered") return this.t("trace.cand.selectedPath")
+      if (state === "incomplete") return this.t("trace.incomplete")
+      if (state !== "resting") return this.t("trace.state." + state)
+      return this.t("trace.cand." + (c.restReason || c.status))
     },
 
-    candDot(c) {
-      const status = c?.status
-      if (status === "chosen" || status === "available") return "ok"
-      if (status === "translated" || status === "wildcard") return "warn"
-      if (
-        status === "quota"
-        || status === "auth"
-        || status === "disabled"
-        || c?.restReason === "credit"
-        || c?.restReason === "verify"
-        || c?.restReason === "rate"
-      ) {
-        return "fail"
+    get stageStatus() {
+      const f = this.selected
+      if (!f) return this.t("trace.empty")
+      if (f.inFlight) {
+        if (!f.connectionId) return this.t("trace.stageRouting")
+        return this.t(
+          f.ttftMs !== undefined ?
+            "trace.state.streaming"
+          : "trace.state.waiting",
+        )
       }
-      return "cancel"
+      if (f.outcome === "incomplete") return this.t("trace.incomplete")
+      return this.t(
+        "trace.state."
+          + (f.outcome === "failed" || f.statusCode >= 400 ? "failed"
+          : f.outcome === "cancelled" ? "cancelled"
+          : "answered"),
+      )
     },
 
-    candSub(c) {
-      const model = c.model || this.selected?.model || "—"
-      return `${c.endpoint || ""} · ${model}`.replace(/^ · /, "")
+    refreshStage() {
+      this.$nextTick(() => {
+        const key = this.laneNodes.map((n) => n.key + n.title).join("|")
+        if (key !== this._laneKey) {
+          this._laneKey = key
+          lucide.createIcons()
+        }
+        this.drawStage()
+      })
     },
 
     /**
@@ -319,15 +460,44 @@ function tracesView() {
     get explanations() {
       const f = this.selected
       if (!f) return []
+      if (f.inFlight) {
+        return [
+          {
+            cls: "pending",
+            text: [this.clientName(f), f.connectionName, this.stageStatus]
+              .filter(Boolean)
+              .join(" · "),
+          },
+        ]
+      }
       const lines = []
-      lines.push({
-        cls: this.outcomeClass(f),
-        text: this.t("trace.routeSummary", {
-          provider: f.provider || "—",
-          target: f.finalTarget || f.connectionName || "—",
-          model: f.model || f.modelUpstream || "—",
-        }),
-      })
+      if (this.isGroup(f)) {
+        lines.push({
+          cls: this.outcomeClass(f),
+          text: this.t("trace.groupRouteSummary", {
+            client: this.clientName(f),
+            group: this.groupName(f),
+            count: this.groupMembersCount(f),
+          }),
+        })
+        lines.push({
+          cls: "ok",
+          text: this.t("trace.groupDecisionSummary", {
+            strategy: this.groupStrategyLabel(f),
+            model: this.groupWinnerModel(f),
+            target: f.finalTarget || f.connectionName || "—",
+          }),
+        })
+      } else {
+        lines.push({
+          cls: this.outcomeClass(f),
+          text: this.t("trace.routeSummary", {
+            provider: f.provider || "—",
+            target: f.finalTarget || f.connectionName || "—",
+            model: f.model || f.modelUpstream || "—",
+          }),
+        })
+      }
       if ((f.failoverCount || 0) > 0) {
         lines.push({
           cls: "fail",
@@ -351,221 +521,364 @@ function tracesView() {
       return lines
     },
 
-    // ---------- animation ----------
+    // ---------- curved routing wires and directional packets ----------
 
-    /**
-     * Index of the node that answers the request: the credential when the lane
-     * has one, otherwise the upstream node. Shared by the in-flight and finished
-     * renderers so both put the packet on the same node.
-     */
-    answerIndexOf(frame, count) {
-      const isNative = !(
-        frame.connectionName
-        || frame.provider
-        || frame.connectionId
-      )
-      return Math.max(1, isNative ? count - 1 : count - 2)
-    },
-
-    centerX(el, laneRect) {
-      const r = el.getBoundingClientRect()
-      return r.left + r.width / 2 - laneRect.left
-    },
-
-    /**
-     * In-flight: park a softly breathing packet on the frontier node so the
-     * request is visible while it runs — routing may add nodes (connection,
-     * credential) as they resolve, and each arrival re-parks the packet.
-     */
-    async playInFlight(frame) {
+    drawStage(force = false) {
       const lane = this.$refs.lane
-      const layer = this.$refs.packets
-      if (!lane || !layer) return
-      await this.$nextTick()
-      ++this._animToken
-      this.clearTimers()
-      layer.replaceChildren()
+      const svg = this.$refs.wires
+      if (!lane || !svg || !lane.clientWidth) return
       const nodes = [...lane.querySelectorAll(".tr-node")]
+      const rows = [...lane.querySelectorAll(".tr-cand")]
+      const key = [
+        this.selected?.requestId,
+        this.stageStatus,
+        ...[...this._flightFrames.values()].map(
+          (f) => f.requestId + f.inFlight + f.connectionId,
+        ),
+        ...this.candidates.map(
+          (c) => this.candidateKey(c) + this.candidateState(c),
+        ),
+      ].join("|")
+      if (!force && key === this._drawKey) return
+      this._drawKey = key
+      svg.replaceChildren()
+      this._flightPaths.clear()
       if (nodes.length < 2) return
-      const laneRect = lane.getBoundingClientRect()
-      const frontier = nodes[this.answerIndexOf(frame, nodes.length)]
-      frontier.classList.add("active")
-      this.spawnPacket(layer, this.centerX(frontier, laneRect), "req pending")
-    },
-
-    /**
-     * Replay one request as a packet crossing the lane.
-     *
-     * Each leg is a SINGLE keyframe animation across every node it passes
-     * (Motion/WAAPI interpolate between the stop points), not one animation per
-     * hop — per-hop create/await cycles were what made it feel stuttery. The
-     * packet element is created once per leg and composited with transforms
-     * only, so it rides the compositor thread.
-     */
-    async playJourney(frame) {
-      const lane = this.$refs.lane
-      const layer = this.$refs.packets
-      if (!lane || !layer || !frame) return
-      await this.$nextTick()
-      const token = ++this._animToken
-      this.clearTimers()
-      // Drop any packet left mid-flight by a superseded replay.
-      layer.replaceChildren()
-      const nodes = [...lane.querySelectorAll(".tr-node")]
-      if (nodes.length < 2) return
-      const laneRect = lane.getBoundingClientRect()
-      const centers = nodes.map((n) => this.centerX(n, laneRect))
-      const answerIndex = this.answerIndexOf(frame, nodes.length)
-      const failed = frame.outcome === "failed"
-      for (const n of nodes) n.classList.remove("active", "hit-ok", "hit-fail")
-
-      const SEG = 0.34 // seconds between adjacent nodes
-      const forwardStops = centers
-        .slice(0, answerIndex + 1)
-        .map((c) => c - centers[0])
-      const forwardDuration = SEG * answerIndex
-
-      // Node highlights fire as the packet passes, scheduled off the same
-      // segment length so they stay in step with the glide.
-      for (let i = 1; i <= answerIndex; i++) {
-        const isAnswer = i === answerIndex
-        const at = SEG * 1000 * i - SEG * 220
-        this._timers.push(
-          globalThis.setTimeout(
-            () => {
-              if (this._animToken !== token) return
-              nodes[i].classList.remove("active")
-              nodes[i].classList.add(
-                isAnswer ?
-                  failed ? "hit-fail"
-                  : "hit-ok"
-                : "active",
-              )
-            },
-            Math.max(0, at),
-          ),
+      const rect = lane.getBoundingClientRect()
+      svg.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height)
+      const point = (el, side) => {
+        const r = el.getBoundingClientRect()
+        return {
+          x: (side === "left" ? r.left : r.right) - rect.left,
+          y: r.top + r.height / 2 - rect.top,
+        }
+      }
+      const curve = (a, b) => {
+        const mid = (a.x + b.x) / 2
+        return (
+          "M "
+          + a.x
+          + " "
+          + a.y
+          + " C "
+          + mid
+          + " "
+          + a.y
+          + ", "
+          + mid
+          + " "
+          + b.y
+          + ", "
+          + b.x
+          + " "
+          + b.y
         )
       }
-
-      const forward = this.spawnPacket(layer, centers[0], "req")
-      await this.animateX(forward, forwardStops, forwardDuration)
-      if (this._animToken !== token) return forward.remove()
-      if (!failed) this.spawnSpark(layer, centers[answerIndex])
-
-      // Back: one glide from the answering node to the client.
-      const back = this.spawnPacket(
-        layer,
-        centers[answerIndex],
-        failed ? "res-fail" : "res",
+      const inbound = curve(point(nodes[0], "right"), point(nodes[1], "left"))
+      this.svgElement(svg, "path", { d: inbound, class: "tr-wire inbound" })
+      const reduced = globalThis.matchMedia(
+        "(prefers-reduced-motion: reduce)",
+      ).matches
+      rows.forEach((row, i) => {
+        const c = this.candidates[i]
+        if (!c) return
+        const state = this.candidateState(c)
+        const d = curve(point(nodes[1], "right"), point(row, "left"))
+        this.svgElement(svg, "path", { d, class: "tr-wire " + state })
+        // A continuous path crosses the gateway instead of teleporting
+        // between two disconnected SVG subpaths.
+        const continuous = inbound + " " + d.replace(/^M /, "L ")
+        const path = this.svgElement(svg, "path", {
+          d: continuous,
+          class: "tr-flight-path",
+        })
+        this._flightPaths.set(this.candidateKey(c), path)
+        this._flightPaths.set(
+          "branch:" + this.candidateKey(c),
+          this.svgElement(svg, "path", { d, class: "tr-flight-path" }),
+        )
+      })
+      this._flightPaths.set(
+        "gateway",
+        this.svgElement(svg, "path", { d: inbound, class: "tr-flight-path" }),
       )
-      await this.animateX(
-        back,
-        [0, centers[0] - centers[answerIndex]],
-        failed ? 0.36 : 0.5,
-      )
-      if (this._animToken !== token) return back.remove()
-      forward.remove()
-      back.remove()
-      this._timers.push(
-        globalThis.setTimeout(() => {
-          if (this._animToken !== token) return
-          for (const n of nodes) {
-            n.classList.remove("active", "hit-ok", "hit-fail")
-          }
-        }, 700),
-      )
+      const sky = this.$refs.flights
+      if (!sky) return
+      sky.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height)
+      if (reduced) {
+        this.clearFlights()
+        return
+      }
+      if (
+        this.replaying
+        && this.selected
+        && !this._completedFlights.has(this.selected.requestId)
+      ) {
+        this._flightFrames.set(
+          this.selected.requestId,
+          this.cloneFrame(this.selected),
+        )
+      }
+      this.startFlights()
     },
 
-    clearTimers() {
-      for (const t of this._timers) clearTimeout(t)
-      this._timers = []
-    },
-
-    spawnPacket(layer, x, cls) {
-      const el = document.createElement("div")
-      el.className = `tr-packet ${cls}`
-      el.style.left = `${x}px`
-      layer.append(el)
+    svgElement(parent, tag, attributes) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", tag)
+      for (const [name, value] of Object.entries(attributes))
+        el.setAttribute(name, value)
+      parent.append(el)
       return el
     },
 
-    /** Animate a packet along `offsets` (px, relative to its start) in one go. */
-    animateX(el, offsets, durationSec) {
-      const keyframes = offsets.length > 1 ? offsets : [0, offsets[0] ?? 0]
-      return new Promise((resolve) => {
-        const settle = () => resolve()
-        const M = globalThis.Motion
-        if (M && typeof M.animate === "function") {
-          // Motion's controls are thenable but expose no `.finished`.
-          const controls = M.animate(
-            el,
-            { x: keyframes },
-            { duration: durationSec, easing: [0.3, 0, 0.25, 1] },
-          )
-          if (controls && typeof controls.then === "function") {
-            controls.then(settle, settle)
-            return
-          }
-          if (controls && controls.finished?.then) {
-            controls.finished.then(settle, settle)
-            return
-          }
-          globalThis.setTimeout(settle, durationSec * 1000 + 60)
-          return
-        }
-        const anim = el.animate(
-          keyframes.map((o) => ({ transform: `translate3d(${o}px,0,0)` })),
-          {
-            duration: durationSec * 1000,
-            easing: "cubic-bezier(0.3,0,0.25,1)",
-            fill: "forwards",
-          },
+    // Each request owns a packet and a clock. Redrawing wires never removes
+    // another request's packet; at most four fly at once.
+    startFlights() {
+      const sky = this.$refs.flights
+      if (!sky) return
+      for (const [id, frame] of this._flightFrames) {
+        if (this._flights.has(id)) continue
+        if (this._flights.size >= 4) break
+        const target = this.frameTarget(frame)
+        const routeKey = target ? this.candidateKey(target) : "gateway"
+        if (!this._flightPaths.has(routeKey)) continue
+        const packet = this.svgElement(sky, "circle", {
+          r: "4",
+          class: "tr-flow-packet",
+          "data-request-id": id,
+        })
+        // Stable per-request color lets overlapping requests remain distinct.
+        const palette = [
+          "var(--apple-blue)",
+          "var(--apple-orange)",
+          "var(--apple-purple)",
+          "var(--apple-green)",
+        ]
+        const slot = [...this._flights.values()].map((f) => f.slot)
+        const colorSlot = [0, 1, 2, 3].find((n) => !slot.includes(n))
+        packet.style.setProperty("--packet-color", palette[colorSlot])
+        this._flights.set(id, {
+          packet,
+          slot: colorSlot,
+          phase: "out",
+          started: performance.now(),
+          routeKey,
+          target,
+        })
+      }
+      if (this._flights.size && this._flightRaf === null) {
+        this._flightRaf = globalThis.requestAnimationFrame((time) =>
+          this.tickFlights(time),
         )
-        if (anim.finished?.then) {
-          anim.finished.then(settle, settle)
-          return
-        }
-        anim.onfinish = settle
-        anim.oncancel = settle
-      })
+      }
     },
 
-    spawnSpark(layer, x) {
-      const el = document.createElement("div")
-      el.className = "tr-spark"
-      el.style.left = `${x}px`
-      layer.append(el)
-      const anim = el.animate(
-        [
-          { transform: "scale(1)", opacity: 0.9 },
-          { transform: "scale(4)", opacity: 0 },
-        ],
-        { duration: 520, easing: "ease-out" },
+    advanceFlight(flight, frame, time) {
+      const target = this.frameTarget(frame)
+      const targetKey = target ? this.candidateKey(target) : "gateway"
+      const elapsed = time - flight.started
+      if (flight.phase === "out" && elapsed < 900) return false
+      if (flight.phase === "out") flight.phase = "held"
+      if (flight.phase === "held") {
+        if (targetKey !== flight.routeKey) {
+          flight.phase = flight.routeKey === "gateway" ? "out" : "retry"
+          flight.started = time
+          if (flight.routeKey === "gateway") flight.routeKey = targetKey
+          if (flight.phase === "out") flight.branchOnly = true
+          if (flight.phase === "out") flight.target = target
+        } else if (!frame.inFlight) {
+          flight.phase = "back"
+          flight.started = time
+        }
+      } else if (flight.phase === "retry" && elapsed >= 620) {
+        flight.routeKey = targetKey
+        flight.target = target
+        flight.branchOnly = true
+        flight.phase = "out"
+        flight.started = time
+      } else if (flight.phase === "back" && elapsed >= 1600) return true
+      return false
+    },
+
+    tickFlights(time) {
+      this._flightRaf = null
+      let removed = false
+      for (const [id, flight] of this._flights) {
+        const frame = this._flightFrames.get(id)
+        if (!frame || this.advanceFlight(flight, frame, time)) {
+          flight.packet.remove()
+          this._flights.delete(id)
+          this._flightFrames.delete(id)
+          if (this.replaying) this._completedFlights.add(id)
+          removed = true
+          continue
+        }
+        this.poseFlight(flight, frame, time)
+      }
+      if (removed) this.refreshStage()
+      this.startFlights()
+    },
+
+    poseFlight(flight, frame, time) {
+      const retry = flight.phase === "retry"
+      const path = this._flightPaths.get(
+        (retry || (flight.phase === "out" && flight.branchOnly) ?
+          "branch:"
+        : "") + flight.routeKey,
       )
-      const remove = () => el.remove()
-      if (anim.finished?.then) anim.finished.then(remove, remove)
-      else anim.onfinish = remove
+      if (!path) return
+      const returning = retry || flight.phase === "back"
+      const duration =
+        retry ? 620
+        : returning ? 1600
+        : 900
+      const fraction =
+        flight.phase === "held" ?
+          1
+        : Math.min(1, Math.max(0, (time - flight.started) / duration))
+      const eased = (1 - Math.cos(Math.PI * fraction)) / 2
+      const point = path.getPointAtLength(
+        path.getTotalLength() * (returning ? 1 - eased : eased),
+      )
+      flight.packet.setAttribute("cx", point.x)
+      flight.packet.setAttribute("cy", point.y)
+      flight.packet.setAttribute(
+        "class",
+        "tr-flow-packet"
+          + (returning ? " back" : "")
+          + (flight.phase === "held" ? " held" : "")
+          + ((
+            returning
+            && (retry || frame.outcome === "failed" || frame.statusCode >= 400)
+          ) ?
+            " error"
+          : ""),
+      )
+    },
+
+    clearFlights() {
+      if (this._flightRaf !== null)
+        globalThis.cancelAnimationFrame(this._flightRaf)
+      this._flightRaf = null
+      for (const flight of this._flights.values()) flight.packet.remove()
+      this._flights.clear()
+      this._flightFrames.clear()
+      this._completedFlights.clear()
+      this._drawKey = null
+    },
+
+    stopReplay() {
+      this.clearFlights()
+      this._replayToken++
+      this.replaying = false
+      this.replayFrame = null
+      this.replayIndex = 0
+    },
+
+    async replayOne(frame = this.selected) {
+      if (!frame || frame.inFlight) return
+      return this.playFrames([this.cloneFrame(frame)])
     },
 
     async replayAll() {
+      if (this.mode !== "history") await this.showHistory()
+      return this.playFrames(
+        this.history.filter((f) => !f.inFlight).map((f) => this.cloneFrame(f)),
+      )
+    },
+
+    async playFrames(frames) {
+      this.stopReplay()
+      if (!frames.length) return
+      this.mode = "history"
       this.replaying = true
-      const frames = this.traces.slice()
+      const token = this._replayToken
       for (let i = 0; i < frames.length; i++) {
-        if (!this.replaying) break
+        if (token !== this._replayToken) return
+        const frame = frames[i]
+        this.selectedId = frame.requestId
         this.replayIndex = i + 1
-        this.select(frames[i])
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => globalThis.setTimeout(r, 550))
+        this.replayDuration = Math.max(1, frame.latencyMs || 1)
+        this.replayElapsed = 0
+        let last = performance.now()
+        while (
+          this.replayElapsed < this.replayDuration
+          && token === this._replayToken
+        ) {
+          const now = performance.now()
+          this.replayElapsed = Math.min(
+            this.replayDuration,
+            this.replayElapsed + (now - last) * this.replaySpeed,
+          )
+          last = now
+          this.replayFrame = this.replayAt(frame, this.replayElapsed)
+          this.refreshStage()
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 40))
+        }
+        if (token !== this._replayToken) return
+        this.replayFrame = frame
+        this.refreshStage()
+        await this.$nextTick?.()
+        // The visual trip can outlast a short response or an accelerated replay.
+        while (
+          this._flightFrames.has(frame.requestId)
+          && token === this._replayToken
+        ) {
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 40))
+        }
       }
-      this.replayIndex = 0
-      this.replaying = false
+      if (token === this._replayToken) {
+        this.replaying = false
+        this.replayFrame = null
+        this.refreshStage()
+      }
+    },
+
+    replayAt(frame, elapsed) {
+      const done = elapsed >= Math.max(1, frame.latencyMs || 1)
+      const ghost = { ...frame, inFlight: !done, attempts: [] }
+      if (!done) {
+        ghost.outcome = undefined
+        ghost.statusCode = undefined
+        ghost.error = undefined
+        ghost.totalTokens = undefined
+        ghost.completionTokens = undefined
+        ghost.ttftMs =
+          frame.ttftMs !== undefined && elapsed >= frame.ttftMs ?
+            frame.ttftMs
+          : undefined
+        let spent = 0
+        const attempts = frame.attempts || []
+        for (const a of attempts) {
+          const end = spent + (a.latencyMs || 0)
+          if (a.result === "failed" && elapsed < end) {
+            Object.assign(ghost, {
+              connectionId: a.connectionId,
+              credentialId: a.credentialId,
+              connectionName: a.connectionName,
+              provider: a.provider,
+              modelUpstream: undefined,
+            })
+            return ghost
+          }
+          ghost.attempts.push(a)
+          spent = end
+        }
+      } else ghost.attempts = frame.attempts
+      return ghost
     },
 
     backToLive() {
-      this.replaying = false
-      if (this.traces.length) {
-        this.select(this.traces[this.traces.length - 1])
-      }
+      this.stopReplay()
+      this._historyToken++
+      this.historyLoading = false
+      this.mode = "live"
+      this.selectedId = this.traces.at(-1)?.requestId || null
+      this.refreshStage()
+    },
+
+    cloneFrame(frame) {
+      // Alpine's reactive proxies cannot be passed to structuredClone.
+      return JSON.parse(JSON.stringify(frame))
     },
 
     // ---------- formatting ----------
@@ -660,6 +973,53 @@ function tracesView() {
     routeLabel(f) {
       if (!f) return ""
       return `${this.apiLabel(f)} · ${f.model || f.modelUpstream || "—"}`
+    },
+
+    isGroup(f) {
+      if (!f) return false
+      return Boolean(
+        f.routingGroupId
+          || f.routingGroupName
+          || (typeof f.modelRequested === "string"
+            && f.modelRequested.startsWith("group/")),
+      )
+    },
+
+    groupName(f) {
+      if (!f) return ""
+      return (
+        f.routingGroupName
+        || f.routingGroupId
+        || (typeof f.modelRequested === "string" ?
+          f.modelRequested.replace(/^group\//, "")
+        : "")
+      )
+    },
+
+    groupMembersCount(f) {
+      if (f?.routingGroupMembers?.length) return f.routingGroupMembers.length
+      if (this.candidates?.length) return this.candidates.length
+      return 0
+    },
+
+    groupStrategyLabel(f) {
+      const mode = f?.routingStrategy || "order"
+      return this.t(`trace.groupStrategy.${mode}`) || mode
+    },
+
+    groupWinnerModel(f) {
+      if (!f) return ""
+      return f.routingGroupSelectedMember || f.modelUpstream || f.model || ""
+    },
+
+    rowModelDisplay(f) {
+      if (!f) return "-"
+      if (this.isGroup(f)) {
+        const gName = this.groupName(f)
+        const winner = this.groupWinnerModel(f)
+        return winner ? `${gName} → ${winner}` : gName
+      }
+      return f.model || f.modelUpstream || "-"
     },
   }
 }

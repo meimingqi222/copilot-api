@@ -12,6 +12,8 @@ function accountsView() {
     ...ViewHelpers,
     loading: false,
     accounts: [],
+    searchQuery: "",
+    enabledFilter: "",
     providers: [],
     showAddModal: false,
     showImportModal: false,
@@ -337,7 +339,7 @@ function accountsView() {
     getProviderGroups() {
       const counts = new Map()
       const members = new Map()
-      for (const account of this.accounts || []) {
+      for (const account of this.filteredAccounts) {
         const key = this.providerGroupKey(account.provider)
         counts.set(key, (counts.get(key) || 0) + 1)
         if (!members.has(key)) members.set(key, [])
@@ -353,6 +355,28 @@ function accountsView() {
         accounts: members.get(provider) || [],
         dense: false,
       }))
+    },
+
+    get filteredAccounts() {
+      const query = this.searchQuery.trim().toLowerCase()
+      return this.accounts.filter((account) => {
+        if (
+          this.enabledFilter
+          && String(account.enabled) !== this.enabledFilter
+        ) {
+          return false
+        }
+        return [
+          account.label,
+          account.id,
+          account.provider,
+          this.providerLabel(account.provider || "copilot"),
+        ].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(query),
+        )
+      })
     },
 
     selectedProvider() {

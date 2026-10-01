@@ -32,6 +32,7 @@ interface ResponsesWsCommitDetails {
 interface PumpHooks {
   /** Fired synchronously on the first successful forward to the client. */
   onCommit: (details: ResponsesWsCommitDetails) => void
+  onFirstOutput?: (timestamp: number) => void
 }
 
 export async function pumpWithLeadingBuffer(
@@ -64,7 +65,10 @@ export async function pumpWithLeadingBuffer(
 
   const markOutputObserved = () => {
     outputObserved = true
-    firstContentAt ??= Date.now()
+    if (firstContentAt === undefined) {
+      firstContentAt = Date.now()
+      hooks.onFirstOutput?.(firstContentAt)
+    }
   }
 
   // Flush buffered control frames, then mark committed.

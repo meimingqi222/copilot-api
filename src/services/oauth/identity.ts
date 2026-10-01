@@ -8,7 +8,7 @@ import {
 
 /** The stable identity of an OAuth account: the vendor's account id, and the
  *  email it was signed in with. */
-export interface OAuthIdentity {
+interface OAuthIdentity {
   accountId?: string
   email?: string
 }

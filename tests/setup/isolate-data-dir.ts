@@ -24,3 +24,15 @@ redirectPathsToDir(testDataDir)
 void ensurePaths().catch(() => {
   // Preload must not crash the suite if mkdir races; writes still guarded.
 })
+
+/**
+ * The pristine `fetch`, snapshotted before any test file loads.
+ *
+ * Bun runs every test file in one process, so a file that patches
+ * `globalThis.fetch` and forgets to restore it leaks into every file after it.
+ * A file cannot defend itself by capturing `globalThis.fetch` at its own load
+ * time — by then the value may already be another file's stub. Restoring this
+ * snapshot in an `afterEach` is the only trustworthy reset.
+ */
+;(globalThis as unknown as { __realFetch?: typeof fetch }).__realFetch =
+  globalThis.fetch

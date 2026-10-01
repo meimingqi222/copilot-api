@@ -18,6 +18,7 @@ import {
   beginStreamLog,
   finishRequestLog,
   markStreamTerminal,
+  markTraceFirstOutput,
   patchRequestLog,
   recordTraceError,
 } from "~/lib/request-log"
@@ -192,7 +193,10 @@ export async function handleAnthropicViaConnection(
             messageStop ||= parsed.type === "message_stop"
             const isOutput = isMessagesOutputEvent(parsed)
             outputObserved ||= isOutput
-            if (isOutput) firstChunkTs ??= Date.now()
+            if (isOutput && firstChunkTs === undefined) {
+              firstChunkTs = Date.now()
+              markTraceFirstOutput(c, firstChunkTs - streamStart)
+            }
           } catch {
             // Malformed provider frames are forwarded but never count as output.
           }

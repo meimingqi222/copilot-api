@@ -135,7 +135,11 @@ export async function syncBalances(now: number = Date.now()): Promise<number> {
 
   const due = connections.filter((conn) => {
     if (!conn.enabled) return false
-    if (resolveConnectionBalanceSource(conn) === undefined) return false
+    if (resolveConnectionBalanceSource(conn) === undefined) {
+      // Clean up locks persisted by a balance source that no longer applies.
+      applyBalanceGate(conn)
+      return false
+    }
     const at = lastBalanceSyncAt.get(conn.id)
     return at === undefined || now - at >= BALANCE_SYNC_MIN_INTERVAL_MS
   })

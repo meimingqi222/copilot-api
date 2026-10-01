@@ -11,13 +11,15 @@ import {
   getProviderConnection,
   isAccountManagedConnection,
 } from "~/lib/provider-connections"
-import { patchRequestLog } from "~/lib/request-log"
+import { getRequestLogContext, patchRequestLog } from "~/lib/request-log"
+import { parseGroupReference, splitMember } from "~/lib/routing-groups/resolve"
 import { noteSessionAffinityCacheRead } from "~/lib/routing"
 import { recordServedTokens } from "~/lib/route-target"
 import {
   canonicalModelId,
   canonicalNativeModelId,
   parseModelReference,
+  resolveModelRouting,
 } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
 import { incrementUserTokens } from "~/lib/users"
@@ -90,6 +92,38 @@ interface UsageRecordInput {
   finishReason?: string
 }
 
+/** A group is a routing name; accounting follows the final responding model. */
+function resolveGroupUsageModel(
+  c: Context,
+  accountId: string,
+  requested: string,
+): { model: string; upstream?: string } {
+  if (parseGroupReference(requested) === undefined) return { model: requested }
+  const entry = getRequestLogContext(c)?.entry
+  if (entry?.connectionId !== accountId) return { model: requested }
+  const upstream = entry.modelUpstream?.trim()
+  const selected = entry.routingGroupSelectedMember
+  if (!upstream) {
+    const model =
+      selected ?
+        resolveModelRouting(splitMember(selected).model).modelId
+      : requested
+    return { model }
+  }
+  const connection = getProviderConnection(accountId)
+  const mappings =
+    connection?.models?.filter(
+      (model) => model.upstreamId.toLowerCase() === upstream.toLowerCase(),
+    ) ?? []
+  const selectedModel =
+    selected ?
+      resolveModelRouting(splitMember(selected).model).modelId
+    : undefined
+  const mapping =
+    mappings.find((model) => model.publicId === selectedModel) ?? mappings[0]
+  return { model: mapping?.publicId ?? upstream, upstream }
+}
+
 export function recordUsage(input: UsageRecordInput): void {
   const {
     c,
@@ -114,7 +148,8 @@ export function recordUsage(input: UsageRecordInput): void {
 
   try {
     const now = timestamp ?? Date.now()
-    const usageModel = resolveUsageModelId(accountId, model)
+    const actual = resolveGroupUsageModel(c, accountId, model)
+    const usageModel = resolveUsageModelId(accountId, actual.model)
     // 用 connection 原生派生 provider（metadata.provider 优先）。
     // 注意：codebuddy / codebuddy-cn 共用 codebuddy-native 协议，
     // 不能用 providerFromProtocol（后写覆盖，永远得到 codebuddy-cn）。
@@ -128,10 +163,12 @@ export function recordUsage(input: UsageRecordInput): void {
       connectionId ?? (c.get("connectionId") as string | undefined)
     const resolvedCredentialId =
       credentialId ?? (c.get("credentialId") as string | undefined)
-    const pricing = statsStore.getModelPricing(
-      usageModel,
-      isProviderId(provider) ? provider : undefined,
-    )
+    const providerHint = isProviderId(provider) ? provider : undefined
+    const pricing =
+      statsStore.getModelPricing(usageModel, providerHint)
+      ?? (actual.upstream ?
+        statsStore.getModelPricing(actual.upstream, providerHint)
+      : null)
     const cost =
       pricing ?
         calculateModelCost(pricing, {

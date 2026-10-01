@@ -396,7 +396,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
 
     const plaintext = buildChatEnvelope(payload, model)
     if (process.env.QODER_DUMP) {
-      // 调试用：把发往 Qoder 的明文信封落盘，便于和 magpie 对比。
+      // 调试用：把发往 Qoder 的明文信封落盘，便于比对。
       try {
         await Bun.write("temp/qoder-envelope.json", plaintext)
       } catch {

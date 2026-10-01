@@ -143,7 +143,7 @@ export function getConnectionQuotaState(
   conn: ProviderConnection,
 ): ConnectionQuotaState {
   // T5.2.5:从 credential.status 派生,不再读 metadata.quotaState
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   if (!cred) return "unknown"
   if (cred.status === "quota_exhausted") return "exhausted"
   if (cred.quota === undefined) return "unknown"
@@ -154,7 +154,7 @@ export function getConnectionQuotaInfo(
   conn: ProviderConnection,
 ): QuotaSnapshot | undefined {
   // T5.2.5:优先读 credential.quota(类型化字段),回退到 metadata.quotaInfo
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   if (cred?.quota) return cred.quota
   const meta = readConnectionMetadata(conn)
   if (!meta) return undefined
@@ -167,7 +167,7 @@ export function setConnectionQuotaInfo(
   conn: ProviderConnection,
   snapshot: QuotaSnapshot,
 ): void {
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   if (cred) {
     cred.quota = snapshot
   }
@@ -208,7 +208,7 @@ export function getConnectionQuotaExhaustedAt(
   conn: ProviderConnection,
 ): number | undefined {
   // T5.2.5:优先读 credential.exhaustedAt,回退到 metadata
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   if (cred?.exhaustedAt !== undefined) return cred.exhaustedAt
   return readConnectionMetadata(conn)?.quotaExhaustedAt
 }
@@ -217,7 +217,7 @@ export function getConnectionExhaustedAt(
   conn: ProviderConnection,
 ): number | undefined {
   // T5.2.5:优先读 credential.exhaustedAt,回退到 metadata
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   if (cred?.exhaustedAt !== undefined) return cred.exhaustedAt
   return readConnectionMetadata(conn)?.exhaustedAt
 }
@@ -228,7 +228,7 @@ export function getConnectionCooldownUntil(
   // cooldownUntil 同时存在于 credential.cooldownUntil 和 metadata.cooldownUntil
   // 优先读 credential（运行时状态），回退到 metadata（持久化值）。
   // 无 credential 的 connection 合法存在（先建连接后加凭据），不得抛错。
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   return cred?.cooldownUntil ?? readConnectionMetadata(conn)?.cooldownUntil
 }
 
@@ -236,7 +236,7 @@ export function getConnectionLastRateLimitReason(
   conn: ProviderConnection,
 ): string | undefined {
   // T5.2.5:优先读 credential.lastRateLimitReason,回退到 metadata
-  const cred = conn.credentials[0]
+  const cred = conn.credentials?.[0]
   if (cred?.lastRateLimitReason) return cred.lastRateLimitReason
   return readConnectionMetadata(conn)?.lastRateLimitReason
 }

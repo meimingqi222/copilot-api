@@ -25,10 +25,12 @@ import {
 } from "~/lib/provider-connections"
 import { patchRequestLog, publishTraceSnapshot } from "~/lib/request-log"
 import {
+  buildGroupRouteTargets,
   buildRouteTargets,
   commitRouteTargetAffinity,
   resolveModelRouting,
   routeEvidenceFor,
+  selectGroupRouteTarget,
   selectRouteTarget,
   targetKey,
 } from "~/lib/route-target"
@@ -36,21 +38,30 @@ import { extractSessionIds, extractSessionTurn } from "~/lib/routing"
 import {
   classifierTargetOf,
   classifyIntent,
+  EFFORT_LEVELS,
   getRoutingGroup,
+  isEffortLevel,
   memberEffort,
   memberFast,
+  type GroupAffinityMode,
   type RuleContext,
   type RoutingGroup,
 } from "~/lib/routing-groups"
+import type { GroupRoutingMode } from "~/lib/routing-groups/types"
 import {
   applyGroupOverrides,
+  captureGroupOverrideBaseline,
+  type GroupOverrideBaseline,
   type AppliedGroupOverrides,
 } from "~/lib/routing-groups/apply"
 import {
+  orderMembersForRouting,
   parseGroupReference,
   resolveGroupMember,
+  splitMember,
 } from "~/lib/routing-groups/resolve"
 import { state } from "~/lib/state"
+import { groupAffinityScope } from "~/lib/route-target/group-policy"
 import { isUserAllowedModel } from "~/lib/users"
 import { safeOrigin } from "~/lib/utils"
 
@@ -84,11 +95,18 @@ export interface ProviderAdmission {
    */
   group?: GroupDecision
   /**
+   * The group's members in the order a retry should try them, so failover can
+   * walk the whole group rather than the single member that answered. Absent on
+   * a plain model name.
+   */
+  groupMembers?: Array<string>
+  /**
    * What that member's `:effort` / `:fast` wrote onto the request payload. The
    * member's suffixes are routing vocabulary, not part of the model id, so this
    * is where "the group asked for high effort, fast lane" becomes observable.
    */
   groupOverrides?: AppliedGroupOverrides
+  groupOverrideBaseline?: GroupOverrideBaseline
 }
 
 /**
@@ -149,10 +167,19 @@ export interface GroupDecisionInput {
   initiator?: "agent" | "user"
   /** The request is a context compaction. */
   compact?: boolean
+  /**
+   * The request's turn key (stable across the tool-result rounds of one turn),
+   * for a group whose routing is `rotate`.
+   */
+  turnKey?: string
 }
 
 /** The member a routing group chose for this request. */
 interface GroupDecision {
+  /** Effective policy; an explicit rule keeps its chosen member first. */
+  routing?: GroupRoutingMode
+  /** Classifier effort, independent of a particular member's fixed suffix. */
+  automaticEffort?: string
   /** Id of the group that answered. */
   groupId: string
   /** The member as written in the group, `:effort` / `:fast` included. */
@@ -165,6 +192,13 @@ interface GroupDecision {
   fast: boolean
   /** Index of the rule that chose the member, when a rule matched. */
   ruleIndex?: number
+  /**
+   * The group's members in the order the request should try them, the lead
+   * first (see `orderMembersForRouting`). Failover walks this list.
+   */
+  members: Array<string>
+  /** The group's affinity override, when it names one. */
+  affinity?: GroupAffinityMode
 }
 
 /** Seams the decision reads through, so a test can drive it without state. */
@@ -175,6 +209,14 @@ export interface GroupDecisionDeps {
   classify?: typeof classifyIntent
   /** Defaults to `new Date()`. */
   now?: () => Date
+  /**
+   * Orders member ids by allowance, best first, for a group whose routing is
+   * `smart` / `usage`. Defaults to leaving the order as written.
+   */
+  rankByAllowance?: (
+    members: Array<string>,
+    mode: "smart" | "usage",
+  ) => Array<string>
 }
 
 /**
@@ -317,16 +359,86 @@ export async function resolveGroupDecision(
   })
   if (!resolved) return undefined
 
+  // The members in the order this request should try them, the lead first.
+  const members = orderMembersForRouting(group, resolved.member, {
+    turnKey: input.turnKey,
+    rankByAllowance: deps.rankByAllowance,
+    ruleMatched: resolved.ruleIndex !== undefined,
+  })
+  const lead = splitMember(members[0] ?? resolved.member, looksLikeKnownModel)
+
+  // `effort: auto` asks the classifier how hard the turn is, unless the member
+  // carries an effort of its own.
+  let automaticEffort: string | undefined
+  const mayChooseAnother =
+    resolved.ruleIndex === undefined
+    && (group.routing === "smart" || group.routing === "usage")
+  if (
+    (lead.effort === undefined || mayChooseAnother)
+    && group.effort === "auto"
+    && classifier
+  ) {
+    const levels =
+      group.levels && group.levels.length > 0 ?
+        group.levels
+      : [...EFFORT_LEVELS]
+    const classify = deps.classify ?? classifyIntent
+    const level = await classify({
+      text: input.messageContent ?? "",
+      intents: levels,
+      provider: classifier.provider,
+      model: classifier.model,
+    })
+    if (typeof level === "string" && isEffortLevel(level))
+      automaticEffort = level
+  }
+  const effort = lead.effort ?? automaticEffort
+
   return {
     groupId: resolved.groupId,
-    member: resolved.member,
-    model: resolved.model,
-    ...(resolved.effort === undefined ? {} : { effort: resolved.effort }),
-    fast: resolved.fast,
+    routing:
+      resolved.ruleIndex === undefined ? (group.routing ?? "order") : "order",
+    ...(automaticEffort === undefined ? {} : { automaticEffort }),
+    member: members[0] ?? resolved.member,
+    model: lead.model,
+    ...(effort === undefined ? {} : { effort }),
+    fast: lead.fast,
     ...(resolved.ruleIndex === undefined ?
       {}
     : { ruleIndex: resolved.ruleIndex }),
+    members,
+    ...(group.affinity === undefined ? {} : { affinity: group.affinity }),
   }
+}
+
+/** Follow the selected account's member, rather than the provisional group lead. */
+export function retargetGroupDecision(
+  decision: GroupDecision,
+  target: RouteTarget,
+): GroupDecision {
+  if (!target.groupMember) return decision
+  const selected = splitMember(target.groupMember, looksLikeKnownModel)
+  return {
+    ...decision,
+    member: target.groupMember,
+    model: selected.model,
+    effort: selected.effort ?? decision.automaticEffort,
+    fast: selected.fast,
+  }
+}
+
+function commitAdmissionAffinity(
+  target: RouteTarget,
+  sessionId: string | undefined,
+  turnKey: string | undefined,
+  group?: GroupDecision,
+): void {
+  const scope = groupAffinityScope(group)
+  commitRouteTargetAffinity(target, sessionId, {
+    affinityMode: group?.affinity,
+    affinityScope: scope,
+    turnKey,
+  })
 }
 
 export async function prepareRequestAdmission(
@@ -350,6 +462,7 @@ export async function prepareRequestAdmission(
   // exactly as a literal model name would.
   let groupDecision: GroupDecision | undefined
   let groupOverrides: AppliedGroupOverrides | undefined
+  let routingGroup: RoutingGroup | null | undefined
   try {
     groupDecision = await resolveGroupDecision({
       model: options.model,
@@ -359,6 +472,7 @@ export async function prepareRequestAdmission(
       inferredInitiator: options.inferredInitiator,
       initiator,
       compact: options.compact,
+      turnKey: extractSessionTurn(options.sessionPayload).turnKey || undefined,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -368,38 +482,21 @@ export async function prepareRequestAdmission(
   }
 
   if (groupDecision) {
-    // The member's `:effort` / `:fast` are routing vocabulary, so they are
-    // written back onto the request body here rather than left dangling: the
-    // payload every route hands to dispatch is the same object it passed in as
-    // `sessionPayload`, so this is the one place a group member can still be
-    // served at the effort it names. A request that is not a group reference
-    // never reaches this branch, and its payload is never touched.
     try {
-      groupOverrides = applyGroupOverrides(
-        options.sessionPayload,
-        groupDecision,
-        { endpoint: options.endpoint },
-      )
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      logger.warn(
-        `Routing group overrides failed for "${groupDecision.member}": ${message}`,
-      )
+      routingGroup = await getRoutingGroup(groupDecision.groupId)
+    } catch {
+      // Best effort lookup of the routing group
     }
 
     patchRequestLog(c, {
-      // `modelRequested` already carries the `group/<id>` reference; the member
-      // the group picked rides on the trace's free-form reason slot so the live
-      // view reads "group/main → openai/o3" next to where the request went.
-      // The member keeps its `:effort` / `:fast` spelling, so the suffixes the
-      // group asked for are visible there too.
       failoverReason: `routing-group:${groupDecision.groupId}→${groupDecision.member}`,
+      routingGroupId: groupDecision.groupId,
+      routingGroupName: routingGroup?.name || groupDecision.groupId,
+      routingGroupMembers: groupDecision.members,
+      routingGroupSelectedMember: groupDecision.member,
+      routingStrategy: routingGroup?.routing || "order",
     })
   }
-
-  // What the request is actually served at: the group member's effort when one
-  // was applied, otherwise whatever the client asked for.
-  const appliedEffort = groupOverrides?.effort ?? options.reasoningEffort
 
   const routedModel = groupDecision?.model ?? options.model
 
@@ -423,12 +520,41 @@ export async function prepareRequestAdmission(
   // Select without any upstream I/O so the guard can use the actual provider.
   // When no target exists, still run the guard with an explicit non-Copilot
   // scope before returning the route diagnostic.
-  const target = selectRouteTarget(candidates, {
-    sessionId: sessionIds.primaryId || undefined,
-    fallbackSessionId: sessionIds.fallbackId || undefined,
-    turnKey: sessionTurn.turnKey || undefined,
-    commitAffinity: false,
-  })
+  const target =
+    groupDecision && groupDecision.members.length > 0 ?
+      selectGroupRouteTarget(groupDecision.members, {
+        routing: groupDecision.routing,
+        groupId: groupDecision.groupId,
+        endpoint: options.endpoint,
+        compact: options.compact,
+        sessionId: sessionIds.primaryId || undefined,
+        fallbackSessionId: sessionIds.fallbackId || undefined,
+        turnKey: sessionTurn.turnKey || undefined,
+        affinityMode: groupDecision.affinity,
+        commitAffinity: false,
+      })
+    : selectRouteTarget(candidates, {
+        sessionId: sessionIds.primaryId || undefined,
+        fallbackSessionId: sessionIds.fallbackId || undefined,
+        turnKey: sessionTurn.turnKey || undefined,
+        commitAffinity: false,
+      })
+  const groupOverrideBaseline =
+    groupDecision ?
+      captureGroupOverrideBaseline(options.sessionPayload)
+    : undefined
+  if (groupDecision && target) {
+    groupDecision = retargetGroupDecision(groupDecision, target)
+    groupOverrides = applyGroupOverrides(
+      options.sessionPayload,
+      groupDecision,
+      {
+        endpoint: options.endpoint,
+        baseline: groupOverrideBaseline,
+      },
+    )
+  }
+  const appliedEffort = groupOverrides?.effort ?? options.reasoningEffort
   let guardProvider = "unroutable"
   if (target) {
     guardProvider =
@@ -497,7 +623,12 @@ export async function prepareRequestAdmission(
   }
 
   // Commit the previewed target only after all admission checks pass.
-  commitRouteTargetAffinity(target, sessionIds.primaryId || undefined)
+  commitAdmissionAffinity(
+    target,
+    sessionIds.primaryId || undefined,
+    sessionTurn.turnKey || undefined,
+    groupDecision,
+  )
 
   const sessionFields = {
     sessionId: sessionIds.primaryId || undefined,
@@ -549,24 +680,41 @@ export async function prepareRequestAdmission(
     sessionId: sessionIds.primaryId || undefined,
     streaming: options.stream,
     reasoningEffort: appliedEffort,
+    ...(groupDecision ?
+      {
+        failoverReason: `routing-group:${groupDecision.groupId}→${groupDecision.member}`,
+        routingGroupId: groupDecision.groupId,
+        routingGroupName: routingGroup?.name || groupDecision.groupId,
+        routingGroupMembers: groupDecision.members,
+        routingGroupSelectedMember: groupDecision.member,
+        routingStrategy: routingGroup?.routing || "order",
+      }
+    : {}),
   })
 
   // Candidate paths: every route routing could have taken, so the admin trace
   // view can show the chosen one plus why the alternates were passed over.
   // Built from the *unfiltered* pool so temporarily-unavailable candidates
   // (cooldown / quota / disabled) still appear.
-  const allCandidates = buildRouteTargets({
-    connectionId: routing.connectionId,
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    aliasRestriction: routing.aliasRestriction,
-    endpoint: options.endpoint,
-    onlyAvailable: false,
-    compact: options.compact,
-  })
+  const allCandidates =
+    groupDecision && groupDecision.members.length > 0 ?
+      buildGroupRouteTargets(groupDecision.members, {
+        endpoint: options.endpoint,
+        compact: options.compact,
+        onlyAvailable: false,
+      })
+    : buildRouteTargets({
+        connectionId: routing.connectionId,
+        legacyProvider: routing.legacyProvider,
+        accountPrefix: routing.accountPrefix,
+        publicModelId: routing.modelId,
+        aliasRestriction: routing.aliasRestriction,
+        endpoint: options.endpoint,
+        onlyAvailable: false,
+        compact: options.compact,
+      })
   patchRequestLog(c, {
-    candidates: describeCandidates(allCandidates, targetKey(target)),
+    candidates: describeCandidates(allCandidates, target),
   })
   publishTraceSnapshot(c, "update")
 
@@ -579,6 +727,8 @@ export async function prepareRequestAdmission(
     ...(groupDecision ?
       {
         group: groupDecision,
+        groupMembers: groupDecision.members,
+        groupOverrideBaseline,
         ...(groupOverrides ? { groupOverrides } : {}),
       }
     : {}),
@@ -832,18 +982,19 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
  * Describe every route the gateway could have taken, chosen one first.
  *
  * Built from the *unfiltered* candidate pool so candidates that were skipped
- * for being unavailable still show up (magpie-style: the alternates stay
+ * for being unavailable still show up (the alternates stay
  * visible with why they lost). One row per connection/credential, preferring
  * the native endpoint, mirroring how the pool is shaped before selection.
  */
 function describeCandidates(
   allCandidates: Array<RouteTarget>,
-  chosenKey: string | undefined,
+  chosen: RouteTarget,
   limit = 12,
 ): Array<RouteCandidate> {
   const byKey = new Map<string, RouteTarget>()
   for (const candidate of allCandidates) {
-    const key = targetKey(candidate)
+    const model = candidate.upstreamModelId || candidate.publicModelId || ""
+    const key = `${candidate.connectionId}::${candidate.credentialId}::${model}`
     const previous = byKey.get(key)
     if (!previous || (previous.isTranslated && !candidate.isTranslated)) {
       byKey.set(key, candidate)
@@ -851,7 +1002,7 @@ function describeCandidates(
   }
 
   const rows: Array<RouteCandidate> = []
-  for (const [key, candidate] of byKey) {
+  for (const [, candidate] of byKey) {
     const connection = getProviderConnection(candidate.connectionId)
     const credential = connection?.credentials.find(
       (c) => c.id === candidate.credentialId,
@@ -859,7 +1010,10 @@ function describeCandidates(
     let status: RouteCandidateStatus
     let retryAfterMs: number | undefined
 
-    if (key === chosenKey) {
+    const isChosen =
+      targetKey(candidate) === targetKey(chosen)
+      && candidate.upstreamModelId === chosen.upstreamModelId
+    if (isChosen) {
       status = "chosen"
     } else if (connection && isAccountManagedConnection(connection)) {
       const availability = getConnectionAvailability(connection)
@@ -901,11 +1055,15 @@ function describeCandidates(
       credentialLabel: credential?.label,
       protocol: candidate.protocol,
       endpoint: candidate.endpoint,
-      model: candidate.upstreamModelId,
+      model: candidate.upstreamModelId || candidate.publicModelId,
       priority: candidate.connectionPriority,
       status,
       retryAfterMs,
-      why: evidence?.rest?.reason ?? status,
+      why:
+        isChosen ? "chosen" : (
+          (evidence?.rest?.reason
+          ?? (status === "available" ? "backup" : status))
+        ),
       quotaUsedPct:
         evidence?.quota?.usedFraction === undefined ?
           undefined

@@ -56,12 +56,14 @@ function matchingRuleIndex(
 
 /**
  * The member that leads this request: the first matching rule's `use`, else the
- * group's `pick`, else undefined.
+ * group's `pick`, else its first member.
  *
  * A rule with no conditions never matches, so an unguarded rule cannot swallow
  * the list — the same reading {@link ruleMatches} applies everywhere else.
- * The winning member keeps its suffixes in `member`; `model`, `effort` and
- * `fast` are read off it, so `vendor/model:high:fast` resolves to
+ * Leading with the first member when no rule matches and no `pick` is set keeps
+ * a group routing somewhere, so a derived group with no rules of its own still
+ * serves. The winning member keeps its suffixes in `member`; `model`, `effort`
+ * and `fast` are read off it, so `vendor/model:high:fast` resolves to
  * `{ model: "vendor/model", effort: "high", fast: true }`.
  */
 export function resolveGroupMember(
@@ -72,7 +74,7 @@ export function resolveGroupMember(
   const ruleIndex = matchingRuleIndex(group, ctx)
   const chosen =
     ruleIndex === undefined ?
-      group.pick?.trim()
+      group.pick?.trim() || group.members?.[0]?.trim()
     : group.rules?.[ruleIndex]?.use.trim()
 
   if (chosen === undefined || chosen === "") return undefined
@@ -92,12 +94,111 @@ export function resolveGroupMember(
   }
 }
 
-/** `group/<id>` — the reference a caller writes to select a group as a model. */
-export function groupModelReference(id: string): string {
-  return `${NESTED_GROUP_PREFIX}${String(id).trim()}`
+/** The parts of a member reference, as {@link resolveGroupMember} reads them. */
+interface SplitMember {
+  /** The member as written, suffixes included. */
+  member: string
+  /** The bare `provider/model`. */
+  model: string
+  /** The member's own reasoning effort, when it carries one. */
+  effort?: string
+  /** The member asked for its fast variant. */
+  fast: boolean
+}
+
+/** Split a member's `:effort` / `:fast` suffixes off, the way the resolver does. */
+export function splitMember(
+  member: string,
+  knownModel?: (id: string) => boolean,
+): SplitMember {
+  const fastSplit = memberFast(member, knownModel)
+  const withoutFast = fastSplit?.model ?? member
+  const effortSplit = memberEffort(withoutFast, knownModel)
+  return {
+    member,
+    model: effortSplit?.model ?? withoutFast,
+    ...(effortSplit === undefined ? {} : { effort: effortSplit.effort }),
+    fast: fastSplit !== undefined,
+  }
+}
+
+/** What a group's routing mode needs to pick the member that leads. */
+interface GroupRoutingContext {
+  /** The request's turn key, for `rotate`. */
+  turnKey?: string
+  /**
+   * Orders member ids by allowance, best first, for `smart` / `usage`. The mode
+   * is passed so `smart` (spare quota, soonest-renewing first) and `usage`
+   * (most allowance left first) can rank differently.
+   */
+  rankByAllowance?: (
+    members: Array<string>,
+    mode: "smart" | "usage",
+  ) => Array<string>
+  /** Whether a rule chose `chosen`; a matching rule always leads. */
+  ruleMatched?: boolean
+}
+
+/** A small, stable string hash, so `rotate` moves a member per turn. */
+function hashIndex(value: string, size: number): number {
+  if (size <= 0) return 0
+  let hash = 0
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0
+  }
+  return hash % size
 }
 
 /**
+ * A group's members in the order a request should try them, the one that leads
+ * first. A rule that matched always leads. Otherwise the routing mode decides:
+ * `manual` keeps only the pick, `rotate` moves the turn's member to the front,
+ * `smart` / `usage` move the member with the most allowance to the front, and
+ * `order` (or an absent mode) leaves the rule-chosen member first.
+ *
+ * The whole list is returned, not just the lead, so the request path can fall
+ * through member by member — `order` is "the first until it cannot answer, then
+ * the next".
+ */
+export function orderMembersForRouting(
+  group: RoutingGroup,
+  chosen: string,
+  ctx: GroupRoutingContext = {},
+): Array<string> {
+  const members = (group.members ?? [])
+    .map((member) => member.trim())
+    .filter((member) => member !== "")
+  if (members.length === 0) return chosen ? [chosen] : []
+
+  const leadFirst = (lead: string): Array<string> => [
+    lead,
+    ...members.filter((member) => member !== lead),
+  ]
+  const lead = chosen !== "" && members.includes(chosen) ? chosen : members[0]
+
+  if (ctx.ruleMatched) return leadFirst(lead ?? members[0])
+
+  const mode = group.routing ?? "order"
+  if (mode === "manual") {
+    const pick = group.pick?.trim()
+    return pick && members.includes(pick) ? [pick] : [members[0]]
+  }
+  if (mode === "rotate" && ctx.turnKey) {
+    return leadFirst(
+      members[hashIndex(ctx.turnKey, members.length)] ?? members[0],
+    )
+  }
+  if ((mode === "smart" || mode === "usage") && ctx.rankByAllowance) {
+    const ranked = ctx.rankByAllowance(members, mode)
+    if (ranked.length > 0) return ranked
+  }
+  return leadFirst(lead ?? members[0])
+}
+
+/** `group/<id>` — the reference a caller writes to select a group as a model. */
+export function groupModelReference(id: string): string {
+  return `${NESTED_GROUP_PREFIX}${String(id).trim()}`
+} /**
  * The group id a `group/<id>` reference names, or undefined when `value` is not
  * a group reference at all. Only the prefix is stripped, so the id round-trips
  * with {@link groupModelReference}.

@@ -318,9 +318,17 @@ const API = {
       API.request(`/routing-groups/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
+    restore: (id) =>
+      API.request(`/routing-groups/${encodeURIComponent(id)}/restore`, {
+        method: "POST",
+      }),
     replace: (groups) =>
       API.request("/routing-groups", { method: "PUT", body: { groups } }),
     references: () => API.request("/routing-groups/references"),
+    hidden: () => API.request("/routing-groups/hidden"),
+    models: () => API.request("/routing-groups/models"),
+    lookup: (model) =>
+      API.request(`/routing-groups/lookup?model=${encodeURIComponent(model)}`),
     meta: () => API.request("/routing-groups/meta"),
   },
 
@@ -433,6 +441,13 @@ const API = {
   // Trace (live request feed for the 请求追踪 view)
   trace: {
     recent: (limit = 60) => API.request(`/trace/recent?limit=${limit}`),
+    history: (filters = {}) => {
+      const params = new URLSearchParams()
+      if (filters.timeFrom !== undefined)
+        params.set("timeFrom", filters.timeFrom)
+      if (filters.timeTo !== undefined) params.set("timeTo", filters.timeTo)
+      return API.request(`/trace/history?${params}`)
+    },
     /** Subscribe to the live SSE feed. Returns the EventSource (call .close()). */
     stream: (handlers = {}) => {
       const source = new EventSource(`${API.baseUrl}/trace/stream`)

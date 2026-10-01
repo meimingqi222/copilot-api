@@ -27,10 +27,19 @@ export interface ModelsDevCost {
   context_over_200k?: ModelsDevTierCost
 }
 
+interface ModelsDevLimit {
+  /** Context window in tokens. */
+  context?: number
+  /** Max output tokens. */
+  output?: number
+}
+
 export interface ModelsDevModel {
   id: string
   name?: string
   cost?: ModelsDevCost
+  /** Context / output window, when models.dev names them. */
+  limit?: ModelsDevLimit
 }
 
 interface ModelsDevProvider {

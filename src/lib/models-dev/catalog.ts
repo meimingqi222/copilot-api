@@ -162,3 +162,85 @@ export function lookupGlobalModelPrice(
   }
   return entries[0]?.pricing ?? null
 }
+
+// ── Context windows ───────────────────────────────────────────────
+//
+// models.dev also names each model's context window (`limit.context`), which is
+// what a model picker shows as a "1M" / "200k" badge. It is indexed the same way
+// the prices are, so a connection whose upstream `/models` response carries no
+// window still gets one from the catalog.
+
+export interface ModelsDevContextIndexes {
+  /** `${providerId}/${modelKey}` → context tokens. */
+  byProviderModel: Map<string, number>
+  /** model key → context tokens, best provider first. */
+  byModelId: Map<string, Array<{ provider: string; context: number }>>
+}
+
+function collectModelContext(
+  providerId: string,
+  modelKey: string,
+  model: ModelsDevModel,
+  indexes: ModelsDevContextIndexes,
+): void {
+  const context = model.limit?.context
+  if (
+    typeof context !== "number"
+    || !Number.isFinite(context)
+    || context <= 0
+  ) {
+    return
+  }
+  const nativeId = (model.id || modelKey).trim().toLowerCase()
+  const slashParts = nativeId.includes("/") ? nativeId.split("/") : []
+  const tailId = slashParts.at(-1) ?? nativeId
+  const keys = new Set<string>([
+    nativeId,
+    modelKey.trim().toLowerCase(),
+    tailId,
+  ])
+  for (const key of keys) {
+    indexes.byProviderModel.set(`${providerId}/${key}`, context)
+    const existing = indexes.byModelId.get(key) ?? []
+    if (!existing.some((entry) => entry.provider === providerId)) {
+      existing.push({ provider: providerId, context })
+      indexes.byModelId.set(key, existing)
+    }
+  }
+}
+
+export function buildModelsDevContextIndexes(
+  catalog: ModelsDevCatalog,
+): ModelsDevContextIndexes {
+  const indexes: ModelsDevContextIndexes = {
+    byProviderModel: new Map(),
+    byModelId: new Map(),
+  }
+  for (const [providerId, provider] of Object.entries(catalog)) {
+    for (const [modelKey, model] of Object.entries(provider.models)) {
+      collectModelContext(providerId, modelKey, model, indexes)
+    }
+  }
+  return indexes
+}
+
+export function lookupProviderModelContext(
+  indexes: ModelsDevContextIndexes,
+  providerIds: Array<string>,
+  modelId: string,
+): number | undefined {
+  const normalized = modelId.trim().toLowerCase()
+  for (const providerId of providerIds) {
+    const hit = indexes.byProviderModel.get(`${providerId}/${normalized}`)
+    if (hit !== undefined) return hit
+  }
+  return undefined
+}
+
+export function lookupGlobalModelContext(
+  indexes: ModelsDevContextIndexes,
+  modelId: string,
+): number | undefined {
+  const normalized = modelId.trim().toLowerCase()
+  return indexes.byModelId.get(normalized)?.[0]?.context
+}

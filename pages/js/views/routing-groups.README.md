@@ -719,30 +719,40 @@ before the `auth` section):
       API.request(`/routing-groups/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
+    restore: (id) =>
+      API.request(`/routing-groups/${encodeURIComponent(id)}/restore`, {
+        method: "POST",
+      }),
     replace: (groups) =>
       API.request("/routing-groups", { method: "PUT", body: { groups } }),
     references: () => API.request("/routing-groups/references"),
+    hidden: () => API.request("/routing-groups/hidden"),
+    lookup: (model) =>
+      API.request(`/routing-groups/lookup?model=${encodeURIComponent(model)}`),
     meta: () => API.request("/routing-groups/meta"),
   },
 ```
 
 `API.request` already prefixes `/admin/api`, so the page never mentions the
-prefix itself. The view only uses `list`, `upsert`, `delete`, `references` and
-`meta`; `get`, `update` and `replace` are listed so the whole surface sits in
-one place.
+prefix itself. The view only uses `list`, `upsert`, `delete`, `restore`,
+`references`, `hidden` and `meta`; `get`, `update` and `replace` are listed so
+the whole surface sits in one place.
 
 ## Routes the page expects
 
 Already-shipped admin API conventions apply (JSON in, `{ error }` + 4xx on bad
 input, `204` on delete):
 
-| Method | Path                                   | Answer the view handles                       |
-| ------ | -------------------------------------- | --------------------------------------------- |
-| GET    | `/admin/api/routing-groups`            | `{ groups: [...] }` — a bare array also works |
-| POST   | `/admin/api/routing-groups`            | `{ group: {...} }` (upsert by `id`), `201`    |
-| DELETE | `/admin/api/routing-groups/:id`        | `204`; `404` + `{ error }` when absent        |
-| GET    | `/admin/api/routing-groups/references` | see below                                     |
-| GET    | `/admin/api/routing-groups/meta`       | optional hints                                |
+| Method | Path                                    | Answer the view handles                       |
+| ------ | --------------------------------------- | --------------------------------------------- |
+| GET    | `/admin/api/routing-groups`             | `{ groups: [...] }` — a bare array also works |
+| POST   | `/admin/api/routing-groups`             | `{ group: {...} }` (upsert by `id`), `201`    |
+| DELETE | `/admin/api/routing-groups/:id`         | `204`; `404` + `{ error }` when absent        |
+| POST   | `/admin/api/routing-groups/:id/restore` | `204`; `404` when the id is not hidden        |
+| GET    | `/admin/api/routing-groups/references`  | see below                                     |
+| GET    | `/admin/api/routing-groups/hidden`      | `{ hidden: ["auto-…"] }`                      |
+| GET    | `/admin/api/routing-groups/lookup`      | `{ model, reference }`; `404` without one     |
+| GET    | `/admin/api/routing-groups/meta`        | optional hints                                |
 
 `/references` is read defensively, so either shape works:
 
@@ -789,6 +799,12 @@ leaves the rest of the page working.
 - **`group/<id>` is shown on every row** with a copy button. Nested group
   members (`group/other`) are legal member strings, and a group cannot list
   itself — the backend rejects that; the page surfaces the message.
+- **Same-model routing needs no group.** The list contains stored custom groups
+  only. Legacy `group/auto-*` references still resolve on demand for existing
+  clients, without appearing in either the group list or `/v1/models`.
+- **Public exposure is opt-in.** The editor's `expose` checkbox adds a custom
+  `group/<id>` entry to `/v1/models`. It is off by default and round-trips through
+  persistence. Same public model IDs stay deduplicated across connections.
 - Unset conditions are omitted from the request body entirely rather than sent
   as `null`/`""`, which is what the store's validation expects.
 - The `fast` flag is a checkbox on each member row; the chip for such a member
@@ -807,3 +823,11 @@ loading it: open `#routing-groups`, create a group with two members and one
 time-windowed rule, confirm it appears with its `group/<id>` chip, then delete
 it. `bun run typecheck` stays clean because `pages/` is plain JS outside the
 `src` project graph.
+
+## Runtime selection
+
+Bare model IDs and custom groups use one route selector. Dedicated/native compatibility tiers precede explicit connection priority. The default strategy is quota-aware, with session affinity; explicitly configured fill-first and round-robin remain supported. Smart and usage flatten member candidates and select quota or least-used policy through that same selector. They respect connection priority, using healthy backups before spent primaries. Ties stay in candidate order. Evidence comes from current in-memory quota snapshots; routing does not fetch quota upstream.
+
+Group affinity follows its configured mode (or global affinity when omitted, as the editor defaults). Both entry points retain low accounts for cache reuse, but release bindings at the spent threshold (98% used by default), on unavailability, or when explicit priority changes move the account out of the primary tier. Group bindings stay isolated from bare-model bindings. A matching rule still leads with its selected member. Order, rotate and manual use their prepared member order.
+
+HTTP and Responses WS retries preserve group policy, session context and member suffixes. WS retries remain restricted to account-managed connections of the initial protocol. Trace member and effort/fast settings follow the actual chosen target.

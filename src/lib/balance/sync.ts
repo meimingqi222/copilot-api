@@ -23,15 +23,18 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { fetchBalance, resolveBalanceSource } from "~/lib/balance"
 import {
   getConnectionCredentialExtras,
+  getConnectionProvider,
   getConnectionSettings,
   markCredentialQuotaExhausted,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import {
   getConnectionBalance,
+  readConnectionMetadata,
   setConnectionBalance,
   type ConnectionBalance,
 } from "~/lib/provider-connections/connection-metadata"
+import { isPlanBasedProvider } from "~/lib/provider-config"
 import { restDecisionForReason } from "~/lib/route-target/rest-reason"
 
 /**
@@ -87,13 +90,26 @@ export function connectionBalanceField(
  * Where this connection's balance can be read from — a configured URL first,
  * else the vendor behind its host. Undefined means there is nothing to read,
  * which is a state, not a failure.
+ *
+ * A plan-based provider is one of those states: its product is a subscription
+ * plan, so its billing endpoint reports plan credits, not money (see
+ * `isPlanBasedProvider`). Reading it as a wallet would report a funded account
+ * as `$0.00` and gate it out of routing. An explicit balance URL is the user
+ * saying otherwise, so it still wins.
  */
 export function resolveConnectionBalanceSource(
   connection: ProviderConnection,
 ): BalanceSource | undefined {
+  const balanceUrl = connectionBalanceField(connection, "balanceUrl")
+  if (
+    !balanceUrl
+    && isPlanBasedProvider(getConnectionProvider(connection) ?? "")
+  ) {
+    return undefined
+  }
   return resolveBalanceSource({
     hosts: connectionBalanceHosts(connection),
-    balanceUrl: connectionBalanceField(connection, "balanceUrl"),
+    balanceUrl,
     balancePath: connectionBalanceField(connection, "balancePath"),
     balanceToken: connectionBalanceField(connection, "balanceToken"),
   })
@@ -145,6 +161,24 @@ interface BalanceGateResult {
 export function applyBalanceGate(
   connection: ProviderConnection,
 ): BalanceGateResult {
+  if (!resolveConnectionBalanceSource(connection)) {
+    // A removed source cannot keep a cached reading authoritative. Recognize
+    // our persisted error too, since the in-memory ownership set resets on boot.
+    const metadata = readConnectionMetadata(connection)
+    if (metadata) delete metadata.balance
+    const credential = connection.credentials[0]
+    if (credential) gatedCredentials.delete(credential.id)
+    if (
+      credential?.status === "quota_exhausted"
+      && credential.lastError?.startsWith("balance depleted (")
+    ) {
+      setConnectionQuotaState(connection, "unknown")
+      credential.lastError = undefined
+      credential.lastErrorAt = undefined
+      return { gated: false, changed: true }
+    }
+    return { gated: false, changed: false }
+  }
   const balance = getConnectionBalance(connection)
   const credential = connection.credentials[0]
   if (!balance || !credential) return { gated: false, changed: false }

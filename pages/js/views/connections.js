@@ -3,6 +3,8 @@ function connectionsView() {
     ...ViewHelpers,
     loading: false,
     connections: [],
+    searchQuery: "",
+    enabledFilter: "",
     showConnModal: false,
     showCredModal: false,
     presets: [],
@@ -64,6 +66,28 @@ function connectionsView() {
     // 管理抽屉内别名编辑器状态(统一别名入口,数据存于 ModelMapping.aliases)
     modelManagerAliasFor: null,
     modelManagerAliasInput: "",
+
+    get filteredConnections() {
+      const query = this.searchQuery.trim().toLowerCase()
+      return this.connections.filter((connection) => {
+        if (
+          this.enabledFilter
+          && String(connection.enabled) !== this.enabledFilter
+        ) {
+          return false
+        }
+        return [
+          connection.name,
+          connection.id,
+          connection.baseUrl,
+          connection.protocol,
+        ].some((value) =>
+          String(value || "")
+            .toLowerCase()
+            .includes(query),
+        )
+      })
+    },
 
     formatTime(ts) {
       if (!ts) return ""

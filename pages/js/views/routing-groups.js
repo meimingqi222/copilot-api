@@ -98,11 +98,16 @@ function routingGroupsView() {
     return {
       id: "",
       name: "",
-      members: [""],
-      fastFlags: [false],
+      expose: false,
+      members: [],
+      fastFlags: [],
       rules: [],
       pick: "",
       levels: [],
+      levelsMode: "shared",
+      routing: "smart",
+      affinity: "",
+      effort: "agent",
       classifier: { provider: "", model: "" },
     }
   }
@@ -127,6 +132,16 @@ function routingGroupsView() {
     loading: false,
     saving: false,
     groups: [],
+    /** Models the member picker offers, from `/routing-groups/models`. */
+    memberOptions: [],
+    /** Provider descriptors (id → icon), for the picker's provider tabs. */
+    providers: [],
+    /** Whether the picker panel is open. */
+    memberPickerOpen: false,
+    /** The picker's filter text. */
+    memberSearch: "",
+    /** The provider whose models the right pane lists; "all" lists every one. */
+    selectedProvider: "all",
     /** Group id → the `group/<id>` values pointing at it. */
     references: {},
     /** Set when the references call failed, so the list can say so quietly. */
@@ -137,12 +152,293 @@ function routingGroupsView() {
     editingId: null,
     form: blankForm(),
 
+    slug(s) {
+      if (!s) return ""
+      return toText(s)
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\u4e00-\u9fa5_-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+    },
+
+    get computedId() {
+      if (this.editingId) {
+        return this.form.id || this.editingId
+      }
+      const name = toText(this.form.name).trim()
+      if (this.form.id && this.form.id.trim() !== "") {
+        return this.form.id.trim()
+      }
+      let id = this.slug(name) || "group"
+      const base = id
+      let n = 1
+      while (this.groups.some((x) => x.id === id)) {
+        id = `${base}-${++n}`
+      }
+      return id
+    },
+
+    get idHintText() {
+      const id = this.computedId
+      return this.t("routingGroups.idHintComputed", { id: `group/${id}` })
+    },
+
+    get hasClassifierNeed() {
+      return (
+        toText(this.form.effort).trim() === "auto"
+        || this.form.rules.some((r) => toText(r.intent).trim() !== "")
+      )
+    },
+
+    get classifierDisplayValue() {
+      const p = toText(this.form.classifier?.provider).trim()
+      const m = toText(this.form.classifier?.model).trim()
+      if (p && m) return `${p}/${m}`
+      if (m) return m
+      return ""
+    },
+
+    setClassifierFromInput(val) {
+      const raw = toText(val).trim()
+      if (!raw) {
+        this.form.classifier = { provider: "", model: "" }
+        return
+      }
+      const slash = raw.indexOf("/")
+      if (slash > 0) {
+        this.form.classifier = {
+          provider: raw.slice(0, slash).trim(),
+          model: raw.slice(slash + 1).trim(),
+        }
+      } else {
+        const opt = this.memberOptions.find(
+          (o) => o.member === raw || o.modelId === raw,
+        )
+        if (opt) {
+          this.form.classifier = {
+            provider: opt.provider,
+            model: opt.modelId || opt.member.split("/")[1] || opt.member,
+          }
+        } else {
+          this.form.classifier = { provider: "", model: raw }
+        }
+      }
+    },
+
+    classifierHintText() {
+      return this.t("routingGroups.classifierHint")
+    },
+
+    getMemberModel(member) {
+      const bare = bareMember(member)
+      return this.memberOptions.find((opt) => opt.member === bare)
+    },
+
+    getMemberName(member) {
+      const model = this.getMemberModel(member)
+      if (model?.name) return model.name
+      const bare = bareMember(member)
+      const slash = bare.indexOf("/")
+      return slash > 0 ? bare.slice(slash + 1) : bare
+    },
+
+    getMemberProviderName(member) {
+      const model = this.getMemberModel(member)
+      if (model?.provider) return model.provider
+      const bare = bareMember(member)
+      const slash = bare.indexOf("/")
+      return slash > 0 ? bare.slice(0, slash) : ""
+    },
+
+    getMemberEffort(member) {
+      let str = toText(member).trim()
+      if (str.endsWith(":fast")) str = str.slice(0, -5)
+      const colon = str.lastIndexOf(":")
+      if (colon > 0) {
+        const suf = str.slice(colon + 1).toLowerCase()
+        if (EFFORT_LEVELS.includes(suf)) return suf
+      }
+      return ""
+    },
+
+    setMemberEffort(index, effort) {
+      const raw = this.form.members[index]
+      const bare = bareMember(raw)
+      const isFast = this.form.fastFlags[index]
+      let next = bare
+      if (effort && EFFORT_LEVELS.includes(effort)) {
+        next += `:${effort}`
+      }
+      if (isFast) {
+        next += ":fast"
+      }
+      this.form.members[index] = next
+    },
+
+    moveMember(index, offset) {
+      const target = index + offset
+      if (target < 0 || target >= this.form.members.length) return
+      const [member] = this.form.members.splice(index, 1)
+      const [fast] = this.form.fastFlags.splice(index, 1)
+      this.form.members.splice(target, 0, member)
+      this.form.fastFlags.splice(target, 0, fast)
+    },
+
+    routingHintText(mode) {
+      const hints = {
+        smart: this.t("routingGroups.routingHint.smart"),
+        order: this.t("routingGroups.routingHint.order"),
+        rotate: this.t("routingGroups.routingHint.rotate"),
+        usage: this.t("routingGroups.routingHint.usage"),
+        manual: this.t("routingGroups.routingHint.manual"),
+      }
+      return hints[mode] || hints.smart
+    },
+
+    affinityHintText(mode) {
+      const hints = {
+        "": this.t("routingGroups.affinityHint.inherit"),
+        auto: this.t("routingGroups.affinityHint.auto"),
+        session: this.t("routingGroups.affinityHint.session"),
+        turn: this.t("routingGroups.affinityHint.turn"),
+        off: this.t("routingGroups.affinityHint.off"),
+      }
+      return hints[mode] || hints.auto
+    },
+
+    effortHintText(mode) {
+      const hints = {
+        agent: this.t("routingGroups.effortHint.agent"),
+        auto: this.t("routingGroups.effortHint.auto"),
+      }
+      return hints[mode] || hints.agent
+    },
+
     // ── derived values ───────────────────────────────────────────────
 
     get effortLevels() {
       const announced = this.normalizedMetaList(["levels", "efforts"])
       const known = announced.filter((level) => EFFORT_LEVELS.includes(level))
       return known.length > 0 ? known : EFFORT_LEVELS
+    },
+
+    /** Member options grouped by provider, for the picker's optgroups. */
+    get memberGroups() {
+      const byProvider = new Map()
+      for (const option of this.memberOptions) {
+        const provider = option.provider || "(provider)"
+        const list = byProvider.get(provider) ?? []
+        list.push(option)
+        byProvider.set(provider, list)
+      }
+      return [...byProvider.entries()].map(([provider, options]) => ({
+        provider,
+        options,
+      }))
+    },
+
+    /** The picker's left rail: "all" first, then each provider. */
+    get providerTabs() {
+      return [
+        {
+          provider: "all",
+          label: this.t("routingGroups.pickerAll"),
+          count: this.memberOptions.length,
+          all: true,
+        },
+        ...this.memberGroups.map((group) => ({
+          provider: group.provider,
+          label: group.provider,
+          count: group.options.length,
+          all: false,
+        })),
+      ]
+    },
+
+    /**
+     * The right list, filtered by the rail's selection and the search box —
+     * the rail itself never changes, so searching only re-renders this.
+     */
+    get visibleGroups() {
+      const query = toText(this.memberSearch).trim().toLowerCase()
+      const all =
+        this.selectedProvider === "" || this.selectedProvider === "all"
+      const base =
+        all ?
+          this.memberGroups
+        : this.memberGroups.filter(
+            (group) => group.provider === this.selectedProvider,
+          )
+      return base
+        .map((group) => ({
+          provider: group.provider,
+          options:
+            query === "" ?
+              group.options
+            : group.options.filter(
+                (option) =>
+                  option.member.toLowerCase().includes(query)
+                  || option.name.toLowerCase().includes(query)
+                  || group.provider.toLowerCase().includes(query),
+              ),
+        }))
+        .filter((group) => group.options.length > 0)
+    },
+
+    /** Provider headers show only when the rail is on "all". */
+    get showGroupHeaders() {
+      return this.selectedProvider === "" || this.selectedProvider === "all"
+    },
+
+    /** The search text, when it names a model the list does not already offer. */
+    get rawMemberCandidate() {
+      const query = toText(this.memberSearch).trim()
+      if (query === "") return ""
+      if (this.memberOptions.some((option) => option.member === query)) {
+        return ""
+      }
+      return query
+    },
+
+    /** id → icon, from the provider descriptors, lower-cased for lookup. */
+    get providerIcons() {
+      const map = {}
+      for (const provider of this.providers) {
+        const id = toText(provider?.id).toLowerCase()
+        const icon = toText(provider?.icon)
+        if (id !== "" && icon !== "") map[id] = icon
+      }
+      return map
+    },
+
+    /** The routing modes the group card offers, in display order. */
+    get routingModes() {
+      return [
+        { value: "smart", label: "routingGroups.routing.smart" },
+        { value: "order", label: "routingGroups.routing.order" },
+        { value: "rotate", label: "routingGroups.routing.rotate" },
+        { value: "usage", label: "routingGroups.routing.usage" },
+        { value: "manual", label: "routingGroups.routing.manual" },
+      ]
+    },
+
+    /** The session-affinity modes the group card offers. */
+    get affinityModes() {
+      return [
+        { value: "", label: "routingGroups.affinity.inherit" },
+        { value: "auto", label: "routingGroups.affinity.auto" },
+        { value: "session", label: "routingGroups.affinity.session" },
+        { value: "turn", label: "routingGroups.affinity.turn" },
+        { value: "off", label: "routingGroups.affinity.off" },
+      ]
+    },
+
+    /** Who decides each request's reasoning effort. */
+    get effortModes() {
+      return [
+        { value: "agent", label: "routingGroups.effort.agent" },
+        { value: "auto", label: "routingGroups.effort.auto" },
+      ]
     },
 
     get effortChoices() {
@@ -288,6 +584,8 @@ function routingGroupsView() {
         this.loading = false
       }
       await this.loadReferences()
+      await this.loadMemberOptions()
+      await this.loadProviders()
       await this.loadMeta()
       this.$nextTick(() => lucide.createIcons())
     },
@@ -372,6 +670,44 @@ function routingGroupsView() {
       }
     },
 
+    /**
+     * The models the member picker offers. A missing endpoint (older backend)
+     * just leaves the list empty, so the free-text rows keep working.
+     */
+    async loadMemberOptions() {
+      try {
+        const payload = await API.routingGroups.models()
+        const list = Array.isArray(payload) ? payload : payload?.models
+        this.memberOptions = listOf(list)
+          .filter((entry) => entry && typeof entry === "object")
+          .map((entry) => ({
+            member: toText(entry.member ?? entry.modelId).trim(),
+            provider: toText(entry.provider).trim(),
+            modelId: toText(entry.modelId).trim(),
+            name: toText(entry.name).trim(),
+            context: Number(entry.context) || 0,
+            free: entry.free === true,
+            efforts: listOf(entry.efforts).map((level) => toText(level)),
+          }))
+          .filter((entry) => entry.member !== "")
+      } catch {
+        this.memberOptions = []
+      }
+    },
+
+    /** Provider descriptors (id → icon), so the picker can show provider icons. */
+    async loadProviders() {
+      try {
+        const payload = await API.providers.list()
+        const list = Array.isArray(payload) ? payload : payload?.providers
+        this.providers = listOf(list).filter(
+          (entry) => entry && typeof entry === "object",
+        )
+      } catch {
+        this.providers = []
+      }
+    },
+
     // ── modal ────────────────────────────────────────────────────────
 
     openCreate() {
@@ -392,12 +728,15 @@ function routingGroupsView() {
       this.showModal = false
       this.editingId = null
       this.form = blankForm()
+      this.memberPickerOpen = false
+      this.memberSearch = ""
+      this.selectedProvider = ""
     },
 
     /** A stored group as editable rows: every condition has a field. */
     toDraft(group) {
       const stored = listOf(group?.members).map((member) => toText(member))
-      const members = stored.length > 0 ? stored : [""]
+      const members = stored.filter((m) => m !== "")
       const fast = new Set(
         listOf(group?.fast).map((entry) => bareMember(entry)),
       )
@@ -407,11 +746,16 @@ function routingGroupsView() {
       return {
         id: toText(group?.id),
         name: toText(group?.name),
+        expose: group?.expose === true,
         members,
         fastFlags: members.map((member) => fast.has(bareMember(member))),
         rules: listOf(group?.rules).map((rule) => this.ruleToDraft(rule)),
         pick: toText(group?.pick),
         levels: this.effortLevels.filter((level) => levels.has(level)),
+        levelsMode: levels.size > 0 ? "own" : "shared",
+        routing: toText(group?.routing) || "smart",
+        affinity: toText(group?.affinity),
+        effort: toText(group?.effort) || "agent",
         classifier: {
           provider: toText(group?.classifier?.provider),
           model: toText(group?.classifier?.model),
@@ -490,7 +834,10 @@ function routingGroupsView() {
      */
     validateDraft() {
       const problems = []
-      const id = toText(this.form.id).trim()
+      const id = (
+        this.editingId ?
+          toText(this.form.id).trim() || this.editingId
+        : toText(this.form.id).trim() || this.computedId).trim()
       if (id === "") {
         problems.push(
           this.t("routingGroups.problem.required", {
@@ -577,10 +924,18 @@ function routingGroupsView() {
         )
       }
 
-      const provider = toText(this.form.classifier?.provider).trim()
-      const model = toText(this.form.classifier?.model).trim()
-      if ((provider === "") !== (model === "")) {
-        problems.push(this.t("routingGroups.problem.classifier"))
+      if (this.hasClassifierNeed) {
+        const provider = toText(this.form.classifier?.provider).trim()
+        const model = toText(this.form.classifier?.model).trim()
+        if ((provider === "") !== (model === "")) {
+          problems.push(this.t("routingGroups.problem.classifier"))
+        }
+        if (
+          toText(this.form.effort).trim() === "auto"
+          && (provider === "" || model === "")
+        ) {
+          problems.push(this.t("routingGroups.problem.effortAutoClassifier"))
+        }
       }
 
       return problems
@@ -597,27 +952,44 @@ function routingGroupsView() {
         if (this.form.fastFlags[index] === true) fast.push(member)
       })
 
+      const id = (
+        this.editingId ?
+          toText(this.form.id).trim() || this.editingId
+        : toText(this.form.id).trim() || this.computedId).trim()
+
       const group = {
-        id: toText(this.form.id).trim(),
-        name: toText(this.form.name).trim(),
+        id,
+        name: toText(this.form.name).trim() || id,
         members,
         rules: this.form.rules.map((rule) => this.draftToRule(rule)),
+        expose: this.form.expose === true,
       }
 
       const pick = toText(this.form.pick).trim()
       if (pick !== "") group.pick = pick
       if (fast.length > 0) group.fast = fast
 
-      const levels = this.effortLevels.filter((level) =>
-        listOf(this.form.levels).includes(level),
-      )
-      if (levels.length > 0) group.levels = levels
-
-      const provider = toText(this.form.classifier?.provider).trim()
-      const model = toText(this.form.classifier?.model).trim()
-      if (provider !== "" && model !== "") {
-        group.classifier = { provider, model }
+      if (this.form.levelsMode === "own") {
+        const levels = this.effortLevels.filter((level) =>
+          listOf(this.form.levels).includes(level),
+        )
+        if (levels.length > 0) group.levels = levels
       }
+
+      if (this.hasClassifierNeed) {
+        const provider = toText(this.form.classifier?.provider).trim()
+        const model = toText(this.form.classifier?.model).trim()
+        if (provider !== "" && model !== "") {
+          group.classifier = { provider, model }
+        }
+      }
+
+      const routing = toText(this.form.routing).trim()
+      if (routing !== "") group.routing = routing
+      const affinity = toText(this.form.affinity).trim()
+      if (affinity !== "") group.affinity = affinity
+      const effort = toText(this.form.effort).trim()
+      if (effort !== "") group.effort = effort
       return group
     },
 
@@ -667,6 +1039,65 @@ function routingGroupsView() {
       this.form.fastFlags.push(false)
     },
 
+    /** Whether a member is already in the form (compared without suffixes). */
+    isMemberAdded(member) {
+      const bare = bareMember(member)
+      return this.form.members.some((entry) => bareMember(entry) === bare)
+    },
+
+    /** The lucide icon for a provider id, with a generic fallback. */
+    providerIcon(provider) {
+      return this.providerIcons[toText(provider).toLowerCase()] || "box"
+    },
+
+    /** Toggle the picker popover; the rail keeps its selection. */
+    openMemberPicker() {
+      this.memberPickerOpen = !this.memberPickerOpen
+      if (this.memberPickerOpen) {
+        this.memberSearch = ""
+        this.$nextTick(() => {
+          lucide.createIcons()
+          if (this.$refs.pickerSearchInput) {
+            this.$refs.pickerSearchInput.focus()
+          }
+        })
+      }
+    },
+
+    /** A context window as a compact badge: 1000000 → "1M", 200000 → "200k". */
+    formatContext(value) {
+      const tokens = Number(value || 0)
+      if (!Number.isFinite(tokens) || tokens <= 0) return ""
+      if (tokens >= 1e6) return `${Number((tokens / 1e6).toFixed(1))}M`
+      if (tokens >= 1e3) return `${Math.round(tokens / 1e3)}k`
+      return String(tokens)
+    },
+
+    /** Append a member from the picker list or the raw search box. */
+    addMemberFromPicker(member) {
+      const value = toText(member).trim()
+      if (value === "") return
+      if (!this.form.members.includes(value)) {
+        this.form.members.push(value)
+        this.form.fastFlags.push(false)
+        this.memberPickerOpen = false
+        this.memberSearch = ""
+      } else {
+        this.showToast(
+          this.t("routingGroups.problem.duplicateMember", { value }),
+          "warning",
+        )
+      }
+    },
+
+    /** Add whatever the search box holds, as a raw `provider/model` id. */
+    pickerAddRaw() {
+      const member = this.rawMemberCandidate
+      if (member === "") return
+      this.addMemberFromPicker(member)
+      this.memberSearch = ""
+    },
+
     /**
      * Repeatable rows use `:checked` + `@change` rather than binding a
      * checkbox group: the lists live in objects inside `x-for`, and one
@@ -699,14 +1130,15 @@ function routingGroupsView() {
     removeMember(index) {
       this.form.members.splice(index, 1)
       this.form.fastFlags.splice(index, 1)
-      if (this.form.members.length === 0) {
-        this.form.members.push("")
-        this.form.fastFlags.push(false)
-      }
-      // A removed member cannot stay the default pick.
+      // A removed member cannot stay the default pick or rule target.
+      const choices = this.memberChoices()
       const pick = toText(this.form.pick).trim()
-      if (pick !== "" && !this.memberChoices().includes(pick))
+      if (pick !== "" && !choices.includes(pick)) {
         this.form.pick = ""
+      }
+      this.form.rules = this.form.rules.filter((r) =>
+        choices.includes(bareMember(r.use)),
+      )
     },
 
     addRule() {

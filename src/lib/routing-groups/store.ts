@@ -19,14 +19,27 @@ import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { Mutex, Repository } from "~/lib/repository"
 
+import { collectServedModels, deriveAutoGroups } from "./auto"
 import {
   cleanMember,
   isNestedGroupMember,
   nestedGroupId,
   normalizeMember,
 } from "./member"
-import { EFFORT_ANY, isEffortLevel } from "./types"
-import type { RoutingGroup, Rule } from "./types"
+import {
+  EFFORT_ANY,
+  isEffortLevel,
+  isGroupAffinityMode,
+  isGroupEffortSource,
+  isRoutingMode,
+} from "./types"
+import type {
+  GroupAffinityMode,
+  GroupEffortSource,
+  GroupRoutingMode,
+  RoutingGroup,
+  Rule,
+} from "./types"
 
 import { TimeWindowError, normalizeWindow } from "./time-window"
 
@@ -38,6 +51,12 @@ const CURRENT_FILE_VERSION = 1
 interface PersistedRoutingGroupsFile {
   version: number
   groups: Array<RoutingGroup>
+  /**
+   * Ids of derived groups the user removed, so they stay gone without being
+   * materialized. A derived group is back the moment its id leaves this list,
+   * which is what {@link restoreAutoGroup} does.
+   */
+  hiddenAutoGroups?: Array<string>
 }
 
 /** Absolute path of the groups file. Resolved per call: the data dir moves in tests. */
@@ -60,6 +79,12 @@ const repo = new Repository<PersistedRoutingGroupsFile>({
     return {
       version: file.version ?? CURRENT_FILE_VERSION,
       groups: file.groups,
+      hiddenAutoGroups:
+        Array.isArray(file.hiddenAutoGroups) ?
+          file.hiddenAutoGroups.filter(
+            (id): id is string => typeof id === "string" && id.trim() !== "",
+          )
+        : [],
     }
   },
   corruptMessage: `${FILE_NAME} is corrupt.`,
@@ -140,6 +165,47 @@ function validateRule(
       problems.push(`${label}.time: ${message}`)
     }
   }
+}
+
+interface GroupRoutingFields {
+  expose?: boolean
+  routing?: GroupRoutingMode
+  affinity?: GroupAffinityMode
+  effort?: GroupEffortSource
+}
+
+/** Read and check a group's routing / affinity / effort, collecting problems. */
+function validateGroupRouting(
+  group: RoutingGroup,
+  problems: Array<string>,
+): GroupRoutingFields {
+  const out: GroupRoutingFields = {}
+  if (group.expose !== undefined) {
+    if (typeof group.expose === "boolean") out.expose = group.expose
+    else problems.push("expose must be a boolean")
+  }
+  if (group.routing !== undefined) {
+    if (isRoutingMode(group.routing)) {
+      out.routing = group.routing.trim().toLowerCase() as GroupRoutingMode
+    } else {
+      problems.push(`routing is not a known mode: ${String(group.routing)}`)
+    }
+  }
+  if (group.affinity !== undefined) {
+    if (isGroupAffinityMode(group.affinity)) {
+      out.affinity = group.affinity.trim().toLowerCase() as GroupAffinityMode
+    } else {
+      problems.push(`affinity is not a known mode: ${String(group.affinity)}`)
+    }
+  }
+  if (group.effort !== undefined) {
+    if (isGroupEffortSource(group.effort)) {
+      out.effort = group.effort.trim().toLowerCase() as GroupEffortSource
+    } else {
+      problems.push(`effort is not a known source: ${String(group.effort)}`)
+    }
+  }
+  return out
 }
 
 /**
@@ -279,6 +345,14 @@ export function validateGroup(
     }
   }
 
+  const routingFields = validateGroupRouting(group, problems)
+  const { effort } = routingFields
+
+  // `effort: auto` needs a classifier to rate how hard each turn is.
+  if (effort === "auto" && classifier === undefined) {
+    problems.push("effort auto needs the group's classifier")
+  }
+
   if (problems.length > 0) throw new RoutingGroupValidationError(problems)
 
   return {
@@ -290,6 +364,7 @@ export function validateGroup(
     ...(fast === undefined ? {} : { fast }),
     ...(levels === undefined ? {} : { levels }),
     ...(classifier === undefined ? {} : { classifier }),
+    ...routingFields,
   }
 }
 
@@ -341,14 +416,21 @@ export function validateRoutingGroups(
 // ── Cache ─────────────────────────────────────────────────────────
 
 let cache: Array<RoutingGroup> = []
+/** Ids of derived groups the user removed; read and written with the groups. */
+let hiddenAutoGroups: Array<string> = []
 /** Path the cache was read from; a different one (tests relocate it) reloads. */
 let cachePath: string | undefined
 
 const mutex = new Mutex()
 
-async function readFromDisk(): Promise<Array<RoutingGroup>> {
+interface LoadedGroups {
+  groups: Array<RoutingGroup>
+  hidden: Array<string>
+}
+
+async function readFromDisk(): Promise<LoadedGroups> {
   const file = await repo.load()
-  if (!file) return []
+  if (!file) return { groups: [], hidden: [] }
 
   const knownGroupIds = file.groups
     .map((group) => (isNonEmptyString(group?.id) ? group.id.trim() : ""))
@@ -372,33 +454,51 @@ async function readFromDisk(): Promise<Array<RoutingGroup>> {
       logger.warn(`[routing-groups] dropping invalid group: ${message}`)
     }
   }
-  return groups
+  return { groups, hidden: file.hiddenAutoGroups ?? [] }
 }
 
 async function ensureLoaded(): Promise<Array<RoutingGroup>> {
   const currentPath = routingGroupsPath()
   if (cachePath === currentPath) return cache
-  const groups = await readFromDisk()
-  cache = groups
+  const loaded = await readFromDisk()
+  cache = loaded.groups
+  hiddenAutoGroups = loaded.hidden
   cachePath = currentPath
   return cache
 }
 
 /**
- * Write the whole list, then swap the cache. The cache is only replaced after
+ * Write the whole file, then swap the cache. The cache is only replaced after
  * the write succeeded, so a failed save cannot leave memory ahead of disk.
  */
-async function persist(groups: Array<RoutingGroup>): Promise<void> {
-  await repo.save({ version: CURRENT_FILE_VERSION, groups })
+async function persist(
+  groups: Array<RoutingGroup>,
+  hidden: Array<string> = hiddenAutoGroups,
+): Promise<void> {
+  await repo.save({
+    version: CURRENT_FILE_VERSION,
+    groups,
+    hiddenAutoGroups: hidden,
+  })
   cache = groups
+  hiddenAutoGroups = hidden
   cachePath = routingGroupsPath()
+}
+
+/** Derived groups for the current catalog, minus the ones the user removed. */
+function currentDerivedGroups(): Array<RoutingGroup> {
+  const hidden = new Set(hiddenAutoGroups)
+  return deriveAutoGroups(collectServedModels()).filter(
+    (group) => !hidden.has(group.id),
+  )
 }
 
 // ── Public API ────────────────────────────────────────────────────
 
-/** Every group, in file order. The result is a copy; mutating it is safe. */
+/** Stored custom groups only; synthetic legacy references stay out of lists. */
 export async function listRoutingGroups(): Promise<Array<RoutingGroup>> {
-  return structuredClone(await ensureLoaded())
+  const stored = await ensureLoaded()
+  return structuredClone(stored)
 }
 
 export async function getRoutingGroup(
@@ -406,7 +506,10 @@ export async function getRoutingGroup(
 ): Promise<RoutingGroup | undefined> {
   const groups = await ensureLoaded()
   const found = groups.find((group) => group.id === id)
-  return found ? structuredClone(found) : undefined
+  if (found) return structuredClone(found)
+  const derived = currentDerivedGroups().find((group) => group.id === id)
+  // Resolve old client references without advertising synthetic groups.
+  return derived ? structuredClone({ ...derived, routing: "smart" }) : undefined
 }
 
 /** Insert or replace one group, keeping its position in the list. */
@@ -415,9 +518,11 @@ export async function upsertRoutingGroup(
 ): Promise<RoutingGroup> {
   return mutex.runExclusive(async () => {
     const groups = await ensureLoaded()
-    const knownGroupIds = groups
-      .map((existing) => existing.id)
-      .filter((id) => id !== group.id)
+    // Derived ids count too, so a stored group may nest `group/auto-…`.
+    const knownGroupIds = [
+      ...groups.map((existing) => existing.id),
+      ...currentDerivedGroups().map((derived) => derived.id),
+    ].filter((id) => id !== group.id)
     const validated = validateGroup(group, { knownGroupIds })
 
     const next = groups.slice()
@@ -430,15 +535,45 @@ export async function upsertRoutingGroup(
   })
 }
 
-/** Remove one group. True when a group was there to remove. */
+/**
+ * Remove one group. A stored group is deleted; a derived one the user removes
+ * is only hidden (recorded by id), so it stays gone without being written out.
+ * True when there was a stored or derived group to remove.
+ */
 export async function deleteRoutingGroup(id: string): Promise<boolean> {
   return mutex.runExclusive(async () => {
     const groups = await ensureLoaded()
     const next = groups.filter((group) => group.id !== id)
-    if (next.length === groups.length) return false
-    await persist(next)
+    if (next.length !== groups.length) {
+      await persist(next)
+      return true
+    }
+    if (hiddenAutoGroups.includes(id)) return false
+    if (!currentDerivedGroups().some((group) => group.id === id)) return false
+    await persist(groups, [...hiddenAutoGroups, id])
     return true
   })
+}
+
+/**
+ * Bring back a derived group the user removed, by dropping its hidden record.
+ * True when there was one to restore.
+ */
+export async function restoreAutoGroup(id: string): Promise<boolean> {
+  return mutex.runExclusive(async () => {
+    if (!hiddenAutoGroups.includes(id)) return false
+    await persist(
+      await ensureLoaded(),
+      hiddenAutoGroups.filter((hidden) => hidden !== id),
+    )
+    return true
+  })
+}
+
+/** The ids of derived groups the user removed, so an editor can list them. */
+export async function listHiddenAutoGroups(): Promise<Array<string>> {
+  await ensureLoaded()
+  return [...hiddenAutoGroups]
 }
 
 /** Replace the whole list, validating every group (and id uniqueness) first. */
@@ -455,5 +590,6 @@ export async function replaceRoutingGroups(
 /** Forget the in-memory cache, so the next call reads the file again. */
 export function clearRoutingGroupsCacheForTest(): void {
   cache = []
+  hiddenAutoGroups = []
   cachePath = undefined
 }

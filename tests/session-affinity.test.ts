@@ -356,8 +356,8 @@ describe("antigravity stable session id", () => {
 })
 
 describe("cache utilization defaults", () => {
-  test("defaults maximize prompt-cache utilization", () => {
-    expect(CACHE_UTILIZATION_DEFAULTS.strategy).toBe("fill-first")
+  test("defaults balance quota while retaining session cache affinity", () => {
+    expect(CACHE_UTILIZATION_DEFAULTS.strategy).toBe("quota")
     expect(CACHE_UTILIZATION_DEFAULTS.sessionAffinity).toBe(true)
     expect(CACHE_UTILIZATION_DEFAULTS.identityConfuse).toBe(false)
     expect(CACHE_UTILIZATION_DEFAULTS.sessionAffinityTtlMs).toBe(
@@ -365,8 +365,9 @@ describe("cache utilization defaults", () => {
     )
   })
 
-  test("fill-first default sticks new sessions without session id", () => {
+  test("explicit fill-first sticks new sessions without session id", () => {
     resetRoutingForTest() // production defaults
+    state.routing.strategy = "fill-first"
     const candidates = [
       makeTarget("conn-b", "cred-b"),
       makeTarget("conn-a", "cred-a"),

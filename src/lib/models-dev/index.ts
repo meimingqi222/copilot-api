@@ -7,6 +7,7 @@ export {
 } from "~/lib/models-dev/client"
 export { buildPricingLookupCandidates } from "~/lib/models-dev/normalize"
 export {
+  resolveModelsDevContext,
   resolveModelsDevPrice,
   resolveModelsDevPriceDetailed,
 } from "~/lib/models-dev/resolve"

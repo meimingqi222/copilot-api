@@ -2,7 +2,7 @@
 //
 // Feeds the `least-used` routing policy and the trace view's "served lately"
 // column. Tokens decay with a 1h half-life so a burst an hour ago weighs half
-// as much as the same burst now — the same shape as magpie's tokenUse.now.
+// as much as the same burst now.
 // Memory-only on purpose: a restart relearns within a few requests, and this
 // counter must never block the request path on persistence.
 

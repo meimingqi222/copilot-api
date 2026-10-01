@@ -61,7 +61,7 @@ if (!delivered) { this.abort(); throw … `the agent is not waiting for tool res
 
 一次回复里的多个工具调用现在都能落地，进程也不会被误杀。代价是"没人等"不再是一个
 响亮的错误：一个凭空捏造的 `tool_use_id` 会被安静地存起来，run 继续等它的调用。
-这是有意的取舍 —— 它和 magpie 的 `early` 表行为一致（那边同样把这些结果先收着），
+这是有意的取舍 —— 把这些结果先收着，
 而且比"因为一个多余的结果杀掉整条 run"划算得多。
 
 ## Verification

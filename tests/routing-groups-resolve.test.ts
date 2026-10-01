@@ -20,6 +20,7 @@ import {
 } from "~/lib/routing-groups"
 import {
   groupModelReference,
+  orderMembersForRouting,
   parseGroupReference,
   resolveGroupMember,
 } from "~/lib/routing-groups/resolve"
@@ -78,7 +79,7 @@ describe("resolveGroupMember", () => {
     ).toMatchObject({ member: "openai/gpt-5", ruleIndex: 0 })
   })
 
-  test("falls back to pick when no rule matches, and to undefined without one", () => {
+  test("falls back to pick, then to the first member, when no rule matches", () => {
     const picked = makeGroup({
       pick: "openai/o3",
       rules: [{ use: "openai/gpt-5", effort: "xhigh" }],
@@ -90,7 +91,15 @@ describe("resolveGroupMember", () => {
     expect(resolved?.member).toBe("openai/o3")
     expect(resolved?.ruleIndex).toBeUndefined()
 
-    expect(resolveGroupMember(makeGroup(), { at: localNoon() })).toBeUndefined()
+    // No pick and no matching rule: the first member leads.
+    expect(resolveGroupMember(makeGroup(), { at: localNoon() })).toMatchObject({
+      member: "openai/gpt-5",
+    })
+
+    // Nothing to lead with at all still resolves to undefined.
+    expect(
+      resolveGroupMember(makeGroup({ members: [] }), { at: localNoon() }),
+    ).toBeUndefined()
   })
 
   test("splits :effort and :fast off the chosen member", () => {
@@ -145,6 +154,67 @@ describe("resolveGroupMember", () => {
       model: "vendor/model:fast",
       fast: false,
     })
+  })
+})
+
+describe("orderMembersForRouting", () => {
+  const group = (overrides: Partial<RoutingGroup> = {}): RoutingGroup => ({
+    id: "g",
+    name: "G",
+    members: ["a/m1", "b/m2", "c/m3"],
+    rules: [],
+    ...overrides,
+  })
+
+  test("order keeps the chosen member first, then the rest in order", () => {
+    expect(orderMembersForRouting(group(), "b/m2")).toEqual([
+      "b/m2",
+      "a/m1",
+      "c/m3",
+    ])
+  })
+
+  test("a matching rule leads whatever the routing mode", () => {
+    expect(
+      orderMembersForRouting(group({ routing: "rotate" }), "b/m2", {
+        ruleMatched: true,
+        turnKey: "t",
+      }),
+    ).toEqual(["b/m2", "a/m1", "c/m3"])
+  })
+
+  test("manual keeps only the pick", () => {
+    expect(
+      orderMembersForRouting(
+        group({ routing: "manual", pick: "c/m3" }),
+        "a/m1",
+      ),
+    ).toEqual(["c/m3"])
+  })
+
+  test("rotate is stable for one turn and moves the head across turns", () => {
+    const g = group({ routing: "rotate" })
+    const once = orderMembersForRouting(g, "a/m1", { turnKey: "turn-1" })
+    expect(orderMembersForRouting(g, "a/m1", { turnKey: "turn-1" })).toEqual(
+      once,
+    )
+    expect(once).toHaveLength(3)
+    // The lead is always a real member.
+    expect(g.members).toContain(once[0]!)
+  })
+
+  test("smart / usage rank the members by allowance", () => {
+    const reversed = (members: Array<string>) => [...members].reverse()
+    expect(
+      orderMembersForRouting(group({ routing: "smart" }), "a/m1", {
+        rankByAllowance: reversed,
+      }),
+    ).toEqual(["c/m3", "b/m2", "a/m1"])
+    expect(
+      orderMembersForRouting(group({ routing: "usage" }), "a/m1", {
+        rankByAllowance: reversed,
+      }),
+    ).toEqual(["c/m3", "b/m2", "a/m1"])
   })
 })
 

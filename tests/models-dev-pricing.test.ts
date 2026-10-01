@@ -6,6 +6,7 @@ import type { ModelsDevCatalog } from "~/lib/models-dev"
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import {
   buildPricingLookupCandidates,
+  resolveModelsDevContext,
   resolveModelsDevPrice,
   resolveModelsDevPriceDetailed,
   setModelsDevCatalogForTest,
@@ -392,5 +393,33 @@ describe("GET /admin/api/usage/pricing", () => {
       body.pricing["mimo-aistudio/mimo-v2.5-pro"].promptPricePer1k,
     ).toBeCloseTo(0.001, 10)
     expect(body.pricing["windsurf/swe-1-6-fast"].promptPricePer1k).toBe(0)
+  })
+})
+
+describe("models.dev context resolver", () => {
+  test("reads limit.context, provider-scoped and by model tail", () => {
+    setModelsDevCatalogForTest({
+      anthropic: {
+        id: "anthropic",
+        name: "Anthropic",
+        models: {
+          "claude-sonnet-4-5": {
+            id: "claude-sonnet-4-5",
+            limit: { context: 1_000_000 },
+          },
+          "claude-opus-4-5": {
+            id: "claude-opus-4-5",
+            limit: { context: 200_000 },
+          },
+        },
+      },
+    } as ModelsDevCatalog)
+
+    expect(resolveModelsDevContext("claude-sonnet-4-5", "claude")).toBe(
+      1_000_000,
+    )
+    expect(resolveModelsDevContext("claude-opus-4-5", "claude")).toBe(200_000)
+    // A model models.dev does not name has no window.
+    expect(resolveModelsDevContext("nope-1", "claude")).toBeUndefined()
   })
 })

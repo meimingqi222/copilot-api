@@ -4,6 +4,7 @@ import { forwardError } from "~/lib/error"
 import { getPublicModelData } from "~/lib/model-catalog"
 import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
+import { publicRoutingGroupModels } from "~/lib/routing-groups/catalog"
 import { isUserAllowedModel, type User } from "~/lib/users"
 import { refreshModelsForAllAccounts } from "~/lib/utils"
 import {
@@ -20,10 +21,15 @@ modelRoutes.get("/", async (c) => {
     }
 
     const user = c.get("user" as never) as User | undefined
-    const filtered =
-      state.models?.data.filter(
-        (model) => !user || isUserAllowedModel(user, model.id),
-      ) ?? []
+    const catalog = new Map(
+      [
+        ...(state.models?.data ?? []),
+        ...(await publicRoutingGroupModels()),
+      ].map((model) => [model.id, model]),
+    )
+    const filtered = [...catalog.values()].filter(
+      (model) => !user || isUserAllowedModel(user, model.id),
+    )
 
     // Grok Shell / Grok Build clients expect a dedicated model catalog shape
     // (api_backend, supported_in_api, reasoning_efforts). Mirrors CPA

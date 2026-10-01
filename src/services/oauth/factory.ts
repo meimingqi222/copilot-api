@@ -1,7 +1,7 @@
 /**
  * Factory (factory.ai / Droid CLI) OAuth：WorkOS 设备流登录 + 刷新。
  *
- * droid 的登录就是 WorkOS 的设备流（droid 自己的 client），magpie 原样复刻：
+ * droid 的登录就是 WorkOS 的设备流（droid 自己的 client）：
  *
  *   设备码  POST {workos}/authorize/device      form: client_id
  *   轮询    POST {workos}/authenticate          grant_type=device_code
@@ -40,7 +40,7 @@ export const FACTORY_API_EU_BASE = "https://api.eu.factory.ai"
 
 /** droid 的 WorkOS client（生产）。 */
 const FACTORY_CLIENT_ID = "client_01HNM792M5G5G1A2THWPXKFMXB"
-/** magpie 请求自称的 droid 版本。 */
+/** 请求自称的 droid 版本。 */
 export const FACTORY_CLI_VERSION = "0.229.0"
 
 const FACTORY_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"

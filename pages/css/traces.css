@@ -1,13 +1,4 @@
-/*
- * Requests / 请求追踪 — live routing trace.
- *
- * A data packet crossing the gateway: client -> gateway -> connection ->
- * credential -> upstream, with a warm response packet coming back and a
- * rejected packet hopping to the next candidate on failover. Ambient motion
- * (ripples, pulses) is CSS; the travel itself is driven by Motion from
- * traces.js. Everything is prefixed `tr-` to stay clear of the other views.
- */
-
+/* Request routing: client, gateway, and every matching provider. */
 .trace-view {
   --tr-rail: var(--apple-border);
   --tr-ok: var(--apple-green);
@@ -16,9 +7,6 @@
   --tr-cancel: var(--apple-purple);
   position: relative;
 }
-
-/* ---------- header / stats ---------- */
-
 .tr-subtitle {
   font-size: 0.8125rem;
   color: var(--apple-text-secondary);
@@ -63,386 +51,351 @@
   background: var(--tr-ok);
 }
 
-/* Composited pulse ring (scale/opacity only) instead of animating box-shadow,
-   which would repaint every frame. */
-.tr-live-dot.on::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 9999px;
-  background: var(--tr-ok);
-  animation: tr-live-pulse 2s ease-out infinite;
-}
-
-@keyframes tr-live-pulse {
-  0% {
-    transform: scale(1);
-    opacity: 0.5;
-  }
-  70% {
-    transform: scale(2.6);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(2.6);
-    opacity: 0;
-  }
-}
-
-/* ---------- stage / lane ---------- */
-
 .tr-stage {
-  position: relative;
-  padding: 2.25rem 1.5rem;
-  border-radius: 1rem;
-  background: var(--apple-bg-secondary);
+  padding: 20px;
   border: 1px solid var(--apple-border);
-  overflow: hidden;
-  /* Isolate the stage's paint/layout so packet motion never invalidates the
-     rest of the page. */
-  contain: layout paint;
+  border-radius: 14px;
+  background: var(--apple-bg);
 }
-
+.tr-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  min-height: 30px;
+}
+.tr-mode-label {
+  font-weight: 600;
+  color: var(--apple-text);
+}
+.tr-stage-status {
+  flex: 1;
+  color: var(--apple-text-secondary);
+}
+.tr-group-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.tr-group-banner-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+.tr-group-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.tr-group-count,
+.tr-group-tag,
+.tr-group-strategy {
+  color: var(--apple-text-secondary);
+}
+.tr-group-banner-right {
+  display: none;
+}
 .tr-lane {
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0;
-  width: 100%;
-  z-index: 2;
-}
-
-.tr-node {
-  /* Share the lane's width so the row always fits its container instead of
-     running past the right edge and getting clipped. */
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: 18rem;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.75rem 1rem;
-  border-radius: 0.875rem;
-  background: var(--apple-bg);
-  border: 1px solid var(--apple-border);
-  box-shadow: var(--apple-shadow-sm);
-  transition:
-    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
-    border-color 0.3s ease,
-    box-shadow 0.3s ease;
-}
-
-.tr-node.tr-node-client {
-  flex: 0 1 10rem;
-  max-width: 12rem;
-}
-
-.tr-node.tr-node-gateway {
-  cursor: default;
-  flex: 0 1 14rem;
-}
-
-.tr-node-gateway .tr-node-title {
-  font-weight: 600;
-}
-
-.tr-node-icon {
-  width: 2rem;
-  height: 2rem;
-  border-radius: 0.5rem;
   display: grid;
-  place-items: center;
-  background: var(--apple-bg-tertiary);
-  color: var(--apple-text-secondary);
-  flex: 0 0 auto;
+  grid-template-columns: 132px 140px minmax(0, 1fr);
+  column-gap: 56px;
+  align-items: center;
+  min-height: 200px;
+  padding: 24px 0;
 }
-
-.tr-node-icon svg {
-  width: 1.125rem;
-  height: 1.125rem;
-}
-
-.tr-node-body {
-  min-width: 0;
-  overflow: hidden;
-}
-
-.tr-node-title {
-  display: block;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--apple-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tr-node-sub {
-  display: block;
-  font-size: 0.6875rem;
-  color: var(--apple-text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tr-node.active {
-  border-color: color-mix(in srgb, var(--apple-blue) 55%, var(--apple-border));
-  box-shadow:
-    var(--apple-shadow-sm),
-    0 0 0 4px color-mix(in srgb, var(--apple-blue) 12%, transparent);
-}
-
-.tr-node.hit-ok {
-  border-color: color-mix(in srgb, var(--tr-ok) 60%, var(--apple-border));
-  box-shadow:
-    var(--apple-shadow-sm),
-    0 0 0 4px color-mix(in srgb, var(--tr-ok) 16%, transparent);
-}
-
-.tr-node.hit-fail {
-  border-color: color-mix(in srgb, var(--tr-fail) 65%, var(--apple-border));
-  box-shadow:
-    var(--apple-shadow-sm),
-    0 0 0 4px color-mix(in srgb, var(--tr-fail) 16%, transparent);
-  animation: tr-shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) 1;
-}
-
-@keyframes tr-shake {
-  10%,
-  90% {
-    transform: translateX(-1.5px);
-  }
-  20%,
-  80% {
-    transform: translateX(2.5px);
-  }
-  30%,
-  50%,
-  70% {
-    transform: translateX(-3.5px);
-  }
-  40%,
-  60% {
-    transform: translateX(3.5px);
-  }
-}
-
-/* connector rails between nodes */
-.tr-rail {
-  flex: 0 0 1.75rem;
-  min-width: 1.25rem;
-  height: 2px;
-  position: relative;
-  background: linear-gradient(
-    90deg,
-    var(--tr-rail),
-    var(--tr-rail) 50%,
-    transparent 50%,
-    transparent
-  );
-  background-size: 8px 2px;
-  opacity: 0.6;
-}
-
-/* overlay for the flying packets (absolute, above nodes) */
-.tr-packets {
+.tr-wires,
+.tr-flights {
   position: absolute;
   inset: 0;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.tr-packet {
-  position: absolute;
-  top: 50%;
-  width: 0.625rem;
-  height: 0.625rem;
-  margin-top: -0.3125rem;
-  border-radius: 9999px;
-  /* Own compositor layer up front, so the multi-stop keyframe glide never
-     triggers a repaint or a late promote. */
-  will-change: transform;
-  transform: translate3d(0, 0, 0);
-  backface-visibility: hidden;
-}
-
-.tr-packet.req {
-  background: var(--apple-blue);
-  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--apple-blue) 55%, transparent);
-}
-
-.tr-packet.res {
-  background: var(--tr-ok);
-  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--tr-ok) 55%, transparent);
-}
-
-.tr-packet.res-fail {
-  background: var(--tr-fail);
-  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--tr-fail) 55%, transparent);
-}
-
-/* In-flight: parked on the frontier node, breathing until the request settles. */
-.tr-packet.pending {
-  animation: tr-breathe 1.15s ease-in-out infinite;
-}
-
-@keyframes tr-breathe {
-  0%,
-  100% {
-    transform: scale(0.65);
-    opacity: 0.45;
-  }
-  50% {
-    transform: scale(1.15);
-    opacity: 1;
-  }
-}
-
-.tr-packet::after {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border-radius: 9999px;
-  background: inherit;
-  opacity: 0.35;
-  animation: tr-packet-halo 1.1s ease-out infinite;
-}
-
-@keyframes tr-packet-halo {
-  0% {
-    transform: scale(0.6);
-    opacity: 0.5;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-}
-
-/* a spark when the first token lands */
-.tr-spark {
-  position: absolute;
-  top: 50%;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-top: -0.25rem;
-  border-radius: 9999px;
-  background: var(--tr-ok);
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   pointer-events: none;
 }
-
-/* dashed return path label */
-.tr-return {
-  position: absolute;
-  right: 1.5rem;
-  bottom: 0.75rem;
-  font-size: 0.6875rem;
-  color: var(--apple-text-secondary);
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
+.tr-flights {
+  z-index: 2;
 }
-
-/* ---------- candidate paths ---------- */
-
-.tr-cands {
-  margin-top: 1.25rem;
+.tr-flight-path {
+  fill: none;
+  stroke: none;
 }
-
-.tr-cands-head {
-  display: flex;
-  align-items: baseline;
-  gap: 0.625rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--apple-text);
-  margin-bottom: 0.5rem;
+.tr-wire {
+  fill: none;
+  stroke: var(--apple-border);
+  stroke-width: 1.5;
 }
-
-.tr-cands-note {
-  font-weight: 400;
-  color: var(--apple-text-secondary);
+.tr-wire.waiting,
+.tr-wire.streaming {
+  stroke: var(--apple-blue);
+  stroke-dasharray: 3 5;
+  animation: tr-flow 0.7s linear infinite;
 }
-
-.tr-cand-list {
+.tr-wire.streaming {
+  animation-direction: reverse;
+}
+.tr-wire.answered {
+  stroke: var(--apple-text-secondary);
+}
+.tr-wire.failed {
+  stroke: var(--tr-fail);
+  stroke-dasharray: 3 5;
+}
+.tr-wire.resting,
+.tr-wire.cancelled {
+  stroke-dasharray: 2 6;
+  opacity: 0.5;
+}
+@keyframes tr-flow {
+  to {
+    stroke-dashoffset: -8;
+  }
+}
+.tr-flow-packet {
+  fill: var(--packet-color, var(--apple-blue));
+}
+.tr-flow-packet.held {
+  animation: tr-blink 1.2s ease-in-out infinite;
+}
+.tr-flow-packet.back {
+  fill: var(--apple-bg);
+  stroke: var(--packet-color, var(--apple-blue));
+  stroke-width: 2;
+}
+.tr-flow-packet.error {
+  stroke: var(--tr-fail);
+}
+.tr-node {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
-}
-
-.tr-cand {
-  display: flex;
   align-items: center;
-  gap: 0.625rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.625rem;
+  gap: 8px;
+  padding: 16px 10px;
+  min-width: 0;
+  border: 1px solid var(--apple-border);
+  border-radius: 12px;
+  background: var(--apple-bg);
+  text-align: center;
+}
+.tr-node-gateway {
+  border-color: var(--apple-text-secondary);
+  box-shadow: 0 0 0 4px var(--apple-bg-secondary);
+}
+.tr-node-icon {
+  display: inline-flex;
+  color: var(--apple-text-secondary);
+}
+.tr-node-icon svg {
+  width: 26px;
+  height: 26px;
+}
+.tr-node-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.tr-node-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-node-sub {
+  font-size: 11px;
+  color: var(--apple-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-hub-strategy {
+  font-size: 10px;
+  color: var(--apple-bg);
+  background: var(--apple-text);
+  border-radius: 5px;
+  padding: 2px 8px;
+}
+.tr-cand-list {
+  display: grid;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+.tr-cand {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+  padding: 10px 12px;
   background: var(--apple-bg);
   border: 1px solid var(--apple-border);
-  opacity: 0.72;
+  border-radius: 10px;
+  min-width: 0;
   transition:
-    opacity 0.3s ease,
-    border-color 0.3s ease;
+    border-color 180ms ease,
+    background 180ms ease;
 }
-
-.tr-cand.chosen {
-  opacity: 1;
-  border-color: color-mix(in srgb, var(--tr-ok) 55%, var(--apple-border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tr-ok) 12%, transparent);
+.tr-cand.waiting,
+.tr-cand.streaming {
+  border-color: var(--apple-blue);
 }
-
-.tr-cand .tr-dot {
-  flex: 0 0 auto;
+.tr-cand.answered {
+  border-color: var(--apple-text-secondary);
 }
-
+.tr-cand.failed {
+  border-color: color-mix(in srgb, var(--tr-fail) 55%, var(--apple-border));
+}
+.tr-cand.resting {
+  border-style: dashed;
+}
+.tr-cand.resting .tr-cand-main {
+  opacity: 0.55;
+}
 .tr-cand-main {
   min-width: 0;
-  flex: 1 1 auto;
+}
+.tr-cand-top {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
-
+.tr-provider-icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+}
+.tr-provider-icon img,
+.tr-provider-icon svg {
+  width: 16px;
+  height: 16px;
+}
 .tr-cand-route {
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--apple-text);
-  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.tr-cand-sub {
-  font-size: 0.6875rem;
+.tr-cand-model {
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    monospace;
   color: var(--apple-text-secondary);
-  white-space: nowrap;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.tr-cand-ev {
-  font-size: 0.625rem;
+.tr-cand-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
   color: var(--apple-text-secondary);
-  opacity: 0.85;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
-
 .tr-cand-status {
-  flex: 0 0 auto;
-  font-size: 0.6875rem;
+  font-size: 11px;
   color: var(--apple-text-secondary);
-  padding: 0.125rem 0.5rem;
-  border-radius: 9999px;
-  background: var(--apple-bg-tertiary);
+  text-align: right;
 }
-
-.tr-cand.chosen .tr-cand-status {
-  color: color-mix(in srgb, var(--tr-ok) 80%, var(--apple-text));
-  background: color-mix(in srgb, var(--tr-ok) 16%, transparent);
+.tr-cand.failed .tr-cand-status {
+  color: var(--tr-fail);
 }
-
+.tr-cand.waiting .tr-cand-status,
+.tr-cand.streaming .tr-cand-status {
+  color: var(--apple-blue);
+}
+.tr-cand-dot {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid var(--apple-text-secondary);
+  border-radius: 50%;
+}
+.tr-cand.waiting .tr-cand-dot,
+.tr-cand.streaming .tr-cand-dot {
+  border-color: var(--apple-blue);
+  background: var(--apple-blue);
+}
+.tr-cand.answered .tr-cand-dot {
+  background: var(--apple-text);
+  border-color: var(--apple-text);
+}
+.tr-cand.failed .tr-cand-dot {
+  background: var(--tr-fail);
+  border-color: var(--tr-fail);
+}
+.tr-quota-bar {
+  grid-column: 2 / 4;
+  height: 3px;
+  background: var(--apple-bg-secondary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.tr-quota-bar span {
+  display: block;
+  height: 100%;
+  background: var(--apple-text-secondary);
+}
+.tr-cand-placeholder {
+  font-size: 12px;
+  padding: 16px;
+  color: var(--apple-text-secondary);
+  border: 1px dashed var(--apple-border);
+  border-radius: 10px;
+}
+.tr-return {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--apple-text-secondary);
+  padding-top: 12px;
+  border-top: 1px solid var(--apple-border);
+}
+.tr-replay-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.tr-replay-controls progress {
+  flex: 1;
+  min-width: 100px;
+  height: 5px;
+  accent-color: var(--apple-blue);
+}
+.tr-history-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+}
+.tr-history-filter input {
+  padding: 4px 8px;
+  color: var(--apple-text);
+  background: var(--apple-bg);
+  border: 1px solid var(--apple-border);
+  border-radius: 6px;
+}
+.tr-list {
+  max-height: 440px;
+  overflow-y: auto;
+}
 /* ---------- explanations ---------- */
 
 .tr-explain {
@@ -516,7 +469,8 @@
 
 .tr-row.selected {
   background: color-mix(in srgb, var(--apple-blue) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--apple-blue) 35%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--apple-blue) 35%, transparent);
 }
 
 .tr-row-time {
@@ -749,14 +703,49 @@
 }
 
 @media (max-width: 900px) {
+  .tr-lane {
+    grid-template-columns: 100px 110px minmax(0, 1fr);
+    column-gap: 30px;
+  }
+  .tr-stage {
+    padding: 14px;
+  }
+  .tr-cand-top {
+    flex-wrap: wrap;
+  }
+  .tr-cand-model {
+    flex-basis: 100%;
+    margin-left: 24px;
+  }
   .tr-stats {
-    gap: 1rem;
+    gap: 14px;
   }
-  .tr-node {
-    padding: 0.625rem 0.75rem;
+}
+@media (max-width: 620px) {
+  .tr-lane {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 28px;
   }
-  .tr-rail {
-    flex-basis: 1rem;
-    min-width: 0.75rem;
+  .tr-cand-list {
+    grid-column: 1 / -1;
+    margin-left: 24px;
+  }
+  .tr-cand {
+    grid-template-columns: 8px minmax(0, 1fr);
+  }
+  .tr-cand-status {
+    grid-column: 2;
+    text-align: left;
+  }
+  .tr-quota-bar {
+    grid-column: 2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .trace-view *,
+  .trace-view *::before,
+  .trace-view *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }

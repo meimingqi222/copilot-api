@@ -3,7 +3,7 @@
  *
  * 流程（RSA + loopback 回调）：
  *
- *   1. magpie 生成一把 RSA-2048 私钥，公钥 = PKCS#1 DER 的 url-safe base64；
+ *   1. 生成一把 RSA-2048 私钥，公钥 = PKCS#1 DER 的 url-safe base64；
  *   2. 打开 https://zed.dev/native_app_signin?native_app_port=<port>
  *      &native_app_public_key=<pub>&system_id=<uuid>；
  *   3. 浏览器回到 loopback 的**任意路径**，query 带 `user_id` 与

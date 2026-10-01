@@ -120,6 +120,21 @@ export function isOAuthProviderId(value: string): value is OAuthProviderId {
   return OAUTH_PROVIDER_IDS.includes(value as OAuthProviderId)
 }
 
+/**
+ * Provider 的产品是「订阅套餐」而非「预付费钱包」的集合。
+ *
+ * 套餐把额度报成滚动窗口的份额（quota 子系统），而不是钱包里的钱。这类
+ * provider 的计费端点描述的是套餐 credits，不是余额：按钱包读它会把一个
+ * 额度充足的账号读成 `$0.00`，进而被余额闸门踢出路由（见 lib/balance）。
+ * 因此它们不参与余额探测——真正的耗尽交给 windowLimits / 上游 402 的
+ * quota 路径。
+ */
+const PLAN_BASED_PROVIDER_IDS = ["commandcode-plan"] as const
+
+export function isPlanBasedProvider(value: string): boolean {
+  return (PLAN_BASED_PROVIDER_IDS as ReadonlyArray<string>).includes(value)
+}
+
 const OAUTH_ACCOUNT_FIELDS: Array<ProviderFieldSchema> = [
   {
     key: "proxyUrl",

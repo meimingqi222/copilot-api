@@ -191,17 +191,17 @@ export function providerHasCacheFeature(
 }
 
 /**
- * Defaults tuned for maximum prompt-cache utilization (L0).
+ * Shared routing defaults balance allowance with prompt-cache reuse (L0).
  *
- * - fill-first: new sessions without affinity keys land on the same
- *   credential, so even hash-less traffic shares an upstream cache namespace.
+ * - quota: new sessions use allowance pressure and renewal times within the
+ *   primary priority tier, using a healthy backup when the primary is spent.
  * - sessionAffinity: known sessions stick across turns (including failover
  *   rebind when the bound credential is unavailable).
  * - 2h sliding TTL: long agent sessions keep binding without re-scatter.
  * - identityConfuse off: does not improve hit rate (Codex TOS paranoia only).
  */
 export const CACHE_UTILIZATION_DEFAULTS: {
-  strategy: "round-robin" | "fill-first"
+  strategy: "round-robin" | "fill-first" | "quota"
   sessionAffinity: boolean
   sessionAffinityTtlMs: number
   identityConfuse: boolean
@@ -209,7 +209,7 @@ export const CACHE_UTILIZATION_DEFAULTS: {
   quotaLowShare: number
   quotaSpentShare: number
 } = {
-  strategy: "fill-first",
+  strategy: "quota",
   sessionAffinity: true,
   sessionAffinityTtlMs: 2 * 60 * 60_000,
   identityConfuse: false,

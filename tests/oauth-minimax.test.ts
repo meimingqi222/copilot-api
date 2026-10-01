@@ -15,7 +15,9 @@ import {
 import { setModelsDevCatalogForTest } from "~/lib/models-dev"
 import {
   fetchMinimaxQuota,
+  parseMinimaxCredits,
   parseMinimaxQuota,
+  parseMinimaxWorkspaceCredits,
 } from "~/lib/quota/fetchers/minimax"
 import { getOAuthFallbackModelsForConnection } from "~/services/oauth/model-catalog"
 import {
@@ -558,5 +560,272 @@ describe("MiniMax Code quota", () => {
       )) as unknown as typeof fetch
 
     await expect(fetchMinimaxQuota(createConnection())).rejects.toThrow(/1004/)
+  })
+
+  // ── 积分（Credits）：没有订阅不等于没有钱 ──────────────────────────
+
+  /** 实测的 2062 响应：模型面还在，只是这个账号没有生效的 Token Plan。 */
+  const noTokenPlanBody = {
+    model_remains: null,
+    base_resp: {
+      status_code: 2062,
+      status_msg: "no active token plan subscription",
+    },
+  }
+
+  /** 实测的 get_membership_info：积分在 op_credit_summary 里。 */
+  const membershipBody = {
+    has_token_plan: false,
+    // 迁移到 OP 之后这个老字段常年是 0，不能拿它当余额。
+    opcredit_balance: 0,
+    op_credit_summary: {
+      total_remaining_amount: "4,799.408",
+      purchased_remaining_amount: "0",
+      free_remaining_amount: "4,799.408",
+    },
+    base_resp: { status_code: 0, status_msg: "success" },
+    subscription_type: "none",
+  }
+
+  interface SeenRequest {
+    url: string
+    method: string
+    body?: string
+    headers: Record<string, string>
+  }
+
+  function routeFetch(
+    routes: Array<{ match: string; body: unknown; status?: number }>,
+  ): Array<SeenRequest> {
+    const seen: Array<SeenRequest> = []
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      const url = String(input)
+      seen.push({
+        url,
+        method: init?.method ?? "GET",
+        body: typeof init?.body === "string" ? init.body : undefined,
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      })
+      const route = routes.find((entry) => url.includes(entry.match))
+      if (!route) {
+        return Promise.resolve(
+          jsonResponse({ base_resp: { status_code: -1 } }, 404),
+        )
+      }
+      return Promise.resolve(jsonResponse(route.body, route.status ?? 200))
+    }) as unknown as typeof fetch
+    return seen
+  }
+
+  test("credit amounts survive the upstream's formatted strings", () => {
+    const credits = parseMinimaxCredits(JSON.stringify(membershipBody))
+    expect(credits?.total).toBe(4799.408)
+    expect(credits?.free).toBe(4799.408)
+    expect(credits?.purchased).toBe(0)
+    expect(credits?.hasTokenPlan).toBe(false)
+
+    // 摘要缺失才退回顶层 opcredit_balance（老账号）。
+    const legacy = parseMinimaxCredits(
+      JSON.stringify({ opcredit_balance: 120, has_token_plan: true }),
+    )
+    expect(legacy?.total).toBe(120)
+    expect(legacy?.hasTokenPlan).toBe(true)
+
+    // 一个数字都读不出来时返回 undefined，而不是编一个 0。
+    expect(parseMinimaxCredits(JSON.stringify({ base_resp: {} }))).toBe(
+      undefined,
+    )
+    expect(parseMinimaxCredits("not json")).toBe(undefined)
+  })
+
+  test("workspace credits come from the personal workspace", () => {
+    const credits = parseMinimaxWorkspaceCredits(
+      JSON.stringify({
+        workspaces: [
+          { workspace_id: 7, workspace_type: 1, opcredit_balance: 1 },
+          { workspace_id: 0, workspace_type: 0, opcredit_balance: 4799.408 },
+        ],
+      }),
+    )
+    expect(credits?.total).toBe(4799.408)
+    expect(parseMinimaxWorkspaceCredits(JSON.stringify({}))).toBe(undefined)
+  })
+
+  test("no token plan falls back to the credit wallet instead of failing", async () => {
+    const seen = routeFetch([
+      {
+        match: "/v1/api/openplatform/coding_plan/remains",
+        body: noTokenPlanBody,
+      },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: membershipBody,
+      },
+    ])
+
+    const snapshot = await fetchMinimaxQuota(createConnection())
+
+    // 订阅端点报“没有订阅”，但这不是错误：卡片改报积分。
+    expect(seen.map((request) => request.url)).toEqual([
+      "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+      "https://agent.minimax.io/matrix/api/v1/commerce/get_membership_info",
+    ])
+    const wallet = seen[1]!
+    expect(wallet.method).toBe("POST")
+    expect(wallet.body).toBe("{}")
+    expect(wallet.headers.Authorization).toBe("Bearer mmoat_access_old")
+
+    expect(snapshot.unlimited).toBe(false)
+    expect(snapshot.chatRemaining).toBe(4799.408)
+    expect(snapshot.chatTotal).toBe(undefined)
+    // 积分不是窗口占比：不给头号百分比，免得编出一个 100% 的进度环。
+    expect(snapshot.premiumInteractionsRemaining).toBe(undefined)
+    const details = snapshot.details?.minimax as
+      | {
+          kind?: string
+          hasTokenPlan?: boolean
+          windows?: Array<unknown>
+          credits?: { total?: number; free?: number }
+        }
+      | undefined
+    expect(details?.kind).toBe("credits")
+    expect(details?.hasTokenPlan).toBe(false)
+    expect(details?.windows).toEqual([])
+    expect(details?.credits?.total).toBe(4799.408)
+    expect(details?.credits?.free).toBe(4799.408)
+  })
+
+  test("an empty plan body (base_resp 0, no windows) also reads credits", async () => {
+    routeFetch([
+      {
+        match: "/v1/api/openplatform/coding_plan/remains",
+        body: { base_resp: { status_code: 0, status_msg: "success" } },
+      },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: membershipBody,
+      },
+    ])
+
+    const snapshot = await fetchMinimaxQuota(createConnection())
+    expect(snapshot.chatRemaining).toBe(4799.408)
+  })
+
+  test("a zero credit balance is reported as zero, not as an error", async () => {
+    routeFetch([
+      {
+        match: "/v1/api/openplatform/coding_plan/remains",
+        body: noTokenPlanBody,
+      },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: {
+          has_token_plan: false,
+          op_credit_summary: {
+            total_remaining_amount: "0",
+            purchased_remaining_amount: "0",
+            free_remaining_amount: "0",
+          },
+        },
+      },
+    ])
+
+    const snapshot = await fetchMinimaxQuota(createConnection())
+    // 0 是上游的断言（钱花完了）；配额状态机据此判耗尽。
+    expect(snapshot.chatRemaining).toBe(0)
+    const details = snapshot.details?.minimax as
+      | { credits?: { total?: number } }
+      | undefined
+    expect(details?.credits?.total).toBe(0)
+  })
+
+  test("the membership endpoint answers without a balance → fall back to the workspace", async () => {
+    routeFetch([
+      {
+        match: "/v1/api/openplatform/coding_plan/remains",
+        body: noTokenPlanBody,
+      },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: { base_resp: { status_code: 0, status_msg: "success" } },
+      },
+      {
+        match: "/matrix/api/v1/user/get_user_extra_info",
+        body: {
+          workspaces: [
+            { workspace_id: 0, workspace_type: 0, opcredit_balance: 321.5 },
+          ],
+        },
+      },
+    ])
+
+    const snapshot = await fetchMinimaxQuota(createConnection())
+    expect(snapshot.chatRemaining).toBe(321.5)
+  })
+
+  test("no plan and no readable credits still surfaces as a failure", async () => {
+    routeFetch([
+      {
+        match: "/v1/api/openplatform/coding_plan/remains",
+        body: noTokenPlanBody,
+      },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: { base_resp: { status_code: 0, status_msg: "success" } },
+      },
+      {
+        match: "/matrix/api/v1/user/get_user_extra_info",
+        body: { workspaces: [] },
+      },
+    ])
+
+    await expect(fetchMinimaxQuota(createConnection())).rejects.toThrow(
+      /no readable credit balance/,
+    )
+  })
+
+  test("a live plan still wins, and its credits ride along", async () => {
+    routeFetch([
+      { match: "/v1/api/openplatform/coding_plan/remains", body: remainsBody },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: {
+          has_token_plan: true,
+          op_credit_summary: { total_remaining_amount: "500" },
+        },
+      },
+    ])
+
+    const snapshot = await fetchMinimaxQuota(createConnection())
+    expect(snapshot.premiumInteractionsRemaining).toBe(75)
+    expect(snapshot.chatRemaining).toBe(75)
+    const details = snapshot.details?.minimax as
+      | {
+          kind?: string
+          windows?: Array<unknown>
+          credits?: { total?: number }
+        }
+      | undefined
+    expect(details?.kind).toBe("plan")
+    expect(details?.windows).toHaveLength(2)
+    expect(details?.credits?.total).toBe(500)
+  })
+
+  test("a failing wallet read never costs the plan reading", async () => {
+    routeFetch([
+      { match: "/v1/api/openplatform/coding_plan/remains", body: remainsBody },
+      {
+        match: "/matrix/api/v1/commerce/get_membership_info",
+        body: { base_resp: { status_code: 500, status_msg: "boom" } },
+        status: 500,
+      },
+    ])
+
+    const snapshot = await fetchMinimaxQuota(createConnection())
+    expect(snapshot.premiumInteractionsRemaining).toBe(75)
+    const details = snapshot.details?.minimax as
+      | { credits?: unknown }
+      | undefined
+    expect(details?.credits).toBe(undefined)
   })
 })

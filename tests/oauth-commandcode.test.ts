@@ -1,3 +1,5 @@
+import http from "node:http"
+
 import { afterEach, describe, expect, test } from "bun:test"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
@@ -35,6 +37,82 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   })
+}
+
+/**
+ * A loopback request that does not route through `globalThis.fetch`.
+ *
+ * These tests drive a real `Bun.serve` callback server, so they must not depend
+ * on whatever the global `fetch` currently is: a stub leaked from another test
+ * file used to reach them, and its response has no `status`. `node:http` is
+ * immune to that patching. The short retry covers the instant between the
+ * server binding and it accepting connections.
+ */
+async function httpRequest(options: {
+  port: number
+  path: string
+  method: string
+  headers?: Record<string, string>
+  body?: string
+}): Promise<{
+  status: number
+  body: string
+  header: (name: string) => string | undefined
+}> {
+  const once = () =>
+    new Promise<{
+      status: number
+      body: string
+      header: (name: string) => string | undefined
+    }>((resolve, reject) => {
+      const request = http.request(
+        {
+          host: "127.0.0.1",
+          port: options.port,
+          path: options.path,
+          method: options.method,
+          headers: options.headers,
+        },
+        (response) => {
+          const chunks: Array<Buffer> = []
+          response.on("data", (chunk: Buffer) => chunks.push(chunk))
+          response.on("end", () =>
+            resolve({
+              status: response.statusCode ?? 0,
+              body: Buffer.concat(chunks).toString("utf8"),
+              header: (name) => {
+                const value = response.headers[name.toLowerCase()]
+                return Array.isArray(value) ? value[0] : value
+              },
+            }),
+          )
+        },
+      )
+      request.on("error", reject)
+      if (options.body !== undefined) request.write(options.body)
+      request.end()
+    })
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await once()
+    } catch (error) {
+      const refused = (error as NodeJS.ErrnoException).code === "ECONNREFUSED"
+      if (!refused || attempt >= 20) throw error
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+}
+
+/** A port nothing is listening on, so the callback server can always bind. */
+async function freePort(): Promise<number> {
+  const probe = Bun.serve({ port: 0, fetch: () => new Response(null) })
+  const port = probe.port
+  await probe.stop(true)
+  if (port === undefined) {
+    throw new Error("Bun.serve did not report the bound port")
+  }
+  return port
 }
 
 afterEach(() => {
@@ -108,7 +186,7 @@ describe("commandcode registration", () => {
 
 describe("commandcode POST callback server", () => {
   test("accepts the key Studio POSTs (JSON) and resolves with it", async () => {
-    const port = 59721
+    const port = await freePort()
     const flowId = "cc-callback-json"
     const pending = startOAuthCallbackServer({
       flowId,
@@ -120,19 +198,18 @@ describe("commandcode POST callback server", () => {
       corsOrigins: ["https://commandcode.ai"],
     })
 
-    const response = await fetch(
-      `http://127.0.0.1:${port}${COMMANDCODE_CALLBACK_PATH}`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin: "https://commandcode.ai",
-        },
-        body: JSON.stringify({ apiKey: "cc-key", state: "state-1" }),
+    const response = await httpRequest({
+      port,
+      path: COMMANDCODE_CALLBACK_PATH,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://commandcode.ai",
       },
-    )
+      body: JSON.stringify({ apiKey: "cc-key", state: "state-1" }),
+    })
     expect(response.status).toBe(200)
-    expect(response.headers.get("access-control-allow-origin")).toBe(
+    expect(response.header("access-control-allow-origin")).toBe(
       "https://commandcode.ai",
     )
 
@@ -143,7 +220,7 @@ describe("commandcode POST callback server", () => {
   })
 
   test("answers the CORS preflight and rejects a state mismatch", async () => {
-    const port = 59722
+    const port = await freePort()
     const flowId = "cc-callback-form"
     const pending = startOAuthCallbackServer({
       flowId,
@@ -158,29 +235,27 @@ describe("commandcode POST callback server", () => {
       // rejected on mismatch below
     })
 
-    const preflight = await fetch(
-      `http://127.0.0.1:${port}${COMMANDCODE_CALLBACK_PATH}`,
-      {
-        method: "OPTIONS",
-        headers: {
-          origin: "https://commandcode.ai",
-          "access-control-request-private-network": "true",
-        },
+    const preflight = await httpRequest({
+      port,
+      path: COMMANDCODE_CALLBACK_PATH,
+      method: "OPTIONS",
+      headers: {
+        origin: "https://commandcode.ai",
+        "access-control-request-private-network": "true",
       },
-    )
+    })
     expect(preflight.status).toBe(204)
-    expect(preflight.headers.get("access-control-allow-private-network")).toBe(
+    expect(preflight.header("access-control-allow-private-network")).toBe(
       "true",
     )
 
-    const mismatch = await fetch(
-      `http://127.0.0.1:${port}${COMMANDCODE_CALLBACK_PATH}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: "apiKey=cc-key&state=wrong",
-      },
-    )
+    const mismatch = await httpRequest({
+      port,
+      path: COMMANDCODE_CALLBACK_PATH,
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "apiKey=cc-key&state=wrong",
+    })
     expect(mismatch.status).toBe(403)
     stopOAuthCallbackServer(flowId)
   })

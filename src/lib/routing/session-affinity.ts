@@ -70,7 +70,7 @@ export function affinitySessionKey(
 
 export function getSessionAffinity(
   cacheKey: string,
-  options: { refresh?: boolean; turnKey?: string } = {},
+  options: { refresh?: boolean; turnKey?: string; mode?: AffinityMode } = {},
 ): string | undefined {
   maybePruneAffinityEntries()
   const entry = entries.get(cacheKey)
@@ -81,7 +81,7 @@ export function getSessionAffinity(
     return undefined
   }
   // `turn`: a binding made in another turn is released.
-  const mode = affinityMode()
+  const mode = options.mode ?? affinityMode()
   if (
     mode === "turn"
     && entry.turnKey !== undefined
@@ -135,11 +135,14 @@ export function setSessionAffinity(
  */
 export function getSessionAffinityBySession(
   sessionKey: string,
-  options: { turnKey?: string } = {},
+  options: { turnKey?: string; mode?: AffinityMode } = {},
 ): string | undefined {
   const cacheKey = sessionIndex.get(sessionKey)
   if (!cacheKey) return undefined
-  const bound = getSessionAffinity(cacheKey, { turnKey: options.turnKey })
+  const bound = getSessionAffinity(cacheKey, {
+    turnKey: options.turnKey,
+    mode: options.mode,
+  })
   if (!bound) sessionIndex.delete(sessionKey)
   return bound
 }

@@ -5,7 +5,9 @@ import type { ModelsDevCatalog } from "~/lib/models-dev/types"
 
 import { logger } from "~/lib/logger"
 import {
+  buildModelsDevContextIndexes,
   buildModelsDevPriceIndexes,
+  type ModelsDevContextIndexes,
   type ModelsDevPriceIndexes,
 } from "~/lib/models-dev/catalog"
 import { MODELS_DEV_API_URL } from "~/lib/models-dev/provider-map"
@@ -15,6 +17,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000
 
 let indexes: ModelsDevPriceIndexes | null = null
+let contextIndexes: ModelsDevContextIndexes | null = null
 let catalog: ModelsDevCatalog | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight: Promise<void> | null = null
@@ -47,6 +50,12 @@ function parseCatalog(text: string): ModelsDevCatalog {
 function setCatalog(nextCatalog: ModelsDevCatalog): void {
   catalog = nextCatalog
   indexes = buildModelsDevPriceIndexes(nextCatalog)
+  contextIndexes = buildModelsDevContextIndexes(nextCatalog)
+}
+
+/** The context-window index, or null until the catalog has loaded once. */
+export function getModelsDevContextIndexes(): ModelsDevContextIndexes | null {
+  return contextIndexes
 }
 
 /**

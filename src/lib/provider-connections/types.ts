@@ -326,6 +326,8 @@ export interface ProviderConnection {
  * 从 connection 派生 Account。
  */
 export interface RouteTarget {
+  /** Group member that produced this target, including its effort/fast suffixes. */
+  groupMember?: string
   connectionId: string
   connectionName: string
   protocol: ProviderProtocol

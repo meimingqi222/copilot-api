@@ -72,11 +72,13 @@ function decide(
 describe("resolveGroupDecision", () => {
   test("the first matching rule names the member; pick answers otherwise", async () => {
     await expect(decide({ messageContent: BIG_TEXT })).resolves.toEqual({
+      routing: "order",
       groupId: "lane",
       member: "vendor/large-model",
       model: "vendor/large-model",
       fast: false,
       ruleIndex: 0,
+      members: ["vendor/large-model", "vendor/small-model"],
     })
 
     const small = await decide({ messageContent: "hi" })
@@ -97,9 +99,15 @@ describe("resolveGroupDecision", () => {
     ).resolves.toBeUndefined()
   })
 
-  test("a group with no rule match and no pick resolves to nothing", async () => {
+  test("a group with no rule match and no pick leads with its first member", async () => {
     const group = makeGroup({ rules: [], pick: undefined })
-    await expect(decide({}, group)).resolves.toBeUndefined()
+    await expect(decide({}, group)).resolves.toMatchObject({
+      member: "vendor/large-model",
+    })
+
+    // Nothing to lead with: a group with no members still resolves to nothing.
+    const empty = makeGroup({ rules: [], pick: undefined, members: [] })
+    await expect(decide({}, empty)).resolves.toBeUndefined()
   })
 
   test("the rule context is read off the request", async () => {
@@ -223,12 +231,78 @@ describe("resolveGroupDecision", () => {
     })
 
     await expect(decide({}, suffixed)).resolves.toEqual({
+      routing: "order",
       groupId: "lane",
       member: "vendor/large-model:high:fast",
       model: "vendor/large-model",
       effort: "high",
       fast: true,
+      members: ["vendor/large-model:high:fast", "vendor/small-model"],
     })
+  })
+})
+
+describe("resolveGroupDecision routing, effort and affinity", () => {
+  const lane = (overrides: Partial<RoutingGroup> = {}): RoutingGroup => ({
+    id: "lane",
+    name: "Lane",
+    members: ["vendor/a", "vendor/b", "vendor/c"],
+    rules: [],
+    ...overrides,
+  })
+
+  test("rotate leads with a member that is stable within one turn", async () => {
+    const group = lane({ routing: "rotate" })
+    const once = await decide({ turnKey: "turn-1" }, group)
+    const again = await decide({ turnKey: "turn-1" }, group)
+    expect(once?.member).toBe(again?.member)
+    const lead = once?.member ?? ""
+    expect(lead).not.toBe("")
+    expect(group.members).toContain(lead)
+  })
+
+  test("manual keeps only the pick", async () => {
+    const decision = await decide(
+      {},
+      lane({ routing: "manual", pick: "vendor/c" }),
+    )
+    expect(decision?.member).toBe("vendor/c")
+    expect(decision?.members).toEqual(["vendor/c"])
+  })
+
+  test("smart ranks the members by allowance", async () => {
+    const decision = await decide({}, lane({ routing: "smart" }), {
+      rankByAllowance: (members) => [...members].reverse(),
+    })
+    expect(decision?.members?.[0]).toBe("vendor/c")
+  })
+
+  test("effort auto takes the level the classifier reports", async () => {
+    const group = lane({
+      effort: "auto",
+      classifier: { provider: "vendor", model: "small" },
+    })
+    const decision = await decide({ messageContent: "hi" }, group, {
+      classify: async () => "high",
+    })
+    expect(decision?.effort).toBe("high")
+  })
+
+  test("a member's own effort wins over effort auto", async () => {
+    const group = lane({
+      members: ["vendor/a:low", "vendor/b"],
+      effort: "auto",
+      classifier: { provider: "vendor", model: "small" },
+    })
+    const decision = await decide({ messageContent: "hi" }, group, {
+      classify: async () => "high",
+    })
+    expect(decision?.effort).toBe("low")
+  })
+
+  test("the group's affinity is carried on the decision", async () => {
+    const decision = await decide({}, lane({ affinity: "off" }))
+    expect(decision?.affinity).toBe("off")
   })
 })
 
@@ -301,14 +375,15 @@ describe("prepareRequestAdmission with group references", () => {
   })
   app.post("/v1/chat/completions", async (c) => {
     initRequestLog(c)
+    const sessionPayload: Record<string, unknown> = {
+      messages: [{ role: "user", content: pending.messageContent }],
+    }
     const admission = await prepareRequestAdmission(c, {
       routeKind: "reasoning",
       model: pending.model,
       endpoint: "chat",
       messageContent: pending.messageContent,
-      sessionPayload: {
-        messages: [{ role: "user", content: pending.messageContent }],
-      },
+      sessionPayload,
     })
     const entry = getRequestLogContext(c)?.entry
 
@@ -317,6 +392,13 @@ describe("prepareRequestAdmission with group references", () => {
       upstreamModelId: admission.target.upstreamModelId,
       modelRequested: entry?.modelRequested,
       groupDecision: entry?.failoverReason,
+      credentialId: admission.target.credentialId,
+      groupMember: entry?.routingGroupSelectedMember,
+      reasoningEffort: sessionPayload.reasoning_effort,
+      serviceTier: sessionPayload.service_tier,
+      chosenCandidates: entry?.candidates
+        ?.filter((candidate) => candidate.status === "chosen")
+        .map((candidate) => candidate.model),
     })
   })
 
@@ -349,12 +431,55 @@ describe("prepareRequestAdmission with group references", () => {
     const body = await admitBody("group/lane", BIG_TEXT)
     expect(body).toMatchObject({
       publicModelId: "vendor/large-model",
+      chosenCandidates: ["large"],
       upstreamModelId: "large",
       // The group reference stays the requested model; the member it chose is
       // what the trace reports as the reason the route moved.
       modelRequested: "group/lane",
       groupDecision: "routing-group:lane→vendor/large-model",
     })
+  })
+
+  test("smart admission uses the selected credential and that member's suffixes and trace", async () => {
+    const first = connection()
+    first.id = "alpha"
+    first.credentials[0].id = "alpha-cred"
+    first.credentials[0].quota = {
+      fetchedAt: Date.now(),
+      unlimited: false,
+      chatRemaining: 3,
+      chatTotal: 100,
+    }
+    const second = connection()
+    second.id = "beta"
+    second.credentials[0].id = "beta-cred"
+    second.credentials[0].quota = {
+      fetchedAt: Date.now(),
+      unlimited: false,
+      chatRemaining: 60,
+      chatTotal: 100,
+    }
+    upsertProviderConnection(first)
+    upsertProviderConnection(second)
+    const members = [
+      "alpha/vendor/small-model:high:fast",
+      "beta/vendor/small-model:low",
+    ]
+    await upsertRoutingGroup(
+      makeGroup({ routing: "smart", rules: [], pick: undefined, members }),
+    )
+    const body = await admitBody("group/lane", "hi")
+    expect(body).toMatchObject({
+      credentialId: "beta-cred",
+      groupMember: members[1],
+      reasoningEffort: "low",
+      groupDecision: `routing-group:lane→${members[1]}`,
+    })
+    expect(body).not.toHaveProperty("serviceTier")
+    // A bare model uses the same default quota selector without entering the group.
+    const plain = await admitBody("vendor/small-model", "hi")
+    expect(plain).toMatchObject({ credentialId: "beta-cred" })
+    expect(plain.groupDecision).toBeUndefined()
   })
 
   test("a small request falls back to the group's pick", async () => {

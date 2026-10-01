@@ -4,9 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Copilot API Admin</title>
-    <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
-    <link rel="stylesheet" href="/admin/static/css/traces.css" />
-    <link rel="stylesheet" href="/admin/static/css/routing-groups.css" />
+    <link rel="stylesheet" href="/admin/static/css/apple-theme.css?v=0.7.3" />
+    <link rel="stylesheet" href="/admin/static/css/traces.css?v=0.7.5" />
+    <link
+      rel="stylesheet"
+      href="/admin/static/css/routing-groups.css?v=0.7.3"
+    />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
@@ -21,9 +24,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/zh.js"></script>
-    <!-- 请求追踪视图：motion 驱动数据包飞行，auto-animate 处理列表增删。版本已锁定，
-         两者缺失时 traces.js 回退到原生 Web Animations API，不影响核心交互。
-         auto-animate 只发 ESM，无 UMD 构建，故以 module 方式引入并挂到全局。 -->
+    <!-- Request list transitions; routing packets use native SVG motion. -->
     <script type="module">
       import autoAnimate from "https://cdn.jsdelivr.net/npm/@formkit/auto-animate@0.8.2/index.min.mjs"
       globalThis.autoAnimate = autoAnimate
@@ -40,11 +41,10 @@
         apply()
       }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/motion@11.11.13/dist/motion.min.js"></script>
-    <script src="/admin/static/js/i18n.js"></script>
-    <script src="/admin/static/js/api.js"></script>
-    <script src="/admin/static/js/view-helpers.js"></script>
-    <script src="/admin/static/js/quota-display.js"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.6"></script>
+    <script src="/admin/static/js/api.js?v=0.7.4"></script>
+    <script src="/admin/static/js/view-helpers.js?v=0.7.3"></script>
+    <script src="/admin/static/js/quota-display.js?v=0.7.3"></script>
   </head>
   <body x-data="adminApp()" x-init="init()" x-cloak>
     <!-- Toast Notifications (Highest Z-Index to stay above all modals) -->
@@ -111,17 +111,27 @@
           </h1>
         </div>
 
-        <nav class="flex-1 py-4">
-          <template x-for="item in navItems" :key="item.id">
-            <a
-              href="#"
-              @click.prevent="currentView = item.id; window.location.hash = item.id; sidebarOpen = false"
-              class="nav-item"
-              :class="{ 'active': currentView === item.id }"
-            >
-              <i :data-lucide="item.icon" class="w-5 h-5"></i>
-              <span x-text="item.label"></span>
-            </a>
+        <nav class="sidebar-nav" :aria-label="t('app.title')">
+          <template x-for="group in navGroups" :key="group.id">
+            <section class="nav-group" :aria-labelledby="'nav-' + group.id">
+              <h2
+                class="nav-group-label"
+                :id="'nav-' + group.id"
+                x-text="group.label"
+              ></h2>
+              <template x-for="item in group.items" :key="item.id">
+                <a
+                  :href="'#' + item.id"
+                  @click="sidebarOpen = false"
+                  class="nav-item"
+                  :class="{ 'active': currentView === item.id }"
+                  :aria-current="currentView === item.id ? 'page' : null"
+                >
+                  <i :data-lucide="item.icon" class="w-5 h-5"></i>
+                  <span x-text="item.label"></span>
+                </a>
+              </template>
+            </section>
           </template>
         </nav>
 
@@ -153,31 +163,56 @@
       </aside>
 
       <!-- Main Content -->
-      <main class="flex-1 overflow-auto p-8 bg-[var(--apple-bg-secondary)]">
+      <main
+        class="flex-1 min-w-0 overflow-auto p-8 bg-[var(--apple-bg-secondary)]"
+      >
         <!-- Dashboard View -->
         <div
           x-show="currentView === 'dashboard'"
           x-data="dashboardView()"
-          x-init="load()"
+          x-init="init()"
         >
-          <header class="flex justify-between items-center mb-8">
-            <h2 class="text-headline" x-text="t('dashboard.title')"></h2>
-            <div class="flex items-center gap-6">
+          <!-- Header -->
+          <header class="page-header mb-6">
+            <div class="page-heading">
+              <h2 class="text-headline" x-text="t('dashboard.title')"></h2>
+              <p class="page-description" x-text="t('dashboard.subtitle')"></p>
+            </div>
+            <div class="flex items-center gap-3">
+              <!-- Auto Refresh Toggle -->
+              <button
+                @click="toggleAutoRefresh()"
+                class="btn btn-secondary text-xs px-3 py-1.5 flex items-center gap-2"
+                :class="{ '!border-[var(--apple-green)] !text-[var(--apple-green)]': autoRefresh }"
+                :title="t('dashboard.autoRefresh')"
+              >
+                <span
+                  class="w-2 h-2 rounded-full"
+                  :class="autoRefresh ? 'bg-[var(--apple-green)] animate-pulse' : 'bg-[var(--apple-gray-3)]'"
+                ></span>
+                <span
+                  x-text="t('dashboard.autoRefresh') + (autoRefresh ? ' ON' : ' OFF')"
+                ></span>
+              </button>
+
+              <!-- Last Updated -->
               <span
-                class="text-body text-[var(--apple-text-secondary)]"
+                class="text-xs text-[var(--apple-text-secondary)] hidden sm:inline"
                 x-show="lastRefresh"
               >
                 <span x-text="t('dashboard.lastUpdated') + ': '"></span>
                 <span x-text="formatTime(lastRefresh)"></span>
               </span>
+
+              <!-- Manual Refresh Button -->
               <button
                 @click="load()"
-                class="btn btn-secondary"
+                class="btn btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
                 :class="{ 'opacity-75': loading }"
               >
                 <i
                   data-lucide="refresh-cw"
-                  class="w-4 h-4"
+                  class="w-3.5 h-3.5"
                   :class="{ 'animate-spin': loading }"
                 ></i>
                 <span x-text="t('refresh')"></span>
@@ -185,10 +220,14 @@
             </div>
           </header>
 
-          <div x-show="loading" class="flex justify-center items-center py-20">
+          <!-- Loading State -->
+          <div
+            x-show="loading && !(data.fleet?.total)"
+            class="flex justify-center items-center py-20"
+          >
             <div class="text-center">
               <div
-                class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-4"
+                class="animate-spin h-10 w-10 border-3 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-3"
               ></div>
               <p
                 class="text-body text-[var(--apple-text-secondary)]"
@@ -197,308 +236,656 @@
             </div>
           </div>
 
-          <div x-show="!loading" class="animate-slide-in">
-            <!-- Stats Grid -->
+          <div x-show="!loading || (data.fleet?.total)" class="space-y-6">
+            <!-- 1. Needs Attention Alerts Banner (Only shown if alerts exist) -->
+            <!-- 1. Alerts & Notices Banner (Only shown if alerts exist) -->
             <div
-              class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8"
+              x-show="data.alerts && data.alerts.length > 0"
+              class="card p-4 rounded-2xl shadow-sm transition-all"
+              :class="hasActionableAlerts() ? 'border border-[var(--apple-red)]/30 bg-[var(--apple-red)]/5' : 'border border-[var(--apple-orange)]/30 bg-[var(--apple-orange)]/5'"
             >
-              <div class="stat-card card card-hover">
-                <p
-                  class="stat-label mb-2"
-                  x-text="t('dashboard.activeUsers')"
-                ></p>
-                <p class="stat-value" x-text="data.activeUsers || 0"></p>
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <i
+                    :data-lucide="hasActionableAlerts() ? 'alert-circle' : 'info'"
+                    class="w-4 h-4"
+                    :class="hasActionableAlerts() ? 'text-[var(--apple-red)]' : 'text-[var(--apple-orange)]'"
+                  ></i>
+                  <span
+                    class="text-sm font-semibold"
+                    :class="hasActionableAlerts() ? 'text-[var(--apple-red)]' : 'text-[var(--apple-text)]'"
+                    x-text="hasActionableAlerts() ? t('dashboard.alerts.titleActionable') : t('dashboard.alerts.title')"
+                  ></span>
+                  <span
+                    class="px-2 py-0.5 text-xs font-bold rounded-full"
+                    :class="hasActionableAlerts() ? 'bg-[var(--apple-red)]/15 text-[var(--apple-red)]' : 'bg-[var(--apple-orange)]/15 text-[var(--apple-orange)]'"
+                    x-text="hasActionableAlerts() ? (actionableAlertsCount() + ' ' + t('dashboard.alerts.itemNeedAction')) : (data.alerts?.length || 0)"
+                  ></span>
+                </div>
+                <template x-if="hasActionableAlerts()">
+                  <a
+                    :href="'#' + firstActionableTargetView()"
+                    class="text-xs text-[var(--apple-red)] hover:underline font-medium flex items-center gap-1"
+                  >
+                    <span x-text="t('dashboard.alerts.actionFix')"></span>
+                    &rarr;
+                  </a>
+                </template>
+                <template x-if="!hasActionableAlerts()">
+                  <a
+                    href="#accounts"
+                    class="text-xs text-[var(--apple-text-secondary)] hover:underline font-medium flex items-center gap-1"
+                  >
+                    <span x-text="t('dashboard.alerts.viewAll')"></span> &rarr;
+                  </a>
+                </template>
               </div>
-              <div class="stat-card card card-hover">
-                <p
-                  class="stat-label mb-2"
-                  x-text="t('dashboard.activeAccounts')"
-                ></p>
-                <p class="stat-value" x-text="data.activeAccounts || 0"></p>
-                <p
-                  class="text-sm text-[var(--apple-text-tertiary)] mt-2"
-                  x-text="(data.activeAccounts || 0) + ' / ' + (data.totalAccounts || 0)"
-                ></p>
-              </div>
-              <div class="stat-card card card-hover">
-                <p
-                  class="stat-label mb-2"
-                  x-text="t('dashboard.requestsToday')"
-                ></p>
-                <p class="stat-value" x-text="data.requestsToday || 0"></p>
-              </div>
-              <div class="stat-card card card-hover">
-                <p
-                  class="stat-label mb-2"
-                  x-text="t('dashboard.errorsToday')"
-                ></p>
-                <p
-                  class="stat-value text-[var(--apple-red)]"
-                  x-text="data.errorsToday || 0"
-                ></p>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                <template x-for="alert in (data.alerts || [])" :key="alert.id">
+                  <div
+                    class="flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-[#1c1c1e] border text-xs shadow-xs"
+                    :class="alert.actionable ? 'border-[var(--apple-red)]/30' : 'border-[var(--apple-gray-5)]'"
+                  >
+                    <div class="flex items-center gap-2 overflow-hidden mr-2">
+                      <span
+                        class="w-2 h-2 rounded-full flex-shrink-0"
+                        :class="{
+                          'bg-[var(--apple-red)]': alert.type === 'auth_error',
+                          'bg-[var(--apple-orange)]': alert.type === 'cooldown',
+                          'bg-[var(--apple-blue)]': alert.type === 'exhausted'
+                        }"
+                      ></span>
+                      <span
+                        class="font-semibold text-[var(--apple-text)] truncate max-w-[130px]"
+                        x-text="alert.connectionName"
+                      ></span>
+                      <span
+                        class="text-[var(--apple-text-secondary)] truncate"
+                        :title="alert.message"
+                        x-text="alert.message"
+                      ></span>
+                    </div>
+
+                    <!-- 真正需要处理的异常 (如 401/403 鉴权失败) -->
+                    <template x-if="alert.actionable">
+                      <a
+                        :href="'#' + (alert.targetView || (alert.isAccountManaged ? 'accounts' : 'connections'))"
+                        class="px-2.5 py-1 rounded-md bg-[var(--apple-red)] text-white hover:bg-[var(--apple-red)]/90 flex-shrink-0 font-medium text-[11px] shadow-xs"
+                        x-text="t('dashboard.alerts.actionFix')"
+                      ></a>
+                    </template>
+
+                    <!-- 限流冷却中：属于系统自适应限流与指数退避，倒计时自愈，无需也不能人工处理 -->
+                    <template x-if="alert.type === 'cooldown'">
+                      <span
+                        class="px-2 py-0.5 rounded-md bg-[var(--apple-orange)]/15 text-[var(--apple-orange)] text-[11px] font-medium flex-shrink-0 flex items-center gap-1"
+                        x-text="t('dashboard.alerts.statusCooling')"
+                      ></span>
+                    </template>
+
+                    <!-- 配额耗尽：属于正常业务量消耗，网关自动分流，提供轻量查看额度链接 -->
+                    <template x-if="alert.type === 'exhausted'">
+                      <a
+                        href="#quotas"
+                        class="px-2 py-0.5 rounded-md bg-[var(--apple-blue)]/10 text-[var(--apple-blue)] hover:bg-[var(--apple-blue)]/20 text-[11px] font-medium flex-shrink-0"
+                        x-text="t('dashboard.alerts.actionQuota')"
+                      ></a>
+                    </template>
+                  </div>
+                </template>
               </div>
             </div>
 
-            <!-- Two Column Layout -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <!-- Quota Summary -->
-              <div class="card p-6">
-                <h3
-                  class="text-title-2 mb-6"
-                  x-text="t('dashboard.quotaSummary')"
-                ></h3>
-                <div x-show="data.activeAccountQuota || data.totalQuota">
-                  <!-- Total Quota (All Accounts) -->
-                  <div x-show="data.totalQuota" class="mb-6">
-                    <div class="flex items-center gap-2 mb-3">
-                      <i
-                        data-lucide="layers"
-                        class="w-4 h-4 text-[var(--apple-text-secondary)]"
-                      ></i>
-                      <span
-                        class="text-sm font-medium text-[var(--apple-text-secondary)]"
-                        x-text="t('quota.totalQuota') || '全部账户'"
-                      ></span>
-                    </div>
+            <!-- All Healthy Banner (when no alerts) -->
+            <div
+              x-show="!data.alerts || data.alerts.length === 0"
+              class="flex items-center justify-between px-4 py-2.5 rounded-xl bg-[var(--apple-green)]/10 border border-[var(--apple-green)]/20 text-xs text-[var(--apple-green)]"
+            >
+              <div class="flex items-center gap-2">
+                <span
+                  class="w-2 h-2 rounded-full bg-[var(--apple-green)]"
+                ></span>
+                <span
+                  class="font-medium"
+                  x-text="t('dashboard.alerts.allHealthy')"
+                ></span>
+              </div>
+              <span
+                class="text-[var(--apple-text-secondary)]"
+                x-text="(data.fleet?.healthy || 0) + ' / ' + (data.fleet?.total || 0) + ' 在线'"
+              ></span>
+            </div>
 
-                    <!-- Total Chat Quota -->
-                    <div x-show="data.totalQuota?.chatTotal" class="mb-4">
-                      <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-2">
-                          <i
-                            data-lucide="message-square"
-                            class="w-4 h-4 text-[var(--apple-text-secondary)]"
-                          ></i>
-                          <span class="text-sm" x-text="t('quota.chat')"></span>
-                        </div>
-                        <span class="text-sm font-medium">
-                          <span
-                            x-text="data.totalQuota?.chatRemaining ?? 'N/A'"
-                          ></span>
-                          <span class="text-[var(--apple-text-secondary)]"
-                            >/ <span x-text="data.totalQuota?.chatTotal"></span
-                          ></span>
-                        </span>
-                      </div>
-                      <div class="progress-bar">
-                        <div
-                          class="progress-fill"
-                          :class="totalQuotaColorClass"
-                          :style="`width: ${totalChatQuotaPercent}%`"
-                        ></div>
-                      </div>
-                    </div>
-
-                    <!-- Total Premium -->
-                    <div x-show="data.totalQuota?.premiumTotal">
-                      <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-2">
-                          <i
-                            data-lucide="sparkles"
-                            class="w-4 h-4 text-[var(--apple-text-secondary)]"
-                          ></i>
-                          <span
-                            class="text-sm text-[var(--apple-text-secondary)]"
-                            x-text="t('quota.premium')"
-                          ></span>
-                        </div>
-                        <span class="text-sm font-medium">
-                          <span
-                            x-text="data.totalQuota?.premiumRemaining ?? 'N/A'"
-                          ></span>
-                          <span class="text-[var(--apple-text-secondary)]"
-                            >/
-                            <span x-text="data.totalQuota?.premiumTotal"></span
-                          ></span>
-                        </span>
-                      </div>
-                      <div class="progress-bar">
-                        <div
-                          class="progress-fill"
-                          :class="totalPremiumColorClass"
-                          :style="`width: ${totalPremiumPercent}%`"
-                        ></div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Divider -->
+            <!-- 2. Core KPI Cards (4-column grid) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <!-- KPI 1: Requests & Success Rate -->
+              <a
+                href="#usage"
+                class="card card-hover p-5 stat-link flex flex-col justify-between"
+              >
+                <div>
                   <div
-                    x-show="data.activeAccountQuota && data.totalQuota"
-                    class="border-t border-[var(--apple-gray-5)] my-4"
-                  ></div>
-
-                  <!-- Active Account Quota -->
-                  <div x-show="data.activeAccountQuota">
-                    <div class="flex items-center gap-2 mb-3">
-                      <i
-                        data-lucide="user"
-                        class="w-4 h-4 text-[var(--apple-blue)]"
-                      ></i>
-                      <span
-                        class="text-sm font-medium text-[var(--apple-blue)]"
-                        x-text="t('quota.currentAccount') || '当前账户'"
-                      ></span>
-                    </div>
-
-                    <!-- Chat Quota (Priority Display) -->
-                    <div
-                      x-show="data.activeAccountQuota?.chatTotal"
-                      class="mb-4"
-                    >
-                      <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-2">
-                          <i
-                            data-lucide="message-square"
-                            class="w-4 h-4 text-[var(--apple-text-secondary)]"
-                          ></i>
-                          <span
-                            class="text-sm font-medium"
-                            x-text="t('quota.chat')"
-                          ></span>
-                        </div>
-                        <span class="text-title-3">
-                          <span
-                            x-text="data.activeAccountQuota?.chatRemaining ?? 'N/A'"
-                          ></span>
-                          <span class="text-[var(--apple-text-secondary)]"
-                            >/
-                            <span
-                              x-text="data.activeAccountQuota?.chatTotal"
-                            ></span
-                          ></span>
-                        </span>
-                      </div>
-                      <div class="progress-bar">
-                        <div
-                          class="progress-fill"
-                          :class="chatQuotaColorClass"
-                          :style="`width: ${chatQuotaPercent}%`"
-                        ></div>
-                      </div>
-                    </div>
-
-                    <!-- Premium Interactions -->
-                    <div
-                      x-show="data.activeAccountQuota?.premiumTotal"
-                      class="py-3 border-t border-[var(--apple-gray-5)]"
-                    >
-                      <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-2">
-                          <i
-                            data-lucide="sparkles"
-                            class="w-4 h-4 text-[var(--apple-text-secondary)]"
-                          ></i>
-                          <span
-                            class="text-sm text-[var(--apple-text-secondary)]"
-                            x-text="t('quota.premium')"
-                          ></span>
-                        </div>
-                        <span class="text-sm font-medium">
-                          <span
-                            x-text="data.activeAccountQuota?.premiumRemaining ?? 'N/A'"
-                          ></span>
-                          <span class="text-[var(--apple-text-secondary)]"
-                            >/
-                            <span
-                              x-text="data.activeAccountQuota?.premiumTotal"
-                            ></span
-                          ></span>
-                        </span>
-                      </div>
-                      <div class="progress-bar">
-                        <div
-                          class="progress-fill"
-                          :class="premiumQuotaColorClass"
-                          :style="`width: ${premiumQuotaPercent}%`"
-                        ></div>
-                      </div>
-                    </div>
-
-                    <!-- Completions (Autocomplete) - Simplified -->
-                    <div
-                      x-show="data.activeAccountQuota?.unlimited || data.activeAccountQuota?.completionsTotal"
-                      class="py-3 border-t border-[var(--apple-gray-5)]"
-                    >
-                      <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-2">
-                          <i
-                            data-lucide="keyboard"
-                            class="w-4 h-4 text-[var(--apple-text-secondary)]"
-                          ></i>
-                          <span
-                            class="text-sm text-[var(--apple-text-secondary)]"
-                            x-text="t('quota.completions')"
-                          ></span>
-                        </div>
-                        <span
-                          x-show="data.activeAccountQuota?.unlimited"
-                          class="text-sm text-[var(--apple-green)] font-medium"
-                        >
-                          <span x-text="t('quota.unlimited')"></span>
-                        </span>
-                        <span
-                          x-show="!data.activeAccountQuota?.unlimited"
-                          class="text-sm font-medium"
-                        >
-                          <span
-                            x-text="data.activeAccountQuota?.completionsRemaining ?? 'N/A'"
-                          ></span>
-                          <span class="text-[var(--apple-text-secondary)]"
-                            >/
-                            <span
-                              x-text="data.activeAccountQuota?.completionsTotal"
-                            ></span
-                          ></span>
-                        </span>
-                      </div>
-                    </div>
-
-                    <!-- No quota data -->
-                    <div
-                      x-show="!data.activeAccountQuota?.chatTotal && !data.activeAccountQuota?.premiumTotal && !data.activeAccountQuota?.completionsTotal"
-                      class="text-center py-4"
-                    >
-                      <p
-                        class="text-sm text-[var(--apple-text-secondary)]"
-                        x-text="t('quota.noData') || '暂无配额数据'"
-                      ></p>
-                    </div>
+                    class="flex items-center justify-between text-[var(--apple-text-secondary)] mb-2"
+                  >
+                    <span
+                      class="text-xs font-medium uppercase tracking-wider"
+                      x-text="t('dashboard.requestsToday')"
+                    ></span>
+                    <i
+                      data-lucide="activity"
+                      class="w-4 h-4 text-[var(--apple-blue)]"
+                    ></i>
                   </div>
+                  <p
+                    class="text-3xl font-bold tracking-tight text-[var(--apple-text)]"
+                    x-text="formatNumber(data.metrics?.requestsToday)"
+                  ></p>
+                </div>
+                <div
+                  class="flex items-center justify-between pt-3 mt-3 border-t border-[var(--apple-gray-5)] text-xs"
+                >
+                  <span
+                    class="flex items-center gap-1 font-semibold"
+                    :class="getSuccessRateColor(data.metrics?.successRate ?? 100)"
+                  >
+                    <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
+                    <span
+                      x-text="(data.metrics?.successRate ?? 100) + '% ' + t('dashboard.kpi.successRate')"
+                    ></span>
+                  </span>
+                  <span
+                    class="text-[var(--apple-red)] font-medium"
+                    x-show="(data.metrics?.errorsToday || 0) > 0"
+                    x-text="(data.metrics?.errorsToday || 0) + ' ' + t('dashboard.errorsToday')"
+                  ></span>
+                </div>
+              </a>
+
+              <!-- KPI 2: Live In-Flight Requests & TPS -->
+              <a
+                href="#traces"
+                class="card card-hover p-5 stat-link flex flex-col justify-between"
+              >
+                <div>
+                  <div
+                    class="flex items-center justify-between text-[var(--apple-text-secondary)] mb-2"
+                  >
+                    <span
+                      class="text-xs font-medium uppercase tracking-wider"
+                      x-text="t('dashboard.kpi.inFlight')"
+                    ></span>
+                    <i
+                      data-lucide="zap"
+                      class="w-4 h-4 text-[var(--apple-orange)]"
+                    ></i>
+                  </div>
+                  <div class="flex items-baseline gap-2">
+                    <p
+                      class="text-3xl font-bold tracking-tight text-[var(--apple-text)]"
+                      x-text="data.metrics?.inFlightRequests || 0"
+                    ></p>
+                    <span
+                      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-[var(--apple-blue)]/15 text-[var(--apple-blue)]"
+                      x-show="(data.metrics?.inFlightRequests || 0) > 0"
+                    >
+                      <span
+                        class="w-1.5 h-1.5 rounded-full bg-[var(--apple-blue)] animate-ping"
+                      ></span>
+                      ACTIVE
+                    </span>
+                  </div>
+                </div>
+                <div
+                  class="flex items-center justify-between pt-3 mt-3 border-t border-[var(--apple-gray-5)] text-xs text-[var(--apple-text-secondary)]"
+                >
+                  <span x-text="t('dashboard.kpi.avgTps')"></span>
+                  <span
+                    class="font-medium text-[var(--apple-text)]"
+                    x-text="data.metrics?.performance?.avgTps ? data.metrics.performance.avgTps + ' tok/s' : '-'"
+                  ></span>
+                </div>
+              </a>
+
+              <!-- KPI 3: First Token Latency (TTFT) -->
+              <a
+                href="#performance"
+                class="card card-hover p-5 stat-link flex flex-col justify-between"
+              >
+                <div>
+                  <div
+                    class="flex items-center justify-between text-[var(--apple-text-secondary)] mb-2"
+                  >
+                    <span
+                      class="text-xs font-medium uppercase tracking-wider"
+                      x-text="t('dashboard.kpi.avgTtft')"
+                    ></span>
+                    <i
+                      data-lucide="gauge"
+                      class="w-4 h-4 text-[var(--apple-purple)]"
+                    ></i>
+                  </div>
+                  <div class="flex items-baseline gap-1">
+                    <p
+                      class="text-3xl font-bold tracking-tight text-[var(--apple-text)]"
+                      x-text="data.metrics?.performance?.avgTtftMs || '-'"
+                    ></p>
+                    <span
+                      class="text-sm font-normal text-[var(--apple-text-secondary)]"
+                      x-show="data.metrics?.performance?.avgTtftMs"
+                      >ms</span
+                    >
+                  </div>
+                </div>
+                <div
+                  class="flex items-center justify-between pt-3 mt-3 border-t border-[var(--apple-gray-5)] text-xs text-[var(--apple-text-secondary)]"
+                >
+                  <span>首字响应体验</span>
+                  <span class="font-medium text-[var(--apple-purple)]"
+                    >性能分析 &rarr;</span
+                  >
+                </div>
+              </a>
+
+              <!-- KPI 4: Tokens & Cost -->
+              <a
+                href="#usage"
+                class="card card-hover p-5 stat-link flex flex-col justify-between"
+              >
+                <div>
+                  <div
+                    class="flex items-center justify-between text-[var(--apple-text-secondary)] mb-2"
+                  >
+                    <span
+                      class="text-xs font-medium uppercase tracking-wider"
+                      x-text="t('dashboard.kpi.tokensToday')"
+                    ></span>
+                    <i
+                      data-lucide="database"
+                      class="w-4 h-4 text-[var(--apple-green)]"
+                    ></i>
+                  </div>
+                  <div class="flex items-baseline justify-between">
+                    <p
+                      class="text-3xl font-bold tracking-tight text-[var(--apple-text)]"
+                      x-text="formatTokens(data.metrics?.todayTokens?.totalTokens)"
+                    ></p>
+                    <span
+                      class="text-base font-semibold text-[var(--apple-blue)]"
+                      x-text="formatCost(data.metrics?.todayTokens?.cost)"
+                    ></span>
+                  </div>
+                </div>
+                <div
+                  class="flex items-center justify-between pt-3 mt-3 border-t border-[var(--apple-gray-5)] text-xs text-[var(--apple-text-secondary)]"
+                >
+                  <span x-text="t('dashboard.kpi.cacheHitRate') + ':'"></span>
+                  <span
+                    class="font-semibold"
+                    :class="data.metrics?.todayTokens?.cacheHitRate ? 'text-[var(--apple-green)]' : 'text-[var(--apple-text-secondary)]'"
+                    x-text="data.metrics?.todayTokens?.cacheHitRate !== null && data.metrics?.todayTokens?.cacheHitRate !== undefined ? data.metrics.todayTokens.cacheHitRate + '%' : '-'"
+                  ></span>
+                </div>
+              </a>
+            </div>
+
+            <!-- 3. Traffic Trend (Chart) & Top Models (2-column layout) -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <!-- Left: 24-Hour Traffic Chart (8 cols) -->
+              <div class="card p-5 lg:col-span-8 flex flex-col justify-between">
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <h3
+                      class="text-title-2 font-semibold"
+                      x-text="t('dashboard.traffic.title')"
+                    ></h3>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="t('dashboard.traffic.subtitle')"
+                    ></p>
+                  </div>
+                  <a
+                    href="#usage"
+                    class="text-xs text-[var(--apple-blue)] hover:underline font-medium"
+                  >
+                    <span x-text="t('dashboard.viewUsage')"></span> &rarr;
+                  </a>
+                </div>
+                <div class="relative h-[240px] w-full">
+                  <canvas id="dashboardTrafficChart"></canvas>
                 </div>
               </div>
 
-              <!-- Recent Activity -->
-              <div class="card p-6">
-                <h3
-                  class="text-title-2 mb-6"
-                  x-text="t('dashboard.recentActivity')"
-                ></h3>
-                <div class="space-y-4" x-show="recentLogs.length">
-                  <template x-for="log in recentLogs" :key="log.id">
-                    <div
-                      class="flex items-center justify-between py-3 border-b border-[var(--apple-gray-5)] last:border-0"
+              <!-- Right: Top Models Today (4 cols) -->
+              <div class="card p-5 lg:col-span-4 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center justify-between mb-3">
+                    <h3
+                      class="text-title-2 font-semibold"
+                      x-text="t('dashboard.topModels.title')"
+                    ></h3>
+                    <span
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="(data.topModels?.length || 0) + ' 个活跃'"
+                    ></span>
+                  </div>
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)] mb-4"
+                    x-text="t('dashboard.topModels.subtitle')"
+                  ></p>
+
+                  <div class="space-y-3.5" x-show="data.topModels?.length">
+                    <template
+                      x-for="item in (data.topModels || [])"
+                      :key="item.model"
                     >
-                      <div class="flex items-center gap-3">
-                        <span
-                          class="badge"
-                          :class="getLevelClass(log.level)"
-                          x-text="log.level"
-                        ></span>
-                        <span class="text-body" x-text="log.path"></span>
+                      <div class="space-y-1">
+                        <div class="flex items-center justify-between text-xs">
+                          <span
+                            class="font-medium text-[var(--apple-text)] truncate max-w-[160px]"
+                            :title="item.model"
+                            x-text="item.model"
+                          ></span>
+                          <span
+                            class="text-[var(--apple-text-secondary)] font-mono"
+                          >
+                            <span
+                              class="font-semibold text-[var(--apple-text)]"
+                              x-text="item.requests"
+                            ></span>
+                            次 (<span x-text="item.percentage + '%'"></span>)
+                          </span>
+                        </div>
+                        <div
+                          class="w-full h-1.5 rounded-full bg-[var(--apple-gray-5)] overflow-hidden"
+                        >
+                          <div
+                            class="h-full rounded-full bg-gradient-to-r from-[var(--apple-blue)] to-[var(--apple-purple)] transition-all duration-300"
+                            :style="'width: ' + item.percentage + '%'"
+                          ></div>
+                        </div>
+                        <div
+                          class="flex items-center justify-between text-[10px] text-[var(--apple-text-tertiary)]"
+                        >
+                          <span
+                            x-text="formatTokens(item.totalTokens) + ' tokens'"
+                          ></span>
+                          <span x-text="'$' + item.cost.toFixed(3)"></span>
+                        </div>
                       </div>
-                      <span
-                        class="text-caption text-[var(--apple-text-secondary)]"
-                        x-text="formatTime(log.timestamp)"
-                      ></span>
+                    </template>
+                  </div>
+
+                  <div
+                    x-show="!data.topModels?.length"
+                    class="empty-state py-8"
+                  >
+                    <i
+                      data-lucide="layers"
+                      class="empty-state-icon w-8 h-8 mx-auto text-[var(--apple-text-secondary)] opacity-50 mb-2"
+                    ></i>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)] text-center"
+                      x-text="t('dashboard.topModels.empty')"
+                    ></p>
+                  </div>
+                </div>
+
+                <div
+                  class="pt-3 border-t border-[var(--apple-gray-5)] text-right"
+                >
+                  <a
+                    href="#model-aliases"
+                    class="text-xs text-[var(--apple-blue)] hover:underline font-medium"
+                  >
+                    管理模型路由与别名 &rarr;
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4. Fleet Status & Live Traces (2-column layout) -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <!-- Upstream Fleet Status -->
+              <div class="card p-5">
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <h3
+                      class="text-title-2 font-semibold"
+                      x-text="t('dashboard.fleet.title')"
+                    ></h3>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="t('dashboard.fleet.subtitle')"
+                    ></p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <a
+                      href="#connections"
+                      class="text-xs text-[var(--apple-blue)] hover:underline font-medium"
+                    >
+                      <span x-text="t('dashboard.manageEndpoints')"></span>
+                      &rarr;
+                    </a>
+                  </div>
+                </div>
+
+                <!-- Connection Items List -->
+                <div
+                  class="space-y-2.5 max-h-[340px] overflow-y-auto pr-1"
+                  x-show="data.fleet?.items?.length"
+                >
+                  <template
+                    x-for="item in (data.fleet?.items || [])"
+                    :key="item.id"
+                  >
+                    <div
+                      class="p-3 rounded-xl border border-[var(--apple-gray-5)] bg-white/50 dark:bg-black/20 hover:border-[var(--apple-blue)]/30 transition-colors flex items-center justify-between"
+                    >
+                      <div class="flex items-center gap-3 min-w-0">
+                        <!-- Status dot -->
+                        <span
+                          class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                          :class="getFleetStatusBadge(item.status).dot"
+                        ></span>
+                        <div class="min-w-0">
+                          <div class="flex items-center gap-2">
+                            <span
+                              class="text-sm font-semibold text-[var(--apple-text)] truncate"
+                              x-text="item.name"
+                            ></span>
+                            <span
+                              class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)]"
+                              x-text="item.provider"
+                            ></span>
+                          </div>
+                          <!-- Quota or status message -->
+                          <div
+                            class="flex items-center gap-2 text-xs text-[var(--apple-text-secondary)] mt-0.5"
+                          >
+                            <span
+                              x-show="item.statusMessage"
+                              class="text-[var(--apple-orange)]"
+                              x-text="item.statusMessage"
+                            ></span>
+                            <span
+                              x-show="!item.statusMessage && item.quotaInfo && item.quotaInfo.chatTotal"
+                              class="text-xs"
+                            >
+                              配额:
+                              <span
+                                class="font-medium text-[var(--apple-text)]"
+                                x-text="item.quotaInfo.chatRemaining"
+                              ></span>
+                              / <span x-text="item.quotaInfo.chatTotal"></span>
+                            </span>
+                            <span
+                              x-show="!item.statusMessage && item.quotaInfo && item.quotaInfo.unlimited"
+                              class="text-[var(--apple-green)] font-medium"
+                            >
+                              无限配额
+                            </span>
+                            <span
+                              x-show="!item.statusMessage && (!item.quotaInfo || (!item.quotaInfo.chatTotal && !item.quotaInfo.unlimited))"
+                              class="text-[var(--apple-text-tertiary)]"
+                            >
+                              标准按量 / 正常
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        class="flex items-center gap-3 text-right flex-shrink-0"
+                      >
+                        <div class="text-xs">
+                          <p
+                            class="font-semibold text-[var(--apple-text)]"
+                            x-text="item.todayRequests"
+                          ></p>
+                          <p
+                            class="text-[10px] text-[var(--apple-text-secondary)]"
+                            x-text="t('dashboard.fleet.todayReq')"
+                          ></p>
+                        </div>
+                        <a
+                          :href="item.provider === 'copilot' ? '#accounts' : '#connections'"
+                          class="p-1.5 rounded-lg text-[var(--apple-text-secondary)] hover:text-[var(--apple-blue)] hover:bg-[var(--apple-gray-5)]"
+                          :title="t('dashboard.manageEndpoints')"
+                        >
+                          <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </a>
+                      </div>
                     </div>
                   </template>
                 </div>
-                <div x-show="!recentLogs.length" class="empty-state">
-                  <i data-lucide="activity" class="empty-state-icon"></i>
+
+                <div
+                  x-show="!data.fleet?.items?.length"
+                  class="empty-state py-8"
+                >
+                  <i
+                    data-lucide="plug"
+                    class="empty-state-icon w-8 h-8 mx-auto text-[var(--apple-text-secondary)] opacity-50 mb-2"
+                  ></i>
                   <p
-                    class="text-body text-[var(--apple-text-secondary)]"
-                    x-text="t('dashboard.noActivity')"
+                    class="text-xs text-[var(--apple-text-secondary)] text-center"
+                  >
+                    暂无配置的上游连接
+                  </p>
+                </div>
+              </div>
+
+              <!-- Live Request Stream -->
+              <div class="card p-5">
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <h3
+                      class="text-title-2 font-semibold"
+                      x-text="t('dashboard.traces.title')"
+                    ></h3>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="t('dashboard.traces.subtitle')"
+                    ></p>
+                  </div>
+                  <a
+                    href="#traces"
+                    class="text-xs text-[var(--apple-blue)] hover:underline font-medium"
+                  >
+                    <span x-text="t('dashboard.traces.viewAll')"></span> &rarr;
+                  </a>
+                </div>
+
+                <!-- Trace Stream List -->
+                <div
+                  class="space-y-2.5 max-h-[340px] overflow-y-auto pr-1"
+                  x-show="data.recentTraces?.length"
+                >
+                  <template
+                    x-for="trace in (data.recentTraces || [])"
+                    :key="trace.requestId"
+                  >
+                    <a
+                      href="#traces"
+                      class="p-3 rounded-xl border border-[var(--apple-gray-5)] bg-white/50 dark:bg-black/20 hover:border-[var(--apple-blue)]/30 transition-all block text-xs"
+                    >
+                      <div class="flex items-center justify-between mb-1.5">
+                        <div class="flex items-center gap-2">
+                          <!-- Status Badge -->
+                          <span
+                            class="px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                            :class="getTraceStatusBadge(trace).class"
+                            x-text="getTraceStatusBadge(trace).text"
+                          ></span>
+                          <span
+                            class="font-semibold text-[var(--apple-text)] truncate max-w-[140px]"
+                            x-text="trace.modelRequested"
+                          ></span>
+                          <i
+                            data-lucide="arrow-right"
+                            class="w-3 h-3 text-[var(--apple-text-secondary)]"
+                          ></i>
+                          <span
+                            class="text-[var(--apple-text-secondary)] truncate max-w-[120px]"
+                            x-text="trace.connectionName || trace.provider || 'default'"
+                          ></span>
+                        </div>
+                        <span
+                          class="text-[10px] text-[var(--apple-text-tertiary)]"
+                          x-text="formatRelativeTime(trace.timestamp)"
+                        ></span>
+                      </div>
+
+                      <div
+                        class="flex items-center justify-between text-[11px] text-[var(--apple-text-secondary)]"
+                      >
+                        <div class="flex items-center gap-3">
+                          <span x-show="trace.latencyMs !== undefined">
+                            耗时:
+                            <span
+                              class="font-medium text-[var(--apple-text)]"
+                              x-text="trace.latencyMs + 'ms'"
+                            ></span>
+                          </span>
+                          <span
+                            x-show="trace.ttftMs !== undefined && trace.ttftMs !== null"
+                          >
+                            TTFT:
+                            <span
+                              class="font-medium text-[var(--apple-text)]"
+                              x-text="trace.ttftMs + 'ms'"
+                            ></span>
+                          </span>
+                          <span x-show="trace.generationTps">
+                            <span
+                              class="font-medium text-[var(--apple-text)]"
+                              x-text="trace.generationTps"
+                            ></span>
+                            tok/s
+                          </span>
+                        </div>
+                        <span
+                          class="px-1 py-0.2 rounded text-[9px] bg-[var(--apple-purple)]/10 text-[var(--apple-purple)]"
+                          x-show="trace.isTranslated"
+                        >
+                          协议转译
+                        </span>
+                      </div>
+                    </a>
+                  </template>
+                </div>
+
+                <div
+                  x-show="!data.recentTraces?.length"
+                  class="empty-state py-8"
+                >
+                  <i
+                    data-lucide="route"
+                    class="empty-state-icon w-8 h-8 mx-auto text-[var(--apple-text-secondary)] opacity-50 mb-2"
+                  ></i>
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)] text-center"
+                    x-text="t('dashboard.traces.empty')"
                   ></p>
                 </div>
               </div>
@@ -1061,21 +1448,12 @@
           x-init="load()"
           style="display: none"
         >
-          <header class="flex justify-between items-center mb-8">
-            <h2 class="text-headline" x-text="t('accounts.title')"></h2>
-            <div class="flex items-center gap-4">
-              <button @click="openAddModal()" class="btn btn-primary">
-                <i data-lucide="plus" class="w-4 h-4 mr-1"></i>
-                <span x-text="t('accounts.addAccount')"></span>
-              </button>
-              <button @click="exportAccounts()" class="btn btn-secondary">
-                <i data-lucide="download" class="w-4 h-4 mr-1"></i>
-                <span x-text="t('accounts.export')"></span>
-              </button>
-              <button @click="openImportModal()" class="btn btn-secondary">
-                <i data-lucide="upload" class="w-4 h-4 mr-1"></i>
-                <span x-text="t('accounts.import')"></span>
-              </button>
+          <header class="page-header">
+            <div class="page-heading">
+              <h2 class="text-headline" x-text="t('accounts.title')"></h2>
+              <p class="page-description" x-text="t('accounts.subtitle')"></p>
+            </div>
+            <div class="page-actions">
               <button
                 @click="load()"
                 class="btn btn-secondary"
@@ -1086,9 +1464,72 @@
                   class="w-4 h-4"
                   :class="{ 'animate-spin': loading }"
                 ></i>
+                <span x-text="t('refresh')"></span>
+              </button>
+              <details
+                class="action-menu"
+                @click.outside="$el.open = false"
+                @keydown.escape="$el.open = false"
+              >
+                <summary
+                  class="btn btn-secondary"
+                  x-text="t('layout.more')"
+                ></summary>
+                <div
+                  class="action-menu-panel"
+                  @click="$el.closest('details').open = false"
+                >
+                  <button @click="openImportModal()" class="btn">
+                    <i data-lucide="upload" class="w-4 h-4"></i
+                    ><span x-text="t('accounts.import')"></span>
+                  </button>
+                  <button @click="exportAccounts()" class="btn">
+                    <i data-lucide="download" class="w-4 h-4"></i
+                    ><span x-text="t('accounts.export')"></span>
+                  </button>
+                </div>
+              </details>
+              <button @click="openAddModal()" class="btn btn-primary">
+                <i data-lucide="plus" class="w-4 h-4"></i>
+                <span x-text="t('accounts.addAccount')"></span>
               </button>
             </div>
           </header>
+
+          <div class="connection-filters" x-show="accounts.length">
+            <input
+              type="search"
+              class="input"
+              x-model.debounce.150ms="searchQuery"
+              :placeholder="t('accounts.searchPlaceholder')"
+              :aria-label="t('accounts.searchPlaceholder')"
+            />
+            <select
+              class="input"
+              x-model="enabledFilter"
+              :aria-label="t('layout.allStatuses')"
+            >
+              <option value="" x-text="t('layout.allStatuses')"></option>
+              <option value="true" x-text="t('layout.enabled')"></option>
+              <option value="false" x-text="t('layout.disabled')"></option>
+            </select>
+            <span
+              class="filter-count"
+              aria-live="polite"
+              x-text="t('layout.resultCount', { visible: filteredAccounts.length, total: accounts.length })"
+            ></span>
+          </div>
+          <div
+            class="card p-6 mb-6"
+            x-show="!loading && accounts.length && !filteredAccounts.length"
+          >
+            <p class="text-body" x-text="t('layout.noMatches')"></p>
+            <button
+              class="btn btn-secondary mt-3"
+              @click="searchQuery = ''; enabledFilter = ''"
+              x-text="t('layout.clearFilters')"
+            ></button>
+          </div>
 
           <div x-show="loading" class="flex justify-center py-20">
             <div
@@ -1118,10 +1559,10 @@
                         'bg-[var(--apple-blue)]': !['copilot','codex','xai','claude','antigravity','kimi'].includes(group.provider)
                       }"
                   ></span>
-                  <i
-                    :data-lucide="providerIcon(group.provider)"
-                    class="w-4 h-4"
-                  ></i>
+                  <span
+                    class="w-4 h-4 flex items-center justify-center shrink-0"
+                    x-html="brandIconHtml(group.provider, '', 'w-4 h-4')"
+                  ></span>
                   <span x-text="providerGroupLabel(group.provider)"></span>
                   <span
                     class="text-xs font-normal text-[var(--apple-text-tertiary)]"
@@ -1139,10 +1580,10 @@
                     <div class="card p-6 flex flex-col h-full">
                       <div class="flex items-start justify-between mb-4">
                         <div class="flex items-center gap-3 min-w-0">
-                          <i
-                            :data-lucide="providerIcon(account.provider || 'copilot')"
-                            class="w-8 h-8 shrink-0"
-                          ></i>
+                          <span
+                            class="w-8 h-8 shrink-0 flex items-center justify-center text-2xl"
+                            x-html="brandIconHtml(account.provider || 'copilot', '', 'w-8 h-8')"
+                          ></span>
                           <div class="min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                               <p
@@ -1689,10 +2130,7 @@
                     x-text="t('accounts.provider.minimax.deviceHint')"
                   ></p>
                 </div>
-                <div
-                  x-show="newAccount.provider === 'qoder'"
-                  class="space-y-1"
-                >
+                <div x-show="newAccount.provider === 'qoder'" class="space-y-1">
                   <p
                     class="text-xs text-[var(--apple-text-secondary)]"
                     x-text="t('accounts.provider.qoder.deviceHint')"
@@ -1707,10 +2145,7 @@
                     x-text="t('accounts.provider.factory.deviceHint')"
                   ></p>
                 </div>
-                <div
-                  x-show="newAccount.provider === 'zcode'"
-                  class="space-y-1"
-                >
+                <div x-show="newAccount.provider === 'zcode'" class="space-y-1">
                   <p
                     class="text-xs text-[var(--apple-text-secondary)]"
                     x-text="t('accounts.provider.zcode.deviceHint')"
@@ -1725,10 +2160,7 @@
                     x-text="t('accounts.provider.commandcode-plan.deviceHint')"
                   ></p>
                 </div>
-                <div
-                  x-show="newAccount.provider === 'zed'"
-                  class="space-y-1"
-                >
+                <div x-show="newAccount.provider === 'zed'" class="space-y-1">
                   <p
                     class="text-xs text-[var(--apple-text-secondary)]"
                     x-text="t('accounts.provider.zed.deviceHint')"
@@ -2184,7 +2616,7 @@
           x-init="load()"
           style="display: none"
         >
-          <header class="flex justify-between items-center mb-8">
+          <header class="page-header">
             <h2 class="text-headline" x-text="t('modelAliases.title')"></h2>
             <button @click="openCreate()" class="btn btn-primary">
               <i data-lucide="plus" class="w-4 h-4"></i>
@@ -2195,6 +2627,23 @@
             class="text-xs text-[var(--apple-text-tertiary)] mb-4"
             x-text="t('modelAliases.divisionHint')"
           ></p>
+          <div class="dashboard-links">
+            <a
+              href="#accounts"
+              class="dashboard-link"
+              x-text="t('nav.accounts')"
+            ></a>
+            <a
+              href="#connections"
+              class="dashboard-link"
+              x-text="t('nav.connections')"
+            ></a>
+            <a
+              href="#routing-groups"
+              class="dashboard-link"
+              x-text="t('nav.routingGroups')"
+            ></a>
+          </div>
           <div class="card mb-6">
             <div class="flex gap-3 items-center">
               <input
@@ -2368,433 +2817,764 @@
           </div>
         </div>
 
-<!-- Routing Groups View -->
-<div
-  x-show="currentView === 'routing-groups'"
-  x-data="routingGroupsView()"
-  x-init="load()"
-  class="routing-groups-view"
-  style="display: none"
->
-  <header class="flex justify-between items-center mb-8">
-    <h2 class="text-headline" x-text="t('routingGroups.title')"></h2>
-    <button @click="openCreate()" class="btn btn-primary">
-      <i data-lucide="plus" class="w-4 h-4"></i>
-      <span x-text="t('routingGroups.add')"></span>
-    </button>
-  </header>
-  <p class="rg-subtitle" x-text="t('routingGroups.subtitle')"></p>
-  <p x-show="loading" class="rg-empty" x-text="t('loading')"></p>
-  <p
-    x-show="!loading && !groups.length"
-    class="rg-empty"
-    x-text="t('routingGroups.empty')"
-  ></p>
+        <!-- Routing Groups View -->
+        <div
+          x-show="currentView === 'routing-groups'"
+          x-data="routingGroupsView()"
+          x-init="load()"
+          class="routing-groups-view"
+          style="display: none"
+        >
+          <header class="flex justify-between items-center mb-8">
+            <h2 class="text-headline" x-text="t('routingGroups.title')"></h2>
+            <button @click="openCreate()" class="btn btn-primary">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span x-text="t('routingGroups.add')"></span>
+            </button>
+          </header>
+          <p class="rg-subtitle" x-text="t('routingGroups.subtitle')"></p>
+          <p x-show="loading" class="rg-empty" x-text="t('loading')"></p>
+          <p
+            x-show="!loading && !groups.length"
+            class="rg-empty"
+            x-text="t('routingGroups.empty')"
+          ></p>
 
-  <div class="rg-list">
-    <template x-for="group in groups" :key="group.id">
-      <div class="card rg-row">
-        <div class="rg-row-head">
-          <div class="rg-row-main">
-            <p class="rg-row-title" x-text="group.name"></p>
-            <p class="rg-row-meta">
-              <span class="rg-model-id" x-text="modelName(group)"></span>
-              <button
-                class="btn-icon rg-copy"
-                @click="copy(modelName(group))"
-                :title="t('copy')"
-              >
-                <i data-lucide="copy" class="w-4 h-4"></i>
-              </button>
-            </p>
-          </div>
-          <div class="rg-row-actions">
-            <button
-              class="btn btn-secondary btn-small"
-              @click="openEdit(group)"
-              x-text="t('edit')"
-            ></button>
-            <button
-              class="btn btn-danger btn-small"
-              @click="remove(group)"
-              x-text="t('delete')"
-            ></button>
-          </div>
-        </div>
-
-        <p class="rg-row-meta" x-text="groupSummary(group)"></p>
-
-        <div class="rg-members">
-          <template x-for="member in group.members" :key="member">
-            <span
-              class="rg-member"
-              :class="{ fast: isFastMember(group, member) }"
-              x-text="member"
-            ></span>
-          </template>
-        </div>
-
-        <div x-show="group.pick" class="rg-pick-line" x-cloak>
-          <span class="rg-field-label" x-text="t('routingGroups.pick')"></span>
-          <span class="rg-member" x-text="group.pick"></span>
-        </div>
-
-        <div class="rg-rule-list" x-show="group.rules.length" x-cloak>
-          <template x-for="(rule, index) in group.rules" :key="index">
-            <div class="rg-rule-row">
-              <span class="rg-rule-index" x-text="index + 1"></span>
-              <span class="rg-rule-use" x-text="rule.use"></span>
-              <span class="rg-rule-when" x-text="ruleSummary(rule)"></span>
-            </div>
-          </template>
-        </div>
-
-        <div class="rg-refs">
-          <span
-            class="rg-refs-label"
-            x-text="t('routingGroups.references')"
-          ></span>
-          <template x-for="ref in referencesFor(group)" :key="ref">
-            <span class="rg-ref" x-text="ref"></span>
-          </template>
-          <span
-            x-show="!referencesFor(group).length && !referencesError"
-            class="rg-refs-empty"
-            x-text="t('routingGroups.referencesEmpty')"
-          ></span>
-          <span
-            x-show="referencesError"
-            class="rg-refs-error"
-            :title="referencesError"
-            x-text="t('routingGroups.referencesUnavailable')"
-          ></span>
-        </div>
-      </div>
-    </template>
-  </div>
-
-  <datalist id="rg-agent-options">
-    <template x-for="agent in agentOptions" :key="agent">
-      <option :value="agent"></option>
-    </template>
-  </datalist>
-
-  <div
-    x-show="showModal"
-    class="modal-overlay"
-    @click.self="closeModal()"
-    x-cloak
-  >
-    <div class="modal rg-modal">
-      <div class="modal-header">
-        <h3
-          class="text-title-3"
-          x-text="editingId ? t('routingGroups.edit') : t('routingGroups.add')"
-        ></h3>
-        <button @click="closeModal()" class="btn-icon">
-          <i data-lucide="x" class="w-5 h-5"></i>
-        </button>
-      </div>
-      <div class="modal-body space-y-5">
-        <div class="rg-grid">
-          <div class="rg-field">
-            <label class="form-label" x-text="t('routingGroups.id')"></label>
-            <input
-              class="form-input"
-              x-model="form.id"
-              :disabled="editingId !== null"
-              :placeholder="t('routingGroups.idPlaceholder')"
-            />
-            <p class="rg-hint" x-text="t('routingGroups.idHint')"></p>
-          </div>
-          <div class="rg-field">
-            <label class="form-label" x-text="t('routingGroups.name')"></label>
-            <input class="form-input" x-model="form.name" />
-          </div>
-        </div>
-
-        <div class="rg-section">
-          <span
-            class="rg-section-title"
-            x-text="t('routingGroups.members')"
-          ></span>
-          <p class="rg-hint" x-text="t('routingGroups.membersHint')"></p>
-          <template x-for="(member, index) in form.members" :key="index">
-            <div class="rg-repeat">
-              <input
-                class="form-input"
-                x-model="form.members[index]"
-                :placeholder="t('routingGroups.membersPlaceholder')"
-              />
-              <label class="rg-check" :title="t('routingGroups.fastHint')">
-                <input
-                  type="checkbox"
-                  :checked="form.fastFlags[index]"
-                  @change="toggleFast(index)"
-                />
-                <span x-text="t('routingGroups.fast')"></span>
-              </label>
-              <div class="rg-repeat-actions">
-                <button
-                  class="btn-icon"
-                  @click="removeMember(index)"
-                  :title="t('routingGroups.removeMember')"
-                >
-                  <i data-lucide="trash-2" class="w-4 h-4"></i>
-                </button>
-              </div>
-            </div>
-          </template>
-          <button
-            class="btn btn-secondary btn-small self-start"
-            @click="addMember()"
-            x-text="t('routingGroups.addMember')"
-          ></button>
-        </div>
-
-        <div class="rg-section">
-          <span
-            class="rg-section-title"
-            x-text="t('routingGroups.pick')"
-          ></span>
-          <div class="rg-field">
-            <select class="form-input" x-model="form.pick">
-              <option value="" x-text="t('routingGroups.pickNone')"></option>
-              <template x-for="member in memberChoices()" :key="member">
-                <option :value="member" x-text="member"></option>
-              </template>
-            </select>
-            <p class="rg-hint" x-text="t('routingGroups.pickHint')"></p>
-          </div>
-        </div>
-
-        <div class="rg-section">
-          <div class="rg-rule-head">
-            <span
-              class="rg-section-title"
-              x-text="t('routingGroups.rules')"
-            ></span>
-            <button
-              class="btn btn-secondary btn-small"
-              @click="addRule()"
-              x-text="t('routingGroups.addRule')"
-            ></button>
-          </div>
-          <p class="rg-hint" x-text="t('routingGroups.rulesHint')"></p>
-          <template x-for="(rule, index) in form.rules" :key="index">
-            <div class="rg-rule">
-              <div class="rg-rule-head">
-                <span
-                  class="rg-rule-head-title"
-                  x-text="t('routingGroups.rule.title', { index: index + 1 })"
-                ></span>
-                <div class="rg-rule-actions">
-                  <button
-                    class="btn-icon"
-                    @click="moveRule(index, -1)"
-                    :title="t('routingGroups.moveUp')"
-                  >
-                    <i data-lucide="arrow-up" class="w-4 h-4"></i>
-                  </button>
-                  <button
-                    class="btn-icon"
-                    @click="moveRule(index, 1)"
-                    :title="t('routingGroups.moveDown')"
-                  >
-                    <i data-lucide="arrow-down" class="w-4 h-4"></i>
-                  </button>
-                  <button
-                    class="btn-icon"
-                    @click="removeRule(index)"
-                    :title="t('routingGroups.removeRule')"
-                  >
-                    <i data-lucide="trash-2" class="w-4 h-4"></i>
-                  </button>
-                </div>
-              </div>
-
-              <div class="rg-rule-grid">
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.use')"
-                  ></label>
-                  <select class="form-input" x-model="rule.use">
-                    <option
-                      value=""
-                      x-text="t('routingGroups.rule.usePlaceholder')"
-                    ></option>
-                    <template x-for="member in memberChoices()" :key="member">
-                      <option :value="member" x-text="member"></option>
-                    </template>
-                  </select>
-                </div>
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.tokens')"
-                  ></label>
-                  <input
-                    class="form-input"
-                    type="number"
-                    min="0"
-                    x-model="rule.tokens"
-                  />
-                </div>
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.effort')"
-                  ></label>
-                  <select class="form-input" x-model="rule.effort">
-                    <option value="" x-text="t('routingGroups.any')"></option>
-                    <option
-                      value="on"
-                      x-text="t('routingGroups.rule.effortOn')"
-                    ></option>
-                    <template x-for="level in effortLevels" :key="level">
-                      <option :value="level" x-text="level"></option>
-                    </template>
-                  </select>
-                </div>
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.images')"
-                  ></label>
-                  <select class="form-input" x-model="rule.images">
-                    <option value="" x-text="t('routingGroups.any')"></option>
-                    <option value="true" x-text="t('yes')"></option>
-                    <option value="false" x-text="t('no')"></option>
-                  </select>
-                </div>
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.compact')"
-                  ></label>
-                  <select class="form-input" x-model="rule.compact">
-                    <option value="" x-text="t('routingGroups.any')"></option>
-                    <option value="true" x-text="t('yes')"></option>
-                    <option value="false" x-text="t('no')"></option>
-                  </select>
-                </div>
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.agents')"
-                  ></label>
-                  <input
-                    class="form-input"
-                    list="rg-agent-options"
-                    x-model="rule.agents"
-                    :placeholder="t('routingGroups.rule.agentsPlaceholder')"
-                  />
-                </div>
-                <div class="rg-field">
-                  <label
-                    class="form-label"
-                    x-text="t('routingGroups.rule.intent')"
-                  ></label>
-                  <input class="form-input" x-model="rule.intent" />
-                </div>
-              </div>
-
-              <div class="rg-field">
-                <label class="rg-check">
-                  <input type="checkbox" x-model="rule.timeEnabled" />
-                  <span x-text="t('routingGroups.rule.time')"></span>
-                </label>
-                <div class="rg-window mt-2" x-show="rule.timeEnabled" x-cloak>
-                  <input
-                    class="form-input"
-                    type="time"
-                    x-model="rule.timeFrom"
-                  />
-                  <span class="rg-field-label">–</span>
-                  <input class="form-input" type="time" x-model="rule.timeTo" />
-                  <div class="rg-days">
-                    <template x-for="day in dayNames" :key="day">
-                      <label class="rg-day">
-                        <input
-                          type="checkbox"
-                          :checked="ruleHasDay(rule, day)"
-                          @change="toggleRuleDay(rule, day)"
-                        />
-                        <span x-text="day"></span>
-                      </label>
-                    </template>
+          <div class="rg-list">
+            <template x-for="group in groups" :key="group.id">
+              <div class="card rg-row">
+                <div class="rg-row-head">
+                  <div class="rg-row-main">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="rg-row-title" x-text="group.name"></span>
+                      <span class="inline-flex items-center gap-1">
+                        <span
+                          class="rg-model-id"
+                          x-text="modelName(group)"
+                        ></span>
+                        <button
+                          type="button"
+                          class="btn-icon rg-copy"
+                          @click="copy(modelName(group))"
+                          :title="t('copy')"
+                        >
+                          <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        </button>
+                      </span>
+                    </div>
+                    <p class="rg-row-meta" x-text="groupSummary(group)"></p>
+                  </div>
+                  <div class="rg-row-actions">
+                    <button
+                      type="button"
+                      class="btn btn-secondary btn-small"
+                      @click="openEdit(group)"
+                      x-text="t('edit')"
+                    ></button>
+                    <button
+                      type="button"
+                      class="btn btn-small btn-secondary text-[var(--apple-red)] hover:bg-[color-mix(in_srgb,var(--apple-red)_10%,transparent)]"
+                      @click="remove(group)"
+                      x-text="t('delete')"
+                    ></button>
                   </div>
                 </div>
-                <p
-                  class="rg-hint"
-                  x-text="t('routingGroups.rule.timeHint')"
-                ></p>
-              </div>
-            </div>
-          </template>
-        </div>
 
-        <div class="rg-section">
-          <span
-            class="rg-section-title"
-            x-text="t('routingGroups.levels')"
-          ></span>
-          <p class="rg-hint" x-text="t('routingGroups.levelsHint')"></p>
-          <div class="rg-levels">
-            <template x-for="level in effortChoices" :key="level">
-              <label class="rg-day">
-                <input
-                  type="checkbox"
-                  :checked="isLevelSelected(level)"
-                  @change="toggleLevel(level)"
-                />
-                <span x-text="level"></span>
-              </label>
+                <div class="rg-members">
+                  <template x-for="member in group.members" :key="member">
+                    <span
+                      class="rg-member"
+                      :class="{ fast: isFastMember(group, member) }"
+                    >
+                      <span
+                        class="w-3.5 h-3.5 inline-flex items-center justify-center shrink-0"
+                        x-html="brandIconHtml(getMemberProviderName(member), getMemberName(member), 'w-3.5 h-3.5')"
+                      ></span>
+                      <span x-text="member"></span>
+                    </span>
+                  </template>
+                </div>
+
+                <div x-show="group.pick" class="rg-pick-line" x-cloak>
+                  <span
+                    class="rg-field-label"
+                    x-text="t('routingGroups.pick')"
+                  ></span>
+                  <span class="rg-member" x-text="group.pick"></span>
+                </div>
+
+                <div class="rg-rule-list" x-show="group.rules.length" x-cloak>
+                  <template x-for="(rule, index) in group.rules" :key="index">
+                    <div class="rg-rule-row">
+                      <span class="rg-rule-index" x-text="index + 1"></span>
+                      <span class="rg-rule-use" x-text="rule.use"></span>
+                      <span
+                        class="rg-rule-when"
+                        x-text="ruleSummary(rule)"
+                      ></span>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Only show references when genuinely present -->
+                <div
+                  class="rg-refs"
+                  x-show="referencesFor(group).length"
+                  x-cloak
+                >
+                  <span
+                    class="rg-refs-label"
+                    x-text="t('routingGroups.references')"
+                  ></span>
+                  <template x-for="ref in referencesFor(group)" :key="ref">
+                    <span class="rg-ref" x-text="ref"></span>
+                  </template>
+                </div>
+              </div>
             </template>
           </div>
-        </div>
 
-        <div class="rg-section">
-          <span
-            class="rg-section-title"
-            x-text="t('routingGroups.classifier')"
-          ></span>
-          <div class="rg-grid">
-            <div class="rg-field">
-              <label
-                class="form-label"
-                x-text="t('routingGroups.classifierProvider')"
-              ></label>
-              <input class="form-input" x-model="form.classifier.provider" />
-            </div>
-            <div class="rg-field">
-              <label
-                class="form-label"
-                x-text="t('routingGroups.classifierModel')"
-              ></label>
-              <input class="form-input" x-model="form.classifier.model" />
+          <datalist id="rg-agent-options">
+            <template x-for="agent in agentOptions" :key="agent">
+              <option :value="agent"></option>
+            </template>
+          </datalist>
+
+          <div
+            x-show="showModal"
+            class="modal-overlay"
+            @click.self="closeModal()"
+            x-cloak
+          >
+            <div class="modal rg-modal">
+              <div class="modal-header">
+                <h3
+                  class="text-title-3"
+                  x-text="editingId ? t('routingGroups.edit') : t('routingGroups.add')"
+                ></h3>
+                <button @click="closeModal()" class="btn-icon">
+                  <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+              </div>
+              <div class="modal-body rg-editor">
+                <!-- 1. 名称 (Name) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.name')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <input
+                      class="form-input rg-input-sm"
+                      x-model="form.name"
+                      :placeholder="t('routingGroups.namePlaceholder')"
+                    />
+                    <p class="rg-hint" x-text="idHintText"></p>
+                    <label class="flex items-center gap-2 mt-2">
+                      <input type="checkbox" x-model="form.expose" />
+                      <span x-text="t('routingGroups.expose')"></span>
+                    </label>
+                    <p
+                      class="rg-hint"
+                      x-text="t('routingGroups.exposeHint')"
+                    ></p>
+                  </div>
+                </div>
+
+                <!-- 1.1 ID (编辑模式才显示) -->
+                <div class="rg-editor-row" x-show="editingId !== null" x-cloak>
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.id')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <input
+                      class="form-input rg-input-sm"
+                      x-model="form.id"
+                      :placeholder="t('routingGroups.idPlaceholder')"
+                    />
+                    <p
+                      class="rg-hint"
+                      x-text="t('routingGroups.idEditHint')"
+                    ></p>
+                  </div>
+                </div>
+
+                <!-- 2. 模型 (Models / Members) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.models')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div
+                      class="rg-model-list"
+                      x-show="form.members.length"
+                      x-cloak
+                    >
+                      <template
+                        x-for="(member, index) in form.members"
+                        :key="index"
+                      >
+                        <div class="rg-model-card">
+                          <span class="rg-model-idx" x-text="index + 1"></span>
+                          <span
+                            class="w-4 h-4 rg-model-icon flex items-center justify-center shrink-0"
+                            x-html="brandIconHtml(getMemberProviderName(member), getMemberName(member), 'w-4 h-4')"
+                          ></span>
+                          <div class="rg-model-main">
+                            <span
+                              class="rg-model-title"
+                              x-text="getMemberName(member)"
+                            ></span>
+                            <span
+                              class="rg-model-vendor"
+                              x-text="getMemberProviderName(member)"
+                            ></span>
+                          </div>
+                          <div class="rg-model-actions">
+                            <select
+                              class="rg-mini-select"
+                              :value="getMemberEffort(member)"
+                              @change="setMemberEffort(index, $event.target.value)"
+                            >
+                              <option
+                                value=""
+                                x-text="t('routingGroups.effortFollowGroup')"
+                              ></option>
+                              <template
+                                x-for="level in effortLevels"
+                                :key="level"
+                              >
+                                <option :value="level" x-text="level"></option>
+                              </template>
+                            </select>
+                            <button
+                              type="button"
+                              class="rg-btn-ghost"
+                              x-show="index > 0"
+                              @click="moveMember(index, -1)"
+                              x-text="t('routingGroups.moveUp')"
+                            ></button>
+                            <button
+                              type="button"
+                              class="rg-btn-ghost danger"
+                              @click="removeMember(index)"
+                              x-text="t('routingGroups.removeMemberShort')"
+                            ></button>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+
+                    <!-- Add model button & Model Picker (Popover) -->
+                    <div
+                      class="rg-picker-container"
+                      @click.outside="memberPickerOpen = false"
+                      @keydown.escape.stop="memberPickerOpen = false"
+                    >
+                      <button
+                        type="button"
+                        class="rg-btn-add-model"
+                        @click="openMemberPicker()"
+                      >
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span
+                          x-text="form.members.length ? t('routingGroups.addAnotherModel') : t('routingGroups.addAModel')"
+                        ></span>
+                      </button>
+
+                      <div
+                        class="rg-picker-panel"
+                        x-show="memberPickerOpen"
+                        x-cloak
+                      >
+                        <div class="rg-picker-search">
+                          <i data-lucide="search" class="w-4 h-4"></i>
+                          <input
+                            type="text"
+                            x-ref="pickerSearchInput"
+                            x-model="memberSearch"
+                            :placeholder="t('routingGroups.pickerSearchPlaceholder')"
+                            @keydown.enter.prevent="pickerAddRaw()"
+                          />
+                        </div>
+
+                        <div class="rg-picker-panes">
+                          <div class="rg-picker-providers">
+                            <template
+                              x-for="tab in providerTabs"
+                              :key="tab.provider"
+                            >
+                              <button
+                                type="button"
+                                class="rg-provider-tab"
+                                :class="{ active: tab.provider === selectedProvider }"
+                                :title="tab.label"
+                                @click="selectedProvider = tab.provider"
+                              >
+                                <template x-if="tab.all">
+                                  <i
+                                    data-lucide="layout-grid"
+                                    class="w-4 h-4 rg-picker-icon shrink-0"
+                                  ></i>
+                                </template>
+                                <template x-if="!tab.all">
+                                  <span
+                                    class="w-4 h-4 rg-picker-icon flex items-center justify-center shrink-0"
+                                    x-html="brandIconHtml(tab.provider, '', 'w-4 h-4')"
+                                  ></span>
+                                </template>
+                                <span
+                                  class="rg-provider-name"
+                                  x-text="tab.label"
+                                ></span>
+                                <span
+                                  class="rg-provider-count"
+                                  x-text="tab.count"
+                                ></span>
+                              </button>
+                            </template>
+                          </div>
+                          <div class="rg-picker-models">
+                            <template
+                              x-for="group in visibleGroups"
+                              :key="group.provider"
+                            >
+                              <div class="rg-picker-group">
+                                <p
+                                  class="rg-picker-group-title"
+                                  x-show="showGroupHeaders"
+                                  x-text="group.provider"
+                                ></p>
+                                <template
+                                  x-for="option in group.options"
+                                  :key="option.member"
+                                >
+                                  <button
+                                    type="button"
+                                    class="rg-picker-row"
+                                    :class="{ added: isMemberAdded(option.member) }"
+                                    :title="option.member"
+                                    @click="addMemberFromPicker(option.member)"
+                                  >
+                                    <span
+                                      class="w-4 h-4 rg-picker-icon flex items-center justify-center shrink-0"
+                                      x-html="brandIconHtml(group.provider, option.member, 'w-4 h-4')"
+                                    ></span>
+                                    <span
+                                      class="rg-picker-name"
+                                      x-text="option.name || option.member"
+                                    ></span>
+                                    <span class="rg-picker-badges">
+                                      <span
+                                        class="rg-badge"
+                                        x-show="option.free"
+                                        x-text="t('routingGroups.pickerFree')"
+                                      ></span>
+                                      <span
+                                        class="rg-badge"
+                                        x-show="option.context"
+                                        x-text="formatContext(option.context)"
+                                      ></span>
+                                    </span>
+                                  </button>
+                                </template>
+                              </div>
+                            </template>
+                            <button
+                              type="button"
+                              class="rg-picker-row rg-picker-raw"
+                              x-show="rawMemberCandidate"
+                              @click="pickerAddRaw()"
+                            >
+                              <i
+                                data-lucide="plus"
+                                class="w-4 h-4 rg-picker-icon"
+                              ></i>
+                              <span
+                                class="rg-picker-name"
+                                x-text="rawMemberCandidate"
+                              ></span>
+                              <span
+                                class="rg-picker-id"
+                                x-text="t('routingGroups.pickerAddRaw')"
+                              ></span>
+                            </button>
+                            <p
+                              class="rg-picker-empty"
+                              x-show="!visibleGroups.length && !rawMemberCandidate"
+                              x-text="t('routingGroups.pickerEmpty')"
+                            ></p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <p
+                      class="rg-hint"
+                      x-text="t('routingGroups.modelsHint')"
+                    ></p>
+                  </div>
+                </div>
+
+                <!-- 3. 路由 (Routing) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.routing')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div class="rg-seg">
+                      <template x-for="mode in routingModes" :key="mode.value">
+                        <button
+                          type="button"
+                          class="rg-seg-btn"
+                          :class="{ active: form.routing === mode.value }"
+                          @click="form.routing = mode.value"
+                          x-text="t(mode.label)"
+                        ></button>
+                      </template>
+                    </div>
+                    <p
+                      class="rg-hint"
+                      x-text="routingHintText(form.routing)"
+                    ></p>
+                  </div>
+                </div>
+
+                <!-- 4. 会话保持 (Affinity / Stays) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.affinity')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div class="rg-seg">
+                      <template x-for="mode in affinityModes" :key="mode.value">
+                        <button
+                          type="button"
+                          class="rg-seg-btn"
+                          :class="{ active: form.affinity === mode.value }"
+                          @click="form.affinity = mode.value"
+                          x-text="t(mode.label)"
+                        ></button>
+                      </template>
+                    </div>
+                    <p
+                      class="rg-hint"
+                      x-text="affinityHintText(form.affinity)"
+                    ></p>
+                  </div>
+                </div>
+
+                <!-- 5. 规则 (Rules) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.rules')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="rg-btn-dashed"
+                        @click="addRule()"
+                      >
+                        <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                        <span x-text="t('routingGroups.addRule')"></span>
+                      </button>
+                    </div>
+                    <p
+                      class="rg-hint"
+                      x-text="t('routingGroups.rulesHintNew')"
+                    ></p>
+
+                    <div
+                      class="rg-rules-container mt-2"
+                      x-show="form.rules.length"
+                      x-cloak
+                    >
+                      <template
+                        x-for="(rule, index) in form.rules"
+                        :key="index"
+                      >
+                        <div class="rg-rule-compact">
+                          <div class="rg-rule-compact-head">
+                            <span
+                              class="rg-rule-compact-idx"
+                              x-text="index + 1"
+                            ></span>
+                            <div class="rg-rule-when-wrap">
+                              <span
+                                class="rg-rule-tag-label"
+                                x-text="t('routingGroups.ruleWhen')"
+                              ></span>
+
+                              <!-- tokens -->
+                              <span
+                                class="rg-cond-pill"
+                                :class="{ active: rule.tokens }"
+                              >
+                                <span>≥</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1000"
+                                  class="rg-cond-input"
+                                  placeholder="0"
+                                  x-model="rule.tokens"
+                                />
+                                <span>tokens</span>
+                              </span>
+
+                              <!-- images -->
+                              <button
+                                type="button"
+                                class="rg-cond-btn"
+                                :class="{ active: rule.images === 'true' }"
+                                @click="rule.images = (rule.images === 'true' ? '' : 'true')"
+                                x-text="t('routingGroups.rule.images')"
+                              ></button>
+
+                              <!-- effort -->
+                              <select
+                                class="rg-cond-select"
+                                :class="{ active: rule.effort }"
+                                x-model="rule.effort"
+                              >
+                                <option
+                                  value=""
+                                  x-text="t('routingGroups.ruleEffortAny')"
+                                ></option>
+                                <option
+                                  value="on"
+                                  x-text="t('routingGroups.rule.effortOn')"
+                                ></option>
+                                <template
+                                  x-for="level in effortLevels"
+                                  :key="level"
+                                >
+                                  <option
+                                    :value="level"
+                                    x-text="'≥ ' + level"
+                                  ></option>
+                                </template>
+                              </select>
+
+                              <!-- compact -->
+                              <button
+                                type="button"
+                                class="rg-cond-btn"
+                                :class="{ active: rule.compact === 'true' }"
+                                @click="rule.compact = (rule.compact === 'true' ? '' : 'true')"
+                                x-text="t('routingGroups.rule.compact')"
+                              ></button>
+
+                              <!-- agents -->
+                              <span
+                                class="rg-cond-pill"
+                                :class="{ active: rule.agents }"
+                              >
+                                <span
+                                  x-text="t('routingGroups.ruleAgentLabel')"
+                                ></span>
+                                <input
+                                  type="text"
+                                  class="rg-cond-input-text"
+                                  placeholder="codex, claude"
+                                  list="rg-agent-options"
+                                  x-model="rule.agents"
+                                />
+                              </span>
+
+                              <!-- intent -->
+                              <span
+                                class="rg-cond-pill"
+                                :class="{ active: rule.intent }"
+                              >
+                                <span
+                                  x-text="t('routingGroups.ruleIntentLabel')"
+                                ></span>
+                                <input
+                                  type="text"
+                                  class="rg-cond-input-text"
+                                  placeholder="writing tests"
+                                  x-model="rule.intent"
+                                />
+                              </span>
+                            </div>
+                            <div class="rg-rule-compact-actions">
+                              <button
+                                type="button"
+                                class="rg-btn-ghost"
+                                x-show="index > 0"
+                                @click="moveRule(index, -1)"
+                                x-text="t('routingGroups.moveUp')"
+                              ></button>
+                              <button
+                                type="button"
+                                class="rg-btn-ghost danger"
+                                @click="removeRule(index)"
+                                x-text="t('routingGroups.removeMemberShort')"
+                              ></button>
+                            </div>
+                          </div>
+                          <div class="rg-rule-compact-use">
+                            <span
+                              class="rg-rule-tag-label"
+                              x-text="t('routingGroups.ruleSendTo')"
+                            ></span>
+                            <select
+                              class="rg-cond-select active"
+                              x-model="rule.use"
+                            >
+                              <option
+                                value=""
+                                x-text="t('routingGroups.rule.usePlaceholder')"
+                              ></option>
+                              <template
+                                x-for="member in memberChoices()"
+                                :key="member"
+                              >
+                                <option
+                                  :value="member"
+                                  x-text="member"
+                                ></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 6. 推理预算 / 推理强度 (Effort) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.effort')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div class="rg-seg">
+                      <template x-for="mode in effortModes" :key="mode.value">
+                        <button
+                          type="button"
+                          class="rg-seg-btn"
+                          :class="{ active: form.effort === mode.value }"
+                          @click="form.effort = mode.value"
+                          x-text="t(mode.label)"
+                        ></button>
+                      </template>
+                    </div>
+                    <p class="rg-hint" x-text="effortHintText(form.effort)"></p>
+                  </div>
+                </div>
+
+                <!-- 7. 判定模型 (Classifier, 条件展示) -->
+                <div class="rg-editor-row" x-show="hasClassifierNeed" x-cloak>
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.classifierModel')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="text"
+                        class="form-input rg-input-sm"
+                        placeholder="provider/model，例如 openai/gpt-4o-mini"
+                        :value="classifierDisplayValue"
+                        @input="setClassifierFromInput($event.target.value)"
+                      />
+                      <select
+                        class="form-input rg-input-sm"
+                        style="width: auto; max-width: 14rem"
+                        @change="if ($event.target.value) setClassifierFromInput($event.target.value)"
+                      >
+                        <option
+                          value=""
+                          x-text="t('routingGroups.pickModelPlaceholder')"
+                        ></option>
+                        <template
+                          x-for="opt in memberOptions"
+                          :key="opt.member"
+                        >
+                          <option
+                            :value="opt.member"
+                            x-text="opt.name || opt.member"
+                          ></option>
+                        </template>
+                      </select>
+                    </div>
+                    <p class="rg-hint" x-text="classifierHintText()"></p>
+                  </div>
+                </div>
+
+                <!-- 8. 推理档位 (Levels) -->
+                <div class="rg-editor-row">
+                  <label
+                    class="rg-editor-label"
+                    x-text="t('routingGroups.levels')"
+                  ></label>
+                  <div class="rg-editor-control">
+                    <div class="rg-seg">
+                      <button
+                        type="button"
+                        class="rg-seg-btn"
+                        :class="{ active: form.levelsMode === 'shared' }"
+                        @click="form.levelsMode = 'shared'; form.levels = []"
+                        x-text="t('routingGroups.levelsShared')"
+                      ></button>
+                      <button
+                        type="button"
+                        class="rg-seg-btn"
+                        :class="{ active: form.levelsMode === 'own' }"
+                        @click="form.levelsMode = 'own'; if (!form.levels.length) form.levels = ['low', 'medium', 'high']"
+                        x-text="t('routingGroups.levelsCustom')"
+                      ></button>
+                    </div>
+                    <p
+                      class="rg-hint"
+                      x-text="form.levelsMode === 'shared' ? t('routingGroups.levelsSharedHint') : t('routingGroups.levelsCustomHint')"
+                    ></p>
+
+                    <div
+                      class="rg-levels mt-2"
+                      x-show="form.levelsMode === 'own'"
+                      x-cloak
+                    >
+                      <template x-for="level in effortChoices" :key="level">
+                        <button
+                          type="button"
+                          class="rg-cond-btn"
+                          :class="{ active: isLevelSelected(level) }"
+                          @click="toggleLevel(level)"
+                          x-text="level"
+                        ></button>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-small"
+                  @click="closeModal()"
+                  x-text="t('cancel')"
+                ></button>
+                <button
+                  type="button"
+                  class="btn btn-primary btn-small"
+                  @click="save()"
+                  :disabled="saving"
+                  x-text="editingId ? t('save') : t('add')"
+                ></button>
+              </div>
             </div>
           </div>
-          <p class="rg-hint" x-text="t('routingGroups.classifierHint')"></p>
         </div>
-      </div>
-      <div class="modal-footer">
-        <button
-          class="btn btn-secondary"
-          @click="closeModal()"
-          x-text="t('cancel')"
-        ></button>
-        <button
-          class="btn btn-primary"
-          @click="save()"
-          :disabled="saving"
-          x-text="t('save')"
-        ></button>
-      </div>
-    </div>
-  </div>
-</div>
 
         <!-- Usage View -->
         <div
@@ -5358,7 +6138,6 @@
         <div
           x-show="currentView === 'traces'"
           x-data="tracesView()"
-          x-init="init()"
           style="display: none"
           class="trace-view"
         >
@@ -5393,67 +6172,126 @@
 
           <!-- Live stage -->
           <div class="tr-stage mb-6">
-            <div class="tr-lane" x-ref="lane">
-              <div class="tr-packets" x-ref="packets"></div>
-              <template x-for="item in laneItems" :key="item.key">
-                <div style="display: contents">
-                  <template x-if="item.rail">
-                    <div class="tr-rail"></div>
-                  </template>
-                  <template x-if="!item.rail">
-                    <div class="tr-node" :class="`tr-node-${item.kind}`">
-                      <span class="tr-node-icon">
-                        <i :data-lucide="item.icon"></i>
-                      </span>
-                      <span class="tr-node-body">
-                        <span class="tr-node-title" x-text="item.title"></span>
-                        <span class="tr-node-sub" x-text="item.sub"></span>
-                      </span>
-                    </div>
-                  </template>
-                </div>
-              </template>
-            </div>
-            <!-- candidate paths: chosen route highlighted, alternates dimmed -->
-            <div class="tr-cands" x-show="candidates.length">
-              <div class="tr-cands-head">
-                <span x-text="t('trace.candidates')"></span>
+            <!-- Routing group banner when request hits a group -->
+            <div class="tr-group-banner" x-show="isGroup(selected)" x-cloak>
+              <div class="tr-group-banner-left">
+                <span class="tr-group-tag" x-text="t('trace.group')"></span>
+                <span class="tr-group-name" x-text="groupName(selected)"></span>
                 <span
-                  class="tr-cands-note"
-                  x-text="t('trace.candidatesNote')"
+                  class="tr-group-count"
+                  x-text="t('trace.groupCount', { n: groupMembersCount(selected) })"
+                ></span>
+                <span
+                  class="tr-group-strategy"
+                  x-text="t('trace.groupStrategy', { strategy: groupStrategyLabel(selected) })"
                 ></span>
               </div>
+            </div>
+
+            <div class="tr-stage-head">
+              <span
+                class="tr-mode-label"
+                x-text="mode === 'live' ? t('trace.live') : t('trace.history')"
+              ></span>
+              <span
+                class="tr-stage-status"
+                aria-live="polite"
+                x-text="stageStatus"
+              ></span>
+              <button
+                class="btn btn-secondary btn-small"
+                x-show="mode === 'history' && selected && !replaying"
+                @click="replayOne()"
+                x-text="t('trace.replay')"
+              ></button>
+            </div>
+            <div class="tr-lane" x-ref="lane">
+              <svg class="tr-wires" x-ref="wires" aria-hidden="true"></svg>
+              <svg class="tr-flights" x-ref="flights" aria-hidden="true"></svg>
+              <template x-for="item in laneNodes" :key="item.key">
+                <div class="tr-node" :class="'tr-node-' + item.kind">
+                  <span class="tr-node-icon"
+                    ><i :data-lucide="item.icon"></i
+                  ></span>
+                  <span class="tr-node-body">
+                    <span
+                      class="tr-node-title"
+                      x-text="item.title"
+                      :title="item.title"
+                    ></span>
+                    <span
+                      class="tr-node-sub"
+                      x-text="item.sub"
+                      :title="item.sub"
+                    ></span>
+                  </span>
+                  <span
+                    class="tr-hub-strategy"
+                    x-show="item.kind === 'gateway' && isGroup(selected)"
+                    x-text="groupStrategyLabel(selected)"
+                  ></span>
+                </div>
+              </template>
               <div class="tr-cand-list">
-                <template
-                  x-for="c in candidates"
-                  :key="c.connectionId + '::' + (c.credentialId || '')"
-                >
-                  <div
-                    class="tr-cand"
-                    :class="{ chosen: c.status === 'chosen' }"
-                  >
-                    <span class="tr-dot" :class="candDot(c)"></span>
+                <template x-for="c in candidates" :key="candidateKey(c)">
+                  <div class="tr-cand" :class="candidateState(c)">
+                    <span class="tr-cand-dot"></span>
                     <span class="tr-cand-main">
-                      <span class="tr-cand-route">
-                        <span x-text="c.connectionName || c.connectionId"></span>
+                      <div class="tr-cand-top">
                         <span
-                          x-show="c.credentialLabel"
-                          x-text="` · ${c.credentialLabel}`"
+                          class="tr-provider-icon"
+                          x-html="brandIconHtml(c.provider, c.model, 'w-4 h-4')"
                         ></span>
-                      </span>
-                      <span class="tr-cand-sub" x-text="candSub(c)"></span>
+                        <span
+                          class="tr-cand-route"
+                          x-text="c.credentialLabel || c.connectionName || c.connectionId"
+                          :title="c.connectionName"
+                        ></span>
+                        <span
+                          class="tr-cand-model"
+                          x-text="c.model || selected?.model || '—'"
+                          :title="c.model"
+                        ></span>
+                      </div>
                       <span
-                        class="tr-cand-ev"
+                        class="tr-cand-meta"
                         x-show="candEvidence(c)"
                         x-text="candEvidence(c)"
                       ></span>
                     </span>
                     <span class="tr-cand-status" x-text="candLabel(c)"></span>
+                    <div class="tr-quota-bar" x-show="c.quotaUsedPct != null">
+                      <span
+                        :style="'width:' + Math.max(0, Math.min(100, c.quotaUsedPct || 0)) + '%'"
+                      ></span>
+                    </div>
                   </div>
+                </template>
+                <template x-if="showCandidatePlaceholder">
+                  <div
+                    class="tr-cand-placeholder"
+                    x-text="t(selected?.inFlight ? 'trace.stageRouting' : 'trace.noCandidates')"
+                  ></div>
                 </template>
               </div>
             </div>
-
+            <div class="tr-replay-controls" x-show="replaying">
+              <span x-text="t('trace.replay') + ' ' + replayIndex"></span>
+              <progress :value="replayElapsed" :max="replayDuration"></progress>
+              <span
+                x-text="took(replayElapsed) + ' / ' + took(replayDuration)"
+              ></span>
+              <button
+                class="btn btn-secondary btn-small"
+                @click="replaySpeed = replaySpeed >= 8 ? 1 : replaySpeed * 2"
+                x-text="replaySpeed + '×'"
+              ></button>
+              <button
+                class="btn btn-secondary btn-small"
+                @click="stopReplay(); refreshStage()"
+                x-text="t('trace.stopReplay')"
+              ></button>
+            </div>
             <div class="tr-return">
               <span
                 class="tr-live-dot"
@@ -5461,6 +6299,10 @@
               ></span>
               <span
                 x-text="paused ? t('trace.paused') : (connecting ? t('trace.connecting') : t('trace.live'))"
+              ></span>
+              <span
+                x-show="mode === 'history'"
+                x-text="' · ' + t('trace.historyHint')"
               ></span>
             </div>
 
@@ -5482,36 +6324,64 @@
                 <div class="flex items-center gap-2">
                   <button
                     class="btn btn-small"
-                    :class="paused ? 'btn-secondary' : 'btn-primary'"
-                    @click="paused = !paused"
+                    :class="mode === 'live' ? 'btn-primary' : 'btn-secondary'"
+                    @click="backToLive()"
                   >
-                    <span
-                      x-text="paused ? t('trace.resume') : t('trace.pause')"
-                    ></span>
+                    <span x-text="t('trace.live')"></span>
                   </button>
+                  <button
+                    class="btn btn-small"
+                    :class="mode === 'history' ? 'btn-primary' : 'btn-secondary'"
+                    @click="showHistory()"
+                    x-text="t('trace.history')"
+                  ></button>
+                  <button
+                    class="btn btn-secondary btn-small"
+                    x-show="mode === 'live'"
+                    @click="paused = !paused"
+                    x-text="t(paused ? 'trace.resume' : 'trace.pause')"
+                  ></button>
                   <span
                     class="text-xs"
                     style="color: var(--apple-text-secondary)"
-                    x-text="t('trace.keepNote', { n: keep })"
+                    x-text="mode === 'history' ? t('trace.historyLimit') : t('trace.keepNote', { n: keep })"
                   ></span>
                 </div>
                 <button
                   class="btn btn-secondary btn-small"
                   @click="replayAll()"
-                  :disabled="replaying || !traces.length"
+                  :disabled="replaying || historyLoading || !visibleTraces.length"
                 >
                   <span x-text="t('trace.replayAll')"></span>
                 </button>
               </div>
 
+              <div class="tr-history-filter" x-show="mode === 'history'">
+                <label
+                  ><span x-text="t('trace.historyDate')"></span>
+                  <input
+                    type="date"
+                    x-model="historyDate"
+                    @change="showHistory()"
+                /></label>
+                <span
+                  x-show="historyLoading"
+                  x-text="t('trace.connecting')"
+                ></span>
+                <span
+                  role="alert"
+                  x-show="historyError"
+                  x-text="historyError"
+                ></span>
+              </div>
               <div
-                x-show="!traces.length"
+                x-show="!visibleTraces.length"
                 class="py-10 text-center text-sm"
                 style="color: var(--apple-text-secondary)"
                 x-text="t('trace.empty')"
               ></div>
 
-              <div class="tr-list" x-ref="list" x-show="traces.length">
+              <div class="tr-list" x-ref="list" x-show="visibleTraces.length">
                 <template x-for="frame in visibleTraces" :key="frame.requestId">
                   <div
                     class="tr-row"
@@ -5522,14 +6392,11 @@
                       class="tr-row-time"
                       x-text="fmtTime(frame.timestamp)"
                     ></span>
-                    <span
-                      class="tr-dot"
-                      :class="rowDotClass(frame)"
-                    ></span>
+                    <span class="tr-dot" :class="rowDotClass(frame)"></span>
                     <span class="tr-row-main">
                       <span
                         class="tr-row-model block"
-                        x-text="frame.model || frame.modelUpstream || '-'"
+                        x-text="rowModelDisplay(frame)"
                       ></span>
                       <span
                         class="tr-row-route block"
@@ -5572,7 +6439,10 @@
 
                 <div class="tr-waterfall" x-show="timeline">
                   <div class="tr-wf-track">
-                    <template x-for="(seg, i) in (timeline?.segs || [])" :key="i">
+                    <template
+                      x-for="(seg, i) in (timeline?.segs || [])"
+                      :key="i"
+                    >
                       <div
                         class="tr-wf-seg"
                         :class="seg.cls"
@@ -5588,13 +6458,29 @@
                   </div>
                   <div class="tr-wf-legend">
                     <span>
-                      <i style="background: color-mix(in srgb, var(--apple-orange) 70%, transparent)"></i>
+                      <i
+                        style="
+                          background: color-mix(
+                            in srgb,
+                            var(--apple-orange) 70%,
+                            transparent
+                          );
+                        "
+                      ></i>
                       <span
                         x-text="`${t('trace.stageFirstToken')} ${selected?.ttftMs ? took(selected.ttftMs) : '-'}`"
                       ></span>
                     </span>
                     <span>
-                      <i style="background: color-mix(in srgb, var(--apple-green) 55%, transparent)"></i>
+                      <i
+                        style="
+                          background: color-mix(
+                            in srgb,
+                            var(--apple-green) 55%,
+                            transparent
+                          );
+                        "
+                      ></i>
                       <span
                         x-text="`${t('trace.total')} ${took(selected?.latencyMs)}`"
                       ></span>
@@ -5609,7 +6495,10 @@
                     x-text="t('trace.attempts')"
                   ></h4>
                   <div class="flex flex-col gap-1.5">
-                    <template x-for="(att, i) in (selected?.attempts || [])" :key="i">
+                    <template
+                      x-for="(att, i) in (selected?.attempts || [])"
+                      :key="i"
+                    >
                       <div
                         class="tr-attempt"
                         :class="att.result === 'failed' ? 'fail' : 'ok'"
@@ -5636,10 +6525,35 @@
                     x-text="t('trace.routing')"
                   ></h4>
                   <dl class="tr-kv">
+                    <dt
+                      x-show="isGroup(selected)"
+                      x-text="t('trace.group')"
+                    ></dt>
+                    <dd
+                      x-show="isGroup(selected)"
+                      x-text="`${groupName(selected)} (${t('trace.groupCount', { n: groupMembersCount(selected) })})`"
+                    ></dd>
+                    <dt
+                      x-show="isGroup(selected)"
+                      x-text="t('trace.groupStrategyLabel')"
+                    ></dt>
+                    <dd
+                      x-show="isGroup(selected)"
+                      x-text="groupStrategyLabel(selected)"
+                    ></dd>
+                    <dt
+                      x-show="isGroup(selected)"
+                      x-text="t('trace.groupSelectedModel')"
+                    ></dt>
+                    <dd
+                      x-show="isGroup(selected)"
+                      class="font-medium text-[var(--apple-green)]"
+                      x-text="groupWinnerModel(selected)"
+                    ></dd>
                     <dt x-text="t('trace.status')"></dt>
                     <dd>
                       <span
-                        x-text="`${selected?.statusCode ?? '-'} · ${t('trace.' + (selected?.outcome || 'success'))}`"
+                        x-text="selected?.inFlight ? stageStatus : `${selected?.statusCode ?? '-'} · ${t('trace.' + (selected?.outcome || 'incomplete'))}`"
                       ></span>
                     </dd>
                     <dt x-text="t('trace.streaming')"></dt>
@@ -5647,11 +6561,17 @@
                       x-text="selected?.streaming ? t('trace.streaming') : t('trace.nonStreaming')"
                     ></dd>
                     <dt x-text="t('trace.connection')"></dt>
-                    <dd x-text="selected?.connectionName || selected?.provider || '—'"></dd>
+                    <dd
+                      x-text="selected?.connectionName || selected?.provider || '—'"
+                    ></dd>
                     <dt x-text="t('trace.credential')"></dt>
-                    <dd x-text="selected?.credentialLabel || selected?.credentialId || '—'"></dd>
+                    <dd
+                      x-text="selected?.credentialLabel || selected?.credentialId || '—'"
+                    ></dd>
                     <dt x-text="t('trace.upstream')"></dt>
-                    <dd x-text="selected?.modelUpstream || selected?.model || '—'"></dd>
+                    <dd
+                      x-text="selected?.modelUpstream || selected?.model || '—'"
+                    ></dd>
                     <dt x-text="t('trace.tokens')"></dt>
                     <dd
                       x-text="`${selected?.promptTokens ?? 0} → ${selected?.completionTokens ?? 0}`"
@@ -5966,19 +6886,19 @@
       </main>
     </div>
 
-    <script src="/admin/static/js/views/app.js"></script>
-    <script src="/admin/static/js/views/dashboard.js"></script>
-    <script src="/admin/static/js/views/users.js"></script>
-    <script src="/admin/static/js/views/accounts.js"></script>
-    <script src="/admin/static/js/views/connections.js"></script>
-    <script src="/admin/static/js/views/model-aliases.js"></script>
-    <script src="/admin/static/js/views/routing-groups.js"></script>
-    <script src="/admin/static/js/views/usage.js"></script>
-    <script src="/admin/static/js/views/quotas.js"></script>
-    <script src="/admin/static/js/views/performance.js"></script>
-    <script src="/admin/static/js/views/traces.js"></script>
-    <script src="/admin/static/js/views/guard.js"></script>
-    <script src="/admin/static/js/views/logs.js"></script>
-    <script src="/admin/static/js/partials.js"></script>
+    <script src="/admin/static/js/views/app.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/dashboard.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/users.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/accounts.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/connections.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/model-aliases.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/routing-groups.js?v=0.7.6"></script>
+    <script src="/admin/static/js/views/usage.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/quotas.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/performance.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/traces.js?v=0.7.5"></script>
+    <script src="/admin/static/js/views/guard.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/logs.js?v=0.7.2"></script>
+    <script src="/admin/static/js/partials.js?v=0.7.2"></script>
   </body>
 </html>

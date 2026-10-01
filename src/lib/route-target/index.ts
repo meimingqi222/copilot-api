@@ -1,4 +1,5 @@
 export { buildRouteTargets, listExposedPublicModels } from "./build"
+export { buildGroupRouteTargets, selectGroupRouteTarget } from "./group-select"
 export {
   quotaWindowsOf,
   renewsAtFor,

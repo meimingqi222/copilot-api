@@ -21,6 +21,8 @@ import {
   isAccountManagedConnection,
 } from "~/lib/provider-connections"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { patchRequestLog } from "~/lib/request-log"
+import { applyGroupOverrides } from "~/lib/routing-groups/apply"
 import { MAX_JSON_BODY_BYTES } from "~/lib/request-body"
 import { ClientAbortError } from "~/lib/request-lifecycle"
 import {
@@ -30,6 +32,7 @@ import {
   finalizeUpstreamModelAuditForContext,
   getRequestLogContext,
   markStreamTerminal,
+  markTraceFirstOutput,
   observeUpstreamResponseModelForContext,
   recordTraceError,
   restoreRequestLogContext,
@@ -390,6 +393,16 @@ async function processResponseCreate(
   if (isCompactRequest) httpRecoveryTried = true
 
   while (true) {
+    if (current.group) {
+      current.groupOverrides = applyGroupOverrides(payload, current.group, {
+        endpoint: "responses",
+        baseline: current.groupOverrideBaseline,
+      })
+      patchRequestLog(c, {
+        routingGroupSelectedMember: current.group.member,
+        reasoningEffort: current.groupOverrides.effort,
+      })
+    }
     // Per-credential in-flight gate. The WS path bypasses
     // `executeWithFailover`, so this is the only cross-session bound: session
     // affinity deliberately pins many Codex sessions to one credential, and
@@ -597,6 +610,8 @@ async function runResponsesAttempt(
       )
     } else {
       const pumped = await pumpWithLeadingBuffer(ws, result.response, {
+        onFirstOutput: (timestamp) =>
+          markTraceFirstOutput(c, timestamp - turnStarted),
         onCommit: (details) => {
           state.committed = true
           updateMemoryTrace(memoryTraceId, "downstream_committed", {
