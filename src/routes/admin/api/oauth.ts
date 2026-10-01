@@ -25,6 +25,10 @@ import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import { upgradeOAuthConnectionLabelIfNeeded } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
 import { isCodebuddyOAuthProviderId } from "~/services/oauth/codebuddy"
+import {
+  connectionOAuthIdentity,
+  findConnectionByOAuthIdentity,
+} from "~/services/oauth/identity"
 import { lobsteraiCallbackStateMatches } from "~/services/oauth/lobsterai"
 import {
   bindOAuthFlowAbortSignal,
@@ -107,9 +111,21 @@ async function finalizeOAuthConnection(
 ): Promise<ProviderConnection> {
   // 原地重认证：把临时 connection 上的新凭据回填到目标 connection。
   // 目标保留 id/name/priority/models/用量统计；仅凭据与 quota/auth 状态更新。
+  //
+  // A fresh sign-in for an account we already have is a re-authentication, not
+  // a second connection: two copies of one rotating refresh token would each
+  // refresh on their own and invalidate the other. Match on the account's
+  // identity (oauthAccountId, else email) — never the just-created connection.
+  const identityMatch =
+    flow?.reauthAccountId ? undefined : (
+      findConnectionByOAuthIdentity(
+        getConnectionProvider(conn),
+        connectionOAuthIdentity(conn),
+      )
+    )
   const reauthTarget =
-    flow?.reauthAccountId ?
-      getMutableProviderConnection(flow.reauthAccountId)
+    flow?.reauthAccountId ? getMutableProviderConnection(flow.reauthAccountId)
+    : identityMatch && identityMatch.id !== conn.id ? identityMatch
     : undefined
   const finalized = reauthTarget ?? conn
   if (reauthTarget) {

@@ -18,6 +18,10 @@ import {
   applyOAuthBundleToCredential,
   applyOAuthConnectionSettings,
 } from "./apply-bundle"
+import {
+  connectionOAuthIdentity,
+  findConnectionByOAuthIdentity,
+} from "./identity"
 import { normalizeCpaProviderType } from "./normalize"
 import { createOAuthConnection } from "./provider-strategies"
 import { parseExpiresAt } from "./token-resolver"
@@ -76,23 +80,16 @@ function buildLabel(
 
 function removeDuplicateConnection(
   connections: Array<ProviderConnection>,
-  label: string,
-  provider: OAuthProviderId,
+  existing: ProviderConnection,
 ): void {
-  const duplicateIndex = connections.findIndex(
-    (conn) =>
-      conn.name === label && providerFromProtocol(conn.protocol) === provider,
-  )
-  if (duplicateIndex === -1) {
-    return
-  }
-
-  const existing = connections[duplicateIndex]
+  const index = connections.indexOf(existing)
   cancelConnectionTokenRefresh(existing.id)
   cancelOAuthRefreshTimer(existing.id)
   clearAccountRateLimitState(existing.id)
   removeProviderConnection(existing.id)
-  connections.splice(duplicateIndex, 1)
+  if (index >= 0) {
+    connections.splice(index, 1)
+  }
 }
 
 /**
@@ -214,12 +211,20 @@ export function importCpaAuthRecords(
       // 从 protocol 反推 provider id 用于重复检测
       const providerId = normalizeCpaProviderType(record.type)
 
-      // 检查重复(通过 label + provider 匹配)
-      const duplicate = existing.find(
+      // 重复检测：同一 provider 下，同 label 或同一 OAuth 身份（accountId / email）
+      // 都算重复——同一账号换个 label 导入不该变成两条各自刷新同一轮转
+      // refresh token 的连接（那样两边会互相顶掉）。
+      const labelDuplicate = existing.find(
         (item) =>
           item.name === label
           && providerFromProtocol(item.protocol) === providerId,
       )
+      const identityDuplicate = findConnectionByOAuthIdentity(
+        providerId,
+        connectionOAuthIdentity(conn),
+        existing,
+      )
+      const duplicate = identityDuplicate ?? labelDuplicate
 
       if (duplicate && !options?.overwrite) {
         result.skipped.push(label)
@@ -227,7 +232,7 @@ export function importCpaAuthRecords(
       }
 
       if (duplicate && options?.overwrite && providerId) {
-        removeDuplicateConnection(existing, label, providerId)
+        removeDuplicateConnection(existing, duplicate)
       }
 
       // 直接 upsert ProviderConnection

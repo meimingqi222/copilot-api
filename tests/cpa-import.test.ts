@@ -116,6 +116,89 @@ describe("CPA auth import", () => {
     expect(listAccounts()).toHaveLength(2)
   })
 
+  test("dedupes the same account imported under a different label", () => {
+    // Same vendor account id, different label: still one account. Two
+    // connections would each refresh the same rotating refresh token and
+    // invalidate the other.
+    importCpaAuthRecords(
+      [
+        {
+          type: "codex",
+          access_token: "codex-1",
+          account_id: "acct_same",
+          email: "same@example.com",
+          label: "first",
+        },
+      ],
+      { existingConnections: listAccountManagedConnections() },
+    )
+    expect(listAccounts()).toHaveLength(1)
+
+    const skipped = importCpaAuthRecords(
+      [
+        {
+          type: "codex",
+          access_token: "codex-2",
+          account_id: "acct_same",
+          email: "same@example.com",
+          label: "second",
+        },
+      ],
+      { existingConnections: listAccountManagedConnections() },
+    )
+    expect(skipped.skipped).toHaveLength(1)
+    expect(listAccounts()).toHaveLength(1)
+
+    const replaced = importCpaAuthRecords(
+      [
+        {
+          type: "codex",
+          access_token: "codex-3",
+          account_id: "acct_same",
+          email: "same@example.com",
+          label: "second",
+        },
+      ],
+      {
+        overwrite: true,
+        existingConnections: listAccountManagedConnections(),
+      },
+    )
+    expect(replaced.imported).toHaveLength(1)
+    expect(listAccounts()).toHaveLength(1)
+    const only = listAccounts()[0] as {
+      credentials?: { accessToken?: string }
+    }
+    expect(only.credentials?.accessToken).toBe("codex-3")
+  })
+
+  test("matches identity by email when no account id is present", () => {
+    importCpaAuthRecords(
+      [
+        {
+          type: "claude",
+          access_token: "claude-1",
+          email: "e@example.com",
+          label: "one",
+        },
+      ],
+      { existingConnections: listAccountManagedConnections() },
+    )
+    const skipped = importCpaAuthRecords(
+      [
+        {
+          type: "claude",
+          access_token: "claude-2",
+          email: "E@example.com",
+          label: "two",
+        },
+      ],
+      { existingConnections: listAccountManagedConnections() },
+    )
+    expect(skipped.skipped).toHaveLength(1)
+    expect(listAccounts()).toHaveLength(1)
+  })
+
   test("parses CPA payload variants", () => {
     expect(
       parseCpaAuthPayload([{ type: "codex", access_token: "a" }]),
