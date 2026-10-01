@@ -328,33 +328,55 @@ test("GET /admin/api/providers returns registered provider descriptors", async (
 })
 
 test("POST /admin/api/accounts creates a windsurf account with direct credentials", async () => {
-  const response = await server.fetch(
-    adminRequest("http://localhost/admin/api/accounts", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        label: "windsurf-main",
-        provider: "windsurf",
-        credentials: {
-          apiKey: "ws-test-key",
-        },
-        settings: {
-          defaultModel: "swe-1-6-fast",
-        },
+  const originalFetch = globalThis.fetch
+  // Creating the account refreshes the model catalog against Windsurf's real
+  // `GetUserStatus` endpoint. Under full-suite load that network attempt is
+  // what overran the 5s test budget — and it made the result depend on
+  // reachability. Mock it: an upstream error is the documented path where
+  // `refreshModelsForConnection` keeps the connection's fallback models, which
+  // is exactly the state this test asserts on.
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url =
+      typeof input === "string" ? input
+      : input instanceof URL ? input.href
+      : input.url
+    if (url.includes("api.windsurf.com")) {
+      return new Response("unreachable in tests", { status: 503 })
+    }
+    return originalFetch(input as never)
+  }) as typeof fetch
+
+  try {
+    const response = await server.fetch(
+      adminRequest("http://localhost/admin/api/accounts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          label: "windsurf-main",
+          provider: "windsurf",
+          credentials: {
+            apiKey: "ws-test-key",
+          },
+          settings: {
+            defaultModel: "swe-1-6-fast",
+          },
+        }),
       }),
-    }),
-  )
+    )
 
-  expect(response.status).toBe(200)
-  const body = (await response.json()) as {
-    status: string
-    account: { provider: string; label: string }
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      status: string
+      account: { provider: string; label: string }
+    }
+
+    expect(body.status).toBe("complete")
+    expect(body.account.provider).toBe("windsurf")
+    expect(body.account.label).toBe("windsurf-main")
+    expect(
+      listAccounts().some((account) => account.provider === "windsurf"),
+    ).toBe(true)
+  } finally {
+    globalThis.fetch = originalFetch
   }
-
-  expect(body.status).toBe("complete")
-  expect(body.account.provider).toBe("windsurf")
-  expect(body.account.label).toBe("windsurf-main")
-  expect(
-    listAccounts().some((account) => account.provider === "windsurf"),
-  ).toBe(true)
 })

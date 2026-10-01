@@ -71,8 +71,32 @@ async function makeRun(patienceMs: number): Promise<{
     run,
     dispose: async () => {
       run.abort()
-      await fs.rm(tmpDir, { recursive: true, force: true })
+      await removeTempDir(tmpDir)
     },
+  }
+}
+
+/**
+ * Remove a run's temp dir, tolerating the Windows quirk that breaks this.
+ *
+ * Two removals race on the same path: `abort()` → `finish()` schedules its own
+ * `fs.rm`, and the test removes it again here while the killed process may
+ * still hold a handle. Bun on Windows intermittently answers that with
+ * `EFAULT: bad address in system call argument` — which is a cleanup detail,
+ * not the behaviour under test, so it must not fail the test. Retry the
+ * transient codes and then give up: an OS temp dir left behind costs nothing.
+ */
+async function removeTempDir(dir: string): Promise<void> {
+  const TRANSIENT = new Set(["EFAULT", "EBUSY", "EPERM", "ENOTEMPTY"])
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (!code || !TRANSIENT.has(code)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
+    }
   }
 }
 
