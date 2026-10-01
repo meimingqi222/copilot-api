@@ -38,7 +38,7 @@ export interface RuleContext {
  * either: an empty list constrains nothing, so it cannot be used to mean
  * "never".
  */
-export function hasConditions(rule: Rule): boolean {
+function hasConditions(rule: Rule): boolean {
   return (
     rule.tokens !== undefined
     || rule.images !== undefined
@@ -58,7 +58,7 @@ export function hasConditions(rule: Rule): boolean {
  * a level requirement, so it satisfies one; a request with reasoning off (or
  * no effort at all) satisfies nothing.
  */
-export function effortSatisfies(required: string, actual?: string): boolean {
+function effortSatisfies(required: string, actual?: string): boolean {
   const wanted = required.trim().toLowerCase()
   const reading = readEffort(actual)
   if (!reading.reasoning) return false
@@ -110,7 +110,7 @@ export function ruleMatches(rule: Rule, ctx: RuleContext): boolean {
 }
 
 /** The first rule that matches, skipping rules with no usable `use`. */
-export function firstMatchingRule(
+function firstMatchingRule(
   group: RoutingGroup,
   ctx: RuleContext,
 ): Rule | undefined {

@@ -28,7 +28,7 @@ import type { MergedPlanAllowance, PlanAllowance, PlanWindow } from "./types"
 import { mergeWithLast } from "./store"
 import { elapsed } from "./windows"
 
-export interface PlanAccount {
+interface PlanAccount {
   provider: string
   user: string
 }
@@ -65,7 +65,7 @@ const WINDOW_SCOPE_TOKENS: ReadonlyArray<string> = [
  * definition for both the snapshot's own windows and the plan readings derived
  * from them, so the two never disagree about which account a model belongs to.
  */
-export function scopeOfWindowText(text: string): string | undefined {
+function scopeOfWindowText(text: string): string | undefined {
   const lower = text.toLowerCase()
   for (const token of WINDOW_SCOPE_TOKENS) {
     if (lower.includes(token)) return token
@@ -161,7 +161,7 @@ interface MirroredReading {
 /** Last reading per account, for the synchronous read side. Memory-only. */
 const mirror = new Map<string, MirroredReading>()
 
-export interface AllowanceReadingInput {
+interface AllowanceReadingInput {
   provider: string
   user: string
   /** A good reading: the windows as fetched. */

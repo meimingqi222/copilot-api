@@ -11,15 +11,18 @@
 // being routed (by their scope) are weighed, so an Opus
 // weekly allowance used up leaves Sonnet alone. copilot-api's quota snapshots
 // carry those windows under `details._quotaWindows` (Claude's seven_day_opus /
-// seven_day_sonnet, and every other provider's cycles); this module filters by
-// them when present and falls back to the whole snapshot otherwise.
+// seven_day_sonnet, and every other provider's cycles). The window model itself
+// lives in `~/lib/plan-quota` (parse, scope, biggest-window-first, advance by
+// elapsed) and is imported here rather than re-implemented; this module keeps
+// only the snapshot-wide fallbacks (top-level counters, heterogeneous resets)
+// for providers that report no canonical window list.
 
 import {
   planAccountFor,
   planAllowanceFor,
-  scopeOfWindowText,
+  planWindowsFromSnapshot,
 } from "~/lib/plan-quota/apply"
-import { allowanceFor } from "~/lib/plan-quota/windows"
+import { allowanceFor, windowApplies } from "~/lib/plan-quota/windows"
 import {
   getProviderConnection,
   isAccountManagedConnection,
@@ -31,8 +34,8 @@ import type { QuotaSnapshot } from "~/lib/quota/types"
 import { state } from "~/lib/state"
 
 import { servedTokensOf } from "./recent-serve"
-import { restInfoFor } from "./rest-registry"
-import { restInfoForCredential, type RestInfo } from "./rest-reason"
+import { type RestInfo } from "./rest-reason"
+import { restingReasonFor } from "./resting"
 
 export interface QuotaEvidence {
   /** Share of the allowance used, 0..1. Undefined when the provider reports none. */
@@ -68,15 +71,6 @@ function normalizeResetMs(value: number): number {
   // Seconds and milliseconds epochs both appear; anything that can only be
   // seconds is seconds.
   return value < 1e12 ? value * 1000 : value
-}
-
-function usedFractionFromPair(
-  usedPercent: number | undefined,
-): number | undefined {
-  if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
-    return undefined
-  }
-  return Math.min(Math.max(usedPercent / 100, 0), 1)
 }
 
 /** The largest usage share across the snapshot's top-level counters. */
@@ -142,50 +136,22 @@ export function quotaRenewsAt(snapshot: QuotaSnapshot): Array<number> {
 }
 
 /**
- * The canonical allowance windows a snapshot carries, when it has any:
+ * The canonical allowance windows a snapshot carries, as routing weighs them:
  * `details._quotaWindows` (built by lib/quota/cycles for Claude, Codex,
- * Antigravity, Kimi). Each window's scope is read from its id/label so a
- * model-scoped window (seven_day_opus) only counts that model.
+ * Antigravity, Kimi).
+ *
+ * Thin adapter over the one window implementation in `~/lib/plan-quota`
+ * (`planWindowsFromSnapshot`); it renames the plan model's `used`/`model` to
+ * this module's `usedFraction`/`scope`, so the selector and the trace view keep
+ * the shape they already read.
  */
 export function quotaWindowsOf(snapshot: QuotaSnapshot): Array<QuotaWindow> {
-  const details = snapshot.details
-  if (!isRecord(details)) return []
-  const raw = details["_quotaWindows"]
-  if (!Array.isArray(raw)) return []
-  const out: Array<QuotaWindow> = []
-  for (const item of raw) {
-    if (!isRecord(item)) continue
-    const id = typeof item["id"] === "string" ? item["id"] : ""
-    const labelKey =
-      typeof item["labelKey"] === "string" ? item["labelKey"] : ""
-    const usedPercent =
-      typeof item["usedPercent"] === "number" ? item["usedPercent"] : undefined
-    const endMs =
-      typeof item["windowEndMs"] === "number" && item["windowEndMs"] > 0 ?
-        item["windowEndMs"]
-      : undefined
-    const startMs =
-      typeof item["windowStartMs"] === "number" && item["windowStartMs"] > 0 ?
-        item["windowStartMs"]
-      : undefined
-    const resetsAtMs =
-      endMs
-      ?? ((
-        typeof item["resetAtSeconds"] === "number" && item["resetAtSeconds"] > 0
-      ) ?
-        normalizeResetMs(item["resetAtSeconds"])
-      : undefined)
-    out.push({
-      usedFraction: usedFractionFromPair(usedPercent),
-      resetsAtMs,
-      spanMs:
-        endMs !== undefined && startMs !== undefined ?
-          endMs - startMs
-        : undefined,
-      scope: scopeOfWindowText(`${id} ${labelKey}`),
-    })
-  }
-  return out
+  return planWindowsFromSnapshot(snapshot).map((window) => ({
+    usedFraction: window.used,
+    resetsAtMs: window.resetsAtMs,
+    spanMs: window.spanMs,
+    scope: window.model,
+  }))
 }
 
 /** Whether a window counts the model being routed. */
@@ -193,9 +159,11 @@ export function windowAppliesTo(
   window: QuotaWindow,
   model: string | undefined,
 ): boolean {
-  if (!window.scope) return true // a plan-wide window counts every model
-  if (!model) return true // no model to filter by: everything counts
-  return model.toLowerCase().includes(window.scope)
+  // Same rule as the plan model (`window.model` is this shape's `scope`).
+  return windowApplies(
+    { used: window.usedFraction ?? 0, model: window.scope },
+    model,
+  )
 }
 
 /** The share used of the fullest window that counts `model`. */
@@ -203,21 +171,14 @@ export function usedFractionFor(
   snapshot: QuotaSnapshot,
   model?: string,
 ): number | undefined {
-  const windows = quotaWindowsOf(snapshot)
-  const applying = windows.filter((w) => windowAppliesTo(w, model))
-  let max: number | undefined
-  for (const window of applying) {
-    if (window.usedFraction === undefined) continue
-    max =
-      max === undefined ?
-        window.usedFraction
-      : Math.max(max, window.usedFraction)
+  const windows = planWindowsFromSnapshot(snapshot)
+  if (!windows.some((window) => windowApplies(window, model))) {
+    // No window counts the model (or none was measured): fall back to the whole
+    // snapshot's counters, so providers that only report an aggregate still
+    // weigh.
+    return usedFractionOf(snapshot)
   }
-  if (max !== undefined) return max
-  // No per-window data (or none counts the model): fall back to the whole
-  // snapshot's counters, so providers that only report an aggregate still
-  // weigh.
-  return usedFractionOf(snapshot)
+  return allowanceFor(windows, model, Date.now()).used
 }
 
 /** Renewal instants of the windows that count `model`, biggest window first. */
@@ -225,25 +186,14 @@ export function renewsAtFor(
   snapshot: QuotaSnapshot,
   model?: string,
 ): Array<number> {
-  const now = Date.now()
-  const windows = quotaWindowsOf(snapshot).filter((w) =>
-    windowAppliesTo(w, model),
-  )
-  const withReset = windows.filter(
-    (w) => w.resetsAtMs !== undefined && w.resetsAtMs > now,
-  )
-  if (withReset.length > 0) {
-    // The longest window first (the week, not the five hours in it); ties by
-    // the furthest reset.
-    return withReset
-      .sort((a, b) => {
-        const span = (b.spanMs ?? 0) - (a.spanMs ?? 0)
-        if (span !== 0) return span
-        return (b.resetsAtMs ?? 0) - (a.resetsAtMs ?? 0)
-      })
-      .map((w) => w.resetsAtMs as number)
-  }
-  return quotaRenewsAt(snapshot)
+  const renews = allowanceFor(
+    planWindowsFromSnapshot(snapshot),
+    model,
+    Date.now(),
+  ).renews
+  // No per-window reset (or no window list at all): fall back to the
+  // heterogeneous details shapes some providers report instead.
+  return renews.length > 0 ? renews : quotaRenewsAt(snapshot)
 }
 
 /**
@@ -319,11 +269,14 @@ function evidenceFrom(
     (snapshotStale ? planQuotaEvidenceFor(connection, model, now) : undefined)
     ?? fromSnapshot
 
-  // The registry's richer rest (by / failures / link) wins over the coarse
-  // credential status when both know of a rest.
+  // One resting read: the registry's richer rest (by / failures / link) wins
+  // over the coarse credential status when both know of a rest. Account scope
+  // only — the trace view has always shown the credential-level rest, not a
+  // model's.
   const rest =
-    (credential ? restInfoFor(credential.id) : undefined)
-    ?? restInfoForCredential(credential)
+    credential ?
+      restingReasonFor({ credentialId: credential.id, credential })
+    : undefined
 
   return {
     quota,

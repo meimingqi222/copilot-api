@@ -27,7 +27,7 @@ export const DAY_NAMES = [
   "sun",
 ] as const
 
-export type DayName = (typeof DAY_NAMES)[number]
+type DayName = (typeof DAY_NAMES)[number]
 
 /** Day names in `Date.getDay()` order, for weekday arithmetic. */
 const JS_DAY_ORDER: Array<DayName> = [
@@ -73,7 +73,7 @@ const DAY_ALIASES: Record<string, DayName> = {
 }
 
 /** A window with its text fields already parsed. */
-export interface NormalizedWindow {
+interface NormalizedWindow {
   /** Minutes since local midnight the window opens. */
   from: number
   /** Minutes since local midnight the window closes (exclusive). */

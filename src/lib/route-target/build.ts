@@ -23,7 +23,6 @@ import {
   getExposedAliasEntries,
   type ModelAliasRestriction,
 } from "~/lib/model-aliases"
-import { isModelCoolingDown } from "~/lib/model-cooldown"
 import {
   DEFAULTS,
   accountManagedModelPrefix,
@@ -42,6 +41,7 @@ import {
 } from "~/lib/provider-connections"
 
 import { connectionModelEndpoints } from "./model-support"
+import { isResting } from "./resting"
 
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
   const credentials = (connection as { credentials?: unknown }).credentials
@@ -49,18 +49,18 @@ function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
 }
 
 /**
- * 模型级冷却排除：CodeBuddy 6004 只冷却 (credential, model)，同凭证其它
+ * 模型级休息排除：CodeBuddy 6004 只让 (credential, model) 休息，同凭证其它
  * 模型照常路由。其它协议无此语义，直接放行（不受影响）。
  * 注意是瞬时状态过滤（与账号冷却同理），/v1/models 列表不受影响。
  */
-function isModelCooldownExcluded(
+function isModelRestingExcluded(
   connection: ProviderConnection,
   credentialId: string,
   upstreamModelId: string,
 ): boolean {
   return (
     connection.protocol === "codebuddy-native"
-    && isModelCoolingDown(credentialId, upstreamModelId)
+    && isResting({ credentialId, model: upstreamModelId })
   )
 }
 
@@ -145,9 +145,9 @@ export function buildRouteTargets(
     if (accountManaged && modelsNotLoaded(connection)) {
       // 尚未加载:为请求的模型生成通配 target(publicModelId 为空则不生成)
       if (!options.publicModelId) continue
-      // 通配 target 也受模型冷却约束（upstreamModelId 即请求模型）。
+      // 通配 target 也受模型休息约束（upstreamModelId 即请求模型）。
       if (
-        isModelCooldownExcluded(
+        isModelRestingExcluded(
           connection,
           credentials[0]?.id ?? connection.id,
           options.publicModelId,
@@ -226,9 +226,9 @@ export function buildRouteTargets(
 
       for (const credential of credentials) {
         if (onlyAvailable && !isCredentialAvailable(credential)) continue
-        // 模型级冷却的 (credential, model) 不生成候选。
+        // 模型级休息的 (credential, model) 不生成候选。
         if (
-          isModelCooldownExcluded(connection, credential.id, model.upstreamId)
+          isModelRestingExcluded(connection, credential.id, model.upstreamId)
         ) {
           continue
         }

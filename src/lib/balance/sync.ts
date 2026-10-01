@@ -57,9 +57,7 @@ const gatedCredentials = new Set<string>()
  * base URL, so every protocol slot points at it and vendor detection sees the
  * same host whichever endpoint the connection's models use.
  */
-export function connectionBalanceHosts(
-  connection: ProviderConnection,
-): BalanceHosts {
+function connectionBalanceHosts(connection: ProviderConnection): BalanceHosts {
   return {
     chat: connection.baseUrl,
     responses: connection.baseUrl,
@@ -130,7 +128,7 @@ export async function syncConnectionBalance(
   return getConnectionBalance(connection)
 }
 
-export interface BalanceGateResult {
+interface BalanceGateResult {
   /** The connection is sitting out on a depleted balance now. */
   gated: boolean
   /** This call moved it — it went out, or came back in. */
@@ -173,11 +171,6 @@ export function applyBalanceGate(
   // ready for the next request.
   setConnectionQuotaState(connection, "available")
   return { gated: false, changed: true }
-}
-
-/** Is this credential out because its balance was read at or below zero? */
-export function isBalanceGated(credentialId: string): boolean {
-  return gatedCredentials.has(credentialId)
 }
 
 /** Forget which credentials this module put out (tests). */

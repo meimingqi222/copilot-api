@@ -24,13 +24,10 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number]
 export const EFFORT_ANY = "on"
 
 /** What a rule's `effort` condition may ask for. */
-export type EffortSpec = EffortLevel | typeof EFFORT_ANY
+type EffortSpec = EffortLevel | typeof EFFORT_ANY
 
 /** Spellings that mean "no reasoning": neither satisfies an effort rule. */
 export const EFFORT_OFF_VALUES = ["off", "none", "disabled"] as const
-
-/** Request-side spellings of "reasoning on, level undecided". */
-export const EFFORT_UNRANKED_VALUES = ["on", "auto", "adaptive"] as const
 
 export function isEffortLevel(value: unknown): value is EffortLevel {
   return (
@@ -39,7 +36,7 @@ export function isEffortLevel(value: unknown): value is EffortLevel {
   )
 }
 
-export function isEffortOff(value: unknown): boolean {
+function isEffortOff(value: unknown): boolean {
   return (
     typeof value === "string"
     && (EFFORT_OFF_VALUES as readonly string[]).includes(
@@ -49,7 +46,7 @@ export function isEffortOff(value: unknown): boolean {
 }
 
 /** A request's effort, read into the two things a rule can care about. */
-export interface EffortReading {
+interface EffortReading {
   /** The request asked for reasoning at all. */
   reasoning: boolean
   /** Where it sits among {@link EFFORT_LEVELS}; 0 when it names no level. */

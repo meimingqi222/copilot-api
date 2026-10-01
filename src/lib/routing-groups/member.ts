@@ -24,18 +24,18 @@ import {
 export const NESTED_GROUP_PREFIX = "group/"
 
 /** Suffix marking the fast variant of a member. */
-export const FAST_SUFFIX = "fast"
+const FAST_SUFFIX = "fast"
 
 /** Whether an id is a real model, so its own suffixes must be left alone. */
-export type KnownModelCheck = (id: string) => boolean
+type KnownModelCheck = (id: string) => boolean
 
-export interface ParsedMemberEffort {
+interface ParsedMemberEffort {
   /** The member without its effort suffix. */
   model: string
   effort: EffortLevel
 }
 
-export interface ParsedMemberFast {
+interface ParsedMemberFast {
   /** The member without its fast suffix. */
   model: string
   fast: true

@@ -84,7 +84,7 @@ function isBackoffReason(reason: RestReason): boolean {
   return reason === "network" || reason === "unknown"
 }
 
-export interface RecordRestInput {
+interface RecordRestInput {
   credentialId: string
   reason: RestReason
   by: RestBy

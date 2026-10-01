@@ -30,7 +30,7 @@ import { isEffortLevel } from "./types"
 export const FAST_SERVICE_TIER = "priority"
 
 /** What a member's suffixes ask for, as `resolve.ts` reads them. */
-export interface GroupOverrides {
+interface GroupOverrides {
   /** Reasoning level the member carries, if any. */
   effort?: string
   /** The member asked for its fast variant. */
@@ -49,7 +49,7 @@ export interface AppliedGroupOverrides {
   fastField?: string
 }
 
-export interface ApplyGroupOverridesOptions {
+interface ApplyGroupOverridesOptions {
   /** Endpoint the payload is written for; decides which spellings apply. */
   endpoint?: ModelEndpoint
 }

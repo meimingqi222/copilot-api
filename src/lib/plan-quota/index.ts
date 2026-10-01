@@ -1,11 +1,4 @@
-import type {
-  MergedPlanAllowance,
-  PlanAllowance,
-  PlanReading,
-  PlanWindow,
-} from "./types"
-
-export type { MergedPlanAllowance, PlanAllowance, PlanReading, PlanWindow }
+export type { PlanAllowance } from "./types"
 
 export {
   isPassingError,

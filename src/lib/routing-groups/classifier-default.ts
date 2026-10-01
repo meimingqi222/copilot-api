@@ -47,7 +47,7 @@ const COMPLETION_MAX_TOKENS = 32
  * intent is {@link intentFromReply}'s job, so a stub can answer with anything a
  * real model might.
  */
-export type ClassifierCompleter = (
+type ClassifierCompleter = (
   input: IntentClassifierInput,
   signal?: AbortSignal,
 ) => Promise<string>
@@ -67,7 +67,7 @@ export function resetIntentClassifierCompleterForTest(): void {
 }
 
 /** The instruction that turns `intents` into a one-word question. */
-export function classificationPrompt(intents: Array<string>): string {
+function classificationPrompt(intents: Array<string>): string {
   return [
     "You label an incoming request with exactly one intent.",
     `Valid labels: ${intents.join(", ")}.`,

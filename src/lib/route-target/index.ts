@@ -37,12 +37,17 @@ export {
   clearRestRegistryForTest,
   listRests,
   recordRest,
-  type RecordRestInput,
   restBackoffMs,
   restInfoFor,
   unrest,
   verifyHeldError,
 } from "./rest-registry"
+export {
+  heldErrorFor,
+  isResting,
+  type RestingQuery,
+  restingReasonFor,
+} from "./resting"
 export {
   canonicalNativeModelId,
   type ParsedModelRef,

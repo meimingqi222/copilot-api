@@ -22,11 +22,7 @@ import {
 import { getProviderConnection } from "~/lib/provider-connections/state"
 
 /** 选路器实际调度的策略，等价于 state.routing.strategy 的规范化取值。 */
-export type EffectiveStrategy =
-  | "round-robin"
-  | "fill-first"
-  | "quota"
-  | "least-used"
+type EffectiveStrategy = "round-robin" | "fill-first" | "quota" | "least-used"
 
 /**
  * 接受的写法：规范名 + 全局配置沿用的简写（fillfirst / ff）。

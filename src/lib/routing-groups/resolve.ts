@@ -18,7 +18,7 @@ import { ruleMatches, type RuleContext } from "./rules"
 import type { RoutingGroup } from "./types"
 
 /** The member a group chose, and the parts of it a caller needs. */
-export interface GroupResolution {
+interface GroupResolution {
   /** Id of the group that answered. */
   groupId: string
   /** The chosen member as written in the group, suffixes included. */
@@ -33,7 +33,7 @@ export interface GroupResolution {
   ruleIndex?: number
 }
 
-export interface ResolveGroupMemberOptions {
+interface ResolveGroupMemberOptions {
   /** Whether an id is a real model, so its own suffixes are left alone. */
   knownModel?: (id: string) => boolean
 }

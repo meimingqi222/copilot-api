@@ -7,12 +7,7 @@
 
 export {
   CACHE_UTILIZATION_DEFAULTS,
-  GENERIC_CACHE_PROFILE,
-  getProtocolCacheProfile,
   getProviderCacheProfile,
-  PROVIDER_CACHE_PROFILES,
-  type ProviderCacheFeature,
-  type ProviderCacheProfile,
   providerHasCacheFeature,
 } from "./provider-cache"
 export {
@@ -26,23 +21,14 @@ export {
   getSessionAffinitySizeForTest,
   invalidateSessionAffinityAuth,
   isCodexIdentityConfuseEnabled,
-  isFillFirstEnabled,
-  isLeastUsedStrategyEnabled,
-  isQuotaStrategyEnabled,
   isSessionAffinityEnabled,
   noteSessionAffinityCacheRead,
   pruneSessionAffinityForTest,
   setSessionAffinity,
 } from "./session-affinity"
 export {
-  computeSessionHash,
-  extractClaudeSessionFromPayload,
-  type ExtractedSessionIds,
-  extractMessageHashIds,
   extractSessionIds,
   extractSessionTurn,
   generateAntigravityStableSessionId,
   resolveStableSessionId,
-  type SessionExtractInput,
-  type SessionTurn,
 } from "./session-extract"

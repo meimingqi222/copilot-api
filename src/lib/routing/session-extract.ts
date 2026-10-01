@@ -17,7 +17,7 @@ import { createHash } from "node:crypto"
 
 const CLAUDE_SESSION_SUFFIX = /_session_([a-f0-9-]+)$/i
 
-export interface ExtractedSessionIds {
+interface ExtractedSessionIds {
   /** Primary affinity key (stable after first turn when hash-based). */
   primaryId: string
   /**
@@ -27,7 +27,7 @@ export interface ExtractedSessionIds {
   fallbackId: string
 }
 
-export interface SessionExtractInput {
+interface SessionExtractInput {
   headers?: Record<string, string | undefined> | null
   payload?: unknown
 }
@@ -96,7 +96,7 @@ export function extractSessionIds(
 }
 
 /** A request's turn: its identity, and whether it is mid-turn. */
-export interface SessionTurn {
+interface SessionTurn {
   /**
    * Stable key for the user's *current* turn — the same across the tool-result
    * rounds within it, and different once the user speaks again. Empty when the
@@ -186,7 +186,7 @@ function classifyUserContent(content: unknown): {
  *   - suffix `_session_<uuid>`
  *   - JSON `{"session_id":"..."}`
  */
-export function extractClaudeSessionFromPayload(
+function extractClaudeSessionFromPayload(
   payload: Record<string, unknown> | undefined,
 ): string | undefined {
   if (!payload) return undefined
@@ -215,7 +215,7 @@ export function extractClaudeSessionFromPayload(
  * Hash system + first user (+ optional first assistant) for sticky routing
  * when the client sends no session id.
  */
-export function extractMessageHashIds(
+function extractMessageHashIds(
   payload: Record<string, unknown>,
 ): ExtractedSessionIds {
   let systemPrompt = readTopLevelSystemPrompt(payload)
@@ -360,7 +360,7 @@ export function resolveStableSessionId(ids: ExtractedSessionIds): string {
 }
 
 /** FNV-1a 64-bit style hash string matching CPA's msg:xxxxxxxxxxxxxxxx form. */
-export function computeSessionHash(
+function computeSessionHash(
   systemPrompt: string,
   userMsg: string,
   assistantMsg: string,

@@ -10,7 +10,7 @@
 import { logger } from "~/lib/logger"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { parseRetryAfterMs } from "~/lib/retry-after"
-import { restInfoFor } from "~/lib/route-target/rest-registry"
+import { isResting } from "~/lib/route-target/resting"
 
 import type { ApiCredential, ProviderConnection } from "./types"
 
@@ -68,19 +68,17 @@ export function refreshConnectionAvailability(
 /** Credential 是否当前可调度。 */
 export function isCredentialAvailable(credential: ApiCredential): boolean {
   if (!credential.enabled) return false
-  if (credential.status !== "ready") return false
   // A live rest keeps the credential out even while its persisted status still
   // reads ready: the registry carries the richer reason (verify / credit /
-  // quota window) and the instant it lifts. Memory-only and synchronous, so the
-  // request path never waits on I/O. An expired or absent entry changes
+  // quota window) and the instant it lifts, and the credential's own status is
+  // folded in beside it by the one resting read. Memory-only and synchronous,
+  // so the request path never waits on I/O. An expired or absent entry changes
   // nothing, and the credential is available exactly as it was before.
-  if (
-    restInfoFor(credential.id, undefined, credential.createdAt)?.untilMs
-    !== undefined
-  ) {
-    return false
-  }
-  return true
+  return !isResting({
+    credentialId: credential.id,
+    credential,
+    credentialCreatedAt: credential.createdAt,
+  })
 }
 
 export function isConnectionAvailable(connection: ProviderConnection): boolean {

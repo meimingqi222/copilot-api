@@ -75,7 +75,7 @@ export class RoutingGroupValidationError extends Error {
   }
 }
 
-export interface ValidateGroupOptions {
+interface ValidateGroupOptions {
   /** Ids of the other groups, so nested references can be checked. */
   knownGroupIds?: Iterable<string>
   /** Whether an id is a real model, so its own suffixes are left alone. */

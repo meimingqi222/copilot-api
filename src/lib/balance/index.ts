@@ -13,7 +13,7 @@ import type { BalanceHosts } from "~/lib/balance/sources"
 import { customBalanceSource, knownBalanceSource } from "~/lib/balance/sources"
 
 export type { BalanceHosts } from "~/lib/balance/sources"
-export type { BalanceResult, BalanceSource } from "~/lib/balance/types"
+export type { BalanceSource } from "~/lib/balance/types"
 export {
   currencySign,
   money,
@@ -27,7 +27,7 @@ export {
   takesBalanceToken,
 } from "~/lib/balance/sources"
 
-export interface ResolveBalanceSourceInput {
+interface ResolveBalanceSourceInput {
   hosts?: BalanceHosts
   /** A user-named balance URL; wins over the known host. */
   balanceUrl?: string
@@ -53,10 +53,7 @@ export function resolveBalanceSource(
 }
 
 /** The fetch signature `fetchBalance` uses; swappable for tests. */
-export type BalanceFetcher = (
-  input: string,
-  init?: RequestInit,
-) => Promise<Response>
+type BalanceFetcher = (input: string, init?: RequestInit) => Promise<Response>
 
 const defaultFetcher: BalanceFetcher = (input, init) =>
   globalThis.fetch(input, init)
