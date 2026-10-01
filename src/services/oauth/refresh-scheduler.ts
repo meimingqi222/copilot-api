@@ -114,31 +114,57 @@ function getConnectionTokenExpiryMs(
   )
 }
 
+/** Statuses where the vendor answered and turned the token down. */
+const REFUSED_STATUSES = new Set([400, 401])
+
+/** Body codes that keep an otherwise refused-looking answer transient. */
+const TRANSIENT_ERROR_PATTERNS = [
+  "temporarily_unavailable",
+  "server_error",
+] as const
+
+/** The HTTP status behind a refresh error: an HTTPError's, or the `(NNN)` a
+ *  provider bakes into its message ("Codex token refresh failed (401): …"). */
+function oauthErrorStatus(error: unknown): number | undefined {
+  if (error instanceof HTTPError) return error.response.status
+  const message = error instanceof Error ? error.message : String(error)
+  const match = /\((\d{3})\)/.exec(message) ?? /HTTP (\d{3})/i.exec(message)
+  return match ? Number(match[1]) : undefined
+}
+
+function oauthErrorBody(error: unknown): string {
+  if (error instanceof HTTPError) return error.responseBody
+  return error instanceof Error ? error.message : String(error)
+}
+
 /**
  * Detect whether an OAuth refresh error is terminal (permanent).
- * Terminal errors (invalid_grant / unauthorized_client / invalid_client)
- * mean the refresh token has been revoked or expired — retrying will
- * never succeed and the account must be re-authenticated.
+ *
+ * The primary rule is the HTTP status, not the body's code: a vendor that
+ * answered 400 or 401 has turned the token down, and the sign-in is gone
+ * whatever the body says. Keying on the status means a code we have never seen
+ * — OpenAI's `invalid_refresh_token`, say — can never be misread as a hiccup
+ * and retried forever. The body's code is used only to pull a genuinely
+ * transient answer back out (`temporarily_unavailable`), and as a safety net
+ * for a terminal code that arrives with no 400/401 status.
  */
 export function isOAuthTerminalError(error: unknown): boolean {
-  const matches = (body: string): boolean => {
-    // 能解析出 OAuth code 时只认 code 字段，避免被 message/description 里偶然
-    // 出现的同名词误判；解析不出（非 JSON、被截断）才退回全文匹配。
-    const codes = oauthErrorCodesFromBody(body)
-    const haystack = codes.length > 0 ? codes.join(" ") : body.toLowerCase()
-    return TERMINAL_ERROR_PATTERNS.some((pattern) =>
-      haystack.includes(pattern.toLowerCase()),
-    )
-  }
+  const body = oauthErrorBody(error)
+  // 能解析出 OAuth code 时只认 code 字段，避免被 message/description 里偶然
+  // 出现的同名词误判；解析不出（非 JSON、被截断）才退回全文匹配。
+  const codes = oauthErrorCodesFromBody(body)
+  const haystack = codes.length > 0 ? codes.join(" ") : body.toLowerCase()
+  const names = (patterns: ReadonlyArray<string>): boolean =>
+    patterns.some((pattern) => haystack.includes(pattern.toLowerCase()))
 
-  if (error instanceof HTTPError) {
-    if (error.response.status === 400 || error.response.status === 401) {
-      return matches(error.responseBody)
-    }
-    return false
-  }
-  const message = error instanceof Error ? error.message : String(error)
-  return matches(message)
+  // A refused-looking answer that names a transient condition stays transient.
+  if (names(TRANSIENT_ERROR_PATTERNS)) return false
+
+  const status = oauthErrorStatus(error)
+  if (status !== undefined && REFUSED_STATUSES.has(status)) return true
+
+  // Safety net: a terminal code on any other status (or with none at all).
+  return names(TERMINAL_ERROR_PATTERNS)
 }
 
 /**

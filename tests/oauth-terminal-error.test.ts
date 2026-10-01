@@ -96,6 +96,39 @@ describe("isOAuthTerminalError", () => {
       ),
     ).toBe(false)
   })
+
+  test("400/401 一律终态：即使 code 是我们没见过的", () => {
+    // 线上实测的 invalid_refresh_token 回的是 401。判定以状态码为主，
+    // 不再依赖 code 白名单，任何新 code 都不会被当成瞬态无限重试。
+    expect(
+      isOAuthTerminalError(
+        new Error(
+          'Codex token refresh failed (401): {"error":{"code":"invalid_refresh_token"}}',
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      isOAuthTerminalError(
+        new Error(
+          'Codex token refresh failed (400): {"error":{"code":"some_unseen_code"}}',
+        ),
+      ),
+    ).toBe(true)
+    // 没有 JSON、没有 code 的裸 401 也算（vendor 已经拒绝了这个 token）。
+    expect(
+      isOAuthTerminalError(new Error("Codex token refresh failed (401):")),
+    ).toBe(true)
+  })
+
+  test("400/401 里点名瞬态条件时仍判瞬态", () => {
+    expect(
+      isOAuthTerminalError(
+        new Error(
+          'Codex token refresh failed (401): {"error":{"code":"temporarily_unavailable"}}',
+        ),
+      ),
+    ).toBe(false)
+  })
 })
 
 describe("refreshCodexTokens 的错误信息", () => {
