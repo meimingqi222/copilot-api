@@ -17,6 +17,10 @@ import {
 import { applyClaudeOAuthBundle, refreshClaudeTokens } from "./claude"
 import { applyCodexOAuthBundle, refreshCodexTokens } from "./codex"
 import {
+  codexCliRefreshTokenIfRotated,
+  writeCodexCliCredentials,
+} from "./codex-cli-auth"
+import {
   applyKimiOAuthBundle,
   createKimiDeviceId,
   refreshKimiTokens,
@@ -83,8 +87,25 @@ export const OAUTH_REFRESH_STRATEGIES: Record<OAuthProviderId, OAuthRefreshFn> =
       }
     },
     codex: async (connection, refreshToken, fetchOptions) => {
-      const bundle = await refreshCodexTokens(refreshToken, fetchOptions)
+      const accountId = getCredentialContextString(connection, "oauthAccountId")
+      // The Codex CLI shares this account's rotating refresh token: adopt its
+      // token when it has rotated since ours, then write ours back after, so
+      // neither side ever spends a token the other already used.
+      const cliRefresh = await codexCliRefreshTokenIfRotated(
+        accountId,
+        refreshToken,
+      )
+      const bundle = await refreshCodexTokens(
+        cliRefresh ?? refreshToken,
+        fetchOptions,
+      )
       applyCodexOAuthBundle(connection, bundle)
+      await writeCodexCliCredentials(accountId, {
+        accessToken: bundle.accessToken,
+        idToken: bundle.idToken,
+        refreshToken: bundle.refreshToken,
+        accountId,
+      })
     },
     antigravity: async (connection, refreshToken, fetchOptions) => {
       const bundle = await refreshAntigravityTokens(refreshToken, fetchOptions)
