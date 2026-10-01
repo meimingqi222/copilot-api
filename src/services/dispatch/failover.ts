@@ -48,6 +48,8 @@ import {
 } from "~/lib/request-log"
 import {
   type RestDecision,
+  clearRest,
+  recordRest,
   resolveConnectionFromTarget,
   restDecisionFor,
   restDecisionForReason,
@@ -163,6 +165,7 @@ export async function executeWithFailover<
       {
         sessionId: current.sessionId,
         fallbackSessionId: current.fallbackSessionId,
+        turnKey: current.turnKey,
       },
     )
     if (!next) return false
@@ -177,6 +180,7 @@ export async function executeWithFailover<
       // the same conversation to the newly selected credential.
       sessionId: current.sessionId,
       fallbackSessionId: current.fallbackSessionId,
+      turnKey: current.turnKey,
     }
     return true
   }
@@ -214,8 +218,10 @@ export async function executeWithFailover<
         // default (glm-5-2), so snapshot and restore it.
         const sku = c ? getRequestLogContext(c)?.entry.modelUpstream : undefined
         // Upstream accepted the request: clear any 429 backoff pressure so
-        // the next 429 episode starts from the base backoff again.
+        // the next 429 episode starts from the base backoff again, and lift
+        // any rest this credential was sitting out.
         await reportUpstreamSuccess(current.connection.id)
+        clearRest(current.credential.id)
         recordUpstreamAttempt(
           c,
           {
@@ -738,6 +744,19 @@ async function markCooldown(
   const isHttp = error instanceof HTTPError
   const status = isHttp ? error.response.status : 503
   const authKey = affinityAuthKey(admission.target)
+
+  // Record the richer rest (by / failures / link) so the trace can say why
+  // the candidate sits out and for how long, and so a verify refusal can be
+  // held for a short while. A zero duration still bumps the failure streak.
+  if (rest) {
+    recordRest({
+      credentialId: admission.credential.id,
+      reason: rest.reason,
+      by: rest.by,
+      untilMs: rest.restMs > 0 ? rest.untilMs : 0,
+      said: isHttp ? (error.responseBody ?? undefined) : undefined,
+    })
+  }
 
   // Phase 3: a semantic refusal (the vendor's safety filter, an unapproved
   // channel) rests nothing — same prompt fails everywhere — so leave the

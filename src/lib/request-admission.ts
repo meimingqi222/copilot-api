@@ -32,7 +32,7 @@ import {
   selectRouteTarget,
   targetKey,
 } from "~/lib/route-target"
-import { extractSessionIds } from "~/lib/routing"
+import { extractSessionIds, extractSessionTurn } from "~/lib/routing"
 import { state } from "~/lib/state"
 import { isUserAllowedModel } from "~/lib/users"
 import { safeOrigin } from "~/lib/utils"
@@ -56,6 +56,11 @@ export interface ProviderAdmission {
    */
   sessionId?: string
   fallbackSessionId?: string
+  /**
+   * The request's current turn key (turn-stable across tool-result rounds),
+   * used by the `turn` affinity mode and carried across failover.
+   */
+  turnKey?: string
 }
 
 /**
@@ -119,6 +124,7 @@ export async function prepareRequestAdmission(
     headers: options.sessionHeaders,
     payload: options.sessionPayload,
   })
+  const sessionTurn = extractSessionTurn(options.sessionPayload)
 
   // Select without any upstream I/O so the guard can use the actual provider.
   // When no target exists, still run the guard with an explicit non-Copilot
@@ -126,6 +132,7 @@ export async function prepareRequestAdmission(
   const target = selectRouteTarget(candidates, {
     sessionId: sessionIds.primaryId || undefined,
     fallbackSessionId: sessionIds.fallbackId || undefined,
+    turnKey: sessionTurn.turnKey || undefined,
     commitAffinity: false,
   })
   let guardProvider = "unroutable"
@@ -201,6 +208,7 @@ export async function prepareRequestAdmission(
   const sessionFields = {
     sessionId: sessionIds.primaryId || undefined,
     fallbackSessionId: sessionIds.fallbackId || undefined,
+    turnKey: sessionTurn.turnKey || undefined,
   }
 
   // 批次 3：target.account 已删除，统一走 getProviderConnection。
@@ -244,6 +252,7 @@ export async function prepareRequestAdmission(
     isTranslated: target.isTranslated,
     isWildcard: target.isWildcard,
     initiator,
+    sessionId: sessionIds.primaryId || undefined,
     streaming: options.stream,
     reasoningEffort: options.reasoningEffort,
   })

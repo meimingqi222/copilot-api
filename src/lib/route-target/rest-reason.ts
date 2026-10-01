@@ -7,8 +7,8 @@
 // time instead of a flat 60s backoff — until then this file only names the
 // reasons; it does not change behaviour.
 //
-// The reason set mirrors magpie internal/gateway/routing.go, minus "foreign"
-// (sealed-reasoning) which has no equivalent here yet.
+// The reason set covers credit, quota, rate, verify, refused, canceled,
+// foreign, proxy, shape and floor.
 
 import type {
   ApiCredential,
@@ -22,28 +22,56 @@ export type RestReason =
   | "verify" // vendor demands account verification before reuse
   | "refused" // safety filter refused the request itself — don't rest
   | "canceled" // client went away — don't rest
+  | "foreign" // sealed reasoning written by another account — don't rest
+  | "proxy" // the proxy couldn't take the connection — don't rest
+  | "shape" // the vendor couldn't read the request's shape — don't rest
+  | "floor" // the reply was asked shorter than the vendor gives — don't rest
   | "network" // transport/5xx
   | "disabled" // administratively disabled
   | "unknown"
+
+/**
+ * What set how long a candidate sits out, so the Trace view can say *why*
+ * the duration is what it is.
+ */
+export type RestBy =
+  | "credit" // a flat half hour
+  | "quota" // no word of when it resets
+  | "retry-after" // the vendor's own header
+  | "resets" // the time it said it comes back
+  | "window" // the allowance window it filled renews
+  | "cooldown" // the flat short cooldown
+  | "backoff" // longer each time it fails again
+  | "verify" // until someone verifies the account
 
 export interface RestInfo {
   reason: RestReason
   untilMs?: number
   retryAfterMs?: number
+  /** What set the duration (credit / retry-after / resets / window / …). */
+  by?: RestBy
+  /** Consecutive failures, when the duration is a backoff. */
+  failures?: number
+  /** The key this candidate rests by, so it can be lifted (unrest). */
+  key?: string
+  /** Where the vendor said to verify the account, for a `verify` rest. */
+  link?: string
 }
 
 // ── Semantic classification + durations (Phase 3) ───────────────
 //
-// Mirrors magpie's failure()/restAfter(): read the vendor's words (not just
+// Read the vendor's words (not just
 // the status) to tell "out of credit" from "out of quota" from "slow down",
 // then rest for as long as that reason says. Until Phase 3 the durations
 // came from one flat backoff; now quota reads the real reset window.
 
-// Band durations, aligning magpie's routing.go constants.
+// Band durations.
 const CREDIT_REST_MS = 30 * 60_000 // out of credit: until someone tops it up
 const QUOTA_FLOOR_MS = 15 * 60_000 // out of quota, with no word of when
 const QUOTA_CAP_MS = 8 * 24 * 3_600_000 // the most a quota rests, with words
 const VERIFY_REST_MS = 30 * 60_000 // until someone verifies the account
+/** The most a vendor's own "try again at" is trusted, for a rate limit. */
+const LONGEST_WAIT_MS = 60 * 60_000
 
 /** The account or key has no money left. */
 const CREDIT_WORDS = new RegExp(
@@ -77,6 +105,23 @@ const REFUSED_WORDS = new RegExp(
   String.raw`unapproved channel|illegal api invocation|blocked by security policy`,
   "i",
 )
+/**
+ * The sealed reasoning in the request was written by another account (or
+ * organization, or vendor) and can't be read here: OpenAI's
+ * invalid_encrypted_content, xAI's "Could not
+ * decrypt the provided encrypted_content". The request is sent again without
+ * that reasoning — the account is fine, so nobody rests.
+ */
+const FOREIGN_WORDS = new RegExp(
+  String.raw`invalid_encrypted_content|encrypted[ _]content.{0,80}could not be (verified|decrypted)|could not (decrypt|verify).{0,40}encrypted[ _]content`,
+  "i",
+)
+/**
+ * The proxy the gateway sends through couldn't take the connection (its own
+ * setting, the *_PROXY variables, the system's): nothing reached the vendor,
+ * so the account is as good as it was and nobody rests.
+ */
+const PROXY_WORDS = new RegExp(String.raw`proxyconnect |socks connect `, "i")
 
 /** Reset instant (ms) from a body's resets_at / resets_in_seconds / words. */
 function resetAtMsFromBody(
@@ -117,18 +162,19 @@ function retryAfterMsFromHeaders(headers?: Headers | null): number | undefined {
   const raw = headers.get("retry-after")
   if (!raw) return undefined
   const seconds = Number.parseFloat(raw)
-  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return Math.min(seconds * 1000, LONGEST_WAIT_MS)
+  }
   const at = Date.parse(raw)
   if (!Number.isNaN(at)) {
     const diff = at - Date.now()
-    if (diff > 0) return diff
+    if (diff > 0) return Math.min(diff, LONGEST_WAIT_MS)
   }
   return undefined
 }
 
 /**
  * Classify a failure into a rest reason by the vendor's words, status included.
- * Mirrors magpie's failure(): credit is told from quota is told from rate.
  */
 export function classifyRestReason(input: {
   status?: number
@@ -136,6 +182,10 @@ export function classifyRestReason(input: {
 }): RestReason {
   const { status, body } = input
   const text = body ?? ""
+  // Nothing reached the vendor: the proxy itself couldn't take the connection.
+  if (status === 502 && PROXY_WORDS.test(text)) return "proxy"
+  // Sealed reasoning another account wrote — resent without it, nobody rests.
+  if (FOREIGN_WORDS.test(text)) return "foreign"
   if (REFUSED_WORDS.test(text)) return "refused"
   if ((status === 401 || status === 403) && VERIFY_WORDS.test(text)) {
     return "verify"
@@ -180,6 +230,8 @@ export interface RestDecision {
   untilMs: number
   /** Real reset instant from the vendor's words, when it gave one. */
   resetAtMs: number
+  /** What set the duration (credit / retry-after / resets / window / …). */
+  by: RestBy
 }
 
 /** Decide duration for an already-known reason, from one shared table. */
@@ -195,30 +247,45 @@ export function restDecisionForReason(input: {
   const resetAtMs =
     input.resetAtMs && input.resetAtMs > now ? input.resetAtMs : 0
   let restMs: number
+  let by: RestBy
   switch (input.reason) {
     case "refused":
     case "canceled":
+    case "foreign":
+    case "proxy":
+    case "shape":
+    case "floor":
+      // The request (or the transport) was the problem, not the account:
+      // rotate to the next candidate without resting this one.
       restMs = 0
+      by = "cooldown"
       break
     case "credit":
       restMs = CREDIT_REST_MS
+      by = "credit"
       break
     case "verify":
       restMs = VERIFY_REST_MS
+      by = "verify"
       break
     case "quota": {
       const window = resetAtMs > now ? resetAtMs - now : 0
       restMs = Math.min(Math.max(window, QUOTA_FLOOR_MS), QUOTA_CAP_MS)
+      by = window > 0 ? "resets" : "quota"
       break
     }
     case "rate":
-      restMs =
-        input.retryAfterMs && input.retryAfterMs > 0 ?
-          input.retryAfterMs
-        : fallbackMs
+      if (input.retryAfterMs && input.retryAfterMs > 0) {
+        restMs = input.retryAfterMs
+        by = "retry-after"
+      } else {
+        restMs = fallbackMs
+        by = "backoff"
+      }
       break
     default:
       restMs = fallbackMs
+      by = "backoff"
       break
   }
   return {
@@ -226,6 +293,7 @@ export function restDecisionForReason(input: {
     restMs,
     untilMs: restMs > 0 ? now + restMs : 0,
     resetAtMs,
+    by,
   }
 }
 
@@ -299,5 +367,9 @@ export function restInfoForCredential(
     : undefined
   const retryAfterMs =
     untilMs ? Math.max(0, Math.ceil(untilMs - Date.now())) : undefined
-  return { reason, untilMs, retryAfterMs }
+  const by: RestBy =
+    reason === "quota" ? "quota"
+    : reason === "verify" ? "verify"
+    : "cooldown"
+  return { reason, by, untilMs, retryAfterMs, key: credential.id }
 }

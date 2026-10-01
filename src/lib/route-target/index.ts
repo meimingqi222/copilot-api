@@ -7,8 +7,13 @@ export {
   orderByLeastUsed,
   orderByQuota,
   type QuotaEvidence,
+  type QuotaWindow,
+  quotaWindowsOf,
+  renewsAtFor,
   type RouteEvidence,
   routeEvidenceFor,
+  usedFractionFor,
+  windowAppliesTo,
 } from "./evidence"
 export {
   clearRecentServeForTest,
@@ -17,6 +22,7 @@ export {
 } from "./recent-serve"
 export {
   classifyRestReason,
+  type RestBy,
   type RestDecision,
   type RestInfo,
   type RestReason,
@@ -26,6 +32,17 @@ export {
   restReasonForErrorKind,
   restReasonForStatus,
 } from "./rest-reason"
+export {
+  clearRest,
+  clearRestRegistryForTest,
+  listRests,
+  recordRest,
+  type RecordRestInput,
+  restBackoffMs,
+  restInfoFor,
+  unrest,
+  verifyHeldError,
+} from "./rest-registry"
 export {
   canonicalNativeModelId,
   type ParsedModelRef,

@@ -22,7 +22,9 @@ import type { RouteTarget } from "~/lib/provider-connections"
 import {
   affinityAuthKey,
   affinityCacheKey,
+  affinitySessionKey,
   getSessionAffinity,
+  getSessionAffinityBySession,
   isFillFirstEnabled,
   isLeastUsedStrategyEnabled,
   isQuotaStrategyEnabled,
@@ -103,7 +105,11 @@ function commitAffinityIfEnabled(
 ): void {
   if (options.commitAffinity === false) return
   setSessionAffinity(cacheKey, affinityAuthKey(target), {
-    turnKey: options.fallbackSessionId,
+    turnKey: options.turnKey ?? options.fallbackSessionId,
+    sessionKey:
+      options.sessionId ?
+        affinitySessionKey(options.sessionId, target.protocol)
+      : undefined,
   })
 }
 
@@ -118,7 +124,9 @@ export function commitRouteTargetAffinity(
     target.publicModelId,
     target.protocol,
   )
-  setSessionAffinity(cacheKey, affinityAuthKey(target))
+  setSessionAffinity(cacheKey, affinityAuthKey(target), {
+    sessionKey: affinitySessionKey(sessionId, target.protocol),
+  })
 }
 
 export interface SelectRouteTargetOptions {
@@ -131,6 +139,12 @@ export interface SelectRouteTargetOptions {
   sessionId?: string
   /** Fallback session id (short message hash) for turn-1 inheritance. */
   fallbackSessionId?: string
+  /**
+   * The request's current turn key — stable across the tool-result rounds of
+   * one turn, different once the user speaks again. Used for the `turn`
+   * affinity mode; falls back to `fallbackSessionId`.
+   */
+  turnKey?: string
   /**
    * When true, force a fresh pick and rebind affinity (used after failover
    * when the bound credential is in the exclude set).
@@ -169,17 +183,26 @@ export function selectRouteTarget(
 
   const modelId = topConn[0]?.publicModelId ?? ""
   const protocol = topConn[0]?.protocol
+  const turnKey = options.turnKey ?? options.fallbackSessionId
+  const sessionKey =
+    options.sessionId ?
+      affinitySessionKey(options.sessionId, protocol)
+    : undefined
 
-  // Session affinity: try primary, then fallback inheritance
+  // Session affinity: the model-scoped binding first, then the model-agnostic
+  // session binding (so a group that changed model keeps the account), then
+  // turn-1 inheritance from the short hash.
   if (
     isSessionAffinityEnabled()
     && options.sessionId
     && !options.rebindAffinity
   ) {
     const primaryKey = affinityCacheKey(options.sessionId, modelId, protocol)
-    const bound = getSessionAffinity(primaryKey, {
-      turnKey: options.fallbackSessionId,
-    })
+    const bound =
+      getSessionAffinity(primaryKey, { turnKey })
+      ?? (sessionKey ?
+        getSessionAffinityBySession(sessionKey, { turnKey })
+      : undefined)
     if (bound) {
       const hit = findByAuthKey(topConn, bound) ?? findByAuthKey(pool, bound)
       // 两阶段过滤后,pool 要么全是专用、要么全是通配。
@@ -203,7 +226,7 @@ export function selectRouteTarget(
       )
       const fallbackBound = getSessionAffinity(fallbackKey, {
         refresh: false,
-        turnKey: options.fallbackSessionId,
+        turnKey,
       })
       if (fallbackBound) {
         const hit =
@@ -231,7 +254,8 @@ export function selectRouteTarget(
       chosen.protocol,
     )
     setSessionAffinity(primaryKey, affinityAuthKey(chosen), {
-      turnKey: options.fallbackSessionId,
+      turnKey,
+      sessionKey: affinitySessionKey(options.sessionId, chosen.protocol),
     })
   }
 

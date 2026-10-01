@@ -38,6 +38,7 @@ export function switchToNextRouteTarget(
   session?: {
     sessionId?: string
     fallbackSessionId?: string
+    turnKey?: string
   },
 ): RouteTarget | null {
   const routing = resolveModelRouting(modelId)
@@ -52,6 +53,7 @@ export function switchToNextRouteTarget(
     exclude,
     sessionId: session?.sessionId,
     fallbackSessionId: session?.fallbackSessionId,
+    turnKey: session?.turnKey,
     rebindAffinity: true,
   })
 }
@@ -81,6 +83,7 @@ export function selectNextResponsesWsTarget(
   session?: {
     sessionId?: string
     fallbackSessionId?: string
+    turnKey?: string
     compact?: boolean
   },
 ): RouteTarget | null {
@@ -102,6 +105,7 @@ export function selectNextResponsesWsTarget(
     exclude: tried,
     sessionId: session?.sessionId,
     fallbackSessionId: session?.fallbackSessionId,
+    turnKey: session?.turnKey,
     rebindAffinity: true,
   })
 }

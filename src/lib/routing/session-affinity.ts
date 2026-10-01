@@ -28,6 +28,8 @@ interface AffinityEntry {
   lastAt?: number
   /** Turn the binding was made in (for the `turn` mode). */
   turnKey?: string
+  /** The model-agnostic session this binding belongs to, when known. */
+  sessionKey?: string
 }
 
 /** A cache read worth keeping a session pinned for. */
@@ -36,6 +38,12 @@ const CACHE_WORTH_TOKENS = 1024
 const CACHE_COLD_MS = 5 * 60_000
 
 const entries = new Map<string, AffinityEntry>()
+/**
+ * sessionKey (`provider::sessionId`) → the model-scoped cacheKey it currently
+ * points at. Lets a conversation that changed model inside a group (Opus →
+ * Sonnet, say) still find the account that answered it.
+ */
+const sessionIndex = new Map<string, string>()
 let lastPruneAt = 0
 
 export function affinityAuthKey(target: RouteTarget): string {
@@ -49,6 +57,15 @@ export function affinityCacheKey(
 ): string {
   const provider = protocol?.trim() || "any"
   return `${provider}::${sessionId}::${modelId}`
+}
+
+/** A model-agnostic session key, for the cross-model affinity fallback. */
+export function affinitySessionKey(
+  sessionId: string,
+  protocol?: string,
+): string {
+  const provider = protocol?.trim() || "any"
+  return `${provider}::${sessionId}`
 }
 
 export function getSessionAffinity(
@@ -92,20 +109,39 @@ export function getSessionAffinity(
 export function setSessionAffinity(
   cacheKey: string,
   authKey: string,
-  meta: { turnKey?: string } = {},
+  meta: { turnKey?: string; sessionKey?: string } = {},
 ): void {
   if (!cacheKey || !authKey) return
   maybePruneAffinityEntries()
   const previous = entries.get(cacheKey)
   const sameAuth = previous?.authKey === authKey
+  const sessionKey = meta.sessionKey ?? previous?.sessionKey
   entries.set(cacheKey, {
     authKey,
     expiresAt: Date.now() + getAffinityTtlMs(),
     lastCacheRead: sameAuth ? previous.lastCacheRead : undefined,
     lastAt: sameAuth ? previous.lastAt : undefined,
     turnKey: meta.turnKey ?? (sameAuth ? previous.turnKey : undefined),
+    sessionKey,
   })
+  if (sessionKey) sessionIndex.set(sessionKey, cacheKey)
   enforceAffinityEntryCap()
+}
+
+/**
+ * The auth key a model-agnostic session is bound to, whatever model scoped
+ * binding it currently points at — the fallback that keeps a conversation on
+ * the same account when the group sends its next turn to another model.
+ */
+export function getSessionAffinityBySession(
+  sessionKey: string,
+  options: { turnKey?: string } = {},
+): string | undefined {
+  const cacheKey = sessionIndex.get(sessionKey)
+  if (!cacheKey) return undefined
+  const bound = getSessionAffinity(cacheKey, { turnKey: options.turnKey })
+  if (!bound) sessionIndex.delete(sessionKey)
+  return bound
 }
 
 /**
@@ -136,13 +172,14 @@ export function invalidateSessionAffinityAuth(authKey: string): void {
   if (!authKey) return
   for (const [key, entry] of entries) {
     if (entry.authKey === authKey) {
-      entries.delete(key)
+      dropEntry(key)
     }
   }
 }
 
 export function clearSessionAffinityForTest(): void {
   entries.clear()
+  sessionIndex.clear()
   lastPruneAt = 0
 }
 
@@ -166,11 +203,20 @@ function pruneExpiredAffinityEntries(now: number): number {
   let removed = 0
   for (const [key, entry] of entries) {
     if (now >= entry.expiresAt) {
-      entries.delete(key)
+      dropEntry(key)
       removed += 1
     }
   }
   return removed
+}
+
+/** Delete a binding and any session index pointing at it. */
+function dropEntry(cacheKey: string): void {
+  const entry = entries.get(cacheKey)
+  entries.delete(cacheKey)
+  if (entry?.sessionKey && sessionIndex.get(entry.sessionKey) === cacheKey) {
+    sessionIndex.delete(entry.sessionKey)
+  }
 }
 
 function enforceAffinityEntryCap(): void {
@@ -181,7 +227,7 @@ function enforceAffinityEntryCap(): void {
   )
   for (let i = 0; i < overflow; i++) {
     const key = sorted[i]?.[0]
-    if (key) entries.delete(key)
+    if (key) dropEntry(key)
   }
 }
 

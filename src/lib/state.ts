@@ -63,6 +63,10 @@ export interface RoutingConfig {
   sessionAffinityTtlMs: number
   /** Codex-only L1. Requires sessionAffinity or fill-first. */
   identityConfuse: boolean
+  /** Share of an allowance past which an account is "low" (kept for backup). */
+  quotaLowShare?: number
+  /** Share past which an account is all but used up (last resort only). */
+  quotaSpentShare?: number
 }
 
 export interface State {

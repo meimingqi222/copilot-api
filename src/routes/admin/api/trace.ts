@@ -2,10 +2,12 @@ import { Hono } from "hono"
 
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import {
+  latestTraceForSession,
   recentTraces,
   subscribeTrace,
   TRACE_KEEP,
   type TraceRecord,
+  waitForTraceSeq,
 } from "~/lib/trace-bus"
 
 export const traceApiRoutes = new Hono()
@@ -78,6 +80,33 @@ traceApiRoutes.get("/recent", (c) => {
   return c.json({
     traces: recentTraces(limit).map(toFrame),
     keep: TRACE_KEEP,
+  })
+})
+
+/**
+ * One session's latest route, for an agent's UI to show where a turn went
+ * while the reply is still on its way:
+ * `?session=<id>`, and with `?after=<seq>&wait=<seconds>` it waits (up to a
+ * minute) for the route to change past `seq`. Reads nothing but the trace bus.
+ */
+traceApiRoutes.get("/session", async (c) => {
+  const session = (c.req.query("session") ?? "").trim().slice(0, 128)
+  if (!session) {
+    return c.json({ error: "name the session: ?session=<id>" }, 400)
+  }
+  const after = Number.parseInt(c.req.query("after") ?? "0", 10) || 0
+  const waitSeconds = Number.parseFloat(c.req.query("wait") ?? "0") || 0
+  const waitMs = Math.min(Math.max(waitSeconds, 0), 60) * 1000
+
+  let found = latestTraceForSession(session)
+  if (waitMs > 0 && found.seq <= after) {
+    await waitForTraceSeq(after, waitMs, c.req.raw.signal)
+    found = latestTraceForSession(session)
+  }
+  return c.json({
+    session,
+    seq: found.seq,
+    route: found.entry ? toFrame(found.entry) : null,
   })
 })
 

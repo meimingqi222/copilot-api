@@ -95,6 +95,92 @@ export function extractSessionIds(
   return extractMessageHashIds(payload)
 }
 
+/** A request's turn: its identity, and whether it is mid-turn. */
+export interface SessionTurn {
+  /**
+   * Stable key for the user's *current* turn — the same across the tool-result
+   * rounds within it, and different once the user speaks again. Empty when the
+   * shape isn't a message list.
+   */
+  turnKey: string
+  /** The agent is handing tool results back within a turn (not a new one). */
+  within: boolean
+}
+
+/**
+ * Work out which turn a request belongs to:
+ * count the user's turns, and tell whether the latest user message is tool
+ * results (mid-turn) rather than a new thing the user asked. The turn key
+ * hashes the conversation up to and including the last user *text* message,
+ * so every tool-result round of a turn shares one key and a new turn gets a
+ * new one — which is what `turn` affinity releases on.
+ */
+export function extractSessionTurn(payload: unknown): SessionTurn {
+  const p =
+    payload && typeof payload === "object" ?
+      (payload as Record<string, unknown>)
+    : undefined
+  const messages = p?.messages
+  if (!Array.isArray(messages)) return { turnKey: "", within: false }
+
+  let lastTextUserIndex = -1
+  let within = false
+  for (let i = 0; i < messages.length; i++) {
+    const msg = asRecord(messages[i])
+    if (!msg) continue
+    if (readTrimmedString(msg.role) !== "user") continue
+    const { hasText, hasToolResult } = classifyUserContent(msg.content)
+    if (hasText && !hasToolResult) {
+      lastTextUserIndex = i
+      within = false
+    } else if (hasToolResult) {
+      if (lastTextUserIndex >= 0) within = true
+    }
+  }
+  if (lastTextUserIndex < 0) return { turnKey: "", within: false }
+
+  const slice = messages.slice(0, lastTextUserIndex + 1)
+  let serialized = ""
+  try {
+    serialized = JSON.stringify(slice)
+  } catch {
+    return { turnKey: "", within }
+  }
+  const digest = createHash("sha256")
+    .update(truncate(serialized, 4000))
+    .digest("hex")
+  return { turnKey: `turn:${digest.slice(0, 16)}`, within }
+}
+
+/** Whether a user message's content is text, tool results, or both. */
+function classifyUserContent(content: unknown): {
+  hasText: boolean
+  hasToolResult: boolean
+} {
+  if (typeof content === "string") {
+    return { hasText: content.trim().length > 0, hasToolResult: false }
+  }
+  if (!Array.isArray(content)) return { hasText: false, hasToolResult: false }
+  let hasText = false
+  let hasToolResult = false
+  for (const part of content) {
+    const record = asRecord(part)
+    if (!record) continue
+    const type = readTrimmedString(record.type)
+    if (type === "tool_result" || type === "tool_result_error") {
+      hasToolResult = true
+    } else if (
+      type === "text"
+      || type === "input_text"
+      || type === "image"
+      || type === "file"
+    ) {
+      hasText = true
+    }
+  }
+  return { hasText, hasToolResult }
+}
+
 /**
  * Claude Code encodes session id in metadata.user_id either as:
  *   - suffix `_session_<uuid>`

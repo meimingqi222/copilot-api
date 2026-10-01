@@ -240,10 +240,16 @@ export const CACHE_UTILIZATION_DEFAULTS: {
   sessionAffinityTtlMs: number
   identityConfuse: boolean
   affinity: "session" | "turn" | "auto" | "off"
+  quotaLowShare: number
+  quotaSpentShare: number
 } = {
   strategy: "fill-first",
   sessionAffinity: true,
   sessionAffinityTtlMs: 2 * 60 * 60_000,
   identityConfuse: false,
   affinity: "session",
+  // Bands where a subscription's allowance stops being "fine": past `low` it
+  // is kept for backup, past `spent` it is a last resort only.
+  quotaLowShare: 0.9,
+  quotaSpentShare: 0.98,
 }

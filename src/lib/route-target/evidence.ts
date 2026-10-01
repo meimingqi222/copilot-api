@@ -6,6 +6,13 @@
 //
 // Phase 1 produces and surfaces the evidence; Phase 2 makes the `quota` and
 // `least-used` strategies consume it in selectRouteTarget.
+//
+// Model-scoped windows: only the allowance windows that count the model
+// being routed (by their scope) are weighed, so an Opus
+// weekly allowance used up leaves Sonnet alone. copilot-api's quota snapshots
+// carry those windows under `details._quotaWindows` (Claude's seven_day_opus /
+// seven_day_sonnet, and every other provider's cycles); this module filters by
+// them when present and falls back to the whole snapshot otherwise.
 
 import {
   getProviderConnection,
@@ -15,8 +22,10 @@ import {
   type RouteTarget,
 } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
+import { state } from "~/lib/state"
 
 import { servedTokensOf } from "./recent-serve"
+import { restInfoFor } from "./rest-registry"
 import { restInfoForCredential, type RestInfo } from "./rest-reason"
 
 export interface QuotaEvidence {
@@ -34,7 +43,72 @@ export interface RouteEvidence {
   rest?: RestInfo
 }
 
-/** The largest usage share across the snapshot's counters. */
+/** One allowance window, as routing weighs it. */
+export interface QuotaWindow {
+  /** Share of the window used, 0..1. */
+  usedFraction?: number
+  /** When the window renews (ms epoch), when the vendor said. */
+  resetsAtMs?: number
+  /** How long the window runs (ms), when known — the longest decides first. */
+  spanMs?: number
+  /**
+   * The model family the window counts ("opus", "sonnet", …), or undefined
+   * when the window counts every model (a five-hour window, a plan-wide one).
+   */
+  scope?: string
+}
+
+/**
+ * Model-family words a window id/label may name. A window that names one
+ * counts only the models whose id contains it; a window that names none
+ * counts every model.
+ */
+const WINDOW_SCOPE_TOKENS: ReadonlyArray<string> = [
+  "opus",
+  "sonnet",
+  "haiku",
+  "fable",
+  "gpt",
+  "o1",
+  "o3",
+  "o4",
+  "gemini",
+  "grok",
+  "kimi",
+  "deepseek",
+  "qwen",
+  "glm",
+  "minimax",
+  "doubao",
+  "mimo",
+  "llama",
+  "mistral",
+]
+
+function scopeOfWindowText(text: string): string | undefined {
+  const lower = text.toLowerCase()
+  for (const token of WINDOW_SCOPE_TOKENS) {
+    if (lower.includes(token)) return token
+  }
+  return undefined
+}
+
+function normalizeResetMs(value: number): number {
+  // Seconds and milliseconds epochs both appear; anything that can only be
+  // seconds is seconds.
+  return value < 1e12 ? value * 1000 : value
+}
+
+function usedFractionFromPair(
+  usedPercent: number | undefined,
+): number | undefined {
+  if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
+    return undefined
+  }
+  return Math.min(Math.max(usedPercent / 100, 0), 1)
+}
+
+/** The largest usage share across the snapshot's top-level counters. */
 function usedFractionOf(snapshot: QuotaSnapshot): number | undefined {
   const pairs: Array<[number | undefined, number | undefined]> = [
     [snapshot.premiumInteractionsRemaining, snapshot.premiumInteractionsTotal],
@@ -60,9 +134,7 @@ function pushReset(target: Array<number>, value: unknown): void {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return
   }
-  // Seconds and milliseconds epochs both appear across providers; treat
-  // anything that can only be seconds as seconds.
-  const ms = value < 1e12 ? value * 1000 : value
+  const ms = normalizeResetMs(value)
   if (!target.includes(ms)) target.push(ms)
 }
 
@@ -85,6 +157,7 @@ export function quotaRenewsAt(snapshot: QuotaSnapshot): Array<number> {
     pushReset(out, value["resetsAt"])
     pushReset(out, value["reset_at"])
     pushReset(out, value["resetAt"])
+    pushReset(out, value["resetsAtMs"])
     pushReset(out, value["windowEndMs"])
     pushReset(out, value["windowEnd"])
     for (const nested of Object.values(value)) {
@@ -98,30 +171,144 @@ export function quotaRenewsAt(snapshot: QuotaSnapshot): Array<number> {
 }
 
 /**
- * Evidence for one (connection, credential) pair. Cheap and synchronous.
+ * The canonical allowance windows a snapshot carries, when it has any:
+ * `details._quotaWindows` (built by lib/quota/cycles for Claude, Codex,
+ * Antigravity, Kimi). Each window's scope is read from its id/label so a
+ * model-scoped window (seven_day_opus) only counts that model.
+ */
+export function quotaWindowsOf(snapshot: QuotaSnapshot): Array<QuotaWindow> {
+  const details = snapshot.details
+  if (!isRecord(details)) return []
+  const raw = details["_quotaWindows"]
+  if (!Array.isArray(raw)) return []
+  const out: Array<QuotaWindow> = []
+  for (const item of raw) {
+    if (!isRecord(item)) continue
+    const id = typeof item["id"] === "string" ? item["id"] : ""
+    const labelKey =
+      typeof item["labelKey"] === "string" ? item["labelKey"] : ""
+    const usedPercent =
+      typeof item["usedPercent"] === "number" ? item["usedPercent"] : undefined
+    const endMs =
+      typeof item["windowEndMs"] === "number" && item["windowEndMs"] > 0 ?
+        item["windowEndMs"]
+      : undefined
+    const startMs =
+      typeof item["windowStartMs"] === "number" && item["windowStartMs"] > 0 ?
+        item["windowStartMs"]
+      : undefined
+    const resetsAtMs =
+      endMs
+      ?? ((
+        typeof item["resetAtSeconds"] === "number" && item["resetAtSeconds"] > 0
+      ) ?
+        normalizeResetMs(item["resetAtSeconds"])
+      : undefined)
+    out.push({
+      usedFraction: usedFractionFromPair(usedPercent),
+      resetsAtMs,
+      spanMs:
+        endMs !== undefined && startMs !== undefined ?
+          endMs - startMs
+        : undefined,
+      scope: scopeOfWindowText(`${id} ${labelKey}`),
+    })
+  }
+  return out
+}
+
+/** Whether a window counts the model being routed. */
+export function windowAppliesTo(
+  window: QuotaWindow,
+  model: string | undefined,
+): boolean {
+  if (!window.scope) return true // a plan-wide window counts every model
+  if (!model) return true // no model to filter by: everything counts
+  return model.toLowerCase().includes(window.scope)
+}
+
+/** The share used of the fullest window that counts `model`. */
+export function usedFractionFor(
+  snapshot: QuotaSnapshot,
+  model?: string,
+): number | undefined {
+  const windows = quotaWindowsOf(snapshot)
+  const applying = windows.filter((w) => windowAppliesTo(w, model))
+  let max: number | undefined
+  for (const window of applying) {
+    if (window.usedFraction === undefined) continue
+    max =
+      max === undefined ?
+        window.usedFraction
+      : Math.max(max, window.usedFraction)
+  }
+  if (max !== undefined) return max
+  // No per-window data (or none counts the model): fall back to the whole
+  // snapshot's counters, so providers that only report an aggregate still
+  // weigh.
+  return usedFractionOf(snapshot)
+}
+
+/** Renewal instants of the windows that count `model`, biggest window first. */
+export function renewsAtFor(
+  snapshot: QuotaSnapshot,
+  model?: string,
+): Array<number> {
+  const now = Date.now()
+  const windows = quotaWindowsOf(snapshot).filter((w) =>
+    windowAppliesTo(w, model),
+  )
+  const withReset = windows.filter(
+    (w) => w.resetsAtMs !== undefined && w.resetsAtMs > now,
+  )
+  if (withReset.length > 0) {
+    // The longest window first (the week, not the five hours in it); ties by
+    // the furthest reset.
+    return withReset
+      .sort((a, b) => {
+        const span = (b.spanMs ?? 0) - (a.spanMs ?? 0)
+        if (span !== 0) return span
+        return (b.resetsAtMs ?? 0) - (a.resetsAtMs ?? 0)
+      })
+      .map((w) => w.resetsAtMs as number)
+  }
+  return quotaRenewsAt(snapshot)
+}
+
+/**
+ * Evidence for one (connection, credential) pair, optionally scoped to the
+ * model being routed. Cheap and synchronous.
  */
 export function routeEvidenceFor(
   connectionId: string,
   credentialId: string,
+  model?: string,
 ): RouteEvidence {
   const connection = getProviderConnection(connectionId)
   const credential = connection?.credentials.find((c) => c.id === credentialId)
-  return evidenceFrom(connection, credential)
+  return evidenceFrom(connection, credential, model)
 }
 
 function evidenceFrom(
   connection: ProviderConnection | undefined,
   credential: ApiCredential | undefined,
+  model?: string,
 ): RouteEvidence {
   const snapshot = credential?.quota
   const quota: QuotaEvidence | undefined =
     snapshot ?
       {
-        usedFraction: usedFractionOf(snapshot),
-        renewsAtMs: quotaRenewsAt(snapshot),
+        usedFraction: usedFractionFor(snapshot, model),
+        renewsAtMs: renewsAtFor(snapshot, model),
         staleMs: Math.max(0, Date.now() - snapshot.fetchedAt),
       }
     : undefined
+
+  // The registry's richer rest (by / failures / link) wins over the coarse
+  // credential status when both know of a rest.
+  const rest =
+    (credential ? restInfoFor(credential.id) : undefined)
+    ?? restInfoForCredential(credential)
 
   return {
     quota,
@@ -129,7 +316,7 @@ function evidenceFrom(
       connection && credential ?
         servedTokensOf(connection.id, credential.id)
       : 0,
-    rest: restInfoForCredential(credential),
+    rest,
   }
 }
 
@@ -137,14 +324,21 @@ function evidenceFrom(
 //
 // The `quota` and `least-used` strategies order the same priority layer the
 // other strategies do, but weigh it by what each credential's allowance has
-// left. Mirrors magpie's weigh(): bands at 90% (low) and 98% (spent), the
+// left: bands at 90% (low) and 98% (spent), the
 // soonest-renewing big window first inside the fine band so an allowance is
 // spent before it lapses, ties keep the incoming (cache-warm) order.
 
-/** Past this share of the allowance an account is "low" (keep for backup). */
-const LOW_SHARE = 0.9
+/** Past this share of the allowance an account is "low" (kept for backup). */
+function lowShare(): number {
+  const v = state.routing.quotaLowShare
+  return typeof v === "number" && v > 0 && v < 1 ? v : 0.9
+}
+
 /** Past this share an account is all but used up — only a last resort. */
-const SPENT_SHARE = 0.98
+function spentShare(): number {
+  const v = state.routing.quotaSpentShare
+  return typeof v === "number" && v > 0 && v <= 1 ? v : 0.98
+}
 
 interface WeighRow {
   /** Allowance used, 0..1; undefined when the provider reports none. */
@@ -161,7 +355,11 @@ function weighRowOf(target: RouteTarget): WeighRow {
   const credential = connection?.credentials.find(
     (c) => c.id === target.credentialId,
   )
-  const evidence = evidenceFrom(connection, credential)
+  const evidence = evidenceFrom(
+    connection,
+    credential,
+    target.publicModelId || target.upstreamModelId,
+  )
   return {
     used: evidence.quota?.usedFraction,
     renews: evidence.quota?.renewsAtMs ?? [],
@@ -195,26 +393,28 @@ function compareFine(a: WeighRow, b: WeighRow): number {
 }
 
 /**
- * Order a priority layer by allowance pressure, magpie-style: plenty left
+ * Order a priority layer by allowance pressure: plenty left
  * (soonest-renewing big window ahead), then nearly used, then spent.
  * Ties keep the incoming order so the vendor's prompt cache stays warm.
  */
 export function orderByQuota(targets: Array<RouteTarget>): Array<RouteTarget> {
   if (targets.length < 2) return targets
+  const low = lowShare()
+  const spent = spentShare()
   const rows = targets.map((target) => ({ target, row: weighRowOf(target) }))
   const bandOf = (row: WeighRow): 0 | 1 | 2 => {
     if (row.used === undefined) return 0
-    if (row.used >= SPENT_SHARE) return 2
-    if (row.used >= LOW_SHARE) return 1
+    if (row.used >= spent) return 2
+    if (row.used >= low) return 1
     return 0
   }
   const fine: Array<(typeof rows)[number]> = []
-  const low: Array<(typeof rows)[number]> = []
-  const spent: Array<(typeof rows)[number]> = []
+  const lowBand: Array<(typeof rows)[number]> = []
+  const spentBand: Array<(typeof rows)[number]> = []
   for (const entry of rows) {
     const band = bandOf(entry.row)
-    if (band === 2) spent.push(entry)
-    else if (band === 1) low.push(entry)
+    if (band === 2) spentBand.push(entry)
+    else if (band === 1) lowBand.push(entry)
     else fine.push(entry)
   }
   fine.sort((a, b) => compareFine(a.row, b.row))
@@ -222,14 +422,14 @@ export function orderByQuota(targets: Array<RouteTarget>): Array<RouteTarget> {
     a: (typeof rows)[number],
     b: (typeof rows)[number],
   ): number => (a.row.used ?? 0) - (b.row.used ?? 0)
-  low.sort(ascending)
-  spent.sort(ascending)
-  return [...fine, ...low, ...spent].map((entry) => entry.target)
+  lowBand.sort(ascending)
+  spentBand.sort(ascending)
+  return [...fine, ...lowBand, ...spentBand].map((entry) => entry.target)
 }
 
 /**
  * Order by allowance used, then by tokens served lately. Unknown allowances
- * count as unused (aligning magpie: one not known counts as unused).
+ * count as unused (one not known counts as unused).
  */
 export function orderByLeastUsed(
   targets: Array<RouteTarget>,
