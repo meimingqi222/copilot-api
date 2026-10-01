@@ -712,4 +712,48 @@ describe("OAuth refresh scheduler", () => {
     expect(getConnectionAuthStatus(connection)).toBe("error")
     expect(getConnectionAuthError(connection)).toContain("invalid_grant")
   })
+
+  test("marks OpenAI's invalid_refresh_token as terminal", async () => {
+    const account: OAuthAccount = {
+      id: "acct-codex-invalid-refresh",
+      label: "Codex Invalid Refresh",
+      provider: "codex",
+      enabled: true,
+      priority: 0,
+      quotaState: "unknown",
+      createdAt: Date.now(),
+      credentials: {
+        accessToken: "old-access",
+        refreshToken: "codex-refresh",
+      },
+      runtimeState: { authStatus: "ready" },
+    }
+    setTestAccounts([account])
+
+    // auth.openai.com returns this when the refresh token was rotated elsewhere
+    // or the session ended: a nested error object with the code, on a 401.
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: {
+              message:
+                "Could not validate your refresh token. Please try signing in again.",
+              type: "invalid_request_error",
+              code: "invalid_refresh_token",
+            },
+          }),
+          { status: 401 },
+        ),
+      )) as unknown as typeof fetch
+
+    const connection = liveConnection("acct-codex-invalid-refresh")
+    await expect(
+      refreshOAuthConnectionToken(connection, "test"),
+    ).rejects.toThrow("invalid_refresh_token")
+    expect(getConnectionAuthStatus(connection)).toBe("error")
+    expect(getConnectionAuthError(connection)).toContain(
+      "invalid_refresh_token",
+    )
+  })
 })

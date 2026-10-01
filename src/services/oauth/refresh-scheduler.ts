@@ -43,6 +43,11 @@ const TERMINAL_ERROR_PATTERNS = [
   // WebUI 永远不显示"重新认证"。
   "refresh_token_invalidated",
   "token_revoked",
+  // auth.openai.com 在 refresh token 已轮换/已作废（例如同一账号在别处重新
+  // 登录）时回 `{"error":{"code":"invalid_refresh_token","message":"Could not
+  // validate your refresh token. Please try signing in again."}}`。它的字符串
+  // 不含 "invalid_grant"，漏列同样会被当成瞬态错误无限重试。
+  "invalid_refresh_token",
 ] as const
 
 /** OAuth 错误体里的 code 字段形状（不同上游嵌套层级不一）。 */
