@@ -4,9 +4,9 @@ import type {
   AnthropicUserMessage,
 } from "~/services/protocols/anthropic"
 
-import { hasClaudeCodeBeta } from "./anthropic-beta"
+import type { CopilotInitiator } from "~/lib/initiator-header"
 
-export type CopilotInitiator = "agent" | "user"
+import { hasClaudeCodeBeta } from "./anthropic-beta"
 
 function hasToolResult(message: AnthropicUserMessage): boolean {
   // Treat as agent-initiated if the message contains ANY tool_result

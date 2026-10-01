@@ -1,6 +1,6 @@
 import type { ProviderProtocol } from "~/lib/provider-connections/types"
 
-export const PROVIDER_IDS = [
+const PROVIDER_IDS = [
   "copilot",
   "codebuff",
   "windsurf",
@@ -75,7 +75,7 @@ export const OAUTH_PROVIDER_IDS = [
 
 export type OAuthProviderId = (typeof OAUTH_PROVIDER_IDS)[number]
 
-export const PROVIDER_FEATURES = [
+const PROVIDER_FEATURES = [
   "quota",
   "cooldown",
   "native_responses",

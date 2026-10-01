@@ -2,8 +2,8 @@ import type { ProviderConnection } from "~/lib/provider-connections/types"
 
 import { getHeader } from "~/services/protocols/shared"
 
-export const LOBSTERAI_DEFAULT_BASE_URL = "https://lobsterai-server.youdao.com"
-export const LOBSTERAI_DEFAULT_CLIENT_VERSION = "2026.9.4"
+const LOBSTERAI_DEFAULT_BASE_URL = "https://lobsterai-server.youdao.com"
+const LOBSTERAI_DEFAULT_CLIENT_VERSION = "2026.9.4"
 export const LOBSTERAI_CLIENT_VERSION_HEADER = "X-LobsterAI-Client-Version"
 
 export function lobsteraiServerRoot(connection: ProviderConnection): string {

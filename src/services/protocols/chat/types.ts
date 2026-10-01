@@ -302,7 +302,7 @@ export interface EmbeddingRequest {
   model: string
 }
 
-export interface Embedding {
+interface Embedding {
   object: string
   embedding: Array<number>
   index: number

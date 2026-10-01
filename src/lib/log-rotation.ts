@@ -4,7 +4,7 @@ import path from "node:path"
 import { PATHS } from "~/lib/paths"
 
 /** Matches `server-2026-06-27.log` and `server-2026-06-27.1.log`. */
-export const LOG_FILE_PATTERN = /^server-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log$/
+const LOG_FILE_PATTERN = /^server-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log$/
 /** Matches daily request logs and their numbered size-based segments. */
 export const REQUEST_LOG_JSONL_PATTERN =
   /^requests-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/

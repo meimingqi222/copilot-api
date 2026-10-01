@@ -26,7 +26,7 @@ export interface User {
   lastUsedAt?: number
 }
 
-export interface UserWithKey extends User {
+interface UserWithKey extends User {
   apiKey: string
 }
 

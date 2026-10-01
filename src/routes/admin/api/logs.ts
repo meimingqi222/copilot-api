@@ -5,7 +5,10 @@ import {
   matchesLogEntry,
   type ApiKind,
   type LogEndpoint,
+  type LogEntry,
   type LogLevel,
+  type LogQueryOptions,
+  type RequestOutcome,
   type TraceStage,
 } from "~/lib/log-store"
 import {
@@ -44,9 +47,7 @@ logApiRoutes.get("/", (c) => {
   const apiKind = (c.req.query("apiKind") ?? endpoint) as ApiKind | undefined
   const stage = c.req.query("stage") as TraceStage | undefined
   const ok = parseBool(c.req.query("ok"))
-  const outcome = c.req.query("outcome") as
-    | import("~/lib/log-store").RequestOutcome
-    | undefined
+  const outcome = c.req.query("outcome") as RequestOutcome | undefined
   const kind = c.req.query("kind")
   const provider = c.req.query("provider")
   const model = c.req.query("model")
@@ -100,9 +101,7 @@ logApiRoutes.get("/export", (c) => {
   const apiKind = (c.req.query("apiKind") ?? endpoint) as ApiKind | undefined
   const stage = c.req.query("stage") as TraceStage | undefined
   const ok = parseBool(c.req.query("ok"))
-  const outcome = c.req.query("outcome") as
-    | import("~/lib/log-store").RequestOutcome
-    | undefined
+  const outcome = c.req.query("outcome") as RequestOutcome | undefined
   const kind = c.req.query("kind")
   const provider = c.req.query("provider")
   const model = c.req.query("model")
@@ -120,7 +119,7 @@ logApiRoutes.get("/export", (c) => {
   const limit =
     Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 5000) : 5000
 
-  const options: import("~/lib/log-store").LogQueryOptions = {
+  const options: LogQueryOptions = {
     level: level || undefined,
     search: search || undefined,
     limit,
@@ -177,9 +176,9 @@ logApiRoutes.get("/:requestId", async (c) => {
 })
 
 async function* filteredPersistedLogs(
-  options: import("~/lib/log-store").LogQueryOptions,
+  options: LogQueryOptions,
   limit: number,
-): AsyncGenerator<import("~/lib/log-store").LogEntry> {
+): AsyncGenerator<LogEntry> {
   let emitted = 0
   for await (const entry of iteratePersistedRequestLogs({
     newestFirst: true,

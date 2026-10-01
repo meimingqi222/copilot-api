@@ -2,7 +2,7 @@ import { ADMIN_SESSION_COOKIE } from "~/lib/request-auth"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 
-export const TEST_ADMIN_SESSION_TOKEN = "test-admin-session-token"
+const TEST_ADMIN_SESSION_TOKEN = "test-admin-session-token"
 
 export function setupAdminAuth(): void {
   state.adminSessionToken = TEST_ADMIN_SESSION_TOKEN

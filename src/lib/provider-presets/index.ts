@@ -11,10 +11,7 @@ import { DOMESTIC_PRIMARY_PRESETS } from "~/lib/provider-presets/domestic-primar
 import { DOMESTIC_SECONDARY_PRESETS } from "~/lib/provider-presets/domestic-secondary"
 import { OTHERS_PRESETS } from "~/lib/provider-presets/others"
 
-export {
-  type PresetModel,
-  type ProviderPreset,
-} from "~/lib/provider-presets/types"
+export { type ProviderPreset } from "~/lib/provider-presets/types"
 
 // 国内主流服务商预设（头部自研 + 平台型/聚合中转）
 const DOMESTIC_PRESETS = [

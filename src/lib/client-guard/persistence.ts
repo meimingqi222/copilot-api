@@ -2,6 +2,7 @@ import {
   getGuardConfig,
   loadGuardConfigFromPersistence,
   resetGuardConfigForTest,
+  type GuardConfig,
 } from "~/lib/guard-config"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
@@ -70,9 +71,7 @@ export async function loadGuard(): Promise<void> {
       }
     }
     if (data.config) {
-      loadGuardConfigFromPersistence(
-        data.config as Partial<import("~/lib/guard-config").GuardConfig>,
-      )
+      loadGuardConfigFromPersistence(data.config as Partial<GuardConfig>)
     }
     logger.info(
       `Guard loaded: ${ipBlacklist.size} blocked IPs, ${uaBlacklist.size} blocked UAs, ${customUaWhitelist.length} custom UA patterns`,

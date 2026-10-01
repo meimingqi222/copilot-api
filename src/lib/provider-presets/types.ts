@@ -7,7 +7,7 @@ import type {
   ProviderProtocol,
 } from "~/lib/provider-connections/types"
 
-export interface PresetModel {
+interface PresetModel {
   publicId: string
   upstreamId: string
   name?: string

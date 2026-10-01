@@ -152,7 +152,7 @@ export interface GroupDecisionInput {
 }
 
 /** The member a routing group chose for this request. */
-export interface GroupDecision {
+interface GroupDecision {
   /** Id of the group that answered. */
   groupId: string
   /** The member as written in the group, `:effort` / `:fast` included. */

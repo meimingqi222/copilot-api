@@ -16,7 +16,7 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-export const FAKE_CLAUDE_SCRIPT = path.join(
+const FAKE_CLAUDE_SCRIPT = path.join(
   import.meta.dir,
   "fixtures",
   "claude-cli",

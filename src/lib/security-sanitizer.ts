@@ -1,4 +1,4 @@
-export const REDACT_FIELD_RE =
+const REDACT_FIELD_RE =
   /authorization|api[-_]?key|password|token|secret|cookie|session|image|base64|data/i
 
 const REDACTED_VALUE = "[redacted]"

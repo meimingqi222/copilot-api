@@ -20,7 +20,6 @@ import type {
 } from "~/services/protocols/chat/types"
 
 export {
-  type Embedding,
   type EmbeddingRequest,
   type EmbeddingResponse,
 } from "~/services/protocols/chat/types"

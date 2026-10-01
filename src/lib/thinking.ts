@@ -118,7 +118,7 @@ type ThinkingSuffixConfig =
   | { mode: "none"; effort: "none" }
   | { mode: "auto"; effort: "auto" }
 
-export interface ParsedThinkingModel {
+interface ParsedThinkingModel {
   model: string
   config?: ThinkingSuffixConfig
 }

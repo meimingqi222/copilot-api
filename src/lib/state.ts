@@ -30,7 +30,7 @@ interface WindsurfProviderDefaults {
  *   即将重置的额度（magpie smart 的对应物）。
  * - `least-used`：先按 allowance 使用率、再按近期 served tokens 升序。
  */
-export type RoutingStrategy =
+type RoutingStrategy =
   | "round-robin"
   | "fill-first"
   | "fillfirst"

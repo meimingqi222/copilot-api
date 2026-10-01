@@ -41,7 +41,7 @@ import { publishTrace, type TracePhase } from "~/lib/trace-bus"
 import { flushTranslationLossesForContext } from "~/services/ir/loss-logging"
 
 type RequestEndpoint = LogEntry["endpoint"]
-export type TraceStage = NonNullable<LogEntry["stage"]>
+type TraceStage = NonNullable<LogEntry["stage"]>
 export interface RequestLogContext {
   requestId: string
   startMs: number

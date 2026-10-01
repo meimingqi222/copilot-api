@@ -441,6 +441,7 @@ function readVarint(
   throw new Error("Unexpected end of protobuf data")
 }
 
+/** @public — consumed by the standalone protobuf probe scripts under scripts/. */
 export function extractStrings(data: Uint8Array): Array<string> {
   const decoder = new TextDecoder()
   const values: Array<string> = []
