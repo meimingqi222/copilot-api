@@ -33,6 +33,16 @@ jobs:
       - name: Run type check
         run: bun run typecheck
 
+      # Dead-code / unused-export report. Non-blocking for now: the remaining
+      # findings are dominated by false positives knip cannot resolve (symbols
+      # reached through namespace imports, deep imports, or the ignored
+      # scripts/ and pages/ trees) plus over-exports in a few core files. The
+      # step keeps the count visible so it cannot regress unnoticed; tighten it
+      # to a hard gate once the residual reaches zero.
+      - name: Report unused code (knip)
+        run: bun run knip
+        continue-on-error: true
+
       - name: Run tests
         run: bun test
 
