@@ -110,6 +110,3 @@ export function getOAuthCatalogModelsForConnection(
   }
   return getOAuthFallbackModelsForConnection(provider as OAuthProviderId)
 }
-
-/** 重新导出 isOAuthConnection 供外部使用。 */
-export { isOAuthConnection } from "~/lib/provider-connections"

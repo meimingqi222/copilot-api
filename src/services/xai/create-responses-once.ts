@@ -44,9 +44,9 @@ import { classifyWsFailure } from "~/services/responses/ws-failure"
 
 import { pruneUnansweredToolCalls } from "../codex/upstream-body"
 import {
-  appendResponsesTranscript,
+  appendCodexTranscript,
   buildResponsesTranscriptInput,
-  getResponsesTranscript,
+  getCodexTranscript,
   resolveSocketResponsesTranscriptSessionId,
   type TranscriptStoreResult,
   xaiTranscriptKey,
@@ -154,7 +154,7 @@ function logCachePrefixDiag(
  * 规则剥离推理参数后透传，其余（model/input/instructions/reasoning）
  * 保持客户端原样，并复用 responses 的加密内容校验。
  */
-export async function createXaiCompactOnce(
+async function createXaiCompactOnce(
   {
     connection,
     credential,
@@ -392,7 +392,7 @@ export async function createXaiResponsesOnce(
   const rawDelta =
     Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
   const cachedFull =
-    previousResponseId ? getResponsesTranscript(transcriptKey) : undefined
+    previousResponseId ? getCodexTranscript(transcriptKey) : undefined
   const transcriptTrackable = !previousResponseId || Boolean(cachedFull)
   const fullInputThisTurn = buildResponsesTranscriptInput(
     cachedFull,
@@ -570,7 +570,7 @@ export async function createXaiResponsesOnce(
   if (ctx?.downstreamWebsocket && transcriptTrackable) {
     recordTranscriptCheckpoint(
       ctx.memoryTraceId,
-      appendResponsesTranscript(
+      appendCodexTranscript(
         transcriptKey,
         fullInputThisTurn,
         Array.isArray(result.output) ? result.output : [],
@@ -818,7 +818,7 @@ function recordXaiTerminalEvent(
       : []
     recordTranscriptCheckpoint(
       memoryTraceId,
-      appendResponsesTranscript(transcriptKey, fullInputThisTurn, output),
+      appendCodexTranscript(transcriptKey, fullInputThisTurn, output),
     )
     if (
       replay.model

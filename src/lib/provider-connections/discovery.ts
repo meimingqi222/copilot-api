@@ -21,7 +21,7 @@ const DEFAULT_CHECK_INTERVAL_MS = 60 * 1000 // 每分钟扫描一次,看哪些 c
 let intervalHandle: ReturnType<typeof globalTimers.interval> | undefined
 const inFlightConnections = new Set<string>()
 
-export async function refreshConnectionModels(
+async function refreshConnectionModels(
   connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<void> {
@@ -148,9 +148,7 @@ function matchPattern(value: string, pattern: string): boolean {
   return value.toLowerCase() === pattern.toLowerCase()
 }
 
-export async function refreshAllConnectionModels(
-  signal?: AbortSignal,
-): Promise<void> {
+async function refreshAllConnectionModels(signal?: AbortSignal): Promise<void> {
   for (const connection of listProviderConnections()) {
     await refreshConnectionModels(connection, signal)
   }
@@ -183,11 +181,4 @@ export function scheduleConnectionModelDiscovery(): void {
       }
     }
   }, DEFAULT_CHECK_INTERVAL_MS)
-}
-
-export function stopConnectionModelDiscovery(): void {
-  if (intervalHandle) {
-    globalTimers.clearInterval(intervalHandle)
-    intervalHandle = undefined
-  }
 }

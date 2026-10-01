@@ -2,7 +2,7 @@ import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
 
-export type ResponsesLogOutcome = "success" | "incomplete" | "failed"
+type ResponsesLogOutcome = "success" | "incomplete" | "failed"
 
 export const TERMINAL_RESPONSE_TYPES = new Set([
   "response.completed",
@@ -147,7 +147,7 @@ export function extractStreamFailureDetail(
 }
 
 /** `patchRequestLog` 能直接消费的流失败补丁形态（LogEntry 子集）。 */
-export interface StreamFailurePatch {
+interface StreamFailurePatch {
   error: string
   errorType: "upstream_stream_error"
   errorSnippet: string | undefined

@@ -9,7 +9,7 @@ import { cacheSignature } from "~/lib/cache/signature-cache"
 
 const MAX_ACCUMULATED_THINKING_BYTES = 32 * 1024 * 1024
 
-export interface AntigravityStreamState {
+interface AntigravityStreamState {
   created: number
   responseId: string
   functionIndex: number

@@ -172,7 +172,7 @@ export function createOAuthConnection(
 /**
  * Phase 3:将 flow 的 proxyUrl 等设置直接写入 connection.settings。
  */
-export function applyFlowSettingsToConnection(
+function applyFlowSettingsToConnection(
   connection: ProviderConnection,
   flow: OAuthPendingFlow,
 ): void {
@@ -189,9 +189,9 @@ function flowFetchOptions(
 
 // ── Strategy interfaces ─────────────────────────────────────────
 
-export type OAuthFlowType = "pkce-callback" | "callback" | "device"
+type OAuthFlowType = "pkce-callback" | "callback" | "device"
 
-export interface OAuthStartInput {
+interface OAuthStartInput {
   proxyUrl?: string
   /**
    * Provider 专属账号域。目前只有 MiniMax Code 用：
@@ -201,7 +201,7 @@ export interface OAuthStartInput {
   region?: string
 }
 
-export interface OAuthStartResult {
+interface OAuthStartResult {
   // Flow registration fields
   authUrl?: string
   state?: string
@@ -221,7 +221,7 @@ export interface OAuthStartResult {
   responseExpiresIn?: number
 }
 
-export interface OAuthExchangeInput {
+interface OAuthExchangeInput {
   flow: OAuthPendingFlow
   /** Authorization code for callback-based flows */
   code?: string
@@ -229,7 +229,7 @@ export interface OAuthExchangeInput {
   signal?: AbortSignal
 }
 
-export interface OAuthProviderStrategy {
+interface OAuthProviderStrategy {
   readonly flowType: OAuthFlowType
   /** Start the OAuth flow (generate auth URL or device code) */
   start(input: OAuthStartInput): Promise<OAuthStartResult>
@@ -914,7 +914,7 @@ export const OAUTH_PROVIDER_STRATEGIES: Record<
  * same `windsurf-native` connection shape. Kept out of
  * `OAUTH_PROVIDER_STRATEGIES` (typed by `OAuthProviderId`) on purpose.
  */
-export const WINDSURF_OAUTH_PROVIDER_ID = "windsurf" as const
+const WINDSURF_OAUTH_PROVIDER_ID = "windsurf" as const
 
 export function getOAuthStrategy(
   provider: string,

@@ -29,8 +29,8 @@ import { generatePkceCodes, type PkceCodes } from "./pkce"
 
 export const GEMINI_AUTHORIZE_URL =
   "https://accounts.google.com/o/oauth2/v2/auth"
-export const GEMINI_TOKEN_URL = "https://oauth2.googleapis.com/token"
-export const GEMINI_USERINFO_URL =
+const GEMINI_TOKEN_URL = "https://oauth2.googleapis.com/token"
+const GEMINI_USERINFO_URL =
   "https://www.googleapis.com/oauth2/v2/userinfo?alt=json"
 export const GEMINI_CODE_ASSIST_BASE = "https://cloudcode-pa.googleapis.com"
 
@@ -54,7 +54,7 @@ export function getGeminiClientId(): string {
 const GEMINI_CLIENT_SECRET_B64 =
   "R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw="
 
-export function getGeminiClientSecret(): string {
+function getGeminiClientSecret(): string {
   const fromEnv = process.env.GEMINI_CLIENT_SECRET?.trim()
   if (fromEnv) {
     return fromEnv
@@ -62,7 +62,7 @@ export function getGeminiClientSecret(): string {
   return Buffer.from(GEMINI_CLIENT_SECRET_B64, "base64").toString("utf8")
 }
 
-export const GEMINI_SCOPES = [
+const GEMINI_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
@@ -70,9 +70,9 @@ export const GEMINI_SCOPES = [
 
 export const GEMINI_CALLBACK_PORT = 59656
 export const GEMINI_CALLBACK_PATH = "/oauth2callback"
-export const GEMINI_REDIRECT_URI = `http://127.0.0.1:${GEMINI_CALLBACK_PORT}${GEMINI_CALLBACK_PATH}`
+const GEMINI_REDIRECT_URI = `http://127.0.0.1:${GEMINI_CALLBACK_PORT}${GEMINI_CALLBACK_PATH}`
 
-export const GEMINI_CLI_VERSION = "0.61.0"
+const GEMINI_CLI_VERSION = "0.61.0"
 
 export function newGeminiPkce(): PkceCodes {
   return generatePkceCodes()
@@ -93,7 +93,7 @@ export function buildGeminiAuthUrl(state: string, pkce: PkceCodes): string {
   return `${GEMINI_AUTHORIZE_URL}?${q.toString()}`
 }
 
-export interface GeminiTokens {
+interface GeminiTokens {
   access_token?: string
   refresh_token?: string
   id_token?: string
@@ -222,7 +222,7 @@ function projectId(value: unknown): string {
   return typeof id === "string" ? id : ""
 }
 
-export interface GeminiProject {
+interface GeminiProject {
   project: string
   plan?: string
 }
@@ -309,7 +309,7 @@ export async function fetchGeminiUserInfo(
   }
 }
 
-export interface GeminiOAuthBundle {
+interface GeminiOAuthBundle {
   accessToken: string
   refreshToken?: string
   expiresAt: number

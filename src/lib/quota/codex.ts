@@ -69,14 +69,14 @@ export interface CodexQuotaWindowEntry {
   windowEndMs: number | null
 }
 
-export interface CodexResetCreditDetail {
+interface CodexResetCreditDetail {
   id: string
   status: string
   grantedAt: string
   expiresAt: string
 }
 
-export interface CodexQuotaMeta {
+interface CodexQuotaMeta {
   planType: string | null
   subscriptionActiveUntil: string | number | null
   rateLimitResetCreditsAvailableCount: number | null
@@ -392,14 +392,14 @@ export function buildCodexQuotaWindows(
   return windows
 }
 
-export function resolveCodexSubscriptionActiveUntil(
+function resolveCodexSubscriptionActiveUntil(
   connection: ProviderConnection,
 ): string | number | null {
   const idToken = readCodexIdToken(connection)
   return extractCodexSubscriptionActiveUntilFromIdToken(idToken) ?? null
 }
 
-export function resolveCodexPlanType(
+function resolveCodexPlanType(
   connection: ProviderConnection,
   payload?: CodexUsagePayload | null,
 ): string | null {
@@ -441,7 +441,7 @@ function normalizeCodexResetCreditDetail(
   }
 }
 
-export function parseCodexResetCreditsPayload(payload: unknown): {
+function parseCodexResetCreditsPayload(payload: unknown): {
   availableCount: number | null
   credits: Array<CodexResetCreditDetail>
 } {
@@ -559,7 +559,7 @@ export async function fetchCodexResetCredits(
   }
 }
 
-export async function consumeCodexRateLimitResetCredit(
+async function consumeCodexRateLimitResetCredit(
   connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<void> {

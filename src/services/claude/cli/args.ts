@@ -12,7 +12,7 @@
  * - `--dangerously-skip-permissions`：headless 下不能有权限交互。
  */
 
-export interface ClaudeCliArgsOptions {
+interface ClaudeCliArgsOptions {
   /** 上游模型 id（已规范化）。 */
   model: string
   /** `--mcp-config` 指向的 JSON 文件路径。 */

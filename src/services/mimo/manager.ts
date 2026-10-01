@@ -38,7 +38,7 @@ export function markAccountReady(accountId: string) {
   }
 }
 
-export function markAccountResting(accountId: string) {
+function markAccountResting(accountId: string) {
   const conn = getMutableProviderConnection(accountId)
   if (conn) {
     setConnectionAuthStatus(conn, "pending", null)

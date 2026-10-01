@@ -130,7 +130,7 @@ export function createTables(db: Database): void {
 }
 
 /** One-time: drop obvious junk swe-1-6-fast test rows (tiny input, zero output). */
-export function migrateSwe16UsageLabels(db: Database): void {
+function migrateSwe16UsageLabels(db: Database): void {
   const applied = db
     .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
     .get("swe-1-6-fast-junk-cleanup") as { ok: number } | undefined
@@ -153,7 +153,7 @@ export function migrateSwe16UsageLabels(db: Database): void {
  * joining against the current account registry. Rows whose account no longer
  * exists are left NULL and reported as "unknown" by the by-provider query.
  */
-export function backfillProviderColumn(db: Database): void {
+function backfillProviderColumn(db: Database): void {
   const applied = db
     .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
     .get("backfill-usage-provider") as { ok: number } | undefined
@@ -185,7 +185,7 @@ export function backfillProviderColumn(db: Database): void {
  * repairCodebuddyCnConnections）之前运行过的话，会把国内版账号的历史行
  * 误写成 "codebuddy"。改名重跑，在连接修复之后按真实 provider 再纠正一次。
  */
-export function repairCodebuddyProviderAttribution(db: Database): void {
+function repairCodebuddyProviderAttribution(db: Database): void {
   const applied = db
     .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
     .get("repair-codebuddy-provider-attribution-v2") as
@@ -213,7 +213,7 @@ export function repairCodebuddyProviderAttribution(db: Database): void {
   ])
 }
 
-export function ensureColumn(
+function ensureColumn(
   db: Database,
   table: string,
   column: string,
@@ -227,7 +227,7 @@ export function ensureColumn(
   }
 }
 
-export function ensureUsageUserColumn(db: Database): void {
+function ensureUsageUserColumn(db: Database): void {
   const rows = db.prepare("PRAGMA table_info(usage_stats)").all() as Array<{
     name: string
   }>

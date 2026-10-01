@@ -236,21 +236,11 @@ export function isSessionAffinityEnabled(): boolean {
   return state.routing.sessionAffinity
 }
 
-export function isFillFirstEnabled(): boolean {
+function isFillFirstEnabled(): boolean {
   const strategy = state.routing.strategy
   return (
     strategy === "fill-first" || strategy === "fillfirst" || strategy === "ff"
   )
-}
-
-/** Quota-aware ordering: use the allowance that renews soonest first. */
-export function isQuotaStrategyEnabled(): boolean {
-  return state.routing.strategy === "quota"
-}
-
-/** Least-used ordering: fewest used allowance, then fewest tokens lately. */
-export function isLeastUsedStrategyEnabled(): boolean {
-  return state.routing.strategy === "least-used"
 }
 
 /**

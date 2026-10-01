@@ -10,10 +10,8 @@ import {
 
 export type { XaiNamespaceToolRef } from "./namespace-tools"
 
-export {
-  collectXaiNamespaceToolRefs,
-  restoreXaiNamespaceToolCalls,
-} from "./namespace-tools"
+export { restoreXaiNamespaceToolCalls } from "./namespace-tools"
+
 export { isValidXaiEncryptedContent } from "./reasoning"
 import type { XaiNamespaceToolRef } from "./namespace-tools"
 
@@ -33,7 +31,7 @@ import {
   normalizeXaiToolsAndInput,
 } from "./tools"
 
-export type XaiSanitizeResult = {
+type XaiSanitizeResult = {
   body: Record<string, unknown>
   /** qualified name → original { namespace, name }, for response restore. */
   namespaceToolRefs: Map<string, XaiNamespaceToolRef>

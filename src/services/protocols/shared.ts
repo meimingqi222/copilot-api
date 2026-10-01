@@ -136,7 +136,7 @@ export function buildBaseHeaders(
   return headers
 }
 
-export interface UpstreamFailureOptions {
+interface UpstreamFailureOptions {
   /**
    * 跳过账号级惩罚标记（冷却/鉴权/配额状态写入与持久化），仅抛错。
    * 调用方已做更细粒度落库时使用（如 CodeBuddy 6004 只冷却模型）。
@@ -309,7 +309,7 @@ export function resolveSseFirstByteTimeoutMs(): number {
   return parsed
 }
 
-export interface SafeSseStreamOptions {
+interface SafeSseStreamOptions {
   /** 覆盖首包超时（毫秒），测试用；不传则走环境变量/默认值。 */
   firstByteTimeoutMs?: number
 }

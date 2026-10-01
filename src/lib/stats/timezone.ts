@@ -42,7 +42,7 @@ export function formatDateInTimeZone(timestamp: number, tz: string): string {
 }
 
 /** UTC offset of the timezone at the instant, in milliseconds. */
-export function timeZoneOffsetMs(tz: string, timestamp: number): number {
+function timeZoneOffsetMs(tz: string, timestamp: number): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     hour12: false,
@@ -78,11 +78,7 @@ function parseDateParts(dateStr: string): {
   return { year, month, day }
 }
 
-export function formatDateParts(
-  year: number,
-  month: number,
-  day: number,
-): string {
+function formatDateParts(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
 }
 

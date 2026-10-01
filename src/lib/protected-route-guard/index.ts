@@ -32,15 +32,10 @@ export {
   getPrincipalStateForTest,
   getProtectedRouteGuardSizeForTest,
   idleTtlMs,
-  maxBlockMs,
   resetProtectedRouteGuardForTest,
 } from "./state"
-export type { GuardInput, PrincipalBehavior } from "./types"
-export type {
-  PrincipalGuardState,
-  ScoreBreakdown,
-  TempBlockInfo,
-} from "./types"
+export type { PrincipalBehavior } from "./types"
+export type { PrincipalGuardState } from "./types"
 
 export function checkProtectedRouteGuard(
   c: Context,

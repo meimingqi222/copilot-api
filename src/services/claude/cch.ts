@@ -43,7 +43,7 @@ const BILLING_SYSTEM_MARKER = cchEncoder.encode(
 )
 const CCH_BILLING_SEARCH_WINDOW = 150
 
-export type CchPatchResult = "patched" | "no-billing-header" | "unanchored"
+type CchPatchResult = "patched" | "no-billing-header" | "unanchored"
 
 /**
  * Builds the `x-anthropic-billing-header` text with a `cch=00000` placeholder.
@@ -141,5 +141,3 @@ export function serializeAndPatchCchBody(
 
 // Re-export for tests that need to compute the expected hash independently.
 export { CCH_SEED as cchSeedForTest }
-
-export { randomUUID } from "node:crypto"

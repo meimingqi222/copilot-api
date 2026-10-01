@@ -17,10 +17,7 @@ function decayedTokens(
   return entry.tokens * Math.pow(0.5, (nowMs - entry.atMs) / HALF_LIFE_MS)
 }
 
-export function recentServeKey(
-  connectionId: string,
-  credentialId: string,
-): string {
+function recentServeKey(connectionId: string, credentialId: string): string {
   return `${connectionId}::${credentialId}`
 }
 

@@ -300,7 +300,7 @@ export function pruneCompatOrphanToolCalls(
  * 跳过该 target，若没有兼容 target 则向客户端返回可读的 422。
  */
 
-export interface StrictBackendRewriteReport {
+interface StrictBackendRewriteReport {
   /** 重写为上游可接受形状（`call_<n>_ET_…`）的 tool_call id 个数。 */
   toolCallIdsRewritten: number
 }
@@ -441,18 +441,18 @@ export function normalizeOpenAICompatChatPayload(
 // ── image_url 引用形态：内联，或降级为文本 ────────────────────────────
 
 /** 内联图片引用的字节上限，本地文件与远程响应共用。 */
-export const COMPAT_INLINE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+const COMPAT_INLINE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 
 /** 远程取回的超时上限。 */
-export const COMPAT_INLINE_IMAGE_TIMEOUT_MS = 10_000
+const COMPAT_INLINE_IMAGE_TIMEOUT_MS = 10_000
 
 /** 跟随重定向的跳数上限；每一跳都重新做地址检查。 */
-export const COMPAT_INLINE_IMAGE_MAX_REDIRECTS = 3
+const COMPAT_INLINE_IMAGE_MAX_REDIRECTS = 3
 
 const COMPAT_PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 const COMPAT_REDIRECT_STATUS = new Set([301, 302, 303, 307, 308])
 
-export interface InlineCompatImageOptions {
+interface InlineCompatImageOptions {
   maxBytes?: number
   /** 家目录，仅用于展开 `~`。 */
   home?: string

@@ -24,25 +24,15 @@ import {
 } from "./connection-metadata"
 
 /** 读取 credential.value(所有 provider 的 primary token 都存这里)。 */
-export function getCredentialValue(
-  conn: ProviderConnection,
-): string | undefined {
+function getCredentialValue(conn: ProviderConnection): string | undefined {
   const value = conn.credentials[0]?.value
   return typeof value === "string" && value ? value : undefined
-}
-
-/** 读取 credential.value,允许返回空字符串(用于 admin 更新清空场景)。 */
-export function getCredentialValueRaw(
-  conn: ProviderConnection,
-): string | undefined {
-  const value = conn.credentials[0]?.value
-  return typeof value === "string" ? value : undefined
 }
 
 // ── Provider-specific 凭据访问器 ──────────────────────────────
 
 /** Copilot githubToken(刷新源材料,存于 credential.context)。 */
-export function getConnectionGithubToken(
+function getConnectionGithubToken(
   conn: ProviderConnection,
 ): string | undefined {
   return getCredentialContextString(conn, "githubToken")
@@ -83,13 +73,6 @@ export function getConnectionMimoPh(
   return getCredentialExtraString(conn, "xiaomichatbotPh")
 }
 
-/** Mimo mimoWsToken(存于 credentialExtras)。 */
-export function getConnectionMimoWsToken(
-  conn: ProviderConnection,
-): string | undefined {
-  return getCredentialExtraString(conn, "mimoWsToken")
-}
-
 /** OAuth accessToken(存于 credential.value)。 */
 export function getConnectionOAuthAccessToken(
   conn: ProviderConnection,
@@ -97,15 +80,8 @@ export function getConnectionOAuthAccessToken(
   return getCredentialValue(conn)
 }
 
-/** OAuth refreshToken(存于 credential.context)。 */
-export function getConnectionOAuthRefreshToken(
-  conn: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(conn, "refreshToken")
-}
-
 /** OAuth apiKey(存于 credential.context)。 */
-export function getConnectionOAuthApiKey(
+function getConnectionOAuthApiKey(
   conn: ProviderConnection,
 ): string | undefined {
   return getCredentialContextString(conn, "apiKey")
@@ -116,20 +92,6 @@ export function getConnectionOAuthAccountId(
   conn: ProviderConnection,
 ): string | undefined {
   return getCredentialContextString(conn, "oauthAccountId")
-}
-
-/** OAuth projectId(存于 credential.context)。 */
-export function getConnectionOAuthProjectId(
-  conn: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(conn, "projectId")
-}
-
-/** OAuth deviceId(存于 credential.context)。 */
-export function getConnectionOAuthDeviceId(
-  conn: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(conn, "deviceId")
 }
 
 // ── 类型守卫 ─────────────────────────────────────────────────

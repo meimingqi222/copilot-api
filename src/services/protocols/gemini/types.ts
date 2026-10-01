@@ -8,23 +8,23 @@
  * Reference: https://ai.google.dev/api/generate-content
  */
 
-export interface GeminiInlineData {
+interface GeminiInlineData {
   mimeType: string
   data: string
 }
 
-export interface GeminiFileData {
+interface GeminiFileData {
   mimeType?: string
   fileUri?: string
 }
 
-export interface GeminiFunctionCall {
+interface GeminiFunctionCall {
   id?: string
   name: string
   args?: Record<string, unknown>
 }
 
-export interface GeminiFunctionResponse {
+interface GeminiFunctionResponse {
   id?: string
   name: string
   response: Record<string, unknown>
@@ -47,7 +47,7 @@ export interface GeminiContent {
   parts: Array<GeminiPart>
 }
 
-export interface GeminiFunctionDeclaration {
+interface GeminiFunctionDeclaration {
   name: string
   description?: string
   parameters?: Record<string, unknown>
@@ -68,7 +68,7 @@ export interface GeminiToolConfig {
   }
 }
 
-export interface GeminiThinkingConfig {
+interface GeminiThinkingConfig {
   thinkingBudget?: number
   thinkingLevel?: string
   includeThoughts?: boolean
@@ -109,7 +109,7 @@ export interface GeminiCandidate {
   index?: number
 }
 
-export interface GeminiPromptFeedback {
+interface GeminiPromptFeedback {
   blockReason?: string
   blockReasonMessage?: string
 }

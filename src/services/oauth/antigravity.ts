@@ -14,7 +14,7 @@ import {
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState } from "./pkce"
 
-export function getAntigravityClientId(): string {
+function getAntigravityClientId(): string {
   const fromEnv = process.env.ANTIGRAVITY_CLIENT_ID?.trim()
   if (fromEnv) {
     return fromEnv
@@ -35,20 +35,19 @@ export function getAntigravityClientSecret(): string {
   }
   return Buffer.from(ANTIGRAVITY_CLIENT_SECRET_B64, "base64").toString("utf8")
 }
-export const ANTIGRAVITY_CALLBACK_PORT = 51121
-export const ANTIGRAVITY_CALLBACK_PATH = "/oauth-callback"
+const ANTIGRAVITY_CALLBACK_PORT = 51121
+const ANTIGRAVITY_CALLBACK_PATH = "/oauth-callback"
 export const ANTIGRAVITY_REDIRECT_URI = `http://localhost:${ANTIGRAVITY_CALLBACK_PORT}${ANTIGRAVITY_CALLBACK_PATH}`
-export const ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token"
-export const ANTIGRAVITY_AUTH_URL =
-  "https://accounts.google.com/o/oauth2/v2/auth"
-export const ANTIGRAVITY_USERINFO_URL =
+const ANTIGRAVITY_TOKEN_URL = "https://oauth2.googleapis.com/token"
+const ANTIGRAVITY_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+const ANTIGRAVITY_USERINFO_URL =
   "https://www.googleapis.com/oauth2/v2/userinfo?alt=json"
 export const ANTIGRAVITY_API_BASE_URL = "https://cloudcode-pa.googleapis.com"
 export const ANTIGRAVITY_DAILY_API_BASE_URL =
   "https://daily-cloudcode-pa.googleapis.com"
 export const ANTIGRAVITY_API_VERSION = "v1internal"
 
-export const ANTIGRAVITY_SCOPES = [
+const ANTIGRAVITY_SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
@@ -63,7 +62,7 @@ interface AntigravityTokenResponse {
   token_type?: string
 }
 
-export interface AntigravityOAuthBundle {
+interface AntigravityOAuthBundle {
   accessToken: string
   refreshToken?: string
   expiresAt?: number
@@ -191,7 +190,7 @@ export async function refreshAntigravityTokens(
   }
 }
 
-export async function fetchAntigravityUserEmail(
+async function fetchAntigravityUserEmail(
   accessToken: string,
   options?: OAuthFetchOptions,
 ): Promise<string | undefined> {
@@ -317,7 +316,7 @@ async function onboardAntigravityUser(
   throw new Error("Antigravity onboardUser did not complete")
 }
 
-export async function fetchAntigravityProjectId(
+async function fetchAntigravityProjectId(
   accessToken: string,
   options?: OAuthFetchOptions,
 ): Promise<string | undefined> {

@@ -18,7 +18,7 @@ import type { QoderModelInfo } from "./envelope"
 /** Qoder 自己给 effort 档位排序的顺序（不含 none / ultra）。 */
 const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"]
 
-export interface QoderModelEntry {
+interface QoderModelEntry {
   key: string
   source: string
   displayName: string
@@ -118,7 +118,7 @@ function readEntry(
  * 一个模型 key 是否是可路由的具体模型。聚合条目（"auto" / "default"）
  * 在 Qoder 内部做路由，不是 agent 能选的单个模型。
  */
-export function isRoutableQoderModel(key: string): boolean {
+function isRoutableQoderModel(key: string): boolean {
   const trimmed = key.trim()
   return trimmed !== "" && trimmed !== "auto" && trimmed !== "default"
 }

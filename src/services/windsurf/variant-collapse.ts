@@ -28,7 +28,7 @@ import type { ReasoningEffort } from "~/lib/thinking"
 /** Windsurf accepts `max` as a discrete request tier alongside OpenAI levels. */
 export type WindsurfRequestedEffort = ReasoningEffort | "max"
 
-export type WindsurfEffortKey =
+type WindsurfEffortKey =
   | "minimal"
   | "low"
   | "medium"
@@ -38,10 +38,10 @@ export type WindsurfEffortKey =
   /** Windsurf/GLM spelling for the top discrete tier. */
   | "max"
 
-export type WindsurfContextTier = "standard" | "1m"
+type WindsurfContextTier = "standard" | "1m"
 
 /** Latency/product lane. `fast`/`priority` are not thinking efforts. */
-export type WindsurfLane = "standard" | "fast" | "priority"
+type WindsurfLane = "standard" | "fast" | "priority"
 
 export interface WindsurfModelVariants {
   contextTier: WindsurfContextTier
@@ -51,7 +51,7 @@ export interface WindsurfModelVariants {
   byEffort: Partial<Record<WindsurfEffortKey, string>>
 }
 
-export const WINDSURF_VARIANTS_METADATA_KEY = "windsurfVariants"
+const WINDSURF_VARIANTS_METADATA_KEY = "windsurfVariants"
 
 export interface RawWindsurfCatalogEntry {
   publicId: string
@@ -152,7 +152,7 @@ function stripEffortToken(value: string): string {
   return result
 }
 
-export interface ParsedVariantTokens {
+interface ParsedVariantTokens {
   family: string
   effort: WindsurfEffortKey | undefined
   contextTier: WindsurfContextTier

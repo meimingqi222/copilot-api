@@ -124,7 +124,7 @@ export function summarizeCodebuddyPackage(account: CodebuddyResourceAccount): {
   return { remain, used, size }
 }
 
-export interface CodebuddyResourceSummary {
+interface CodebuddyResourceSummary {
   remain: number
   used: number
   size: number

@@ -89,7 +89,7 @@ export function groupRowsByProvider(
   return result
 }
 
-export interface PerformanceByModel {
+interface PerformanceByModel {
   model: string
   requests: number
   streamingRequests: number
@@ -129,7 +129,7 @@ export function computePerformanceByModel(
     .map(([model, acc]) => ({ model, ...perfAverages(acc) }))
 }
 
-export interface PerformanceByProviderModel extends PerformanceByModel {
+interface PerformanceByProviderModel extends PerformanceByModel {
   provider: string
 }
 
@@ -238,7 +238,7 @@ function perfAverages(acc: PerfAccumulator): {
   }
 }
 
-export interface IntervalBucketOptions {
+interface IntervalBucketOptions {
   rows: Array<UsageRawRow>
   intervalMs: number
   /** Slots align to this instant (viewer midnight); defaults to UTC midnight. */

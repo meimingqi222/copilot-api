@@ -1,4 +1,4 @@
-export interface ClaudeUsageWindow {
+interface ClaudeUsageWindow {
   utilization?: number
   resets_at?: string
 }
@@ -19,7 +19,7 @@ export interface ClaudeUsagePayload {
   } | null
 }
 
-export interface KimiUsageDetail {
+interface KimiUsageDetail {
   used?: number
   limit?: number
   remaining?: number
@@ -27,7 +27,7 @@ export interface KimiUsageDetail {
   title?: string
 }
 
-export interface KimiLimitItem {
+interface KimiLimitItem {
   name?: string
   title?: string
   detail?: KimiUsageDetail
@@ -42,7 +42,7 @@ export interface KimiUsagePayload {
   limits?: Array<KimiLimitItem>
 }
 
-export interface AntigravityQuotaBucketPayload {
+interface AntigravityQuotaBucketPayload {
   bucketId?: string
   bucket_id?: string
   displayName?: string
@@ -55,7 +55,7 @@ export interface AntigravityQuotaBucketPayload {
   description?: string
 }
 
-export interface AntigravityQuotaGroupPayload {
+interface AntigravityQuotaGroupPayload {
   displayName?: string
   display_name?: string
   description?: string
@@ -87,7 +87,7 @@ export interface CodexRateLimitInfo {
   secondaryWindow?: CodexUsageWindow | null
 }
 
-export interface CodexAdditionalRateLimit {
+interface CodexAdditionalRateLimit {
   limit_name?: string
   limitName?: string
   metered_feature?: string
@@ -96,13 +96,13 @@ export interface CodexAdditionalRateLimit {
   rateLimit?: CodexRateLimitInfo | null
 }
 
-export interface CodexRateLimitResetCredits {
+interface CodexRateLimitResetCredits {
   available_count?: number | string
   availableCount?: number | string
   credits?: Array<CodexRateLimitResetCreditItem> | null
 }
 
-export interface CodexRateLimitResetCreditItem {
+interface CodexRateLimitResetCreditItem {
   id?: string
   status?: string
   granted_at?: string
@@ -126,23 +126,23 @@ export interface CodexUsagePayload {
   rateLimitResetCredits?: CodexRateLimitResetCredits | null
 }
 
-export interface XaiBillingCent {
+interface XaiBillingCent {
   val?: number | string
 }
 
-export interface XaiBillingPeriod {
+interface XaiBillingPeriod {
   type?: string
   start?: string
   end?: string
 }
 
-export interface XaiProductUsage {
+interface XaiProductUsage {
   product?: string
   usagePercent?: number | string | null
   usage_percent?: number | string | null
 }
 
-export interface XaiBillingConfig {
+interface XaiBillingConfig {
   monthlyLimit?: XaiBillingCent | number | string | null
   monthly_limit?: XaiBillingCent | number | string | null
   used?: XaiBillingCent | number | string | null

@@ -12,14 +12,6 @@ export { loadGuard, resetGuardForTest } from "./persistence"
 
 export { getSnapshots, recordRequest, recordRequestPreview } from "./snapshot"
 
-export type {
-  BlacklistEntry,
-  ClientSnapshot,
-  ClientSnapshotDTO,
-  GuardRecordResult,
-  GuardRequestPreview,
-} from "./types"
-
 export {
   addUaWhitelistPattern,
   getCustomUaWhitelist,

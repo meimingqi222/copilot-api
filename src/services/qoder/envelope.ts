@@ -54,7 +54,7 @@ const QODER_SYS =
 const DEFAULT_MAX_TOKENS = 32000
 
 /** fitEffort：取模型自身最接近所要求的那一档；平局往上取。 */
-export function fitEffort(want: string, levels: Array<string>): string {
+function fitEffort(want: string, levels: Array<string>): string {
   if (want === "ultra" && !levels.includes(want)) {
     want = "max"
   }
@@ -84,7 +84,7 @@ export function fitEffort(want: string, levels: Array<string>): string {
  * 被要求 none 而模型总是思考时，用它的最低档；没被要求或要求了模型没有的档位时，
  * 用模型自己的默认档。
  */
-export function qoderEffort(
+function qoderEffort(
   asked: string,
   model: QoderModelInfo,
 ): { thinking: boolean; effort: string } {

@@ -56,7 +56,7 @@ export interface AccountModel {
 }
 
 /** 创建 account-managed connection 时的运行态最小子集。 */
-export interface ManagedConnectionRuntimeState {
+interface ManagedConnectionRuntimeState {
   copilotToken?: string
   copilotTokenExpiry?: number
   windsurfJwt?: string

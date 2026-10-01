@@ -1,12 +1,5 @@
 // 统计存储相关的类型定义（从 stats-store.ts 拆分而来，纯类型，无逻辑变更）
 
-export interface DailyStats {
-  date: string
-  accountId: string
-  requests: number
-  errors: number
-}
-
 export interface UsageStats {
   date: string
   accountId: string

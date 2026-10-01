@@ -42,7 +42,7 @@ interface LobsteraiRefreshResponse {
 }
 
 /** credential.context 中 LobsterAI 相关字段。 */
-export interface LobsteraiCredentialContext {
+interface LobsteraiCredentialContext {
   refreshToken?: string
   expiresAt?: number
   accountId?: string

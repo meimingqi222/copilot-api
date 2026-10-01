@@ -37,7 +37,7 @@ import { servedTokensOf } from "./recent-serve"
 import { type RestInfo } from "./rest-reason"
 import { restingReasonFor } from "./resting"
 
-export interface QuotaEvidence {
+interface QuotaEvidence {
   /** Share of the allowance used, 0..1. Undefined when the provider reports none. */
   usedFraction?: number
   /** Reset instants of the allowance windows, biggest window first. */
@@ -46,14 +46,14 @@ export interface QuotaEvidence {
   staleMs: number
 }
 
-export interface RouteEvidence {
+interface RouteEvidence {
   quota?: QuotaEvidence
   servedTokens: number
   rest?: RestInfo
 }
 
 /** One allowance window, as routing weighs it. */
-export interface QuotaWindow {
+interface QuotaWindow {
   /** Share of the window used, 0..1. */
   usedFraction?: number
   /** When the window renews (ms epoch), when the vendor said. */
@@ -104,7 +104,7 @@ function pushReset(target: Array<number>, value: unknown): void {
 }
 
 /** Collect renewal instants from the heterogeneous details shapes. */
-export function quotaRenewsAt(snapshot: QuotaSnapshot): Array<number> {
+function quotaRenewsAt(snapshot: QuotaSnapshot): Array<number> {
   const out: Array<number> = []
   const details = snapshot.details
   if (!isRecord(details)) return out

@@ -13,10 +13,10 @@ import {
 } from "./jwt"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
 
-export const CODEX_AUTH_URL = "https://auth.openai.com/oauth/authorize"
-export const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
-export const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-export const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
+const CODEX_AUTH_URL = "https://auth.openai.com/oauth/authorize"
+const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
 export const CODEX_API_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
 const CODEX_REFRESH_TIMEOUT_MS = 30_000
@@ -28,7 +28,7 @@ interface CodexTokenResponse {
   expires_in?: number
 }
 
-export interface CodexOAuthBundle {
+interface CodexOAuthBundle {
   accessToken: string
   refreshToken?: string
   idToken?: string

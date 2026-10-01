@@ -26,7 +26,7 @@ export function hasNonObjectRootUnion(
   return false
 }
 
-export function xaiSchemaTypeIsObjectOnly(schemaType: unknown): boolean {
+function xaiSchemaTypeIsObjectOnly(schemaType: unknown): boolean {
   if (typeof schemaType === "string") {
     return schemaType.trim().toLowerCase() === "object"
   }

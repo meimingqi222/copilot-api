@@ -48,7 +48,7 @@ export interface AnthropicMessagesPayload {
     | null
 }
 
-export interface AnthropicCacheControl {
+interface AnthropicCacheControl {
   type: "ephemeral"
   ttl?: "5m" | "1h"
 }
@@ -59,7 +59,7 @@ export interface AnthropicTextBlock {
   cache_control?: AnthropicCacheControl
 }
 
-export type AnthropicImageMediaType =
+type AnthropicImageMediaType =
   | "image/jpeg"
   | "image/png"
   | "image/gif"
@@ -95,14 +95,14 @@ export interface AnthropicToolResultBlock {
   is_error?: boolean
 }
 
-export interface AnthropicToolUseBlock {
+interface AnthropicToolUseBlock {
   type: "tool_use"
   id: string
   name: string
   input: Record<string, unknown>
 }
 
-export interface AnthropicThinkingBlock {
+interface AnthropicThinkingBlock {
   type: "thinking"
   thinking: string
   signature?: string
@@ -113,14 +113,14 @@ export interface AnthropicThinkingBlock {
  * execute it; the results arrive in a following `web_search_tool_result`
  * block, which is a *user* block per the Messages wire.
  */
-export interface AnthropicServerToolUseBlock {
+interface AnthropicServerToolUseBlock {
   type: "server_tool_use"
   id: string
   name: string
   input: Record<string, unknown>
 }
 
-export interface AnthropicWebSearchResult {
+interface AnthropicWebSearchResult {
   type: "web_search_result"
   url: string
   title?: string
@@ -212,7 +212,7 @@ export interface AnthropicMessageStartEvent {
   }
 }
 
-export interface AnthropicContentBlockStartEvent {
+interface AnthropicContentBlockStartEvent {
   type: "content_block_start"
   index: number
   // Per Anthropic streaming spec, content_block_start for thinking blocks contains
@@ -230,7 +230,7 @@ export interface AnthropicContentBlockStartEvent {
     | AnthropicWebSearchToolResultBlock
 }
 
-export interface AnthropicContentBlockDeltaEvent {
+interface AnthropicContentBlockDeltaEvent {
   type: "content_block_delta"
   index: number
   delta:
@@ -240,7 +240,7 @@ export interface AnthropicContentBlockDeltaEvent {
     | { type: "signature_delta"; signature: string }
 }
 
-export interface AnthropicContentBlockStopEvent {
+interface AnthropicContentBlockStopEvent {
   type: "content_block_stop"
   index: number
 }
@@ -259,11 +259,11 @@ export interface AnthropicMessageDeltaEvent {
   }
 }
 
-export interface AnthropicMessageStopEvent {
+interface AnthropicMessageStopEvent {
   type: "message_stop"
 }
 
-export interface AnthropicPingEvent {
+interface AnthropicPingEvent {
   type: "ping"
 }
 
@@ -325,8 +325,6 @@ export function extractMessageContentFromAnthropicPayload(
 }
 
 // Shared streaming types
-export type CopilotStream = AsyncIterable<{ data?: string; event?: string }>
-
 export interface AnthropicStreamingUsage {
   input_tokens?: number
   output_tokens: number

@@ -106,7 +106,7 @@ export function chunkFromToolCallArgs(opts: {
   })
 }
 
-export interface WindsurfUsageLike {
+interface WindsurfUsageLike {
   prompt_tokens?: number
   completion_tokens?: number
   total_tokens?: number
@@ -115,7 +115,7 @@ export interface WindsurfUsageLike {
   cache_read_tokens?: number
 }
 
-export interface OpenAIChunkUsage {
+interface OpenAIChunkUsage {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number

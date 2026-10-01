@@ -156,28 +156,28 @@ function translatedCall(
   })
 }
 
-export interface ChatDispatchOptions {
+interface ChatDispatchOptions {
   routeKind: "chat"
   payload: ChatCompletionsPayload
   c?: Context
   executionContext?: RequestExecutionContext
 }
 
-export interface MessagesDispatchOptions {
+interface MessagesDispatchOptions {
   routeKind: "messages"
   payload: AnthropicMessagesPayload
   forwardedHeaders?: Record<string, string | undefined>
   c?: Context
 }
 
-export interface ResponsesDispatchOptions {
+interface ResponsesDispatchOptions {
   routeKind: "responses"
   payload: ResponsesPayload
   c?: Context
   executionContext?: RequestExecutionContext
 }
 
-export interface GeminiDispatchOptions {
+interface GeminiDispatchOptions {
   routeKind: "gemini"
   /** `model` is resolved from the URL path by the route, never from the body. */
   payload: GeminiGenerateContentRequest & { model: string }
@@ -241,7 +241,7 @@ function dispatchGeminiTarget(
   )
 }
 
-export type DispatchOptions =
+type DispatchOptions =
   | ChatDispatchOptions
   | MessagesDispatchOptions
   | ResponsesDispatchOptions
@@ -254,7 +254,7 @@ export interface DispatchIdentity {
   provider: string
 }
 
-export type DispatchResult =
+type DispatchResult =
   | (AdapterChatResult & { identity: DispatchIdentity })
   | (AdapterMessagesResult & { identity: DispatchIdentity })
   | (AdapterResponsesResult & { identity: DispatchIdentity })

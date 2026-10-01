@@ -57,7 +57,7 @@ async function ensureInit(): Promise<void> {
  * Builds the cache key from model name and session key.
  * Uses NUL separator to avoid collisions (mirrors CPA).
  */
-export function reasoningReplayCacheKey(
+function reasoningReplayCacheKey(
   modelName: string,
   sessionKey: string,
 ): string {

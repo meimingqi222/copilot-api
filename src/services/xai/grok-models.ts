@@ -8,14 +8,14 @@ export function isGrokShellUserAgent(userAgent: string | undefined): boolean {
   return userAgent.toLowerCase().includes("grok-shell")
 }
 
-export interface GrokShellReasoningEffort {
+interface GrokShellReasoningEffort {
   value: string
   /** The family default. Exactly one entry carries this. */
   default?: boolean
 }
 
 /** Single model entry formatted for Grok Shell (CPA grokbuild.ModelEntry). */
-export interface GrokShellModelEntry {
+interface GrokShellModelEntry {
   id: string
   model: string
   name: string
@@ -25,7 +25,7 @@ export interface GrokShellModelEntry {
   reasoning_efforts?: Array<GrokShellReasoningEffort>
 }
 
-export interface GrokShellModelsResponse {
+interface GrokShellModelsResponse {
   object: "list"
   data: Array<GrokShellModelEntry>
 }

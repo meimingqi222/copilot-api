@@ -21,15 +21,15 @@ export const XAI_API_BASE_URL = "https://api.x.ai/v1"
  * compact.
  */
 export const XAI_CLI_CHAT_PROXY_BASE_URL = "https://cli-chat-proxy.grok.com/v1"
-export const XAI_ISSUER = "https://auth.x.ai"
-export const XAI_DISCOVERY_URL = `${XAI_ISSUER}/.well-known/openid-configuration`
-export const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
-export const XAI_SCOPE =
+const XAI_ISSUER = "https://auth.x.ai"
+const XAI_DISCOVERY_URL = `${XAI_ISSUER}/.well-known/openid-configuration`
+const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+const XAI_SCOPE =
   "openid profile email offline_access grok-cli:access api:access"
-export const XAI_REDIRECT_HOST = "127.0.0.1"
-export const XAI_CALLBACK_PORT = 56121
-export const XAI_REDIRECT_PATH = "/callback"
-export const XAI_REDIRECT_URI = `http://${XAI_REDIRECT_HOST}:${XAI_CALLBACK_PORT}${XAI_REDIRECT_PATH}`
+const XAI_REDIRECT_HOST = "127.0.0.1"
+const XAI_CALLBACK_PORT = 56121
+const XAI_REDIRECT_PATH = "/callback"
+const XAI_REDIRECT_URI = `http://${XAI_REDIRECT_HOST}:${XAI_CALLBACK_PORT}${XAI_REDIRECT_PATH}`
 export const XAI_DEFAULT_TOKEN_ENDPOINT = `${XAI_ISSUER}/oauth2/token`
 
 interface XaiDiscovery {
@@ -44,7 +44,7 @@ interface XaiTokenResponse {
   expires_in?: number
 }
 
-export interface XaiOAuthBundle {
+interface XaiOAuthBundle {
   accessToken: string
   refreshToken?: string
   idToken?: string
@@ -54,7 +54,7 @@ export interface XaiOAuthBundle {
   redirectUri: string
 }
 
-export function generateXaiNonce(): string {
+function generateXaiNonce(): string {
   return randomBytes(16).toString("hex")
 }
 

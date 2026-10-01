@@ -64,7 +64,7 @@ const MAX_TRANSCRIPT_ENTRIES = 256
 const TRANSCRIPT_IDLE_MS = 60 * 60_000
 
 /** Build the map key for a client session (conversation-scoped, not model). */
-export type ResponsesTranscriptProvider = "codex" | "xai"
+type ResponsesTranscriptProvider = "codex" | "xai"
 
 /**
  * Build the provider-scoped map key for a client session.
@@ -247,11 +247,6 @@ function transcriptStoreResult(
 export function clearCodexTranscript(key: string): void {
   deleteTranscript(key)
 }
-
-// Provider-agnostic aliases (the store is keyed by a provider-scoped key, so
-// the same get/set/clear serve codex and xAI without cross-provider bleed).
-export const getResponsesTranscript = getCodexTranscript
-export const appendResponsesTranscript = appendCodexTranscript
 
 /**
  * Clears every socket-scoped transcript bound to a downstream client WS id,

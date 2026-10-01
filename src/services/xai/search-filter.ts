@@ -13,7 +13,7 @@
 
 import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
-export interface XaiClientToolKey {
+interface XaiClientToolKey {
   namespace: string
   name: string
   toolType: string
@@ -26,11 +26,11 @@ const INTERNAL_X_SEARCH_TOOL_NAMES = new Set([
   "x_thread_fetch",
 ])
 
-export function isInternalXSearchToolName(name: string): boolean {
+function isInternalXSearchToolName(name: string): boolean {
   return INTERNAL_X_SEARCH_TOOL_NAMES.has(name.trim())
 }
 
-export function isInternalXSearchCallId(callId: string | undefined): boolean {
+function isInternalXSearchCallId(callId: string | undefined): boolean {
   if (!callId) return false
   return callId.trim().startsWith("xs_call")
 }

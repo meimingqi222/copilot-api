@@ -9,7 +9,7 @@ export interface IRSource {
   model?: string
 }
 
-export interface IRCacheControl {
+interface IRCacheControl {
   type: "ephemeral"
   ttl?: "5m" | "1h"
 }
@@ -21,7 +21,7 @@ export interface IRTextPart {
   cacheControl?: IRCacheControl
 }
 
-export type IRImageSource =
+type IRImageSource =
   | { type: "url"; url: string; detail?: "low" | "high" | "auto" }
   | { type: "base64"; mediaType: string; data: string }
 
@@ -31,12 +31,12 @@ export interface IRImagePart {
   id?: string
 }
 
-export type IRFileSource =
+type IRFileSource =
   | { type: "url"; url: string }
   | { type: "base64"; data: string; mediaType: string; name?: string }
   | { type: "file_id"; fileId: string; issuer?: string }
 
-export interface IRFilePart {
+interface IRFilePart {
   type: "file"
   source: IRFileSource
   id?: string
@@ -77,7 +77,7 @@ export interface IRToolResultPart {
  * `server_tool_use`, OpenAI `web_search_call`). Distinct from `tool_call`,
  * which the client is expected to execute and answer with a `tool_result`.
  */
-export interface IRServerToolUsePart {
+interface IRServerToolUsePart {
   type: "server_tool_use"
   id: string
   /** Server tool name, e.g. `web_search`. */
@@ -110,7 +110,7 @@ export type IRPart =
   | IRServerToolUsePart
   | IRWebSearchResultPart
 
-export interface IRInstruction {
+interface IRInstruction {
   role: "system" | "developer"
   parts: Array<IRTextPart>
   source?: IRSource
@@ -136,7 +136,7 @@ export type IRToolChoice =
   | { type: "tool"; name: string }
   | { type: "allowed"; mode: "auto" | "required"; names: Array<string> }
 
-export interface IRReasoningOptions {
+interface IRReasoningOptions {
   mode?: "enabled" | "disabled" | "adaptive"
   effort?:
     | "none"
@@ -152,7 +152,7 @@ export interface IRReasoningOptions {
   summary?: "auto" | "concise" | "detailed"
 }
 
-export type IRTextFormat =
+type IRTextFormat =
   | { type: "text" | "json_object" }
   | { type: "json_schema"; jsonSchema: Record<string, unknown> }
 

@@ -87,7 +87,7 @@ export function cancelAllOAuthRefreshTimers(): void {
 }
 
 /** 读取 connection 的 OAuth provider(非 OAuth connection 返回 undefined)。 */
-export function getOAuthConnectionProvider(
+function getOAuthConnectionProvider(
   connection: ProviderConnection,
 ): OAuthProviderId | undefined {
   const provider = getConnectionProvider(connection)

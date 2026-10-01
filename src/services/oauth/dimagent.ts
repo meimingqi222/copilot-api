@@ -25,9 +25,9 @@ export const DIMAGENT_CLIENT_ID = "f025fda6d5014fd2b6d4aba45cd8b2b6"
 export const DIMAGENT_REDIRECT_URI = "http://localhost:54321/auth/callback"
 export const DIMAGENT_CALLBACK_PORT = 54321
 export const DIMAGENT_CALLBACK_PATH = "/auth/callback"
-export const DIMAGENT_SCOPE = "openid profile email market.read remote:delegate"
+const DIMAGENT_SCOPE = "openid profile email market.read remote:delegate"
 export const DIMAGENT_REFERER = "https://dimagent.com/"
-export const DIMAGENT_DESKTOP_UA = "DimAgent-Desktop"
+const DIMAGENT_DESKTOP_UA = "DimAgent-Desktop"
 export const DIMAGENT_CHAT_UA = "DimAgent/0.9.21"
 
 const DEFAULT_ACCESS_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -51,7 +51,7 @@ export function buildDimagentAuthUrl(state: string, pkce: PkceCodes): string {
   return `${DIMAGENT_BASE}/oauth/authorize?${q.toString()}`
 }
 
-export interface DimagentTokens {
+interface DimagentTokens {
   access_token?: string
   refresh_token?: string
   id_token?: string
@@ -177,7 +177,7 @@ export function refreshDimagentTokens(
   )
 }
 
-export interface DimagentBundle {
+interface DimagentBundle {
   accessToken: string
   refreshToken?: string
   expiresAt: number

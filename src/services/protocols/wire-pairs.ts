@@ -114,7 +114,7 @@ export interface WireSpec {
 }
 
 /** Char/4 heuristic over the IR text, wire-agnostic. */
-export function estimateIrTokens(ir: RequestIR): number {
+function estimateIrTokens(ir: RequestIR): number {
   let chars = 0
   for (const instruction of ir.instructions)
     for (const part of instruction.parts) chars += part.text.length
@@ -213,7 +213,7 @@ export function wireSpec(wire: IRWire): WireSpec {
   return WIRE_SPECS[wire]
 }
 
-export interface ExecutorParams {
+interface ExecutorParams {
   target: RouteTarget
   connection: ProviderConnection
   credential: ApiCredential
@@ -228,19 +228,19 @@ export type WireExecutor = (params: ExecutorParams) => Promise<{
 }>
 
 /** Observability hooks the cross-endpoint wrappers attach to the pipeline. */
-export type TranslationPhase =
+type TranslationPhase =
   | "request_decoded"
   | "request_encoded"
   | "result_decoded"
   | "complete"
 
-export interface TranslationPhaseDetails {
+interface TranslationPhaseDetails {
   request?: RequestIR
   /** The encoded target request, available from `request_encoded` on. */
   targetPayload?: unknown
 }
 
-export interface TranslatedCallParams {
+interface TranslatedCallParams {
   /** Wire the client speaks. */
   source: IRWire
   /** Wire the selected target speaks. */

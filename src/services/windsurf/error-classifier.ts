@@ -16,7 +16,7 @@
 
 import { parseWindsurfFrameErrorParts } from "./response-parsers"
 
-export type WindsurfErrorKind =
+type WindsurfErrorKind =
   | "rate_limited" // "Reached message rate limit" — per-model message quota (recoverable)
   | "quota_exhausted" // "Quota exhausted" / quota/balance keywords
   | "auth_error" // "Unauthenticated" / auth-related "Permission denied"
@@ -25,7 +25,7 @@ export type WindsurfErrorKind =
   | "client_error"
   | "unknown"
 
-export interface ClassifiedWindsurfError {
+interface ClassifiedWindsurfError {
   kind: WindsurfErrorKind
   retryAfterMs?: number
   message: string

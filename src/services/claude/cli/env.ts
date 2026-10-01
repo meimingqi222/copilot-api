@@ -35,7 +35,7 @@ const FORCED_ENV: Readonly<Record<string, string>> = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
 }
 
-export interface CleanClaudeEnvOptions {
+interface CleanClaudeEnvOptions {
   /** 注入 `CLAUDE_CODE_OAUTH_TOKEN`。空值表示不注入（沿用 CLI 自己的登录态）。 */
   oauthToken?: string
   /** 最后应用的覆盖项；值为 undefined 表示删除该键。 */

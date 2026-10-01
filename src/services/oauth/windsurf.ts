@@ -6,8 +6,8 @@ import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
 
-export const WINDSURF_APP_BASE_URL = "https://app.devin.ai"
-export const WINDSURF_API_BASE_URL = "https://api.devin.ai"
+const WINDSURF_APP_BASE_URL = "https://app.devin.ai"
+const WINDSURF_API_BASE_URL = "https://api.devin.ai"
 const WINDSURF_TOKEN_PATH = "/auth/cli/token"
 const WINDSURF_SELF_PATH = "/v3/self"
 
@@ -23,7 +23,7 @@ export const WINDSURF_REDIRECT_URI = `http://127.0.0.1:${WINDSURF_CALLBACK_PORT}
 
 const WINDSURF_SESSION_TOKEN_PREFIX = "devin-session-token$"
 
-export interface WindsurfOAuthBundle {
+interface WindsurfOAuthBundle {
   /** Formatted session token (`devin-session-token$...`), stored as credential value. */
   sessionToken: string
   userName?: string

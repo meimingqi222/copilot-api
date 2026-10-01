@@ -14,7 +14,7 @@ import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/ty
 import { CLAUDE_WAIT_TOOL_NAME } from "./mcp-names"
 
 /** MCP `tools/list` 里的一个工具。 */
-export interface BridgeTool {
+interface BridgeTool {
   name: string
   description?: string
   inputSchema: Record<string, unknown>
@@ -94,7 +94,7 @@ export function toolResultIds(
 }
 
 /** 从调用方的 messages 里取出 `tool_result`，供唤醒挂起的 run。 */
-export interface BridgeToolResult {
+interface BridgeToolResult {
   toolUseId: string
   text: string
   isError: boolean

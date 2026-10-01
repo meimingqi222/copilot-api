@@ -1,4 +1,4 @@
-export interface ModelsDevTierRate {
+interface ModelsDevTierRate {
   input?: number
   output?: number
   cache_read?: number
@@ -9,7 +9,7 @@ export interface ModelsDevTierRate {
   }
 }
 
-export interface ModelsDevTierCost {
+interface ModelsDevTierCost {
   input?: number
   output?: number
   cache_read?: number
@@ -33,7 +33,7 @@ export interface ModelsDevModel {
   cost?: ModelsDevCost
 }
 
-export interface ModelsDevProvider {
+interface ModelsDevProvider {
   id: string
   name?: string
   models: Record<string, ModelsDevModel>
@@ -63,11 +63,7 @@ export interface ContextTierPricingPer1k {
   cacheWritePricePer1k: number
 }
 
-export type ModelPricingSource =
-  | "manual"
-  | "models-dev"
-  | "builtin"
-  | "unmatched"
+type ModelPricingSource = "manual" | "models-dev" | "builtin" | "unmatched"
 
 export interface ResolvedModelPricing extends ModelPricingPer1k {
   source: ModelPricingSource

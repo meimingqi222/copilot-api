@@ -18,7 +18,7 @@ import {
   DIMAGENT_REFERER,
 } from "~/services/oauth/dimagent"
 
-export interface DimagentQuotaWindow {
+interface DimagentQuotaWindow {
   name: string
   usedPercent: number
   display: string

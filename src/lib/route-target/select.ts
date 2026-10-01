@@ -131,7 +131,7 @@ export function commitRouteTargetAffinity(
   })
 }
 
-export interface SelectRouteTargetOptions {
+interface SelectRouteTargetOptions {
   exclude?: Set<string>
   /**
    * Primary session id for affinity (from extractSessionIds).

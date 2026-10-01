@@ -24,7 +24,7 @@ import {
 import { getHeader } from "~/services/protocols/shared"
 
 const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
-export const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
+const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_PRODUCT = "SaaS"
 const REFRESH_LEAD_MS = 5 * 60 * 1000
@@ -292,7 +292,7 @@ export async function ensureCodebuddyAccessToken(
   return liveCredential?.value || credential.value || undefined
 }
 
-export function cancelCodebuddyRefreshTimer(connectionId: string): void {
+function cancelCodebuddyRefreshTimer(connectionId: string): void {
   const timer = refreshTimers.get(connectionId)
   if (!timer) return
   clearTimeout(timer)

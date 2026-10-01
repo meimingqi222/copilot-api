@@ -52,7 +52,7 @@ function findString(data: Uint8Array, field: number): string | undefined {
   }
 }
 
-export interface WindsurfQuotaWindows {
+interface WindsurfQuotaWindows {
   dailyUsedPercent: number | undefined
   weeklyUsedPercent: number | undefined
   dailyResetAt: number | undefined

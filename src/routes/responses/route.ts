@@ -8,6 +8,7 @@ import { recordTraceError } from "~/lib/request-log"
 import { handleResponsesCompact } from "./compact"
 import { handleResponses } from "./handler"
 import { createResponsesWebSocketSession } from "./ws-handler"
+import type { WebSocketSendTarget } from "./ws-pump"
 
 export const responsesRoutes = new Hono()
 
@@ -18,7 +19,7 @@ const upgradeResponsesWebSocket = upgradeWebSocket((c) => {
     onMessage(event, ws) {
       session.onMessage(
         event as MessageEvent<string | ArrayBuffer>,
-        ws.raw as unknown as import("./ws-handler").WebSocketSendTarget,
+        ws.raw as unknown as WebSocketSendTarget,
       )
     },
     onClose(event) {

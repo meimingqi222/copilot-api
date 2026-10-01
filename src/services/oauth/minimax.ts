@@ -34,14 +34,14 @@ import {
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
-export const MINIMAX_CLIENT_ID = "mcode-public"
-export const MINIMAX_SCOPE = "agent.default"
-export const MINIMAX_AUDIENCE = "agent-backend"
-export const MINIMAX_DEVICE_CODE_GRANT_TYPE =
+const MINIMAX_CLIENT_ID = "mcode-public"
+const MINIMAX_SCOPE = "agent.default"
+const MINIMAX_AUDIENCE = "agent-backend"
+const MINIMAX_DEVICE_CODE_GRANT_TYPE =
   "urn:ietf:params:oauth:grant-type:device_code"
 
 /** `{agent}` 之后到 Messages 端点的固定前缀（自带 `/v1`，不要再补一层）。 */
-export const MINIMAX_LLM_PREFIX = "/mavis/api/v1/llm/v1"
+const MINIMAX_LLM_PREFIX = "/mavis/api/v1/llm/v1"
 
 /**
  * 第三方客户端的自述 UA。
@@ -52,7 +52,7 @@ export const MINIMAX_LLM_PREFIX = "/mavis/api/v1/llm/v1"
  */
 export const MINIMAX_USER_AGENT = "copilot-api"
 
-export type MinimaxRegion = "cn" | "en"
+type MinimaxRegion = "cn" | "en"
 
 export const MINIMAX_DEFAULT_REGION: MinimaxRegion = "cn"
 
@@ -101,9 +101,7 @@ export function normalizeMinimaxRegion(value: unknown): MinimaxRegion {
 }
 
 /** 从域名反查区域；不是 MiniMax 域名返回 undefined。 */
-export function minimaxRegionFromHost(
-  value: unknown,
-): MinimaxRegion | undefined {
+function minimaxRegionFromHost(value: unknown): MinimaxRegion | undefined {
   const text = String(value ?? "")
     .trim()
     .toLowerCase()
@@ -140,15 +138,15 @@ export function resolveMinimaxRegion(
   return minimaxRegionFromHost(connection.baseUrl) ?? MINIMAX_DEFAULT_REGION
 }
 
-export function minimaxAccountHost(region: MinimaxRegion): string {
+function minimaxAccountHost(region: MinimaxRegion): string {
   return MINIMAX_REGIONS[region].account
 }
 
-export function minimaxDeviceCodeUrl(region: MinimaxRegion): string {
+function minimaxDeviceCodeUrl(region: MinimaxRegion): string {
   return `${minimaxAccountHost(region)}/oauth2/device/code`
 }
 
-export function minimaxTokenUrl(region: MinimaxRegion): string {
+function minimaxTokenUrl(region: MinimaxRegion): string {
   return `${minimaxAccountHost(region)}/oauth2/token`
 }
 
@@ -251,7 +249,7 @@ export async function startMinimaxDeviceFlow(
   }
 }
 
-export interface MinimaxOAuthBundle {
+interface MinimaxOAuthBundle {
   accessToken: string
   refreshToken?: string
   expiresAt?: number

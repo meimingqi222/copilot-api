@@ -44,7 +44,7 @@ interface XaiVideoStatusResponse {
 }
 
 /** OpenAI-compatible video creation response */
-export interface VideoCreationResponse {
+interface VideoCreationResponse {
   object: "video"
   id: string
   model: string
@@ -57,7 +57,7 @@ export interface VideoCreationResponse {
 }
 
 /** OpenAI-compatible video retrieval response */
-export interface VideoRetrieveResponse {
+interface VideoRetrieveResponse {
   object: "video"
   id: string
   model: string

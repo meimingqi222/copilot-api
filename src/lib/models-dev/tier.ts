@@ -16,16 +16,6 @@ export function promptTotalForTier(
   )
 }
 
-/** 是否触发长上下文阶梯（整单跳价，非超额累进）。 */
-export function isContextTierTriggered(
-  pricing: Pick<ModelPricingPer1k, "contextTierAbove">,
-  promptTotal: number,
-): boolean {
-  const tier = pricing.contextTierAbove
-  if (!tier || !Number.isFinite(tier.thresholdTokens)) return false
-  return promptTotal > tier.thresholdTokens
-}
-
 /** 按 prompt 总量选出本单实际生效的一套单价。 */
 export function selectEffectivePricing(
   pricing: ModelPricingPer1k,

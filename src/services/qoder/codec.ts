@@ -51,7 +51,7 @@ function groupBytes(grp: string): Uint8Array | null {
  * 每满 6 bit 输出一个字符；最后一组不足时零填充成一个字符；字符数补 '$' 到 4 的倍数。
  * 6-bit 值 63 输出为 '!'。
  */
-export function segmentEncode(data: Uint8Array): string {
+function segmentEncode(data: Uint8Array): string {
   const chars = Math.ceil((data.length * 8) / 6)
   const out = Buffer.allocUnsafe(Math.ceil(chars / 4) * 4)
   let n = 0
@@ -98,7 +98,7 @@ export function bodyDecode(s: string): Uint8Array {
 }
 
 /** 交换编码串的首尾各 1/3；中间 1/3 不动。 */
-export function swapBodyOuterThirds(encoded: string): string {
+function swapBodyOuterThirds(encoded: string): string {
   const third = Math.floor(encoded.length / 3)
   if (third === 0) return encoded
   return (

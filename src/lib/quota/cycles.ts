@@ -13,14 +13,14 @@ import { CLAUDE_USAGE_WINDOW_KEYS } from "~/lib/quota/constants"
 import { parseCodexUsagePayload } from "~/lib/quota/parsers"
 import { statsStore } from "~/lib/stats-store"
 
-export const CYCLE_USAGE_PROVIDERS = new Set<OAuthProviderId>([
+const CYCLE_USAGE_PROVIDERS = new Set<OAuthProviderId>([
   "codex",
   "claude",
   "antigravity",
   "kimi",
 ])
 
-export interface CycleUsageModelSummary {
+interface CycleUsageModelSummary {
   requests: number
   promptTokens: number
   completionTokens: number
@@ -28,7 +28,7 @@ export interface CycleUsageModelSummary {
   cost: number
 }
 
-export interface CycleUsageSummary {
+interface CycleUsageSummary {
   requests: number
   promptTokens: number
   completionTokens: number
@@ -37,7 +37,7 @@ export interface CycleUsageSummary {
   models: Record<string, CycleUsageModelSummary>
 }
 
-export interface QuotaWindowDescriptor {
+interface QuotaWindowDescriptor {
   id: string
   labelKey: string
   labelParams?: Record<string, string | number>
@@ -349,7 +349,7 @@ const CYCLE_WINDOW_RESOLVERS: Partial<
   kimi: resolveKimiQuotaWindows,
 }
 
-export function resolveQuotaWindows(
+function resolveQuotaWindows(
   provider: OAuthProviderId,
   details: Record<string, unknown> | undefined,
 ): Array<QuotaWindowDescriptor> {
@@ -387,7 +387,7 @@ export function attachCycleUsage(
   })
 }
 
-export function buildStoredQuotaWindows(
+function buildStoredQuotaWindows(
   provider: OAuthProviderId,
   details: Record<string, unknown>,
 ): Array<QuotaWindowDescriptor> {

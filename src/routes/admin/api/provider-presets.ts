@@ -16,9 +16,6 @@ import {
   mergePresets,
 } from "~/lib/provider-presets"
 
-// 向后兼容：重新导出类型
-export { type PresetModel, type ProviderPreset } from "~/lib/provider-presets"
-
 /**
  * 读取用户自定义预设配置文件。
  * 路径：~/.local/share/copilot-api/provider-presets.json

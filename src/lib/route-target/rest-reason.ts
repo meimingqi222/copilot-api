@@ -213,7 +213,7 @@ export function classifyRestReason(input: {
   return "unknown"
 }
 
-export interface RestDecisionInput {
+interface RestDecisionInput {
   status?: number
   headers?: Headers | null
   body?: string | null
@@ -315,7 +315,7 @@ export function restDecisionFor(input: RestDecisionInput): RestDecision {
 }
 
 /** Status → rest reason, for candidates that were never even selected. */
-export function restReasonForStatus(status: CredentialStatus): RestReason {
+function restReasonForStatus(status: CredentialStatus): RestReason {
   switch (status) {
     case "quota_exhausted":
       return "quota"

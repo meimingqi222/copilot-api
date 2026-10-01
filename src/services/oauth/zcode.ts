@@ -27,17 +27,16 @@ import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 export const ZCODE_API = "https://zcode.z.ai"
-export const ZCODE_APP_VERSION = "3.14.3"
+const ZCODE_APP_VERSION = "3.14.3"
 
 export const ZCODE_ZAI_ANTHROPIC_BASE = "https://api.z.ai/api/anthropic"
-export const ZCODE_BIGMODEL_ANTHROPIC_BASE =
-  "https://open.bigmodel.cn/api/anthropic"
+const ZCODE_BIGMODEL_ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic"
 export const ZCODE_ZAI_BIZ_API = "https://api.z.ai"
 export const ZCODE_BIGMODEL_BIZ_API = "https://bigmodel.cn"
 
 export type ZcodeSite = "zai" | "bigmodel"
 
-export interface ZcodeSignInStart {
+interface ZcodeSignInStart {
   flowId: string
   authUrl: string
   pollToken: string
@@ -45,14 +44,14 @@ export interface ZcodeSignInStart {
   expiresAtMs: number
 }
 
-export interface ZcodeSignInResult {
+interface ZcodeSignInResult {
   /** ZCode 会话 token（换 biz token 用）。 */
   sessionToken: string
   email?: string
   userId?: string
 }
 
-export interface ZcodeKeyBundle {
+interface ZcodeKeyBundle {
   /** 计划端点 base（Anthropic 兼容）。 */
   base: string
   /** 铸出的 key `<id>.<secret>`。 */
@@ -66,11 +65,11 @@ export function normalizeZcodeSite(value: string | undefined): ZcodeSite {
   return value === "bigmodel" ? "bigmodel" : "zai"
 }
 
-export function zcodeBizApi(site: ZcodeSite): string {
+function zcodeBizApi(site: ZcodeSite): string {
   return site === "bigmodel" ? ZCODE_BIGMODEL_BIZ_API : ZCODE_ZAI_BIZ_API
 }
 
-export function zcodeAnthropicBase(site: ZcodeSite): string {
+function zcodeAnthropicBase(site: ZcodeSite): string {
   return site === "bigmodel" ?
       ZCODE_BIGMODEL_ANTHROPIC_BASE
     : ZCODE_ZAI_ANTHROPIC_BASE
@@ -209,7 +208,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /** 轮询登录流程直到 ready，返回会话 token 与身份。 */
-export async function pollZcodeSignIn(
+async function pollZcodeSignIn(
   start: ZcodeSignInStart,
   site: ZcodeSite,
   options?: OAuthFetchOptions & { signal?: AbortSignal },
@@ -271,7 +270,7 @@ export async function pollZcodeSignIn(
 }
 
 /** 换业务 API 的 Authorization（Z.ai 需要一次交换；BigModel 直接用）。 */
-export async function zcodeBizAuth(
+async function zcodeBizAuth(
   site: ZcodeSite,
   sessionToken: string,
   options?: OAuthFetchOptions,

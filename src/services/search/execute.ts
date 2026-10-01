@@ -23,7 +23,7 @@ import type { SearchAnswer, SearchHit, Searcher } from "./types"
 
 import { describeSearcher } from "./searcher"
 
-export const SEARCH_TIMEOUT_MS = 120_000
+const SEARCH_TIMEOUT_MS = 120_000
 
 const SEARCH_SYSTEM_PROMPT =
   "You are a web search backend. Search the web for the user's query, then "

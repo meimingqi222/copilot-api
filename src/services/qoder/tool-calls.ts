@@ -10,7 +10,7 @@
  * 未成形的尾巴要么留着等下一片，要么在流结束时按原文吐出（绝不吞掉用户可见文本）。
  */
 
-export interface QoderToolCall {
+interface QoderToolCall {
   name: string
   args: string
 }
@@ -37,7 +37,7 @@ function markerSuffix(value: string): number {
  * 读一个调用块：JSON `{name,arguments}`，或 XML 的 function/parameter 形态。
  * 参数值原样取用（上游没有约定转义规则），能当 JSON 解析就按 JSON 放。
  */
-export function parseQoderToolCall(value: string): QoderToolCall | undefined {
+function parseQoderToolCall(value: string): QoderToolCall | undefined {
   const trimmed = value.trim()
   try {
     const framed = JSON.parse(trimmed) as {

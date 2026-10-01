@@ -31,7 +31,7 @@ function devinOs(): string {
 }
 
 /** One wire identity tuple (`exa.codeium_common_pb.Metadata`). */
-export interface WindsurfClientIdentity {
+interface WindsurfClientIdentity {
   /** Metadata.ide_name (field 1) */
   ideName: string
   /** Metadata.ide_version (field 7) */

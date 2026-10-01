@@ -81,19 +81,6 @@ export function connectionProvider(conn: ProviderConnection): string {
 }
 
 /**
- * 按 id 查询 account-managed connection 的 provider。
- * 非 account-managed(或不存在)的 id 返回 undefined —— 与原
- * `getAccount(id)?.provider` 语义一致(plain connection 从不是 Account)。
- */
-export function accountManagedProviderFromId(
-  id: string,
-): ProviderId | undefined {
-  const conn = listProviderConnections().find((c) => c.id === id)
-  if (!conn || !isAccountManagedConnection(conn)) return undefined
-  return accountManagedProvider(conn)
-}
-
-/**
  * account-managed connection 的模型前缀。
  * 镜像 getAccountModelPrefix:OAuth 自定义 modelPrefix(trim 后非空)优先,
  * 否则用 provider 本身。

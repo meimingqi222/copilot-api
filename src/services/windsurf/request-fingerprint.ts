@@ -7,7 +7,7 @@ const METADATA_STRING_FIELDS = new Set([1, 2, 3, 4, 5, 7, 12, 28])
 
 const FINGERPRINT_DECODER = new TextDecoder()
 
-export interface WindsurfRequestFingerprint {
+interface WindsurfRequestFingerprint {
   metadataFields: Array<number>
   metadata: Record<string, string | number>
   /** request_type (field 7) */

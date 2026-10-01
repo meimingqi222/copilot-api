@@ -29,7 +29,7 @@ import { restInfoFor, verifyHeldError } from "./rest-registry"
 import { restInfoForCredential, type RestInfo } from "./rest-reason"
 
 /** What to ask about: one credential, optionally scoped to one model. */
-export interface RestingQuery {
+interface RestingQuery {
   /** Credential the question is about; keys the registry and model cooldowns. */
   credentialId: string
   /**

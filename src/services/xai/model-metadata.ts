@@ -51,7 +51,7 @@ const XAI_CATALOG_RULES: Array<{
   },
 ]
 
-export type XaiCatalogHints = {
+type XaiCatalogHints = {
   contextWindow?: number
   reasoningLevels?: ReadonlyArray<string>
 }

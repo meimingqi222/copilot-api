@@ -21,8 +21,7 @@ const SIGNATURE_TEXT_HASH_LEN = 16
 const MIN_VALID_SIGNATURE_LEN = 50
 
 /** Sentinel value for Gemini models when no cached signature exists. */
-export const SKIP_THOUGHT_SIGNATURE_VALIDATOR =
-  "skip_thought_signature_validator"
+const SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
 
 const cache = new PersistentTTLMap<string>("signature-cache", SIGNATURE_TTL_MS)
 
@@ -39,7 +38,7 @@ async function ensureInit(): Promise<void> {
  * Returns the model group for signature caching.
  * Models are grouped by provider family (gpt/claude/gemini).
  */
-export function getModelGroup(modelName: string): string {
+function getModelGroup(modelName: string): string {
   const name = modelName.toLowerCase()
   if (name.includes("gpt")) return "gpt"
   if (name.includes("claude")) return "claude"

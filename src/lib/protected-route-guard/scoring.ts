@@ -19,7 +19,7 @@ import {
 // guard-config; weights intentionally fixed to keep the policy surface small).
 // Single strong signals (failure bursts, persistent repeats) can reach the
 // soft (L2 throttle) line alone; hard (L3+) blocks always need a combination.
-export const SCORE_WEIGHTS = {
+const SCORE_WEIGHTS = {
   upstreamDense: 25,
   upstreamTotal: 20,
   burst: 25,
@@ -31,7 +31,7 @@ export const SCORE_WEIGHTS = {
   authProbe: 25,
 } as const
 
-export interface AnalyzeOptions {
+interface AnalyzeOptions {
   userAgent?: string
   trustedClient: boolean
   currentContentHash?: string
@@ -174,7 +174,7 @@ export function analyzeBehavior(
   }
 }
 
-export function calculateBurstScore(
+function calculateBurstScore(
   recentRequests: Array<number>,
   now: number,
 ): number {
@@ -207,9 +207,7 @@ export function calculateBurstScore(
   return count + regularityScore
 }
 
-export function calculateFailureRate(
-  recentEvents: Array<BehaviorEvent>,
-): number {
+function calculateFailureRate(recentEvents: Array<BehaviorEvent>): number {
   const outcomes = recentEvents.filter(
     (e) =>
       e.type === "success" || e.type === "error" || e.type === "upstream_429",
@@ -224,7 +222,7 @@ export function calculateFailureRate(
   return failures / outcomes.length
 }
 
-export function countRepeatedContent(
+function countRepeatedContent(
   events: Array<BehaviorEvent>,
   now: number,
   currentContentHash: string,
@@ -243,9 +241,7 @@ export function countRepeatedContent(
   ).length
 }
 
-export function countDistinctModels(
-  recentEvents: Array<BehaviorEvent>,
-): number {
+function countDistinctModels(recentEvents: Array<BehaviorEvent>): number {
   const models = new Set<string>()
   for (const e of recentEvents) {
     if (e.model) models.add(e.model)
@@ -253,7 +249,7 @@ export function countDistinctModels(
   return models.size
 }
 
-export function countAuthProbe(
+function countAuthProbe(
   recentEvents: Array<BehaviorEvent>,
   now: number,
 ): number {

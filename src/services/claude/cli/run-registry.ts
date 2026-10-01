@@ -34,7 +34,7 @@ export interface BridgeRun {
   awaitWaitRequest(toolUseId: string): Promise<McpToolResult>
 }
 
-export interface ParkedMatch {
+interface ParkedMatch {
   run: BridgeRun
   /** 命中这个 run 的 tool_use id（只含真正挂起的那些）。 */
   toolUseIds: Array<string>

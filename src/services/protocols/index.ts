@@ -58,15 +58,11 @@ export function initializeProtocolAdapters(): void {
   initialized = true
 }
 
-export { createChatViaMessages } from "./chat-via-messages"
-export { getProtocolAdapter, registerProtocolAdapter } from "./registry"
-export { createResponsesViaChat } from "./responses-via-chat"
+export { getProtocolAdapter } from "./registry"
 export type {
   AdapterChatResult,
-  AdapterEmbeddingsResult,
   AdapterGeminiResult,
   AdapterMessagesResult,
   AdapterResponsesResult,
   AnthropicMessagesPayload,
-  ProtocolAdapter,
 } from "./types"

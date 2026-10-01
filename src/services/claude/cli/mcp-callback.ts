@@ -28,15 +28,13 @@ export class ClaudeMcpCallbackError extends Error {
   }
 }
 
-export interface ClaudeMcpCallbackBody {
+interface ClaudeMcpCallbackBody {
   toolCallId: string
   name: string
   args: unknown
 }
 
-export function parseClaudeMcpCallbackBody(
-  body: unknown,
-): ClaudeMcpCallbackBody {
+function parseClaudeMcpCallbackBody(body: unknown): ClaudeMcpCallbackBody {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new ClaudeMcpCallbackError("invalid tool call body", 400)
   }

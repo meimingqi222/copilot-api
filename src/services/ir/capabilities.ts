@@ -9,7 +9,7 @@ import type {
   RequestIR,
 } from "./types"
 
-export type RequestFeatureKind =
+type RequestFeatureKind =
   | "image"
   | "tool_result_image"
   | "file"
@@ -25,7 +25,7 @@ export type RequestFeatureKind =
   | "web_search_result"
   | "reasoning_effort"
 
-export interface RequestFeature {
+interface RequestFeature {
   kind: RequestFeatureKind
   path: string
   /** Current turn contents can affect the answer and are never silently dropped. */
@@ -36,7 +36,7 @@ export interface RequestFeature {
 }
 
 /** Wire support is a baseline; connection/model overrides belong in TargetCapabilities. */
-export interface WireCapabilities {
+interface WireCapabilities {
   images: boolean
   toolResultImages: boolean
   files: boolean
@@ -125,7 +125,7 @@ export const WIRE_CAPABILITIES: Readonly<
   },
 }
 
-export interface TargetCapabilities {
+interface TargetCapabilities {
   wire: IRWire
   providerId?: string
   model?: string

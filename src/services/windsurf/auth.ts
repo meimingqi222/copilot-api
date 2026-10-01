@@ -23,7 +23,7 @@ import { ProtobufEncoder, parseMessage } from "./protobuf"
 const DEVIN_AUTH_PATH = "/exa.auth_pb.AuthService/GetUserJwt"
 const MAX_AUTH_RESPONSE_BYTES = 1024 * 1024
 
-export interface DevinAuthMetadata {
+interface DevinAuthMetadata {
   /** Short-lived JWT carried in Metadata.user_jwt (field 21) on chat requests. */
   userJwt: string
   /** Optional region-routed base URL; when present, chat requests go here. */
@@ -230,7 +230,3 @@ function decompressGzip(payload: Uint8Array): Uint8Array {
     throw error
   }
 }
-
-/** Re-exported so callers can normalize without importing metadata directly. */
-
-export { normalizeDevinApiKey } from "./metadata"

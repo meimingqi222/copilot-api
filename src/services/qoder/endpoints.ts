@@ -31,11 +31,11 @@ export const QODER_JOB_TOKEN_PATH = "/api/v1/me/jobToken"
 export const QODER_JOB_TOKEN_REFRESH_PATH = "/api/v1/jobToken/refresh"
 
 /** SSE 对话端点：取 LLM 结果、指定 agent_common、Encode=1 走自定义 body 编码。 */
-export const QODER_CHAT_PATH =
+const QODER_CHAT_PATH =
   "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1"
 
 /** 实时模型列表端点。 */
-export const QODER_LIST_MODELS_PATH = "/algo/api/v2/model/list?Encode=1"
+const QODER_LIST_MODELS_PATH = "/algo/api/v2/model/list?Encode=1"
 
 /** 桌面客户端的账号用量端点。 */
 export const QODER_ACCOUNT_USAGE_PATH = "/sash/api/v2/me/usage"

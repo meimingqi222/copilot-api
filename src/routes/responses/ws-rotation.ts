@@ -56,7 +56,7 @@ export function selectNextResponsesAdmission(
   }
 }
 
-export interface SaturationOutcome {
+interface SaturationOutcome {
   /** The error to surface when no other account is available. */
   error: CredentialConcurrencyLimitError
   /** The next account to try, or null when the candidate set is exhausted. */

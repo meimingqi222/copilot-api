@@ -11,7 +11,7 @@ import type { DispatchIdentity } from "./shared"
 
 import { dispatchRequest } from "./shared"
 
-export interface MessagesDispatchResult {
+interface MessagesDispatchResult {
   accountId: string
   response: AsyncIterable<unknown> | Record<string, unknown>
   identity: DispatchIdentity

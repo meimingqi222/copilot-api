@@ -6,11 +6,7 @@ import type {
   GeminiUsageMetadata,
 } from "~/services/protocols/gemini"
 
-import {
-  applyUsageIdentity,
-  identityFromAdmission,
-  recordUsage,
-} from "~/lib/usage"
+import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 
 interface RecordGeminiUsageOpts {
   c: Context
@@ -20,8 +16,6 @@ interface RecordGeminiUsageOpts {
   streaming: boolean
   ttftMs?: number
 }
-
-export { identityFromAdmission }
 
 /**
  * Records one usage row for a Gemini request.

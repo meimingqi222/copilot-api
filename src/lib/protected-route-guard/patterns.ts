@@ -1,6 +1,6 @@
 import { compilePatterns, getGuardConfig } from "~/lib/guard-config"
 
-export function getTrustedPatterns(): Array<RegExp> {
+function getTrustedPatterns(): Array<RegExp> {
   return compilePatterns(getGuardConfig().trustedClientPatterns)
 }
 

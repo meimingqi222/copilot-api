@@ -7,11 +7,11 @@ export const BEHAVIOR_WINDOW_MS = 10 * 60 * 1000
 export const REQUEST_WINDOW_MS = 60_000
 export const UPSTREAM_429_DENSE_WINDOW_MS = 60_000
 export const AUTH_PROBE_WINDOW_MS = 5 * 60 * 1000
-export const CLEANUP_INTERVAL_MS = 5 * 60_000
+const CLEANUP_INTERVAL_MS = 5 * 60_000
 
 export const guardState = new Map<string, PrincipalGuardState>()
 
-export interface BucketState {
+interface BucketState {
   tokens: number
   updatedAt: number
   /** Capacity last applied — lets the idle sweep prove a refill is complete. */
@@ -22,7 +22,7 @@ export interface BucketState {
 
 export const buckets = new Map<string, BucketState>()
 
-export interface ShadowStat {
+interface ShadowStat {
   reason: string
   hits: number
   lastSeen: number
@@ -39,7 +39,7 @@ export const shadowStats = new Map<string, ShadowStat>()
  * that is still active and silently unblock the principal. Taking the max of
  * the three keeps that true for any configuration, not just the defaults.
  */
-export function maxBlockMs(): number {
+function maxBlockMs(): number {
   const cfg = getGuardConfig()
   return Math.max(cfg.shortBlockMs, cfg.tempBlockMs, cfg.longBlockMs)
 }
@@ -98,7 +98,7 @@ export function pruneState(state: PrincipalGuardState, now: number): void {
   }
 }
 
-export function cleanupIdleState(now: number): void {
+function cleanupIdleState(now: number): void {
   const ttl = idleTtlMs()
   for (const [principal, state] of guardState) {
     pruneState(state, now)

@@ -15,7 +15,7 @@ import {
   PLACEHOLDER_REASON_DESCRIPTION,
 } from "~/lib/gemini-schema/shared"
 
-export const UNSUPPORTED_KEYWORDS_BASE = [
+const UNSUPPORTED_KEYWORDS_BASE = [
   "$schema",
   "$defs",
   "definitions",

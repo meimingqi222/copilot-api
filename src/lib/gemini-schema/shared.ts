@@ -23,7 +23,7 @@ export type Arr = Array<unknown>
 export const PLACEHOLDER_REASON_DESCRIPTION =
   "Brief explanation of why you are calling this tool"
 
-export const SCHEMA_NAME_MAP_KEYWORDS = new Set([
+const SCHEMA_NAME_MAP_KEYWORDS = new Set([
   "properties",
   "patternProperties",
   "dependentSchemas",

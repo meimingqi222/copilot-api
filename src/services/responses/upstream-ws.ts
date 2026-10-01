@@ -37,7 +37,6 @@ import { isChainedTurnUpstreamError } from "./upstream-ws-error"
 export {
   buildUpstreamResponsesCreateBody,
   normalizeUpstreamWsEvent,
-  type UpstreamWsProvider,
 } from "~/services/responses/upstream-ws-body"
 
 const CODEX_WS_BETA = "responses_websockets=2026-02-06"
@@ -56,7 +55,7 @@ const UPSTREAM_WS_MAX_AGE_CODEX_MS = 55 * 60_000
 const UPSTREAM_WS_MAX_AGE_XAI_MS = 24 * 60_000
 
 /** Per-provider max socket age before a proactive redial. */
-export function getUpstreamWsMaxAge(provider: UpstreamWsProvider): number {
+function getUpstreamWsMaxAge(provider: UpstreamWsProvider): number {
   return provider === "xai" ?
       UPSTREAM_WS_MAX_AGE_XAI_MS
     : UPSTREAM_WS_MAX_AGE_CODEX_MS
@@ -235,7 +234,7 @@ function sessionKey(
   return `${provider}::${accountId}::${executionSessionId}`
 }
 
-export interface UpstreamWsTurnOptions {
+interface UpstreamWsTurnOptions {
   provider: UpstreamWsProvider
   /** 主体标识(Phase 2d:原 account.id),用于 session key 与日志。 */
   accountId: string
@@ -627,14 +626,6 @@ function retryChainedTurnOnce(params: {
       + `error=${error instanceof Error ? error.message : String(error)}`,
   )
   return true
-}
-
-/** @deprecated Prefer openUpstreamResponsesWebsocketTurn for eager open. */
-export async function* streamUpstreamResponsesWebsocket(
-  options: UpstreamWsTurnOptions,
-): AsyncIterable<CopilotStreamEventLike> {
-  const stream = await openUpstreamResponsesWebsocketTurn(options)
-  yield* stream
 }
 
 async function openSession(options: {

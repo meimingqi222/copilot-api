@@ -18,14 +18,14 @@ import { getConnectionProvider } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { COMMANDCODE_API } from "~/services/oauth/commandcode"
 
-export interface CommandCodeQuotaWindow {
+interface CommandCodeQuotaWindow {
   name: string
   usedPercent: number
   resetsAt?: number
   display: string
 }
 
-export interface ParsedCommandCodeQuota {
+interface ParsedCommandCodeQuota {
   planId?: string
   windows: Array<CommandCodeQuotaWindow>
   monthlyCredits?: number

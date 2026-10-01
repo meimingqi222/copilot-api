@@ -42,7 +42,7 @@ export function resolveCodebuddyModelCooldownMs(body: string): number {
   return parsed && parsed > 0 ? parsed : DEFAULTS.COOLDOWN_429_FALLBACK_MS
 }
 
-export interface RecordCodebuddyModelCooldownInput {
+interface RecordCodebuddyModelCooldownInput {
   connectionId: string
   credentialId: string
   model: string

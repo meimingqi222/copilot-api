@@ -13,7 +13,7 @@ import type {
 import { getConnectionSettings } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 
-export interface WindsurfRuntimeSettings {
+interface WindsurfRuntimeSettings {
   apiKey: string | undefined
   baseUrl: string | undefined
   defaultModel: string | undefined

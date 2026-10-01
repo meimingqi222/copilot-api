@@ -22,7 +22,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { hashKeyPart, PersistentTTLMap } from "~/lib/cache/persistent-map"
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 
-export interface CloudSessionIds {
+interface CloudSessionIds {
   /** Stable cascade id sent on the wire. */
   cascadeId: string
   /** Stable prompt id sent on the wire when the upstream supports field 17. */
@@ -30,9 +30,9 @@ export interface CloudSessionIds {
 }
 
 /** Legacy sentinel — only used by callers that intentionally omit a key. */
-export const DEFAULT_CONVERSATION_KEY = "__default__"
+const DEFAULT_CONVERSATION_KEY = "__default__"
 
-export interface CloudSessionCacheOpts {
+interface CloudSessionCacheOpts {
   conversationKey?: string
   /**
    * Stable upstream account identity (connection id). Part of the derivation so
@@ -46,12 +46,12 @@ export interface CloudSessionCacheOpts {
   persist?: boolean
 }
 
-export interface ResolvedWindsurfConversationKey {
+interface ResolvedWindsurfConversationKey {
   key: string
   persistent: boolean
 }
 
-export interface ResolveWindsurfConversationKeyOptions {
+interface ResolveWindsurfConversationKeyOptions {
   forwardedHeaders?: Record<string, string | undefined>
   /** OpenAI body field — primary cache key for Codex-style clients. */
   promptCacheKey?: string | null

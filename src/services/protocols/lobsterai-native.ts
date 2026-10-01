@@ -54,20 +54,11 @@ import { aggregateSseToResponse } from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
 
-export {
-  LOBSTERAI_CLIENT_VERSION_HEADER,
-  LOBSTERAI_DEFAULT_BASE_URL,
-  LOBSTERAI_DEFAULT_CLIENT_VERSION,
-  lobsteraiClientVersion,
-  lobsteraiServerRoot,
-} from "~/services/lobsterai/config"
-
 /** 官方客户端声明的能力集合，原样透传以对齐行为。 */
 export const LOBSTERAI_CLIENT_CAPABILITIES =
   "kimi-k3-agentic-v1,thinking-level-control-v1"
 
-export const LOBSTERAI_CLIENT_CAPABILITIES_HEADER =
-  "X-LobsterAI-Client-Capabilities"
+const LOBSTERAI_CLIENT_CAPABILITIES_HEADER = "X-LobsterAI-Client-Capabilities"
 
 const CHAT_PATH = "/api/proxy/v1/chat/completions"
 const MODELS_PATH = "/api/models/available"

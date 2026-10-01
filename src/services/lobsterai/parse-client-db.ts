@@ -36,7 +36,7 @@ const KV_KEYS = {
   keyfrom: "keyfrom.attribution.v1",
 } as const
 
-export interface ParsedLobsteraiClientCredentials {
+interface ParsedLobsteraiClientCredentials {
   accessToken: string
   refreshToken?: string
   expiresAt?: number

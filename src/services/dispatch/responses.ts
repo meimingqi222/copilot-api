@@ -20,7 +20,7 @@ import type { DispatchIdentity } from "./shared"
 
 import { dispatchRequest } from "./shared"
 
-export type ResponsesDispatchResult =
+type ResponsesDispatchResult =
   | {
       accountId: string
       response: AsyncIterable<CopilotStreamEventLike>

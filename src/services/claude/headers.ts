@@ -214,5 +214,3 @@ export function getForwardedHeader(
 ): string | undefined {
   return getHeaderCaseInsensitive(headers, name)
 }
-
-export { claudeCodeVersion } from "./fingerprint"

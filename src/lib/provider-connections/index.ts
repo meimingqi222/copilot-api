@@ -23,29 +23,15 @@ export {
   resetCredentialStatus,
   setCredentialEnabled,
 } from "./availability"
-export type {
-  ConnectionRoutability,
-  ConnectionUnavailabilityReason,
-  RateLimitInfo,
-  UpstreamErrorKind,
-} from "./availability"
 export {
   connectionHasCredentials,
   getConnectionCodebuffAuthToken,
   getConnectionCopilotToken,
-  getConnectionGithubToken,
   getConnectionMimoPh,
   getConnectionMimoServiceToken,
-  getConnectionMimoWsToken,
   getConnectionOAuthAccessToken,
   getConnectionOAuthAccountId,
-  getConnectionOAuthApiKey,
-  getConnectionOAuthDeviceId,
-  getConnectionOAuthProjectId,
-  getConnectionOAuthRefreshToken,
   getConnectionWindsurfApiKey,
-  getCredentialValue,
-  getCredentialValueRaw,
   isOAuthConnection,
 } from "./connection-accessors"
 export {
@@ -56,24 +42,16 @@ export {
   getConnectionCpaMetadata,
   getConnectionCredentialExtras,
   getConnectionExhaustedAt,
-  getConnectionIsExhausted,
-  getConnectionLastRateLimitAt,
-  getConnectionLastRateLimitReason,
-  getConnectionModelPrefix,
   getConnectionProvider,
   getConnectionProxy,
   getConnectionProxyUrl,
-  getConnectionQuotaExhaustedAt,
   getConnectionQuotaInfo,
   getConnectionQuotaState,
   getConnectionRedirectUri,
   getConnectionSettings,
-  getConnectionSubtitle,
-  getConnectionTokenEndpoint,
   getConnectionUserId,
   getCredentialContextNumber,
   getCredentialContextString,
-  getCredentialExtraNumber,
   getCredentialExtraString,
   readConnectionMetadata,
   setConnectionAuthStatus,
@@ -87,10 +65,6 @@ export {
   setCredentialContextField,
   setCredentialValue,
 } from "./connection-metadata"
-export type {
-  ConnectionMetadata,
-  ConnectionQuotaState,
-} from "./connection-metadata"
 export {
   flushManagedConnectionsOnShutdown,
   initializeManagedConnections,
@@ -100,21 +74,11 @@ export {
   managedConnectionFromInput,
   serializeConnectionForExport,
 } from "./managed-connection"
-export type {
-  AccountModel,
-  ManagedConnectionInput,
-  ManagedConnectionRuntimeState,
-} from "./managed-connection"
-export {
-  refreshAllConnectionModels,
-  refreshConnectionModels,
-  scheduleConnectionModelDiscovery,
-  stopConnectionModelDiscovery,
-} from "./discovery"
+export type { AccountModel, ManagedConnectionInput } from "./managed-connection"
+export { scheduleConnectionModelDiscovery } from "./discovery"
 export {
   accountManagedModelPrefix,
   accountManagedProvider,
-  accountManagedProviderFromId,
   connectionProvider,
   listAccountManagedConnections,
   providerFromProtocol,
@@ -142,24 +106,16 @@ export {
   removeProviderConnection,
   setConnectionModels,
   setDiscoveryError,
-  setProviderConnectionsForMigration,
   updateConnection,
   updateCredential,
   updateModel,
   upsertProviderConnection,
 } from "./state"
-export type {
-  CreateConnectionInput,
-  CreateCredentialInput,
-  UpdateConnectionInput,
-  UpdateCredentialInput,
-} from "./state"
+export type { CreateCredentialInput } from "./state"
 export {
-  loadProviderConnections,
   sanitizeConnection,
   sanitizeCredential,
   saveProviderConnections,
   upgradeConnectionV1ToV2,
 } from "./store"
-export type { SanitizedConnection, SanitizedCredential } from "./store"
 export * from "./types"

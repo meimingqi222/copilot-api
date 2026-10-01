@@ -11,7 +11,7 @@ import {
   preOrder,
 } from "~/lib/gemini-schema/shared"
 
-export const UNSUPPORTED_CONSTRAINTS = [
+const UNSUPPORTED_CONSTRAINTS = [
   "minLength",
   "maxLength",
   "exclusiveMinimum",

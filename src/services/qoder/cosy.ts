@@ -20,7 +20,7 @@ import {
 import { QODER_COSY_VERSION } from "./endpoints"
 
 /** Qoder 客户端内嵌的 1024-bit RSA 公钥（来自客户端 cosy 源码）。 */
-export const QODER_RSA_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
+const QODER_RSA_PUBLIC_KEY_PEM = `-----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDA8iMH5c02LilrsERw9t6Pv5Nc
 4k6Pz1EaDicBMpdpxKduSZu5OANqUq8er4GM95omAGIOPOh+Nx0spthYA2BqGz+l
 6HRkPJ7S236FZz73In/KVuLnwI8JJ2CbuJap8kvheCCZpmAWpb/cPx/3Vr/J6I17
@@ -63,7 +63,7 @@ export function rsaPkcs1Encrypt(key: Uint8Array): Buffer {
  * 构造 COSY payload 携带的 AES 加密 user blob，返回 base64 后的 (info, key)；
  * AES key 同时用作 IV。
  */
-export function generateUserBlob(user: QoderUser): {
+function generateUserBlob(user: QoderUser): {
   infoB64: string
   keyB64: string
 } {

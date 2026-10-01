@@ -24,14 +24,14 @@ import {
   type ZcodeSite,
 } from "~/services/oauth/zcode"
 
-export interface ZcodeQuotaWindow {
+interface ZcodeQuotaWindow {
   name: string
   usedPercent: number
   resetsAt?: number
   display: string
 }
 
-export interface ParsedZcodeQuota {
+interface ParsedZcodeQuota {
   level?: string
   windows: Array<ZcodeQuotaWindow>
 }

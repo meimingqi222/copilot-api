@@ -27,7 +27,6 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
 import {
-  getCredentialContextString,
   setConnectionCredentialExtra,
   setCredentialContextField,
 } from "~/lib/provider-connections"
@@ -35,22 +34,18 @@ import {
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
-export const FACTORY_WORKOS_BASE = "https://api.workos.com/user_management"
+const FACTORY_WORKOS_BASE = "https://api.workos.com/user_management"
 export const FACTORY_API_BASE = "https://api.factory.ai"
 export const FACTORY_API_EU_BASE = "https://api.eu.factory.ai"
 
 /** droid 的 WorkOS client（生产）。 */
-export const FACTORY_CLIENT_ID = "client_01HNM792M5G5G1A2THWPXKFMXB"
+const FACTORY_CLIENT_ID = "client_01HNM792M5G5G1A2THWPXKFMXB"
 /** magpie 请求自称的 droid 版本。 */
 export const FACTORY_CLI_VERSION = "0.229.0"
 
-/** 提前多少毫秒续期（droid 提前 1 分钟，这里留宽一点）。 */
-export const FACTORY_REFRESH_LEAD_MS = 2 * 60 * 1000
+const FACTORY_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
-export const FACTORY_DEVICE_GRANT =
-  "urn:ietf:params:oauth:grant-type:device_code"
-
-export interface FactoryDeviceCodeResponse {
+interface FactoryDeviceCodeResponse {
   device_code: string
   user_code: string
   verification_uri: string
@@ -59,7 +54,7 @@ export interface FactoryDeviceCodeResponse {
   expires_in?: number
 }
 
-export interface FactoryTokens {
+interface FactoryTokens {
   access_token?: string
   refresh_token?: string
   organization_id?: string
@@ -68,7 +63,7 @@ export interface FactoryTokens {
   error_description?: string
 }
 
-export interface FactoryOAuthBundle {
+interface FactoryOAuthBundle {
   accessToken: string
   refreshToken?: string
   /** 活动 org（Factory 自己的 id，X-Factory-Org-Id）。 */
@@ -299,7 +294,7 @@ interface FactoryWhoami {
 }
 
 /** Factory 自己的身份接口：给出活动 org（X-Factory-Org-Id）与所在区域。 */
-export async function fetchFactoryWhoami(
+async function fetchFactoryWhoami(
   accessToken: string,
   region: string | undefined,
   options?: OAuthFetchOptions,
@@ -397,18 +392,4 @@ export function applyFactoryTokenRefresh(
     refreshToken: tokens.refresh_token,
     expiresAt: factoryExpiryMs(accessToken) || undefined,
   })
-}
-
-/** 读 connection 上的活动 org（X-Factory-Org-Id）。 */
-export function getFactoryActiveOrgId(
-  connection: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(connection, "organizationId")
-}
-
-/** 读 connection 上的区域（"eu" 走 EU 域）。 */
-export function getFactoryRegion(
-  connection: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(connection, "region")
 }

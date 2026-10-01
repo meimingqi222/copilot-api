@@ -63,7 +63,7 @@ export class ClaudeCliUnavailableError extends LocalUnavailableError {
 }
 
 /** 账号配额耗尽 / 被限流；换账号可能成功。 */
-export class ClaudeCliQuotaError extends ClaudeCliError {
+class ClaudeCliQuotaError extends ClaudeCliError {
   constructor(message: string, detail?: string) {
     super(message, detail)
     this.name = "ClaudeCliQuotaError"
@@ -109,7 +109,7 @@ export class ClaudeCliConcurrencyLimitError extends LocalConcurrencyLimitError {
 }
 
 /** 文案是否像"没额度了"。 */
-export function looksLikeQuota(text: string): boolean {
+function looksLikeQuota(text: string): boolean {
   return QUOTA_WORDS.test(text)
 }
 

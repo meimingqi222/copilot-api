@@ -25,7 +25,7 @@ import {
 } from "~/lib/provider-connections"
 import { parseThinkingModel } from "~/lib/thinking"
 
-export interface ParsedModelRef {
+interface ParsedModelRef {
   /** 命中已注册 connection 时的 connection id;否则 undefined。 */
   connectionId?: string
   /** 命中 legacy provider id 时填充(用于兼容现有 account 路由)。 */
@@ -36,7 +36,7 @@ export interface ParsedModelRef {
   modelId: string
 }
 
-export interface ResolvedModelRouting {
+interface ResolvedModelRouting {
   connectionId?: string
   legacyProvider?: ProviderId
   accountPrefix?: string

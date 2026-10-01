@@ -58,7 +58,7 @@ const TRANSCRIPT_IDLE_MS = 60 * 60_000
  */
 const MAX_SNOOP_ITEMS = 4000
 
-export function statelessTranscriptKey(
+function statelessTranscriptKey(
   connectionId: string,
   responseId: string,
 ): string {

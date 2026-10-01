@@ -12,7 +12,7 @@ import {
   extractWsErrorStatus,
 } from "./upstream-ws-error"
 
-export const UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS = 120_000
+const UPSTREAM_WS_STREAM_IDLE_TIMEOUT_MS = 120_000
 const MAX_UPSTREAM_WS_QUEUE_MESSAGES = 1_024
 const MAX_UPSTREAM_WS_QUEUE_BYTES = 16 * 1024 * 1024
 

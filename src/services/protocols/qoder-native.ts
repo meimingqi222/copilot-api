@@ -98,7 +98,7 @@ function normalizeHttpStatus(value: number): number {
  * `new Response(null, { status })` 只接受 200–599，越界会抛 RangeError；
  * Qoder 的 401/403 表示登录过期，含 "quota" 的报文表示用量见底。
  */
-export function qoderStreamError(
+function qoderStreamError(
   statusCode: number,
   inner: string,
   outer: string,

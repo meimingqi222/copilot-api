@@ -86,14 +86,14 @@ export function isConnectionAvailable(connection: ProviderConnection): boolean {
   return connection.credentials.some((c) => isCredentialAvailable(c))
 }
 
-export type ConnectionUnavailabilityReason =
+type ConnectionUnavailabilityReason =
   | "available"
   | "disabled"
   | "auth_error"
   | "cooldown"
   | "quota_exhausted"
 
-export interface ConnectionRoutability {
+interface ConnectionRoutability {
   routable: boolean
   reason: ConnectionUnavailabilityReason
   /** 恢复前剩余秒数(诊断用);可路由时为 0。 */
@@ -192,7 +192,7 @@ function getQuotaRetryAfterSeconds(
   return waitSeconds
 }
 
-export interface RateLimitInfo {
+interface RateLimitInfo {
   /** `Retry-After` 头解析出的秒数,或上游建议的下次重试时间。 */
   retryAfterMs?: number
   reason?: string
@@ -279,7 +279,7 @@ export function setCredentialEnabled(
  * 根据上游 HTTP 响应分类错误并更新状态。
  * 返回错误类别供调用方决定是否 failover。
  */
-export type UpstreamErrorKind =
+type UpstreamErrorKind =
   | "rate_limited"
   | "auth_error"
   | "quota_exhausted"
@@ -368,7 +368,7 @@ function parseRetryAfterFromJson(body: string): number | undefined {
   return undefined
 }
 
-export function parseRetryAfterFromBody(body?: string): number | undefined {
+function parseRetryAfterFromBody(body?: string): number | undefined {
   if (!body) return undefined
 
   const jsonMs = parseRetryAfterFromJson(body)
@@ -614,7 +614,7 @@ export function classifyUpstreamError(input: {
  * contentBlockedRule). These are request problems — retrying with another
  * account changes nothing and the credential must not be disabled.
  */
-export function isCodebuddyContentBlocked(body: string): boolean {
+function isCodebuddyContentBlocked(body: string): boolean {
   if (!body) return false
   if (/"code"\s*:\s*"?11128"?/.test(body)) return true
   const lower = body.toLowerCase()

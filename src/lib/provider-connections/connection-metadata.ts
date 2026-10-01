@@ -36,7 +36,7 @@ for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
 }
 
 /** 配额状态(credential.status 的粗粒度投影)。 */
-export type ConnectionQuotaState = "unknown" | "available" | "exhausted"
+type ConnectionQuotaState = "unknown" | "available" | "exhausted"
 
 /**
  * 会话粘性模式（与 state.routing.affinity 同一套取值）。
@@ -73,7 +73,7 @@ export interface ConnectionBalance {
  * ProviderConnection 标准字段之外的 provider-specific 数据:
  * quota 状态、settings、credentialExtras、OAuth routing 字段等。
  */
-export interface ConnectionMetadata {
+interface ConnectionMetadata {
   provider: ProviderId
   quotaState: ConnectionQuotaState
   quotaInfo?: QuotaSnapshot | null
@@ -232,12 +232,6 @@ export function getConnectionCooldownUntil(
   return cred?.cooldownUntil ?? readConnectionMetadata(conn)?.cooldownUntil
 }
 
-export function getConnectionLastRateLimitAt(
-  conn: ProviderConnection,
-): number | undefined {
-  return readConnectionMetadata(conn)?.lastRateLimitAt
-}
-
 export function getConnectionLastRateLimitReason(
   conn: ProviderConnection,
 ): string | undefined {
@@ -257,24 +251,6 @@ export function getConnectionCpaMetadata(
   conn: ProviderConnection,
 ): Record<string, unknown> | undefined {
   return readConnectionMetadata(conn)?.cpaMetadata
-}
-
-export function getConnectionSubtitle(
-  conn: ProviderConnection,
-): string | undefined {
-  // T5.2.5:从 credential.context 派生,不再读 metadata.subtitle
-  const cred = conn.credentials[0]
-  const ctx = cred?.context
-  if (!ctx) return undefined
-  const email = typeof ctx.email === "string" ? ctx.email : undefined
-  const projectId =
-    typeof ctx.projectId === "string" ? ctx.projectId : undefined
-  const oauthAccountId =
-    typeof ctx.oauthAccountId === "string" ? ctx.oauthAccountId : undefined
-  if (email) return email
-  if (projectId) return projectId
-  if (oauthAccountId) return oauthAccountId
-  return undefined
 }
 
 export function getConnectionSettings(
@@ -304,19 +280,6 @@ export function getConnectionProxyUrl(
 ): string | undefined {
   // T5.2.5:优先读 connection.proxyUrl(类型化字段),回退到 metadata
   return conn.proxyUrl ?? readConnectionMetadata(conn)?.proxyUrl
-}
-
-export function getConnectionModelPrefix(
-  conn: ProviderConnection,
-): string | undefined {
-  // T5.2.5:优先读 connection.modelPrefix(类型化字段),回退到 metadata
-  return conn.modelPrefix ?? readConnectionMetadata(conn)?.modelPrefix
-}
-
-export function getConnectionTokenEndpoint(
-  conn: ProviderConnection,
-): string | undefined {
-  return readConnectionMetadata(conn)?.tokenEndpoint
 }
 
 export function getConnectionRedirectUri(
@@ -373,19 +336,6 @@ export function getCredentialExtraString(
   if (!extras) return undefined
   const value = extras[key]
   return typeof value === "string" ? value : undefined
-}
-
-/**
- * 从 credentialExtras 读取特定字段（number 版本）。
- */
-export function getCredentialExtraNumber(
-  conn: ProviderConnection,
-  key: string,
-): number | undefined {
-  const extras = getConnectionCredentialExtras(conn)
-  if (!extras) return undefined
-  const value = extras[key]
-  return typeof value === "number" ? value : undefined
 }
 
 /**

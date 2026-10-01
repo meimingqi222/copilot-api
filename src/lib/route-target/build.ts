@@ -64,7 +64,7 @@ function isModelRestingExcluded(
   )
 }
 
-export interface BuildRouteTargetsOptions {
+interface BuildRouteTargetsOptions {
   /** 限定只构造此 publicId / alias 对应的 target。 */
   publicModelId?: string
   /** 强制指定的 connection id(对应 `providerId/model` 引用形式)。 */

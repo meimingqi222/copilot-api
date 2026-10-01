@@ -9,7 +9,7 @@ import {
   setCredentialValue,
 } from "~/lib/provider-connections"
 
-export interface OAuthBundleCore {
+interface OAuthBundleCore {
   accessToken: string
   refreshToken?: string
   expiresAt?: number
@@ -22,7 +22,7 @@ export interface OAuthBundleCore {
  *   (email 同时落入 context 与 extras:context 供 connection 原生 label/subtitle
  *   推断读取,extras 供老路径 Account 快照合并读取)
  */
-export interface OAuthBundleExtras {
+interface OAuthBundleExtras {
   idToken?: string
   accountId?: string
   projectId?: string

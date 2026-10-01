@@ -66,15 +66,15 @@ import {
   selectNextResponsesAdmission,
 } from "./ws-rotation"
 
-export type { WebSocketSendTarget } from "./ws-pump"
-
 interface ResponsesWebSocketMessage {
   type?: unknown
   response?: unknown
   [key: string]: unknown
 }
 
-export { sendResponsesWebSocketTextForTest } from "./ws-pump"
+/** @deprecated Kept only for the WS pump test; import `sendText` from
+ * "./ws-pump" in new code. */
+export { sendText as sendResponsesWebSocketTextForTest } from "./ws-pump"
 
 export function createResponsesWebSocketSession(c: Context) {
   let inFlight = false

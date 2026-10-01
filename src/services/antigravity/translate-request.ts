@@ -78,7 +78,7 @@ export async function preResolveSignatures(
   return createSignatureRegistry(entries)
 }
 
-export interface AntigravityGeminiPart {
+interface AntigravityGeminiPart {
   text?: string
   thought?: boolean
   thoughtSignature?: string
@@ -100,7 +100,7 @@ export interface AntigravityGeminiPart {
   }
 }
 
-export interface AntigravityGeminiContent {
+interface AntigravityGeminiContent {
   role: "user" | "model"
   parts: Array<AntigravityGeminiPart>
 }

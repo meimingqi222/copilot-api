@@ -127,12 +127,12 @@ function previewSecret(value: string | undefined): string | undefined {
   return `${trimmed.slice(0, 3)}***${trimmed.slice(-4)}`
 }
 
-export type SanitizedCredential = Omit<ApiCredential, "value"> & {
+type SanitizedCredential = Omit<ApiCredential, "value"> & {
   hasSecret: boolean
   secretPreview?: string
 }
 
-export type SanitizedConnection = Omit<ProviderConnection, "credentials"> & {
+type SanitizedConnection = Omit<ProviderConnection, "credentials"> & {
   credentials: Array<SanitizedCredential>
 }
 

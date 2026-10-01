@@ -35,7 +35,7 @@ export interface ChatCompletionChunk {
   }
 }
 
-export interface ChatCompletionReasoningDetail {
+interface ChatCompletionReasoningDetail {
   type?: string
   text?: string
   reasoning?: string
@@ -242,24 +242,24 @@ export type ContentPart =
  * shape — the OpenRouter convention, and the only way a chat client can place
  * one. Honoured on the chat→messages path; ignored by chat upstreams.
  */
-export interface ChatCacheControl {
+interface ChatCacheControl {
   type: "ephemeral"
   ttl?: "5m" | "1h"
 }
 
-export interface TextPart {
+interface TextPart {
   type: "text"
   text: string
   cache_control?: ChatCacheControl
 }
 
-export interface OutputTextPart {
+interface OutputTextPart {
   type: "output_text"
   text: string
   cache_control?: ChatCacheControl
 }
 
-export interface ReasoningContentPart {
+interface ReasoningContentPart {
   type: "reasoning" | "thinking"
   text?: string
   reasoning?: string
@@ -267,7 +267,7 @@ export interface ReasoningContentPart {
   signature?: string
 }
 
-export interface ImagePart {
+interface ImagePart {
   type: "image_url"
   image_url: {
     url: string

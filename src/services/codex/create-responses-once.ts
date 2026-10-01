@@ -150,7 +150,7 @@ export function finalizeCodexOutboundBody(
  * `buildCodexUpstreamBody`（那是 `/responses` 专用，会加 stream 相关字段），
  * 不走 WebSocket、不读写 transcript/replay 缓存（input 本来就是全量历史）。
  */
-export async function createCodexCompactOnce(
+async function createCodexCompactOnce(
   {
     connection,
     credential,

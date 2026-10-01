@@ -35,7 +35,7 @@ export type ProviderProtocol =
   | "dimagent-native"
   | "gemini-native"
 
-export const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
+const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
   "openai-compatible",
   "openai-responses-compatible",
   "anthropic-compatible",
@@ -74,7 +74,7 @@ export type ModelEndpoint =
   | "images"
   | "videos"
 
-export const MODEL_ENDPOINTS: ReadonlyArray<ModelEndpoint> = [
+const MODEL_ENDPOINTS: ReadonlyArray<ModelEndpoint> = [
   "chat",
   "responses",
   "messages",
@@ -164,7 +164,7 @@ export function supportsCompactEndpoint(protocol: ProviderProtocol): boolean {
  */
 export type CredentialAuthMode = "bearer" | "header"
 
-export const CREDENTIAL_AUTH_MODES: ReadonlyArray<CredentialAuthMode> = [
+const CREDENTIAL_AUTH_MODES: ReadonlyArray<CredentialAuthMode> = [
   "bearer",
   "header",
 ]
@@ -257,7 +257,7 @@ export interface ModelMapping {
   metadata?: Record<string, unknown>
 }
 
-export type ModelDiscoveryMode = "merge" | "replace" | "manual-only"
+type ModelDiscoveryMode = "merge" | "replace" | "manual-only"
 
 export interface ModelDiscoveryConfig {
   enabled: boolean

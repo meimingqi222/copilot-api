@@ -53,7 +53,7 @@ interface ClaudeModelsPayload {
   last_id?: unknown
 }
 
-export interface ClaudeModelsPage {
+interface ClaudeModelsPage {
   models: Array<AccountModel>
   hasMore: boolean
   lastId?: string

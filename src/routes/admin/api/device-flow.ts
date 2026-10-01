@@ -20,7 +20,7 @@ import { refreshModelsForConnection } from "~/lib/utils"
 import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refresh"
 
 // Persisted map of pending device-code flows: deviceCode → pollState
-export interface PollState {
+interface PollState {
   label: string
   provider: ProviderId
   interval: number
@@ -34,7 +34,7 @@ const pendingFlows = new Map<string, PollState>()
 const MAX_PENDING_DEVICE_FLOWS = 256
 
 // Load pending flows from disk
-export async function loadPendingFlows(): Promise<void> {
+async function loadPendingFlows(): Promise<void> {
   try {
     // oxlint-disable-next-line unicorn/prefer-json-parse-buffer
     const data = await fs.readFile(PATHS.PENDING_FLOWS_PATH, "utf8")

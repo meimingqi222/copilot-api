@@ -26,7 +26,7 @@ export interface UpdateAccountBody {
 /**
  * Connection 级别的补丁(与原 AccountConnectionPatch 形状一致)。
  */
-export interface ConnectionPatch {
+interface ConnectionPatch {
   label?: string
   enabled?: boolean
   priority?: number

@@ -32,14 +32,14 @@ import { HTTPError, LocalConcurrencyLimitError } from "~/lib/error"
 import { classifyUpstreamError } from "~/lib/provider-connections"
 import { isAbortLikeError } from "~/services/responses/upstream-ws"
 
-export type WsFailureScope =
+type WsFailureScope =
   | "abort"
   | "request"
   | "credential"
   | "connection"
   | "local_saturation"
 
-export type WsFailureKind =
+type WsFailureKind =
   | "abort"
   | "invalid_request"
   | "quota"

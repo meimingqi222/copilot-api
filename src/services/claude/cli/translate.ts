@@ -26,7 +26,7 @@ import type {
 import { CLAUDE_WAIT_TOOL_NAME, stripMcpToolPrefix } from "./mcp-names"
 import { parseStreamJsonLine, type ClaudeCliUsage } from "./stream-json"
 
-export interface ClaudeStreamTranslationOptions {
+interface ClaudeStreamTranslationOptions {
   /** 调用方请求的模型 id；用于改写 `message_start.message.model`。 */
   model: string
   /** MCP 服务器名（剥工具名前缀用）。 */
@@ -78,7 +78,7 @@ function deltaUsage(
   }
 }
 
-export function claudeErrorEvent(message: string): AnthropicErrorEvent {
+function claudeErrorEvent(message: string): AnthropicErrorEvent {
   return { type: "error", error: { type: "api_error", message } }
 }
 

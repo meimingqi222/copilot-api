@@ -71,8 +71,6 @@ import {
   windsurfEffortIsExact,
 } from "./variant-collapse"
 
-export type { WindsurfCacheDebugContext } from "./attempt"
-
 // ── Model resolution ───────────────────────────────────────────────────────────
 
 export function resolveWindsurfRequestModel(

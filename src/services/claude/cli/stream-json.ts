@@ -24,7 +24,7 @@ export interface ClaudeCliUsage {
 }
 
 /** `stream_event` 里的 Anthropic 流式事件（宽松类型，见文档 §9）。 */
-export interface ClaudeStreamJsonEvent {
+interface ClaudeStreamJsonEvent {
   type?: string
   index?: number
   message?: { id?: string; model?: string; usage?: ClaudeCliUsage }
@@ -47,7 +47,7 @@ export interface ClaudeStreamJsonEvent {
 }
 
 /** CLI stdout 的一行。 */
-export interface ClaudeStreamJsonLine {
+interface ClaudeStreamJsonLine {
   type?: string
   subtype?: string
   is_error?: boolean

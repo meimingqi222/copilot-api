@@ -22,7 +22,7 @@ import {
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { FACTORY_CLI_VERSION, factoryApiBase } from "~/services/oauth/factory"
 
-export interface FactoryQuotaWindow {
+interface FactoryQuotaWindow {
   name: string
   usedPercent: number
   /** 窗口跨度（毫秒），用于展示。 */
@@ -31,7 +31,7 @@ export interface FactoryQuotaWindow {
   display: string
 }
 
-export interface ParsedFactoryQuota {
+interface ParsedFactoryQuota {
   windows: Array<FactoryQuotaWindow>
   extraBalanceCents?: number
 }

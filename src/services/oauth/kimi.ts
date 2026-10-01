@@ -6,10 +6,10 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
-export const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
-export const KIMI_OAUTH_HOST = "https://auth.kimi.com"
-export const KIMI_DEVICE_CODE_URL = `${KIMI_OAUTH_HOST}/api/oauth/device_authorization`
-export const KIMI_TOKEN_URL = `${KIMI_OAUTH_HOST}/api/oauth/token`
+const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
+const KIMI_OAUTH_HOST = "https://auth.kimi.com"
+const KIMI_DEVICE_CODE_URL = `${KIMI_OAUTH_HOST}/api/oauth/device_authorization`
+const KIMI_TOKEN_URL = `${KIMI_OAUTH_HOST}/api/oauth/token`
 
 const DEFAULT_POLL_INTERVAL_MS = 5000
 const MAX_POLL_DURATION_MS = 15 * 60 * 1000
@@ -23,7 +23,7 @@ export interface KimiDeviceCodeResponse {
   interval?: number
 }
 
-export interface KimiOAuthBundle {
+interface KimiOAuthBundle {
   accessToken: string
   refreshToken?: string
   expiresAt?: number

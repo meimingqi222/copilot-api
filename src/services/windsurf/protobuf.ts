@@ -420,7 +420,7 @@ export async function* decodeConnectFrames(
   }
 }
 
-export function readVarint(
+function readVarint(
   data: Uint8Array,
   offset: number,
 ): { value: number; nextOffset: number } {

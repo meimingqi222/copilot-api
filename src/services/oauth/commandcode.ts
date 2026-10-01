@@ -18,7 +18,6 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { getConnectionProxyUrl } from "~/lib/provider-connections"
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
@@ -30,9 +29,9 @@ export const COMMANDCODE_STUDIO = "https://commandcode.ai"
 export const COMMANDCODE_API = "https://api.commandcode.ai"
 export const COMMANDCODE_PROVIDER_BASE = `${COMMANDCODE_API}/provider/v1`
 
-export const COMMANDCODE_CALLBACK_URI = `http://127.0.0.1:${COMMANDCODE_CALLBACK_PORT}${COMMANDCODE_CALLBACK_PATH}`
+const COMMANDCODE_CALLBACK_URI = `http://127.0.0.1:${COMMANDCODE_CALLBACK_PORT}${COMMANDCODE_CALLBACK_PATH}`
 
-export interface CommandCodeBundle {
+interface CommandCodeBundle {
   apiKey: string
   userName?: string
   email?: string
@@ -88,7 +87,7 @@ async function commandCodeGet(
 }
 
 /** whoami：拿到账号名（key 刚铸出时上游可能 500，调用方自行重试）。 */
-export async function fetchCommandCodeWhoami(
+async function fetchCommandCodeWhoami(
   apiKey: string,
   options?: OAuthFetchOptions,
 ): Promise<{ userName?: string; email?: string; userId?: string }> {
@@ -102,7 +101,7 @@ export async function fetchCommandCodeWhoami(
 }
 
 /** 计划名（Pro/GOAT/Max/Ultra/Go），best-effort。 */
-export async function fetchCommandCodePlan(
+async function fetchCommandCodePlan(
   apiKey: string,
   options?: OAuthFetchOptions,
 ): Promise<string | undefined> {
@@ -162,11 +161,4 @@ export function applyCommandCodeOAuthBundle(
       email: bundle.email ?? bundle.userName,
     },
   )
-}
-
-/** 供 quota fetcher 用的 connection 代理 URL。 */
-export function commandCodeProxyUrl(
-  connection: ProviderConnection,
-): string | undefined {
-  return getConnectionProxyUrl(connection)
 }

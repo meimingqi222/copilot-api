@@ -18,7 +18,7 @@ interface BeginWindsurfRequestOptions {
   memoryTraceId?: string
 }
 
-export interface WindsurfConcurrencySnapshot {
+interface WindsurfConcurrencySnapshot {
   active: number
   streaming: number
   nonStreaming: number

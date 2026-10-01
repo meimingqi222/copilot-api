@@ -30,7 +30,7 @@ function findCredentialIdsForConnection(connectionId: string): Array<string> {
     .filter((id) => id !== connectionId)
 }
 
-export function queryUsageDayRows(
+function queryUsageDayRows(
   db: Database,
   filters: {
     accountId?: string
@@ -77,7 +77,7 @@ export function queryUsageDayRows(
   return stmt.all(...params) as Array<UsageDayRow>
 }
 
-export function queryUsageModelsByDate(
+function queryUsageModelsByDate(
   db: Database,
   date: string,
   accountId?: string,
@@ -291,9 +291,9 @@ export function getUsageStatsByProviderData(
  * Ranges that exceed it (e.g. `range=all` on a large instance) get a 413
  * instead of loading the whole table into memory.
  */
-export const MAX_USAGE_RAW_ROWS = 200_000
+const MAX_USAGE_RAW_ROWS = 200_000
 
-export class UsageRangeTooLargeError extends HTTPError {
+class UsageRangeTooLargeError extends HTTPError {
   constructor(rowLimit: number) {
     super(
       `Usage range too large: exceeds ${rowLimit} rows. `
@@ -304,7 +304,7 @@ export class UsageRangeTooLargeError extends HTTPError {
   }
 }
 
-export interface UsageRawRowFilter {
+interface UsageRawRowFilter {
   accountId?: string
   userId?: string
   startMs: number

@@ -20,7 +20,7 @@ import type { DispatchIdentity } from "./shared"
 
 import { dispatchRequest } from "./shared"
 
-export type GeminiDispatchResult =
+type GeminiDispatchResult =
   | {
       accountId: string
       response: AsyncIterable<GeminiStreamEvent>

@@ -27,31 +27,31 @@ export interface ResponsesUsage {
   total_tokens?: number
 }
 
-export interface ResponsesOutputText {
+interface ResponsesOutputText {
   type?: string
   text?: string
   annotations?: Array<unknown>
 }
 
-export interface ResponsesReasoningSummaryPart {
+interface ResponsesReasoningSummaryPart {
   text?: string
   type?: string
 }
 
-export interface ResponsesReasoningItem {
+interface ResponsesReasoningItem {
   type: "reasoning"
   id?: string
   summary?: Array<ResponsesReasoningSummaryPart>
 }
 
-export interface ResponsesMessageItem {
+interface ResponsesMessageItem {
   type: "message"
   id?: string
   role?: "assistant"
   content?: Array<ResponsesOutputText>
 }
 
-export interface ResponsesFunctionCallItem {
+interface ResponsesFunctionCallItem {
   type: "function_call"
   id?: string
   call_id?: string
@@ -63,27 +63,27 @@ export interface ResponsesFunctionCallItem {
  * An upstream-executed search the model decided to run. Replayed verbatim by
  * Responses clients, so it is modelled on both the input and output sides.
  */
-export interface ResponsesWebSearchCallItem {
+interface ResponsesWebSearchCallItem {
   type: "web_search_call"
   id?: string
   status?: string
   action?: unknown
 }
 
-export interface ResponsesTextConfig {
+interface ResponsesTextConfig {
   format:
     | { type: "text" }
     | { type: "json_object" }
     | { type: "json_schema"; json_schema: Record<string, unknown> }
 }
 
-export type ResponsesToolChoice =
+type ResponsesToolChoice =
   | "none"
   | "auto"
   | "required"
   | { type: "function"; name: string }
 
-export type ResponsesInputContent =
+type ResponsesInputContent =
   | {
       type: "input_text"
       text: string
@@ -132,7 +132,7 @@ export type ResponsesInputItem =
   /** Replayed by clients that used the upstream `web_search` tool. */
   | ResponsesWebSearchCallItem
 
-export interface ResponsesFunctionTool {
+interface ResponsesFunctionTool {
   type: "function"
   name: string
   description?: string
@@ -141,7 +141,7 @@ export interface ResponsesFunctionTool {
 }
 
 /** An upstream-executed tool (`web_search`, `web_search_preview`, …). */
-export interface ResponsesServerTool {
+interface ResponsesServerTool {
   type: string
   name?: string
   max_uses?: number
@@ -149,7 +149,7 @@ export interface ResponsesServerTool {
   [key: string]: unknown
 }
 
-export type ResponsesTool = ResponsesFunctionTool | ResponsesServerTool
+type ResponsesTool = ResponsesFunctionTool | ResponsesServerTool
 
 export function isResponsesServerTool(
   tool: ResponsesTool,

@@ -40,7 +40,7 @@ import {
   refreshXaiTokens,
 } from "./xai"
 
-export type OAuthRefreshFn = (
+type OAuthRefreshFn = (
   connection: ProviderConnection,
   refreshToken: string,
   fetchOptions: OAuthFetchOptions,
@@ -51,7 +51,7 @@ export type OAuthRefreshFn = (
  * 刷新路径写入 credential.context.deviceId;迁移路径可能仅存在于
  * credentialExtras.deviceId,两处都检查。
  */
-export function getConnectionOAuthDeviceId(
+function getConnectionOAuthDeviceId(
   connection: ProviderConnection,
 ): string | undefined {
   const fromContext = getCredentialContextString(connection, "deviceId")

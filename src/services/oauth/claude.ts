@@ -6,13 +6,13 @@ import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
 
-export const CLAUDE_AUTH_URL = "https://claude.ai/oauth/authorize"
-export const CLAUDE_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
-export const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-export const CLAUDE_REDIRECT_URI = "http://localhost:54545/callback"
-export const CLAUDE_BOOTSTRAP_URL =
+const CLAUDE_AUTH_URL = "https://claude.ai/oauth/authorize"
+const CLAUDE_TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
+const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+const CLAUDE_REDIRECT_URI = "http://localhost:54545/callback"
+const CLAUDE_BOOTSTRAP_URL =
   "https://api.anthropic.com/api/claude_cli/bootstrap"
-export const CLAUDE_OAUTH_SCOPE =
+const CLAUDE_OAUTH_SCOPE =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 
 interface ClaudeTokenResponse {
@@ -32,7 +32,7 @@ interface ClaudeBootstrapResponse {
   }
 }
 
-export interface ClaudeOAuthBundle {
+interface ClaudeOAuthBundle {
   accessToken: string
   refreshToken?: string
   expiresAt?: number
@@ -41,8 +41,6 @@ export interface ClaudeOAuthBundle {
   organizationId?: string
   organizationName?: string
 }
-
-export { generateOAuthState } from "./pkce"
 
 export function buildClaudeAuthUrl(state: string, pkce: PkceCodes): string {
   const params = new URLSearchParams({

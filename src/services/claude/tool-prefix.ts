@@ -18,7 +18,7 @@ const ANTHROPIC_BUILTIN_TOOL_NAMES = new Set([
 ])
 
 /** CC's tool-name prefix (always `_`). */
-export const claudeToolPrefix = "_"
+const claudeToolPrefix = "_"
 
 /**
  * Applies the CC `_` prefix to a non-builtin tool name.

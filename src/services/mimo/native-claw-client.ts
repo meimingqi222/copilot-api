@@ -11,7 +11,7 @@ import {
   fetchWithProxy,
 } from "~/services/mimo/ws-proxy"
 
-export interface WsMessage {
+interface WsMessage {
   type: string
   event?: string
   id?: string
@@ -19,7 +19,7 @@ export interface WsMessage {
   payload?: Record<string, unknown>
 }
 
-export interface AgentPayload {
+interface AgentPayload {
   runId?: string
   stream?: string
   data?: {
@@ -31,7 +31,7 @@ export interface AgentPayload {
   seq?: number
 }
 
-export interface ChatEvent {
+interface ChatEvent {
   event?: string
   payload?: {
     message?: {
@@ -42,14 +42,14 @@ export interface ChatEvent {
   } & AgentPayload
 }
 
-export interface StatusResponse {
+interface StatusResponse {
   data?: {
     status?: string
     expireTime?: number | string
   }
 }
 
-export interface TicketResponse {
+interface TicketResponse {
   data?: {
     ticket?: string
   }

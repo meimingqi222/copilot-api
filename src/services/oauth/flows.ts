@@ -92,7 +92,7 @@ const oauthCallbackServers = new Map<string, Server>()
 const oauthFlowAbortControllers = new Map<string, AbortController>()
 const MAX_PENDING_OAUTH_FLOWS = 256
 
-export async function loadPendingOAuthFlows(): Promise<void> {
+async function loadPendingOAuthFlows(): Promise<void> {
   try {
     const data = await fs.readFile(PATHS.PENDING_OAUTH_FLOWS_PATH)
     const parsed = JSON.parse(data.toString("utf8")) as Record<
@@ -127,7 +127,7 @@ function flowForPersistence(flow: OAuthPendingFlow): OAuthPendingFlow {
   }
 }
 
-export async function savePendingOAuthFlows(): Promise<void> {
+async function savePendingOAuthFlows(): Promise<void> {
   purgeStaleOAuthFlows()
   const serializable = Object.fromEntries(
     [...pendingOAuthFlows.entries()]
@@ -169,7 +169,7 @@ function purgeStaleOAuthFlows(): void {
 }
 
 /** 该 provider 当前活跃的 flow（pending 或 exchanging）。 */
-export function getActiveOAuthFlowForProvider(
+function getActiveOAuthFlowForProvider(
   provider: OAuthFlowProvider,
 ): OAuthPendingFlow | undefined {
   purgeStaleOAuthFlows()
@@ -269,7 +269,7 @@ export function updateOAuthFlow(
   return updated
 }
 
-export type OAuthExchangeClaim =
+type OAuthExchangeClaim =
   | { kind: "claim"; flow: OAuthPendingFlow }
   | { kind: "complete"; flow: OAuthPendingFlow; accountId: string }
   | { kind: "unavailable" }
@@ -557,7 +557,7 @@ export function stopOAuthCallbackServer(flowId: string): void {
   }
 }
 
-export interface OAuthCallbackConfig {
+interface OAuthCallbackConfig {
   port: number
   hostname?: string
   callbackPath: string

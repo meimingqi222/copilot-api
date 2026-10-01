@@ -28,7 +28,7 @@ import { WIRE_CAPABILITIES } from "~/services/ir/capabilities"
 
 import { executeWebSearch } from "./execute"
 
-export const MAX_SEARCH_ROUNDS = 6
+const MAX_SEARCH_ROUNDS = 6
 
 /** The tool the proxy injects; the client never sees this name. */
 const INTERNAL_TOOL_NAME = "web_search"
@@ -43,7 +43,7 @@ const INTERNAL_TOOL_DESCRIPTION =
 const NO_MORE_SEARCHES =
   "No more searches are available. Answer with what has already been found."
 
-export interface SearchAwareExecutorResult {
+interface SearchAwareExecutorResult {
   credentialId: string
   response: unknown
 }
@@ -52,7 +52,7 @@ export type SearchAwareExecutor = (
   payload: unknown,
 ) => Promise<SearchAwareExecutorResult>
 
-export interface SearchAwareParams {
+interface SearchAwareParams {
   request: RequestIR
   /** Codec bundle of the *target* wire. */
   spec: WireSpec

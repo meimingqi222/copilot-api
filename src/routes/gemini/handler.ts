@@ -143,7 +143,7 @@ export async function handleGenerateContent(c: Context) {
  * Splits `.../models/{model}:{action}` into its parts. Model ids may contain
  * slashes (`models/tunedModels/...`), so only the final segment is parsed.
  */
-export function parseModelAction(
+function parseModelAction(
   path: string,
 ): { model: string; streaming: boolean } | undefined {
   const marker = "/models/"

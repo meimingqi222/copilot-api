@@ -143,5 +143,3 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
       }))
   },
 }
-
-export { type AnthropicMessagesPayload } from "./types"

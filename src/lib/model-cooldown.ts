@@ -22,7 +22,7 @@ interface ModelCooldownEntry {
 
 const modelCooldowns = new Map<string, ModelCooldownEntry>()
 
-export function normalizeModelCooldownKey(model: string): string {
+function normalizeModelCooldownKey(model: string): string {
   return model.trim().toLowerCase()
 }
 
@@ -30,7 +30,7 @@ function entryKey(credentialId: string, model: string): string {
   return `${credentialId}::${normalizeModelCooldownKey(model)}`
 }
 
-export interface RecordModelCooldownInput {
+interface RecordModelCooldownInput {
   credentialId: string
   connectionId: string
   model: string
@@ -86,7 +86,7 @@ export function clearModelCooldownsForConnection(connectionId: string): void {
   }
 }
 
-export interface ModelCooldownInfo {
+interface ModelCooldownInfo {
   /** 归一化后的模型 id（小写）。 */
   model: string
   credentialId: string

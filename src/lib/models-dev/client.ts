@@ -101,7 +101,7 @@ export function setModelsDevCatalogForTest(
   setCatalog(nextCatalog)
 }
 
-export async function refreshModelsDevCatalog(force = false): Promise<void> {
+async function refreshModelsDevCatalog(force = false): Promise<void> {
   if (refreshInFlight) {
     await refreshInFlight
     return

@@ -90,7 +90,7 @@ interface ImageCallResult {
   quality: string
 }
 
-export interface CodexImageSubject {
+interface CodexImageSubject {
   connection: ProviderConnection
   credential: ApiCredential
 }
@@ -347,7 +347,7 @@ function buildUpstreamHeaders(
  * 直接路径：gpt-image-1.5 / gpt-image-2 调上游 `/images/*`。
  * JSON body 透传（仅规范 model，edits 非流式删 stream）。
  */
-export async function createCodexDirectImageOnce(
+async function createCodexDirectImageOnce(
   { connection, credential }: CodexImageSubject,
   endpoint: "generations" | "edits",
   body: Record<string, unknown>,

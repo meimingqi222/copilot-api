@@ -34,7 +34,7 @@ import {
   QODER_USER_AGENT,
 } from "~/services/qoder/endpoints"
 
-export interface QoderQuotaWindow {
+interface QoderQuotaWindow {
   name: string
   used: number
   total: number
@@ -43,7 +43,7 @@ export interface QoderQuotaWindow {
   display: string
 }
 
-export interface ParsedQoderQuota {
+interface ParsedQoderQuota {
   displayMode: string
   plan?: string
   windows: Array<QoderQuotaWindow>

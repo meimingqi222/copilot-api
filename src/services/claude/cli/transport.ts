@@ -23,7 +23,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { findClaudeBinary } from "./binary"
 import { ClaudeCliUnavailableError } from "./errors"
 
-export type ClaudeTransport = "cli" | "http"
+type ClaudeTransport = "cli" | "http"
 
 /** connection.metadata 里的开关键名。 */
 const METADATA_KEY = "claudeTransport"

@@ -94,7 +94,7 @@ function toTarget(
  * Pure read: callers decide whether to use any of them (`planTranslation` must
  * stay side-effect free, so availability is checked here by the caller).
  */
-export function listSearcherCandidates(): Array<Searcher> {
+function listSearcherCandidates(): Array<Searcher> {
   const out: Array<Searcher> = []
   for (const connection of listProviderConnections()) {
     const policy = policyFor(connection.protocol)

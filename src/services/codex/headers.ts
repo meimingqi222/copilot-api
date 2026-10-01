@@ -6,7 +6,7 @@ export const CODEX_CLIENT_VERSION = "0.153.3"
 
 const CODEX_USER_AGENT = `codex-tui/${CODEX_CLIENT_VERSION} (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; ${CODEX_CLIENT_VERSION})`
 
-export interface CodexHeaderOptions {
+interface CodexHeaderOptions {
   /**
    * Stable session identifier reused across all requests in the same
    * conversation session. The ChatGPT backend uses this to group requests

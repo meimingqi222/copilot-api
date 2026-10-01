@@ -87,7 +87,7 @@ const SAFE_REASONS: Readonly<Record<string, string>> = {
     "effort_unsupported_by_responses",
 }
 
-export interface SafeLossRecord {
+interface SafeLossRecord {
   path: string
   feature: string
   action: LossAction
@@ -104,7 +104,7 @@ interface RequestLossState {
 const pending = new WeakMap<RequestLogContext, RequestLossState>()
 const metricCounts = new Map<string, number>()
 
-export function sanitizeLossRecord(record: LossRecord): SafeLossRecord {
+function sanitizeLossRecord(record: LossRecord): SafeLossRecord {
   return {
     path:
       record.path.length <= 128 && SAFE_PATH.test(record.path) ?

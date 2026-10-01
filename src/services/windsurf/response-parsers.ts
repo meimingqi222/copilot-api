@@ -4,7 +4,7 @@ import { parseMessage } from "./protobuf"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ChatStreamDelta =
+type ChatStreamDelta =
   | { kind: "content"; text: string }
   | { kind: "reasoning_text"; text: string }
   | { kind: "reasoning_signature"; text: string }
@@ -523,7 +523,7 @@ function isWindsurfJsonWhitespace(byte: number): boolean {
   return byte === 0x20 || byte === 0x0a || byte === 0x0d || byte === 0x09
 }
 
-export interface WindsurfFrameErrorParts {
+interface WindsurfFrameErrorParts {
   code?: string
   message: string
   combined: string

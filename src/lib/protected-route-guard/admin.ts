@@ -4,7 +4,7 @@ import type { TempBlockInfo } from "./types"
 
 import { getOrCreateState, guardState, shadowStats } from "./state"
 
-export function parsePrincipal(principal: string): TempBlockInfo["kind"] {
+function parsePrincipal(principal: string): TempBlockInfo["kind"] {
   if (principal.startsWith("user:")) return "user"
   if (principal.startsWith("key:")) return "key"
   return "ip"

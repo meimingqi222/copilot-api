@@ -54,27 +54,27 @@ export const QODER_DEVICE_POLL_INTERVAL_MS = 2000
 export const QODER_DEVICE_FLOW_DEADLINE_MS = 15 * 60 * 1000
 
 /** job token 响应缺 `expires_in` 时的兜底寿命（兜底 24h）。 */
-export const QODER_JOB_TOKEN_FALLBACK_MS = 24 * 60 * 60 * 1000
+const QODER_JOB_TOKEN_FALLBACK_MS = 24 * 60 * 60 * 1000
 
 const JSON_HEADERS = {
   Accept: "application/json",
   "Content-Type": "application/json",
 } as const
 
-export interface QoderDeviceTokenResponse {
+interface QoderDeviceTokenResponse {
   token: string
   refreshToken: string
   userId: string
 }
 
-export interface QoderJobTokenResponse {
+interface QoderJobTokenResponse {
   token: string
   refreshToken: string
   /** 毫秒；缺失或 ≤ 0 时由调用方兜 24h。 */
   expiresInMs?: number
 }
 
-export interface QoderUserInfo {
+interface QoderUserInfo {
   id: string
   name: string
   email: string
@@ -377,7 +377,7 @@ export function qoderJobTokenLifetimeMs(
 
 // ── connection 落库 ─────────────────────────────────────────────
 
-export interface QoderOAuthBundle {
+interface QoderOAuthBundle {
   jobToken: string
   jobRefreshToken: string
   expiresAt: number

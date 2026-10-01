@@ -2,7 +2,7 @@ import type { Context } from "hono"
 
 import type { ProtectedRouteKind } from "~/lib/protected-routes"
 
-export type BehaviorEventType = "request" | "upstream_429" | "error" | "success"
+type BehaviorEventType = "request" | "upstream_429" | "error" | "success"
 
 export interface BehaviorEvent {
   at: number

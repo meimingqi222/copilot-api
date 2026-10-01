@@ -34,7 +34,7 @@ function array(value: unknown, key: string): Array<WireRecord> {
     .filter((entry): entry is WireRecord => entry !== undefined)
 }
 
-export function decodeResponsesUsage(
+function decodeResponsesUsage(
   usage: ResponsesUsage | undefined,
 ): IRUsage | undefined {
   if (!usage) return undefined
@@ -49,7 +49,7 @@ export function decodeResponsesUsage(
   }
 }
 
-export function encodeResponsesUsage(
+function encodeResponsesUsage(
   usage: IRUsage | undefined,
 ): ResponsesUsage | undefined {
   if (!usage) return undefined

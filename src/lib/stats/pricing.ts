@@ -11,7 +11,7 @@ import type { ProviderId } from "~/lib/provider-config"
 import { getDefaultModelPrice } from "~/lib/default-prices"
 import { resolveModelsDevPriceDetailed } from "~/lib/models-dev"
 
-export interface ManualPricingInput {
+interface ManualPricingInput {
   promptPricePer1k: number
   completionPricePer1k: number
   cacheReadPricePer1k?: number

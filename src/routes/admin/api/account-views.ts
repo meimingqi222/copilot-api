@@ -154,14 +154,6 @@ export function connectionSubtitle(
   return connectionOAuthSubtitle(conn)
 }
 
-/**
- * 判断 connection 是否有凭据(等价 getHasCredentials)。
- * 委托给 connection-accessors.ts 的 connection 原生实现。
- */
-export function connectionHasCredentials(conn: ProviderConnection): boolean {
-  return connectionHasCredentialsNative(conn)
-}
-
 // ── 内部辅助函数 ─────────────────────────────────────────────────
 
 /**

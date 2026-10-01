@@ -27,7 +27,6 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
 import {
-  getConnectionProxyUrl,
   setConnectionCredentialExtra,
   setCredentialContextField,
 } from "~/lib/provider-connections"
@@ -37,7 +36,7 @@ import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 export const ZED_SITE = "https://zed.dev"
 export const ZED_CLOUD = "https://cloud.zed.dev"
-export const ZED_VERSION = "1.23.0"
+const ZED_VERSION = "1.23.0"
 export const ZED_CALLBACK_PORT = 59655
 export const ZED_SIGNIN_SUCCEEDED_URL = `${ZED_SITE}/native_app_signin_succeeded`
 
@@ -51,7 +50,7 @@ export function zedUserAgent(): string {
   return `Zed/${ZED_VERSION} (${os}; ${arch})`
 }
 
-export interface ZedKey {
+interface ZedKey {
   privateKeyPem: string
   publicKeyB64: string
 }
@@ -120,7 +119,7 @@ export function decryptZedToken(
   }
 }
 
-export interface ZedMe {
+interface ZedMe {
   userId?: string
   login?: string
   name?: string
@@ -252,7 +251,7 @@ export async function fetchZedLlmToken(
   return llm
 }
 
-export interface ZedOAuthBundle {
+interface ZedOAuthBundle {
   userId: string
   accessToken: string
   systemId: string
@@ -277,30 +276,4 @@ export function applyZedOAuthBundle(
   if (bundle.org)
     setCredentialContextField(connection, "organizationId", bundle.org)
   if (bundle.plan) setConnectionCredentialExtra(connection, "plan", bundle.plan)
-}
-
-/** 供 adapter / quota 用：从 connection 读 user_id + token。 */
-export function zedCredentials(connection: ProviderConnection): {
-  uid?: string
-  token?: string
-  systemId?: string
-  org?: string
-} {
-  return {
-    uid: connection.credentials[0]?.context?.zedUserId as string | undefined,
-    token: connection.credentials[0]?.value,
-    systemId: connection.credentials[0]?.context?.systemId as
-      | string
-      | undefined,
-    org: connection.credentials[0]?.context?.organizationId as
-      | string
-      | undefined,
-  }
-}
-
-/** 供 adapter 用：connection 代理 URL。 */
-export function zedProxyUrl(
-  connection: ProviderConnection,
-): string | undefined {
-  return getConnectionProxyUrl(connection)
 }

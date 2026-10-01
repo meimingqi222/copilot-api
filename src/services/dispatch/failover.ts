@@ -76,7 +76,7 @@ import {
 } from "~/services/protocols"
 import { WindsurfUpstreamError } from "~/services/windsurf/error-classifier"
 
-export interface FailoverOptions<TPayload, TResult> {
+interface FailoverOptions<TPayload, TResult> {
   payload: TPayload
   admission: RequestAdmission
   signal?: AbortSignal

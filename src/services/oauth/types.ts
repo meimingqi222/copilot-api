@@ -1,7 +1,3 @@
-import type { OAuthProviderId } from "~/lib/provider-config"
-
-import { isOAuthProviderId as isOAuthProviderIdFromConfig } from "~/lib/provider-config"
-
 /** CPA-compatible auth JSON shape (auths/*.json). */
 export interface CpaAuthRecord {
   type?: string
@@ -48,8 +44,4 @@ export interface UpstreamProxyResponse {
   statusCode: number
   headers: Record<string, string>
   body: string
-}
-
-export function isOAuthProviderId(value: string): value is OAuthProviderId {
-  return isOAuthProviderIdFromConfig(value)
 }

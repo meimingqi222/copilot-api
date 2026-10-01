@@ -16,20 +16,20 @@ import {
 const MAX_BUFFERED_EVENTS = 128
 const MAX_BUFFERED_BYTES = 64 * 1024
 
-export type ResponsesWsCommitReason =
+type ResponsesWsCommitReason =
   | "meaningful_output"
   | "terminal"
   | "buffer_message_limit"
   | "buffer_byte_limit"
   | "untyped_frame"
 
-export interface ResponsesWsCommitDetails {
+interface ResponsesWsCommitDetails {
   reason: ResponsesWsCommitReason
   bufferedEvents: number
   bufferedBytes: number
 }
 
-export interface PumpHooks {
+interface PumpHooks {
   /** Fired synchronously on the first successful forward to the client. */
   onCommit: (details: ResponsesWsCommitDetails) => void
 }
@@ -228,6 +228,3 @@ function waitForSendPoll(signal?: AbortSignal): Promise<void> {
     signal?.addEventListener("abort", finish, { once: true })
   })
 }
-
-/** Test hook for Bun send-status/backpressure behavior. */
-export const sendResponsesWebSocketTextForTest = sendText

@@ -8,7 +8,7 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
 
-export interface ResolvedCodexSessionHeaders {
+interface ResolvedCodexSessionHeaders {
   sessionId?: string
   threadId?: string
   /**
