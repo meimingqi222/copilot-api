@@ -2,10 +2,14 @@
  * Intent-classifier slot.
  *
  * Classifying an intent needs a model call, and this module must not make one:
- * the request path stays here and the caller wires an implementation in. Until
- * something registers a classifier, {@link classifyIntent} resolves
- * `undefined` — "no intent known", which matches nothing but never fails a
- * request.
+ * the request path stays here and the caller wires an implementation in. The
+ * default implementation lives in `./classifier-default` and pulls in the
+ * dispatch stack, so it is imported lazily — the first time a group's rules ask
+ * for an intent, and never before. A deployment that does not use `intent`
+ * rules pays nothing for it, and no boot wiring is needed.
+ *
+ * Until a classifier answers, {@link classifyIntent} resolves `undefined` —
+ * "no intent known", which matches nothing but never fails a request.
  *
  * A classifier that throws or answers with an empty string is treated the same
  * way: routing falls back to the rules' other conditions rather than failing.
@@ -48,6 +52,26 @@ export function hasIntentClassifier(): boolean {
 }
 
 /**
+ * Install the default classifier, importing it on first use.
+ *
+ * The import is dynamic on purpose: `./classifier-default` reaches into the
+ * route-target and protocol adapter layers, and this module sits on the request
+ * path of every admission. A failure to load means there is simply no
+ * classifier, which is the state this slot starts in.
+ */
+async function ensureDefaultClassifier(): Promise<void> {
+  if (classifier) return
+  try {
+    const { ensureDefaultIntentClassifier } = await import(
+      "./classifier-default"
+    )
+    ensureDefaultIntentClassifier()
+  } catch {
+    // No default available: the caller treats this as "no intent known".
+  }
+}
+
+/**
  * Classify `input`, or resolve `undefined` when nothing can answer. Never
  * throws: a classifier is an optimisation, not a dependency of the request.
  */
@@ -55,10 +79,15 @@ export async function classifyIntent(
   input: IntentClassifierInput,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  const registered = classifier
-  if (!registered) return undefined
+  // An empty intent list is unanswerable however a classifier is wired, so
+  // check it before paying for the default implementation's import.
   if (input.intents.length === 0) return undefined
   if (signal?.aborted) return undefined
+
+  if (!classifier) await ensureDefaultClassifier()
+
+  const registered = classifier
+  if (!registered) return undefined
 
   try {
     const answer = await registered.classify(input, signal)

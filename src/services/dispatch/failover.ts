@@ -56,6 +56,7 @@ import {
   restReasonForErrorKind,
   switchToNextRouteTarget,
   targetKey,
+  verifyHeldError,
 } from "~/lib/route-target"
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { isAbortError, safeOrigin, shouldFailover } from "~/lib/utils"
@@ -187,6 +188,29 @@ export async function executeWithFailover<
 
   let attemptIndex = 0
   while (true) {
+    // A `verify` refusal the vendor gave a moment ago is answered from memory:
+    // the account is stopped until someone verifies it, so a fresh upstream
+    // call would only collect the same refusal again. Rotate to another
+    // candidate; with none left, hand the vendor's own words back.
+    const heldVerify = verifyHeldError(
+      current.credential.id,
+      undefined,
+      undefined,
+      current.credential.createdAt,
+    )
+    if (heldVerify !== undefined) {
+      tried.add(targetKey(current.target))
+      logger.warn(
+        `${logPrefix} credential "${current.credential.id}" is verify-held; answering from memory`,
+      )
+      if (advanceToNextTarget()) continue
+      throw new HTTPError(
+        heldVerify,
+        new Response(heldVerify, { status: 403 }),
+        heldVerify,
+      )
+    }
+
     const adapter = getProtocolAdapter(current.target.protocol)
     const attemptStart = Date.now()
     try {
@@ -748,9 +772,18 @@ async function markCooldown(
   // Record the richer rest (by / failures / link) so the trace can say why
   // the candidate sits out and for how long, and so a verify refusal can be
   // held for a short while. A zero duration still bumps the failure streak.
-  if (rest) {
+  //
+  // A plain 4xx is the request's fault, not the account's — the branches below
+  // rotate it without cooling the credential — so it must not leave a rest
+  // behind either. `unknown` is the classifier's word for exactly that case
+  // (a semantic reason such as credit or verify outranks it).
+  const requestFault = isHttp && rest?.reason === "unknown"
+  if (rest && !requestFault) {
     recordRest({
       credentialId: admission.credential.id,
+      // Bind the rest to this credential instance, so deleting and re-adding
+      // the same key doesn't inherit a rest taken by the one before it.
+      credentialCreatedAt: admission.credential.createdAt,
       reason: rest.reason,
       by: rest.by,
       untilMs: rest.restMs > 0 ? rest.untilMs : 0,

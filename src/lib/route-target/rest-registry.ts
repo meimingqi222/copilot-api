@@ -32,6 +32,8 @@ interface RestEntry {
   said?: string
   /** Until when the held error is answered without asking again. */
   holdUntil?: number
+  /** `createdAt` of the credential instance that took this rest, when known. */
+  credentialCreatedAt?: number
 }
 
 const rests = new Map<string, RestEntry>()
@@ -46,6 +48,28 @@ const VERIFY_HOLD_MS = 60_000
 function entryKey(credentialId: string, model?: string): string {
   const base = credentialId
   return model ? `${base}::${model}` : base
+}
+
+/**
+ * Whether an entry still describes the credential in hand.
+ *
+ * A rest belongs to the credential instance that took it, and a credential id
+ * can be reused — delete a key and add it again — so an entry recorded for one
+ * instance must not keep a later instance of the same id out. When either side
+ * names no instance (`createdAt` unknown), the entry is taken to apply, which
+ * keeps every existing id-only caller and test behaving as before.
+ */
+function instanceMatches(
+  entry: RestEntry,
+  credentialCreatedAt?: number,
+): boolean {
+  if (
+    entry.credentialCreatedAt === undefined
+    || credentialCreatedAt === undefined
+  ) {
+    return true
+  }
+  return entry.credentialCreatedAt === credentialCreatedAt
 }
 
 /** A backoff's length for `failures` consecutive failures, capped. */
@@ -72,6 +96,12 @@ export interface RecordRestInput {
   link?: string
   /** The vendor's own error text, held for a short while. */
   said?: string
+  /**
+   * `createdAt` of the credential instance this rest is about, when known.
+   * Credential ids can be reused (delete a key, add it again), so a rest only
+   * describes the instance that took it — see `instanceMatches`.
+   */
+  credentialCreatedAt?: number
   now?: number
 }
 
@@ -83,7 +113,16 @@ export interface RecordRestInput {
 export function recordRest(input: RecordRestInput): RestInfo {
   const now = input.now ?? Date.now()
   const key = entryKey(input.credentialId, input.model)
-  const previous = rests.get(key)
+  // A rest belongs to the credential instance that took it. An id can be
+  // re-used (delete a key, add it again under the same id), so a stored entry
+  // for a different instance describes a credential that is gone: it must not
+  // bleed its failure streak into the newcomer.
+  const stored = rests.get(key)
+  const previous =
+    stored && instanceMatches(stored, input.credentialCreatedAt) ? stored : (
+      undefined
+    )
+  if (stored && !previous) rests.delete(key)
   const failures = previous ? previous.failures + 1 : 1
 
   if (!(input.untilMs > now)) {
@@ -118,6 +157,7 @@ export function recordRest(input: RecordRestInput): RestInfo {
     link: input.link,
     said: input.said,
     holdUntil: input.reason === "verify" ? now + VERIFY_HOLD_MS : undefined,
+    credentialCreatedAt: input.credentialCreatedAt,
   }
   rests.set(key, entry)
   return {
@@ -145,10 +185,11 @@ export function unrest(key: string): boolean {
 export function restInfoFor(
   credentialId: string,
   model?: string,
+  credentialCreatedAt?: number,
 ): RestInfo | undefined {
   const key = entryKey(credentialId, model)
   const entry = rests.get(key)
-  if (!entry) return undefined
+  if (!entry || !instanceMatches(entry, credentialCreatedAt)) return undefined
   const now = Date.now()
   return {
     reason: entry.reason,
@@ -171,9 +212,11 @@ export function verifyHeldError(
   credentialId: string,
   model?: string,
   now = Date.now(),
+  credentialCreatedAt?: number,
 ): string | undefined {
   const entry = rests.get(entryKey(credentialId, model))
-  if (!entry || entry.reason !== "verify" || !entry.said) return undefined
+  if (!entry || !instanceMatches(entry, credentialCreatedAt)) return undefined
+  if (entry.reason !== "verify" || !entry.said) return undefined
   if (entry.holdUntil === undefined || now >= entry.holdUntil) return undefined
   return entry.said
 }

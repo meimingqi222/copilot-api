@@ -43,6 +43,10 @@ import {
   type RoutingGroup,
 } from "~/lib/routing-groups"
 import {
+  applyGroupOverrides,
+  type AppliedGroupOverrides,
+} from "~/lib/routing-groups/apply"
+import {
   parseGroupReference,
   resolveGroupMember,
 } from "~/lib/routing-groups/resolve"
@@ -74,6 +78,17 @@ export interface ProviderAdmission {
    * used by the `turn` affinity mode and carried across failover.
    */
   turnKey?: string
+  /**
+   * The routing-group member that answered this request, when the model was a
+   * `group/<id>` reference. Absent on a plain model name.
+   */
+  group?: GroupDecision
+  /**
+   * What that member's `:effort` / `:fast` wrote onto the request payload. The
+   * member's suffixes are routing vocabulary, not part of the model id, so this
+   * is where "the group asked for high effort, fast lane" becomes observable.
+   */
+  groupOverrides?: AppliedGroupOverrides
 }
 
 /**
@@ -334,6 +349,7 @@ export async function prepareRequestAdmission(
   // Group logic is best effort — a group that cannot answer leaves the request
   // exactly as a literal model name would.
   let groupDecision: GroupDecision | undefined
+  let groupOverrides: AppliedGroupOverrides | undefined
   try {
     groupDecision = await resolveGroupDecision({
       model: options.model,
@@ -352,13 +368,38 @@ export async function prepareRequestAdmission(
   }
 
   if (groupDecision) {
+    // The member's `:effort` / `:fast` are routing vocabulary, so they are
+    // written back onto the request body here rather than left dangling: the
+    // payload every route hands to dispatch is the same object it passed in as
+    // `sessionPayload`, so this is the one place a group member can still be
+    // served at the effort it names. A request that is not a group reference
+    // never reaches this branch, and its payload is never touched.
+    try {
+      groupOverrides = applyGroupOverrides(
+        options.sessionPayload,
+        groupDecision,
+        { endpoint: options.endpoint },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn(
+        `Routing group overrides failed for "${groupDecision.member}": ${message}`,
+      )
+    }
+
     patchRequestLog(c, {
       // `modelRequested` already carries the `group/<id>` reference; the member
       // the group picked rides on the trace's free-form reason slot so the live
       // view reads "group/main → openai/o3" next to where the request went.
+      // The member keeps its `:effort` / `:fast` spelling, so the suffixes the
+      // group asked for are visible there too.
       failoverReason: `routing-group:${groupDecision.groupId}→${groupDecision.member}`,
     })
   }
+
+  // What the request is actually served at: the group member's effort when one
+  // was applied, otherwise whatever the client asked for.
+  const appliedEffort = groupOverrides?.effort ?? options.reasoningEffort
 
   const routedModel = groupDecision?.model ?? options.model
 
@@ -427,7 +468,7 @@ export async function prepareRequestAdmission(
       endpoint: options.endpoint,
       apiKind: options.endpoint as import("~/lib/log-store").ApiKind,
       streaming: options.stream,
-      reasoningEffort: options.reasoningEffort,
+      reasoningEffort: appliedEffort,
       initiator,
       outcome: "failed",
       error: diagnostic.message,
@@ -507,7 +548,7 @@ export async function prepareRequestAdmission(
     initiator,
     sessionId: sessionIds.primaryId || undefined,
     streaming: options.stream,
-    reasoningEffort: options.reasoningEffort,
+    reasoningEffort: appliedEffort,
   })
 
   // Candidate paths: every route routing could have taken, so the admin trace
@@ -535,6 +576,12 @@ export async function prepareRequestAdmission(
     credential: found.credential,
     initiator,
     ...sessionFields,
+    ...(groupDecision ?
+      {
+        group: groupDecision,
+        ...(groupOverrides ? { groupOverrides } : {}),
+      }
+    : {}),
   }
 }
 

@@ -15,6 +15,12 @@
 // them when present and falls back to the whole snapshot otherwise.
 
 import {
+  planAccountFor,
+  planAllowanceFor,
+  scopeOfWindowText,
+} from "~/lib/plan-quota/apply"
+import { allowanceFor } from "~/lib/plan-quota/windows"
+import {
   getProviderConnection,
   isAccountManagedConnection,
   type ApiCredential,
@@ -56,41 +62,6 @@ export interface QuotaWindow {
    * when the window counts every model (a five-hour window, a plan-wide one).
    */
   scope?: string
-}
-
-/**
- * Model-family words a window id/label may name. A window that names one
- * counts only the models whose id contains it; a window that names none
- * counts every model.
- */
-const WINDOW_SCOPE_TOKENS: ReadonlyArray<string> = [
-  "opus",
-  "sonnet",
-  "haiku",
-  "fable",
-  "gpt",
-  "o1",
-  "o3",
-  "o4",
-  "gemini",
-  "grok",
-  "kimi",
-  "deepseek",
-  "qwen",
-  "glm",
-  "minimax",
-  "doubao",
-  "mimo",
-  "llama",
-  "mistral",
-]
-
-function scopeOfWindowText(text: string): string | undefined {
-  const lower = text.toLowerCase()
-  for (const token of WINDOW_SCOPE_TOKENS) {
-    if (lower.includes(token)) return token
-  }
-  return undefined
 }
 
 function normalizeResetMs(value: number): number {
@@ -289,20 +260,64 @@ export function routeEvidenceFor(
   return evidenceFrom(connection, credential, model)
 }
 
+/**
+ * Past this age a credential's own snapshot stops being the better answer: the
+ * world has moved on since it was taken, while a plan reading is advanced to
+ * now every time it is read.
+ */
+const SNAPSHOT_STALE_MS = 30 * 60_000
+
+/**
+ * Allowance evidence from the account's last plan-quota reading — the
+ * allowance as shares of a rolling window, advanced to `now`. Memory-only, so
+ * the selection path stays I/O-free; undefined when this process has no
+ * reading for the account.
+ */
+function planQuotaEvidenceFor(
+  connection: ProviderConnection | undefined,
+  model: string | undefined,
+  now: number,
+): QuotaEvidence | undefined {
+  if (!connection) return undefined
+  const account = planAccountFor(connection)
+  if (!account) return undefined
+  const reading = planAllowanceFor(account.provider, account.user, now)
+  if (!reading) return undefined
+  // Reporting-only windows are not weighed (same rule as the snapshot path).
+  const windows = reading.windows.filter((window) => window.aside !== true)
+  if (windows.length === 0) return undefined
+  const { used, renews } = allowanceFor(windows, model, now)
+  return {
+    usedFraction: used,
+    renewsAtMs: renews.filter((at) => at > now),
+    staleMs: Math.max(0, now - (reading.asOf ?? now)),
+  }
+}
+
 function evidenceFrom(
   connection: ProviderConnection | undefined,
   credential: ApiCredential | undefined,
   model?: string,
 ): RouteEvidence {
+  const now = Date.now()
   const snapshot = credential?.quota
-  const quota: QuotaEvidence | undefined =
+  const fromSnapshot: QuotaEvidence | undefined =
     snapshot ?
       {
         usedFraction: usedFractionFor(snapshot, model),
         renewsAtMs: renewsAtFor(snapshot, model),
-        staleMs: Math.max(0, Date.now() - snapshot.fetchedAt),
+        staleMs: Math.max(0, now - snapshot.fetchedAt),
       }
     : undefined
+  // A missing or stale snapshot is exactly when the last known allowance is
+  // worth more than the credential's own frozen counters — a refresh that
+  // failed transiently replays it as stale instead of losing it. With a fresh
+  // snapshot, the snapshot is the answer, as before.
+  const snapshotStale =
+    snapshot === undefined || now - snapshot.fetchedAt > SNAPSHOT_STALE_MS
+  const quota =
+    (snapshotStale ? planQuotaEvidenceFor(connection, model, now) : undefined)
+    ?? fromSnapshot
 
   // The registry's richer rest (by / failures / link) wins over the coarse
   // credential status when both know of a rest.

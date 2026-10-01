@@ -8,7 +8,13 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
+import {
+  applyBalanceGate,
+  resolveConnectionBalanceSource,
+  syncConnectionBalance,
+} from "~/lib/balance/sync"
 import { logger } from "~/lib/logger"
+import { noteReadingFailure } from "~/lib/plan-quota/apply"
 import {
   isOAuthConnection,
   listProviderConnections,
@@ -24,6 +30,14 @@ import { globalTimers } from "~/lib/timer-registry"
 
 const QUOTA_EXHAUSTION_THRESHOLD = 5
 const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
+/** How long a vendor's wallet endpoint is given to answer. */
+const BALANCE_PROBE_TIMEOUT_MS = 15_000
+/**
+ * The least time between two reads of one connection's balance. The tick
+ * already runs on the quota interval; this keeps any other trigger from
+ * re-reading the same wallets.
+ */
+const BALANCE_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
 
 /**
  * copilot-native connection 的配额刷新。
@@ -89,8 +103,78 @@ async function refreshAllQuotas(): Promise<void> {
   // 或手动点刷新。这里定期重探处于 quota_exhausted 的 OAuth 连接，
   // 上游窗口恢复（如 Codex 5h / Claude 5h）后自动重新参与调度。
   await refreshExhaustedOAuthQuotas()
+  // Balances (a prepaid key, an account wallet) never enter the request path:
+  // they are read here on the tick, and the result gates routing.
+  await syncBalances()
   await saveProviderConnections(listProviderConnections())
   emitStateChange("models-stale")
+}
+
+/** When each connection's balance was last read (ms epoch). */
+const lastBalanceSyncAt = new Map<string, number>()
+
+/**
+ * Read the balance of every connection that has a known source, and gate
+ * routing on what came back.
+ *
+ * A balance at or below zero takes the connection out of scheduling (the
+ * out-of-credit state: quota_exhausted, the same state failover uses for a 402
+ * or an `insufficient balance` refusal) until a later read comes back positive.
+ * Rate-limited per connection, and — beside the admin probe — the only place a
+ * balance is fetched: the request path only ever reads memory.
+ *
+ * Returns how many connections were actually read.
+ */
+export async function syncBalances(now: number = Date.now()): Promise<number> {
+  const connections = listProviderConnections()
+  // Rate-limit records of deleted connections do not linger in memory.
+  const live = new Set(connections.map((conn) => conn.id))
+  for (const id of lastBalanceSyncAt.keys()) {
+    if (!live.has(id)) lastBalanceSyncAt.delete(id)
+  }
+
+  const due = connections.filter((conn) => {
+    if (!conn.enabled) return false
+    if (resolveConnectionBalanceSource(conn) === undefined) return false
+    const at = lastBalanceSyncAt.get(conn.id)
+    return at === undefined || now - at >= BALANCE_SYNC_MIN_INTERVAL_MS
+  })
+  if (due.length === 0) return 0
+
+  let read = 0
+  const results = await Promise.allSettled(
+    due.map(async (conn) => {
+      lastBalanceSyncAt.set(conn.id, now)
+      const balance = await syncConnectionBalance(
+        conn,
+        AbortSignal.timeout(BALANCE_PROBE_TIMEOUT_MS),
+      )
+      if (!balance) return
+      read += 1
+      const gate = applyBalanceGate(conn)
+      if (!gate.changed) return
+      if (gate.gated) {
+        logger.warn(
+          `Connection "${conn.name}" balance depleted (${balance.display}) — routing skips it`,
+        )
+      } else {
+        logger.info(
+          `Connection "${conn.name}" balance restored — re-activating`,
+        )
+      }
+    }),
+  )
+  for (const result of results) {
+    if (result.status === "rejected") {
+      logger.warn("Failed to sync connection balance:", result.reason)
+    }
+  }
+  return read
+}
+
+/** Test-only: drop the balance read rate-limit bookkeeping. */
+export function __resetBalanceSyncForTest(): void {
+  lastBalanceSyncAt.clear()
 }
 
 /**
@@ -107,7 +191,16 @@ async function refreshExhaustedOAuthQuotas(): Promise<void> {
   if (targets.length === 0) return
   const results = await Promise.allSettled(
     targets.map(async (conn) => {
-      const snapshot = await fetchOAuthProviderQuota(conn)
+      let snapshot: QuotaSnapshot | undefined
+      try {
+        snapshot = await fetchOAuthProviderQuota(conn)
+      } catch (error) {
+        // A transient probe failure must not lose the last known allowance:
+        // hand the error to plan-quota, which replays the previous reading as
+        // stale. The exhaust/retry semantics stay exactly as they were.
+        await noteReadingFailure(conn, error)
+        throw error
+      }
       if (snapshot) {
         const wasExhausted = conn.credentials[0]?.status === "quota_exhausted"
         applyOAuthQuotaSnapshot(conn, snapshot)

@@ -33,6 +33,7 @@ import { planQuotaApiRoutes } from "./api/plan-quota"
 import { providerConnectionApiRoutes } from "./api/provider-connections"
 import { providerApiRoutes } from "./api/providers"
 import { quotaApiRoutes } from "./api/quota"
+import { restsApiRoutes } from "./api/rests"
 import { routingGroupsApiRoutes } from "./api/routing-groups"
 import { totpApiRoutes } from "./api/totp"
 import { traceApiRoutes } from "./api/trace"
@@ -104,6 +105,7 @@ adminRoutes.route("/api/provider-connections", providerConnectionApiRoutes)
 adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/model-aliases", modelAliasApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
+adminRoutes.route("/api/rests", restsApiRoutes)
 adminRoutes.route("/api/balance", balanceApiRoutes)
 adminRoutes.route("/api/plan-quota", planQuotaApiRoutes)
 adminRoutes.route("/api/routing-groups", routingGroupsApiRoutes)

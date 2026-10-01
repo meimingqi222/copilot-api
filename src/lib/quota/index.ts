@@ -2,6 +2,7 @@ import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
+import { noteSnapshotReading } from "~/lib/plan-quota/apply"
 import { isOAuthProviderId } from "~/lib/provider-config"
 import {
   getConnectionProvider,
@@ -75,6 +76,9 @@ export function applyOAuthQuotaSnapshot(
   snapshot: QuotaSnapshot,
 ): void {
   setConnectionQuotaInfo(connection, snapshot)
+  // Keep the plan reading beside the snapshot: a later refresh that fails
+  // transiently replays this one instead of losing the last known allowance.
+  noteSnapshotReading(connection, snapshot)
 
   const provider = snapshot.provider as OAuthProviderId | undefined
 
