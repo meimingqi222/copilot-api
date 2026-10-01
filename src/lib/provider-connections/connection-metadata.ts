@@ -17,6 +17,8 @@ for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
   PROTOCOL_TO_PROVIDER[protocol] = providerId
 }
 
+import type { BalanceResult } from "~/lib/balance/types"
+
 import type {
   ProviderConnection,
   ProviderProtocol,
@@ -50,6 +52,22 @@ const CONNECTION_AFFINITY_MODES: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * A balance as last read from the vendor, plus the instant it was read.
+ *
+ * This is the money side of a connection (what is left on a prepaid key or an
+ * account wallet), not a quota percentage. A vendor with no readable balance
+ * simply leaves the field absent.
+ */
+export interface ConnectionBalance {
+  amount: number
+  currency: string
+  /** Preformatted for display, e.g. "¥12.34" / "$3.00". */
+  display: string
+  /** When the balance was read (ms since epoch). */
+  at: number
+}
+
+/**
  * provider-connections.json 中 connection.metadata 的形状。
  *
  * ProviderConnection 标准字段之外的 provider-specific 数据:
@@ -59,6 +77,8 @@ export interface ConnectionMetadata {
   provider: ProviderId
   quotaState: ConnectionQuotaState
   quotaInfo?: QuotaSnapshot | null
+  /** Last balance read from the vendor (money, not a quota share). */
+  balance?: ConnectionBalance
   quotaExhaustedAt?: number
   exhaustedAt?: number
   cooldownUntil?: number
@@ -150,6 +170,37 @@ export function setConnectionQuotaInfo(
   const cred = conn.credentials[0]
   if (cred) {
     cred.quota = snapshot
+  }
+}
+
+/**
+ * Read the last balance stored on the connection, or undefined when no
+ * balance was ever read from this vendor.
+ */
+export function getConnectionBalance(
+  conn: ProviderConnection,
+): ConnectionBalance | undefined {
+  const balance = readConnectionMetadata(conn)?.balance
+  if (!balance || typeof balance.amount !== "number") return undefined
+  return balance
+}
+
+/**
+ * Store a freshly fetched balance. The vendor's raw body is intentionally
+ * dropped: only the normalized amount/currency/display are persisted.
+ * Caller is responsible for a following persistProviderConnections().
+ */
+export function setConnectionBalance(
+  conn: ProviderConnection,
+  result: BalanceResult,
+  at: number = Date.now(),
+): void {
+  const meta = ensureConnectionMetadata(conn)
+  meta.balance = {
+    amount: result.amount,
+    currency: result.currency,
+    display: result.display,
+    at,
   }
 }
 

@@ -1,0 +1,389 @@
+/*
+ * Routing groups / 路由组 — named member pools with first-match rules.
+ *
+ * One page, one prefix: everything here is `rg-` and lives under
+ * `.routing-groups-view`, so nothing leaks into the other views. Only the
+ * shared primitives from the theme are reused (`card`, `btn`, `form-input`,
+ * `modal`, `badge`); colour always comes from the theme tokens rather than a
+ * literal, so a token change moves this page with it.
+ */
+
+.routing-groups-view {
+  --rg-chip-bg: var(--apple-gray-6);
+  --rg-chip-text: var(--apple-text);
+  --rg-accent: var(--apple-blue);
+  --rg-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ---------- page header ---------- */
+
+.rg-subtitle {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--apple-text-secondary);
+  margin: -1.25rem 0 1.5rem;
+}
+
+.rg-empty {
+  padding: 2.5rem 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--apple-text-secondary);
+}
+
+/* ---------- group list ---------- */
+
+.rg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rg-row {
+  padding: 1rem 1.125rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rg-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.rg-row-main {
+  min-width: 0;
+}
+
+.rg-row-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.rg-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--apple-text-secondary);
+}
+
+.rg-row-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* The name a client types as a model, shown wherever a group appears. */
+.rg-model-id {
+  font-family: var(--rg-mono);
+  font-size: 0.75rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--rg-accent) 12%, transparent);
+  color: var(--rg-accent);
+  overflow-wrap: anywhere;
+}
+
+.rg-copy {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+/* ---------- members ---------- */
+
+.rg-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.rg-member {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--rg-chip-bg);
+  color: var(--rg-chip-text);
+  font-family: var(--rg-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+/* A member whose fast variant leads for this group. */
+.rg-member.fast::after {
+  content: "fast";
+  font-family: inherit;
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--apple-orange);
+}
+
+.rg-field-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--apple-text-tertiary);
+}
+
+.rg-pick-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* ---------- stored rules ---------- */
+
+.rg-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.rg-rule-row {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 14rem) 1fr;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.rg-rule-index {
+  font-variant-numeric: tabular-nums;
+  color: var(--apple-text-tertiary);
+  text-align: right;
+}
+
+.rg-rule-use {
+  font-family: var(--rg-mono);
+  color: var(--apple-text);
+  overflow-wrap: anywhere;
+}
+
+.rg-rule-when {
+  color: var(--apple-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- references ---------- */
+
+.rg-refs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--apple-gray-5);
+  font-size: 0.75rem;
+}
+
+.rg-refs-label {
+  color: var(--apple-text-tertiary);
+}
+
+.rg-ref,
+.rg-refs-empty,
+.rg-refs-error {
+  font-size: 0.75rem;
+}
+
+.rg-ref {
+  font-family: var(--rg-mono);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  background: var(--rg-chip-bg);
+  overflow-wrap: anywhere;
+}
+
+.rg-refs-empty {
+  color: var(--apple-text-tertiary);
+}
+
+.rg-refs-error {
+  color: var(--apple-orange);
+}
+
+/* ---------- editor modal ---------- */
+
+.rg-modal {
+  max-width: 46rem;
+}
+
+.rg-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rg-section-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--apple-text-tertiary);
+}
+
+.rg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+}
+
+.rg-field {
+  min-width: 0;
+}
+
+.rg-hint {
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--apple-text-tertiary);
+  margin-top: 0.25rem;
+}
+
+/* One member row: id, its fast flag, and the way to drop it. */
+.rg-repeat {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rg-repeat .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.rg-repeat-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.rg-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--apple-text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ---------- rule editor ---------- */
+
+.rg-rule {
+  border: 1px solid var(--apple-gray-5);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.rg-rule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.rg-rule-head-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.rg-rule-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.rg-rule-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+
+.rg-rule-grid .form-label {
+  margin-bottom: 4px;
+}
+
+/* Time window: from / to plus the days it is attributed to. */
+.rg-window {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rg-window .form-input {
+  width: auto;
+  min-width: 7rem;
+}
+
+.rg-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.rg-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.5rem;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  color: var(--apple-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.rg-day:hover {
+  border-color: var(--apple-gray-3);
+  color: var(--apple-text);
+}
+
+.rg-day:has(input:checked) {
+  border-color: color-mix(in srgb, var(--rg-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--rg-accent) 12%, transparent);
+  color: var(--rg-accent);
+}
+
+.rg-day input {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0;
+}
+
+/* Levels the group may be served at. */
+.rg-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+@media (width <= 640px) {
+  .rg-row-head {
+    flex-direction: column;
+  }
+
+  .rg-rule-row {
+    grid-template-columns: 1.25rem 1fr;
+  }
+
+  .rg-rule-when {
+    grid-column: 2;
+  }
+}

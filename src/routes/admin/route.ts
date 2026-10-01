@@ -23,14 +23,17 @@ import { readJsonBody, readTextBody } from "~/lib/request-body"
 import { getClientIp } from "~/lib/utils"
 
 import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
+import { balanceApiRoutes } from "./api/balance"
 import { dashboardApiRoutes } from "./api/dashboard"
 import { guardApiRoutes } from "./api/guard"
 import { logApiRoutes } from "./api/logs"
 import { modelAliasApiRoutes } from "./api/model-aliases"
 import { oauthApiRoutes } from "./api/oauth"
+import { planQuotaApiRoutes } from "./api/plan-quota"
 import { providerConnectionApiRoutes } from "./api/provider-connections"
 import { providerApiRoutes } from "./api/providers"
 import { quotaApiRoutes } from "./api/quota"
+import { routingGroupsApiRoutes } from "./api/routing-groups"
 import { totpApiRoutes } from "./api/totp"
 import { traceApiRoutes } from "./api/trace"
 import { usageApiRoutes } from "./api/usage"
@@ -101,6 +104,9 @@ adminRoutes.route("/api/provider-connections", providerConnectionApiRoutes)
 adminRoutes.route("/api/logs", logApiRoutes)
 adminRoutes.route("/api/model-aliases", modelAliasApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
+adminRoutes.route("/api/balance", balanceApiRoutes)
+adminRoutes.route("/api/plan-quota", planQuotaApiRoutes)
+adminRoutes.route("/api/routing-groups", routingGroupsApiRoutes)
 adminRoutes.route("/api/usage", usageApiRoutes)
 adminRoutes.route("/api/trace", traceApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
