@@ -6,6 +6,7 @@
     <title>Copilot API Admin</title>
     <link rel="stylesheet" href="/admin/static/css/apple-theme.css" />
     <link rel="stylesheet" href="/admin/static/css/traces.css" />
+    <link rel="stylesheet" href="/admin/static/css/routing-groups.css" />
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css"
@@ -2366,6 +2367,434 @@
             </div>
           </div>
         </div>
+
+<!-- Routing Groups View -->
+<div
+  x-show="currentView === 'routing-groups'"
+  x-data="routingGroupsView()"
+  x-init="load()"
+  class="routing-groups-view"
+  style="display: none"
+>
+  <header class="flex justify-between items-center mb-8">
+    <h2 class="text-headline" x-text="t('routingGroups.title')"></h2>
+    <button @click="openCreate()" class="btn btn-primary">
+      <i data-lucide="plus" class="w-4 h-4"></i>
+      <span x-text="t('routingGroups.add')"></span>
+    </button>
+  </header>
+  <p class="rg-subtitle" x-text="t('routingGroups.subtitle')"></p>
+  <p x-show="loading" class="rg-empty" x-text="t('loading')"></p>
+  <p
+    x-show="!loading && !groups.length"
+    class="rg-empty"
+    x-text="t('routingGroups.empty')"
+  ></p>
+
+  <div class="rg-list">
+    <template x-for="group in groups" :key="group.id">
+      <div class="card rg-row">
+        <div class="rg-row-head">
+          <div class="rg-row-main">
+            <p class="rg-row-title" x-text="group.name"></p>
+            <p class="rg-row-meta">
+              <span class="rg-model-id" x-text="modelName(group)"></span>
+              <button
+                class="btn-icon rg-copy"
+                @click="copy(modelName(group))"
+                :title="t('copy')"
+              >
+                <i data-lucide="copy" class="w-4 h-4"></i>
+              </button>
+            </p>
+          </div>
+          <div class="rg-row-actions">
+            <button
+              class="btn btn-secondary btn-small"
+              @click="openEdit(group)"
+              x-text="t('edit')"
+            ></button>
+            <button
+              class="btn btn-danger btn-small"
+              @click="remove(group)"
+              x-text="t('delete')"
+            ></button>
+          </div>
+        </div>
+
+        <p class="rg-row-meta" x-text="groupSummary(group)"></p>
+
+        <div class="rg-members">
+          <template x-for="member in group.members" :key="member">
+            <span
+              class="rg-member"
+              :class="{ fast: isFastMember(group, member) }"
+              x-text="member"
+            ></span>
+          </template>
+        </div>
+
+        <div x-show="group.pick" class="rg-pick-line" x-cloak>
+          <span class="rg-field-label" x-text="t('routingGroups.pick')"></span>
+          <span class="rg-member" x-text="group.pick"></span>
+        </div>
+
+        <div class="rg-rule-list" x-show="group.rules.length" x-cloak>
+          <template x-for="(rule, index) in group.rules" :key="index">
+            <div class="rg-rule-row">
+              <span class="rg-rule-index" x-text="index + 1"></span>
+              <span class="rg-rule-use" x-text="rule.use"></span>
+              <span class="rg-rule-when" x-text="ruleSummary(rule)"></span>
+            </div>
+          </template>
+        </div>
+
+        <div class="rg-refs">
+          <span
+            class="rg-refs-label"
+            x-text="t('routingGroups.references')"
+          ></span>
+          <template x-for="ref in referencesFor(group)" :key="ref">
+            <span class="rg-ref" x-text="ref"></span>
+          </template>
+          <span
+            x-show="!referencesFor(group).length && !referencesError"
+            class="rg-refs-empty"
+            x-text="t('routingGroups.referencesEmpty')"
+          ></span>
+          <span
+            x-show="referencesError"
+            class="rg-refs-error"
+            :title="referencesError"
+            x-text="t('routingGroups.referencesUnavailable')"
+          ></span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <datalist id="rg-agent-options">
+    <template x-for="agent in agentOptions" :key="agent">
+      <option :value="agent"></option>
+    </template>
+  </datalist>
+
+  <div
+    x-show="showModal"
+    class="modal-overlay"
+    @click.self="closeModal()"
+    x-cloak
+  >
+    <div class="modal rg-modal">
+      <div class="modal-header">
+        <h3
+          class="text-title-3"
+          x-text="editingId ? t('routingGroups.edit') : t('routingGroups.add')"
+        ></h3>
+        <button @click="closeModal()" class="btn-icon">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="modal-body space-y-5">
+        <div class="rg-grid">
+          <div class="rg-field">
+            <label class="form-label" x-text="t('routingGroups.id')"></label>
+            <input
+              class="form-input"
+              x-model="form.id"
+              :disabled="editingId !== null"
+              :placeholder="t('routingGroups.idPlaceholder')"
+            />
+            <p class="rg-hint" x-text="t('routingGroups.idHint')"></p>
+          </div>
+          <div class="rg-field">
+            <label class="form-label" x-text="t('routingGroups.name')"></label>
+            <input class="form-input" x-model="form.name" />
+          </div>
+        </div>
+
+        <div class="rg-section">
+          <span
+            class="rg-section-title"
+            x-text="t('routingGroups.members')"
+          ></span>
+          <p class="rg-hint" x-text="t('routingGroups.membersHint')"></p>
+          <template x-for="(member, index) in form.members" :key="index">
+            <div class="rg-repeat">
+              <input
+                class="form-input"
+                x-model="form.members[index]"
+                :placeholder="t('routingGroups.membersPlaceholder')"
+              />
+              <label class="rg-check" :title="t('routingGroups.fastHint')">
+                <input
+                  type="checkbox"
+                  :checked="form.fastFlags[index]"
+                  @change="toggleFast(index)"
+                />
+                <span x-text="t('routingGroups.fast')"></span>
+              </label>
+              <div class="rg-repeat-actions">
+                <button
+                  class="btn-icon"
+                  @click="removeMember(index)"
+                  :title="t('routingGroups.removeMember')"
+                >
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+          </template>
+          <button
+            class="btn btn-secondary btn-small self-start"
+            @click="addMember()"
+            x-text="t('routingGroups.addMember')"
+          ></button>
+        </div>
+
+        <div class="rg-section">
+          <span
+            class="rg-section-title"
+            x-text="t('routingGroups.pick')"
+          ></span>
+          <div class="rg-field">
+            <select class="form-input" x-model="form.pick">
+              <option value="" x-text="t('routingGroups.pickNone')"></option>
+              <template x-for="member in memberChoices()" :key="member">
+                <option :value="member" x-text="member"></option>
+              </template>
+            </select>
+            <p class="rg-hint" x-text="t('routingGroups.pickHint')"></p>
+          </div>
+        </div>
+
+        <div class="rg-section">
+          <div class="rg-rule-head">
+            <span
+              class="rg-section-title"
+              x-text="t('routingGroups.rules')"
+            ></span>
+            <button
+              class="btn btn-secondary btn-small"
+              @click="addRule()"
+              x-text="t('routingGroups.addRule')"
+            ></button>
+          </div>
+          <p class="rg-hint" x-text="t('routingGroups.rulesHint')"></p>
+          <template x-for="(rule, index) in form.rules" :key="index">
+            <div class="rg-rule">
+              <div class="rg-rule-head">
+                <span
+                  class="rg-rule-head-title"
+                  x-text="t('routingGroups.rule.title', { index: index + 1 })"
+                ></span>
+                <div class="rg-rule-actions">
+                  <button
+                    class="btn-icon"
+                    @click="moveRule(index, -1)"
+                    :title="t('routingGroups.moveUp')"
+                  >
+                    <i data-lucide="arrow-up" class="w-4 h-4"></i>
+                  </button>
+                  <button
+                    class="btn-icon"
+                    @click="moveRule(index, 1)"
+                    :title="t('routingGroups.moveDown')"
+                  >
+                    <i data-lucide="arrow-down" class="w-4 h-4"></i>
+                  </button>
+                  <button
+                    class="btn-icon"
+                    @click="removeRule(index)"
+                    :title="t('routingGroups.removeRule')"
+                  >
+                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="rg-rule-grid">
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.use')"
+                  ></label>
+                  <select class="form-input" x-model="rule.use">
+                    <option
+                      value=""
+                      x-text="t('routingGroups.rule.usePlaceholder')"
+                    ></option>
+                    <template x-for="member in memberChoices()" :key="member">
+                      <option :value="member" x-text="member"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.tokens')"
+                  ></label>
+                  <input
+                    class="form-input"
+                    type="number"
+                    min="0"
+                    x-model="rule.tokens"
+                  />
+                </div>
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.effort')"
+                  ></label>
+                  <select class="form-input" x-model="rule.effort">
+                    <option value="" x-text="t('routingGroups.any')"></option>
+                    <option
+                      value="on"
+                      x-text="t('routingGroups.rule.effortOn')"
+                    ></option>
+                    <template x-for="level in effortLevels" :key="level">
+                      <option :value="level" x-text="level"></option>
+                    </template>
+                  </select>
+                </div>
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.images')"
+                  ></label>
+                  <select class="form-input" x-model="rule.images">
+                    <option value="" x-text="t('routingGroups.any')"></option>
+                    <option value="true" x-text="t('yes')"></option>
+                    <option value="false" x-text="t('no')"></option>
+                  </select>
+                </div>
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.compact')"
+                  ></label>
+                  <select class="form-input" x-model="rule.compact">
+                    <option value="" x-text="t('routingGroups.any')"></option>
+                    <option value="true" x-text="t('yes')"></option>
+                    <option value="false" x-text="t('no')"></option>
+                  </select>
+                </div>
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.agents')"
+                  ></label>
+                  <input
+                    class="form-input"
+                    list="rg-agent-options"
+                    x-model="rule.agents"
+                    :placeholder="t('routingGroups.rule.agentsPlaceholder')"
+                  />
+                </div>
+                <div class="rg-field">
+                  <label
+                    class="form-label"
+                    x-text="t('routingGroups.rule.intent')"
+                  ></label>
+                  <input class="form-input" x-model="rule.intent" />
+                </div>
+              </div>
+
+              <div class="rg-field">
+                <label class="rg-check">
+                  <input type="checkbox" x-model="rule.timeEnabled" />
+                  <span x-text="t('routingGroups.rule.time')"></span>
+                </label>
+                <div class="rg-window mt-2" x-show="rule.timeEnabled" x-cloak>
+                  <input
+                    class="form-input"
+                    type="time"
+                    x-model="rule.timeFrom"
+                  />
+                  <span class="rg-field-label">–</span>
+                  <input class="form-input" type="time" x-model="rule.timeTo" />
+                  <div class="rg-days">
+                    <template x-for="day in dayNames" :key="day">
+                      <label class="rg-day">
+                        <input
+                          type="checkbox"
+                          :checked="ruleHasDay(rule, day)"
+                          @change="toggleRuleDay(rule, day)"
+                        />
+                        <span x-text="day"></span>
+                      </label>
+                    </template>
+                  </div>
+                </div>
+                <p
+                  class="rg-hint"
+                  x-text="t('routingGroups.rule.timeHint')"
+                ></p>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="rg-section">
+          <span
+            class="rg-section-title"
+            x-text="t('routingGroups.levels')"
+          ></span>
+          <p class="rg-hint" x-text="t('routingGroups.levelsHint')"></p>
+          <div class="rg-levels">
+            <template x-for="level in effortChoices" :key="level">
+              <label class="rg-day">
+                <input
+                  type="checkbox"
+                  :checked="isLevelSelected(level)"
+                  @change="toggleLevel(level)"
+                />
+                <span x-text="level"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+
+        <div class="rg-section">
+          <span
+            class="rg-section-title"
+            x-text="t('routingGroups.classifier')"
+          ></span>
+          <div class="rg-grid">
+            <div class="rg-field">
+              <label
+                class="form-label"
+                x-text="t('routingGroups.classifierProvider')"
+              ></label>
+              <input class="form-input" x-model="form.classifier.provider" />
+            </div>
+            <div class="rg-field">
+              <label
+                class="form-label"
+                x-text="t('routingGroups.classifierModel')"
+              ></label>
+              <input class="form-input" x-model="form.classifier.model" />
+            </div>
+          </div>
+          <p class="rg-hint" x-text="t('routingGroups.classifierHint')"></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button
+          class="btn btn-secondary"
+          @click="closeModal()"
+          x-text="t('cancel')"
+        ></button>
+        <button
+          class="btn btn-primary"
+          @click="save()"
+          :disabled="saving"
+          x-text="t('save')"
+        ></button>
+      </div>
+    </div>
+  </div>
+</div>
 
         <!-- Usage View -->
         <div
@@ -5543,6 +5972,7 @@
     <script src="/admin/static/js/views/accounts.js"></script>
     <script src="/admin/static/js/views/connections.js"></script>
     <script src="/admin/static/js/views/model-aliases.js"></script>
+    <script src="/admin/static/js/views/routing-groups.js"></script>
     <script src="/admin/static/js/views/usage.js"></script>
     <script src="/admin/static/js/views/quotas.js"></script>
     <script src="/admin/static/js/views/performance.js"></script>

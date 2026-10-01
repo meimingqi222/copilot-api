@@ -303,6 +303,27 @@ const API = {
       }),
   },
 
+  // Routing groups
+  routingGroups: {
+    list: () => API.request("/routing-groups"),
+    get: (id) => API.request(`/routing-groups/${encodeURIComponent(id)}`),
+    upsert: (group) =>
+      API.request("/routing-groups", { method: "POST", body: group }),
+    update: (id, group) =>
+      API.request(`/routing-groups/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        body: group,
+      }),
+    delete: (id) =>
+      API.request(`/routing-groups/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    replace: (groups) =>
+      API.request("/routing-groups", { method: "PUT", body: { groups } }),
+    references: () => API.request("/routing-groups/references"),
+    meta: () => API.request("/routing-groups/meta"),
+  },
+
   accountFlows: {
     poll: (flowId) =>
       API.request(`/account-flows/${flowId}/poll`, { method: "POST" }),

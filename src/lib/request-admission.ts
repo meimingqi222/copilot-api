@@ -33,6 +33,19 @@ import {
   targetKey,
 } from "~/lib/route-target"
 import { extractSessionIds, extractSessionTurn } from "~/lib/routing"
+import {
+  classifierTargetOf,
+  classifyIntent,
+  getRoutingGroup,
+  memberEffort,
+  memberFast,
+  type RuleContext,
+  type RoutingGroup,
+} from "~/lib/routing-groups"
+import {
+  parseGroupReference,
+  resolveGroupMember,
+} from "~/lib/routing-groups/resolve"
 import { state } from "~/lib/state"
 import { isUserAllowedModel } from "~/lib/users"
 import { safeOrigin } from "~/lib/utils"
@@ -96,6 +109,211 @@ interface PrepareRequestAdmissionOptions {
   reasoningEffort?: string
 }
 
+/**
+ * A `group/<id>` model reference, resolved for one request.
+ *
+ * The parts admission already holds (the requested model, the flattened message
+ * text, the request body) are what a group rule can be judged against, so the
+ * decision is a function of those alone — no request context, no disk beyond
+ * the group store itself. Splitting it out keeps `prepareRequestAdmission` the
+ * only thing that has to know about routing, and lets the decision be exercised
+ * directly.
+ */
+export interface GroupDecisionInput {
+  /** The model the client asked for; may be a `group/<id>` reference. */
+  model: string
+  /** Flattened message text: the request's size, and what a classifier reads. */
+  messageContent?: string
+  /** Request body, scanned read-only for image parts. */
+  sessionPayload?: unknown
+  /** The effort the client asked for, as it spelled it. */
+  reasoningEffort?: string
+  /** Initiator inferred from the payload, before the client header. */
+  inferredInitiator?: "agent" | "user"
+  /** Initiator after the client header has been taken into account. */
+  initiator?: "agent" | "user"
+  /** The request is a context compaction. */
+  compact?: boolean
+}
+
+/** The member a routing group chose for this request. */
+export interface GroupDecision {
+  /** Id of the group that answered. */
+  groupId: string
+  /** The member as written in the group, `:effort` / `:fast` included. */
+  member: string
+  /** The bare `provider/model` the request should be routed with. */
+  model: string
+  /** Effort the member asked for, when it carries one. */
+  effort?: string
+  /** The member asked for its fast variant. */
+  fast: boolean
+  /** Index of the rule that chose the member, when a rule matched. */
+  ruleIndex?: number
+}
+
+/** Seams the decision reads through, so a test can drive it without state. */
+export interface GroupDecisionDeps {
+  /** Defaults to the routing-group store. */
+  getGroup?: (id: string) => Promise<RoutingGroup | undefined>
+  /** Defaults to the registered intent classifier (a no-op until one exists). */
+  classify?: typeof classifyIntent
+  /** Defaults to `new Date()`. */
+  now?: () => Date
+}
+
+/**
+ * Rough request size in tokens.
+ *
+ * A group rule only ever compares `tokens` against a threshold, and admission
+ * has no model in hand for the tokenizer's constants, so a fixed four
+ * characters per token is the estimate here. An empty body is "unknown", not
+ * zero: a rule asking for a minimum size then simply does not match.
+ */
+function estimateGroupTokens(text: string | undefined): number | undefined {
+  if (typeof text !== "string" || text === "") return undefined
+  return Math.ceil(text.length / 4)
+}
+
+/** Content-part types that mean "this request carries an image". */
+const IMAGE_PART_TYPES = new Set(["image", "image_url", "input_image"])
+
+/**
+ * Whether the request body carries an image, read-only and bounded.
+ *
+ * Routing only asks yes/no, so the scan stops at the first image part. It walks
+ * plain objects and arrays only, at a shallow depth, and treats a compact set
+ * of spellings as an image: a content part's `type`, or the fields only an
+ * image block has. Nested group members do not exist yet, so nothing else in
+ * the payload is interpreted.
+ */
+function sessionPayloadHasImage(payload: unknown): boolean {
+  const seen = new Set<object>()
+
+  const visit = (node: unknown, depth: number): boolean => {
+    if (depth > 8 || node === null || typeof node !== "object") return false
+    if (seen.has(node)) return false
+    seen.add(node)
+
+    if (Array.isArray(node)) {
+      return node.some((item) => visit(item, depth + 1))
+    }
+
+    const record = node as Record<string, unknown>
+    const type = record["type"]
+    if (
+      typeof type === "string"
+      && IMAGE_PART_TYPES.has(type.trim().toLowerCase())
+    ) {
+      return true
+    }
+    if (record["image_url"] !== undefined || record["imageUrl"] !== undefined) {
+      return true
+    }
+    if (
+      record["inlineData"] !== undefined
+      || record["inline_data"] !== undefined
+    ) {
+      return true
+    }
+
+    return Object.values(record).some((value) => visit(value, depth + 1))
+  }
+
+  return visit(payload, 0)
+}
+
+/**
+ * Best-effort "is this id a real model" check, without a model catalog.
+ *
+ * Anything of the `provider/model` shape counts as a model — that is how this
+ * proxy names what it routes to — *unless* it ends in the suffix chain a group
+ * member may carry (`:effort`, `:fast`). Reading those as models too would hand
+ * the router `vendor/model:fast` instead of the model it decorates, which is
+ * exactly the id the suffix parser exists to strip.
+ */
+function looksLikeKnownModel(id: string): boolean {
+  if (!id.includes("/")) return false
+  const trimmed = id.trim()
+  return (
+    memberEffort(trimmed) === undefined && memberFast(trimmed) === undefined
+  )
+}
+
+/** The distinct intents a group's rules ask a classifier about. */
+function groupRuleIntents(group: RoutingGroup): Array<string> {
+  const intents = new Set<string>()
+  for (const rule of group.rules ?? []) {
+    const intent = typeof rule?.intent === "string" ? rule.intent.trim() : ""
+    if (intent !== "") intents.add(intent)
+  }
+  return [...intents]
+}
+
+/**
+ * Resolve a `group/<id>` model reference to the member that leads this request.
+ *
+ * Returns undefined when the model is not a group reference, the group is
+ * unknown, or the group resolves to nothing — the caller then keeps the model
+ * the client asked for, exactly as before groups existed. Never throws: a group
+ * is an optimisation over a plain model name, so a broken group must not be
+ * able to fail a request.
+ */
+export async function resolveGroupDecision(
+  input: GroupDecisionInput,
+  deps: GroupDecisionDeps = {},
+): Promise<GroupDecision | undefined> {
+  const groupId = parseGroupReference(input.model)
+  if (groupId === undefined) return undefined
+
+  const getGroup = deps.getGroup ?? getRoutingGroup
+  const group = await getGroup(groupId)
+  if (!group) return undefined
+
+  const ctx: RuleContext = {
+    tokens: estimateGroupTokens(input.messageContent),
+    images: sessionPayloadHasImage(input.sessionPayload),
+    effort: input.reasoningEffort,
+    agent: input.initiator ?? input.inferredInitiator ?? "user",
+    compact: input.compact,
+    at: deps.now?.() ?? new Date(),
+  }
+
+  // Only a group that names a classifier pays for one, and only for the
+  // intents its rules actually test. `classifyIntent` resolves undefined when
+  // nothing is registered, which leaves the rule's other conditions to decide.
+  const classifier = classifierTargetOf(group)
+  if (classifier) {
+    const intents = groupRuleIntents(group)
+    if (intents.length > 0) {
+      const classify = deps.classify ?? classifyIntent
+      const intent = await classify({
+        text: input.messageContent ?? "",
+        intents,
+        provider: classifier.provider,
+        model: classifier.model,
+      })
+      if (intent !== undefined) ctx.intent = intent
+    }
+  }
+
+  const resolved = resolveGroupMember(group, ctx, {
+    knownModel: looksLikeKnownModel,
+  })
+  if (!resolved) return undefined
+
+  return {
+    groupId: resolved.groupId,
+    member: resolved.member,
+    model: resolved.model,
+    ...(resolved.effort === undefined ? {} : { effort: resolved.effort }),
+    fast: resolved.fast,
+    ...(resolved.ruleIndex === undefined ?
+      {}
+    : { ruleIndex: resolved.ruleIndex }),
+  }
+}
+
 export async function prepareRequestAdmission(
   c: Context,
   options: PrepareRequestAdmissionOptions,
@@ -109,7 +327,42 @@ export async function prepareRequestAdmission(
   )
   c.set("guardInitiator", initiator)
 
-  const routing = resolveModelRouting(options.model)
+  // A `group/<id>` reference is resolved before anything looks at the model:
+  // the group's chosen member is what routing then works with, while the group
+  // reference stays the model the client asked for (it is what the guard, the
+  // usage attribution and `modelRequested` in the trace all keep showing).
+  // Group logic is best effort — a group that cannot answer leaves the request
+  // exactly as a literal model name would.
+  let groupDecision: GroupDecision | undefined
+  try {
+    groupDecision = await resolveGroupDecision({
+      model: options.model,
+      messageContent: options.messageContent,
+      sessionPayload: options.sessionPayload,
+      reasoningEffort: options.reasoningEffort,
+      inferredInitiator: options.inferredInitiator,
+      initiator,
+      compact: options.compact,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    logger.warn(
+      `Routing group resolution failed for "${options.model}": ${message}`,
+    )
+  }
+
+  if (groupDecision) {
+    patchRequestLog(c, {
+      // `modelRequested` already carries the `group/<id>` reference; the member
+      // the group picked rides on the trace's free-form reason slot so the live
+      // view reads "group/main → openai/o3" next to where the request went.
+      failoverReason: `routing-group:${groupDecision.groupId}→${groupDecision.member}`,
+    })
+  }
+
+  const routedModel = groupDecision?.model ?? options.model
+
+  const routing = resolveModelRouting(routedModel)
   const candidates = buildRouteTargets({
     connectionId: routing.connectionId,
     legacyProvider: routing.legacyProvider,
@@ -168,7 +421,7 @@ export async function prepareRequestAdmission(
   }
 
   if (!target) {
-    const diagnostic = diagnoseRouteFailure(options)
+    const diagnostic = diagnoseRouteFailure(options, routedModel)
     patchRequestLog(c, {
       modelRequested: options.model,
       endpoint: options.endpoint,
@@ -299,8 +552,15 @@ interface RouteFailureDiagnostic {
 
 function diagnoseRouteFailure(
   options: PrepareRequestAdmissionOptions,
+  model: string,
 ): RouteFailureDiagnostic {
-  const routing = resolveModelRouting(options.model)
+  const routing = resolveModelRouting(model)
+  // Name the model routing actually worked with, and the group reference it
+  // came from, so a group whose member is unroutable says which member failed.
+  const label =
+    model === options.model ?
+      `"${model}"`
+    : `"${model}" (routing group ${options.model})`
   const allCandidates = buildRouteTargets({
     connectionId: routing.connectionId,
     legacyProvider: routing.legacyProvider,
@@ -314,7 +574,7 @@ function diagnoseRouteFailure(
 
   if (allCandidates.length === 0) {
     return {
-      message: `No available route for model "${options.model}": model is not configured or not supported by any enabled provider`,
+      message: `No available route for model ${label}: model is not configured or not supported by any enabled provider`,
       retryAfterSeconds: 0,
       reason: "unknown",
     }
@@ -326,7 +586,7 @@ function diagnoseRouteFailure(
     // All candidates report available, yet selectRouteTarget returned null.
     // This is defensive and should be rare.
     return {
-      message: `No available route for model "${options.model}": all candidates were filtered out by routing rules`,
+      message: `No available route for model ${label}: all candidates were filtered out by routing rules`,
       retryAfterSeconds: 0,
       reason: "unknown",
     }
@@ -338,28 +598,28 @@ function diagnoseRouteFailure(
     const reason = [...reasons][0]
     if (reason === "quota") {
       return {
-        message: `No available route for model "${options.model}": quota exhausted for all providers`,
+        message: `No available route for model ${label}: quota exhausted for all providers`,
         retryAfterSeconds,
         reason: dominantReason,
       }
     }
     if (reason === "cooldown") {
       return {
-        message: `No available route for model "${options.model}": all providers are temporarily rate-limited`,
+        message: `No available route for model ${label}: all providers are temporarily rate-limited`,
         retryAfterSeconds,
         reason: dominantReason,
       }
     }
     if (reason === "auth") {
       return {
-        message: `No available route for model "${options.model}": authentication failed for all providers`,
+        message: `No available route for model ${label}: authentication failed for all providers`,
         retryAfterSeconds: 0,
         reason: dominantReason,
       }
     }
     if (reason === "disabled") {
       return {
-        message: `No available route for model "${options.model}": all providers are disabled`,
+        message: `No available route for model ${label}: all providers are disabled`,
         retryAfterSeconds: 0,
         reason: dominantReason,
       }
@@ -389,7 +649,7 @@ function diagnoseRouteFailure(
     .join(", ")
 
   return {
-    message: `No available route for model "${options.model}": all providers are unavailable (${reasonLabels})`,
+    message: `No available route for model ${label}: all providers are unavailable (${reasonLabels})`,
     retryAfterSeconds,
     reason: dominantReason,
   }
