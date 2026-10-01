@@ -24,6 +24,7 @@ import {
 } from "~/lib/provider-connections"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { clearRecentServeForTest } from "~/lib/route-target"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -397,11 +398,21 @@ describe("GET /admin/api/trace/history", () => {
   })
 
   test("merges persisted history and finalized memory records, filters dates and deduplicates", async () => {
+    /**
+     * 本用例必须真隔离，而不是只改 process.env.LOG_DIR：
+     *  - 持久化读取走 PATHS.LOG_DIR，改 env 无效，会读到别的用例/生产日志；
+     *  - 落盘是延迟的（queueMicrotask），同文件更早用例的真实请求可能在本用例
+     *    重定向之后才落到新目录里。
+     * 所以：重定向 PATHS + 断言只针对固定窗口（timeTo 收口），不假设目录里只有
+     * fixture。
+     */
+    const isolationRoot = PATHS.APP_DIR
     const originalLogDir = process.env.LOG_DIR
     const root = resolve("temp")
     await mkdir(root, { recursive: true })
     const directory = await mkdtemp(join(root, "trace-history-"))
-    process.env.LOG_DIR = directory
+    redirectPathsToDir(directory)
+    await mkdir(PATHS.LOG_DIR, { recursive: true })
     const timestamp = new Date("2026-10-01T12:00:00Z").getTime()
     const kept = {
       ...frame({ requestId: "persisted", timestamp, model: "history-model" }),
@@ -409,7 +420,7 @@ describe("GET /admin/api/trace/history", () => {
     }
     try {
       await writeFile(
-        join(directory, "requests-2026-10-01.jsonl"),
+        join(PATHS.LOG_DIR, "requests-2026-10-01.jsonl"),
         JSON.stringify(kept) + "\n",
       )
       logStore.push({ ...kept, connectionName: "memory-wins" })
@@ -439,15 +450,21 @@ describe("GET /admin/api/trace/history", () => {
       logStore.clearForTest()
       const persistedResponse = await server.fetch(
         adminRequest(
-          `http://localhost/admin/api/trace/history?timeFrom=${timestamp}`,
+          `http://localhost/admin/api/trace/history?timeFrom=${timestamp}&timeTo=${timestamp + 50}`,
         ),
       )
       const persistedData = (await persistedResponse.json()) as {
         traces: Array<Record<string, unknown>>
       }
-      expect(persistedData.traces).toHaveLength(1)
-      expect(persistedData.traces[0]?.requestId).toBe("persisted")
+      // 内存已清空：窗口内只剩落盘的那条（窗口用 timeTo 收口，避免延迟落盘的
+      // 真实请求记录混进来导致断言随墙钟漂移）。
+      expect(persistedData.traces.map((t) => t.requestId)).toEqual([
+        "persisted",
+      ])
+      // 内存里那条合并结果（connectionName: memory-wins）随清空消失，只剩落盘版本。
+      expect(persistedData.traces[0]?.connectionName).toBeUndefined()
     } finally {
+      redirectPathsToDir(isolationRoot)
       if (originalLogDir === undefined) delete process.env.LOG_DIR
       else process.env.LOG_DIR = originalLogDir
       if (directory.startsWith(root + "\\"))

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import {
   markCredentialCooldown,
@@ -11,7 +11,16 @@ import { server } from "~/server"
 
 import { adminRequest, setupAdminAuth } from "./admin-test-utils"
 
+// 本文件会把 state.users 设成非空用户表；测试进程是共享的，不还原就会污染后续
+// 文件：API key 校验会改走用户存储，导致用 legacy key 的请求全部 401
+// （实测 tests/messages-route.test.ts 的三条因此失败）。
+const originalUsers = state.users
+
 describe("Admin Dashboard API", () => {
+  afterEach(() => {
+    state.users = originalUsers
+  })
+
   beforeEach(() => {
     setupAdminAuth()
     statsStore.clearUsageStatsForTest()
