@@ -25,12 +25,14 @@ import {
   affinitySessionKey,
   getSessionAffinity,
   getSessionAffinityBySession,
-  isFillFirstEnabled,
-  isLeastUsedStrategyEnabled,
-  isQuotaStrategyEnabled,
   isSessionAffinityEnabled,
   setSessionAffinity,
 } from "~/lib/routing"
+import {
+  effectiveAffinityFor,
+  effectiveStrategyFor,
+} from "~/lib/routing/connection-routing-override"
+import { state } from "~/lib/state"
 
 import { orderByLeastUsed, orderByQuota } from "./evidence"
 
@@ -188,15 +190,18 @@ export function selectRouteTarget(
     options.sessionId ?
       affinitySessionKey(options.sessionId, protocol)
     : undefined
+  // 该层的亲和开关：连接一致声明覆盖时以覆盖为准（`off` 即不粘），
+  // 否则沿用全局 `sessionAffinity` + `affinity` 组合。
+  const poolAffinity = effectiveAffinityFor(topConn.map((t) => t.connectionId))
+  const affinityOn =
+    poolAffinity === undefined ?
+      isSessionAffinityEnabled()
+    : poolAffinity !== "off"
 
   // Session affinity: the model-scoped binding first, then the model-agnostic
   // session binding (so a group that changed model keeps the account), then
   // turn-1 inheritance from the short hash.
-  if (
-    isSessionAffinityEnabled()
-    && options.sessionId
-    && !options.rebindAffinity
-  ) {
+  if (affinityOn && options.sessionId && !options.rebindAffinity) {
     const primaryKey = affinityCacheKey(options.sessionId, modelId, protocol)
     const bound =
       getSessionAffinity(primaryKey, { turnKey })
@@ -243,11 +248,7 @@ export function selectRouteTarget(
   const chosen = pickFromPriorityPool(topConn, minConnPrio)
 
   // Record affinity binding for this session
-  if (
-    options.commitAffinity !== false
-    && isSessionAffinityEnabled()
-    && options.sessionId
-  ) {
+  if (options.commitAffinity !== false && affinityOn && options.sessionId) {
     const primaryKey = affinityCacheKey(
       options.sessionId,
       chosen.publicModelId,
@@ -266,17 +267,23 @@ function pickFromPriorityPool(
   topConn: Array<RouteTarget>,
   minConnPrio: number,
 ): RouteTarget {
-  if (isFillFirstEnabled()) {
+  // 单连接可覆盖全局策略：同层声明者一致时用覆盖，否则用全局。
+  const strategy = effectiveStrategyFor(
+    topConn.map((t) => t.connectionId),
+    state.routing.strategy,
+  )
+
+  if (strategy === "fill-first") {
     return pickFillFirst(topConn)
   }
 
   // Quota-aware strategies order the same layer by allowance pressure and
   // take the head — connection and credential are chosen together, the way
-  // magpie weighs a provider's candidates.
-  if (isQuotaStrategyEnabled()) {
+  // the weighing in evidence.ts intends.
+  if (strategy === "quota") {
     return orderByQuota(topConn)[0]
   }
-  if (isLeastUsedStrategyEnabled()) {
+  if (strategy === "least-used") {
     return orderByLeastUsed(topConn)[0]
   }
 

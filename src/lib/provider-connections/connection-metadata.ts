@@ -37,6 +37,19 @@ for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
 export type ConnectionQuotaState = "unknown" | "available" | "exhausted"
 
 /**
+ * 会话粘性模式（与 state.routing.affinity 同一套取值）。
+ * 连接可用它单独覆盖全局亲和模式，例如让共享账号不粘会话。
+ */
+export type ConnectionAffinity = "session" | "turn" | "auto" | "off"
+
+const CONNECTION_AFFINITY_MODES: ReadonlySet<string> = new Set([
+  "session",
+  "turn",
+  "auto",
+  "off",
+])
+
+/**
  * provider-connections.json 中 connection.metadata 的形状。
  *
  * ProviderConnection 标准字段之外的 provider-specific 数据:
@@ -74,6 +87,9 @@ export interface ConnectionMetadata {
   // mimo routing 字段
   proxy?: string
   userId?: string
+  // routing 覆盖字段：单连接可覆盖全局选路策略 / 会话亲和
+  routingStrategy?: string
+  affinity?: ConnectionAffinity
 }
 
 /**
@@ -268,6 +284,31 @@ export function getConnectionUserId(
   conn: ProviderConnection,
 ): string | undefined {
   return readConnectionMetadata(conn)?.userId
+}
+
+/**
+ * 该连接声明的选路策略覆盖（原始字符串，规范化由 routing 层负责）。
+ * 未声明时返回 undefined，调用方回退到全局 `state.routing.strategy`。
+ */
+export function getConnectionRoutingStrategy(
+  conn: ProviderConnection,
+): string | undefined {
+  const value = readConnectionMetadata(conn)?.routingStrategy
+  return typeof value === "string" && value.trim() !== "" ? value : undefined
+}
+
+/**
+ * 该连接声明的会话亲和覆盖。
+ * 未声明或取值非法（磁盘 JSON 不受类型约束）时返回 undefined，
+ * 调用方回退到全局 `state.routing.affinity`。
+ */
+export function getConnectionAffinity(
+  conn: ProviderConnection,
+): ConnectionAffinity | undefined {
+  const value = readConnectionMetadata(conn)?.affinity
+  return typeof value === "string" && CONNECTION_AFFINITY_MODES.has(value) ?
+      (value as ConnectionAffinity)
+    : undefined
 }
 
 /**
