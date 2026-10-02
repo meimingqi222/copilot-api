@@ -6,9 +6,11 @@ import {
   getConnectionProvider,
   getConnectionSettings,
   getConnectionWindsurfApiKey,
+  markCredentialQuotaExhausted,
   setConnectionQuotaInfo,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
+import { DEFAULTS } from "~/lib/provider-connections/types"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { normalizeWindsurfBaseUrl } from "~/services/windsurf/base-url"
 import {
@@ -105,6 +107,23 @@ function toUsedPercent(remaining: number | undefined): number | undefined {
   return remaining === undefined ? undefined : Math.max(0, 100 - remaining)
 }
 
+/** 用尽窗口里最近的重置时刻（epoch ms）；没有可用信息时 undefined。 */
+function exhaustedWindowResetMs(
+  dailyRemainingPercent: number | undefined,
+  dailyResetSeconds: number | undefined,
+  weeklyRemainingPercent: number | undefined,
+  weeklyResetSeconds: number | undefined,
+): number | undefined {
+  const candidates: Array<number> = []
+  if (dailyRemainingPercent === 0 && dailyResetSeconds !== undefined) {
+    candidates.push(dailyResetSeconds * 1000)
+  }
+  if (weeklyRemainingPercent === 0 && weeklyResetSeconds !== undefined) {
+    candidates.push(weeklyResetSeconds * 1000)
+  }
+  return candidates.length > 0 ? Math.min(...candidates) : undefined
+}
+
 export async function fetchWindsurfQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
@@ -162,12 +181,26 @@ export async function fetchWindsurfQuota(
     throw new Error("GetUserStatus returned no quota fields")
   }
 
-  let remainingPercent: number | undefined
-  if (parsed.weeklyUsedPercent !== undefined) {
-    remainingPercent = Math.max(0, 100 - parsed.weeklyUsedPercent)
-  } else if (parsed.dailyUsedPercent !== undefined) {
-    remainingPercent = Math.max(0, 100 - parsed.dailyUsedPercent)
-  }
+  // 两个窗口都算，取更紧张的那个。
+  //
+  // 日额度是周额度的子窗口：任一窗口用尽就会立刻挡住请求，所以"还能用多少"必须由
+  // 剩余更少的窗口决定；恢复到什么时候由"用尽的那个窗口"的重置时刻决定。旧实现只要
+  // weekly 有值就忽略 daily，于是日额度打满、周还有余时会被判成"可用"继续派请求，
+  // 然后被上游拒（这是上次相反方向的错判）。
+  const dailyRemainingPercent =
+    parsed.dailyUsedPercent !== undefined ?
+      Math.max(0, 100 - parsed.dailyUsedPercent)
+    : undefined
+  const weeklyRemainingPercent =
+    parsed.weeklyUsedPercent !== undefined ?
+      Math.max(0, 100 - parsed.weeklyUsedPercent)
+    : undefined
+  const definedRemaining = [
+    dailyRemainingPercent,
+    weeklyRemainingPercent,
+  ].filter((value): value is number => value !== undefined)
+  const remainingPercent =
+    definedRemaining.length > 0 ? Math.min(...definedRemaining) : undefined
 
   return {
     fetchedAt: Date.now(),
@@ -195,7 +228,40 @@ export async function refreshWindsurfQuota(
   const remaining = snapshot.premiumInteractionsRemaining
   const exhausted = remaining !== undefined && remaining <= 0
   setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
-  if (!exhausted) {
+  if (exhausted) {
+    // 恢复时间对齐到"用尽窗口"的重置时刻，而不是默认 24h 猜测（日额度的重置可能只有
+    // 几小时，猜 24h 会白白停摆）。夹在 1min~24h 之间，防上游字段异常把账号停摆过久。
+    // 窗口信息从 snapshot.details 读（refreshWindsurfQuota 不再持有解析中间量）。
+    const details = (snapshot.details ?? {}) as {
+      dailyUsedPercent?: number
+      weeklyUsedPercent?: number
+      dailyResetAt?: number
+      weeklyResetAt?: number
+    }
+    const windowRemaining = (used: number | undefined) =>
+      used === undefined ? undefined : Math.max(0, 100 - used)
+    const resetMs = exhaustedWindowResetMs(
+      windowRemaining(details.dailyUsedPercent),
+      details.dailyResetAt,
+      windowRemaining(details.weeklyUsedPercent),
+      details.weeklyResetAt,
+    )
+    const recoveryMs =
+      resetMs === undefined ?
+        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+      : Math.min(
+          Math.max(resetMs - Date.now(), 60_000),
+          DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+        )
+    const credential = connection.credentials[0]
+    if (credential) {
+      markCredentialQuotaExhausted(
+        credential,
+        "windsurf quota exhausted",
+        recoveryMs,
+      )
+    }
+  } else {
     clearAccountRateLimitState(connection.id)
   }
   return snapshot
