@@ -22,8 +22,32 @@ export type TracePhase = "start" | "update" | "final"
 /** What a publisher hands in: a full settled record, or a partial snapshot. */
 export type TraceInput = Partial<RequestLogRecord> & { requestId: string }
 
-/** A stored trace: the (possibly partial) record plus whether it is running. */
-export type TraceRecord = TraceInput & { inFlight?: boolean; seq?: number }
+/**
+ * A stored trace: the (possibly partial) record plus whether it is running.
+ * `stale` marks one that never settled and was closed out by the TTL sweep —
+ * it is no longer running, but it also never reported a result.
+ */
+export type TraceRecord = TraceInput & {
+  inFlight?: boolean
+  stale?: boolean
+  seq?: number
+  /**
+   * 最后一次发布的时刻（总线内部用）。兜底超时看它而不是请求开始时间：
+   * 重放/回填的记录可能带着很旧的 timestamp，但它们是**现在**才进入总线、
+   * 并且每次 update 都会刷新——没有后续更新才是真的"没人在管"。
+   */
+  atMs?: number
+}
+
+/**
+ * 未收尾的 in-flight 记录超过这个时长就按"未收尾"结算掉。
+ *
+ * 正常收尾由 middleware / 流式 producer 负责；这里是兜底：客户端硬断、进程重启、
+ * 或者某条路径忘了结算时，绝不能让它在追踪视图里永远显示"进行中"（实测有 700s+
+ * 的幽灵记录）。取 30 分钟——比任何正常请求都长（首帧超时 3 分钟，WS 单轮几十秒），
+ * 所以不会误伤真正在跑的请求。
+ */
+export const TRACE_INFLIGHT_TTL_MS = 30 * 60 * 1000
 
 const bus = new EventEmitter()
 // One listener per open SSE client; unbounded on purpose.
@@ -33,17 +57,47 @@ const recent: Array<TraceRecord> = []
 /** Monotonic sequence, bumped on every upsert, for "wait past seq" polls. */
 let seqCounter = 0
 
+/**
+ * 把超时未收尾的 in-flight 记录结算掉（按"未收尾"），并通知订阅者，让已经打开的
+ * 实时视图把这些幽灵条目落地，而不是一直跳秒。
+ */
+function sweepStaleInFlight(now: number): void {
+  for (let index = 0; index < recent.length; index += 1) {
+    const record = recent[index]
+    if (!record?.inFlight) continue
+    const lastSeenAt = record.atMs ?? 0
+    if (lastSeenAt > 0 && now - lastSeenAt <= TRACE_INFLIGHT_TTL_MS) continue
+    seqCounter += 1
+    const settled: TraceRecord = {
+      ...record,
+      inFlight: false,
+      stale: true,
+      seq: seqCounter,
+      outcome: record.outcome ?? "incomplete",
+    }
+    recent[index] = settled
+    bus.emit("trace", { entry: settled, phase: "final" })
+  }
+}
+
 function upsert(entry: TraceRecord, phase: TracePhase): void {
+  const now = Date.now()
+  sweepStaleInFlight(now)
   seqCounter += 1
-  const stamped: TraceRecord = { ...entry, seq: seqCounter }
+  const stamped: TraceRecord = { ...entry, seq: seqCounter, atMs: now }
   const existing =
     entry.requestId ?
       recent.findIndex((r) => r.requestId === entry.requestId)
     : -1
   if (existing >= 0) {
     // Start/update carry partial data — merge so the later phase never drops
-    // fields an earlier one already knew.
-    recent[existing] = { ...recent[existing], ...stamped }
+    // fields an earlier one already knew. `final` 总是结算态：即便这条记录先前被
+    // TTL 兜底标成 stale（真跑了 30 分钟以上的长请求），拿到真结果后要把 stale 抹掉。
+    recent[existing] = {
+      ...recent[existing],
+      ...stamped,
+      ...(phase === "final" ? { stale: undefined } : {}),
+    }
   } else {
     recent.push(stamped)
   }
@@ -66,6 +120,7 @@ export function publishTrace(
 
 /** The most recent traces, oldest first (in-flight ones included). */
 export function recentTraces(limit = TRACE_KEEP): Array<TraceRecord> {
+  sweepStaleInFlight(Date.now())
   const n = Math.min(Math.max(Math.trunc(limit) || TRACE_KEEP, 1), TRACE_KEEP)
   return recent.slice(-n)
 }
@@ -78,6 +133,11 @@ export function subscribeTrace(
   return () => {
     bus.off("trace", listener)
   }
+}
+
+/** Test seam: run the in-flight TTL sweep as if the clock read `now`. */
+export function __sweepStaleInFlightForTest(now: number): void {
+  sweepStaleInFlight(now)
 }
 
 /** Test seam: drop buffered traces and listeners. */

@@ -17,11 +17,13 @@ import {
   recordUpstreamAttempt,
 } from "~/lib/request-log"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
+import { clearTraceBusForTest, recentTraces } from "~/lib/trace-bus"
 
 describe("log middleware", () => {
   afterEach(() => {
     resetGuardForTest()
     logStore.clearForTest()
+    clearTraceBusForTest()
   })
 
   test("does not treat protected-route 429s as global guard errors", async () => {
@@ -258,5 +260,33 @@ describe("log middleware", () => {
     )
 
     expect(logStore.count()).toBe(2)
+  })
+
+  test("被安全防护拉黑的请求不写系统日志，但实时追踪会结算（不再永远'进行中'）", async () => {
+    const app = new Hono()
+
+    app.use("*", requestLogger)
+    app.post("/v1/chat/completions", (c) => {
+      c.set("guardRejected", true)
+      return c.json({ error: { message: "blocked" } }, 403)
+    })
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.7",
+      },
+      body: JSON.stringify({ model: "gpt-4o", messages: [] }),
+    })
+
+    expect(response.status).toBe(403)
+    // 仍然不写系统日志（黑名单 IP 的请求不落盘）
+    expect(logStore.count()).toBe(0)
+    // 但实时追踪里那条已经被结算，不会永远显示"进行中"
+    const record = recentTraces().find((r) => r.path === "/v1/chat/completions")
+    expect(record).toBeTruthy()
+    expect(record?.inFlight).toBe(false)
+    expect(record?.outcome).toBe("cancelled")
   })
 })

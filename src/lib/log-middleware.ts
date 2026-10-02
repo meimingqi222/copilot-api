@@ -107,12 +107,23 @@ export const requestLogger = async (c: Context, next: Next) => {
         logger.debug("Failed to persist stats")
       }
     })
-    // 被安全防护拉黑的请求不再写入系统日志（guard 快照仍会更新，
-    // 以便在安全防护页看到最后活跃时间）。
+    // 被安全防护拉黑的请求不再写入系统日志（guard 快照仍会更新，以便在安全防护页
+    // 看到最后活跃时间），但**实时追踪必须结算**：这条记录已经在请求进入时发过
+    // "start"，直接 return 会让它永远挂在"进行中"（实测出现 700s+ 的幽灵记录）。
+    let guardRejected = false
     try {
-      if (c.get("guardRejected")) return
+      guardRejected = Boolean(c.get("guardRejected"))
     } catch {
       // Context 已结束时按正常路径继续
+    }
+    if (guardRejected) {
+      patchRequestLog(c, {
+        statusCode: nextError ? 500 : c.res.status,
+        outcome: "cancelled",
+        errorSnippet: "guard rejected (请求未写入系统日志)",
+      })
+      publishTraceSnapshot(c, "final")
+      return
     }
     const status = c.res.status
     // 上游自报模型审计：必须在 finalizeRequestLog 之前结算，否则这一条日志
