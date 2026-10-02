@@ -21,6 +21,7 @@ import {
   finalizeUpstreamModelAudit,
   getRequestLogContext,
   initRequestLog,
+  isApiEndpointPath,
   isCoreApiPath,
   patchRequestLog,
   publishTraceSnapshot,
@@ -38,6 +39,10 @@ export const requestLogger = async (c: Context, next: Next) => {
   const clientIp = getClientIp(c)
   const userAgent = c.req.header("user-agent") || undefined
   const isCoreApi = isCoreApiPath(c.req.path)
+  // 是否属于本服务对外的 API 面：请求日志/统计/实时追踪只覆盖 API 面。扫描器瞎撞的
+  // 非 API 路径（/ai/credentials、/.env、静态资源）不是 API 调用，记进去只会让
+  // "某端点 401"看起来像 LLM 请求失败，也污染统计。安全防护快照不受影响（照常记录）。
+  const isApiSurface = isApiEndpointPath(c.req.path)
   const isLocalhost =
     clientIp === "127.0.0.1"
     || clientIp === "::1"
@@ -60,8 +65,9 @@ export const requestLogger = async (c: Context, next: Next) => {
     username: c.get("username"),
   })
   // Show the request on the live trace view the moment it opens, before
-  // routing resolves and long before it finishes.
-  publishTraceSnapshot(c, "start")
+  // routing resolves and long before it finishes. 非 API 面不会走到收尾落盘，
+  // 这里也不能发 start，否则实时视图会留下永不结束的条目。
+  if (isApiSurface) publishTraceSnapshot(c, "start")
   try {
     c.header("X-Request-Id", ctx.requestId)
   } catch {
@@ -83,6 +89,9 @@ export const requestLogger = async (c: Context, next: Next) => {
   let nextError: unknown
   const persistRequestLog = () => {
     if (!claimRequestLogFinish(c)) return
+    // 非 API 面的请求不写请求日志、不记统计、不发实时追踪（安全防护快照在 finally
+    // 里照常更新，暴力破解信号不受影响）。
+    if (!isApiSurface) return
     // daily_stats 与 request log 同一次落盘、恰好一次：
     // 流式请求的 accountId 在 SSE producer 里 dispatch 后才落定，
     // middleware finally 时还拿不到，放这里才能计入流式。

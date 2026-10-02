@@ -799,6 +799,34 @@ function endpointToApiKind(
   return "other"
 }
 
+/**
+ * 本服务真正对外的 API 端点面：LLM 推理端点（chat/messages/responses/embeddings）、
+ * 模型/图像/视频端点，以及 Gemini 方言（`/v1beta`）。请求追踪与统计只覆盖这些路径。
+ *
+ * 其它路径（扫描器瞎撞的 `/ai/credentials`、`/.env`，静态资源，管理端，`/ws` 内部
+ * 通道）不是本服务的 API 调用：记进请求日志既不反映真实业务，又会让"某个端点 401"
+ * 看起来像 LLM 请求失败，还污染统计。
+ */
+export function isApiEndpointPath(path: string): boolean {
+  return (
+    isCoreApiPath(path)
+    || matchesApiPrefix(path, "/models")
+    || matchesApiPrefix(path, "/v1/models")
+    || matchesApiPrefix(path, "/images")
+    || matchesApiPrefix(path, "/v1/images")
+    || matchesApiPrefix(path, "/videos")
+    || matchesApiPrefix(path, "/v1/videos")
+    || matchesApiPrefix(path, "/v1beta")
+  )
+}
+
+/** 前缀命中：`/v1/models`、`/v1/models/...`、`/v1beta/models/x:generateContent` 均算。 */
+function matchesApiPrefix(path: string, prefix: string): boolean {
+  if (!path.startsWith(prefix)) return false
+  const rest = path.slice(prefix.length)
+  return rest === "" || rest.startsWith("/") || rest.startsWith(":")
+}
+
 export function isCoreApiPath(path: string): boolean {
   return (
     path === "/chat/completions"

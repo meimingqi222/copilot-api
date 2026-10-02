@@ -192,4 +192,71 @@ describe("log middleware", () => {
       )
     }
   })
+
+  test("非 API 路径的请求不写请求日志/统计，但安全防护快照照常更新", async () => {
+    const app = new Hono()
+
+    app.use("*", requestLogger)
+    app.get("/ai/credentials", (c) =>
+      c.json({ error: { message: "unauthorized" } }, 401),
+    )
+
+    const response = await app.request("http://localhost/ai/credentials", {
+      headers: {
+        "user-agent": "unit-test-scanner/1.0",
+        "x-forwarded-for": "45.138.12.10",
+      },
+    })
+
+    expect(response.status).toBe(401)
+    // 不是本服务的 API 调用：不进请求日志（否则追踪列表里会出现"某端点 401"）
+    expect(logStore.count()).toBe(0)
+    // 安全防护仍然看到这次扫描（暴力破解信号不能丢）
+    expect(getSnapshots("ip")[0]?.key).toBe("45.138.12.10")
+  })
+
+  test("API 路径照常记录", async () => {
+    const app = new Hono()
+
+    app.use("*", requestLogger)
+    app.post("/v1/chat/completions", (c) => c.json({ ok: true }))
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "unit-test-client/1.0",
+        "x-forwarded-for": "203.0.113.9",
+      },
+      body: JSON.stringify({ model: "gpt-4o", messages: [] }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(logStore.count()).toBe(1)
+  })
+
+  test("/v1/models 与 Gemini 方言也属于被追踪的 API 面", async () => {
+    const app = new Hono()
+
+    app.use("*", requestLogger)
+    app.get("/v1/models", (c) => c.json({ data: [] }))
+    app.post("/v1beta/models/gemini-3-pro:generateContent", (c) => c.json({}))
+
+    await app.request("http://localhost/v1/models", {
+      headers: { "x-forwarded-for": "203.0.113.11" },
+    })
+    await app.request(
+      "http://localhost/v1beta/models/gemini-3-pro:generateContent",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "203.0.113.12",
+        },
+        body: JSON.stringify({}),
+      },
+    )
+
+    expect(logStore.count()).toBe(2)
+  })
 })
