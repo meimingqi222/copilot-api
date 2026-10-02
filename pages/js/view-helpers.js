@@ -22,7 +22,9 @@ const BRAND_ICON_MAP = {
   workbuddy: "workbuddy-color",
   "workbuddy-cn": "workbuddy-color",
   codebuff: "codex-color",
-  windsurf: "antigravity-color",
+  windsurf: "windsurf",
+  devin: "devin",
+  swe: "devin",
   "mimo-aistudio": "mimocode",
   mimo: "mimocode",
   xiaomi: "mimocode",
@@ -89,6 +91,8 @@ const MODEL_FAMILY_ICONS = [
   { prefix: "doubao", icon: "volcengine-color" },
   { prefix: "codebuddy", icon: "workbuddy-color" },
   { prefix: "workbuddy", icon: "workbuddy-color" },
+  { prefix: "swe", icon: "devin" },
+  { prefix: "devin", icon: "devin" },
 ]
 
 const ViewHelpers = {

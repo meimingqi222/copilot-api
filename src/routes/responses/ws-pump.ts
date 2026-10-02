@@ -30,6 +30,8 @@ interface ResponsesWsCommitDetails {
 }
 
 interface PumpHooks {
+  onFrame?: (frame: unknown) => void
+  onWrite?: (ms: number) => void
   /** Fired synchronously on the first successful forward to the client. */
   onCommit: (details: ResponsesWsCommitDetails) => void
   onFirstOutput?: (timestamp: number) => void
@@ -58,9 +60,11 @@ export async function pumpWithLeadingBuffer(
   let bufferedBytes = 0
 
   const forward = async (data: string) => {
+    const started = hooks.onWrite ? performance.now() : undefined
     if (!(await sendText(ws, data))) {
       throw new ClientAbortError()
     }
+    if (started !== undefined) hooks.onWrite?.(performance.now() - started)
   }
 
   const markOutputObserved = () => {
@@ -101,6 +105,7 @@ export async function pumpWithLeadingBuffer(
     }
 
     const type = typeof parsed?.type === "string" ? parsed.type : undefined
+    hooks.onFrame?.(parsed)
     const meaningfulOutput = parsed ? isResponsesOutputEvent(parsed) : false
     if (type && TERMINAL_RESPONSE_TYPES.has(type)) {
       sawTerminal = true

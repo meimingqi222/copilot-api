@@ -1,0 +1,159 @@
+<div
+  x-data="systemConfigView()"
+  x-init="load(); $watch('currentView', view => { if (view === 'system-config') load() })"
+>
+  <header class="page-header">
+    <div class="page-heading">
+      <h2 class="text-headline" x-text="t('nav.system-config')"></h2>
+      <p class="page-description" x-text="t('system.subtitle')"></p>
+    </div>
+    <button
+      class="btn btn-secondary"
+      @click="load()"
+      :disabled="loading || saving"
+      x-text="t('refresh')"
+    ></button>
+  </header>
+  <p
+    role="alert"
+    class="text-sm text-red-600 mb-4"
+    x-show="error"
+    x-text="error"
+  ></p>
+  <template x-if="settings">
+    <form
+      @submit.prevent="save()"
+      class="card p-5 space-y-5 max-w-3xl"
+      @input="saved = false"
+    >
+      <p
+        class="text-sm text-[var(--apple-text-secondary)]"
+        x-text="t('system.source.' + source)"
+      ></p>
+      <label class="block">
+        <span
+          class="block text-sm font-medium mb-2"
+          x-text="t('system.quotaDisplayMode')"
+        ></span>
+        <select
+          class="input w-full"
+          x-model="settings.quotaDisplayMode"
+          :disabled="saving"
+        >
+          <option
+            value="remaining"
+            x-text="t('system.quotaMode.remaining')"
+          ></option>
+          <option value="used" x-text="t('system.quotaMode.used')"></option>
+        </select>
+        <span
+          class="block text-sm text-[var(--apple-text-secondary)] mt-1"
+          x-text="t('system.quotaDisplayHint')"
+        ></span>
+      </label>
+      <label class="block">
+        <span
+          class="block text-sm font-medium mb-2"
+          x-text="t('system.logLevel')"
+        ></span>
+        <select
+          class="input w-full"
+          x-model="settings.logLevel"
+          :disabled="saving"
+        >
+          <option value="warn" x-text="t('system.level.warn')"></option>
+          <option value="info" x-text="t('system.level.info')"></option>
+          <option value="debug" x-text="t('system.level.debug')"></option>
+        </select>
+        <span
+          class="block text-sm text-[var(--apple-text-secondary)] mt-1"
+          x-text="t('system.logHint')"
+        ></span>
+      </label>
+      <template
+        x-for="key in ['performanceDetails', 'memoryVerbose', 'requestDump']"
+        :key="key"
+      >
+        <label class="flex items-start gap-3">
+          <input
+            type="checkbox"
+            class="mt-1"
+            x-model="settings[key]"
+            :disabled="saving"
+          />
+          <span>
+            <span
+              class="block text-sm font-medium"
+              x-text="t('system.' + key)"
+            ></span>
+            <span
+              class="block text-sm text-[var(--apple-text-secondary)]"
+              x-text="t('system.' + key + 'Hint')"
+            ></span>
+          </span>
+        </label>
+      </template>
+      <label class="flex items-start gap-3" x-show="settings.requestDump">
+        <input
+          type="checkbox"
+          class="mt-1"
+          x-model="acknowledgeSensitiveData"
+          :disabled="saving"
+        />
+        <span class="text-sm" x-text="t('system.acknowledge')"></span>
+      </label>
+      <label
+        class="block"
+        x-show="settings.logLevel === 'debug' || settings.requestDump || settings.memoryVerbose"
+      >
+        <span
+          class="block text-sm font-medium mb-2"
+          x-text="t('system.duration')"
+        ></span>
+        <input
+          type="number"
+          class="input w-full"
+          min="1"
+          max="120"
+          step="1"
+          x-model.number="debugMinutes"
+          :disabled="saving"
+        />
+        <span
+          class="block text-sm text-[var(--apple-text-secondary)] mt-1"
+          x-text="t('system.expiryHint')"
+        ></span>
+      </label>
+      <p
+        class="text-sm"
+        x-show="expiresAt"
+        x-text="t('system.expiresAt') + ': ' + formatTime(expiresAt)"
+      ></p>
+      <div class="flex flex-wrap items-center gap-3">
+        <button
+          type="submit"
+          class="btn btn-primary"
+          :disabled="saving || loading || (settings.requestDump && !acknowledgeSensitiveData)"
+          x-text="t('system.save')"
+        ></button>
+        <button
+          type="button"
+          class="btn btn-secondary"
+          @click="useRecommended()"
+          :disabled="saving"
+          x-text="t('system.recommended')"
+        ></button>
+        <span
+          role="status"
+          class="text-sm"
+          x-show="saved"
+          x-text="t('system.saved')"
+        ></span>
+      </div>
+      <p
+        class="text-sm text-[var(--apple-text-secondary)]"
+        x-text="t('system.boundaries')"
+      ></p>
+    </form>
+  </template>
+</div>

@@ -12,6 +12,7 @@ import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { logger } from "~/lib/logger"
+import { measurePerformanceStage } from "~/lib/request-performance"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import {
   connectionProvider,
@@ -446,6 +447,15 @@ export async function prepareRequestAdmission(
   c: Context,
   options: PrepareRequestAdmissionOptions,
 ): Promise<RequestAdmission> {
+  return measurePerformanceStage(c, "admissionMs", () =>
+    prepareRequestAdmissionImpl(c, options),
+  )
+}
+
+async function prepareRequestAdmissionImpl(
+  c: Context,
+  options: PrepareRequestAdmissionOptions,
+): Promise<RequestAdmission> {
   c.set("model", options.model)
   enforceUserModelAccess(c, options.model)
 
@@ -465,16 +475,19 @@ export async function prepareRequestAdmission(
   let groupOverrides: AppliedGroupOverrides | undefined
   let routingGroup: RoutingGroup | null | undefined
   try {
-    groupDecision = await resolveGroupDecision({
-      model: options.model,
-      messageContent: options.messageContent,
-      sessionPayload: options.sessionPayload,
-      reasoningEffort: options.reasoningEffort,
-      inferredInitiator: options.inferredInitiator,
-      initiator,
-      compact: options.compact,
-      turnKey: extractSessionTurn(options.sessionPayload).turnKey || undefined,
-    })
+    groupDecision = await measurePerformanceStage(c, "routingDecisionMs", () =>
+      resolveGroupDecision({
+        model: options.model,
+        messageContent: options.messageContent,
+        sessionPayload: options.sessionPayload,
+        reasoningEffort: options.reasoningEffort,
+        inferredInitiator: options.inferredInitiator,
+        initiator,
+        compact: options.compact,
+        turnKey:
+          extractSessionTurn(options.sessionPayload).turnKey || undefined,
+      }),
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     logger.warn(

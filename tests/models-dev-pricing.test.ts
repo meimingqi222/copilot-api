@@ -394,6 +394,48 @@ describe("GET /admin/api/usage/pricing", () => {
     ).toBeCloseTo(0.001, 10)
     expect(body.pricing["windsurf/swe-1-6-fast"].promptPricePer1k).toBe(0.0005)
   })
+
+  test("updates manual pricing and deletes it to reset back to default", async () => {
+    const testModel = "custom-test-pricing-model"
+    // 1. PUT manual price
+    const putRes = await server.fetch(
+      adminRequest(
+        `http://localhost/admin/api/usage/pricing/${encodeURIComponent(testModel)}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            promptPricePer1k: 0.05,
+            completionPricePer1k: 0.1,
+          }),
+        },
+      ),
+    )
+    expect(putRes.status).toBe(200)
+    const putBody = (await putRes.json()) as {
+      pricing: { promptPricePer1k: number }
+    }
+    expect(putBody.pricing.promptPricePer1k).toBe(0.05)
+
+    // 2. Verify DELETE resets it
+    const delRes = await server.fetch(
+      adminRequest(
+        `http://localhost/admin/api/usage/pricing/${encodeURIComponent(testModel)}`,
+        {
+          method: "DELETE",
+        },
+      ),
+    )
+    expect(delRes.status).toBe(200)
+    const delBody = (await delRes.json()) as {
+      ok: boolean
+      source: string
+    }
+    expect(delBody.ok).toBe(true)
+    expect(delBody.source).toBe("unmatched")
+  })
 })
 
 describe("models.dev context resolver", () => {

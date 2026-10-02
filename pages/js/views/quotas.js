@@ -101,8 +101,10 @@ function quotasView() {
     },
 
     getQuotaRows(account) {
-      return QuotaDisplay.buildRows(account, (key, params) =>
-        this.t(key, params),
+      return QuotaDisplay.applyDisplayMode(
+        QuotaDisplay.buildRows(account, (key, params) => this.t(key, params)),
+        this.quotaDisplayMode,
+        (key) => this.t(key),
       )
     },
 

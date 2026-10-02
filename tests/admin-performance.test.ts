@@ -23,6 +23,13 @@ type PerformanceRow = {
 }
 
 type PerformanceResponse = {
+  details: Array<{
+    endpoint: string
+    transport: string
+    translated: boolean
+    generationTps: number | null
+    timings: { preprocessingMs: { samples: number; average: number | null } }
+  }>
   performance: Array<PerformanceRow>
   byProvider: Array<
     PerformanceRow & { provider: string; providerLabel: string }
@@ -64,6 +71,47 @@ beforeEach(() => {
   state.users = []
   clearAdminPasswordConfig()
   setupAdminAuth()
+})
+
+test("performance API exposes segmented new samples without inventing historical values", async () => {
+  const timestamp = Date.now()
+  const usage = {
+    date: statsStore.getDateString(timestamp),
+    accountId: "account-1",
+    model: "gpt-test",
+    promptTokens: 10,
+    completionTokens: 300,
+    totalTokens: 310,
+    timestamp,
+    streaming: true,
+    tps: 30,
+  }
+  statsStore.recordUsage(usage)
+  statsStore.recordUsage({
+    ...usage,
+    performance: {
+      version: 1,
+      endpoint: "/v1/messages",
+      transport: "http",
+      translated: true,
+      generationMs: 2000,
+      preprocessingMs: 12,
+    },
+  })
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as PerformanceResponse
+  expect(body.details).toHaveLength(1)
+  expect(body.details[0]).toMatchObject({
+    endpoint: "/v1/messages",
+    transport: "http",
+    translated: true,
+    generationTps: 150,
+    timings: { preprocessingMs: { samples: 1, average: 12 } },
+  })
+  expect(body.performance[0]?.avgStreamingTps).toBe(30)
 })
 
 afterEach(() => {

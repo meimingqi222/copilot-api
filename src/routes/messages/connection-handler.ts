@@ -13,6 +13,7 @@ import {
   resolveRetryableCode,
 } from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
+import { markPerformanceDispatch } from "~/lib/request-performance"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   beginStreamLog,
@@ -78,6 +79,7 @@ export async function handleAnthropicViaConnection(
 
   if (!anthropicPayload.stream) {
     const nonStreamStart = Date.now()
+    markPerformanceDispatch(c)
     let result: Awaited<ReturnType<typeof dispatchMessages>>
     try {
       result = await dispatchMessages({
@@ -132,6 +134,7 @@ export async function handleAnthropicViaConnection(
   // body instead of `200 + event: error`.
   let result: Awaited<ReturnType<typeof dispatchMessages>>
   const dispatchStart = Date.now()
+  markPerformanceDispatch(c)
   try {
     result = await dispatchMessages({
       payload: anthropicPayload,

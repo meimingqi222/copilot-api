@@ -227,6 +227,12 @@ export function isDebugLoggingEnabled(): boolean {
   return consola.level >= 4 || fileMinLevel === "debug"
 }
 
+export function setRuntimeLogLevel(level: "warn" | "info" | "debug"): void {
+  consola.level = { warn: 1, info: 3, debug: 4 }[level]
+  fileMinLevel = level
+  fileMinLevelLocked = true
+}
+
 /** Test hook: redirect file output and reset reporter state. */
 export function configureLoggerForTest(options: {
   logFilePath: string

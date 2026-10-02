@@ -383,10 +383,32 @@ function tracesView() {
      * Evidence line under a candidate: quota pressure, when it renews or
      * the rest lifts, and how much it served lately.
      */
+    candQuotaPercent(c) {
+      if (
+        typeof c.quotaUsedPct !== "number"
+        || !Number.isFinite(c.quotaUsedPct)
+      )
+        return undefined
+      return QuotaDisplay.displayPercent(
+        100 - c.quotaUsedPct,
+        this.quotaDisplayMode,
+      )
+    },
+
     candEvidence(c) {
       const parts = []
       if (c.quotaUsedPct !== undefined && c.quotaUsedPct !== null) {
-        parts.push(this.t("trace.ev.quota", { n: c.quotaUsedPct }))
+        const percent = this.candQuotaPercent(c)
+        if (percent !== undefined) {
+          parts.push(
+            this.t(
+              this.quotaDisplayMode === "used" ?
+                "trace.ev.quotaUsed"
+              : "trace.ev.quotaRemaining",
+              { n: Math.round(percent) },
+            ),
+          )
+        }
       }
       if (c.restUntilMs && c.restUntilMs > this.now) {
         parts.push(
@@ -775,20 +797,32 @@ function tracesView() {
     },
 
     async replayOne(frame = this.selected) {
-      if (!frame || frame.inFlight) return
+      if (!frame || frame.inFlight || this.replaying || this.historyLoading)
+        return
       return this.playFrames([this.cloneFrame(frame)])
     },
 
+    get replayableFrames() {
+      return (this.mode === "history" ? this.history : this.traces).filter(
+        (frame) => !frame.inFlight,
+      )
+    },
+
     async replayAll() {
-      if (this.mode !== "history") await this.showHistory()
+      if (this.replaying || this.historyLoading) return
       return this.playFrames(
-        this.history.filter((f) => !f.inFlight).map((f) => this.cloneFrame(f)),
+        this.replayableFrames.map((frame) => this.cloneFrame(frame)),
       )
     },
 
     async playFrames(frames) {
       this.stopReplay()
       if (!frames.length) return
+      if (this.mode !== "history") {
+        this.history = this.replayableFrames.map((frame) =>
+          this.cloneFrame(frame),
+        )
+      }
       this.mode = "history"
       this.replaying = true
       const token = this._replayToken

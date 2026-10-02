@@ -14,8 +14,10 @@ function adminApp() {
       "traces",
       "usage",
       "users",
+      "system-config",
     ],
     initialized: false,
+    quotaDisplayMode: "remaining",
     toasts: [],
     lang: I18n.currentLang(),
     sidebarOpen: false,
@@ -48,6 +50,12 @@ function adminApp() {
       this.applyHashView(hash)
 
       await this.checkAuth()
+      globalThis.addEventListener("quota-display-mode", (event) => {
+        if (["remaining", "used"].includes(event.detail)) {
+          this.quotaDisplayMode = event.detail
+        }
+      })
+      await this.loadQuotaDisplayMode()
       this.initialized = true
       lucide.createIcons()
       // Refresh quotas in background after login
@@ -60,10 +68,22 @@ function adminApp() {
 
       // Update hash when currentView changes
       this.$watch("currentView", (view) => {
+        if (view === "quotas" || view === "traces") {
+          void this.loadQuotaDisplayMode()
+        }
         if (globalThis.location.hash.slice(1) !== view) {
           globalThis.location.hash = view
         }
       })
+    },
+
+    async loadQuotaDisplayMode() {
+      try {
+        const data = await API.request("/system-config")
+        this.quotaDisplayMode = data.settings.quotaDisplayMode || "remaining"
+      } catch (error) {
+        console.warn("Failed to load quota display preference:", error)
+      }
     },
 
     async refreshQuotaInBackground() {
@@ -148,6 +168,7 @@ function adminApp() {
           items: [
             { id: "users", icon: "key" },
             { id: "guard", icon: "shield" },
+            { id: "system-config", icon: "settings" },
           ],
         },
       ].map((group) => ({

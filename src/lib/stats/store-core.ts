@@ -19,9 +19,14 @@ import type {
 } from "~/lib/stats/types"
 
 import { PATHS } from "~/lib/paths"
+import {
+  computePerformanceDetails,
+  type PerformanceDetail,
+} from "~/lib/stats/performance-detail"
 import { deleteConfig, getConfig, setConfig } from "~/lib/stats/config"
 import { getUsageStatsByIntervalData } from "~/lib/stats/interval"
 import {
+  deleteModelPricing,
   getAllModelPricing,
   getModelPricing,
   getManualModelPricing,
@@ -177,8 +182,8 @@ class StatsStore {
       INSERT INTO usage_stats (
         date, account_id, user_id, model, provider, connection_id, credential_id,
         prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens,
-        total_tokens, cost, timestamp, ttft_ms, tps, streaming
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        total_tokens, cost, timestamp, ttft_ms, tps, streaming, performance_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       stats.date,
@@ -198,6 +203,7 @@ class StatsStore {
       stats.ttftMs ?? null,
       stats.tps ?? null,
       stats.streaming ? 1 : 0,
+      stats.performance ? JSON.stringify(stats.performance) : null,
     )
   }
 
@@ -257,6 +263,15 @@ class StatsStore {
     const db = this.ensureDb()
     const rows = queryUsageRawRows(db, options)
     return groupRowsByProvider(rows)
+  }
+
+  getPerformanceDetailsInRange(options: {
+    startMs: number
+    endMs: number
+  }): PerformanceDetail[] {
+    return computePerformanceDetails(
+      queryUsageRawRows(this.ensureDb(), options),
+    )
   }
 
   getPerformanceByModelInRange(options: {
@@ -352,6 +367,11 @@ class StatsStore {
   ): void {
     const db = this.ensureDb()
     setModelPricing(db, model, pricing)
+  }
+
+  deleteModelPricing(model: string): boolean {
+    const db = this.ensureDb()
+    return deleteModelPricing(db, model)
   }
 
   hasManualModelPricing(model: string): boolean {

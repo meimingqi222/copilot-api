@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 /**
  * OpenAI Responses-compatible Protocol Adapter。
  *
@@ -132,7 +138,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       {
         method: "POST",
         headers: buildHeaders(connection, credential),
-        body: JSON.stringify(upstreamPayload),
+        body: serializeUpstreamBody(upstreamPayload),
         signal,
       },
     )
@@ -154,7 +160,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       } satisfies AdapterChatResult
     }
 
-    const body = (await response.json()) as ChatCompletionResponse
+    const body = (await readUpstreamJson(response)) as ChatCompletionResponse
     return {
       credentialId: credential.id,
       response: body,
@@ -229,7 +235,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     const response = await fetch(joinUrl(connection.baseUrl, "/responses"), {
       method: "POST",
       headers: buildHeaders(connection, credential),
-      body: JSON.stringify(upstreamPayload),
+      body: serializeUpstreamBody(upstreamPayload),
       signal,
     })
 
@@ -282,7 +288,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       } satisfies AdapterResponsesResult
     }
 
-    const body = (await response.json()) as ResponsesResponse
+    const body = (await readUpstreamJson(response)) as ResponsesResponse
     if (recordedInput) {
       const responseId = typeof body.id === "string" ? body.id.trim() : ""
       if (responseId) {

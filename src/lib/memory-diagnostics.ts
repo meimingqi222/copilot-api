@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 
 import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
+import { getSystemSettings } from "~/lib/system-config"
 
 const MIB = 1024 * 1024
 const RECENT_CHECKPOINT_LIMIT = 32
@@ -108,7 +109,7 @@ export function beginMemoryTrace(options: {
     details: options.details ?? {},
   })
   recordCheckpoint(options.traceId)
-  if (process.env.MEMORY_DIAGNOSTICS_VERBOSE === "true") {
+  if (getSystemSettings().memoryVerbose) {
     const trace = activeTraces.get(options.traceId)
     if (trace) {
       logger.info("[memory-diagnostics] request checkpoint", {
@@ -135,7 +136,7 @@ export function updateMemoryTrace(
   recordCheckpoint(traceId)
   if (usage.rss >= PROCESS_WARN_BYTES) {
     warnForTrace(trace, usage, "rss_threshold")
-  } else if (process.env.MEMORY_DIAGNOSTICS_VERBOSE === "true") {
+  } else if (getSystemSettings().memoryVerbose) {
     logger.info("[memory-diagnostics] request checkpoint", {
       ...serializeTrace(trace),
       process: serializeRuntimeMemory(usage),
@@ -163,7 +164,7 @@ export function startMemoryDiagnostics(): void {
     processWarnMiB: toMiB(PROCESS_WARN_BYTES),
     swapWarnMiB: toMiB(SWAP_WARN_BYTES),
     availableWarnMiB: toMiB(AVAILABLE_WARN_BYTES),
-    verbose: process.env.MEMORY_DIAGNOSTICS_VERBOSE === "true",
+    verbose: getSystemSettings().memoryVerbose,
   })
   globalTimers.interval(() => {
     const now = Date.now()

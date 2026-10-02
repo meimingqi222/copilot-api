@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 import type {
   ApiCredential,
   ProviderConnection,
@@ -96,7 +102,7 @@ export async function createCopilotMessagesOnce(
   const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
     method: "POST",
     headers,
-    body: JSON.stringify(copilotPayload),
+    body: serializeUpstreamBody(copilotPayload),
     signal,
   })
 
@@ -112,5 +118,5 @@ export async function createCopilotMessagesOnce(
     )) as unknown as AsyncIterable<CopilotStreamEventLike>
   }
 
-  return (await response.json()) as AnthropicResponse
+  return (await readUpstreamJson(response)) as AnthropicResponse
 }

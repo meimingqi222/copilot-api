@@ -389,7 +389,14 @@ const API = {
     },
     getPricing: () => API.request("/usage/pricing"),
     updatePricing: (model, pricing) =>
-      API.request(`/usage/pricing/${model}`, { method: "PUT", body: pricing }),
+      API.request(`/usage/pricing/${encodeURIComponent(model)}`, {
+        method: "PUT",
+        body: pricing,
+      }),
+    deletePricing: (model) =>
+      API.request(`/usage/pricing/${encodeURIComponent(model)}`, {
+        method: "DELETE",
+      }),
   },
 
   // Logs

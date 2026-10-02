@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 /**
  * OpenAI-compatible Protocol Adapter。
  *
@@ -127,7 +133,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       {
         method: "POST",
         headers: buildHeaders(connection, credential),
-        body: JSON.stringify(upstreamPayload),
+        body: serializeUpstreamBody(upstreamPayload),
         signal,
       },
     )
@@ -149,7 +155,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       } satisfies AdapterChatResult
     }
 
-    const raw = (await response.json()) as Record<string, unknown>
+    const raw = (await readUpstreamJson(response)) as Record<string, unknown>
     // Some upstreams (e.g. Cline Pass) wrap the standard OpenAI response
     // in a `data` envelope. Unwrap it so downstream code sees a normal
     // ChatCompletionResponse with top-level `choices`.
@@ -172,7 +178,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     const response = await fetch(joinUrl(connection.baseUrl, "/embeddings"), {
       method: "POST",
       headers: buildHeaders(connection, credential),
-      body: JSON.stringify(upstreamPayload),
+      body: serializeUpstreamBody(upstreamPayload),
       signal,
     })
 

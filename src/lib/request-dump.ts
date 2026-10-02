@@ -21,6 +21,7 @@ import { join } from "node:path"
 import { dateKeyFromDate, readLogRotationConfig } from "~/lib/log-rotation"
 import { logger } from "~/lib/logger"
 import { isCoreApiPath } from "~/lib/request-log"
+import { getSystemSettings } from "~/lib/system-config"
 
 const DUMP_FILE_PATTERN =
   /^request-dumps-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/
@@ -39,8 +40,7 @@ const DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 let appendQueue = Promise.resolve()
 
 export function isRequestDumpEnabled(): boolean {
-  const value = process.env["DUMP_REQUESTS"]?.trim().toLowerCase()
-  return value === "1" || value === "true" || value === "yes"
+  return getSystemSettings().requestDump
 }
 
 function resolveMaxBodyBytes(): number {

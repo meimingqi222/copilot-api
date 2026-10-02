@@ -15,6 +15,14 @@ import {
 } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
+  addPerformanceTiming,
+  markResponseReady,
+} from "~/lib/request-performance"
+import {
+  bindPerformanceStream,
+  runWithPerformanceContext,
+} from "~/lib/upstream-performance"
+import {
   DEFAULTS,
   classifyUpstreamError,
   connectionProvider,
@@ -113,12 +121,16 @@ interface FailoverOptions<TPayload, TResult> {
 function holdLeaseForStream<TResult>(
   result: TResult,
   lease: CredentialLease,
+  c?: Context,
 ): { value: TResult; handedOff: boolean } {
   if (isWrappedStream(result)) {
     return {
       value: {
         ...(result as object),
-        response: wrapLeaseStream(result.response, lease),
+        response: wrapLeaseStream(
+          bindPerformanceStream(result.response, c),
+          lease,
+        ),
       } as TResult,
       handedOff: true,
     }
@@ -126,7 +138,7 @@ function holdLeaseForStream<TResult>(
   if (isAsyncIterable(result)) {
     return {
       value: wrapLeaseStream(
-        result as AsyncIterable<unknown>,
+        bindPerformanceStream(result as AsyncIterable<unknown>, c),
         lease,
       ) as TResult,
       handedOff: true,
@@ -229,12 +241,22 @@ export async function executeWithFailover<
 
     const adapter = getProtocolAdapter(current.target.protocol)
     const attemptStart = Date.now()
+    const metricAttemptStart = performance.now()
     try {
       // Pacing gate (burst + interval per connection). Runs before lease
       // acquisition so waiting requests don't hold credential leases.
       // Queue-full is local saturation, not an upstream failure — it is
       // handled in the catch block by rotating without any cooldown.
-      await checkRateLimit(current.connection.id, signal)
+      const rateLimitStarted = performance.now()
+      try {
+        await checkRateLimit(current.connection.id, signal)
+      } finally {
+        addPerformanceTiming(
+          c,
+          "rateLimitWaitMs",
+          performance.now() - rateLimitStarted,
+        )
+      }
       const lease = tryAcquireCredentialLease(current.target)
       if (!lease) {
         throw new CredentialConcurrencyLimitError(targetKey(current.target))
@@ -251,7 +273,11 @@ export async function executeWithFailover<
           provider: connectionProvider(current.connection),
           upstreamBaseUrl: safeOrigin(current.connection.baseUrl),
         })
-        const result = await execute(adapter, current.target, current)
+        const result = await runWithPerformanceContext(c, () =>
+          execute(adapter, current.target, current),
+        )
+        if (!isWrappedStream(result) && !isAsyncIterable(result))
+          markResponseReady(c)
         // Windsurf resolves the real SKU (e.g. glm-5-2-max) from
         // reasoning_effort inside the adapter and patches modelUpstream.
         // recordUpstreamAttempt below would overwrite it with the head
@@ -280,13 +306,18 @@ export async function executeWithFailover<
         // Hold the lease for the full stream lifetime, not until the iterable
         // is returned. See `holdLeaseForStream` for why the stream is not on
         // `result` itself.
-        const leased = holdLeaseForStream(result, lease)
+        const leased = holdLeaseForStream(result, lease, c)
         handedOffToStream = leased.handedOff
         return leased.value
       } finally {
         if (!handedOffToStream) lease.release()
       }
     } catch (error) {
+      addPerformanceTiming(
+        c,
+        "failedAttemptMs",
+        performance.now() - metricAttemptStart,
+      )
       if (error instanceof RateLimitQueueFullError) {
         // Local pacing saturation, not an upstream failure: rotate to the
         // next target without cooling anything down. Only when no target is

@@ -11,6 +11,31 @@ const QuotaDisplay = {
   ]),
   CYCLE_USAGE_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi"]),
 
+  displayPercent(remaining, mode = "remaining") {
+    if (typeof remaining !== "number" || !Number.isFinite(remaining))
+      return undefined
+    const percent = Math.max(0, Math.min(100, remaining))
+    return mode === "used" ? 100 - percent : percent
+  },
+
+  applyDisplayMode(rows, mode, t) {
+    const label = t(
+      mode === "used" ? "system.quotaMode.used" : "system.quotaMode.remaining",
+    )
+    return rows.map((row) => {
+      const displayPercent = this.displayPercent(row.remainingPercent, mode)
+      if (displayPercent === undefined) return row
+      const percentText = `${label} ${Math.round(displayPercent)}%`
+      const next = { ...row, displayPercent, percentText }
+      for (const key of ["valueText", "amountText"]) {
+        if (typeof row[key] === "string" && /^\d+(?:\.\d+)?%$/.test(row[key])) {
+          next[key] = percentText
+        }
+      }
+      return next
+    })
+  },
+
   isOAuthProvider(provider) {
     return this.OAUTH_PROVIDERS.has(provider)
   },

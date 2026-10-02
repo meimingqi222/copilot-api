@@ -10,7 +10,7 @@ SWE model ids are excluded from models.dev matching, and no alternative source e
 
 Resolve SWE prices from Devin Desktop's official modelCostData JSON, filtered strictly to TEAMS_TIER_PRO. Manual database prices remain first priority. Parse JSON without evaluating MDX. Load a verified 2026-10-02 SWE snapshot before disk cache and network refresh. Reuse the existing pricing refresh lifecycle, with a 24-hour cache and one-hour failure backoff. Validate before atomically replacing cached data. Preserve exact SWE products and zero rates. Bare SWE-2 uses the high variant; dotted versions and provider prefixes resolve to the same official model. Expired cached SWE-2 promotional zeros use documented list prices after October 15, 2026 (UTC cutoff).
 
-The pricing API reports devin-official, so configured SWE prices are no longer reported as unmatched.
+The pricing API reports devin-official, and the dashboard includes this source in official badges, counts, model filters and provider tabs.
 
 ## Alternatives considered
 
@@ -29,4 +29,4 @@ Non-SWE pricing retains existing source selection. SWE defaults estimate publish
 - `tests/devin-pricing.test.ts`
 - `tests/models-dev-pricing.test.ts`
 
-Proved: before adding the Devin resolver, `bun test tests/devin-pricing.test.ts` failed because SWE Fast's source was undefined instead of devin-official; after the fix it passes. Tests also cover tier filtering, zero prices, invalid and duplicate rates, exact products, manual overrides, promotion expiry, cache reuse, failure backoff.
+Proved: before adding the Devin resolver, `bun test tests/devin-pricing.test.ts` failed because SWE Fast's source was undefined instead of devin-official; after the fix it passes. Tests also cover tier filtering, zero prices, invalid and duplicate rates, exact products, manual reset, promotion expiry, cache reuse, failure backoff and dashboard official filters.

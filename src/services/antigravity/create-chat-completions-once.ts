@@ -1,3 +1,11 @@
+import {
+  measureLocalWork,
+  measureLocalIterable,
+  observeUpstreamResponse,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 import { randomUUID } from "node:crypto"
 
 import type {
@@ -107,6 +115,7 @@ async function* translateAntigravitySseToOpenAi(
     if (!readResult.value) {
       continue
     }
+    observeUpstreamResponse(response)
     for (
       let offset = 0;
       offset < readResult.value.byteLength;
@@ -125,7 +134,10 @@ async function* translateAntigravitySseToOpenAi(
         const lineEnd = buffer.indexOf("\n", lineStart)
         if (lineEnd === -1) break
         const line = buffer.slice(lineStart, lineEnd)
-        for (const output of convertSseLine(line, model, state)) yield output
+        for (const output of measureLocalIterable(
+          convertSseLine(line, model, state),
+        ))
+          yield output
         lineStart = lineEnd + 1
       }
       if (lineStart > 0) buffer = buffer.slice(lineStart)
@@ -134,7 +146,10 @@ async function* translateAntigravitySseToOpenAi(
 
   buffer += decoder.decode()
   if (buffer.trim()) {
-    for (const output of convertSseLine(buffer, model, state)) yield output
+    for (const output of measureLocalIterable(
+      convertSseLine(buffer, model, state),
+    ))
+      yield output
   }
 
   yield { data: "[DONE]" }
@@ -164,7 +179,7 @@ async function postAntigravityRequest(
       const response = await fetchWithConnectionProxy(connection, url, {
         method: "POST",
         headers: buildAntigravityHeaders(accessToken, stream),
-        body: JSON.stringify(upstreamBody),
+        body: serializeUpstreamBody(upstreamBody),
         signal,
       })
       if (response.ok) {
@@ -231,10 +246,12 @@ export async function createAntigravityChatCompletionsOnce(
   const model = canonicalNativeModelId(payload.model)
   // Pre-resolve cached thoughtSignatures for assistant messages in history.
   const signatureRegistry = await preResolveSignatures(model, payload.messages)
-  const upstreamBody = translateOpenAiChatToAntigravity(
-    { ...payload, model },
-    projectId,
-    signatureRegistry,
+  const upstreamBody = measureLocalWork("adapterPreparationMs", () =>
+    translateOpenAiChatToAntigravity(
+      { ...payload, model },
+      projectId,
+      signatureRegistry,
+    ),
   )
   const stream = payload.stream === true
 
@@ -297,8 +314,10 @@ export async function createAntigravityChatCompletionsOnce(
     return translateAntigravitySseToOpenAi(response, model)
   }
 
-  const raw = (await response.json()) as Record<string, unknown>
-  const body = convertAntigravityNonStreamResponse(raw, model)
+  const raw = (await readUpstreamJson(response)) as Record<string, unknown>
+  const body = measureLocalWork("responseTranslationMs", () =>
+    convertAntigravityNonStreamResponse(raw, model),
+  )
   if (!isChatCompletionResponse(body)) {
     throw new Error(
       "Antigravity upstream returned invalid chat completion response",

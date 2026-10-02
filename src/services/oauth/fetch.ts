@@ -1,3 +1,5 @@
+import { performanceFetch as fetch } from "~/lib/upstream-performance"
+
 type BunFetchInit = RequestInit & { proxy?: string }
 
 export interface OAuthFetchOptions {

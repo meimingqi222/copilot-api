@@ -70,6 +70,7 @@ export function createTables(db: Database): void {
   // Add performance columns to usage_stats (migration for existing DBs)
   ensureColumn(db, "usage_stats", "ttft_ms", "REAL")
   ensureColumn(db, "usage_stats", "tps", "REAL")
+  ensureColumn(db, "usage_stats", "performance_json", "TEXT")
   ensureColumn(db, "usage_stats", "streaming", "INTEGER DEFAULT 0")
   // Add provider column so usage can be aggregated by provider even after
   // an account/connection is deleted (historical rows keep their provider).

@@ -359,6 +359,7 @@ export function queryUsageRawRows(
       timestamp,
       ttft_ms,
       tps,
+      performance_json,
       streaming
     FROM usage_stats
     WHERE timestamp >= ?

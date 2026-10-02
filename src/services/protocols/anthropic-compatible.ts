@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 /**
  * Anthropic-compatible Protocol Adapter。
  *
@@ -80,7 +86,7 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
           ?? forwardedHeaders["session-id"],
         promptCacheKey: forwardedHeaders["prompt_cache_key"],
       }),
-      body: JSON.stringify(upstreamPayload),
+      body: serializeUpstreamBody(upstreamPayload),
       signal,
     })
 
@@ -100,7 +106,7 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
         response: stream as unknown as AsyncIterable<unknown>,
       } satisfies AdapterMessagesResult
     }
-    const body = (await response.json()) as Record<string, unknown>
+    const body = (await readUpstreamJson(response)) as Record<string, unknown>
     return {
       credentialId: credential.id,
       response: body,

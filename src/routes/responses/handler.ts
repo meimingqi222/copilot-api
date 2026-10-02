@@ -1,6 +1,8 @@
 import type { Context } from "hono"
 
 import { streamSSE } from "hono/streaming"
+import { attachPerformanceStream } from "~/lib/sse"
+import { markPerformanceDispatch } from "~/lib/request-performance"
 
 import type {
   CopilotStreamEventLike,
@@ -132,6 +134,7 @@ export async function handleResponses(c: Context) {
     let accountId: string | undefined
     let result: ResponsesExecutionResult
     const dispatchStart = Date.now()
+    markPerformanceDispatch(c)
     try {
       result = await executeRequest()
     } catch (error) {
@@ -144,6 +147,7 @@ export async function handleResponses(c: Context) {
 
     beginStreamLog(c)
     return streamSSE(c, async (stream) => {
+      attachPerformanceStream(stream, c)
       await writeSseComment(stream)
       const pingInterval = createSsePingInterval(stream)
       let completedResponse: ResponsesResponse | undefined
@@ -279,6 +283,7 @@ export async function handleResponses(c: Context) {
   }
 
   const nonStreamStart = Date.now()
+  markPerformanceDispatch(c)
   const result = await executeRequest()
   applyUsageIdentity(c, result.identity ?? identityFromAdmission(admission))
   c.set("model", payload.model)

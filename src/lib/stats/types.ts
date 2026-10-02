@@ -1,5 +1,7 @@
 // 统计存储相关的类型定义（从 stats-store.ts 拆分而来，纯类型，无逻辑变更）
 
+import type { RequestPerformance } from "~/lib/request-performance"
+
 export interface UsageStats {
   date: string
   accountId: string
@@ -18,6 +20,7 @@ export interface UsageStats {
   ttftMs?: number
   tps?: number
   streaming?: boolean
+  performance?: RequestPerformance
 }
 
 export type UsageModelStats = {
@@ -102,6 +105,7 @@ export type UsageProviderRow = {
 
 /** Per-request usage row for timestamp-range aggregation (grouped in JS). */
 export type UsageRawRow = {
+  performance_json?: string | null
   model: string
   account_id: string
   user_id: string | null

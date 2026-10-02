@@ -11,6 +11,10 @@ import {
 } from "~/lib/memory-diagnostics"
 import { connectionProvider } from "~/lib/provider-connections"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import {
+  markPerformanceDispatch,
+  measurePerformanceStage,
+} from "~/lib/request-performance"
 import { readJsonBody } from "~/lib/request-body"
 import { patchRequestLog } from "~/lib/request-log"
 import { state } from "~/lib/state"
@@ -63,7 +67,9 @@ export async function handleCompletion(c: Context) {
 
 async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
   const signal = c.req.raw.signal
-  let payload = await readJsonBody<ChatCompletionsPayload>(c.req.raw)
+  let payload = await measurePerformanceStage(c, "bodyParseMs", () =>
+    readJsonBody<ChatCompletionsPayload>(c.req.raw, undefined, c),
+  )
   updateMemoryTrace(memoryTraceId, "chat_payload_parsed", {
     model: payload.model,
     messageCount: payload.messages.length,
@@ -124,11 +130,16 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
 
   if (!payload.stream) {
     updateMemoryTrace(memoryTraceId, "chat_token_estimate_start")
-    const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+    const estimatedInputTokens = await measurePerformanceStage(
+      c,
+      "tokenEstimateMs",
+      () => calculateTokens(payload, selectedModel),
+    )
     updateMemoryTrace(memoryTraceId, "chat_token_estimated", {
       estimatedInputTokens,
     })
     const nonStreamStart = Date.now()
+    markPerformanceDispatch(c)
     updateMemoryTrace(memoryTraceId, "chat_dispatch_start")
     const result = await dispatchChatCompletions(
       payload,
@@ -168,7 +179,11 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
   }
 
   updateMemoryTrace(memoryTraceId, "chat_token_estimate_start")
-  const estimatedInputTokens = await calculateTokens(payload, selectedModel)
+  const estimatedInputTokens = await measurePerformanceStage(
+    c,
+    "tokenEstimateMs",
+    () => calculateTokens(payload, selectedModel),
+  )
   updateMemoryTrace(memoryTraceId, "chat_token_estimated", {
     estimatedInputTokens,
   })

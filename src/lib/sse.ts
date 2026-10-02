@@ -3,6 +3,13 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 
 import { logger } from "~/lib/logger"
+import {
+  markPerformanceWrite,
+  markPerformanceText,
+  addPerformanceTiming,
+  hasRequestPerformance,
+  observePerformanceData,
+} from "~/lib/request-performance"
 import { isAbortError } from "~/lib/utils"
 
 export interface SSEStream {
@@ -16,6 +23,11 @@ interface SSEEventLike {
 }
 
 const DEFAULT_PING_INTERVAL_MS = 5_000
+const performanceStreams = new WeakMap<SSEStream, Context>()
+
+export function attachPerformanceStream(stream: SSEStream, c: Context): void {
+  performanceStreams.set(stream, c)
+}
 
 /**
  * Sends SSE comment as keep-alive signal.
@@ -43,11 +55,28 @@ export async function writeSseEvent(
   stream: SSEStream,
   data: string,
   event?: string,
+  parsed?: unknown,
 ): Promise<void> {
-  await stream.writeSSE({
-    ...(event ? { event } : {}),
-    data,
-  })
+  const context = performanceStreams.get(stream)
+  if (context) {
+    if (parsed !== undefined) markPerformanceText(context, parsed)
+    else observePerformanceData(context, data)
+  }
+  const started = hasRequestPerformance(context) ? performance.now() : undefined
+  try {
+    await stream.writeSSE({
+      ...(event ? { event } : {}),
+      data,
+    })
+  } finally {
+    if (started !== undefined)
+      addPerformanceTiming(
+        context,
+        "downstreamWriteMs",
+        performance.now() - started,
+      )
+  }
+  if (context) markPerformanceWrite(context)
 }
 
 export async function writeSseComment(
@@ -78,10 +107,25 @@ export async function writeSseEvents(
   }
 
   if (stream.write) {
+    const context = performanceStreams.get(stream)
+    if (context)
+      for (const item of events) observePerformanceData(context, item.data)
     const batch = events
       .map((item) => formatSseFrame(item.data, item.event))
       .join("")
-    await stream.write(batch)
+    const started =
+      hasRequestPerformance(context) ? performance.now() : undefined
+    try {
+      await stream.write(batch)
+    } finally {
+      if (started !== undefined)
+        addPerformanceTiming(
+          context,
+          "downstreamWriteMs",
+          performance.now() - started,
+        )
+    }
+    if (context) markPerformanceWrite(context)
     return
   }
 
@@ -112,6 +156,7 @@ export function handleSseStream(
   },
 ) {
   return streamSSE(c, async (stream) => {
+    attachPerformanceStream(stream, c)
     const pingInterval =
       options?.skipPing ? undefined : createSsePingInterval(stream)
     const signal = c.req.raw.signal

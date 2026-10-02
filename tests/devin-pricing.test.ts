@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, utimesSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { runInNewContext } from "node:vm"
 
 import {
   refreshDevinPricing,
@@ -67,13 +68,17 @@ describe("SWE official pricing", () => {
     }
   })
 
-  test("manual overrides still win over official defaults", () => {
+  test("manual overrides still win and deleting them restores the official default", () => {
     statsStore.setModelPricing("swe-1-6-fast", {
       promptPricePer1k: 0.1,
       completionPricePer1k: 0.2,
     })
     expect(statsStore.resolveModelPricing("swe-1-6-fast")?.source).toBe(
       "manual",
+    )
+    statsStore.deleteModelPricing("swe-1-6-fast")
+    expect(statsStore.resolveModelPricing("swe-1-6-fast")?.source).toBe(
+      "devin-official",
     )
   })
 
@@ -146,5 +151,22 @@ describe("SWE official pricing", () => {
       fetchDocument: async () => document(),
     })
     expect(resolveDevinPrice("swe-2-high", now)?.promptPricePer1k).toBe(0)
+  })
+
+  test("the admin view includes Devin prices in official counts and filtering", () => {
+    const v = runInNewContext(
+      readFileSync("pages/js/views/usage.js", "utf8") + "\nusageView()",
+      { ViewHelpers: {} },
+    )
+    v.modelPrices = { "swe-2-high": {}, unknown: {} }
+    v.t = (key: string) => key
+    v.pricingSources = { "swe-2-high": "devin-official", unknown: "unmatched" }
+    expect(v.isPricingOfficial("swe-2-high")).toBe(true)
+    expect(v.pricingCounts.official).toBe(1)
+    v.pricingFilter = "official"
+    expect(Array.from(v.filteredModelKeys)).toEqual(["swe-2-high"])
+    expect(v.pricingProviderTabs[0].count).toBe(1)
+    v.pricingFilter = "unmatched"
+    expect(Array.from(v.filteredModelKeys)).toEqual(["unknown"])
   })
 })

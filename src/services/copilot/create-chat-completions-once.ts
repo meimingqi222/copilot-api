@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 import type {
   ApiCredential,
   ProviderConnection,
@@ -69,7 +75,7 @@ export async function createCopilotChatCompletionsOnce(
   }
   const enableVision = ctx?.enableVision ?? hasImageContent(normalizedPayload)
 
-  const body = JSON.stringify(normalizedPayload)
+  const body = serializeUpstreamBody(normalizedPayload)
 
   const headers: Record<string, string> = {
     ...copilotHeadersForToken(token, enableVision),
@@ -154,5 +160,5 @@ export async function createCopilotChatCompletionsOnce(
     )) as unknown as AsyncIterable<CopilotStreamEvent>
   }
 
-  return (await response.json()) as ChatCompletionResponse
+  return (await readUpstreamJson(response)) as ChatCompletionResponse
 }

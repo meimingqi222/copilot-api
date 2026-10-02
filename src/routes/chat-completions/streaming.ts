@@ -21,6 +21,7 @@ import {
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
+import { markPerformanceDispatch } from "~/lib/request-performance"
 import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
@@ -152,7 +153,12 @@ export function handleStreamingResponse(
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
-          await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+          await writeSseEvent(
+            stream,
+            JSON.stringify(normalizeChunk(chunk)),
+            undefined,
+            chunk,
+          )
           if (!downstreamCommitted) {
             downstreamCommitted = true
             updateMemoryTrace(memoryTraceId, "chat_downstream_committed", {
@@ -253,6 +259,7 @@ export async function handleStreamingCompletion(
   updateMemoryTrace(memoryTraceId, "chat_dispatch_start")
   let result: ChatDispatchResult
   const dispatchStart = Date.now()
+  markPerformanceDispatch(c)
   try {
     result = await dispatchChatCompletions(payload, admission, signal, c, {
       forwardedHeaders: extractChatForwardedHeaders(c),
@@ -357,7 +364,12 @@ export async function handleStreamingCompletion(
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
-          await writeSseEvent(stream, JSON.stringify(normalizeChunk(chunk)))
+          await writeSseEvent(
+            stream,
+            JSON.stringify(normalizeChunk(chunk)),
+            undefined,
+            chunk,
+          )
           if (!downstreamCommitted) {
             downstreamCommitted = true
             updateMemoryTrace(

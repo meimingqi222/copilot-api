@@ -45,6 +45,44 @@ const i18n = {
       "nav.group.models": "模型与路由",
       "nav.group.monitoring": "运行监控",
       "nav.group.access": "访问与安全",
+      "nav.system-config": "系统配置",
+      "system.subtitle": "即时控制诊断开销；保留基础统计、请求追踪和错误告警。",
+      "system.source.environment":
+        "配置来源：启动参数 / 环境变量。首次保存后，WebUI 配置优先。",
+      "system.source.webui": "配置来源：WebUI（已持久化，重启后保留）。",
+      "system.logLevel": "控制台与文件日志级别",
+      "system.quotaDisplayMode": "配额百分比显示口径",
+      "system.quotaMode.remaining": "剩余",
+      "system.quotaMode.used": "已用",
+      "system.quotaDisplayHint":
+        "统一配额页与请求追踪的百分比、进度条。默认显示剩余；仅改变展示，不改变路由决策。告警颜色仍反映真实剩余额度。",
+      "trace.ev.quotaRemaining": "剩余额度 {n}%",
+      "trace.ev.quotaUsed": "已用额度 {n}%",
+      "system.level.warn": "警告与错误（低开销）",
+      "system.level.info": "常规信息（推荐）",
+      "system.level.debug": "调试日志（临时）",
+      "system.logHint":
+        "关闭调试日志可减少格式化和写盘，但无法消除所有调用方预先构造日志的开销。",
+      "system.performanceDetails": "详细性能指标",
+      "system.performanceDetailsHint":
+        "记录首输出、首文本、首写入和协议转换耗时。关闭仅影响新请求，基础 TPS、用量与原有 TTFT 仍保留。",
+      "system.memoryVerbose": "详细内存检查点日志",
+      "system.memoryVerboseHint":
+        "逐请求记录内存检查点；关闭不会禁用低频内存压力监控与警告。",
+      "system.requestDump": "原始请求与失败上游请求落盘",
+      "system.requestDumpHint":
+        "高开销：读取请求体、序列化并写盘。请求内容可能包含提示词、代码与个人信息，不建议日常开启。",
+      "system.acknowledge":
+        "我了解请求内容可能包含敏感数据，并会在排查结束后清理已有 dump 文件。关闭开关不会删除历史文件。",
+      "system.duration": "临时调试时长（1–120 分钟）",
+      "system.expiryHint":
+        "到期自动关闭请求 dump 与详细内存日志，调试日志恢复常规级别；详细性能指标保持所选状态。",
+      "system.expiresAt": "最近一次调试到期时间（已过期则已关闭）",
+      "system.save": "保存并立即生效",
+      "system.recommended": "填入推荐设置",
+      "system.saved": "已保存并生效",
+      "system.boundaries":
+        "端口、代理、凭据与协议行为不属于调试开关。日志目录、轮转大小和保留天数暂仍通过环境变量配置。",
       "layout.more": "更多操作",
       "layout.allStatuses": "全部启用状态",
       "layout.enabled": "已启用",
@@ -425,6 +463,33 @@ const i18n = {
       "usage.refreshError": "用量数据刷新失败",
       "usage.pricingSaved": "模型价格已保存",
       "usage.pricingSaveError": "保存失败：",
+      "usage.pricingSearchPlaceholder":
+        "搜索模型名称 (如 gpt-4, claude, deepseek)...",
+      "usage.pricingFilterAll": "全部",
+      "usage.pricingFilterUnmatched": "需配置",
+      "usage.pricingFilterManual": "已自定义",
+      "usage.pricingFilterOfficial": "官方默认",
+      "usage.pricingSourceCustom": "自定义",
+      "usage.pricingSourceOfficial": "官方",
+      "usage.pricingSourceUnmatched": "未配置",
+      "usage.pricingColModel": "模型名称",
+      "usage.pricingColPrompt": "Prompt ($/1M)",
+      "usage.pricingColCompletion": "Completion ($/1M)",
+      "usage.pricingColCache": "缓存读 / 写 ($/1M)",
+      "usage.pricingColTier": "长上下文阶梯",
+      "usage.pricingColActions": "操作",
+      "usage.pricingNoTier": "无分档",
+      "usage.pricingConfigureTier": "配置阶梯",
+      "usage.pricingTierActive": ">{threshold}k 阶梯",
+      "usage.pricingResetToDefault": "恢复默认价格",
+      "usage.pricingResetConfirm": "确定将模型 {model} 恢复为官方默认价格吗？",
+      "usage.pricingResetSuccess": "已恢复为官方默认价格",
+      "usage.pricingSaveAll": "保存全部修改",
+      "usage.pricingSaveAllSuccess": "已成功保存 {count} 个模型的价格配置",
+      "usage.pricingShowingCount": "显示 {shown} / 共 {total} 个模型",
+      "usage.pricingModifiedCount": "已修改 {count} 个",
+      "usage.pricingNoMatch": "未找到匹配的模型",
+      "usage.pricingProviderAll": "全部供应商 / 前缀",
       "usage.today": "今日",
       "usage.week": "本周",
       "usage.month": "本月",
@@ -1139,10 +1204,103 @@ const i18n = {
       "perf.byProviderDesc": "同一模型在不同提供商的速度可能差很大",
       "perf.provider": "提供商",
       "perf.allProviders": "全部提供商",
-      "perf.ttftDesc": "流式请求中从发出请求到收到第一个 token 的耗时",
+      "perf.ttftDesc":
+        "调度开始到首次有效输出（含思考及工具调用），不含调度前预处理",
+      "perf.detailTitle": "分段性能（新请求）",
+      "perf.detailDesc":
+        "按 API、HTTP/WS、流式及原生/转换路径分组。首输出后 TPS = 输出 Token / 首次有效输出至用量记录的耗时，非纯解码速度；首输出可能是思考或工具调用，首正文单独记录。首帧写出排除心跳，但可能是控制帧；写出指服务端完成写入，不代表客户端收到。请求转换为本地准备耗时；首帧转译等待包含转换所需缓冲，不是纯 CPU 时间。仅新请求有数据，缺失项显示 —，各项存在重叠，不能直接相加。",
+      "perf.detailEmpty":
+        "更新后尚无带分段计时的请求，请完成新请求后刷新。历史数据不会推算或补零。",
+      "perf.generationTps": "首输出后 TPS",
+      "perf.samples": "样本",
+      "perf.metric": "指标",
+      "perf.average": "平均",
+      "perf.translated": "转换",
+      "perf.native": "原生",
+      "perf.nonStreaming": "非流式",
+      "perf.outputTtftMs": "请求进入 → 首次有效输出",
+      "perf.textTtftMs": "请求进入 → 首正文可用",
+      "perf.firstWriteMs": "请求进入 → 首帧写出",
+      "perf.preprocessingMs": "请求进入 → 开始调度",
+      "perf.bodyParseMs": "请求体读取与解析",
+      "perf.bodyReadMs": "请求体读取（含客户端上传等待）",
+      "perf.jsonDecodeMs": "请求 JSON 解码与解析",
+      "perf.admissionMs": "请求准入（含路由决策）",
+      "perf.routingDecisionMs": "路由分组决策（含分类器等待）",
+      "perf.tokenEstimateMs": "本地输入 Token 估算",
+      "perf.dispatchToOutputMs": "调度 → 首次有效输出",
+      "perf.requestTranslationMs": "请求转换准备（重试累计）",
+      "perf.firstTranslatedFrameMs": "首个上游帧 → 首个转换帧",
+      "perf.rateLimitWaitMs": "本地限流等待（累计）",
+      "perf.failedAttemptMs": "失败调度尝试耗时（含限流，累计）",
+      "perf.upstreamHeadersMs": "HTTP 发起 → 收到响应头（累计）",
+      "perf.upstreamConnectMs": "上游 WS 连接建立（累计）",
+      "perf.upstreamQueueMs": "上游 WS 会话排队（累计）",
+      "perf.upstreamFirstEventMs": "最后一次上游发起 → 首事件 / 数据块",
+      "perf.upstreamBodyReadMs": "非流式响应读取与解析（累计）",
+      "perf.adapterPreparationMs": "供应商请求格式准备（累计）",
+      "perf.responseTranslationMs": "响应本地转换（累计）",
+      "perf.streamTranslationActiveMs": "流转换推进（排除上游拉取等待，累计）",
+      "perf.downstreamWriteMs": "下游写入调用耗时（含背压，累计）",
+      "perf.outputToWriteMs": "有效输出观测 → 下一次成功写入",
+      "perf.upstreamToOutputMs": "首上游事件 → 有效输出观测",
+      "perf.responseReadyMs": "请求进入 → 非流式调度结果就绪",
       "perf.streamingTpsDesc":
         "从请求发出到响应结束的完整 token 速率（含首字延迟和缓冲）",
       "perf.nonStreamingTpsDesc": "完整的请求-响应周期 token 速率",
+
+      // 性能监控 UX 重构增强
+      "perf.searchPlaceholder": "搜索模型、端点或供应商...",
+      "perf.viewPipeline": "链路分析",
+      "perf.viewTable": "指标矩阵",
+      "perf.hideEmpty": "仅看有效指标",
+      "perf.hideEmptyHint": "自动隐藏样本数为 0 的不适用指标",
+      "perf.expandAll": "展开全部细项",
+      "perf.collapseAll": "折叠全部细项",
+      "perf.channelCount": "{count} 个通道",
+      "perf.noFilteredDetails": "没有找到符合条件的性能明细",
+      "perf.clearFilter": "清空搜索与重置筛选",
+
+      // 核心体感指标 Hero Metrics
+      "perf.heroTtft": "首次有效输出 (TTFT)",
+      "perf.heroTtftSub": "首个内容时延 (含思考/工具)",
+      "perf.heroText": "首正文可用 (Text TTFT)",
+      "perf.heroTextSub": "思考/工具后的正文时延",
+      "perf.heroFirstWrite": "首帧写出 (First Write)",
+      "perf.heroFirstWriteSub": "向客户端写出首包时延",
+      "perf.heroTps": "首输出后 TPS",
+      "perf.heroTpsSub": "Token 吐字流式速率",
+      "perf.heroReady": "结果就绪 (Ready)",
+      "perf.heroReadySub": "非流式完整响应就绪时延",
+
+      // 生命周期阶段 Lifecycle Stages
+      "perf.stagesTitle": "生命周期耗时流水线",
+      "perf.pipelineBreakdown": "耗时占比流水线",
+      "perf.pipelineDesc": "按请求流转顺序拆解端到端耗时占比，快速定位性能瓶颈",
+      "perf.stage.gateway": "网关接入与准入",
+      "perf.stage.gatewayDesc":
+        "请求体读取、JSON解析、鉴权、路由准入与Token估算",
+      "perf.stage.dispatch": "调度与格式准备",
+      "perf.stage.dispatchDesc":
+        "供应商请求格式序列化、协议转换准备与本地限流排队",
+      "perf.stage.upstream": "上游响应与推理",
+      "perf.stage.upstreamDesc":
+        "上游网络往返、等待首个数据块与大模型前置思考推理",
+      "perf.stage.downstream": "流转换与下游写出",
+      "perf.stage.downstreamDesc":
+        "响应协议转译推进、下游客户端数据写入与背压控制",
+
+      // 智能性能洞察
+      "perf.insightUpstreamBottleneck":
+        "上游模型响应与推理占耗时绝对主导（{pct}%），代理层自身开销极小",
+      "perf.insightClientUpload":
+        "网关前置耗时主要为客户端网络上传等待（{ms}）",
+      "perf.insightThinkingTime":
+        "包含约 {sec}s 模型前置思考/工具调用耗时（正文时延相应后移）",
+      "perf.insightRateLimited":
+        "检测到本地限流等待（累计 {ms}），建议关注通道并发或配额策略",
+      "perf.insightFailoverRetries":
+        "发生过失败调度并触发重试（累计耗时 {ms}）",
 
       // Trace (请求追踪)
       "trace.title": "请求追踪",
@@ -1199,8 +1357,10 @@ const i18n = {
       "trace.noModel": "（无模型）",
       "trace.unknownClient": "未知客户端",
       "trace.routing": "这次请求是怎么路由的",
-      "trace.replay": "重放",
-      "trace.replayAll": "全部重放",
+      "trace.replay": "重放选中请求",
+      "trace.replayAll": "批量播放当前列表（{n} 条）",
+      "trace.replayScope":
+        "仅播放当前列表中已结束请求的追踪动画，不重新发送 API 请求。",
       "trace.backToLive": "回到实时",
       "trace.success": "成功",
       "trace.failed": "失败",
@@ -1293,6 +1453,45 @@ const i18n = {
       "nav.group.models": "Models & Routing",
       "nav.group.monitoring": "Monitoring",
       "nav.group.access": "Access & Security",
+      "nav.system-config": "System Settings",
+      "system.subtitle":
+        "Control diagnostic overhead live; keep basic usage, traces and error alerts.",
+      "system.source.environment":
+        "Source: startup options / environment. Saved WebUI settings take precedence.",
+      "system.source.webui": "Source: WebUI (persisted across restarts).",
+      "system.logLevel": "Console and file log level",
+      "system.quotaDisplayMode": "Quota percentage display",
+      "system.quotaMode.remaining": "Remaining",
+      "system.quotaMode.used": "Used",
+      "system.quotaDisplayHint":
+        "Use the same percentages and bars on Quotas and Request Traces. Defaults to remaining; routing is unchanged. Warning colors still reflect actual remaining quota.",
+      "trace.ev.quotaRemaining": "remaining quota {n}%",
+      "trace.ev.quotaUsed": "used quota {n}%",
+      "system.level.warn": "Warnings and errors (lower overhead)",
+      "system.level.info": "Information (recommended)",
+      "system.level.debug": "Debug (temporary)",
+      "system.logHint":
+        "Disabling debug reduces formatting and disk writes, but not all eagerly built log arguments.",
+      "system.performanceDetails": "Detailed performance metrics",
+      "system.performanceDetailsHint":
+        "Measure first output, text, write and translation timings. Disabling affects new requests only; basic TPS, usage and original TTFT remain.",
+      "system.memoryVerbose": "Verbose memory checkpoints",
+      "system.memoryVerboseHint":
+        "Log per-request memory checkpoints. The low-frequency memory watchdog and pressure warnings remain enabled.",
+      "system.requestDump": "Dump incoming and failed upstream requests",
+      "system.requestDumpHint":
+        "Higher overhead: body reads, serialization and disk writes. Contents may include prompts, code and personal data. Keep off normally.",
+      "system.acknowledge":
+        "I understand dumps may contain sensitive data and will clean up existing files after diagnosis. Disabling does not delete old files.",
+      "system.duration": "Temporary debug duration (1–120 minutes)",
+      "system.expiryHint":
+        "Expiry disables dumps and verbose memory logs, and restores debug logging to info. Performance metrics keep their selected setting.",
+      "system.expiresAt": "Last debug expiry (past means disabled)",
+      "system.save": "Save and apply now",
+      "system.recommended": "Fill recommended settings",
+      "system.saved": "Saved and applied",
+      "system.boundaries":
+        "Ports, proxies, credentials and protocol semantics are not debug switches. Log paths, rotation sizes and retention remain environment settings for now.",
       "layout.more": "More actions",
       "layout.allStatuses": "All enablement states",
       "layout.enabled": "Enabled",
@@ -1691,6 +1890,34 @@ const i18n = {
       "usage.refreshError": "Failed to refresh usage data",
       "usage.pricingSaved": "Model pricing saved",
       "usage.pricingSaveError": "Save failed: ",
+      "usage.pricingSearchPlaceholder":
+        "Search models (e.g. gpt-4, claude, deepseek)...",
+      "usage.pricingFilterAll": "All",
+      "usage.pricingFilterUnmatched": "Needs Setup",
+      "usage.pricingFilterManual": "Customized",
+      "usage.pricingFilterOfficial": "Official",
+      "usage.pricingSourceCustom": "Custom",
+      "usage.pricingSourceOfficial": "Official",
+      "usage.pricingSourceUnmatched": "Unmatched",
+      "usage.pricingColModel": "Model",
+      "usage.pricingColPrompt": "Prompt ($/1M)",
+      "usage.pricingColCompletion": "Completion ($/1M)",
+      "usage.pricingColCache": "Cache Read / Write ($/1M)",
+      "usage.pricingColTier": "Tier Repricing",
+      "usage.pricingColActions": "Actions",
+      "usage.pricingNoTier": "No tier",
+      "usage.pricingConfigureTier": "Configure Tier",
+      "usage.pricingTierActive": ">{threshold}k Tier",
+      "usage.pricingResetToDefault": "Reset to Default",
+      "usage.pricingResetConfirm":
+        "Reset pricing for {model} to official default?",
+      "usage.pricingResetSuccess": "Reset to default pricing",
+      "usage.pricingSaveAll": "Save All Changes",
+      "usage.pricingSaveAllSuccess": "Successfully saved {count} model prices",
+      "usage.pricingShowingCount": "Showing {shown} of {total} models",
+      "usage.pricingModifiedCount": "{count} modified",
+      "usage.pricingNoMatch": "No matching models found",
+      "usage.pricingProviderAll": "All Providers / Prefixes",
       "usage.today": "Today",
       "usage.week": "This Week",
       "usage.month": "This Month",
@@ -2422,11 +2649,113 @@ const i18n = {
       "perf.provider": "Provider",
       "perf.allProviders": "All Providers",
       "perf.ttftDesc":
-        "Time from request dispatch to first token received (streaming)",
+        "Dispatch to first meaningful output (including reasoning/tools); excludes pre-dispatch work",
+      "perf.detailTitle": "Segmented performance (new requests)",
+      "perf.rateLimitWaitMs": "Local rate-limit wait (total)",
+      "perf.failedAttemptMs":
+        "Failed dispatch attempts (includes pacing, total)",
+      "perf.upstreamHeadersMs": "HTTP start → response headers (total)",
+      "perf.upstreamConnectMs": "Upstream WS connection setup (total)",
+      "perf.upstreamQueueMs": "Upstream WS session queue (total)",
+      "perf.upstreamFirstEventMs":
+        "Latest upstream start → first event / chunk",
+      "perf.upstreamBodyReadMs": "Non-streaming body read and parse (total)",
+      "perf.adapterPreparationMs": "Provider request preparation (total)",
+      "perf.responseTranslationMs": "Local response translation (total)",
+      "perf.streamTranslationActiveMs":
+        "Stream advancement excluding upstream pulls (total)",
+      "perf.downstreamWriteMs":
+        "Downstream write calls including backpressure (total)",
+      "perf.outputToWriteMs": "Output observed → next successful write",
+      "perf.upstreamToOutputMs": "First upstream event → output observed",
+      "perf.responseReadyMs":
+        "Request entry → non-streaming dispatch result ready",
+      "perf.detailDesc":
+        "Grouped by API, HTTP/WS, streaming and native/translated path. Post-output TPS divides output tokens by first meaningful output to usage recording, not pure decode speed. Reasoning/tools count as output; visible text is timed separately. First write excludes heartbeats but may be a control frame; it is server-side, not client receipt. Request translation measures local preparation; first-frame translation includes required buffering, not just CPU. New samples only; missing values are not zero. Timings overlap and must not be added together.",
+      "perf.detailEmpty":
+        "No segmented samples yet. Complete a new request and refresh. Historical timings are not inferred.",
+      "perf.generationTps": "Post-output TPS",
+      "perf.samples": "samples",
+      "perf.metric": "Metric",
+      "perf.average": "Average",
+      "perf.translated": "Translated",
+      "perf.native": "Native",
+      "perf.nonStreaming": "Non-streaming",
+      "perf.outputTtftMs": "Request entry → meaningful output",
+      "perf.textTtftMs": "Request entry → visible text available",
+      "perf.firstWriteMs": "Request entry → first frame written",
+      "perf.preprocessingMs": "Request entry → dispatch",
+      "perf.bodyParseMs": "Request body read and parse",
+      "perf.bodyReadMs": "Request body read (includes client upload wait)",
+      "perf.jsonDecodeMs": "Request JSON decoding and parsing",
+      "perf.admissionMs": "Request admission (includes routing decision)",
+      "perf.routingDecisionMs":
+        "Routing group decision (includes classifier wait)",
+      "perf.tokenEstimateMs": "Local input token estimation",
+      "perf.dispatchToOutputMs": "Dispatch → meaningful output",
+      "perf.requestTranslationMs":
+        "Request translation preparation (all attempts)",
+      "perf.firstTranslatedFrameMs":
+        "First upstream frame → first translated frame",
       "perf.streamingTpsDesc":
         "Full response rate including TTFT and buffering (request to last token)",
       "perf.nonStreamingTpsDesc":
         "Overall tokens-per-second for the full request-response cycle",
+
+      // Performance UX Redesign
+      "perf.searchPlaceholder": "Search models, endpoints, or providers...",
+      "perf.viewPipeline": "Pipeline View",
+      "perf.viewTable": "Metrics Matrix",
+      "perf.hideEmpty": "Hide Empty Metrics",
+      "perf.hideEmptyHint":
+        "Automatically hide unmeasured metrics with 0 samples",
+      "perf.expandAll": "Expand All",
+      "perf.collapseAll": "Collapse All",
+      "perf.channelCount": "{count} channels",
+      "perf.noFilteredDetails": "No performance details match the criteria",
+      "perf.clearFilter": "Clear search or reset filter",
+
+      // Hero Metrics
+      "perf.heroTtft": "First Meaningful Output (TTFT)",
+      "perf.heroTtftSub": "Initial content delay (incl. reasoning/tools)",
+      "perf.heroText": "Visible Text Available (Text TTFT)",
+      "perf.heroTextSub": "Visible text delay after reasoning",
+      "perf.heroFirstWrite": "First Frame Written",
+      "perf.heroFirstWriteSub": "First packet written to client",
+      "perf.heroTps": "Post-Output TPS",
+      "perf.heroTpsSub": "Stream token generation speed",
+      "perf.heroReady": "Result Ready",
+      "perf.heroReadySub": "Non-streaming complete response delay",
+
+      // Lifecycle Stages
+      "perf.stagesTitle": "Lifecycle Latency Pipeline",
+      "perf.pipelineBreakdown": "Pipeline Latency Breakdown",
+      "perf.pipelineDesc":
+        "Deconstruct latency across request lifecycle stages to pinpoint bottlenecks",
+      "perf.stage.gateway": "Gateway & Admission",
+      "perf.stage.gatewayDesc":
+        "Body upload/read, JSON decoding, auth, routing decision, and token estimation",
+      "perf.stage.dispatch": "Dispatch & Preparation",
+      "perf.stage.dispatchDesc":
+        "Provider request formatting, translation prep, and local rate-limit queues",
+      "perf.stage.upstream": "Upstream & Inference",
+      "perf.stage.upstreamDesc":
+        "Network roundtrip, waiting for first upstream chunk, and model reasoning",
+      "perf.stage.downstream": "Streaming & Delivery",
+      "perf.stage.downstreamDesc":
+        "Translation iterator progress, downstream client socket write, and backpressure",
+
+      // Smart Insights
+      "perf.insightUpstreamBottleneck":
+        "Upstream model response and generation accounts for {pct}% of total latency; proxy overhead is minimal",
+      "perf.insightClientUpload":
+        "Gateway latency is dominated by client upload network time ({ms})",
+      "perf.insightThinkingTime":
+        "Includes ~{sec}s model reasoning / tool call time before visible text",
+      "perf.insightRateLimited":
+        "Local rate-limit pacing observed (cumulative {ms})",
+      "perf.insightFailoverRetries":
+        "Failed dispatch attempts and retries observed ({ms})",
 
       // Trace (Requests)
       "trace.title": "Requests",
@@ -2484,8 +2813,10 @@ const i18n = {
       "trace.noModel": "(no model)",
       "trace.unknownClient": "Unknown client",
       "trace.routing": "How this request was routed",
-      "trace.replay": "Replay",
-      "trace.replayAll": "Replay all",
+      "trace.replay": "Replay selected request",
+      "trace.replayAll": "Play current list ({n} requests)",
+      "trace.replayScope":
+        "Play trace animations for completed requests in this list only. No API requests are resent.",
       "trace.backToLive": "Back to live",
       "trace.success": "Success",
       "trace.failed": "Failed",

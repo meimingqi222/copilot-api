@@ -1,4 +1,5 @@
 import { events } from "fetch-event-stream"
+import { observeUpstreamResponse } from "~/lib/upstream-performance"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
@@ -334,6 +335,7 @@ export async function safeSseStream<T>(
     opts?.firstByteTimeoutMs,
   )
   if (first.done) return raw
+  observeUpstreamResponse(response)
 
   const error = isError(first.value)
   if (error) {

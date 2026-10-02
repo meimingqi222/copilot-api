@@ -254,19 +254,37 @@ usageApiRoutes.get("/pricing", (c) => {
       break
     }
   }
+  const providerHints = buildModelProviderHints()
+  const providers: Record<string, string> = {}
+  for (const id of Object.keys(pricing)) {
+    const hint = providerHints.get(id)
+    if (hint) {
+      providers[id] = hint
+    } else if (id.includes("/")) {
+      providers[id] = id.split("/")[0]
+    }
+  }
+
   const filteredPricing = Object.fromEntries(
     Object.entries(pricing).filter(([id]) => !toRemove.has(id)),
   )
   const filteredSources = Object.fromEntries(
     Object.entries(sources).filter(([id]) => !toRemove.has(id)),
   )
+  const filteredProviders = Object.fromEntries(
+    Object.entries(providers).filter(([id]) => !toRemove.has(id)),
+  )
 
-  return c.json({ pricing: filteredPricing, sources: filteredSources })
+  return c.json({
+    pricing: filteredPricing,
+    sources: filteredSources,
+    providers: filteredProviders,
+  })
 })
 
 // Update model pricing
-usageApiRoutes.put("/pricing/:model", async (c) => {
-  const model = c.req.param("model")
+usageApiRoutes.put("/pricing/:model{.+}", async (c) => {
+  const model = decodeURIComponent(c.req.param("model"))
   let body: {
     promptPricePer1k?: number
     completionPricePer1k?: number
@@ -326,6 +344,41 @@ usageApiRoutes.put("/pricing/:model", async (c) => {
 
   return c.json({
     pricing: statsStore.getModelPricing(model),
+  })
+})
+
+// Reset (delete) manual model pricing back to default
+usageApiRoutes.delete("/pricing/:model{.+}", (c) => {
+  const model = decodeURIComponent(c.req.param("model"))
+  statsStore.deleteModelPricing(model)
+  const providerHints = buildModelProviderHints()
+  const resolved = statsStore.resolveModelPricing(
+    model,
+    providerHints.get(model),
+  )
+  return c.json({
+    ok: true,
+    pricing:
+      resolved ?
+        {
+          promptPricePer1k: resolved.promptPricePer1k,
+          completionPricePer1k: resolved.completionPricePer1k,
+          cacheReadPricePer1k: resolved.cacheReadPricePer1k,
+          cacheWritePricePer1k: resolved.cacheWritePricePer1k,
+          ...toExtended(resolved),
+        }
+      : {
+          promptPricePer1k: 0,
+          completionPricePer1k: 0,
+          cacheReadPricePer1k: 0,
+          cacheWritePricePer1k: 0,
+          contextThresholdTokens: null,
+          extendedPromptPricePer1k: null,
+          extendedCompletionPricePer1k: null,
+          extendedCacheReadPricePer1k: null,
+          extendedCacheWritePricePer1k: null,
+        },
+    source: resolved?.source ?? "unmatched",
   })
 })
 
@@ -835,12 +888,14 @@ usageApiRoutes.get("/performance", (c) => {
       startMs,
       endMs,
     })
+    const details = statsStore.getPerformanceDetailsInRange({ startMs, endMs })
     const byProvider = statsStore
       .getPerformanceByProviderModelInRange({ startMs, endMs })
       .map((row) => ({ ...row, providerLabel: providerLabel(row.provider) }))
 
     return c.json({
       performance,
+      details,
       byProvider,
       period: { startDate, endDate, timeZone },
     })

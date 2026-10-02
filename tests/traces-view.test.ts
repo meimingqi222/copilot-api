@@ -19,6 +19,74 @@ function view(api = {}) {
 }
 
 describe("request trace view", () => {
+  test("selected replay plays only the selected request without loading history", async () => {
+    const v = view()
+    v.mode = "history"
+    v.history = [{ requestId: "first" }, { requestId: "selected" }]
+    v.selectedId = "selected"
+    let played: Array<{ requestId: string }> = []
+    v.playFrames = (frames: typeof played) => {
+      played = frames
+    }
+    v.showHistory = () => {
+      throw new Error("Unexpected history load")
+    }
+    await v.replayOne()
+    expect(played.map((frame) => frame.requestId)).toEqual(["selected"])
+    expect(played[0]).not.toBe(v.history[1])
+  })
+
+  test("batch count and playback use only the current list's completed requests", async () => {
+    const v = view()
+    v.traces = [
+      { requestId: "live-complete" },
+      { requestId: "inflight", inFlight: true },
+    ]
+    v.history = [{ requestId: "filtered-history" }]
+    let played: Array<{ requestId: string }> = []
+    v.playFrames = (frames: typeof played) => {
+      played = frames
+    }
+    v.showHistory = () => {
+      throw new Error("Unexpected history load")
+    }
+    expect(v.replayableFrames.length).toBe(1)
+    await v.replayAll()
+    expect(played.map((frame) => frame.requestId)).toEqual(["live-complete"])
+    v.mode = "history"
+    expect(v.replayableFrames.length).toBe(1)
+    await v.replayAll()
+    expect(played.map((frame) => frame.requestId)).toEqual(["filtered-history"])
+  })
+
+  test("unavailable selections and busy state cannot start replay", async () => {
+    const v = view()
+    let calls = 0
+    v.playFrames = () => {
+      calls++
+    }
+    await v.replayOne()
+    await v.replayOne({ requestId: "inflight", inFlight: true })
+    v.replaying = true
+    await v.replayOne({ requestId: "complete" })
+    await v.replayAll()
+    v.replaying = false
+    v.historyLoading = true
+    await v.replayOne({ requestId: "complete" })
+    await v.replayAll()
+    expect(calls).toBe(0)
+  })
+
+  test("live replay retains the selection after playback completes", async () => {
+    const v = view()
+    v.traces = [{ requestId: "selected", latencyMs: 1 }]
+    v.selectedId = "selected"
+    await v.replayOne()
+    expect(v.mode).toBe("history")
+    expect(v.selected?.requestId).toBe("selected")
+    expect(v.history[0]).not.toBe(v.traces[0])
+  })
+
   test("model-less trace rows identify the request instead of a dash", () => {
     const traceView = view()
     expect(

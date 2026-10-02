@@ -6,7 +6,8 @@ import invariant from "tiny-invariant"
 
 import { bunWebsocket } from "~/lib/bun-websocket"
 import { flushAllPersistentMaps } from "~/lib/cache/persistent-map"
-import { initLogger, logger } from "~/lib/logger"
+import { initLogger, logger, setRuntimeLogLevel } from "~/lib/logger"
+import { initializeSystemConfig, SYSTEM_CONFIG_KEY } from "~/lib/system-config"
 import { startMemoryDiagnostics } from "~/lib/memory-diagnostics"
 import { loadModelAliases } from "~/lib/model-aliases"
 import { startAntigravityVersionUpdater } from "~/services/antigravity/version"
@@ -197,6 +198,13 @@ async function runServer(options: RunServerOptions): Promise<void> {
   await ensurePaths()
   await acquireServerLock()
   initLogger({ verbose: options.verbose })
+  statsStore.init()
+  initializeSystemConfig({
+    value: statsStore.getConfig(SYSTEM_CONFIG_KEY),
+    verbose: options.verbose,
+    save: (value) => statsStore.setConfig(SYSTEM_CONFIG_KEY, value),
+    onChange: (settings) => setRuntimeLogLevel(settings.logLevel),
+  })
   startMemoryDiagnostics()
   if (options.verbose) {
     logger.info("Verbose logging enabled")
@@ -266,9 +274,6 @@ async function runServer(options: RunServerOptions): Promise<void> {
 
   // Load guard blacklist
   await loadGuard()
-
-  // Initialize stats store
-  statsStore.init()
 
   const serverUrl = `http://localhost:${options.port}`
 

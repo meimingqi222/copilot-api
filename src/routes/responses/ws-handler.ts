@@ -40,7 +40,14 @@ import {
 import { appendRequestLogSync } from "~/lib/request-log-persist"
 import { resolveTranscriptScopeId } from "~/lib/request-scope"
 import { publishTrace } from "~/lib/trace-bus"
+import {
+  markPerformanceDispatch,
+  markPerformanceText,
+  addPerformanceTiming,
+  markPerformanceWrite,
+} from "~/lib/request-performance"
 import { targetKey } from "~/lib/route-target"
+import { runWithPerformanceContext } from "~/lib/upstream-performance"
 import {
   parseThinkingModel,
   thinkingConfigToResponsesEffort,
@@ -389,6 +396,7 @@ async function processResponseCreate(
   let httpRecoveryTried = false
   const tried = new Set<string>()
   const turnStarted = Date.now()
+  markPerformanceDispatch(c)
   // 压缩 turn 复用 HTTP 已测通的路径：首轮即强制上游 HTTP，不经过 WS 尝试。
   // 压缩 input 本来就是全量历史 + 自包含，WS 的增量 input 优势吃不到，
   // 且能避开上游 WS 的 transcript/链式语义坑。
@@ -438,22 +446,24 @@ async function processResponseCreate(
     if (signal.aborted) releaseOnAbort()
     else signal.addEventListener("abort", releaseOnAbort, { once: true })
     try {
-      outcome = await runResponsesAttempt({
-        c,
-        ws,
-        payload,
-        signal,
-        executionSessionId,
-        transcriptScopeId,
-        sessionHeaders,
-        admission,
-        current,
-        tried,
-        httpRecoveryTried,
-        memoryTraceId,
-        turnStarted,
-        compact: isCompactRequest || undefined,
-      })
+      outcome = await runWithPerformanceContext(c, () =>
+        runResponsesAttempt({
+          c,
+          ws,
+          payload,
+          signal,
+          executionSessionId,
+          transcriptScopeId,
+          sessionHeaders,
+          admission,
+          current,
+          tried,
+          httpRecoveryTried,
+          memoryTraceId,
+          turnStarted,
+          compact: isCompactRequest || undefined,
+        }),
+      )
     } finally {
       signal.removeEventListener("abort", releaseOnAbort)
       // A WS turn is fully pumped inside `runResponsesAttempt`, so the lease
@@ -612,6 +622,11 @@ async function runResponsesAttempt(
       )
     } else {
       const pumped = await pumpWithLeadingBuffer(ws, result.response, {
+        onFrame: (frame) => markPerformanceText(c, frame),
+        onWrite: (ms) => {
+          addPerformanceTiming(c, "downstreamWriteMs", ms)
+          markPerformanceWrite(c)
+        },
         onFirstOutput: (timestamp) =>
           markTraceFirstOutput(c, timestamp - turnStarted),
         onCommit: (details) => {

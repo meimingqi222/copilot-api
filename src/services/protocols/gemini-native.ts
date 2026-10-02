@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 /**
  * Gemini (Code Assist) Native Protocol Adapter。
  *
@@ -119,7 +125,7 @@ export const geminiNativeAdapter: ProtocolAdapter = {
         "content-type": "application/json",
         "user-agent": geminiUserAgent(),
       },
-      body: JSON.stringify(envelope),
+      body: serializeUpstreamBody(envelope),
       signal,
     })
     if (!response.ok) {
@@ -136,7 +142,7 @@ export const geminiNativeAdapter: ProtocolAdapter = {
         response: unwrapCodeAssistStream(response),
       } satisfies AdapterGeminiResult
     }
-    const body = (await response.json()) as Record<string, unknown>
+    const body = (await readUpstreamJson(response)) as Record<string, unknown>
     const inner = asRecord(body.response) ?? body
     return {
       credentialId: credential.id,

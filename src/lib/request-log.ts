@@ -38,6 +38,10 @@ import {
 } from "~/lib/upstream-model-audit"
 import { isAbortError } from "~/lib/utils"
 import { publishTrace, type TracePhase } from "~/lib/trace-bus"
+import {
+  markPerformanceOutput,
+  startRequestPerformance,
+} from "~/lib/request-performance"
 import { flushTranslationLossesForContext } from "~/services/ir/loss-logging"
 
 type RequestEndpoint = LogEntry["endpoint"]
@@ -79,6 +83,7 @@ export function bindRequestLogContext(
   ctx: RequestLogContext,
 ): RequestLogContext | undefined {
   const previous = getRequestLogContext(c)
+  startRequestPerformance(c)
   c.set(CTX_KEY, ctx as never)
   c.set(REQ_ID_KEY, ctx.requestId)
   return previous
@@ -98,6 +103,7 @@ export function initRequestLog(
   c: Context,
   opts?: { parentRequestId?: string; requestId?: string },
 ): RequestLogContext {
+  startRequestPerformance(c)
   const requestId = opts?.requestId ?? randomUUID()
   const endpoint = inferEndpoint(c.req.path)
   const ctx: RequestLogContext = {
@@ -708,6 +714,7 @@ export function beginStreamLog(c: Context): void {
 
 /** Publish once at the first semantic output, before the stream finishes. */
 export function markTraceFirstOutput(c: Context, ttftMs: number): void {
+  markPerformanceOutput(c)
   const ctx = getRequestLogContext(c)
   if (!ctx || ctx.finished || ctx.entry.ttftMs !== undefined) return
   patchRequestLog(c, { ttftMs, outputObserved: true })

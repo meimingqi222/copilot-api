@@ -1,3 +1,12 @@
+import {
+  addPerformanceTiming,
+  markUpstreamSent,
+} from "~/lib/request-performance"
+import {
+  performanceContext,
+  measureLocalWork,
+} from "~/lib/upstream-performance"
+
 /**
  * Upstream Responses API WebSocket transport (CPA-aligned).
  *
@@ -386,7 +395,13 @@ async function openUpstreamResponsesWebsocketTurnOnce(
   sess.chain = new Promise<void>((resolve) => {
     releaseChain = resolve
   })
+  const queuedAt = performance.now()
   await prev
+  addPerformanceTiming(
+    performanceContext(),
+    "upstreamQueueMs",
+    performance.now() - queuedAt,
+  )
 
   let ws: WebSocket
   let openedFresh = false
@@ -423,6 +438,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
           // ignore
         }
       }
+      const connectStarted = performance.now()
       const opened = await openSession({
         key,
         provider,
@@ -432,6 +448,11 @@ async function openUpstreamResponsesWebsocketTurnOnce(
         headers,
         signal,
       })
+      addPerformanceTiming(
+        performanceContext(),
+        "upstreamConnectMs",
+        performance.now() - connectStarted,
+      )
       if (signal?.aborted) {
         try {
           opened.ws.close()
@@ -500,7 +521,9 @@ async function openUpstreamResponsesWebsocketTurnOnce(
         Array.isArray(effectiveBody.input) ? effectiveBody.input.length : 0,
       replayedFullInput: usedFallback,
     })
-    const wireBody = JSON.stringify(effectiveBody)
+    const wireBody = measureLocalWork("adapterPreparationMs", () =>
+      JSON.stringify(effectiveBody),
+    )
     const wireBytes = Buffer.byteLength(wireBody)
     updateMemoryTrace(options.memoryTraceId, "upstream_ws_send", {
       provider,
@@ -516,6 +539,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
     if (signal?.aborted) {
       throw new Error(`${provider} websockets: aborted`)
     }
+    markUpstreamSent(performanceContext())
     ws.send(wireBody)
     updateMemoryTrace(options.memoryTraceId, "upstream_ws_sent", {
       provider,

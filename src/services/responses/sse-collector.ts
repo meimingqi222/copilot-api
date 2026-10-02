@@ -5,6 +5,10 @@ import type {
 
 import { HTTPError } from "~/lib/error"
 import { readResponseBytes } from "~/lib/request-body"
+import {
+  measureUpstreamRead,
+  measureLocalWork,
+} from "~/lib/upstream-performance"
 
 import {
   extractWsErrorMessage,
@@ -253,7 +257,11 @@ export async function collectResponsesFromSseResponse(
   model: string,
 ): Promise<ResponsesResponse> {
   const text = new TextDecoder().decode(
-    await readResponseBytes(response, MAX_COLLECTED_SSE_BYTES),
+    await measureUpstreamRead(response, () =>
+      readResponseBytes(response, MAX_COLLECTED_SSE_BYTES),
+    ),
   )
-  return collectResponsesFromSseText(text, model)
+  return measureLocalWork("responseTranslationMs", () =>
+    collectResponsesFromSseText(text, model),
+  )
 }

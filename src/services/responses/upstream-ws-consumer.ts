@@ -2,6 +2,8 @@ import type { CopilotStreamEventLike } from "~/services/protocols/responses/type
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { markUpstreamEvent } from "~/lib/request-performance"
+import { performanceContext } from "~/lib/upstream-performance"
 
 import {
   normalizeUpstreamWsEvent,
@@ -109,7 +111,9 @@ export function createTurnConsumer(options: {
     wake = undefined
   }
 
+  const metricContext = performanceContext()
   const onMessage = (event: MessageEvent) => {
+    markUpstreamEvent(metricContext)
     let data = ""
     if (typeof event.data === "string") {
       data = event.data

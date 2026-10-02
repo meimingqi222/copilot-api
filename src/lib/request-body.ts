@@ -1,4 +1,10 @@
+import type { Context } from "hono"
+
 import { HTTPError } from "~/lib/error"
+import {
+  hasRequestPerformance,
+  measurePerformanceStage,
+} from "~/lib/request-performance"
 
 const DEFAULT_JSON_BODY_BYTES = 32 * 1024 * 1024
 const DEFAULT_MEDIA_JSON_BODY_BYTES = 64 * 1024 * 1024
@@ -33,8 +39,19 @@ function bodyTooLarge(maxBytes: number): HTTPError {
 export async function readJsonBody<T>(
   request: Request,
   maxBytes = MAX_JSON_BODY_BYTES,
+  c?: Context,
 ): Promise<T> {
   assertDeclaredBodySize(request.headers, maxBytes)
+  if (hasRequestPerformance(c)) {
+    const bytes = await measurePerformanceStage(c, "bodyReadMs", () =>
+      readBodyBytes(request.body, maxBytes),
+    )
+    return measurePerformanceStage(
+      c,
+      "jsonDecodeMs",
+      () => JSON.parse(new TextDecoder().decode(bytes)) as T,
+    )
+  }
   const bytes = await readBodyBytes(request.body, maxBytes)
   return JSON.parse(new TextDecoder().decode(bytes)) as T
 }

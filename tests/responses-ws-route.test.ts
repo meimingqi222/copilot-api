@@ -12,6 +12,8 @@ import {
   recentTraces,
   subscribeTrace,
 } from "~/lib/trace-bus"
+import { performanceContext } from "~/lib/upstream-performance"
+
 import { sendResponsesWebSocketTextForTest } from "~/routes/responses/ws-handler"
 import { server } from "~/server"
 
@@ -94,6 +96,7 @@ loopbackTest(
     })
 
     const fetchMock = mock((_url: string, opts: { body?: string }) => {
+      expect(performanceContext()).toBeDefined()
       const payload = JSON.parse(opts.body ?? "{}") as {
         model?: string
         input?: string

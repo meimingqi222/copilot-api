@@ -1,3 +1,5 @@
+import { measureLocalWork } from "~/lib/upstream-performance"
+
 /**
  * Pair translator for wire combinations without a hand-written wrapper.
  *
@@ -26,6 +28,10 @@ import type {
 } from "~/services/ir/types"
 
 import { LocalPayloadUnsupportedError } from "~/lib/error"
+import {
+  addRequestTranslationTime,
+  measureTranslatedStream,
+} from "~/lib/request-performance"
 import { planTranslation, recordTranslationLosses } from "~/services/ir"
 import {
   needsSearchOrchestration,
@@ -288,6 +294,7 @@ export async function createTranslatedCall(
   params: TranslatedCallParams,
 ): Promise<{ credentialId: string; response: unknown }> {
   const { source, target, targetPayload, connection, routeTarget } = params
+  const translationStarted = performance.now()
   const sourceSpec = WIRE_SPECS[source]
   const targetSpec = WIRE_SPECS[target]
   const requestIR = sourceSpec.decodeRequest(targetPayload)
@@ -336,6 +343,10 @@ export async function createTranslatedCall(
   // A chat target cannot carry web search, so the proxy runs the search itself
   // before the client-wire encoder ever sees the result.
   if (orchestrate) {
+    addRequestTranslationTime(
+      params.ctx?.c,
+      performance.now() - translationStarted,
+    )
     const searchParams = {
       request: requestIR,
       spec: targetSpec,
@@ -380,31 +391,46 @@ export async function createTranslatedCall(
     request: requestIR,
     targetPayload: targetRequest,
   })
+  addRequestTranslationTime(
+    params.ctx?.c,
+    performance.now() - translationStarted,
+  )
   const result = await executor(targetRequest)
   if (targetSpec.isResult(result.response)) {
-    const decoded = targetSpec.decodeResult(result.response, {
-      model: routeTarget.upstreamModelId,
-      request: requestIR,
-    })
+    const decoded = measureLocalWork("responseTranslationMs", () =>
+      targetSpec.decodeResult(result.response, {
+        model: routeTarget.upstreamModelId,
+        request: requestIR,
+      }),
+    )
     params.onPhase?.("result_decoded", { request: requestIR })
-    const response = sourceSpec.encodeResult(decoded, {
-      model: routeTarget.upstreamModelId,
-      request: requestIR,
-    })
+    const response = measureLocalWork("responseTranslationMs", () =>
+      sourceSpec.encodeResult(decoded, {
+        model: routeTarget.upstreamModelId,
+        request: requestIR,
+      }),
+    )
     params.onPhase?.("complete", { request: requestIR })
     return { credentialId: result.credentialId, response }
   }
-  const streamResponse = targetSpec.decodeStream(
-    result.response as AsyncIterable<SseLike>,
-    { model: routeTarget.upstreamModelId, request: requestIR },
-  )
   return {
     credentialId: result.credentialId,
-    response: sourceSpec.encodeStream(streamResponse, {
-      model: routeTarget.upstreamModelId,
-      request: requestIR,
-      estimatedInputTokens: estimateIrTokens(requestIR),
-    }),
+    response: measureTranslatedStream(
+      result.response as AsyncIterable<SseLike>,
+      (upstream) =>
+        sourceSpec.encodeStream(
+          targetSpec.decodeStream(upstream, {
+            model: routeTarget.upstreamModelId,
+            request: requestIR,
+          }),
+          {
+            model: routeTarget.upstreamModelId,
+            request: requestIR,
+            estimatedInputTokens: estimateIrTokens(requestIR),
+          },
+        ),
+      params.ctx?.c,
+    ),
   }
 }
 

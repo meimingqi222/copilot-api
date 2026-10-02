@@ -22,6 +22,7 @@ import {
   resolveModelRouting,
 } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
+import { requestPerformanceSnapshot } from "~/lib/request-performance"
 import { incrementUserTokens } from "~/lib/users"
 
 /** Map request model id to the account catalog public id when possible. */
@@ -197,6 +198,7 @@ export function recordUsage(input: UsageRecordInput): void {
       ttftMs,
       tps,
       streaming,
+      performance: requestPerformanceSnapshot(c, streaming),
     })
     if (resolvedConnectionId && resolvedCredentialId) {
       recordServedTokens(

@@ -21,6 +21,7 @@ import {
 } from "~/lib/request-auth"
 import { readJsonBody, readTextBody } from "~/lib/request-body"
 import { getClientIp } from "~/lib/utils"
+import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
 
 import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
 import { balanceApiRoutes } from "./api/balance"
@@ -130,6 +131,7 @@ adminRoutes.route("/api/trace", traceApiRoutes)
 adminRoutes.route("/api/dashboard", dashboardApiRoutes)
 adminRoutes.route("/api/users", userApiRoutes)
 adminRoutes.route("/api/guard", guardApiRoutes)
+adminRoutes.route("/api/system-config", systemConfigApiRoutes)
 adminRoutes.route("/api/totp", totpApiRoutes)
 
 // Serve a file from pages directory

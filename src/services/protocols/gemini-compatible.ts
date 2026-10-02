@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 /**
  * Gemini `generateContent`-compatible Protocol Adapter.
  *
@@ -113,7 +119,7 @@ export const geminiCompatibleAdapter: ProtocolAdapter = {
     const response = await fetch(url, {
       method: "POST",
       headers: buildBaseHeaders(connection, credential),
-      body: JSON.stringify(upstreamBody(payload)),
+      body: serializeUpstreamBody(upstreamBody(payload)),
       signal,
     })
     if (!response.ok) {
@@ -133,7 +139,9 @@ export const geminiCompatibleAdapter: ProtocolAdapter = {
         response: body,
       } satisfies AdapterGeminiResult
     }
-    const body = (await response.json()) as GeminiGenerateContentResponse
+    const body = (await readUpstreamJson(
+      response,
+    )) as GeminiGenerateContentResponse
     return {
       credentialId: credential.id,
       response: body,

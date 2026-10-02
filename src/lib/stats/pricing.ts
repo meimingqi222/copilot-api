@@ -125,6 +125,14 @@ export function setModelPricing(
   )
 }
 
+export function deleteModelPricing(db: Database, model: string): boolean {
+  const stmt = db.prepare(`
+    DELETE FROM model_pricing WHERE model = ?
+  `)
+  const result = stmt.run(model)
+  return result.changes > 0
+}
+
 export function hasManualModelPricing(db: Database, model: string): boolean {
   const stmt = db.prepare(`
     SELECT 1 FROM model_pricing WHERE model = ? LIMIT 1

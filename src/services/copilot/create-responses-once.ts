@@ -1,3 +1,9 @@
+import {
+  performanceFetch as fetch,
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 import type {
   ApiCredential,
   ProviderConnection,
@@ -48,7 +54,7 @@ export async function createCopilotResponsesOnce(
   const normalizedModel = parseModelReference(payload.model).nativeModelId
   const enableVision = ctx?.enableVision ?? hasVisionInput(payload)
 
-  const responsesBody = JSON.stringify({
+  const responsesBody = serializeUpstreamBody({
     ...payload,
     model: normalizedModel,
     ...withDefaultReasoningSummary(payload.reasoning),
@@ -83,5 +89,5 @@ export async function createCopilotResponsesOnce(
     )
   }
 
-  return (await response.json()) as ResponsesResponse
+  return (await readUpstreamJson(response)) as ResponsesResponse
 }

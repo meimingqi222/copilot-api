@@ -1,3 +1,8 @@
+import {
+  readUpstreamJson,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
+
 import type {
   ApiCredential,
   ProviderConnection,
@@ -251,7 +256,7 @@ async function createCodexCompactOnce(
       await response.text().catch(() => "(unreadable)"),
     )
   }
-  return (await response.json()) as ResponsesResponse
+  return (await readUpstreamJson(response)) as ResponsesResponse
 }
 
 /**
@@ -827,7 +832,7 @@ async function postCodexResponses(options: {
     provider: "codex",
     inputItems: countArrayItems(effectiveBody.input),
   })
-  const body = JSON.stringify(effectiveBody)
+  const body = serializeUpstreamBody(effectiveBody)
   updateMemoryTrace(options.memoryTraceId, "upstream_http_send", {
     provider: "codex",
     wireBytes: Buffer.byteLength(body),
