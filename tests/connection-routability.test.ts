@@ -18,7 +18,10 @@ import {
   markCredentialAuthError,
   markCredentialCooldown,
   markCredentialQuotaExhausted,
+  readConnectionMetadata,
+  refreshConnectionAvailability,
   setConnectionAuthStatus,
+  setConnectionExhausted,
   setConnectionQuotaState,
   setCredentialEnabled,
   type ProviderConnection,
@@ -179,5 +182,65 @@ describe("getConnectionRoutability", () => {
     // credential.cooldownUntil 同步进 limiter 内存,走 cooldown 分支。
     expect(result.reason).toBe("cooldown")
     expect(result.retryAfterSeconds).toBeGreaterThan(0)
+  })
+
+  test("只剩遗留 metadata.exhaustedAt 的陈旧标记也会自愈（线上实测形态）", async () => {
+    await setupConnection("c-legacy")
+    const live = mustGet("c-legacy")
+    const at = Date.now() - 25 * 60 * 60 * 1000
+    setConnectionExhausted(live, true, at)
+    // 复现线上形态：credential 侧已被配额恢复路径清掉，只剩遗留镜像字段
+    live.credentials[0].exhaustedAt = undefined
+    expect(readConnectionMetadata(live)?.exhaustedAt).toBe(at)
+
+    refreshConnectionAvailability(live)
+
+    const meta = readConnectionMetadata(live)
+    expect(meta?.exhaustedAt).toBeUndefined()
+    expect(meta?.isExhausted).toBe(false)
+    expect(meta?.quotaExhaustedAt).toBeUndefined()
+  })
+
+  test("配额恢复时清掉遗留镜像字段（credential 已被时间窗口恢复成 ready）", async () => {
+    await setupConnection("c-quota")
+    const live = mustGet("c-quota")
+    setConnectionExhausted(live, true)
+    // credential 先被时间窗口恢复（cooldown 到期）——旧实现正是这样漏清镜像字段
+    live.credentials[0].status = "cooldown"
+    live.credentials[0].cooldownUntil = Date.now() - 1_000
+    refreshConnectionAvailability(live)
+    expect(live.credentials[0].status as string).toBe("ready")
+
+    setConnectionQuotaState(live, "available")
+
+    const meta = readConnectionMetadata(live)
+    expect(meta?.isExhausted).toBe(false)
+    expect(meta?.exhaustedAt).toBeUndefined()
+    expect(live.credentials[0].exhaustedAt).toBeUndefined()
+  })
+
+  test("超过自动恢复窗口的陈旧耗尽标记会被自愈清理", async () => {
+    await setupConnection("c-stale")
+    const live = mustGet("c-stale")
+    setConnectionExhausted(live, true, Date.now() - 25 * 60 * 60 * 1000)
+
+    refreshConnectionAvailability(live)
+
+    const meta = readConnectionMetadata(live)
+    expect(meta?.exhaustedAt).toBeUndefined()
+    expect(meta?.isExhausted).toBe(false)
+  })
+
+  test("窗口内的耗尽标记不会被误清（上游仍可能处于限额）", async () => {
+    await setupConnection("c-fresh")
+    const live = mustGet("c-fresh")
+    const at = Date.now() - 60 * 60 * 1000
+    setConnectionExhausted(live, true, at)
+
+    refreshConnectionAvailability(live)
+
+    const meta = readConnectionMetadata(live)
+    expect(meta?.exhaustedAt).toBe(at)
+    expect(meta?.isExhausted).toBe(true)
   })
 })

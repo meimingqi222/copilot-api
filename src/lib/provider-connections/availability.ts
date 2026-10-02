@@ -19,6 +19,8 @@ import {
   getConnectionCooldownUntil,
   getConnectionQuotaExhaustedAt,
   getConnectionQuotaState,
+  readConnectionMetadata,
+  setConnectionQuotaState,
 } from "./connection-metadata"
 import { DEFAULTS } from "./types"
 
@@ -63,6 +65,34 @@ export function refreshConnectionAvailability(
   for (const credential of credentials) {
     refreshCredentialAvailability(credential, now)
   }
+
+  // 陈旧耗尽标记自愈：超过自动恢复窗口、且 credential 已不再处于
+  // quota_exhausted 时，遗留的耗尽标记只会让后台一直显示"配额已耗尽"（实测
+  // windsurf 账号恢复后仍挂着 2.8 天前的 exhaustedAt，而日额度其实是 0% 已用）。
+  //
+  // 必须同时看遗留字段 metadata.exhaustedAt：类型化的
+  // getConnectionQuotaExhaustedAt() 只读 credential.exhaustedAt /
+  // metadata.quotaExhaustedAt，而 credential 被时间窗口恢复后往往只剩遗留字段。
+  // 窗口内的标记保持不动，等上游真正恢复时的 setConnectionQuotaState 来清。
+  const exhaustedAt = latestExhaustedMarker(connection)
+  if (
+    exhaustedAt !== undefined
+    && now - exhaustedAt >= DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+    && getConnectionQuotaState(connection) !== "exhausted"
+  ) {
+    setConnectionQuotaState(connection, "available")
+  }
+}
+
+/** 耗尽时刻：类型化字段与遗留 metadata.exhaustedAt 取较新者（都缺则 undefined）。 */
+function latestExhaustedMarker(
+  connection: ProviderConnection,
+): number | undefined {
+  const markers = [
+    getConnectionQuotaExhaustedAt(connection),
+    readConnectionMetadata(connection)?.exhaustedAt,
+  ].filter((value): value is number => typeof value === "number")
+  return markers.length > 0 ? Math.max(...markers) : undefined
 }
 
 /** Credential 是否当前可调度。 */

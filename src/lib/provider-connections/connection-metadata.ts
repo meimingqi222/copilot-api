@@ -463,14 +463,24 @@ export function setConnectionQuotaState(
     }
     return
   }
-  // 配额恢复:只处理确实被配额锁定的 credential，不碰普通 cooldown
+  // 配额恢复:耗尽标记无条件清掉。
+  //
+  // 这些镜像字段（metadata.isExhausted / metadata.exhaustedAt /
+  // credential.exhaustedAt）是"曾经耗尽"的证据，恢复后留着只会让 UI 永远显示
+  // "配额已耗尽"：实测 windsurf 账号的 credential 先被时间窗口恢复成 ready，
+  // 之后 setConnectionQuotaState("available") 因为下面那个 if 不成立而漏清了
+  // 镜像字段，结果挂着一个 2.8 天前的 exhaustedAt，日/周额度其实都还有。
+  meta.isExhausted = false
+  meta.exhaustedAt = undefined
+  if (cred) {
+    cred.exhaustedAt = undefined
+  }
+  // 只处理确实被配额锁定的 credential，不碰普通 cooldown
   //（普通限流冷却由 refreshCredentialAvailability 按到期时间自行恢复）。
   if (cred && cred.status === "quota_exhausted") {
     cred.status = cred.enabled ? "ready" : "disabled"
     cred.cooldownUntil = undefined
     meta.cooldownUntil = undefined
-    meta.isExhausted = false
-    meta.exhaustedAt = undefined
   }
 }
 
