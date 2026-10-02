@@ -39,6 +39,7 @@ import {
 } from "~/lib/request-log"
 import { appendRequestLogSync } from "~/lib/request-log-persist"
 import { resolveTranscriptScopeId } from "~/lib/request-scope"
+import { publishTrace } from "~/lib/trace-bus"
 import { targetKey } from "~/lib/route-target"
 import {
   parseThinkingModel,
@@ -224,6 +225,7 @@ export function createResponsesWebSocketSession(c: Context) {
         }
         logStore.push(finalized)
         appendRequestLogSync(finalized)
+        publishTrace({ ...finalized, requestId: turnCtx.requestId }, "final")
       }
       turnCtx.finish = () => finishTurn(turnCtx.entry.statusCode ?? 500)
 

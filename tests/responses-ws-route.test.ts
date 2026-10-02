@@ -7,6 +7,11 @@ import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+import {
+  clearTraceBusForTest,
+  recentTraces,
+  subscribeTrace,
+} from "~/lib/trace-bus"
 import { sendResponsesWebSocketTextForTest } from "~/routes/responses/ws-handler"
 import { server } from "~/server"
 
@@ -25,6 +30,7 @@ beforeEach(() => {
   resetProtectedRouteGuardForTest()
   resetAdaptiveRateLimiterForTest()
   logStore.clearForTest()
+  clearTraceBusForTest()
   statsStore.clearUsageStatsForTest()
   setTestAccounts([
     {
@@ -68,6 +74,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  clearTraceBusForTest()
   globalThis.fetch = originalFetch
   setTestAccounts(originalAccounts)
   state.models = originalModels
@@ -81,6 +88,10 @@ loopbackTest(
   "WS /responses supports sequential response.create requests",
   async () => {
     state.legacyApiKey = "secret"
+    const finalTraceIds: string[] = []
+    const unsubscribe = subscribeTrace(({ entry, phase }) => {
+      if (phase === "final") finalTraceIds.push(entry.requestId)
+    })
 
     const fetchMock = mock((_url: string, opts: { body?: string }) => {
       const payload = JSON.parse(opts.body ?? "{}") as {
@@ -175,8 +186,19 @@ loopbackTest(
       expect(turn.outcome).toBe("success")
       expect(turn.attempts?.length).toBeGreaterThan(0)
       expect(turn.totalTokens).toBe(2)
+      const trace = recentTraces().find(
+        (entry) => entry.requestId === turn.requestId,
+      )
+      expect(trace).toBeDefined()
+      expect(trace?.inFlight).toBe(false)
+      expect(trace?.outcome).toBe("success")
+      expect(trace?.statusCode).toBe(200)
+      expect(finalTraceIds.filter((id) => id === turn.requestId)).toHaveLength(
+        1,
+      )
     }
 
+    unsubscribe()
     ws.close()
   },
 )
@@ -281,6 +303,14 @@ loopbackTest(
     expect(sawBusy).toBe(true)
     expect(sawCompleted).toBe(true)
 
+    await waitFor(() =>
+      recentTraces().some((entry) => entry.inFlight === false),
+    )
+    expect(
+      recentTraces().filter((entry) => entry.method === "WS"),
+    ).toHaveLength(1)
+    expect(recentTraces()[0]?.outcome).toBe("success")
+
     ws.close()
   },
 )
@@ -330,6 +360,12 @@ loopbackTest(
     expect(message.error.type).toBe("error")
     expect(message.error.message).toContain("upstream failed")
 
+    await waitFor(() =>
+      recentTraces().some((entry) => entry.inFlight === false),
+    )
+    expect(recentTraces()[0]?.outcome).toBe("failed")
+    expect(recentTraces()[0]?.statusCode).toBe(500)
+
     ws.close()
   },
 )
@@ -367,6 +403,10 @@ loopbackTest(
           (entry) => entry.method === "WS" && entry.statusCode === 499,
         ),
     )
+    const cancelledTrace = recentTraces().find((entry) => entry.method === "WS")
+    expect(cancelledTrace?.inFlight).toBe(false)
+    expect(cancelledTrace?.outcome).toBe("cancelled")
+    expect(cancelledTrace?.statusCode).toBe(499)
   },
 )
 
