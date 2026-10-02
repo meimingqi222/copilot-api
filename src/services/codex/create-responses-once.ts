@@ -1,3 +1,12 @@
+import type { Context } from "hono"
+
+import {
+  observeResponseServiceTier,
+  observeServiceTierStream,
+  recordRoutedServiceTier,
+  recordSentServiceTier,
+} from "~/lib/service-tier-trace"
+
 import {
   readUpstreamJson,
   serializeUpstreamBody,
@@ -243,6 +252,7 @@ async function createCodexCompactOnce(
     inputItems: countArrayItems(compactBody.input),
   })
   const response = await postCodexResponses({
+    c: ctx?.c,
     connection,
     url,
     headers,
@@ -345,6 +355,29 @@ function buildCodexReplayBody(options: {
 }
 
 export async function createCodexResponsesOnce(
+  target: { connection: ProviderConnection; credential: ApiCredential },
+  payload: ResponsesPayload,
+  signal?: AbortSignal,
+  ctx?: RequestExecutionContext,
+): Promise<AsyncIterable<CopilotStreamEventLike> | ResponsesResponse> {
+  recordRoutedServiceTier(ctx?.c, payload)
+  const result = await createCodexResponsesOnceImpl(
+    target,
+    payload,
+    signal,
+    ctx,
+  )
+  if (!ctx?.c) return result
+  if (Symbol.asyncIterator in result)
+    return observeServiceTierStream(
+      result as AsyncIterable<CopilotStreamEventLike>,
+      ctx.c,
+    )
+  observeResponseServiceTier(ctx.c, result)
+  return result
+}
+
+async function createCodexResponsesOnceImpl(
   {
     connection,
     credential,
@@ -605,6 +638,7 @@ export async function createCodexResponsesOnce(
   if (useUpstreamWs) {
     const attemptWs = () =>
       attemptCodexUpstreamWsTurn({
+        c: ctx?.c,
         connection,
         url,
         httpHeaders,
@@ -646,6 +680,7 @@ export async function createCodexResponsesOnce(
 
   const postResponses = () =>
     postCodexResponses({
+      c: ctx?.c,
       connection,
       url,
       headers: httpHeaders,
@@ -817,6 +852,7 @@ function readMemoryTraceId(
 }
 
 async function postCodexResponses(options: {
+  c?: Context
   connection: ProviderConnection
   url: string
   headers: Record<string, string>
@@ -838,6 +874,7 @@ async function postCodexResponses(options: {
     provider: "codex",
     wireBytes: Buffer.byteLength(body),
   })
+  recordSentServiceTier(options.c, effectiveBody.service_tier)
   return fetchWithConnectionProxy(options.connection, options.url, {
     method: "POST",
     headers: options.headers,
@@ -929,6 +966,7 @@ async function* wrapCodexStream(
 }
 
 interface CodexWsTurnOptions {
+  c?: Context
   connection: ProviderConnection
   url: string
   httpHeaders: Record<string, string>
@@ -998,6 +1036,7 @@ async function attemptCodexUpstreamWsTurn(
   try {
     // Eager open+send so handshake failures hit this catch (streaming-safe).
     const wsStream = await openUpstreamResponsesWebsocketTurn({
+      onSend: (body) => recordSentServiceTier(options.c, body.service_tier),
       provider: "codex",
       accountId: connection.id,
       httpResponsesUrl: url,

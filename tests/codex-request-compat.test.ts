@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Hono } from "hono"
+
+import { getRequestLogContext, initRequestLog } from "~/lib/request-log"
+import { recordRequestedServiceTier } from "~/lib/service-tier-trace"
 
 import type {
   ApiCredential,
@@ -107,6 +111,53 @@ async function capturePostedBody(
 }
 
 describe("codex request compatibility (CPA parity)", () => {
+  for (const streaming of [true, false]) {
+    test(`HTTP Codex tier trace observes actual wire and response (stream=${streaming})`, async () => {
+      globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+        const posted = JSON.parse(init.body as string) as Record<
+          string,
+          unknown
+        >
+        expect(posted.service_tier).toBe("priority")
+        const data = await sseOkBody().text()
+        return new Response(
+          data.replace(
+            '"status":"completed","model"',
+            '"status":"completed","service_tier":"default","model"',
+          ),
+          { headers: { "content-type": "text/event-stream" } },
+        )
+      }) as typeof fetch
+      const app = new Hono().post("/v1/responses", async (current) => {
+        initRequestLog(current)
+        const payload = {
+          model: "gpt-5",
+          input: "test",
+          stream: streaming,
+          service_tier: "priority" as const,
+        }
+        recordRequestedServiceTier(current, payload)
+        const result = await createCodexResponsesOnce(
+          makeCodexSubject(),
+          payload,
+          undefined,
+          { c: current, forceUpstreamHttp: true },
+        )
+        if (Symbol.asyncIterator in result)
+          for await (const event of result as AsyncIterable<unknown>)
+            expect(event).toBeDefined()
+        return current.json(getRequestLogContext(current)?.entry ?? {})
+      })
+      const response = await app.request("/v1/responses", { method: "POST" })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({
+        serviceTierRequested: "priority",
+        serviceTierRouted: "priority",
+        serviceTierUpstream: "priority",
+        serviceTierResponse: "default",
+      })
+    })
+  }
   test("parallel_tool_calls: non-lite client explicit false is preserved with tools", async () => {
     const body = await capturePostedBody({
       model: "gpt-5",

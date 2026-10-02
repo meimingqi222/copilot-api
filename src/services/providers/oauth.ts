@@ -45,7 +45,7 @@ export function createOAuthProviderRuntime(
       }
       return getOAuthCatalogModelsForConnection(connection)
     },
-    async refreshQuota(connection) {
+    async refreshQuota(connection, signal) {
       const provider = getConnectionProvider(connection)
       if (provider !== providerId) {
         return undefined
@@ -56,7 +56,7 @@ export function createOAuthProviderRuntime(
         return undefined
       }
 
-      const snapshot = await fetchOAuthProviderQuota(liveConnection)
+      const snapshot = await fetchOAuthProviderQuota(liveConnection, signal)
       if (!snapshot) {
         return undefined
       }

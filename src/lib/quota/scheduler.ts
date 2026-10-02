@@ -14,22 +14,22 @@ import {
   syncConnectionBalance,
 } from "~/lib/balance/sync"
 import { logger } from "~/lib/logger"
-import { noteReadingFailure } from "~/lib/plan-quota/apply"
 import {
-  isOAuthConnection,
+  listAccountManagedConnections,
   listProviderConnections,
   saveProviderConnections,
   setConnectionQuotaInfo,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
-import { applyOAuthQuotaSnapshot, fetchOAuthProviderQuota } from "~/lib/quota"
+import { refreshManagedQuota } from "~/lib/quota/refresh"
+import { initializeProviderRegistry } from "~/services/providers"
 import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { emitStateChange } from "~/lib/state-events"
 import { globalTimers } from "~/lib/timer-registry"
 
 const QUOTA_EXHAUSTION_THRESHOLD = 5
-const QUOTA_RECHECK_INTERVAL_MS = 5 * 60 * 1000
+const QUOTA_RECHECK_INTERVAL_MS = 60 * 1000
 /** How long a vendor's wallet endpoint is given to answer. */
 const BALANCE_PROBE_TIMEOUT_MS = 15_000
 /**
@@ -41,17 +41,18 @@ const BALANCE_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
 
 /**
  * copilot-native connection 的配额刷新。
- * 其它 protocol 无此周期性探测，返回 undefined。
+ * 其它 protocol 返回 undefined，由各自 runtime 提供配额探测。
  */
 export async function refreshQuotaForConnection(
   connection: ProviderConnection,
   skipSave = false,
+  signal?: AbortSignal,
 ): Promise<QuotaSnapshot | undefined> {
   if (connection.protocol !== "copilot-native") {
     return undefined
   }
 
-  const snapshot = await fetchCopilotQuota(connection)
+  const snapshot = await fetchCopilotQuota(connection, signal)
   const remaining = snapshot.premiumInteractionsRemaining ?? Infinity
   const unlimited = snapshot.unlimited
   const exhausted = !unlimited && remaining <= QUOTA_EXHAUSTION_THRESHOLD
@@ -78,31 +79,49 @@ export async function refreshQuotaForConnection(
 }
 
 /**
- * 定时刷新所有 copilot-native connection 的配额。
+ * 定时检查所有支持配额的账号，按账号刷新间隔探测。
  */
 export function scheduleQuotaRefresh(): void {
+  initializeProviderRegistry()
   void refreshAllQuotas()
   globalTimers.interval(() => {
     void refreshAllQuotas()
   }, QUOTA_RECHECK_INTERVAL_MS)
 }
 
-async function refreshAllQuotas(): Promise<void> {
-  const connections = listProviderConnections().filter(
-    (conn) => conn.protocol === "copilot-native",
+let refreshing = false
+
+export async function refreshAllQuotas(): Promise<void> {
+  if (refreshing) return
+  refreshing = true
+  try {
+    await refreshAllQuotasOnce()
+  } catch (error) {
+    logger.warn("Background quota refresh failed:", error)
+  } finally {
+    refreshing = false
+  }
+}
+
+async function refreshAllQuotasOnce(): Promise<void> {
+  const connections = listAccountManagedConnections().filter(
+    (conn) =>
+      conn.enabled
+      && conn.credentials[0]?.enabled === true
+      && conn.credentials[0]?.status !== "disabled",
   )
-  const results = await Promise.allSettled(
-    connections.map((conn) => refreshQuotaForConnection(conn, true)),
-  )
-  for (const result of results) {
-    if (result.status === "rejected") {
-      logger.warn("Failed to refresh quota for connection:", result.reason)
+  for (let offset = 0; offset < connections.length; offset += 4) {
+    const results = await Promise.allSettled(
+      connections
+        .slice(offset, offset + 4)
+        .map(async (conn) => refreshManagedQuota(conn)),
+    )
+    for (const result of results) {
+      if (result.status === "rejected") {
+        logger.warn("Failed to refresh quota for connection:", result.reason)
+      }
     }
   }
-  // OAuth 账号之前没有任何后台配额探测：一次耗尽后只能等 24h 自动恢复
-  // 或手动点刷新。这里定期重探处于 quota_exhausted 的 OAuth 连接，
-  // 上游窗口恢复（如 Codex 5h / Claude 5h）后自动重新参与调度。
-  await refreshExhaustedOAuthQuotas()
   // Balances (a prepaid key, an account wallet) never enter the request path:
   // they are read here on the tick, and the result gates routing.
   await syncBalances()
@@ -179,51 +198,6 @@ export async function syncBalances(now: number = Date.now()): Promise<number> {
 /** Test-only: drop the balance read rate-limit bookkeeping. */
 export function __resetBalanceSyncForTest(): void {
   lastBalanceSyncAt.clear()
-}
-
-/**
- * 重探所有处于 quota_exhausted 的 OAuth 连接。
- * 探测成功且上游显示有配额时，applyOAuthQuotaSnapshot 会把 credential
- * 恢复为 ready 并清理冷却；探测失败则保持耗尽状态不变。
- */
-async function refreshExhaustedOAuthQuotas(): Promise<void> {
-  const targets = listProviderConnections().filter(
-    (conn) =>
-      isOAuthConnection(conn)
-      && conn.credentials[0]?.status === "quota_exhausted",
-  )
-  if (targets.length === 0) return
-  const results = await Promise.allSettled(
-    targets.map(async (conn) => {
-      let snapshot: QuotaSnapshot | undefined
-      try {
-        snapshot = await fetchOAuthProviderQuota(conn)
-      } catch (error) {
-        // A transient probe failure must not lose the last known allowance:
-        // hand the error to plan-quota, which replays the previous reading as
-        // stale. The exhaust/retry semantics stay exactly as they were.
-        await noteReadingFailure(conn, error)
-        throw error
-      }
-      if (snapshot) {
-        const wasExhausted = conn.credentials[0]?.status === "quota_exhausted"
-        applyOAuthQuotaSnapshot(conn, snapshot)
-        if (wasExhausted && conn.credentials[0]?.status !== "quota_exhausted") {
-          logger.info(
-            `Connection "${conn.name}" quota recovered — re-activating`,
-          )
-        }
-      }
-    }),
-  )
-  for (const result of results) {
-    if (result.status === "rejected") {
-      logger.warn(
-        "Failed to refresh OAuth quota for connection:",
-        result.reason,
-      )
-    }
-  }
 }
 
 function readQuotaState(connection: ProviderConnection): string {

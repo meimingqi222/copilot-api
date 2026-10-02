@@ -12,6 +12,10 @@ import { awaitApproval } from "~/lib/approval"
 import { HTTPError } from "~/lib/error"
 import { resolveInitiatorWithClientHeader } from "~/lib/initiator-header"
 import { logger } from "~/lib/logger"
+import {
+  recordRequestedServiceTier,
+  recordRoutedServiceTier,
+} from "~/lib/service-tier-trace"
 import { measurePerformanceStage } from "~/lib/request-performance"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import {
@@ -457,6 +461,7 @@ async function prepareRequestAdmissionImpl(
   options: PrepareRequestAdmissionOptions,
 ): Promise<RequestAdmission> {
   c.set("model", options.model)
+  recordRequestedServiceTier(c, options.sessionPayload)
   enforceUserModelAccess(c, options.model)
 
   const { initiator } = resolveInitiatorWithClientHeader(
@@ -672,6 +677,7 @@ async function prepareRequestAdmissionImpl(
   // connectionProvider 从 connection 原生派生（account-managed 走
   // metadata.provider，plain connection 走 protocol）。
   const provider = connectionProvider(connection)
+  recordRoutedServiceTier(c, options.sessionPayload)
   // Expose provider on the context so usage recording can attribute plain
   // (non-account-managed) provider connections correctly. Account-backed
   // paths derive provider from the final accountId at record time (preserving

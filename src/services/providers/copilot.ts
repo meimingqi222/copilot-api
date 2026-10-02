@@ -69,8 +69,8 @@ export const copilotProviderRuntime: ProviderRuntime = {
     setConnectionModels(connection, mappings)
     return mappings
   },
-  async refreshQuota(connection) {
-    return refreshQuotaForConnection(connection)
+  async refreshQuota(connection, signal) {
+    return refreshQuotaForConnection(connection, false, signal)
   },
   async refreshAuth(connection) {
     await refreshCopilotTokenForConnection(connection)

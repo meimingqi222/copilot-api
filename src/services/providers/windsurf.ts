@@ -40,10 +40,10 @@ export const windsurfProviderRuntime: ProviderRuntime = {
     const models = await getWindsurfModelsForConnection(connection)
     return models
   },
-  async refreshQuota(connection) {
+  async refreshQuota(connection, signal) {
     const liveConnection = getMutableProviderConnection(connection.id)
     if (!liveConnection) return undefined
-    const snapshot = await refreshWindsurfQuota(liveConnection)
+    const snapshot = await refreshWindsurfQuota(liveConnection, signal)
     await persistProviderConnections()
     return snapshot
   },

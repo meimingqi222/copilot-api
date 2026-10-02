@@ -157,8 +157,8 @@ function createCodebuddyRuntime(opts: {
     getFallbackModels(_connection) {
       return fallbackModels
     },
-    async refreshQuota(connection) {
-      return refreshCodebuddyQuota(connection)
+    async refreshQuota(connection, signal) {
+      return refreshCodebuddyQuota(connection, signal)
     },
   }
 }

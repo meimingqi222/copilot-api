@@ -41,9 +41,10 @@
         apply()
       }
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.13"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.15"></script>
     <script src="/admin/static/js/api.js?v=0.7.4"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.4"></script>
+    <script src="/admin/static/js/usage-auto-refresh.js?v=0.7.0"></script>
     <script src="/admin/static/js/quota-display.js?v=0.7.4"></script>
   </head>
   <body x-data="adminApp()" x-init="init()" x-cloak>
@@ -3599,6 +3600,10 @@
           <header class="page-header mb-5">
             <div class="page-heading">
               <h2 class="text-headline" x-text="t('usage.title')"></h2>
+              <p
+                class="page-description"
+                x-text="t('usage.pageUpdated') + ' ' + updatedTime()"
+              ></p>
             </div>
             <div class="page-actions">
               <button
@@ -3608,6 +3613,31 @@
                 <i data-lucide="settings" class="w-3.5 h-3.5"></i>
                 <span x-text="t('usage.modelPricing')"></span>
               </button>
+              <select
+                class="input input-small"
+                :value="autoRefreshSeconds"
+                @change="setAutoRefresh($event.target.value)"
+                :aria-label="t('usage.autoRefresh')"
+                :title="t('usage.autoRefresh')"
+              >
+                <option value="0" x-text="t('usage.refreshOff')"></option>
+                <option
+                  value="5"
+                  x-text="t('usage.refreshEvery', { seconds: 5 })"
+                ></option>
+                <option
+                  value="10"
+                  x-text="t('usage.refreshEvery', { seconds: 10 })"
+                ></option>
+                <option
+                  value="30"
+                  x-text="t('usage.refreshEvery', { seconds: 30 })"
+                ></option>
+                <option
+                  value="60"
+                  x-text="t('usage.refreshEvery', { seconds: 60 })"
+                ></option>
+              </select>
               <button
                 @click="refresh()"
                 class="btn btn-secondary text-xs px-3"
@@ -4952,8 +4982,37 @@
                 class="page-description"
                 x-text="t('quota.accountQuotasAllDesc')"
               ></p>
+              <p
+                class="page-description"
+                x-text="t('usage.pageUpdated') + ' ' + updatedTime()"
+              ></p>
             </div>
             <div class="page-actions">
+              <select
+                class="input input-small"
+                :value="autoRefreshSeconds"
+                @change="setAutoRefresh($event.target.value)"
+                :aria-label="t('usage.autoRefresh')"
+                :title="t('usage.autoRefresh')"
+              >
+                <option value="0" x-text="t('usage.refreshOff')"></option>
+                <option
+                  value="5"
+                  x-text="t('usage.refreshEvery', { seconds: 5 })"
+                ></option>
+                <option
+                  value="10"
+                  x-text="t('usage.refreshEvery', { seconds: 10 })"
+                ></option>
+                <option
+                  value="30"
+                  x-text="t('usage.refreshEvery', { seconds: 30 })"
+                ></option>
+                <option
+                  value="60"
+                  x-text="t('usage.refreshEvery', { seconds: 60 })"
+                ></option>
+              </select>
               <button
                 @click="refresh()"
                 class="btn btn-secondary text-xs px-3"
@@ -5078,6 +5137,10 @@
                           ></span>
                         </div>
 
+                        <p
+                          class="text-xs text-[var(--apple-text-tertiary)] mb-3"
+                          x-text="t('quota.snapshotUpdated') + ' ' + quotaUpdatedTime(account)"
+                        ></p>
                         <div
                           x-show="account.rateLimitedModels && account.rateLimitedModels.length"
                           class="mb-3 p-2.5 rounded-lg bg-[rgba(255,149,0,0.08)]"
@@ -6767,6 +6830,12 @@
                         x-text="rowModelDisplay(frame)"
                       ></span>
                       <span
+                        x-show="serviceTierBadge(frame)"
+                        class="text-xs"
+                        :title="serviceTierSummary(frame)"
+                        x-text="serviceTierBadge(frame)"
+                      ></span>
+                      <span
                         class="tr-row-route block"
                         x-text="`. ${rowRoute(frame)}`"
                       ></span>
@@ -6881,6 +6950,11 @@
                           x-text="att.credentialLabel || ''"
                         ></span>
                         <span class="lat" x-text="took(att.latencyMs)"></span>
+                        <span
+                          x-show="att.serviceTierUpstream"
+                          class="text-xs"
+                          x-text="`${t('trace.tierSent')}: ${att.serviceTierUpstream} · ${t('trace.tierReported')}: ${att.serviceTierResponse || t('trace.tierUnconfirmed')}`"
+                        ></span>
                       </div>
                     </template>
                   </div>
@@ -6893,6 +6967,14 @@
                     x-text="t('trace.routing')"
                   ></h4>
                   <dl class="tr-kv">
+                    <dt
+                      x-show="selected?.serviceTierUpstream"
+                      x-text="t('trace.serviceTier')"
+                    ></dt>
+                    <dd
+                      x-show="selected?.serviceTierUpstream"
+                      x-text="serviceTierSummary(selected)"
+                    ></dd>
                     <dt
                       x-show="isGroup(selected)"
                       x-text="t('trace.group')"
@@ -7269,10 +7351,10 @@
     <script src="/admin/static/js/views/connections.js?v=0.7.2"></script>
     <script src="/admin/static/js/views/model-aliases.js?v=0.7.2"></script>
     <script src="/admin/static/js/views/routing-groups.js?v=0.7.6"></script>
-    <script src="/admin/static/js/views/usage.js?v=0.7.2"></script>
-    <script src="/admin/static/js/views/quotas.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/usage.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/quotas.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/performance.js?v=0.7.7"></script>
-    <script src="/admin/static/js/views/traces.js?v=0.7.7"></script>
+    <script src="/admin/static/js/views/traces.js?v=0.7.8"></script>
     <script src="/admin/static/js/views/guard.js?v=0.7.2"></script>
     <script src="/admin/static/js/views/logs.js?v=0.7.2"></script>
     <script src="/admin/static/js/partials.js?v=0.7.2"></script>

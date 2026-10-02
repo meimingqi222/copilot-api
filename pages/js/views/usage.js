@@ -1,6 +1,7 @@
 function usageView() {
   return {
     ...ViewHelpers,
+    ...usageAutoRefresh("usage"),
     loading: false,
     refreshing: false,
     dateRange: "today",
@@ -45,8 +46,10 @@ function usageView() {
     },
     usageChart: null,
     chartRenderToken: 0,
+    usageReadVersion: 0,
 
     init() {
+      this.initAutoRefresh()
       if (typeof Chart !== "undefined" && !Chart._patchedNullCanvas) {
         Chart._patchedNullCanvas = true
         const origClear = Chart.prototype.clear
@@ -758,6 +761,7 @@ function usageView() {
     },
 
     async loadUsageStats() {
+      const version = ++this.usageReadVersion
       try {
         let params
         if (this.dateRange === "custom") {
@@ -775,10 +779,25 @@ function usageView() {
           params = { range: this.dateRange }
         }
         const data = await API.usage.summary(params)
+        if (version !== this.usageReadVersion) return
         this.usageSummary = data
+        this.lastUpdatedAt = Date.now()
       } catch (e) {
         console.error("Failed to load usage stats:", e)
         throw e
+      }
+    },
+
+    async refreshCachedUsage() {
+      const previous = JSON.stringify(this.usageSummary)
+      await this.loadUsageStats()
+      const app = document.querySelector("[x-data^=adminApp]")
+      if (
+        app
+        && Alpine.$data(app).currentView === "usage"
+        && previous !== JSON.stringify(this.usageSummary)
+      ) {
+        this.$nextTick(() => this.renderChart())
       }
     },
 

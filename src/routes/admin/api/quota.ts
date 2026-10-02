@@ -17,6 +17,7 @@ import {
 import { listModelCooldownsForConnection } from "~/lib/model-cooldown"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
+import { refreshManagedQuota } from "~/lib/quota/refresh"
 import {
   canResetCodexQuota,
   resetCodexQuota,
@@ -105,7 +106,7 @@ quotaApiRoutes.post("/refresh", async (c) => {
       const runtime = getProviderRuntime(provider)
       const mutableConn = getMutableProviderConnection(conn.id)
       if (runtime.refreshQuota && mutableConn) {
-        await runtime.refreshQuota(mutableConn)
+        await refreshManagedQuota(mutableConn, { force: true })
       } else if (provider === "copilot") {
         await refreshQuotaForConnection(mutableConn ?? conn)
       }
@@ -150,7 +151,7 @@ quotaApiRoutes.post("/:id/refresh", async (c) => {
 
   try {
     if (runtime.refreshQuota) {
-      await runtime.refreshQuota(mutableConn)
+      await refreshManagedQuota(mutableConn, { force: true })
     } else if (provider === "copilot") {
       await refreshQuotaForConnection(mutableConn)
     } else {

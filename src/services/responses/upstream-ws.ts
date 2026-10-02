@@ -244,6 +244,7 @@ function sessionKey(
 }
 
 interface UpstreamWsTurnOptions {
+  onSend?: (body: Record<string, unknown>) => void
   provider: UpstreamWsProvider
   /** 主体标识(Phase 2d:原 account.id),用于 session key 与日志。 */
   accountId: string
@@ -541,6 +542,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
     }
     markUpstreamSent(performanceContext())
     ws.send(wireBody)
+    options.onSend?.(effectiveBody)
     updateMemoryTrace(options.memoryTraceId, "upstream_ws_sent", {
       provider,
       wireBytes,

@@ -1,6 +1,7 @@
 function quotasView() {
   return {
     ...ViewHelpers,
+    ...usageAutoRefresh("quotas"),
     loading: false,
     refreshing: false,
     refreshingAccountId: null,
@@ -8,6 +9,7 @@ function quotasView() {
     accounts: [],
 
     init() {
+      this.initAutoRefresh()
       this.load()
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) {
@@ -24,12 +26,29 @@ function quotasView() {
       try {
         const data = await API.quota.get()
         this.accounts = data.accounts || []
+        this.lastUpdatedAt = Date.now()
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
         this.$nextTick(() => lucide.createIcons())
       }
+    },
+
+    async refreshCachedUsage() {
+      const data = await API.quota.get()
+      if (
+        JSON.stringify(this.accounts) !== JSON.stringify(data.accounts || [])
+      ) {
+        this.accounts = data.accounts || []
+        this.$nextTick(() => lucide.createIcons())
+      }
+      this.lastUpdatedAt = Date.now()
+    },
+
+    quotaUpdatedTime(account) {
+      const at = account.quotaInfo?.fetchedAt
+      return at ? new Date(at).toLocaleString() : "—"
     },
 
     async refresh() {

@@ -871,6 +871,8 @@ function tracesView() {
       const done = elapsed >= Math.max(1, frame.latencyMs || 1)
       const ghost = { ...frame, inFlight: !done, attempts: [] }
       if (!done) {
+        ghost.serviceTierUpstream = undefined
+        ghost.serviceTierResponse = undefined
         ghost.outcome = undefined
         ghost.statusCode = undefined
         ghost.error = undefined
@@ -891,10 +893,14 @@ function tracesView() {
               connectionName: a.connectionName,
               provider: a.provider,
               modelUpstream: undefined,
+              serviceTierUpstream: a.serviceTierUpstream,
+              serviceTierResponse: a.serviceTierResponse,
             })
             return ghost
           }
           ghost.attempts.push(a)
+          ghost.serviceTierUpstream = a.serviceTierUpstream
+          ghost.serviceTierResponse = a.serviceTierResponse
           spent = end
         }
       } else ghost.attempts = frame.attempts
@@ -1007,6 +1013,27 @@ function tracesView() {
     routeLabel(f) {
       if (!f) return ""
       return `${this.apiLabel(f)} · ${f.model || f.modelUpstream || "—"}`
+    },
+
+    serviceTierBadge(f) {
+      if (f?.serviceTierResponse === "priority") return "Fast"
+      if (f?.serviceTierUpstream !== "priority") return ""
+      return (
+        "Fast · "
+        + this.t(
+          f.serviceTierResponse ? "trace.tierChanged" : "trace.tierUnconfirmed",
+        )
+      )
+    },
+
+    serviceTierSummary(f) {
+      if (!f?.serviceTierUpstream) return ""
+      return [
+        `${this.t("trace.tierRequested")}: ${f.serviceTierRequested || "default"}`,
+        `${this.t("trace.tierRouted")}: ${f.serviceTierRouted || "default"}`,
+        `${this.t("trace.tierSent")}: ${f.serviceTierUpstream}`,
+        `${this.t("trace.tierReported")}: ${f.serviceTierResponse || this.t("trace.tierUnconfirmed")}`,
+      ].join(" · ")
     },
 
     isGroup(f) {

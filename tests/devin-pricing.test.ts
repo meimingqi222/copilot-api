@@ -155,7 +155,10 @@ describe("SWE official pricing", () => {
 
   test("the admin view includes Devin prices in official counts and filtering", () => {
     const v = runInNewContext(
-      readFileSync("pages/js/views/usage.js", "utf8") + "\nusageView()",
+      readFileSync("pages/js/usage-auto-refresh.js", "utf8")
+        + "\n"
+        + readFileSync("pages/js/views/usage.js", "utf8")
+        + "\nusageView()",
       { ViewHelpers: {} },
     )
     v.modelPrices = { "swe-2-high": {}, unknown: {} }

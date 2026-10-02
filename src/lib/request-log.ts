@@ -331,6 +331,10 @@ function applyTargetFields(
   ctx.entry.endpoint = target.endpoint as LogEntry["endpoint"]
   ctx.entry.modelUpstream = target.upstreamModelId
   ctx.entry.isTranslated = target.isTranslated
+  if (target.provider !== "codex") {
+    ctx.entry.serviceTierUpstream = undefined
+    ctx.entry.serviceTierResponse = undefined
+  }
 }
 
 /**
@@ -349,6 +353,8 @@ export function markAttemptStarting(
   const ctx = getRequestLogContext(c)
   if (!ctx) return
   applyTargetFields(ctx, target)
+  ctx.entry.serviceTierUpstream = undefined
+  ctx.entry.serviceTierResponse = undefined
   publishTrace({ ...ctx.entry, requestId: ctx.requestId }, "update")
 }
 
@@ -385,6 +391,14 @@ export function recordUpstreamAttempt(
     restReason: result.restReason,
     restUntilMs: result.restUntilMs,
     result: result.errorCode ? "failed" : "opened",
+    serviceTierUpstream:
+      target.provider === "codex" ?
+        getRequestLogContext(c)?.entry.serviceTierUpstream
+      : undefined,
+    serviceTierResponse:
+      target.provider === "codex" ?
+        getRequestLogContext(c)?.entry.serviceTierResponse
+      : undefined,
   })
   const logCtx = getRequestLogContext(c)
   if (logCtx) applyTargetFields(logCtx, target)

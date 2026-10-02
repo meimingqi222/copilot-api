@@ -22,6 +22,8 @@ export type TraceStage =
   | "abort"
 
 export interface UpstreamAttempt {
+  serviceTierUpstream?: string
+  serviceTierResponse?: string
   n: number
   connectionId: string
   connectionName?: string
@@ -152,6 +154,10 @@ export interface LogEntry {
   modelConflict?: boolean
   /** 请求的思考等级（reasoning effort），来自模型名后缀或 payload 字段 */
   reasoningEffort?: string
+  serviceTierRequested?: string
+  serviceTierRouted?: string
+  serviceTierUpstream?: string
+  serviceTierResponse?: string
   provider?: string
   protocol?: string
   connectionId?: string

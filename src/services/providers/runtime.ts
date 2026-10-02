@@ -67,6 +67,7 @@ export interface ProviderRuntime {
   refreshModels(connection: ProviderConnection): Promise<Array<ModelMapping>>
   refreshQuota?(
     connection: ProviderConnection,
+    signal?: AbortSignal,
   ): Promise<QuotaSnapshot | undefined>
   refreshAuth?(connection: ProviderConnection): Promise<void>
   getFallbackModels?(connection: ProviderConnection): Array<ModelMapping>

@@ -23,6 +23,7 @@ interface CopilotUsageResponse {
  */
 export async function fetchCopilotQuota(
   connection: ProviderConnection,
+  signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
   if (getConnectionProvider(connection) !== "copilot") {
     throw new Error("fetchCopilotQuota requires a Copilot connection")
@@ -34,6 +35,7 @@ export async function fetchCopilotQuota(
   }
 
   const response = await fetch(`${GITHUB_API_BASE_URL}/copilot_internal/user`, {
+    signal,
     headers: {
       ...githubApiHeaders(),
       authorization: `token ${githubToken}`,

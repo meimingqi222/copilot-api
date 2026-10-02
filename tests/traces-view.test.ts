@@ -19,6 +19,35 @@ function view(api = {}) {
 }
 
 describe("request trace view", () => {
+  test("Fast badge distinguishes requested, sent, confirmed and changed tiers", () => {
+    const trace = view()
+    expect(trace.serviceTierBadge({ serviceTierRequested: "priority" })).toBe(
+      "",
+    )
+    expect(trace.serviceTierBadge({ serviceTierUpstream: "priority" })).toBe(
+      "Fast · trace.tierUnconfirmed",
+    )
+    expect(
+      trace.serviceTierBadge({
+        serviceTierUpstream: "priority",
+        serviceTierResponse: "priority",
+      }),
+    ).toBe("Fast")
+    expect(
+      trace.serviceTierBadge({
+        serviceTierUpstream: "priority",
+        serviceTierResponse: "default",
+      }),
+    ).toBe("Fast · trace.tierChanged")
+    expect(trace.serviceTierBadge({})).toBe("")
+    expect(
+      trace.serviceTierSummary({
+        serviceTierRequested: "default",
+        serviceTierRouted: "priority",
+        serviceTierUpstream: "priority",
+      }),
+    ).toContain("trace.tierRouted: priority")
+  })
   test("selected replay plays only the selected request without loading history", async () => {
     const v = view()
     v.mode = "history"
