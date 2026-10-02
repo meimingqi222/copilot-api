@@ -388,11 +388,11 @@ describe("GET /admin/api/usage/pricing", () => {
     }
 
     expect(body.sources["mimo-aistudio/mimo-v2.5-pro"]).toBe("models-dev")
-    expect(body.sources["windsurf/swe-1-6-fast"]).toBe("unmatched")
+    expect(body.sources["windsurf/swe-1-6-fast"]).toBe("devin-official")
     expect(
       body.pricing["mimo-aistudio/mimo-v2.5-pro"].promptPricePer1k,
     ).toBeCloseTo(0.001, 10)
-    expect(body.pricing["windsurf/swe-1-6-fast"].promptPricePer1k).toBe(0)
+    expect(body.pricing["windsurf/swe-1-6-fast"].promptPricePer1k).toBe(0.0005)
   })
 })
 

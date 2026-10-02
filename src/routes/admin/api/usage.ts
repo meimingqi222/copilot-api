@@ -185,7 +185,7 @@ usageApiRoutes.get("/pricing", (c) => {
   > = {}
   const sources: Record<
     string,
-    "manual" | "models-dev" | "builtin" | "unmatched"
+    "manual" | "models-dev" | "devin-official" | "builtin" | "unmatched"
   > = {}
 
   for (const item of statsStore.getAllModelPricing()) {

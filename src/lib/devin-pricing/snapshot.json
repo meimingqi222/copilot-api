@@ -1,0 +1,86 @@
+{
+  "models": [
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-1-6",
+      "input_cost_per_million_usd": 0.5,
+      "output_cost_per_million_usd": 2.5,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0.2
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-1-6-fast",
+      "input_cost_per_million_usd": 0.5,
+      "output_cost_per_million_usd": 2.5,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0.2
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-1-7",
+      "input_cost_per_million_usd": 0,
+      "output_cost_per_million_usd": 0,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-1-7-lightning",
+      "input_cost_per_million_usd": 2.5,
+      "output_cost_per_million_usd": 12.5,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 1
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-1-7-lightning-medium",
+      "input_cost_per_million_usd": 2.5,
+      "output_cost_per_million_usd": 12.5,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 1
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-1-7-medium",
+      "input_cost_per_million_usd": 0,
+      "output_cost_per_million_usd": 0,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-2-high",
+      "input_cost_per_million_usd": 0,
+      "output_cost_per_million_usd": 0,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-2-max",
+      "input_cost_per_million_usd": 0,
+      "output_cost_per_million_usd": 0,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-2-medium",
+      "input_cost_per_million_usd": 0,
+      "output_cost_per_million_usd": 0,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0
+    },
+    {
+      "tier": "TEAMS_TIER_PRO",
+      "model_uid": "swe-check",
+      "input_cost_per_million_usd": 0,
+      "output_cost_per_million_usd": 0,
+      "cache_write_cost_per_million_usd": 0,
+      "cache_read_cost_per_million_usd": 0
+    }
+  ],
+  "fetchedAt": "2026-10-02",
+  "source": "https://docs.devin.ai/desktop/models.md"
+}

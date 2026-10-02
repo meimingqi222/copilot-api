@@ -72,7 +72,12 @@ export interface ContextTierPricingPer1k {
   cacheWritePricePer1k: number
 }
 
-type ModelPricingSource = "manual" | "models-dev" | "builtin" | "unmatched"
+type ModelPricingSource =
+  | "manual"
+  | "models-dev"
+  | "devin-official"
+  | "builtin"
+  | "unmatched"
 
 export interface ResolvedModelPricing extends ModelPricingPer1k {
   source: ModelPricingSource

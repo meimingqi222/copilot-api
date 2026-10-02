@@ -4,6 +4,7 @@ import path from "node:path"
 import type { ModelsDevCatalog } from "~/lib/models-dev/types"
 
 import { logger } from "~/lib/logger"
+import { initDevinPricing, refreshDevinPricing } from "~/lib/devin-pricing"
 import {
   buildModelsDevContextIndexes,
   buildModelsDevPriceIndexes,
@@ -149,6 +150,7 @@ async function refreshModelsDevCatalog(force = false): Promise<void> {
 }
 
 export function initModelsDevPricing(): void {
+  initDevinPricing()
   ensureCacheDir()
   const cached = loadCatalogFromDisk()
   if (cached) {
@@ -161,6 +163,7 @@ export function initModelsDevPricing(): void {
     clearInterval(refreshTimer)
   }
   refreshTimer = setInterval(() => {
+    void refreshDevinPricing()
     void refreshModelsDevCatalog(true)
   }, REFRESH_INTERVAL_MS)
   if (typeof refreshTimer.unref === "function") {

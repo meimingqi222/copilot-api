@@ -9,6 +9,7 @@ import type {
 import type { ProviderId } from "~/lib/provider-config"
 
 import { getDefaultModelPrice } from "~/lib/default-prices"
+import { resolveDevinPrice } from "~/lib/devin-pricing"
 import { resolveModelsDevPriceDetailed } from "~/lib/models-dev"
 
 interface ManualPricingInput {
@@ -183,6 +184,8 @@ export function resolveModelPricing(
       source: "manual",
     }
   }
+  const fromDevin = resolveDevinPrice(model)
+  if (fromDevin) return fromDevin
   const fromModelsDev = resolveModelsDevPriceDetailed(model, provider)
   if (fromModelsDev) {
     return fromModelsDev
