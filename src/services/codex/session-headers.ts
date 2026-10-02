@@ -115,6 +115,8 @@ export function resolveCodexExtraHeaders(
     "x-codex-turn-metadata",
     "x-codex-window-id",
     "x-codex-beta-features",
+    // Advisory model/tier routing; the body still controls service_tier.
+    "x-codex-routing-hint",
     // Always sent by the official client on HTTP (client.rs
     // ModelClientSession::stream): per-installation identity.
     "x-codex-installation-id",

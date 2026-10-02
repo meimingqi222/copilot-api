@@ -98,6 +98,13 @@ export function convertSystemRoleToDeveloper(input: unknown): unknown {
   return state.changed ? items : input
 }
 
+export function resolveCodexServiceTier(
+  value: unknown,
+): "priority" | "flex" | undefined {
+  // Match the CLI: default is implicit; only explicit priority/flex go upstream.
+  return value === "priority" || value === "flex" ? value : undefined
+}
+
 /**
  * Builds the body sent to the Codex upstream /responses endpoint.
  *
@@ -138,9 +145,6 @@ export function buildCodexUpstreamBody(
   ).stream_options
   const reasoningSummaryDelivery = streamOptions?.reasoning_summary_delivery
   const includeUsage = streamOptions?.include_usage
-  // CPA keeps only service_tier "priority" and strips every other value.
-  const serviceTier = (payload as unknown as { service_tier?: unknown })
-    .service_tier
   const keptStreamOptions: Record<string, unknown> = {}
   if (reasoningSummaryDelivery !== undefined) {
     keptStreamOptions.reasoning_summary_delivery = reasoningSummaryDelivery
@@ -179,7 +183,7 @@ export function buildCodexUpstreamBody(
     truncation: undefined,
     user: undefined,
     context_management: undefined,
-    service_tier: serviceTier === "priority" ? "priority" : undefined,
+    service_tier: resolveCodexServiceTier(payload.service_tier),
   }
 }
 

@@ -1,3 +1,8 @@
+import {
+  readAnthropicServiceTier,
+  readOpenAIServiceTier,
+} from "~/lib/service-tier"
+
 import type {
   ConversionPlan,
   IRPart,
@@ -24,6 +29,7 @@ type RequestFeatureKind =
   | "server_tool_use"
   | "web_search_result"
   | "reasoning_effort"
+  | "service_tier"
 
 interface RequestFeature {
   kind: RequestFeatureKind
@@ -251,6 +257,13 @@ export function inspectRequestFeatures(
       current: true,
     })
   }
+  if (request.generation?.serviceTier) {
+    features.push({
+      kind: "service_tier",
+      path: "generation.serviceTier",
+      current: true,
+    })
+  }
   return features
 }
 
@@ -345,6 +358,23 @@ function recordFeatureLoss(
   capabilities: WireCapabilities,
 ): void {
   switch (feature.kind) {
+    case "service_tier": {
+      const tier = request.generation?.serviceTier
+      const supported =
+        (target.wire === "messages" && readAnthropicServiceTier(tier))
+        || ((target.wire === "chat" || target.wire === "responses")
+          && readOpenAIServiceTier(tier))
+      if (!supported) {
+        record(
+          records,
+          target.wire,
+          feature,
+          "drop",
+          "target wire cannot express the requested service tier",
+        )
+      }
+      break
+    }
     case "image":
     case "tool_result_image":
     case "file":

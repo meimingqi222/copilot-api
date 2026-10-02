@@ -66,6 +66,13 @@ content parts 重复拼接。多个带签名 thinking 块保持独立，签名�
   （`streamGenerateContent`）而非 body 字段决定，路由在 dispatch 前写入
   `stream`。
 
+`service_tier` 在 Chat ↔ Responses 之间保留（`auto/default/flex/priority/scale`）。
+Messages 只编码 `auto/standard_only`；不可表达的 tier（含 Gemini 的所有 tier）
+记录 `service_tier` / `drop` 损失，不把 OpenAI priority 或 flex 冒充为 Anthropic auto。
+原生请求遵循提供方契约：Codex `/responses` 和 `/responses/compact` 只发送
+`priority/flex`，其他值省略；Copilot 和通用 OpenAI 兼容连接保留原生透传。
+`x-codex-routing-hint` 是独立的 advisory 头，转发它不覆盖 body 的 `service_tier`。
+
 ## 5. 翻译路径的选择
 
 | 情形                                                     | 走哪条路                         |

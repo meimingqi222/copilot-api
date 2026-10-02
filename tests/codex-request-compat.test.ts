@@ -213,22 +213,28 @@ describe("codex request compatibility (CPA parity)", () => {
     })
   })
 
-  test("service_tier: priority is kept, other values are stripped", async () => {
-    const body = await capturePostedBody({
-      model: "gpt-5",
-      input: [{ type: "message", role: "user", content: "hi" }],
-      stream: true,
-      service_tier: "standard",
-    })
-    expect(Object.hasOwn(body, "service_tier")).toBe(false)
-
-    const body2 = await capturePostedBody({
-      model: "gpt-5",
-      input: [{ type: "message", role: "user", content: "hi" }],
-      stream: true,
-      service_tier: "priority",
-    })
-    expect(body2.service_tier).toBe("priority")
+  test("service_tier: priority/flex kept, others stripped", async () => {
+    for (const tier of [
+      "priority",
+      "flex",
+      "default",
+      "auto",
+      "scale",
+      "standard",
+      null,
+    ]) {
+      const body = await capturePostedBody({
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "hi" }],
+        stream: true,
+        service_tier: tier,
+      })
+      if (tier === "priority" || tier === "flex") {
+        expect(body.service_tier).toBe(tier)
+      } else {
+        expect(Object.hasOwn(body, "service_tier")).toBe(false)
+      }
+    }
   })
 
   test("generate is stripped from the HTTP body", async () => {

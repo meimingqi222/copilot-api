@@ -11,6 +11,7 @@ import type {
 } from "~/services/ir/types"
 import { createHash } from "node:crypto"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { readOpenAIServiceTier } from "~/lib/service-tier"
 import { isResponsesServerTool } from "~/services/protocols/responses/types"
 
 type RecordValue = Record<string, unknown>
@@ -232,6 +233,7 @@ function decodeToolChoice(value: unknown): IRToolChoice | undefined {
 function decodeGeneration(payload: ResponsesPayload): IRGenerationOptions {
   const p = payload
   const generation: IRGenerationOptions = {}
+  generation.serviceTier = readOpenAIServiceTier(p.service_tier)
   if (typeof p.max_output_tokens === "number")
     generation.maxOutputTokens = p.max_output_tokens
   if (typeof p.temperature === "number") generation.temperature = p.temperature
@@ -645,6 +647,7 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
   const payload: RecordValue = {
     model: ir.model,
     input: items,
+    service_tier: readOpenAIServiceTier(generation?.serviceTier),
     ...(ir.instructions.length ?
       {
         instructions: ir.instructions

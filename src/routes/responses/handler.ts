@@ -356,6 +356,7 @@ export function collectForwardedSessionHeaders(
     "x-codex-turn-metadata": c.req.header("x-codex-turn-metadata"),
     "x-codex-window-id": c.req.header("x-codex-window-id"),
     "x-codex-beta-features": c.req.header("x-codex-beta-features"),
+    "x-codex-routing-hint": c.req.header("x-codex-routing-hint"),
     // Per-installation identity the official client always sends on HTTP.
     "x-codex-installation-id": c.req.header("x-codex-installation-id"),
     // Server-echoed turn state (forwarded on HTTP; stripped on the WS

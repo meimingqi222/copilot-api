@@ -75,6 +75,7 @@ import {
   countUnansweredToolCalls,
   isResponsesLiteRequest,
   pruneUnansweredToolCalls,
+  resolveCodexServiceTier,
   stripReasoningItems,
 } from "./upstream-body"
 import {
@@ -211,7 +212,7 @@ async function createCodexCompactOnce(
     tools: body.tools,
     parallel_tool_calls: body.parallel_tool_calls,
     reasoning: body.reasoning,
-    service_tier: body.service_tier,
+    service_tier: resolveCodexServiceTier(body.service_tier),
     prompt_cache_key:
       sessionId
       ?? (typeof body.prompt_cache_key === "string" ?

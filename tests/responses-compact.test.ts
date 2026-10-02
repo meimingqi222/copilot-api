@@ -31,6 +31,7 @@ const originalApiKey = state.legacyApiKey
 interface RecordedCall {
   url: string
   body: Record<string, unknown>
+  headers: Headers
 }
 
 let calls: Array<RecordedCall>
@@ -46,7 +47,7 @@ function sseCompleted(resultBody: unknown): string {
 }
 
 function mockCompactFetch(): void {
-  const fetchMock = mock((url: unknown, init?: { body?: unknown }) => {
+  const fetchMock = mock((url: unknown, init?: RequestInit) => {
     let parsed: Record<string, unknown> = {}
     try {
       parsed = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>
@@ -54,7 +55,11 @@ function mockCompactFetch(): void {
       // leave empty
     }
     const urlString = String(url)
-    calls.push({ url: urlString, body: parsed })
+    calls.push({
+      url: urlString,
+      body: parsed,
+      headers: new Headers(init?.headers),
+    })
     const next = fetchQueue.shift() ?? { status: 200, body: COMPACTION_RESULT }
     if (next.status >= 400) {
       return new Response(JSON.stringify(next.body), {
@@ -164,6 +169,42 @@ afterEach(async () => {
 })
 
 describe("POST /v1/responses/compact", () => {
+  test("codex: compact keeps priority/flex, strips other tiers and forwards routing hint", async () => {
+    await setupCodexConnection()
+    mockCompactFetch()
+    const hint = "model=gpt-5.4;tier=priority"
+    for (const tier of [
+      "priority",
+      "flex",
+      "default",
+      "auto",
+      "standard",
+      null,
+    ]) {
+      const response = await server.fetch(
+        new Request("http://localhost/v1/responses/compact", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-codex-routing-hint": hint,
+          },
+          body: JSON.stringify({
+            model: "gpt-5.4",
+            input: HISTORY_INPUT,
+            service_tier: tier,
+          }),
+        }),
+      )
+      expect(response.status).toBe(200)
+      const call = calls.at(-1)!
+      expect(call.headers.get("x-codex-routing-hint")).toBe(hint)
+      expect(call.body.service_tier).toBe(
+        tier === "priority" || tier === "flex" ? tier : undefined,
+      )
+      expect(call.body.stream).toBeUndefined()
+    }
+  })
+
   test("codex: forwards to upstream /responses/compact unary", async () => {
     await setupCodexConnection()
     mockCompactFetch()
@@ -327,10 +368,14 @@ describe("POST /v1/responses/compact", () => {
     const response = await server.fetch(
       new Request("http://localhost/v1/responses", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-codex-routing-hint": "model=gpt-5.4;tier=priority",
+        },
         body: JSON.stringify({
           model: "gpt-5.4",
           stream: false,
+          service_tier: "flex",
           input: [...HISTORY_INPUT, { type: "compaction_trigger" }],
         }),
       }),
@@ -342,6 +387,10 @@ describe("POST /v1/responses/compact", () => {
     // V2 内联：走普通 /responses，trigger 原样透传（新模型只认这个）。
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe("https://chatgpt.com/backend-api/codex/responses")
+    expect(calls[0].headers.get("x-codex-routing-hint")).toBe(
+      "model=gpt-5.4;tier=priority",
+    )
+    expect(calls[0].body.service_tier).toBe("flex")
     expect(calls[0].body.input).toEqual([
       ...HISTORY_INPUT,
       { type: "compaction_trigger" },
@@ -361,7 +410,12 @@ describe("WS /v1/responses with inline compaction_trigger", () => {
         fetch: server.fetch,
         websocket: (await import("~/lib/bun-websocket")).bunWebsocket,
       })
-      const ws = new WebSocket(`ws://localhost:${appServer.port}/v1/responses`)
+      const ws = new WebSocket(
+        `ws://localhost:${appServer.port}/v1/responses`,
+        {
+          headers: { "x-codex-routing-hint": "model=gpt-5.4;tier=priority" },
+        },
+      )
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error("Timed out waiting for websocket open")),
@@ -385,6 +439,7 @@ describe("WS /v1/responses with inline compaction_trigger", () => {
           type: "response.create",
           response: {
             model: "gpt-5.4",
+            service_tier: "flex",
             input: [...HISTORY_INPUT, { type: "compaction_trigger" }],
           },
         }),
@@ -400,6 +455,10 @@ describe("WS /v1/responses with inline compaction_trigger", () => {
         ...HISTORY_INPUT,
         { type: "compaction_trigger" },
       ])
+      expect(calls[0].headers.get("x-codex-routing-hint")).toBe(
+        "model=gpt-5.4;tier=priority",
+      )
+      expect(calls[0].body.service_tier).toBe("flex")
       ws.close()
     },
   )

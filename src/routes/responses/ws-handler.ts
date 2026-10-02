@@ -783,6 +783,7 @@ function extractResponsesSessionHeaders(
     "x-codex-turn-metadata": c.req.header("x-codex-turn-metadata"),
     "x-codex-window-id": c.req.header("x-codex-window-id"),
     "x-codex-beta-features": c.req.header("x-codex-beta-features"),
+    "x-codex-routing-hint": c.req.header("x-codex-routing-hint"),
     // Responses Lite marker — forwarded so the upstream/parallel_tool_calls
     // invariant is preserved end-to-end.
     "x-openai-internal-codex-responses-lite": c.req.header(

@@ -5,6 +5,8 @@
  * provider 能力判定或上游调用。
  */
 
+import type { OpenAIServiceTier } from "~/lib/service-tier"
+
 // ── Chat Completions streaming types ────────────────────────────────
 
 export interface CopilotStreamEvent {
@@ -129,6 +131,7 @@ export interface ChatCompletionsPayload {
   stop?: string | Array<string> | null
   n?: number | null
   stream?: boolean | null
+  service_tier?: OpenAIServiceTier | null
 
   frequency_penalty?: number | null
   presence_penalty?: number | null

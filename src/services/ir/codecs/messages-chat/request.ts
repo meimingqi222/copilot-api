@@ -26,6 +26,10 @@ import type {
 
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
+  readAnthropicServiceTier,
+  readOpenAIServiceTier,
+} from "~/lib/service-tier"
+import {
   budgetToLevel,
   extractReasoningBlockText,
   extractReasoningTextAlias,
@@ -488,6 +492,7 @@ export function encodeChatRequest(
     model: ir.model.replace(/^(claude-(?:sonnet|opus)-4)-\d{8}$/, "$1"),
     messages,
     max_tokens: generation?.maxOutputTokens,
+    service_tier: readOpenAIServiceTier(generation?.serviceTier),
     stop: generation?.stopSequences,
     stream: options.stream,
     temperature:
@@ -617,6 +622,7 @@ export function decodeChatRequest(payload: ChatCompletionsPayload): RequestIR {
     }),
     generation: {
       maxOutputTokens: payload.max_tokens ?? undefined,
+      serviceTier: readOpenAIServiceTier(payload.service_tier),
       temperature: payload.temperature ?? undefined,
       topP: payload.top_p ?? undefined,
       stopSequences:
@@ -916,6 +922,7 @@ export function encodeMessagesRequest(
     model: ir.model,
     messages,
     max_tokens: generation?.maxOutputTokens ?? MAX_TOKENS_DEFAULT,
+    service_tier: readAnthropicServiceTier(generation?.serviceTier),
     ...(systemText && { system }),
     ...(generation?.stopSequences && {
       stop_sequences: generation.stopSequences,

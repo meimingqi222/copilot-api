@@ -1,3 +1,8 @@
+import type {
+  AnthropicServiceTier,
+  OpenAIServiceTier,
+} from "~/lib/service-tier"
+
 /** The IR is used only when translating between public wire protocols. */
 export type IRWire = "chat" | "messages" | "responses" | "gemini"
 
@@ -175,7 +180,7 @@ export interface IRGenerationOptions {
   maxToolCalls?: number
   reasoning?: IRReasoningOptions
   textFormat?: IRTextFormat
-  serviceTier?: "auto" | "standard_only"
+  serviceTier?: OpenAIServiceTier | AnthropicServiceTier
   store?: boolean
   background?: boolean
   previousResponseId?: string

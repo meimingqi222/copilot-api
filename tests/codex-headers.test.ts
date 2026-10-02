@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import { buildCodexHeaders } from "~/services/codex/headers"
+import { resolveCodexExtraHeaders } from "~/services/codex/session-headers"
 import { applyCodexWebsocketHeaders } from "~/services/responses/upstream-ws"
 
 describe("buildCodexHeaders (official codex simulation)", () => {
@@ -36,6 +37,15 @@ describe("buildCodexHeaders (official codex simulation)", () => {
 })
 
 describe("applyCodexWebsocketHeaders (official handshake simulation)", () => {
+  test("keeps advisory model/tier routing hint on HTTP and WebSocket headers", () => {
+    const hint = "model=gpt-5;tier=priority"
+    const extra = resolveCodexExtraHeaders({
+      forwardedHeaders: { "x-codex-routing-hint": hint },
+    })
+    expect(extra["x-codex-routing-hint"]).toBe(hint)
+    expect(applyCodexWebsocketHeaders(extra)["x-codex-routing-hint"]).toBe(hint)
+  })
+
   test("derives x-client-request-id from thread-id", () => {
     const next = applyCodexWebsocketHeaders({
       "thread-id": "thread-1",

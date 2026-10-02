@@ -6,6 +6,8 @@
  * services/<provider>/ 下实现。
  */
 
+import type { OpenAIServiceTier } from "~/lib/service-tier"
+
 /** 上游 SSE 事件的通用外形（data + 可选 event 名）。 */
 export interface CopilotStreamEventLike {
   data?: string
@@ -168,6 +170,7 @@ export interface ResponsesPayload {
   parallel_tool_calls?: boolean | null
   previous_response_id?: string | null
   stream?: boolean | null
+  service_tier?: OpenAIServiceTier | null
   store?: boolean | null
   temperature?: number | null
   text?: ResponsesTextConfig
