@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { Hono } from "hono"
 
 import {
@@ -14,10 +14,12 @@ import {
   beginStreamLog,
   finishRequestLog,
   markStreamTerminal,
+  patchRequestLog,
   recordUpstreamAttempt,
 } from "~/lib/request-log"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { clearTraceBusForTest, recentTraces } from "~/lib/trace-bus"
+import { statsStore } from "~/lib/stats-store"
 
 describe("log middleware", () => {
   afterEach(() => {
@@ -148,6 +150,65 @@ describe("log middleware", () => {
     expect(entry.outputObserved).toBe(true)
   })
 
+  test.each(["/v1/chat/completions", "/v1/messages", "/v1/responses"])(
+    "settles a requested stream that returns a JSON error on %s",
+    async (endpoint) => {
+      const app = new Hono()
+      app.use("*", requestLogger)
+      app.post(endpoint, (c) => {
+        patchRequestLog(c, { streaming: true, model: "test-model" })
+        return c.json({ error: { message: "Upstream unavailable" } }, 503)
+      })
+      const response = await app.request(`http://localhost${endpoint}`, {
+        method: "POST",
+      })
+      await response.text()
+      const entry = logStore.query({ limit: 1 }).entries[0]
+      expect(entry?.statusCode).toBe(503)
+      expect(entry?.outcome).toBe("failed")
+      const trace = recentTraces().find(
+        (record) => record.requestId === response.headers.get("X-Request-Id"),
+      )
+      expect(trace?.inFlight).toBe(false)
+      expect(trace?.outcome).toBe("failed")
+    },
+  )
+
+  test("does not settle a real SSE response before its producer finishes", async () => {
+    const app = new Hono()
+    let releaseProducer: (() => void) | undefined
+    const producerGate = new Promise<void>((resolve) => {
+      releaseProducer = resolve
+    })
+    app.use("*", requestLogger)
+    app.post("/v1/responses", (c) => {
+      beginStreamLog(c)
+      return handleSseStream(
+        c,
+        async (stream) => {
+          await producerGate
+          markStreamTerminal(c, "response.completed", "success", true)
+          await writeSseEvent(stream, "done")
+        },
+        { skipPing: true, onFinally: () => finishRequestLog(c) },
+      )
+    })
+    const response = await app.request("http://localhost/v1/responses", {
+      method: "POST",
+    })
+    const requestId = response.headers.get("X-Request-Id")
+    expect(
+      recentTraces().find((record) => record.requestId === requestId)?.inFlight,
+    ).toBe(true)
+    expect(logStore.query({ limit: 10 }).entries).toHaveLength(0)
+    releaseProducer?.()
+    await response.text()
+    expect(
+      recentTraces().find((record) => record.requestId === requestId)?.inFlight,
+    ).toBe(false)
+    expect(logStore.query({ limit: 10 }).entries).toHaveLength(1)
+  })
+
   test("keeps concurrent upstream attempts on their own request", async () => {
     const app = new Hono()
     app.use("*", requestLogger)
@@ -237,7 +298,7 @@ describe("log middleware", () => {
     expect(logStore.count()).toBe(1)
   })
 
-  test("/v1/models 与 Gemini 方言也属于被追踪的 API 面", async () => {
+  test("only Gemini generation is traced, not model listing", async () => {
     const app = new Hono()
 
     app.use("*", requestLogger)
@@ -259,7 +320,73 @@ describe("log middleware", () => {
       },
     )
 
-    expect(logStore.count()).toBe(2)
+    expect(logStore.count()).toBe(1)
+    expect(recentTraces().map((record) => record.path)).toEqual([
+      "/v1beta/models/gemini-3-pro:generateContent",
+    ])
+  })
+
+  test.each([
+    ["GET", "/v1/models"],
+    ["GET", "/models"],
+    ["POST", "/v1/messages/count_tokens"],
+    ["POST", "/v1beta/models/gemini-pro:countTokens"],
+    ["GET", "/v1beta/models"],
+    ["POST", "/v1/embeddings"],
+    ["POST", "/v1/images/generations"],
+    ["GET", "/v1/chat/completions"],
+    ["OPTIONS", "/v1/responses"],
+    ["POST", "/v1/responses/not-a-route"],
+  ])("does not trace non-generation request %s %s", async (method, path) => {
+    const app = new Hono()
+    app.use("*", requestLogger)
+    app.all(path, (c) => c.json({ ok: true }))
+    await app.request(`http://localhost${path}`, {
+      method,
+      headers: { "x-forwarded-for": "203.0.113.13" },
+    })
+    expect(logStore.count()).toBe(0)
+    expect(recentTraces()).toHaveLength(0)
+    expect(getSnapshots("ip")[0]?.key).toBe("203.0.113.13")
+  })
+
+  test("non-generation requests do not increment account request statistics", async () => {
+    const requestSpy = spyOn(
+      statsStore,
+      "incrementRequests",
+    ).mockImplementation(() => {})
+    const errorSpy = spyOn(
+      statsStore,
+      "incrementRequestAndError",
+    ).mockImplementation(() => {})
+    try {
+      const app = new Hono()
+      app.use("*", requestLogger)
+      app.all("*", (c) => {
+        c.set("accountId", "test-stat-account")
+        return c.json(
+          { ok: true },
+          c.req.path.endsWith("count_tokens") ? 400 : 200,
+        )
+      })
+      for (const [method, path] of [
+        ["GET", "/v1/models"],
+        ["POST", "/v1/messages/count_tokens"],
+      ]) {
+        await app.request(`http://localhost${path}`, {
+          method,
+          headers: { "x-forwarded-for": "203.0.113.14" },
+        })
+      }
+      expect(requestSpy).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+      await app.request("http://localhost/v1/messages", { method: "POST" })
+      expect(requestSpy).toHaveBeenCalledTimes(1)
+      expect(errorSpy).not.toHaveBeenCalled()
+    } finally {
+      requestSpy.mockRestore()
+      errorSpy.mockRestore()
+    }
   })
 
   test("被安全防护拉黑的请求不写系统日志，但实时追踪会结算（不再永远'进行中'）", async () => {

@@ -85,6 +85,7 @@ export function createResponsesWebSocketSession(c: Context) {
   let activeController: AbortController | undefined
   let activeTurn: ReturnType<typeof createDetachedRequestLog> | undefined
   const executionSessionId = randomUUID()
+  const handshakeRequestId = getRequestLogContext(c)?.requestId ?? randomUUID()
   const transcriptScopeId = resolveTranscriptScopeId(c)
   logger.info(
     `responses websocket: client session opened id=${executionSessionId}`,
@@ -177,9 +178,8 @@ export function createResponsesWebSocketSession(c: Context) {
       inFlight = true
       const controller = new AbortController()
       activeController = controller
-      const handshakeCtx = getRequestLogContext(c)
       const turnCtx = createDetachedRequestLog({
-        parentRequestId: handshakeCtx?.requestId,
+        parentRequestId: handshakeRequestId,
         method: "WS",
         path: c.req.path,
         endpoint: "responses",

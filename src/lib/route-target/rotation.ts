@@ -48,6 +48,7 @@ export function switchToNextRouteTarget(
     groupMembers?: Array<string>
     groupRouting?: GroupRoutingMode
     groupId?: string
+    compact?: boolean
   },
 ): RouteTarget | null {
   const sessionOptions = {
@@ -63,16 +64,19 @@ export function switchToNextRouteTarget(
       groupId: session.groupId,
       endpoint,
       exclude,
+      compact: session?.compact,
       ...sessionOptions,
     })
   }
   const routing = resolveModelRouting(modelId)
   const candidates = buildRouteTargets({
+    connectionId: routing.connectionId,
     legacyProvider: routing.legacyProvider,
     accountPrefix: routing.accountPrefix,
     publicModelId: routing.modelId,
     aliasRestriction: routing.aliasRestriction,
     endpoint,
+    compact: session?.compact,
   })
   return selectRouteTarget(candidates, { exclude, ...sessionOptions })
 }

@@ -104,8 +104,14 @@ traceApiRoutes.get("/history", async (c) => {
   const timeFrom = parseTime(c.req.query("timeFrom"))
   const timeTo = parseTime(c.req.query("timeTo"))
   const limit = 500
-  const persisted = await readPersistedRequestLogs({ timeFrom, timeTo, limit })
+  const persisted = await readPersistedRequestLogs({
+    timeFrom,
+    timeTo,
+    limit,
+    llmOnly: true,
+  })
   const memory = logStore.query({
+    llmOnly: true,
     timeFrom,
     timeTo,
     limit,

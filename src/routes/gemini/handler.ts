@@ -6,6 +6,7 @@ import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   beginStreamLog,
+  finishRequestLog,
   markStreamTerminal,
   markTraceFirstOutput,
 } from "~/lib/request-log"
@@ -92,10 +93,10 @@ export async function handleGenerateContent(c: Context) {
 
   beginStreamLog(c)
   return streamSSE(c, async (stream) => {
-    await writeSseComment(stream)
     const pingInterval = createSsePingInterval(stream)
     let outputObserved = false
     try {
+      await writeSseComment(stream)
       if (!isAsyncIterable<GeminiStreamEvent>(result.response)) {
         const response = result.response as GeminiGenerateContentResponse
         recordGeminiUsage({
@@ -142,6 +143,7 @@ export async function handleGenerateContent(c: Context) {
       })
     } finally {
       clearInterval(pingInterval)
+      finishRequestLog(c)
     }
   })
 }

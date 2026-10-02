@@ -78,6 +78,8 @@ function frame(
     timestamp: Date.now(),
     level: "info",
     message: "POST /v1/chat/completions 200",
+    method: "POST",
+    path: "/v1/chat/completions",
     outcome: "success",
     ...overrides,
   }
@@ -421,13 +423,31 @@ describe("GET /admin/api/trace/history", () => {
     try {
       await writeFile(
         join(PATHS.LOG_DIR, "requests-2026-10-01.jsonl"),
-        JSON.stringify(kept) + "\n",
+        [
+          kept,
+          ...Array.from({ length: 501 }, (_, index) => ({
+            ...kept,
+            requestId: `old-model-list-${index}`,
+            timestamp: timestamp + 2,
+            method: "GET",
+            path: "/v1/models",
+          })),
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n",
       )
       logStore.push({ ...kept, connectionName: "memory-wins" })
       logStore.push(
         frame({ requestId: "memory-only", timestamp: timestamp + 1 }),
       )
       logStore.push(frame({ requestId: "outside", timestamp: timestamp - 100 }))
+      logStore.push(
+        frame({
+          requestId: "old-token-count",
+          timestamp,
+          path: "/v1/messages/count_tokens",
+        }),
+      )
       publishTrace({ requestId: "still-running", timestamp }, "start")
       const response = await server.fetch(
         adminRequest(

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 
 import {
   TRACE_INFLIGHT_TTL_MS,
@@ -56,6 +56,39 @@ describe("trace bus in-flight 自愈", () => {
     expect(
       events.some((e) => e.requestId === "stale-1" && e.inFlight === false),
     ).toBe(true)
+  })
+
+  test("idle subscribers receive settlement without another trace read or publish", () => {
+    const realSetInterval = globalThis.setInterval
+    let sweep: (() => void) | undefined
+    const intervalSpy = spyOn(globalThis, "setInterval").mockImplementation(
+      (callback: () => void, delay?: number) => {
+        sweep = () => callback()
+        return realSetInterval(callback, delay)
+      },
+    )
+    const events: Array<{ requestId: string; inFlight?: boolean }> = []
+    const unsubscribe = subscribeTrace(({ entry }) => events.push(entry))
+    let clockSpy: ReturnType<typeof spyOn> | undefined
+    try {
+      publishTrace(
+        { requestId: "idle", path: "/v1/responses", timestamp: Date.now() },
+        "start",
+      )
+      const expiredAt = Date.now() + TRACE_INFLIGHT_TTL_MS + 1000
+      clockSpy = spyOn(Date, "now").mockReturnValue(expiredAt)
+      expect(sweep).toBeDefined()
+      sweep?.()
+      expect(
+        events.some(
+          (entry) => entry.requestId === "idle" && entry.inFlight === false,
+        ),
+      ).toBe(true)
+    } finally {
+      unsubscribe()
+      clockSpy?.mockRestore()
+      intervalSpy.mockRestore()
+    }
   })
 
   test("TTL 内的 in-flight 记录不被动", () => {

@@ -11,6 +11,7 @@ import {
   REQUEST_LOG_JSONL_PATTERN,
 } from "~/lib/log-rotation"
 import { logger } from "~/lib/logger"
+import { isLlmRequest } from "~/lib/llm-request"
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
 
 let appendQueue = Promise.resolve()
@@ -164,6 +165,7 @@ function parseLine(line: string, output: Array<LogEntry>): void {
 }
 
 export async function readPersistedRequestLogs(options?: {
+  llmOnly?: boolean
   timeFrom?: number
   timeTo?: number
   limit?: number
@@ -174,6 +176,7 @@ export async function readPersistedRequestLogs(options?: {
   })) {
     if (options?.timeFrom && entry.timestamp < options.timeFrom) continue
     if (options?.timeTo && entry.timestamp > options.timeTo) continue
+    if (options?.llmOnly && !isLlmRequest(entry)) continue
     entries.push(entry)
     if (options?.limit && entries.length >= options.limit) break
   }

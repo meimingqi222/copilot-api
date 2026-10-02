@@ -74,6 +74,7 @@ import { safeOrigin } from "~/lib/utils"
  * - `connection`/`credential`: 始终填充。批次 3 后统一从 getProviderConnection 获取。
  */
 export interface ProviderAdmission {
+  compact?: boolean
   target: RouteTarget
   connection: ProviderConnection
   credential: ApiCredential
@@ -722,6 +723,7 @@ export async function prepareRequestAdmission(
     target,
     connection,
     credential: found.credential,
+    compact: options.compact,
     initiator,
     ...sessionFields,
     ...(groupDecision ?

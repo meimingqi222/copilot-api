@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono"
 
 import { logger } from "~/lib/logger"
+import { isLlmRequest } from "~/lib/llm-request"
 
 import {
   isBlocked,
@@ -21,8 +22,6 @@ import {
   finalizeUpstreamModelAudit,
   getRequestLogContext,
   initRequestLog,
-  isApiEndpointPath,
-  isCoreApiPath,
   patchRequestLog,
   publishTraceSnapshot,
   recordTraceError,
@@ -38,18 +37,14 @@ import { getClientIp } from "./utils"
 export const requestLogger = async (c: Context, next: Next) => {
   const clientIp = getClientIp(c)
   const userAgent = c.req.header("user-agent") || undefined
-  const isCoreApi = isCoreApiPath(c.req.path)
-  // 是否属于本服务对外的 API 面：请求日志/统计/实时追踪只覆盖 API 面。扫描器瞎撞的
-  // 非 API 路径（/ai/credentials、/.env、静态资源）不是 API 调用，记进去只会让
-  // "某端点 401"看起来像 LLM 请求失败，也污染统计。安全防护快照不受影响（照常记录）。
-  const isApiSurface = isApiEndpointPath(c.req.path)
+  const isLlmCall = isLlmRequest({ method: c.req.method, path: c.req.path })
   const isLocalhost =
     clientIp === "127.0.0.1"
     || clientIp === "::1"
     || clientIp === "::ffff:127.0.0.1"
 
-  const shouldSkip = !isCoreApi && shouldSkipRequestLog(c.req.path)
-  const shouldSkipLocalhost = isLocalhost && !isCoreApi
+  const shouldSkip = !isLlmCall && shouldSkipRequestLog(c.req.path)
+  const shouldSkipLocalhost = isLocalhost && !isLlmCall
   // 跳过路径(health/admin/ws/mimo 及非核心 API 的 localhost)本就不追踪:
   // 不建 ctx、不写 logStore,与旧版 `await next(); if (skip) return` 语义等价。
   if (shouldSkip || shouldSkipLocalhost) {
@@ -67,7 +62,7 @@ export const requestLogger = async (c: Context, next: Next) => {
   // Show the request on the live trace view the moment it opens, before
   // routing resolves and long before it finishes. 非 API 面不会走到收尾落盘，
   // 这里也不能发 start，否则实时视图会留下永不结束的条目。
-  if (isApiSurface) publishTraceSnapshot(c, "start")
+  if (isLlmCall) publishTraceSnapshot(c, "start")
   try {
     c.header("X-Request-Id", ctx.requestId)
   } catch {
@@ -91,7 +86,7 @@ export const requestLogger = async (c: Context, next: Next) => {
     if (!claimRequestLogFinish(c)) return
     // 非 API 面的请求不写请求日志、不记统计、不发实时追踪（安全防护快照在 finally
     // 里照常更新，暴力破解信号不受影响）。
-    if (!isApiSurface) return
+    if (!isLlmCall) return
     // daily_stats 与 request log 同一次落盘、恰好一次：
     // 流式请求的 accountId 在 SSE producer 里 dispatch 后才落定，
     // middleware finally 时还拿不到，放这里才能计入流式。
@@ -198,7 +193,10 @@ export const requestLogger = async (c: Context, next: Next) => {
     // Hono returns the SSE Response before its producer has consumed the
     // upstream stream. The producer explicitly finishes these requests after
     // observing the protocol terminal; non-stream requests finish here.
-    if (!ctx.entry.streaming || nextError) persistRequestLog()
+    const isSseResponse =
+      c.res.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
+      === "text/event-stream"
+    if (!ctx.entry.streaming || !isSseResponse || nextError) persistRequestLog()
     try {
       const cfg = readLogRotationConfig()
       maybePruneRequestLogs(cfg, new Date())

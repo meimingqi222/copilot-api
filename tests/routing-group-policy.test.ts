@@ -15,6 +15,7 @@ import {
   clearRestRegistryForTest,
   selectGroupRouteTarget,
   selectNextResponsesWsTarget,
+  switchToNextRouteTarget,
   targetKey,
 } from "~/lib/route-target"
 import { clearSessionAffinityForTest } from "~/lib/routing"
@@ -101,6 +102,59 @@ function pick(
 }
 
 describe("routing group candidate policy", () => {
+  test("HTTP failover honors an explicit connection pin", () => {
+    connection("alpha", [60])
+    connection("beta", [60])
+    const initial = selectGroupRouteTarget(["alpha/model"], {
+      endpoint: "chat",
+    })!
+    expect(
+      switchToNextRouteTarget(
+        initial,
+        "alpha/model",
+        "chat",
+        new Set([targetKey(initial)]),
+      ),
+    ).toBeNull()
+  })
+
+  test("group HTTP compact failover excludes non-compact connections", async () => {
+    const alpha = connection("alpha", [60])
+    const beta = connection("beta", [60])
+    const gamma = connection("gamma", [60])
+    for (const conn of [alpha, beta, gamma]) {
+      conn.protocol =
+        conn.id === "beta" ? "openai-responses-compatible" : "codex-native"
+      conn.models![0].endpoints = ["responses"]
+      upsertProviderConnection(conn)
+    }
+    const members = ["alpha/model", "beta/model", "gamma/model"]
+    const target = selectGroupRouteTarget(members, {
+      endpoint: "responses",
+      compact: true,
+    })!
+    const attempts: Array<string> = []
+    const result = await executeWithFailover({
+      payload: { model: "model" },
+      routeKind: "responses",
+      admission: {
+        target,
+        connection: alpha,
+        credential: alpha.credentials[0],
+        compact: true,
+        groupMembers: members,
+      },
+      execute: (_adapter, next) => {
+        attempts.push(next.connectionId)
+        if (next.connectionId === "alpha")
+          throw new LocalPayloadUnsupportedError("try backup")
+        return Promise.resolve(next.connectionId)
+      },
+    })
+    expect(result).toBe("gamma")
+    expect(attempts).toEqual(["alpha", "gamma"])
+  })
+
   test("smart prefers native paths and falls back to translated paths after exclusion", () => {
     const translated = connection("alpha", [80])
     translated.models![0].endpoints = ["responses"]

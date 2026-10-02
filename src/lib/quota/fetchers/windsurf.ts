@@ -107,7 +107,7 @@ function toUsedPercent(remaining: number | undefined): number | undefined {
   return remaining === undefined ? undefined : Math.max(0, 100 - remaining)
 }
 
-/** 用尽窗口里最近的重置时刻（epoch ms）；没有可用信息时 undefined。 */
+/** 用尽窗口里最后的重置时刻（epoch ms）；没有可用信息时 undefined。 */
 function exhaustedWindowResetMs(
   dailyRemainingPercent: number | undefined,
   dailyResetSeconds: number | undefined,
@@ -121,7 +121,7 @@ function exhaustedWindowResetMs(
   if (weeklyRemainingPercent === 0 && weeklyResetSeconds !== undefined) {
     candidates.push(weeklyResetSeconds * 1000)
   }
-  return candidates.length > 0 ? Math.min(...candidates) : undefined
+  return candidates.length > 0 ? Math.max(...candidates) : undefined
 }
 
 export async function fetchWindsurfQuota(

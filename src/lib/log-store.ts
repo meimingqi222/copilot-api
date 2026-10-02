@@ -1,3 +1,5 @@
+import { isLlmRequest } from "~/lib/llm-request"
+
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
 export type LogEndpoint =
@@ -184,6 +186,7 @@ export type RequestLogRecord = Omit<LogEntry, "id">
 const MAX_SIZE = Number(process.env["LOG_BUFFER_SIZE"] ?? 5000)
 
 export interface LogQueryOptions {
+  llmOnly?: boolean
   level?: LogLevel
   search?: string
   limit?: number
@@ -256,6 +259,7 @@ export function matchesLogEntry(
   entry: LogEntry,
   options: LogQueryOptions,
 ): boolean {
+  if (options.llmOnly && !isLlmRequest(entry)) return false
   if (options.level && entry.level !== options.level) return false
   if (options.endpoint && entry.endpoint !== options.endpoint) return false
   if (options.apiKind && (entry.apiKind ?? entry.endpoint) !== options.apiKind)

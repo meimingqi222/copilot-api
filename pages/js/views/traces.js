@@ -1019,7 +1019,12 @@ function tracesView() {
         const winner = this.groupWinnerModel(f)
         return winner ? `${gName} → ${winner}` : gName
       }
-      return f.model || f.modelUpstream || "-"
+      return (
+        f.model
+        || f.modelUpstream
+        || f.modelRequested
+        || (f.path ? [f.method, f.path].filter(Boolean).join(" ") : "-")
+      )
     },
   }
 }

@@ -238,6 +238,23 @@ describe("fetchWindsurfQuota", () => {
       })
     })
 
+    test("both exhausted windows stay locked until the later reset", async () => {
+      const dailyReset = Math.floor(Date.now() / 1000) + 3600
+      const weeklyReset = dailyReset + 4 * 3600
+      const payload = buildQuotaPayload({
+        dailyRemaining: 0,
+        weeklyRemaining: 0,
+        dailyReset,
+        weeklyReset,
+      })
+      await withStubbedQuota(payload, async (connection) => {
+        await refreshWindsurfQuota(connection)
+        expect(connection.credentials[0].cooldownUntil).toBeGreaterThanOrEqual(
+          weeklyReset * 1000 - 1000,
+        )
+      })
+    })
+
     test("周额度用尽同样判为耗尽", async () => {
       const payload = buildQuotaPayload({
         dailyRemaining: 100,

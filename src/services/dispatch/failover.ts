@@ -175,6 +175,7 @@ export async function executeWithFailover<
         groupMembers: current.groupMembers,
         groupRouting: current.group?.routing,
         groupId: current.group?.groupId,
+        compact: current.compact,
       },
     )
     if (!next) return false

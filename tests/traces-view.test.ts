@@ -19,6 +19,38 @@ function view(api = {}) {
 }
 
 describe("request trace view", () => {
+  test("model-less trace rows identify the request instead of a dash", () => {
+    const traceView = view()
+    expect(
+      traceView.rowModelDisplay({ method: "GET", path: "/v1/models" }),
+    ).toBe("GET /v1/models")
+    expect(
+      traceView.rowModelDisplay({
+        method: "POST",
+        path: "/v1/messages/count_tokens",
+      }),
+    ).toBe("POST /v1/messages/count_tokens")
+    expect(traceView.rowModelDisplay({ path: "/v1/models" })).toBe("/v1/models")
+    expect(
+      traceView.rowModelDisplay({
+        modelRequested: "gpt-test",
+        method: "POST",
+        path: "/v1/responses",
+      }),
+    ).toBe("gpt-test")
+    expect(
+      traceView.rowModelDisplay({
+        model: "public-model",
+        modelRequested: "requested-model",
+        modelUpstream: "native-model",
+      }),
+    ).toBe("public-model")
+    expect(traceView.rowModelDisplay({ modelUpstream: "native-model" })).toBe(
+      "native-model",
+    )
+    expect(traceView.rowModelDisplay(null)).toBe("-")
+  })
+
   test("history replay waits for the returning packet before advancing", async () => {
     const v = view()
     const arrivals: Array<() => void> = []

@@ -13,6 +13,7 @@
 import { EventEmitter } from "node:events"
 
 import type { RequestLogRecord } from "~/lib/log-store"
+import { isLlmRequest } from "~/lib/llm-request"
 
 /** How many recent requests the live view keeps. */
 export const TRACE_KEEP = 60
@@ -56,6 +57,12 @@ bus.setMaxListeners(0)
 const recent: Array<TraceRecord> = []
 /** Monotonic sequence, bumped on every upsert, for "wait past seq" polls. */
 let seqCounter = 0
+let sweepTimer: ReturnType<typeof setInterval> | undefined
+
+function stopSweepTimer(): void {
+  if (sweepTimer !== undefined) clearInterval(sweepTimer)
+  sweepTimer = undefined
+}
 
 /**
  * 把超时未收尾的 in-flight 记录结算掉（按"未收尾"），并通知订阅者，让已经打开的
@@ -115,6 +122,7 @@ export function publishTrace(
   entry: TraceInput,
   phase: TracePhase = "final",
 ): void {
+  if (entry.path && !isLlmRequest(entry)) return
   upsert({ ...entry, inFlight: phase !== "final" }, phase)
 }
 
@@ -130,8 +138,13 @@ export function subscribeTrace(
   listener: (event: { entry: TraceRecord; phase: TracePhase }) => void,
 ): () => void {
   bus.on("trace", listener)
+  if (sweepTimer === undefined) {
+    sweepTimer = setInterval(() => sweepStaleInFlight(Date.now()), 60_000)
+    sweepTimer.unref()
+  }
   return () => {
     bus.off("trace", listener)
+    if (bus.listenerCount("trace") === 0) stopSweepTimer()
   }
 }
 
@@ -142,6 +155,7 @@ export function __sweepStaleInFlightForTest(now: number): void {
 
 /** Test seam: drop buffered traces and listeners. */
 export function clearTraceBusForTest(): void {
+  stopSweepTimer()
   recent.length = 0
   bus.removeAllListeners()
   seqCounter = 0

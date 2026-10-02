@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test"
 
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
+import { logStore } from "~/lib/log-store"
+import { clearTraceBusForTest, recentTraces } from "~/lib/trace-bus"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
@@ -30,12 +32,16 @@ function geminiResponse(text: string) {
 }
 
 beforeEach(async () => {
+  logStore.clearForTest()
+  clearTraceBusForTest()
   statsStore.clearUsageStatsForTest()
   resetProtectedRouteGuardForTest()
   __resetProviderConnectionsForTest()
 })
 
 afterEach(() => {
+  logStore.clearForTest()
+  clearTraceBusForTest()
   statsStore.clearUsageStatsForTest()
   globalThis.fetch = originalFetch
   __resetProviderConnectionsForTest()
@@ -160,7 +166,10 @@ test("streamGenerateContent forwards SSE frames and appends alt=sse", async () =
       "http://localhost/v1beta/models/gemini-3-pro:streamGenerateContent",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": "203.0.113.78",
+        },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: "hi" }] }],
         }),
@@ -188,6 +197,13 @@ test("streamGenerateContent forwards SSE frames and appends alt=sse", async () =
     .map((part) => part.text)
     .filter(Boolean)
   expect(emitted).toEqual(["He", "llo"])
+  const requestId = response.headers.get("X-Request-Id")
+  const trace = recentTraces().find((record) => record.requestId === requestId)
+  expect(trace?.inFlight).toBe(false)
+  expect(trace?.outcome).toBe("success")
+  expect(
+    logStore.query({ requestId: requestId ?? undefined }).entries,
+  ).toHaveLength(1)
 })
 
 test("a Gemini client falls back to a chat-only connection via the shared codec table", async () => {
