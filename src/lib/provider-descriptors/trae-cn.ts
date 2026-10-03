@@ -15,6 +15,8 @@ export const providerMetadata = defineProviderMetadata({
       category: "ide",
       badgeKey: "accounts.badge.oauth",
       hintKey: "accounts.provider.trae-cn.deviceHint",
+      // 服务器部署时 loopback 回调到不了本地：开手动粘贴回调地址。
+      manualOAuthCallback: true,
     },
     name: "Trae CN",
     icon: "trae",

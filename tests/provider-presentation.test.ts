@@ -56,6 +56,7 @@ describe("provider-owned account presentation", () => {
       "antigravity",
       "windsurf",
       "lobsterai",
+      "trae-cn",
     ])
       expect(view.needsManualOAuthCallback(id)).toBe(true)
     for (const id of ["copilot", "kimi", "gemini", "zed", "commandcode-plan"])

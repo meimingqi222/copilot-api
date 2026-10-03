@@ -410,6 +410,11 @@ const i18n = {
         "http://localhost:51121/oauth-callback?code=...&state=...",
       "accounts.oauth.antigravityCallbackHint":
         "Google 授权后复制浏览器地址栏的完整回调 URL。",
+      "accounts.oauth.trae-cnCallbackLabel": "Trae CN 回调地址",
+      "accounts.oauth.trae-cnCallbackPlaceholder":
+        "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
+      "accounts.oauth.trae-cnCallbackHint":
+        "授权后浏览器会跳转到 127.0.0.1（远程部署时页面打不开是正常的），复制地址栏完整 URL 粘贴到这里。",
       "accounts.oauth.success": "OAuth 账户添加成功！",
       "accounts.oauth.error": "OAuth 授权失败",
       "accounts.oauth.expired": "OAuth 授权已过期，请重试。",
@@ -1897,6 +1902,11 @@ const i18n = {
         "http://localhost:51121/oauth-callback?code=...&state=...",
       "accounts.oauth.antigravityCallbackHint":
         "After Google authorization, paste the full callback URL from your browser.",
+      "accounts.oauth.trae-cnCallbackLabel": "Trae CN callback URL",
+      "accounts.oauth.trae-cnCallbackPlaceholder":
+        "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
+      "accounts.oauth.trae-cnCallbackHint":
+        "After authorization the browser jumps to 127.0.0.1 — on a remote deployment the page just fails to load; copy the full URL from the address bar and paste it here.",
       "accounts.oauth.success": "OAuth account added successfully!",
       "accounts.oauth.error": "OAuth authorization failed",
       "accounts.oauth.expired":

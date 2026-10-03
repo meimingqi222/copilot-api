@@ -25,7 +25,10 @@ import {
   followConnectionIdentityOnReauth,
   upgradeOAuthConnectionLabelIfNeeded,
 } from "~/services/oauth/account-label"
-import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
+import {
+  parseOAuthAuthorizationCode,
+  parseProviderCallbackInput,
+} from "~/services/oauth/callback-input"
 import {
   connectionOAuthIdentity,
   findConnectionByOAuthIdentity,
@@ -463,7 +466,16 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
     return c.json({ error: "flowId and code (or callback) are required." }, 400)
   }
 
-  const code = parseOAuthAuthorizationCode(callbackInput)
+  // 回调参数不一定是标准 code/state：先按该 provider 的回调配置解析
+  // （Trae CN 的 userJwt/userInfo + combineIntoCode），再回退通用解析。
+  const callbackConfig = getBuiltinProviderModule(provider)?.callback
+  const code =
+    ((
+      callbackConfig
+      && (callbackConfig.queryParams || callbackConfig.combineIntoCode)
+    ) ?
+      parseProviderCallbackInput(callbackInput, callbackConfig)
+    : undefined) ?? parseOAuthAuthorizationCode(callbackInput)
   if (!code) {
     return c.json(
       { error: "Could not parse authorization code from callback input." },

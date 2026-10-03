@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 
-import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
+import {
+  parseOAuthAuthorizationCode,
+  parseProviderCallbackInput,
+} from "~/services/oauth/callback-input"
+import { getBuiltinProviderModule } from "~/services/providers/builtins"
 
 describe("parseOAuthAuthorizationCode", () => {
   test("extracts code from callback URL", () => {
@@ -42,5 +46,61 @@ describe("parseOAuthAuthorizationCode", () => {
   test("returns undefined for empty input", () => {
     expect(parseOAuthAuthorizationCode("")).toBeUndefined()
     expect(parseOAuthAuthorizationCode("   ")).toBeUndefined()
+  })
+})
+
+describe("parseProviderCallbackInput", () => {
+  // 用模块自己声明的回调配置（queryParams/combineIntoCode），与
+  // loopback 回调服务器同一处真相：改了 config 这里立刻报错。
+  const traeCnCallback = getBuiltinProviderModule("trae-cn")!.callback!
+
+  test("Trae CN callback combines userInfo and userJwt with a NUL separator", () => {
+    const jwt = JSON.stringify({
+      Token: "tok-1",
+      RefreshToken: "ref-1",
+      ClientID: "ono9krqynydwx5",
+    })
+    const info = JSON.stringify({ UserID: "u-1", ScreenName: "Dev" })
+    const url =
+      "http://127.0.0.1:57557/authorize"
+      + `?userJwt=${encodeURIComponent(jwt)}`
+      + `&userInfo=${encodeURIComponent(info)}`
+    expect(parseProviderCallbackInput(url, traeCnCallback)).toBe(
+      `${info}\u0000${jwt}`,
+    )
+  })
+
+  test("a missing state-side param still yields the combined code", () => {
+    const jwt = JSON.stringify({ Token: "tok-1" })
+    const url = `http://127.0.0.1:57557/authorize?userJwt=${encodeURIComponent(jwt)}`
+    expect(parseProviderCallbackInput(url, traeCnCallback)).toBe(`\u0000${jwt}`)
+  })
+
+  test("accepts a bare query string and rejects non-matching input", () => {
+    expect(
+      parseProviderCallbackInput("userJwt=tok&userInfo=info", traeCnCallback),
+    ).toBe("info\u0000tok")
+    expect(
+      parseProviderCallbackInput(
+        "http://localhost/callback?code=x&state=y",
+        traeCnCallback,
+      ),
+    ).toBeUndefined()
+    expect(
+      parseProviderCallbackInput("not a url", traeCnCallback),
+    ).toBeUndefined()
+  })
+
+  test("honors custom code param names without combining", () => {
+    expect(
+      parseProviderCallbackInput("http://localhost/cb?session_key=abc123&x=1", {
+        queryParams: { code: "session_key", state: "state" },
+      }),
+    ).toBe("abc123")
+    expect(
+      parseProviderCallbackInput("code=tok&state=s", {
+        combineIntoCode: true,
+      }),
+    ).toBe("s\u0000tok")
   })
 })
