@@ -1,3 +1,4 @@
+import { zedCallbackConfig } from "~/services/providers/callbacks/zed"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getZedFallbackModels } from "~/services/providers/model-catalogs/zed"
 import { fetchZedQuota } from "~/lib/quota/fetchers/zed"
@@ -84,6 +85,7 @@ export function getZedModule(): ProviderModule {
   return {
     id: "zed",
     descriptor: getProviderDescriptor("zed"),
+    callback: zedCallbackConfig,
     fetchQuota: fetchZedQuota,
     fallbackModels: getZedFallbackModels,
     adapter: zedNativeAdapter,

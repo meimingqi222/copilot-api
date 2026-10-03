@@ -1,3 +1,4 @@
+import { antigravityCallbackConfig } from "~/services/providers/callbacks/antigravity"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 import { getAntigravityModelsForConnection } from "~/services/antigravity/get-models"
@@ -74,6 +75,7 @@ export function getAntigravityModule(): ProviderModule {
   return {
     id: "antigravity",
     descriptor: getProviderDescriptor("antigravity"),
+    callback: antigravityCallbackConfig,
     fetchQuota: fetchAntigravityQuota,
     fallbackModels: getAntigravityFallbackModels,
     async discoverModels(connection, signal) {

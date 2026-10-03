@@ -1,3 +1,4 @@
+import { claudeCallbackConfig } from "~/services/providers/callbacks/claude"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 import { getClaudeModelsForConnection } from "~/services/claude/get-models"
@@ -79,6 +80,7 @@ export function getClaudeModule(): ProviderModule {
   return {
     id: "claude",
     descriptor: getProviderDescriptor("claude"),
+    callback: claudeCallbackConfig,
     fetchQuota: fetchClaudeQuota,
     fallbackModels: getClaudeFallbackModels,
     async discoverModels(connection, signal) {

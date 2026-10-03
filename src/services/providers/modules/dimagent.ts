@@ -1,3 +1,4 @@
+import { dimagentCallbackConfig } from "~/services/providers/callbacks/dimagent"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchDimagentQuota } from "~/lib/quota/fetchers/dimagent"
 import type { ProviderModule } from "~/services/providers/module"
@@ -65,6 +66,7 @@ export function getDimagentModule(): ProviderModule {
   return {
     id: "dimagent",
     descriptor: getProviderDescriptor("dimagent"),
+    callback: dimagentCallbackConfig,
     fetchQuota: fetchDimagentQuota,
     fallbackModels: () => [],
     adapter: dimagentNativeAdapter,

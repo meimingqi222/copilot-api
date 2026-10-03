@@ -1,3 +1,4 @@
+import { mimoAccountCreation } from "~/services/providers/account-creation/mimo"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { mimoNativeAdapter } from "~/services/protocols/mimo-native"
@@ -7,6 +8,7 @@ export function getMimoModule(): ProviderModule {
   return {
     id: "mimo-aistudio",
     descriptor: getProviderDescriptor("mimo-aistudio"),
+    accountCreation: mimoAccountCreation,
     adapter: mimoNativeAdapter,
     createRuntime: () => mimoProviderRuntime,
   }

@@ -1,3 +1,4 @@
+import { xaiCallbackConfig } from "~/services/providers/callbacks/xai"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getXaiFallbackModels } from "~/services/providers/model-catalogs/xai"
 import { fetchXaiQuota } from "~/lib/quota/fetchers/xai"
@@ -77,6 +78,7 @@ export function getXaiModule(): ProviderModule {
   return {
     id: "xai",
     descriptor: getProviderDescriptor("xai"),
+    callback: xaiCallbackConfig,
     fetchQuota: fetchXaiQuota,
     fallbackModels: getXaiFallbackModels,
     adapter: xaiNativeAdapter,

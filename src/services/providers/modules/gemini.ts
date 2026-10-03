@@ -1,3 +1,4 @@
+import { geminiCallbackConfig } from "~/services/providers/callbacks/gemini"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchGeminiQuota } from "~/lib/quota/fetchers/gemini"
 import type { ProviderModule } from "~/services/providers/module"
@@ -76,6 +77,7 @@ export function getGeminiModule(): ProviderModule {
   return {
     id: "gemini",
     descriptor: getProviderDescriptor("gemini"),
+    callback: geminiCallbackConfig,
     fetchQuota: fetchGeminiQuota,
     fallbackModels: () => [],
     adapter: geminiNativeAdapter,

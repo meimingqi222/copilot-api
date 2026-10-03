@@ -19,6 +19,8 @@ import {
   OAUTH_REFRESH_LEAD_MS,
   OAUTH_REFRESH_STRATEGIES,
 } from "~/services/oauth/refresh-strategies"
+import type { OAuthFlowProvider } from "~/services/oauth/flows"
+import { OAUTH_CALLBACK_CONFIGS } from "~/services/oauth/flows"
 import { initializeProviderRegistry } from "~/services/providers"
 import {
   getBuiltinProviderModule,
@@ -122,6 +124,36 @@ describe("internal provider modules", () => {
     expect(() =>
       validateProviderModules([global, { ...cn, adapter: { ...cn.adapter } }]),
     ).toThrow("Conflicting")
+  })
+
+  test("callback flows carry a server config; direct-credential creation lives on the module", () => {
+    for (const module of listBuiltinProviderModules()) {
+      const flowType = module.oauth?.flowType
+      if (flowType === "pkce-callback" || flowType === "callback") {
+        // 回调型登录没有 loopback 服务器配置就无法完成非手动登录。
+        expect(module.id, module.id).toBeDefined()
+        expect(module.callback, module.id).toBeDefined()
+        expect(
+          OAUTH_CALLBACK_CONFIGS[module.id as OAuthFlowProvider],
+          module.id,
+        ).toBe(module.callback)
+      }
+    }
+    for (const id of [
+      "copilot",
+      "codebuff",
+      "windsurf",
+      "mimo-aistudio",
+      "codebuddy",
+      "codebuddy-cn",
+      "lobsterai",
+    ]) {
+      expect(getBuiltinProviderModule(id)?.accountCreation, id).toBeDefined()
+    }
+    // OAuth 登录的 provider 经 OAuth 兑换建号,不需要直连凭证创建。
+    for (const id of ["codex", "claude", "gemini", "zcode"]) {
+      expect(getBuiltinProviderModule(id)?.accountCreation, id).toBeUndefined()
+    }
   })
 
   test("refresh-only, OAuth-only and protocol-only entry points work in a fresh process", () => {

@@ -36,7 +36,6 @@ const zcodeStrategy: OAuthProviderStrategy = {
       interval: Math.max(Math.round(s.intervalMs / 1000), 1),
       deviceExpiresIn: expiresInSec,
       responseExpiresIn: expiresInSec,
-      region: site,
     }
   },
   async exchange({ flow, signal }) {

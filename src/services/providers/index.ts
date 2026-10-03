@@ -1,14 +1,14 @@
 import { initializeProtocolAdapters } from "~/services/protocols"
 import { listBuiltinProviderModules } from "~/services/providers/builtins"
 import { registerProvider } from "~/services/providers/registry"
-import { validateProviderModules } from "~/services/providers/module"
 
 let initialized = false
 
 export function initializeProviderRegistry(): void {
   if (initialized) return
   const modules = listBuiltinProviderModules()
-  validateProviderModules(modules)
+  // 校验只做一次:initializeProtocolAdapters 内部对同一份模块列表
+  // 跑 validateProviderModules(无论谁先初始化都会经过那里)。
   initializeProtocolAdapters()
   const runtimes = modules.map((module) => {
     const runtime = module.createRuntime()

@@ -1,5 +1,4 @@
 import { Hono } from "hono"
-import { randomUUID } from "node:crypto"
 
 import type { ManagedConnectionInput } from "~/lib/provider-connections"
 
@@ -15,42 +14,13 @@ import {
 } from "~/lib/provider-connections"
 import { readBinaryBody, readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
-import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
-import { getDeviceCode } from "~/services/github/get-device-code"
 import { parseLobsteraiClientDatabase } from "~/services/lobsterai/parse-client-db"
-import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import { initializeProviderRegistry } from "~/services/providers"
+import { getBuiltinProviderModule } from "~/services/providers/builtins"
+import type { CreateAccountBody } from "~/services/providers/account-creation/types"
 
 import { publicAccountFromConnection } from "./account-views"
 import { registerPendingFlow } from "./device-flow"
-
-/** 从 JWT 的 exp 字段提取过期时间（秒 → 毫秒）。 */
-function extractJwtExp(token: string): number | undefined {
-  const parts = token.split(".")
-  if (parts.length !== 3) return undefined
-  try {
-    const payload = JSON.parse(
-      Buffer.from(
-        parts[1].replaceAll("-", "+").replaceAll("_", "/"),
-        "base64",
-      ).toString("utf8"),
-    ) as { exp?: number }
-    return typeof payload.exp === "number" ? payload.exp * 1000 : undefined
-  } catch {
-    return undefined
-  }
-}
-
-interface CreateAccountBody {
-  label?: string
-  provider?: ProviderId
-  authToken?: string
-  apiKey?: string
-  serviceToken?: string
-  xiaomichatbotPh?: string
-  credentials?: Record<string, unknown>
-  settings?: Record<string, unknown>
-}
 
 /**
  * 落库新建的 account-managed connection:写入内存、刷新模型、持久化,
@@ -70,60 +40,6 @@ async function finalizeCreatedConnection(
       getProviderConnection(conn.id) ?? conn,
     ),
   }
-}
-
-/**
- * 创建 LobsterAI 账号（token 粘贴式接入）。
- *
- * 抽成独立函数而非内联在路由处理器里：该处理器已有多个 provider 分支，
- * 内联会把圈复杂度推过 lint 上限。
- */
-async function createLobsteraiAccount(
-  body: CreateAccountBody,
-  label: string,
-): Promise<{ error: string } | { accountId: string; account: unknown }> {
-  const accessToken =
-    typeof body.credentials?.accessToken === "string" ?
-      body.credentials.accessToken.trim()
-    : body.authToken?.trim()
-  const refreshToken =
-    typeof body.credentials?.refreshToken === "string" ?
-      body.credentials.refreshToken.trim()
-    : undefined
-  if (!accessToken && !refreshToken) {
-    return { error: "LobsterAI accessToken or refreshToken is required." }
-  }
-
-  const expiresAt = accessToken ? extractJwtExp(accessToken) : undefined
-  // keyfrom 归因字段（可选）：refresh 时原样回传，缺失时服务端默认 official。
-  const pickString = (key: string): string | undefined => {
-    const value = body.credentials?.[key]
-    return typeof value === "string" && value.trim() ? value.trim() : undefined
-  }
-  const uuid = pickString("uuid")
-  const userId = pickString("userId")
-  const firstKeyfrom = pickString("firstKeyfrom")
-  const latestKeyfrom = pickString("latestKeyfrom")
-
-  const id = randomUUID()
-  const result = await finalizeCreatedConnection({
-    id,
-    name: label,
-    provider: "lobsterai",
-    credentials: {
-      accessToken: accessToken ?? "",
-      ...(refreshToken ? { refreshToken } : {}),
-      ...(expiresAt ? { expiresAt } : {}),
-      ...(uuid ? { uuid } : {}),
-      ...(userId ? { userId } : {}),
-      ...(firstKeyfrom ? { firstKeyfrom } : {}),
-      ...(latestKeyfrom ? { latestKeyfrom } : {}),
-    },
-    settings: { ...body.settings },
-  })
-  const conn = getProviderConnection(id)
-  if (conn) scheduleLobsteraiRefresh(conn)
-  return result
 }
 
 export const createAccountRoutes = new Hono()
@@ -201,163 +117,54 @@ createAccountRoutes.post("/", async (c) => {
   const label =
     body.label ?? `account-${listAccountManagedConnections().length + 1}`
 
-  if (provider === "codebuff") {
-    const authToken =
-      typeof body.credentials?.authToken === "string" ?
-        body.credentials.authToken.trim()
-      : body.authToken?.trim()
-    if (!authToken) {
-      return c.json({ error: "Codebuff auth token is required." }, 400)
-    }
-
-    const result = await finalizeCreatedConnection({
-      id: randomUUID(),
-      name: label,
-      provider,
-      credentials: { authToken },
-      settings: { ...body.settings },
-    })
-    return c.json({ status: "complete", ...result })
+  // Provider 准备凭证（或注册设备码 flow），宿主负责落库与账户视图。
+  const creation = getBuiltinProviderModule(provider)?.accountCreation
+  if (!creation) {
+    return c.json({ error: `Unsupported account provider: ${provider}` }, 400)
   }
 
-  if (provider === "windsurf") {
-    const apiKey =
-      typeof body.credentials?.apiKey === "string" ?
-        body.credentials.apiKey.trim()
-      : body.apiKey?.trim()
-    if (!apiKey) {
-      return c.json({ error: "Windsurf API key is required." }, 400)
-    }
-
-    const result = await finalizeCreatedConnection({
-      id: randomUUID(),
-      name: label,
-      provider,
-      credentials: { apiKey },
-      settings: { ...body.settings },
-    })
-    return c.json({ status: "complete", ...result })
-  }
-
-  if (provider === "mimo-aistudio") {
-    const serviceToken =
-      typeof body.credentials?.serviceToken === "string" ?
-        body.credentials.serviceToken.trim()
-      : (body.serviceToken?.trim()
-        ?? (typeof body.settings?.serviceToken === "string" ?
-          body.settings.serviceToken.trim()
-        : undefined))
-    const xiaomichatbotPh =
-      typeof body.credentials?.xiaomichatbotPh === "string" ?
-        body.credentials.xiaomichatbotPh.trim()
-      : (body.xiaomichatbotPh?.trim()
-        ?? (typeof body.settings?.xiaomichatbotPh === "string" ?
-          body.settings.xiaomichatbotPh.trim()
-        : undefined))
-
-    if (!serviceToken || !xiaomichatbotPh) {
-      return c.json({ error: "Service Token and PH cookie are required." }, 400)
-    }
-
-    const settings = body.settings ?? {}
-    const result = await finalizeCreatedConnection({
-      id: randomUUID(),
-      name: label,
-      provider,
-      credentials: { serviceToken, xiaomichatbotPh },
-      settings: {
-        ...settings,
-        userId:
-          typeof settings.userId === "string" ? settings.userId : undefined,
-        proxy: typeof settings.proxy === "string" ? settings.proxy : undefined,
-      },
-    })
-    return c.json({ status: "complete", ...result })
-  }
-
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    const accessToken =
-      typeof body.credentials?.accessToken === "string" ?
-        body.credentials.accessToken.trim()
-      : body.authToken?.trim()
-    const refreshToken =
-      typeof body.credentials?.refreshToken === "string" ?
-        body.credentials.refreshToken.trim()
-      : undefined
-    if (!accessToken) {
-      return c.json({ error: "CodeBuddy accessToken is required." }, 400)
-    }
-
-    const expiresAt = extractJwtExp(accessToken)
-
-    const id = randomUUID()
-    const result = await finalizeCreatedConnection({
-      id,
-      name: label,
-      provider,
-      credentials: {
-        accessToken,
-        ...(refreshToken ? { refreshToken } : {}),
-        ...(expiresAt ? { expiresAt } : {}),
-      },
-      settings: { ...body.settings },
-    })
-    const conn = getProviderConnection(id)
-    if (conn) scheduleCodebuddyRefresh(conn)
-    return c.json({ status: "complete", ...result })
-  }
-
-  if (provider === "lobsterai") {
-    const result = await createLobsteraiAccount(body, label)
-    if ("error" in result) {
-      return c.json({ error: result.error }, 400)
-    }
-    return c.json({ status: "complete", ...result })
-  }
-
-  let deviceCodeResponse: Awaited<ReturnType<typeof getDeviceCode>>
-  try {
-    deviceCodeResponse = await getDeviceCode()
-  } catch (e: unknown) {
-    logger.error("Failed to initiate GitHub device flow:", e)
-    return c.json({ error: "Failed to initiate GitHub device flow." }, 502)
-  }
-
-  const { device_code, user_code, verification_uri, expires_in, interval } =
-    deviceCodeResponse
-
-  registerPendingFlow(device_code, {
+  const result = await creation.prepare({
+    body,
     label,
-    provider: "copilot",
-    interval,
-    expiresAt: Date.now() + expires_in * 1000,
-    status: "pending",
+    registerDeviceFlow(flow, flowLabel) {
+      registerPendingFlow(flow.device_code, {
+        label: flowLabel,
+        provider,
+        interval: flow.interval,
+        expiresAt: Date.now() + flow.expires_in * 1000,
+        status: "pending",
+      })
+
+      // Clean up expired flows after expiry
+      setTimeout(async () => {
+        const { getPendingFlow, savePendingFlows } = await import(
+          "./device-flow"
+        )
+        const pending = getPendingFlow(flow.device_code)
+        if (pending && pending.status === "pending") {
+          pending.status = "expired"
+          await savePendingFlows()
+        }
+        setTimeout(async () => {
+          const { removePendingFlow, savePendingFlows: save } = await import(
+            "./device-flow"
+          )
+          removePendingFlow(flow.device_code)
+          await save()
+        }, 60_000)
+      }, flow.expires_in * 1000)
+    },
   })
 
-  // Clean up expired flows after expiry
-  setTimeout(async () => {
-    const { getPendingFlow, savePendingFlows } = await import("./device-flow")
-    const flow = getPendingFlow(device_code)
-    if (flow && flow.status === "pending") {
-      flow.status = "expired"
-      await savePendingFlows()
-    }
-    setTimeout(async () => {
-      const { removePendingFlow, savePendingFlows: save } = await import(
-        "./device-flow"
-      )
-      removePendingFlow(device_code)
-      await save()
-    }, 60_000)
-  }, expires_in * 1000)
+  if ("error" in result) {
+    return c.json({ error: result.error }, result.status ?? 400)
+  }
+  if ("response" in result) {
+    return c.json(result.response)
+  }
 
-  return c.json({
-    flowId: device_code,
-    status: "pending_auth",
-    deviceCode: device_code,
-    userCode: user_code,
-    verificationUri: verification_uri,
-    expiresIn: expires_in,
-    interval,
-  })
+  const finalized = await finalizeCreatedConnection(result)
+  const conn = getProviderConnection(result.id)
+  if (conn) await creation.afterCreate?.(conn)
+  return c.json({ status: "complete", ...finalized })
 })

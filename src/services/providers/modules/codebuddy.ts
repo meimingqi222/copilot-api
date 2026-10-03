@@ -1,3 +1,4 @@
+import { createCodebuddyAccountCreation } from "~/services/providers/account-creation/codebuddy"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { codebuddyNativeAdapter } from "~/services/protocols/codebuddy-native"
@@ -49,6 +50,7 @@ export function getCodebuddyModule(): ProviderModule {
   return {
     id: "codebuddy",
     descriptor: getProviderDescriptor("codebuddy"),
+    accountCreation: createCodebuddyAccountCreation("codebuddy"),
     adapter: codebuddyNativeAdapter,
     createRuntime: () => codebuddyProviderRuntime,
     oauth: codebuddyStrategy,

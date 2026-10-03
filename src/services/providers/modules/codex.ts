@@ -1,3 +1,4 @@
+import { codexCallbackConfig } from "~/services/providers/callbacks/codex"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 import { getCodexModelsForConnection } from "~/services/codex/get-models"
@@ -84,6 +85,7 @@ export function getCodexModule(): ProviderModule {
   return {
     id: "codex",
     descriptor: getProviderDescriptor("codex"),
+    callback: codexCallbackConfig,
     fetchQuota: fetchCodexQuota,
     fallbackModels: getCodexFallbackModels,
     async discoverModels(connection, signal) {

@@ -1,3 +1,5 @@
+import { windsurfCallbackConfig } from "~/services/providers/callbacks/windsurf"
+import { windsurfAccountCreation } from "~/services/providers/account-creation/windsurf"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { windsurfNativeAdapter } from "~/services/protocols/windsurf-native"
@@ -65,6 +67,8 @@ export function getWindsurfModule(): ProviderModule {
   return {
     id: "windsurf",
     descriptor: getProviderDescriptor("windsurf"),
+    accountCreation: windsurfAccountCreation,
+    callback: windsurfCallbackConfig,
     adapter: windsurfNativeAdapter,
     createRuntime: () => windsurfProviderRuntime,
     oauth: windsurfStrategy,

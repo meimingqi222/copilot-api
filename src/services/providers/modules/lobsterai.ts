@@ -1,3 +1,5 @@
+import { lobsteraiCallbackConfig } from "~/services/providers/callbacks/lobsterai"
+import { lobsteraiAccountCreation } from "~/services/providers/account-creation/lobsterai"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { lobsteraiNativeAdapter } from "~/services/protocols/lobsterai-native"
@@ -50,6 +52,8 @@ export function getLobsteraiModule(): ProviderModule {
   return {
     id: "lobsterai",
     descriptor: getProviderDescriptor("lobsterai"),
+    accountCreation: lobsteraiAccountCreation,
+    callback: lobsteraiCallbackConfig,
     adapter: lobsteraiNativeAdapter,
     createRuntime: () => lobsteraiProviderRuntime,
     oauth: lobsteraiStrategy,

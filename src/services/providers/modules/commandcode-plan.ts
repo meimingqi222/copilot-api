@@ -1,3 +1,4 @@
+import { commandcodePlanCallbackConfig } from "~/services/providers/callbacks/commandcode-plan"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchCommandCodeQuota } from "~/lib/quota/fetchers/commandcode"
 import type { ProviderModule } from "~/services/providers/module"
@@ -47,6 +48,7 @@ export function getCommandCodeModule(): ProviderModule {
   return {
     id: "commandcode-plan",
     descriptor: getProviderDescriptor("commandcode-plan"),
+    callback: commandcodePlanCallbackConfig,
     fetchQuota: fetchCommandCodeQuota,
     fallbackModels: () => [],
     adapter: commandCodeNativeAdapter,

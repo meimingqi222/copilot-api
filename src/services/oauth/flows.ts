@@ -3,22 +3,16 @@ import type { Server } from "bun"
 import fs from "node:fs/promises"
 
 import type { OAuthProviderId } from "~/lib/provider-config"
+import { PROVIDER_IDS } from "~/lib/provider-definitions"
 
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
 
+import { getBuiltinProviderModule } from "~/services/providers/builtins"
+import type { OAuthCallbackConfig } from "~/services/providers/callbacks/types"
+
 import type { CodebuddyOAuthProviderId } from "./codebuddy"
 import type { PkceCodes } from "./pkce"
-
-import { LOBSTERAI_CALLBACK_PATH, LOBSTERAI_CALLBACK_PORT } from "./lobsterai"
-import { WINDSURF_CALLBACK_PATH, WINDSURF_CALLBACK_PORT } from "./windsurf"
-import {
-  COMMANDCODE_CALLBACK_PATH,
-  COMMANDCODE_CALLBACK_PORT,
-} from "./commandcode"
-import { ZED_CALLBACK_PORT, ZED_SIGNIN_SUCCEEDED_URL } from "./zed"
-import { DIMAGENT_CALLBACK_PATH, DIMAGENT_CALLBACK_PORT } from "./dimagent"
-import { GEMINI_CALLBACK_PATH, GEMINI_CALLBACK_PORT } from "./gemini"
 
 export type OAuthFlowProvider =
   | OAuthProviderId
@@ -557,105 +551,20 @@ export function stopOAuthCallbackServer(flowId: string): void {
   }
 }
 
-interface OAuthCallbackConfig {
-  port: number
-  hostname?: string
-  callbackPath: string
-  providerLabel: string
-  /** "post" when the provider's page POSTs the result (see the server). */
-  mode?: "query" | "post"
-  /** Allowed origins for a POST callback. */
-  corsOrigins?: Array<string>
-  /** Match the callback on any path (Zed comes back on whatever path). */
-  anyPath?: boolean
-  /** Query param names carrying the result (default code/state). */
-  queryParams?: { code: string; state: string }
-  /** Where to send the browser after a successful callback. */
-  successRedirect?: string
-  /** Skip the `state` match (Zed sends its own `user_id`). */
-  skipStateCheck?: boolean
-  /** Resolve `code` as `<state>\u0000<code>` so the caller gets both values. */
-  combineIntoCode?: boolean
-}
-
+/**
+ * Callback server 的设置归属各 provider 模块
+ * （services/providers/callbacks/<id>.ts，经 module.callback 提供）。
+ * 这里保留旧入口：惰性派生视图，导入时不实例化任何 provider runtime。
+ */
 export const OAUTH_CALLBACK_CONFIGS: Partial<
   Record<OAuthFlowProvider, OAuthCallbackConfig>
-> = {
-  claude: { port: 54545, callbackPath: "/callback", providerLabel: "Claude" },
-  codex: {
-    port: 1455,
-    callbackPath: "/auth/callback",
-    providerLabel: "Codex",
-  },
-  xai: {
-    port: 56121,
-    hostname: "127.0.0.1",
-    callbackPath: "/callback",
-    providerLabel: "xAI",
-  },
-  antigravity: {
-    port: 51121,
-    hostname: "localhost",
-    callbackPath: "/oauth-callback",
-    providerLabel: "Antigravity",
-  },
-  // Devin's authorization page only accepts a loopback redirect
-  // (`http://127.0.0.1:<port>/callback`), so the callback server has to listen
-  // on the same port the CLI identity advertises — see
-  // `WINDSURF_REDIRECT_URI`. Without this entry the flow type
-  // (`pkce-callback`) has no server to start and every non-manual login dies
-  // with "Provider \"windsurf\" does not use a callback server".
-  windsurf: {
-    port: WINDSURF_CALLBACK_PORT,
-    hostname: "127.0.0.1",
-    callbackPath: WINDSURF_CALLBACK_PATH,
-    providerLabel: "Devin",
-  },
-  lobsterai: {
-    port: LOBSTERAI_CALLBACK_PORT,
-    hostname: "127.0.0.1",
-    callbackPath: LOBSTERAI_CALLBACK_PATH,
-    providerLabel: "LobsterAI",
-  },
-  // Command Code Studio POSTs the minted API key (JSON or form) to the
-  // loopback callback instead of redirecting with a code, so this one is a
-  // POST callback with CORS for the Studio origin.
-  "commandcode-plan": {
-    port: COMMANDCODE_CALLBACK_PORT,
-    hostname: "127.0.0.1",
-    callbackPath: COMMANDCODE_CALLBACK_PATH,
-    providerLabel: "Command Code",
-    mode: "post",
-    corsOrigins: ["https://commandcode.ai", "https://staging.commandcode.ai"],
-  },
-  // Zed comes back on whatever path, with user_id + access_token in the
-  // query (the token encrypted to the key it made); it then sends the
-  // browser on to its own "succeeded" page.
-  zed: {
-    port: ZED_CALLBACK_PORT,
-    hostname: "127.0.0.1",
-    callbackPath: "/",
-    providerLabel: "Zed",
-    anyPath: true,
-    queryParams: { code: "access_token", state: "user_id" },
-    successRedirect: ZED_SIGNIN_SUCCEEDED_URL,
-    skipStateCheck: true,
-    combineIntoCode: true,
-  },
-  // DimAgent 用固定 public client 的固定回调 http://localhost:54321/auth/callback。
-  dimagent: {
-    port: DIMAGENT_CALLBACK_PORT,
-    hostname: "127.0.0.1",
-    callbackPath: DIMAGENT_CALLBACK_PATH,
-    providerLabel: "DimAgent",
-  },
-  // Gemini CLI 的 Google OAuth 回到 127.0.0.1:59656/oauth2callback。
-  gemini: {
-    port: GEMINI_CALLBACK_PORT,
-    hostname: "127.0.0.1",
-    callbackPath: GEMINI_CALLBACK_PATH,
-    providerLabel: "Gemini CLI",
-  },
+> = {}
+
+for (const id of PROVIDER_IDS) {
+  Object.defineProperty(OAUTH_CALLBACK_CONFIGS, id, {
+    get: () => getBuiltinProviderModule(id)?.callback,
+    enumerable: true,
+  })
 }
 
 export async function startProviderCallbackServer(
