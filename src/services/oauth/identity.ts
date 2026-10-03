@@ -30,12 +30,20 @@ function same(a: string | undefined, b: string | undefined): boolean {
 
 /**
  * Find an existing account-managed connection that is the *same* OAuth account
- * as `identity`, for `provider`: the same vendor account id, or failing that
- * the same email.
+ * as `identity`, for `provider`.
  *
- * This is what keeps one account from becoming two connections — two copies of
- * one refresh token, each refreshing on its own, which (with a rotating
- * refresh token) invalidates the other. Sign-in and import both dedupe on it.
+ * Email is the only per-user identity here: for Codex the JWT's
+ * `chatgpt_account_id` is a *workspace* id shared by every member of a
+ * Team/Enterprise workspace, so two different sign-ins can return the same
+ * value. Treating `accountId` alone as "same account" merges those members
+ * into one connection — each new login silently overwrites the previous
+ * user's tokens (CPA avoids this by keying credential files on
+ * accountHash+email, never account_id alone).
+ *
+ * So: an email match always merges (the user's workspace id may change across
+ * logins); an accountId match merges only when emails don't positively
+ * disagree. This still dedupes real re-logins — two copies of one rotating
+ * refresh token would each refresh on their own and invalidate the other.
  */
 export function findConnectionByOAuthIdentity(
   provider: string | undefined,
@@ -48,9 +56,11 @@ export function findConnectionByOAuthIdentity(
       return false
     }
     const other = connectionOAuthIdentity(conn)
-    return (
-      same(other.accountId, identity.accountId)
-      || same(other.email, identity.email)
-    )
+    if (same(other.email, identity.email)) return true
+    const emailConflict =
+      Boolean(other.email)
+      && Boolean(identity.email)
+      && !same(other.email, identity.email)
+    return same(other.accountId, identity.accountId) && !emailConflict
   })
 }

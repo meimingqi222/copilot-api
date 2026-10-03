@@ -22,7 +22,10 @@ import { refreshModelsForConnection } from "~/lib/utils"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { cancelConnectionTokenRefresh } from "~/services/copilot/token-refresh"
 import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
-import { upgradeOAuthConnectionLabelIfNeeded } from "~/services/oauth/account-label"
+import {
+  followConnectionIdentityOnReauth,
+  upgradeOAuthConnectionLabelIfNeeded,
+} from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
 import { isCodebuddyOAuthProviderId } from "~/services/oauth/codebuddy"
 import {
@@ -130,6 +133,10 @@ async function finalizeOAuthConnection(
   const finalized = reauthTarget ?? conn
   if (reauthTarget) {
     applyReauthBundle(reauthTarget, conn)
+    // 身份回填后，让推断出来的名称跟上新身份：判重会把新 token 并进老连接
+    //（避免两份 refresh token 互相作废），但老连接的 name 还是旧身份——
+    // 不跟着改，界面看起来就像新账号没有添加成功。自定义名称不受影响。
+    followConnectionIdentityOnReauth(reauthTarget)
     removeProviderConnection(conn.id)
   }
   // 直接在 connection 上做 label upgrade
