@@ -32,4 +32,34 @@ describe("provider brand icons", () => {
       "/admin/static/icons/antigravity-color.svg",
     )
   })
+
+  test("Codebuff uses its own PNG mark, not the codex icon", () => {
+    expect(helpers.resolveBrandIconName("codebuff", "")).toBe("codebuff")
+    expect(existsSync("pages/icons/codebuff.png")).toBe(true)
+    expect(helpers.brandIconHtml("codebuff", "")).toContain(
+      "/admin/static/icons/codebuff.png",
+    )
+    expect(helpers.brandIconHtml("codebuff", "")).not.toContain("codex-color")
+  })
+
+  test("LobsterAI resolves to its own PNG mark instead of the fallback", () => {
+    expect(helpers.resolveBrandIconName("lobsterai", "")).toBe("lobsterai")
+    expect(existsSync("pages/icons/lobsterai.png")).toBe(true)
+    expect(helpers.brandIconHtml("lobsterai", "")).toContain(
+      "/admin/static/icons/lobsterai.png",
+    )
+  })
+
+  test("Mimo Claw resolves to its own color SVG icon", () => {
+    expect(helpers.resolveBrandIconName("mimo-aistudio", "")).toBe(
+      "mimoclaw-color",
+    )
+    expect(helpers.resolveBrandIconName("mimo", "")).toBe("mimoclaw-color")
+    expect(helpers.resolveBrandIconName("mimo-claw", "")).toBe("mimoclaw-color")
+    expect(existsSync("pages/icons/mimoclaw-color.svg")).toBe(true)
+    expect(helpers.brandIconHtml("mimo-aistudio", "")).toContain(
+      "/admin/static/icons/mimoclaw-color.svg",
+    )
+    expect(helpers.brandIconHtml("mimo-aistudio", "")).toContain("<img src=")
+  })
 })

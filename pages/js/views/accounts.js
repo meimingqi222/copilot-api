@@ -7,6 +7,110 @@ const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
   "lobsterai",
 ])
 
+const PROVIDER_METAS = {
+  copilot: {
+    category: "popular",
+    badgeKey: "accounts.badge.deviceFlow",
+    hintKey: "accounts.deviceFlow.step1",
+  },
+  codex: {
+    category: "popular",
+    badgeKey: "accounts.badge.oauth",
+  },
+  claude: {
+    category: "popular",
+    badgeKey: "accounts.badge.oauth",
+  },
+  gemini: {
+    category: "popular",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.gemini.deviceHint",
+  },
+  antigravity: {
+    category: "popular",
+    badgeKey: "accounts.badge.oauth",
+  },
+  xai: {
+    category: "popular",
+    badgeKey: "accounts.badge.oauth",
+  },
+  kimi: {
+    category: "domestic",
+    badgeKey: "accounts.badge.oauth",
+  },
+  minimax: {
+    category: "domestic",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.minimax.deviceHint",
+  },
+  zcode: {
+    category: "domestic",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.zcode.deviceHint",
+  },
+  dimagent: {
+    category: "domestic",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.dimagent.deviceHint",
+  },
+  "mimo-aistudio": {
+    category: "domestic",
+    badgeKey: "accounts.badge.cookie",
+    importMethod: "cookie",
+    hintKey: "accounts.provider.mimo-aistudio.cookieHint",
+  },
+  windsurf: {
+    category: "ide",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.windsurf.oauthHint",
+  },
+  qoder: {
+    category: "ide",
+    badgeKey: "accounts.badge.deviceFlow",
+    hintKey: "accounts.provider.qoder.deviceHint",
+  },
+  zed: {
+    category: "ide",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.zed.deviceHint",
+  },
+  factory: {
+    category: "ide",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.factory.deviceHint",
+  },
+  "commandcode-plan": {
+    category: "ide",
+    badgeKey: "accounts.badge.oauth",
+    hintKey: "accounts.provider.commandcode-plan.deviceHint",
+  },
+  codebuff: {
+    category: "ide",
+    badgeKey: "accounts.badge.token",
+  },
+  codebuddy: {
+    category: "import",
+    badgeKey: "accounts.badge.multi",
+    hasManualMode: true,
+    importMethod: "json",
+    hintKey: "accounts.provider.codebuddy.oauthHint",
+  },
+  "codebuddy-cn": {
+    category: "import",
+    badgeKey: "accounts.badge.multi",
+    hasManualMode: true,
+    importMethod: "json",
+    hintKey: "accounts.provider.codebuddy.oauthHint",
+  },
+  lobsterai: {
+    category: "import",
+    badgeKey: "accounts.badge.multi",
+    hasManualMode: true,
+    importMethod: "lobsterai",
+    hintKey: "accounts.provider.lobsterai.oauthHint",
+  },
+}
+
 function accountsView() {
   return {
     ...ViewHelpers,
@@ -16,6 +120,10 @@ function accountsView() {
     enabledFilter: "",
     providers: [],
     showAddModal: false,
+    addStep: "select",
+    providerCategory: "all",
+    providerSearchQuery: "",
+    authMethodTab: "oauth",
     showImportModal: false,
     /** @type {Array<File>} selected import files (CPA supports multi-select) */
     importFiles: [],
@@ -483,10 +591,110 @@ function accountsView() {
       }
     },
 
+    getProviderMeta(providerId) {
+      return (
+        PROVIDER_METAS[providerId] || {
+          category: "popular",
+          badgeKey: "accounts.badge.oauth",
+        }
+      )
+    },
+
+    filteredProviders() {
+      const query = this.providerSearchQuery.trim().toLowerCase()
+      return (this.providers || []).filter((p) => {
+        // 合并 CodeBuddy：codebuddy-cn 不单独出卡片，统一归入 codebuddy
+        if (p.id === "codebuddy-cn") {
+          return false
+        }
+        const meta = this.getProviderMeta(p.id)
+        if (
+          this.providerCategory !== "all"
+          && meta.category !== this.providerCategory
+        ) {
+          return false
+        }
+        if (!query) return true
+        const name = (p.name || p.id).toLowerCase()
+        const id = p.id.toLowerCase()
+        if (p.id === "codebuddy") {
+          if (
+            "codebuddy-cn".includes(query)
+            || "国内".includes(query)
+            || "国际".includes(query)
+            || "tencent".includes(query)
+            || "腾讯".includes(query)
+            || "workbuddy".includes(query)
+          ) {
+            return true
+          }
+        }
+        return name.includes(query) || id.includes(query)
+      })
+    },
+
+    selectProviderForAdd(providerId) {
+      // 选择 CodeBuddy 系列时，默认设为国内版 codebuddy-cn
+      this.newAccount.provider =
+        providerId === "codebuddy" ? "codebuddy-cn" : providerId
+      this.authMethodTab = "oauth"
+      this.addStep = "configure"
+      this.$nextTick(() => {
+        if (window.lucide) window.lucide.createIcons()
+      })
+    },
+
+    setCodebuddyVariant(variant) {
+      this.newAccount.provider = variant
+      this.$nextTick(() => {
+        if (window.lucide) window.lucide.createIcons()
+      })
+    },
+
+    backToProviderSelect() {
+      this.addStep = "select"
+      this.$nextTick(() => {
+        if (window.lucide) window.lucide.createIcons()
+      })
+    },
+
+    getProviderHint() {
+      const meta = this.getProviderMeta(this.newAccount.provider)
+      if (meta.hintKey) {
+        return I18n.t(meta.hintKey)
+      }
+      return ""
+    },
+
+    getSubmitButtonText() {
+      const meta = this.getProviderMeta(this.newAccount.provider)
+      if (meta.hasManualMode && this.authMethodTab === "manual") {
+        return I18n.t("accounts.saveAndImport") || "保存并导入"
+      }
+      const authMode = this.selectedProvider()?.authMode
+      if (authMode === "oauth") {
+        return I18n.t("accounts.oauth.authorize")
+      }
+      if (authMode === "device_flow") {
+        return I18n.t("accounts.deviceFlow.step2")
+      }
+      return I18n.t("create")
+    },
+
+    handleAccountSubmit() {
+      const meta = this.getProviderMeta(this.newAccount.provider)
+      const isManual = meta.hasManualMode && this.authMethodTab === "manual"
+      return this.submitAccount(isManual)
+    },
+
     /** 重置新增/重认证弹窗的全部临时状态。 */
     resetAddModalState() {
       this.newAccount = this.defaultNewAccount()
       this.reauthAccount = null
+      this.addStep = "select"
+      this.providerCategory = "all"
+      this.providerSearchQuery = ""
+      this.authMethodTab = "oauth"
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
       this.oauthFlowData = null
@@ -501,7 +709,11 @@ function accountsView() {
 
     openAddModal() {
       this.resetAddModalState()
+      this.addStep = "select"
       this.showAddModal = true
+      this.$nextTick(() => {
+        if (window.lucide) window.lucide.createIcons()
+      })
     },
 
     /**
@@ -518,7 +730,12 @@ function accountsView() {
         this.newAccount.settings = { ...account.settings }
       }
       this.reauthAccount = account
+      this.addStep = "configure"
+      this.authMethodTab = "oauth"
       this.showAddModal = true
+      this.$nextTick(() => {
+        if (window.lucide) window.lucide.createIcons()
+      })
     },
 
     isReauthFlow() {

@@ -1,9 +1,16 @@
-<section class="card p-4 sm:p-5 mb-6 shadow-sm border border-[var(--apple-gray-5)]">
+<section
+  class="card p-4 sm:p-5 mb-6 shadow-sm border border-[var(--apple-gray-5)]"
+>
   <!-- 标题与操作栏 -->
-  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+  <div
+    class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4"
+  >
     <div>
       <div class="flex items-center gap-2">
-        <h3 class="text-title-3 font-semibold" x-text="t('perf.detailTitle')"></h3>
+        <h3
+          class="text-title-3 font-semibold"
+          x-text="t('perf.detailTitle')"
+        ></h3>
         <span
           class="badge badge-info text-xs font-medium"
           x-show="filteredDetails.length"
@@ -41,7 +48,9 @@
       </div>
 
       <!-- 视图模式切换 -->
-      <div class="inline-flex rounded-lg border border-[var(--apple-gray-5)] p-0.5 bg-[var(--apple-gray-6)] text-xs">
+      <div
+        class="inline-flex rounded-lg border border-[var(--apple-gray-5)] p-0.5 bg-[var(--apple-gray-6)] text-xs"
+      >
         <button
           type="button"
           @click="viewMode = 'pipeline'; $nextTick(() => window.lucide?.createIcons?.())"
@@ -99,15 +108,31 @@
   <!-- 通道性能卡片列表 -->
   <div class="space-y-6" x-show="filteredDetails.length">
     <template x-for="row in filteredDetails" :key="getRowKey(row)">
-      <div class="border border-[var(--apple-gray-5)] rounded-xl p-4 bg-white transition-all hover:shadow-md">
+      <div
+        class="border border-[var(--apple-gray-5)] rounded-xl p-4 bg-white transition-all hover:shadow-md"
+      >
         <!-- 卡片头部 Header -->
-        <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--apple-gray-5)]">
+        <div
+          class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--apple-gray-5)]"
+        >
           <!-- 左侧：模型名 + 供应商 + 徽章组 -->
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-base font-bold text-[var(--apple-text)] break-all" x-text="row.model"></span>
-            <span class="badge badge-info text-xs font-medium" x-text="row.provider"></span>
-            <span class="text-xs text-[var(--apple-text-secondary)] hidden sm:inline">·</span>
-            <span class="text-xs font-mono text-[var(--apple-text-secondary)] hidden sm:inline" x-text="row.endpoint"></span>
+            <span
+              class="text-base font-bold text-[var(--apple-text)] break-all"
+              x-text="row.model"
+            ></span>
+            <span
+              class="badge badge-info text-xs font-medium"
+              x-text="row.provider"
+            ></span>
+            <span
+              class="text-xs text-[var(--apple-text-secondary)] hidden sm:inline"
+              >·</span
+            >
+            <span
+              class="text-xs font-mono text-[var(--apple-text-secondary)] hidden sm:inline"
+              x-text="row.endpoint"
+            ></span>
             <span
               class="badge text-[11px] px-2 py-0.5 font-normal"
               :class="row.transport === 'ws' ? 'badge-purple' : 'badge-gray'"
@@ -147,51 +172,123 @@
         <!-- 核心体感指标 Hero 面板（4 列网格） -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 my-4">
           <!-- 核心指标 1: TTFT / 首次有效输出 -->
-          <div class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden">
-            <div class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1">
-              <span x-text="t('perf.heroTtft')" :title="t('perf.heroTtftSub')"></span>
-              <i data-lucide="timer" class="w-3.5 h-3.5 text-[var(--apple-blue)]"></i>
+          <div
+            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
+          >
+            <div
+              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+            >
+              <span
+                x-text="t('perf.heroTtft')"
+                :title="t('perf.heroTtftSub')"
+              ></span>
+              <i
+                data-lucide="timer"
+                class="w-3.5 h-3.5 text-[var(--apple-blue)]"
+              ></i>
             </div>
             <div
               class="text-xl font-bold font-mono tracking-tight"
               :class="getTtftClass(row.timings.outputTtftMs?.average)"
               x-text="formatMs(row.timings.outputTtftMs?.average)"
             ></div>
-            <div class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2">
-              <span>P50: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.outputTtftMs?.p50)"></strong></span>
-              <span>P95: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.outputTtftMs?.p95)"></strong></span>
+            <div
+              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
+            >
+              <span
+                >P50:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.outputTtftMs?.p50)"
+                ></strong
+              ></span>
+              <span
+                >P95:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.outputTtftMs?.p95)"
+                ></strong
+              ></span>
             </div>
           </div>
 
           <!-- 核心指标 2: 首正文可用 (Text TTFT) -->
-          <div class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden">
-            <div class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1">
-              <span x-text="t('perf.heroText')" :title="t('perf.heroTextSub')"></span>
-              <i data-lucide="message-square" class="w-3.5 h-3.5 text-[var(--apple-purple)]"></i>
+          <div
+            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
+          >
+            <div
+              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+            >
+              <span
+                x-text="t('perf.heroText')"
+                :title="t('perf.heroTextSub')"
+              ></span>
+              <i
+                data-lucide="message-square"
+                class="w-3.5 h-3.5 text-[var(--apple-purple)]"
+              ></i>
             </div>
             <div
               class="text-xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
               x-text="formatMs(row.timings.textTtftMs?.average)"
             ></div>
-            <div class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2">
-              <span>P50: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.textTtftMs?.p50)"></strong></span>
-              <span>P95: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.textTtftMs?.p95)"></strong></span>
+            <div
+              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
+            >
+              <span
+                >P50:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.textTtftMs?.p50)"
+                ></strong
+              ></span>
+              <span
+                >P95:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.textTtftMs?.p95)"
+                ></strong
+              ></span>
             </div>
           </div>
 
           <!-- 核心指标 3: 首帧写出 (First Write) -->
-          <div class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden">
-            <div class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1">
-              <span x-text="t('perf.heroFirstWrite')" :title="t('perf.heroFirstWriteSub')"></span>
-              <i data-lucide="send" class="w-3.5 h-3.5 text-[var(--apple-orange)]"></i>
+          <div
+            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
+          >
+            <div
+              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+            >
+              <span
+                x-text="t('perf.heroFirstWrite')"
+                :title="t('perf.heroFirstWriteSub')"
+              ></span>
+              <i
+                data-lucide="send"
+                class="w-3.5 h-3.5 text-[var(--apple-orange)]"
+              ></i>
             </div>
             <div
               class="text-xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
               x-text="formatMs(row.timings.firstWriteMs?.average)"
             ></div>
-            <div class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2">
-              <span>P50: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.firstWriteMs?.p50)"></strong></span>
-              <span>P95: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.firstWriteMs?.p95)"></strong></span>
+            <div
+              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
+            >
+              <span
+                >P50:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.firstWriteMs?.p50)"
+                ></strong
+              ></span>
+              <span
+                >P95:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.firstWriteMs?.p95)"
+                ></strong
+              ></span>
             </div>
           </div>
 
@@ -200,34 +297,68 @@
             class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
             x-show="row.streaming"
           >
-            <div class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1">
-              <span x-text="t('perf.heroTps')" :title="t('perf.heroTpsSub')"></span>
-              <i data-lucide="zap" class="w-3.5 h-3.5 text-[var(--apple-green)]"></i>
+            <div
+              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+            >
+              <span
+                x-text="t('perf.heroTps')"
+                :title="t('perf.heroTpsSub')"
+              ></span>
+              <i
+                data-lucide="zap"
+                class="w-3.5 h-3.5 text-[var(--apple-green)]"
+              ></i>
             </div>
             <div
               class="text-xl font-bold font-mono tracking-tight"
               :class="getTpsClass(row.generationTps)"
               x-text="formatTps(row.generationTps) + ' tok/s'"
             ></div>
-            <div class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-1.5">
-              <span x-text="row.generationSamples + ' ' + t('perf.samples')"></span>
+            <div
+              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-1.5"
+            >
+              <span
+                x-text="row.generationSamples + ' ' + t('perf.samples')"
+              ></span>
             </div>
           </div>
           <div
             class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
             x-show="!row.streaming"
           >
-            <div class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1">
-              <span x-text="t('perf.heroReady')" :title="t('perf.heroReadySub')"></span>
-              <i data-lucide="check-circle" class="w-3.5 h-3.5 text-[var(--apple-green)]"></i>
+            <div
+              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+            >
+              <span
+                x-text="t('perf.heroReady')"
+                :title="t('perf.heroReadySub')"
+              ></span>
+              <i
+                data-lucide="check-circle"
+                class="w-3.5 h-3.5 text-[var(--apple-green)]"
+              ></i>
             </div>
             <div
               class="text-xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
               x-text="formatMs(row.timings.responseReadyMs?.average)"
             ></div>
-            <div class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2">
-              <span>P50: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.responseReadyMs?.p50)"></strong></span>
-              <span>P95: <strong class="text-[var(--apple-text)]" x-text="formatMs(row.timings.responseReadyMs?.p95)"></strong></span>
+            <div
+              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
+            >
+              <span
+                >P50:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.responseReadyMs?.p50)"
+                ></strong
+              ></span>
+              <span
+                >P95:
+                <strong
+                  class="text-[var(--apple-text)]"
+                  x-text="formatMs(row.timings.responseReadyMs?.p95)"
+                ></strong
+              ></span>
             </div>
           </div>
         </div>
@@ -235,7 +366,10 @@
         <!-- 智能性能诊断条 (Insights) -->
         <div class="flex flex-wrap gap-2 mb-4" x-show="getInsights(row).length">
           <template x-for="insight in getInsights(row)" :key="insight.text">
-            <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border" :class="insight.class">
+            <div
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border"
+              :class="insight.class"
+            >
               <i :data-lucide="insight.icon" class="w-3.5 h-3.5 shrink-0"></i>
               <span x-text="insight.text"></span>
             </div>
@@ -243,18 +377,33 @@
         </div>
 
         <!-- 阶段耗时流水线 Waterfall Breakdown Bar -->
-        <div class="mb-4 p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]/50">
+        <div
+          class="mb-4 p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]/50"
+        >
           <div class="flex items-center justify-between text-xs mb-1.5">
-            <span class="font-medium text-[var(--apple-text)] flex items-center gap-1.5">
-              <i data-lucide="git-commit" class="w-3.5 h-3.5 text-[var(--apple-blue)]"></i>
+            <span
+              class="font-medium text-[var(--apple-text)] flex items-center gap-1.5"
+            >
+              <i
+                data-lucide="git-commit"
+                class="w-3.5 h-3.5 text-[var(--apple-blue)]"
+              ></i>
               <span x-text="t('perf.pipelineBreakdown')"></span>
             </span>
-            <span class="text-[var(--apple-text-secondary)] text-[11px] hidden sm:inline" x-text="t('perf.pipelineDesc')"></span>
+            <span
+              class="text-[var(--apple-text-secondary)] text-[11px] hidden sm:inline"
+              x-text="t('perf.pipelineDesc')"
+            ></span>
           </div>
 
           <!-- 彩色分段进度条 -->
-          <div class="h-2.5 w-full rounded-full bg-[var(--apple-gray-5)] overflow-hidden flex my-2">
-            <template x-for="stage in getPipelineBreakdown(row)" :key="stage.id">
+          <div
+            class="h-2.5 w-full rounded-full bg-[var(--apple-gray-5)] overflow-hidden flex my-2"
+          >
+            <template
+              x-for="stage in getPipelineBreakdown(row)"
+              :key="stage.id"
+            >
               <div
                 class="h-full transition-all duration-300 relative group cursor-pointer"
                 :style="'width: ' + stage.pct + '%; background-color: ' + stage.color"
@@ -264,13 +413,30 @@
           </div>
 
           <!-- 分段图例与耗时标签 -->
-          <div class="flex flex-wrap items-center justify-between gap-2 text-xs pt-1">
-            <template x-for="stage in getPipelineBreakdown(row)" :key="stage.id">
+          <div
+            class="flex flex-wrap items-center justify-between gap-2 text-xs pt-1"
+          >
+            <template
+              x-for="stage in getPipelineBreakdown(row)"
+              :key="stage.id"
+            >
               <div class="flex items-center gap-1.5">
-                <span class="w-2.5 h-2.5 rounded-full inline-block shrink-0" :style="'background-color: ' + stage.color"></span>
-                <span class="text-[var(--apple-text-secondary)]" x-text="stage.name"></span>
-                <strong class="font-mono text-[var(--apple-text)]" x-text="formatMs(stage.ms)"></strong>
-                <span class="text-[10px] text-[var(--apple-text-tertiary)]" x-text="'(' + stage.pct + '%)'"></span>
+                <span
+                  class="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+                  :style="'background-color: ' + stage.color"
+                ></span>
+                <span
+                  class="text-[var(--apple-text-secondary)]"
+                  x-text="stage.name"
+                ></span>
+                <strong
+                  class="font-mono text-[var(--apple-text)]"
+                  x-text="formatMs(stage.ms)"
+                ></strong>
+                <span
+                  class="text-[10px] text-[var(--apple-text-tertiary)]"
+                  x-text="'(' + stage.pct + '%)'"
+                ></span>
               </div>
             </template>
           </div>
@@ -278,35 +444,53 @@
 
         <!-- 模式一：阶段卡片流 (Pipeline Stages View) -->
         <div x-show="viewMode === 'pipeline'" class="space-y-2.5">
-          <div class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] px-1 mb-1">
+          <div
+            class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] px-1 mb-1"
+          >
             <span x-text="t('perf.stagesTitle')"></span>
             <button
               type="button"
               @click="toggleAllStages(getRowKey(row))"
               class="text-[var(--apple-blue)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
             >
-              <span x-text="isAllExpanded(getRowKey(row)) ? t('perf.collapseAll') : t('perf.expandAll')"></span>
+              <span
+                x-text="isAllExpanded(getRowKey(row)) ? t('perf.collapseAll') : t('perf.expandAll')"
+              ></span>
             </button>
           </div>
 
           <template x-for="stage in lifecycleStages" :key="stage.id">
-            <div class="border border-[var(--apple-gray-5)] rounded-lg overflow-hidden bg-white">
+            <div
+              class="border border-[var(--apple-gray-5)] rounded-lg overflow-hidden bg-white"
+            >
               <!-- 阶段头部 (可点击展开/收起) -->
               <div
                 @click="toggleStage(getRowKey(row), stage.id)"
                 class="p-2.5 sm:px-3.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-[var(--apple-gray-6)] transition-colors select-none"
               >
                 <div class="flex items-center gap-2.5 min-w-0">
-                  <span class="w-2 h-2 rounded-full shrink-0" :style="'background-color: ' + stage.color"></span>
+                  <span
+                    class="w-2 h-2 rounded-full shrink-0"
+                    :style="'background-color: ' + stage.color"
+                  ></span>
                   <div class="min-w-0">
-                    <span class="font-medium text-xs sm:text-sm text-[var(--apple-text)]" x-text="t(stage.nameKey)"></span>
-                    <span class="text-[11px] text-[var(--apple-text-secondary)] ml-2 hidden sm:inline" x-text="t(stage.descKey)"></span>
+                    <span
+                      class="font-medium text-xs sm:text-sm text-[var(--apple-text)]"
+                      x-text="t(stage.nameKey)"
+                    ></span>
+                    <span
+                      class="text-[11px] text-[var(--apple-text-secondary)] ml-2 hidden sm:inline"
+                      x-text="t(stage.descKey)"
+                    ></span>
                   </div>
                 </div>
 
                 <div class="flex items-center gap-3 shrink-0">
                   <!-- 阶段核心耗时 -->
-                  <div class="text-right" x-show="getStageSummary(row, stage.id)">
+                  <div
+                    class="text-right"
+                    x-show="getStageSummary(row, stage.id)"
+                  >
                     <span
                       class="text-xs font-mono font-semibold text-[var(--apple-text)]"
                       x-text="formatMs(getStageSummary(row, stage.id)?.average)"
@@ -338,26 +522,58 @@
                 <div class="table-container w-full min-w-0 overflow-x-auto">
                   <table class="table !table min-w-[500px] text-xs">
                     <thead>
-                      <tr class="text-[var(--apple-text-secondary)] border-b border-[var(--apple-gray-5)]">
+                      <tr
+                        class="text-[var(--apple-text-secondary)] border-b border-[var(--apple-gray-5)]"
+                      >
                         <th class="py-1.5" x-text="t('perf.metric')"></th>
-                        <th class="py-1.5 !text-center" x-text="t('perf.samples')"></th>
-                        <th class="py-1.5 !text-right" x-text="t('perf.average')"></th>
+                        <th
+                          class="py-1.5 !text-center"
+                          x-text="t('perf.samples')"
+                        ></th>
+                        <th
+                          class="py-1.5 !text-right"
+                          x-text="t('perf.average')"
+                        ></th>
                         <th class="py-1.5 !text-right">P50</th>
                         <th class="py-1.5 !text-right">P95</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <template x-for="item in getStageMetrics(row, stage.id)" :key="item.field">
-                        <tr class="hover:bg-white border-b border-[var(--apple-gray-5)]/60 last:border-none">
-                          <td class="py-1.5 font-medium text-[var(--apple-text)]" x-text="t('perf.' + item.field)"></td>
-                          <td class="py-1.5 !text-center text-[var(--apple-text-secondary)] font-mono" x-text="item.timing.samples"></td>
-                          <td class="py-1.5 !text-right font-mono font-semibold text-[var(--apple-text)]" x-text="formatMs(item.timing.average)"></td>
-                          <td class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]" x-text="formatMs(item.timing.p50)"></td>
-                          <td class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]" x-text="formatMs(item.timing.p95)"></td>
+                      <template
+                        x-for="item in getStageMetrics(row, stage.id)"
+                        :key="item.field"
+                      >
+                        <tr
+                          class="hover:bg-white border-b border-[var(--apple-gray-5)]/60 last:border-none"
+                        >
+                          <td
+                            class="py-1.5 font-medium text-[var(--apple-text)]"
+                            x-text="t('perf.' + item.field)"
+                          ></td>
+                          <td
+                            class="py-1.5 !text-center text-[var(--apple-text-secondary)] font-mono"
+                            x-text="item.timing.samples"
+                          ></td>
+                          <td
+                            class="py-1.5 !text-right font-mono font-semibold text-[var(--apple-text)]"
+                            x-text="formatMs(item.timing.average)"
+                          ></td>
+                          <td
+                            class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
+                            x-text="formatMs(item.timing.p50)"
+                          ></td>
+                          <td
+                            class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
+                            x-text="formatMs(item.timing.p95)"
+                          ></td>
                         </tr>
                       </template>
                       <tr x-show="!getStageMetrics(row, stage.id).length">
-                        <td colspan="5" class="py-3 text-center text-[var(--apple-text-secondary)]" x-text="t('perf.noData')"></td>
+                        <td
+                          colspan="5"
+                          class="py-3 text-center text-[var(--apple-text-secondary)]"
+                          x-text="t('perf.noData')"
+                        ></td>
                       </tr>
                     </tbody>
                   </table>
@@ -374,7 +590,9 @@
         >
           <table class="table !table min-w-[560px] text-xs">
             <thead>
-              <tr class="bg-[var(--apple-bg-secondary)] border-b border-[var(--apple-gray-5)]">
+              <tr
+                class="bg-[var(--apple-bg-secondary)] border-b border-[var(--apple-gray-5)]"
+              >
                 <th class="py-2" x-text="t('perf.metric')"></th>
                 <th class="py-2 !text-center" x-text="t('perf.samples')"></th>
                 <th class="py-2 !text-right" x-text="t('perf.average')"></th>
@@ -385,18 +603,40 @@
             <tbody>
               <!-- 顶级端到端指标 -->
               <tr class="bg-[var(--apple-blue)]/5 font-semibold">
-                <td colspan="5" class="py-1.5 text-[var(--apple-blue)] font-bold text-xs" x-text="t('perf.heroTtft')"></td>
+                <td
+                  colspan="5"
+                  class="py-1.5 text-[var(--apple-blue)] font-bold text-xs"
+                  x-text="t('perf.heroTtft')"
+                ></td>
               </tr>
-              <template x-for="field in ['outputTtftMs', 'textTtftMs', 'firstWriteMs']" :key="field">
+              <template
+                x-for="field in ['outputTtftMs', 'textTtftMs', 'firstWriteMs']"
+                :key="field"
+              >
                 <tr
                   x-show="!hideEmpty || row.timings[field]?.samples > 0"
                   class="hover:bg-[var(--apple-gray-5)]/50 border-b border-[var(--apple-gray-5)]/60"
                 >
-                  <td class="py-1.5 font-medium pl-4 text-[var(--apple-text)]" x-text="t('perf.' + field)"></td>
-                  <td class="py-1.5 !text-center font-mono text-[var(--apple-text-secondary)]" x-text="row.timings[field]?.samples"></td>
-                  <td class="py-1.5 !text-right font-mono font-bold text-[var(--apple-text)]" x-text="formatMs(row.timings[field]?.average)"></td>
-                  <td class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]" x-text="formatMs(row.timings[field]?.p50)"></td>
-                  <td class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]" x-text="formatMs(row.timings[field]?.p95)"></td>
+                  <td
+                    class="py-1.5 font-medium pl-4 text-[var(--apple-text)]"
+                    x-text="t('perf.' + field)"
+                  ></td>
+                  <td
+                    class="py-1.5 !text-center font-mono text-[var(--apple-text-secondary)]"
+                    x-text="row.timings[field]?.samples"
+                  ></td>
+                  <td
+                    class="py-1.5 !text-right font-mono font-bold text-[var(--apple-text)]"
+                    x-text="formatMs(row.timings[field]?.average)"
+                  ></td>
+                  <td
+                    class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
+                    x-text="formatMs(row.timings[field]?.p50)"
+                  ></td>
+                  <td
+                    class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
+                    x-text="formatMs(row.timings[field]?.p95)"
+                  ></td>
                 </tr>
               </template>
 
@@ -407,21 +647,50 @@
                     x-show="!hideEmpty || getStageMetrics(row, stage.id).length > 0"
                     class="bg-[var(--apple-bg-secondary)] font-semibold border-t border-[var(--apple-gray-5)]"
                   >
-                    <td colspan="5" class="py-1.5 text-xs text-[var(--apple-text)] font-bold">
+                    <td
+                      colspan="5"
+                      class="py-1.5 text-xs text-[var(--apple-text)] font-bold"
+                    >
                       <div class="flex items-center gap-1.5">
-                        <span class="w-2 h-2 rounded-full inline-block" :style="'background-color: ' + stage.color"></span>
+                        <span
+                          class="w-2 h-2 rounded-full inline-block"
+                          :style="'background-color: ' + stage.color"
+                        ></span>
                         <span x-text="t(stage.nameKey)"></span>
-                        <span class="font-normal text-[11px] text-[var(--apple-text-secondary)] ml-2" x-text="t(stage.descKey)"></span>
+                        <span
+                          class="font-normal text-[11px] text-[var(--apple-text-secondary)] ml-2"
+                          x-text="t(stage.descKey)"
+                        ></span>
                       </div>
                     </td>
                   </tr>
-                  <template x-for="item in getStageMetrics(row, stage.id)" :key="item.field">
-                    <tr class="hover:bg-[var(--apple-gray-5)]/50 border-b border-[var(--apple-gray-5)]/60 last:border-none">
-                      <td class="py-1.5 pl-4 text-[var(--apple-text)]" x-text="t('perf.' + item.field)"></td>
-                      <td class="py-1.5 !text-center font-mono text-[var(--apple-text-secondary)]" x-text="item.timing.samples"></td>
-                      <td class="py-1.5 !text-right font-mono font-medium text-[var(--apple-text)]" x-text="formatMs(item.timing.average)"></td>
-                      <td class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]" x-text="formatMs(item.timing.p50)"></td>
-                      <td class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]" x-text="formatMs(item.timing.p95)"></td>
+                  <template
+                    x-for="item in getStageMetrics(row, stage.id)"
+                    :key="item.field"
+                  >
+                    <tr
+                      class="hover:bg-[var(--apple-gray-5)]/50 border-b border-[var(--apple-gray-5)]/60 last:border-none"
+                    >
+                      <td
+                        class="py-1.5 pl-4 text-[var(--apple-text)]"
+                        x-text="t('perf.' + item.field)"
+                      ></td>
+                      <td
+                        class="py-1.5 !text-center font-mono text-[var(--apple-text-secondary)]"
+                        x-text="item.timing.samples"
+                      ></td>
+                      <td
+                        class="py-1.5 !text-right font-mono font-medium text-[var(--apple-text)]"
+                        x-text="formatMs(item.timing.average)"
+                      ></td>
+                      <td
+                        class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
+                        x-text="formatMs(item.timing.p50)"
+                      ></td>
+                      <td
+                        class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
+                        x-text="formatMs(item.timing.p95)"
+                      ></td>
                     </tr>
                   </template>
                 </tbody>

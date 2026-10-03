@@ -73,6 +73,25 @@ async function createCodexSearcher(): Promise<void> {
   setConnectionSetting(connection, "baseUrl", "https://codex.test/v1")
 }
 
+async function createXaiSearcher(): Promise<void> {
+  const connection = await createConnection({
+    id: "xai-searcher",
+    name: "grok",
+    protocol: "xai-native",
+    baseUrl: "https://xai.test/v1",
+    credentials: [{ id: "xai-cred", value: "tok", authMode: "bearer" }],
+    models: [
+      {
+        publicId: "grok-4",
+        upstreamId: "grok-4",
+        endpoints: ["responses"],
+        enabled: true,
+      },
+    ],
+  })
+  setConnectionSetting(connection, "baseUrl", "https://xai.test/v1")
+}
+
 /** A chat-only upstream that hosts the model the client asked for. */
 async function createChatTarget(): Promise<void> {
   await createConnection({
@@ -368,6 +387,70 @@ test("a codex account is preferred as the searcher when one is available", async
     "web_search_tool_result",
   )
 })
+
+test.each([false, true])(
+  "xAI executes proxy search through Responses (fallback: %s)",
+  async (failXai) => {
+    await createXaiSearcher()
+    if (failXai) await createSearcher()
+    await createChatTarget()
+
+    const urls: Array<string> = []
+    let chatRound = 0
+    let searchBody: Record<string, unknown> | undefined
+    const fetchMock = mock((url: string, init?: RequestInit) => {
+      urls.push(url)
+      if (url.includes("chat.test")) {
+        chatRound++
+        return chatRound === 1 ?
+            chatResponse("", {
+              id: "call_1",
+              name: "web_search",
+              args: JSON.stringify({ query: "go 1.27" }),
+            })
+          : chatResponse("Go 1.27.1 is out.")
+      }
+      if (url.includes("xai.test")) {
+        searchBody = JSON.parse(init?.body as string) as Record<string, unknown>
+        if (failXai) return new Response("unavailable", { status: 500 })
+        return codexSearchResponse(["https://go.dev/doc/go1.27"])
+      }
+      return searcherSearchResponse(["https://go.dev/doc/go1.27"])
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const response = await server.fetch(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "writer-model",
+          max_tokens: 256,
+          messages: [{ role: "user", content: "did go 1.27 come out?" }],
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+        }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(urls.filter((url) => url.includes("xai.test"))).toEqual([
+      "https://xai.test/v1/responses",
+    ])
+    expect(urls.some((url) => url.includes("searcher.test"))).toBe(failXai)
+    expect(searchBody).toMatchObject({
+      model: "grok-4",
+      input: "Search the web for: go 1.27",
+      tools: [{ type: "web_search", name: "web_search" }],
+      store: false,
+    })
+    expect(secondChatBody(fetchMock)).toContain("Go 1.27.1 is out.")
+    expect(secondChatBody(fetchMock)).toContain("https://go.dev/doc/go1.27")
+    const body = (await response.json()) as { content: Array<{ type: string }> }
+    expect(body.content.map((block) => block.type)).toContain(
+      "web_search_tool_result",
+    )
+  },
+)
 
 test("messages client → responses upstream: native search is passed through, not orchestrated", async () => {
   await createSearcher()

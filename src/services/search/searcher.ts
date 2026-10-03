@@ -27,8 +27,9 @@ const SEARCH_PROTOCOLS: ReadonlyArray<{
 }> = [
   { protocol: "codex-native", endpoint: "responses", rank: 0 },
   { protocol: "claude-native", endpoint: "messages", rank: 1 },
-  { protocol: "anthropic-compatible", endpoint: "messages", rank: 2 },
-  { protocol: "openai-responses-compatible", endpoint: "responses", rank: 3 },
+  { protocol: "xai-native", endpoint: "responses", rank: 2 },
+  { protocol: "anthropic-compatible", endpoint: "messages", rank: 3 },
+  { protocol: "openai-responses-compatible", endpoint: "responses", rank: 4 },
 ]
 
 /** Names that usually mark the cheapest tier of a model family. */

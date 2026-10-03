@@ -46,7 +46,7 @@ export const mimoProviderRuntime: ProviderRuntime = {
   id: "mimo-aistudio",
   descriptor: {
     id: "mimo-aistudio",
-    name: "Mimo AI Studio",
+    name: "Mimo Claw",
     icon: "cpu",
     authMode: "direct",
     features: ["cooldown", "model_discovery"],

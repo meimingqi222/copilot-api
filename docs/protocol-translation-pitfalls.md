@@ -316,7 +316,7 @@ Gemini 是新公共协议，不是某个既有 wire 的方言，因此它在
 `web_search_call.action.sources`）。
 
 searcher 优先级（`searcher.ts`，`SEARCH_PROTOCOLS`）：**codex 账号** → claude 账号 →
-`anthropic-compatible` → `openai-responses-compatible`。codex 排第一是因为它的 ChatGPT 后端原生支持
+xAI / Grok 账号（`xai-native`，Responses 原生搜索）→ `anthropic-compatible` → `openai-responses-compatible`。codex 排第一是因为它的 ChatGPT 后端原生支持
 Responses `web_search`，且本仓库 `services/codex/` 已透明透传该工具。用 `SEARCH_ORCHESTRATION=0` 整体关闭。
 
 回归时不要回退的契约：

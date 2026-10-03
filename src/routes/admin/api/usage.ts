@@ -63,7 +63,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   windsurf: "Windsurf",
   antigravity: "Antigravity",
   codebuff: "Codebuff",
-  "mimo-aistudio": "MiMo",
+  "mimo-aistudio": "Mimo Claw",
   codebuddy: "CodeBuddy",
   "codebuddy-cn": "CodeBuddy CN",
   unknown: "Unknown",

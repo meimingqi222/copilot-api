@@ -21,13 +21,16 @@ const BRAND_ICON_MAP = {
   "codebuddy-cn": "workbuddy-color",
   workbuddy: "workbuddy-color",
   "workbuddy-cn": "workbuddy-color",
-  codebuff: "codex-color",
+  codebuff: "codebuff",
+  lobsterai: "lobsterai",
   windsurf: "windsurf",
   devin: "devin",
   swe: "devin",
-  "mimo-aistudio": "mimocode",
-  mimo: "mimocode",
-  xiaomi: "mimocode",
+  "mimo-aistudio": "mimoclaw-color",
+  mimo: "mimoclaw-color",
+  "mimo-claw": "mimoclaw-color",
+  mimoclaw: "mimoclaw-color",
+  xiaomi: "mimoclaw-color",
   minimax: "minimax-color",
   "minimax-cn": "minimax-color",
   qoder: "qoder",
@@ -85,8 +88,9 @@ const MODEL_FAMILY_ICONS = [
   { prefix: "mistral", icon: "mistral-color" },
   { prefix: "codestral", icon: "mistral-color" },
   { prefix: "minimax", icon: "minimax-color" },
-  { prefix: "mimo", icon: "mimocode" },
-  { prefix: "xiaomi", icon: "mimocode" },
+  { prefix: "mimo", icon: "mimoclaw-color" },
+  { prefix: "mimoclaw", icon: "mimoclaw-color" },
+  { prefix: "xiaomi", icon: "mimoclaw-color" },
   { prefix: "step", icon: "stepfun-color" },
   { prefix: "doubao", icon: "volcengine-color" },
   { prefix: "codebuddy", icon: "workbuddy-color" },
@@ -94,6 +98,19 @@ const MODEL_FAMILY_ICONS = [
   { prefix: "swe", icon: "devin" },
   { prefix: "devin", icon: "devin" },
 ]
+
+/**
+ * Brand icons stored as PNG (not SVG). These are rendered via <img> rather
+ * than the monochrome mask used for SVGs — the mark itself is already the
+ * right color.
+ */
+const PNG_BRAND_ICONS = new Set([
+  "crush",
+  "zcode",
+  "typesafe",
+  "codebuff",
+  "lobsterai",
+])
 
 const ViewHelpers = {
   t(key, params) {
@@ -147,15 +164,8 @@ const ViewHelpers = {
     if (!iconName) {
       return `<i data-lucide="box" class="${extraClass}"></i>`
     }
-    const isColor =
-      iconName.endsWith("-color")
-      || iconName === "crush"
-      || iconName === "zcode"
-      || iconName === "typesafe"
-    const ext =
-      iconName === "crush" || iconName === "zcode" || iconName === "typesafe" ?
-        "png"
-      : "svg"
+    const isColor = iconName.endsWith("-color") || PNG_BRAND_ICONS.has(iconName)
+    const ext = PNG_BRAND_ICONS.has(iconName) ? "png" : "svg"
     const src = `/admin/static/icons/${iconName}.${ext}`
     if (isColor) {
       return `<span class="brand-icon ${extraClass}"><img src="${src}" alt="" draggable="false" /></span>`

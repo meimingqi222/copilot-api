@@ -40,6 +40,95 @@ afterEach(async () => {
 })
 
 describe("searcher selection", () => {
+  test("ranks xAI after Codex and Claude, before compatible searchers", async () => {
+    const candidates = [
+      ["openai-responses-compatible", "responses"],
+      ["anthropic-compatible", "messages"],
+      ["xai-native", "responses"],
+      ["claude-native", "messages"],
+      ["codex-native", "responses"],
+    ] as const
+    for (const [protocol, endpoint] of candidates) {
+      await createConnection({
+        id: protocol,
+        name: protocol,
+        protocol,
+        baseUrl: "https://search.test/v1",
+        credentials: [
+          { id: `${protocol}-cred`, value: "tok", authMode: "bearer" },
+        ],
+        models: [
+          {
+            publicId: `${protocol}-model`,
+            upstreamId: `${protocol}-model`,
+            endpoints: [endpoint],
+            enabled: true,
+          },
+        ],
+      })
+    }
+
+    expect(
+      listSearchers().map((searcher) => searcher.connection.protocol),
+    ).toEqual([
+      "codex-native",
+      "claude-native",
+      "xai-native",
+      "anthropic-compatible",
+      "openai-responses-compatible",
+    ])
+    expect(listSearchers()[2].target.endpoint).toBe("responses")
+  })
+
+  test("xAI alone enables search and requires an available Responses model", async () => {
+    await createConnection({
+      id: "xai",
+      name: "xai",
+      protocol: "xai-native",
+      baseUrl: "https://xai.test/v1",
+      credentials: [{ id: "xai-cred", value: "tok", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "chat-only",
+          upstreamId: "chat-only",
+          endpoints: ["chat"],
+          enabled: true,
+        },
+        {
+          publicId: "disabled",
+          upstreamId: "disabled",
+          endpoints: ["responses"],
+          enabled: false,
+        },
+      ],
+    })
+    expect(hasSearcher()).toBe(false)
+
+    await createConnection({
+      id: "xai-usable",
+      name: "xai-usable",
+      protocol: "xai-native",
+      baseUrl: "https://xai.test/v1",
+      credentials: [
+        { id: "xai-usable-cred", value: "tok", authMode: "bearer" },
+      ],
+      models: [
+        {
+          publicId: "grok-mini",
+          upstreamId: "grok-mini",
+          endpoints: ["responses"],
+          enabled: true,
+        },
+      ],
+    })
+    expect(hasSearcher()).toBe(true)
+    expect(listSearchers().map((searcher) => searcher.connection.id)).toEqual([
+      "xai-usable",
+    ])
+    process.env.SEARCH_ORCHESTRATION = "0"
+    expect(listSearchers()).toEqual([])
+  })
+
   test("prefers a codex account over every other search-capable protocol", async () => {
     await createConnection({
       id: "anthropic",
