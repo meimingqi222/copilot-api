@@ -4,6 +4,7 @@ import type { ProviderAdmission } from "~/lib/request-admission"
 
 import { HTTPError } from "~/lib/error"
 import {
+  __modelCooldownCountForTest,
   clearModelCooldownsForConnection,
   getModelCooldownRemainingMs,
   isModelCoolingDown,
@@ -106,17 +107,34 @@ describe("model-cooldown store", () => {
 
   test("expired entries read as zero and are pruned", async () => {
     expect(getModelCooldownRemainingMs("unknown-cred", "m")).toBe(0)
-    // 极短冷却过期后惰性删除
+
+    // 生效中的冷却：窗口取足够长，"写入 → 读取"之间不可能跨过截止时刻。
     recordModelCooldown({
       credentialId: "c2",
       connectionId: "conn1",
       model: "m",
-      untilMs: Date.now() + 1,
+      untilMs: Date.now() + 60_000,
     })
     expect(isModelCoolingDown("c2", "m")).toBe(true)
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(getModelCooldownRemainingMs("c2", "m")).toBe(0)
-    expect(isModelCoolingDown("c2", "m")).toBe(false)
+    expect(__modelCooldownCountForTest()).toBe(1)
+
+    // 极短冷却（换模型名，避免与上条按"最晚截止"合并）：等到记录的截止时刻
+    // 之后才断言，杜绝毫秒级时钟竞态。
+    const shortUntil = Date.now() + 200
+    recordModelCooldown({
+      credentialId: "c2",
+      connectionId: "conn1",
+      model: "m-short",
+      untilMs: shortUntil,
+    })
+    while (Date.now() <= shortUntil) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    expect(getModelCooldownRemainingMs("c2", "m-short")).toBe(0)
+    expect(isModelCoolingDown("c2", "m-short")).toBe(false)
+    // 过期条目在读时被删除，只剩生效中的那条。
+    expect(__modelCooldownCountForTest()).toBe(1)
+    expect(isModelCoolingDown("c2", "m")).toBe(true)
   })
 
   test("later expiry wins over earlier (idempotent merge)", () => {
@@ -193,14 +211,21 @@ describe("listModelCooldownsForConnection", () => {
   })
 
   test("prunes expired entries on read", async () => {
+    const untilMs = Date.now() + 250
     recordModelCooldown({
       credentialId: "c1",
       connectionId: "conn1",
       model: "m",
-      untilMs: Date.now() + 1,
+      untilMs,
     })
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    // 先确认确实入账，否则"列表为空"可能是空跑出来的。
+    expect(__modelCooldownCountForTest()).toBe(1)
+    while (Date.now() <= untilMs) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
     expect(listModelCooldownsForConnection("conn1")).toEqual([])
+    // 台账里也真的删掉了（惰性删除），不只是被过滤掉。
+    expect(__modelCooldownCountForTest()).toBe(0)
   })
 })
 

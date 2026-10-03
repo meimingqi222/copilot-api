@@ -126,3 +126,8 @@ export function listModelCooldownsForConnection(
 export function resetModelCooldownsForTest(): void {
   modelCooldowns.clear()
 }
+
+/** 仅供测试：当前台账条数（用于断言过期条目确实被惰性删除）。 */
+export function __modelCooldownCountForTest(): number {
+  return modelCooldowns.size
+}
