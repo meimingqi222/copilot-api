@@ -473,6 +473,33 @@ const nextCallId = () =>
   `call_${randomBytes(12).toString("hex")}${(callSeq++).toString(36)}`
 
 /**
+ * 把 tool call 的 arguments 归一成"JSON.parse 后是对象"的字符串。
+ *
+ * 模型经常把 arguments 写成：
+ * - 对象（正常）：直接 stringify；
+ * - JSON 字符串 `"{\"cmd\":\"x\"}"`：parse 一次出来还是 string
+ *   （双重编码），拆开再验证，最多拆三层；
+ * - 裸文本 `"git status"`（根本不是 JSON）：没有忠实的对象表示，
+ *   降级 `{}`——和 IR 翻译层 parseToolInput/parseArguments 的约定一致。
+ *   透出原样会让下游收到一个 parse 不出对象的字符串，客户端校验
+ *   直接报 "expected object, received string"。
+ */
+function normalizeCallArguments(value: unknown): string {
+  let v: unknown = value ?? {}
+  for (let i = 0; i < 3 && typeof v === "string"; i++) {
+    try {
+      v = JSON.parse(v)
+    } catch {
+      break
+    }
+  }
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    return JSON.stringify(v)
+  }
+  return "{}"
+}
+
+/**
  * 把模型文本里写的 `<tool_call>{…}</tool_call>` 块剥出来：
  * 块没闭合前把可能的块头留在缓冲里，避免半截 XML 泄漏给用户。
  */
@@ -502,10 +529,11 @@ export class TraeCnTextTools {
           upstreamId: "",
           id: nextCallId(),
           name: String(v.name),
-          arguments:
-            typeof v.arguments === "string" ?
-              v.arguments
-            : JSON.stringify(v.arguments ?? v.input ?? v.parameters ?? {}),
+          // 与插件一致地接受 arguments / input / parameters / params 变体，
+          // 但过一遍归一化：字符串原样透传会把双重编码和裸文本交给下游。
+          arguments: normalizeCallArguments(
+            v.arguments ?? v.input ?? v.parameters ?? v.params,
+          ),
         })
       } else {
         text += TOOL_OPEN + raw + TOOL_CLOSE
@@ -544,13 +572,13 @@ function nativeCall(tc: unknown): TraeChatCall | undefined {
     ?? t
   const name = f?.name ?? t?.tool_name ?? ""
   if (!name) return undefined
-  const a = f?.arguments ?? t?.params ?? t?.input ?? t?.parameters ?? {}
+  const a = f?.arguments ?? t?.params ?? t?.input ?? t?.parameters
   const upstreamId = String(t?.id ?? t?.tool_call_id ?? "")
   return {
     upstreamId,
     id: upstreamId || nextCallId(),
     name: String(name),
-    arguments: typeof a === "string" ? a : JSON.stringify(a),
+    arguments: normalizeCallArguments(a),
   }
 }
 
