@@ -1,5 +1,6 @@
 import { lobsteraiCallbackConfig } from "~/services/providers/callbacks/lobsterai"
 import { lobsteraiAccountCreation } from "~/services/providers/account-creation/lobsterai"
+import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { lobsteraiNativeAdapter } from "~/services/protocols/lobsterai-native"
@@ -10,7 +11,6 @@ import {
   flowFetchOptions,
   type OAuthProviderStrategy,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyLobsteraiOAuthTokens,
   createLobsteraiOAuthStart,
@@ -43,7 +43,6 @@ const lobsteraiStrategy: OAuthProviderStrategy = {
     )
     if (!tokens) throw new Error("LobsterAI exchange returned no token data")
     applyLobsteraiOAuthTokens(conn, tokens, flow.nonce)
-    upsertProviderConnection(conn)
     return conn
   },
 }
@@ -53,6 +52,7 @@ export function getLobsteraiModule(): ProviderModule {
     id: "lobsterai",
     descriptor: getProviderDescriptor("lobsterai"),
     accountCreation: lobsteraiAccountCreation,
+    afterAuthentication: scheduleLobsteraiRefresh,
     callback: lobsteraiCallbackConfig,
     adapter: lobsteraiNativeAdapter,
     createRuntime: () => lobsteraiProviderRuntime,

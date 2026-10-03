@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getFactoryFallbackModels } from "~/services/providers/model-catalogs/factory"
 import { fetchFactoryQuota } from "~/lib/quota/fetchers/factory"
@@ -9,9 +10,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyFactoryOAuthBundle,
   pollFactoryDeviceAuthorization,
@@ -54,19 +53,16 @@ const factoryStrategy: OAuthProviderStrategy = {
       { ...flowFetchOptions(flow), signal },
     )
     applyFactoryOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const tokens = await refreshFactoryTokens(refreshToken, fetchOptions)
-  applyFactoryTokenRefresh(connection, tokens)
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const tokens = await refreshFactoryTokens(refreshToken, fetchOptions)
+    applyFactoryTokenRefresh(connection, tokens)
+  },
+)
 
 export function getFactoryModule(): ProviderModule {
   return {

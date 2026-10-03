@@ -1,26 +1,7 @@
-/** Pure metadata, available before runtime initialization and while loading persisted connections. */
-export const PROVIDER_DEFINITIONS = {
-  copilot: { protocol: "copilot-native", oauth: false },
-  codebuff: { protocol: "codebuff-native", oauth: false },
-  windsurf: { protocol: "windsurf-native", oauth: false },
-  "mimo-aistudio": { protocol: "mimo-native", oauth: false },
-  codex: { protocol: "codex-native", oauth: true },
-  claude: { protocol: "claude-native", oauth: true },
-  antigravity: { protocol: "antigravity-native", oauth: true },
-  kimi: { protocol: "kimi-native", oauth: true },
-  xai: { protocol: "xai-native", oauth: true },
-  codebuddy: { protocol: "codebuddy-native", oauth: false },
-  "codebuddy-cn": { protocol: "codebuddy-native", oauth: false },
-  lobsterai: { protocol: "lobsterai-native", oauth: false },
-  minimax: { protocol: "minimax-native", oauth: true },
-  qoder: { protocol: "qoder-native", oauth: true },
-  factory: { protocol: "factory-native", oauth: true },
-  zcode: { protocol: "zcode-native", oauth: true },
-  "commandcode-plan": { protocol: "commandcode-native", oauth: true },
-  zed: { protocol: "zed-native", oauth: true },
-  dimagent: { protocol: "dimagent-native", oauth: true },
-  gemini: { protocol: "gemini-native", oauth: true },
-} as const
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
+
+/** Identity and protocol data derive from the same pure contributions as the UI. */
+export const PROVIDER_DEFINITIONS = PROVIDER_METADATA
 
 export type ProviderId = keyof typeof PROVIDER_DEFINITIONS
 export type NativeProviderProtocol =

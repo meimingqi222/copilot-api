@@ -626,8 +626,10 @@ The CI workflow (`.github/workflows/ci.yml`) runs on push/PR:
 Read [`docs/provider-modules.md`](docs/provider-modules.md). Providers are
 internal modules assembled by `src/services/providers/builtins.ts`.
 
-1. Declare the ID, protocol and OAuth account classification in
-   `src/lib/provider-definitions.ts`; the ID/protocol types and checks derive from it.
+1. Declare pure metadata (descriptor, protocol and OAuth account classification)
+   in `src/lib/provider-descriptors/<id>.ts`, then add its contribution to
+   `src/lib/provider-metadata.ts`. ID/protocol types and descriptor indexes derive
+   from this single catalog; do not add a second identity or descriptor list.
 2. Add `src/services/providers/modules/<id>.ts` with its adapter, runtime factory,
    login strategy and refresh hooks, then register its factory in `builtins.ts`.
 3. Add the account descriptor/UI fields and provider-specific tests. OAuth runtimes
@@ -637,6 +639,12 @@ Do not add provider-specific branches to the runtime/protocol initialization
 functions or OAuth login/refresh dispatch tables. Shared IR translation remains
 outside provider modules. Fixed callback servers and other special capabilities
 may still require explicit integration; see the module guide.
+
+OAuth exchange returns a detached connection; host finalization owns registration,
+identity merging and persistence. Module refreshAuth returns ProviderAuthUpdate.
+Use prepareOAuthRefresh to adapt existing bundle decoders on an isolated draft;
+never replace a live Connection with a refresh snapshot. Declare shared login and
+credential-creation completion work through afterAuthentication.
 
 ### Add a new route
 

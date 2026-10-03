@@ -1,116 +1,3 @@
-const MANUAL_OAUTH_CALLBACK_PROVIDERS = new Set([
-  "claude",
-  "codex",
-  "xai",
-  "antigravity",
-  "windsurf",
-  "lobsterai",
-])
-
-const PROVIDER_METAS = {
-  copilot: {
-    category: "popular",
-    badgeKey: "accounts.badge.deviceFlow",
-    hintKey: "accounts.deviceFlow.step1",
-  },
-  codex: {
-    category: "popular",
-    badgeKey: "accounts.badge.oauth",
-  },
-  claude: {
-    category: "popular",
-    badgeKey: "accounts.badge.oauth",
-  },
-  gemini: {
-    category: "popular",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.gemini.deviceHint",
-  },
-  antigravity: {
-    category: "popular",
-    badgeKey: "accounts.badge.oauth",
-  },
-  xai: {
-    category: "popular",
-    badgeKey: "accounts.badge.oauth",
-  },
-  kimi: {
-    category: "domestic",
-    badgeKey: "accounts.badge.oauth",
-  },
-  minimax: {
-    category: "domestic",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.minimax.deviceHint",
-  },
-  zcode: {
-    category: "domestic",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.zcode.deviceHint",
-  },
-  dimagent: {
-    category: "domestic",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.dimagent.deviceHint",
-  },
-  "mimo-aistudio": {
-    category: "domestic",
-    badgeKey: "accounts.badge.cookie",
-    importMethod: "cookie",
-    hintKey: "accounts.provider.mimo-aistudio.cookieHint",
-  },
-  windsurf: {
-    category: "ide",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.windsurf.oauthHint",
-  },
-  qoder: {
-    category: "ide",
-    badgeKey: "accounts.badge.deviceFlow",
-    hintKey: "accounts.provider.qoder.deviceHint",
-  },
-  zed: {
-    category: "ide",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.zed.deviceHint",
-  },
-  factory: {
-    category: "ide",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.factory.deviceHint",
-  },
-  "commandcode-plan": {
-    category: "ide",
-    badgeKey: "accounts.badge.oauth",
-    hintKey: "accounts.provider.commandcode-plan.deviceHint",
-  },
-  codebuff: {
-    category: "ide",
-    badgeKey: "accounts.badge.token",
-  },
-  codebuddy: {
-    category: "import",
-    badgeKey: "accounts.badge.multi",
-    hasManualMode: true,
-    importMethod: "json",
-    hintKey: "accounts.provider.codebuddy.oauthHint",
-  },
-  "codebuddy-cn": {
-    category: "import",
-    badgeKey: "accounts.badge.multi",
-    hasManualMode: true,
-    importMethod: "json",
-    hintKey: "accounts.provider.codebuddy.oauthHint",
-  },
-  lobsterai: {
-    category: "import",
-    badgeKey: "accounts.badge.multi",
-    hasManualMode: true,
-    importMethod: "lobsterai",
-    hintKey: "accounts.provider.lobsterai.oauthHint",
-  },
-}
-
 function accountsView() {
   return {
     ...ViewHelpers,
@@ -555,7 +442,7 @@ function accountsView() {
     },
 
     needsManualOAuthCallback(provider = this.newAccount.provider) {
-      return MANUAL_OAUTH_CALLBACK_PROVIDERS.has(provider)
+      return this.getProviderMeta(provider).manualOAuthCallback === true
     },
 
     oauthCallbackLabel() {
@@ -592,10 +479,17 @@ function accountsView() {
     },
 
     getProviderMeta(providerId) {
+      const provider = this.providers.find((entry) => entry.id === providerId)
+      let badgeKey = "accounts.badge.oauth"
+      if (provider?.authMode === "device_flow") {
+        badgeKey = "accounts.badge.deviceFlow"
+      } else if (provider?.authMode === "direct") {
+        badgeKey = "accounts.badge.token"
+      }
       return (
-        PROVIDER_METAS[providerId] || {
+        provider?.presentation || {
           category: "popular",
-          badgeKey: "accounts.badge.oauth",
+          badgeKey,
         }
       )
     },

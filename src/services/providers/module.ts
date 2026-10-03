@@ -26,6 +26,7 @@ export interface ProviderModule {
   refreshAuth?: OAuthRefreshFn
   refreshLeadMs?: number
   accountCreation?: ProviderAccountCreation
+  afterAuthentication?(connection: ProviderConnection): void | Promise<void>
   callback?: OAuthCallbackConfig
   fallbackModels?(): Array<ModelMapping>
   discoverModels?(
@@ -68,6 +69,13 @@ export function validateProviderModules(
       && (!module.oauth || !module.refreshAuth)
     ) {
       throw new Error(`OAuth provider module is incomplete: ${module.id}`)
+    }
+    if (
+      (module.oauth?.flowType === "pkce-callback"
+        || module.oauth?.flowType === "callback")
+      && !module.callback
+    ) {
+      throw new Error(`Callback provider module is incomplete: ${module.id}`)
     }
   }
 }

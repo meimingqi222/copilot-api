@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { dimagentCallbackConfig } from "~/services/providers/callbacks/dimagent"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchDimagentQuota } from "~/lib/quota/fetchers/dimagent"
@@ -9,9 +10,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import { generateOAuthState } from "~/services/oauth/pkce"
 import {
   applyDimagentOAuthBundle,
@@ -48,19 +47,16 @@ const dimagentStrategy: OAuthProviderStrategy = {
       flowFetchOptions(flow),
     )
     applyDimagentOAuthBundle(conn, dimagentBundle(tokens))
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const tokens = await refreshDimagentTokens(refreshToken, fetchOptions)
-  applyDimagentOAuthBundle(connection, dimagentBundle(tokens))
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const tokens = await refreshDimagentTokens(refreshToken, fetchOptions)
+    applyDimagentOAuthBundle(connection, dimagentBundle(tokens))
+  },
+)
 
 export function getDimagentModule(): ProviderModule {
   return {

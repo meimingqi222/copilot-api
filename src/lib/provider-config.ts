@@ -1,5 +1,6 @@
 import {
   PROVIDER_IDS,
+  PROVIDER_DEFINITIONS,
   OAUTH_PROVIDER_IDS,
   type ProviderId,
   type OAuthProviderId,
@@ -13,6 +14,7 @@ export type {
   ProviderDescriptor,
   ProviderFeature,
   ProviderFieldSchema,
+  ProviderPresentation,
 } from "~/lib/provider-descriptors/types"
 import {
   getProviderDescriptor,
@@ -36,10 +38,10 @@ export function isOAuthProviderId(value: string): value is OAuthProviderId {
  * 因此它们不参与余额探测——真正的耗尽交给 windowLimits / 上游 402 的
  * quota 路径。
  */
-const PLAN_BASED_PROVIDER_IDS = ["commandcode-plan"] as const
-
 export function isPlanBasedProvider(value: string): boolean {
-  return (PLAN_BASED_PROVIDER_IDS as ReadonlyArray<string>).includes(value)
+  if (!isProviderId(value)) return false
+  const definition = PROVIDER_DEFINITIONS[value]
+  return "planBased" in definition && definition.planBased === true
 }
 
 /** OAuth provider 的账号描述。数据本体在各 provider 的 descriptor 文件里。 */

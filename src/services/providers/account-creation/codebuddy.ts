@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
   credentialString,
   extractJwtExp,
@@ -27,6 +26,5 @@ export function createCodebuddyAccountCreation(
         settings: { ...body.settings },
       }
     },
-    afterCreate: scheduleCodebuddyRefresh,
   }
 }

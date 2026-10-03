@@ -187,6 +187,23 @@ describe("detectQoderStreamError", () => {
     expect(detectQoderStreamError({ data: "not json" })).toBeNull()
     expect(detectQoderStreamError({})).toBeNull()
   })
+
+  test("unwraps a nested details.error.message into the error text", () => {
+    const error = detectQoderStreamError({
+      data: JSON.stringify({
+        statusCodeValue: 500,
+        body: JSON.stringify({
+          message: "request failed",
+          // Qoder 常把真实原因藏在 details 里（JSON 字符串或对象）。
+          details: JSON.stringify({
+            error: { message: "model overloaded, retry later" },
+          }),
+        }),
+      }),
+    })
+    expect(error?.response.status).toBe(500)
+    expect(error?.message).toBe("request failed: model overloaded, retry later")
+  })
 })
 
 // ── 模型发现 ────────────────────────────────────────────────────────
@@ -221,6 +238,25 @@ describe("qoderNativeAdapter.discoverModels", () => {
     expect(
       (models?.[0]?.metadata?.qoderModelConfig as Record<string, unknown>).key,
     ).toBe("claude-sonnet-4-6")
+  })
+
+  test("honors a CN connection's gateway baseUrl", async () => {
+    const seen: Array<string> = []
+    globalThis.fetch = mock((url: string) => {
+      seen.push(url)
+      return Promise.resolve(jsonResponse(MODEL_LIST))
+    }) as unknown as typeof fetch
+
+    await qoderNativeAdapter.discoverModels?.({
+      connection: makeConnection({
+        baseUrl: "https://gateway.qoder.com.cn",
+      }),
+      credential: makeCredential(),
+    })
+
+    expect(seen[0]).toBe(
+      "https://gateway.qoder.com.cn/algo/api/v2/model/list?Encode=1",
+    )
   })
 })
 
@@ -615,6 +651,168 @@ describe("qoderNativeAdapter.createChatCompletions", () => {
       }),
     ).rejects.toMatchObject({ response: { status: 400 } })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("forwards the usage-only chunk that arrives after finish_reason", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        sseResponse([
+          outerFrame({
+            id: "c1",
+            created: 1700000000,
+            choices: [
+              { index: 0, delta: { content: "hi" }, finish_reason: null },
+            ],
+          }),
+          // finish_reason 先走，usage 跟在它**之后**的独立 chunk 里——
+          // 读到 finish 就 break 的话整份 token 统计会丢。
+          outerFrame({
+            id: "c1",
+            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          }),
+          outerFrame({
+            id: "c1",
+            choices: [],
+            usage: {
+              prompt_tokens: 11,
+              completion_tokens: 5,
+              total_tokens: 16,
+            },
+          }),
+        ]),
+      ),
+    ) as unknown as typeof fetch
+
+    const result = await qoderNativeAdapter.createChatCompletions?.({
+      target: chatTarget("claude-sonnet-4-6"),
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: {
+        model: "claude-sonnet-4-6",
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      },
+    })
+    const frames = await collectFrames(
+      (result as { response: AsyncIterable<{ data?: string }> }).response,
+    )
+
+    const finishes = frames.flatMap(
+      (f) =>
+        (f.choices as Array<{ finish_reason?: string | null }> | undefined)
+          ?.filter((c) => c.finish_reason)
+          .map((c) => c.finish_reason) ?? [],
+    )
+    expect(finishes).toEqual(["stop"])
+
+    const usageFrame = frames.find((f) => f.usage)
+    expect(usageFrame?.usage).toMatchObject({
+      prompt_tokens: 11,
+      completion_tokens: 5,
+      total_tokens: 16,
+    })
+    // usage 独占一帧且不带 finish_reason，聚合端才能正确记账。
+    expect(usageFrame?.choices).toEqual([])
+  })
+
+  test("lifts tool-result images into the following user turn", async () => {
+    let sentBody = ""
+    globalThis.fetch = mock(
+      (
+        _url: string,
+        init: { headers: Record<string, string>; body: string },
+      ) => {
+        sentBody = init.body
+        return Promise.resolve(
+          sseResponse([
+            outerFrame({
+              id: "c1",
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+            }),
+          ]),
+        )
+      },
+    ) as unknown as typeof fetch
+
+    await qoderNativeAdapter.createChatCompletions?.({
+      target: chatTarget("claude-sonnet-4-6"),
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: {
+        model: "claude-sonnet-4-6",
+        stream: true,
+        messages: [
+          { role: "user", content: "look at this" },
+          {
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              {
+                id: "call_1",
+                type: "function",
+                function: {
+                  name: "screenshot",
+                  // 有客户端把 arguments 发成对象，落库前归一成字符串。
+                  arguments: { region: "full" } as unknown as string,
+                },
+              },
+            ],
+          },
+          {
+            role: "tool",
+            tool_call_id: "call_1",
+            content: [
+              { type: "text", text: "captured" },
+              {
+                type: "image_url",
+                image_url: { url: "data:image/png;base64,AAA" },
+              },
+            ],
+          },
+          { role: "user", content: "next" },
+        ],
+      },
+    })
+
+    const envelope = JSON.parse(
+      Buffer.from(decodeRequestBody(sentBody)).toString("utf8"),
+    ) as Record<string, unknown>
+    const messages = envelope.messages as Array<Record<string, unknown>>
+
+    const assistant = messages.find((m) => m.role === "assistant")
+    expect(
+      (
+        assistant?.tool_calls as Array<{
+          function: { arguments: unknown }
+        }>
+      )[0]?.function.arguments,
+    ).toBe('{"region":"full"}')
+
+    const tool = messages.find((m) => m.role === "tool")
+    expect(tool?.tool_call_id).toBe("call_1")
+    expect(String(tool?.content)).toContain("captured")
+    expect(String(tool?.content)).toContain("it follows in the next message")
+    // tool 的 content 是纯文本：图片已拆走。
+    expect(String(tool?.content)).not.toContain("data:image")
+
+    // 图片 + 注记被并进下一个 user 消息的块开头。
+    const followUp = messages.find(
+      (m) =>
+        m.role === "user"
+        && Array.isArray(m.content)
+        && (m.content as Array<{ text?: string }>).some(
+          (b) => b.text === "next",
+        ),
+    )
+    const blocks = followUp?.content as Array<Record<string, unknown>>
+    expect(blocks[0]?.text).toBe(
+      "[From the result of screenshot (tool call call_1):]",
+    )
+    expect(blocks[1]).toEqual({
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,AAA" },
+    })
+    expect(blocks[2]).toEqual({ type: "text", text: "next" })
   })
 })
 

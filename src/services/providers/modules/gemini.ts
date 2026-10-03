@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { geminiCallbackConfig } from "~/services/providers/callbacks/gemini"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchGeminiQuota } from "~/lib/quota/fetchers/gemini"
@@ -9,9 +10,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import { generateOAuthState } from "~/services/oauth/pkce"
 import {
   applyGeminiOAuthBundle,
@@ -52,26 +51,23 @@ const geminiStrategy: OAuthProviderStrategy = {
     const conn = createOAuthConnection("gemini", flow.label)
     applyFlowSettingsToConnection(conn, flow)
     applyGeminiOAuthBundle(conn, geminiBundle(tokens, project, user))
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const tokens = await refreshGeminiTokens(refreshToken, fetchOptions)
-  const cred = connection.credentials[0]
-  const project = cred?.context?.projectId as string | undefined
-  applyGeminiOAuthBundle(connection, {
-    accessToken: tokens.access_token ?? "",
-    refreshToken: tokens.refresh_token,
-    expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000,
-    project: project ?? "",
-  })
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const tokens = await refreshGeminiTokens(refreshToken, fetchOptions)
+    const cred = connection.credentials[0]
+    const project = cred?.context?.projectId as string | undefined
+    applyGeminiOAuthBundle(connection, {
+      accessToken: tokens.access_token ?? "",
+      refreshToken: tokens.refresh_token,
+      expiresAt: Date.now() + (tokens.expires_in ?? 3600) * 1000,
+      project: project ?? "",
+    })
+  },
+)
 
 export function getGeminiModule(): ProviderModule {
   return {

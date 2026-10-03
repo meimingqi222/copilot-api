@@ -19,6 +19,7 @@ import {
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import {
+  ZCODE_APP_VERSION,
   ZCODE_BIGMODEL_BIZ_API,
   ZCODE_ZAI_BIZ_API,
   type ZcodeSite,
@@ -275,7 +276,7 @@ export async function fetchZcodeQuota(
         // key 裸放 Authorization（不是 Bearer）。
         authorization: key,
         accept: "application/json",
-        "user-agent": "ZCode/3.14.3",
+        "user-agent": `ZCode/${ZCODE_APP_VERSION}`,
       },
       signal,
     },

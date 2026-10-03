@@ -178,41 +178,93 @@ function qoderTools(
   return out
 }
 
-/** 调用方的消息 → Qoder 消息（system 单独折叠进 system 字段）。 */
+/** 调用方的消息 → Qoder 消息（system 单独折叠进 system 字段）。
+ *
+ * tool 消息里夹的图片：Qoder 的 tool 结果只能带文本，图片要拆出来作为
+ * 紧随其后的 user 消息下发（`seen` 攒着，tool 文本里留注记）。 */
 function qoderMessages(
   messages: ChatCompletionsPayload["messages"],
 ): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
+  const names = new Map<string, string>()
+  let seen: Array<Record<string, unknown>> = []
+  const showSeen = () => {
+    if (seen.length > 0) out.push({ role: "user", content: seen })
+    seen = []
+  }
   for (const m of messages) {
     if (isSystemRole(m.role)) continue
+    if (m.role !== "user" && m.role !== "tool") showSeen()
     if (m.role === "tool") {
-      const text = textOf(m.content)
+      const callId = m.tool_call_id ?? ""
+      let text = textOf(m.content)
+      const images =
+        Array.isArray(m.content) ?
+          m.content
+            .filter(
+              (p) =>
+                typeof p === "object"
+                && p !== null
+                && (p as { type?: string }).type === "image_url",
+            )
+            .map((p) => {
+              const part = p as { image_url?: unknown }
+              return {
+                type: "image_url",
+                image_url: part.image_url,
+              }
+            })
+        : []
+      if (images.length > 0) {
+        const name = names.get(callId) || m.name
+        const of =
+          name ? `${name} (tool call ${callId})` : `tool call ${callId}`
+        seen.push({ type: "text", text: `[From the result of ${of}:]` })
+        seen.push(...images)
+        const note =
+          images.length === 1 ?
+            "[The tool returned an image; it follows in the next message.]"
+          : `[The tool returned ${images.length} images; they follow in the next message.]`
+        text = text.trim() ? `${text}\n\n${note}` : note
+      }
+      out.push({ role: "tool", tool_call_id: callId, content: text })
+      continue
+    }
+    if (m.role === "assistant" && (m.tool_calls?.length ?? 0) > 0) {
+      const calls = (m.tool_calls ?? []).map((c) => {
+        const id = c.id || `call_${newQoderId()}`
+        names.set(id, c.function?.name ?? "")
+        const args = c.function?.arguments
+        return {
+          id,
+          type: "function",
+          function: {
+            name: c.function?.name,
+            arguments:
+              typeof args === "string" ? args : JSON.stringify(args ?? {}),
+          },
+        }
+      })
       out.push({
-        role: "tool",
-        tool_call_id: m.tool_call_id ?? "",
-        content: text,
+        role: "assistant",
+        content: textOf(m.content),
+        tool_calls: calls,
       })
       continue
     }
+    let blocks = blocksOf(m.content)
+    // assistant 的图片不下发（Qoder 客户端也这么丢）。
     if (m.role === "assistant") {
-      const calls = (m.tool_calls ?? []).map((c) => ({
-        id: c.id || `call_${newQoderId()}`,
-        type: "function",
-        function: { name: c.function.name, arguments: c.function.arguments },
-      }))
-      if (calls.length > 0) {
-        out.push({
-          role: "assistant",
-          content: textOf(m.content),
-          tool_calls: calls,
-        })
-        continue
-      }
-      out.push({ role: "assistant", content: blocksOf(m.content) })
-      continue
+      blocks = blocks.filter((b) => b.type === "text")
     }
-    out.push({ role: m.role, content: blocksOf(m.content) })
+    if (blocks.length === 0) continue
+    if (m.role === "user" && seen.length > 0) {
+      blocks = [...seen, ...blocks]
+      seen = []
+    }
+    out.push({ role: m.role, content: blocks })
   }
+  showSeen()
   return out
 }
 

@@ -41,9 +41,11 @@ unsupported accounts are excluded, and page polling pauses in hidden tabs.
 - `tests/quota-refresh.test.ts`
 - `tests/usage-auto-refresh.test.ts`
 
-Proved: the healthy-account test against the HEAD scheduler copied into
-`temp/quota-baseline.ts` failed with expected one quota read, received zero
-(`bun test ./temp/quota-baseline.test.ts -t "background refresh includes healthy"`,
-one failure). The updated scheduler exercises the provider runtime and updates
+Proved: the healthy-account regression was run against a temporary copy of the
+then-HEAD scheduler and failed with expected one quota read, received zero
+(one failure). The temporary reproduction files were removed after that red run;
+the permanent regression is tests/quota-refresh.test.ts, including the case
+"background refresh includes healthy OAuth accounts and skips disabled accounts".
+The updated scheduler exercises the provider runtime and updates
 the same credential snapshot read by routing. UI tests pin visibility, cadence,
 disabled polling, initialization cleanup and in-flight deduplication.

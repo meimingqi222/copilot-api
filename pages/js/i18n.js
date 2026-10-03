@@ -308,12 +308,20 @@ const i18n = {
       "accounts.provider.qoder.oauthLogin": "浏览器登录 (OAuth)",
       "accounts.provider.qoder.deviceHint":
         "点击「授权」后会打开 Qoder 授权页选择账号，确认完即可，无需手工粘贴 token。",
+      "accounts.provider.qoder-cn": "Qoder CN",
+      "accounts.provider.qoder-cn.name": "Qoder CN",
+      "accounts.provider.qoder-cn.oauthLogin": "浏览器登录 (OAuth)",
+      "accounts.provider.qoder-cn.deviceHint":
+        "点击「授权」后会打开 qoder.cn 授权页（阿里云/手机号账号），确认完即可，无需手工粘贴 token。",
       "accounts.provider.factory.name": "Factory",
       "accounts.provider.factory.deviceHint":
         "点击「授权」后会打开 Factory (WorkOS) 设备码页面，输入设备码确认即可，无需手工粘贴 token。",
       "accounts.provider.zcode.name": "ZCode",
       "accounts.provider.zcode.deviceHint":
         "点击「授权」后会打开 Z.ai 登录页；登录完成后自动为账号铸出 GLM Coding Plan 的 API key，无需手工粘贴 token。",
+      "accounts.provider.trae-cn.name": "Trae CN",
+      "accounts.provider.trae-cn.deviceHint":
+        "点击「授权」后会打开 trae.cn 授权页；登录完成后自动拿到账号的 Cloud-IDE-JWT 与刷新凭证，模型走 Trae IDE agent 通道（实验性）。",
       "accounts.provider.commandcode-plan.name": "Command Code Plan",
       "accounts.provider.commandcode-plan.deviceHint":
         "点击「授权」后会打开 Command Code 的 Studio 授权页；在页面上确认后，铸出的 API key 会自动回传，无需手工粘贴。",
@@ -1783,12 +1791,20 @@ const i18n = {
       "accounts.provider.qoder.oauthLogin": "Browser login (OAuth)",
       "accounts.provider.qoder.deviceHint":
         "Clicking Authorize opens the Qoder account picker; confirm there and no token paste is needed.",
+      "accounts.provider.qoder-cn": "Qoder CN",
+      "accounts.provider.qoder-cn.name": "Qoder CN",
+      "accounts.provider.qoder-cn.oauthLogin": "Browser login (OAuth)",
+      "accounts.provider.qoder-cn.deviceHint":
+        "Clicking Authorize opens the qoder.cn account picker (Alibaba Cloud or phone accounts); confirm there and no token paste is needed.",
       "accounts.provider.factory.name": "Factory",
       "accounts.provider.factory.deviceHint":
         "Clicking Authorize opens the Factory (WorkOS) device-code page; enter the code and confirm — no token paste is needed.",
       "accounts.provider.zcode.name": "ZCode",
       "accounts.provider.zcode.deviceHint":
         "Clicking Authorize opens the Z.ai sign-in; once signed in, the GLM Coding Plan API key is minted for the account — no token paste is needed.",
+      "accounts.provider.trae-cn.name": "Trae CN",
+      "accounts.provider.trae-cn.deviceHint":
+        "Clicking Authorize opens the trae.cn authorization page; once signed in, the account's Cloud-IDE-JWT and refresh token are kept for you — models go through Trae's IDE agent channel (experimental).",
       "accounts.provider.commandcode-plan.name": "Command Code Plan",
       "accounts.provider.commandcode-plan.deviceHint":
         "Clicking Authorize opens Command Code's Studio page; approve there and the minted API key is delivered back automatically — no token paste is needed.",

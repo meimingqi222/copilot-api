@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { codexCallbackConfig } from "~/services/providers/callbacks/codex"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
@@ -12,12 +13,8 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import {
-  upsertProviderConnection,
-  getCredentialContextString,
-} from "~/lib/provider-connections"
+import { getCredentialContextString } from "~/lib/provider-connections"
 import {
   applyCodexOAuthBundle,
   createCodexOAuthStart,
@@ -50,36 +47,33 @@ const codexStrategy: OAuthProviderStrategy = {
       flowFetchOptions(flow),
     )
     applyCodexOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const accountId = getCredentialContextString(connection, "oauthAccountId")
-  // The Codex CLI shares this account's rotating refresh token: adopt its
-  // token when it has rotated since ours, then write ours back after, so
-  // neither side ever spends a token the other already used.
-  const cliRefresh = await codexCliRefreshTokenIfRotated(
-    accountId,
-    refreshToken,
-  )
-  const bundle = await refreshCodexTokens(
-    cliRefresh ?? refreshToken,
-    fetchOptions,
-  )
-  applyCodexOAuthBundle(connection, bundle)
-  await writeCodexCliCredentials(accountId, {
-    accessToken: bundle.accessToken,
-    idToken: bundle.idToken,
-    refreshToken: bundle.refreshToken,
-    accountId,
-  })
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const accountId = getCredentialContextString(connection, "oauthAccountId")
+    // The Codex CLI shares this account's rotating refresh token: adopt its
+    // token when it has rotated since ours, then write ours back after, so
+    // neither side ever spends a token the other already used.
+    const cliRefresh = await codexCliRefreshTokenIfRotated(
+      accountId,
+      refreshToken,
+    )
+    const bundle = await refreshCodexTokens(
+      cliRefresh ?? refreshToken,
+      fetchOptions,
+    )
+    applyCodexOAuthBundle(connection, bundle)
+    await writeCodexCliCredentials(accountId, {
+      accessToken: bundle.accessToken,
+      idToken: bundle.idToken,
+      refreshToken: bundle.refreshToken,
+      accountId,
+    })
+  },
+)
 
 export function getCodexModule(): ProviderModule {
   return {

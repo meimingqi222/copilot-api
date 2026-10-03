@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getKimiFallbackModels } from "~/services/providers/model-catalogs/kimi"
 import { fetchKimiQuota } from "~/lib/quota/fetchers/kimi"
@@ -9,10 +10,8 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
 import {
-  upsertProviderConnection,
   getCredentialContextString,
   setCredentialContextField,
   type ProviderConnection,
@@ -66,7 +65,6 @@ const kimiStrategy: OAuthProviderStrategy = {
       { ...fetchOptions, signal },
     )
     applyKimiOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
@@ -83,19 +81,17 @@ function getConnectionOAuthDeviceId(
   return typeof value === "string" && value ? value : undefined
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const existingDeviceId = getConnectionOAuthDeviceId(connection)
-  const deviceId = createKimiDeviceId(existingDeviceId)
-  const bundle = await refreshKimiTokens(refreshToken, deviceId, fetchOptions)
-  applyKimiOAuthBundle(connection, bundle)
-  if (!existingDeviceId) {
-    setCredentialContextField(connection, "deviceId", deviceId)
-  }
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const existingDeviceId = getConnectionOAuthDeviceId(connection)
+    const deviceId = createKimiDeviceId(existingDeviceId)
+    const bundle = await refreshKimiTokens(refreshToken, deviceId, fetchOptions)
+    applyKimiOAuthBundle(connection, bundle)
+    if (!existingDeviceId) {
+      setCredentialContextField(connection, "deviceId", deviceId)
+    }
+  },
+)
 
 export function getKimiModule(): ProviderModule {
   return {

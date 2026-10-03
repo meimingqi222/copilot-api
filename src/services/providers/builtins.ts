@@ -13,13 +13,17 @@ import { getCodebuddyModule } from "~/services/providers/modules/codebuddy"
 import { getCodebuddyCnModule } from "~/services/providers/modules/codebuddy-cn"
 import { getLobsteraiModule } from "~/services/providers/modules/lobsterai"
 import { getMinimaxModule } from "~/services/providers/modules/minimax"
-import { getQoderModule } from "~/services/providers/modules/qoder"
+import {
+  getQoderModule,
+  getQoderCnModule,
+} from "~/services/providers/modules/qoder"
 import { getFactoryModule } from "~/services/providers/modules/factory"
 import { getZcodeModule } from "~/services/providers/modules/zcode"
 import { getCommandCodeModule } from "~/services/providers/modules/commandcode-plan"
 import { getZedModule } from "~/services/providers/modules/zed"
 import { getDimagentModule } from "~/services/providers/modules/dimagent"
 import { getGeminiModule } from "~/services/providers/modules/gemini"
+import { getTraeCnModule } from "~/services/providers/modules/trae-cn"
 
 // Factories keep registration independent of module import order.
 const modules: Record<ProviderId, () => ProviderModule> = {
@@ -31,6 +35,7 @@ const modules: Record<ProviderId, () => ProviderModule> = {
   "codebuddy-cn": getCodebuddyCnModule,
   lobsterai: getLobsteraiModule,
   qoder: getQoderModule,
+  "qoder-cn": getQoderCnModule,
   "commandcode-plan": getCommandCodeModule,
   codex: getCodexModule,
   claude: getClaudeModule,
@@ -43,6 +48,7 @@ const modules: Record<ProviderId, () => ProviderModule> = {
   zed: getZedModule,
   dimagent: getDimagentModule,
   gemini: getGeminiModule,
+  "trae-cn": getTraeCnModule,
 }
 
 export function listBuiltinProviderModules(): Array<ProviderModule> {

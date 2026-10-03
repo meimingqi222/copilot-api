@@ -83,11 +83,17 @@ async function withZcode(
     )
   }
 
+  // Start Plan 只发 ZCode 指纹头：connection.headers 里残留的
+  // x-api-key / anthropic-beta（如连接被人手改过）会破指纹。
+  const headers = { ...connection.headers, ...zcodeSourceHeaders() }
+  removeHeader(headers, "x-api-key")
+  removeHeader(headers, "anthropic-beta")
+
   return {
     connection: {
       ...connection,
       baseUrl: `${ZCODE_START_PLAN_BASE}/v1`,
-      headers: { ...connection.headers, ...zcodeSourceHeaders() },
+      headers,
     },
     // Start Plan 只认 Bearer JWT，不带 x-api-key。
     credential: { ...credential, authMode: "bearer", value: jwt },

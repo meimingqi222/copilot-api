@@ -19,13 +19,18 @@
 
 import { HTTPError } from "~/lib/error"
 import type { ModelMapping } from "~/lib/provider-connections"
+import { getConnectionProvider } from "~/lib/provider-connections"
 import { buildCosyHeaders, type QoderUser } from "~/services/qoder/cosy"
 import { encodeRequestBody } from "~/services/qoder/codec"
 import {
   buildChatEnvelope,
   type QoderModelInfo,
 } from "~/services/qoder/envelope"
-import { qoderChatUrl, qoderListModelsUrl } from "~/services/qoder/endpoints"
+import {
+  qoderChatUrl,
+  qoderListModelsUrl,
+  qoderSiteForProvider,
+} from "~/services/qoder/endpoints"
 import { newQoderId } from "~/services/qoder/ids"
 import {
   parseQoderModelList,
@@ -105,11 +110,25 @@ function qoderStreamError(
 ): HTTPError {
   const parsed = asRecord(safeJson(inner))
   const nested = asRecord(parsed?.error)
-  const message =
+  let message =
     (typeof parsed?.message === "string" && parsed.message)
     || (typeof nested?.message === "string" && nested.message)
     || inner.trim().slice(0, 300)
     || `Qoder upstream error ${statusCode}`
+  // Qoder 的真实错误描述常藏在 details 里（JSON 字符串或对象，
+  // { error: { message } }），剥一层拼到 message 后面。
+  const details =
+    typeof parsed?.details === "string" ?
+      asRecord(safeJson(parsed.details))
+    : asRecord(parsed?.details)
+  const detailMessage = asRecord(details?.error)?.message
+  if (
+    typeof detailMessage === "string"
+    && detailMessage
+    && !message.includes(detailMessage)
+  ) {
+    message = `${message}: ${detailMessage}`
+  }
   const status = normalizeHttpStatus(statusCode)
   if (statusCode === 401 || statusCode === 403) {
     return new HTTPError(
@@ -184,6 +203,7 @@ async function* decodeQoderStream(
   let xmlCallIndex = 0
   let sawNativeTool = false
   let sawFinish = false
+  let usageSent = false
   let id = ""
   let created = Math.floor(Date.now() / 1000)
 
@@ -286,7 +306,7 @@ async function* decodeQoderStream(
       })
     }
 
-    if (choice?.finish_reason) {
+    if (choice?.finish_reason && !sawFinish) {
       for (const frame of fragments(splitter.flush())) yield frame
       const finish =
         choice.finish_reason === "stop" && (splitter.sawTool || sawNativeTool) ?
@@ -298,11 +318,16 @@ async function* decodeQoderStream(
         ...(chunk.usage ? { usage: chunk.usage } : {}),
       })
       sawFinish = true
-      break
+      if (chunk.usage) usageSent = true
+      // 不能在这里 break：usage 通常跟在 finish_reason **之后**的独立
+      // chunk 里，读到这里就停会把整份 token 统计丢掉。
+      continue
     }
 
-    // 只带 usage 的收尾帧（没有 choices）也要透出去。
-    if (!choice && chunk.usage) {
+    // 只带 usage 的收尾帧（没有 choices，或 finish 之后的那个）也要透出去；
+    // finish chunk 已带过 usage 时不再重复发。
+    if (chunk.usage && !usageSent && (sawFinish || !choice)) {
+      usageSent = true
       yield chunkFrame({ ...base(), choices: [], usage: chunk.usage })
     }
   }
@@ -359,7 +384,11 @@ export const qoderNativeAdapter: ProtocolAdapter = {
   protocol: "qoder-native",
 
   async discoverModels({ connection, credential, signal }) {
-    const url = qoderListModelsUrl()
+    // 站点：connection.baseUrl（登录时落库）优先，缺了按 provider 取。
+    const base =
+      connection.baseUrl
+      || qoderSiteForProvider(getConnectionProvider(connection)).apiHost
+    const url = qoderListModelsUrl(base)
     // GET 的 COSY 签名用空 body。
     const headers = buildQoderHeaders(connection, credential.value, url, "")
     const response = await fetch(url, { headers, signal })
@@ -404,7 +433,10 @@ export const qoderNativeAdapter: ProtocolAdapter = {
       }
     }
     const wire = encodeRequestBody(new TextEncoder().encode(plaintext))
-    const url = qoderChatUrl()
+    const base =
+      connection.baseUrl
+      || qoderSiteForProvider(getConnectionProvider(connection)).apiHost
+    const url = qoderChatUrl(base)
     const headers = buildQoderHeaders(connection, credential.value, url, wire)
     setHeader(headers, "Accept", "text/event-stream")
     setHeader(headers, "Cache-Control", "no-cache")

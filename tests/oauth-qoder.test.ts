@@ -12,7 +12,7 @@ import {
   OAUTH_PROVIDER_IDS,
   PROVIDER_PROTOCOL_MAP,
 } from "~/lib/provider-config"
-import { QODER_API_HOST } from "~/services/qoder/endpoints"
+import { QODER_API_HOST, QODER_SITES } from "~/services/qoder/endpoints"
 import {
   applyQoderOAuthBundle,
   createQoderAuthRequest,
@@ -28,6 +28,7 @@ import {
   OAUTH_REFRESH_LEAD_MS,
   OAUTH_REFRESH_STRATEGIES,
 } from "~/services/oauth/refresh-strategies"
+import { getQoderFallbackModels } from "~/services/providers/model-catalogs/qoder"
 
 const originalFetch = globalThis.fetch
 
@@ -194,7 +195,7 @@ describe("Qoder device flow", () => {
     expect(credential.context?.machineId).toBe(start.deviceId)
     expect(credential.context?.email).toBe("q@x.dev")
     expect(credential.context?.expiresAt).toBeGreaterThan(Date.now() + 3000_000)
-    expect(getProviderConnection(conn.id)?.id).toBe(conn.id)
+    expect(getProviderConnection(conn.id)).toBeUndefined()
 
     // 轮询带 PKCE verifier + S256；job token 请求带设备 token 的 Bearer。
     const poll = urls.find((url) => url.includes("/deviceToken/poll"))!
@@ -283,5 +284,138 @@ describe("Qoder token refresh", () => {
       name: "N",
       email: "e@x",
     })
+  })
+})
+
+describe("Qoder CN site", () => {
+  test("registers as its own OAuth provider over the shared native protocol", () => {
+    expect(isOAuthProviderId("qoder-cn")).toBe(true)
+    expect(PROVIDER_PROTOCOL_MAP["qoder-cn"]).toBe("qoder-native")
+    expect(OAUTH_PROVIDER_STRATEGIES["qoder-cn"].flowType).toBe("device")
+    expect(getOAuthStrategy("qoder-cn")?.flowType).toBe("device")
+    expect(OAUTH_REFRESH_STRATEGIES["qoder-cn"]).toBeDefined()
+    expect(OAUTH_REFRESH_LEAD_MS["qoder-cn"]).toBe(5 * 60 * 1000)
+    const descriptor = getOAuthProviderDescriptor("qoder-cn")
+    expect(descriptor.id).toBe("qoder-cn")
+    expect(descriptor.name).toBe("Qoder CN")
+    expect(descriptor.accountFields).toEqual([])
+  })
+
+  test("start builds the qoder.cn auth URL without redirect_uri", () => {
+    const request = createQoderAuthRequest(QODER_SITES["qoder-cn"])
+    const url = new URL(request.authUrl)
+    expect(url.origin).toBe("https://qoder.cn")
+    expect(url.pathname).toBe("/device/selectAccounts")
+    expect(url.searchParams.get("challenge_method")).toBe("S256")
+    expect(url.searchParams.get("client_id")).toBe(
+      "e883ade2-e6e3-4d6d-adf7-f92ceff5fdcb",
+    )
+    // Qoder CN 的 CLI 不带 redirect_uri。
+    expect(url.searchParams.get("redirect_uri")).toBeNull()
+    expect(url.searchParams.get("machine_id")).toBe(request.machineId)
+  })
+
+  test("a refused job token falls back to device-token chat on qoder.cn", async () => {
+    const urls: Array<string> = []
+    globalThis.fetch = ((input: unknown) => {
+      const url = String(input)
+      urls.push(url)
+      if (url.includes("deviceToken/poll")) {
+        return Promise.resolve(
+          jsonResponse({
+            token: "dt-cn",
+            refresh_token: "drt-cn",
+            user_id: "uid-cn",
+          }),
+        )
+      }
+      if (url.includes("/api/v1/me/jobToken")) {
+        // CN 的 CLI 账号拿不到 job token：403 → 回退到 device-token chat。
+        return Promise.resolve(jsonResponse({ message: "forbidden" }, 403))
+      }
+      if (url.includes("userinfo")) {
+        return Promise.resolve(
+          jsonResponse({ id: "uid-cn", name: "CN User", email: "cn@x.cn" }),
+        )
+      }
+      return Promise.resolve(jsonResponse({}, 404))
+    }) as unknown as typeof fetch
+
+    const strategy = getOAuthStrategy("qoder-cn")!
+    const start = await strategy.start({})
+    expect(start.authUrl).toContain("qoder.cn/device/selectAccounts")
+
+    const conn = await strategy.exchange({
+      flow: {
+        id: "flow-cn",
+        provider: "qoder-cn",
+        label: "qoder-cn-1",
+        status: "pending",
+        expiresAt: Date.now() + 60_000,
+        authUrl: start.authUrl,
+        nonce: start.nonce,
+        deviceId: start.deviceId,
+        pkce: start.pkce,
+        interval: 0,
+      },
+    })
+
+    expect(conn.baseUrl).toBe("https://gateway.qoder.com.cn")
+    const credential = conn.credentials[0]!
+    // chat 直签 device token，账号页与 chat 共用同一对。
+    expect(credential.value).toBe("dt-cn")
+    expect(credential.context?.refreshToken).toBe("drt-cn")
+    expect(credential.context?.chatTokenKind).toBe("device")
+    expect(credential.context?.deviceToken).toBe("dt-cn")
+    expect(credential.context?.deviceRefreshToken).toBe("drt-cn")
+    // 轮询 / 交换都打 CN 的 openapi host。
+    expect(urls.every((url) => url.includes("openapi.qoder.com.cn"))).toBe(true)
+  })
+
+  test("device-chat refresh rotates the device pair on qoder.cn", async () => {
+    const urls: Array<string> = []
+    globalThis.fetch = ((input: unknown) => {
+      urls.push(String(input))
+      return Promise.resolve(
+        jsonResponse({
+          token: "dt-new",
+          refresh_token: "drt-new",
+          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        }),
+      )
+    }) as unknown as typeof fetch
+
+    const connection = createConnection()
+    connection.credentials[0]!.context!.chatTokenKind = "device"
+    await OAUTH_REFRESH_STRATEGIES["qoder-cn"](connection, "drt-old", {})
+
+    expect(urls[0]).toBe(
+      "https://openapi.qoder.com.cn/api/v1/deviceToken/refresh",
+    )
+    const credential = connection.credentials[0]!
+    expect(credential.value).toBe("dt-new")
+    expect(credential.context?.refreshToken).toBe("drt-new")
+    expect(credential.context?.deviceToken).toBe("dt-new")
+    expect(credential.context?.deviceRefreshToken).toBe("drt-new")
+    expect(credential.context?.expiresAt).toBeGreaterThan(Date.now())
+  })
+
+  test("fallback catalogs carry synthetic model configs per site", () => {
+    const cn = getQoderFallbackModels(QODER_SITES["qoder-cn"])
+    expect(cn.map((m) => m.publicId)).toEqual([
+      "ultimate",
+      "performance",
+      "efficient",
+      "lite",
+    ])
+    for (const m of cn) {
+      expect(m.metadata?.qoderModelConfig).toBeDefined()
+    }
+    const global = getQoderFallbackModels(QODER_SITES.qoder)
+    expect(global.length).toBeGreaterThan(10)
+    for (const m of global) {
+      expect(m.metadata?.qoderModelConfig).toBeDefined()
+      expect(m.endpoints).toEqual(["chat"])
+    }
   })
 })

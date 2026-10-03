@@ -1,5 +1,8 @@
 import { OAUTH_PROVIDER_IDS, type OAuthProviderId } from "~/lib/provider-config"
-import type { OAuthRefreshFn } from "~/services/oauth/strategy-types"
+import {
+  applyProviderAuthUpdate,
+  type OAuthRefreshOperation,
+} from "~/services/providers/auth-update"
 import { getBuiltinProviderModule } from "~/services/providers/builtins"
 
 // Lazy compatibility views avoid initializing runtimes during module loading.
@@ -10,11 +13,19 @@ export const OAUTH_REFRESH_STRATEGIES = Object.defineProperties(
       id,
       {
         enumerable: true,
-        get: () => getBuiltinProviderModule(id)?.refreshAuth,
+        get:
+          (): OAuthRefreshOperation =>
+          async (connection, refreshToken, options) => {
+            const refresh = getBuiltinProviderModule(id)?.refreshAuth
+            if (!refresh)
+              throw new Error(`Missing provider refresh operation: ${id}`)
+            const update = await refresh(connection, refreshToken, options)
+            applyProviderAuthUpdate(connection, update)
+          },
       },
     ]),
   ),
-) as Record<OAuthProviderId, OAuthRefreshFn>
+) as Record<OAuthProviderId, OAuthRefreshOperation>
 
 export const OAUTH_REFRESH_LEAD_MS = Object.defineProperties(
   {},

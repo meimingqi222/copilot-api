@@ -10,7 +10,6 @@ import {
   flowFetchOptions,
   type OAuthProviderStrategy,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyWindsurfOAuthBundle,
   createWindsurfOAuthStart,
@@ -58,7 +57,6 @@ const windsurfStrategy: OAuthProviderStrategy = {
       flowFetchOptions(flow),
     )
     applyWindsurfOAuthBundle(conn, { sessionToken, ...profile })
-    upsertProviderConnection(conn)
     return conn
   },
 }

@@ -28,11 +28,21 @@ export interface ProviderFieldSchema {
   options?: Array<ProviderFieldOption>
 }
 
-export interface ProviderDescriptor {
-  id: ProviderId
+export interface ProviderPresentation {
+  category: "popular" | "domestic" | "ide" | "import"
+  badgeKey: string
+  hintKey?: string
+  hasManualMode?: boolean
+  importMethod?: "cookie" | "json" | "lobsterai"
+  manualOAuthCallback?: boolean
+}
+
+export interface ProviderDescriptor<Id extends string = ProviderId> {
+  id: Id
   name: string
   icon: string
   authMode: "device_flow" | "direct" | "oauth"
   features: Array<ProviderFeature>
   accountFields: Array<ProviderFieldSchema>
+  presentation?: ProviderPresentation
 }

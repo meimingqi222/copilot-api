@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getMinimaxFallbackModels } from "~/services/providers/model-catalogs/minimax"
 import { fetchMinimaxQuota } from "~/lib/quota/fetchers/minimax"
@@ -9,9 +10,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import { generatePkceCodes } from "~/services/oauth/pkce"
 import {
   applyMinimaxOAuthBundle,
@@ -70,22 +69,23 @@ const minimaxStrategy: OAuthProviderStrategy = {
       { ...flowFetchOptions(flow), signal },
     )
     applyMinimaxOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  // 账号域由 connection 上的 region 决定（baseUrl 里也带着区域，
-  // resolveMinimaxRegion 会在 context 缺失时从那里反查）。
-  const region = resolveMinimaxRegion(connection)
-  const bundle = await refreshMinimaxTokens(refreshToken, region, fetchOptions)
-  applyMinimaxOAuthBundle(connection, bundle)
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    // 账号域由 connection 上的 region 决定（baseUrl 里也带着区域，
+    // resolveMinimaxRegion 会在 context 缺失时从那里反查）。
+    const region = resolveMinimaxRegion(connection)
+    const bundle = await refreshMinimaxTokens(
+      refreshToken,
+      region,
+      fetchOptions,
+    )
+    applyMinimaxOAuthBundle(connection, bundle)
+  },
+)
 
 export function getMinimaxModule(): ProviderModule {
   return {

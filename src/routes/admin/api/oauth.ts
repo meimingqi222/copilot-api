@@ -15,19 +15,17 @@ import {
   setConnectionAuthStatus,
   setConnectionCooldownUntil,
   setConnectionRateLimitInfo,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
-import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { cancelConnectionTokenRefresh } from "~/services/copilot/token-refresh"
-import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import {
   followConnectionIdentityOnReauth,
   upgradeOAuthConnectionLabelIfNeeded,
 } from "~/services/oauth/account-label"
 import { parseOAuthAuthorizationCode } from "~/services/oauth/callback-input"
-import { isCodebuddyOAuthProviderId } from "~/services/oauth/codebuddy"
 import {
   connectionOAuthIdentity,
   findConnectionByOAuthIdentity,
@@ -56,6 +54,7 @@ import {
   scheduleOAuthRefreshForConnection,
 } from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
+import { getBuiltinProviderModule } from "~/services/providers/builtins"
 import { getProviderRuntime } from "~/services/providers/registry"
 
 import { publicAccountFromConnection } from "./account-views"
@@ -101,7 +100,7 @@ function publicAccountForId(accountId: string) {
 
 /**
  * Phase 3:connection 原生版本的 finalizeOAuthAccount。
- * connection 已由 strategy.exchange 创建并 upsert,此处只做后续初始化。
+ * strategy.exchange 返回未注册的连接，宿主在此统一注册与初始化。
  * Phase 5:直接在 connection 上做 label upgrade,不再经由 getAccount 派生 Account 快照。
  *
  * 原地重认证（flow.reauthAccountId）：exchange 产物是全新的临时 connection，
@@ -138,17 +137,17 @@ async function finalizeOAuthConnection(
     // 不跟着改，界面看起来就像新账号没有添加成功。自定义名称不受影响。
     followConnectionIdentityOnReauth(reauthTarget)
     removeProviderConnection(conn.id)
+  } else {
+    upsertProviderConnection(conn)
   }
   // 直接在 connection 上做 label upgrade
   upgradeOAuthConnectionLabelIfNeeded(finalized)
   scheduleOAuthRefreshForConnection(finalized)
-  // codebuddy 双模式：OAuth 登录产物仍走自有的 token 刷新调度
-  //（OAuth 调度只认 OAuthProviderId，codebuddy 保持 direct 描述符）。
-  if (isCodebuddyOAuthProviderId(getConnectionProvider(finalized) ?? "")) {
-    scheduleCodebuddyRefresh(finalized)
-  }
-  if (getConnectionProvider(finalized) === "lobsterai") {
-    scheduleLobsteraiRefresh(finalized)
+  const finalizedProvider = getConnectionProvider(finalized)
+  if (finalizedProvider) {
+    await getBuiltinProviderModule(finalizedProvider)?.afterAuthentication?.(
+      finalized,
+    )
   }
   try {
     await refreshModelsForConnection(finalized)

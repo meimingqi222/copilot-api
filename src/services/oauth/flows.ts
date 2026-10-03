@@ -2,7 +2,7 @@ import type { Server } from "bun"
 
 import fs from "node:fs/promises"
 
-import type { OAuthProviderId } from "~/lib/provider-config"
+import type { ProviderId } from "~/lib/provider-config"
 import { PROVIDER_IDS } from "~/lib/provider-definitions"
 
 import { logger } from "~/lib/logger"
@@ -11,18 +11,10 @@ import { assertWritableDataPath, PATHS } from "~/lib/paths"
 import { getBuiltinProviderModule } from "~/services/providers/builtins"
 import type { OAuthCallbackConfig } from "~/services/providers/callbacks/types"
 
-import type { CodebuddyOAuthProviderId } from "./codebuddy"
-import type { PkceCodes } from "./pkce"
+import type { PkceCodes } from "~/services/oauth/pkce"
 
-export type OAuthFlowProvider =
-  | OAuthProviderId
-  | "windsurf"
-  | "lobsterai"
-  | "commandcode-plan"
-  | "zed"
-  | "dimagent"
-  | "gemini"
-  | CodebuddyOAuthProviderId
+// Login support comes from the provider module, independently of account type.
+export type OAuthFlowProvider = ProviderId
 
 export interface OAuthPendingFlow {
   id: string
@@ -558,14 +550,36 @@ export function stopOAuthCallbackServer(flowId: string): void {
  */
 export const OAUTH_CALLBACK_CONFIGS: Partial<
   Record<OAuthFlowProvider, OAuthCallbackConfig>
-> = {}
-
-for (const id of PROVIDER_IDS) {
-  Object.defineProperty(OAUTH_CALLBACK_CONFIGS, id, {
-    get: () => getBuiltinProviderModule(id)?.callback,
-    enumerable: true,
-  })
-}
+> = new Proxy(
+  {},
+  {
+    get(_target, key) {
+      return typeof key === "string" ?
+          getBuiltinProviderModule(key)?.callback
+        : undefined
+    },
+    ownKeys() {
+      return PROVIDER_IDS.filter(
+        (id) => getBuiltinProviderModule(id)?.callback !== undefined,
+      )
+    },
+    getOwnPropertyDescriptor(_target, key) {
+      if (typeof key !== "string" || !getBuiltinProviderModule(key)?.callback)
+        return undefined
+      return {
+        configurable: true,
+        enumerable: true,
+        get: () => getBuiltinProviderModule(key)?.callback,
+      }
+    },
+    has(_target, key) {
+      return (
+        typeof key === "string"
+        && getBuiltinProviderModule(key)?.callback !== undefined
+      )
+    },
+  },
+)
 
 export async function startProviderCallbackServer(
   provider: OAuthFlowProvider,

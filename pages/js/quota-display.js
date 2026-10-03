@@ -8,6 +8,7 @@ const QuotaDisplay = {
     "xai",
     "minimax",
     "qoder",
+    "qoder-cn",
   ]),
   CYCLE_USAGE_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi"]),
 
@@ -320,7 +321,8 @@ const QuotaDisplay = {
 
         break
       }
-      case "qoder": {
+      case "qoder":
+      case "qoder-cn": {
         rows = this.buildQoderRows(info.details, t)
 
         break
@@ -346,7 +348,8 @@ const QuotaDisplay = {
       case "zcode":
       case "dimagent":
       case "zed":
-      case "gemini": {
+      case "gemini":
+      case "trae-cn": {
         const key = provider === "commandcode-plan" ? "commandcode" : provider
         rows = this.buildOAuthWindowsRows(info.details, key, t)
 

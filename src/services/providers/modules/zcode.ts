@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getZcodeFallbackModels } from "~/services/providers/model-catalogs/zcode"
 import { fetchZcodeQuota } from "~/lib/quota/fetchers/zcode"
@@ -9,9 +10,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyZcodeOAuthBundle,
   normalizeZcodeSite,
@@ -58,14 +57,13 @@ const zcodeStrategy: OAuthProviderStrategy = {
       { ...flowFetchOptions(flow), signal },
     )
     applyZcodeOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async () => {
+const refreshAuth = prepareOAuthRefresh(async () => {
   // no-op: the minted API key does not rotate
-}
+})
 
 export function getZcodeModule(): ProviderModule {
   return {

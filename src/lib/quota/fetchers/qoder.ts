@@ -30,8 +30,9 @@ import {
 } from "~/services/oauth/qoder"
 import {
   QODER_ACCOUNT_USAGE_PATH,
-  QODER_OPENAPI_HOST,
+  qoderSiteForConnection,
   QODER_USER_AGENT,
+  type QoderSite,
 } from "~/services/qoder/endpoints"
 
 interface QoderQuotaWindow {
@@ -180,12 +181,13 @@ function buildSnapshot(parsed: ParsedQoderQuota, host: string): QuotaSnapshot {
 
 async function requestUsage(
   connection: ProviderConnection,
+  site: QoderSite,
   deviceToken: string,
   signal?: AbortSignal,
 ): Promise<Response> {
   return fetchWithConnectionProxy(
     connection,
-    `${QODER_OPENAPI_HOST}${QODER_ACCOUNT_USAGE_PATH}`,
+    `${site.openapiHost}${QODER_ACCOUNT_USAGE_PATH}`,
     {
       method: "GET",
       headers: {
@@ -203,9 +205,13 @@ export async function fetchQoderQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot> {
-  if (getConnectionProvider(connection) !== "qoder") {
+  const provider = getConnectionProvider(connection)
+  if (provider !== "qoder" && provider !== "qoder-cn") {
     throw new Error("fetchQoderQuota requires a Qoder connection")
   }
+  // 站点优先按 connection.baseUrl 判：qoder / qoder-cn 共用 qoder-native
+  // 协议，裸 connection 的 protocol → provider 反查会推错站。
+  const site = qoderSiteForConnection(connection)
   const deviceToken = getCredentialContextString(connection, "deviceToken")
   if (!deviceToken) {
     throw new Error(
@@ -213,7 +219,7 @@ export async function fetchQoderQuota(
     )
   }
 
-  let response = await requestUsage(connection, deviceToken, signal)
+  let response = await requestUsage(connection, site, deviceToken, signal)
   if (response.status === 401 || response.status === 403) {
     await response.text()
     const deviceRefresh = getCredentialContextString(
@@ -222,12 +228,16 @@ export async function fetchQoderQuota(
     )
     if (deviceRefresh) {
       try {
-        const refreshed = await refreshQoderDeviceToken(deviceRefresh, {
-          proxyUrl: getConnectionProxyUrl(connection),
-          signal,
-        })
+        const refreshed = await refreshQoderDeviceToken(
+          deviceRefresh,
+          {
+            proxyUrl: getConnectionProxyUrl(connection),
+            signal,
+          },
+          site,
+        )
         applyQoderDeviceTokenRefresh(connection, refreshed)
-        response = await requestUsage(connection, refreshed.token, signal)
+        response = await requestUsage(connection, site, refreshed.token, signal)
       } catch (error: unknown) {
         throw new Error(
           "Qoder usage is unavailable: Qoder refused the account-page sign-in "
@@ -253,5 +263,5 @@ export async function fetchQoderQuota(
   if (!parsed) {
     throw new Error("Qoder usage response carried an unknown display mode")
   }
-  return buildSnapshot(parsed, QODER_OPENAPI_HOST)
+  return buildSnapshot(parsed, site.openapiHost)
 }

@@ -73,7 +73,8 @@ describe("internal provider modules", () => {
       const module = getBuiltinProviderModule(id)!
       expect(getOAuthStrategy(id)).toBe(module.oauth)
       expect(OAUTH_PROVIDER_STRATEGIES[id]).toBe(module.oauth!)
-      expect(OAUTH_REFRESH_STRATEGIES[id]).toBe(module.refreshAuth!)
+      expect(typeof OAUTH_REFRESH_STRATEGIES[id]).toBe("function")
+      expect(typeof module.refreshAuth).toBe("function")
     }
     expect(OAUTH_REFRESH_LEAD_MS.codex).toBe(24 * 60 * 60 * 1000)
     expect(OAUTH_REFRESH_LEAD_MS.claude).toBe(4 * 60 * 60 * 1000)

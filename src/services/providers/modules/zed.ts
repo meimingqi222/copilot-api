@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { zedCallbackConfig } from "~/services/providers/callbacks/zed"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getZedFallbackModels } from "~/services/providers/model-catalogs/zed"
@@ -10,9 +11,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyZedOAuthBundle,
   decryptZedToken,
@@ -72,14 +71,13 @@ const zedStrategy: OAuthProviderStrategy = {
       name: me.name,
       plan: me.plan,
     })
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async () => {
+const refreshAuth = prepareOAuthRefresh(async () => {
   // no-op: the Zed account token does not rotate
-}
+})
 
 export function getZedModule(): ProviderModule {
   return {

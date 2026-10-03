@@ -14,8 +14,8 @@
  *     "request has been blocked due to unusual activity"），所以请求要
  *     带上 ZCode 的头（zcodeSourceHeaders）并按 ZCode 的形状重塑 body
  *     （shapeZcodeStartBody：三块缓存 system + 日期提醒 user turn +
- *     metadata.user_id = 设备 id）。magpie 实测同样的头体经 HTTP/1.1
- *     的 fetch 发出即可（Bun fetch 本身就是 HTTP/1.1，无需降级）。
+ *     metadata.user_id = 设备 id）。同样的头体经 HTTP/1.1 的 fetch
+ *     发出即可（Bun fetch 本身就是 HTTP/1.1，无需降级）。
  *
  * 临时积分只是 Start Plan 计费体系里的一个 plan + balance 桶：余额接口
  * 返回 plans[] / balances[]，过期的 plan（status "expired"，或 ends_at
@@ -57,11 +57,11 @@ export const ZCODE_START_PLAN_BASE = `${ZCODE_API}/api/v1/zcode-plan/anthropic`
 
 const BALANCE_URL = `${ZCODE_API}/api/v1/zcode-plan/billing/balance`
 
-/** Start Plan 提供的模型（Coding Plan 专属 GLM-5.3 不在其列）。 */
+/** Start Plan 提供的模型（Coding Plan 专属 GLM-5.3 不在其列），按小写比较。 */
 const ZCODE_START_PLAN_MODELS = new Set([
-  "GLM-5.3-Flash",
-  "GLM-5.2",
-  "GLM-5-Turbo",
+  "glm-5.3-flash",
+  "glm-5.2",
+  "glm-5-turbo",
 ])
 
 export const ZCODE_START_BLOCK_HINT =
@@ -113,6 +113,9 @@ export function zcodeSessionJwt(connection: ProviderConnection): string {
   return getCredentialContextString(connection, "zcodeJwt") ?? ""
 }
 
+/** 提前 30s 判过期，避免把临期 JWT 发出去吃 401。 */
+const JWT_SKEW_MS = 30_000
+
 /** JWT 的 exp 是否已过；读不出 exp 当作未过期。 */
 export function zcodeJwtExpired(jwt: string): boolean {
   const parts = jwt.split(".")
@@ -125,7 +128,7 @@ export function zcodeJwtExpired(jwt: string): boolean {
       ).toString("utf8"),
     ) as { exp?: number }
     if (!claims.exp) return false
-    return Date.now() >= claims.exp * 1000
+    return Date.now() + JWT_SKEW_MS >= claims.exp * 1000
   } catch {
     return false
   }
@@ -328,17 +331,12 @@ export function zcodeActiveStartPlan(
 ): { name: string; untilMs?: number } | undefined {
   for (const p of balance.plans) {
     if (p.status !== "active") continue
-    if (p.planId || p.name) {
-      const id = p.planId.toLowerCase()
-      const name = p.name.toLowerCase()
-      if (
-        !id.includes("start-plan")
-        && !id.includes("start plan")
-        && !name.includes("start-plan")
-        && !name.includes("start plan")
-      ) {
-        continue
-      }
+    if (
+      (p.planId || p.name)
+      && !isZcodeStartPlanName(p.planId)
+      && !isZcodeStartPlanName(p.name)
+    ) {
+      continue
     }
     return {
       name: p.name || "Start Plan",
@@ -375,6 +373,7 @@ interface RouteEntry {
 }
 
 const routeCache = new Map<string, RouteEntry>()
+const ROUTE_CACHE_MAX = 512
 
 /** 测试用：清掉路由缓存。 */
 export function __resetZcodeRouteCacheForTest(): void {
@@ -431,7 +430,7 @@ async function decideZcodeRoute(
 export async function resolveZcodeRoute(
   connection: ProviderConnection,
   credential: ApiCredential,
-  opts?: { cached?: boolean; signal?: AbortSignal },
+  opts?: { cached?: boolean },
 ): Promise<ZcodeRoute> {
   const jwt = zcodeSessionJwt(connection)
   if (!jwt) return "coding"
@@ -456,17 +455,25 @@ export async function resolveZcodeRoute(
     /* base 缺失或畸形时用默认 */
   }
   const { route, sure } = await decideZcodeRoute(connection, key, jwt, root)
+  // 先扫掉过期项；还超上限就丢最老的，缓存不无限涨。
+  const now = Date.now()
+  for (const [k, e] of routeCache) {
+    if (now - e.at >= e.ttlMs) routeCache.delete(k)
+  }
+  while (routeCache.size >= ROUTE_CACHE_MAX) {
+    routeCache.delete(routeCache.keys().next().value!)
+  }
   routeCache.set(cacheKey, {
     route,
-    at: Date.now(),
+    at: now,
     ttlMs: sure ? ROUTE_TTL_SURE_MS : ROUTE_TTL_UNSURE_MS,
   })
   return route
 }
 
-/** Start Plan 是否提供这个模型（按 upstream model id）。 */
+/** Start Plan 是否提供这个模型（按 upstream model id，大小写不敏感）。 */
 export function zcodeStartServes(model: string): boolean {
-  return ZCODE_START_PLAN_MODELS.has(model)
+  return ZCODE_START_PLAN_MODELS.has(model.toLowerCase())
 }
 
 // ── 请求指纹（头） ──────────────────────────────────────────────
@@ -509,8 +516,8 @@ function zcodeTimezone(): string {
 }
 
 /**
- * Start Plan 请求要带的一套 ZCode 应用头（magpie 对照过 ZCode 桌面端
- * 3.14 与其服务的 OpenCode 插件的请求）：
+ * Start Plan 请求要带的一套 ZCode 应用头（对照过 ZCode 桌面端 3.14
+ * 的请求）：
  * 不带 anthropic-beta、不带 query/session id、不带 X-Device-Mid。
  * 返回头名 → 值；调用方负责 merge。
  */
@@ -680,8 +687,19 @@ export function shapeZcodeStartBody(
     return payload
   }
 
+  // 原消息对象会被重塑（删 cache_control、改最后一条的 content），
+  // 先克隆，不能脏调用方手里的 payload（错误日志/重试还会读它）。
   const msgs = payload.messages.filter((m): m is JsonObject => !!asRecord(m))
   if (msgs.length !== payload.messages.length) return payload
+  const clonedMsgs = msgs.map((m) => {
+    const msg: JsonObject = { ...m }
+    if (Array.isArray(msg.content)) {
+      msg.content = msg.content.map((b) =>
+        typeof b === "object" && b !== null ? { ...(b as JsonObject) } : b,
+      )
+    }
+    return msg
+  })
   const first = msgs[0]
   if (first) {
     const c = first.content
@@ -697,7 +715,7 @@ export function shapeZcodeStartBody(
 
   const system = [...zcodeSystem(provider, model, zcodeCwd(texts)), ...own]
 
-  const outMsgs: Array<JsonObject> = [zcodeDateReminder(now), ...msgs]
+  const outMsgs: Array<JsonObject> = [zcodeDateReminder(now), ...clonedMsgs]
   let lastAt = -1
   for (const [i, msg] of outMsgs.entries()) {
     if (msg.role === "system") continue
@@ -722,16 +740,26 @@ export function shapeZcodeStartBody(
     }
   }
 
-  const tools = payload.tools
-  if (Array.isArray(tools)) {
-    for (const t of tools) {
-      const tool = asRecord(t)
-      if (tool) delete tool.cache_control
-    }
-  }
+  const rawTools = payload.tools
+  const outTools: Array<unknown> | undefined =
+    Array.isArray(rawTools) ?
+      rawTools.map((t) => {
+        const tool = asRecord(t)
+        if (!tool) return t
+        const clone = { ...tool }
+        delete clone.cache_control
+        return clone
+      })
+    : undefined
 
   const meta: JsonObject = { ...asRecord(payload.metadata) }
   meta.user_id = zcodeUserID()
 
-  return { ...payload, system, messages: outMsgs, metadata: meta }
+  return {
+    ...payload,
+    system,
+    messages: outMsgs,
+    ...(outTools ? { tools: outTools } : {}),
+    metadata: meta,
+  }
 }

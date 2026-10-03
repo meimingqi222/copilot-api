@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { antigravityCallbackConfig } from "~/services/providers/callbacks/antigravity"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
@@ -12,12 +13,8 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import {
-  upsertProviderConnection,
-  getConnectionRedirectUri,
-} from "~/lib/provider-connections"
+import { getConnectionRedirectUri } from "~/lib/provider-connections"
 import {
   applyAntigravityOAuthBundle,
   createAntigravityOAuthStart,
@@ -53,23 +50,20 @@ const antigravityStrategy: OAuthProviderStrategy = {
       flowFetchOptions(flow),
     )
     applyAntigravityOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const bundle = await refreshAntigravityTokens(refreshToken, fetchOptions)
-  applyAntigravityOAuthBundle(connection, {
-    ...bundle,
-    redirectUri:
-      getConnectionRedirectUri(connection) ?? ANTIGRAVITY_REDIRECT_URI,
-  })
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const bundle = await refreshAntigravityTokens(refreshToken, fetchOptions)
+    applyAntigravityOAuthBundle(connection, {
+      ...bundle,
+      redirectUri:
+        getConnectionRedirectUri(connection) ?? ANTIGRAVITY_REDIRECT_URI,
+    })
+  },
+)
 
 export function getAntigravityModule(): ProviderModule {
   return {

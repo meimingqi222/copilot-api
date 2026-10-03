@@ -1,8 +1,5 @@
 import type { ProviderId } from "~/lib/provider-config"
-import type {
-  ManagedConnectionInput,
-  ProviderConnection,
-} from "~/lib/provider-connections"
+import type { ManagedConnectionInput } from "~/lib/provider-connections"
 
 export interface CreateAccountBody {
   label?: string
@@ -39,5 +36,4 @@ export interface ProviderAccountCreation {
   prepare(
     context: AccountCreationContext,
   ): AccountCreationResult | Promise<AccountCreationResult>
-  afterCreate?(connection: ProviderConnection): void | Promise<void>
 }

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
 import {
   credentialString,
   extractJwtExp,
@@ -31,5 +30,4 @@ export const lobsteraiAccountCreation: ProviderAccountCreation = {
       settings: { ...body.settings },
     }
   },
-  afterCreate: scheduleLobsteraiRefresh,
 }

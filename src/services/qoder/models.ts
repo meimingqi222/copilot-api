@@ -24,6 +24,12 @@ interface QoderModelEntry {
   displayName: string
   isVl: boolean
   maxInputTokens: number
+  /** price_factor 判定的免费模型（促销 0× 不算）。 */
+  free: boolean
+  /** 客户端显示的当前价签（price_factor 倍数，0 = 无价格/免费）。 */
+  rate: number
+  /** 促销期间被划掉的原价（0 = 无）。 */
+  rateWas: number
   thinks: boolean
   alwaysThinks: boolean
   defaultEffort: string
@@ -73,8 +79,8 @@ function readThinking(
   }
   const enabled = asRecord(thinkingConfig.enabled)
   const thinks = enabled !== undefined
-  // `disabled` 只要**出现**（哪怕是 null）就表示该思考不可关闭。
-  const alwaysThinks = thinks && !Object.hasOwn(thinkingConfig, "disabled")
+  // `disabled` 缺省或为 null 都表示思考关不掉（客户端把 null 也算进去）。
+  const alwaysThinks = thinks && thinkingConfig.disabled == null
   if (!thinks || !enabled) {
     return { thinks, alwaysThinks, defaultEffort: "", efforts: [] }
   }
@@ -96,6 +102,61 @@ function readThinking(
   return { thinks, alwaysThinks, defaultEffort, efforts }
 }
 
+/**
+ * 模型免费判定：`price_factor === 0` 且当前没有
+ * 「原价 > 0 的活动促销」才算免费（促销 0× 是打折不是免费）；
+ * 没给价格的条目才看 `is_free`。
+ */
+function freeOf(raw: Record<string, unknown>): boolean {
+  const price = raw.price_factor ?? raw.priceFactor
+  if (typeof price === "number" && Number.isFinite(price)) {
+    if (price !== 0) return false
+    const p = asRecord(raw.promotion) ?? asRecord(raw.prommotion)
+    const before =
+      numberOr(p?.before_promotion_price_factor)
+      || numberOr(p?.beforePromotionPriceFactor)
+    return !(p?.active === true && before > 0)
+  }
+  return (raw.is_free ?? raw.isFree) === true
+}
+
+/**
+ * 客户端显示的价签：`rate` 是当前 price_factor，`rateWas` 是划掉的原价
+ * （活动促销的 before_promotion，否则高于现价的 original_price_factor）。
+ */
+function rateOf(raw: Record<string, unknown>): {
+  rate: number
+  rateWas: number
+} {
+  const numField = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : 0
+  const price = numField(raw.price_factor ?? raw.priceFactor)
+  if (
+    !price
+    && raw.price_factor === undefined
+    && raw.priceFactor === undefined
+  ) {
+    return { rate: 0, rateWas: 0 }
+  }
+  const p = asRecord(raw.promotion) ?? asRecord(raw.prommotion)
+  const before =
+    numField(p?.before_promotion_price_factor)
+    || numField(p?.beforePromotionPriceFactor)
+  const discount = numField(p?.discount_factor) || numField(p?.discountFactor)
+  const discounted = p?.active === true && before > 0
+  let rate = Math.max(price, 0)
+  let rateWas = Math.max(
+    numField(raw.original_price_factor),
+    numField(raw.originalPriceFactor),
+  )
+  if (discounted) {
+    rateWas = before
+    if (rate === 0) rate = before * discount
+  }
+  if (rateWas <= rate) rateWas = 0
+  return { rate, rateWas }
+}
+
 function readEntry(
   key: string,
   source: string,
@@ -109,6 +170,8 @@ function readEntry(
     displayName: displayName || key,
     isVl: config.is_vl === true,
     maxInputTokens: numberOr(config.max_input_tokens),
+    free: freeOf(config),
+    ...rateOf(config),
     ...thinking,
     config,
   }
@@ -153,12 +216,20 @@ export function qoderModelMappings(
     publicId: entry.key,
     upstreamId: entry.key,
     name: entry.displayName,
+    vendor: "qoder",
     endpoints: ["chat"],
     enabled: true,
     pickerEnabled: true,
     metadata: {
       qoderSource: entry.source,
       qoderModelConfig: entry.config,
+      ...(entry.maxInputTokens > 0 ?
+        { contextWindow: entry.maxInputTokens }
+      : {}),
+      ...(entry.isVl ? { imageInput: true } : {}),
+      free: entry.free,
+      ...(entry.rate > 0 ? { priceFactor: entry.rate } : {}),
+      ...(entry.rateWas > 0 ? { priceFactorWas: entry.rateWas } : {}),
     },
   }))
 }

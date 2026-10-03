@@ -30,16 +30,14 @@ import {
   setCredentialContextField,
 } from "~/lib/provider-connections"
 import {
-  QODER_CLIENT_ID,
-  QODER_DEVICE_FLOW_HOST,
   QODER_DEVICE_SELECT_ACCOUNTS_PATH,
   QODER_DEVICE_TOKEN_POLL_PATH,
   QODER_DEVICE_TOKEN_REFRESH_PATH,
   QODER_JOB_TOKEN_PATH,
   QODER_JOB_TOKEN_REFRESH_PATH,
-  QODER_OPENAPI_HOST,
-  QODER_REDIRECT_URI,
+  QODER_SITES,
   QODER_USERINFO_PATH,
+  type QoderSite,
 } from "~/services/qoder/endpoints"
 import { newQoderMachineId } from "~/services/qoder/ids"
 
@@ -53,8 +51,8 @@ export const QODER_DEVICE_POLL_INTERVAL_MS = 2000
 /** 设备流轮询上限（覆盖用户打开浏览器完成授权的时间）。 */
 export const QODER_DEVICE_FLOW_DEADLINE_MS = 15 * 60 * 1000
 
-/** job token 响应缺 `expires_in` 时的兜底寿命（兜底 24h）。 */
-const QODER_JOB_TOKEN_FALLBACK_MS = 24 * 60 * 60 * 1000
+/** job token / device-chat token 缺到期信息时的兜底寿命（24h）。 */
+export const QODER_TOKEN_FALLBACK_MS = 24 * 60 * 60 * 1000
 
 const JSON_HEADERS = {
   Accept: "application/json",
@@ -65,6 +63,8 @@ interface QoderDeviceTokenResponse {
   token: string
   refreshToken: string
   userId: string
+  /** 设备 token 的到期时刻（毫秒）；读不出为 0。 */
+  expiresAtMs?: number
 }
 
 interface QoderJobTokenResponse {
@@ -96,7 +96,7 @@ function asRecord(value: unknown): Record<string, unknown> {
  * machine_id 是账号身份，必须随登录一起保存（COSY 头用它），所以由调用方
  * 放到 flow 上、exchange 时再取回。
  */
-export function createQoderAuthRequest(): {
+export function createQoderAuthRequest(site: QoderSite = QODER_SITES.qoder): {
   authUrl: string
   pkce: { codeVerifier: string; codeChallenge: string }
   nonce: string
@@ -110,11 +110,12 @@ export function createQoderAuthRequest(): {
     challenge_method: "S256",
     nonce,
     machine_id: machineId,
-    client_id: QODER_CLIENT_ID,
-    redirect_uri: QODER_REDIRECT_URI,
+    client_id: site.clientId,
   })
+  // Qoder CN 的 CLI 不带 redirect_uri；国际站带 qoder-app://。
+  if (site.redirectUri) params.set("redirect_uri", site.redirectUri)
   return {
-    authUrl: `${QODER_DEVICE_FLOW_HOST}${QODER_DEVICE_SELECT_ACCOUNTS_PATH}?${params.toString()}`,
+    authUrl: `${site.deviceFlowHost}${QODER_DEVICE_SELECT_ACCOUNTS_PATH}?${params.toString()}`,
     pkce,
     nonce,
     machineId,
@@ -125,6 +126,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** 设备 token 的到期：expires_at（RFC3339 或秒/毫秒纪元）+ expires_in（毫秒）兜底。 */
+function deviceExpiryMs(raw: Record<string, unknown>): number | undefined {
+  const at = raw.expires_at
+  if (typeof at === "string") {
+    const parsed = Date.parse(at)
+    if (!Number.isNaN(parsed)) return parsed
+    const n = Number(at)
+    if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n
+  }
+  const n = typeof at === "number" ? at : NaN
+  if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n
+  const inMs = numberOrUndefined(raw.expires_in)
+  return inMs !== undefined ? Date.now() + inMs : undefined
+}
+
 function mapDeviceToken(
   raw: Record<string, unknown>,
 ): QoderDeviceTokenResponse {
@@ -133,6 +149,7 @@ function mapDeviceToken(
     token: asString(raw.token) || asString(raw.device_token),
     refreshToken: asString(raw.refresh_token),
     userId: asString(raw.user_id),
+    expiresAtMs: deviceExpiryMs(raw),
   }
 }
 
@@ -145,6 +162,7 @@ function mapDeviceToken(
 export async function pollQoderDeviceToken(params: {
   nonce: string
   verifier: string
+  site?: QoderSite
   intervalMs?: number
   deadlineMs?: number
   signal?: AbortSignal
@@ -172,7 +190,7 @@ export async function pollQoderDeviceToken(params: {
       challenge_method: "S256",
     })
     const response = await oauthFetch(
-      `${QODER_OPENAPI_HOST}${QODER_DEVICE_TOKEN_POLL_PATH}?${params_.toString()}`,
+      `${(params.site ?? QODER_SITES.qoder).openapiHost}${QODER_DEVICE_TOKEN_POLL_PATH}?${params_.toString()}`,
       { method: "GET", headers: { Accept: "application/json" } },
       options,
     )
@@ -191,24 +209,28 @@ export async function pollQoderDeviceToken(params: {
   throw new Error("Qoder device authorization timed out")
 }
 
-/** job token 交换：用 device token 换 chat 用的 job token。 */
+/** job token 交换：用 device token 换 chat 用的 job token。
+ * 失败抛 HTTPError——CN 站要按 4xx 回退到 device-token chat。 */
 export async function exchangeQoderJobToken(
   deviceToken: string,
   options?: OAuthFetchOptions,
+  site: QoderSite = QODER_SITES.qoder,
 ): Promise<QoderJobTokenResponse> {
   const response = await oauthFetch(
-    `${QODER_OPENAPI_HOST}${QODER_JOB_TOKEN_PATH}`,
+    `${site.openapiHost}${QODER_JOB_TOKEN_PATH}`,
     {
       method: "POST",
       headers: { ...JSON_HEADERS, Authorization: `Bearer ${deviceToken}` },
-      body: JSON.stringify({ clientId: QODER_CLIENT_ID }),
+      body: JSON.stringify({ clientId: site.clientId }),
     },
     options,
   )
   const body = await response.text()
   if (!response.ok) {
-    throw new Error(
+    throw new HTTPError(
       `Qoder job token exchange failed (${response.status}): ${body.slice(0, 300)}`,
+      new Response(body, { status: response.status }),
+      body,
     )
   }
   const raw = asRecord(safeJson(body))
@@ -232,6 +254,7 @@ export async function exchangeQoderJobToken(
 export async function refreshQoderJobToken(
   refreshToken: string,
   options?: OAuthFetchOptions,
+  site: QoderSite = QODER_SITES.qoder,
 ): Promise<QoderJobTokenResponse> {
   if (!refreshToken.trim()) {
     throw new Error(
@@ -239,7 +262,7 @@ export async function refreshQoderJobToken(
     )
   }
   const response = await oauthFetch(
-    `${QODER_OPENAPI_HOST}${QODER_JOB_TOKEN_REFRESH_PATH}`,
+    `${site.openapiHost}${QODER_JOB_TOKEN_REFRESH_PATH}`,
     {
       method: "POST",
       headers: { ...JSON_HEADERS },
@@ -277,6 +300,7 @@ export async function refreshQoderJobToken(
 export async function refreshQoderDeviceToken(
   refreshToken: string,
   options?: OAuthFetchOptions,
+  site: QoderSite = QODER_SITES.qoder,
 ): Promise<QoderDeviceTokenResponse> {
   if (!refreshToken.trim()) {
     throw new Error(
@@ -284,7 +308,7 @@ export async function refreshQoderDeviceToken(
     )
   }
   const response = await oauthFetch(
-    `${QODER_OPENAPI_HOST}${QODER_DEVICE_TOKEN_REFRESH_PATH}`,
+    `${site.openapiHost}${QODER_DEVICE_TOKEN_REFRESH_PATH}`,
     {
       method: "POST",
       headers: { ...JSON_HEADERS },
@@ -326,9 +350,10 @@ export function applyQoderDeviceTokenRefresh(
 export async function fetchQoderUserInfo(
   deviceToken: string,
   options?: OAuthFetchOptions,
+  site: QoderSite = QODER_SITES.qoder,
 ): Promise<QoderUserInfo> {
   const response = await oauthFetch(
-    `${QODER_OPENAPI_HOST}${QODER_USERINFO_PATH}`,
+    `${site.openapiHost}${QODER_USERINFO_PATH}`,
     {
       method: "GET",
       headers: {
@@ -372,7 +397,7 @@ export function qoderJobTokenLifetimeMs(
 ): number {
   return job.expiresInMs && job.expiresInMs > 0 ?
       job.expiresInMs
-    : QODER_JOB_TOKEN_FALLBACK_MS
+    : QODER_TOKEN_FALLBACK_MS
 }
 
 // ── connection 落库 ─────────────────────────────────────────────
@@ -385,6 +410,12 @@ interface QoderOAuthBundle {
   deviceRefreshToken: string
   uid: string
   machineId: string
+  /**
+   * chat 用的 token 种类：`job`（默认，jobToken 对）或 `device`
+   * （Qoder CN 的 CLI 方式：jobToken 被 4xx 拒时用 device token 直签，
+   * 续期也走 deviceToken/refresh）。OAuth 刷新调度按它选端点。
+   */
+  chatTokenKind?: "job" | "device"
   name?: string
   email?: string
 }
@@ -420,6 +451,11 @@ export function applyQoderOAuthBundle(
     "deviceRefreshToken",
     bundle.deviceRefreshToken,
   )
+  setCredentialContextField(
+    connection,
+    "chatTokenKind",
+    bundle.chatTokenKind ?? "job",
+  )
   if (bundle.name) {
     setCredentialContextField(connection, "name", bundle.name)
     setConnectionCredentialExtra(connection, "name", bundle.name)
@@ -436,6 +472,22 @@ export function applyQoderJobTokenRefresh(
     refreshToken: job.refreshToken,
     expiresAt: Date.now() + qoderJobTokenLifetimeMs(job),
   })
+}
+
+/**
+ * device-chat 账号（Qoder CN 的 CLI 方式）的续期写回：chat 用的就是
+ * device token 本体，所以 credential 三件套与 deviceToken 上下文一起换。
+ */
+export function applyQoderDeviceChatRefresh(
+  connection: ProviderConnection,
+  token: QoderDeviceTokenResponse,
+): void {
+  applyOAuthBundleToCredential(connection, {
+    accessToken: token.token,
+    refreshToken: token.refreshToken,
+    expiresAt: token.expiresAtMs ?? Date.now() + QODER_TOKEN_FALLBACK_MS,
+  })
+  applyQoderDeviceTokenRefresh(connection, token)
 }
 
 /** 从 connection 读回 COSY 签名所需的身份（缺失时 undefined）。 */

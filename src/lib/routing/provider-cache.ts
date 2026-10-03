@@ -134,6 +134,11 @@ const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> = {
     features: ["passthrough-client-session"],
     synthesizeStableSession: false,
   },
+  "qoder-cn": {
+    provider: "qoder-cn",
+    features: ["passthrough-client-session"],
+    synthesizeStableSession: false,
+  },
   factory: {
     provider: "factory",
     features: ["passthrough-client-session"],
@@ -161,6 +166,12 @@ const PROVIDER_CACHE_PROFILES: Record<ProviderId, ProviderCacheProfile> = {
   },
   gemini: {
     provider: "gemini",
+    features: ["passthrough-client-session"],
+    synthesizeStableSession: false,
+  },
+  // Trae CN 的私有 SSE 通道未实测是否认会话键，不伪造：只透传客户端带来的。
+  "trae-cn": {
+    provider: "trae-cn",
     features: ["passthrough-client-session"],
     synthesizeStableSession: false,
   },

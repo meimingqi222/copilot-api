@@ -249,8 +249,7 @@ function scheduleOAuthRefreshAttempt(
 /**
  * connection 原生的 OAuth token 刷新核心。
  * 刷新材料从 credential.context 读取,刷新结果经各 provider 的
- * apply*OAuthBundle 直接写回 connection(credential.value / context /
- * credentialExtras / metadata.authStatus),最后统一持久化。
+ * apply*OAuthBundle 在独立副本上解析，再由宿主合并认证更新并统一持久化。
  */
 export async function refreshOAuthConnectionToken(
   connection: ProviderConnection,

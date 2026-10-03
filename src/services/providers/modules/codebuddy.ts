@@ -1,4 +1,5 @@
 import { createCodebuddyAccountCreation } from "~/services/providers/account-creation/codebuddy"
+import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { codebuddyNativeAdapter } from "~/services/protocols/codebuddy-native"
@@ -8,7 +9,6 @@ import {
   applyFlowSettingsToConnection,
   type OAuthProviderStrategy,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyCodebuddyOAuthBundle,
   pollCodebuddyDeviceAuthorization,
@@ -38,7 +38,6 @@ export function createCodebuddyStrategy(
         { proxyUrl: flow.proxyUrl, signal },
       )
       applyCodebuddyOAuthBundle(conn, provider, bundle)
-      upsertProviderConnection(conn)
       return conn
     },
   }
@@ -51,6 +50,7 @@ export function getCodebuddyModule(): ProviderModule {
     id: "codebuddy",
     descriptor: getProviderDescriptor("codebuddy"),
     accountCreation: createCodebuddyAccountCreation("codebuddy"),
+    afterAuthentication: scheduleCodebuddyRefresh,
     adapter: codebuddyNativeAdapter,
     createRuntime: () => codebuddyProviderRuntime,
     oauth: codebuddyStrategy,

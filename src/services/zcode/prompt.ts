@@ -1,7 +1,7 @@
 /**
  * ZCode Start Plan 的 system prompt 常量。
  *
- * 移植自 magpie 的 zcode_prompt.json（ZCode 3.14.x 应用的 prompt）：
+ * 与 ZCode 3.14.x 应用下发的 prompt 一致：
  * Start Plan 端点会拦下没有这套 prompt 的请求（405 / code 3012），
  * 所以请求体必须按 ZCode 的样子重塑（见 ./start-plan.ts 的 shapeZcodeStartBody）。
  */

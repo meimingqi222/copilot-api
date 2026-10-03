@@ -118,7 +118,8 @@ createAccountRoutes.post("/", async (c) => {
     body.label ?? `account-${listAccountManagedConnections().length + 1}`
 
   // Provider 准备凭证（或注册设备码 flow），宿主负责落库与账户视图。
-  const creation = getBuiltinProviderModule(provider)?.accountCreation
+  const module = getBuiltinProviderModule(provider)
+  const creation = module?.accountCreation
   if (!creation) {
     return c.json({ error: `Unsupported account provider: ${provider}` }, 400)
   }
@@ -165,6 +166,6 @@ createAccountRoutes.post("/", async (c) => {
 
   const finalized = await finalizeCreatedConnection(result)
   const conn = getProviderConnection(result.id)
-  if (conn) await creation.afterCreate?.(conn)
+  if (conn) await module?.afterAuthentication?.(conn)
   return c.json({ status: "complete", ...finalized })
 })

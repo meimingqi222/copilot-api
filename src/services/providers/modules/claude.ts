@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { claudeCallbackConfig } from "~/services/providers/callbacks/claude"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
@@ -12,9 +13,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyClaudeOAuthBundle,
   createClaudeOAuthStart,
@@ -62,19 +61,16 @@ const claudeStrategy: OAuthProviderStrategy = {
         bundle.organizationName ?? identity.organizationName
     }
     applyClaudeOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const bundle = await refreshClaudeTokens(refreshToken, fetchOptions)
-  applyClaudeOAuthBundle(connection, bundle)
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const bundle = await refreshClaudeTokens(refreshToken, fetchOptions)
+    applyClaudeOAuthBundle(connection, bundle)
+  },
+)
 
 export function getClaudeModule(): ProviderModule {
   return {

@@ -297,7 +297,7 @@ describe("MiniMax Code device flow", () => {
     expect(
       (conn.metadata?.settings as Record<string, unknown> | undefined)?.region,
     ).toBe("en")
-    expect(getProviderConnection(conn.id)?.id).toBe(conn.id)
+    expect(getProviderConnection(conn.id)).toBeUndefined()
     // token 请求必须带 PKCE verifier，否则 MiniMax 换不出 token
     expect(bodies.some((body) => body.includes("code_verifier="))).toBe(true)
   })

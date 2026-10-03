@@ -1,3 +1,4 @@
+import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { xaiCallbackConfig } from "~/services/providers/callbacks/xai"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getXaiFallbackModels } from "~/services/providers/model-catalogs/xai"
@@ -10,9 +11,7 @@ import {
   applyFlowSettingsToConnection,
   flowFetchOptions,
   type OAuthProviderStrategy,
-  type OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
-import { upsertProviderConnection } from "~/lib/provider-connections"
 import {
   applyXaiOAuthBundle,
   createXaiOAuthStart,
@@ -55,24 +54,21 @@ const xaiStrategy: OAuthProviderStrategy = {
       flowFetchOptions(flow),
     )
     applyXaiOAuthBundle(conn, bundle)
-    upsertProviderConnection(conn)
     return conn
   },
 }
 
-const refreshAuth: OAuthRefreshFn = async (
-  connection,
-  refreshToken,
-  fetchOptions,
-) => {
-  const tokenEndpoint = getXaiTokenEndpoint(connection) ?? ""
-  const bundle = await refreshXaiTokens(
-    refreshToken,
-    tokenEndpoint,
-    fetchOptions,
-  )
-  applyXaiOAuthBundle(connection, bundle)
-}
+const refreshAuth = prepareOAuthRefresh(
+  async (connection, refreshToken, fetchOptions) => {
+    const tokenEndpoint = getXaiTokenEndpoint(connection) ?? ""
+    const bundle = await refreshXaiTokens(
+      refreshToken,
+      tokenEndpoint,
+      fetchOptions,
+    )
+    applyXaiOAuthBundle(connection, bundle)
+  },
+)
 
 export function getXaiModule(): ProviderModule {
   return {

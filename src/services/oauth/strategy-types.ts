@@ -9,6 +9,7 @@ import { setConnectionSetting } from "~/lib/provider-connections"
 import type { OAuthFetchOptions } from "~/services/oauth/fetch"
 import type { OAuthPendingFlow } from "~/services/oauth/flows"
 import type { PkceCodes } from "~/services/oauth/pkce"
+import type { ProviderAuthUpdate } from "~/services/providers/auth-update"
 
 export function createOAuthConnection(
   provider: ProviderId,
@@ -102,7 +103,7 @@ export interface OAuthProviderStrategy {
   readonly flowType: OAuthFlowType
   /** Start the OAuth flow (generate auth URL or device code) */
   start(input: OAuthStartInput): Promise<OAuthStartResult>
-  /** Exchange authorization for tokens and return a persisted ProviderConnection */
+  /** Return a detached connection; the host registers and persists it. */
   exchange(input: OAuthExchangeInput): Promise<ProviderConnection>
 }
 
@@ -110,4 +111,4 @@ export type OAuthRefreshFn = (
   connection: ProviderConnection,
   refreshToken: string,
   fetchOptions: OAuthFetchOptions,
-) => Promise<void>
+) => Promise<ProviderAuthUpdate>
