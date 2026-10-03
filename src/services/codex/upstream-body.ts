@@ -316,7 +316,7 @@ function isUnansweredToolCall(entry: unknown, answered: Set<string>): boolean {
  * supported on this model"` rejection (mirrors CPA
  * stripCodexResponsesCacheBreakpoints).
  */
-export function stripPromptCacheBreakpoints(input: unknown): unknown {
+function stripPromptCacheBreakpoints(input: unknown): unknown {
   if (!Array.isArray(input)) return input
   let changed = false
   const items = input.map((rawItem) => {
@@ -369,7 +369,7 @@ export function stripPromptCacheBreakpoints(input: unknown): unknown {
  * strings are rewritten; non-empty strings pass through unchanged so other
  * errors keep their shape.
  */
-export function normalizeEmptyFunctionCallArguments(input: unknown): unknown {
+function normalizeEmptyFunctionCallArguments(input: unknown): unknown {
   if (!Array.isArray(input)) return input
   let changed = false
   const items = input.map((rawItem) => {

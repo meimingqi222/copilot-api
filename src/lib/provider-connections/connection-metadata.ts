@@ -18,12 +18,9 @@ for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
 }
 
 import type { BalanceResult } from "~/lib/balance/types"
+import type { QuotaSnapshot } from "~/lib/quota/types"
 
-import type {
-  ProviderConnection,
-  ProviderProtocol,
-  QuotaSnapshot,
-} from "./types"
+import type { ProviderConnection, ProviderProtocol } from "./types"
 
 /**
  * protocol → provider 反向映射,从 PROVIDER_PROTOCOL_MAP 派生。

@@ -14,7 +14,7 @@ import {
 } from "~/lib/trace-bus"
 import { performanceContext } from "~/lib/upstream-performance"
 
-import { sendResponsesWebSocketTextForTest } from "~/routes/responses/ws-handler"
+import { sendText } from "~/routes/responses/ws-pump"
 import { server } from "~/server"
 
 import { setTestAccounts } from "./helpers/set-accounts"
@@ -467,7 +467,7 @@ loopbackTest(
 )
 
 test("Responses WS send detects a message dropped by Bun", async () => {
-  const accepted = await sendResponsesWebSocketTextForTest(
+  const accepted = await sendText(
     {
       readyState: 1,
       send: () => 0,
@@ -485,7 +485,7 @@ test("Responses WS send waits for buffered output to drain", async () => {
     buffered = 0
   }, 15)
 
-  const accepted = await sendResponsesWebSocketTextForTest(
+  const accepted = await sendText(
     {
       readyState: 1,
       send: () => {

@@ -352,8 +352,7 @@ export async function dispatchRequest(
       logPrefix: "[dispatch/chat]",
       c: options.c,
       execute: (adapter, target: RouteTarget, current) => {
-        // Step B 后 admission 始终携带 connection/credential;
-        // account-backed 路径下由 accountToConnection 构造虚拟对象。
+        // Step B 后 admission 始终携带 connection/credential。
         const { connection: conn, credential: cred } = current
 
         const executionContext = {

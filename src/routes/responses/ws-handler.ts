@@ -83,10 +83,6 @@ interface ResponsesWebSocketMessage {
   [key: string]: unknown
 }
 
-/** @deprecated Kept only for the WS pump test; import `sendText` from
- * "./ws-pump" in new code. */
-export { sendText as sendResponsesWebSocketTextForTest } from "./ws-pump"
-
 export function createResponsesWebSocketSession(c: Context) {
   let inFlight = false
   let turnSequence = 0

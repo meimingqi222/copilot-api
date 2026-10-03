@@ -412,36 +412,6 @@ function performanceView() {
       )
     },
 
-    timingFields: [
-      "outputTtftMs",
-      "textTtftMs",
-      "firstWriteMs",
-      "preprocessingMs",
-      "bodyParseMs",
-      "bodyReadMs",
-      "jsonDecodeMs",
-      "admissionMs",
-      "routingDecisionMs",
-      "tokenEstimateMs",
-      "dispatchToOutputMs",
-      "requestTranslationMs",
-      "firstTranslatedFrameMs",
-      "rateLimitWaitMs",
-      "failedAttemptMs",
-      "upstreamHeadersMs",
-      "upstreamConnectMs",
-      "upstreamQueueMs",
-      "upstreamFirstEventMs",
-      "upstreamBodyReadMs",
-      "adapterPreparationMs",
-      "responseTranslationMs",
-      "streamTranslationActiveMs",
-      "downstreamWriteMs",
-      "outputToWriteMs",
-      "upstreamToOutputMs",
-      "responseReadyMs",
-    ],
-
     formatTps(tps) {
       if (tps === null || tps === undefined) return "-"
       return new Intl.NumberFormat(undefined, {

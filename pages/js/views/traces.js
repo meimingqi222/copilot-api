@@ -943,12 +943,6 @@ function tracesView() {
       return map[f.apiKind] || f.apiKind || f.endpoint || ""
     },
 
-    shorten(v) {
-      if (!v) return ""
-      const s = String(v)
-      return s.length > 32 ? `${s.slice(0, 14)}…${s.slice(-12)}` : s
-    },
-
     fmtTime(ts) {
       if (!ts) return "—"
       const d = new Date(ts)
@@ -992,27 +986,10 @@ function tracesView() {
       return "ok"
     },
 
-    /** Right-hand cell: a live elapsed counter while running, timings once done. */
-    rowTiming(f) {
-      if (f.inFlight) {
-        const started = f.timestamp ?? this.now
-        return this.t("trace.inflight") + " " + this.took(this.now - started)
-      }
-      let s = this.took(f.latencyMs)
-      if (f.ttftMs)
-        s += ` · ${this.t("trace.firstToken")} ${this.took(f.ttftMs)}`
-      return s
-    },
-
     rowRoute(f) {
       const conn = f.connectionName || f.provider || "—"
       const cred = f.credentialLabel ? ` · ${f.credentialLabel}` : ""
       return `${conn}${cred}`
-    },
-
-    routeLabel(f) {
-      if (!f) return ""
-      return `${this.apiLabel(f)} · ${f.model || f.modelUpstream || "—"}`
     },
 
     serviceTierInfo(frame) {

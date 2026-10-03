@@ -33,7 +33,7 @@ const TIMING_FIELDS = [
 
 type TimingField = (typeof TIMING_FIELDS)[number]
 
-export interface TimingSummary {
+interface TimingSummary {
   samples: number
   average: number | null
   p50: number | null

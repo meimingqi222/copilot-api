@@ -222,11 +222,6 @@ export interface ApiCredential {
   lastRateLimitReason?: string
 }
 
-/**
- * 配额快照类型(Phase 5:已迁移到 lib/quota/types.ts,
- * 此处 re-export 保持向后兼容)。
- */
-
 export interface ModelMapping {
   /** 对客户端暴露的模型名,例如 `deepseek-v4-flash`。 */
   publicId: string
@@ -372,5 +367,3 @@ export const DEFAULTS = {
   QUOTA_EXHAUSTED_AUTO_RECOVERY_MS: 24 * 60 * 60 * 1000,
   MODEL_DISCOVERY_INTERVAL_MS: 60 * 60 * 1000,
 } as const
-
-export { type QuotaSnapshot } from "~/lib/quota/types"

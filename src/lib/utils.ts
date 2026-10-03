@@ -161,7 +161,7 @@ export function cacheModels(): void {
     combined.length > 0 ? { object: "list", data: combined } : undefined
 }
 
-// 注册 models-stale 监听:saveAccounts / persistProviderConnections 完成后
+// 注册 models-stale 监听:persistProviderConnections 完成后
 // 自动触发 cacheModels() 重建缓存,消除调用方的手动 cacheModels() 调用。
 onStateChange("models-stale", cacheModels)
 

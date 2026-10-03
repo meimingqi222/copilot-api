@@ -1,8 +1,7 @@
 /**
  * 测试辅助:直接通过 ProviderConnection 设置测试状态(connection 原生)。
  *
- * Phase 2:仿 set-accounts.ts 模式,但直接操作 ProviderConnection 而非 Account。
- * 新测试应优先使用此 helper,逐步替代 set-accounts.ts。
+ * 直接操作 ProviderConnection;需要 account 形状断言的测试用 set-accounts.ts。
  */
 import type { ProviderConnection } from "~/lib/provider-connections"
 

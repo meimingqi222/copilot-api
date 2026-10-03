@@ -1,6 +1,6 @@
 import type { ModelPricingPer1k } from "~/lib/models-dev/types"
 
-export type DevinPrices = Map<string, ModelPricingPer1k>
+type DevinPrices = Map<string, ModelPricingPer1k>
 
 export function parseDevinPrices(document: string): DevinPrices {
   // Parse only the JSON array; never evaluate the surrounding MDX document.

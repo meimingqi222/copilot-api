@@ -133,30 +133,6 @@ function usageView() {
       }
     },
 
-    // Bind flatpickr's range mode to a single input so start/end are picked
-    // together in one calendar instead of two disconnected date fields.
-    initCustomRangePicker(el) {
-      flatpickr(el, {
-        mode: "range",
-        dateFormat: "Y-m-d",
-        locale: I18n.currentLang() === "zh" ? "zh" : "default",
-        // Show two months side by side (like Ant Design's RangePicker) so
-        // cross-month ranges don't require flipping calendar pages.
-        showMonths: window.innerWidth < 640 ? 1 : 2,
-        maxDate: this.todayStr,
-        defaultDate:
-          this.customStartDate && this.customEndDate ?
-            [this.customStartDate, this.customEndDate]
-          : undefined,
-        onChange: (selectedDates, _dateStr, instance) => {
-          if (selectedDates.length !== 2) return
-          this.customStartDate = instance.formatDate(selectedDates[0], "Y-m-d")
-          this.customEndDate = instance.formatDate(selectedDates[1], "Y-m-d")
-          this.setCustomRange()
-        },
-      })
-    },
-
     setMonth(month) {
       if (!month) return
       this.dateRange = "custom"
@@ -274,6 +250,76 @@ function usageView() {
       }
     },
 
+    pricingForm(price) {
+      return {
+        promptPricePer1m: price.promptPricePer1k * 1000,
+        completionPricePer1m: price.completionPricePer1k * 1000,
+        cacheReadPricePer1m: price.cacheReadPricePer1k * 1000,
+        cacheWritePricePer1m: price.cacheWritePricePer1k * 1000,
+        contextThresholdTokens: price.contextThresholdTokens ?? "",
+        extendedPromptPricePer1m:
+          (
+            price.extendedPromptPricePer1k !== null
+            && price.extendedPromptPricePer1k !== undefined
+          ) ?
+            price.extendedPromptPricePer1k * 1000
+          : "",
+        extendedCompletionPricePer1m:
+          (
+            price.extendedCompletionPricePer1k !== null
+            && price.extendedCompletionPricePer1k !== undefined
+          ) ?
+            price.extendedCompletionPricePer1k * 1000
+          : "",
+        extendedCacheReadPricePer1m:
+          (
+            price.extendedCacheReadPricePer1k !== null
+            && price.extendedCacheReadPricePer1k !== undefined
+          ) ?
+            price.extendedCacheReadPricePer1k * 1000
+          : "",
+        extendedCacheWritePricePer1m:
+          (
+            price.extendedCacheWritePricePer1k !== null
+            && price.extendedCacheWritePricePer1k !== undefined
+          ) ?
+            price.extendedCacheWritePricePer1k * 1000
+          : "",
+      }
+    },
+
+    pricingPayload(price) {
+      const toPer1k = (v) => {
+        if (v === "" || v === null || v === undefined) return null
+        const n = Number.parseFloat(v)
+        return Number.isFinite(n) ? n / 1000 : null
+      }
+      const toThreshold = (v) => {
+        if (v === "" || v === null || v === undefined) return null
+        const n = Number.parseInt(v, 10)
+        return Number.isFinite(n) && n > 0 ? n : null
+      }
+      return {
+        promptPricePer1k:
+          (Number.parseFloat(price.promptPricePer1m) || 0) / 1000,
+        completionPricePer1k:
+          (Number.parseFloat(price.completionPricePer1m) || 0) / 1000,
+        cacheReadPricePer1k:
+          (Number.parseFloat(price.cacheReadPricePer1m) || 0) / 1000,
+        cacheWritePricePer1k:
+          (Number.parseFloat(price.cacheWritePricePer1m) || 0) / 1000,
+        contextThresholdTokens: toThreshold(price.contextThresholdTokens),
+        extendedPromptPricePer1k: toPer1k(price.extendedPromptPricePer1m),
+        extendedCompletionPricePer1k: toPer1k(
+          price.extendedCompletionPricePer1m,
+        ),
+        extendedCacheReadPricePer1k: toPer1k(price.extendedCacheReadPricePer1m),
+        extendedCacheWritePricePer1k: toPer1k(
+          price.extendedCacheWritePricePer1m,
+        ),
+      }
+    },
+
     async loadModelPricing() {
       try {
         const data = await API.usage.getPricing()
@@ -281,41 +327,7 @@ function usageView() {
         this.pricingSources = data.sources || {}
         this.modelProviders = data.providers || {}
         for (const [model, price] of Object.entries(data.pricing || {})) {
-          this.modelPrices[model] = {
-            promptPricePer1m: price.promptPricePer1k * 1000,
-            completionPricePer1m: price.completionPricePer1k * 1000,
-            cacheReadPricePer1m: price.cacheReadPricePer1k * 1000,
-            cacheWritePricePer1m: price.cacheWritePricePer1k * 1000,
-            contextThresholdTokens: price.contextThresholdTokens ?? "",
-            extendedPromptPricePer1m:
-              (
-                price.extendedPromptPricePer1k !== null
-                && price.extendedPromptPricePer1k !== undefined
-              ) ?
-                price.extendedPromptPricePer1k * 1000
-              : "",
-            extendedCompletionPricePer1m:
-              (
-                price.extendedCompletionPricePer1k !== null
-                && price.extendedCompletionPricePer1k !== undefined
-              ) ?
-                price.extendedCompletionPricePer1k * 1000
-              : "",
-            extendedCacheReadPricePer1m:
-              (
-                price.extendedCacheReadPricePer1k !== null
-                && price.extendedCacheReadPricePer1k !== undefined
-              ) ?
-                price.extendedCacheReadPricePer1k * 1000
-              : "",
-            extendedCacheWritePricePer1m:
-              (
-                price.extendedCacheWritePricePer1k !== null
-                && price.extendedCacheWritePricePer1k !== undefined
-              ) ?
-                price.extendedCacheWritePricePer1k * 1000
-              : "",
-          }
+          this.modelPrices[model] = this.pricingForm(price)
         }
         this.originalPrices = JSON.parse(JSON.stringify(this.modelPrices))
         this.$nextTick(() => {
@@ -591,37 +603,7 @@ function usageView() {
       this.savingModels = { ...this.savingModels, [model]: true }
       try {
         const price = this.modelPrices[model]
-        const toPer1k = (v) => {
-          if (v === "" || v === null || v === undefined) return null
-          const n = Number.parseFloat(v)
-          return Number.isFinite(n) ? n / 1000 : null
-        }
-        const toThreshold = (v) => {
-          if (v === "" || v === null || v === undefined) return null
-          const n = Number.parseInt(v, 10)
-          return Number.isFinite(n) && n > 0 ? n : null
-        }
-        await API.usage.updatePricing(model, {
-          promptPricePer1k:
-            (Number.parseFloat(price.promptPricePer1m) || 0) / 1000,
-          completionPricePer1k:
-            (Number.parseFloat(price.completionPricePer1m) || 0) / 1000,
-          cacheReadPricePer1k:
-            (Number.parseFloat(price.cacheReadPricePer1m) || 0) / 1000,
-          cacheWritePricePer1k:
-            (Number.parseFloat(price.cacheWritePricePer1m) || 0) / 1000,
-          contextThresholdTokens: toThreshold(price.contextThresholdTokens),
-          extendedPromptPricePer1k: toPer1k(price.extendedPromptPricePer1m),
-          extendedCompletionPricePer1k: toPer1k(
-            price.extendedCompletionPricePer1m,
-          ),
-          extendedCacheReadPricePer1k: toPer1k(
-            price.extendedCacheReadPricePer1m,
-          ),
-          extendedCacheWritePricePer1k: toPer1k(
-            price.extendedCacheWritePricePer1m,
-          ),
-        })
+        await API.usage.updatePricing(model, this.pricingPayload(price))
         this.originalPrices[model] = JSON.parse(
           JSON.stringify(this.modelPrices[model]),
         )
@@ -642,41 +624,10 @@ function usageView() {
       this.savingAllPricing = true
       let successCount = 0
       try {
-        const toPer1k = (v) => {
-          if (v === "" || v === null || v === undefined) return null
-          const n = Number.parseFloat(v)
-          return Number.isFinite(n) ? n / 1000 : null
-        }
-        const toThreshold = (v) => {
-          if (v === "" || v === null || v === undefined) return null
-          const n = Number.parseInt(v, 10)
-          return Number.isFinite(n) && n > 0 ? n : null
-        }
-
         await Promise.all(
           dirtyModels.map(async (model) => {
             const price = this.modelPrices[model]
-            await API.usage.updatePricing(model, {
-              promptPricePer1k:
-                (Number.parseFloat(price.promptPricePer1m) || 0) / 1000,
-              completionPricePer1k:
-                (Number.parseFloat(price.completionPricePer1m) || 0) / 1000,
-              cacheReadPricePer1k:
-                (Number.parseFloat(price.cacheReadPricePer1m) || 0) / 1000,
-              cacheWritePricePer1k:
-                (Number.parseFloat(price.cacheWritePricePer1m) || 0) / 1000,
-              contextThresholdTokens: toThreshold(price.contextThresholdTokens),
-              extendedPromptPricePer1k: toPer1k(price.extendedPromptPricePer1m),
-              extendedCompletionPricePer1k: toPer1k(
-                price.extendedCompletionPricePer1m,
-              ),
-              extendedCacheReadPricePer1k: toPer1k(
-                price.extendedCacheReadPricePer1m,
-              ),
-              extendedCacheWritePricePer1k: toPer1k(
-                price.extendedCacheWritePricePer1m,
-              ),
-            })
+            await API.usage.updatePricing(model, this.pricingPayload(price))
             this.originalPrices[model] = JSON.parse(
               JSON.stringify(this.modelPrices[model]),
             )
@@ -710,41 +661,7 @@ function usageView() {
         const res = await API.usage.deletePricing(model)
         if (res && res.pricing) {
           const price = res.pricing
-          this.modelPrices[model] = {
-            promptPricePer1m: price.promptPricePer1k * 1000,
-            completionPricePer1m: price.completionPricePer1k * 1000,
-            cacheReadPricePer1m: price.cacheReadPricePer1k * 1000,
-            cacheWritePricePer1m: price.cacheWritePricePer1k * 1000,
-            contextThresholdTokens: price.contextThresholdTokens ?? "",
-            extendedPromptPricePer1m:
-              (
-                price.extendedPromptPricePer1k !== null
-                && price.extendedPromptPricePer1k !== undefined
-              ) ?
-                price.extendedPromptPricePer1k * 1000
-              : "",
-            extendedCompletionPricePer1m:
-              (
-                price.extendedCompletionPricePer1k !== null
-                && price.extendedCompletionPricePer1k !== undefined
-              ) ?
-                price.extendedCompletionPricePer1k * 1000
-              : "",
-            extendedCacheReadPricePer1m:
-              (
-                price.extendedCacheReadPricePer1k !== null
-                && price.extendedCacheReadPricePer1k !== undefined
-              ) ?
-                price.extendedCacheReadPricePer1k * 1000
-              : "",
-            extendedCacheWritePricePer1m:
-              (
-                price.extendedCacheWritePricePer1k !== null
-                && price.extendedCacheWritePricePer1k !== undefined
-              ) ?
-                price.extendedCacheWritePricePer1k * 1000
-              : "",
-          }
+          this.modelPrices[model] = this.pricingForm(price)
           this.pricingSources[model] = res.source || "unmatched"
           this.originalPrices[model] = JSON.parse(
             JSON.stringify(this.modelPrices[model]),

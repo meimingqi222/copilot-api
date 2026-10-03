@@ -2,7 +2,7 @@
 // the /models catalog by this value, so it must stay aligned with the current
 // Codex CLI release to receive new models (e.g. gpt-6-astra requires >= 0.153.0).
 // Keep in sync with CPA codex_executor_request.go codexUserAgent.
-export const CODEX_CLIENT_VERSION = "0.154.0"
+const CODEX_CLIENT_VERSION = "0.154.0"
 
 // Version claimed when fetching the /models catalog. CPA's fetch_codex_models
 // tool defaults to a *newer* version than the live UA so the catalog includes

@@ -46,7 +46,7 @@ async function tryAcquireLock(): Promise<boolean> {
 /**
  * Ensures only one server process runs at a time.
  *
- * All persisted state (accounts.json, provider-connections.json, users.json,
+ * All persisted state (provider-connections.json, users.json,
  * guard.json, cache/*.json, stats.db) assumes a single writer. The lock is
  * acquired at startup before any load/save and released on shutdown.
  *

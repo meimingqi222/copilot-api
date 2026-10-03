@@ -9,7 +9,7 @@ import type {
   ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
-import type { QuotaSnapshot } from "~/lib/provider-connections/types"
+import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProtocolAdapter } from "~/services/protocols/types"
 
 export interface RequestExecutionContext {

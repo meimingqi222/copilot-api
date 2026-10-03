@@ -1,7 +1,7 @@
 /**
  * State 变更事件通知(debounce + 显式入口)。
  *
- * 用途:saveAccounts() / persistProviderConnections() 等持久化入口
+ * 用途:persistProviderConnections() 等持久化入口
  * 在完成后 emit "models-stale",由 cacheModels() 监听并重建缓存,
  * 消除散落在调用方的手动 cacheModels() 调用。
  *
@@ -11,7 +11,7 @@
  * - `onStateChange(event, fn)` — 注册监听,返回 unsubscribe 函数
  * - `clearStateChangeListeners()` — 清空所有监听,供测试隔离使用
  */
-type StateEvent = "accounts-changed" | "connections-changed" | "models-stale"
+type StateEvent = "models-stale"
 
 const listeners = new Map<StateEvent, Set<() => void>>()
 let pending = new Set<StateEvent>()

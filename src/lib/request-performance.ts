@@ -199,10 +199,7 @@ export function addRequestTranslationTime(
   state.requestTranslationMs = (state.requestTranslationMs ?? 0) + ms
 }
 
-export function markFirstTranslatedFrame(
-  c: Context | undefined,
-  ms: number,
-): void {
+function markFirstTranslatedFrame(c: Context | undefined, ms: number): void {
   const state = c && requests.get(c)
   if (state && state.firstTranslatedFrameMs === undefined) {
     state.firstTranslatedFrameMs = ms

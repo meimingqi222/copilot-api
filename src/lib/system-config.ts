@@ -32,7 +32,7 @@ const storedSchema = z
   })
   .strict()
 
-export type SystemSettings = z.infer<typeof settingsSchema>
+type SystemSettings = z.infer<typeof settingsSchema>
 type StoredConfig = z.infer<typeof storedSchema>
 
 const safeDefaults: SystemSettings = {
