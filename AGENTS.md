@@ -50,6 +50,23 @@
 - **Release:**\
   `bun run release` (runs bumpp + publish)
 
+## Testing Policy
+
+The full suite takes ~85s and CI runs it on every push — do **not** run
+`bun test` after every local change. Verify incrementally instead:
+
+- **Default:** `bun run test:affected` — picks the tests touched by the
+  uncommitted diff (import edges + filename heuristics; shared infra
+  upgrades to a small core pack). Add `--print` to preview the selection.
+- **Small edits:** running the specific `tests/<name>.test.ts` file
+  directly is fine too.
+- **Always cheap:** `bun run lint` (~100ms) and `bun run typecheck` —
+  run these whenever code changed.
+- **Full `bun test` only when:** finishing a multi-file refactor, adding
+  a provider/protocol, touching `src/lib/provider-connections`,
+  `src/services/oauth/flows.ts`, or `src/server.ts`, or when the affected
+  run reports zero hits and behavior can't be checked locally.
+
 ## Code Organization
 
 ```

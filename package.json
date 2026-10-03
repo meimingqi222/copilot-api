@@ -33,6 +33,7 @@
     "prepare": "simple-git-hooks",
     "release": "bumpp && bun publish --access public",
     "start": "NODE_ENV=production bun run ./src/main.ts start",
+    "test:affected": "bun run scripts/test-affected.ts",
     "typecheck": "tsc"
   },
   "simple-git-hooks": {
