@@ -329,6 +329,7 @@ test("GET /admin/api/providers returns registered provider descriptors", async (
 
 test("POST /admin/api/accounts creates a windsurf account with direct credentials", async () => {
   const originalFetch = globalThis.fetch
+  let catalogRequests = 0
   // Creating the account refreshes the model catalog against Windsurf's real
   // `GetUserStatus` endpoint. Under full-suite load that network attempt is
   // what overran the 5s test budget — and it made the result depend on
@@ -340,7 +341,12 @@ test("POST /admin/api/accounts creates a windsurf account with direct credential
       typeof input === "string" ? input
       : input instanceof URL ? input.href
       : input.url
-    if (url.includes("api.windsurf.com")) {
+    // Match the RPC, since Windsurf may use codeium.com or a regional host.
+    if (
+      new URL(url).pathname
+      === "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
+    ) {
+      catalogRequests++
       return new Response("unreachable in tests", { status: 503 })
     }
     return originalFetch(input as never)
@@ -365,6 +371,7 @@ test("POST /admin/api/accounts creates a windsurf account with direct credential
     )
 
     expect(response.status).toBe(200)
+    expect(catalogRequests).toBe(1)
     const body = (await response.json()) as {
       status: string
       account: { provider: string; label: string }

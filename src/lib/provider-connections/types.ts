@@ -10,55 +10,25 @@ import type { QuotaSnapshot } from "~/lib/quota/types"
 
 import type { CredentialRefresherType } from "./credential-refresher"
 
-export type ProviderProtocol =
-  | "openai-compatible"
-  | "openai-responses-compatible"
-  | "anthropic-compatible"
-  | "gemini-compatible"
-  | "copilot-native"
-  | "windsurf-native"
-  | "codebuff-native"
-  | "mimo-native"
-  | "codex-native"
-  | "claude-native"
-  | "antigravity-native"
-  | "kimi-native"
-  | "xai-native"
-  | "codebuddy-native"
-  | "lobsterai-native"
-  | "minimax-native"
-  | "qoder-native"
-  | "factory-native"
-  | "zcode-native"
-  | "commandcode-native"
-  | "zed-native"
-  | "dimagent-native"
-  | "gemini-native"
+import {
+  PROVIDER_PROTOCOL_MAP,
+  type NativeProviderProtocol,
+} from "~/lib/provider-definitions"
 
-const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
+const COMPATIBLE_PROTOCOLS = [
   "openai-compatible",
   "openai-responses-compatible",
   "anthropic-compatible",
   "gemini-compatible",
-  "copilot-native",
-  "windsurf-native",
-  "codebuff-native",
-  "mimo-native",
-  "codex-native",
-  "claude-native",
-  "antigravity-native",
-  "kimi-native",
-  "xai-native",
-  "codebuddy-native",
-  "lobsterai-native",
-  "minimax-native",
-  "qoder-native",
-  "factory-native",
-  "zcode-native",
-  "commandcode-native",
-  "zed-native",
-  "dimagent-native",
-  "gemini-native",
+] as const
+
+export type ProviderProtocol =
+  | NativeProviderProtocol
+  | (typeof COMPATIBLE_PROTOCOLS)[number]
+
+const PROVIDER_PROTOCOLS: ReadonlyArray<ProviderProtocol> = [
+  ...COMPATIBLE_PROTOCOLS,
+  ...new Set(Object.values(PROVIDER_PROTOCOL_MAP)),
 ]
 
 export function isProviderProtocol(value: string): value is ProviderProtocol {

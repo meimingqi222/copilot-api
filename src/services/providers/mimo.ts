@@ -1,6 +1,7 @@
+import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ModelMapping } from "~/lib/provider-connections"
 
-import type { ProviderRuntime } from "./runtime"
+import type { ProviderRuntime } from "~/services/providers/runtime"
 
 const MIMO_MODELS = [
   { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", vendor: "MiMo", tts: false },
@@ -44,43 +45,7 @@ function toMimoModels(): Array<ModelMapping> {
 
 export const mimoProviderRuntime: ProviderRuntime = {
   id: "mimo-aistudio",
-  descriptor: {
-    id: "mimo-aistudio",
-    name: "Mimo Claw",
-    icon: "cpu",
-    authMode: "direct",
-    features: ["cooldown", "model_discovery"],
-    accountFields: [
-      {
-        key: "userId",
-        type: "text",
-        labelKey: "accounts.provider.mimo-aistudio.fields.userId",
-        required: true,
-        placeholder: "Xiaomi User ID",
-      },
-      {
-        key: "serviceToken",
-        type: "secret",
-        labelKey: "accounts.provider.mimo-aistudio.fields.serviceToken",
-        required: true,
-        placeholder: "serviceToken",
-      },
-      {
-        key: "xiaomichatbotPh",
-        type: "secret",
-        labelKey: "accounts.provider.mimo-aistudio.fields.xiaomichatbotPh",
-        required: true,
-        placeholder: "xiaomichatbot_ph",
-      },
-      {
-        key: "proxy",
-        type: "text",
-        labelKey: "accounts.provider.mimo-aistudio.fields.proxy",
-        required: false,
-        placeholder: "http://your-proxy:port",
-      },
-    ],
-  },
+  descriptor: getProviderDescriptor("mimo-aistudio"),
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },

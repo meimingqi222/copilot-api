@@ -1,3 +1,4 @@
+import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type {
   ModelMapping,
   ProviderConnection,
@@ -13,7 +14,7 @@ import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refresh"
 import { getModelsForConnection } from "~/services/copilot/get-models"
 
-import type { ProviderRuntime } from "./runtime"
+import type { ProviderRuntime } from "~/services/providers/runtime"
 
 function toModelMappings(connection: ProviderConnection): Array<ModelMapping> {
   return connection.models ?? []
@@ -21,22 +22,7 @@ function toModelMappings(connection: ProviderConnection): Array<ModelMapping> {
 
 export const copilotProviderRuntime: ProviderRuntime = {
   id: "copilot",
-  descriptor: {
-    id: "copilot",
-    name: "Copilot",
-    icon: "github",
-    authMode: "device_flow",
-    features: [
-      "quota",
-      "cooldown",
-      "native_responses",
-      "native_messages",
-      "embeddings",
-      "device_flow",
-      "model_discovery",
-    ],
-    accountFields: [],
-  },
+  descriptor: getProviderDescriptor("copilot"),
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },

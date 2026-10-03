@@ -12,11 +12,27 @@ import {
   getOAuthCatalogModelsForConnection,
 } from "~/services/oauth/discover-models"
 import { refreshOAuthConnectionToken } from "~/services/oauth/refresh-scheduler"
+import type { QuotaSnapshot } from "~/lib/quota/types"
+import type {
+  ModelMapping,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
-import type { ProviderRuntime } from "./runtime"
+import type { ProviderRuntime } from "~/services/providers/runtime"
+
+/** Provider-owned operations; defaults preserve the existing OAuth providers. */
+export interface OAuthRuntimeOperations {
+  discoverModels?(connection: ProviderConnection): Promise<Array<ModelMapping>>
+  getFallbackModels?(connection: ProviderConnection): Array<ModelMapping>
+  fetchQuota?(
+    connection: ProviderConnection,
+    signal?: AbortSignal,
+  ): Promise<QuotaSnapshot | undefined>
+}
 
 export function createOAuthProviderRuntime(
   providerId: OAuthProviderId,
+  operations: OAuthRuntimeOperations = {},
 ): ProviderRuntime {
   const descriptor = getOAuthProviderDescriptor(providerId)
 
@@ -34,7 +50,9 @@ export function createOAuthProviderRuntime(
       if (provider !== providerId) {
         return []
       }
-      const models = await discoverOAuthModelsForConnection(connection)
+      const discoverModels =
+        operations.discoverModels ?? discoverOAuthModelsForConnection
+      const models = await discoverModels(connection)
       setConnectionModels(connection, models)
       return models
     },
@@ -43,7 +61,9 @@ export function createOAuthProviderRuntime(
       if (provider !== providerId) {
         return []
       }
-      return getOAuthCatalogModelsForConnection(connection)
+      const getFallbackModels =
+        operations.getFallbackModels ?? getOAuthCatalogModelsForConnection
+      return getFallbackModels(connection)
     },
     async refreshQuota(connection, signal) {
       const provider = getConnectionProvider(connection)
@@ -56,7 +76,8 @@ export function createOAuthProviderRuntime(
         return undefined
       }
 
-      const snapshot = await fetchOAuthProviderQuota(liveConnection, signal)
+      const fetchQuota = operations.fetchQuota ?? fetchOAuthProviderQuota
+      const snapshot = await fetchQuota(liveConnection, signal)
       if (!snapshot) {
         return undefined
       }

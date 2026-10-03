@@ -1,3 +1,4 @@
+import { getProviderDescriptor } from "~/lib/provider-descriptors"
 /**
  * LobsterAI（有道龙虾）Provider Runtime。
  *
@@ -11,7 +12,7 @@ import type { ModelMapping } from "~/lib/provider-connections"
 
 import { getProtocolAdapter } from "~/services/protocols"
 
-import type { ProviderRuntime } from "./runtime"
+import type { ProviderRuntime } from "~/services/providers/runtime"
 
 /**
  * 内置兜底模型列表（实测 `/api/models/available` 的模型；
@@ -55,25 +56,7 @@ const LOBSTERAI_FALLBACK_MODELS: Array<ModelMapping> = [
 
 export const lobsteraiProviderRuntime: ProviderRuntime = {
   id: "lobsterai",
-  descriptor: {
-    id: "lobsterai",
-    name: "LobsterAI",
-    icon: "bot",
-    authMode: "oauth",
-    features: ["cooldown", "model_discovery", "oauth"],
-    // LobsterAI sign-in is the primary path; the manual JSON / sqlite paste
-    // stays available as a fallback (see the add modal). Kept out of
-    // `OAUTH_PROVIDER_IDS` so legacy direct-token classification is untouched.
-    accountFields: [
-      {
-        key: "proxyUrl",
-        type: "url",
-        labelKey: "accounts.oauth.fields.proxyUrl",
-        descriptionKey: "accounts.oauth.fields.proxyUrlHint",
-        placeholder: "http://127.0.0.1:7890",
-      },
-    ],
-  },
+  descriptor: getProviderDescriptor("lobsterai"),
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },

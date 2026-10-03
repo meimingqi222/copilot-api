@@ -1,3 +1,4 @@
+import { getProviderDescriptor } from "~/lib/provider-descriptors"
 /**
  * CodeBuddy Provider Runtime。
  *
@@ -16,7 +17,7 @@ import type { ModelMapping } from "~/lib/provider-connections"
 import { refreshCodebuddyQuota } from "~/services/codebuddy/quota"
 import { getProtocolAdapter } from "~/services/protocols"
 
-import type { ProviderRuntime } from "./runtime"
+import type { ProviderRuntime } from "~/services/providers/runtime"
 
 // ── 国内版（codebuddy-cn）内置模型列表 ──────────────────────────────
 const CODEBUDDY_CN_FALLBACK_MODELS: Array<ModelMapping> = [
@@ -103,29 +104,10 @@ function createCodebuddyRuntime(opts: {
   name: string
   fallbackModels: Array<ModelMapping>
 }): ProviderRuntime {
-  const { id, name, fallbackModels } = opts
+  const { id, fallbackModels } = opts
   return {
     id,
-    descriptor: {
-      id,
-      name,
-      icon: "bot",
-      authMode: "oauth",
-      features: ["cooldown", "model_discovery", "quota", "oauth"],
-      // CodeBuddy device-flow sign-in is the primary path; the manual
-      // JSON/accessToken paste stays available as a fallback (see the add
-      // modal). Kept out of `OAUTH_PROVIDER_IDS` so legacy direct-token
-      // classification is untouched.
-      accountFields: [
-        {
-          key: "proxyUrl",
-          type: "url",
-          labelKey: "accounts.oauth.fields.proxyUrl",
-          descriptionKey: "accounts.oauth.fields.proxyUrlHint",
-          placeholder: "http://127.0.0.1:7890",
-        },
-      ],
-    },
+    descriptor: getProviderDescriptor(id),
     supports(_connection, feature) {
       return this.descriptor.features.includes(feature)
     },

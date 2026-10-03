@@ -11,44 +11,8 @@ import {
 } from "~/lib/provider-connections"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 
-import { fetchAntigravityQuota } from "./fetchers/antigravity"
-import { fetchClaudeQuota } from "./fetchers/claude"
-import { fetchCodexQuota } from "./fetchers/codex"
-import { fetchKimiQuota } from "./fetchers/kimi"
-import { fetchMinimaxQuota } from "./fetchers/minimax"
-import { fetchQoderQuota } from "./fetchers/qoder"
-import { fetchFactoryQuota } from "./fetchers/factory"
-import { fetchZcodeQuota } from "./fetchers/zcode"
-import { fetchCommandCodeQuota } from "./fetchers/commandcode"
-import { fetchZedQuota } from "./fetchers/zed"
-import { fetchDimagentQuota } from "./fetchers/dimagent"
-import { fetchGeminiQuota } from "./fetchers/gemini"
-import { fetchXaiQuota } from "./fetchers/xai"
-
 const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
 const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
-
-const QUOTA_FETCHERS: Record<
-  OAuthProviderId,
-  (
-    connection: ProviderConnection,
-    signal?: AbortSignal,
-  ) => Promise<QuotaSnapshot>
-> = {
-  antigravity: fetchAntigravityQuota,
-  claude: fetchClaudeQuota,
-  kimi: fetchKimiQuota,
-  codex: fetchCodexQuota,
-  xai: fetchXaiQuota,
-  minimax: fetchMinimaxQuota,
-  qoder: fetchQoderQuota,
-  factory: fetchFactoryQuota,
-  zcode: fetchZcodeQuota,
-  "commandcode-plan": fetchCommandCodeQuota,
-  zed: fetchZedQuota,
-  dimagent: fetchDimagentQuota,
-  gemini: fetchGeminiQuota,
-}
 
 /**
  * 拉取 OAuth provider 配额快照(connection 原生)。
@@ -64,7 +28,12 @@ export async function fetchOAuthProviderQuota(
     return undefined
   }
 
-  return QUOTA_FETCHERS[provider](connection, signal)
+  // Legacy callers can read quota before provider runtime initialization.
+  // Load the service contribution only when needed; persisted-data loading remains independent.
+  const { getBuiltinProviderModule } = await import(
+    "~/services/providers/builtins"
+  )
+  return getBuiltinProviderModule(provider)?.fetchQuota?.(connection, signal)
 }
 
 /**
