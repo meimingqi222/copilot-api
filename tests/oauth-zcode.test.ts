@@ -11,6 +11,15 @@ import {
 } from "~/lib/provider-config"
 import { parseZcodeQuota } from "~/lib/quota/fetchers/zcode"
 import {
+  __resetZcodeRouteCacheForTest,
+  isZcodeStartPlanName,
+  parseZcodeStartBalance,
+  resolveZcodeRoute,
+  shapeZcodeStartBody,
+  zcodeActiveStartPlan,
+  zcodeJwtExpired,
+} from "~/services/zcode/start-plan"
+import {
   applyZcodeOAuthBundle,
   mintZcodeKey,
   startZcodeSignIn,
@@ -29,6 +38,7 @@ const originalFetch = globalThis.fetch
 afterEach(() => {
   globalThis.fetch = originalFetch
   __resetProviderConnectionsForTest()
+  __resetZcodeRouteCacheForTest()
 })
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -164,6 +174,18 @@ describe("zcode credential landing", () => {
     expect(cred.context?.base).toBe(ZCODE_ZAI_ANTHROPIC_BASE)
     expect(cred.context?.site).toBe("zai")
   })
+
+  test("applyZcodeOAuthBundle keeps the session JWT for the Start Plan", () => {
+    const conn = createConnection()
+    applyZcodeOAuthBundle(conn, {
+      base: ZCODE_ZAI_ANTHROPIC_BASE,
+      apiKey: "",
+      site: "zai",
+      jwt: "jwt-token",
+    })
+    const cred = conn.credentials[0]!
+    expect(cred.context?.zcodeJwt).toBe("jwt-token")
+  })
 })
 
 describe("zcode-native adapter", () => {
@@ -214,5 +236,344 @@ describe("zcode quota parsing", () => {
     expect(names).toContain("7 days")
     const weekly = parsed!.windows.find((w) => w.name === "7 days")!
     expect(weekly.usedPercent).toBeCloseTo(60, 5)
+  })
+})
+
+describe("zcode Start Plan (temporary credits)", () => {
+  function fakeJwt(expSec = Math.floor(Date.now() / 1000) + 3600): string {
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64url")
+    return `${b64({ alg: "none" })}.${b64({ exp: expSec })}.sig`
+  }
+
+  function startPlanConnection(jwt = fakeJwt()): ProviderConnection {
+    const conn = createConnection()
+    conn.credentials[0]!.value = "key-123.sec-xyz"
+    conn.credentials[0]!.context = {
+      base: ZCODE_ZAI_ANTHROPIC_BASE,
+      site: "zai",
+      zcodeJwt: jwt,
+    }
+    return conn
+  }
+
+  test("route follows the subscription list", async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).includes("/api/biz/subscription/list")) {
+        return jsonResponse({ code: 0, data: [] })
+      }
+      throw new Error(`unexpected ${url}`)
+    }) as unknown as typeof fetch
+    const route = await resolveZcodeRoute(
+      startPlanConnection(),
+      startPlanConnection().credentials[0]!,
+    )
+    expect(route).toBe("start")
+  })
+
+  test("route stays on the coding plan while a subscription is VALID", async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).includes("/api/biz/subscription/list")) {
+        return jsonResponse({
+          code: 0,
+          data: [{ productName: "GLM Coding Plan", status: "VALID" }],
+        })
+      }
+      throw new Error(`unexpected ${url}`)
+    }) as unknown as typeof fetch
+    const conn = startPlanConnection()
+    expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("coding")
+  })
+
+  test("route falls back to an active Start Plan when subscriptions fail", async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      const target = String(url)
+      if (target.includes("/api/biz/subscription/list")) {
+        return new Response("boom", { status: 500 })
+      }
+      if (target.includes("/api/v1/zcode-plan/billing/balance")) {
+        return jsonResponse({
+          code: 0,
+          data: {
+            plans: [
+              {
+                plan_id: "start-plan",
+                user_plan_id: "up1",
+                name: "Start Plan",
+                status: "active",
+                ends_at: Math.floor(Date.now() / 1000) + 86400,
+                entitlements: [{ entitlement_id: "e1", period: "daily" }],
+              },
+            ],
+            balances: [
+              {
+                plan_id: "start-plan",
+                user_plan_id: "up1",
+                entitlement_id: "e1",
+                show_name: "GLM-5.2",
+                capabilities: ["model:GLM-5.2"],
+                total_units: 5000,
+                used_units: 0,
+                remaining_units: 5000,
+              },
+            ],
+          },
+        })
+      }
+      throw new Error(`unexpected ${target}`)
+    }) as unknown as typeof fetch
+    const conn = startPlanConnection()
+    expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("start")
+  })
+
+  test("no JWT never leaves the coding plan", async () => {
+    const conn = createConnection()
+    conn.credentials[0]!.value = "key-123.sec-xyz"
+    conn.credentials[0]!.context = { base: ZCODE_ZAI_ANTHROPIC_BASE }
+    expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("coding")
+  })
+})
+
+describe("zcode Start Plan balance parsing", () => {
+  test("expired plans take their buckets with them (temporary credits)", () => {
+    const now = Math.floor(Date.now() / 1000)
+    const balance = parseZcodeStartBalance({
+      server_time: now,
+      plans: [
+        {
+          plan_id: "temp-credits",
+          user_plan_id: "up1",
+          name: "活动积分",
+          status: "active",
+          ends_at: now - 10,
+          entitlements: [],
+        },
+        {
+          plan_id: "start-plan",
+          user_plan_id: "up2",
+          name: "Start Plan",
+          status: "active",
+          ends_at: now + 86400,
+          entitlements: [{ entitlement_id: "e2", period: "daily" }],
+        },
+      ],
+      balances: [
+        {
+          plan_id: "temp-credits",
+          user_plan_id: "up1",
+          entitlement_id: "e1",
+          total_units: 100,
+          remaining_units: 100,
+        },
+        {
+          plan_id: "start-plan",
+          user_plan_id: "up2",
+          entitlement_id: "e2",
+          show_name: "GLM-5.2",
+          total_units: 5000,
+          used_units: 1000,
+          remaining_units: 4000,
+          expires_at: now + 86400,
+        },
+      ],
+    })
+    expect(balance.balances).toHaveLength(1)
+    expect(balance.balances[0]!.planId).toBe("start-plan")
+    const active = zcodeActiveStartPlan(balance)
+    expect(active?.name).toBe("Start Plan")
+    expect(active?.untilMs).toBe((now + 86400) * 1000)
+  })
+
+  test("plan name matching covers start-plan and 体验", () => {
+    expect(isZcodeStartPlanName("Start Plan")).toBe(true)
+    expect(isZcodeStartPlanName("zai-start-plan")).toBe(true)
+    expect(isZcodeStartPlanName("体验套餐")).toBe(true)
+    expect(isZcodeStartPlanName("GLM Coding Pro")).toBe(false)
+  })
+
+  test("jwt expiry is read from exp", () => {
+    expect(
+      zcodeJwtExpired(
+        `a.${Buffer.from(JSON.stringify({ exp: 1 })).toString("base64url")}.b`,
+      ),
+    ).toBe(true)
+    expect(zcodeJwtExpired("not-a-jwt")).toBe(false)
+  })
+})
+
+describe("zcode Start Plan request shaping", () => {
+  test("system is replaced by ZCode blocks, date reminder prepended, cache moved to the last turn", () => {
+    const body = shapeZcodeStartBody(
+      {
+        model: "GLM-5.2",
+        system: [{ type: "text", text: "agent system" }],
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "hi",
+                cache_control: { type: "ephemeral" },
+              },
+            ],
+          },
+          { role: "assistant", content: "hello" },
+        ],
+        tools: [{ name: "t", cache_control: { type: "ephemeral" } }],
+      },
+      "zai-api",
+      new Date("2026-10-03T12:00:00+08:00"),
+    )
+    const system = body.system as Array<Record<string, unknown>>
+    expect(system).toHaveLength(4)
+    expect(system[0]!.text).toBe("You are ZCode, an interactive coding agent")
+    expect(system[0]!.cache_control).toEqual({ type: "ephemeral" })
+    expect(system[3]!).toEqual({ type: "text", text: "agent system" })
+
+    const messages = body.messages as Array<Record<string, unknown>>
+    expect(messages[0]!.role).toBe("user")
+    const reminder = messages[0]!.content as Array<Record<string, unknown>>
+    expect(String(reminder[0]!.text)).toContain("<system-reminder>")
+    expect(String(reminder[0]!.text)).toContain("Today's date is 2026-10-03")
+
+    // 中间块的 cache_control 被清掉，最后一条消息的最后一块补上。
+    const firstUser = messages[1]!.content as Array<Record<string, unknown>>
+    expect(firstUser[0]!.cache_control).toBeUndefined()
+    const lastMsg = messages[messages.length - 1]!
+    const lastContent = lastMsg.content as Array<Record<string, unknown>>
+    expect(lastContent[lastContent.length - 1]!.cache_control).toEqual({
+      type: "ephemeral",
+    })
+
+    const tools = body.tools as Array<Record<string, unknown>>
+    expect(tools[0]!.cache_control).toBeUndefined()
+
+    const meta = body.metadata as Record<string, unknown>
+    const userId = JSON.parse(String(meta.user_id)) as { device_id: string }
+    expect(userId.device_id).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  test("a body already carrying the ZCode prefix is left alone", () => {
+    const sys = [
+      { type: "text", text: "You are ZCode, an interactive coding agent" },
+    ]
+    const shaped = shapeZcodeStartBody(
+      { messages: [{ role: "user", content: "hi" }], system: sys },
+      "zai-api",
+    )
+    expect(shaped.system).toBe(sys)
+  })
+})
+
+describe("zcode-native adapter — Start Plan", () => {
+  function fakeJwt(expSec = Math.floor(Date.now() / 1000) + 3600): string {
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64url")
+    return `${b64({ alg: "none" })}.${b64({ exp: expSec })}.sig`
+  }
+
+  function startConn(jwt = fakeJwt()): ProviderConnection {
+    const conn = createConnection()
+    conn.credentials[0]!.value = "key-123.sec-xyz"
+    conn.credentials[0]!.context = {
+      base: ZCODE_ZAI_ANTHROPIC_BASE,
+      zcodeJwt: jwt,
+    }
+    return conn
+  }
+
+  function stubStartPlan(): void {
+    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+      const target = String(url)
+      if (target.includes("/api/biz/subscription/list")) {
+        return jsonResponse({ code: 0, data: [] })
+      }
+      if (target.includes("/api/v1/zcode-plan/anthropic/v1/messages")) {
+        const headers = init?.headers as Record<string, string>
+        expect(headers.Authorization).toMatch(/^Bearer .+\..+\..+$/)
+        expect(headers["x-api-key"]).toBeUndefined()
+        expect(headers["X-ZCode-App-Version"]).toBe("3.14.3")
+        expect(headers["X-Title"]).toBe("Z Code@cli")
+        expect(headers["anthropic-beta"]).toBeUndefined()
+        return new Response(JSON.stringify({ id: "m", content: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected ${target}`)
+    }) as unknown as typeof fetch
+  }
+
+  test("a Start Plan account posts JWT + ZCode fingerprint to zcode.z.ai", async () => {
+    stubStartPlan()
+    const conn = startConn()
+    await zcodeNativeAdapter.createMessages!({
+      target: { upstreamModelId: "GLM-5.2" } as never,
+      connection: conn,
+      credential: conn.credentials[0]!,
+      payload: {
+        model: "GLM-5.2",
+        messages: [{ role: "user", content: "hi" }],
+        system: "you are helpful",
+      } as never,
+    })
+  })
+
+  test("GLM-5.3 is refused on the Start Plan before any upstream call", async () => {
+    stubStartPlan()
+    const conn = startConn()
+    await expect(
+      zcodeNativeAdapter.createMessages!({
+        target: { upstreamModelId: "GLM-5.3" } as never,
+        connection: conn,
+        credential: conn.credentials[0]!,
+        payload: { model: "GLM-5.3", messages: [] } as never,
+      }),
+    ).rejects.toThrow("Start Plan does not serve GLM-5.3")
+  })
+
+  test("an expired JWT asks to sign in again", async () => {
+    stubStartPlan()
+    const conn = startConn(fakeJwt(1))
+    await expect(
+      zcodeNativeAdapter.createMessages!({
+        target: { upstreamModelId: "GLM-5.2" } as never,
+        connection: conn,
+        credential: conn.credentials[0]!,
+        payload: { model: "GLM-5.2", messages: [] } as never,
+      }),
+    ).rejects.toThrow("sign-in has expired")
+  })
+
+  test("a 405 unusual-activity block is explained, not forwarded raw", async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      const target = String(url)
+      if (target.includes("/api/biz/subscription/list")) {
+        return jsonResponse({ code: 0, data: [] })
+      }
+      if (target.includes("/api/v1/zcode-plan/anthropic/v1/messages")) {
+        return new Response(
+          JSON.stringify({
+            code: 3012,
+            msg: "request has been blocked due to unusual activity",
+          }),
+          { status: 405, headers: { "Content-Type": "application/json" } },
+        )
+      }
+      throw new Error(`unexpected ${target}`)
+    }) as unknown as typeof fetch
+    const conn = startConn()
+    await expect(
+      zcodeNativeAdapter.createMessages!({
+        target: { upstreamModelId: "GLM-5.2" } as never,
+        connection: conn,
+        credential: conn.credentials[0]!,
+        payload: {
+          model: "GLM-5.2",
+          messages: [{ role: "user", content: "hi" }],
+        } as never,
+      }),
+    ).rejects.toThrow("turned this request away")
   })
 })

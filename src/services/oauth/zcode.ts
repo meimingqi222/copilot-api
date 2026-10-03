@@ -27,10 +27,11 @@ import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 export const ZCODE_API = "https://zcode.z.ai"
-const ZCODE_APP_VERSION = "3.14.3"
+export const ZCODE_APP_VERSION = "3.14.3"
 
 export const ZCODE_ZAI_ANTHROPIC_BASE = "https://api.z.ai/api/anthropic"
-const ZCODE_BIGMODEL_ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic"
+export const ZCODE_BIGMODEL_ANTHROPIC_BASE =
+  "https://open.bigmodel.cn/api/anthropic"
 export const ZCODE_ZAI_BIZ_API = "https://api.z.ai"
 export const ZCODE_BIGMODEL_BIZ_API = "https://bigmodel.cn"
 
@@ -47,6 +48,13 @@ interface ZcodeSignInStart {
 interface ZcodeSignInResult {
   /** ZCode 会话 token（换 biz token 用）。 */
   sessionToken: string
+  /**
+   * ZCode 自己的会话 JWT（轮询返回的顶层 `token`）。
+   * 账号走 Start Plan（临时积分 / 体验套餐）时它是请求凭证
+   * （zcode.z.ai/api/v1/zcode-plan/… 的 Bearer），与换 biz 的
+   * access_token 是两回事；存 credential.context.zcodeJwt。
+   */
+  jwt?: string
   email?: string
   userId?: string
 }
@@ -54,9 +62,11 @@ interface ZcodeSignInResult {
 interface ZcodeKeyBundle {
   /** 计划端点 base（Anthropic 兼容）。 */
   base: string
-  /** 铸出的 key `<id>.<secret>`。 */
+  /** 铸出的 key `<id>.<secret>`；铸不出来（纯 Start Plan 账号）为 ""。 */
   apiKey: string
   site: ZcodeSite
+  /** ZCode 会话 JWT（Start Plan 通道用），见 ZcodeSignInResult。 */
+  jwt?: string
   email?: string
   userId?: string
 }
@@ -263,6 +273,8 @@ async function pollZcodeSignIn(
     const user = asRecord(data?.user)
     return {
       sessionToken,
+      // 顶层 token 是 ZCode 自己的会话 JWT（Start Plan 的凭证）。
+      jwt: str(data?.token) || undefined,
       email: str(user?.email) || undefined,
       userId: str(user?.user_id) || undefined,
     }
@@ -411,17 +423,25 @@ export async function zcodeSignInAndMint(
 ): Promise<ZcodeKeyBundle> {
   const session = await pollZcodeSignIn(start, site, options)
   const bizAuth = await zcodeBizAuth(site, session.sessionToken, options)
-  const apiKey = await mintZcodeKey(site, bizAuth, options)
+  let apiKey = ""
+  try {
+    apiKey = await mintZcodeKey(site, bizAuth, options)
+  } catch (error) {
+    // 纯 Start Plan 账号（只有临时积分、没有 Coding Plan、也没有任何
+    // 项目）铸不出 key：只要有 ZCode 会话 JWT，照样能以积分通道登录。
+    if (!session.jwt) throw error
+  }
   return {
     base: zcodeAnthropicBase(site),
     apiKey,
     site,
+    jwt: session.jwt,
     email: session.email,
     userId: session.userId,
   }
 }
 
-/** 落库：credential.value = 铸出的 key；base/site/身份进 context。 */
+/** 落库：credential.value = 铸出的 key；base/site/jwt/身份进 context。 */
 export function applyZcodeOAuthBundle(
   connection: ProviderConnection,
   bundle: ZcodeKeyBundle,
@@ -433,4 +453,6 @@ export function applyZcodeOAuthBundle(
   )
   setCredentialContextField(connection, "site", bundle.site)
   setCredentialContextField(connection, "base", bundle.base)
+  // ZCode 会话 JWT：Start Plan（临时积分）通道的请求凭证。
+  setCredentialContextField(connection, "zcodeJwt", bundle.jwt)
 }

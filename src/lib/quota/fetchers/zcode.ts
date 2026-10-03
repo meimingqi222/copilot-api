@@ -1,13 +1,13 @@
 /**
- * ZCode (Z.ai GLM Coding Plan) 配额拉取。
+ * ZCode 配额拉取。
  *
- * 端点：`GET {siteRoot}/api/monitor/usage/quota/limit`，key 裸放
- * `Authorization`（不是 Bearer）。响应：
- *
- *   { level, limits: [ { type, unit, number, usage, currentValue,
- *                        remaining, percentage, nextResetTime } ] }
- *
- * unit 3 = 五小时窗口，6 = 周窗口。用百分比或「总量 - 剩余」还原已用。
+ * - GLM Coding Plan：`GET {siteRoot}/api/monitor/usage/quota/limit`，key
+ *   裸放 `Authorization`（不是 Bearer）。响应 { level, limits: [...] }，
+ *   unit 3 = 五小时窗口，6 = 周窗口。用百分比或「总量 - 剩余」还原已用。
+ * - Start Plan（体验套餐 / 临时领的积分）：账号没有 Coding Plan 时走
+ *   `GET {zcodeApi}/api/v1/zcode-plan/billing/balance`，ZCode 会话 JWT
+ *   作 Bearer + X-Device-Mid。每个余额桶一个窗口，过期 plan 及其桶已被
+ *   parseZcodeStartBalance 剔除（临时积分到期不显示）。
  */
 
 import type { QuotaSnapshot } from "~/lib/quota/types"
@@ -23,6 +23,12 @@ import {
   ZCODE_ZAI_BIZ_API,
   type ZcodeSite,
 } from "~/services/oauth/zcode"
+import {
+  resolveZcodeRoute,
+  zcodeActiveStartPlan,
+  zcodeStartBalance,
+  type ZcodeStartBalance,
+} from "~/services/zcode/start-plan"
 
 interface ZcodeQuotaWindow {
   name: string
@@ -125,6 +131,111 @@ function buildSnapshot(parsed: ParsedZcodeQuota, host: string): QuotaSnapshot {
   }
 }
 
+// ── Start Plan（billing/balance → 余额桶窗口） ──────────────────
+
+function periodLabel(ms: number): string {
+  const days = ms / 86_400_000
+  if (days >= 28) return "Monthly"
+  if (Math.abs(days - 7) < 1) return "Weekly"
+  if (Math.abs(days - 1) < 1) return "Daily"
+  return days > 1 ? `${Math.round(days)} days` : "Credits"
+}
+
+function bucketPeriodMs(
+  bucket: ZcodeStartBalance["balances"][number],
+  balance: ZcodeStartBalance,
+): number {
+  const plan = balance.plans.find(
+    (p) =>
+      (bucket.userPlanId !== ""
+        && p.userPlanId !== ""
+        && bucket.userPlanId === p.userPlanId)
+      || ((bucket.userPlanId === "" || p.userPlanId === "")
+        && bucket.planId === p.planId),
+  )
+  const period =
+    bucket.entitlement ?
+      plan?.entitlementPeriods.get(bucket.entitlement)
+    : undefined
+  const p = (period ?? "").toLowerCase()
+  if (p.includes("day") || p.includes("daily")) return 86_400_000
+  if (p.includes("week")) return 7 * 86_400_000
+  if (p.includes("month")) return 30 * 86_400_000
+  if (
+    bucket.periodStart !== undefined
+    && bucket.periodEnd !== undefined
+    && bucket.periodEnd > bucket.periodStart
+  ) {
+    return (bucket.periodEnd - bucket.periodStart) * 1000
+  }
+  return 0
+}
+
+/** Start Plan 余额 → 配额快照：每个余额桶一个窗口。 */
+function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
+  const active = zcodeActiveStartPlan(balance)
+  if (!active) {
+    throw new Error(
+      "this account has no GLM Coding Plan, and ZCode's Start Plan has ended or was never started",
+    )
+  }
+  const windows: Array<ZcodeQuotaWindow> = []
+  for (const bucket of balance.balances) {
+    const total = bucket.total
+    let used = bucket.used
+    const left = bucket.remaining
+    if (total === undefined && used === undefined && left === undefined)
+      continue
+    if (used === undefined && total !== undefined && left !== undefined) {
+      used = total - left
+    }
+    const models = bucket.capabilities
+      .map((c) =>
+        c
+          .trim()
+          .replace(/^model:/, "")
+          .trim(),
+      )
+      .filter(Boolean)
+    const name = bucket.showName || models.join(", ") || "Credits"
+    const w: ZcodeQuotaWindow = { name, usedPercent: 0, display: "" }
+    if (total !== undefined && total > 0 && used !== undefined) {
+      w.usedPercent = Math.min(100, Math.max(0, (100 * used) / total))
+      const remaining = Math.max(0, total - used)
+      w.display = `${remaining.toFixed(0)} / ${total.toFixed(0)}`
+    }
+    if (bucket.expiresAt !== undefined && bucket.expiresAt > 0) {
+      w.resetsAt = bucket.expiresAt * 1000 // 余额接口给的是秒
+    }
+    const periodMs = bucketPeriodMs(bucket, balance)
+    if (periodMs > 0) w.name = `${name} · ${periodLabel(periodMs)}`
+    windows.push(w)
+  }
+  const base: QuotaSnapshot = {
+    fetchedAt: Date.now(),
+    provider: "zcode",
+    unlimited: windows.length === 0,
+    details: {
+      zcode: {
+        host: "zcode.z.ai",
+        plan: active.name,
+        until: active.untilMs,
+        windows,
+      },
+    },
+  }
+  if (windows.length === 0) return base
+  const usedPercent = Math.max(...windows.map((w) => w.usedPercent))
+  const primary = windows[0]!
+  return {
+    ...base,
+    premiumInteractionsRemaining: Math.round(Math.max(0, 100 - usedPercent)),
+    premiumInteractionsTotal: 100,
+    chatRemaining: Math.max(0, Math.round(100 - primary.usedPercent)),
+    chatTotal: 100,
+  }
+}
+
 export async function fetchZcodeQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
@@ -132,7 +243,20 @@ export async function fetchZcodeQuota(
   if (getConnectionProvider(connection) !== "zcode") {
     throw new Error("fetchZcodeQuota requires a ZCode connection")
   }
-  const key = connection.credentials[0]?.value
+  const credential = connection.credentials[0]
+  const key = credential?.value ?? ""
+  const jwt = getCredentialContextString(connection, "zcodeJwt") ?? ""
+
+  // 只有 JWT（纯积分账号）或路由判定走 Start Plan：读 zcode.z.ai 的余额。
+  if (
+    credential
+    && jwt
+    && (!key || (await resolveZcodeRoute(connection, credential)) === "start")
+  ) {
+    const balance = await zcodeStartBalance(connection, jwt)
+    return buildStartSnapshot(balance)
+  }
+
   if (!key) {
     throw new Error(
       "ZCode usage is unavailable: the saved sign-in carries no API key — sign in again",
