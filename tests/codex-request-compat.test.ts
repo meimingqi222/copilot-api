@@ -90,6 +90,7 @@ async function capturePostedBody(
      */
     transcriptScopeId?: string
   } = {},
+  subject?: ReturnType<typeof makeCodexSubject>,
 ): Promise<Record<string, unknown>> {
   let postedBody: Record<string, unknown> | undefined
   globalThis.fetch = ((_url: unknown, init: RequestInit) => {
@@ -99,7 +100,7 @@ async function capturePostedBody(
   }) as typeof fetch
 
   const stream = await createCodexResponsesOnce(
-    makeCodexSubject(),
+    subject ?? makeCodexSubject(),
     payload as never,
     undefined,
     {
@@ -362,11 +363,12 @@ describe("codex request compatibility (CPA parity)", () => {
     })
   })
 
-  test("service_tier: fast maps to priority, priority/flex kept, others stripped", async () => {
+  test("service_tier: fast maps to priority, priority/flex/ultrafast kept, others stripped", async () => {
     for (const tier of [
       "fast",
       "priority",
       "flex",
+      "ultrafast",
       "default",
       "auto",
       "scale",
@@ -381,12 +383,180 @@ describe("codex request compatibility (CPA parity)", () => {
       })
       if (tier === "fast") {
         expect(body.service_tier).toBe("priority")
-      } else if (tier === "priority" || tier === "flex") {
+      } else if (
+        tier === "priority"
+        || tier === "flex"
+        || tier === "ultrafast"
+      ) {
         expect(body.service_tier).toBe(tier)
       } else {
         expect(Object.hasOwn(body, "service_tier")).toBe(false)
       }
     }
+  })
+
+  test("prompt_cache_options is stripped (upstream rejects it; prompt_cache_key stays)", async () => {
+    const body = await capturePostedBody({
+      model: "gpt-5",
+      input: [{ type: "message", role: "user", content: "hi" }],
+      stream: true,
+      prompt_cache_key: "session-1",
+      prompt_cache_options: { mode: "aggressive" },
+      prompt_cache_retention: "24h",
+    })
+    expect(Object.hasOwn(body, "prompt_cache_options")).toBe(false)
+    expect(Object.hasOwn(body, "prompt_cache_retention")).toBe(false)
+    expect(body.prompt_cache_key).toBe("session-1")
+  })
+
+  test("prompt_cache_breakpoint is stripped at item level and inside content/output parts", async () => {
+    const body = await capturePostedBody({
+      model: "gpt-5",
+      stream: true,
+      input: [
+        {
+          type: "message",
+          role: "user",
+          prompt_cache_breakpoint: true,
+          content: [
+            { type: "input_text", text: "a", prompt_cache_breakpoint: true },
+            { type: "input_text", text: "b" },
+          ],
+        },
+        {
+          type: "function_call_output",
+          call_id: "call_1",
+          output: [
+            { type: "output_text", text: "o", prompt_cache_breakpoint: true },
+          ],
+        },
+      ],
+    })
+    const items = body.input as Array<Record<string, unknown>>
+    expect(items[0].prompt_cache_breakpoint).toBeUndefined()
+    expect(items[0].content).toEqual([
+      { type: "input_text", text: "a" },
+      { type: "input_text", text: "b" },
+    ])
+    expect(items[1].output).toEqual([{ type: "output_text", text: "o" }])
+  })
+
+  test("blank function_call arguments are normalized to {}", async () => {
+    const body = await capturePostedBody({
+      model: "gpt-5",
+      stream: true,
+      input: [
+        { type: "function_call", call_id: "c1", name: "lookup", arguments: "" },
+        {
+          type: "function_call",
+          call_id: "c2",
+          name: "lookup",
+          arguments: '{"q":"x"}',
+        },
+      ],
+    })
+    const items = body.input as Array<{ arguments?: string }>
+    expect(items[0].arguments).toBe("{}")
+    expect(items[1].arguments).toBe('{"q":"x"}')
+  })
+
+  test("legacy builtin tool names are normalized (tools, tool_choice.type, tool_choice.tools)", async () => {
+    const body = await capturePostedBody({
+      model: "gpt-5",
+      stream: true,
+      input: [{ type: "message", role: "user", content: "hi" }],
+      tools: [
+        { type: "web_search_preview" },
+        { type: "web_search_preview_2025_03_11" },
+        { type: "function", name: "lookup" },
+      ],
+      tool_choice: {
+        type: "web_search_preview",
+        tools: [{ type: "web_search_preview" }],
+      },
+    })
+    const tools = body.tools as Array<{ type: string }>
+    expect(tools[0].type).toBe("web_search")
+    expect(tools[1].type).toBe("web_search")
+    expect(tools[2].type).toBe("function")
+    const tc = body.tool_choice as {
+      type: string
+      tools: Array<{ type: string }>
+    }
+    expect(tc.type).toBe("web_search")
+    expect(tc.tools[0].type).toBe("web_search")
+  })
+
+  test("image_generation tool is injected for paid plans and skipped for free/lite/spark", async () => {
+    const paid = makeCodexSubject()
+    paid.credential.context = { ...paid.credential.context, planType: "plus" }
+    const paidBody = await capturePostedBody(
+      {
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "hi" }],
+        stream: true,
+      },
+      {},
+      paid,
+    )
+    expect(paidBody.tools).toEqual([
+      { type: "image_generation", output_format: "png" },
+    ])
+
+    const free = makeCodexSubject()
+    free.credential.context = { ...free.credential.context, planType: "free" }
+    const freeBody = await capturePostedBody(
+      {
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "hi" }],
+        stream: true,
+      },
+      {},
+      free,
+    )
+    expect(freeBody.tools).toBeUndefined()
+
+    // spark models skip injection even on paid plans.
+    const sparkBody = await capturePostedBody(
+      {
+        model: "gpt-5.3-codex-spark",
+        input: [{ type: "message", role: "user", content: "hi" }],
+        stream: true,
+      },
+      {},
+      paid,
+    )
+    expect(sparkBody.tools).toBeUndefined()
+
+    // responses-lite requests skip injection via the forwarded header.
+    const liteBody = await capturePostedBody(
+      {
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "hi" }],
+        stream: true,
+      },
+      { headers: { "x-openai-internal-codex-responses-lite": "true" } },
+      paid,
+    )
+    expect(liteBody.tools).toBeUndefined()
+  })
+
+  test("image_generation tool is not duplicated when already present", async () => {
+    const paid = makeCodexSubject()
+    paid.credential.context = { ...paid.credential.context, planType: "plus" }
+    const body = await capturePostedBody(
+      {
+        model: "gpt-5",
+        input: [{ type: "message", role: "user", content: "hi" }],
+        stream: true,
+        tools: [{ type: "image_generation", output_format: "jpeg" }],
+      },
+      {},
+      paid,
+    )
+    expect(body.tools).toEqual([
+      { type: "image_generation", output_format: "jpeg" },
+    ])
   })
 
   test("generate is stripped from the HTTP body", async () => {

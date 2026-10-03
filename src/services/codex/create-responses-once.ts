@@ -48,6 +48,7 @@ import { sanitizeCodexInput } from "~/services/codex/sanitize-input"
 import { normalizeResponsesStreamIds } from "~/services/protocols/responses/normalize-stream"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
+import { extractCodexPlanTypeFromIdToken } from "~/services/oauth/jwt"
 import {
   detectResponsesStreamError,
   safeSseStream,
@@ -81,9 +82,11 @@ import {
   assertChainedHttpReplayAvailable,
   buildCodexUpstreamBody,
   chainedHttpCodexRequestError,
-  convertSystemRoleToDeveloper,
   countUnansweredToolCalls,
+  ensureImageGenerationTool,
   isResponsesLiteRequest,
+  normalizeCodexBuiltinTools,
+  normalizeCodexInputItems,
   pruneUnansweredToolCalls,
   resolveCodexServiceTier,
   stripReasoningItems,
@@ -104,6 +107,25 @@ function readForwardedHeader(
 ): string | undefined {
   const value = ctx?.forwardedHeaders?.[name]
   return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+/**
+ * The credential's ChatGPT plan type (free/plus/team/…). Read from the
+ * persisted context written at OAuth apply time; for connections added before
+ * planType was captured, fall back to re-parsing the stored idToken (mirrors
+ * lib/quota/codex.ts resolveCodexPlanType).
+ */
+function codexPlanTypeFor(connection: ProviderConnection): string | undefined {
+  const credential = connection.credentials[0]
+  if (!credential) return undefined
+  const stored = credential.context?.planType
+  if (typeof stored === "string" && stored.trim()) {
+    return stored.trim()
+  }
+  const idToken = credential.context?.idToken
+  return extractCodexPlanTypeFromIdToken(
+    typeof idToken === "string" ? idToken : undefined,
+  )
 }
 
 function isCodexUnauthorized(error: unknown): boolean {
@@ -129,11 +151,23 @@ type CodexOutboundTransport = "http" | "ws"
 export function finalizeCodexOutboundBody(
   body: Record<string, unknown>,
   transport: CodexOutboundTransport,
+  opts?: {
+    /** Responses Lite marker present → image tool injection skipped. */
+    responsesLite?: boolean
+    /** Resolved connection; used to read the credential's planType. */
+    connection?: ProviderConnection
+    /**
+     * Compact and other non-/responses flows build their own minimal body;
+     * the image tool is a /responses feature and is never injected there
+     * (CPA's executeCompact does not call ensureImageGenerationTool).
+     */
+    skipImageTool?: boolean
+  },
 ): Record<string, unknown> {
-  const finalized: Record<string, unknown> = {
+  const finalized: Record<string, unknown> = normalizeCodexBuiltinTools({
     ...body,
-    input: convertSystemRoleToDeveloper(body.input),
-  }
+    input: normalizeCodexInputItems(body.input),
+  })
   if (transport === "http") {
     // `generate` is WebSocket-only (CPA deletes it on the HTTP path): a
     // spawn-agent turn over plain HTTP would be rejected/orphaned upstream.
@@ -154,7 +188,17 @@ export function finalizeCodexOutboundBody(
         : httpStreamOptions
     }
   }
-  return sanitizeCodexInput(finalized)
+  const withImageTool =
+    opts?.skipImageTool ? finalized : (
+      ensureImageGenerationTool(finalized, {
+        model:
+          typeof finalized.model === "string" ? finalized.model : undefined,
+        responsesLite: opts?.responsesLite,
+        planType:
+          opts?.connection ? codexPlanTypeFor(opts.connection) : undefined,
+      })
+    )
+  return sanitizeCodexInput(withImageTool)
 }
 
 /**
@@ -260,6 +304,8 @@ async function createCodexCompactOnce(
     upstreamBody: compactBody,
     signal,
     memoryTraceId: readMemoryTraceId(ctx),
+    // Compact bodies must not get the image tool (CPA executeCompact path).
+    skipImageTool: true,
   })
   if (!response.ok) {
     throw new HTTPError(
@@ -656,6 +702,7 @@ async function createCodexResponsesOnceImpl(
         transcriptTrackable,
         fullInputThisTurn,
         memoryTraceId,
+        responsesLite,
         timingMetricsHeader: readForwardedHeader(
           ctx,
           "x-responsesapi-include-timing-metrics",
@@ -689,6 +736,7 @@ async function createCodexResponsesOnceImpl(
       httpFallbackBody,
       signal,
       memoryTraceId,
+      responsesLite,
     })
 
   let response = await postResponses()
@@ -861,10 +909,19 @@ async function postCodexResponses(options: {
   httpFallbackBody?: Record<string, unknown>
   signal?: AbortSignal
   memoryTraceId?: string
+  /** Request carries the Responses Lite marker → skip image tool injection. */
+  responsesLite?: boolean
+  /** Compact bodies must not receive the image tool (CPA executeCompact). */
+  skipImageTool?: boolean
 }): Promise<Response> {
   const effectiveBody = finalizeCodexOutboundBody(
     options.httpFallbackBody ?? options.upstreamBody,
     "http",
+    {
+      responsesLite: options.responsesLite,
+      connection: options.connection,
+      skipImageTool: options.skipImageTool,
+    },
   )
   updateMemoryTrace(options.memoryTraceId, "upstream_http_stringify_start", {
     provider: "codex",
@@ -984,6 +1041,8 @@ interface CodexWsTurnOptions {
   transcriptTrackable: boolean
   fullInputThisTurn: Array<unknown>
   memoryTraceId?: string
+  /** Downstream Responses Lite marker → skip image tool injection. */
+  responsesLite?: boolean
   /**
    * Downstream `x-responsesapi-include-timing-metrics` value. Applied to the
    * WebSocket handshake only (the official client never sends it on HTTP).
@@ -1018,18 +1077,23 @@ async function attemptCodexUpstreamWsTurn(
     transcriptTrackable,
     fullInputThisTurn,
     memoryTraceId,
+    responsesLite,
     timingMetricsHeader,
   } = options
   const wsBody = finalizeCodexOutboundBody(
     { ...upstreamBody, previous_response_id: previousResponseId },
     "ws",
+    { responsesLite, connection },
   )
   // `generate` must survive on the WS transport (see finalizeCodexOutboundBody);
   // finalize the replay fallback the same way so a fresh-socket recovery turn
   // does not silently drop it either.
   const wsFallbackFullInputBody =
     fallbackFullInputBody
-    && finalizeCodexOutboundBody(fallbackFullInputBody, "ws")
+    && finalizeCodexOutboundBody(fallbackFullInputBody, "ws", {
+      responsesLite,
+      connection,
+    })
   const wsHeaders = applyCodexWebsocketHeaders(
     withCodexRoutingHint(httpHeaders, wsBody),
   )

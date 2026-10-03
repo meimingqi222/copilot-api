@@ -29,6 +29,8 @@ interface OAuthBundleExtras {
   deviceId?: string
   apiKey?: string
   email?: string
+  /** Codex plan_type (free/plus/team/…), mirrors CPA auth.Attributes.plan_type. */
+  planType?: string
   organizationId?: string
   organizationName?: string
 }
@@ -42,6 +44,7 @@ const CONTEXT_KEYS = [
   "deviceId",
   "apiKey",
   "email",
+  "planType",
 ] as const
 
 /** bundle 中仅落入 metadata.credentialExtras 的字段(undefined 保留旧值)。 */

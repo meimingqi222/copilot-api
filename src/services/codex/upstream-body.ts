@@ -100,9 +100,11 @@ export function convertSystemRoleToDeveloper(input: unknown): unknown {
 
 export function resolveCodexServiceTier(
   value: unknown,
-): "priority" | "flex" | undefined {
+): "priority" | "flex" | "ultrafast" | undefined {
   if (value === "fast") return "priority"
-  return value === "priority" || value === "flex" ? value : undefined
+  return value === "priority" || value === "flex" || value === "ultrafast" ?
+      value
+    : undefined
 }
 
 /**
@@ -171,6 +173,10 @@ export function buildCodexUpstreamBody(
     input: payload.input,
     previous_response_id: undefined,
     prompt_cache_retention: undefined,
+    // prompt_cache_options is also rejected upstream (CPA
+    // deleteCodexRequestFields); prompt_cache_key itself is supported and
+    // kept — it drives server-side session affinity.
+    prompt_cache_options: undefined,
     safety_identifier: undefined,
     stream_options:
       Object.keys(keptStreamOptions).length === 0 ?
@@ -301,6 +307,220 @@ function isUnansweredToolCall(entry: unknown, answered: Set<string>): boolean {
   // A call with no `call_id` is unmatchable; keep it rather than guess.
   if (!callId) return false
   return !answered.has(`${callType}:${callId}`)
+}
+
+/**
+ * Remove `prompt_cache_breakpoint` markers from input items — both item-level
+ * and inside `content`/`output` part arrays. Clients that forward Copilot-CLI-
+ * style cache breakpoints hit upstream's `"prompt_cache_breakpoint is not
+ * supported on this model"` rejection (mirrors CPA
+ * stripCodexResponsesCacheBreakpoints).
+ */
+export function stripPromptCacheBreakpoints(input: unknown): unknown {
+  if (!Array.isArray(input)) return input
+  let changed = false
+  const items = input.map((rawItem) => {
+    if (
+      rawItem === null
+      || typeof rawItem !== "object"
+      || Array.isArray(rawItem)
+    ) {
+      return rawItem
+    }
+    let item = rawItem as Record<string, unknown>
+    for (const arrayPath of ["content", "output"]) {
+      const parts = item[arrayPath]
+      if (!Array.isArray(parts)) continue
+      const filtered = parts.map((part) => {
+        if (
+          part !== null
+          && typeof part === "object"
+          && !Array.isArray(part)
+          && "prompt_cache_breakpoint" in (part as Record<string, unknown>)
+        ) {
+          const { prompt_cache_breakpoint: _drop, ...rest } = part as Record<
+            string,
+            unknown
+          >
+          return rest
+        }
+        return part
+      })
+      if (filtered.some((part, i) => part !== parts[i])) {
+        item = { ...item, [arrayPath]: filtered }
+        changed = true
+      }
+    }
+    if ("prompt_cache_breakpoint" in item) {
+      const { prompt_cache_breakpoint: _drop, ...rest } = item
+      item = rest
+      changed = true
+    }
+    return item
+  })
+  return changed ? items : input
+}
+
+/**
+ * Rewrite blank-string `arguments` on history function_call items to `"{}"`.
+ * Some Responses clients serialize parameter-less calls as an empty string,
+ * which the strict Codex Responses upstream rejects with "`arguments` must be
+ * valid JSON" (mirrors CPA normalizeEmptyFunctionCallArguments). Only blank
+ * strings are rewritten; non-empty strings pass through unchanged so other
+ * errors keep their shape.
+ */
+export function normalizeEmptyFunctionCallArguments(input: unknown): unknown {
+  if (!Array.isArray(input)) return input
+  let changed = false
+  const items = input.map((rawItem) => {
+    const item =
+      (
+        rawItem !== null
+        && typeof rawItem === "object"
+        && !Array.isArray(rawItem)
+      ) ?
+        (rawItem as Record<string, unknown>)
+      : undefined
+    if (
+      item?.type === "function_call"
+      && typeof item.arguments === "string"
+      && item.arguments.trim() === ""
+    ) {
+      changed = true
+      return { ...item, arguments: "{}" }
+    }
+    return rawItem
+  })
+  return changed ? items : input
+}
+
+/**
+ * Input-level normalizations applied at the final outbound boundary
+ * (finalizeCodexOutboundBody) so every send site — first turn, replay,
+ * translation — gets them in one place.
+ */
+export function normalizeCodexInputItems(input: unknown): unknown {
+  return convertSystemRoleToDeveloper(
+    normalizeEmptyFunctionCallArguments(stripPromptCacheBreakpoints(input)),
+  )
+}
+
+/**
+ * Codex upstream rejects legacy/preview built-in tool type spellings. CPA's
+ * normalizeCodexBuiltinToolType centralizes the alias table; extend here if
+ * Codex adds more.
+ */
+const CODEX_BUILTIN_TOOL_ALIASES: Record<string, string> = {
+  web_search_preview: "web_search",
+  web_search_preview_2025_03_11: "web_search",
+}
+
+function normalizeBuiltinToolType(toolType: unknown): string | undefined {
+  return typeof toolType === "string" ?
+      CODEX_BUILTIN_TOOL_ALIASES[toolType]
+    : undefined
+}
+
+/** Rewrite `type` fields inside an array of tools. */
+function normalizeToolArray(tools: unknown): unknown {
+  if (!Array.isArray(tools)) return tools
+  let changed = false
+  const next = tools.map((raw) => {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return raw
+    }
+    const item = raw as Record<string, unknown>
+    const normalized = normalizeBuiltinToolType(item.type)
+    if (!normalized) return raw
+    changed = true
+    return { ...item, type: normalized }
+  })
+  return changed ? next : tools
+}
+
+/**
+ * Normalize built-in tool type spellings across the three locations the
+ * upstream checks: `tools[]`, `tool_choice.type`, `tool_choice.tools[]`
+ * (mirrors CPA normalizeCodexBuiltinTools).
+ */
+export function normalizeCodexBuiltinTools(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const tools = normalizeToolArray(body.tools)
+  if (tools === body.tools && body.tool_choice === undefined) {
+    return body
+  }
+
+  const toolChoice = body.tool_choice
+  let nextToolChoice = toolChoice
+  if (
+    toolChoice !== null
+    && typeof toolChoice === "object"
+    && !Array.isArray(toolChoice)
+  ) {
+    const tc = { ...(toolChoice as Record<string, unknown>) }
+    const normalizedType = normalizeBuiltinToolType(tc.type)
+    if (normalizedType) tc.type = normalizedType
+    tc.tools = normalizeToolArray(tc.tools)
+    nextToolChoice = tc
+  }
+
+  const next = { ...body, tools, tool_choice: nextToolChoice }
+  return next
+}
+
+const CODEX_IMAGE_GEN_TOOL = { type: "image_generation", output_format: "png" }
+
+/** Mirrors CPA isImageGenerationFunctionTool. */
+function isImageGenerationTool(tool: unknown): boolean {
+  if (tool === null || typeof tool !== "object" || Array.isArray(tool)) {
+    return false
+  }
+  const t = tool as Record<string, unknown>
+  switch (t.type) {
+    case "image_generation":
+      return true
+    case "function":
+      return t.name === "image_gen.imagegen"
+    case "namespace": {
+      if (t.name !== "image_gen" || !Array.isArray(t.tools)) return false
+      return (t.tools as Array<unknown>).some(
+        (nested) =>
+          nested !== null
+          && typeof nested === "object"
+          && (nested as Record<string, unknown>).type === "function"
+          && (nested as Record<string, unknown>).name === "imagegen",
+      )
+    }
+    default:
+      return false
+  }
+}
+
+/**
+ * Inject the `image_generation` built-in tool so paid-plan accounts can
+ * actually call imagegen through /responses (mirrors CPA
+ * ensureImageGenerationTool). Skipped for Responses Lite requests, `*-spark`
+ * models, and free-plan credentials (upstream rejects the tool there), and
+ * when the body already carries an image-generation tool in any of its
+ * accepted shapes.
+ */
+export function ensureImageGenerationTool(
+  body: Record<string, unknown>,
+  options: { model?: string; responsesLite?: boolean; planType?: string },
+): Record<string, unknown> {
+  if (options.responsesLite) return body
+  if (typeof options.model === "string" && options.model.endsWith("spark")) {
+    return body
+  }
+  if (options.planType?.trim().toLowerCase() === "free") return body
+
+  const tools = body.tools
+  if (!Array.isArray(tools)) {
+    return { ...body, tools: [CODEX_IMAGE_GEN_TOOL] }
+  }
+  if (tools.some(isImageGenerationTool)) return body
+  return { ...body, tools: [...tools, CODEX_IMAGE_GEN_TOOL] }
 }
 
 /**

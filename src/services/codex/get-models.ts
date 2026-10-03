@@ -12,7 +12,7 @@ import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { oauthFetch } from "~/services/oauth/fetch"
 
-import { buildCodexHeaders, CODEX_CLIENT_VERSION } from "./headers"
+import { buildCodexHeaders, CODEX_MODELS_CLIENT_VERSION } from "./headers"
 
 interface CodexModelPayload {
   slug?: string
@@ -129,9 +129,9 @@ async function fetchCodexModelsFromUpstream(
 ): Promise<Array<AccountModel>> {
   const url = new URL(`${baseUrl.replace(/\/$/, "")}/models`)
   // Upstream filters models by client_version. 0.135.0 omits gpt-5.6-*;
-  // 0.153.3 matches CPA fetch_codex_models and returns the current catalog
-  // (incl. gpt-6-astra, which requires minimal_client_version >= 0.153.0).
-  url.searchParams.set("client_version", CODEX_CLIENT_VERSION)
+  // we claim the newer fetch version CPA's fetch_codex_models uses (0.159.0)
+  // so the catalog keeps including freshly shipped models.
+  url.searchParams.set("client_version", CODEX_MODELS_CLIENT_VERSION)
 
   const response = await executeUpstreamProxyCall(connection, {
     method: "GET",

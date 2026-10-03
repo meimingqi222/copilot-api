@@ -9,6 +9,7 @@ import {
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import {
   extractCodexAccountIdFromIdToken,
+  extractCodexPlanTypeFromIdToken,
   extractEmailFromIdToken,
 } from "./jwt"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
@@ -35,6 +36,8 @@ interface CodexOAuthBundle {
   expiresAt?: number
   accountId?: string
   email?: string
+  /** ChatGPT plan type from the id token (free/plus/team/…), lowercase. */
+  planType?: string
 }
 
 export function buildCodexAuthUrl(state: string, pkce: PkceCodes): string {
@@ -78,6 +81,7 @@ function mapTokenResponse(token: CodexTokenResponse): CodexOAuthBundle {
       token.expires_in ? Date.now() + token.expires_in * 1000 : undefined,
     accountId: extractCodexAccountIdFromIdToken(token.id_token),
     email: extractEmailFromIdToken(token.id_token),
+    planType: extractCodexPlanTypeFromIdToken(token.id_token),
   }
 }
 
@@ -170,6 +174,7 @@ export function applyCodexOAuthBundle(
     idToken: bundle.idToken,
     accountId: bundle.accountId,
     email: bundle.email,
+    planType: bundle.planType,
   })
   applyOAuthConnectionSettings(connection, {
     baseUrl: readSettingString(connection, "baseUrl") ?? CODEX_API_BASE_URL,
