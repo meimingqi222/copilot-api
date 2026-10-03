@@ -65,7 +65,7 @@ function subject() {
 
 describe("service tier translation", () => {
   test("responses-via-chat delivers priority/flex to the executor in streaming and non-streaming mode", async () => {
-    for (const tier of ["priority", "flex"] as const) {
+    for (const tier of ["fast", "priority", "flex"] as const) {
       for (const stream of [true, false]) {
         const signal = new AbortController().signal
         const result = await createResponsesViaChat({
@@ -141,6 +141,7 @@ describe("service tier translation", () => {
       )
     }) as typeof fetch
     for (const tier of [
+      "fast",
       "priority",
       "flex",
       "default",
@@ -176,7 +177,14 @@ describe("service tier translation", () => {
   })
 
   test("Chat and Responses preserve OpenAI tiers in both directions", () => {
-    for (const tier of ["auto", "default", "flex", "priority", "scale"]) {
+    for (const tier of [
+      "auto",
+      "default",
+      "flex",
+      "fast",
+      "priority",
+      "scale",
+    ]) {
       const responses = decodeResponsesRequest({
         model: "test",
         input: "hello",

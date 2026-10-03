@@ -1015,25 +1015,147 @@ function tracesView() {
       return `${this.apiLabel(f)} · ${f.model || f.modelUpstream || "—"}`
     },
 
-    serviceTierBadge(f) {
-      if (f?.serviceTierResponse === "priority") return "Fast"
-      if (f?.serviceTierUpstream !== "priority") return ""
+    serviceTierInfo(frame) {
+      let source = frame
+      const lastAttempt = frame?.attempts?.at(-1)
+      if (
+        !frame?.inFlight
+        && !frame?.serviceTierUpstream
+        && !frame?.serviceTierResponse
+        && lastAttempt
+        && ["connectionId", "credentialId", "provider"].every(
+          (key) => !frame[key] || frame[key] === lastAttempt[key],
+        )
+      ) {
+        source = lastAttempt
+      }
+      return {
+        requested: frame?.serviceTierRequested,
+        routed: frame?.serviceTierRouted,
+        sent: source?.serviceTierUpstream,
+        reported: source?.serviceTierResponse,
+      }
+    },
+
+    serviceTierLabel(tier) {
+      if (!tier) return this.t("trace.tierUnknown")
+      const labels = {
+        priority: "trace.tierFast",
+        fast: "trace.tierFast",
+        default: "trace.tierNormal",
+        auto: "trace.tierAuto",
+        flex: "trace.tierFlex",
+        scale: "trace.tierScale",
+      }
+      return labels[tier] ? this.t(labels[tier]) : tier
+    },
+
+    isFastServiceTier(tier) {
+      return tier === "priority" || tier === "fast"
+    },
+
+    serviceTiersMatch(sent, reported) {
       return (
-        "Fast · "
+        sent === reported
+        || (this.isFastServiceTier(sent) && this.isFastServiceTier(reported))
+      )
+    },
+
+    serviceTierStatus(frame) {
+      const { requested, routed, sent, reported } = this.serviceTierInfo(frame)
+      const wantsFast =
+        this.isFastServiceTier(requested) || this.isFastServiceTier(routed)
+      if (reported && (!sent || this.serviceTiersMatch(sent, reported))) {
+        const confirmed =
+          this.isFastServiceTier(reported) ?
+            this.t("trace.fastConfirmed")
+          : this.t("trace.tierConfirmedMode", {
+              mode: this.serviceTierLabel(reported),
+            })
+        if (wantsFast && sent && !this.isFastServiceTier(sent)) {
+          return this.t("trace.fastNotSent") + " → " + confirmed
+        }
+        return confirmed
+      }
+      if (!sent) {
+        if (!wantsFast) return ""
+        return this.t(
+          frame?.inFlight ? "trace.fastPendingSend" : "trace.fastNoSendRecord",
+        )
+      }
+      const request =
+        this.isFastServiceTier(sent) ?
+          this.t("trace.fastRequested")
+        : this.t("trace.tierRequestMode", {
+            mode: this.serviceTierLabel(sent),
+          })
+      if (reported) {
+        return (
+          request
+          + " → "
+          + this.t("trace.tierReportedMode", {
+            mode: this.serviceTierLabel(reported),
+          })
+        )
+      }
+      if (wantsFast && !this.isFastServiceTier(sent)) {
+        return this.t("trace.fastNotSent") + " → " + request
+      }
+      if (!this.isFastServiceTier(sent)) return request
+      return (
+        request
+        + " · "
         + this.t(
-          f.serviceTierResponse ? "trace.tierChanged" : "trace.tierUnconfirmed",
+          frame?.inFlight ? "trace.tierPending" : "trace.tierUnconfirmed",
         )
       )
     },
 
-    serviceTierSummary(f) {
-      if (!f?.serviceTierUpstream) return ""
+    serviceTierClass(frame) {
+      const { requested, routed, sent, reported } = this.serviceTierInfo(frame)
+      if (reported && sent && !this.serviceTiersMatch(sent, reported))
+        return "changed"
+      if (
+        (this.isFastServiceTier(requested) || this.isFastServiceTier(routed))
+        && sent
+        && !this.isFastServiceTier(sent)
+      )
+        return "changed"
+      if (this.isFastServiceTier(reported)) return "confirmed"
+      if (this.isFastServiceTier(sent)) return "pending"
+      return ""
+    },
+
+    serviceTierHint(frame) {
+      const { sent, reported } = this.serviceTierInfo(frame)
+      if (sent && reported && !this.serviceTiersMatch(sent, reported))
+        return this.t("trace.tierMismatchHint")
+      if (reported) return ""
+      if (!sent) return this.t("trace.tierNoSendHint")
+      return this.t(
+        frame?.inFlight ? "trace.tierPendingHint" : "trace.tierMissingHint",
+      )
+    },
+
+    serviceTierDetails(frame) {
+      const tiers = this.serviceTierInfo(frame)
       return [
-        `${this.t("trace.tierRequested")}: ${f.serviceTierRequested || "default"}`,
-        `${this.t("trace.tierRouted")}: ${f.serviceTierRouted || "default"}`,
-        `${this.t("trace.tierSent")}: ${f.serviceTierUpstream}`,
-        `${this.t("trace.tierReported")}: ${f.serviceTierResponse || this.t("trace.tierUnconfirmed")}`,
-      ].join(" · ")
+        ["requested", "trace.tierRequested"],
+        ["routed", "trace.tierRouted"],
+        ["sent", "trace.tierSent"],
+        ["reported", "trace.tierReported"],
+      ]
+        .filter(([field]) => tiers[field])
+        .map(([field, label]) => ({
+          label: this.t(label),
+          value: `${this.serviceTierLabel(tiers[field])} (${tiers[field]})`,
+        }))
+    },
+
+    serviceTierSummary(frame) {
+      return this.serviceTierDetails(frame)
+        .map(({ label, value }) => `${label}: ${value}`)
+        .join(" · ")
     },
 
     isGroup(f) {

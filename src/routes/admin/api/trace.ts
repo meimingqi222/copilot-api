@@ -44,6 +44,10 @@ function toFrame(entry: TraceRecord): Record<string, unknown> {
     modelUpstream: entry.modelUpstream,
     modelResponse: entry.modelResponse,
     reasoningEffort: entry.reasoningEffort,
+    serviceTierRequested: entry.serviceTierRequested,
+    serviceTierRouted: entry.serviceTierRouted,
+    serviceTierUpstream: entry.serviceTierUpstream,
+    serviceTierResponse: entry.serviceTierResponse,
     streaming: Boolean(entry.streaming),
     isTranslated: Boolean(entry.isTranslated),
     // where it went

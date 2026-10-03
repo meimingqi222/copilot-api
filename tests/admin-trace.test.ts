@@ -198,6 +198,53 @@ describe("trace bus", () => {
 })
 
 describe("GET /admin/api/trace/recent", () => {
+  test("projects all Fast tiers through recent, session and SSE frames", async () => {
+    const tiers = {
+      serviceTierRequested: "default",
+      serviceTierRouted: "priority",
+      serviceTierUpstream: "priority",
+      serviceTierResponse: "default",
+    }
+    publishTrace(
+      frame({ requestId: "fast", sessionId: "fast-session", ...tiers }),
+    )
+    const recent = await server.fetch(
+      adminRequest("http://localhost/admin/api/trace/recent"),
+    )
+    const recentData = (await recent.json()) as {
+      traces: Array<Record<string, unknown>>
+    }
+    expect(recentData.traces[0]).toMatchObject(tiers)
+    const session = await server.fetch(
+      adminRequest(
+        "http://localhost/admin/api/trace/session?session=fast-session",
+      ),
+    )
+    const sessionData = (await session.json()) as {
+      route: Record<string, unknown>
+    }
+    expect(sessionData.route).toMatchObject(tiers)
+    const controller = new AbortController()
+    const response = await server.fetch(
+      new Request(adminRequest("http://localhost/admin/api/trace/stream"), {
+        signal: controller.signal,
+      }),
+    )
+    const reader = response.body!.getReader()
+    try {
+      let text = ""
+      while (!text.includes("data:")) {
+        const chunk = await reader.read()
+        if (chunk.done) throw new Error("Trace stream ended before a frame")
+        text += new TextDecoder().decode(chunk.value)
+      }
+      const data = text.split("\n").find((line) => line.startsWith("data:"))!
+      expect(JSON.parse(data.slice(5))).toMatchObject(tiers)
+    } finally {
+      controller.abort()
+      await reader.cancel()
+    }
+  })
   test("requires admin role", async () => {
     clearAdminAuth()
     const response = await server.fetch(
@@ -418,6 +465,10 @@ describe("GET /admin/api/trace/history", () => {
     const timestamp = new Date("2026-10-01T12:00:00Z").getTime()
     const kept = {
       ...frame({ requestId: "persisted", timestamp, model: "history-model" }),
+      serviceTierRequested: "default",
+      serviceTierRouted: "priority",
+      serviceTierUpstream: "priority",
+      serviceTierResponse: "default",
       id: 1,
     }
     try {
@@ -465,6 +516,10 @@ describe("GET /admin/api/trace/history", () => {
         connectionName: "memory-wins",
         model: "history-model",
         inFlight: false,
+        serviceTierRequested: "default",
+        serviceTierRouted: "priority",
+        serviceTierUpstream: "priority",
+        serviceTierResponse: "default",
       })
       expect(data.traces[0]).not.toHaveProperty("message")
       logStore.clearForTest()
@@ -483,6 +538,8 @@ describe("GET /admin/api/trace/history", () => {
       ])
       // 内存里那条合并结果（connectionName: memory-wins）随清空消失，只剩落盘版本。
       expect(persistedData.traces[0]?.connectionName).toBeUndefined()
+      expect(persistedData.traces[0]?.serviceTierUpstream).toBe("priority")
+      expect(persistedData.traces[0]?.serviceTierResponse).toBe("default")
     } finally {
       redirectPathsToDir(isolationRoot)
       if (originalLogDir === undefined) delete process.env.LOG_DIR

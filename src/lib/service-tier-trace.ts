@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 
 import { logger } from "~/lib/logger"
+import { readOpenAIServiceTier } from "~/lib/service-tier"
 import {
   getRequestLogContext,
   patchRequestLog,
@@ -9,18 +10,9 @@ import {
 
 const attemptsAtSend = new WeakMap<Context, number>()
 
-function readTier(value: unknown): string | undefined {
-  return (
-      typeof value === "string"
-        && /^(default|auto|priority|flex|scale)$/.test(value)
-    ) ?
-      value
-    : undefined
-}
-
 function payloadTier(payload: unknown): string | undefined {
   return payload && typeof payload === "object" ?
-      readTier((payload as Record<string, unknown>).service_tier)
+      readOpenAIServiceTier((payload as Record<string, unknown>).service_tier)
     : undefined
 }
 
@@ -43,7 +35,7 @@ export function recordSentServiceTier(
   value: unknown,
 ): void {
   if (!c) return
-  const tier = readTier(value) ?? "default"
+  const tier = readOpenAIServiceTier(value) ?? "default"
   attemptsAtSend.set(c, getRequestLogContext(c)?.entry.attempts?.length ?? 0)
   patchRequestLog(c, {
     serviceTierUpstream: tier,

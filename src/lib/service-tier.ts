@@ -3,6 +3,7 @@ export type OpenAIServiceTier =
   | "auto"
   | "default"
   | "flex"
+  | "fast"
   | "priority"
   | "scale"
 export type AnthropicServiceTier = "auto" | "standard_only"
@@ -14,6 +15,7 @@ export function readOpenAIServiceTier(
     case "auto":
     case "default":
     case "flex":
+    case "fast":
     case "priority":
     case "scale":
       return value

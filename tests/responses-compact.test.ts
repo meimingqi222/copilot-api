@@ -169,11 +169,12 @@ afterEach(async () => {
 })
 
 describe("POST /v1/responses/compact", () => {
-  test("codex: compact keeps priority/flex, strips other tiers and forwards routing hint", async () => {
+  test("codex: compact normalizes Fast aliases and rebuilds routing hints", async () => {
     await setupCodexConnection()
     mockCompactFetch()
     const hint = "model=gpt-5.4;tier=priority"
     for (const tier of [
+      "fast",
       "priority",
       "flex",
       "default",
@@ -197,10 +198,14 @@ describe("POST /v1/responses/compact", () => {
       )
       expect(response.status).toBe(200)
       const call = calls.at(-1)!
-      expect(call.headers.get("x-codex-routing-hint")).toBe(hint)
-      expect(call.body.service_tier).toBe(
-        tier === "priority" || tier === "flex" ? tier : undefined,
+      const expectedTier =
+        tier === "fast" ? "priority"
+        : tier === "priority" || tier === "flex" ? tier
+        : undefined
+      expect(call.headers.get("x-codex-routing-hint")).toBe(
+        expectedTier ? `model=gpt-5.4;tier=${expectedTier}` : "model=gpt-5.4",
       )
+      expect(call.body.service_tier).toBe(expectedTier)
       expect(call.body.stream).toBeUndefined()
     }
   })
@@ -388,7 +393,7 @@ describe("POST /v1/responses/compact", () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].url).toBe("https://chatgpt.com/backend-api/codex/responses")
     expect(calls[0].headers.get("x-codex-routing-hint")).toBe(
-      "model=gpt-5.4;tier=priority",
+      "model=gpt-5.4;tier=flex",
     )
     expect(calls[0].body.service_tier).toBe("flex")
     expect(calls[0].body.input).toEqual([
@@ -456,7 +461,7 @@ describe("WS /v1/responses with inline compaction_trigger", () => {
         { type: "compaction_trigger" },
       ])
       expect(calls[0].headers.get("x-codex-routing-hint")).toBe(
-        "model=gpt-5.4;tier=priority",
+        "model=gpt-5.4;tier=flex",
       )
       expect(calls[0].body.service_tier).toBe("flex")
       ws.close()

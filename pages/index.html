@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Copilot API Admin</title>
     <link rel="stylesheet" href="/admin/static/css/apple-theme.css?v=0.7.5" />
-    <link rel="stylesheet" href="/admin/static/css/traces.css?v=0.7.5" />
+    <link rel="stylesheet" href="/admin/static/css/traces.css?v=0.7.6" />
     <link
       rel="stylesheet"
       href="/admin/static/css/routing-groups.css?v=0.7.3"
@@ -41,7 +41,7 @@
         apply()
       }
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.15"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.16"></script>
     <script src="/admin/static/js/api.js?v=0.7.4"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.4"></script>
     <script src="/admin/static/js/usage-auto-refresh.js?v=0.7.0"></script>
@@ -6830,10 +6830,11 @@
                         x-text="rowModelDisplay(frame)"
                       ></span>
                       <span
-                        x-show="serviceTierBadge(frame)"
-                        class="text-xs"
+                        x-show="serviceTierStatus(frame)"
+                        class="tr-tier-status tr-row-tier"
+                        :class="serviceTierClass(frame)"
                         :title="serviceTierSummary(frame)"
-                        x-text="serviceTierBadge(frame)"
+                        x-text="serviceTierStatus(frame)"
                       ></span>
                       <span
                         class="tr-row-route block"
@@ -6873,6 +6874,40 @@
 
               <div x-show="selected">
                 <h3 class="text-title-2 mb-3" x-text="t('trace.timeline')"></h3>
+
+                <section
+                  class="tr-tier-detail"
+                  x-show="serviceTierStatus(selected)"
+                >
+                  <h4
+                    class="tr-tier-label"
+                    x-text="t('trace.serviceTier')"
+                  ></h4>
+                  <p
+                    class="tr-tier-status"
+                    :class="serviceTierClass(selected)"
+                    x-text="serviceTierStatus(selected)"
+                  ></p>
+                  <p
+                    class="tr-tier-hint"
+                    x-show="serviceTierHint(selected)"
+                    x-text="serviceTierHint(selected)"
+                  ></p>
+                  <details class="tr-tier-fields">
+                    <summary x-text="t('trace.tierProtocolDetails')"></summary>
+                    <dl class="tr-kv">
+                      <template
+                        x-for="detail in serviceTierDetails(selected)"
+                        :key="detail.label"
+                      >
+                        <div class="contents">
+                          <dt x-text="detail.label"></dt>
+                          <dd x-text="detail.value"></dd>
+                        </div>
+                      </template>
+                    </dl>
+                  </details>
+                </section>
 
                 <div class="tr-waterfall" x-show="timeline">
                   <div class="tr-wf-track">
@@ -6951,9 +6986,11 @@
                         ></span>
                         <span class="lat" x-text="took(att.latencyMs)"></span>
                         <span
-                          x-show="att.serviceTierUpstream"
-                          class="text-xs"
-                          x-text="`${t('trace.tierSent')}: ${att.serviceTierUpstream} · ${t('trace.tierReported')}: ${att.serviceTierResponse || t('trace.tierUnconfirmed')}`"
+                          x-show="serviceTierStatus(att)"
+                          class="tr-tier-status tr-attempt-tier"
+                          :class="serviceTierClass(att)"
+                          :title="serviceTierSummary(att)"
+                          x-text="serviceTierStatus(att)"
                         ></span>
                       </div>
                     </template>
@@ -6967,14 +7004,6 @@
                     x-text="t('trace.routing')"
                   ></h4>
                   <dl class="tr-kv">
-                    <dt
-                      x-show="selected?.serviceTierUpstream"
-                      x-text="t('trace.serviceTier')"
-                    ></dt>
-                    <dd
-                      x-show="selected?.serviceTierUpstream"
-                      x-text="serviceTierSummary(selected)"
-                    ></dd>
                     <dt
                       x-show="isGroup(selected)"
                       x-text="t('trace.group')"
@@ -7354,7 +7383,7 @@
     <script src="/admin/static/js/views/usage.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/quotas.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/performance.js?v=0.7.7"></script>
-    <script src="/admin/static/js/views/traces.js?v=0.7.8"></script>
+    <script src="/admin/static/js/views/traces.js?v=0.7.10"></script>
     <script src="/admin/static/js/views/guard.js?v=0.7.2"></script>
     <script src="/admin/static/js/views/logs.js?v=0.7.2"></script>
     <script src="/admin/static/js/partials.js?v=0.7.2"></script>

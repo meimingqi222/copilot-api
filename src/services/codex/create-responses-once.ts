@@ -75,7 +75,8 @@ import { buildCodexHeaders } from "./headers"
 import {
   resolveCodexExtraHeaders,
   resolveCodexSessionHeaders,
-} from "./session-headers"
+  withCodexRoutingHint,
+} from "~/services/codex/session-headers"
 import {
   assertChainedHttpReplayAvailable,
   buildCodexUpstreamBody,
@@ -877,7 +878,7 @@ async function postCodexResponses(options: {
   recordSentServiceTier(options.c, effectiveBody.service_tier)
   return fetchWithConnectionProxy(options.connection, options.url, {
     method: "POST",
-    headers: options.headers,
+    headers: withCodexRoutingHint(options.headers, effectiveBody),
     // HTTP never sends previous_response_id. A chained WS fallback uses the
     // full self-contained body so the tool-result turn is not orphaned.
     body,
@@ -1029,7 +1030,9 @@ async function attemptCodexUpstreamWsTurn(
   const wsFallbackFullInputBody =
     fallbackFullInputBody
     && finalizeCodexOutboundBody(fallbackFullInputBody, "ws")
-  const wsHeaders = applyCodexWebsocketHeaders({ ...httpHeaders })
+  const wsHeaders = applyCodexWebsocketHeaders(
+    withCodexRoutingHint(httpHeaders, wsBody),
+  )
   if (timingMetricsHeader) {
     wsHeaders["x-responsesapi-include-timing-metrics"] = timingMetricsHeader
   }

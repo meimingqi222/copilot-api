@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
 
 import { buildCodexHeaders } from "~/services/codex/headers"
-import { resolveCodexExtraHeaders } from "~/services/codex/session-headers"
+import {
+  resolveCodexExtraHeaders,
+  withCodexRoutingHint,
+} from "~/services/codex/session-headers"
 import { applyCodexWebsocketHeaders } from "~/services/responses/upstream-ws"
 
 describe("buildCodexHeaders (official codex simulation)", () => {
@@ -37,6 +40,36 @@ describe("buildCodexHeaders (official codex simulation)", () => {
 })
 
 describe("applyCodexWebsocketHeaders (official handshake simulation)", () => {
+  test("derives routing hints from final model/tier without mutating forwarded headers", () => {
+    const forwarded = {
+      "x-codex-routing-hint": "model=alias;tier=default",
+      "thread-id": "thread",
+    }
+    const next = withCodexRoutingHint(forwarded, {
+      model: "gpt-6.1-sol",
+      service_tier: "fast",
+    })
+    expect(next["x-codex-routing-hint"]).toBe("model=gpt-6.1-sol;tier=priority")
+    expect(forwarded["x-codex-routing-hint"]).toBe("model=alias;tier=default")
+    expect(applyCodexWebsocketHeaders(next)["x-codex-routing-hint"]).toBe(
+      next["x-codex-routing-hint"],
+    )
+    expect(
+      withCodexRoutingHint(forwarded, { model: "gpt-6.1-sol" })[
+        "x-codex-routing-hint"
+      ],
+    ).toBe("model=gpt-6.1-sol")
+    expect(
+      withCodexRoutingHint(forwarded, { model: "bad\r\nheader" })[
+        "x-codex-routing-hint"
+      ],
+    ).toBeUndefined()
+    expect(
+      withCodexRoutingHint(forwarded, { model: "bad;tier=priority" })[
+        "x-codex-routing-hint"
+      ],
+    ).toBeUndefined()
+  })
   test("keeps advisory model/tier routing hint on HTTP and WebSocket headers", () => {
     const hint = "model=gpt-5;tier=priority"
     const extra = resolveCodexExtraHeaders({

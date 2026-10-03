@@ -18,35 +18,170 @@ function view(api = {}) {
   return result
 }
 
+function tierView(language = "zh") {
+  const translations = runInNewContext(
+    readFileSync("pages/js/i18n.js", "utf8") + "\nI18n",
+    { navigator: { language }, localStorage: { getItem: () => language } },
+  )
+  const trace = view()
+  trace.t = translations.t.bind(translations)
+  return trace
+}
+
 describe("request trace view", () => {
-  test("Fast badge distinguishes requested, sent, confirmed and changed tiers", () => {
-    const trace = view()
-    expect(trace.serviceTierBadge({ serviceTierRequested: "priority" })).toBe(
-      "",
-    )
-    expect(trace.serviceTierBadge({ serviceTierUpstream: "priority" })).toBe(
-      "Fast · trace.tierUnconfirmed",
+  test("fast and priority are equivalent Fast modes but keep raw details", () => {
+    const trace = tierView()
+    for (const sent of ["fast", "priority"])
+      for (const reported of ["fast", "priority"]) {
+        const frame = {
+          serviceTierUpstream: sent,
+          serviceTierResponse: reported,
+        }
+        expect(trace.serviceTierStatus(frame)).toBe("Fast 已确认")
+        expect(trace.serviceTierClass(frame)).toBe("confirmed")
+        expect(trace.serviceTierHint(frame)).toBe("")
+        expect(trace.serviceTierDetails(frame)[1].value).toBe(
+          `Fast (${reported})`,
+        )
+      }
+    expect(
+      trace.serviceTierStatus({ serviceTierRequested: "fast", inFlight: true }),
+    ).toBe("Fast 待发送")
+    expect(
+      trace.serviceTierStatus({
+        serviceTierUpstream: "fast",
+        serviceTierResponse: "default",
+      }),
+    ).toBe("请求 Fast → 上游回报普通模式")
+  })
+  test("Fast status explains requested, confirmed and mismatched modes", () => {
+    const trace = tierView()
+    expect(
+      trace.serviceTierStatus({
+        serviceTierRequested: "priority",
+        inFlight: true,
+      }),
+    ).toBe("Fast 待发送")
+    expect(trace.serviceTierStatus({ serviceTierRequested: "priority" })).toBe(
+      "请求 Fast · 无发送记录",
     )
     expect(
-      trace.serviceTierBadge({
+      trace.serviceTierStatus({
+        serviceTierUpstream: "priority",
+        inFlight: true,
+      }),
+    ).toBe("请求 Fast · 等待确认")
+    expect(trace.serviceTierStatus({ serviceTierUpstream: "priority" })).toBe(
+      "请求 Fast · 未确认",
+    )
+    expect(
+      trace.serviceTierStatus({
         serviceTierUpstream: "priority",
         serviceTierResponse: "priority",
       }),
-    ).toBe("Fast")
+    ).toBe("Fast 已确认")
     expect(
-      trace.serviceTierBadge({
+      trace.serviceTierStatus({
         serviceTierUpstream: "priority",
         serviceTierResponse: "default",
       }),
-    ).toBe("Fast · trace.tierChanged")
-    expect(trace.serviceTierBadge({})).toBe("")
+    ).toBe("请求 Fast → 上游回报普通模式")
     expect(
-      trace.serviceTierSummary({
-        serviceTierRequested: "default",
-        serviceTierRouted: "priority",
-        serviceTierUpstream: "priority",
+      trace.serviceTierStatus({
+        serviceTierRequested: "priority",
+        serviceTierUpstream: "default",
       }),
-    ).toContain("trace.tierRouted: priority")
+    ).toBe("Fast 未发送 → 请求普通模式")
+    expect(
+      trace.serviceTierHint({ serviceTierUpstream: "priority" }),
+    ).not.toContain("等待")
+    expect(
+      trace.serviceTierHint({
+        serviceTierUpstream: "priority",
+        serviceTierResponse: "default",
+      }),
+    ).toContain("不代表已按 Fast 执行")
+    expect(
+      tierView("en").serviceTierStatus({
+        serviceTierUpstream: "priority",
+        serviceTierResponse: "default",
+      }),
+    ).toBe("Fast requested → Upstream reported Normal mode")
+  })
+
+  test("tier details translate modes without inventing missing history", () => {
+    const trace = tierView()
+    expect(trace.serviceTierStatus({})).toBe("")
+    expect(trace.serviceTierStatus(null)).toBe("")
+    expect(trace.serviceTierStatus({ model: "gpt-fast" })).toBe("")
+    expect(
+      trace.serviceTierStatus({
+        serviceTierUpstream: "default",
+        serviceTierResponse: "default",
+      }),
+    ).toBe("普通模式已确认")
+    expect(trace.serviceTierLabel("flex")).toBe("Flex 弹性模式")
+    expect(trace.serviceTierLabel("auto")).toBe("自动模式")
+    expect(trace.serviceTierLabel("scale")).toBe("Scale 模式")
+    expect(trace.serviceTierLabel("future-tier")).toBe("future-tier")
+    const details = trace.serviceTierDetails({
+      serviceTierRouted: "priority",
+      serviceTierUpstream: "priority",
+    })
+    expect(details.map((detail: { value: string }) => detail.value)).toEqual([
+      "Fast (priority)",
+      "Fast (priority)",
+    ])
+    expect(
+      trace.serviceTierSummary({ serviceTierUpstream: "priority" }),
+    ).not.toContain("default")
+  })
+
+  test("tier fallback uses only a matching final attempt and never mixes retries", () => {
+    const trace = tierView()
+    const fast = {
+      connectionId: "codex",
+      provider: "codex",
+      serviceTierUpstream: "priority",
+      serviceTierResponse: "priority",
+    }
+    expect(
+      trace.serviceTierStatus({ connectionId: "codex", attempts: [fast] }),
+    ).toBe("Fast 已确认")
+    expect(
+      trace.serviceTierStatus({ connectionId: "other", attempts: [fast] }),
+    ).toBe("")
+    expect(
+      trace.serviceTierStatus({ provider: "copilot", attempts: [fast] }),
+    ).toBe("")
+    expect(trace.serviceTierStatus({ inFlight: true, attempts: [fast] })).toBe(
+      "",
+    )
+    expect(
+      trace.serviceTierStatus({ attempts: [fast, { provider: "copilot" }] }),
+    ).toBe("")
+    expect(
+      trace.serviceTierStatus({
+        serviceTierUpstream: "priority",
+        attempts: [fast],
+      }),
+    ).toBe("请求 Fast · 未确认")
+    const frame = {
+      latencyMs: 100,
+      serviceTierUpstream: "default",
+      serviceTierResponse: "default",
+      attempts: [
+        { ...fast, result: "failed", latencyMs: 50 },
+        { provider: "copilot", result: "success", latencyMs: 50 },
+      ],
+    }
+    expect(trace.serviceTierStatus(trace.replayAt(frame, 20))).toBe(
+      "Fast 已确认",
+    )
+    expect(trace.serviceTierStatus(trace.replayAt(frame, 75))).toBe("")
+    expect(trace.serviceTierStatus(trace.replayAt(frame, 100))).toBe(
+      "普通模式已确认",
+    )
   })
   test("selected replay plays only the selected request without loading history", async () => {
     const v = view()

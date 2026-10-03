@@ -3,6 +3,8 @@ import { Hono } from "hono"
 
 import { getRequestLogContext, initRequestLog } from "~/lib/request-log"
 import { recordRequestedServiceTier } from "~/lib/service-tier-trace"
+import { clearUpstreamWebsocketSessionsForTest } from "~/services/responses/upstream-ws"
+import { loopbackTest } from "./helpers/loopback-test"
 
 import type {
   ApiCredential,
@@ -80,6 +82,7 @@ async function capturePostedBody(
   payload: Record<string, unknown>,
   opts: {
     headers?: Record<string, string>
+    captureHeaders?: (headers: Headers) => void
     /**
      * Transcript recovery fails closed without a tenant scope, so any test
      * exercising the replay path must model a real scoped caller (both route
@@ -91,6 +94,7 @@ async function capturePostedBody(
   let postedBody: Record<string, unknown> | undefined
   globalThis.fetch = ((_url: unknown, init: RequestInit) => {
     postedBody = JSON.parse(init.body as string) as Record<string, unknown>
+    opts.captureHeaders?.(new Headers(init.headers))
     return Promise.resolve(sseOkBody())
   }) as typeof fetch
 
@@ -111,6 +115,100 @@ async function capturePostedBody(
 }
 
 describe("codex request compatibility (CPA parity)", () => {
+  test("Fast alias and routing hint match the actual HTTP model and tier", async () => {
+    for (const tier of ["fast", "priority", "default"] as const) {
+      const capturedHeaders: { routingHint: string | null } = {
+        routingHint: null,
+      }
+      const posted = await capturePostedBody(
+        { model: "gpt-6.1-sol", input: "hi", stream: true, service_tier: tier },
+        {
+          headers: {
+            "x-codex-routing-hint": "model=old-client-alias;tier=flex",
+          },
+          captureHeaders: (headers) => {
+            capturedHeaders.routingHint = headers.get("x-codex-routing-hint")
+          },
+        },
+      )
+      expect(posted.service_tier).toBe(
+        tier === "default" ? undefined : "priority",
+      )
+      expect(capturedHeaders.routingHint).toBe(
+        tier === "default" ? "model=gpt-6.1-sol" : (
+          "model=gpt-6.1-sol;tier=priority"
+        ),
+      )
+    }
+  })
+
+  loopbackTest(
+    "Codex WS handshake and body use the resolved Fast tier",
+    async () => {
+      const capturedHeaders: { routingHint: string | null } = {
+        routingHint: null,
+      }
+      let posted: Record<string, unknown> | undefined
+      using upstream = Bun.serve({
+        port: 0,
+        fetch(request, server) {
+          capturedHeaders.routingHint = request.headers.get(
+            "x-codex-routing-hint",
+          )
+          if (server.upgrade(request)) return undefined
+          return new Response("Not found", { status: 404 })
+        },
+        websocket: {
+          message(socket, message) {
+            posted = JSON.parse(String(message)) as Record<string, unknown>
+            socket.send(
+              JSON.stringify({
+                type: "response.completed",
+                response: {
+                  id: "resp_fast",
+                  status: "completed",
+                  service_tier: "fast",
+                  output: [],
+                },
+              }),
+            )
+          },
+        },
+      })
+      const subject = makeCodexSubject()
+      subject.connection.metadata = {
+        provider: "codex",
+        settings: { baseUrl: `http://127.0.0.1:${upstream.port}` },
+      }
+      try {
+        const result = await createCodexResponsesOnce(
+          subject,
+          {
+            model: "gpt-6.1-sol",
+            input: "hi",
+            stream: true,
+            service_tier: "fast",
+          } as never,
+          undefined,
+          {
+            downstreamWebsocket: true,
+            executionSessionId: "fast-parity-test",
+            forwardedHeaders: {
+              "x-codex-routing-hint": "model=old-client-alias;tier=flex",
+            },
+          },
+        )
+        for await (const event of result as AsyncIterable<unknown>)
+          expect(event).toBeDefined()
+        expect(posted?.service_tier).toBe("priority")
+        expect(capturedHeaders.routingHint).toBe(
+          "model=gpt-6.1-sol;tier=priority",
+        )
+      } finally {
+        clearUpstreamWebsocketSessionsForTest()
+      }
+    },
+  )
   for (const streaming of [true, false]) {
     test(`HTTP Codex tier trace observes actual wire and response (stream=${streaming})`, async () => {
       globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
@@ -264,8 +362,9 @@ describe("codex request compatibility (CPA parity)", () => {
     })
   })
 
-  test("service_tier: priority/flex kept, others stripped", async () => {
+  test("service_tier: fast maps to priority, priority/flex kept, others stripped", async () => {
     for (const tier of [
+      "fast",
       "priority",
       "flex",
       "default",
@@ -280,7 +379,9 @@ describe("codex request compatibility (CPA parity)", () => {
         stream: true,
         service_tier: tier,
       })
-      if (tier === "priority" || tier === "flex") {
+      if (tier === "fast") {
+        expect(body.service_tier).toBe("priority")
+      } else if (tier === "priority" || tier === "flex") {
         expect(body.service_tier).toBe(tier)
       } else {
         expect(Object.hasOwn(body, "service_tier")).toBe(false)

@@ -7,6 +7,23 @@ import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
+import { resolveCodexServiceTier } from "~/services/codex/upstream-body"
+
+export function withCodexRoutingHint(
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+): Record<string, string> {
+  const next = { ...headers }
+  const model = body.model
+  if (typeof model !== "string" || !model || /[;\r\n]/.test(model)) {
+    delete next["x-codex-routing-hint"]
+    return next
+  }
+  const tier = resolveCodexServiceTier(body.service_tier)
+  next["x-codex-routing-hint"] =
+    tier ? `model=${model};tier=${tier}` : `model=${model}`
+  return next
+}
 
 interface ResolvedCodexSessionHeaders {
   sessionId?: string

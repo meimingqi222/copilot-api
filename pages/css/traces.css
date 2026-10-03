@@ -499,6 +499,61 @@
   text-overflow: ellipsis;
 }
 
+.tr-tier-status {
+  color: var(--apple-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.tr-tier-status.confirmed {
+  color: var(--apple-green);
+}
+
+.tr-tier-status.changed {
+  color: var(--apple-orange);
+}
+
+.tr-tier-status.pending {
+  color: var(--apple-blue);
+}
+
+.tr-row-tier {
+  display: block;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+.tr-tier-detail {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--apple-border);
+}
+
+.tr-tier-label,
+.tr-tier-hint,
+.tr-tier-fields {
+  color: var(--apple-text-secondary);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+.tr-tier-detail > .tr-tier-status {
+  margin: 0.25rem 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.tr-tier-fields {
+  margin-top: 0.5rem;
+}
+
+.tr-tier-fields summary {
+  cursor: pointer;
+}
+
+.tr-tier-fields .tr-kv {
+  margin-top: 0.5rem;
+}
+
 .tr-row-timing {
   font-size: 0.6875rem;
   color: var(--apple-text-secondary);
@@ -643,12 +698,19 @@
 
 .tr-attempt {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   padding: 0.375rem 0.5rem;
   border-radius: 0.5rem;
   background: var(--apple-bg-secondary);
   font-size: 0.75rem;
+}
+
+.tr-attempt-tier {
+  flex-basis: 100%;
+  padding-left: 1.625rem;
+  font-size: 0.6875rem;
 }
 
 .tr-attempt .n {

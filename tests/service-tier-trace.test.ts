@@ -114,6 +114,27 @@ test("initial lifecycle frames do not confirm Fast", async () => {
   ).toBeUndefined()
 })
 
+test("Fast aliases retain their raw request and response values", async () => {
+  const current = await context()
+  recordRequestedServiceTier(current, { service_tier: "fast" })
+  recordRoutedServiceTier(current, { service_tier: "fast" })
+  recordSentServiceTier(current, "priority")
+  recordUpstreamAttempt(current, target, { status: 200 }, 1)
+  observeResponseServiceTier(current, {
+    type: "response.completed",
+    response: { service_tier: "fast" },
+  })
+  expect(getRequestLogContext(current)?.entry).toMatchObject({
+    serviceTierRequested: "fast",
+    serviceTierRouted: "fast",
+    serviceTierUpstream: "priority",
+    serviceTierResponse: "fast",
+  })
+  expect(
+    getRequestLogContext(current)?.entry.attempts?.[0].serviceTierResponse,
+  ).toBe("fast")
+})
+
 test("service tier records requested, routed, sent and reported independently", async () => {
   const current = await context()
   recordRequestedServiceTier(current, {})

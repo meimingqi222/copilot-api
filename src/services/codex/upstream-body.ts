@@ -101,7 +101,7 @@ export function convertSystemRoleToDeveloper(input: unknown): unknown {
 export function resolveCodexServiceTier(
   value: unknown,
 ): "priority" | "flex" | undefined {
-  // Match the CLI: default is implicit; only explicit priority/flex go upstream.
+  if (value === "fast") return "priority"
   return value === "priority" || value === "flex" ? value : undefined
 }
 
