@@ -25,5 +25,3 @@ export const providerMetadata = defineProviderMetadata({
     accountFields: [],
   },
 })
-
-export const descriptor = providerMetadata.descriptor

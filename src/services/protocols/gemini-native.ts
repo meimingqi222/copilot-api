@@ -22,6 +22,7 @@ import {
 import type { ProviderConnection } from "~/lib/provider-connections"
 import { HTTPError } from "~/lib/error"
 import { getCredentialContextString } from "~/lib/provider-connections"
+import { iterateLines } from "~/lib/stream-lines"
 import {
   GEMINI_CODE_ASSIST_BASE,
   geminiUserAgent,
@@ -44,10 +45,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 async function* unwrapCodeAssistStream(
   response: Response,
 ): AsyncGenerator<GeminiStreamEvent> {
-  const reader = response.body?.getReader()
-  if (!reader) return
-  const decoder = new TextDecoder()
-  let buffer = ""
+  const body = response.body
+  if (!body) return
   const handle = (raw: string): GeminiStreamEvent | null => {
     const line = raw.trim()
     if (!line.startsWith("data:")) return null
@@ -70,20 +69,10 @@ async function* unwrapCodeAssistStream(
     const inner = parsed.response ?? parsed
     return { data: JSON.stringify(inner) }
   }
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let index: number
-    while ((index = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, index)
-      buffer = buffer.slice(index + 1)
-      const event = handle(line)
-      if (event) yield event
-    }
+  for await (const line of iterateLines(body)) {
+    const event = handle(line)
+    if (event) yield event
   }
-  const tail = handle(buffer)
-  if (tail) yield tail
 }
 
 function projectOf(connection: ProviderConnection): string {

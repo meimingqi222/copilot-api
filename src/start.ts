@@ -49,10 +49,23 @@ import { refreshCopilotTokenForConnection } from "./services/copilot/token-refre
 import { startMimoManager, stopMimoManager } from "./services/mimo/manager"
 import { initializeProtocolAdapters } from "./services/protocols"
 
+/**
+ * Providers `--provider` can preselect at startup.
+ *
+ * One array drives both the declared type and the runtime validation, so the
+ * accepted set and the type can no longer drift the way a hand-written union
+ * plus an `if` chain could. Deliberately narrower than `PROVIDER_IDS`: only
+ * these three have startup defaults in `state.providerDefaults` (or act as the
+ * fallback). Every other provider is added through the admin panel instead.
+ */
+const BOOTSTRAP_PROVIDERS = ["copilot", "codebuff", "windsurf"] as const
+
+type BootstrapProvider = (typeof BOOTSTRAP_PROVIDERS)[number]
+
 interface RunServerOptions {
   port: number
   verbose: boolean
-  provider: "copilot" | "codebuff" | "windsurf"
+  bootstrapProvider: BootstrapProvider
   accountType: string
   manual: boolean
   claudeCode: boolean
@@ -101,7 +114,6 @@ async function runServer(options: RunServerOptions): Promise<void> {
     initProxyFromEnv()
   }
 
-  state.defaultProvider = options.provider
   state.accountType = options.accountType
   if (options.accountType !== "individual") {
     logger.info(`Using ${options.accountType} plan GitHub account`)
@@ -127,12 +139,12 @@ async function runServer(options: RunServerOptions): Promise<void> {
   state.providerDefaults.windsurf.defaultModel =
     options.windsurfModel ?? state.providerDefaults.windsurf.defaultModel
 
-  if (options.provider === "codebuff") {
+  if (options.bootstrapProvider === "codebuff") {
     logger.info(
       `Using codebuff defaults: ${state.providerDefaults.codebuff.baseUrl}`,
     )
   }
-  if (options.provider === "windsurf") {
+  if (options.bootstrapProvider === "windsurf") {
     logger.info(
       `Using windsurf defaults: ${state.providerDefaults.windsurf.baseUrl}`,
     )
@@ -374,12 +386,24 @@ async function runServer(options: RunServerOptions): Promise<void> {
   })
 }
 
-function resolveProvider(
-  provider?: string,
-): "copilot" | "codebuff" | "windsurf" {
-  if (provider === "codebuff") return "codebuff"
-  if (provider === "windsurf") return "windsurf"
-  return "copilot"
+/**
+ * Map the `--provider` flag onto a bootstrap provider.
+ *
+ * An unrecognised value is a hard error. Silently falling back to `copilot`
+ * meant `--provider clade` looked like it worked; only `undefined` (flag
+ * absent) means "no preselection".
+ */
+function resolveBootstrapProvider(provider?: string): BootstrapProvider {
+  if (provider === undefined) return "copilot"
+  if ((BOOTSTRAP_PROVIDERS as ReadonlyArray<string>).includes(provider)) {
+    return provider as BootstrapProvider
+  }
+  logger.error(
+    `Unknown --provider "${provider}". Expected one of: ${BOOTSTRAP_PROVIDERS.join(
+      ", ",
+    )}.`,
+  )
+  process.exit(1)
 }
 
 export const start = defineCommand({
@@ -532,11 +556,11 @@ export const start = defineCommand({
     },
   },
   run({ args }) {
-    const provider = resolveProvider(args.provider)
+    const bootstrapProvider = resolveBootstrapProvider(args.provider)
     return runServer({
       port: Number.parseInt(args.port, 10),
       verbose: args.verbose,
-      provider,
+      bootstrapProvider,
       accountType: args["account-type"],
       manual: args.manual,
       claudeCode: args["claude-code"],

@@ -813,26 +813,6 @@ function endpointToApiKind(
   return "other"
 }
 
-export function isCoreApiPath(path: string): boolean {
-  return (
-    path === "/chat/completions"
-    || path.startsWith("/chat/completions/")
-    || path === "/v1/chat/completions"
-    || path.startsWith("/v1/chat/completions/")
-    || path === "/v1/messages"
-    || path.startsWith("/v1/messages/")
-    || path === "/v1/messages/count_tokens"
-    || path === "/responses"
-    || path.startsWith("/responses/")
-    || path === "/v1/responses"
-    || path.startsWith("/v1/responses/")
-    || path === "/embeddings"
-    || path.startsWith("/embeddings/")
-    || path === "/v1/embeddings"
-    || path.startsWith("/v1/embeddings/")
-  )
-}
-
 function truncate(value: string | undefined, max: number): string | undefined {
   if (!value) return value
   return value.length > max ? value.slice(0, max) : value

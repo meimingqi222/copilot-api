@@ -404,6 +404,11 @@ The project can be run from source in several ways:
 bun run dev
 ```
 
+Dashboard utilities are generated into `pages/css/tailwind.min.css` by
+`bun run build:css`. Both `dev` and `build` run this step. After adding utility
+classes while the dev server is running, regenerate the stylesheet with
+`bun run build:css`; keep class names as complete literals in dashboard HTML/JS.
+
 ### Production Mode
 
 ```sh

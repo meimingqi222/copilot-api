@@ -141,7 +141,7 @@ function qoderRefreshAuth(site: QoderSite) {
 // getOAuthStrategy(id) === module.oauth）。
 const moduleCache = new Map<QoderSite["id"], ProviderModule>()
 
-export function getQoderModuleFor(site: QoderSite): ProviderModule {
+function getQoderModuleFor(site: QoderSite): ProviderModule {
   let module = moduleCache.get(site.id)
   if (!module) {
     module = {

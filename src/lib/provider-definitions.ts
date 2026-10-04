@@ -20,3 +20,8 @@ export const OAUTH_PROVIDER_IDS = PROVIDER_IDS.filter(
 export const PROVIDER_PROTOCOL_MAP = Object.fromEntries(
   PROVIDER_IDS.map((id) => [id, PROVIDER_DEFINITIONS[id].protocol]),
 ) as Record<ProviderId, NativeProviderProtocol>
+
+/** Shared reverse lookup; later registrations preserve the historical alias precedence. */
+export const PROTOCOL_PROVIDER_MAP = Object.fromEntries(
+  PROVIDER_IDS.map((id) => [PROVIDER_DEFINITIONS[id].protocol, id]),
+) as Partial<Record<string, ProviderId>>

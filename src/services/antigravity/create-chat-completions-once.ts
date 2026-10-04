@@ -21,6 +21,7 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import { iterateLines } from "~/lib/stream-lines"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import {
   getCredentialContextString,
@@ -89,6 +90,9 @@ function* convertSseLine(
   }
 }
 
+/** 单行 SSE 缓冲上限；上游一直不发换行时用它兜住内存。 */
+const ANTIGRAVITY_MAX_SSE_LINE_BYTES = 16 * 1024 * 1024
+
 async function* translateAntigravitySseToOpenAi(
   response: Response,
   model: string,
@@ -98,56 +102,15 @@ async function* translateAntigravitySseToOpenAi(
     throw new Error("Antigravity stream body is empty")
   }
 
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
   const state = createAntigravityStreamState(model)
-  const maxReadChunkBytes = 64 * 1024
+  // 首包时延只记第一次；markUpstreamEvent 幂等，所以逐次读时调用与这里等价。
+  observeUpstreamResponse(response)
 
-  while (true) {
-    const readResult = (await reader.read()) as {
-      done: boolean
-      value?: Uint8Array
-    }
-    if (readResult.done) {
-      break
-    }
-    if (!readResult.value) {
-      continue
-    }
-    observeUpstreamResponse(response)
-    for (
-      let offset = 0;
-      offset < readResult.value.byteLength;
-      offset += maxReadChunkBytes
-    ) {
-      const piece = readResult.value.subarray(
-        offset,
-        Math.min(offset + maxReadChunkBytes, readResult.value.byteLength),
-      )
-      buffer += decoder.decode(piece, { stream: true })
-      if (Buffer.byteLength(buffer) > 16 * 1024 * 1024) {
-        throw new Error("Antigravity SSE line exceeds the maximum size")
-      }
-      let lineStart = 0
-      while (true) {
-        const lineEnd = buffer.indexOf("\n", lineStart)
-        if (lineEnd === -1) break
-        const line = buffer.slice(lineStart, lineEnd)
-        for (const output of measureLocalIterable(
-          convertSseLine(line, model, state),
-        ))
-          yield output
-        lineStart = lineEnd + 1
-      }
-      if (lineStart > 0) buffer = buffer.slice(lineStart)
-    }
-  }
-
-  buffer += decoder.decode()
-  if (buffer.trim()) {
+  for await (const line of iterateLines(stream, {
+    maxBufferedBytes: ANTIGRAVITY_MAX_SSE_LINE_BYTES,
+  })) {
     for (const output of measureLocalIterable(
-      convertSseLine(buffer, model, state),
+      convertSseLine(line, model, state),
     ))
       yield output
   }

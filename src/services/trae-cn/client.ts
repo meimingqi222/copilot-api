@@ -18,6 +18,7 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto"
+import { iterateLines } from "~/lib/stream-lines"
 import { TraeCnNativeTools } from "~/services/trae-cn/native-tools"
 
 import type {
@@ -35,7 +36,7 @@ import {
 
 // IDE 的 chat function：经典 IDE agent、SOLO Work、TRAE agent
 //（solo_agent，deepseek-v4.1-flash 在这里）、SOLO Lite agent。
-export const TRAE_CN_FUNCTIONS = [
+const TRAE_CN_FUNCTIONS = [
   "chat_v3",
   "solo_work_lite",
   "solo_agent",
@@ -345,7 +346,7 @@ export function traeCnChatBody(
 
 // ── SSE 解析 ───────────────────────────────────────────────────
 
-export interface TraeSseEvent {
+interface TraeSseEvent {
   event: string
   data: unknown
 }
@@ -354,9 +355,6 @@ export interface TraeSseEvent {
 export async function* traeCnSse(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<TraeSseEvent> {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let buf = ""
   let event = ""
   let data: Array<string> = []
   const flush = function* (): Generator<TraeSseEvent> {
@@ -383,37 +381,20 @@ export async function* traeCnSse(
     }
     event = ""
   }
-  try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      let i: number
-      while ((i = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, i).replace(/\r$/, "")
-        buf = buf.slice(i + 1)
-        if (!line) {
-          yield* flush()
-          continue
-        }
-        if (line.startsWith(":")) continue
-        if (line.startsWith("event:")) {
-          yield* flush()
-          event = line.slice(6).trim()
-        } else if (line.startsWith("data:")) {
-          data.push(line.slice(5).trimStart())
-        }
-      }
+  for await (const line of iterateLines(stream)) {
+    if (!line) {
+      yield* flush()
+      continue
     }
-    buf += decoder.decode()
-    if (buf.startsWith("data:")) data.push(buf.slice(5).trimStart())
-    yield* flush()
-  } finally {
-    // 消费方提前停（错误件轮换 / 客户端断开）时要把上游流真正取消，
-    // 只 releaseLock 会让 fetch 连接挂着等 GC。
-    await reader.cancel().catch(() => {})
-    reader.releaseLock()
+    if (line.startsWith(":")) continue
+    if (line.startsWith("event:")) {
+      yield* flush()
+      event = line.slice(6).trim()
+    } else if (line.startsWith("data:")) {
+      data.push(line.slice(5).trimStart())
+    }
   }
+  yield* flush()
 }
 
 const eventName = (s: unknown): string =>
@@ -425,7 +406,7 @@ const eventName = (s: unknown): string =>
 
 // ── 应答部件 ───────────────────────────────────────────────────
 
-export interface TraeChatUsage {
+interface TraeChatUsage {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
@@ -439,7 +420,7 @@ export interface TraeChatCall {
   arguments: string
 }
 
-export type TraeChatPart =
+type TraeChatPart =
   | { text: string }
   | { reasoning: string }
   | { call: TraeChatCall }
@@ -661,7 +642,7 @@ export async function* traeCnChain(
 
 // ── 模型列表 ───────────────────────────────────────────────────
 
-export interface TraeCnModelEntry {
+interface TraeCnModelEntry {
   config_name?: string
   usage?: string
   config_switch?: boolean
@@ -681,7 +662,7 @@ export interface TraeCnModelEntry {
   }>
 }
 
-export function isTraeCnChatModel(m: TraeCnModelEntry): boolean {
+function isTraeCnChatModel(m: TraeCnModelEntry): boolean {
   const id = String(m?.config_name ?? "")
   if (!id || /^custom_model/i.test(id)) return false
   if (m.usage && m.usage !== "chat_completion") return false
@@ -706,7 +687,7 @@ export interface TraeCnPostResult {
   v: Record<string, unknown>
 }
 
-export type TraeCnPost = (
+type TraeCnPost = (
   url: string,
   body: Record<string, unknown>,
 ) => Promise<TraeCnPostResult>
@@ -789,7 +770,7 @@ async function listOf(
   return (list ?? []).filter((m) => m?.config_name)
 }
 
-export interface TraeCnListedModel {
+interface TraeCnListedModel {
   id: string
   name: string
   context?: number

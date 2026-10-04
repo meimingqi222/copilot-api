@@ -5,7 +5,7 @@ import { setConnectionAuthStatus } from "~/lib/provider-connections"
 import type { OAuthFetchOptions } from "~/services/oauth/fetch"
 import type { OAuthRefreshFn } from "~/services/oauth/strategy-types"
 
-export interface AuthRecordUpdate {
+interface AuthRecordUpdate {
   set: Record<string, unknown>
   remove: Array<string>
 }

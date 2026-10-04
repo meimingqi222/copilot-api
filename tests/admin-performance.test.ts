@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { state } from "~/lib/state"
@@ -40,6 +40,41 @@ const originalAccounts = listAccounts()
 const originalApiKey = state.legacyApiKey
 const originalAdminPassword = state.adminPassword
 const originalUsers = state.users
+test("performance cache reuses unchanged data and invalidates immediately after writes and reset", async () => {
+  const probe = spyOn(statsStore, "getPerformanceInRange")
+  const request = () =>
+    server.fetch(
+      adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+    )
+  const timestamp = Date.now()
+  const usage = {
+    date: statsStore.getDateString(timestamp),
+    accountId: "account-1",
+    model: "cache-model",
+    promptTokens: 10,
+    completionTokens: 20,
+    totalTokens: 30,
+    timestamp,
+    tps: 10,
+    streaming: true,
+  }
+  try {
+    statsStore.recordUsage(usage)
+    await request()
+    await request()
+    expect(probe).toHaveBeenCalledTimes(1)
+    statsStore.recordUsage(usage)
+    const updated = (await (await request()).json()) as PerformanceResponse
+    expect(updated.performance[0]?.requests).toBe(2)
+    expect(probe).toHaveBeenCalledTimes(2)
+    statsStore.clearUsageStatsForTest()
+    const empty = (await (await request()).json()) as PerformanceResponse
+    expect(empty.performance).toHaveLength(0)
+    expect(probe).toHaveBeenCalledTimes(3)
+  } finally {
+    probe.mockRestore()
+  }
+})
 beforeEach(() => {
   statsStore.clearUsageStatsForTest()
   setTestAccounts([

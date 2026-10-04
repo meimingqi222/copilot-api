@@ -12,7 +12,7 @@ export interface CreateAccountBody {
   settings?: Record<string, unknown>
 }
 
-export interface AccountDeviceFlow {
+interface AccountDeviceFlow {
   device_code: string
   user_code: string
   verification_uri: string
@@ -20,13 +20,13 @@ export interface AccountDeviceFlow {
   interval: number
 }
 
-export interface AccountCreationContext {
+interface AccountCreationContext {
   body: CreateAccountBody
   label: string
   registerDeviceFlow(flow: AccountDeviceFlow, label: string): void
 }
 
-export type AccountCreationResult =
+type AccountCreationResult =
   | ManagedConnectionInput
   | { error: string; status?: 400 | 502 }
   | { response: Record<string, unknown> }

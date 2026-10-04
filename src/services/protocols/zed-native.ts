@@ -19,6 +19,7 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 import { HTTPError } from "~/lib/error"
 import { getCredentialContextString } from "~/lib/provider-connections"
+import { iterateLines } from "~/lib/stream-lines"
 import { fetchZedLlmToken, ZED_CLOUD, zedUserAgent } from "~/services/oauth/zed"
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
@@ -83,33 +84,15 @@ async function zedLlmToken(connection: ProviderConnection): Promise<string> {
 async function* zedEvents(
   response: Response,
 ): AsyncGenerator<{ data: string }> {
-  const reader = response.body?.getReader()
-  if (!reader) return
-  const decoder = new TextDecoder()
-  let buffer = ""
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let index: number
-    while ((index = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, index)
-      buffer = buffer.slice(index + 1)
-      const parsed = parseLine(line)
-      if (!parsed) continue
-      const failure = zedFailure(parsed.status)
-      if (failure) throw failure
-      if (parsed.event !== undefined) {
-        yield { data: JSON.stringify(parsed.event) }
-      }
-    }
-  }
-  const tail = parseLine(buffer)
-  if (tail) {
-    const failure = zedFailure(tail.status)
+  const body = response.body
+  if (!body) return
+  for await (const line of iterateLines(body)) {
+    const parsed = parseLine(line)
+    if (!parsed) continue
+    const failure = zedFailure(parsed.status)
     if (failure) throw failure
-    if (tail.event !== undefined) {
-      yield { data: JSON.stringify(tail.event) }
+    if (parsed.event !== undefined) {
+      yield { data: JSON.stringify(parsed.event) }
     }
   }
 }

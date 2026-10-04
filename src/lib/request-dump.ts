@@ -1,7 +1,7 @@
 /**
- * 请求 dump：把 core API(chat / messages / responses / embeddings)的原始
- * 请求头与请求体按行写入 JSONL，用于对比不同客户端打到同一 provider 时的
- * 请求差异(ZCode vs 其他 agent)。
+ * 请求 dump：把 LLM 端点的原始请求头与请求体按行写入 JSONL，用于对比不同
+ * 客户端打到同一 provider 时的请求差异(ZCode vs 其他 agent)。覆盖范围由
+ * `shouldDumpRequest()` 定义(trace 集合 + count_tokens / embeddings)。
  *
  * 默认关闭，设置 `DUMP_REQUESTS=1` 开启；`DUMP_REQUESTS_MAX_BYTES` 可覆盖
  * 单请求体积上限(默认 8MB)，`DUMP_REQUESTS_DIR` 可覆盖输出目录。
@@ -16,15 +16,16 @@
 import type { Context } from "hono"
 
 import { appendFile, mkdir, readdir, stat } from "node:fs/promises"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
+import { shouldDumpRequest } from "~/lib/llm-request"
 import { dateKeyFromDate, readLogRotationConfig } from "~/lib/log-rotation"
 import { logger } from "~/lib/logger"
-import { isCoreApiPath } from "~/lib/request-log"
 import { getSystemSettings } from "~/lib/system-config"
 import {
   createDumpSanitizer,
   isDumpSecretField,
+  type DumpSanitizer,
 } from "~/lib/request-dump-sanitizer"
 
 const DUMP_FILE_PATTERN =
@@ -66,15 +67,20 @@ export async function dumpIncomingRequest(
   meta: RequestDumpMeta,
 ): Promise<void> {
   if (!isRequestDumpEnabled()) return
-  if (!isCoreApiPath(c.req.path)) return
-  if (!["PATCH", "POST", "PUT"].includes(c.req.method)) return
+  if (!shouldDumpRequest({ method: c.req.method, path: c.req.path })) return
 
   try {
-    const headers = collectHeaders(c)
+    // 头和体共用一个 sanitizer scope：头部先记住自己的凭证，读体后再把体内
+    // 出现的凭证并进来。这样只建一次实例，header 也只遍历一遍。
+    const sanitizer = createDumpSanitizer([
+      JSON.stringify(Object.fromEntries(c.req.raw.headers)),
+    ])
+    const headers = collectHeaders(c, sanitizer)
     const maxBodyBytes = resolveMaxBodyBytes()
     const { body, bodyBytes, truncated } = await readRequestBody(
       c,
       maxBodyBytes,
+      sanitizer,
     )
     const entry = {
       timestamp: Date.now(),
@@ -95,11 +101,11 @@ export async function dumpIncomingRequest(
   }
 }
 
-function collectHeaders(c: Context): Record<string, string> {
+function collectHeaders(
+  c: Context,
+  sanitizer: DumpSanitizer,
+): Record<string, string> {
   const headers: Record<string, string> = {}
-  const sanitizer = createDumpSanitizer([
-    JSON.stringify(Object.fromEntries(c.req.raw.headers)),
-  ])
   for (const [name, value] of c.req.raw.headers.entries()) {
     const key = name.toLowerCase()
     headers[key] =
@@ -113,6 +119,7 @@ function collectHeaders(c: Context): Record<string, string> {
 async function readRequestBody(
   c: Context,
   maxBodyBytes: number,
+  sanitizer: DumpSanitizer,
 ): Promise<{ body?: string; bodyBytes?: number; truncated: boolean }> {
   const declaredLength = Number(c.req.header("content-length") ?? "")
   if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
@@ -123,26 +130,67 @@ async function readRequestBody(
     }
   }
 
-  const raw = await c.req.raw.clone().text()
-  const bodyBytes = Buffer.byteLength(raw, "utf8")
-  if (bodyBytes <= maxBodyBytes) {
-    const headerSecrets = Object.fromEntries(
-      [...c.req.raw.headers].filter(([key]) => isDumpSecretField(key)),
-    )
-    const sanitizer = createDumpSanitizer([raw, JSON.stringify(headerSecrets)])
-    const body = sanitizer.json(raw)
-    if (Buffer.byteLength(body) <= maxBodyBytes)
-      return { body, bodyBytes, truncated: false }
+  // 没有可信的 Content-Length 时也不整读：第一个跨过上限的 chunk 到达后就停，
+  // 超限直接记「已截断」而不是先把一个可能几百 MB 的 body 全部拉进内存。
+  const { raw, bytesRead, overflow } = await readBodyBounded(c, maxBodyBytes)
+  if (overflow) {
     return {
-      body: "[body omitted: redacted body exceeds limit]",
-      bodyBytes,
+      body: `[body omitted: exceeds ${maxBodyBytes} bytes]`,
+      bodyBytes: bytesRead,
       truncated: true,
     }
   }
+  const bodyBytes = bytesRead
+  // 体内可能回显 header 里的凭证，读体后并入同一个 scope 再脱敏。
+  sanitizer.addSecrets(raw)
+  const body = sanitizer.json(raw)
+  if (Buffer.byteLength(body) <= maxBodyBytes)
+    return { body, bodyBytes, truncated: false }
   return {
-    body: `[body omitted: ${bodyBytes} bytes > ${maxBodyBytes}]`,
+    body: "[body omitted: redacted body exceeds limit]",
     bodyBytes,
     truncated: true,
+  }
+}
+
+async function readBodyBounded(
+  c: Context,
+  maxBodyBytes: number,
+): Promise<{ raw: string; bytesRead: number; overflow: boolean }> {
+  const body = c.req.raw.clone().body
+  if (!body) return { raw: "", bytesRead: 0, overflow: false }
+  const reader = body.getReader()
+  const chunks: Array<Uint8Array> = []
+  let bytesRead = 0
+  let overflow = false
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytesRead += value.byteLength
+      if (bytesRead > maxBodyBytes) {
+        overflow = true
+        break
+      }
+      chunks.push(value)
+    }
+  } finally {
+    // A cloned request is a tee. Awaiting cancellation waits for the original
+    // branch too, which the route may not read until the dump has finished.
+    void reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+  if (overflow) return { raw: "", bytesRead, overflow }
+  const whole = new Uint8Array(bytesRead)
+  let offset = 0
+  for (const chunk of chunks) {
+    whole.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return {
+    raw: new TextDecoder().decode(whole),
+    bytesRead,
+    overflow,
   }
 }
 
@@ -152,18 +200,63 @@ function enqueueAppend(line: string, timestamp: number): Promise<void> {
   return operation
 }
 
+/**
+ * 当前写入的文件及其已知大小。每行都 readdir+stat 一次代价不小，
+ * 追加写入是唯一写者，所以行尾追加后大小可直接累加；目录或日期
+ * 变了、追加失败时回退到全量扫描。
+ */
+let currentDumpFile:
+  | { dir: string; dateKey: string; file: string; size: number }
+  | undefined
+
 async function appendDumpLine(line: string, timestamp: number): Promise<void> {
   const config = readLogRotationConfig()
-  const dir = resolveDumpDir(config.logDir)
+  const dir = resolve(resolveDumpDir(config.logDir))
   await mkdir(dir, { recursive: true })
   const dateKey = dateKeyFromDate(new Date(timestamp))
-  const file = await selectDumpFile(
-    dir,
-    dateKey,
-    Buffer.byteLength(line),
-    config.maxFileBytes,
-  )
-  await appendFile(file, line, "utf8")
+  const lineBytes = Buffer.byteLength(line)
+
+  let file: string
+  let size: number
+  if (
+    currentDumpFile
+    && currentDumpFile.size + lineBytes <= config.maxFileBytes
+    && currentDumpFile.dir === dir
+    && currentDumpFile.dateKey === dateKey
+  ) {
+    file = currentDumpFile.file
+    size = currentDumpFile.size
+  } else {
+    const selected = await selectDumpFile(
+      dir,
+      dateKey,
+      lineBytes,
+      config.maxFileBytes,
+    )
+    file = selected.file
+    size = selected.size
+  }
+  try {
+    await appendFile(file, line, "utf8")
+  } catch {
+    // 文件可能被外部轮转/删除，清缓存重扫一次再写。
+    currentDumpFile = undefined
+    const selected = await selectDumpFile(
+      dir,
+      dateKey,
+      lineBytes,
+      config.maxFileBytes,
+    )
+    await appendFile(selected.file, line, "utf8")
+    currentDumpFile = {
+      dir,
+      dateKey,
+      file: selected.file,
+      size: selected.size + lineBytes,
+    }
+    return
+  }
+  currentDumpFile = { dir, dateKey, file, size: size + lineBytes }
 }
 
 async function selectDumpFile(
@@ -171,7 +264,7 @@ async function selectDumpFile(
   dateKey: string,
   lineBytes: number,
   maxFileBytes: number,
-): Promise<string> {
+): Promise<{ file: string; size: number }> {
   const segments = (await listDumpSegments(dir, dateKey)).sort((a, b) => a - b)
   const segment = segments.at(-1) ?? 0
   const candidate = join(dir, buildDumpFileName(dateKey, segment))
@@ -181,9 +274,10 @@ async function selectDumpFile(
   } catch {
     // A missing first segment starts at size zero.
   }
-  return size > 0 && size + lineBytes > maxFileBytes ?
-      join(dir, buildDumpFileName(dateKey, segment + 1))
-    : candidate
+  if (size > 0 && size + lineBytes > maxFileBytes) {
+    return { file: join(dir, buildDumpFileName(dateKey, segment + 1)), size: 0 }
+  }
+  return { file: candidate, size }
 }
 
 async function listDumpSegments(

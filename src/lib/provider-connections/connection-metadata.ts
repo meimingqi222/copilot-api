@@ -5,32 +5,14 @@
  * 承载于 `ProviderConnection.metadata` 内的 `ConnectionMetadata` 子结构。
  * 本模块提供类型安全的字段读取器，替代散装 `metadata.xxx as string` 强转。
  */
-import {
-  isOAuthProviderId,
-  PROVIDER_PROTOCOL_MAP,
-  type ProviderId,
-} from "~/lib/provider-config"
+import { isOAuthProviderId, type ProviderId } from "~/lib/provider-config"
 
-// T5.2.5:内联 protocol → provider 映射(避免与 protocol-provider.ts 的循环依赖)
-const PROTOCOL_TO_PROVIDER: Partial<Record<ProviderProtocol, string>> = {}
-for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
-  PROTOCOL_TO_PROVIDER[protocol] = providerId
-}
+import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-definitions"
 
 import type { BalanceResult } from "~/lib/balance/types"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
-import type { ProviderConnection, ProviderProtocol } from "./types"
-
-/**
- * protocol → provider 反向映射,从 PROVIDER_PROTOCOL_MAP 派生。
- * 用于 ensureConnectionMetadata 的默认 provider 推导。
- */
-const PROTOCOL_TO_PROVIDER_ID: Partial<Record<ProviderProtocol, ProviderId>> =
-  {}
-for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
-  PROTOCOL_TO_PROVIDER_ID[protocol] = providerId as ProviderId
-}
+import type { ProviderConnection } from "./types"
 
 /** 配额状态(credential.status 的粗粒度投影)。 */
 type ConnectionQuotaState = "unknown" | "available" | "exhausted"
@@ -400,7 +382,7 @@ export function ensureConnectionMetadata(
     || !("provider" in conn.metadata)
   ) {
     // 从 protocol 推导默认 provider,而非硬编码 "copilot"
-    const defaultProvider = PROTOCOL_TO_PROVIDER_ID[conn.protocol] ?? "copilot"
+    const defaultProvider = PROTOCOL_TO_PROVIDER[conn.protocol] ?? "copilot"
     conn.metadata = {
       provider: defaultProvider,
       quotaState: "unknown",

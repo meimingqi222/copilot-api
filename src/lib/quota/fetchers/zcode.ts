@@ -252,9 +252,11 @@ export async function fetchZcodeQuota(
   if (
     credential
     && jwt
-    && (!key || (await resolveZcodeRoute(connection, credential)) === "start")
+    && (!key
+      || (await resolveZcodeRoute(connection, credential, { signal }))
+        === "start")
   ) {
-    const balance = await zcodeStartBalance(connection, jwt)
+    const balance = await zcodeStartBalance(connection, jwt, signal)
     return buildStartSnapshot(balance)
   }
 

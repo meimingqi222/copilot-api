@@ -30,6 +30,7 @@ const originalEnv = {
   DUMP_REQUESTS_DIR: process.env["DUMP_REQUESTS_DIR"],
   DUMP_REQUESTS_MAX_BYTES: process.env["DUMP_REQUESTS_MAX_BYTES"],
   LOG_DIR: process.env["LOG_DIR"],
+  LOG_MAX_FILE_BYTES: process.env["LOG_MAX_FILE_BYTES"],
 }
 
 let dumpDir = ""
@@ -50,6 +51,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (originalEnv.LOG_MAX_FILE_BYTES === undefined)
+    delete process.env.LOG_MAX_FILE_BYTES
+  else process.env.LOG_MAX_FILE_BYTES = originalEnv.LOG_MAX_FILE_BYTES
   if (originalEnv.DUMP_REQUESTS === undefined) delete process.env.DUMP_REQUESTS
   else process.env.DUMP_REQUESTS = originalEnv.DUMP_REQUESTS
   if (originalEnv.DUMP_REQUESTS_DIR === undefined)
@@ -331,6 +335,99 @@ describe("request dump", () => {
 })
 
 describe("upstream responses wire dump", () => {
+  test("JSON preceded by long whitespace still has its secrets and echoes redacted", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    const body =
+      " ".repeat(100)
+      + JSON.stringify({
+        token: "whitespace-secret",
+        echo: "whitespace-secret",
+      })
+    await dumpUpstreamResponsesWire({
+      connectionId: "test",
+      model: "test",
+      stripMode: "none",
+      wire: "test",
+      upstreamStatus: 400,
+      upstreamBody: body,
+      upstreamErrorBody: "whitespace-secret",
+    })
+    const written = fs.readFileSync(
+      path.join(dumpDir, buildDumpFileName(dateKey(), 0)),
+      "utf8",
+    )
+    expect(written).not.toContain("whitespace-secret")
+    expect(written).toContain("redacted")
+  })
+
+  test("rotation cache honors exact directories and size boundaries", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    process.env.LOG_MAX_FILE_BYTES = "100000"
+    const write = () =>
+      dumpUpstreamResponsesWire({
+        connectionId: "test",
+        model: "test",
+        stripMode: "none",
+        wire: "test",
+        upstreamStatus: 400,
+        upstreamBody: "{}",
+        upstreamErrorBody: "failed",
+      })
+    const prefix = path.join(dumpDir, "nested")
+    const child = path.join(prefix, "child")
+    process.env.DUMP_REQUESTS_DIR = child
+    await write()
+    process.env.DUMP_REQUESTS_DIR = prefix
+    await write()
+    const first = path.join(prefix, buildDumpFileName(dateKey(), 0))
+    expect(fs.existsSync(first)).toBe(true)
+    process.env.LOG_MAX_FILE_BYTES = "1"
+    await write()
+    expect(
+      fs.existsSync(path.join(prefix, buildDumpFileName(dateKey(), 1))),
+    ).toBe(true)
+    expect(fs.readFileSync(first, "utf8").trim().split("\n")).toHaveLength(1)
+  })
+
+  test("bounded dump does not wait for a tee's unread original request", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    process.env.DUMP_REQUESTS_MAX_BYTES = "32"
+    let reads = 0
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        reads++
+        if (reads <= 10)
+          controller.enqueue(new TextEncoder().encode("x".repeat(32)))
+        else controller.close()
+      },
+    })
+    const app = new Hono()
+    let entry: Record<string, unknown> | undefined
+    app.post("/v1/responses", async (c) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([
+          dumpIncomingRequest(c, { requestId: "bounded" }),
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("dump stalled")), 500)
+          }),
+        ])
+        entry = readAllEntries()[0]
+        expect(reads).toBeLessThan(10)
+        expect((await c.req.text()).length).toBe(320)
+        return c.json({ ok: true })
+      } finally {
+        clearTimeout(timer)
+      }
+    })
+    const response = await app.request("/v1/responses", {
+      method: "POST",
+      body: stream,
+    })
+    expect(response.status).toBe(200)
+    expect(entry?.truncated).toBe(true)
+    expect(entry?.bodyBytes).toBe(64)
+  })
   test("sanitizes upstream bodies and error echoes before truncating", async () => {
     process.env.DUMP_REQUESTS = "1"
     await dumpUpstreamResponsesWire({

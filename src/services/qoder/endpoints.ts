@@ -79,22 +79,10 @@ export function qoderSiteForConnection(
   return qoderSiteForProvider(getConnectionProvider(connection))
 }
 
-// ── 全局站常量（沿用旧导出，等价 QODER_SITES.qoder 的字段） ──────
-
-/** 设备流客户端 id。 */
-export const QODER_CLIENT_ID = QODER_SITES.qoder.clientId
-
-/** 设备流授权页 host。 */
-export const QODER_DEVICE_FLOW_HOST = QODER_SITES.qoder.deviceFlowHost
-
-/** token 轮询 / job token 交换的 host。 */
-export const QODER_OPENAPI_HOST = QODER_SITES.qoder.openapiHost
+// ── 全局站常量（等价 QODER_SITES.qoder 的字段） ────────────────
 
 /** 模型推理 host。 */
 export const QODER_API_HOST = QODER_SITES.qoder.apiHost
-
-/** 设备流使用的 app scheme。 */
-export const QODER_REDIRECT_URI = QODER_SITES.qoder.redirectUri
 
 /** 账号页请求用的 User-Agent（usage 端点要求）。 */
 export const QODER_USER_AGENT = "Qoder"

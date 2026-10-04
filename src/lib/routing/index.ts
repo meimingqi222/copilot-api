@@ -1,15 +1,10 @@
 /**
  * L0 routing helpers for multi-account prompt-cache utilization.
  *
- * L1 (provider-specific rewrites) live under services/<provider>/ and
- * must consult provider-cache.ts before inventing session identifiers.
+ * L1 (provider-specific rewrites) live under services/<provider>/.
  */
 
-export {
-  CACHE_UTILIZATION_DEFAULTS,
-  getProviderCacheProfile,
-  providerHasCacheFeature,
-} from "./provider-cache"
+export { CACHE_UTILIZATION_DEFAULTS } from "./provider-cache"
 export {
   affinityAuthKey,
   affinityCacheKey,

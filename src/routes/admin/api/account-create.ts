@@ -135,25 +135,11 @@ createAccountRoutes.post("/", async (c) => {
         expiresAt: Date.now() + flow.expires_in * 1000,
         status: "pending",
       })
-
-      // Clean up expired flows after expiry
-      setTimeout(async () => {
-        const { getPendingFlow, savePendingFlows } = await import(
-          "./device-flow"
-        )
-        const pending = getPendingFlow(flow.device_code)
-        if (pending && pending.status === "pending") {
-          pending.status = "expired"
-          await savePendingFlows()
-        }
-        setTimeout(async () => {
-          const { removePendingFlow, savePendingFlows: save } = await import(
-            "./device-flow"
-          )
-          removePendingFlow(flow.device_code)
-          await save()
-        }, 60_000)
-      }, flow.expires_in * 1000)
+      // 过期不需要定时器：`registerPendingFlow` 每次注册都会清掉已过期条目，
+      // `pollAccountFlow` 也会按 `expiresAt` 就地返回 "expired"，重启加载时
+      // 同样会过滤掉过期条目。原来的嵌套 setTimeout 既没 unref 也没留
+      // handle，等于每次设备流登录都往 event loop 上挂两个最长 15 分钟的
+      // 活跃 timer。
     },
   })
 

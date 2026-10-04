@@ -41,5 +41,3 @@ export const providerMetadata = defineProviderMetadata({
     accountFields: MINIMAX_ACCOUNT_FIELDS,
   },
 })
-
-export const descriptor = providerMetadata.descriptor

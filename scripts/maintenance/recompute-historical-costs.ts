@@ -8,8 +8,8 @@
  * and asks for confirmation via the --apply flag before writing.
  *
  * Usage:
- *   bun run scripts/recompute-historical-costs.ts          # dry-run
- *   bun run scripts/recompute-historical-costs.ts --apply  # write changes
+ *   bun run scripts/maintenance/recompute-historical-costs.ts          # dry-run
+ *   bun run scripts/maintenance/recompute-historical-costs.ts --apply  # write changes
  */
 import { Database } from "bun:sqlite"
 

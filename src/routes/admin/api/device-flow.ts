@@ -52,7 +52,7 @@ async function loadPendingFlows(): Promise<void> {
 }
 
 // Save pending flows to disk
-export async function savePendingFlows(): Promise<void> {
+async function savePendingFlows(): Promise<void> {
   assertWritableDataPath(PATHS.PENDING_FLOWS_PATH)
   const obj = Object.fromEntries(pendingFlows.entries())
   await fs.writeFile(PATHS.PENDING_FLOWS_PATH, JSON.stringify(obj, null, 2))
@@ -75,14 +75,6 @@ export function registerPendingFlow(
   }
   pendingFlows.set(deviceCode, state)
   void savePendingFlows()
-}
-
-export function getPendingFlow(flowId: string): PollState | undefined {
-  return pendingFlows.get(flowId)
-}
-
-export function removePendingFlow(flowId: string): void {
-  pendingFlows.delete(flowId)
 }
 
 export async function pollAccountFlow(flowId: string): Promise<{

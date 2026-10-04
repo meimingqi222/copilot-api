@@ -10,7 +10,7 @@
       rel="stylesheet"
       href="/admin/static/css/routing-groups.css?v=0.7.3"
     />
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/admin/static/css/tailwind.min.css?v=0.7.7" />
     <!-- CDN 版本已锁定:升级前先在离线/测试环境验证,避免上游 breaking change 直接白屏 -->
     <script
       defer
@@ -4635,11 +4635,8 @@
                           ></th>
                         </tr>
                       </thead>
-                      <tbody>
-                        <template
-                          x-for="model in filteredModelKeys"
-                          :key="model"
-                        >
+                      <template x-for="model in filteredModelKeys" :key="model">
+                        <tbody>
                           <!-- Model Row Group -->
                           <tr
                             class="border-b border-[var(--apple-gray-6)] hover:bg-[var(--apple-bg-secondary)]/50 transition-colors"
@@ -5004,8 +5001,10 @@
                               </div>
                             </td>
                           </tr>
-                        </template>
+                        </tbody>
+                      </template>
 
+                      <tbody>
                         <!-- Filter / Search empty state -->
                         <tr
                           x-show="filteredModelKeys.length === 0 && Object.keys(modelPrices).length > 0"
@@ -6763,7 +6762,11 @@
               </template>
               <div class="tr-cand-list">
                 <template x-for="c in candidates" :key="candidateKey(c)">
-                  <div class="tr-cand" :class="candidateState(c)">
+                  <div
+                    class="tr-cand"
+                    :class="candidateState(c)"
+                    :data-route-key="candidateKey(c)"
+                  >
                     <span class="tr-cand-dot"></span>
                     <span class="tr-cand-main">
                       <div class="tr-cand-top">
@@ -7507,7 +7510,7 @@
     <script src="/admin/static/js/views/usage.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/quotas.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/performance.js?v=0.7.7"></script>
-    <script src="/admin/static/js/views/traces.js?v=0.7.10"></script>
+    <script src="/admin/static/js/views/traces.js?v=0.7.11"></script>
     <script src="/admin/static/js/views/guard.js?v=0.7.2"></script>
     <script src="/admin/static/js/views/logs.js?v=0.7.2"></script>
     <script src="/admin/static/js/partials.js?v=0.7.2"></script>

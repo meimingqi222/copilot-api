@@ -17,11 +17,9 @@ import {
   clearSessionAffinityForTest,
   extractSessionIds,
   generateAntigravityStableSessionId,
-  getProviderCacheProfile,
   getSessionAffinitySizeForTest,
   invalidateSessionAffinityAuth,
   isCodexIdentityConfuseEnabled,
-  providerHasCacheFeature,
   pruneSessionAffinityForTest,
   resolveStableSessionId,
   setSessionAffinity,
@@ -409,28 +407,5 @@ describe("session affinity map maintenance", () => {
     // Past TTL window
     expect(pruneSessionAffinityForTest(Date.now() + 3 * 60 * 60_000)).toBe(1)
     expect(getSessionAffinitySizeForTest()).toBe(0)
-  })
-})
-
-describe("provider L1 cache profiles", () => {
-  test("identity confuse is codex-only", () => {
-    expect(providerHasCacheFeature("codex", "codex-identity-confuse")).toBe(
-      true,
-    )
-    expect(providerHasCacheFeature("claude", "codex-identity-confuse")).toBe(
-      false,
-    )
-    expect(
-      providerHasCacheFeature("antigravity", "codex-identity-confuse"),
-    ).toBe(false)
-    expect(providerHasCacheFeature("xai", "codex-identity-confuse")).toBe(false)
-  })
-
-  test("kimi/codebuff only passthrough (no synthesis)", () => {
-    expect(getProviderCacheProfile("kimi").synthesizeStableSession).toBe(false)
-    expect(getProviderCacheProfile("codebuff").synthesizeStableSession).toBe(
-      false,
-    )
-    expect(getProviderCacheProfile("claude").synthesizeStableSession).toBe(true)
   })
 })

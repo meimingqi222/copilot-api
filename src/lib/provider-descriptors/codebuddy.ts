@@ -26,8 +26,6 @@ export const codebuddyMetadata = defineProviderMetadata({
   },
 })
 
-export const codebuddyDescriptor = codebuddyMetadata.descriptor
-
 export const codebuddyCnMetadata = defineProviderMetadata({
   protocol: "codebuddy-native",
   oauth: false,
@@ -47,5 +45,3 @@ export const codebuddyCnMetadata = defineProviderMetadata({
     accountFields: OAUTH_ACCOUNT_FIELDS,
   },
 })
-
-export const codebuddyCnDescriptor = codebuddyCnMetadata.descriptor

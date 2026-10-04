@@ -16,7 +16,7 @@
  */
 
 import { isOAuthProviderId, type ProviderId } from "~/lib/provider-config"
-import { PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
+import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-definitions"
 
 import type { ProviderConnection, ProviderProtocol } from "./types"
 
@@ -27,10 +27,6 @@ import { listProviderConnections } from "./state"
 /**
  * Protocol → ProviderId 反向映射(从 PROVIDER_PROTOCOL_MAP 派生)。
  */
-const PROTOCOL_TO_PROVIDER: Partial<Record<ProviderProtocol, ProviderId>> = {}
-for (const [providerId, protocol] of Object.entries(PROVIDER_PROTOCOL_MAP)) {
-  PROTOCOL_TO_PROVIDER[protocol] = providerId as ProviderId
-}
 
 /**
  * 协议反查 provider。未注册的 protocol 返回 undefined。

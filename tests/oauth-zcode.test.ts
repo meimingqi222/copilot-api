@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
@@ -256,6 +256,81 @@ describe("zcode Start Plan (temporary credits)", () => {
     }
     return conn
   }
+
+  test("twenty cold requests share one bounded probe and cancellation only drops its waiter", async () => {
+    const conn = startPlanConnection()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reads = 0
+    let probeSignal: AbortSignal | undefined
+    globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
+      reads++
+      probeSignal = init?.signal ?? undefined
+      await gate
+      return jsonResponse({ code: 0, data: [{ status: "VALID" }] })
+    }) as typeof fetch
+    const abort = new AbortController()
+    const canceled = resolveZcodeRoute(conn, conn.credentials[0]!, {
+      signal: abort.signal,
+    })
+    const remaining = Array.from({ length: 19 }, () =>
+      resolveZcodeRoute(conn, conn.credentials[0]!),
+    )
+    abort.abort(new Error("caller canceled"))
+    await expect(canceled).rejects.toThrow("caller canceled")
+    expect(probeSignal).toBeInstanceOf(AbortSignal)
+    expect(probeSignal?.aborted).toBe(false)
+    expect(reads).toBe(1)
+    release()
+    expect(await Promise.all(remaining)).toEqual(Array(19).fill("coding"))
+  })
+
+  test("route probes time out and preserve cached routes during background refresh", async () => {
+    const conn = startPlanConnection()
+    const timeout = spyOn(AbortSignal, "timeout")
+    timeout.mockImplementation(() => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new Error("probe timeout")), 10)
+      return controller.signal
+    })
+    let calls = 0
+    globalThis.fetch = (async (_url: string | URL, init?: RequestInit) => {
+      calls++
+      if (calls === 1)
+        return jsonResponse({ code: 0, data: [{ status: "VALID" }] })
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (signal?.aborted) {
+          reject(signal.reason)
+          return
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        })
+      })
+    }) as typeof fetch
+    try {
+      expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("coding")
+      const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60_000)
+      try {
+        expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe(
+          "coding",
+        )
+      } finally {
+        clock.mockRestore()
+      }
+      // Let the shared timeout finish; the caller did not have to wait for it.
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(timeout).toHaveBeenCalledWith(15_000)
+      expect(calls).toBe(3)
+      __resetZcodeRouteCacheForTest()
+      expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("coding")
+    } finally {
+      timeout.mockRestore()
+    }
+  })
 
   test("route follows the subscription list", async () => {
     globalThis.fetch = (async (url: string | URL) => {

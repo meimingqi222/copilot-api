@@ -59,9 +59,9 @@ export function flowFetchOptions(
   return flow.proxyUrl ? { proxyUrl: flow.proxyUrl } : undefined
 }
 
-export type OAuthFlowType = "pkce-callback" | "callback" | "device"
+type OAuthFlowType = "pkce-callback" | "callback" | "device"
 
-export interface OAuthStartInput {
+interface OAuthStartInput {
   proxyUrl?: string
   /**
    * Provider 专属账号域。目前只有 MiniMax Code 用：
@@ -71,7 +71,7 @@ export interface OAuthStartInput {
   region?: string
 }
 
-export interface OAuthStartResult {
+interface OAuthStartResult {
   // Flow registration fields
   authUrl?: string
   state?: string
@@ -91,7 +91,7 @@ export interface OAuthStartResult {
   responseExpiresIn?: number
 }
 
-export interface OAuthExchangeInput {
+interface OAuthExchangeInput {
   flow: OAuthPendingFlow
   /** Authorization code for callback-based flows */
   code?: string

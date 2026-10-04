@@ -17,21 +17,61 @@ function isMediaField(key: string, record: Record<string, unknown>): boolean {
   )
 }
 
-function parseJson(input: string): unknown {
-  try {
-    return JSON.parse(input) as unknown
-  } catch {
-    return undefined
+/**
+ * Cheap gate before JSON.parse: only a leading `{`/`[` (after whitespace)
+ * can yield a structure worth sanitizing. Most strings in a body are plain
+ * text/values; this skips the throwaway parse the old code ran on every one.
+ */
+function looksLikeJson(input: string): boolean {
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (ch === "{" || ch === "[") return true
+    if (ch !== " " && ch !== "\n" && ch !== "\r" && ch !== "\t") return false
   }
+  return false
+}
+
+/**
+ * Parsed results are memoized per-sanitizer because the same string is
+ * walked twice: once collecting secrets (`remember`) and once producing the
+ * sanitized copy (`sanitize`). Bounded — embedded JSON strings are rare and
+ * an unbounded map would pin large bodies.
+ */
+const PARSE_MEMO_MAX = 128
+
+function parseJson(input: string, memo?: Map<string, unknown>): unknown {
+  if (!looksLikeJson(input)) return undefined
+  if (memo?.has(input)) return memo.get(input)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(input) as unknown
+  } catch {
+    parsed = undefined
+  }
+  if (memo) {
+    if (memo.size >= PARSE_MEMO_MAX) memo.delete(memo.keys().next().value!)
+    memo.set(input, parsed)
+  }
+  return parsed
 }
 
 /** One scope shares known secrets between headers, body and error echoes. */
+export type DumpSanitizer = ReturnType<typeof createDumpSanitizer>
+
 export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
   const secrets = new Set<string>()
+  const memo = new Map<string, unknown>()
+  /**
+   * Sorted longest-first so a token containing another secret is replaced as a
+   * whole. Built lazily and dropped whenever more secrets arrive, because the
+   * header pass runs before the body has been read.
+   */
+  let knownSecrets: Array<string> | undefined
+
   function remember(value: unknown, depth = 0): void {
     if (depth > MAX_DEPTH) return
     if (typeof value === "string") {
-      const parsed = parseJson(value)
+      const parsed = parseJson(value, memo)
       if (parsed !== undefined) remember(parsed, depth + 1)
     } else if (Array.isArray(value)) {
       for (const item of value) remember(item, depth + 1)
@@ -51,18 +91,33 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
               if (value.length >= 4) secrets.add(value)
             }
           }
+          knownSecrets = undefined
         }
         remember(nested, depth + 1)
       }
     }
   }
-  for (const input of inputs) remember(parseJson(input))
-  const knownSecrets = [...secrets].sort((a, b) => b.length - a.length)
+  /**
+   * Add a scope's worth of text to the shared secret pool. Called once per
+   * input at construction, and again for the body once it has been read.
+   */
+  function addSecrets(input: string): void {
+    const parsed = parseJson(input, memo)
+    if (parsed !== undefined) remember(parsed)
+  }
+
+  for (const input of inputs) addSecrets(input)
+
+  function currentSecrets(): ReadonlyArray<string> {
+    if (!knownSecrets)
+      knownSecrets = [...secrets].sort((a, b) => b.length - a.length)
+    return knownSecrets
+  }
 
   function text(input: string, depth = 0): string {
     if (depth > MAX_DEPTH) return "[omitted: nesting limit]"
     let result = input
-    for (const secret of knownSecrets)
+    for (const secret of currentSecrets())
       result = result.replaceAll(secret, REDACTED)
     return result
       .replaceAll(
@@ -100,7 +155,7 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
   function sanitize(value: unknown, depth = 0): unknown {
     if (depth > MAX_DEPTH) return "[omitted: nesting limit]"
     if (typeof value === "string") {
-      const parsed = parseJson(value)
+      const parsed = parseJson(value, memo)
       return parsed === undefined ?
           text(value)
         : JSON.stringify(sanitize(parsed, depth + 1))
@@ -122,16 +177,16 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
   }
 
   function json(input: string): string {
-    const parsed = parseJson(input)
+    const parsed = parseJson(input, memo)
     return parsed === undefined ?
         "[body omitted: invalid JSON]"
       : JSON.stringify(sanitize(parsed))
   }
 
   function error(input: string): string {
-    const parsed = parseJson(input)
+    const parsed = parseJson(input, memo)
     return parsed === undefined ? text(input) : JSON.stringify(sanitize(parsed))
   }
 
-  return { json, error, text }
+  return { json, error, text, addSecrets }
 }

@@ -1,7 +1,7 @@
 /* oxlint-disable unicorn/text-encoding-identifier-case */
 /**
  * Deep parser for Windsurf GetChatMessage request & response captures.
- * Usage: bun run scripts/parse-proto-capture.ts <temp/GetChatMessage-req|res>
+ * Usage: bun run scripts/archive/parse-proto-capture.ts <temp/GetChatMessage-req|res>
  */
 import { readFileSync } from "node:fs"
 import { gunzipSync } from "node:zlib"
@@ -230,7 +230,9 @@ function printTree(
 function main() {
   const filePath = process.argv[2]
   if (!filePath) {
-    console.error("Usage: bun run scripts/parse-proto-capture.ts <file>")
+    console.error(
+      "Usage: bun run scripts/archive/parse-proto-capture.ts <file>",
+    )
     process.exit(1)
   }
 

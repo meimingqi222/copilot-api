@@ -13,8 +13,6 @@ export type { ProviderId, OAuthProviderId } from "~/lib/provider-definitions"
 export type {
   ProviderDescriptor,
   ProviderFeature,
-  ProviderFieldSchema,
-  ProviderPresentation,
 } from "~/lib/provider-descriptors/types"
 import {
   getProviderDescriptor,

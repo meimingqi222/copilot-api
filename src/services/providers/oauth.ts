@@ -21,7 +21,7 @@ import type {
 import type { ProviderRuntime } from "~/services/providers/runtime"
 
 /** Provider-owned operations; defaults preserve the existing OAuth providers. */
-export interface OAuthRuntimeOperations {
+interface OAuthRuntimeOperations {
   discoverModels?(connection: ProviderConnection): Promise<Array<ModelMapping>>
   getFallbackModels?(connection: ProviderConnection): Array<ModelMapping>
   fetchQuota?(

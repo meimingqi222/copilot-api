@@ -13,10 +13,7 @@
 
 import { createHash } from "node:crypto"
 
-import {
-  isCodexIdentityConfuseEnabled,
-  providerHasCacheFeature,
-} from "~/lib/routing"
+import { isCodexIdentityConfuseEnabled } from "~/lib/routing"
 
 // UUID v5 namespace (OID namespace from RFC 4122)
 const NAMESPACE_OID = "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
@@ -144,12 +141,10 @@ export function applyIdentityConfuseBody(
     promptCacheKey: "",
     turnIds: [],
   }
-  // L1 Codex only + flag + (affinity | fill-first)
-  if (
-    !providerHasCacheFeature("codex", "codex-identity-confuse")
-    || !isCodexIdentityConfuseEnabled()
-    || !authId.trim()
-  ) {
+  // Codex-only by construction — the only callers are in
+  // services/codex/create-responses-once.ts. Gate is flag + (affinity |
+  // fill-first).
+  if (!isCodexIdentityConfuseEnabled() || !authId.trim()) {
     return state
   }
   state.enabled = true

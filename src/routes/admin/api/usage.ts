@@ -11,6 +11,7 @@ import {
 import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
+import { onStateChange } from "~/lib/state-events"
 import { statsStore } from "~/lib/stats-store"
 import {
   addDays,
@@ -27,7 +28,29 @@ import {
  * models.dev bucket instead of falling back to the global (provider-agnostic)
  * lookup, which can return stale data from an unrelated provider.
  */
+const MODEL_HINTS_TTL_MS = 5_000
+
+/**
+ * The pricing endpoints below each call `buildModelProviderHints()` once per
+ * request, and every call walks every connection and every model. Connections
+ * change rarely, so a short TTL stops one page load from rebuilding an
+ * identical map three times. Callers only read the returned map.
+ */
+let modelHintsCache: { at: number; hints: Map<string, ProviderId> } | undefined
+onStateChange("models-stale", () => {
+  modelHintsCache = undefined
+})
+
 function buildModelProviderHints(): Map<string, ProviderId> {
+  const now = Date.now()
+  if (modelHintsCache && now - modelHintsCache.at < MODEL_HINTS_TTL_MS)
+    return modelHintsCache.hints
+  const hints = buildModelProviderHintsUncached()
+  modelHintsCache = { at: now, hints }
+  return hints
+}
+
+function buildModelProviderHintsUncached(): Map<string, ProviderId> {
   const hints = new Map<string, ProviderId>()
   // 使用 connection 原生列表(替代 listAccounts())
   const sortedConnections = listAccountManagedConnections()
@@ -868,8 +891,45 @@ usageApiRoutes.get("/summary", (c) => {
   }
 })
 
+// ── /performance 短缓存 ─────────────────────────────────────────
+// 聚合是同步 CPU（50k 行约 340ms），而页面会在各自动刷新周期反复
+// 请求同一时间范围。2s TTL 既挡掉连点刷新，又几乎不影响数据新鲜度。
+const PERF_CACHE_TTL_MS = 2_000
+const PERF_CACHE_MAX = 32
+const perfCache = new Map<
+  string,
+  {
+    at: number
+    revision: number
+    result: ReturnType<typeof statsStore.getPerformanceInRange>
+  }
+>()
+
+function getPerfBundle(startMs: number, endMs: number) {
+  const key = `${startMs}:${endMs}`
+  const now = Date.now()
+  const hit = perfCache.get(key)
+  const revision = statsStore.getUsageRevision()
+  if (hit && hit.revision === revision && now - hit.at < PERF_CACHE_TTL_MS)
+    return hit.result
+  const result = statsStore.getPerformanceInRange({ startMs, endMs })
+  perfCache.set(key, { at: now, revision, result })
+  void result.catch(() => {
+    if (perfCache.get(key)?.result === result) perfCache.delete(key)
+  })
+  if (perfCache.size > PERF_CACHE_MAX) {
+    // Map 迭代按插入序，删掉最旧的一半即可。
+    let remove = perfCache.size - PERF_CACHE_MAX / 2
+    for (const k of perfCache.keys()) {
+      if (remove-- <= 0) break
+      perfCache.delete(k)
+    }
+  }
+  return result
+}
+
 // Get per-model performance metrics (TTFT, TPS)
-usageApiRoutes.get("/performance", (c) => {
+usageApiRoutes.get("/performance", async (c) => {
   try {
     const range = c.req.query("range") || "today"
     const month = c.req.query("month")
@@ -884,19 +944,19 @@ usageApiRoutes.get("/performance", (c) => {
       tz,
     })
 
-    const performance = statsStore.getPerformanceByModelInRange({
+    // 一次原始行扫描同时产出三个视图（之前各扫一遍）。
+    const { performance, details, byProvider } = await getPerfBundle(
       startMs,
       endMs,
-    })
-    const details = statsStore.getPerformanceDetailsInRange({ startMs, endMs })
-    const byProvider = statsStore
-      .getPerformanceByProviderModelInRange({ startMs, endMs })
-      .map((row) => ({ ...row, providerLabel: providerLabel(row.provider) }))
+    )
 
     return c.json({
       performance,
       details,
-      byProvider,
+      byProvider: byProvider.map((row) => ({
+        ...row,
+        providerLabel: providerLabel(row.provider),
+      })),
       period: { startDate, endDate, timeZone },
     })
   } catch (error) {

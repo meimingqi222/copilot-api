@@ -18,5 +18,3 @@ export const providerMetadata = defineProviderMetadata({
     accountFields: OAUTH_ACCOUNT_FIELDS,
   },
 })
-
-export const descriptor = providerMetadata.descriptor

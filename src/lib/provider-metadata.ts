@@ -50,9 +50,6 @@ export const PROVIDER_METADATA_ENTRIES = [
   traeCnMetadata,
 ] as const
 
-export type ProviderMetadataEntry = (typeof PROVIDER_METADATA_ENTRIES)[number]
-export type ProviderMetadataId = ProviderMetadataEntry["descriptor"]["id"]
-
 export const PROVIDER_METADATA = createProviderMetadataCatalog(
   PROVIDER_METADATA_ENTRIES,
 )

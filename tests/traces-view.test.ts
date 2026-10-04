@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 
-function view(api = {}) {
+function view(api = {}, environment = {}) {
   const source = readFileSync("pages/js/views/traces.js", "utf8")
   const context = {
     ViewHelpers: {},
@@ -11,6 +11,7 @@ function view(api = {}) {
     Date,
     globalThis,
     API: api,
+    ...environment,
   }
   const result = runInNewContext(source + "\ntracesView()", context)
   result.refreshStage = () => {}
@@ -29,6 +30,126 @@ function tierView(language = "zh") {
 }
 
 describe("request trace view", () => {
+  test("packets are positioned before the first animation frame", () => {
+    const v = view(
+      {},
+      {
+        globalThis: { requestAnimationFrame: () => 1 },
+      },
+    )
+    const attributes = new Map<string, unknown>()
+    v.$refs = { flights: {} }
+    v.svgElement = (_parent: unknown, _tag: string, attrs: object) => {
+      expect(attrs).toMatchObject({ visibility: "hidden" })
+      for (const [key, value] of Object.entries(attrs))
+        attributes.set(key, value)
+      return {
+        setAttribute: (key: string, value: unknown) =>
+          attributes.set(key, value),
+        style: { setProperty: () => {} },
+      }
+    }
+    v._flightPaths.set("gateway", {
+      getTotalLength: () => 100,
+      getPointAtLength: (distance: number) => ({ x: 132 + distance, y: 84 }),
+    })
+    v._flightFrames.set("new", { requestId: "new", inFlight: true })
+    v.startFlights()
+    expect(attributes.get("cx")).toBe(132)
+    expect(attributes.get("cy")).toBe(84)
+    expect(attributes.get("visibility")).toBe("visible")
+  })
+
+  test("animation caches geometry and hides packets with missing routes", () => {
+    const v = view()
+    const writes: string[] = []
+    let measurements = 0
+    let visibility = ""
+    const path = {
+      getTotalLength: () => {
+        measurements++
+        return 100
+      },
+      getPointAtLength: (distance: number) => ({ x: distance, y: 84 }),
+    }
+    const flight = {
+      packet: {
+        setAttribute: (name: string, value: unknown) => {
+          writes.push(name)
+          if (name === "visibility") visibility = String(value)
+        },
+      },
+      phase: "out",
+      started: 0,
+      routeKey: "gateway",
+    }
+    v._flightPaths.set("gateway", path)
+    v.poseFlight(flight, {}, 0)
+    v.poseFlight(flight, {}, 100)
+    expect(measurements).toBe(1)
+    expect(writes.filter((name) => name === "class")).toHaveLength(1)
+    v._flightPaths.clear()
+    v.poseFlight(flight, {}, 200)
+    expect(writes.at(-1)).toBe("visibility")
+    expect(visibility).toBe("hidden")
+    v._flightPaths.set("gateway", path)
+    v.poseFlight(flight, {}, 300)
+    expect(writes.filter((name) => name === "visibility")).toHaveLength(3)
+    expect(visibility).toBe("visible")
+    v._flightPaths.set("gateway", { ...path })
+    v.poseFlight(flight, {}, 400)
+    expect(measurements).toBe(2)
+  })
+
+  test("dashboard uses bundled utilities without a DOM-observing compiler", () => {
+    const html = readFileSync("pages/index.html", "utf8")
+    expect(html).not.toContain("https://cdn.tailwindcss.com")
+    expect(html).toContain("/admin/static/css/tailwind.min.css")
+  })
+
+  test("wire geometry follows candidate identity during DOM reordering", () => {
+    const v = view(
+      {},
+      { globalThis: { matchMedia: () => ({ matches: false }) } },
+    )
+    v.push({
+      requestId: "a",
+      candidates: [{ connectionId: "first" }, { connectionId: "second" }],
+    })
+    v._flightFrames.clear()
+    const node = (left: number, top: number, routeKey?: string) => ({
+      dataset: { routeKey },
+      getBoundingClientRect: () => ({
+        left,
+        right: left + 40,
+        top,
+        height: 20,
+      }),
+    })
+    const rows = [node(400, 120, "second::::"), node(400, 180, "first::::")]
+    v.$refs = {
+      lane: {
+        clientWidth: 600,
+        querySelectorAll: (selector: string) =>
+          selector === ".tr-node" ? [node(20, 60), node(200, 60)] : rows,
+        getBoundingClientRect: () => ({
+          left: 0,
+          top: 0,
+          width: 600,
+          height: 240,
+        }),
+      },
+      wires: { replaceChildren: () => {}, setAttribute: () => {} },
+    }
+    v.svgElement = (_parent: unknown, _tag: string, attrs: object) => attrs
+    v.drawStage()
+    expect(v._flightPaths.get("branch:first::::").d.endsWith("400 190")).toBe(
+      true,
+    )
+    expect(v._flightPaths.get("branch:second::::").d.endsWith("400 130")).toBe(
+      true,
+    )
+  })
   test("fast and priority are equivalent Fast modes but keep raw details", () => {
     const trace = tierView()
     for (const sent of ["fast", "priority"])

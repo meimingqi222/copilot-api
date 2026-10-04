@@ -336,7 +336,7 @@ function performanceView() {
         if (bodyRatio >= 0.7 && t.bodyReadMs.average >= 200) {
           insights.push({
             type: "network",
-            icon: "arrow-down-to-bracket",
+            icon: "upload",
             class: "badge-info",
             text: this.t("perf.insightClientUpload", {
               ms: this.formatMs(t.bodyReadMs.average),

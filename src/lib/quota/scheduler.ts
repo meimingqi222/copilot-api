@@ -103,6 +103,17 @@ export async function refreshAllQuotas(): Promise<void> {
   }
 }
 
+/**
+ * Fields the tick may mutate. Persist + models-stale emit only happen when a
+ * fingerprint actually changes — a quiet tick otherwise rewrites the whole
+ * connections file and notifies every watcher for nothing.
+ */
+function connectionFingerprint(conn: ProviderConnection): string {
+  return JSON.stringify(conn)
+}
+
+const QUOTA_REFRESH_WORKERS = 4
+
 async function refreshAllQuotasOnce(): Promise<void> {
   const connections = listAccountManagedConnections().filter(
     (conn) =>
@@ -110,23 +121,36 @@ async function refreshAllQuotasOnce(): Promise<void> {
       && conn.credentials[0]?.enabled === true
       && conn.credentials[0]?.status !== "disabled",
   )
-  for (let offset = 0; offset < connections.length; offset += 4) {
-    const results = await Promise.allSettled(
-      connections
-        .slice(offset, offset + 4)
-        .map(async (conn) => refreshManagedQuota(conn)),
-    )
-    for (const result of results) {
-      if (result.status === "rejected") {
-        logger.warn("Failed to refresh quota for connection:", result.reason)
+  const fingerprints = new Map(
+    listProviderConnections().map((conn) => [
+      conn.id,
+      connectionFingerprint(conn),
+    ]),
+  )
+  // Fixed worker pool: a slow connection no longer holds the whole batch
+  // (chunked Promise.all waited for the slowest member of each batch).
+  const queue = [...connections]
+  await Promise.all(
+    Array.from({ length: QUOTA_REFRESH_WORKERS }, async () => {
+      for (let conn = queue.shift(); conn; conn = queue.shift()) {
+        try {
+          await refreshManagedQuota(conn)
+        } catch (error) {
+          logger.warn("Failed to refresh quota for connection:", error)
+        }
       }
-    }
-  }
+    }),
+  )
   // Balances (a prepaid key, an account wallet) never enter the request path:
   // they are read here on the tick, and the result gates routing.
   await syncBalances()
-  await saveProviderConnections(listProviderConnections())
-  emitStateChange("models-stale")
+  const changed = listProviderConnections().some(
+    (conn) => fingerprints.get(conn.id) !== connectionFingerprint(conn),
+  )
+  if (changed || fingerprints.size !== listProviderConnections().length) {
+    await saveProviderConnections(listProviderConnections())
+    emitStateChange("models-stale")
+  }
 }
 
 /** When each connection's balance was last read (ms epoch). */

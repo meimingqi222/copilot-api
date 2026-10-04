@@ -49,15 +49,22 @@ import {
   groupRowsByViewerDate,
 } from "~/lib/stats/range-query"
 import { createTables } from "~/lib/stats/schema"
+import { runPerformanceBundle } from "~/lib/stats/performance-runner"
 
 class StatsStore {
   private db: Database | null = null
   private isTestMode = false
+  private usageRevision = 0
+
+  getUsageRevision(): number {
+    return this.usageRevision
+  }
 
   useTestDb(): void {
     this.isTestMode = true
     this.db = new Database(":memory:")
     createTables(this.db)
+    this.usageRevision++
   }
 
   private ensureDb(): Database {
@@ -205,6 +212,7 @@ class StatsStore {
       stats.streaming ? 1 : 0,
       stats.performance ? JSON.stringify(stats.performance) : null,
     )
+    this.usageRevision++
   }
 
   getUsageStatsForUser(
@@ -305,6 +313,16 @@ class StatsStore {
     const db = this.ensureDb()
     const rows = queryUsageRawRows(db, options)
     return computePerformanceByProviderModel(rows)
+  }
+
+  /**
+   * 三个性能视图共享一次原始行扫描。按时间范围拉行是主要成本，
+   * 需要多个视图的调用方（/performance 端点）应改用这个方法，
+   * 而不是分别调用三个 getter（各自重扫一遍）。
+   */
+  getPerformanceInRange(options: { startMs: number; endMs: number }) {
+    const rows = queryUsageRawRows(this.ensureDb(), options)
+    return runPerformanceBundle(rows)
   }
 
   getUsageStatsByIntervalInRange(options: {

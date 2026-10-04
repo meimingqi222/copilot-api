@@ -31,5 +31,3 @@ export const providerMetadata = defineProviderMetadata({
     ],
   },
 })
-
-export const descriptor = providerMetadata.descriptor

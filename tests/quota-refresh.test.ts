@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
+import * as connectionStore from "~/lib/provider-connections/store"
+import { onStateChange } from "~/lib/state-events"
 
 import {
   __resetProviderConnectionsForTest,
@@ -53,9 +55,10 @@ afterEach(() => {
 
 async function account(
   protocol: "codex-native" | "claude-native" = "codex-native",
+  id = `quota-${protocol}`,
 ): Promise<ProviderConnection> {
   return createConnection({
-    id: `quota-${protocol}`,
+    id,
     name: "quota refresh",
     protocol,
     baseUrl: "https://example.test",
@@ -119,6 +122,82 @@ test("Claude background polling uses a longer interval", async () => {
   expect(reads).toBe(1)
   await refreshManagedQuota(connection, { now: now + 15 * 60_000 })
   expect(reads).toBe(2)
+})
+
+test("quiet refresh does not persist or notify, but credential context changes do", async () => {
+  const conn = await account()
+  const persist = spyOn(
+    connectionStore,
+    "saveProviderConnections",
+  ).mockResolvedValue(undefined)
+  let events = 0
+  const unsubscribe = onStateChange("models-stale", () => {
+    events++
+  })
+  registerProvider({
+    ...originalCodex,
+    async refreshQuota(connection) {
+      // No quota timestamp changes: token-refresh context must still be persisted.
+      connection.credentials[0]!.context = { refreshToken: "new-token" }
+      connection.credentials[0]!.exhaustedAt = 123
+      return undefined
+    },
+  })
+  try {
+    await refreshAllQuotas()
+    expect(conn.credentials[0]!.context?.refreshToken).toBe("new-token")
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(events).toBe(1)
+    await refreshAllQuotas()
+    expect(persist).toHaveBeenCalledTimes(1)
+    expect(events).toBe(1)
+  } finally {
+    persist.mockRestore()
+    unsubscribe()
+  }
+})
+
+test("a slow quota connection never holds up the next queued connection", async () => {
+  for (let i = 0; i < 6; i++) await account("codex-native", `pool-${i}`)
+  let release!: () => void
+  let reached!: () => void
+  const slow = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const next = new Promise<void>((resolve) => {
+    reached = resolve
+  })
+  let active = 0
+  let peak = 0
+  const started: string[] = []
+  registerProvider({
+    ...originalCodex,
+    async refreshQuota(connection) {
+      active++
+      peak = Math.max(peak, active)
+      started.push(connection.id)
+      if (connection.id === "pool-0") await slow
+      if (connection.id === "pool-5") reached()
+      active--
+      return undefined
+    },
+  })
+  const running = refreshAllQuotas()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      next,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("batch blocked")), 500)
+      }),
+    ])
+    expect(started).toHaveLength(6)
+    expect(peak).toBeLessThanOrEqual(4)
+  } finally {
+    clearTimeout(timer)
+    release()
+    await running
+  }
 })
 
 test("failed refresh keeps the last snapshot and does not retry every scheduler tick", async () => {

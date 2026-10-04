@@ -33,6 +33,7 @@ import {
 import { globalTimers } from "~/lib/timer-registry"
 import {
   buildUpstreamResponsesCreateBody,
+  upstreamWsProfile,
   type UpstreamWsProvider,
 } from "~/services/responses/upstream-ws-body"
 
@@ -51,33 +52,6 @@ export {
 const CODEX_WS_BETA = "responses_websockets=2026-02-06"
 /** Idle unused upstream sockets are closed after this many ms. */
 const UPSTREAM_WS_IDLE_MS = 5 * 60_000
-/**
- * Upstream sockets are force-closed by the provider after a hard limit, so we
- * proactively redial a fresh connection *before* it so a turn is never sent on
- * a socket about to be dropped. The cap is provider-specific:
- *   - Codex: ~60 min hard limit → redial at 55 min.
- *   - xAI:   documented 25 min cap → redial at 24 min.
- * store=true (forced for xAI) + previous_response_id (or full-input replay)
- * keep multi-turn chaining working across the redial.
- */
-const UPSTREAM_WS_MAX_AGE_CODEX_MS = 55 * 60_000
-const UPSTREAM_WS_MAX_AGE_XAI_MS = 24 * 60_000
-
-/** Per-provider max socket age before a proactive redial. */
-function getUpstreamWsMaxAge(provider: UpstreamWsProvider): number {
-  return provider === "xai" ?
-      UPSTREAM_WS_MAX_AGE_XAI_MS
-    : UPSTREAM_WS_MAX_AGE_CODEX_MS
-}
-/**
- * Max time to wait for the *first* upstream event after `response.create` is
- * sent. Codex/xAI emit `response.created` within ~1-2s; a freshly dialed
- * socket that silently accepts an oversized replay frame but never responds
- * would otherwise hang until the downstream client gives up. On timeout we
- * throw a transport error *before* returning the stream so the caller can
- * fall back to HTTP POST (which handles large bodies with no WS frame limit).
- */
-const UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS = 60_000
 /**
  * Max gap between events *after* streaming has started. A live Responses
  * stream emits events continuously; total silence this long means the socket
@@ -415,7 +389,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       throw new Error(`${provider} websockets: aborted`)
     }
 
-    const maxAgeMs = getUpstreamWsMaxAge(provider)
+    const maxAgeMs = upstreamWsProfile(provider).maxSocketAgeMs
     const age = sess.openedAt > 0 ? Date.now() - sess.openedAt : 0
     const tooOld = age >= maxAgeMs
     const live =
@@ -578,7 +552,9 @@ async function openUpstreamResponsesWebsocketTurnOnce(
   // throws a transport error *here* — letting the caller fall back to HTTP —
   // instead of hanging until the downstream client gives up.
   try {
-    await consumer.waitForFirstEvent(UPSTREAM_WS_FIRST_EVENT_TIMEOUT_MS)
+    await consumer.waitForFirstEvent(
+      upstreamWsProfile(provider).firstEventTimeoutMs,
+    )
   } catch (error) {
     consumer.dispose()
     if (
@@ -780,7 +756,8 @@ function pruneIdleUpstreamSessions(now = Date.now()): void {
     // and must not pin the connection past the upstream hard limit.
     if (
       sess.activeTurns > 0
-      && now - sess.lastUsedAt <= getUpstreamWsMaxAge(sess.provider)
+      && now - sess.lastUsedAt
+        <= upstreamWsProfile(sess.provider).maxSocketAgeMs
     ) {
       continue
     }

@@ -29,14 +29,14 @@ import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 // ── 端点与客户端常量 ────────────────────────────────────────────
 
-export const TRAE_CN_WEB_HOST = "https://www.trae.cn"
+const TRAE_CN_WEB_HOST = "https://www.trae.cn"
 export const TRAE_CN_AUTH_HOST = "https://api.trae.cn"
 /** 账号没带模型 host 时的默认模型网关。 */
 export const TRAE_CN_API_HOST = "https://trae-api-cn.mchost.guru"
 
-export const TRAE_CN_CLIENT_ID = "ono9krqynydwx5" // Trae CN 的 IDE
+const TRAE_CN_CLIENT_ID = "ono9krqynydwx5" // Trae CN 的 IDE
 export const TRAE_CN_APP_ID = "6eefa01c-1036-4c7e-9ca5-d891f63bfcd8"
-export const TRAE_CN_IDE_VERSION = "3.3.65"
+const TRAE_CN_IDE_VERSION = "3.3.65"
 const TRAE_CN_PLUGIN_VERSION = "2.3.24254"
 // 对模型网关自称的客户端：TRAE SOLO CN 0.1.69。Trae 只给足够新的
 // 客户端开放新模型（2026-04 的 IDE 拿不到 deepseek-v4.1-flash）。
@@ -75,7 +75,7 @@ export function traeWhenOf(value: unknown): number {
 }
 
 /** JWT 的 exp（毫秒），无 exp 为 0。 */
-export function traeJwtExp(token: string): number {
+function traeJwtExp(token: string): number {
   try {
     const payload = JSON.parse(
       Buffer.from(String(token).split(".")[1] ?? "", "base64url").toString(),
@@ -141,7 +141,7 @@ export function traeCnSignInUrl(
 
 // ── 登录结果 ────────────────────────────────────────────────────
 
-export interface TraeCnSignIn {
+interface TraeCnSignIn {
   /** Cloud-IDE-JWT。 */
   token: string
   refresh: string
@@ -232,7 +232,7 @@ export async function parseTraeCnCallbackCode(
 
 // ── token 交换（刷新） ──────────────────────────────────────────
 
-export interface TraeCnTokenExchange {
+interface TraeCnTokenExchange {
   token: string
   refresh: string
   expires: number

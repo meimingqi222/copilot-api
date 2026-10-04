@@ -16,6 +16,7 @@ import {
   shouldUseUpstreamResponsesWebsocket,
   waitForUpstreamWsOpenForTest,
 } from "~/services/responses/upstream-ws"
+import { upstreamWsProfile } from "~/services/responses/upstream-ws-body"
 import {
   extractWsErrorMessage,
   extractWsErrorStatus,
@@ -415,5 +416,40 @@ describe("chained-turn upstream error classification", () => {
     ).toBe(false)
     expect(isChainedTurnUpstreamError(new Error("network"))).toBe(false)
     expect(isChainedTurnUpstreamError(null)).toBe(false)
+  })
+})
+
+/**
+ * The per-provider transport facts used to be `if (provider === …)` branches
+ * spread across `upstream-ws-body.ts` and `upstream-ws.ts`. They are one table
+ * now: these assertions pin the values so relocating them cannot silently
+ * change wire behaviour, and `Record<UpstreamWsProvider, …>` makes a new
+ * provider a compile error until it has a row.
+ */
+describe("upstream WS transport profiles", () => {
+  test("codex keeps stream_options and rewrites its terminal alias", () => {
+    const profile = upstreamWsProfile("codex")
+    expect(profile.keepStreamOptions).toBe(true)
+    expect(profile.storeChainedTurns).toBe(false)
+    expect(profile.terminalAlias).toEqual({
+      from: "response.done",
+      to: "response.completed",
+    })
+  })
+
+  test("xai stores chained turns and has no terminal alias", () => {
+    const profile = upstreamWsProfile("xai")
+    expect(profile.keepStreamOptions).toBe(false)
+    expect(profile.storeChainedTurns).toBe(true)
+    expect(profile.terminalAlias).toBeUndefined()
+  })
+
+  test("redial age stays below each provider's hard limit", () => {
+    // Codex force-closes at ~60 min; xAI documents a 25 min cap.
+    expect(upstreamWsProfile("codex").maxSocketAgeMs).toBe(55 * 60_000)
+    expect(upstreamWsProfile("xai").maxSocketAgeMs).toBe(24 * 60_000)
+    for (const provider of ["codex", "xai"] as const) {
+      expect(upstreamWsProfile(provider).firstEventTimeoutMs).toBe(60_000)
+    }
   })
 })

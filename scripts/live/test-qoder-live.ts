@@ -2,7 +2,7 @@
  * Qoder 真实连通性冒烟（**不进 CI**，需要真实的 Qoder 订阅账号）。
  *
  * 用法：
- *   bun run scripts/test-qoder-live.ts
+ *   bun run scripts/live/test-qoder-live.ts
  *
  * 流程：设备流登录 → 拉模型列表 → 非流式 + 流式各发一条 → 读用量。
  * 私有接口（api3.qoder.sh）是逆向产物，真实可用性依赖这个脚本。

@@ -83,7 +83,7 @@ let cachedDeviceMid: string | undefined
  * billing/balance 没它会 400（code 3001）。服务端只校验存在，
  * 所以我们自己在数据目录里持久化一个 UUID。
  */
-export function zcodeDeviceMid(): string {
+function zcodeDeviceMid(): string {
   if (cachedDeviceMid) return cachedDeviceMid
   const file = path.join(PATHS.APP_DIR, DEVICE_MID_FILE)
   try {
@@ -136,7 +136,7 @@ export function zcodeJwtExpired(jwt: string): boolean {
 
 // ── 余额（billing/balance） ─────────────────────────────────────
 
-export interface ZcodeStartBalancePlan {
+interface ZcodeStartBalancePlan {
   planId: string
   userPlanId: string
   name: string
@@ -145,7 +145,7 @@ export interface ZcodeStartBalancePlan {
   entitlementPeriods: Map<string, string>
 }
 
-export interface ZcodeStartBalanceBucket {
+interface ZcodeStartBalanceBucket {
   planId: string
   userPlanId: string
   entitlement: string
@@ -194,8 +194,10 @@ async function zcodeGet(
   url: string,
   auth: string,
   headers?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   const options: OAuthFetchOptions = {}
+  if (signal) options.signal = signal
   if (connection) {
     const proxyUrl = getConnectionProxyUrl(connection)
     if (proxyUrl) options.proxyUrl = proxyUrl
@@ -350,21 +352,26 @@ export function zcodeActiveStartPlan(
 export async function zcodeStartBalance(
   connection: ProviderConnection,
   jwt: string,
+  signal?: AbortSignal,
 ): Promise<ZcodeStartBalance> {
   if (!jwt) throw new Error("not signed in to ZCode")
   if (zcodeJwtExpired(jwt)) throw new Error(ZCODE_JWT_EXPIRED_HINT)
   const url =
     `${BALANCE_URL}?`
     + new URLSearchParams({ app_version: ZCODE_APP_VERSION }).toString()
-  const data = await zcodeGet(connection, url, `Bearer ${jwt}`, {
-    "X-Device-Mid": zcodeDeviceMid(),
-  })
+  const data = await zcodeGet(
+    connection,
+    url,
+    `Bearer ${jwt}`,
+    { "X-Device-Mid": zcodeDeviceMid() },
+    signal,
+  )
   return parseZcodeStartBalance(data)
 }
 
 // ── 路由判定（Start Plan vs Coding Plan） ───────────────────────
 
-export type ZcodeRoute = "start" | "coding"
+type ZcodeRoute = "start" | "coding"
 
 interface RouteEntry {
   route: ZcodeRoute
@@ -378,6 +385,7 @@ const ROUTE_CACHE_MAX = 512
 /** 测试用：清掉路由缓存。 */
 export function __resetZcodeRouteCacheForTest(): void {
   routeCache.clear()
+  inflightRouteProbes.clear()
 }
 
 const ROUTE_TTL_SURE_MS = 10 * 60 * 1000
@@ -388,11 +396,14 @@ async function zcodeHasCodingPlan(
   connection: ProviderConnection,
   key: string,
   root: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const data = await zcodeGet(
     connection,
     `${root}/api/biz/subscription/list`,
     key,
+    undefined,
+    signal,
   )
   const subs = Array.isArray(data) ? data : []
   return subs.some((raw) => {
@@ -406,15 +417,16 @@ async function decideZcodeRoute(
   key: string,
   jwt: string,
   root: string,
+  signal?: AbortSignal,
 ): Promise<{ route: ZcodeRoute; sure: boolean }> {
   try {
-    const has = await zcodeHasCodingPlan(connection, key, root)
+    const has = await zcodeHasCodingPlan(connection, key, root, signal)
     return { route: has ? "coding" : "start", sure: true }
   } catch {
     /* fall through to the Start Plan check */
   }
   try {
-    const balance = await zcodeStartBalance(connection, jwt)
+    const balance = await zcodeStartBalance(connection, jwt, signal)
     if (zcodeActiveStartPlan(balance)) return { route: "start", sure: true }
   } catch {
     /* can't tell either way */
@@ -427,35 +439,17 @@ async function decideZcodeRoute(
  * `cached`（如 quota 预检只想要上次结论、不想额外发请求）时只看缓存，
  * 没有缓存按「有 JWT + 无 key → start，否则 coding」的静态判断。
  */
-export async function resolveZcodeRoute(
-  connection: ProviderConnection,
-  credential: ApiCredential,
-  opts?: { cached?: boolean },
-): Promise<ZcodeRoute> {
-  const jwt = zcodeSessionJwt(connection)
-  if (!jwt) return "coding"
-  const key =
-    credential.value
-    || getCredentialContextString(connection, "accessToken")
-    || ""
-  if (!key) return "start"
-  const cacheKey = `${key}${jwt}`
-  const hit = routeCache.get(cacheKey)
-  if (opts?.cached) {
-    if (hit) return hit.route
-    return key ? "coding" : "start"
-  }
-  if (hit && Date.now() - hit.at < hit.ttlMs) return hit.route
-  // 判定请求是后台探测，不带调用方的 signal。
-  const base = getCredentialContextString(connection, "base") ?? ""
-  let root = "https://api.z.ai"
-  try {
-    root = new URL(base).origin
-  } catch {
-    /* base 缺失或畸形时用默认 */
-  }
-  const { route, sure } = await decideZcodeRoute(connection, key, jwt, root)
-  // 先扫掉过期项；还超上限就丢最老的，缓存不无限涨。
+/**
+ * 同一连接同时只跑一次路由判定：冷缓存时 N 个并发请求共享同一次
+ * 探测，而不是各自发一遍订阅+余额查询。
+ */
+const inflightRouteProbes = new Map<string, Promise<ZcodeRoute>>()
+
+/** 路由探测是后台动作：不带调用方 signal，给它自己的超时上限。 */
+const ROUTE_PROBE_TIMEOUT_MS = 15_000
+
+/** 先扫掉过期项；还超上限就丢最老的，缓存不无限涨。 */
+function storeRoute(cacheKey: string, route: ZcodeRoute, sure: boolean): void {
   const now = Date.now()
   for (const [k, e] of routeCache) {
     if (now - e.at >= e.ttlMs) routeCache.delete(k)
@@ -468,7 +462,95 @@ export async function resolveZcodeRoute(
     at: now,
     ttlMs: sure ? ROUTE_TTL_SURE_MS : ROUTE_TTL_UNSURE_MS,
   })
+}
+
+async function probeZcodeRoute(
+  cacheKey: string,
+  connection: ProviderConnection,
+  key: string,
+  jwt: string,
+  root: string,
+): Promise<ZcodeRoute> {
+  const { route, sure } = await decideZcodeRoute(
+    connection,
+    key,
+    jwt,
+    root,
+    AbortSignal.timeout(ROUTE_PROBE_TIMEOUT_MS),
+  )
+  storeRoute(cacheKey, route, sure)
   return route
+}
+
+/** 发起或复用该连接的 in-flight 探测；结束后从表里清掉。 */
+function sharedRouteProbe(
+  cacheKey: string,
+  connection: ProviderConnection,
+  key: string,
+  jwt: string,
+  root: string,
+): Promise<ZcodeRoute> {
+  const pending = inflightRouteProbes.get(cacheKey)
+  if (pending) return pending
+  const probe = probeZcodeRoute(cacheKey, connection, key, jwt, root).finally(
+    () => inflightRouteProbes.delete(cacheKey),
+  )
+  inflightRouteProbes.set(cacheKey, probe)
+  return probe
+}
+
+export async function resolveZcodeRoute(
+  connection: ProviderConnection,
+  credential: ApiCredential,
+  opts?: { cached?: boolean; signal?: AbortSignal },
+): Promise<ZcodeRoute> {
+  opts?.signal?.throwIfAborted()
+  const jwt = zcodeSessionJwt(connection)
+  if (!jwt) return "coding"
+  const key =
+    credential.value
+    || getCredentialContextString(connection, "accessToken")
+    || ""
+  if (!key) return "start"
+  const cacheKey = JSON.stringify([
+    connection.id,
+    connection.proxyUrl,
+    getCredentialContextString(connection, "base"),
+    key,
+    jwt,
+  ])
+  const hit = routeCache.get(cacheKey)
+  if (opts?.cached) {
+    if (hit) return hit.route
+    return key ? "coding" : "start"
+  }
+  const base = getCredentialContextString(connection, "base") ?? ""
+  let root = "https://api.z.ai"
+  try {
+    root = new URL(base).origin
+  } catch {
+    /* base 缺失或畸形时用默认 */
+  }
+  if (hit) {
+    if (Date.now() - hit.at < hit.ttlMs) return hit.route
+    // 过期但不阻塞：用上次结论放行这次请求，同时后台重判。
+    // sure=false 的短 TTL 项会很快回来再纠偏。
+    void sharedRouteProbe(cacheKey, connection, key, jwt, root).catch(
+      () => undefined,
+    )
+    return hit.route
+  }
+  const probe = sharedRouteProbe(cacheKey, connection, key, jwt, root)
+  if (!opts?.signal) return probe
+  const signal = opts.signal
+  return new Promise<ZcodeRoute>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
+    void probe
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", abort))
+  })
 }
 
 /** Start Plan 是否提供这个模型（按 upstream model id，大小写不敏感）。 */

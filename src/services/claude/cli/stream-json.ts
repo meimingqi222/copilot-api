@@ -14,6 +14,8 @@
  * 流式事件**（这正是 CLI 转发上游 SSE 的形态），所以翻译层基本是透传。
  */
 
+import { iterateLines } from "~/lib/stream-lines"
+
 /** CLI 报的 usage，字段名与 Anthropic 一致。 */
 export interface ClaudeCliUsage {
   input_tokens?: number
@@ -82,20 +84,5 @@ export function parseStreamJsonLine(
 export async function* readStreamJsonLines(
   source: AsyncIterable<string | Uint8Array>,
 ): AsyncIterable<string> {
-  const decoder = new TextDecoder()
-  let buffer = ""
-  for await (const chunk of source) {
-    buffer +=
-      typeof chunk === "string" ? chunk : (
-        decoder.decode(chunk, { stream: true })
-      )
-    let index = buffer.indexOf("\n")
-    while (index >= 0) {
-      yield buffer.slice(0, index)
-      buffer = buffer.slice(index + 1)
-      index = buffer.indexOf("\n")
-    }
-  }
-  buffer += decoder.decode()
-  if (buffer.trim()) yield buffer
+  yield* iterateLines(source)
 }

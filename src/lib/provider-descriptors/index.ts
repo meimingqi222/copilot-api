@@ -14,11 +14,4 @@ export function getProviderDescriptor(id: ProviderId): ProviderDescriptor {
   return PROVIDER_DESCRIPTORS[id]
 }
 
-export type {
-  ProviderDescriptor,
-  ProviderFeature,
-  ProviderFieldOption,
-  ProviderFieldSchema,
-  ProviderPresentation,
-} from "~/lib/provider-descriptors/types"
-export { PROVIDER_FEATURES } from "~/lib/provider-descriptors/types"
+export type { ProviderDescriptor } from "~/lib/provider-descriptors/types"

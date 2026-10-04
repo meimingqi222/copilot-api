@@ -56,10 +56,12 @@ interface ZcodeRouted {
 async function withZcode(
   connection: ProviderConnection,
   credential: ApiCredential,
+  signal?: AbortSignal,
 ): Promise<ZcodeRouted> {
   const apiBase =
     getCredentialContextString(connection, "base") || ZCODE_ZAI_ANTHROPIC_BASE
-  const start = (await resolveZcodeRoute(connection, credential)) === "start"
+  const start =
+    (await resolveZcodeRoute(connection, credential, { signal })) === "start"
 
   if (!start) {
     const headers: Record<string, string> = {
@@ -113,6 +115,7 @@ export const zcodeNativeAdapter: ProtocolAdapter = {
     const { connection, credential, start } = await withZcode(
       params.connection,
       params.credential,
+      params.signal,
     )
 
     if (!start) {

@@ -12,7 +12,7 @@
  * Windsurf response field-7 varints: [prompt_tokens, completion_tokens, cached_tokens]
  * A non-zero third varint on the second request confirms KV cache is being reused.
  *
- * Run: bun scripts/test-windsurf-cache.ts
+ * Run: bun scripts/live/test-windsurf-cache.ts
  */
 
 import { Database } from "bun:sqlite"

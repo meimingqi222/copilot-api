@@ -601,8 +601,11 @@ function tracesView() {
       const reduced = globalThis.matchMedia(
         "(prefers-reduced-motion: reduce)",
       ).matches
-      rows.forEach((row, i) => {
-        const c = this.candidates[i]
+      const candidates = new Map(
+        this.candidates.map((c) => [this.candidateKey(c), c]),
+      )
+      rows.forEach((row) => {
+        const c = candidates.get(row.dataset.routeKey)
         if (!c) return
         const state = this.candidateState(c)
         const d = curve(point(nodes[1], "right"), point(row, "left"))
@@ -627,6 +630,12 @@ function tracesView() {
       const sky = this.$refs.flights
       if (!sky) return
       sky.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height)
+      // Reposition existing packets synchronously when the coordinate system changes.
+      const time = performance.now()
+      for (const [id, flight] of this._flights) {
+        const frame = this._flightFrames.get(id)
+        if (frame) this.poseFlight(flight, frame, time)
+      }
       if (reduced) {
         this.clearFlights()
         return
@@ -666,6 +675,7 @@ function tracesView() {
         const packet = this.svgElement(sky, "circle", {
           r: "4",
           class: "tr-flow-packet",
+          visibility: "hidden",
           "data-request-id": id,
         })
         // Stable per-request color lets overlapping requests remain distinct.
@@ -678,14 +688,16 @@ function tracesView() {
         const slot = [...this._flights.values()].map((f) => f.slot)
         const colorSlot = [0, 1, 2, 3].find((n) => !slot.includes(n))
         packet.style.setProperty("--packet-color", palette[colorSlot])
-        this._flights.set(id, {
+        const flight = {
           packet,
           slot: colorSlot,
           phase: "out",
           started: performance.now(),
           routeKey,
           target,
-        })
+        }
+        this.poseFlight(flight, frame, flight.started)
+        this._flights.set(id, flight)
       }
       if (this._flights.size && this._flightRaf === null) {
         this._flightRaf = globalThis.requestAnimationFrame((time) =>
@@ -747,7 +759,16 @@ function tracesView() {
           "branch:"
         : "") + flight.routeKey,
       )
-      if (!path) return
+      if (!path) {
+        if (flight.visible !== false)
+          flight.packet.setAttribute("visibility", "hidden")
+        flight.visible = false
+        return
+      }
+      if (flight.path !== path) {
+        flight.path = path
+        flight.pathLength = path.getTotalLength()
+      }
       const returning = retry || flight.phase === "back"
       const duration =
         retry ? 620
@@ -759,22 +780,27 @@ function tracesView() {
         : Math.min(1, Math.max(0, (time - flight.started) / duration))
       const eased = (1 - Math.cos(Math.PI * fraction)) / 2
       const point = path.getPointAtLength(
-        path.getTotalLength() * (returning ? 1 - eased : eased),
+        flight.pathLength * (returning ? 1 - eased : eased),
       )
       flight.packet.setAttribute("cx", point.x)
       flight.packet.setAttribute("cy", point.y)
-      flight.packet.setAttribute(
-        "class",
+      if (flight.visible !== true)
+        flight.packet.setAttribute("visibility", "visible")
+      flight.visible = true
+      const packetClass =
         "tr-flow-packet"
-          + (returning ? " back" : "")
-          + (flight.phase === "held" ? " held" : "")
-          + ((
-            returning
-            && (retry || frame.outcome === "failed" || frame.statusCode >= 400)
-          ) ?
-            " error"
-          : ""),
-      )
+        + (returning ? " back" : "")
+        + (flight.phase === "held" ? " held" : "")
+        + ((
+          returning
+          && (retry || frame.outcome === "failed" || frame.statusCode >= 400)
+        ) ?
+          " error"
+        : "")
+      if (flight.packetClass !== packetClass) {
+        flight.packet.setAttribute("class", packetClass)
+        flight.packetClass = packetClass
+      }
     },
 
     clearFlights() {
