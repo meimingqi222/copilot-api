@@ -478,13 +478,13 @@
                 <!-- 列 5: 输出 TPS -->
                 <td class="py-2.5 px-3 text-right whitespace-nowrap">
                   <div
-                    x-show="row.streaming && row.generationTps"
+                    x-show="row.streaming && getChannelTps(row)"
                     class="font-mono"
                   >
                     <span
                       class="font-bold text-sm"
-                      :class="getTpsClass(row.generationTps)"
-                      x-text="formatTps(row.generationTps)"
+                      :class="getTpsClass(getChannelTps(row))"
+                      x-text="formatTps(getChannelTps(row))"
                     ></span>
                     <span
                       class="text-[10px] text-[var(--apple-text-tertiary)] ml-0.5"
@@ -492,7 +492,7 @@
                     >
                   </div>
                   <div
-                    x-show="!row.streaming || !row.generationTps"
+                    x-show="!row.streaming || !getChannelTps(row)"
                     class="text-[var(--apple-text-secondary)] font-mono"
                   >
                     <span

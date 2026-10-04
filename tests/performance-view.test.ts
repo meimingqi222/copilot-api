@@ -216,4 +216,49 @@ describe("performanceView UX redesign", () => {
     view.toggleAllStages(key)
     expect(view.isAllExpanded(key)).toBe(false)
   })
+
+  test("calculates globalStats.avgTps accurately and clamps extreme outliers", () => {
+    const view = sandbox.performanceView()
+
+    // 1. 优先使用 performance 数组中的真实模型级吞吐
+    view.performance = [
+      {
+        model: "claude-3-7-sonnet",
+        requests: 100,
+        streamingRequests: 100,
+        avgStreamingTps: 80,
+        avgTtftMs: 500,
+      },
+      {
+        model: "gpt-4o",
+        requests: 50,
+        streamingRequests: 50,
+        avgStreamingTps: 100,
+        avgTtftMs: 400,
+      },
+    ]
+    // 即使 details 中存在因单帧除以零导致的异常通道 (例如 5000+ tok/s)
+    view.details = [
+      {
+        model: "claude-3-7-sonnet",
+        streaming: true,
+        generationSamples: 100,
+        generationTps: 5954.5, // 离群异常值
+      },
+    ]
+
+    const stats = view.globalStats
+    // 加权均值应为: (80 * 100 + 100 * 50) / 150 = 13000 / 150 ≈ 86.67 tok/s，而不是 5000+
+    expect(stats.avgTps).toBeCloseTo(86.67, 1)
+    expect(stats.totalSamples).toBe(150)
+
+    // 2. getChannelTps 防护: 离群通道自动回退到模型基准
+    const clampedTps = view.getChannelTps(view.details[0])
+    expect(clampedTps).toBe(80) // 回退到 claude-3-7-sonnet 的 80 tok/s 基准
+
+    // 3. 当 performance 为空回退到 details 时，>800 tok/s 也会被安全钳位
+    view.performance = []
+    const fallbackStats = view.globalStats
+    expect(fallbackStats.avgTps).toBe(800) // 钳位到上限 800
+  })
 })

@@ -199,22 +199,67 @@ function performanceView() {
       let proxyOverheadSum = 0
       let upstreamSum = 0
 
-      for (const row of details) {
-        const reqs = row.requests || 0
-        totalRequests += reqs
-        const t = row.timings || {}
-        const ttft = t.outputTtftMs?.p50 ?? t.outputTtftMs?.average
-        if (typeof ttft === "number" && ttft > 0) {
-          const s = t.outputTtftMs?.samples || reqs || 1
-          ttftSum += ttft * s
-          ttftCount += s
+      // 1. 全局流式 TPS 均值与 TTFT 优先对齐 dashboard 官方大盘算法：
+      // 从 perf (this.performance) 读取各模型的实际流式速率，按流式样本数进行真实加权。
+      // range-query.ts 的模型级聚合是基于 SQLite streamTokenSeconds 真实吞吐计算的，
+      // 绝不会因为单次微秒除零或极短突发导致均值爆炸到数千 tok/s。
+      if (perf && perf.length > 0) {
+        for (const row of perf) {
+          totalRequests += row.requests || 0
+          if (
+            typeof row.avgTtftMs === "number"
+            && row.avgTtftMs > 0
+            && row.requests > 0
+          ) {
+            ttftSum += row.avgTtftMs * row.requests
+            ttftCount += row.requests
+          }
+          const tps = row.avgStreamingTps ?? row.avgNonStreamingTps
+          const sReqs = row.streamingRequests || 0
+          if (typeof tps === "number" && tps > 0 && sReqs > 0) {
+            const saneTps = Math.min(tps, 800)
+            tpsWeightedSum += saneTps * sReqs
+            tpsCount += sReqs
+            totalSamples += sReqs
+          }
         }
-        if (row.generationSamples && row.generationTps) {
-          totalSamples += row.generationSamples
-          tpsWeightedSum += row.generationTps * row.generationSamples
-          tpsCount += row.generationSamples
-        }
+      }
 
+      // 2. 如果 perf 为空或无流式样本，回退使用 details 汇总
+      if (tpsCount === 0 && details.length > 0) {
+        for (const row of details) {
+          if (!totalRequests) totalRequests += row.requests || 0
+          const t = row.timings || {}
+          const ttft = t.outputTtftMs?.p50 ?? t.outputTtftMs?.average
+          if (!ttftCount && typeof ttft === "number" && ttft > 0) {
+            const s = t.outputTtftMs?.samples || row.requests || 1
+            ttftSum += ttft * s
+            ttftCount += s
+          }
+          if (
+            row.generationSamples
+            && row.generationTps
+            && row.generationTps > 0
+          ) {
+            const saneTps = Math.min(row.generationTps, 800)
+            totalSamples += row.generationSamples
+            tpsWeightedSum += saneTps * row.generationSamples
+            tpsCount += row.generationSamples
+          }
+        }
+      }
+
+      // 补齐总请求数
+      if (totalRequests === 0) {
+        for (const row of details) {
+          totalRequests += row.requests || 0
+        }
+      }
+
+      // 3. 计算代理层开销（从 details 汇总）
+      for (const row of details) {
+        const reqs = row.requests || 1
+        const t = row.timings || {}
         const gatewayMs = t.preprocessingMs?.average || 0
         const dispatchMs =
           (t.adapterPreparationMs?.average || 0)
@@ -228,24 +273,8 @@ function performanceView() {
           || 0
 
         if (upMs > 0 || proxyMs > 0) {
-          proxyOverheadSum += proxyMs * (reqs || 1)
-          upstreamSum += upMs * (reqs || 1)
-        }
-      }
-
-      if (totalRequests === 0 && perf.length > 0) {
-        for (const row of perf) {
-          const reqs = row.requests || 0
-          totalRequests += reqs
-          if (row.avgTtftMs) {
-            ttftSum += row.avgTtftMs * reqs
-            ttftCount += reqs
-          }
-          if (row.avgStreamingTps && row.streamingRequests) {
-            tpsWeightedSum += row.avgStreamingTps * row.streamingRequests
-            tpsCount += row.streamingRequests
-            totalSamples += row.streamingRequests
-          }
+          proxyOverheadSum += proxyMs * reqs
+          upstreamSum += upMs * reqs
         }
       }
 
@@ -260,7 +289,7 @@ function performanceView() {
       return {
         totalRequests,
         totalSamples,
-        channelCount: details.length || perf.length,
+        channelCount: Math.max(details.length, perf.length),
         avgTtft,
         avgTps,
         upstreamRatio,
@@ -278,9 +307,32 @@ function performanceView() {
 
     formatTps(tps) {
       if (tps === null || tps === undefined) return "-"
+      if (typeof tps !== "number" || !Number.isFinite(tps) || tps <= 0)
+        return "-"
+      if (tps > 800) return ">800"
       return new Intl.NumberFormat(undefined, {
         maximumFractionDigits: 1,
       }).format(tps)
+    },
+
+    getChannelTps(row) {
+      if (!row.streaming || !row.generationTps) return null
+      // 若单通道 generationTps 因极短毫秒突发出现异常 (> 800 tok/s)，回退至对应模型的基准流式 TPS
+      if (row.generationTps > 800) {
+        const matched = (this.performance || []).find(
+          (m) => m.model === row.model,
+        )
+        if (
+          matched
+          && typeof matched.avgStreamingTps === "number"
+          && matched.avgStreamingTps > 0
+          && matched.avgStreamingTps <= 800
+        ) {
+          return matched.avgStreamingTps
+        }
+        return 800
+      }
+      return row.generationTps
     },
 
     getTtftClass(ms) {
@@ -355,8 +407,8 @@ function performanceView() {
           return (aVal - bVal) * dir
         }
         if (this.sortBy === "tps") {
-          const aVal = a.generationTps ?? (this.sortDesc ? -1 : 999999)
-          const bVal = b.generationTps ?? (this.sortDesc ? -1 : 999999)
+          const aVal = this.getChannelTps(a) ?? (this.sortDesc ? -1 : 999999)
+          const bVal = this.getChannelTps(b) ?? (this.sortDesc ? -1 : 999999)
           return (aVal - bVal) * dir
         }
         if (this.sortBy === "model") {

@@ -123,9 +123,26 @@ export function computePerformanceDetails(
       && metrics.generationMs > 0
       && row.completion_tokens > 0
     ) {
+      let effectiveGenMs = metrics.generationMs
+      const instantTps = row.completion_tokens / (metrics.generationMs / 1000)
+      // 若单帧突发导致瞬时 TPS 突破物理极限（> 800 tok/s），且具备持久化的全局真实 TPS，则用真实耗时做平滑校准；
+      // 若无有效 row.tps，则将耗时下限钳位至物理极速上限 800 tok/s 对应的毫秒数，避免除零爆表
+      if (instantTps > 800) {
+        if (typeof row.tps === "number" && row.tps > 0 && row.tps <= 800) {
+          effectiveGenMs = Math.max(
+            metrics.generationMs,
+            (row.completion_tokens / row.tps) * 1000,
+          )
+        } else {
+          effectiveGenMs = Math.max(
+            metrics.generationMs,
+            (row.completion_tokens / 800) * 1000,
+          )
+        }
+      }
       group.generationSamples += 1
       group.tokens += row.completion_tokens
-      group.generationMs += metrics.generationMs
+      group.generationMs += effectiveGenMs
     }
   }
   return [...groups.values()]
