@@ -5,7 +5,7 @@
  *
  * 默认关闭，设置 `DUMP_REQUESTS=1` 开启；`DUMP_REQUESTS_MAX_BYTES` 可覆盖
  * 单请求体积上限(默认 8MB)，`DUMP_REQUESTS_DIR` 可覆盖输出目录。
- * dump 内含原始 body,属于敏感数据:仅用于本地短期排查,查完请关闭开关。
+ * 写盘前脱敏凭证与内嵌媒体；仍含提示词和普通工具参数，属于敏感数据。
  *
  * 同一开关同时控制上游 wire dump(`dumpUpstreamResponsesWire`):代理实际
  * 发往上游的请求体(经 strip/replay 改写后的形态)只在上游返回失败时落盘，
@@ -22,19 +22,15 @@ import { dateKeyFromDate, readLogRotationConfig } from "~/lib/log-rotation"
 import { logger } from "~/lib/logger"
 import { isCoreApiPath } from "~/lib/request-log"
 import { getSystemSettings } from "~/lib/system-config"
+import {
+  createDumpSanitizer,
+  isDumpSecretField,
+} from "~/lib/request-dump-sanitizer"
 
 const DUMP_FILE_PATTERN =
   /^request-dumps-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/
 
 /** 请求头脱敏:保留出现与长度,不落盘密钥本身。 */
-const REDACTED_HEADER_NAMES = new Set([
-  "authorization",
-  "x-api-key",
-  "api-key",
-  "cookie",
-  "proxy-authorization",
-])
-
 const DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 
 let appendQueue = Promise.resolve()
@@ -101,10 +97,15 @@ export async function dumpIncomingRequest(
 
 function collectHeaders(c: Context): Record<string, string> {
   const headers: Record<string, string> = {}
+  const sanitizer = createDumpSanitizer([
+    JSON.stringify(Object.fromEntries(c.req.raw.headers)),
+  ])
   for (const [name, value] of c.req.raw.headers.entries()) {
     const key = name.toLowerCase()
     headers[key] =
-      REDACTED_HEADER_NAMES.has(key) ? `[redacted:${value.length}]` : value
+      isDumpSecretField(key) ?
+        `[redacted:${value.length}]`
+      : sanitizer.text(value)
   }
   return headers
 }
@@ -125,9 +126,24 @@ async function readRequestBody(
   const raw = await c.req.raw.clone().text()
   const bodyBytes = Buffer.byteLength(raw, "utf8")
   if (bodyBytes <= maxBodyBytes) {
-    return { body: raw, bodyBytes, truncated: false }
+    const headerSecrets = Object.fromEntries(
+      [...c.req.raw.headers].filter(([key]) => isDumpSecretField(key)),
+    )
+    const sanitizer = createDumpSanitizer([raw, JSON.stringify(headerSecrets)])
+    const body = sanitizer.json(raw)
+    if (Buffer.byteLength(body) <= maxBodyBytes)
+      return { body, bodyBytes, truncated: false }
+    return {
+      body: "[body omitted: redacted body exceeds limit]",
+      bodyBytes,
+      truncated: true,
+    }
   }
-  return { body: raw.slice(0, maxBodyBytes), bodyBytes, truncated: true }
+  return {
+    body: `[body omitted: ${bodyBytes} bytes > ${maxBodyBytes}]`,
+    bodyBytes,
+    truncated: true,
+  }
 }
 
 function enqueueAppend(line: string, timestamp: number): Promise<void> {
@@ -196,7 +212,7 @@ interface UpstreamResponsesWireDump {
   stripMode: string
   /** 无正文的形状摘要(条数/类型/tools 数),控制台可打印,落盘备用。 */
   wire: string
-  /** 实际发往上游的完整 JSON(与 fetch body 完全一致)。 */
+  /** 实际发往上游的 JSON，写盘前脱敏，不修改 fetch body。 */
   upstreamBody: string
   upstreamStatus: number
   /** 上游错误原文(截断上限内全量)。 */
@@ -215,19 +231,29 @@ export async function dumpUpstreamResponsesWire(
   try {
     const maxBodyBytes = resolveMaxBodyBytes()
     const timestamp = Date.now()
+    const sanitizer = createDumpSanitizer([
+      dump.upstreamBody,
+      dump.upstreamErrorBody,
+    ])
     const entry = {
       timestamp,
       kind: "upstream-responses",
       connectionId: dump.connectionId,
       model: dump.model,
       stripMode: dump.stripMode,
-      wire: dump.wire,
-      ...capSizedField("upstreamBody", dump.upstreamBody, maxBodyBytes),
+      wire: sanitizer.text(dump.wire),
+      ...capSizedField(
+        "upstreamBody",
+        sanitizer.json(dump.upstreamBody),
+        maxBodyBytes,
+        Buffer.byteLength(dump.upstreamBody),
+      ),
       upstreamStatus: dump.upstreamStatus,
       ...capSizedField(
         "upstreamErrorBody",
-        dump.upstreamErrorBody,
+        sanitizer.error(dump.upstreamErrorBody),
         Math.min(maxBodyBytes, 256 * 1024),
+        Buffer.byteLength(dump.upstreamErrorBody),
       ),
     }
     await enqueueAppend(`${JSON.stringify(entry)}\n`, timestamp)
@@ -241,13 +267,18 @@ function capSizedField(
   name: "upstreamBody" | "upstreamErrorBody",
   value: string,
   maxBodyBytes: number,
+  bodyBytes: number,
 ): Record<string, unknown> {
-  const bodyBytes = Buffer.byteLength(value, "utf8")
-  if (bodyBytes <= maxBodyBytes) {
+  const oversized =
+    bodyBytes > maxBodyBytes || Buffer.byteLength(value) > maxBodyBytes
+  if (!oversized) {
     return { [name]: value, [`${name}Bytes`]: bodyBytes }
   }
   return {
-    [name]: value.slice(0, maxBodyBytes),
+    [name]: Buffer.from(value)
+      .subarray(0, maxBodyBytes)
+      .toString("utf8")
+      .replace(/\uFFFD$/, ""),
     [`${name}Bytes`]: bodyBytes,
     [`${name}Truncated`]: true,
   }

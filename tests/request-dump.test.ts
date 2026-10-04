@@ -107,6 +107,100 @@ const payload = {
 }
 
 describe("request dump", () => {
+  test("sanitizes credential headers, nested tool arguments and media before writing", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    const secretBody = {
+      ...payload,
+      max_tokens: 42,
+      metadata: { refreshToken: "refresh-body-secret", note: "hello" },
+      messages: [
+        {
+          role: "assistant",
+          content:
+            "Bearer text-body-secret; echoed header-auth-secret header-cookie-secret header-ide-secret",
+          tool_calls: [
+            {
+              function: {
+                name: "login",
+                arguments: JSON.stringify({
+                  password: "tool-password-secret",
+                  command: "echo hello",
+                }),
+              },
+            },
+          ],
+        },
+      ],
+      image_url: { url: "data:image/png;base64,private-image-content" },
+      inlineData: { mimeType: "image/png", data: "gemini-private-image" },
+      input_audio: { format: "wav", data: "private-audio" },
+      source: { type: "base64", data: "anthropic-private-image" },
+      malformedArguments: '{"password":"broken-argument-secret',
+      ordinaryBracketText: "[caller] hello",
+    }
+    const c = await captureContext({
+      path: "/v1/chat/completions",
+      init: {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer header-auth-secret",
+          "x-ide-token": "header-ide-secret",
+          "x-cloudide-token": "header-cloud-secret",
+          cookie: "session=header-cookie-secret",
+        },
+        body: JSON.stringify(secretBody),
+      },
+    })
+    await dumpIncomingRequest(c, { requestId: "redacted-incoming" })
+    const [entry] = readDumpEntries()
+    const written = JSON.stringify(entry)
+    for (const secret of [
+      "refresh-body-secret",
+      "text-body-secret",
+      "tool-password-secret",
+      "private-image-content",
+      "header-ide-secret",
+      "header-cloud-secret",
+      "header-cookie-secret",
+      "header-auth-secret",
+      "gemini-private-image",
+      "private-audio",
+      "anthropic-private-image",
+      "broken-argument-secret",
+    ])
+      expect(written).not.toContain(secret)
+    const body = JSON.parse(entry!.body!)
+    expect(body.max_tokens).toBe(42)
+    expect(body.metadata.note).toBe("hello")
+    expect(body.ordinaryBracketText).toBe("[caller] hello")
+    expect(
+      JSON.parse(body.messages[0].tool_calls[0].function.arguments).command,
+    ).toBe("echo hello")
+    // Dumping must not alter the forwarded request.
+    expect(await c.req.raw.clone().json()).toEqual(secretBody)
+  })
+
+  test("omits malformed and oversized request bodies instead of storing raw prefixes", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    for (const raw of [
+      '{"password":"malformed-secret',
+      JSON.stringify({
+        password: "oversized-secret",
+        padding: "x".repeat(100),
+      }),
+    ]) {
+      process.env.DUMP_REQUESTS_MAX_BYTES = "64"
+      const c = await captureContext({
+        path: "/v1/messages",
+        init: { method: "POST", body: raw },
+      })
+      await dumpIncomingRequest(c, { requestId: "omitted" })
+    }
+    const written = JSON.stringify(readDumpEntries())
+    expect(written).not.toContain("malformed-secret")
+    expect(written).not.toContain("oversized-secret")
+  })
   test("is disabled unless DUMP_REQUESTS is set", async () => {
     delete process.env["DUMP_REQUESTS"]
     expect(isRequestDumpEnabled()).toBe(false)
@@ -124,7 +218,7 @@ describe("request dump", () => {
     expect(readDumpEntries()).toHaveLength(0)
   })
 
-  test("writes raw headers and body for a core API request", async () => {
+  test("keeps ordinary headers and body fields for a core API request", async () => {
     process.env["DUMP_REQUESTS"] = "1"
 
     const c = await captureContext({
@@ -212,7 +306,7 @@ describe("request dump", () => {
     const [entry] = readDumpEntries()
     expect(entry.truncated).toBe(true)
     expect(entry.bodyBytes).toBeGreaterThan(64)
-    expect((entry.body ?? "").length).toBe(64)
+    expect(entry.body).toContain("body omitted")
   })
 
   test("honours DUMP_REQUESTS_DIR", async () => {
@@ -237,6 +331,55 @@ describe("request dump", () => {
 })
 
 describe("upstream responses wire dump", () => {
+  test("sanitizes upstream bodies and error echoes before truncating", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    await dumpUpstreamResponsesWire({
+      connectionId: "test",
+      model: "test",
+      stripMode: "none",
+      wire: "inputItems=1",
+      upstreamStatus: 400,
+      upstreamBody: JSON.stringify({
+        access_token: "upstream-secret",
+        input: [{ content: "hello" }],
+      }),
+      upstreamErrorBody: JSON.stringify({
+        error: {
+          message: "upstream-secret",
+          client_secret: "error-secret",
+          detail: JSON.stringify({ api_key: "embedded-secret" }),
+        },
+      }),
+    })
+    await dumpUpstreamResponsesWire({
+      connectionId: "test",
+      model: "test",
+      stripMode: "none",
+      wire: "inputItems=1",
+      upstreamStatus: 400,
+      upstreamBody: "{invalid-json upstream-secret",
+      upstreamErrorBody:
+        'Authorization: Cloud-IDE-JWT plain-jwt-secret; password="two words secret"; accessToken=camel-secret; Cookie: first=cookie-first-secret; second=cookie-second-secret\nurl=https://example.test/?accessToken=url-token-secret&key=url-key-secret',
+    })
+    const entries = readAllEntries()
+    const written = JSON.stringify(entries)
+    for (const secret of [
+      "upstream-secret",
+      "error-secret",
+      "embedded-secret",
+      "plain-jwt-secret",
+      "two words secret",
+      "camel-secret",
+      "cookie-first-secret",
+      "cookie-second-secret",
+      "url-token-secret",
+      "url-key-secret",
+    ])
+      expect(written).not.toContain(secret)
+    expect(
+      JSON.parse(entries[0]!.upstreamBody as string).input[0].content,
+    ).toBe("hello")
+  })
   test("is disabled unless DUMP_REQUESTS is set", async () => {
     delete process.env["DUMP_REQUESTS"]
     await dumpUpstreamResponsesWire({
@@ -298,5 +441,33 @@ describe("upstream responses wire dump", () => {
     expect(entries).toHaveLength(1)
     expect(entries[0]?.["upstreamBodyTruncated"]).toBe(true)
     expect(entries[0]?.["upstreamBodyBytes"]).toBeGreaterThan(64)
+  })
+
+  test("redacts full credentials before applying the UTF-8 byte limit", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    process.env.DUMP_REQUESTS_MAX_BYTES = "64"
+    await dumpUpstreamResponsesWire({
+      connectionId: "test",
+      model: "test",
+      stripMode: "none",
+      wire: "inputItems=0",
+      upstreamStatus: 400,
+      upstreamBody: JSON.stringify({
+        api_key: "secret-prefix-".repeat(100),
+        padding: "中文".repeat(100),
+      }),
+      upstreamErrorBody: 'refreshToken="' + "error-prefix-".repeat(100) + '"',
+    })
+    const [entry] = readAllEntries()
+    expect(JSON.stringify(entry)).not.toContain("secret-prefix-")
+    expect(JSON.stringify(entry)).not.toContain("error-prefix-")
+    expect(
+      Buffer.byteLength(entry!.upstreamBody as string),
+    ).toBeLessThanOrEqual(64)
+    expect(
+      Buffer.byteLength(entry!.upstreamErrorBody as string),
+    ).toBeLessThanOrEqual(64)
+    expect(entry!.upstreamBodyTruncated).toBe(true)
+    expect(entry!.upstreamErrorBodyTruncated).toBe(true)
   })
 })

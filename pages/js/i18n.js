@@ -69,9 +69,9 @@ const i18n = {
       "system.memoryVerbose": "详细内存检查点日志",
       "system.memoryVerboseHint":
         "逐请求记录内存检查点；关闭不会禁用低频内存压力监控与警告。",
-      "system.requestDump": "原始请求与失败上游请求落盘",
+      "system.requestDump": "请求与失败上游请求脱敏落盘",
       "system.requestDumpHint":
-        "高开销：读取请求体、序列化并写盘。请求内容可能包含提示词、代码与个人信息，不建议日常开启。",
+        "写盘前遮盖凭证和内嵌媒体，保留提示词、代码及普通工具参数用于排障。仍可能包含个人信息，且有读取、序列化与写盘开销。",
       "system.acknowledge":
         "我了解请求内容可能包含敏感数据，并会在排查结束后清理已有 dump 文件。关闭开关不会删除历史文件。",
       "system.duration": "临时调试时长（1–120 分钟）",
@@ -1548,9 +1548,10 @@ const i18n = {
       "system.memoryVerbose": "Verbose memory checkpoints",
       "system.memoryVerboseHint":
         "Log per-request memory checkpoints. The low-frequency memory watchdog and pressure warnings remain enabled.",
-      "system.requestDump": "Dump incoming and failed upstream requests",
+      "system.requestDump":
+        "Dump redacted incoming and failed upstream requests",
       "system.requestDumpHint":
-        "Higher overhead: body reads, serialization and disk writes. Contents may include prompts, code and personal data. Keep off normally.",
+        "Credentials and inline media are redacted before writing. Prompts, code and ordinary tool arguments remain for diagnosis and may contain personal data. Body reads, serialization and disk writes add overhead.",
       "system.acknowledge":
         "I understand dumps may contain sensitive data and will clean up existing files after diagnosis. Disabling does not delete old files.",
       "system.duration": "Temporary debug duration (1–120 minutes)",
