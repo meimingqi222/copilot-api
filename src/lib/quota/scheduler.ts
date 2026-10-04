@@ -22,6 +22,7 @@ import {
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
+import { autoResetExpiringCodexQuota } from "~/lib/quota/codex-reset"
 import { initializeProviderRegistry } from "~/services/providers"
 import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
@@ -137,6 +138,14 @@ async function refreshAllQuotasOnce(): Promise<void> {
           await refreshManagedQuota(conn)
         } catch (error) {
           logger.warn("Failed to refresh quota for connection:", error)
+        }
+        try {
+          await autoResetExpiringCodexQuota(conn)
+        } catch (error) {
+          logger.warn(
+            `Failed to automatically reset Codex quota for "${conn.name}":`,
+            error,
+          )
         }
       }
     }),

@@ -8,6 +8,7 @@ const settingsSchema = z
     requestDump: z.boolean(),
     memoryVerbose: z.boolean(),
     performanceDetails: z.boolean(),
+    codexAutoReset: z.boolean().default(false),
     quotaDisplayMode: z.enum(["remaining", "used"]).default("remaining"),
   })
   .strict()
@@ -40,6 +41,7 @@ const safeDefaults: SystemSettings = {
   requestDump: false,
   memoryVerbose: false,
   performanceDetails: true,
+  codexAutoReset: false,
   quotaDisplayMode: "remaining",
 }
 

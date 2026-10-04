@@ -11,24 +11,13 @@ import {
   isOAuthConnection,
   listAccountManagedConnections,
   persistProviderConnections,
-  setConnectionCooldownUntil,
-  setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
 import { listModelCooldownsForConnection } from "~/lib/model-cooldown"
-import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
-import {
-  canResetCodexQuota,
-  resetCodexQuota,
-  buildCodexQuotaMeta,
-} from "~/lib/quota/codex"
-import {
-  enrichQuotaDetails,
-  enrichQuotaInfoForResponse,
-} from "~/lib/quota/cycles"
-import { summarizeCodexQuota } from "~/lib/quota/parsers"
-import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { canResetCodexQuota, buildCodexQuotaMeta } from "~/lib/quota/codex"
+import { enrichQuotaInfoForResponse } from "~/lib/quota/cycles"
+import { resetCodexQuotaForConnection } from "~/lib/quota/codex-reset"
 import { upgradeOAuthConnectionLabels } from "~/services/oauth/account-label"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
@@ -223,34 +212,9 @@ quotaApiRoutes.post("/:id/reset", async (c) => {
     if (!connection) {
       return c.json({ error: "Connection not found." }, 404)
     }
-    const payload = await resetCodexQuota(connection)
-    const summary = summarizeCodexQuota(payload)
-    const meta = buildCodexQuotaMeta(connection, payload)
-    const snapshot = {
-      fetchedAt: Date.now(),
-      provider: "codex" as const,
-      unlimited: summary.unlimited,
-      premiumInteractionsRemaining: summary.remainingPercent,
-      details: enrichQuotaDetails("codex", {
-        ...(payload as unknown as Record<string, unknown>),
-        _codexMeta: meta,
-      }),
-    }
-    applyOAuthQuotaSnapshot(connection, snapshot)
-    // Clear any residual cooldown state left over from the prior
-    // quota-exhausted period — but only when the fresh snapshot shows the
-    // quota actually recovered. `applyOAuthQuotaSnapshot` flips an exhausted
-    // credential back to ready on recovery; blindly clearing cooldown while
-    // still exhausted would let refreshConnectionAvailability instantly
-    // re-activate an account that has no quota.
-    // 直接通过 connection 原生 setter 清理,不再经由 Account 快照
-    if (getConnectionQuotaState(connection) !== "exhausted") {
-      const syncConn = getMutableProviderConnection(conn.id)
-      if (syncConn) {
-        setConnectionCooldownUntil(syncConn, undefined)
-        setConnectionRateLimitInfo(syncConn, undefined, undefined)
-      }
-      clearAccountRateLimitState(conn.id)
+    const snapshot = await resetCodexQuotaForConnection(connection)
+    if (!snapshot) {
+      return c.json({ error: "A quota reset is already in progress." }, 409)
     }
     await persistProviderConnections()
     logger.info(`Codex quota reset for account "${conn.name}"`)

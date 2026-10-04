@@ -559,9 +559,10 @@ export async function fetchCodexResetCredits(
   }
 }
 
-async function consumeCodexRateLimitResetCredit(
+export async function consumeCodexRateLimitResetCredit(
   connection: ProviderConnection,
   signal?: AbortSignal,
+  redeemRequestId = createCodexRedeemRequestId(),
 ): Promise<void> {
   if (getConnectionProvider(connection) !== "codex") {
     throw new Error(
@@ -574,7 +575,7 @@ async function consumeCodexRateLimitResetCredit(
     url: CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL,
     headers: buildCodexRequestHeaders(connection),
     body: JSON.stringify({
-      redeem_request_id: createCodexRedeemRequestId(),
+      redeem_request_id: redeemRequestId,
     }),
     signal,
   })

@@ -63,6 +63,9 @@ const i18n = {
       "system.level.debug": "调试日志（临时）",
       "system.logHint":
         "关闭调试日志可减少格式化和写盘，但无法消除所有调用方预先构造日志的开销。",
+      "system.codexAutoReset": "自动使用即将过期的 Codex 重置次数",
+      "system.codexAutoResetHint":
+        "后台每分钟检查，在重置次数到期前 5 分钟内自动使用一次；5 小时和周额度均为满额时跳过。需要服务保持运行。",
       "system.performanceDetails": "详细性能指标",
       "system.performanceDetailsHint":
         "记录首输出、首文本、首写入和协议转换耗时。关闭仅影响新请求，基础 TPS、用量与原有 TTFT 仍保留。",
@@ -1562,6 +1565,9 @@ const i18n = {
       "system.level.debug": "Debug (temporary)",
       "system.logHint":
         "Disabling debug reduces formatting and disk writes, but not all eagerly built log arguments.",
+      "system.codexAutoReset": "Automatically use expiring Codex reset credits",
+      "system.codexAutoResetHint":
+        "Checks every minute and uses a credit within 5 minutes of expiry, unless both 5-hour and weekly quotas are full. The server must stay running.",
       "system.performanceDetails": "Detailed performance metrics",
       "system.performanceDetailsHint":
         "Measure first output, text, write and translation timings. Disabling affects new requests only; basic TPS, usage and original TTFT remain.",

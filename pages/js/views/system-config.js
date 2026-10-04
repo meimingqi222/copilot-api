@@ -41,6 +41,7 @@ function systemConfigView() {
         requestDump: false,
         memoryVerbose: false,
         performanceDetails: true,
+        codexAutoReset: false,
         quotaDisplayMode: "remaining",
       }
       this.acknowledgeSensitiveData = false

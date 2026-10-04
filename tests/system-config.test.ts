@@ -73,6 +73,22 @@ test("quota display mode persists and legacy configs default to remaining", () =
   expect(getSystemSettings().quotaDisplayMode).toBe("remaining")
 })
 
+test("Codex auto reset defaults off, persists and survives diagnostic expiry", () => {
+  expect(getSystemSettings().codexAutoReset).toBe(false)
+  updateSystemConfig({ ...normal, codexAutoReset: true, logLevel: "debug" })
+  const stored = JSON.parse(saved!) as { settings: unknown; expiresAt: number }
+  stored.expiresAt = Date.now() - 1
+  initialize(JSON.stringify(stored))
+  expect(getSystemSettings().codexAutoReset).toBe(true)
+  expect(getSystemSettings().logLevel).toBe("info")
+  expect(() =>
+    updateSystemConfig({ ...normal, codexAutoReset: "true" }),
+  ).toThrow()
+  updateSystemConfig({ ...normal, codexAutoReset: false })
+  initialize(saved)
+  expect(getSystemSettings().codexAutoReset).toBe(false)
+})
+
 test("dump needs explicit acknowledgement and expires with verbose logs", () => {
   expect(() => updateSystemConfig({ ...normal, requestDump: true })).toThrow()
   updateSystemConfig({
