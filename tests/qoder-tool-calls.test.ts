@@ -42,10 +42,20 @@ describe("QoderToolCallSplitter", () => {
   })
 
   test("large call in tiny chunks stays linear", () => {
-    const big = `<tool_call><function=w><parameter=c>${"y".repeat(200_000)}</parameter></function></tool_call>`
-    const start = performance.now()
-    const frags = feedInChunks(big, 20)
-    expect(performance.now() - start).toBeLessThan(50)
-    expect(frags.filter((f) => f.kind === "call")).toHaveLength(1)
+    const payload = (size: number) =>
+      `<tool_call><function=w><parameter=c>${"y".repeat(size)}</parameter></function></tool_call>`
+    const feed = (size: number) => {
+      const start = performance.now()
+      const frags = feedInChunks(payload(size), 20)
+      return { ms: performance.now() - start, frags }
+    }
+
+    const small = feed(50_000)
+    const large = feed(200_000)
+    expect(large.frags.filter((f) => f.kind === "call")).toHaveLength(1)
+    // 4 倍输入:线性实现约 4 倍耗时,二次方实现约 16 倍。用比值判定而非绝对
+    // 时间,并留一个下限吸收负载抖动 —— 原写法把 200k 输入硬卡在 50ms,在并行
+    // 跑全量时会随 CPU 争用假失败(实测出现过 53ms)。
+    expect(large.ms).toBeLessThan(Math.max(small.ms * 12, 500))
   })
 })
