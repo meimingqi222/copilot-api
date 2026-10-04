@@ -9,7 +9,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { join, resolve, sep } from "node:path"
+import { tmpdir } from "node:os"
+import { join, sep } from "node:path"
 import {
   bindRequestLogContext,
   createDetachedRequestLog,
@@ -457,8 +458,9 @@ describe("GET /admin/api/trace/history", () => {
      */
     const isolationRoot = PATHS.APP_DIR
     const originalLogDir = process.env.LOG_DIR
-    const root = resolve("temp")
-    await mkdir(root, { recursive: true })
+    // 用系统临时目录:仓库内的 temp/ 虽然被 .gitignore 忽略,Bun 的测试发现
+    // 却会把它当源码扫,测试产物不该落在仓库里。
+    const root = tmpdir()
     const directory = await mkdtemp(join(root, "trace-history-"))
     redirectPathsToDir(directory)
     await mkdir(PATHS.LOG_DIR, { recursive: true })
