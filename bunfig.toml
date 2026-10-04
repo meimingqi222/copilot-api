@@ -1,3 +1,7 @@
 [test]
 # Isolate all PATHS writes away from ~/.local/share/copilot-api
 preload = ["./tests/setup/isolate-data-dir.ts"]
+# temp/ holds gitignored snapshots (release/backup copies of this repo).
+# Bun's test discovery does not honour .gitignore, so without this the stale
+# copies' test files are executed alongside the real suite.
+pathIgnorePatterns = ["temp/**"]
