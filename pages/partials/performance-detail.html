@@ -1,704 +1,1109 @@
-<section
-  class="card p-4 sm:p-5 mb-6 shadow-sm border border-[var(--apple-gray-5)]"
->
-  <!-- 标题与操作栏 -->
-  <div
-    class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4"
-  >
-    <div>
-      <div class="flex items-center gap-2">
-        <h3
-          class="text-title-3 font-semibold"
-          x-text="t('perf.detailTitle')"
-        ></h3>
+<div class="space-y-5">
+  <!-- 1. 全局大盘核心 KPI 看板 (Hero Overview Cards) -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+    <!-- KPI 1: 全局首字响应 -->
+    <div
+      class="card p-3.5 sm:p-4 border border-[var(--apple-gray-5)] bg-white shadow-sm relative overflow-hidden"
+    >
+      <div
+        class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+      >
+        <span x-text="t('perf.globalTtft')"></span>
+        <i data-lucide="timer" class="w-4 h-4 text-[var(--apple-blue)]"></i>
+      </div>
+      <div
+        class="text-xl sm:text-2xl font-bold font-mono tracking-tight"
+        :class="getTtftClass(globalStats.avgTtft)"
+        x-text="formatMs(globalStats.avgTtft)"
+      ></div>
+      <p
+        class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-1.5 truncate"
+      >
         <span
-          class="badge badge-info text-xs font-medium"
-          x-show="filteredDetails.length"
-          x-text="t('perf.channelCount', { count: filteredDetails.length })"
+          class="inline-block w-1.5 h-1.5 rounded-full bg-[var(--apple-blue)]"
         ></span>
+        <span x-text="t('perf.heroTtftSub')"></span>
+      </p>
+    </div>
+
+    <!-- KPI 2: 全局平均流式速率 -->
+    <div
+      class="card p-3.5 sm:p-4 border border-[var(--apple-gray-5)] bg-white shadow-sm relative overflow-hidden"
+    >
+      <div
+        class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+      >
+        <span x-text="t('perf.globalTps')"></span>
+        <i data-lucide="zap" class="w-4 h-4 text-[var(--apple-green)]"></i>
+      </div>
+      <div
+        class="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[var(--apple-green)]"
+      >
+        <span x-text="formatTps(globalStats.avgTps)"></span>
+        <span
+          class="text-xs font-normal text-[var(--apple-text-secondary)] ml-0.5"
+          >tok/s</span
+        >
+      </div>
+      <p class="text-[11px] text-[var(--apple-text-secondary)] mt-1 truncate">
+        <span
+          x-text="globalStats.totalSamples + ' ' + t('perf.samples')"
+        ></span>
+      </p>
+    </div>
+
+    <!-- KPI 3: 代理处理开销与上游占比 -->
+    <div
+      class="card p-3.5 sm:p-4 border border-[var(--apple-gray-5)] bg-white shadow-sm relative overflow-hidden"
+    >
+      <div
+        class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+      >
+        <span x-text="t('perf.proxyOverhead')"></span>
+        <i data-lucide="cpu" class="w-4 h-4 text-[var(--apple-purple)]"></i>
+      </div>
+      <div class="flex items-baseline gap-2">
+        <span
+          class="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
+          x-text="formatMs(globalStats.proxyOverheadMs)"
+        ></span>
+        <span class="badge badge-success text-[10px] px-1.5 py-0.5 font-mono">
+          上游 <span x-text="globalStats.upstreamRatio + '%'"></span>
+        </span>
       </div>
       <p
-        class="text-xs text-[var(--apple-text-secondary)] mt-1 max-w-3xl leading-relaxed"
-        x-text="t('perf.detailDesc')"
-      ></p>
+        class="text-[11px] text-[var(--apple-text-secondary)] mt-1 truncate"
+        :title="t('perf.proxyOverheadDesc')"
+      >
+        <span x-text="t('perf.proxyOverheadDesc')"></span>
+      </p>
     </div>
 
-    <!-- 顶栏快速操作与视图切换 -->
-    <div class="flex flex-wrap items-center gap-2 shrink-0">
-      <!-- 搜索框 -->
-      <div class="relative">
-        <input
-          type="text"
-          x-model="searchQuery"
-          :placeholder="t('perf.searchPlaceholder')"
-          class="input input-small pl-8 pr-7 text-xs w-44 sm:w-56 focus:w-64 transition-all"
-        />
-        <i
-          data-lucide="search"
-          class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--apple-text-secondary)] pointer-events-none"
-        ></i>
-        <button
-          type="button"
-          x-show="searchQuery"
-          @click="searchQuery = ''"
-          class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)] p-0.5 cursor-pointer"
-        >
-          <i data-lucide="x" class="w-3 h-3"></i>
-        </button>
-      </div>
-
-      <!-- 视图模式切换 -->
+    <!-- KPI 4: 监控通道与总样本 -->
+    <div
+      class="card p-3.5 sm:p-4 border border-[var(--apple-gray-5)] bg-white shadow-sm relative overflow-hidden"
+    >
       <div
-        class="inline-flex rounded-lg border border-[var(--apple-gray-5)] p-0.5 bg-[var(--apple-gray-6)] text-xs"
+        class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
+      >
+        <span x-text="t('perf.monitoredChannels')"></span>
+        <i
+          data-lucide="activity"
+          class="w-4 h-4 text-[var(--apple-orange)]"
+        ></i>
+      </div>
+      <div
+        class="text-xl sm:text-2xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
+      >
+        <span x-text="globalStats.channelCount"></span>
+        <span
+          class="text-xs font-normal text-[var(--apple-text-secondary)] ml-1 font-sans"
+          >通道</span
+        >
+      </div>
+      <p class="text-[11px] text-[var(--apple-text-secondary)] mt-1 truncate">
+        <span x-text="'累计 ' + globalStats.totalRequests + ' 次调用'"></span>
+      </p>
+    </div>
+  </div>
+
+  <!-- 2. 控制栏与视角 Tab 切换 -->
+  <div
+    class="card p-3 sm:p-4 border border-[var(--apple-gray-5)] bg-white shadow-sm"
+  >
+    <div
+      class="flex flex-col md:flex-row md:items-center justify-between gap-3"
+    >
+      <!-- 视角 Tab 按钮组 -->
+      <div
+        class="inline-flex rounded-lg border border-[var(--apple-gray-5)] p-0.5 bg-[var(--apple-gray-6)] text-xs shrink-0"
       >
         <button
           type="button"
-          @click="viewMode = 'pipeline'; $nextTick(() => window.lucide?.createIcons?.())"
-          :class="viewMode === 'pipeline' ? 'bg-white shadow-sm font-medium text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
-          class="px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
+          @click="activeTab = 'channels'; $nextTick(() => window.lucide?.createIcons?.())"
+          :class="activeTab === 'channels' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+          class="px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
         >
           <i data-lucide="layers" class="w-3.5 h-3.5"></i>
-          <span x-text="t('perf.viewPipeline')"></span>
+          <span x-text="t('perf.tabChannels')"></span>
+          <span
+            class="text-[10px] px-1.5 py-0.2 rounded-full bg-[var(--apple-blue)]/10 text-[var(--apple-blue)] font-mono ml-0.5"
+            x-text="filteredDetails.length"
+            x-show="filteredDetails.length"
+          ></span>
         </button>
         <button
           type="button"
-          @click="viewMode = 'table'; $nextTick(() => window.lucide?.createIcons?.())"
-          :class="viewMode === 'table' ? 'bg-white shadow-sm font-medium text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
-          class="px-2.5 py-1 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
+          @click="activeTab = 'models'; $nextTick(() => window.lucide?.createIcons?.())"
+          :class="activeTab === 'models' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+          class="px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
         >
-          <i data-lucide="table" class="w-3.5 h-3.5"></i>
-          <span x-text="t('perf.viewTable')"></span>
+          <i data-lucide="cpu" class="w-3.5 h-3.5"></i>
+          <span x-text="t('perf.tabModels')"></span>
+          <span
+            class="text-[10px] px-1.5 py-0.2 rounded-full bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] font-mono ml-0.5"
+            x-text="performance.length"
+            x-show="performance.length"
+          ></span>
+        </button>
+        <button
+          type="button"
+          @click="activeTab = 'providers'; $nextTick(() => window.lucide?.createIcons?.())"
+          :class="activeTab === 'providers' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+          class="px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
+        >
+          <i data-lucide="server" class="w-3.5 h-3.5"></i>
+          <span x-text="t('perf.tabProviders')"></span>
         </button>
       </div>
 
-      <!-- 仅看有效指标 开关 -->
-      <label
-        class="inline-flex items-center gap-1.5 text-xs text-[var(--apple-text-secondary)] cursor-pointer select-none px-2 py-1 rounded-md hover:bg-[var(--apple-gray-6)] transition-colors border border-transparent hover:border-[var(--apple-gray-5)]"
-        :title="t('perf.hideEmptyHint')"
-      >
-        <input
-          type="checkbox"
-          x-model="hideEmpty"
-          class="rounded border-[var(--apple-gray-4)] text-[var(--apple-blue)] focus:ring-[var(--apple-blue)] cursor-pointer"
-        />
-        <span x-text="t('perf.hideEmpty')"></span>
-      </label>
+      <!-- 右侧筛选、搜索与工具 -->
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- 搜索框 -->
+        <div class="relative">
+          <input
+            type="text"
+            x-model="searchQuery"
+            :placeholder="t('perf.searchPlaceholder')"
+            class="input input-small pl-8 pr-7 text-xs w-48 sm:w-56 focus:w-64 transition-all"
+          />
+          <i
+            data-lucide="search"
+            class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--apple-text-secondary)] pointer-events-none"
+          ></i>
+          <button
+            type="button"
+            x-show="searchQuery"
+            @click="searchQuery = ''"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)] p-0.5 cursor-pointer"
+          >
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </div>
+
+        <!-- 供应商下拉筛选 -->
+        <select
+          x-model="providerFilter"
+          x-show="activeTab === 'channels' || activeTab === 'providers'"
+          class="input input-small text-xs"
+          style="max-width: 150px"
+        >
+          <option value="all" x-text="t('perf.allProviders')"></option>
+          <template x-for="opt in providerOptions" :key="opt.provider">
+            <option :value="opt.provider" x-text="opt.label"></option>
+          </template>
+        </select>
+
+        <!-- 指标概念说明切换 -->
+        <button
+          type="button"
+          @click="showGuide = !showGuide"
+          :class="showGuide ? 'btn-primary' : 'btn-secondary'"
+          class="btn btn-small text-xs flex items-center gap-1 cursor-pointer"
+          :title="t('perf.metricsGuide')"
+        >
+          <i data-lucide="info" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline" x-text="t('perf.metricsGuide')"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 可折叠的指标概念提示 -->
+    <div
+      x-show="showGuide"
+      x-transition
+      class="mt-3 pt-3 border-t border-[var(--apple-gray-5)] grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+    >
+      <div class="p-2.5 rounded-lg bg-[var(--apple-bg-secondary)]">
+        <strong class="text-[var(--apple-text)] block mb-0.5"
+          >TTFT (首次有效输出):</strong
+        >
+        <p x-text="t('perf.ttftDesc')"></p>
+      </div>
+      <div class="p-2.5 rounded-lg bg-[var(--apple-bg-secondary)]">
+        <strong class="text-[var(--apple-text)] block mb-0.5"
+          >Text TTFT vs TTFT (思考时延):</strong
+        >
+        <p>
+          若两者存在明显时间差，代表大模型正在进行深度思考推理（Reasoning）或工具解析，正文随后呈现。
+        </p>
+      </div>
+      <div class="p-2.5 rounded-lg bg-[var(--apple-bg-secondary)]">
+        <strong class="text-[var(--apple-text)] block mb-0.5"
+          >代理开销 (Proxy Overhead):</strong
+        >
+        <p>
+          代理层网关解析、协议转译及下游写入纯内部耗时。绝大多数耗时（>95%）为上游大模型推理与网络往返。
+        </p>
+      </div>
     </div>
   </div>
 
-  <!-- 无数据空状态 -->
-  <p
-    class="text-sm text-[var(--apple-text-secondary)] py-8 text-center"
-    x-show="!details.length"
-    x-text="t('perf.detailEmpty')"
-  ></p>
-  <div
-    class="text-sm text-[var(--apple-text-secondary)] py-8 text-center"
-    x-show="details.length && !filteredDetails.length"
-  >
-    <p x-text="t('perf.noFilteredDetails')"></p>
-    <button
-      type="button"
-      @click="searchQuery = ''; providerFilter = 'all'"
-      class="btn btn-small btn-secondary mt-2 cursor-pointer"
-      x-text="t('perf.clearFilter')"
-    ></button>
-  </div>
+  <!-- 3. 主体内容 TAB 1：通道性能矩阵 (可下钻生命周期流水线) -->
+  <div x-show="activeTab === 'channels'" class="space-y-4">
+    <!-- 无数据状态 -->
+    <div
+      class="card p-12 text-center text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]"
+      x-show="!details.length"
+    >
+      <i data-lucide="gauge" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+      <p class="text-sm" x-text="t('perf.detailEmpty')"></p>
+    </div>
 
-  <!-- 通道性能卡片列表 -->
-  <div class="space-y-6" x-show="filteredDetails.length">
-    <template x-for="row in filteredDetails" :key="getRowKey(row)">
+    <div
+      class="card p-8 text-center text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]"
+      x-show="details.length && !filteredDetails.length"
+    >
+      <p class="text-sm" x-text="t('perf.noFilteredDetails')"></p>
+      <button
+        type="button"
+        @click="searchQuery = ''; providerFilter = 'all'"
+        class="btn btn-small btn-secondary mt-3 cursor-pointer"
+        x-text="t('perf.clearFilter')"
+      ></button>
+    </div>
+
+    <!-- 性能矩阵主表格 -->
+    <div
+      class="card border border-[var(--apple-gray-5)] bg-white shadow-sm overflow-hidden"
+      x-show="filteredDetails.length"
+    >
+      <!-- 表格操作副顶栏 -->
       <div
-        class="border border-[var(--apple-gray-5)] rounded-xl p-4 bg-white transition-all hover:shadow-md"
+        class="px-4 py-2.5 bg-[var(--apple-bg-secondary)]/50 border-b border-[var(--apple-gray-5)] flex items-center justify-between text-xs text-[var(--apple-text-secondary)]"
       >
-        <!-- 卡片头部 Header -->
-        <div
-          class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--apple-gray-5)]"
+        <div class="flex items-center gap-2">
+          <span
+            >共
+            <strong
+              class="text-[var(--apple-text)] font-mono"
+              x-text="filteredDetails.length"
+            ></strong>
+            个通道</span
+          >
+          <span class="text-[var(--apple-gray-4)]">|</span>
+          <span class="text-[11px]">点击任意通道可展开深度耗时流水线分析</span>
+        </div>
+        <button
+          type="button"
+          @click="expandAllRows()"
+          class="text-[var(--apple-blue)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
         >
-          <!-- 左侧：模型名 + 供应商 + 徽章组 -->
-          <div class="flex flex-wrap items-center gap-2">
-            <span
-              class="text-base font-bold text-[var(--apple-text)] break-all"
-              x-text="row.model"
-            ></span>
-            <span
-              class="badge badge-info text-xs font-medium"
-              x-text="row.provider"
-            ></span>
-            <span
-              class="text-xs text-[var(--apple-text-secondary)] hidden sm:inline"
-              >·</span
-            >
-            <span
-              class="text-xs font-mono text-[var(--apple-text-secondary)] hidden sm:inline"
-              x-text="row.endpoint"
-            ></span>
-            <span
-              class="badge text-[11px] px-2 py-0.5 font-normal"
-              :class="row.transport === 'ws' ? 'badge-purple' : 'badge-gray'"
-              x-text="row.transport.toUpperCase()"
-            ></span>
-            <span
-              class="badge text-[11px] px-2 py-0.5 font-normal"
-              :class="row.translated ? 'badge-purple' : 'badge-success'"
-              x-text="t(row.translated ? 'perf.translated' : 'perf.native')"
-            ></span>
-            <span
-              class="badge text-[11px] px-2 py-0.5 font-normal"
-              :class="row.streaming ? 'badge-info' : 'badge-gray'"
-              x-text="t(row.streaming ? 'perf.streaming' : 'perf.nonStreaming')"
-            ></span>
-          </div>
+          <i data-lucide="layers" class="w-3 h-3"></i>
+          <span x-text="isAllRowsExpanded() ? '全部折叠' : '全部展开'"></span>
+        </button>
+      </div>
 
-          <!-- 右侧：样本数与 TPS -->
-          <div class="flex items-center gap-3">
-            <span
-              class="text-xs text-[var(--apple-text-secondary)]"
-              x-text="row.generationSamples + ' / ' + row.requests + ' ' + t('perf.samples')"
-            ></span>
-            <div
-              x-show="row.streaming && row.generationTps"
-              class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--apple-green)]/10 text-[var(--apple-green)] border border-[var(--apple-green)]/20 font-semibold text-xs"
+      <div class="table-container w-full min-w-0 overflow-x-auto">
+        <table class="table !table w-full text-xs" style="table-layout: auto">
+          <thead>
+            <tr
+              class="bg-[var(--apple-bg-secondary)] border-b border-[var(--apple-gray-5)] select-none"
             >
-              <i data-lucide="zap" class="w-3.5 h-3.5"></i>
-              <span>
-                <span x-text="formatTps(row.generationTps)"></span>
-                <span class="font-normal text-[10px]">tok/s</span>
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 核心体感指标 Hero 面板（4 列网格） -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 my-4">
-          <!-- 核心指标 1: TTFT / 首次有效输出 -->
-          <div
-            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
-          >
-            <div
-              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
-            >
-              <span
-                x-text="t('perf.heroTtft')"
-                :title="t('perf.heroTtftSub')"
-              ></span>
-              <i
-                data-lucide="timer"
-                class="w-3.5 h-3.5 text-[var(--apple-blue)]"
-              ></i>
-            </div>
-            <div
-              class="text-xl font-bold font-mono tracking-tight"
-              :class="getTtftClass(row.timings.outputTtftMs?.average)"
-              x-text="formatMs(row.timings.outputTtftMs?.average)"
-            ></div>
-            <div
-              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
-            >
-              <span
-                >P50:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.outputTtftMs?.p50)"
-                ></strong
-              ></span>
-              <span
-                >P95:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.outputTtftMs?.p95)"
-                ></strong
-              ></span>
-            </div>
-          </div>
-
-          <!-- 核心指标 2: 首正文可用 (Text TTFT) -->
-          <div
-            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
-          >
-            <div
-              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
-            >
-              <span
-                x-text="t('perf.heroText')"
-                :title="t('perf.heroTextSub')"
-              ></span>
-              <i
-                data-lucide="message-square"
-                class="w-3.5 h-3.5 text-[var(--apple-purple)]"
-              ></i>
-            </div>
-            <div
-              class="text-xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
-              x-text="formatMs(row.timings.textTtftMs?.average)"
-            ></div>
-            <div
-              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
-            >
-              <span
-                >P50:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.textTtftMs?.p50)"
-                ></strong
-              ></span>
-              <span
-                >P95:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.textTtftMs?.p95)"
-                ></strong
-              ></span>
-            </div>
-          </div>
-
-          <!-- 核心指标 3: 首帧写出 (First Write) -->
-          <div
-            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
-          >
-            <div
-              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
-            >
-              <span
-                x-text="t('perf.heroFirstWrite')"
-                :title="t('perf.heroFirstWriteSub')"
-              ></span>
-              <i
-                data-lucide="send"
-                class="w-3.5 h-3.5 text-[var(--apple-orange)]"
-              ></i>
-            </div>
-            <div
-              class="text-xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
-              x-text="formatMs(row.timings.firstWriteMs?.average)"
-            ></div>
-            <div
-              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
-            >
-              <span
-                >P50:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.firstWriteMs?.p50)"
-                ></strong
-              ></span>
-              <span
-                >P95:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.firstWriteMs?.p95)"
-                ></strong
-              ></span>
-            </div>
-          </div>
-
-          <!-- 核心指标 4: 输出速度 TPS 或 非流式结果就绪 -->
-          <div
-            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
-            x-show="row.streaming"
-          >
-            <div
-              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
-            >
-              <span
-                x-text="t('perf.heroTps')"
-                :title="t('perf.heroTpsSub')"
-              ></span>
-              <i
-                data-lucide="zap"
-                class="w-3.5 h-3.5 text-[var(--apple-green)]"
-              ></i>
-            </div>
-            <div
-              class="text-xl font-bold font-mono tracking-tight"
-              :class="getTpsClass(row.generationTps)"
-              x-text="formatTps(row.generationTps) + ' tok/s'"
-            ></div>
-            <div
-              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-1.5"
-            >
-              <span
-                x-text="row.generationSamples + ' ' + t('perf.samples')"
-              ></span>
-            </div>
-          </div>
-          <div
-            class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)] relative overflow-hidden"
-            x-show="!row.streaming"
-          >
-            <div
-              class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
-            >
-              <span
-                x-text="t('perf.heroReady')"
-                :title="t('perf.heroReadySub')"
-              ></span>
-              <i
-                data-lucide="check-circle"
-                class="w-3.5 h-3.5 text-[var(--apple-green)]"
-              ></i>
-            </div>
-            <div
-              class="text-xl font-bold font-mono tracking-tight text-[var(--apple-text)]"
-              x-text="formatMs(row.timings.responseReadyMs?.average)"
-            ></div>
-            <div
-              class="text-[11px] text-[var(--apple-text-secondary)] mt-1 flex items-center gap-2"
-            >
-              <span
-                >P50:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.responseReadyMs?.p50)"
-                ></strong
-              ></span>
-              <span
-                >P95:
-                <strong
-                  class="text-[var(--apple-text)]"
-                  x-text="formatMs(row.timings.responseReadyMs?.p95)"
-                ></strong
-              ></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 智能性能诊断条 (Insights) -->
-        <div class="flex flex-wrap gap-2 mb-4" x-show="getInsights(row).length">
-          <template x-for="insight in getInsights(row)" :key="insight.text">
-            <div
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border"
-              :class="insight.class"
-            >
-              <i :data-lucide="insight.icon" class="w-3.5 h-3.5 shrink-0"></i>
-              <span x-text="insight.text"></span>
-            </div>
-          </template>
-        </div>
-
-        <!-- 阶段耗时流水线 Waterfall Breakdown Bar -->
-        <div
-          class="mb-4 p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]/50"
-        >
-          <div class="flex items-center justify-between text-xs mb-1.5">
-            <span
-              class="font-medium text-[var(--apple-text)] flex items-center gap-1.5"
-            >
-              <i
-                data-lucide="git-commit"
-                class="w-3.5 h-3.5 text-[var(--apple-blue)]"
-              ></i>
-              <span x-text="t('perf.pipelineBreakdown')"></span>
-            </span>
-            <span
-              class="text-[var(--apple-text-secondary)] text-[11px] hidden sm:inline"
-              x-text="t('perf.pipelineDesc')"
-            ></span>
-          </div>
-
-          <!-- 彩色分段进度条 -->
-          <div
-            class="h-2.5 w-full rounded-full bg-[var(--apple-gray-5)] overflow-hidden flex my-2"
-          >
-            <template
-              x-for="stage in getPipelineBreakdown(row)"
-              :key="stage.id"
-            >
-              <div
-                class="h-full transition-all duration-300 relative group cursor-pointer"
-                :style="'width: ' + stage.pct + '%; background-color: ' + stage.color"
-                :title="stage.name + ': ' + formatMs(stage.ms) + ' (' + stage.pct + '%)'"
-              ></div>
-            </template>
-          </div>
-
-          <!-- 分段图例与耗时标签 -->
-          <div
-            class="flex flex-wrap items-center justify-between gap-2 text-xs pt-1"
-          >
-            <template
-              x-for="stage in getPipelineBreakdown(row)"
-              :key="stage.id"
-            >
-              <div class="flex items-center gap-1.5">
-                <span
-                  class="w-2.5 h-2.5 rounded-full inline-block shrink-0"
-                  :style="'background-color: ' + stage.color"
-                ></span>
-                <span
-                  class="text-[var(--apple-text-secondary)]"
-                  x-text="stage.name"
-                ></span>
-                <strong
-                  class="font-mono text-[var(--apple-text)]"
-                  x-text="formatMs(stage.ms)"
-                ></strong>
-                <span
-                  class="text-[10px] text-[var(--apple-text-tertiary)]"
-                  x-text="'(' + stage.pct + '%)'"
-                ></span>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- 模式一：阶段卡片流 (Pipeline Stages View) -->
-        <div x-show="viewMode === 'pipeline'" class="space-y-2.5">
-          <div
-            class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] px-1 mb-1"
-          >
-            <span x-text="t('perf.stagesTitle')"></span>
-            <button
-              type="button"
-              @click="toggleAllStages(getRowKey(row))"
-              class="text-[var(--apple-blue)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
-            >
-              <span
-                x-text="isAllExpanded(getRowKey(row)) ? t('perf.collapseAll') : t('perf.expandAll')"
-              ></span>
-            </button>
-          </div>
-
-          <template x-for="stage in lifecycleStages" :key="stage.id">
-            <div
-              class="border border-[var(--apple-gray-5)] rounded-lg overflow-hidden bg-white"
-            >
-              <!-- 阶段头部 (可点击展开/收起) -->
-              <div
-                @click="toggleStage(getRowKey(row), stage.id)"
-                class="p-2.5 sm:px-3.5 flex items-center justify-between gap-2 cursor-pointer hover:bg-[var(--apple-gray-6)] transition-colors select-none"
+              <!-- 列 1: 模型与通道 -->
+              <th
+                class="py-2.5 px-3 text-left font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('model')"
               >
-                <div class="flex items-center gap-2.5 min-w-0">
-                  <span
-                    class="w-2 h-2 rounded-full shrink-0"
-                    :style="'background-color: ' + stage.color"
-                  ></span>
-                  <div class="min-w-0">
-                    <span
-                      class="font-medium text-xs sm:text-sm text-[var(--apple-text)]"
-                      x-text="t(stage.nameKey)"
-                    ></span>
-                    <span
-                      class="text-[11px] text-[var(--apple-text-secondary)] ml-2 hidden sm:inline"
-                      x-text="t(stage.descKey)"
-                    ></span>
-                  </div>
-                </div>
-
-                <div class="flex items-center gap-3 shrink-0">
-                  <!-- 阶段核心耗时 -->
-                  <div
-                    class="text-right"
-                    x-show="getStageSummary(row, stage.id)"
-                  >
-                    <span
-                      class="text-xs font-mono font-semibold text-[var(--apple-text)]"
-                      x-text="formatMs(getStageSummary(row, stage.id)?.average)"
-                    ></span>
-                    <span
-                      class="text-[11px] text-[var(--apple-text-secondary)] ml-1"
-                      x-text="'(P50: ' + formatMs(getStageSummary(row, stage.id)?.p50) + ')'"
-                    ></span>
-                  </div>
-                  <!-- 指标计数 -->
-                  <span
-                    class="text-[11px] text-[var(--apple-text-tertiary)] px-2 py-0.5 rounded bg-[var(--apple-gray-6)] font-mono"
-                    x-text="getStageMetrics(row, stage.id).length + ' 项'"
-                  ></span>
-                  <!-- 展开收起箭头 -->
+                <div class="flex items-center gap-1">
+                  <span x-text="t('perf.model')"></span>
                   <i
-                    data-lucide="chevron-down"
-                    class="w-4 h-4 text-[var(--apple-text-secondary)] transition-transform duration-200"
-                    :class="isStageExpanded(getRowKey(row), stage.id) ? 'rotate-180' : ''"
+                    data-lucide="arrow-up-down"
+                    class="w-3 h-3 opacity-50"
+                    x-show="sortBy !== 'model'"
+                  ></i>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'model'"
                   ></i>
                 </div>
-              </div>
-
-              <!-- 展开后的细分指标表格 -->
-              <div
-                x-show="isStageExpanded(getRowKey(row), stage.id)"
-                class="border-t border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]/30 p-2 sm:p-3"
+              </th>
+              <!-- 列 2: 请求样本 -->
+              <th
+                class="py-2.5 px-3 text-center font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('requests')"
               >
-                <div class="table-container w-full min-w-0 overflow-x-auto">
-                  <table class="table !table min-w-[500px] text-xs">
-                    <thead>
-                      <tr
-                        class="text-[var(--apple-text-secondary)] border-b border-[var(--apple-gray-5)]"
-                      >
-                        <th class="py-1.5" x-text="t('perf.metric')"></th>
-                        <th
-                          class="py-1.5 !text-center"
-                          x-text="t('perf.samples')"
-                        ></th>
-                        <th
-                          class="py-1.5 !text-right"
-                          x-text="t('perf.average')"
-                        ></th>
-                        <th class="py-1.5 !text-right">P50</th>
-                        <th class="py-1.5 !text-right">P95</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <template
-                        x-for="item in getStageMetrics(row, stage.id)"
-                        :key="item.field"
-                      >
-                        <tr
-                          class="hover:bg-white border-b border-[var(--apple-gray-5)]/60 last:border-none"
-                        >
-                          <td
-                            class="py-1.5 font-medium text-[var(--apple-text)]"
-                            x-text="t('perf.' + item.field)"
-                          ></td>
-                          <td
-                            class="py-1.5 !text-center text-[var(--apple-text-secondary)] font-mono"
-                            x-text="item.timing.samples"
-                          ></td>
-                          <td
-                            class="py-1.5 !text-right font-mono font-semibold text-[var(--apple-text)]"
-                            x-text="formatMs(item.timing.average)"
-                          ></td>
-                          <td
-                            class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
-                            x-text="formatMs(item.timing.p50)"
-                          ></td>
-                          <td
-                            class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
-                            x-text="formatMs(item.timing.p95)"
-                          ></td>
-                        </tr>
-                      </template>
-                      <tr x-show="!getStageMetrics(row, stage.id).length">
-                        <td
-                          colspan="5"
-                          class="py-3 text-center text-[var(--apple-text-secondary)]"
-                          x-text="t('perf.noData')"
-                        ></td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <div class="flex items-center justify-center gap-1">
+                  <span x-text="t('perf.requests')"></span>
+                  <i
+                    data-lucide="arrow-up-down"
+                    class="w-3 h-3 opacity-50"
+                    x-show="sortBy !== 'requests'"
+                  ></i>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'requests'"
+                  ></i>
                 </div>
-              </div>
-            </div>
-          </template>
-        </div>
-
-        <!-- 模式二：分组矩阵表格 (Grouped Matrix View) -->
-        <div
-          x-show="viewMode === 'table'"
-          class="table-container w-full min-w-0 overflow-x-auto border border-[var(--apple-gray-5)] rounded-lg"
-        >
-          <table class="table !table min-w-[560px] text-xs">
-            <thead>
+              </th>
+              <!-- 列 3: TTFT 首字延迟 (P50 / Avg) -->
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('ttft')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span>首字 (TTFT)</span>
+                  <i
+                    data-lucide="arrow-up-down"
+                    class="w-3 h-3 opacity-50"
+                    x-show="sortBy !== 'ttft'"
+                  ></i>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'ttft'"
+                  ></i>
+                </div>
+              </th>
+              <!-- 列 4: 首正文 / 思考延时 -->
+              <th class="py-2.5 px-3 text-right font-semibold">
+                首正文 (Text TTFT)
+              </th>
+              <!-- 列 5: 输出速度 TPS -->
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('tps')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span>输出 TPS</span>
+                  <i
+                    data-lucide="arrow-up-down"
+                    class="w-3 h-3 opacity-50"
+                    x-show="sortBy !== 'tps'"
+                  ></i>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'tps'"
+                  ></i>
+                </div>
+              </th>
+              <!-- 列 6: 耗时分布微缩条 (上游 vs 代理) -->
+              <th class="py-2.5 px-3 text-left font-semibold">耗时分布</th>
+              <!-- 列 7: 智能诊断提示 -->
+              <th
+                class="py-2.5 px-3 text-left font-semibold hidden lg:table-cell"
+              >
+                诊断提示
+              </th>
+              <!-- 列 8: 操作 -->
+              <th class="py-2.5 px-3 text-center font-semibold w-14">分析</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="row in sortedDetails" :key="getRowKey(row)">
+              <!-- 正常数据行 -->
               <tr
-                class="bg-[var(--apple-bg-secondary)] border-b border-[var(--apple-gray-5)]"
+                @click="toggleRow(getRowKey(row))"
+                class="border-b border-[var(--apple-gray-5)]/70 hover:bg-[var(--apple-bg-secondary)]/50 cursor-pointer transition-colors"
+                :class="isRowExpanded(getRowKey(row)) ? 'bg-[var(--apple-blue)]/5 border-[var(--apple-blue)]/30' : ''"
               >
-                <th class="py-2" x-text="t('perf.metric')"></th>
-                <th class="py-2 !text-center" x-text="t('perf.samples')"></th>
-                <th class="py-2 !text-right" x-text="t('perf.average')"></th>
-                <th class="py-2 !text-right">P50</th>
-                <th class="py-2 !text-right">P95</th>
-              </tr>
-            </thead>
-            <tbody>
-              <!-- 顶级端到端指标 -->
-              <tr class="bg-[var(--apple-blue)]/5 font-semibold">
-                <td
-                  colspan="5"
-                  class="py-1.5 text-[var(--apple-blue)] font-bold text-xs"
-                  x-text="t('perf.heroTtft')"
-                ></td>
-              </tr>
-              <template
-                x-for="field in ['outputTtftMs', 'textTtftMs', 'firstWriteMs']"
-                :key="field"
-              >
-                <tr
-                  x-show="!hideEmpty || row.timings[field]?.samples > 0"
-                  class="hover:bg-[var(--apple-gray-5)]/50 border-b border-[var(--apple-gray-5)]/60"
-                >
-                  <td
-                    class="py-1.5 font-medium pl-4 text-[var(--apple-text)]"
-                    x-text="t('perf.' + field)"
-                  ></td>
-                  <td
-                    class="py-1.5 !text-center font-mono text-[var(--apple-text-secondary)]"
-                    x-text="row.timings[field]?.samples"
-                  ></td>
-                  <td
-                    class="py-1.5 !text-right font-mono font-bold text-[var(--apple-text)]"
-                    x-text="formatMs(row.timings[field]?.average)"
-                  ></td>
-                  <td
-                    class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
-                    x-text="formatMs(row.timings[field]?.p50)"
-                  ></td>
-                  <td
-                    class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
-                    x-text="formatMs(row.timings[field]?.p95)"
-                  ></td>
-                </tr>
-              </template>
-
-              <!-- 各阶段分组 -->
-              <template x-for="stage in lifecycleStages" :key="stage.id">
-                <tbody :key="stage.id">
-                  <tr
-                    x-show="!hideEmpty || getStageMetrics(row, stage.id).length > 0"
-                    class="bg-[var(--apple-bg-secondary)] font-semibold border-t border-[var(--apple-gray-5)]"
+                <!-- 列 1: 模型与渠道徽章 -->
+                <td class="py-2.5 px-3 min-w-[200px]">
+                  <div
+                    class="font-medium text-[var(--apple-text)] break-all flex items-center gap-1.5 flex-wrap"
                   >
-                    <td
-                      colspan="5"
-                      class="py-1.5 text-xs text-[var(--apple-text)] font-bold"
+                    <span
+                      class="font-semibold text-sm"
+                      x-text="row.model"
+                    ></span>
+                    <span
+                      class="badge badge-info text-[10px] px-1.5 py-0 font-medium"
+                      x-text="row.provider"
+                    ></span>
+                    <span
+                      class="badge text-[10px] px-1.5 py-0 font-normal"
+                      :class="row.streaming ? 'badge-purple' : 'badge-gray'"
+                      x-text="row.streaming ? '流式' : '非流式'"
+                    ></span>
+                    <span
+                      class="badge text-[10px] px-1.5 py-0 font-normal hidden sm:inline"
+                      :class="row.translated ? 'badge-purple' : 'badge-success'"
+                      x-text="row.translated ? '转译' : '原生'"
+                    ></span>
+                  </div>
+                  <div
+                    class="text-[11px] font-mono text-[var(--apple-text-tertiary)] mt-0.5 truncate"
+                    x-text="row.endpoint"
+                  ></div>
+                </td>
+
+                <!-- 列 2: 请求数与样本数 -->
+                <td class="py-2.5 px-3 text-center whitespace-nowrap">
+                  <span
+                    class="font-mono font-medium text-[var(--apple-text)]"
+                    x-text="row.requests"
+                  ></span>
+                  <span
+                    class="text-[10px] text-[var(--apple-text-tertiary)] block"
+                    x-show="row.generationSamples"
+                    x-text="row.generationSamples + ' 测速样本'"
+                  ></span>
+                </td>
+
+                <!-- 列 3: TTFT 首字延迟 (P50 / Avg) -->
+                <td class="py-2.5 px-3 text-right whitespace-nowrap">
+                  <span
+                    class="font-mono font-bold text-sm"
+                    :class="getTtftClass(row.timings.outputTtftMs?.p50 || row.timings.outputTtftMs?.average)"
+                    x-text="formatMs(row.timings.outputTtftMs?.p50 || row.timings.outputTtftMs?.average)"
+                  ></span>
+                  <span
+                    class="text-[10px] text-[var(--apple-text-tertiary)] block font-mono"
+                    x-show="row.timings.outputTtftMs?.p95"
+                  >
+                    P95:
+                    <span
+                      x-text="formatMs(row.timings.outputTtftMs?.p95)"
+                    ></span>
+                  </span>
+                </td>
+
+                <!-- 列 4: 首正文 (Text TTFT) 与思考提示 -->
+                <td class="py-2.5 px-3 text-right whitespace-nowrap">
+                  <span
+                    class="font-mono text-sm text-[var(--apple-text)]"
+                    x-text="formatMs(row.timings.textTtftMs?.average || row.timings.outputTtftMs?.average)"
+                  ></span>
+                  <span
+                    x-show="getThinkingDiff(row)"
+                    class="badge badge-purple text-[10px] px-1 py-0 block mt-0.5 ml-auto font-mono"
+                    :title="'包含约 ' + getThinkingDiff(row) + 's 模型前置思考或工具解析耗时'"
+                    x-text="'+' + getThinkingDiff(row) + 's 思考'"
+                  ></span>
+                </td>
+
+                <!-- 列 5: 输出 TPS -->
+                <td class="py-2.5 px-3 text-right whitespace-nowrap">
+                  <div
+                    x-show="row.streaming && row.generationTps"
+                    class="font-mono"
+                  >
+                    <span
+                      class="font-bold text-sm"
+                      :class="getTpsClass(row.generationTps)"
+                      x-text="formatTps(row.generationTps)"
+                    ></span>
+                    <span
+                      class="text-[10px] text-[var(--apple-text-tertiary)] ml-0.5"
+                      >tok/s</span
                     >
-                      <div class="flex items-center gap-1.5">
+                  </div>
+                  <div
+                    x-show="!row.streaming || !row.generationTps"
+                    class="text-[var(--apple-text-secondary)] font-mono"
+                  >
+                    <span
+                      x-text="row.timings.responseReadyMs?.average ? formatMs(row.timings.responseReadyMs?.average) : '-'"
+                    ></span>
+                  </div>
+                </td>
+
+                <!-- 列 6: 耗时分布微缩条 (代理 vs 上游) -->
+                <td class="py-2.5 px-3 whitespace-nowrap">
+                  <div class="flex items-center gap-2 w-28">
+                    <div
+                      class="h-2 w-full rounded-full bg-[var(--apple-gray-5)] overflow-hidden flex cursor-pointer"
+                      :title="'上游耗时: ' + formatMs(getPipelineBreakdown(row)[2].ms) + ' (' + getPipelineBreakdown(row)[2].pct + '%) | 代理开销: ' + formatMs(getProxyOverhead(row).ms) + ' (' + getProxyOverhead(row).pct + '%)'"
+                    >
+                      <div
+                        class="h-full bg-[var(--apple-blue)]"
+                        :style="'width: ' + getPipelineBreakdown(row)[0].pct + '%'"
+                      ></div>
+                      <div
+                        class="h-full bg-[var(--apple-purple)]"
+                        :style="'width: ' + getPipelineBreakdown(row)[1].pct + '%'"
+                      ></div>
+                      <div
+                        class="h-full bg-[var(--apple-orange)]"
+                        :style="'width: ' + getPipelineBreakdown(row)[2].pct + '%'"
+                      ></div>
+                      <div
+                        class="h-full bg-[var(--apple-green)]"
+                        :style="'width: ' + getPipelineBreakdown(row)[3].pct + '%'"
+                      ></div>
+                    </div>
+                    <span
+                      class="font-mono text-[10px] text-[var(--apple-text-secondary)] shrink-0"
+                      x-text="getPipelineBreakdown(row)[2].pct + '%'"
+                    ></span>
+                  </div>
+                </td>
+
+                <!-- 列 7: 智能诊断提示 (行内紧凑标签) -->
+                <td class="py-2.5 px-3 min-w-[140px] hidden lg:table-cell">
+                  <div class="flex flex-wrap gap-1">
+                    <template
+                      x-for="insight in getInsights(row).slice(0, 2)"
+                      :key="insight.text"
+                    >
+                      <span
+                        class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border truncate max-w-[180px]"
+                        :class="insight.class"
+                        :title="insight.text"
+                      >
+                        <i
+                          :data-lucide="insight.icon"
+                          class="w-3 h-3 shrink-0"
+                        ></i>
+                        <span class="truncate" x-text="insight.text"></span>
+                      </span>
+                    </template>
+                    <span
+                      x-show="!getInsights(row).length"
+                      class="text-[var(--apple-text-tertiary)] text-[11px]"
+                      >-</span
+                    >
+                  </div>
+                </td>
+
+                <!-- 列 8: 展开操作 -->
+                <td class="py-2.5 px-3 text-center">
+                  <div
+                    class="p-1 rounded-md text-[var(--apple-text-secondary)] hover:text-[var(--apple-blue)] inline-block transition-transform duration-200"
+                    :class="isRowExpanded(getRowKey(row)) ? 'rotate-180 text-[var(--apple-blue)]' : ''"
+                  >
+                    <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- 下钻分析详情面板 (按需展开) -->
+              <tr
+                x-show="isRowExpanded(getRowKey(row))"
+                class="bg-[var(--apple-bg-secondary)]/30 border-b border-[var(--apple-gray-5)]"
+              >
+                <td colspan="8" class="p-3 sm:p-5">
+                  <div
+                    class="bg-white rounded-xl border border-[var(--apple-gray-5)] p-4 sm:p-5 shadow-sm space-y-4"
+                  >
+                    <!-- 详情面板顶部标题与快报 -->
+                    <div
+                      class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--apple-gray-5)]"
+                    >
+                      <div class="flex items-center gap-2">
+                        <i
+                          data-lucide="git-commit"
+                          class="w-4 h-4 text-[var(--apple-blue)]"
+                        ></i>
+                        <h4 class="font-bold text-sm text-[var(--apple-text)]">
+                          <span x-text="row.model"></span> ·
+                          生命周期链路耗时下钻
+                        </h4>
                         <span
-                          class="w-2 h-2 rounded-full inline-block"
-                          :style="'background-color: ' + stage.color"
-                        ></span>
-                        <span x-text="t(stage.nameKey)"></span>
-                        <span
-                          class="font-normal text-[11px] text-[var(--apple-text-secondary)] ml-2"
-                          x-text="t(stage.descKey)"
+                          class="text-xs text-[var(--apple-text-secondary)] font-mono"
+                          x-text="'(' + row.provider + ' / ' + row.endpoint + ')'"
                         ></span>
                       </div>
-                    </td>
-                  </tr>
-                  <template
-                    x-for="item in getStageMetrics(row, stage.id)"
-                    :key="item.field"
-                  >
-                    <tr
-                      class="hover:bg-[var(--apple-gray-5)]/50 border-b border-[var(--apple-gray-5)]/60 last:border-none"
+                      <div class="flex items-center gap-2">
+                        <!-- 仅看有效指标 开关 -->
+                        <label
+                          class="inline-flex items-center gap-1.5 text-xs text-[var(--apple-text-secondary)] cursor-pointer select-none"
+                        >
+                          <input
+                            type="checkbox"
+                            x-model="hideEmpty"
+                            class="rounded border-[var(--apple-gray-4)] text-[var(--apple-blue)] focus:ring-[var(--apple-blue)] cursor-pointer"
+                          />
+                          <span x-text="t('perf.hideEmpty')"></span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <!-- 智能性能诊断 (全部) -->
+                    <div
+                      class="flex flex-wrap gap-2"
+                      x-show="getInsights(row).length"
                     >
-                      <td
-                        class="py-1.5 pl-4 text-[var(--apple-text)]"
-                        x-text="t('perf.' + item.field)"
-                      ></td>
-                      <td
-                        class="py-1.5 !text-center font-mono text-[var(--apple-text-secondary)]"
-                        x-text="item.timing.samples"
-                      ></td>
-                      <td
-                        class="py-1.5 !text-right font-mono font-medium text-[var(--apple-text)]"
-                        x-text="formatMs(item.timing.average)"
-                      ></td>
-                      <td
-                        class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
-                        x-text="formatMs(item.timing.p50)"
-                      ></td>
-                      <td
-                        class="py-1.5 !text-right font-mono text-[var(--apple-text-secondary)]"
-                        x-text="formatMs(item.timing.p95)"
-                      ></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </template>
-            </tbody>
-          </table>
-        </div>
+                      <template
+                        x-for="insight in getInsights(row)"
+                        :key="insight.text"
+                      >
+                        <div
+                          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border"
+                          :class="insight.class"
+                        >
+                          <i
+                            :data-lucide="insight.icon"
+                            class="w-3.5 h-3.5 shrink-0"
+                          ></i>
+                          <span x-text="insight.text"></span>
+                        </div>
+                      </template>
+                    </div>
+
+                    <!-- 阶段耗时流水线 Waterfall Breakdown Bar -->
+                    <div
+                      class="p-3 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]/50"
+                    >
+                      <div
+                        class="flex items-center justify-between text-xs mb-1.5"
+                      >
+                        <span
+                          class="font-semibold text-[var(--apple-text)]"
+                          x-text="t('perf.pipelineBreakdown')"
+                        ></span>
+                        <span
+                          class="text-[11px] text-[var(--apple-text-secondary)]"
+                          x-text="t('perf.pipelineDesc')"
+                        ></span>
+                      </div>
+
+                      <!-- 彩色分段进度条 -->
+                      <div
+                        class="h-3 w-full rounded-full bg-[var(--apple-gray-5)] overflow-hidden flex my-2"
+                      >
+                        <template
+                          x-for="stage in getPipelineBreakdown(row)"
+                          :key="stage.id"
+                        >
+                          <div
+                            class="h-full transition-all duration-300"
+                            :style="'width: ' + stage.pct + '%; background-color: ' + stage.color"
+                            :title="stage.name + ': ' + formatMs(stage.ms) + ' (' + stage.pct + '%)'"
+                          ></div>
+                        </template>
+                      </div>
+
+                      <!-- 分段图例与耗时标签 -->
+                      <div
+                        class="flex flex-wrap items-center justify-between gap-3 text-xs pt-1"
+                      >
+                        <template
+                          x-for="stage in getPipelineBreakdown(row)"
+                          :key="stage.id"
+                        >
+                          <div class="flex items-center gap-1.5">
+                            <span
+                              class="w-2.5 h-2.5 rounded-full inline-block shrink-0"
+                              :style="'background-color: ' + stage.color"
+                            ></span>
+                            <span
+                              class="text-[var(--apple-text-secondary)]"
+                              x-text="stage.name"
+                            ></span>
+                            <strong
+                              class="font-mono text-[var(--apple-text)]"
+                              x-text="formatMs(stage.ms)"
+                            ></strong>
+                            <span
+                              class="text-[10px] text-[var(--apple-text-tertiary)]"
+                              x-text="'(' + stage.pct + '%)'"
+                            ></span>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- 四阶段卡片式折叠列表 (生命周期各阶段细分指标) -->
+                    <div class="space-y-2">
+                      <div
+                        class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] px-1"
+                      >
+                        <span
+                          class="font-medium text-[var(--apple-text)]"
+                          x-text="t('perf.stagesTitle')"
+                        ></span>
+                        <button
+                          type="button"
+                          @click="toggleAllStages(getRowKey(row))"
+                          class="text-[var(--apple-blue)] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                        >
+                          <span
+                            x-text="isAllExpanded(getRowKey(row)) ? t('perf.collapseAll') : t('perf.expandAll')"
+                          ></span>
+                        </button>
+                      </div>
+
+                      <template
+                        x-for="stage in lifecycleStages"
+                        :key="stage.id"
+                      >
+                        <div
+                          class="border border-[var(--apple-gray-5)] rounded-lg overflow-hidden bg-white"
+                        >
+                          <!-- 阶段头部 (点击展开细分指标) -->
+                          <div
+                            @click="toggleStage(getRowKey(row), stage.id)"
+                            class="p-2.5 sm:px-3 flex items-center justify-between gap-2 cursor-pointer hover:bg-[var(--apple-gray-6)] transition-colors select-none"
+                          >
+                            <div class="flex items-center gap-2 min-w-0">
+                              <span
+                                class="w-2 h-2 rounded-full shrink-0"
+                                :style="'background-color: ' + stage.color"
+                              ></span>
+                              <span
+                                class="font-medium text-xs text-[var(--apple-text)]"
+                                x-text="t(stage.nameKey)"
+                              ></span>
+                              <span
+                                class="text-[11px] text-[var(--apple-text-secondary)] ml-1 hidden sm:inline truncate"
+                                x-text="t(stage.descKey)"
+                              ></span>
+                            </div>
+
+                            <div class="flex items-center gap-3 shrink-0">
+                              <!-- 阶段核心耗时 -->
+                              <div
+                                class="text-right"
+                                x-show="getStageSummary(row, stage.id)"
+                              >
+                                <span
+                                  class="text-xs font-mono font-semibold text-[var(--apple-text)]"
+                                  x-text="formatMs(getStageSummary(row, stage.id)?.average)"
+                                ></span>
+                                <span
+                                  class="text-[10px] text-[var(--apple-text-secondary)] ml-1 font-mono"
+                                  x-text="'(P50: ' + formatMs(getStageSummary(row, stage.id)?.p50) + ')'"
+                                ></span>
+                              </div>
+                              <span
+                                class="text-[10px] text-[var(--apple-text-tertiary)] px-1.5 py-0.5 rounded bg-[var(--apple-gray-6)] font-mono"
+                                x-text="getStageMetrics(row, stage.id).length + ' 项'"
+                              ></span>
+                              <i
+                                data-lucide="chevron-down"
+                                class="w-3.5 h-3.5 text-[var(--apple-text-secondary)] transition-transform duration-200"
+                                :class="isStageExpanded(getRowKey(row), stage.id) ? 'rotate-180' : ''"
+                              ></i>
+                            </div>
+                          </div>
+
+                          <!-- 展开后的细分指标表格 -->
+                          <div
+                            x-show="isStageExpanded(getRowKey(row), stage.id)"
+                            class="border-t border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]/30 p-2 sm:p-3"
+                          >
+                            <table class="table !table w-full text-xs">
+                              <thead>
+                                <tr
+                                  class="text-[var(--apple-text-secondary)] border-b border-[var(--apple-gray-5)]"
+                                >
+                                  <th
+                                    class="py-1 text-left"
+                                    x-text="t('perf.metric')"
+                                  ></th>
+                                  <th
+                                    class="py-1 !text-center"
+                                    x-text="t('perf.samples')"
+                                  ></th>
+                                  <th
+                                    class="py-1 !text-right"
+                                    x-text="t('perf.average')"
+                                  ></th>
+                                  <th class="py-1 !text-right">P50</th>
+                                  <th class="py-1 !text-right">P95</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <template
+                                  x-for="item in getStageMetrics(row, stage.id)"
+                                  :key="item.field"
+                                >
+                                  <tr
+                                    class="hover:bg-white border-b border-[var(--apple-gray-5)]/60 last:border-none"
+                                  >
+                                    <td
+                                      class="py-1 font-medium text-[var(--apple-text)]"
+                                      x-text="t('perf.' + item.field)"
+                                    ></td>
+                                    <td
+                                      class="py-1 !text-center text-[var(--apple-text-secondary)] font-mono"
+                                      x-text="item.timing.samples"
+                                    ></td>
+                                    <td
+                                      class="py-1 !text-right font-mono font-semibold text-[var(--apple-text)]"
+                                      x-text="formatMs(item.timing.average)"
+                                    ></td>
+                                    <td
+                                      class="py-1 !text-right font-mono text-[var(--apple-text-secondary)]"
+                                      x-text="formatMs(item.timing.p50)"
+                                    ></td>
+                                    <td
+                                      class="py-1 !text-right font-mono text-[var(--apple-text-secondary)]"
+                                      x-text="formatMs(item.timing.p95)"
+                                    ></td>
+                                  </tr>
+                                </template>
+                                <tr
+                                  x-show="!getStageMetrics(row, stage.id).length"
+                                >
+                                  <td
+                                    colspan="5"
+                                    class="py-2 text-center text-[var(--apple-text-secondary)]"
+                                    x-text="t('perf.noData')"
+                                  ></td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
-    </template>
+    </div>
   </div>
-</section>
+
+  <!-- 4. 主体内容 TAB 2：按模型汇总 (跨渠道对比) -->
+  <div x-show="activeTab === 'models'" class="space-y-4">
+    <div
+      class="card p-8 text-center text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]"
+      x-show="!performance.length"
+    >
+      <i data-lucide="cpu" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+      <p class="text-sm" x-text="t('perf.noData')"></p>
+    </div>
+
+    <div
+      class="card border border-[var(--apple-gray-5)] bg-white shadow-sm overflow-hidden"
+      x-show="performance.length"
+    >
+      <div class="table-container w-full min-w-0 overflow-x-auto">
+        <table class="table !table w-full text-xs">
+          <thead>
+            <tr
+              class="bg-[var(--apple-bg-secondary)] border-b border-[var(--apple-gray-5)] select-none"
+            >
+              <th
+                class="py-2.5 px-3 text-left font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('model')"
+              >
+                <div class="flex items-center gap-1">
+                  <span x-text="t('perf.model')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'model'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-center font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('requests')"
+              >
+                <div class="flex items-center justify-center gap-1">
+                  <span x-text="t('perf.requests')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'requests'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-center font-semibold"
+                x-text="t('perf.streaming')"
+              ></th>
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('ttft')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span x-text="t('perf.avgTtft')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'ttft'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('tps')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span x-text="t('perf.streamingTps')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'tps'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-right font-semibold"
+                x-text="t('perf.nonStreamingTps')"
+              ></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="row in sortedModels" :key="row.model">
+              <tr
+                class="hover:bg-[var(--apple-gray-6)] border-b border-[var(--apple-gray-5)]/70"
+              >
+                <td
+                  class="py-2.5 px-3 font-semibold text-sm text-[var(--apple-text)] break-all"
+                  x-text="row.model"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-center font-mono font-medium"
+                  x-text="row.requests"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-center font-mono text-[var(--apple-text-secondary)]"
+                  x-text="row.streamingRequests || 0"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono font-bold"
+                  :class="getTtftClass(row.avgTtftMs)"
+                  x-text="formatMs(row.avgTtftMs)"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono font-semibold"
+                  :class="getTpsClass(row.avgStreamingTps)"
+                  x-text="formatTps(row.avgStreamingTps) + ' tok/s'"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono text-[var(--apple-text-secondary)]"
+                  x-text="formatTps(row.avgNonStreamingTps)"
+                ></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. 主体内容 TAB 3：按供应商汇总 (横向比对) -->
+  <div x-show="activeTab === 'providers'" class="space-y-4">
+    <div
+      class="card p-8 text-center text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]"
+      x-show="!byProvider.length"
+    >
+      <i data-lucide="server" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+      <p class="text-sm" x-text="t('perf.noData')"></p>
+    </div>
+
+    <div
+      class="card border border-[var(--apple-gray-5)] bg-white shadow-sm overflow-hidden"
+      x-show="byProvider.length"
+    >
+      <div class="table-container w-full min-w-0 overflow-x-auto">
+        <table class="table !table w-full text-xs">
+          <thead>
+            <tr
+              class="bg-[var(--apple-bg-secondary)] border-b border-[var(--apple-gray-5)] select-none"
+            >
+              <th
+                class="py-2.5 px-3 text-left font-semibold"
+                x-text="t('perf.provider')"
+              ></th>
+              <th
+                class="py-2.5 px-3 text-left font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('model')"
+              >
+                <div class="flex items-center gap-1">
+                  <span x-text="t('perf.model')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'model'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-center font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('requests')"
+              >
+                <div class="flex items-center justify-center gap-1">
+                  <span x-text="t('perf.requests')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'requests'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-center font-semibold"
+                x-text="t('perf.streaming')"
+              ></th>
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('ttft')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span x-text="t('perf.avgTtft')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'ttft'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('tps')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span x-text="t('perf.streamingTps')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'tps'"
+                  ></i>
+                </div>
+              </th>
+              <th
+                class="py-2.5 px-3 text-right font-semibold"
+                x-text="t('perf.nonStreamingTps')"
+              ></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template
+              x-for="row in sortedProviders"
+              :key="row.provider + '/' + row.model"
+            >
+              <tr
+                class="hover:bg-[var(--apple-gray-6)] border-b border-[var(--apple-gray-5)]/70"
+              >
+                <td class="py-2.5 px-3">
+                  <span
+                    class="badge badge-info text-xs font-medium"
+                    x-text="row.providerLabel || row.provider"
+                  ></span>
+                </td>
+                <td
+                  class="py-2.5 px-3 font-semibold text-sm text-[var(--apple-text)] break-all"
+                  x-text="row.model"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-center font-mono font-medium"
+                  x-text="row.requests"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-center font-mono text-[var(--apple-text-secondary)]"
+                  x-text="row.streamingRequests || 0"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono font-bold"
+                  :class="getTtftClass(row.avgTtftMs)"
+                  x-text="formatMs(row.avgTtftMs)"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono font-semibold"
+                  :class="getTpsClass(row.avgStreamingTps)"
+                  x-text="formatTps(row.avgStreamingTps) + ' tok/s'"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono text-[var(--apple-text-secondary)]"
+                  x-text="formatTps(row.avgNonStreamingTps)"
+                ></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

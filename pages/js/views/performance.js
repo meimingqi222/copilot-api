@@ -73,11 +73,16 @@ function performanceView() {
     providerFilter: "all",
     period: { startDate: "", endDate: "" },
 
-    // UX 重构增强状态
+    // UX 重构与导航状态
+    activeTab: "channels", // 'channels' | 'models' | 'providers'
     searchQuery: "",
     hideEmpty: true,
     viewMode: "pipeline", // 'pipeline' | 'table'
-    expandedStages: {},
+    sortBy: "requests", // 'requests' | 'ttft' | 'tps' | 'model'
+    sortDesc: true,
+    expandedRows: {}, // rowKey -> boolean, 默认全部折叠, 彻底杜绝页面过长
+    expandedStages: {}, // rowKey:stageId -> boolean
+    showGuide: false, // 是否展开指标说明
 
     lifecycleStages: LIFECYCLE_STAGES,
 
@@ -134,6 +139,16 @@ function performanceView() {
         this.performance = data.performance || []
         this.byProvider = data.byProvider || []
         this.details = data.details || []
+
+        // 如果没有 details 但有 performance 聚合数据，自动切换到 models tab
+        if (
+          !this.details.length
+          && this.performance.length
+          && this.activeTab === "channels"
+        ) {
+          this.activeTab = "models"
+        }
+
         // 当前筛选的 provider 无数据时回退到全部
         if (
           this.providerFilter !== "all"
@@ -171,12 +186,117 @@ function performanceView() {
       )
     },
 
+    // 全局大盘核心 KPI
+    get globalStats() {
+      const details = this.details || []
+      const perf = this.performance || []
+      let totalRequests = 0
+      let totalSamples = 0
+      let ttftSum = 0
+      let ttftCount = 0
+      let tpsWeightedSum = 0
+      let tpsCount = 0
+      let proxyOverheadSum = 0
+      let upstreamSum = 0
+
+      for (const row of details) {
+        const reqs = row.requests || 0
+        totalRequests += reqs
+        const t = row.timings || {}
+        const ttft = t.outputTtftMs?.p50 ?? t.outputTtftMs?.average
+        if (typeof ttft === "number" && ttft > 0) {
+          const s = t.outputTtftMs?.samples || reqs || 1
+          ttftSum += ttft * s
+          ttftCount += s
+        }
+        if (row.generationSamples && row.generationTps) {
+          totalSamples += row.generationSamples
+          tpsWeightedSum += row.generationTps * row.generationSamples
+          tpsCount += row.generationSamples
+        }
+
+        const gatewayMs = t.preprocessingMs?.average || 0
+        const dispatchMs =
+          (t.adapterPreparationMs?.average || 0)
+          + (t.requestTranslationMs?.average || 0)
+        const downstreamMs = t.downstreamWriteMs?.average || 0
+        const proxyMs = gatewayMs + dispatchMs + downstreamMs
+        const upMs =
+          t.dispatchToOutputMs?.average
+          || t.upstreamFirstEventMs?.average
+          || t.upstreamBodyReadMs?.average
+          || 0
+
+        if (upMs > 0 || proxyMs > 0) {
+          proxyOverheadSum += proxyMs * (reqs || 1)
+          upstreamSum += upMs * (reqs || 1)
+        }
+      }
+
+      if (totalRequests === 0 && perf.length > 0) {
+        for (const row of perf) {
+          const reqs = row.requests || 0
+          totalRequests += reqs
+          if (row.avgTtftMs) {
+            ttftSum += row.avgTtftMs * reqs
+            ttftCount += reqs
+          }
+          if (row.avgStreamingTps && row.streamingRequests) {
+            tpsWeightedSum += row.avgStreamingTps * row.streamingRequests
+            tpsCount += row.streamingRequests
+            totalSamples += row.streamingRequests
+          }
+        }
+      }
+
+      const avgTtft = ttftCount > 0 ? ttftSum / ttftCount : null
+      const avgTps = tpsCount > 0 ? tpsWeightedSum / tpsCount : null
+      const totalTime = proxyOverheadSum + upstreamSum
+      const upstreamRatio =
+        totalTime > 0 ? Math.round((upstreamSum / totalTime) * 100) : 99
+      const proxyOverheadMs =
+        totalRequests > 0 ? proxyOverheadSum / totalRequests : 0
+
+      return {
+        totalRequests,
+        totalSamples,
+        channelCount: details.length || perf.length,
+        avgTtft,
+        avgTps,
+        upstreamRatio,
+        proxyOverheadMs,
+      }
+    },
+
     formatMs(ms) {
       if (ms === null || ms === undefined) return "-"
       if (ms >= 1000) {
         return (ms / 1000).toFixed(1) + "s"
       }
       return Math.round(ms) + "ms"
+    },
+
+    formatTps(tps) {
+      if (tps === null || tps === undefined) return "-"
+      return new Intl.NumberFormat(undefined, {
+        maximumFractionDigits: 1,
+      }).format(tps)
+    },
+
+    getTtftClass(ms) {
+      if (ms === null || ms === undefined)
+        return "text-[var(--apple-text-secondary)]"
+      if (ms < 800) return "text-[var(--apple-green)]"
+      if (ms < 2000) return "text-[var(--apple-orange)]"
+      return "text-[var(--apple-red)]"
+    },
+
+    getTpsClass(tps) {
+      if (tps === null || tps === undefined)
+        return "text-[var(--apple-text-secondary)]"
+      if (tps >= 50) return "text-[var(--apple-green)] font-semibold"
+      if (tps >= 20) return "text-[var(--apple-orange)]"
+      return "text-[var(--apple-text)]"
     },
 
     getRowKey(row) {
@@ -215,6 +335,163 @@ function performanceView() {
       })
     },
 
+    get sortedDetails() {
+      const list = [...this.filteredDetails]
+      const dir = this.sortDesc ? -1 : 1
+
+      list.sort((a, b) => {
+        if (this.sortBy === "requests") {
+          return (a.requests - b.requests) * dir
+        }
+        if (this.sortBy === "ttft") {
+          const aVal =
+            a.timings?.outputTtftMs?.p50
+            ?? a.timings?.outputTtftMs?.average
+            ?? (this.sortDesc ? -1 : 999999)
+          const bVal =
+            b.timings?.outputTtftMs?.p50
+            ?? b.timings?.outputTtftMs?.average
+            ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "tps") {
+          const aVal = a.generationTps ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.generationTps ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "model") {
+          return (a.model || "").localeCompare(b.model || "") * dir
+        }
+        return 0
+      })
+      return list
+    },
+
+    get sortedModels() {
+      const query = (this.searchQuery || "").trim().toLowerCase()
+      const list = (this.performance || []).filter((row) => {
+        if (!query) return true
+        return (row.model || "").toLowerCase().includes(query)
+      })
+      const dir = this.sortDesc ? -1 : 1
+
+      list.sort((a, b) => {
+        if (this.sortBy === "requests") {
+          return (a.requests - b.requests) * dir
+        }
+        if (this.sortBy === "ttft") {
+          const aVal = a.avgTtftMs ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.avgTtftMs ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "tps") {
+          const aVal = a.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "model") {
+          return (a.model || "").localeCompare(b.model || "") * dir
+        }
+        return 0
+      })
+      return list
+    },
+
+    get sortedProviders() {
+      const query = (this.searchQuery || "").trim().toLowerCase()
+      const list = (this.filteredByProvider || []).filter((row) => {
+        if (!query) return true
+        const matchModel = (row.model || "").toLowerCase().includes(query)
+        const matchProvider = (row.provider || "").toLowerCase().includes(query)
+        const matchLabel = (row.providerLabel || "")
+          .toLowerCase()
+          .includes(query)
+        return matchModel || matchProvider || matchLabel
+      })
+      const dir = this.sortDesc ? -1 : 1
+
+      list.sort((a, b) => {
+        if (this.sortBy === "requests") {
+          return (a.requests - b.requests) * dir
+        }
+        if (this.sortBy === "ttft") {
+          const aVal = a.avgTtftMs ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.avgTtftMs ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "tps") {
+          const aVal = a.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "model") {
+          return (a.model || "").localeCompare(b.model || "") * dir
+        }
+        return 0
+      })
+      return list
+    },
+
+    setSort(field) {
+      if (this.sortBy === field) {
+        this.sortDesc = !this.sortDesc
+      } else {
+        this.sortBy = field
+        this.sortDesc = true
+      }
+    },
+
+    // 行展开与折叠控制
+    isRowExpanded(rowKey) {
+      return Boolean(this.expandedRows[rowKey])
+    },
+
+    toggleRow(rowKey) {
+      this.expandedRows[rowKey] = !this.isRowExpanded(rowKey)
+      this.$nextTick?.(() => window.lucide?.createIcons?.())
+    },
+
+    expandAllRows() {
+      const currentlyAll = this.isAllRowsExpanded()
+      for (const row of this.filteredDetails) {
+        this.expandedRows[this.getRowKey(row)] = !currentlyAll
+      }
+      this.$nextTick?.(() => window.lucide?.createIcons?.())
+    },
+
+    isAllRowsExpanded() {
+      if (!this.filteredDetails.length) return false
+      return this.filteredDetails.every((r) =>
+        this.isRowExpanded(this.getRowKey(r)),
+      )
+    },
+
+    getThinkingDiff(row) {
+      const t = row.timings || {}
+      if (t.textTtftMs?.average && t.outputTtftMs?.average) {
+        const diff = t.textTtftMs.average - t.outputTtftMs.average
+        if (diff >= 300) {
+          return (diff / 1000).toFixed(1)
+        }
+      }
+      return null
+    },
+
+    getProxyOverhead(row) {
+      const t = row.timings || {}
+      const gatewayMs = t.preprocessingMs?.average || 0
+      const dispatchMs =
+        (t.adapterPreparationMs?.average || 0)
+        + (t.requestTranslationMs?.average || 0)
+      const downstreamMs = t.downstreamWriteMs?.average || 0
+      const proxyMs = gatewayMs + dispatchMs + downstreamMs
+      const total =
+        t.outputTtftMs?.average || t.responseReadyMs?.average || proxyMs
+      const pct =
+        total > 0 ? Math.min(100, Math.round((proxyMs / total) * 100)) : 0
+      return { ms: proxyMs, pct }
+    },
+
     getStageMetrics(row, stageId) {
       const stage = this.lifecycleStages.find((s) => s.id === stageId)
       if (!stage || !row.timings) return []
@@ -239,7 +516,6 @@ function performanceView() {
       const stage = this.lifecycleStages.find((s) => s.id === stageId)
       if (!stage) return null
 
-      // 首选主指标，若主指标无数据则退回该阶段首个有 samples 的指标
       const primary = row.timings[stage.primaryTiming]
       if (primary && primary.samples > 0) return primary
 
@@ -410,27 +686,6 @@ function performanceView() {
       return this.lifecycleStages.every((s) =>
         this.isStageExpanded(rowKey, s.id),
       )
-    },
-
-    formatTps(tps) {
-      if (tps === null || tps === undefined) return "-"
-      return new Intl.NumberFormat(undefined, {
-        maximumFractionDigits: 2,
-      }).format(tps)
-    },
-
-    getTtftClass(ms) {
-      if (ms === null || ms === undefined) return ""
-      if (ms < 500) return "text-[var(--apple-green)]"
-      if (ms < 1000) return "text-[var(--apple-orange)]"
-      return "text-[var(--apple-red)]"
-    },
-
-    getTpsClass(tps) {
-      if (tps === null || tps === undefined) return ""
-      if (tps >= 50) return "text-[var(--apple-green)]"
-      if (tps >= 20) return "text-[var(--apple-orange)]"
-      return ""
     },
   }
 }
