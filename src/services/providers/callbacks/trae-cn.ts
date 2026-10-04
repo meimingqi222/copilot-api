@@ -2,7 +2,7 @@ import type { OAuthCallbackConfig } from "~/services/providers/callbacks/types"
 import {
   TRAE_CN_CALLBACK_PATH,
   TRAE_CN_CALLBACK_PORT,
-} from "~/services/oauth/trae-cn"
+} from "~/services/trae-cn/constants"
 
 // trae.cn 的授权页回到 auth_callback_url 指到的 /authorize，query 带
 // userJwt（token 对，编码后的 JSON）与 userInfo（账号）；没有 OAuth

@@ -163,6 +163,8 @@ describe("internal provider modules", () => {
       "oauth/provider-strategies",
       "protocols",
       "providers",
+      "trae-cn/client",
+      "oauth/trae-cn",
     ]) {
       const source = `await import("./src/services/${entry}");
         const { initializeProviderRegistry } = await import("./src/services/providers");

@@ -18,6 +18,7 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto"
+import { TraeCnNativeTools } from "~/services/trae-cn/native-tools"
 
 import type {
   ChatCompletionChunk,
@@ -564,24 +565,6 @@ export class TraeCnTextTools {
   }
 }
 
-function nativeCall(tc: unknown): TraeChatCall | undefined {
-  const t = tc as Record<string, unknown>
-  const f =
-    (t?.function as Record<string, unknown>)
-    ?? (t?.function_call as Record<string, unknown>)
-    ?? t
-  const name = f?.name ?? t?.tool_name ?? ""
-  if (!name) return undefined
-  const a = f?.arguments ?? t?.params ?? t?.input ?? t?.parameters
-  const upstreamId = String(t?.id ?? t?.tool_call_id ?? "")
-  return {
-    upstreamId,
-    id: upstreamId || nextCallId(),
-    name: String(name),
-    arguments: normalizeCallArguments(a),
-  }
-}
-
 /**
  * Trae 的 SSE 事件 → 应答部件：文本、reasoning、tool call、usage、完成、
  * 或业务错误。queue/metadata/timing 等非 output 事件跳过。
@@ -590,7 +573,7 @@ export async function* traeCnParts(
   events: AsyncIterable<TraeSseEvent>,
 ): AsyncIterable<TraeChatPart> {
   const tt = new TraeCnTextTools()
-  const seen = new Set<string>()
+  const nativeTools = new TraeCnNativeTools()
   for await (const { event, data } of events) {
     const name = eventName(event)
     const d =
@@ -629,20 +612,7 @@ export async function* traeCnParts(
       for (const c of r.calls) yield { call: c }
     }
     for (const tc of Array.isArray(d.tool_calls) ? d.tool_calls : []) {
-      const c = nativeCall(tc)
-      if (!c) continue
-      // 去重 key 用上游 id；没有 id 的 call 用 name+args。
-      // 不能用生成的 c.id——它每次新建，去重永远落空；
-      // 只用上游 id 也不行：同一 call 的 arguments 若分批下发，
-      // 后续块会被误丢。加上 args 后，重复整包仍去重，分批下发
-      // 当作新 call 发出，比静默截断更安全。
-      const key =
-        c.upstreamId ?
-          `${c.upstreamId}${c.name}${c.arguments}`
-        : `${c.name}${c.arguments}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      yield { call: c }
+      nativeTools.push(tc)
     }
     const u = tokensOf(d.usage)
     if (u) yield { usage: u }
@@ -650,6 +620,15 @@ export async function* traeCnParts(
   const r = tt.push("", true)
   if (r.text) yield { text: r.text }
   for (const c of r.calls) yield { call: c }
+  for (const call of nativeTools.finish()) {
+    yield {
+      call: {
+        ...call,
+        id: call.upstreamId || nextCallId(),
+        arguments: normalizeCallArguments(call.arguments),
+      },
+    }
+  }
 }
 
 /**

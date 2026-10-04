@@ -45,8 +45,10 @@ export const TRAE_CN_CLIENT_VERSION_CODE = "20260917"
 const TRAE_CN_DEVICE_BRAND = "ASUS TUF Gaming A15 FA507RM_FA507RM"
 
 /** 本地回调端口：auth_callback_url 写进授权 URL，Trae 接受任意 loopback 端口。 */
-export const TRAE_CN_CALLBACK_PORT = 57557
-export const TRAE_CN_CALLBACK_PATH = "/authorize"
+export {
+  TRAE_CN_CALLBACK_PORT,
+  TRAE_CN_CALLBACK_PATH,
+} from "~/services/trae-cn/constants"
 
 // ── 小工具 ──────────────────────────────────────────────────────
 
