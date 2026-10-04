@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono } from "hono"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { join, resolve, sep } from "node:path"
 import {
   bindRequestLogContext,
   createDetachedRequestLog,
@@ -544,7 +544,7 @@ describe("GET /admin/api/trace/history", () => {
       redirectPathsToDir(isolationRoot)
       if (originalLogDir === undefined) delete process.env.LOG_DIR
       else process.env.LOG_DIR = originalLogDir
-      if (directory.startsWith(root + "\\"))
+      if (directory.startsWith(root + sep))
         await rm(directory, { recursive: true, force: true })
     }
   })
