@@ -1,0 +1,36 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\trae-cn-models.test.ts:
+47 |       },
+48 |     }),
+49 |     "https://models.example",
+50 |   )
+51 | 
+52 |   expect(models).toEqual([
+                      ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "context": 200000,
++     "context": undefined,
+      "id": "deepseek-v4.1-flash",
+-     "name": "DeepSeek-V4.1-Flash",
+-     "output": 64000,
++     "name": "DeepSeek-V4-Flash 正式版",
++     "output": 16000,
+    },
+  ]
+
+- Expected  - 3
++ Received  + 3
+
+      at <anonymous> (D:\code\copilot-refs\copilot-api\tests\trae-cn-models.test.ts:52:18)
+(fail) TRAE agent metadata wins when the same model has dev entries in multiple modes [1.20ms]
+(pass) different upstream IDs remain separate even when their display names match [0.14ms]
+(pass) a usable dev configuration still wins over TRAE agent entries without dev [0.19ms]
+
+ 2 pass
+ 1 fail
+ 4 expect() calls
+Ran 3 tests across 1 file. [499.00ms]

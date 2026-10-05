@@ -681,6 +681,12 @@ const devModel = (m: TraeCnModelEntry) =>
     String(d?.model_name ?? "").endsWith("__dev"),
   )
 
+function modelEntryPriority(m: TraeCnModelEntry, fn: string): number {
+  // Usable wire configuration comes first. Among equivalent entries prefer
+  // TRAE agent metadata: chat_v3 can retain a pre-release display name.
+  return (devModel(m) ? 2 : 0) + (fn === "solo_agent" ? 1 : 0)
+}
+
 export interface TraeCnPostResult {
   status: number
   text: string
@@ -779,7 +785,8 @@ interface TraeCnListedModel {
 
 /**
  * 账号的模型列表：batch 拿不到时逐 function 取；一个模型被多个
- * function 列出时优先记下带 __dev model 的那条（Trae 真正服务的模型）。
+ * function 列出时优先记下带 __dev model 的那条（Trae 真正服务的模型），
+ * 同等配置优先使用 TRAE agent 的名称与参数，避免旧模式的展示名覆盖。
  * 顺手登记 listedByModel / devNameByModel 供请求时的 function 轮换。
  */
 export async function traeCnListModels(
@@ -805,7 +812,10 @@ export async function traeCnListModels(
       if (!isTraeCnChatModel(m)) continue
       const id = String(m.config_name)
       const was = picked.get(id)
-      if (!was || (!devModel(was.m) && devModel(m))) {
+      if (
+        !was
+        || modelEntryPriority(m, fn) > modelEntryPriority(was.m, was.fn)
+      ) {
         picked.set(id, { m, fn })
       }
     }
