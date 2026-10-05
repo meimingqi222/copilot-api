@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import {
+  getConnectionAuthError,
   getConnectionAuthStatus,
   getMutableProviderConnection,
+  setConnectionAuthStatus,
   upsertProviderConnection,
   type ProviderConnection,
   type ProviderProtocol,
@@ -251,6 +253,40 @@ describe("ensureOAuthConnectionAccessToken", () => {
       "temporary network failure",
     )
     expect(getConnectionAuthStatus(conn)).toBe("ready")
+  })
+
+  test("clears a previous auth_error once a refresh succeeds", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "recovered-access",
+            refresh_token: "recovered-refresh",
+            expires_in: 3600,
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      )) as unknown as typeof fetch
+
+    const conn = createOAuthConnection("acct-codex-recovered", "codex", {
+      refreshToken: "refresh-1",
+      expiresAt: Date.now() - 60_000,
+    })
+    // 此前的终态标记（例如刷新时打错了站点，拿到 401）。
+    setConnectionAuthStatus(
+      conn,
+      "error",
+      "Terminal OAuth error: token refresh failed (401)",
+    )
+    expect(getConnectionAuthStatus(conn)).toBe("error")
+    expect(conn.credentials[0]?.status).toBe("auth_error")
+
+    await refreshOAuthConnectionToken(conn, "manual")
+
+    expect(getConnectionAuthStatus(conn)).toBe("ready")
+    expect(getConnectionAuthError(conn)).toBeNull()
+    expect(conn.credentials[0]?.status).toBe("ready")
+    expect(conn.credentials[0]?.lastError).toBeUndefined()
   })
 
   test("returns existing token when still valid", async () => {
