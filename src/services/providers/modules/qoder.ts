@@ -12,7 +12,11 @@ import {
   type OAuthProviderStrategy,
 } from "~/services/oauth/strategy-types"
 import { HTTPError } from "~/lib/error"
-import { QODER_SITES, type QoderSite } from "~/services/qoder/endpoints"
+import {
+  QODER_SITES,
+  qoderSiteForConnection,
+  type QoderSite,
+} from "~/services/qoder/endpoints"
 import { type OAuthFetchOptions } from "~/services/oauth/fetch"
 import {
   applyQoderDeviceChatRefresh,
@@ -117,8 +121,11 @@ function qoderStrategy(site: QoderSite): OAuthProviderStrategy {
   }
 }
 
-function qoderRefreshAuth(site: QoderSite) {
+function qoderRefreshAuth() {
   return prepareOAuthRefresh(async (connection, refreshToken, fetchOptions) => {
+    // Shared protocols and stale provider metadata can select the other module.
+    // Use the same connection site as inference and quota; token domains differ.
+    const site = qoderSiteForConnection(connection)
     // device-chat 账号的 refreshToken 就是 device refresh token，
     // 续期端点也是 deviceToken/refresh（同一对，chat 与账号页共用）。
     const kind = getCredentialContextString(connection, "chatTokenKind")
@@ -152,7 +159,7 @@ function getQoderModuleFor(site: QoderSite): ProviderModule {
       adapter: qoderNativeAdapter,
       createRuntime: () => qoderProviderRuntimeFor(site.id),
       oauth: qoderStrategy(site),
-      refreshAuth: qoderRefreshAuth(site),
+      refreshAuth: qoderRefreshAuth(),
       refreshLeadMs: 5 * 60 * 1000,
     }
     moduleCache.set(site.id, module)

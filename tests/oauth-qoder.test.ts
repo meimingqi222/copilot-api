@@ -220,6 +220,52 @@ describe("Qoder device flow", () => {
 })
 
 describe("Qoder token refresh", () => {
+  for (const kind of ["job", "device"] as const) {
+    for (const site of Object.values(QODER_SITES)) {
+      test(`${kind} refresh uses ${site.id} connection host despite conflicting provider metadata`, async () => {
+        const connection = createConnection({
+          baseUrl: site.apiHost,
+          metadata: { provider: site.id === "qoder" ? "qoder-cn" : "qoder" },
+        })
+        connection.credentials[0]!.context!.chatTokenKind = kind
+        const urls: Array<string> = []
+        globalThis.fetch = ((input: unknown) => {
+          const url = String(input)
+          urls.push(url)
+          return Promise.resolve(
+            url.startsWith(site.openapiHost) ?
+              jsonResponse({ token: "new-token", refresh_token: "new-refresh" })
+            : jsonResponse({ error: "invalid_grant" }, 401),
+          )
+        }) as unknown as typeof fetch
+
+        const provider = site.id === "qoder" ? "qoder-cn" : "qoder"
+        await OAUTH_REFRESH_STRATEGIES[provider](connection, "old-refresh", {})
+
+        expect(urls).toEqual([
+          `${site.openapiHost}/api/v1/${kind === "job" ? "jobToken" : "deviceToken"}/refresh`,
+        ])
+        expect(connection.credentials[0]!.value).toBe("new-token")
+        expect(connection.credentials[0]!.context!.refreshToken).toBe(
+          "new-refresh",
+        )
+      })
+    }
+  }
+
+  test("international connection without provider metadata refreshes on the international host", async () => {
+    const connection = createConnection()
+    const urls: Array<string> = []
+    globalThis.fetch = ((input: unknown) => {
+      urls.push(String(input))
+      return Promise.resolve(
+        jsonResponse({ token: "jt-new", refresh_token: "jrt-new" }),
+      )
+    }) as unknown as typeof fetch
+    await OAUTH_REFRESH_STRATEGIES["qoder-cn"](connection, "jrt-old", {})
+    expect(urls).toEqual(["https://openapi.qoder.sh/api/v1/jobToken/refresh"])
+  })
+
   test("refresh rotates the job token pair and keeps the device token", async () => {
     const urls: Array<string> = []
     globalThis.fetch = ((input: unknown) => {
@@ -385,7 +431,10 @@ describe("Qoder CN site", () => {
       )
     }) as unknown as typeof fetch
 
-    const connection = createConnection()
+    const connection = createConnection({
+      baseUrl: QODER_SITES["qoder-cn"].apiHost,
+      metadata: { provider: "qoder-cn" },
+    })
     connection.credentials[0]!.context!.chatTokenKind = "device"
     await OAUTH_REFRESH_STRATEGIES["qoder-cn"](connection, "drt-old", {})
 

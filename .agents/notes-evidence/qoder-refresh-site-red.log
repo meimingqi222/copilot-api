@@ -1,0 +1,22 @@
+Pre-fix natural red run, 2026-10-05.
+Command: bun test tests/oauth-qoder.test.ts --test-name-pattern 'connection host|without provider metadata'
+Captured excerpt from tool result fefa69 (before qoderRefreshAuth used qoderSiteForConnection):
+
+error: Qoder job token refresh failed (401)
+(fail) Qoder token refresh > job refresh uses qoder connection host despite conflicting provider metadata
+error: Qoder job token refresh failed (401)
+(fail) Qoder token refresh > job refresh uses qoder-cn connection host despite conflicting provider metadata
+error: Qoder device token refresh failed (401)
+(fail) Qoder token refresh > device refresh uses qoder connection host despite conflicting provider metadata
+error: Qoder device token refresh failed (401)
+(fail) Qoder token refresh > device refresh uses qoder-cn connection host despite conflicting provider metadata
+
+error: expect(received).toEqual(expected)
+- "https://openapi.qoder.sh/api/v1/jobToken/refresh",
++ "https://openapi.qoder.com.cn/api/v1/jobToken/refresh",
+(fail) Qoder token refresh > international connection without provider metadata refreshes on the international host
+
+0 pass
+13 filtered out
+5 fail
+Ran 5 tests across 1 file.
