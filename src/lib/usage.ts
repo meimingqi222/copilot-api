@@ -22,6 +22,7 @@ import {
   resolveModelRouting,
 } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
+import { codexServiceTierCostMultiplier } from "~/lib/stats/service-tier-pricing"
 import { requestPerformanceSnapshot } from "~/lib/request-performance"
 import { incrementUserTokens } from "~/lib/users"
 
@@ -178,6 +179,11 @@ export function recordUsage(input: UsageRecordInput): void {
           cacheReadTokens,
           cacheWriteTokens,
         })
+        * codexServiceTierCostMultiplier(
+          provider,
+          accountId,
+          getRequestLogContext(c)?.entry,
+        )
       : 0
 
     statsStore.recordUsage({
