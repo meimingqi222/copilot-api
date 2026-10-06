@@ -113,7 +113,7 @@ test("automatic view refresh reads only cached APIs and unchanged usage does not
     ViewHelpers: {},
     document: { querySelector: () => ({}) },
     Alpine: { $data: () => ({ currentView: "usage" }) },
-    lucide: { createIcons() {} },
+    refreshAdminIcons() {},
     API: {
       quota: {
         get: async () => {

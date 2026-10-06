@@ -17,6 +17,7 @@ function adminApp() {
       "system-config",
     ],
     initialized: false,
+    visitedViews: {},
     quotaDisplayMode: "remaining",
     toasts: [],
     lang: I18n.currentLang(),
@@ -56,8 +57,9 @@ function adminApp() {
         }
       })
       await this.loadQuotaDisplayMode()
+      this.visitedViews[this.currentView] = true
       this.initialized = true
-      lucide.createIcons()
+      refreshAdminIcons(this.$el)
       // Refresh quotas in background after login
       this.refreshQuotaInBackground()
 
@@ -68,6 +70,13 @@ function adminApp() {
 
       // Update hash when currentView changes
       this.$watch("currentView", (view) => {
+        this.visitedViews[view] = true
+        this.$nextTick(() => {
+          const root = this.$el.querySelector(
+            `[x-show="currentView === '${view}'"]`,
+          )
+          if (root) refreshAdminIcons(root)
+        })
         if (view === "quotas" || view === "traces") {
           void this.loadQuotaDisplayMode()
         }
@@ -119,7 +128,7 @@ function adminApp() {
     setLang(lang) {
       I18n.setLang(lang)
       this.lang = lang
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     formatTime(ts) {

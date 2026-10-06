@@ -146,7 +146,7 @@ function connectionsView() {
         this.showToast(e.message || "Failed to load connections", "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -211,7 +211,7 @@ function connectionsView() {
       this.selectedModelIds = this.fetchedModels.map((m) => m.publicId)
       this.showFetchedModelsPanel = this.fetchedModels.length > 0
       this.modelSearchQuery = ""
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     selectCustomPreset() {
@@ -226,7 +226,7 @@ function connectionsView() {
       this.selectedModelIds = []
       this.showFetchedModelsPanel = false
       this.modelSearchQuery = ""
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     async fetchRemoteModels() {
@@ -302,7 +302,7 @@ function connectionsView() {
         this.showToast(e.message || "Failed to fetch models", "error")
       } finally {
         this.fetchingModels = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -397,7 +397,7 @@ function connectionsView() {
       }
 
       initPresets().finally(() => {
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       })
     },
 
@@ -439,7 +439,7 @@ function connectionsView() {
         .map((m) => m.publicId)
       this.showFetchedModelsPanel = this.fetchedModels.length > 0
       this.showConnModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     async saveConn() {
@@ -575,7 +575,7 @@ function connectionsView() {
         _protocol: conn.protocol,
       }
       this.showCredModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     openEditCredential(conn, cred) {
@@ -586,7 +586,7 @@ function connectionsView() {
         _protocol: conn.protocol,
       }
       this.showCredModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     async saveCred() {
@@ -790,7 +790,7 @@ function connectionsView() {
       this.$nextTick(() => {
         if (this.$refs.connImportFileInput)
           this.$refs.connImportFileInput.value = ""
-        lucide.createIcons()
+        refreshAdminIcons(this.$el)
       })
     },
 
@@ -853,7 +853,7 @@ function connectionsView() {
         upstreamId: "",
       }
       this.showModelModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     // 对外 ID 统一入口:管理抽屉行内改名(替代原来的逐个小弹窗)。
@@ -918,7 +918,7 @@ function connectionsView() {
         this.cancelRenameModel()
         this.modelManagerAliasFor = m.publicId
         this.modelManagerAliasInput = ""
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -996,7 +996,7 @@ function connectionsView() {
       this.modelManagerSearch = ""
       this.cancelRenameModel()
       this.showModelManager = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     get modelManagerFilteredModels() {
@@ -1051,7 +1051,7 @@ function connectionsView() {
         models: [],
       }
       this.showBatchModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     /**

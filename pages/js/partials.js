@@ -15,6 +15,7 @@ async function loadPartial(el) {
       throw new Error(`HTTP ${response.status}`)
     }
     el.innerHTML = await response.text()
+    refreshAdminIcons(el)
   } catch (error) {
     console.error(`Failed to load partial ${url}:`, error)
     el.innerHTML =
@@ -25,6 +26,4 @@ async function loadPartial(el) {
   }
 }
 
-for (const el of document.querySelectorAll("[data-partial]")) {
-  void loadPartial(el)
-}
+// View placeholders call loadPartial($el) on their first Alpine mount.

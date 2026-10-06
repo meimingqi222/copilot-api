@@ -23,6 +23,7 @@ function tracesView() {
     now: Date.now(),
     _ticker: null,
     _resize: null,
+    _visibilityHandler: null,
     _laneKey: null,
     _drawKey: null,
     _replayToken: 0,
@@ -34,19 +35,43 @@ function tracesView() {
     _completedFlights: new Set(),
 
     init() {
-      this.load()
-      this.connect()
-      this.$watch("paused", (p) => (p ? this.disconnect() : this.connect()))
-      this.$watch("currentView", (view) => {
-        if (view === "traces") this.refreshStage()
-      })
-      this._ticker = globalThis.setInterval(() => {
-        if (this.traces.some((t) => t.inFlight)) this.now = Date.now()
-      }, 250)
+      this.$watch("paused", () => this.syncActivity())
+      this.$watch("currentView", () => this.syncActivity())
+      this._visibilityHandler = () => this.syncActivity()
+      document.addEventListener("visibilitychange", this._visibilityHandler)
+      this.syncActivity()
       this.$nextTick(() => {
         this._resize = new ResizeObserver(() => this.drawStage(true))
         if (this.$refs.lane) this._resize.observe(this.$refs.lane)
+        const list = this.$el.querySelector(".tr-list")
+        if (list && globalThis.autoAnimate) {
+          globalThis.autoAnimate(list, { duration: 260 })
+        }
       })
+    },
+
+    syncActivity() {
+      const active = this.currentView === "traces" && !document.hidden
+      if (!active) {
+        this.disconnect()
+        this.clearFlights()
+        this.stopReplay()
+        globalThis.clearInterval(this._ticker)
+        this._ticker = null
+        return
+      }
+      if (this.paused) {
+        this.disconnect()
+      } else if (!this.source) {
+        this.load()
+        this.connect()
+      }
+      if (this._ticker === null) {
+        this._ticker = globalThis.setInterval(() => {
+          if (this.traces.some((t) => t.inFlight)) this.now = Date.now()
+        }, 250)
+      }
+      this.refreshStage()
     },
 
     destroy() {
@@ -55,6 +80,7 @@ function tracesView() {
       this.stopReplay()
       globalThis.clearInterval(this._ticker)
       this._resize?.disconnect()
+      document.removeEventListener("visibilitychange", this._visibilityHandler)
     },
 
     async load() {
@@ -370,10 +396,11 @@ function tracesView() {
 
     refreshStage() {
       this.$nextTick(() => {
+        if (this.currentView !== "traces" || document.hidden) return
         const key = this.laneNodes.map((n) => n.key + n.title).join("|")
         if (key !== this._laneKey) {
           this._laneKey = key
-          lucide.createIcons()
+          refreshAdminIcons(this.$el)
         }
         this.drawStage()
       })
@@ -546,6 +573,7 @@ function tracesView() {
     // ---------- curved routing wires and directional packets ----------
 
     drawStage(force = false) {
+      if (this.currentView !== "traces" || document.hidden) return
       const lane = this.$refs.lane
       const svg = this.$refs.wires
       if (!lane || !svg || !lane.clientWidth) return

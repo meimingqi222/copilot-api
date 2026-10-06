@@ -229,7 +229,7 @@ function accountsView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -534,21 +534,21 @@ function accountsView() {
       this.authMethodTab = "oauth"
       this.addStep = "configure"
       this.$nextTick(() => {
-        if (window.lucide) window.lucide.createIcons()
+        if (window.lucide) refreshAdminIcons(this.$el)
       })
     },
 
     setCodebuddyVariant(variant) {
       this.newAccount.provider = variant
       this.$nextTick(() => {
-        if (window.lucide) window.lucide.createIcons()
+        if (window.lucide) refreshAdminIcons(this.$el)
       })
     },
 
     backToProviderSelect() {
       this.addStep = "select"
       this.$nextTick(() => {
-        if (window.lucide) window.lucide.createIcons()
+        if (window.lucide) refreshAdminIcons(this.$el)
       })
     },
 
@@ -606,7 +606,7 @@ function accountsView() {
       this.addStep = "select"
       this.showAddModal = true
       this.$nextTick(() => {
-        if (window.lucide) window.lucide.createIcons()
+        if (window.lucide) refreshAdminIcons(this.$el)
       })
     },
 
@@ -628,7 +628,7 @@ function accountsView() {
       this.authMethodTab = "oauth"
       this.showAddModal = true
       this.$nextTick(() => {
-        if (window.lucide) window.lucide.createIcons()
+        if (window.lucide) refreshAdminIcons(this.$el)
       })
     },
 
@@ -1173,7 +1173,7 @@ function accountsView() {
         this.accountModelsAliasFor = null
         this.accountModelsAliasInput = ""
         this.showAccountModels = true
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       } catch (e) {
         this.showToast(e.message || I18n.t("error.load"), "error")
       }

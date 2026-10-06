@@ -24,14 +24,14 @@ are ever built.
 
 Cross-checked against `model-aliases.js` for shape:
 
-| Concern        | Convention used                                                          |
-| -------------- | ------------------------------------------------------------------------ |
-| Entry point    | global `routingGroupsView()` returning a data object                     |
-| Shared helpers | `...ViewHelpers` → `this.t(...)`, `this.showToast(...)`                  |
-| Fetching       | `API.routingGroups.*` (see step 5)                                       |
-| Errors         | `catch (error) { this.showToast(error.message, "error") }`               |
-| Delete confirm | `globalThis.confirm(this.t("routingGroups.deleteConfirm", { name }))`    |
-| Icons          | `this.$nextTick(() => lucide.createIcons())` after the list/modal render |
+| Concern        | Convention used                                                                 |
+| -------------- | ------------------------------------------------------------------------------- |
+| Entry point    | global `routingGroupsView()` returning a data object                            |
+| Shared helpers | `...ViewHelpers` → `this.t(...)`, `this.showToast(...)`                         |
+| Fetching       | `API.routingGroups.*` (see step 5)                                              |
+| Errors         | `catch (error) { this.showToast(error.message, "error") }`                      |
+| Delete confirm | `globalThis.confirm(this.t("routingGroups.deleteConfirm", { name }))`           |
+| Icons          | `this.$nextTick(() => refreshAdminIcons(this.$el))` after the list/modal render |
 
 ## Step 1 — load the script and the stylesheet (`pages/index.html`)
 

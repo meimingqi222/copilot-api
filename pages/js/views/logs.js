@@ -34,11 +34,18 @@ function logsView() {
           this.stopAutoRefresh()
         }
       })
+      this.$watch("currentView", (view) => {
+        this.stopAutoRefresh()
+        if (view === "logs" && this.autoRefresh) this.startAutoRefresh()
+      })
     },
 
     startAutoRefresh() {
+      this.stopAutoRefresh()
       this.refreshTimer = setInterval(() => {
-        this.load()
+        if (this.currentView === "logs" && !document.hidden && !this.loading) {
+          this.load()
+        }
       }, 5000)
     },
 
@@ -47,6 +54,10 @@ function logsView() {
         clearInterval(this.refreshTimer)
         this.refreshTimer = null
       }
+    },
+
+    destroy() {
+      this.stopAutoRefresh()
     },
 
     async load() {
@@ -65,7 +76,7 @@ function logsView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 

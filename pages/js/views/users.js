@@ -49,7 +49,7 @@ function usersView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -74,7 +74,7 @@ function usersView() {
         this.showKeyModal = true
         this.showToast(I18n.t("users.createSuccess"), "success")
         await this.load()
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       } catch {
         this.showToast(I18n.t("error.create"), "error")
       }
@@ -94,7 +94,7 @@ function usersView() {
       this.selectedUser = user
       this.selectedModels = [...(user.allowedModels || [])]
       this.showModelsModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     isModelSelected(modelId) {
@@ -135,7 +135,7 @@ function usersView() {
         this.newApiKey = res.apiKey
         this.showKeyModal = true
         this.showToast(I18n.t("users.resetSuccess"), "success")
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       } catch {
         this.showToast(I18n.t("error.update"), "error")
       }
@@ -172,7 +172,7 @@ function usersView() {
         allowedModels: [...(user.allowedModels || [])],
       }
       this.showEditModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     toggleEditModel(modelId) {

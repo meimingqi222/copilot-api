@@ -152,12 +152,12 @@ function usageView() {
     setModelViewMode(mode) {
       this.modelViewMode = mode
       this.showAllModels = false
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     toggleShowAllModels() {
       this.showAllModels = !this.showAllModels
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     get filteredModelUsage() {
@@ -183,7 +183,7 @@ function usageView() {
 
     toggleAccountExpanded(accountId) {
       this.expandedAccounts[accountId] = !this.expandedAccounts[accountId]
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     isAccountExpanded(accountId) {
@@ -192,7 +192,7 @@ function usageView() {
 
     toggleProviderExpanded(providerId) {
       this.expandedProviders[providerId] = !this.expandedProviders[providerId]
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     isProviderExpanded(providerId) {
@@ -205,7 +205,7 @@ function usageView() {
       }
       this.expandedProviderAccounts[providerId][accountId] =
         !this.expandedProviderAccounts[providerId][accountId]
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     isProviderAccountExpanded(providerId, accountId) {
@@ -244,7 +244,7 @@ function usageView() {
       } finally {
         this.loading = false
         this.$nextTick(() => {
-          lucide.createIcons()
+          refreshAdminIcons(this.$el)
           this.renderChart()
         })
       }
@@ -331,7 +331,7 @@ function usageView() {
         }
         this.originalPrices = JSON.parse(JSON.stringify(this.modelPrices))
         this.$nextTick(() => {
-          if (typeof lucide !== "undefined") lucide.createIcons()
+          if (typeof lucide !== "undefined") refreshAdminIcons(this.$el)
         })
       } catch (e) {
         console.error("Failed to load model pricing:", e)
@@ -376,7 +376,7 @@ function usageView() {
         [model]: !this.expandedTierModels[model],
       }
       this.$nextTick(() => {
-        if (typeof lucide !== "undefined") lucide.createIcons()
+        if (typeof lucide !== "undefined") refreshAdminIcons(this.$el)
       })
     },
 
@@ -739,6 +739,7 @@ function usageView() {
 
       const attempt = (retryCount = 0) => {
         if (token !== this.chartRenderToken) return
+        if (this.currentView !== "usage" || document.hidden) return
 
         const canvas = document.querySelector("#usageTrendChart")
         if (!canvas || canvas.offsetParent === null) {

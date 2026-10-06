@@ -118,6 +118,7 @@ function performanceView() {
     },
 
     async load() {
+      if (this.loading) return
       this.loading = true
       try {
         await this.loadPerformance()
@@ -125,7 +126,7 @@ function performanceView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick?.(() => window.lucide?.createIcons?.())
+        this.$nextTick?.(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -500,7 +501,7 @@ function performanceView() {
 
     toggleRow(rowKey) {
       this.expandedRows[rowKey] = !this.isRowExpanded(rowKey)
-      this.$nextTick?.(() => window.lucide?.createIcons?.())
+      this.$nextTick?.(() => refreshAdminIcons(this.$el))
     },
 
     expandAllRows() {
@@ -508,7 +509,7 @@ function performanceView() {
       for (const row of this.filteredDetails) {
         this.expandedRows[this.getRowKey(row)] = !currentlyAll
       }
-      this.$nextTick?.(() => window.lucide?.createIcons?.())
+      this.$nextTick?.(() => refreshAdminIcons(this.$el))
     },
 
     isAllRowsExpanded() {
@@ -723,7 +724,7 @@ function performanceView() {
     toggleStage(rowKey, stageId) {
       const key = `${rowKey}:${stageId}`
       this.expandedStages[key] = !this.isStageExpanded(rowKey, stageId)
-      this.$nextTick?.(() => window.lucide?.createIcons?.())
+      this.$nextTick?.(() => refreshAdminIcons(this.$el))
     },
 
     toggleAllStages(rowKey) {
@@ -731,7 +732,7 @@ function performanceView() {
       for (const stage of this.lifecycleStages) {
         this.expandedStages[`${rowKey}:${stage.id}`] = !currentlyAll
       }
-      this.$nextTick?.(() => window.lucide?.createIcons?.())
+      this.$nextTick?.(() => refreshAdminIcons(this.$el))
     },
 
     isAllExpanded(rowKey) {

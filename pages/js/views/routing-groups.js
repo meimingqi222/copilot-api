@@ -587,7 +587,7 @@ function routingGroupsView() {
       await this.loadMemberOptions()
       await this.loadProviders()
       await this.loadMeta()
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     /** The list endpoint may answer with an array or wrap it in `{ groups }`. */
@@ -714,14 +714,14 @@ function routingGroupsView() {
       this.editingId = null
       this.form = blankForm()
       this.showModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     openEdit(group) {
       this.editingId = group.id
       this.form = this.toDraft(group)
       this.showModal = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     closeModal() {
@@ -1056,7 +1056,7 @@ function routingGroupsView() {
       if (this.memberPickerOpen) {
         this.memberSearch = ""
         this.$nextTick(() => {
-          lucide.createIcons()
+          refreshAdminIcons(this.$el)
           if (this.$refs.pickerSearchInput) {
             this.$refs.pickerSearchInput.focus()
           }

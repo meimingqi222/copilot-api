@@ -22,6 +22,7 @@ function quotasView() {
     },
 
     async load() {
+      if (this.loading) return
       this.loading = true
       try {
         const data = await API.quota.get()
@@ -31,7 +32,7 @@ function quotasView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -41,7 +42,7 @@ function quotasView() {
         JSON.stringify(this.accounts) !== JSON.stringify(data.accounts || [])
       ) {
         this.accounts = data.accounts || []
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
       this.lastUpdatedAt = Date.now()
     },
@@ -91,7 +92,7 @@ function quotasView() {
         this.showToast(I18n.t("quota.oauth.codex.resetError"), "error")
       } finally {
         this.resettingAccountId = null
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -115,7 +116,7 @@ function quotasView() {
         this.showToast(I18n.t("accounts.quotaRefreshError"), "error")
       } finally {
         this.refreshingAccountId = null
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 

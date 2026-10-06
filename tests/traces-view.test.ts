@@ -11,9 +11,11 @@ function view(api = {}, environment = {}) {
     Date,
     globalThis,
     API: api,
+    document: { hidden: false },
     ...environment,
   }
   const result = runInNewContext(source + "\ntracesView()", context)
+  result.currentView = "traces"
   result.refreshStage = () => {}
   result.t = (key: string) => key
   return result

@@ -116,7 +116,7 @@ function guardView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -139,7 +139,7 @@ function guardView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -152,7 +152,7 @@ function guardView() {
         if (!silent) this.showToast(I18n.t("error.load"), "error")
       } finally {
         if (!silent) this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -166,7 +166,7 @@ function guardView() {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -183,7 +183,7 @@ function guardView() {
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       } finally {
-        this.$nextTick(() => lucide.createIcons())
+        this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },
 
@@ -223,7 +223,7 @@ function guardView() {
         reason: "",
       }
       this.blockModalOpen = true
-      this.$nextTick(() => lucide.createIcons())
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     closeBlockModal() {

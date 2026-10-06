@@ -2,6 +2,7 @@ function dashboardView() {
   return {
     ...ViewHelpers,
     loading: false,
+    loadInFlight: false,
     autoRefresh: true,
     lastRefresh: null,
     refreshInterval: null,
@@ -121,6 +122,8 @@ function dashboardView() {
     },
 
     async load(silent = false) {
+      if (this.loadInFlight) return
+      this.loadInFlight = true
       if (!silent) this.loading = true
       try {
         const dashboard = await API.dashboard.get()
@@ -152,15 +155,15 @@ function dashboardView() {
         this.lastRefresh = new Date()
         this.$nextTick(() => {
           this.renderChart()
-          lucide.createIcons()
+          refreshAdminIcons(this.$el)
         })
       } catch {
         if (!silent) {
           this.showToast(I18n.t("error.load"), "error")
         }
       } finally {
+        this.loadInFlight = false
         if (!silent) this.loading = false
-        this.$nextTick(() => lucide.createIcons())
       }
     },
 
@@ -170,6 +173,7 @@ function dashboardView() {
 
       const attempt = (retryCount = 0) => {
         if (token !== this.chartRenderToken) return
+        if (this.currentView !== "dashboard" || document.hidden) return
 
         const canvas = document.querySelector("#dashboardTrafficChart")
         if (!canvas || canvas.offsetParent === null) {

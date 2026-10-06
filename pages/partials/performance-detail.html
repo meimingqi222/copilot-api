@@ -120,7 +120,7 @@
       >
         <button
           type="button"
-          @click="activeTab = 'channels'; $nextTick(() => window.lucide?.createIcons?.())"
+          @click="activeTab = 'channels'; $nextTick(() => refreshAdminIcons($root))"
           :class="activeTab === 'channels' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
           class="px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
         >
@@ -134,7 +134,7 @@
         </button>
         <button
           type="button"
-          @click="activeTab = 'models'; $nextTick(() => window.lucide?.createIcons?.())"
+          @click="activeTab = 'models'; $nextTick(() => refreshAdminIcons($root))"
           :class="activeTab === 'models' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
           class="px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
         >
@@ -148,7 +148,7 @@
         </button>
         <button
           type="button"
-          @click="activeTab = 'providers'; $nextTick(() => window.lucide?.createIcons?.())"
+          @click="activeTab = 'providers'; $nextTick(() => refreshAdminIcons($root))"
           :class="activeTab === 'providers' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
           class="px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 cursor-pointer"
         >
