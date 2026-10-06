@@ -101,10 +101,27 @@ test("Codex clients receive a native catalog including the hidden reviewer", asy
   expect(reviewer.supported_reasoning_levels).toBeArray()
   expect(reviewer.truncation_policy).toBeObject()
   expect(
+    response.models!.find((model) => model.slug === "gpt-5.6-sol")!
+      .auto_review_model_override,
+  ).toBe("codex-auto-review")
+  expect(
     response.models!.some((model) =>
       String(model.slug).startsWith("gpt-image-"),
     ),
   ).toBe(false)
+})
+
+test("reviewer override follows the allowed public reviewer ID", async () => {
+  const connection = getMutableProviderConnection("codex-test")!
+  connection.models!.find(
+    (model) => model.upstreamId === "codex-auto-review",
+  )!.publicId = "my-reviewer"
+  cacheModels()
+  const response = await catalog(undefined, ["gpt-5.6-sol", "my-reviewer"])
+  expect(
+    response.models!.find((model) => model.slug === "gpt-5.6-sol")!
+      .auto_review_model_override,
+  ).toBe("my-reviewer")
 })
 
 test("ordinary OpenAI clients retain their existing model list", async () => {

@@ -157,9 +157,22 @@ export function buildCodexClientModelsResponse(
   clientVersion: string,
 ): { models: Array<CodexClientModel> } {
   const nativeIds = nativeCodexModelIds()
-  const entries = models
-    .filter(isTextModel)
-    .map((model) => clientModel(model, nativeIds))
+  const reviewer = models.find(
+    (model) =>
+      isTextModel(model)
+      && nativeIds.get(model.id)?.nativeId === "codex-auto-review",
+  )
+  const entries = models.filter(isTextModel).map((model) => {
+    const entry = clientModel(model, nativeIds)
+    if (
+      reviewer
+      && model.capabilities.family === "codex"
+      && nativeIds.has(model.id)
+    ) {
+      entry.auto_review_model_override = reviewer.id
+    }
+    return entry
+  })
   // max/ultra were added in CLI 0.144.0; older clients reject the whole catalog.
   const version = clientVersion.match(/^(\d+)\.(\d+)\.(\d+)/)
   const legacyClient =

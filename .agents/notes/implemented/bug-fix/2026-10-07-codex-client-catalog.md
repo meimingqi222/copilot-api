@@ -21,7 +21,10 @@ capability snapshot for enabled Codex models. Resolve renamed public IDs back
 to their native mapping when choosing metadata. Keep picker-hidden reviewers
 in the native catalog and omit image-only and embedding-only models.
 
-Preserve upstream reviewer metadata and let the client choose its reviewer.
+Preserve upstream reviewer metadata. When a caller-visible native codex-auto-review
+mapping exists, advertise its public ID as the native Codex models' synchronous
+reviewer override. Restricted callers without that model retain original metadata.
+Guardian V2's asynchronous Luna classifier is unaffected.
 The proxy adds no separate reviewer configuration or synthetic review turns.
 
 ## Alternatives considered
@@ -59,3 +62,5 @@ V2's separately hardcoded Luna asynchronous classifier.
 Proved: Before the implementation, the native catalog test
 failed because response.models was undefined; the ordinary OpenAI test
 passed. The same cases pass after adding the native response branch.
+Before adding the reviewer override, the default and renamed-reviewer tests
+failed (7 pass, 2 fail); both pass after advertising the allowed public reviewer ID.

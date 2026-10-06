@@ -21,7 +21,9 @@ provider's AuthManager contains cached `CodexAuth::ApiKey` login state. Otherwis
 it prefers `codex-auto-review`. Sending a proxy API key through a custom
 provider's `env_key` or HTTP headers does not itself select the ApiKey login
 branch. CPA's bundled catalog leaves `auto_review_model_override` null and
-therefore preserves this client choice. This proxy does the same by default.
+therefore preserves this client choice. This proxy advertises the caller-visible
+Codex reviewer as `auto_review_model_override` on native Codex models when it is
+available, so synchronous reviews prefer it even with cached ApiKey login.
 
 When the client already prefers `codex-auto-review`, loading a catalog that
 contains it is sufficient. Enable the Codex connection and its reviewer model,
