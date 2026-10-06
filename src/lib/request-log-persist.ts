@@ -7,6 +7,7 @@ import type { LogEntry, RequestLogRecord } from "~/lib/log-store"
 
 import {
   dateKeyFromDate,
+  maybeEnforceLogStorageLimits,
   readLogRotationConfig,
   REQUEST_LOG_JSONL_PATTERN,
 } from "~/lib/log-rotation"
@@ -43,6 +44,7 @@ async function appendRequestLogSerialized(
       config.maxFileBytes,
     )
     await appendFile(file, line, "utf8")
+    maybeEnforceLogStorageLimits(config, Buffer.byteLength(line))
   } catch (error) {
     logger.warn("Failed to persist request log:", error)
   }

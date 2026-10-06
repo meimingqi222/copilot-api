@@ -11,6 +11,7 @@ import {
   parseRotatedLogFileName,
   pruneExpiredLogFiles,
   pruneExpiredRequestLogs,
+  enforceLogStorageLimits,
   RotatingLogFileSink,
 } from "~/lib/log-rotation"
 
@@ -55,6 +56,41 @@ describe("buildRotatedLogFileName", () => {
 })
 
 describe("retention", () => {
+  test("enforces a shared budget and expires dumps in a separate directory", () => {
+    const logDir = tempLogDir()
+    const dumpDir = tempLogDir()
+    fs.mkdirSync(logDir, { recursive: true })
+    fs.mkdirSync(dumpDir, { recursive: true })
+    try {
+      const oldDump = path.join(dumpDir, "request-dumps-2026-06-10.jsonl")
+      const oldest = path.join(logDir, "server-2026-06-25.log")
+      const recent = path.join(logDir, "requests-2026-06-26.jsonl")
+      const newest = path.join(dumpDir, "request-dumps-2026-06-27.jsonl")
+      for (const file of [oldDump, oldest, recent, newest])
+        fs.writeFileSync(file, "123456")
+      const noise = path.join(logDir, "notes.txt")
+      fs.writeFileSync(noise, "do not delete")
+      enforceLogStorageLimits(
+        {
+          logDir,
+          dumpDir,
+          maxFileBytes: 10,
+          retentionDays: 7,
+          maxTotalBytes: 12,
+        },
+        new Date("2026-06-27T12:00:00Z"),
+      )
+      expect(fs.existsSync(oldDump)).toBe(false)
+      expect(fs.existsSync(oldest)).toBe(false)
+      expect(fs.existsSync(recent)).toBe(true)
+      expect(fs.existsSync(newest)).toBe(true)
+      expect(fs.readFileSync(noise, "utf8")).toBe("do not delete")
+    } finally {
+      rmDir(logDir)
+      rmDir(dumpDir)
+    }
+  })
+
   test("expires files older than retention window", () => {
     const now = new Date("2026-06-27T12:00:00.000Z")
     expect(isLogDateExpired("2026-06-19", now, 7)).toBe(true)
@@ -121,6 +157,32 @@ describe("retention", () => {
 })
 
 describe("RotatingLogFileSink", () => {
+  test("bounds repeated writes and resumes after removing an oversized active file", () => {
+    const logDir = tempLogDir()
+    const now = new Date("2026-06-27T10:00:00Z")
+    const sink = new RotatingLogFileSink({
+      config: { logDir, maxFileBytes: 6, retentionDays: 7, maxTotalBytes: 12 },
+      now,
+    })
+    try {
+      for (let i = 0; i < 20; i++) sink.append("123456", now)
+      const total = () =>
+        fs
+          .readdirSync(logDir)
+          .reduce(
+            (sum, name) => sum + fs.statSync(path.join(logDir, name)).size,
+            0,
+          )
+      expect(total()).toBeLessThanOrEqual(12)
+      sink.append("x".repeat(30), now)
+      expect(total()).toBeLessThanOrEqual(12)
+      sink.append("ok", now)
+      expect(fs.readFileSync(sink.getActivePath(), "utf8")).toBe("ok")
+    } finally {
+      rmDir(logDir)
+    }
+  })
+
   test("writes to daily file under log dir", () => {
     const logDir = tempLogDir()
     const now = new Date("2026-06-27T10:00:00.000Z")

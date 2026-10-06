@@ -4,6 +4,7 @@ function systemConfigView() {
     source: "",
     expiresAt: null,
     debugMinutes: 15,
+    maxLogMiB: 1024,
     acknowledgeSensitiveData: false,
     loading: false,
     saving: false,
@@ -12,6 +13,7 @@ function systemConfigView() {
 
     accept(data) {
       this.settings = data.settings
+      this.maxLogMiB = Math.ceil(data.settings.logMaxTotalBytes / (1024 * 1024))
       globalThis.dispatchEvent(
         new CustomEvent("quota-display-mode", {
           detail: data.settings.quotaDisplayMode || "remaining",
@@ -43,7 +45,10 @@ function systemConfigView() {
         performanceDetails: true,
         codexAutoReset: false,
         quotaDisplayMode: "remaining",
+        logRetentionDays: 7,
+        logMaxTotalBytes: 1024 * 1024 * 1024,
       }
+      this.maxLogMiB = 1024
       this.acknowledgeSensitiveData = false
       this.saved = false
     },
@@ -58,6 +63,7 @@ function systemConfigView() {
             method: "PUT",
             body: {
               ...this.settings,
+              logMaxTotalBytes: Number(this.maxLogMiB) * 1024 * 1024,
               debugMinutes: Number(this.debugMinutes),
               acknowledgeSensitiveData: this.acknowledgeSensitiveData,
             },

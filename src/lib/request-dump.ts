@@ -19,7 +19,11 @@ import { appendFile, mkdir, readdir, stat } from "node:fs/promises"
 import { join, resolve } from "node:path"
 
 import { shouldDumpRequest } from "~/lib/llm-request"
-import { dateKeyFromDate, readLogRotationConfig } from "~/lib/log-rotation"
+import {
+  dateKeyFromDate,
+  maybeEnforceLogStorageLimits,
+  readLogRotationConfig,
+} from "~/lib/log-rotation"
 import { logger } from "~/lib/logger"
 import { getSystemSettings } from "~/lib/system-config"
 import {
@@ -254,9 +258,13 @@ async function appendDumpLine(line: string, timestamp: number): Promise<void> {
       file: selected.file,
       size: selected.size + lineBytes,
     }
+    if (maybeEnforceLogStorageLimits(config, lineBytes))
+      currentDumpFile = undefined
     return
   }
   currentDumpFile = { dir, dateKey, file, size: size + lineBytes }
+  if (maybeEnforceLogStorageLimits(config, lineBytes))
+    currentDumpFile = undefined
 }
 
 async function selectDumpFile(

@@ -51,6 +51,11 @@ const i18n = {
         "配置来源：启动参数 / 环境变量。首次保存后，WebUI 配置优先。",
       "system.source.webui": "配置来源：WebUI（已持久化，重启后保留）。",
       "system.logLevel": "控制台与文件日志级别",
+      "system.logStorage": "日志存储",
+      "system.logRetentionDays": "日志保留天数（天）",
+      "system.logMaxTotalMiB": "日志总容量上限（MiB）",
+      "system.logStorageHint":
+        "文件日志、请求记录与请求落盘共用此上限，包含自定义落盘目录。默认保留 7 天、总容量 1024 MiB。保存后立即清理过期或超限的最旧文件；分批清理期间容量可能短暂略超上限。",
       "system.quotaDisplayMode": "配额百分比显示口径",
       "system.quotaMode.remaining": "剩余",
       "system.quotaMode.used": "已用",
@@ -85,7 +90,7 @@ const i18n = {
       "system.recommended": "填入推荐设置",
       "system.saved": "已保存并生效",
       "system.boundaries":
-        "端口、代理、凭据与协议行为不属于调试开关。日志目录、轮转大小和保留天数暂仍通过环境变量配置。",
+        "日志存储设置重启后保留，不随临时调试到期而恢复。日志目录和单文件轮转大小仍通过环境变量配置。",
       "layout.more": "更多操作",
       "layout.allStatuses": "全部启用状态",
       "layout.enabled": "已启用",
@@ -1553,6 +1558,11 @@ const i18n = {
         "Source: startup options / environment. Saved WebUI settings take precedence.",
       "system.source.webui": "Source: WebUI (persisted across restarts).",
       "system.logLevel": "Console and file log level",
+      "system.logStorage": "Log storage",
+      "system.logRetentionDays": "Log retention (days)",
+      "system.logMaxTotalMiB": "Total log capacity (MiB)",
+      "system.logStorageHint":
+        "File logs, request records and request dumps share this budget, including custom dump directories. Defaults: 7 days and 1024 MiB. Saving immediately deletes expired or oldest excess files. Batched cleanup can briefly exceed the limit.",
       "system.quotaDisplayMode": "Quota percentage display",
       "system.quotaMode.remaining": "Remaining",
       "system.quotaMode.used": "Used",
@@ -1588,7 +1598,7 @@ const i18n = {
       "system.recommended": "Fill recommended settings",
       "system.saved": "Saved and applied",
       "system.boundaries":
-        "Ports, proxies, credentials and protocol semantics are not debug switches. Log paths, rotation sizes and retention remain environment settings for now.",
+        "Log storage settings survive restarts and temporary diagnostic expiry. Log directories and per-file rotation sizes remain environment settings.",
       "layout.more": "More actions",
       "layout.allStatuses": "All enablement states",
       "layout.enabled": "Enabled",

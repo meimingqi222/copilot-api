@@ -31,6 +31,7 @@ const originalEnv = {
   DUMP_REQUESTS_MAX_BYTES: process.env["DUMP_REQUESTS_MAX_BYTES"],
   LOG_DIR: process.env["LOG_DIR"],
   LOG_MAX_FILE_BYTES: process.env["LOG_MAX_FILE_BYTES"],
+  LOG_MAX_TOTAL_BYTES: process.env["LOG_MAX_TOTAL_BYTES"],
 }
 
 let dumpDir = ""
@@ -51,6 +52,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  if (originalEnv.LOG_MAX_TOTAL_BYTES === undefined)
+    delete process.env.LOG_MAX_TOTAL_BYTES
+  else process.env.LOG_MAX_TOTAL_BYTES = originalEnv.LOG_MAX_TOTAL_BYTES
   if (originalEnv.LOG_MAX_FILE_BYTES === undefined)
     delete process.env.LOG_MAX_FILE_BYTES
   else process.env.LOG_MAX_FILE_BYTES = originalEnv.LOG_MAX_FILE_BYTES
@@ -111,6 +115,29 @@ const payload = {
 }
 
 describe("request dump", () => {
+  test("cleans expired dumps and recovers after a dump exceeds the budget", async () => {
+    process.env.DUMP_REQUESTS = "1"
+    process.env.LOG_MAX_TOTAL_BYTES = "1000"
+    const expired = path.join(dumpDir, "request-dumps-2000-01-01.jsonl")
+    fs.writeFileSync(expired, "expired")
+    const send = async (content: string) => {
+      const context = await captureContext({
+        path: "/v1/responses",
+        init: { method: "POST", body: JSON.stringify({ input: content }) },
+      })
+      await dumpIncomingRequest(context, { requestId: "budget-test" })
+    }
+    await send("x".repeat(2000))
+    expect(fs.existsSync(expired)).toBe(false)
+    expect(
+      fs
+        .readdirSync(dumpDir)
+        .filter((name) => name.startsWith("request-dumps-")),
+    ).toHaveLength(0)
+    await send("hello")
+    expect(readAllEntries()).toHaveLength(1)
+  })
+
   test("sanitizes credential headers, nested tool arguments and media before writing", async () => {
     process.env.DUMP_REQUESTS = "1"
     const secretBody = {

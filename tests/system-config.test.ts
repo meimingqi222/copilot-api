@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
 import { Hono } from "hono"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 import { isDebugLoggingEnabled, logger, setRuntimeLogLevel } from "~/lib/logger"
 import { isRequestDumpEnabled } from "~/lib/request-dump"
+import {
+  enforceLogStorageLimits,
+  readLogRotationConfig,
+  RotatingLogFileSink,
+} from "~/lib/log-rotation"
 import {
   requestPerformanceSnapshot,
   startRequestPerformance,
@@ -58,6 +66,69 @@ test("saved settings override environment and survive reinitialization", () => {
   expect(getSystemConfig().source).toBe("webui")
   expect(getSystemSettings().performanceDetails).toBe(false)
   expect(getSystemConfig().expiresAt).toBeNull()
+})
+
+test("log storage limits persist and survive diagnostic expiry", () => {
+  updateSystemConfig({
+    ...normal,
+    logRetentionDays: 3,
+    logMaxTotalBytes: 64 * 1024 * 1024,
+    logLevel: "debug",
+  })
+  const stored = JSON.parse(saved!) as { settings: unknown; expiresAt: number }
+  stored.expiresAt = Date.now() - 1
+  initialize(JSON.stringify(stored))
+  expect(readLogRotationConfig().retentionDays).toBe(3)
+  expect(readLogRotationConfig().maxTotalBytes).toBe(64 * 1024 * 1024)
+  updateSystemConfig(normal)
+  expect(readLogRotationConfig().maxTotalBytes).toBe(64 * 1024 * 1024)
+  expect(readLogRotationConfig().retentionDays).toBe(3)
+  for (const value of [0, -1, 1.5, "7"]) {
+    expect(() =>
+      updateSystemConfig({ ...normal, logRetentionDays: value }),
+    ).toThrow()
+    expect(() =>
+      updateSystemConfig({ ...normal, logMaxTotalBytes: value }),
+    ).toThrow()
+  }
+})
+
+test("saving log limits immediately prunes and updates an existing writer", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "log-config-"))
+  const originalDir = process.env.LOG_DIR
+  process.env.LOG_DIR = dir
+  try {
+    initializeSystemConfig({
+      save: (value) => {
+        saved = value
+      },
+      onChange: () => enforceLogStorageLimits(),
+    })
+    const sink = new RotatingLogFileSink()
+    sink.append("x".repeat(20))
+    const app = new Hono().route("/", systemConfigApiRoutes)
+    const response = await app.request("/", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...normal,
+        logRetentionDays: 2,
+        logMaxTotalBytes: 6,
+      }),
+    })
+    expect(response.status).toBe(200)
+    expect(fs.readdirSync(dir)).toHaveLength(0)
+    sink.append("x".repeat(20))
+    expect(fs.readdirSync(dir)).toHaveLength(0)
+    sink.append("ok")
+    expect(fs.readFileSync(sink.getActivePath(), "utf8")).toBe("ok")
+    initialize(saved)
+    expect(readLogRotationConfig().maxTotalBytes).toBe(6)
+  } finally {
+    if (originalDir === undefined) delete process.env.LOG_DIR
+    else process.env.LOG_DIR = originalDir
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("quota display mode persists and legacy configs default to remaining", () => {

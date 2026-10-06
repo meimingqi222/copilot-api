@@ -2,6 +2,22 @@ import { z } from "zod"
 
 export const SYSTEM_CONFIG_KEY = "system-diagnostics-v1"
 
+function environmentLogStorage(): {
+  logRetentionDays: number
+  logMaxTotalBytes: number
+} {
+  const days = Number(process.env.LOG_RETENTION_DAYS)
+  const bytes = Number(process.env.LOG_MAX_TOTAL_BYTES)
+  return {
+    logRetentionDays:
+      Number.isSafeInteger(days) && days > 0 && days <= 3650 ? days : 7,
+    logMaxTotalBytes:
+      Number.isSafeInteger(bytes) && bytes > 0 && bytes <= 1024 ** 4 ?
+        bytes
+      : 1024 ** 3,
+  }
+}
+
 const settingsSchema = z
   .object({
     logLevel: z.enum(["warn", "info", "debug"]),
@@ -10,11 +26,29 @@ const settingsSchema = z
     performanceDetails: z.boolean(),
     codexAutoReset: z.boolean().default(false),
     quotaDisplayMode: z.enum(["remaining", "used"]).default("remaining"),
+    logRetentionDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650)
+      .default(() => environmentLogStorage().logRetentionDays),
+    logMaxTotalBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(1024 ** 4)
+      .default(() => environmentLogStorage().logMaxTotalBytes),
   })
   .strict()
 
 export const systemConfigUpdateSchema = settingsSchema
   .extend({
+    logRetentionDays: settingsSchema.shape.logRetentionDays
+      .removeDefault()
+      .optional(),
+    logMaxTotalBytes: settingsSchema.shape.logMaxTotalBytes
+      .removeDefault()
+      .optional(),
     debugMinutes: z.number().int().min(1).max(120),
     acknowledgeSensitiveData: z.boolean().optional(),
   })
@@ -43,6 +77,7 @@ const safeDefaults: SystemSettings = {
   performanceDetails: true,
   codexAutoReset: false,
   quotaDisplayMode: "remaining",
+  ...environmentLogStorage(),
 }
 
 let defaults = { ...safeDefaults }
@@ -53,6 +88,7 @@ let expiryTimer: ReturnType<typeof setTimeout> | undefined
 
 function effectiveSettings(now = Date.now()): SystemSettings {
   if (!stored) {
+    Object.assign(defaults, environmentLogStorage())
     defaults.requestDump = ["1", "true", "yes"].includes(
       process.env.DUMP_REQUESTS?.trim().toLowerCase() ?? "",
     )
@@ -141,7 +177,13 @@ export function updateSystemConfig(
     || settings.requestDump
     || settings.memoryVerbose
   const next: StoredConfig = {
-    settings,
+    settings: {
+      ...settings,
+      logRetentionDays:
+        settings.logRetentionDays ?? effectiveSettings().logRetentionDays,
+      logMaxTotalBytes:
+        settings.logMaxTotalBytes ?? effectiveSettings().logMaxTotalBytes,
+    },
     expiresAt: debugging ? Date.now() + debugMinutes * 60_000 : null,
   }
   if (!persist) throw new Error("System configuration has not been initialized")
