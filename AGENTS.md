@@ -341,6 +341,9 @@ copilot-api debug     # Show diagnostic info
 - **Temporary scripts files:**\
   Write all temporary/scratch scripts and files to the `temp/` directory (already gitignored), never to the repository root. Do not create root-level `.tmp_*`, `temp_*`, or similar scratch files. This keeps the working tree clean and avoids polluting `git status`.
 
+- **Private server operations:**\
+  Keep server investigation reports, deployment validation documents, and command output logs in ignored `temp/`; do not commit them. Do not upload documentation or scratch files to servers. Deploy only files needed to run the service, and remove any necessary temporary deployment payload after use. Never commit credentials, private infrastructure addresses, or personal filesystem paths. Keep automated regression tests in the repository.
+
 ## Testing Patterns
 
 - **Test runner:** Bun's built-in test runner
