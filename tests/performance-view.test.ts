@@ -51,6 +51,25 @@ runInNewContext(
 )
 
 describe("performanceView UX redesign", () => {
+  test("connection names are searchable and connection IDs distinguish channel keys", () => {
+    const view = sandbox.performanceView()
+    const first = {
+      provider: "openai-compatible",
+      model: "deepseek-v4.1-flash",
+      connectionId: "command-code",
+      connectionName: "Command Code",
+    }
+    const second = { ...first, connectionId: "other", connectionName: "Other" }
+    view.details = [first, second]
+    view.searchQuery = "command code"
+    expect(view.filteredDetails).toEqual([first])
+    expect(view.getRowKey(first)).not.toBe(view.getRowKey(second))
+    const template = readFileSync(
+      "pages/partials/performance-detail.html",
+      "utf8",
+    )
+    expect(template).toContain('x-text="row.connectionName || row.provider"')
+  })
   const sampleUserRow = {
     provider: "openai-compatible",
     model: "deepseek-v4.1-flash",

@@ -7,6 +7,7 @@ export interface RequestPerformance {
   endpoint: string
   transport: "http" | "ws"
   translated: boolean
+  requestBodyBytes?: number
   generationMs?: number
   outputTtftMs?: number
   textTtftMs?: number
@@ -38,6 +39,7 @@ export interface RequestPerformance {
 }
 
 interface PerformanceState {
+  requestBodyBytes?: number
   start: number
   dispatch?: number
   output?: number
@@ -87,6 +89,14 @@ export function startRequestPerformance(
 
 export function hasRequestPerformance(c: Context | undefined): boolean {
   return Boolean(c && requests.has(c))
+}
+
+export function recordRequestBodyBytes(
+  c: Context | undefined,
+  bytes: number,
+): void {
+  const state = c && requests.get(c)
+  if (state) state.requestBodyBytes = bytes
 }
 
 export function markResponseReady(
@@ -271,6 +281,7 @@ export function requestPerformanceSnapshot(
     endpoint: c.req.path,
     transport: c.req.method === "GET" ? "ws" : "http",
     translated: state.translated,
+    requestBodyBytes: state.requestBodyBytes,
     ...state.timings,
     responseReadyMs:
       state.responseReady === undefined ?

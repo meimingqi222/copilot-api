@@ -2,9 +2,10 @@ import type { Context } from "hono"
 
 import { HTTPError } from "~/lib/error"
 import {
-  hasRequestPerformance,
+  recordRequestBodyBytes,
   measurePerformanceStage,
 } from "~/lib/request-performance"
+import { patchRequestLog } from "~/lib/request-log"
 
 const DEFAULT_JSON_BODY_BYTES = 32 * 1024 * 1024
 const DEFAULT_MEDIA_JSON_BODY_BYTES = 64 * 1024 * 1024
@@ -42,18 +43,27 @@ export async function readJsonBody<T>(
   c?: Context,
 ): Promise<T> {
   assertDeclaredBodySize(request.headers, maxBytes)
-  if (hasRequestPerformance(c)) {
-    const bytes = await measurePerformanceStage(c, "bodyReadMs", () =>
-      readBodyBytes(request.body, maxBytes),
-    )
-    return measurePerformanceStage(
+  const readStarted = performance.now()
+  const bytes = await measurePerformanceStage(c, "bodyReadMs", () =>
+    readBodyBytes(request.body, maxBytes),
+  )
+  recordRequestBodyBytes(c, bytes.byteLength)
+  if (c)
+    patchRequestLog(c, {
+      requestBodyBytes: bytes.byteLength,
+      bodyReadMs: performance.now() - readStarted,
+    })
+  const decodeStarted = performance.now()
+  try {
+    return await measurePerformanceStage(
       c,
       "jsonDecodeMs",
       () => JSON.parse(new TextDecoder().decode(bytes)) as T,
     )
+  } finally {
+    if (c)
+      patchRequestLog(c, { jsonDecodeMs: performance.now() - decodeStarted })
   }
-  const bytes = await readBodyBytes(request.body, maxBytes)
-  return JSON.parse(new TextDecoder().decode(bytes)) as T
 }
 
 export async function readTextBody(

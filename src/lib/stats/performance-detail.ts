@@ -41,6 +41,7 @@ interface TimingSummary {
 }
 
 export interface PerformanceDetail {
+  connectionId: string
   provider: string
   model: string
   endpoint: string
@@ -88,6 +89,7 @@ export function computePerformanceDetails(
     const metrics = readPerformance(row.performance_json)
     if (!metrics) continue
     const identity = {
+      connectionId: row.connection_id ?? row.account_id,
       provider: row.provider ?? "unknown",
       model: row.model,
       endpoint: metrics.endpoint,

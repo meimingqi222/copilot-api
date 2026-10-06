@@ -1,0 +1,119 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\admin-performance.test.ts:
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 6ms
+53 |       performance: { version: 1, endpoint: "/v1/chat/completions", transport: "http", translated: false },
+54 |     })
+55 |   }
+56 |   const response = await server.fetch(adminRequest("http://localhost/admin/api/usage/performance?range=all"))
+57 |   const body = await response.json() as PerformanceResponse
+58 |   expect(body.details.map(row => [row.connectionId, row.connectionName])).toEqual([
+                                                                               ^
+error: expect(received).toEqual(expected)
+
+  [
+    [
+-     "account-1",
+-     "default",
+-   ],
+-   [
+-     "account-2",
+-     "edu",
+-   ],
+-   [
+-     "deleted-endpoint",
+-     "OpenAI Compatible",
++     undefined,
++     undefined,
+    ],
+  ]
+
+- Expected  - 10
++ Received  + 2
+
+      at <anonymous> (<workspace>/tests\admin-performance.test.ts:58:75)
+(fail) performance details show live connection names and deleted connection fallback [22.06ms]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 2ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 2ms
+(pass) performance cache reuses unchanged data and invalidates immediately after writes and reset [13.69ms]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 2ms
+(pass) performance API exposes segmented new samples without inventing historical values [6.50ms]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+(pass) GET /admin/api/usage/performance uses a weighted TPS average [5.80ms]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+(pass) GET /admin/api/usage/performance splits the same model by provider [5.79ms]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+(pass) GET /admin/api/usage/performance counts untimed requests, averages only timed ones [6.46ms]
+error: Cannot read file "<workspace-parent>/": EPERM
+
+tests\performance-view.test.ts:
+55 |     const view = sandbox.performanceView()
+56 |     const first = { provider: "openai-compatible", model: "deepseek-v4.1-flash", connectionId: "command-code", connectionName: "Command Code" }
+57 |     const second = { ...first, connectionId: "other", connectionName: "Other" }
+58 |     view.details = [first, second]
+59 |     view.searchQuery = "command code"
+60 |     expect(view.filteredDetails).toEqual([first])
+                                      ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "connectionId": "command-code",
+-     "connectionName": "Command Code",
+-     "model": "deepseek-v4.1-flash",
+-     "provider": "openai-compatible",
+-   },
+- ]
++ []
+
+- Expected  - 8
++ Received  + 1
+
+      at <anonymous> (<workspace>/tests\performance-view.test.ts:60:34)
+(fail) performanceView UX redesign > connection names are searchable and connection IDs distinguish channel keys [0.60ms]
+(pass) performanceView UX redesign > filters out empty metrics when hideEmpty is true [0.26ms]
+(pass) performanceView UX redesign > calculates end-to-end pipeline breakdown correctly [0.47ms]
+(pass) performanceView UX redesign > generates smart diagnostic insights from raw performance timings [0.24ms]
+(pass) performanceView UX redesign > supports model/provider search filtering [0.07ms]
+(pass) performanceView UX redesign > manages stage collapse and expand toggle [0.21ms]
+(pass) performanceView UX redesign > calculates globalStats.avgTps accurately and clamps extreme outliers [0.33ms]
+
+tests\request-performance.test.ts:
+65 |       { ...sample, connection_id: "command-code" },
+66 |       { ...sample, connection_id: "another-endpoint" },
+67 |       { ...sample, connection_id: "command-code" },
+68 |       sample,
+69 |     ])
+70 |     expect(details).toHaveLength(3)
+                         ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 3
+Received length: 1
+
+      at <anonymous> (<workspace>/tests\request-performance.test.ts:70:21)
+(fail) request performance measurement > keeps connections with the same provider and model distinct [0.43ms]
+(pass) request performance measurement > separates preprocessing, first output and post-output duration without changing effective TPS [1.11ms]
+(pass) request performance measurement > reasoning, tools and control frames are not visible answer text [0.21ms]
+(pass) request performance measurement > SSE heartbeats and failed writes do not count as first frame written [0.92ms]
+(pass) request performance measurement > a new WS turn resets metrics instead of inheriting the previous turn [0.30ms]
+(pass) request performance measurement > translation instrumentation is lazy and preserves incremental frames [0.88ms]
+(pass) segmented performance aggregation > weights post-output TPS by measured duration and ignores missing historical data [0.25ms]
+(pass) segmented performance aggregation > keeps API, transport, translation and streaming groups distinct [0.23ms]
+(pass) segmented performance aggregation > persists new metrics alongside historical usage without fabricating timings [2.40ms]
+
+ 19 pass
+ 3 fail
+ 96 expect() calls
+Ran 22 tests across 3 files. [651.00ms]

@@ -2,6 +2,10 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { state } from "~/lib/state"
+import {
+  getProviderConnection,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 
@@ -24,6 +28,8 @@ type PerformanceRow = {
 
 type PerformanceResponse = {
   details: Array<{
+    connectionId: string
+    connectionName: string
     endpoint: string
     transport: string
     translated: boolean
@@ -40,6 +46,50 @@ const originalAccounts = listAccounts()
 const originalApiKey = state.legacyApiKey
 const originalAdminPassword = state.adminPassword
 const originalUsers = state.users
+test("performance details show live connection names and deleted connection fallback", async () => {
+  const connection = getProviderConnection("account-1")
+  if (!connection) throw new Error("Missing test connection")
+  upsertProviderConnection({ ...connection, name: "Command Code" })
+  const timestamp = Date.now()
+  for (const connectionId of ["account-1", "account-2", "deleted-endpoint"]) {
+    statsStore.recordUsage({
+      accountId: "legacy-owner",
+      connectionId,
+      provider: "openai-compatible",
+      model: "deepseek-v4.1-flash",
+      date: statsStore.getDateString(timestamp),
+      timestamp,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      streaming: true,
+      performance: {
+        version: 1,
+        endpoint: "/v1/chat/completions",
+        transport: "http",
+        translated: false,
+      },
+    })
+  }
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  const body = (await response.json()) as PerformanceResponse
+  expect(
+    body.details.map((row) => [row.connectionId, row.connectionName]),
+  ).toEqual([
+    ["account-1", "Command Code"],
+    ["account-2", "edu"],
+    ["deleted-endpoint", "OpenAI Compatible"],
+  ])
+  upsertProviderConnection({ ...connection, name: "Renamed Command Code" })
+  const renamed = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  expect(
+    ((await renamed.json()) as PerformanceResponse).details[0]?.connectionName,
+  ).toBe("Renamed Command Code")
+})
 test("performance cache reuses unchanged data and invalidates immediately after writes and reset", async () => {
   const probe = spyOn(statsStore, "getPerformanceInRange")
   const request = () =>

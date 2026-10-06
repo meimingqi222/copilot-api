@@ -57,6 +57,28 @@ function row(performanceJson?: string | null): UsageRawRow {
 }
 
 describe("request performance measurement", () => {
+  test("keeps connections with the same provider and model distinct", () => {
+    const sample = row(
+      JSON.stringify({
+        version: 1,
+        endpoint: "/v1/chat/completions",
+        transport: "http",
+        translated: false,
+      }),
+    )
+    const details = computePerformanceDetails([
+      { ...sample, connection_id: "command-code" },
+      { ...sample, connection_id: "another-endpoint" },
+      { ...sample, connection_id: "command-code" },
+      sample,
+    ])
+    expect(details).toHaveLength(3)
+    expect(details[0]).toMatchObject({
+      connectionId: "command-code",
+      requests: 2,
+    })
+    expect(details[2]).toMatchObject({ connectionId: "account", requests: 1 })
+  })
   test("separates preprocessing, first output and post-output duration without changing effective TPS", async () => {
     const c = await context()
     startRequestPerformance(c, 0)

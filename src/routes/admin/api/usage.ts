@@ -952,7 +952,12 @@ usageApiRoutes.get("/performance", async (c) => {
 
     return c.json({
       performance,
-      details,
+      details: details.map((row) => ({
+        ...row,
+        connectionName:
+          getProviderConnection(row.connectionId)?.name.trim()
+          || providerLabel(row.provider),
+      })),
       byProvider: byProvider.map((row) => ({
         ...row,
         providerLabel: providerLabel(row.provider),

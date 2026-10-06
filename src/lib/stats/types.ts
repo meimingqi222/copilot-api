@@ -105,6 +105,7 @@ export type UsageProviderRow = {
 
 /** Per-request usage row for timestamp-range aggregation (grouped in JS). */
 export type UsageRawRow = {
+  connection_id?: string | null
   performance_json?: string | null
   model: string
   account_id: string

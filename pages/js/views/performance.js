@@ -354,6 +354,7 @@ function performanceView() {
 
     getRowKey(row) {
       return [
+        row.connectionId,
         row.provider,
         row.model,
         row.endpoint,
@@ -380,7 +381,15 @@ function performanceView() {
           const matchEndpoint = (row.endpoint || "")
             .toLowerCase()
             .includes(query)
-          if (!matchModel && !matchProvider && !matchEndpoint) {
+          const matchConnection = (row.connectionName || "")
+            .toLowerCase()
+            .includes(query)
+          if (
+            !matchModel
+            && !matchProvider
+            && !matchEndpoint
+            && !matchConnection
+          ) {
             return false
           }
         }

@@ -411,7 +411,8 @@
                     ></span>
                     <span
                       class="badge badge-info text-[10px] px-1.5 py-0 font-medium"
-                      x-text="row.provider"
+                      x-text="row.connectionName || row.provider"
+                      :title="row.provider + ' / ' + row.endpoint"
                     ></span>
                     <span
                       class="badge text-[10px] px-1.5 py-0 font-normal"
@@ -594,7 +595,7 @@
                         </h4>
                         <span
                           class="text-xs text-[var(--apple-text-secondary)] font-mono"
-                          x-text="'(' + row.provider + ' / ' + row.endpoint + ')'"
+                          x-text="'(' + (row.connectionName || row.provider) + ' / ' + row.endpoint + ')'"
                         ></span>
                       </div>
                       <div class="flex items-center gap-2">

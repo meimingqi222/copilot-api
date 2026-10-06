@@ -348,6 +348,7 @@ export function queryUsageRawRows(
     SELECT
       model,
       account_id,
+      connection_id,
       user_id,
       provider,
       prompt_tokens,

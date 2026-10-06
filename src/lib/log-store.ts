@@ -117,6 +117,9 @@ export interface LogEntry {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   latencyMs?: number
+  requestBodyBytes?: number
+  bodyReadMs?: number
+  jsonDecodeMs?: number
   statusCode?: number
   path?: string
   error?: string

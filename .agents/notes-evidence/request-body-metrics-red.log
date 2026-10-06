@@ -1,0 +1,41 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\request-body.test.ts:
+23 |         controller.close()
+24 |       },
+25 |     })
+26 |     const response = await app.request("http://localhost/v1/messages", { method: "POST", body, duplex: "half" })
+27 |     const result = await response.json() as { log: { requestBodyBytes: number; bodyReadMs: number; jsonDecodeMs: number }; metrics: { requestBodyBytes: number } }
+28 |     expect(result.log.requestBodyBytes).toBe(payload.byteLength)
+                                             ^
+error: expect(received).toBe(expected)
+
+Expected: 21
+Received: undefined
+
+      at <anonymous> (<workspace>/tests\request-body.test.ts:28:41)
+(fail) readJsonBody > records actual UTF-8 bytes and separates delayed upload from JSON decoding [55.66ms]
+37 |       try { await readJsonBody(c.req.raw, 1024, c) } catch { /* inspect failed decode */ }
+38 |       return c.json(getRequestLogContext(c)?.entry)
+39 |     })
+40 |     const response = await app.request("http://localhost/v1/messages", { method: "POST", body: "{invalid" })
+41 |     const result = await response.json() as { requestBodyBytes: number; jsonDecodeMs: number }
+42 |     expect(result.requestBodyBytes).toBe(8)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: 8
+Received: undefined
+
+      at <anonymous> (<workspace>/tests\request-body.test.ts:42:37)
+(fail) readJsonBody > records body size even when JSON decoding fails [4.66ms]
+(pass) readJsonBody > rejects a body over the declared size limit [0.27ms]
+(pass) readJsonBody > rejects an oversized chunked body [0.54ms]
+(pass) readJsonBody > parses a body within the limit [0.30ms]
+(pass) readJsonBody > limits form bodies too [0.43ms]
+error: Cannot read file "<workspace-parent>/": EPERM
+
+ 4 pass
+ 2 fail
+ 7 expect() calls
+Ran 6 tests across 1 file. [645.00ms]
