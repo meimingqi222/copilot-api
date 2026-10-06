@@ -116,6 +116,29 @@ async function capturePostedBody(
 }
 
 describe("codex request compatibility (CPA parity)", () => {
+  test("the automatic reviewer model is sent unchanged to the Codex upstream", async () => {
+    const posted = await capturePostedBody({
+      model: "codex-auto-review",
+      input: "Review this action",
+      stream: true,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "review",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: { outcome: { type: "string" } },
+            required: ["outcome"],
+            additionalProperties: false,
+          },
+        },
+      },
+    })
+    expect(posted.model).toBe("codex-auto-review")
+    expect((posted.text as Record<string, unknown>).format).toBeObject()
+  })
+
   test("Fast alias and routing hint match the actual HTTP model and tier", async () => {
     for (const tier of ["fast", "priority", "default"] as const) {
       const capturedHeaders: { routingHint: string | null } = {

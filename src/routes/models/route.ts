@@ -7,6 +7,7 @@ import { state } from "~/lib/state"
 import { publicRoutingGroupModels } from "~/lib/routing-groups/catalog"
 import { isUserAllowedModel, type User } from "~/lib/users"
 import { refreshModelsForAllAccounts } from "~/lib/utils"
+import { buildCodexClientModelsResponse } from "~/services/codex/client-models"
 import {
   buildGrokShellModelsResponse,
   isGrokShellUserAgent,
@@ -30,6 +31,11 @@ modelRoutes.get("/", async (c) => {
     const filtered = [...catalog.values()].filter(
       (model) => !user || isUserAllowedModel(user, model.id),
     )
+
+    const clientVersion = c.req.query("client_version")
+    if (clientVersion !== undefined) {
+      return c.json(buildCodexClientModelsResponse(filtered, clientVersion))
+    }
 
     // Grok Shell / Grok Build clients expect a dedicated model catalog shape
     // (api_backend, supported_in_api, reasoning_efforts). Mirrors CPA

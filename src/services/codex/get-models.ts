@@ -11,6 +11,7 @@ import {
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { oauthFetch } from "~/services/oauth/fetch"
+import { rememberCodexClientModels } from "~/services/codex/client-models"
 
 import { buildCodexHeaders, CODEX_MODELS_CLIENT_VERSION } from "./headers"
 
@@ -52,7 +53,10 @@ function endpointsForCodexModel(id: string): Array<string> {
   return ["/v1/responses"]
 }
 
-function parseCodexModelsPayload(raw: string): Array<AccountModel> {
+function parseCodexModelsPayload(
+  raw: string,
+  connectionId: string,
+): Array<AccountModel> {
   let payload: { models?: Array<CodexModelPayload> }
   try {
     payload = JSON.parse(raw) as { models?: Array<CodexModelPayload> }
@@ -82,6 +86,8 @@ function parseCodexModelsPayload(raw: string): Array<AccountModel> {
     throw new Error("Codex models response did not include any models")
   }
 
+  rememberCodexClientModels(connectionId, payload.models ?? [])
+
   return models
 }
 
@@ -110,7 +116,7 @@ async function fetchCodexModelsFromMirror(
         continue
       }
       const body = await response.text()
-      return parseCodexModelsPayload(body)
+      return parseCodexModelsPayload(body, connection.id)
     } catch (error) {
       logger.debug(
         `Codex catalog mirror fetch failed from ${url}: ${(error as Error).message}`,
@@ -146,7 +152,7 @@ async function fetchCodexModelsFromUpstream(
     )
   }
 
-  return parseCodexModelsPayload(response.body)
+  return parseCodexModelsPayload(response.body, connection.id)
 }
 
 /**
