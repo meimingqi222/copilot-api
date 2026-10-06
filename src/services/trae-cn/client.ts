@@ -410,6 +410,11 @@ interface TraeChatUsage {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number
+  prompt_tokens_details?: {
+    cached_tokens?: number
+    cache_creation_input_tokens?: number
+  }
+  completion_tokens_details?: { reasoning_tokens?: number }
 }
 
 export interface TraeChatCall {
@@ -427,6 +432,19 @@ type TraeChatPart =
   | { usage: TraeChatUsage }
   | { error: string; code?: string | number }
 
+function usageDetails(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ?
+      (value as Record<string, unknown>)
+    : {}
+}
+
+function optionalTokenCount(value: unknown): number | undefined {
+  if (typeof value !== "number" && typeof value !== "string") return undefined
+  if (typeof value === "string" && !value.trim()) return undefined
+  const count = Number(value)
+  return Number.isFinite(count) && count >= 0 ? count : undefined
+}
+
 function tokensOf(u: unknown): TraeChatUsage | undefined {
   if (!u || typeof u !== "object") return undefined
   const o = u as Record<string, unknown>
@@ -443,10 +461,34 @@ function tokensOf(u: unknown): TraeChatUsage | undefined {
         ?? 0,
     ) || 0
   if (!p && !c) return undefined
+  const promptDetails = usageDetails(o.prompt_tokens_details)
+  const completionDetails = usageDetails(o.completion_tokens_details)
+  const read = optionalTokenCount(
+    promptDetails.cached_tokens ?? o.cache_read_input_tokens,
+  )
+  const write = optionalTokenCount(
+    promptDetails.cache_creation_input_tokens ?? o.cache_creation_input_tokens,
+  )
+  const reasoning = optionalTokenCount(
+    completionDetails.reasoning_tokens ?? o.reasoning_tokens,
+  )
   return {
     prompt_tokens: p,
     completion_tokens: c,
     total_tokens: Number(o.total_tokens ?? o.totalTokens) || p + c,
+    ...(read !== undefined || write !== undefined ?
+      {
+        prompt_tokens_details: {
+          ...(read !== undefined ? { cached_tokens: read } : {}),
+          ...(write !== undefined ?
+            { cache_creation_input_tokens: write }
+          : {}),
+        },
+      }
+    : {}),
+    ...(reasoning !== undefined ?
+      { completion_tokens_details: { reasoning_tokens: reasoning } }
+    : {}),
   }
 }
 

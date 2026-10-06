@@ -1,0 +1,65 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\trae-cn-usage.test.ts:
+28 |   completion_tokens_details: { reasoning_tokens: 50 },
+29 | }
+30 | 
+31 | test("Trae cache read/write and reasoning counts survive non-streaming collection", async () => {
+32 |   const result = await traeCnCollect(parts(usage), "test-model")
+33 |   expect(result.usage).toEqual(expected)
+                            ^
+error: expect(received).toEqual(expected)
+
+  {
+    "completion_tokens": 200,
+-   "completion_tokens_details": {
+-     "reasoning_tokens": 50,
+-   },
+    "prompt_tokens": 1000,
+-   "prompt_tokens_details": {
+-     "cache_creation_input_tokens": 100,
+-     "cached_tokens": 400,
+-   },
+    "total_tokens": 1200,
+  }
+
+- Expected  - 7
++ Received  + 0
+
+      at <anonymous> (D:\code\copilot-refs\copilot-api\tests\trae-cn-usage.test.ts:33:24)
+(fail) Trae cache read/write and reasoning counts survive non-streaming collection [3.59ms]
+38 |   for await (const event of traeCnStreamEvents(parts(usage), "test-model")) {
+39 |     if (event.data === "[DONE]") continue
+40 |     const chunk = JSON.parse(event.data) as { usage?: unknown }
+41 |     if (chunk.usage) emitted.push(chunk.usage)
+42 |   }
+43 |   expect(emitted).toEqual([expected])
+                       ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "completion_tokens": 200,
+-     "completion_tokens_details": {
+-       "reasoning_tokens": 50,
+-     },
+      "prompt_tokens": 1000,
+-     "prompt_tokens_details": {
+-       "cache_creation_input_tokens": 100,
+-       "cached_tokens": 400,
+-     },
+      "total_tokens": 1200,
+    },
+  ]
+
+- Expected  - 7
++ Received  + 0
+
+      at <anonymous> (D:\code\copilot-refs\copilot-api\tests\trae-cn-usage.test.ts:43:19)
+(fail) Trae cache read/write and reasoning counts survive streaming usage output [0.76ms]
+(pass) absent Trae cache metrics remain absent rather than being reported as measured zero [0.23ms]
+
+ 1 pass
+ 2 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [428.00ms]
