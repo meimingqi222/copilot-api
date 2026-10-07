@@ -11,6 +11,7 @@ function systemConfigView() {
     error: "",
     saved: false,
     codexModels: [],
+    codexModelsError: "",
     codexModelSearch: "",
 
     get filteredCodexModels() {
@@ -64,17 +65,25 @@ function systemConfigView() {
       this.loading = true
       this.error = ""
       this.saved = false
+      void this.loadCodexModels()
       try {
-        const [config, catalog] = await Promise.all([
-          API.request("/system-config"),
-          API.request("/system-config/codex-models"),
-        ])
+        const config = await API.request("/system-config")
         this.accept(config)
-        this.codexModels = catalog.models
       } catch (error) {
         this.error = error.message
       } finally {
         this.loading = false
+      }
+    },
+
+    async loadCodexModels() {
+      this.codexModelsError = ""
+      try {
+        const catalog = await API.request("/system-config/codex-models")
+        this.codexModels = catalog.models
+      } catch (error) {
+        this.codexModels = []
+        this.codexModelsError = error.message
       }
     },
 
@@ -96,6 +105,12 @@ function systemConfigView() {
     },
 
     async save() {
+      if (
+        this.settings.codexModelIds?.length === 0
+        && !globalThis.confirm(I18n.t("system.codexModelsEmptyConfirm"))
+      ) {
+        return
+      }
       this.saving = true
       this.error = ""
       this.saved = false

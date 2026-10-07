@@ -61,6 +61,8 @@ const i18n = {
       "system.codexModelsRemove": "移除",
       "system.codexModelsSearch": "搜索模型名称或 ID",
       "system.codexModelsEmpty": "没有匹配的模型",
+      "system.codexModelsEmptyConfirm":
+        "未选择任何模型，Codex 模型选择器将为空。仍要保存吗？",
       "system.logStorage": "日志存储",
       "system.logRetentionDays": "日志保留天数（天）",
       "system.logMaxTotalMiB": "日志总容量上限（MiB）",
@@ -1578,6 +1580,8 @@ const i18n = {
       "system.codexModelsRemove": "Remove",
       "system.codexModelsSearch": "Search model name or ID",
       "system.codexModelsEmpty": "No matching models",
+      "system.codexModelsEmptyConfirm":
+        "No models are selected. The Codex model picker will be empty. Save anyway?",
       "system.logStorage": "Log storage",
       "system.logRetentionDays": "Log retention (days)",
       "system.logMaxTotalMiB": "Total log capacity (MiB)",
