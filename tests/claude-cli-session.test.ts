@@ -135,7 +135,7 @@ describe("Claude CLI persistent sessions", () => {
     } finally {
       registration.mockRestore()
     }
-  })
+  }, 20_000)
   test("restarts with full history after an effort acknowledgment timeout", async () => {
     process.env.FAKE_CLAUDE_IGNORE_CONTROL = "1"
     const request = payload()
@@ -161,7 +161,7 @@ describe("Claude CLI persistent sessions", () => {
     setTimeout(() => signal.abort(new Error("cancel-effort")), 50)
     expect(await pending).toMatchObject({ message: "cancel-effort" })
     expect(runRegistry.countForConnection(context.connection.id)).toBe(0)
-  })
+  }, 20_000)
   test("restarts with full history if the CLI rejects an effort update", async () => {
     process.env.FAKE_CLAUDE_REJECT_CONTROL = "1"
     const request = payload()
@@ -174,7 +174,7 @@ describe("Claude CLI persistent sessions", () => {
     expect(detail(second).pid).not.toBe(detail(first).pid)
     expect(JSON.stringify(detail(second).input)).toContain("first question")
     expect(detail(second).args).toContain("high")
-  })
+  }, 20_000)
   test("reuses the same process and sends only new user messages", async () => {
     const request = payload()
     const first = await collectClaudeCliMessages(context, request)
@@ -196,7 +196,7 @@ describe("Claude CLI persistent sessions", () => {
       nextPayload(nextPayload(request, first), second),
     )
     expect(detail(third).turn).toBe(3)
-  })
+  }, 20_000)
   test.each([
     "model",
     "system",
@@ -206,55 +206,59 @@ describe("Claude CLI persistent sessions", () => {
     "token",
     "proxy",
     "image",
-  ])("starts a fresh process when %s changes", async (changed) => {
-    const request = payload()
-    const first = await collectClaudeCliMessages(context, request)
-    const next = nextPayload(request, first)
-    const nextContext = { ...context }
-    switch (changed) {
-      case "model":
-        nextContext.model = next.model = "claude-opus-4-6"
-        break
-      case "system":
-        next.system = "changed system"
-        break
-      case "tools":
-        next.tools = [{ name: "new_tool", input_schema: { type: "object" } }]
-        break
-      case "history":
-        next.messages[0] = { role: "user", content: "edited question" }
-        break
-      case "credential":
-        nextContext.credential = testCredential({ id: "other-credential" })
-        break
-      case "token":
-        nextContext.accessToken = "refreshed-token"
-        break
-      case "proxy":
-        nextContext.connection = testConnection({
-          proxyUrl: "http://127.0.0.1:9999",
-        })
-        break
-      case "image":
-        next.messages[0] = {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: "image/png",
-                data: "changed",
+  ])(
+    "starts a fresh process when %s changes",
+    async (changed) => {
+      const request = payload()
+      const first = await collectClaudeCliMessages(context, request)
+      const next = nextPayload(request, first)
+      const nextContext = { ...context }
+      switch (changed) {
+        case "model":
+          nextContext.model = next.model = "claude-opus-4-6"
+          break
+        case "system":
+          next.system = "changed system"
+          break
+        case "tools":
+          next.tools = [{ name: "new_tool", input_schema: { type: "object" } }]
+          break
+        case "history":
+          next.messages[0] = { role: "user", content: "edited question" }
+          break
+        case "credential":
+          nextContext.credential = testCredential({ id: "other-credential" })
+          break
+        case "token":
+          nextContext.accessToken = "refreshed-token"
+          break
+        case "proxy":
+          nextContext.connection = testConnection({
+            proxyUrl: "http://127.0.0.1:9999",
+          })
+          break
+        case "image":
+          next.messages[0] = {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: "changed",
+                },
               },
-            },
-          ],
-        }
-        break
-    }
-    const second = await collectClaudeCliMessages(nextContext, next)
-    expect(detail(second).pid).not.toBe(detail(first).pid)
-    expect(detail(second).turn).toBe(1)
-  })
+            ],
+          }
+          break
+      }
+      const second = await collectClaudeCliMessages(nextContext, next)
+      expect(detail(second).pid).not.toBe(detail(first).pid)
+      expect(detail(second).turn).toBe(1)
+    },
+    20_000,
+  )
   test("checks out an idle process only once for concurrent continuations", async () => {
     const request = payload()
     const first = await collectClaudeCliMessages(context, request)
@@ -266,7 +270,7 @@ describe("Claude CLI persistent sessions", () => {
       replies.filter((reply) => detail(reply).pid === detail(first).pid),
     ).toHaveLength(1)
     expect(new Set(replies.map((reply) => detail(reply).pid)).size).toBe(2)
-  })
+  }, 20_000)
   test("updates effort inside the same process before sending the next turn", async () => {
     const request = payload()
     const first = await collectClaudeCliMessages(context, request)
@@ -286,7 +290,7 @@ describe("Claude CLI persistent sessions", () => {
       effort: "",
       turn: 3,
     })
-  })
+  }, 20_000)
   test("evicts idle sessions to leave room for new conversations", async () => {
     for (let i = 0; i < 5; i++)
       await collectClaudeCliMessages(context, {
@@ -294,7 +298,7 @@ describe("Claude CLI persistent sessions", () => {
         messages: [{ role: "user", content: `question ${i}` }],
       })
     expect(runRegistry.countForConnection(context.connection.id)).toBe(4)
-  })
+  }, 20_000)
   test("does not treat tool results as a normal continuation", () => {
     expect(
       continuation({
@@ -359,6 +363,7 @@ describe("Claude CLI native capabilities", () => {
       expect(diagnostic.args).toContain("manual")
       expect(diagnostic.args).not.toContain("--dangerously-skip-permissions")
     },
+    20_000,
   )
   test("enables only WebSearch and passes the JSON schema", () => {
     const args = claudeCliArgs({
@@ -413,7 +418,7 @@ describe("Claude CLI native capabilities", () => {
       delta: { stop_reason: "end_turn" },
       usage: { input_tokens: 20, output_tokens: 8 },
     })
-  })
+  }, 20_000)
   test.each([false, true])(
     "returns only validated structured JSON (stream=%s)",
     async (stream) => {
@@ -444,6 +449,7 @@ describe("Claude CLI native capabilities", () => {
         ).toEqual([{ type: "text", text: '{"ok":true}' }])
       }
     },
+    20_000,
   )
   test("propagates schema failure before returning a success response", async () => {
     process.env.FAKE_CLAUDE_SCENARIO = "schema-error"
@@ -457,7 +463,7 @@ describe("Claude CLI native capabilities", () => {
     )
     expect(error).toBeDefined()
     expect(String(error)).toContain("schema validation failed")
-  })
+  }, 20_000)
   test("retains JSON schema through the Messages IR codec", () => {
     const request = {
       ...payload(),

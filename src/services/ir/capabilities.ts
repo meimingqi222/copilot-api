@@ -30,6 +30,7 @@ type RequestFeatureKind =
   | "web_search_result"
   | "reasoning_effort"
   | "service_tier"
+  | "structured_output"
 
 interface RequestFeature {
   kind: RequestFeatureKind
@@ -52,6 +53,7 @@ interface WireCapabilities {
   cacheControl: boolean
   namespaceTools: boolean
   allowedTools: boolean
+  structuredOutput: boolean
   webSearch: boolean
   /** Can carry an upstream-executed tool call in the transcript. */
   serverToolUse: boolean
@@ -63,6 +65,7 @@ export const WIRE_CAPABILITIES: Readonly<
   Record<IRWire, Readonly<WireCapabilities>>
 > = {
   chat: {
+    structuredOutput: true,
     images: true,
     toolResultImages: true,
     files: false,
@@ -77,6 +80,7 @@ export const WIRE_CAPABILITIES: Readonly<
     webSearchResults: false,
   },
   messages: {
+    structuredOutput: true,
     images: true,
     toolResultImages: true,
     files: false,
@@ -93,6 +97,7 @@ export const WIRE_CAPABILITIES: Readonly<
     webSearchResults: true,
   },
   responses: {
+    structuredOutput: true,
     images: true,
     toolResultImages: true,
     files: true,
@@ -114,6 +119,7 @@ export const WIRE_CAPABILITIES: Readonly<
   // fileData URLs are the supported carriers. Signatures are per-wire
   // (thoughtSignature), so replay is only valid for Gemini-sourced thinking.
   gemini: {
+    structuredOutput: false,
     images: true,
     toolResultImages: false,
     files: false,
@@ -243,6 +249,16 @@ export function inspectRequestFeatures(
   if (request.toolChoice?.type === "allowed") {
     features.push({ kind: "allowed_tools", path: "toolChoice", current: true })
   }
+  if (
+    request.generation?.textFormat
+    && request.generation.textFormat.type !== "text"
+  ) {
+    features.push({
+      kind: "structured_output",
+      path: "generation.textFormat",
+      current: true,
+    })
+  }
   if (request.generation?.webSearch) {
     features.push({
       kind: "web_search",
@@ -358,6 +374,21 @@ function recordFeatureLoss(
   capabilities: WireCapabilities,
 ): void {
   switch (feature.kind) {
+    case "structured_output":
+      if (
+        !capabilities.structuredOutput
+        || (target.wire === "messages"
+          && request.generation?.textFormat?.type === "json_object")
+      ) {
+        record(
+          records,
+          target.wire,
+          feature,
+          "reject",
+          "target wire codec cannot encode the requested structured output format",
+        )
+      }
+      break
     case "service_tier": {
       const tier = request.generation?.serviceTier
       const supported =

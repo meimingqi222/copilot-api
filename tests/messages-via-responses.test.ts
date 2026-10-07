@@ -37,7 +37,7 @@ afterEach(() => {
   __resetProviderConnectionsForTest()
 })
 
-test("POST /v1/messages routes to a responses-only connection via messages→responses translation", async () => {
+test("POST /v1/messages sends a named schema to a responses-only connection", async () => {
   const fetchMock = mock((url: string) => ({
     ok: true,
     json: () => ({
@@ -69,6 +69,17 @@ test("POST /v1/messages routes to a responses-only connection via messages→res
       body: JSON.stringify({
         model: "gpt-responses",
         max_tokens: 256,
+        output_config: {
+          format: {
+            type: "json_schema",
+            schema: {
+              type: "object",
+              properties: { answer: { type: "string" } },
+              required: ["answer"],
+              additionalProperties: false,
+            },
+          },
+        },
         messages: [{ role: "user", content: "hi" }],
       }),
     }),
@@ -83,6 +94,18 @@ test("POST /v1/messages routes to a responses-only connection via messages→res
   expect(JSON.parse(options.body ?? "{}")).toMatchObject({
     model: "gpt-responses",
     max_output_tokens: 256,
+    text: {
+      format: {
+        type: "json_schema",
+        name: "response",
+        schema: {
+          type: "object",
+          properties: { answer: { type: "string" } },
+          required: ["answer"],
+          additionalProperties: false,
+        },
+      },
+    },
     input: [{ role: "user", content: [{ type: "input_text", text: "hi" }] }],
   })
 

@@ -367,3 +367,11 @@ IR 侧的意图与事件语义仍然是基础，下述规则不变：
 一次新的搜索，能力不足必须 `reject`；出现在**历史**时只是回放，能力不足按 `drop`
 记录即可（`planTranslation` 用 `feature.current` 区分）。把它们当成普通
 `tool_call` / `tool_result` 处理会让客户端以为要自己执行搜索。
+
+## 7. 结构化输出的 wire 边界
+
+Responses 的 JSON schema 配置使用 `text.format = { type: "json_schema", name, schema, strict? }`，不能套用 Chat 的 `response_format.json_schema` 嵌套结构。Messages 来源没有 schema 名称，转换时使用 `response`；调用方提供的名称及 strict 保留。
+
+Gemini codec 尚未实现结构化输出映射，跨协议请求带 JSON schema 或 JSON object 模式时，预检记录 `structured_output` 的 reject loss，禁止静默丢弃后返回自由文本。Messages 能承载 JSON schema，但不能表达无 schema 的 JSON object 模式，也必须拒绝。原生 Gemini 透传与普通文本转换不受影响。
+
+回归：`tests/ir-structured-output.test.ts`、`tests/messages-via-responses.test.ts`。决策：`.agents/notes/implemented/bug-fix/2026-10-08-structured-output-wire-contract.md`。

@@ -1,0 +1,11 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\claude-cli-session.test.ts:
+killed 2 dangling processes
+(fail) Claude CLI persistent sessions > evicts idle sessions to leave room for new conversations [1406.45ms]
+  ^ this test timed out after 1200ms.
+
+ 0 pass
+ 26 filtered out
+ 1 fail
+Ran 1 test across 1 file. [1.94s]

@@ -1,0 +1,144 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\ir-structured-output.test.ts:
+ 6 | const schema = { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false }
+ 7 | const messages = () => decodeMessagesRequest({ model: "test", max_tokens: 100, messages: [{ role: "user", content: "Give a person" }], output_config: { format: { type: "json_schema", schema } } })
+ 8 | const chat = () => decodeChatRequest({ model: "test", messages: [{ role: "user", content: "Give a person" }], response_format: { type: "json_schema", json_schema: { name: "person", description: "A person", strict: true, schema } } })
+ 9 |
+10 | test("Messages schema becomes a named flat Responses format", () => {
+11 |   expect(encodeResponsesRequest(messages()).text?.format).toEqual({ type: "json_schema", name: "response", schema })
+                                                               ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "name": "response",
+-   "schema": {
+-     "additionalProperties": false,
+-     "properties": {
+-       "name": {
+-         "type": "string",
++   "json_schema": {
++     "schema": {
++       "additionalProperties": false,
++       "properties": {
++         "name": {
++           "type": "string",
++         },
+        },
++       "required": [
++         "name",
++       ],
++       "type": "object",
+      },
+-     "required": [
+-       "name",
+-     ],
+-     "type": "object",
+    },
+    "type": "json_schema",
+  }
+
+- Expected  - 10
++ Received  + 11
+
+      at <anonymous> (tests\ir-structured-output.test.ts:11:59)
+(fail) Messages schema becomes a named flat Responses format [1.00ms]
+11 |   expect(encodeResponsesRequest(messages()).text?.format).toEqual({ type: "json_schema", name: "response", schema })
+12 | })
+13 |
+14 | test("Chat schema metadata survives native Responses encoding and decoding", () => {
+15 |   const response = encodeResponsesRequest(chat())
+16 |   expect(response.text?.format).toEqual({ type: "json_schema", name: "person", description: "A person", strict: true, schema })
+                                     ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "description": "A person",
+-   "name": "person",
+-   "schema": {
+-     "additionalProperties": false,
+-     "properties": {
+-       "name": {
+-         "type": "string",
++   "json_schema": {
++     "description": "A person",
++     "name": "person",
++     "schema": {
++       "additionalProperties": false,
++       "properties": {
++         "name": {
++           "type": "string",
++         },
+        },
++       "required": [
++         "name",
++       ],
++       "type": "object",
+      },
+-     "required": [
+-       "name",
+-     ],
+-     "type": "object",
++     "strict": true,
+    },
+-   "strict": true,
+    "type": "json_schema",
+  }
+
+- Expected  - 12
++ Received  + 14
+
+      at <anonymous> (tests\ir-structured-output.test.ts:16:33)
+(fail) Chat schema metadata survives native Responses encoding and decoding [0.62ms]
+18 | })
+19 |
+20 | test("Gemini preflight rejects structured output instead of silently dropping it", () => {
+21 |   for (const request of [messages(), chat()]) {
+22 |     const plan = planTranslation(request, { wire: "gemini" })
+23 |     expect(plan.accepted).toBe(false)
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (tests\ir-structured-output.test.ts:23:27)
+(fail) Gemini preflight rejects structured output instead of silently dropping it [0.59ms]
+25 |   }
+26 | })
+27 |
+28 | test("JSON object mode is rejected by wires that cannot carry it", () => {
+29 |   const request = decodeChatRequest({ model: "test", messages: [{ role: "user", content: "JSON please" }], response_format: { type: "json_object" } })
+30 |   expect(planTranslation(request, { wire: "gemini" }).accepted).toBe(false)
+                                                                     ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (tests\ir-structured-output.test.ts:30:65)
+(fail) JSON object mode is rejected by wires that cannot carry it [0.25ms]
+(pass) text output and schema-capable targets remain available [0.10ms]
+
+tests\system-config-view.test.ts:
+(pass) system settings display MiB and save the selected storage budget [1.13ms]
+(pass) Codex picker loads all choices, searches IDs, enforces 100 selections, reorders and saves [1.40ms]
+121 |   const rendered = page.replace(/x-text="([^"]*)"[^>]*>([^<]*)/g, (_match, expression: string) => {
+122 |     const value: unknown = expression.includes("t(") ? runInNewContext(expression, { t, settings: { codexModelIds: [] }, source: "webui" }) : ""
+123 |     return `>${String(value)}`
+124 |   }).replace(/:title="([^"]*)"/g, (_match, expression: string) => `title="${String(runInNewContext(expression, { t }))}"`)
+125 |   const visibleText = rendered.replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, "")
+126 |   expect(visibleText).not.toMatch(/[\u3400-\u9fff]/)
+                                ^
+error: expect(received).not.toMatch(expected)
+
+Expected substring or pattern: not /[\u3400-\u9fff]/
+Received: " { if (view === 'system-config') load() })\"\n  class=\"space-y-6 max-w-4xl pb-12\"\n>\n  \n  \n    \n      \n        System Settings\n        \n          \n            \n            Source: WebUI (persisted across restarts).\n          \n        \n      \n      Control diagnostic overhead live; keep basic usage, traces and error alerts.\n    \n    \n      Refresh\n    \n  \n\n  \n  \n\n  \n    \n      \n      \n        \n          \n            \n            Display & Preferences\n          \n          Affects admin console and trace metrics\n        \n\n        \n          \n          \n            \n              Quota percentage display\n              Use the same percentages and bars on Quotas and Request Traces. Defaults to remaining; routing is unchanged. Warning colors still reflect actual remaining quota.\n            \n            \n              Remaining\n              Used\n            \n          \n        \n      \n\n      \n      \n        \n          \n            \n            Codex Integration\n          \n          GitHub Copilot and Codex client settings\n        \n\n        \n          \n          \n            \n              \n                Automatically use expiring Codex reset credits\n                定时轮询\n              \n              Checks every minute and uses a credit within 5 minutes of expiry, unless both 5-hour and weekly quotas are full. The server must stay running.\n            \n            \n              \n              \n            \n          \n\n          \n          \n            \n              \n                \n                  Codex client model list\n                  Selected models (display order): 0 / 100\n                \n                All models are provided by default. Select up to 100 visible models and arrange their display order. Hidden review models are retained automatically. Only the Codex catalog changes; ordinary model lists and routing are unchanged. Wait for the client catalog to refresh, or restart the client after saving.\n              \n              \n                \n                \n              \n            \n\n            \n            \n\n            \n            \n              \n                \n                \n                  Selected models (display order): 0 / 100\n                  \n                \n\n                \n                \n                  已选择的可见模型（按序排列）：\n                  \n                    \n                      \n                        \n                          \n                          \n                            \n                            \n                          \n                        \n                        \n                          \n                            ↑\n                          \n                          \n                            ↓\n                          \n                          Remove\n                        \n                      \n                    \n                  \n                \n\n                \n                \n                  选择添加模型（支持搜索过滤）：\n                  \n                    \n                      \n                        = 100 && !settings.codexModelIds.includes(model.id))\"\n                        />\n                        \n                          \n                          \n                        \n                      \n                    \n                    No matching models\n                  \n                \n              \n            \n          \n        \n      \n\n      \n      \n        \n          \n            \n            Logging & Storage\n          \n          Console and persistent file budget\n        \n\n        \n          \n          \n            \n              Console and file log level\n              Disabling debug reduces formatting and disk writes, but not all eagerly built log arguments.\n            \n            \n              Warnings and errors (lower overhead)\n              Information (recommended)\n              Debug (temporary)\n            \n          \n\n          \n          \n            \n              Log storage\n              File logs, request records and request dumps share this budget, including custom dump directories. Defaults: 7 days and 1024 MiB. Saving immediately deletes expired or oldest excess files. Batched cleanup can briefly exceed the limit.\n            \n            \n              \n                \n                  Log retention (days)\n                  \n                    \n                    天\n                  \n                \n                默认 7 天\n              \n\n              \n                \n                  Total log capacity (MiB)\n                  \n                    \n                    MiB\n                  \n                \n                1024 MiB (1 GiB)\n              \n            \n          \n        \n      \n\n      \n      \n        \n          \n            \n            Diagnostics & Probes\n          \n          按需临时开启\n        \n\n        \n          \n          \n            \n              \n                Detailed performance metrics\n                推荐开启\n              \n              Measure first output, text, write and translation timings. Disabling affects new requests only; basic TPS, usage and original TTFT remain.\n            \n            \n              \n              \n            \n          \n\n          \n          \n            \n              Verbose memory checkpoints\n              Log per-request memory checkpoints. The low-frequency memory watchdog and pressure warnings remain enabled.\n            \n            \n              \n              \n            \n          \n\n          \n          \n            \n              \n                Dump redacted incoming and failed upstream requests\n                高磁盘与 I/O 开销\n              \n              Credentials and inline media are redacted before writing. Prompts, code and ordinary tool arguments remain for diagnosis and may contain personal data. Body reads, serialization and disk writes add overhead.\n            \n            \n              \n              \n            \n          \n\n          \n          \n            \n              \n                !\n              \n              \n                Temporary Diagnostic Session\n                Intensive diagnostics expire automatically to prevent persistent disk and performance overhead.\n              \n            \n\n            \n              \n              \n                Temporary debug duration (1–120 minutes)\n                \n                  \n                  分钟 (1~120)\n                \n                Expiry disables dumps and verbose memory logs, and restores debug logging to info. Performance metrics keep their selected setting.\n              \n\n              \n              \n                Last debug expiry (past means disabled)\n                \n              \n            \n\n            \n            \n              \n                \n                I understand dumps may contain sensitive data and will clean up existing files after diagnosis. Disabling does not delete old files.\n              \n            \n          \n        \n      \n\n      \n      \n        \n          Save and apply now\n          Fill recommended settings\n          \n            \n            Saved and applied\n          \n        \n        Log storage settings survive restarts and temporary diagnostic expiry. Log directories and per-file rotation sizes remain environment settings.\n      \n    \n  \n\n"
+
+      at <anonymous> (tests\system-config-view.test.ts:126:27)
+(fail) system settings render translated labels and titles in English [16.58ms]
+
+ 3 pass
+ 5 fail
+ 24 expect() calls
+Ran 8 tests across 2 files. [598.00ms]

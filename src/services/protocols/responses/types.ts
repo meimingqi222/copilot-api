@@ -76,7 +76,13 @@ interface ResponsesTextConfig {
   format:
     | { type: "text" }
     | { type: "json_object" }
-    | { type: "json_schema"; json_schema: Record<string, unknown> }
+    | {
+        type: "json_schema"
+        name: string
+        schema: Record<string, unknown>
+        strict?: boolean
+        description?: string
+      }
 }
 
 type ResponsesToolChoice =

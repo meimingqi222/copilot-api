@@ -111,3 +111,50 @@ test("Codex picker loads all choices, searches IDs, enforces 100 selections, reo
   await view.save()
   expect(submitted?.codexModelIds).toBeNull()
 })
+
+test("system settings render translated labels and titles in English", () => {
+  const source = readFileSync("pages/js/i18n.js", "utf8")
+  const translations = runInNewContext(source + "\ni18n.translations", {
+    navigator: { language: "en" },
+    localStorage: { getItem: () => null },
+  }) as Record<string, Record<string, string>>
+  const page = readFileSync("pages/partials/system-config.html", "utf8")
+  const t = (key: string) => {
+    const value = translations.en[key]
+    if (!value) throw new Error(`Missing English translation: ${key}`)
+    return value
+  }
+  const defaultBadge = page.match(
+    /x-text="(settings\.codexModelIds !== null[^"]*)"/,
+  )?.[1]
+  expect(defaultBadge).toBeDefined()
+  expect(
+    String(
+      runInNewContext(defaultBadge!, { t, settings: { codexModelIds: null } }),
+    ),
+  ).not.toMatch(/[\u3400-\u9fff]/)
+  const rendered = page
+    .replace(/x-text="([^"]*)"[^>]*>([^<]*)/g, (_match, expression: string) => {
+      const value: unknown =
+        expression.includes("t(") ?
+          runInNewContext(expression, {
+            t,
+            settings: { codexModelIds: [] },
+            source: "webui",
+          })
+        : ""
+      return `>${String(value)}`
+    })
+    .replace(
+      /:title="([^"]*)"/g,
+      (_match, expression: string) =>
+        `title="${String(runInNewContext(expression, { t }))}"`,
+    )
+  const visibleText = rendered
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<[^>]*>/g, "")
+  expect(visibleText).not.toMatch(/[\u3400-\u9fff]/)
+  expect(rendered.match(/(?<!:)title="[^"]*"/g)?.join(" ") ?? "").not.toMatch(
+    /[\u3400-\u9fff]/,
+  )
+})

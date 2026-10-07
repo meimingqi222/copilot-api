@@ -9,6 +9,7 @@ import type {
   IRWebSearchOptions,
   RequestIR,
 } from "~/services/ir/types"
+import { encodeChatTextFormat } from "~/services/ir/codecs/messages-chat/text-format"
 import { createHash } from "node:crypto"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { readOpenAIServiceTier } from "~/lib/service-tier"
@@ -265,10 +266,12 @@ function decodeGeneration(payload: ResponsesPayload): IRGenerationOptions {
     }
   }
   if (p.text?.format) {
-    generation.textFormat =
-      p.text.format.type === "json_schema" ?
-        { type: "json_schema", jsonSchema: p.text.format.json_schema }
-      : { type: p.text.format.type }
+    if (p.text.format.type === "json_schema") {
+      const { type: _type, ...jsonSchema } = p.text.format
+      generation.textFormat = { type: "json_schema", jsonSchema }
+    } else {
+      generation.textFormat = { type: p.text.format.type }
+    }
   }
   const reasoning = record(p.reasoning)
   if (typeof reasoning?.effort === "string") {
@@ -644,6 +647,9 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
   const generation = ir.generation
   const tools = ir.tools ?? []
   const encodedTools = encodeRequestTools(tools, generation?.webSearchOptions)
+  const textFormat = encodeChatTextFormat(
+    generation?.textFormat,
+  ).response_format
   const payload: RecordValue = {
     model: ir.model,
     input: items,
@@ -682,16 +688,16 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
     ...(generation?.truncation ? { truncation: generation.truncation } : {}),
     ...(generation?.metadata ? { metadata: generation.metadata } : {}),
     ...(generation?.user ? { user: generation.user } : {}),
-    ...(generation?.textFormat ?
+    ...(textFormat ?
       {
         text: {
           format:
-            generation.textFormat.type === "json_schema" ?
+            textFormat.type === "json_schema" ?
               {
                 type: "json_schema",
-                json_schema: generation.textFormat.jsonSchema,
+                ...textFormat.json_schema,
               }
-            : { type: generation.textFormat.type },
+            : { type: textFormat.type },
         },
       }
     : {}),

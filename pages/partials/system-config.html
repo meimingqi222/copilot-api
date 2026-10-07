@@ -144,8 +144,8 @@
                 <span x-text="t('system.codexAutoReset')"></span>
                 <span
                   class="badge text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
-                  >定时轮询</span
-                >
+                  x-text="t('system.autoResetPolling')"
+                ></span>
               </div>
               <p
                 class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
@@ -175,7 +175,7 @@
                   <span
                     class="badge text-[10px] px-1.5 py-0.5 rounded"
                     :class="settings.codexModelIds !== null ? 'bg-blue-50 text-[var(--apple-blue)] border border-blue-200' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]'"
-                    x-text="settings.codexModelIds !== null ? (t('system.codexModelsSelected') + ': ' + settings.codexModelIds.length + ' / 100') : '默认展示全部'"
+                    x-text="settings.codexModelIds !== null ? (t('system.codexModelsSelected') + ': ' + settings.codexModelIds.length + ' / 100') : t('system.codexModelsAll')"
                   ></span>
                 </div>
                 <p
@@ -187,6 +187,7 @@
                 <input
                   type="checkbox"
                   :checked="settings.codexModelIds !== null"
+                  :aria-label="t('system.codexModelsCustom')"
                   @change="setCustomCodexModels($event.target.checked)"
                   :disabled="saving"
                 />
@@ -225,9 +226,10 @@
 
                 <!-- 选中的模型列表 (可排序) -->
                 <div class="space-y-2">
-                  <span class="text-xs text-[var(--apple-text-secondary)] block"
-                    >已选择的可见模型（按序排列）：</span
-                  >
+                  <span
+                    class="text-xs text-[var(--apple-text-secondary)] block"
+                    x-text="t('system.codexModelsOrdered')"
+                  ></span>
                   <ol
                     class="space-y-1.5 max-h-56 overflow-y-auto pr-1"
                     :aria-label="t('system.codexModelsSelected')"
@@ -262,7 +264,7 @@
                             @click="moveCodexModel(index, -1)"
                             :disabled="saving || index === 0"
                             :aria-label="t('system.codexModelsUp')"
-                            title="上移"
+                            :title="t('system.codexModelsUp')"
                           >
                             ↑
                           </button>
@@ -272,7 +274,7 @@
                             @click="moveCodexModel(index, 1)"
                             :disabled="saving || index === settings.codexModelIds.length - 1"
                             :aria-label="t('system.codexModelsDown')"
-                            title="下移"
+                            :title="t('system.codexModelsDown')"
                           >
                             ↓
                           </button>
@@ -293,9 +295,10 @@
                 <div
                   class="space-y-2 pt-2 border-t border-dashed border-[var(--apple-gray-5)]"
                 >
-                  <span class="text-xs text-[var(--apple-text-secondary)] block"
-                    >选择添加模型（支持搜索过滤）：</span
-                  >
+                  <span
+                    class="text-xs text-[var(--apple-text-secondary)] block"
+                    x-text="t('system.codexModelsAdd')"
+                  ></span>
                   <div
                     class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto p-1"
                   >
@@ -420,14 +423,16 @@
                       x-model.number="settings.logRetentionDays"
                       :disabled="saving"
                     />
-                    <span class="text-xs text-[var(--apple-text-secondary)]"
-                      >天</span
-                    >
+                    <span
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="t('system.daysUnit')"
+                    ></span>
                   </div>
                 </div>
-                <span class="text-xs text-[var(--apple-text-secondary)]"
-                  >默认 7 天</span
-                >
+                <span
+                  class="text-xs text-[var(--apple-text-secondary)]"
+                  x-text="t('system.defaultRetention')"
+                ></span>
               </div>
 
               <div
@@ -481,8 +486,8 @@
           </div>
           <span
             class="badge text-[10px] px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
-            >按需临时开启</span
-          >
+            x-text="t('system.temporaryOnDemand')"
+          ></span>
         </div>
 
         <div class="divide-y divide-[var(--apple-gray-5)]">
@@ -497,8 +502,8 @@
                 <span x-text="t('system.performanceDetails')"></span>
                 <span
                   class="badge text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-[var(--apple-blue)] border border-blue-200"
-                  >推荐开启</span
-                >
+                  x-text="t('system.recommendedEnabled')"
+                ></span>
               </div>
               <p
                 class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
@@ -550,8 +555,8 @@
                 <span x-text="t('system.requestDump')"></span>
                 <span
                   class="badge text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200"
-                  >高磁盘与 I/O 开销</span
-                >
+                  x-text="t('system.dumpOverhead')"
+                ></span>
               </div>
               <p
                 class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
@@ -608,7 +613,10 @@
                     x-model.number="debugMinutes"
                     :disabled="saving"
                   />
-                  <span class="text-xs text-amber-800/80">分钟 (1~120)</span>
+                  <span
+                    class="text-xs text-amber-800/80"
+                    x-text="t('system.durationUnit')"
+                  ></span>
                 </div>
                 <p
                   class="text-[11px] text-amber-700/80 mt-1"
