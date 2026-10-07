@@ -148,45 +148,54 @@ describe("stream failure forwarding (integration)", () => {
     }
   })
 
-  test("in-stream response.failed reaches the client unchanged", async () => {
-    const sse =
-      `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_1" } })}\n\n`
-      + `data: ${JSON.stringify({
-        type: "response.failed",
-        response: {
-          id: "resp_1",
-          error: { code: "server_error", message: "upstream exploded" },
-        },
-      })}\n\ndata: [DONE]\n\n`
-    const fetchMock = mock(() => {
-      return new Response(sse, {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
+  test.each([false, true])(
+    "in-stream response.failed preserves one usage row (reported usage: %s)",
+    async (hasUsage) => {
+      const sse =
+        `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_1" } })}\n\n`
+        + `data: ${JSON.stringify({
+          type: "response.failed",
+          response: {
+            id: "resp_1",
+            ...(hasUsage && {
+              usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+            }),
+            error: { code: "server_error", message: "upstream exploded" },
+          },
+        })}\n\ndata: [DONE]\n\n`
+      const fetchMock = mock(() => {
+        return new Response(sse, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        })
       })
-    })
-    globalThis.fetch = fetchMock as unknown as typeof fetch
+      globalThis.fetch = fetchMock as unknown as typeof fetch
 
-    const response = await server.fetch(
-      new Request("http://localhost/v1/responses", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-5.4",
-          stream: true,
-          input: [
-            {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text: "hi" }],
-            },
-          ],
+      const response = await server.fetch(
+        new Request("http://localhost/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "gpt-5.4",
+            stream: true,
+            input: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "hi" }],
+              },
+            ],
+          }),
         }),
-      }),
-    )
-    expect(response.status).toBe(200)
-    const text = await response.text()
-    // 失败事件原样透传给客户端（日志补丁由单测覆盖）。
-    expect(text).toContain("response.failed")
-    expect(text).toContain("upstream exploded")
-  })
+      )
+      expect(response.status).toBe(200)
+      const text = await response.text()
+      // 失败事件原样透传给客户端（日志补丁由单测覆盖）。
+      expect(text).toContain("response.failed")
+      expect(text).toContain("upstream exploded")
+      const usage = statsStore.getUsageStats("codex-stream-fail")[0]
+      expect(usage?.requests).toBe(1)
+      expect(usage?.totalTokens).toBe(hasUsage ? 15 : 0)
+    },
+  )
 })

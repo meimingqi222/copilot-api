@@ -96,7 +96,8 @@ export const requestLogger = async (c: Context, next: Next) => {
         const accountId = c.get("accountId")
         if (!accountId) return
         const status = nextError ? 500 : c.res.status
-        if (status >= 400) statsStore.incrementRequestAndError(accountId)
+        if (status >= 400 || ctx.entry.outcome === "failed")
+          statsStore.incrementRequestAndError(accountId)
         else statsStore.incrementRequests(accountId)
       } catch {
         logger.debug("Failed to persist stats")

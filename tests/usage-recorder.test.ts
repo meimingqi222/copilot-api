@@ -55,9 +55,11 @@ describe("recordDirectStreamingUsage (Anthropic shape)", () => {
     expect(entry?.completionTokens).toBe(0)
   })
 
-  test("missing usage without estimate writes nothing", () => {
+  test("missing usage without estimate preserves one zero-token request", () => {
     recordDirectStreamingUsage(fakeContext("test-model"), "acc-1", undefined)
-    expect(rowCount()).toBe(0)
+    expect(rowCount()).toBe(1)
+    expect(modelEntry()?.requests).toBe(1)
+    expect(modelEntry()?.cost).toBe(0)
   })
 })
 

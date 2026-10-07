@@ -229,9 +229,9 @@ export async function handleResponses(c: Context) {
           ) {
             sawTerminal = true
             const terminal = parsed.type as string
-            const incompleteResponse = readIncompleteResponse(parsed, terminal)
-            completedResponse = incompleteResponse ?? completedResponse
-            if (incompleteResponse && hasResponsesOutput(incompleteResponse))
+            const terminalResponse = readTerminalResponse(parsed, terminal)
+            completedResponse = terminalResponse ?? completedResponse
+            if (terminalResponse && hasResponsesOutput(terminalResponse))
               markOutputObserved()
             markStreamTerminal(
               c,
@@ -263,15 +263,19 @@ export async function handleResponses(c: Context) {
         await writeResponsesErrorEvent(stream, error)
       } finally {
         clearInterval(pingInterval)
-        if (completedResponse && accountId && !usageRecorded) {
+        if (accountId && !usageRecorded) {
           const elapsed = Date.now() - streamStartTs
-          const completionTokens = completedResponse.usage?.output_tokens ?? 0
+          const completionTokens = completedResponse?.usage?.output_tokens ?? 0
           const tps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
           const ttftMs = firstChunkTs ? firstChunkTs - streamStartTs : undefined
           recordResponsesUsage({
             c,
             accountId,
-            response: completedResponse,
+            response: completedResponse ?? {
+              id: "",
+              model: payload.model,
+              output: [],
+            },
             tps,
             streaming: true,
             ttftMs,
@@ -381,12 +385,12 @@ export function collectForwardedSessionHeaders(
   }
 }
 
-function readIncompleteResponse(
+function readTerminalResponse(
   event: Record<string, unknown>,
   terminal: string,
 ): ResponsesResponse | undefined {
   if (
-    terminal === "response.incomplete"
+    (terminal === "response.incomplete" || terminal === "response.failed")
     && event.response
     && typeof event.response === "object"
   ) {

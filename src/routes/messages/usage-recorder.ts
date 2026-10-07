@@ -28,7 +28,6 @@ export function recordDirectStreamingUsage(
   }
 
   if (!lastUsage) {
-    if (estimatedInputTokens <= 0) return
     recordUsage({
       c,
       accountId,

@@ -3,6 +3,7 @@
 import { Database } from "bun:sqlite"
 
 import type { UsageIntervalStats } from "~/lib/stats/types"
+import { usageAccountIds } from "~/lib/stats/queries"
 
 export function getUsageStatsByIntervalData(
   db: Database,
@@ -29,8 +30,9 @@ export function getUsageStatsByIntervalData(
   const params: Array<string | number> = [intervalMs, intervalMs, effectiveDate]
 
   if (accountId) {
-    query += " AND account_id = ?"
-    params.push(accountId)
+    const ids = usageAccountIds(accountId)
+    query += ` AND account_id IN (${ids.map(() => "?").join(",")})`
+    params.push(...ids)
   }
 
   query += " GROUP BY slot_ts, model ORDER BY slot_ts ASC"

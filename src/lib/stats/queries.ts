@@ -19,15 +19,17 @@ import { getProviderConnection } from "~/lib/provider-connections/state"
 
 /**
  * 同一 connection 下全部 credential id（in-memory 连接表反查）。
- * stats.db 里没有 connection 表，只能走内存态；测试里连接表为空时
- * 返回空数组，查询退化为单 id 查。
+ * stats.db 里没有 connection 表，只能走内存态；连接表为空时
+ * 仍保留 connection id，查询退化为单 id 查。
  */
-function findCredentialIdsForConnection(connectionId: string): Array<string> {
+export function usageAccountIds(connectionId: string): Array<string> {
   const conn = getProviderConnection(connectionId)
-  if (!conn) return []
-  return conn.credentials
-    .map((cred) => cred.id)
-    .filter((id) => id !== connectionId)
+  return [
+    ...new Set([
+      connectionId,
+      ...(conn?.credentials.map((cred) => cred.id) ?? []),
+    ]),
+  ]
 }
 
 function queryUsageDayRows(
@@ -55,8 +57,9 @@ function queryUsageDayRows(
   const params: Array<string> = []
 
   if (filters.accountId) {
-    query += " AND account_id = ?"
-    params.push(filters.accountId)
+    const ids = usageAccountIds(filters.accountId)
+    query += ` AND account_id IN (${ids.map(() => "?").join(",")})`
+    params.push(...ids)
   }
   if (filters.userId) {
     query += " AND user_id = ?"
@@ -98,8 +101,9 @@ function queryUsageModelsByDate(
   `
   const params = [date]
   if (accountId) {
-    query += " AND account_id = ?"
-    params.push(accountId)
+    const ids = usageAccountIds(accountId)
+    query += ` AND account_id IN (${ids.map(() => "?").join(",")})`
+    params.push(...ids)
   }
   if (userId) {
     query += " AND user_id = ?"
@@ -330,8 +334,9 @@ export function queryUsageRawRows(
   const countParams: Array<string | number> = [filter.startMs, filter.endMs]
   let countFilter = ""
   if (filter.accountId) {
-    countFilter += " AND account_id = ?"
-    countParams.push(filter.accountId)
+    const ids = usageAccountIds(filter.accountId)
+    countFilter += ` AND account_id IN (${ids.map(() => "?").join(",")})`
+    countParams.push(...ids)
   }
   if (filter.userId) {
     countFilter += " AND user_id = ?"
@@ -368,8 +373,9 @@ export function queryUsageRawRows(
   `
   const params: Array<string | number> = [filter.startMs, filter.endMs]
   if (filter.accountId) {
-    query += " AND account_id = ?"
-    params.push(filter.accountId)
+    const ids = usageAccountIds(filter.accountId)
+    query += ` AND account_id IN (${ids.map(() => "?").join(",")})`
+    params.push(...ids)
   }
   if (filter.userId) {
     query += " AND user_id = ?"
@@ -392,8 +398,7 @@ export function getUsageByTimestampRangeData(
   // 必须按 credential 归一：先经 in-memory 的 connection → credential 映射
   // 展开 id 集合，再按 account_id IN 查。不能用 credential_id 列反查——
   // 老行该列恰恰是 NULL。
-  const credentialIds = findCredentialIdsForConnection(accountId)
-  const accountIds = [accountId, ...credentialIds]
+  const accountIds = usageAccountIds(accountId)
   const placeholders = accountIds.map(() => "?").join(",")
   const stmt = db.prepare(`
     SELECT

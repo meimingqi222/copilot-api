@@ -110,19 +110,17 @@ export async function handleAnthropicViaConnection(
         // 上游返回了非 Anthropic 形状:用本地估算记一行,与其他端点兜底一致。
         const estimatedInputTokens =
           await estimateAnthropicInputTokens(anthropicPayload)
-        if (estimatedInputTokens > 0) {
-          recordUsage({
-            c,
-            accountId: result.accountId,
-            model: anthropicPayload.model,
-            promptTokens: estimatedInputTokens,
-            completionTokens: 0,
-            totalTokens: estimatedInputTokens,
-            tps: 0,
-            streaming: false,
-            finishReason: "usage_missing",
-          })
-        }
+        recordUsage({
+          c,
+          accountId: result.accountId,
+          model: anthropicPayload.model,
+          promptTokens: estimatedInputTokens,
+          completionTokens: 0,
+          totalTokens: estimatedInputTokens,
+          tps: 0,
+          streaming: false,
+          finishReason: "usage_missing",
+        })
       }
       return c.json(result.response as unknown as AnthropicResponse)
     }

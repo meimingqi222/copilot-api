@@ -397,6 +397,7 @@ export async function* runSearchAwareStream(
     const payload = params.spec.encodeRequest(working, { stream: true })
     const result = await params.execute(payload)
     const calls: Array<IRToolCallPart> = []
+    let roundUsage: IRUsage | undefined
     let openInternalPartId: string | undefined
     let openInternalArguments = ""
 
@@ -412,7 +413,18 @@ export async function* runSearchAwareStream(
         continue
       }
       if (raw.type === "usage") {
-        usage = addUsage(usage, raw.usage)
+        roundUsage = {
+          source: raw.usage.source,
+          inputTokens: raw.usage.inputTokens ?? roundUsage?.inputTokens,
+          outputTokens: raw.usage.outputTokens ?? roundUsage?.outputTokens,
+          cacheReadTokens:
+            raw.usage.cacheReadTokens ?? roundUsage?.cacheReadTokens,
+          cacheWriteTokens:
+            raw.usage.cacheWriteTokens ?? roundUsage?.cacheWriteTokens,
+          reasoningTokens:
+            raw.usage.reasoningTokens ?? roundUsage?.reasoningTokens,
+          totalTokens: raw.usage.totalTokens ?? roundUsage?.totalTokens,
+        }
         continue
       }
       if (raw.type === "message_end") {
@@ -449,6 +461,7 @@ export async function* runSearchAwareStream(
       }
       yield remapIndex(raw, round)
     }
+    usage = addUsage(usage, roundUsage)
     // A call that never received a part_end still has to be answerable.
     if (openInternalPartId !== undefined) {
       const call = calls.at(-1)

@@ -117,9 +117,11 @@ describe("log middleware", () => {
   })
 
   test("persists the protocol outcome after an HTTP 200 stream finishes", async () => {
+    statsStore.clearUsageStatsForTest()
     const app = new Hono()
     app.use("*", requestLogger)
     app.post("/v1/responses", (c) => {
+      c.set("accountId", "stream-failed-account")
       beginStreamLog(c)
       return handleSseStream(
         c,
@@ -148,6 +150,10 @@ describe("log middleware", () => {
     expect(entry.outcome).toBe("failed")
     expect(entry.protocolTerminal).toBe("response.failed")
     expect(entry.outputObserved).toBe(true)
+    expect(statsStore.getTodayStats("stream-failed-account")).toEqual({
+      requests: 1,
+      errors: 1,
+    })
   })
 
   test.each(["/v1/chat/completions", "/v1/messages", "/v1/responses"])(
