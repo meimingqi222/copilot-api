@@ -12,7 +12,7 @@ Status: implemented
 
 Preserve all catalog context tiers, retaining the legacy first-tier field for existing consumers and manual two-tier pricing. `src/lib/models-dev/tier.ts` selects the highest threshold strictly below the input total, including cache read/write tokens. Apply Fast price multipliers to every tier. Do not discard later tiers when the first one repeats base pricing.
 
-Keep each final round usage snapshot in request-local accounting metadata through `src/lib/usage-pricing-rounds.ts`. `src/services/protocols/wire-pairs.ts` starts that metadata only for orchestrated requests and clears it for a fresh translation attempt. Price rounds individually at final accounting, then sum their costs. Keep one stored row for the client request and keep the existing summed wire token counts. Consume metadata once and validate its account owner so another request or failover cannot reuse it.
+Keep each final round usage snapshot in request-local accounting metadata through `src/lib/usage-pricing-rounds.ts`. `src/services/protocols/wire-pairs.ts` starts that metadata only for orchestrated requests and clears it for a fresh translation attempt. Price rounds individually at final accounting, then sum their costs. Keep one stored row for the client request and keep the existing summed wire token counts. Consume metadata once and validate both its account owner and the request log requestId: Responses WebSocket turns share a Hono Context, so account validation alone cannot prevent cross-turn reuse after a failed turn. Recorder callbacks retain their own state and cannot append to a later recorder. Callers without request logging retain existing behavior.
 
 ## Alternatives considered
 
@@ -30,5 +30,8 @@ Catalog pricing supports any number of context thresholds. Existing manual base-
 - `tests/models-dev-tier-pricing.test.ts`
 - `tests/search-orchestration.test.ts`
 - `tests/usage-pricing-rounds.test.ts`
+- `tests/usage-pricing-rounds-request-scope.test.ts::a failed turn cannot price a later native turn on the same account`
 
 Proved: Pre-fix tests failed for the second context threshold and all eight search-pricing combinations across Messages/Responses, streaming/non-streaming and short/short versus short/long rounds. Two short rounds returned 0.42008 instead of 0.21004; mixed rounds returned 0.62008 instead of 0.51506. Output is retained in ignored temp/multi-tier-red.log. These regressions pass after the fix, along with tests for cache thresholds, Fast multipliers, base-priced first tiers, request isolation, failover ownership and one-time metadata consumption.
+
+Proved: Removing the requestId validation made the shared-Context regression consume the abandoned turn's 300000 input tokens instead of returning undefined. Restoring the validation passed both request-scope tests. The red output is retained in ignored temp/request-rounds-red.log.

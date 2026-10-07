@@ -22,6 +22,10 @@ import type { RequestExecutionContext } from "~/services/providers/runtime"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { connectionProvider } from "~/lib/provider-connections"
 import {
+  clearUsagePricingRounds,
+  createUsagePricingRecorder,
+} from "~/lib/usage-pricing-rounds"
+import {
   observeUpstreamResponseModel,
   observeUpstreamResponseModelFromSseData,
 } from "~/lib/request-log"
@@ -97,7 +101,9 @@ function chatSearchDetour(params: {
   payload: ChatCompletionsPayload
   target: RouteTarget
   execute: SearchAwareExecutor
+  ctx?: RequestExecutionContext
 }): Promise<{ credentialId: string; response: unknown }> | undefined {
+  clearUsagePricingRounds(params.ctx?.c)
   const searchers = listSearchers()
   if (searchers.length === 0) return undefined
   const request = decodeChatRequest(params.payload)
@@ -109,6 +115,10 @@ function chatSearchDetour(params: {
     spec,
     searchers,
     execute: params.execute,
+    onUsage: createUsagePricingRecorder(
+      params.ctx?.c,
+      params.target.connectionId,
+    ),
   }
   if (params.payload.stream === true) {
     return Promise.resolve({
@@ -375,6 +385,7 @@ export async function dispatchRequest(
           const searchAware = chatSearchDetour({
             payload: chatPayload,
             target,
+            ctx: executionContext,
             execute: (payload: unknown) =>
               createChat({
                 target,
