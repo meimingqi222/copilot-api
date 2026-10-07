@@ -1,28 +1,28 @@
 /**
  * CLI 传输层的编排。
  *
- * 一个 run = 一个活着的 `claude` 子进程 = 一次 API 回合。进程内的多次工具
+ * 一个 run = 一个活着的 `claude` 子进程。进程内的多次工具
  * 往返由**同一个**进程完成：CLI 发起 MCP `tools/call` 后阻塞，我们把
  * `tool_use` 交给调用方；调用方下一轮带着 `tool_result` 回来，我们把结果
  * 投递给那个阻塞中的调用，CLI 继续跑同一轮。
  *
- * 为什么跨回合不复用进程：
+ * 普通回合只在账号、配置与完整历史一致时复用：
  *
- * - 工具集在 `Bun.spawn` 时就通过 `tools.json` 固化了，复用会把过期的工具
- *   定义留在进程里。
- * - 调用方可能压缩/改写历史，增量喂消息会与进程内状态不一致。
+ * - 工具集与其他参数改变时重新启动，避免沿用过期配置。
+ * - 调用方压缩/改写历史时重新启动，避免进程内状态与调用方不一致。
  *
  * 进程内的多次工具往返**必须**复用进程：每次重开都要重发整段 transcript，
  * prompt cache 会全部作废。
  */
 
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
 import { logger } from "~/lib/logger"
+import { getConnectionProxyUrl } from "~/lib/provider-connections"
 import type {
   ApiCredential,
   ProviderConnection,
@@ -33,32 +33,60 @@ import type {
   AnthropicStreamEventData,
 } from "~/services/protocols/anthropic/types"
 
-import { claudeCliArgs } from "./args"
-import { claudeConfigDir, claudeHome, findClaudeBinary } from "./binary"
-import { cleanClaudeEnv } from "./env"
+import { claudeCliArgs } from "~/services/claude/cli/args"
+import {
+  claudeConfigDir,
+  claudeHome,
+  findClaudeBinary,
+} from "~/services/claude/cli/binary"
+import { cleanClaudeEnv } from "~/services/claude/cli/env"
 import {
   ClaudeCliConcurrencyLimitError,
   ClaudeCliError,
   ClaudeCliUnavailableError,
   toHttpError,
-} from "./errors"
-import { EventQueue, takeSegment } from "./event-queue"
+} from "~/services/claude/cli/errors"
+import { EventQueue, takeSegment } from "~/services/claude/cli/event-queue"
 import {
   CLAUDE_MCP_SERVER_NAME,
   CLAUDE_WAIT_TOOL_NAME,
   mcpToolNamePrefix,
-} from "./mcp-names"
-import { renderClaudePrompt } from "./prompt"
-import { redactAndTruncate } from "./redact"
-import { runRegistry, type BridgeRun, type McpToolResult } from "./run-registry"
-import { claudeCallbackBaseUrl } from "./server-address"
-import { readStreamJsonLines } from "./stream-json"
-import { bridgeTools, toolResultIds, toolResults } from "./tools"
-import { pruneClaudeTranscripts } from "./transcripts"
+} from "~/services/claude/cli/mcp-names"
+import { renderClaudePrompt } from "~/services/claude/cli/prompt"
+import { terminateClaudeProcess } from "~/services/claude/cli/process"
+import {
+  continuation,
+  sessionKey,
+  claudeEffort,
+  withOriginalTools,
+  hasFreshContent,
+} from "~/services/claude/cli/session"
+import { ClaudeCliControls } from "~/services/claude/cli/controls"
+import {
+  ClaudeSearchPolicy,
+  claudeSearchDeclaration,
+} from "~/services/claude/cli/search-policy"
+import { parseStreamJsonLine } from "~/services/claude/cli/stream-json"
+import { normalizeClaudeTurns } from "~/services/claude/cli/turns"
+import { redactAndTruncate } from "~/services/claude/cli/redact"
+import {
+  runRegistry,
+  type BridgeRun,
+  type McpToolResult,
+} from "~/services/claude/cli/run-registry"
+import { claudeCallbackBaseUrl } from "~/services/claude/cli/server-address"
+import { readStreamJsonLines } from "~/services/claude/cli/stream-json"
+import {
+  bridgeTools,
+  toolResultIds,
+  toolResults,
+  type BridgeToolResult,
+} from "~/services/claude/cli/tools"
+import { pruneClaudeTranscripts } from "~/services/claude/cli/transcripts"
 import {
   collectAnthropicResponse,
   translateClaudeStreamJson,
-} from "./translate"
+} from "~/services/claude/cli/translate"
 
 /** 一个 run 最多活 30 分钟，然后连进程一起清掉。 */
 const RUN_TIMEOUT_MS = 30 * 60_000
@@ -69,7 +97,7 @@ const RUN_TIMEOUT_MS = 30 * 60_000
  * 调用方"拿 tool_use → 执行 → 回 tool_result"通常是秒级，这里给足余量；
  * 真正的兜底是 `RUN_TIMEOUT_MS`。
  */
-const DEFAULT_PATIENCE_MS = 5 * 60_000
+const DEFAULT_PATIENCE_MS = 55_000
 
 /** 进程起来后多久还没吐出第一个事件就判定为卡死。 */
 const STARTUP_TIMEOUT_MS = 120_000
@@ -81,7 +109,9 @@ function patienceMs(): number {
   const raw = process.env.COPILOT_API_CLAUDE_MCP_PATIENCE_MS?.trim()
   if (!raw) return DEFAULT_PATIENCE_MS
   const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_PATIENCE_MS
+  return Number.isFinite(parsed) && parsed > 0 ?
+      Math.min(parsed, DEFAULT_PATIENCE_MS)
+    : DEFAULT_PATIENCE_MS
 }
 
 /**
@@ -115,6 +145,8 @@ export interface ClaudeCliRunContext {
   model: string
   /** 该 connection 的 OAuth access token。 */
   accessToken: string
+  /** Cancellation belongs to this HTTP segment, not to a completed tool turn. */
+  signal?: AbortSignal
 }
 
 /** 主入口：给一次 `/v1/messages` 拿到 Anthropic 流式事件。 */
@@ -122,19 +154,80 @@ export async function streamClaudeCliMessages(
   context: ClaudeCliRunContext,
   payload: AnthropicMessagesPayload,
 ): Promise<AsyncIterable<AnthropicStreamEventData>> {
+  context.signal?.throwIfAborted()
+  new ClaudeSearchPolicy(payload)
   const scope = {
     connectionId: context.connection.id,
     credentialId: context.credential.id,
   }
-  const parked = runRegistry.findParked(toolResultIds(payload), scope)
-  if (parked?.run instanceof ClaudeCliRun) {
-    // 全部结果都交过去：命中挂起调用的直接交付，其余(调用尚未发出 / 已经
-    // 回过"还在跑")由 run 自己存起来。先前按 parked.toolUseIds 过滤会让那些
-    // 结果永远丢失 —— 一次回复里两个工具调用就会踩到。
-    return withHeadPeek(parked.run.resume(toolResults(payload)), parked.run)
+  const parked = runRegistry.takeParked(toolResultIds(payload), scope)
+  const parkedRun = parked?.run
+  if (parkedRun instanceof ClaudeCliRun) {
+    if (!parkedRun.canResume(context, payload)) parkedRun.abort()
+    else {
+      try {
+        await parkedRun.configure(payload, context.signal)
+        // 全部结果都交过去：命中挂起调用的直接交付，其余(调用尚未发出 / 已经
+        // 回过"还在跑")由 run 自己存起来。先前按 parked.toolUseIds 过滤会让那些
+        // 结果永远丢失 —— 一次回复里两个工具调用就会踩到。
+        return withHeadPeek(
+          withRequestAbort(
+            parkedRun.resume(toolResults(payload), payload),
+            parkedRun,
+            context.signal,
+          ),
+          parkedRun,
+        )
+      } catch (error) {
+        parkedRun.abort()
+        context.signal?.throwIfAborted()
+        logger.debug("claude-cli: parked session could not resume", {
+          error: String(error),
+        })
+      }
+    }
+  }
+  const next = continuation(payload)
+  if (next) {
+    const idle = runRegistry.takeIdle(
+      sessionKey(sessionOwner(context), payload, next.history),
+    )
+    if (idle instanceof ClaudeCliRun) {
+      let sent = false
+      try {
+        await idle.configure(payload, context.signal)
+        idle.send(payload, next.since)
+        sent = true
+      } catch (error) {
+        idle.abort()
+        context.signal?.throwIfAborted()
+        logger.debug("claude-cli: idle session could not resume", {
+          error: String(error),
+        })
+      }
+      if (sent)
+        return withHeadPeek(
+          withRequestAbort(idle.attach(), idle, context.signal),
+          idle,
+        )
+    }
   }
   const run = await startRun(context, payload)
-  return withHeadPeek(run.attach(), run)
+  return withHeadPeek(withRequestAbort(run.attach(), run, context.signal), run)
+}
+
+function sessionOwner(context: ClaudeCliRunContext): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        context.connection.id,
+        context.credential.id,
+        context.model,
+        context.accessToken,
+        getConnectionProxyUrl(context.connection),
+      ]),
+    )
+    .digest("hex")
 }
 
 /** 非流式：折叠成一条完整响应。 */
@@ -150,13 +243,33 @@ export async function collectClaudeCliMessages(
   }
 }
 
-/**
- * 头部预读 —— failover 的前提。
- *
- * `executeWithFailover` 只能在"还没向下游写出任何字节"时换账号。所以必须
- * 在把流交给下游之前先确认这一轮真的开始了：如果第一个实质事件是错误
- * （配额 / 限流 / 未登录），就地抛出带状态码的 `HTTPError`。
- */
+/** Keep cancellation local to this HTTP segment; parked tool runs outlive it. */
+async function* withRequestAbort(
+  segment: AsyncIterable<AnthropicStreamEventData>,
+  run: ClaudeCliRun,
+  signal?: AbortSignal,
+): AsyncIterable<AnthropicStreamEventData> {
+  const abort = () => run.abort()
+  let completed = false
+  signal?.addEventListener("abort", abort, { once: true })
+  try {
+    signal?.throwIfAborted()
+    for await (const event of segment) {
+      signal?.throwIfAborted()
+      if (event.type === "message_stop") {
+        completed = true
+        signal?.removeEventListener("abort", abort)
+      }
+      yield event
+    }
+    if (!completed) signal?.throwIfAborted()
+  } finally {
+    signal?.removeEventListener("abort", abort)
+    if (!completed) run.abort()
+  }
+}
+
+/** Peek until content or an upstream error arrives, under one startup deadline. */
 async function withHeadPeek(
   segment: AsyncIterable<AnthropicStreamEventData>,
   run: ClaudeCliRun,
@@ -165,16 +278,33 @@ async function withHeadPeek(
   const head: Array<AnthropicStreamEventData> = []
   let failure: string | undefined
 
-  const first = await Promise.race([
-    iterator.next(),
-    new Promise<"timeout">((resolve) => {
-      const timer = setTimeout(() => resolve("timeout"), STARTUP_TIMEOUT_MS)
-      timer.unref?.()
-    }),
-  ])
-
-  if (first === "timeout") {
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
     run.abort()
+  }, STARTUP_TIMEOUT_MS)
+  timer.unref?.()
+  try {
+    let next = await iterator.next()
+    while (!next.done) {
+      const event = next.value
+      head.push(event)
+      if (event.type === "error") {
+        failure = event.error.message
+        break
+      }
+      if (
+        event.type !== "message_start"
+        && event.type !== "message_delta"
+        && event.type !== "ping"
+      )
+        break
+      next = await iterator.next()
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+  if (timedOut) {
     throw toHttpError(
       new ClaudeCliError(
         "Claude Code produced no output; the CLI may be stuck",
@@ -182,27 +312,9 @@ async function withHeadPeek(
     )
   }
 
-  let next: IteratorResult<AnthropicStreamEventData> = first
-  while (!next.done) {
-    const event = next.value
-    head.push(event)
-    if (event.type === "error") {
-      failure = event.error.message
-      break
-    }
-    // 只有这些是"还没有内容"的前导事件；遇到别的说明这一轮已经开始了。
-    if (
-      event.type !== "message_start"
-      && event.type !== "message_delta"
-      && event.type !== "ping"
-    ) {
-      break
-    }
-    next = await iterator.next()
-  }
-
   if (failure !== undefined) {
     run.abort()
+    await iterator.return?.()
     throw toHttpError(new ClaudeCliError(failure))
   }
 
@@ -213,11 +325,15 @@ async function* prepend<T>(
   head: ReadonlyArray<T>,
   rest: AsyncIterator<T>,
 ): AsyncIterable<T> {
-  for (const item of head) yield item
-  for (;;) {
-    const next = await rest.next()
-    if (next.done) return
-    yield next.value
+  try {
+    for (const item of head) yield item
+    for (;;) {
+      const next = await rest.next()
+      if (next.done) return
+      yield next.value
+    }
+  } finally {
+    await rest.return?.()
   }
 }
 
@@ -298,6 +414,16 @@ export class ClaudeCliRun implements BridgeRun {
   private readonly patience: number
   private timer: ReturnType<typeof setTimeout> | undefined
   private finished = false
+  private readonly owner: string
+  private payload: AnthropicMessagesPayload
+  private parkedHistory: AnthropicMessagesPayload["messages"] | undefined
+  private readonly structured: boolean
+  private readonly controls: ClaudeCliControls
+  private policy: ClaudeSearchPolicy
+  private effort: string
+  private consuming = false
+  private segmentId = 0
+  private configuring = false
   private stderrTail = ""
   private readonly stderrDone: Promise<void>
 
@@ -306,7 +432,17 @@ export class ClaudeCliRun implements BridgeRun {
     context: ClaudeCliRunContext
     proc: Bun.Subprocess<"pipe", "pipe", "pipe">
     tmpDir: string
+    payload: AnthropicMessagesPayload
   }) {
+    this.effort = claudeEffort(options.payload)
+    this.policy = new ClaudeSearchPolicy(options.payload)
+    this.controls = new ClaudeCliControls(
+      (value) => this.write(value),
+      (name, input) => this.policy.permission(name, input),
+    )
+    this.owner = sessionOwner(options.context)
+    this.payload = options.payload
+    this.structured = !!options.payload.output_config?.format
     this.token = options.token
     this.connectionId = options.context.connection.id
     this.credentialId = options.context.credential.id
@@ -353,7 +489,9 @@ export class ClaudeCliRun implements BridgeRun {
       let produced = false
       try {
         for await (const event of translateClaudeStreamJson(
-          readStreamJsonLines(readChunks(this.proc.stdout)),
+          normalizeClaudeTurns(this.outputLines(), {
+            structured: this.structured,
+          }),
           { model, mcpServerName: CLAUDE_MCP_SERVER_NAME },
         )) {
           produced = true
@@ -371,6 +509,39 @@ export class ClaudeCliRun implements BridgeRun {
         this.finish()
       }
     })()
+  }
+
+  private write(value: unknown): void {
+    this.proc.stdin.write(JSON.stringify(value) + "\n")
+    this.proc.stdin.flush()
+  }
+
+  private async *outputLines(): AsyncIterable<string> {
+    for await (const line of readStreamJsonLines(
+      readChunks(this.proc.stdout),
+    )) {
+      if (!this.controls.handle(parseStreamJsonLine(line))) yield line
+    }
+  }
+
+  async configure(
+    payload: AnthropicMessagesPayload,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    this.assertAvailable()
+    if (this.configuring)
+      throw new ClaudeCliError("the Claude Code run is being configured")
+    this.configuring = true
+    try {
+      const effort = claudeEffort(payload)
+      if (effort !== this.effort) {
+        await this.controls.applyEffort(effort, signal)
+        this.effort = effort
+      }
+      this.policy = new ClaudeSearchPolicy(payload)
+    } finally {
+      this.configuring = false
+    }
   }
 
   /**
@@ -396,27 +567,144 @@ export class ClaudeCliRun implements BridgeRun {
 
   /** 当前这一段（到 message_stop 为止）的流式事件。 */
   attach(): AsyncIterable<AnthropicStreamEventData> {
-    return takeSegment(this.queue)
+    this.assertAvailable()
+    this.consuming = true
+    return this.segment(++this.segmentId)
+  }
+
+  private assertAvailable(): void {
+    if (this.finished)
+      throw toHttpError(new ClaudeCliError("the Claude Code run has ended"))
+    if (this.consuming)
+      throw toHttpError(
+        new ClaudeCliError("the Claude Code run is already serving a request"),
+      )
+  }
+
+  canResume(
+    context: ClaudeCliRunContext,
+    payload: AnthropicMessagesPayload,
+  ): boolean {
+    if (
+      this.finished
+      || this.consuming
+      || this.configuring
+      || this.owner !== sessionOwner(context)
+      || hasFreshContent(payload)
+    )
+      return false
+    const compatible = withOriginalTools(this.payload, payload)
+    if (!compatible) return false
+    const history = this.parkedHistory ?? this.payload.messages
+    return (
+      sessionKey(this.owner, this.payload, history)
+      === sessionKey(
+        this.owner,
+        compatible,
+        payload.messages.slice(0, history.length),
+      )
+    )
+  }
+
+  private async *segment(id: number): AsyncIterable<AnthropicStreamEventData> {
+    const events: Array<AnthropicStreamEventData> = []
+    try {
+      for await (const event of takeSegment(this.queue)) {
+        events.push(event)
+        if (event.type === "message_stop") {
+          await this.completed(events)
+          this.consuming = false
+        }
+        yield event
+      }
+    } finally {
+      if (this.segmentId === id) this.consuming = false
+    }
+  }
+
+  private async completed(
+    events: Array<AnthropicStreamEventData>,
+  ): Promise<void> {
+    if (this.finished) return
+    if (events.some((event) => event.type === "error")) {
+      this.abort()
+      return
+    }
+    const response = await collectAnthropicResponse(
+      (async function* () {
+        yield* events
+      })(),
+      this.payload.model,
+    )
+    if (response.stop_reason === "tool_use") {
+      this.parkedHistory = [
+        ...this.payload.messages,
+        {
+          role: "assistant",
+          content:
+            response.content as import("~/services/protocols/anthropic/types").AnthropicAssistantContentBlock[],
+        },
+      ]
+      // Register before sending message_stop: callers can answer before the MCP callback.
+      for (const block of response.content) {
+        if (block.type !== "tool_use") continue
+        this.awaitingResult.add(block.id)
+        runRegistry.park(block.id, this)
+      }
+      return
+    }
+    if (response.stop_reason !== "end_turn" || !response.content.length) {
+      this.abort()
+      return
+    }
+    runRegistry.keepIdle(
+      sessionKey(this.owner, this.payload, [
+        ...this.payload.messages,
+        {
+          role: "assistant",
+          content:
+            response.content as import("~/services/protocols/anthropic/types").AnthropicAssistantContentBlock[],
+        },
+      ]),
+      this,
+    )
+    this.arm(60 * 60_000)
+  }
+
+  send(payload: AnthropicMessagesPayload, messages = payload.messages): void {
+    this.assertAvailable()
+    this.payload = payload
+    this.arm()
+    this.proc.stdin.write(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: renderClaudePrompt({
+            ...payload,
+            system: messages === payload.messages ? payload.system : undefined,
+            messages,
+          }),
+        },
+      }) + "\n",
+    )
+    this.proc.stdin.flush()
   }
 
   /** 把调用方的工具结果投给阻塞中的 MCP 调用，并开始下一段。 */
   resume(
-    results: ReadonlyArray<{
-      toolUseId: string
-      text: string
-      isError: boolean
-    }>,
+    results: ReadonlyArray<BridgeToolResult>,
+    payload: AnthropicMessagesPayload,
   ): AsyncIterable<AnthropicStreamEventData> {
-    if (this.finished) {
-      throw toHttpError(new ClaudeCliError("the Claude Code run has ended"))
-    }
+    this.assertAvailable()
+    this.payload = payload
     for (const result of results) {
       // deliver 在没有 MCP 调用等待时会先把结果存起来(调用尚未发出 / 已经
       // 回过"还在跑")。早先这里遇到"没人等"会 abort 整条 run —— 而 Claude
       // Code 的 MCP 调用是串行的，一次回复里两个工具调用、调用方把两个结果
       // 一起送回来时，后到的那个会把进程连结果一起丢掉。
       this.deliver(result.toolUseId, {
-        content: [{ type: "text", text: result.text }],
+        content: result.content,
         is_error: result.isError,
       })
     }
@@ -426,6 +714,14 @@ export class ClaudeCliRun implements BridgeRun {
 
   hasPending(toolUseId: string): boolean {
     return this.waiters.has(toolUseId)
+  }
+
+  toolDefinitions() {
+    return bridgeTools(this.payload)
+  }
+
+  availableForResume(): boolean {
+    return !this.finished && !this.consuming && !this.configuring
   }
 
   /**
@@ -532,23 +828,26 @@ export class ClaudeCliRun implements BridgeRun {
 
   /** 杀进程并清理。 */
   abort(): void {
+    if (this.finished) return
+    terminateClaudeProcess(this.proc)
     try {
-      this.proc.kill()
+      this.proc.stdin.end()
     } catch {
       // 进程可能已经退出了。
     }
     this.finish()
   }
 
-  private arm(): void {
+  private arm(timeout = RUN_TIMEOUT_MS): void {
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => this.abort(), RUN_TIMEOUT_MS)
+    this.timer = setTimeout(() => this.abort(), timeout)
     this.timer.unref?.()
   }
 
   private finish(): void {
     if (this.finished) return
     this.finished = true
+    this.controls.close()
     if (this.timer) clearTimeout(this.timer)
     for (const waiter of this.waiters.values()) waiter({ kind: "gone" })
     this.waiters.clear()
@@ -556,7 +855,15 @@ export class ClaudeCliRun implements BridgeRun {
     this.awaitingResult.clear()
     runRegistry.unregister(this)
     this.queue.close()
-    void fs.rm(this.tmpDir, { recursive: true, force: true }).catch(() => {})
+    // Windows process-tree termination is asynchronous; retain startup files
+    // until the CLI has actually stopped reading them.
+    void this.proc.exited
+      .then(() => fs.rm(this.tmpDir, { recursive: true, force: true }))
+      .catch((error: unknown) =>
+        logger.warn("claude-cli: temporary configuration cleanup failed", {
+          error: String(error),
+        }),
+      )
   }
 }
 
@@ -589,86 +896,106 @@ async function startRun(
   context: ClaudeCliRunContext,
   payload: AnthropicMessagesPayload,
 ): Promise<ClaudeCliRun> {
+  context.signal?.throwIfAborted()
   const binary = findClaudeBinary()
   if (!binary) {
     throw new ClaudeCliUnavailableError(
       "Claude Code is not installed; install it and run `claude auth login`",
     )
   }
-  if (
-    runRegistry.countForConnection(context.connection.id)
-    >= maxRunsPerConnection()
-  ) {
-    throw new ClaudeCliConcurrencyLimitError(context.connection.id)
+  const release = runRegistry.reserveConnection(
+    context.connection.id,
+    maxRunsPerConnection(),
+  )
+  if (!release) throw new ClaudeCliConcurrencyLimitError(context.connection.id)
+  try {
+    return await spawnRun(context, payload, binary)
+  } finally {
+    release()
   }
+}
 
+async function spawnRun(
+  context: ClaudeCliRunContext,
+  payload: AnthropicMessagesPayload,
+  binary: string,
+): Promise<ClaudeCliRun> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "copilot-api-claude-"))
-  const token = randomUUID()
-  // 回调 URL 带一次性 token，**不能进 argv**（`ps` 在同机多用户下可见）。
-  // 写进同目录的 bridge.json，只把路径交给 helper。
-  const bridgePath = path.join(tmpDir, "bridge.json")
-  const mcpConfigPath = path.join(tmpDir, "mcp.json")
-  const home = claudeHome(context.connection.id)
-  const configDir = claudeConfigDir(context.connection.id)
-  await fs.mkdir(home, { recursive: true })
-  await fs.mkdir(configDir, { recursive: true })
-  // 尽力而为：把上一轮残留的转录压回保留窗口（节流到每小时一次）。
-  void pruneClaudeTranscripts(configDir).catch(() => {})
-  await fs.writeFile(
-    bridgePath,
-    JSON.stringify({
-      callbackUrl: `${claudeCallbackBaseUrl()}/_internal/claude-mcp/${token}`,
-      tools: bridgeTools(payload),
-    }),
-    "utf8",
-  )
-  await fs.writeFile(
-    mcpConfigPath,
-    JSON.stringify({
-      mcpServers: {
-        [CLAUDE_MCP_SERVER_NAME]: {
-          command: process.execPath,
-          args: helperArgs(bridgePath),
+  let ownedByRun = false
+  try {
+    const token = randomUUID()
+    // 回调 URL 带一次性 token，**不能进 argv**（`ps` 在同机多用户下可见）。
+    // 写进同目录的 bridge.json，只把路径交给 helper。
+    const bridgePath = path.join(tmpDir, "bridge.json")
+    const mcpConfigPath = path.join(tmpDir, "mcp.json")
+    const home = claudeHome(context.connection.id)
+    const configDir = claudeConfigDir(context.connection.id)
+    await fs.mkdir(home, { recursive: true })
+    await fs.mkdir(configDir, { recursive: true })
+    // 尽力而为：把上一轮残留的转录压回保留窗口（节流到每小时一次）。
+    void pruneClaudeTranscripts(configDir).catch(() => {})
+    await fs.writeFile(
+      bridgePath,
+      JSON.stringify({
+        callbackUrl: `${claudeCallbackBaseUrl()}/_internal/claude-mcp/${token}`,
+        tools: bridgeTools(payload),
+      }),
+      "utf8",
+    )
+    await fs.writeFile(
+      mcpConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          [CLAUDE_MCP_SERVER_NAME]: {
+            command: process.execPath,
+            args: helperArgs(bridgePath),
+          },
         },
+      }),
+      "utf8",
+    )
+
+    context.signal?.throwIfAborted()
+    const proc = Bun.spawn(
+      [
+        binary,
+        ...claudeCliArgs({
+          model: context.model,
+          mcpConfigPath,
+          effort: claudeEffort(payload),
+          webSearch: !!claudeSearchDeclaration(payload),
+          jsonSchema: payload.output_config?.format?.schema,
+        }),
+      ],
+      {
+        cwd: home,
+        env: cleanClaudeEnv(process.env, {
+          oauthToken: context.accessToken,
+          proxyUrl: getConnectionProxyUrl(context.connection),
+          // 让 CLI 的配置与会话（含对话转录）落在我们自己的目录里，
+          // 而不是用户的 ~/.claude。已实测确认不影响 token 认证。
+          overrides: { CLAUDE_CONFIG_DIR: configDir },
+        }),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
       },
-    }),
-    "utf8",
-  )
+    )
 
-  const proc = Bun.spawn(
-    [
-      binary,
-      ...claudeCliArgs({
-        model: context.model,
-        mcpConfigPath,
-        effort: payload.output_config?.effort ?? undefined,
-      }),
-    ],
-    {
-      cwd: home,
-      env: cleanClaudeEnv(process.env, {
-        oauthToken: context.accessToken,
-        // 让 CLI 的配置与会话（含对话转录）落在我们自己的目录里，
-        // 而不是用户的 ~/.claude。已实测确认不影响 token 认证。
-        overrides: { CLAUDE_CONFIG_DIR: configDir },
-      }),
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  )
+    const run = new ClaudeCliRun({ token, context, proc, tmpDir, payload })
+    runRegistry.register(run)
+    run.startPump(context.model)
 
-  const run = new ClaudeCliRun({ token, context, proc, tmpDir })
-  runRegistry.register(run)
-  run.startPump(context.model)
+    try {
+      run.send(payload)
+    } catch (error) {
+      run.abort()
+      throw error
+    }
 
-  const line =
-    JSON.stringify({
-      type: "user",
-      message: { role: "user", content: renderClaudePrompt(payload) },
-    }) + "\n"
-  proc.stdin.write(line)
-  proc.stdin.end()
-
-  return run
+    ownedByRun = true
+    return run
+  } finally {
+    if (!ownedByRun) await fs.rm(tmpDir, { recursive: true, force: true })
+  }
 }

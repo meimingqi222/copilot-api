@@ -1,0 +1,143 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\claude-cli-connection-contract.test.ts:
+123 |       })
+124 |       const waiting = run
+125 |         .awaitToolCall("toolu_patience", "read")
+126 |         .catch(() => undefined)
+127 |       try {
+128 |         expect(timer.mock.calls.map((call) => call[1])).toContain(
+                                                              ^
+error: expect(received).toContain(expected)
+
+Expected to contain: 55000
+Received: [ 1800000, 300000 ]
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:128:57)
+(fail) Claude CLI connection contract > bounds MCP patience below the CLI timeout (%s) [24.61ms]
+123 |       })
+124 |       const waiting = run
+125 |         .awaitToolCall("toolu_patience", "read")
+126 |         .catch(() => undefined)
+127 |       try {
+128 |         expect(timer.mock.calls.map((call) => call[1])).toContain(
+                                                              ^
+error: expect(received).toContain(expected)
+
+Expected to contain: 55000
+Received: [ 1800000, 300000 ]
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:128:57)
+(fail) Claude CLI connection contract > bounds MCP patience below the CLI timeout (300000) [17.03ms]
+(pass) Claude CLI connection contract > bounds MCP patience below the CLI timeout (20) [17.77ms]
+138 |         else process.env.COPILOT_API_CLAUDE_MCP_PATIENCE_MS = previous
+139 |       }
+140 |     },
+141 |   )
+142 |   test("preserves xhigh as a distinct CLI effort", () => {
+143 |     expect(mapClaudeEffort("xhigh")).toBe("xhigh")
+                                           ^
+error: expect(received).toBe(expected)
+
+Expected: "xhigh"
+Received: "max"
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:143:38)
+(fail) Claude CLI connection contract > preserves xhigh as a distinct CLI effort [1.52ms]
+148 |         HTTPS_PROXY: "http://inherited.invalid",
+149 |         https_proxy: "http://lowercase.invalid",
+150 |       },
+151 |       { proxyUrl: "http://connection.invalid:8080" },
+152 |     )
+153 |     expect(env.HTTPS_PROXY).toBe("http://connection.invalid:8080")
+                                  ^
+error: expect(received).toBe(expected)
+
+Expected: "http://connection.invalid:8080"
+Received: "http://inherited.invalid"
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:153:29)
+(fail) Claude CLI connection contract > sets connection proxy in the isolated CLI environment [1.42ms]
+159 |     process.env.FAKE_CLAUDE_SCENARIO = "env"
+160 |     context.connection.proxyUrl = "http://connection.invalid:8080"
+161 |     const events = await drain(
+162 |       await streamClaudeCliMessages(context, payload()),
+163 |     )
+164 |     expect(JSON.stringify(events)).toContain("http://connection.invalid:8080")
+                                         ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "http://connection.invalid:8080"
+Received: "[{\"type\":\"message_start\",\"message\":{\"id\":\"msg_env\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-sonnet-4-6\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":1,\"cache_read_input_tokens\":7,\"cache_creation_input_tokens\":3}}},{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}},{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"{}\"}},{\"type\":\"content_block_stop\",\"index\":0},{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":4}},{\"type\":\"message_stop\"}]"
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:164:36)
+(fail) Claude CLI connection contract > passes connection proxy to the actual child process [953.37ms]
+181 |     const pending = streamClaudeCliMessages(
+182 |       { ...context, signal: controller.signal },
+183 |       payload(),
+184 |     ).then(drain)
+185 |     setTimeout(() => controller.abort(new Error("cancelled-during-start")), 80)
+186 |     expect(await rejection(pending)).toMatchObject({ message: "cancelled-during-start" })
+                                           ^
+error: expect(received).toMatchObject(expected)
+
+Matcher error: received value must be a non-null object
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:186:38)
+(fail) Claude CLI connection contract > cancels while waiting for the first CLI event [1478.87ms]
+192 |       { ...context, signal: controller.signal },
+193 |       payload(),
+194 |     )
+195 |     const reading = drain(events)
+196 |     controller.abort(new Error("cancelled-stream"))
+197 |     expect(await rejection(reading)).toMatchObject({ message: "cancelled-stream" })
+                                           ^
+error: expect(received).toMatchObject(expected)
+
+Matcher error: received value must be a non-null object
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:197:38)
+(fail) Claude CLI connection contract > cancels an active stream and releases its run [1349.61ms]
+196 |     controller.abort(new Error("cancelled-stream"))
+197 |     expect(await rejection(reading)).toMatchObject({ message: "cancelled-stream" })
+198 |     expect(runRegistry.countForConnection(context.connection.id)).toBe(0)
+199 |   })
+200 |   test("preserves image blocks in resumed tool results", () => {
+201 |     expect(toolResults(imagePayload())).toMatchObject([
+                                              ^
+error: expect(received).toMatchObject(expected)
+
+  [
+    {
+-     "content": [
+-       {
+-         "text": "screenshot:",
+-         "type": "text",
+-       },
+-       {
+-         "data": "aW1hZ2U=",
+-         "mimeType": "image/png",
+-         "type": "image",
+-       },
+-       {
+-         "text": "[image: https://example.invalid/image.png]",
+-         "type": "text",
+-       },
+-     ],
++     "isError": false,
++     "text": "screenshot:[image][image]",
+      "toolUseId": "toolu_fake_1",
+    },
+  ]
+
+- Expected  - 15
++ Received  + 2
+
+      at <anonymous> (<workspace>\tests\claude-cli-connection-contract.test.ts:201:41)
+(fail) Claude CLI connection contract > preserves image blocks in resumed tool results [1.90ms]
+
+ 1 pass
+ 2 filtered out
+ 8 fail
+ 9 expect() calls
+Ran 9 tests across 1 file. [4.33s]

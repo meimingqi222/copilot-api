@@ -156,6 +156,41 @@ const TOOLS = [
 const UNUSED_CALLBACK_URL = "http://127.0.0.1:1/callback"
 
 describe("claude-mcp-helper", () => {
+  loopbackTest(
+    "announces updated tools and serves their definitions after a call",
+    async () => {
+      const updated = [
+        ...TOOLS,
+        { name: "extra", inputSchema: { type: "object" } },
+      ]
+      const callback = startCallback(() =>
+        Response.json({
+          content: [{ type: "text", text: "done" }],
+          tools: updated,
+        }),
+      )
+      const harness = await startHelper(await writeBridge(callback.url, TOOLS))
+      harness.send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "get_weather", arguments: {} },
+      })
+      expect(await harness.next()).toEqual({
+        jsonrpc: "2.0",
+        method: "notifications/tools/list_changed",
+      })
+      expect(await harness.next()).toMatchObject({
+        id: 1,
+        result: { content: [{ type: "text", text: "done" }] },
+      })
+      harness.send({ jsonrpc: "2.0", id: 2, method: "tools/list" })
+      expect(await harness.next()).toMatchObject({
+        id: 2,
+        result: { tools: updated },
+      })
+    },
+  )
   test("answers initialize with the protocol version and server info", async () => {
     const harness = await startHelper(
       await writeBridge(UNUSED_CALLBACK_URL, TOOLS),

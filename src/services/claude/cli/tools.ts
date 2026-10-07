@@ -9,12 +9,17 @@
  *   会让整段 prompt cache 失效（见 `docs/todo-claude-cli-transport.md` §6.1）。
  */
 
-import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/types"
+import type {
+  AnthropicMessagesPayload,
+  AnthropicToolResultBlock,
+} from "~/services/protocols/anthropic/types"
+
+import type { McpToolResult } from "~/services/claude/cli/run-registry"
 
 import { CLAUDE_WAIT_TOOL_NAME } from "./mcp-names"
 
 /** MCP `tools/list` 里的一个工具。 */
-interface BridgeTool {
+export interface BridgeTool {
   name: string
   description?: string
   inputSchema: Record<string, unknown>
@@ -84,7 +89,7 @@ export function toolResultIds(
   payload: AnthropicMessagesPayload,
 ): Array<string> {
   const ids: Array<string> = []
-  for (const message of payload.messages) {
+  for (const message of freshResultMessages(payload)) {
     if (typeof message.content === "string") continue
     for (const block of message.content) {
       if (block.type === "tool_result") ids.push(block.tool_use_id)
@@ -94,9 +99,9 @@ export function toolResultIds(
 }
 
 /** 从调用方的 messages 里取出 `tool_result`，供唤醒挂起的 run。 */
-interface BridgeToolResult {
+export interface BridgeToolResult {
   toolUseId: string
-  text: string
+  content: McpToolResult["content"]
   isError: boolean
 }
 
@@ -104,13 +109,13 @@ export function toolResults(
   payload: AnthropicMessagesPayload,
 ): Array<BridgeToolResult> {
   const out: Array<BridgeToolResult> = []
-  for (const message of payload.messages) {
+  for (const message of freshResultMessages(payload)) {
     if (typeof message.content === "string") continue
     for (const block of message.content) {
       if (block.type !== "tool_result") continue
       out.push({
         toolUseId: block.tool_use_id,
-        text: toolResultText(block.content),
+        content: toolResultContent(block.content),
         isError: block.is_error === true,
       })
     }
@@ -118,11 +123,28 @@ export function toolResults(
   return out
 }
 
-function toolResultText(
-  content: string | Array<{ type: string; text?: string }>,
-): string {
-  if (typeof content === "string") return content
-  return content
-    .map((block) => (block.type === "text" ? (block.text ?? "") : "[image]"))
-    .join("")
+function freshResultMessages(payload: AnthropicMessagesPayload) {
+  const last = payload.messages.findLastIndex(
+    (message) => message.role === "assistant",
+  )
+  return payload.messages
+    .slice(last + 1)
+    .filter((message) => message.role === "user")
+}
+
+function toolResultContent(
+  content: AnthropicToolResultBlock["content"],
+): McpToolResult["content"] {
+  if (typeof content === "string") return [{ type: "text", text: content }]
+  return content.map((block) => {
+    if (block.type === "text") return { type: "text", text: block.text }
+    if (block.source.type === "base64") {
+      return {
+        type: "image",
+        data: block.source.data,
+        mimeType: block.source.media_type,
+      }
+    }
+    return { type: "text", text: `[image: ${block.source.url}]` }
+  })
 }

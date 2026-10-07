@@ -15,7 +15,6 @@
  */
 
 import type {
-  AnthropicAssistantContentBlock,
   AnthropicErrorEvent,
   AnthropicMessageDeltaEvent,
   AnthropicMessageStartEvent,
@@ -23,8 +22,12 @@ import type {
   AnthropicStreamEventData,
 } from "~/services/protocols/anthropic/types"
 
-import { CLAUDE_WAIT_TOOL_NAME, stripMcpToolPrefix } from "./mcp-names"
-import { parseStreamJsonLine, type ClaudeCliUsage } from "./stream-json"
+import { stripMcpToolPrefix } from "~/services/claude/cli/mcp-names"
+import {
+  parseStreamJsonLine,
+  type ClaudeCliUsage,
+  type ClaudeStreamJsonEvent,
+} from "~/services/claude/cli/stream-json"
 
 interface ClaudeStreamTranslationOptions {
   /** 调用方请求的模型 id；用于改写 `message_start.message.model`。 */
@@ -83,86 +86,16 @@ function claudeErrorEvent(message: string): AnthropicErrorEvent {
 }
 
 /**
- * 把 CLI stdout 的行翻成 Anthropic 流式事件。
+ * 把 normalizeClaudeTurns 输出的行翻成 Anthropic 流式事件。
  *
  * 出错时产出 `error` 事件而不是抛异常：调用方需要能区分"首字节之前的错误"
  * （可以换账号重试）和"已经有内容之后的错误"（只能作为流内错误下发）。
  */
-/**
- * 网关自己的合成工具（`wait_for_tool`）产生的块。
- *
- * 这些调用不该让调用方看见，所以整块滤掉（含 `input_json_delta`）；而且当
- * 一轮答复**只**带自己的调用结束时不能算"答复结束" —— 否则调用方会收到一个
- * 没有任何内容的完整回复，而真正的答案要等结果到了才继续。
- *
- * 判断都收在这个小类里：翻译主循环只调用它，既读得清楚，也不会把这几个分支
- * 堆进 `translateClaudeStreamJson` 的复杂度预算里。
- */
-class OwnWaitBlocks {
-  private readonly blocks = new Set<number>()
-  private sawClientToolCall = false
-
-  /** 新的一条 CLI 助手消息开始：块 index 各成一套。 */
-  reset(): void {
-    this.blocks.clear()
-    this.sawClientToolCall = false
-  }
-
-  /**
-   * 这个块是网关自己的调用吗？是就认领它（并从 `openBlocks` 摘掉，免得收尾时
-   * 替它补 `content_block_stop`）。
-   */
-  claimIfOurs(
-    name: string | undefined,
-    index: number,
-    openBlocks: Set<number>,
-    serverName?: string,
-  ): boolean {
-    if (stripMcpToolPrefix(name ?? "", serverName) !== CLAUDE_WAIT_TOOL_NAME) {
-      return false
-    }
-    openBlocks.delete(index)
-    this.blocks.add(index)
-    return true
-  }
-
-  markClientTool(): void {
-    this.sawClientToolCall = true
-  }
-
-  /** 这个块是网关自己的吗（它的增量与收尾都不该下发）。 */
-  holds(index: number): boolean {
-    return this.blocks.has(index)
-  }
-
-  /** 这一轮是否只在等网关自己的调用 —— 即答复尚未成形。 */
-  private onlyOurs(): boolean {
-    return this.blocks.size > 0 && !this.sawClientToolCall
-  }
-
-  /**
-   * 这一轮要报给调用方的 `stop_reason`。
-   *
-   * 只带自己调用的那轮即便 CLI 说 `tool_use` 也不能照报：调用方会以为该由自己
-   * 执行那个工具。
-   */
-  stopReasonToReport(stopReason: string | undefined): string | undefined {
-    if (stopReason !== "tool_use" || !this.onlyOurs()) return stopReason
-    return undefined
-  }
-
-  /** 这一轮的 `message_stop` 该不该下发（只带自己调用的那轮不发）。 */
-  endsResponse(): boolean {
-    return !this.onlyOurs()
-  }
-}
-
 export async function* translateClaudeStreamJson(
   lines: AsyncIterable<string>,
   options: ClaudeStreamTranslationOptions,
 ): AsyncIterable<AnthropicStreamEventData> {
   const openBlocks = new Set<number>()
-  const own = new OwnWaitBlocks()
   let messageStarted = false
   let messageEnded = false
 
@@ -194,7 +127,7 @@ export async function* translateClaudeStreamJson(
     switch (event.type) {
       case "message_start": {
         messageStarted = true
-        own.reset()
+        messageEnded = false
         const start: AnthropicMessageStartEvent = {
           type: "message_start",
           message: {
@@ -216,19 +149,12 @@ export async function* translateClaudeStreamJson(
         const index = event.index ?? openBlocks.size
         openBlocks.add(index)
         const block = event.content_block
+        const server = serverBlock(block)
+        if (server) {
+          yield { type: "content_block_start", index, content_block: server }
+          break
+        }
         if (block?.type === "tool_use") {
-          // 网关自己的调用：整块不下发，也不留在 openBlocks 里。
-          if (
-            own.claimIfOurs(
-              block.name,
-              index,
-              openBlocks,
-              options.mcpServerName,
-            )
-          ) {
-            break
-          }
-          own.markClientTool()
           yield {
             type: "content_block_start",
             index,
@@ -268,8 +194,6 @@ export async function* translateClaudeStreamJson(
 
       case "content_block_delta": {
         const index = event.index ?? 0
-        // 自己的块的参数增量（input_json_delta）同样不下发。
-        if (own.holds(index)) break
         const delta = event.delta
         switch (delta?.type) {
           case "text_delta": {
@@ -320,9 +244,6 @@ export async function* translateClaudeStreamJson(
 
       case "content_block_stop": {
         const index = event.index ?? 0
-        // 自己的块不删：`message_delta` / `message_stop` 还要靠它判断"这一轮
-        // 只有网关自己的调用"。它在下一个 message_start 时统一清掉。
-        if (own.holds(index)) break
         if (!openBlocks.delete(index)) break
         yield { type: "content_block_stop", index }
         break
@@ -331,9 +252,7 @@ export async function* translateClaudeStreamJson(
       case "message_delta": {
         // 先关掉还开着的块，否则下游会看到 message_delta 时块还开着。
         for (const closed of closeOpenBlocks()) yield closed
-        // 只带网关自己调用的那一轮不算"因为工具而停"：报给调用方会让它以为
-        // 该由自己执行那个工具。这一轮的答复还在后面（等结果回来）。
-        const stopReason = own.stopReasonToReport(event.delta?.stop_reason)
+        const stopReason = event.delta?.stop_reason
         yield {
           type: "message_delta",
           delta: {
@@ -353,11 +272,6 @@ export async function* translateClaudeStreamJson(
 
       case "message_stop": {
         for (const closed of closeOpenBlocks()) yield closed
-        if (!own.endsResponse()) {
-          // 这一轮只是在等网关自己的调用，答复尚未成形：**不**结束这一段，
-          // 让结果到了之后的内容落在同一个流里。
-          break
-        }
         messageEnded = true
         yield { type: "message_stop" }
         break
@@ -390,6 +304,30 @@ export async function* translateClaudeStreamJson(
   if (!messageEnded) yield { type: "message_stop" }
 }
 
+function serverBlock(
+  block: ClaudeStreamJsonEvent["content_block"],
+):
+  | Extract<
+      AnthropicStreamEventData,
+      { type: "content_block_start" }
+    >["content_block"]
+  | undefined {
+  if (block?.type === "server_tool_use")
+    return {
+      type: "server_tool_use",
+      id: block.id ?? "",
+      name: block.name ?? "web_search",
+      input: block.input ?? {},
+    }
+  if (block?.type === "web_search_tool_result")
+    return {
+      type: "web_search_tool_result",
+      tool_use_id: block.tool_use_id ?? "",
+      content: block.content ?? [],
+    }
+  return undefined
+}
+
 /**
  * 把 Anthropic 流式事件折叠成一个完整响应（非流式路径）。
  *
@@ -405,7 +343,7 @@ export async function collectAnthropicResponse(
   let usage: AnthropicResponse["usage"] = { input_tokens: 0, output_tokens: 0 }
   let stopReason: AnthropicResponse["stop_reason"] = "end_turn"
   let stopSequence: string | null = null
-  const content: Array<AnthropicAssistantContentBlock> = []
+  const content: AnthropicResponse["content"] = []
 
   type Builder =
     | { kind: "text"; text: string }
@@ -467,7 +405,7 @@ export async function collectAnthropicResponse(
         } else if (block.type === "text") {
           current = { kind: "text", text: block.text ?? "" }
         } else {
-          // Server tools (web search) have no CLI-visible representation.
+          content.push(block)
           current = undefined
         }
         break

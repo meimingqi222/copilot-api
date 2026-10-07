@@ -22,6 +22,47 @@ function textOf(blocks: Array<ClaudePromptBlock>): string {
 }
 
 describe("renderClaudePrompt", () => {
+  test("replays server search queries and results in their original order", () => {
+    const rendered = textOf(
+      renderClaudePrompt(
+        payload([
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "server_tool_use",
+                id: "search",
+                name: "web_search",
+                input: { query: "important query" },
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "web_search_tool_result",
+                tool_use_id: "search",
+                content: [
+                  {
+                    type: "web_search_result",
+                    url: "https://important.example",
+                    title: "Important fact",
+                  },
+                ],
+              },
+            ],
+          },
+        ]),
+      ),
+    )
+    expect(rendered).toContain("important query")
+    expect(rendered).toContain("https://important.example")
+    expect(rendered).toContain("Important fact")
+    expect(rendered.indexOf("important query")).toBeLessThan(
+      rendered.indexOf("Important fact"),
+    )
+  })
   test("labels turns as Human / Assistant", () => {
     const blocks = renderClaudePrompt(
       payload([

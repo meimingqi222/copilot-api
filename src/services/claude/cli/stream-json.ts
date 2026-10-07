@@ -15,6 +15,7 @@
  */
 
 import { iterateLines } from "~/lib/stream-lines"
+import type { AnthropicWebSearchToolResultBlock } from "~/services/protocols/anthropic/types"
 
 /** CLI 报的 usage，字段名与 Anthropic 一致。 */
 export interface ClaudeCliUsage {
@@ -26,7 +27,7 @@ export interface ClaudeCliUsage {
 }
 
 /** `stream_event` 里的 Anthropic 流式事件（宽松类型，见文档 §9）。 */
-interface ClaudeStreamJsonEvent {
+export interface ClaudeStreamJsonEvent {
   type?: string
   index?: number
   message?: { id?: string; model?: string; usage?: ClaudeCliUsage }
@@ -35,6 +36,9 @@ interface ClaudeStreamJsonEvent {
     id?: string
     name?: string
     text?: string
+    input?: Record<string, unknown>
+    tool_use_id?: string
+    content?: AnthropicWebSearchToolResultBlock["content"]
   }
   delta?: {
     type?: string
@@ -54,6 +58,10 @@ interface ClaudeStreamJsonLine {
   subtype?: string
   is_error?: boolean
   result?: string
+  structured_output?: unknown
+  tool_use_result?: unknown
+  message?: { content?: Array<{ type: string; tool_use_id?: string }> }
+  errors?: Array<string>
   session_id?: string
   event?: ClaudeStreamJsonEvent
   usage?: ClaudeCliUsage

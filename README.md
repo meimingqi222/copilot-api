@@ -241,7 +241,7 @@ an API key. It has two transports:
 | Transport       | How it works                                                                                                                                                                  | When it is used                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `cli` (default) | Drives the genuine local `claude` binary: the turn is rendered into a user message, the caller's tools are bridged in over MCP, and tool results resume the same CLI process. | Automatically, when a `claude` binary is on `PATH` (or in `~/.local/bin`, `/usr/local/bin`, `/opt/homebrew/bin`). |
-| `http`          | Replays the OAuth token against `api.anthropic.com` with a Claude Code wire fingerprint.                                                                                      | When no `claude` binary is found, or when explicitly requested.                                                   |
+| `http`          | Replays the OAuth token against `api.anthropic.com` with a Claude Code wire fingerprint.                                                                                      | When explicitly selected in the account settings or global override.                                              |
 
 **Why the CLI is the default.** Anthropic applies subscription eligibility
 checks to request _content_, not only to credentials and the attestation hash.
@@ -266,15 +266,37 @@ an error and does not silently switch to HTTP. You can also set
 
 Other knobs:
 
-| Environment variable                 | Default  | Meaning                                                                          |
-| ------------------------------------ | -------- | -------------------------------------------------------------------------------- |
-| `COPILOT_API_CLAUDE_MAX_RUNS`        | `4`      | Live `claude` processes per connection (each run is one process).                |
-| `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` | `300000` | How long one bridged tool call may block before it is reported as still running. |
+| Environment variable                 | Default | Meaning                                                                                |
+| ------------------------------------ | ------- | -------------------------------------------------------------------------------------- |
+| `COPILOT_API_CLAUDE_MAX_RUNS`        | `4`     | Live `claude` processes per connection (each run is one process).                      |
+| `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` | `55000` | Tool-call wait in milliseconds, capped at 55 seconds; shorter overrides are supported. |
 
 Because the CLI transport never touches the credential store, the OAuth refresh
 chain in the proxy stays the single holder of the rotating refresh token. See
 [`docs/todo-claude-cli-transport.md`](docs/todo-claude-cli-transport.md) for the
 full design.
+
+Normal conversation turns reuse a live CLI process when the account, model,
+configuration and complete history match. Only new user messages are sent on
+continuation; changed history or configuration starts a fresh process. Idle
+sessions expire after one hour, are bounded to six globally, and can be evicted
+to admit new work within the per-connection process limit. CLI transcripts are
+disabled with `--no-session-persistence`.
+
+Claude CLI connections support native `web_search` server tools and JSON schema
+output via `output_config.format`. OpenAI `response_format: {type:
+"json_schema", json_schema: {schema: ...}}` also carries its schema through the
+IR conversion to Messages. Search rounds produce one response with server-tool
+results, and structured replies contain only the CLI's validated JSON. Native
+search domain filters and `max_uses` are enforced through the CLI's stdio
+permission protocol. Effort changes update the existing process after a CLI
+acknowledgment; unsupported updates fall back to a fresh process. Parked tool
+continuations can add client tools without restarting; existing definitions
+and complete history must remain unchanged.
+
+Tool-result continuations containing new text or images replay the full
+transcript in a fresh process. Search queries and results are preserved during
+replay, and parallel search results are matched by their tool call IDs.
 
 ### Usage Monitoring Endpoints
 

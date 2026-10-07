@@ -1,0 +1,43 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\claude-cli-bridge.test.ts:
+143 |     process.env.FAKE_CLAUDE_SCENARIO = "tool-delayed"
+144 |     const tools = [{ name: "get_weather", input_schema: { type: "object" } }]
+145 |     const first = await drain(await streamClaudeCliMessages(context, { ...userPayload("weather?"), tools }))
+146 |     expect(first.at(-1)?.type).toBe("message_stop")
+147 |     const parked = runRegistry.findParked([TOOL_USE_ID], { connectionId: context.connection.id, credentialId: context.credential.id })
+148 |     expect(parked).toBeDefined()
+                         ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (tests\claude-cli-bridge.test.ts:148:20)
+(fail) claude cli bridge > accepts an immediate tool result before the callback and adds tools to the same run [900.20ms]
+
+tests\claude-cli-controls.test.ts:
+71 |     const request: AnthropicMessagesPayload = { model: "claude-sonnet-4-6", max_tokens: 100, messages: [
+72 |       { role: "user", content: [{ type: "tool_result", tool_use_id: "stale", content: "old" }] },
+73 |       { role: "assistant", content: "next" },
+74 |       { role: "user", content: [{ type: "tool_result", tool_use_id: "fresh", content: "new" }] },
+75 |     ] }
+76 |     expect(toolResultIds(request)).toEqual(["fresh"])
+                                        ^
+error: expect(received).toEqual(expected)
+
+  [
++   "stale",
+    "fresh",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests\claude-cli-controls.test.ts:76:36)
+(fail) Claude tool continuation > only fresh user tool results can resume a run [0.33ms]
+
+ 0 pass
+ 33 filtered out
+ 2 fail
+ 3 expect() calls
+Ran 2 tests across 2 files. [1356.00ms]

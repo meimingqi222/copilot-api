@@ -4,12 +4,13 @@
  * 几个参数不是可选的：
  *
  * - `--include-partial-messages`：没有它只能拿到整块消息，没有 token 级流。
- * - `--tools ""`：禁用 CLI 的全部内置工具。调用方的工具才是唯一的工具，
+ * - `--tools ""`：默认禁用 CLI 的内置工具；请求原生搜索时只启用 WebSearch。
+ *   调用方的工具通过 MCP 桥接，
  *   否则模型可能去用 CLI 自带的 Read/Bash，而调用方根本收不到那些调用。
  * - `--strict-mcp-config`：只用我们给的那份 MCP 配置。
  * - `--setting-sources ""`：不读 `settings.json` / `CLAUDE.md`，
  *   避免工作目录里的用户配置漏进 system prompt。
- * - `--dangerously-skip-permissions`：headless 下不能有权限交互。
+ * - 搜索通过 stdio 权限协议执行调用方限制；其他请求跳过权限交互。
  */
 
 interface ClaudeCliArgsOptions {
@@ -19,16 +20,8 @@ interface ClaudeCliArgsOptions {
   mcpConfigPath: string
   /** 推理强度；空值表示不传。 */
   effort?: string
-}
-
-/** 我们的 effort 取值与 CLI 的对应关系。 */
-const EFFORT_ALIASES: Readonly<Record<string, string>> = {
-  xhigh: "max",
-}
-
-/** 把我们的 effort 取值翻译成 CLI 认识的值。 */
-export function mapClaudeEffort(effort: string): string {
-  return EFFORT_ALIASES[effort] ?? effort
+  webSearch?: boolean
+  jsonSchema?: Record<string, unknown>
 }
 
 export function claudeCliArgs(options: ClaudeCliArgsOptions): Array<string> {
@@ -43,22 +36,27 @@ export function claudeCliArgs(options: ClaudeCliArgsOptions): Array<string> {
     "--model",
     options.model,
     "--tools",
-    "",
+    options.webSearch ? "WebSearch" : "",
     "--strict-mcp-config",
     "--mcp-config",
     options.mcpConfigPath,
     "--setting-sources",
     "",
-    "--dangerously-skip-permissions",
+    "--no-session-persistence",
   ]
+  if (options.webSearch)
+    args.push(
+      "--permission-mode",
+      "manual",
+      "--permission-prompt-tool",
+      "stdio",
+    )
+  else args.push("--dangerously-skip-permissions")
   const effort = options.effort?.trim()
   if (effort) {
-    args.push(
-      "--effort",
-      mapClaudeEffort(effort),
-      "--thinking-display",
-      "summarized",
-    )
+    args.push("--effort", effort, "--thinking-display", "summarized")
   }
+  if (options.jsonSchema)
+    args.push("--json-schema", JSON.stringify(options.jsonSchema))
   return args
 }

@@ -28,6 +28,7 @@ import { ClaudeCliRun } from "~/services/claude/cli/bridge"
 import { CLAUDE_WAIT_TOOL_NAME } from "~/services/claude/cli/mcp-names"
 import { bridgeTools } from "~/services/claude/cli/tools"
 import { translateClaudeStreamJson } from "~/services/claude/cli/translate"
+import { normalizeClaudeTurns } from "~/services/claude/cli/turns"
 
 import { testConnection, testCredential } from "./claude-cli-fixtures"
 
@@ -58,6 +59,7 @@ async function makeRun(patienceMs: number): Promise<{
   )
   const run = new ClaudeCliRun({
     token: "tok-wait-test",
+    payload: { model: "claude-sonnet-5-5", max_tokens: 100, messages: [] },
     context: {
       connection: testConnection(),
       credential: testCredential(),
@@ -71,32 +73,8 @@ async function makeRun(patienceMs: number): Promise<{
     run,
     dispose: async () => {
       run.abort()
-      await removeTempDir(tmpDir)
+      await proc.exited
     },
-  }
-}
-
-/**
- * Remove a run's temp dir, tolerating the Windows quirk that breaks this.
- *
- * Two removals race on the same path: `abort()` → `finish()` schedules its own
- * `fs.rm`, and the test removes it again here while the killed process may
- * still hold a handle. Bun on Windows intermittently answers that with
- * `EFAULT: bad address in system call argument` — which is a cleanup detail,
- * not the behaviour under test, so it must not fail the test. Retry the
- * transient codes and then give up: an OS temp dir left behind costs nothing.
- */
-async function removeTempDir(dir: string): Promise<void> {
-  const TRANSIENT = new Set(["EFAULT", "EBUSY", "EPERM", "ENOTEMPTY"])
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      await fs.rm(dir, { recursive: true, force: true })
-      return
-    } catch (error) {
-      const code = (error as { code?: string }).code
-      if (!code || !TRANSIENT.has(code)) throw error
-      await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)))
-    }
   }
 }
 
@@ -196,9 +174,12 @@ async function translate(
   const iterable = (async function* generate() {
     for (const value of lines) yield JSON.stringify(value)
   })()
-  for await (const event of translateClaudeStreamJson(iterable, {
-    model: "claude-sonnet-5-5",
-  })) {
+  for await (const event of translateClaudeStreamJson(
+    normalizeClaudeTurns(iterable, { structured: false }),
+    {
+      model: "claude-sonnet-5-5",
+    },
+  )) {
     out.push(event)
   }
   return out

@@ -358,7 +358,7 @@ export async function createClaudeMessagesOnce(
     throw toHttpError(error)
   }
   if (transport === "cli") {
-    const runContext = { connection, credential, model, accessToken }
+    const runContext = { connection, credential, model, accessToken, signal }
     if (isStream) {
       // 流式契约是 `{ data, event }` 帧;CLI 产出的是类型化 Anthropic 事件,
       // 必须在这里转帧,否则路由层会把每一个事件都丢掉(见 cliEventsAsSseFrames)。

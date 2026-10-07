@@ -76,6 +76,7 @@ function randomCallId(): string {
 async function handleToolsCall(
   callbackUrl: string,
   params: unknown,
+  updateTools: (tools: unknown) => void,
 ): Promise<unknown> {
   const typed = (params ?? {}) as {
     name?: string
@@ -102,7 +103,9 @@ async function handleToolsCall(
   const parsed = JSON.parse(response.body) as {
     content?: unknown
     is_error?: boolean
+    tools?: unknown
   }
+  if (Array.isArray(parsed.tools)) updateTools(parsed.tools)
   return { content: parsed.content ?? [], isError: parsed.is_error === true }
 }
 
@@ -144,7 +147,14 @@ export async function runClaudeMcpHelper(
     process.stderr.write("claude-mcp-helper: bridge file has no callbackUrl\n")
     return 2
   }
-  const tools = bridge.tools ?? []
+  let tools: unknown = bridge.tools ?? []
+  const updateTools = (next: unknown) => {
+    if (JSON.stringify(next) === JSON.stringify(tools)) return
+    tools = next
+    process.stdout.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })}\n`,
+    )
+  }
 
   const write = (response: JsonRpcResponse) => {
     process.stdout.write(`${JSON.stringify(response)}\n`)
@@ -176,7 +186,7 @@ export async function runClaudeMcpHelper(
       case "initialize": {
         respond(id, {
           protocolVersion: PROTOCOL_VERSION,
-          capabilities: { tools: {} },
+          capabilities: { tools: { listChanged: true } },
           serverInfo: { name: "copilot-api", version: "1" },
         })
         break
@@ -187,7 +197,7 @@ export async function runClaudeMcpHelper(
       }
       case "tools/call": {
         // 并发处理：一个 run 里可能有多个工具调用同时在等。
-        void handleToolsCall(callbackUrl, request.params)
+        void handleToolsCall(callbackUrl, request.params, updateTools)
           .then((result) => respond(id, result))
           .catch((error: unknown) => {
             respond(id, undefined, (error as Error).message)

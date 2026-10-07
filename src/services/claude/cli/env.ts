@@ -23,6 +23,7 @@ const BLOCKED_ENV_KEYS: ReadonlyArray<string> = [
   "CLAUDE_CODE_SSE_PORT",
   // 先删再按需注入：否则用户环境里的 token 会盖过连接自己的凭证。
   "CLAUDE_CODE_OAUTH_TOKEN",
+  "CLAUDE_SECURESTORAGE_CONFIG_DIR",
 ]
 
 /** 无条件追加的变量。 */
@@ -38,6 +39,8 @@ const FORCED_ENV: Readonly<Record<string, string>> = {
 interface CleanClaudeEnvOptions {
   /** 注入 `CLAUDE_CODE_OAUTH_TOKEN`。空值表示不注入（沿用 CLI 自己的登录态）。 */
   oauthToken?: string
+  /** Connection-specific proxy for the real CLI process. */
+  proxyUrl?: string
   /** 最后应用的覆盖项；值为 undefined 表示删除该键。 */
   overrides?: Record<string, string | undefined>
 }
@@ -58,8 +61,24 @@ export function cleanClaudeEnv(
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {
     if (value === undefined) continue
-    if (blocked.has(key)) continue
+    if (blocked.has(key.toUpperCase())) continue
     out[key] = value
+  }
+  const proxy = options.proxyUrl?.trim()
+  if (proxy) {
+    for (const key of Object.keys(out)) {
+      if (
+        ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"].includes(key.toUpperCase())
+      )
+        delete out[key]
+    }
+    out.HTTP_PROXY = proxy
+    out.HTTPS_PROXY = proxy
+    out.ALL_PROXY = proxy
+    out.NO_PROXY = [out.NO_PROXY, out.no_proxy, "localhost", "127.0.0.1", "::1"]
+      .filter(Boolean)
+      .join(",")
+    delete out.no_proxy
   }
   Object.assign(out, FORCED_ENV)
   const token = options.oauthToken?.trim()

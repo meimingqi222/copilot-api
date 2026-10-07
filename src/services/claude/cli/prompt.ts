@@ -3,8 +3,8 @@
  *
  * ## 为什么把整段 transcript 压成一条 user 文本
  *
- * 真 Claude Code 自己持有会话状态，而我们每回合起一个新进程。所以每回合
- * 都要把完整对话重新喂进去。压成文本而不是结构化的 messages，是因为
+ * 新进程启动时需要完整对话；匹配到持久会话时只渲染新 user 消息。
+ * 压成文本而不是结构化的 messages，是因为
  * CLI 的 `--input-format stream-json` 只接受"一条 user 消息"，会话结构
  * 由 CLI 自己维护。
  *
@@ -69,11 +69,7 @@ function contentBlocks(
 /** tool_result 的内容既可以是字符串，也可以是 text/image 块数组。 */
 function toolResultBlocks(
   content: AnthropicToolResultBlock["content"],
-): ReadonlyArray<
-  AnthropicToolResultBlock["content"] extends string ? never
-  : | { type: "text"; text: string }
-    | { type: "image"; source: AnthropicImageSource }
-> {
+): ReadonlyArray<ClaudePromptBlock> {
   if (typeof content === "string") return [{ type: "text", text: content }]
   return content
 }
@@ -115,6 +111,7 @@ export function renderClaudePrompt(
           text += block.thinking
           break
         }
+        case "server_tool_use":
         case "tool_use": {
           text += `\n[tool call ${block.name} id=${block.id} args=${JSON.stringify(block.input)}]`
           break
@@ -134,6 +131,10 @@ export function renderClaudePrompt(
         case "image": {
           flush()
           blocks.push({ type: "image", source: block.source })
+          break
+        }
+        case "web_search_tool_result": {
+          text += `\n[web search result id=${block.tool_use_id}]\n${JSON.stringify(block.content)}`
           break
         }
       }

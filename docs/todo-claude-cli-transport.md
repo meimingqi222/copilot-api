@@ -214,11 +214,34 @@ POST /v1/messages
 
 ### 4.4 进程生命周期
 
-- **一回合 = 一个进程**。写完第一条 user 消息后 `stdin.Close()`，CLI 跑完这轮就退出。
-- 跨回合**不复用**进程。
+- stdin 保持打开；账号、模型、配置和完整历史一致时，普通回合复用同一进程，
+  只发送新增 user 消息。历史压缩或配置变化时启动新进程。
+- 正常完成的空闲进程保留最多一小时，全局最多六个；连接满额时先淘汰空闲进程。
+- `--no-session-persistence` 禁用新会话转录持久化；服务退出会清理活跃与空闲进程。
 - 一轮之内跨多次工具调用**复用**同一进程 —— 这是 prompt cache 命中率的关键，
   也是"挂起而不是重开"的根本理由。
 - 30 分钟兜底：`setTimeout(30 * 60_000, () => run.abort())`，每轮 `resume` 时重置。
+
+2026-10-07 补齐原生 `WebSearch` 与 `--json-schema`。CLI 自己执行的搜索、等待工具和
+结构化校验回合合并为一条 API 响应，保留搜索结果与累计 usage，且重映射内容块索引。
+结构化响应只输出最终 `structured_output`，校验失败通过错误路径返回。
+搜索的 domain filters / `max_uses` 通过 stdio 权限请求强制执行，重复请求不会重复
+扣除次数。推理强度改变通过 `apply_flag_settings` 更新，确认失败或超时则重启并重放
+完整历史。工具续接可以追加 MCP 工具，helper 更新列表并发出 `tools/list_changed`。
+响应结束前预登记工具调用，只使用最后一条 assistant 之后的工具结果匹配挂起进程。
+自动化验证见 `tests/claude-cli-session.test.ts`、`tests/claude-cli-controls.test.ts` 和
+MCP helper/bridge 集成测试。真实 CLI 的强度更新和搜索权限协议已通过本地模拟上游
+验证。2026-10-07 使用真实 Claude 订阅与 `claude-sonnet-5-5` 验证短文本回复、
+普通回合进程复用、low → medium 强度更新、MCP 工具调用、追加工具后的挂起续接
+及 JSON schema 输出，全部通过。后续真机补测流式文本、内联图片、MCP 图片结果、
+流式 JSON schema、原生网页搜索及来源链接、allowed/blocked domains、零搜索预算、
+第二次搜索超出 max_uses 的拒绝、请求取消与进程清理，均通过。搜索结果来自真实
+上游；预算耗尽测试记录了第一条 WebSearch 被允许、第二条被拒绝。取消期间发现的
+临时配置过早删除已修复，并以 `tests/claude-cli-process.test.ts` 绑定回归测试。
+
+审阅后的修复：并行 WebSearch 按 `tool_use_id` 匹配结果；完整历史重放保留搜索查询
+和结果。工具结果之外包含新增文字或图片的续接启动新进程并重放完整历史，避免丢失
+新增内容。内部工具过滤统一由 `normalizeClaudeTurns` 负责，翻译层不再重复维护状态。
 
 ---
 
@@ -275,7 +298,7 @@ POST /v1/messages
   "--dangerously-skip-permissions",
 ]
 // effort 非空时追加：["--effort", effort, "--thinking-display", "summarized"]
-// 注意 effort === "xhigh" 要映射成 "max"
+// 当前 Claude Code 支持独立的 xhigh 与 max，effort 原样传递。
 ```
 
 **测试**
@@ -717,7 +740,7 @@ bun run dev -- --verbose
    citty 的 help 输出和 app 启动横幅都会污染它。改为 `argv[0] === "claude-mcp-helper"`
    前置判断，且不加载 app。
 3. **`wait_for_tool` 当时未实现** —— §5 Phase 3 自己把它标为 Phase 4 增强项并允许先
-   不做；用 `patience`（默认 5 分钟，`COPILOT_API_CLAUDE_MCP_PATIENCE_MS`）顶。
+   不做；用 `patience`（现默认且最多 55 秒，`COPILOT_API_CLAUDE_MCP_PATIENCE_MS` 可调小）顶。
    **2026-09-30 已补齐**（真机验证发现"越过 patience 后迟到结果只能靠重开进程接"的
    代价），见 §0「后续跟进」2。
 4. **Phase 5 的粘性选路无需新写** —— `src/lib/route-target/select.ts:84,200` 的

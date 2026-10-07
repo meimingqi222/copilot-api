@@ -16,6 +16,7 @@ import { enforceLogStorageLimits } from "~/lib/log-rotation"
 import { startMemoryDiagnostics } from "~/lib/memory-diagnostics"
 import { loadModelAliases } from "~/lib/model-aliases"
 import { startAntigravityVersionUpdater } from "~/services/antigravity/version"
+import { runRegistry } from "~/services/claude/cli/run-registry"
 
 import { hashAdminPasswordInEnv } from "./lib/admin-password"
 import { loadGuard } from "./lib/guard"
@@ -372,6 +373,7 @@ async function runServer(options: RunServerOptions): Promise<void> {
     if (shuttingDown) return
     shuttingDown = true
     logger.info("Shutting down...")
+    runRegistry.clear()
     try {
       await flushAllPersistentMaps()
       await flushManagedConnectionsOnShutdown()

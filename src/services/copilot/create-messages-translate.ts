@@ -72,7 +72,7 @@ export function translateToCopilotMessages(
     }
 
     if (outputConfig?.effort) {
-      const effortOrder = ["low", "medium", "high"] as const
+      const effortOrder = ["low", "medium", "high", "xhigh", "max"] as const
       const currentIdx = effortOrder.indexOf(outputConfig.effort)
       const mediumIdx = effortOrder.indexOf("medium")
       if (currentIdx > mediumIdx) {

@@ -14,7 +14,11 @@
 
 /** MCP 工具调用的结果，形态与 MCP 的 `tools/call` 返回一致。 */
 export interface McpToolResult {
-  content: Array<{ type: string; text: string }>
+  tools?: Array<import("~/services/claude/cli/tools").BridgeTool>
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+  >
   is_error?: boolean
 }
 
@@ -25,6 +29,7 @@ export interface BridgeRun {
   readonly connectionId: string
   readonly credentialId: string
   /** 这个 run 是否正阻塞在给定的 MCP 调用上。 */
+  abort?(): void
   hasPending(toolUseId: string): boolean
   /** 把调用方的结果交给阻塞中的 MCP 调用；没有在等这个 id 时返回 false。 */
   deliver(toolUseId: string, result: McpToolResult): boolean
@@ -32,6 +37,8 @@ export interface BridgeRun {
   awaitToolCall(toolUseId: string, name: string): Promise<McpToolResult>
   /** 取一个已经回过"still running"的调用的结果（`wait_for_tool` 的入口）。 */
   awaitWaitRequest(toolUseId: string): Promise<McpToolResult>
+  toolDefinitions?(): Array<import("~/services/claude/cli/tools").BridgeTool>
+  availableForResume?(): boolean
 }
 
 interface ParkedMatch {
@@ -43,6 +50,47 @@ interface ParkedMatch {
 export class RunRegistry {
   private readonly byToken = new Map<string, BridgeRun>()
   private readonly byCall = new Map<string, BridgeRun>()
+  private readonly idle = new Map<string, BridgeRun>()
+  private readonly starting = new Map<string, number>()
+
+  reserveConnection(
+    connectionId: string,
+    limit: number,
+  ): (() => void) | undefined {
+    if (this.countForConnection(connectionId) >= limit)
+      this.evictIdle(connectionId)
+    if (this.countForConnection(connectionId) >= limit) return undefined
+    this.starting.set(connectionId, (this.starting.get(connectionId) ?? 0) + 1)
+    return () => {
+      const count = (this.starting.get(connectionId) ?? 1) - 1
+      if (count <= 0) this.starting.delete(connectionId)
+      else this.starting.set(connectionId, count)
+    }
+  }
+
+  keepIdle(key: string, run: BridgeRun): void {
+    const replaced = this.idle.get(key)
+    if (replaced && replaced !== run) replaced.abort?.()
+    this.idle.delete(key)
+    this.idle.set(key, run)
+    while (this.idle.size > 6) this.evictIdle()
+  }
+
+  takeIdle(key: string): BridgeRun | undefined {
+    const run = this.idle.get(key)
+    this.idle.delete(key)
+    return run
+  }
+
+  evictIdle(connectionId?: string): boolean {
+    for (const [key, run] of this.idle) {
+      if (connectionId && run.connectionId !== connectionId) continue
+      this.idle.delete(key)
+      run.abort?.()
+      return true
+    }
+    return false
+  }
 
   register(run: BridgeRun): void {
     this.byToken.set(run.token, run)
@@ -50,6 +98,9 @@ export class RunRegistry {
 
   unregister(run: BridgeRun): void {
     this.byToken.delete(run.token)
+    for (const [key, owner] of this.idle) {
+      if (owner === run) this.idle.delete(key)
+    }
     for (const [callId, owner] of this.byCall) {
       if (owner === run) this.byCall.delete(callId)
     }
@@ -107,15 +158,31 @@ export class RunRegistry {
     return { run: found, toolUseIds: matched }
   }
 
+  takeParked(
+    toolUseIds: ReadonlyArray<string>,
+    scope: { connectionId: string; credentialId: string },
+  ): ParkedMatch | undefined {
+    const match = this.findParked(toolUseIds, scope)
+    if (match?.run.availableForResume?.() === false) return undefined
+    if (match) {
+      for (const [id, run] of this.byCall) {
+        if (run === match.run) this.byCall.delete(id)
+      }
+    }
+    return match
+  }
+
   /** 测试用：清空注册表。 */
   clear(): void {
+    for (const run of this.byToken.values()) run.abort?.()
+    this.idle.clear()
     this.byToken.clear()
     this.byCall.clear()
   }
 
   /** 这个 connection 现在有多少个活着的 run（含挂起的）。 */
   countForConnection(connectionId: string): number {
-    let count = 0
+    let count = this.starting.get(connectionId) ?? 0
     for (const run of this.byToken.values()) {
       if (run.connectionId === connectionId) count += 1
     }

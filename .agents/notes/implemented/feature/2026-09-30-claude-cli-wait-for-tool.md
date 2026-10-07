@@ -1,6 +1,7 @@
 # Agent Note: `wait_for_tool` —— 让模型自己回来取迟到的工具结果
 
 Status: implemented
+Partly-superseded-by: 2026-10-07-claude-cli-connection-contract.md
 
 ## Problem
 
@@ -29,11 +30,9 @@ Do not call it again.` 工具名按 CLI 眼里的形态写全，模型看到的�
   `arguments.call`（**不是**回调自己的 `tool_call_id`，那是 wait 这次调用自身的 id），
   交给 `run.awaitWaitRequest()`；它复用 `awaitToolCall` 的同一套等待，区别是不再
   `park`（那条调用早已登记，也不该再被 `findParked` 当成新回合的唤醒目标）。
-- **合成调用不能泄漏给调用方**。`translateClaudeStreamJson` 里新增
-  `OwnWaitBlocks`：认出自己那块就整块不下发（含 `input_json_delta` 与
-  `content_block_stop`），并且当一轮答复**只**带自己的调用时，`message_delta` 不报
-  `tool_use`、`message_stop` 也不下发 —— 否则调用方会收到一个没有任何内容的完整回复，
-  而真正的答案还在后面。
+- **合成调用不能泄漏给调用方**。`normalizeClaudeTurns` 统一过滤自己的调用及其
+  参数增量、收尾，并将 CLI 自己执行的回合合并到同一条响应；`translateClaudeStreamJson`
+  只负责归一化后的协议输出，不再维护第二套过滤状态。
 - 等待到哪里为止：`patience` 到点时 waiter 会把自己摘掉，所以之后送来的结果落进
   `pendingResults`，等下一次 `wait_for_tool` 来取。**不**把 waiter 留着，否则结果会
   兑现给一个已经答复完的请求，等于丢掉。
@@ -56,8 +55,12 @@ prompt cache 与对话状态都保住。代价是多一个只对 CLI 可见的�
 回来取"这一层依赖 —— 模型如果不理会那条指示，行为会退回到"下一轮重开一个进程"，
 而不是出错。
 
-阻塞时长始终压在 `patience`（默认 5 分钟）以内，且每次 `wait_for_tool` 重新计时；
-若要让它严格短于客户端的一分钟上限，把 `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` 调小即可。
+阻塞时长默认且最多为 55 秒，严格短于本文记录的客户端一分钟上限；每次 `wait_for_tool` 重新计时。
+`COPILOT_API_CLAUDE_MCP_PATIENCE_MS` 仍可配置更短的等待，大于 55 秒的值会被截断。
+
+## Superseded
+
+The wait-tool and late-result decisions remain active. The historical five-minute default is replaced by a 55-second default and ceiling in `2026-10-07-claude-cli-connection-contract.md`; shorter configured waits remain supported.
 
 ## Verification
 

@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\claude-cli-process.test.ts:
+21 |   } as unknown as Bun.Subprocess<"pipe", "pipe", "pipe">
+22 |   const run = new ClaudeCliRun({ token: "cleanup-test", context: { connection: testConnection(), credential: testCredential(), model: "test-model", accessToken: "fake" }, proc, tmpDir })
+23 |   try {
+24 |     run.abort()
+25 |     await Bun.sleep(30)
+26 |     expect(await Bun.file(config).exists()).toBe(true)
+                                                 ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (tests\claude-cli-process.test.ts:26:45)
+(fail) retains MCP configuration until the CLI process exits [43.72ms]
+
+ 0 pass
+ 1 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [477.00ms]

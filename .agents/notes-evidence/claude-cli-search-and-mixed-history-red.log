@@ -1,0 +1,66 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\claude-cli-bridge.test.ts:
+145 |     const resumed = toolResultPayload(TOOL_USE_ID, "sunny")
+146 |     const last = resumed.messages.at(-1)!
+147 |     const mixed = { ...resumed, messages: [...resumed.messages.slice(0, -1), { role: "user" as const, content: [...(Array.isArray(last.content) ? last.content : []), { type: "text" as const, text: "New instruction: answer in Chinese" }] }] }
+148 |     process.env.FAKE_CLAUDE_SCENARIO = "persistent"
+149 |     const response = await collectClaudeCliMessages(context, mixed)
+150 |     expect(JSON.stringify(response.content)).toContain("New instruction: answer in Chinese")
+                                                   ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "New instruction: answer in Chinese"
+Received: "[{\"type\":\"text\",\"text\":\"pid=53608 result=sunny\"}]"
+
+      at <anonymous> (tests\claude-cli-bridge.test.ts:150:46)
+(fail) claude cli bridge > replays a mixed tool continuation instead of dropping new instructions [862.47ms]
+
+tests\claude-cli-prompt.test.ts:
+25 |   test("replays server search queries and results in their original order", () => {
+26 |     const rendered = textOf(renderClaudePrompt(payload([
+27 |       { role: "assistant", content: [{ type: "server_tool_use", id: "search", name: "web_search", input: { query: "important query" } }] },
+28 |       { role: "user", content: [{ type: "web_search_tool_result", tool_use_id: "search", content: [{ type: "web_search_result", url: "https://important.example", title: "Important fact" }] }] },
+29 |     ])))
+30 |     expect(rendered).toContain("important query")
+                          ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "important query"
+Received: "Assistant: \n\nHuman: \n\n"
+
+      at <anonymous> (tests\claude-cli-prompt.test.ts:30:22)
+(fail) renderClaudePrompt > replays server search queries and results in their original order [0.45ms]
+
+tests\claude-cli-turns.test.ts:
+56 |       ...["A", "B"].flatMap((id, index) => [event({ type: "content_block_start", index, content_block: { type: "tool_use", id, name: "WebSearch" } }), event({ type: "content_block_stop", index })]),
+57 |       ...["B", "A"].map((id) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id }] }, tool_use_result: { query: `query-${id}`, results: [{ content: [{ url: `https://${id.toLowerCase()}.example` }] }] } })),
+58 |       { type: "result", is_error: false }]
+59 |     const response = await collectAnthropicResponse((async function* () { yield* await translate(values) })(), "test")
+60 |     const calls = response.content.filter((block) => block.type === "server_tool_use")
+61 |     expect(calls.map((block) => [block.id, block.input.query])).toEqual([["B", "query-B"], ["A", "query-A"]])
+                                                                     ^
+error: expect(received).toEqual(expected)
+
+  [
+    [
+      "B",
+      "query-B",
+    ],
+-   [
+-     "A",
+-     "query-A",
+-   ],
+  ]
+
+- Expected  - 4
++ Received  + 0
+
+      at <anonymous> (tests\claude-cli-turns.test.ts:61:65)
+(fail) CLI internal turn normalization > associates parallel search results by tool use ID even out of order [1.42ms]
+
+ 0 pass
+ 40 filtered out
+ 3 fail
+ 3 expect() calls
+Ran 3 tests across 3 files. [1327.00ms]

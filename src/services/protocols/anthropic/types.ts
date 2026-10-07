@@ -34,7 +34,8 @@ export interface AnthropicMessagesPayload {
         type: "disabled"
       }
   output_config?: {
-    effort?: "low" | "medium" | "high" | null
+    effort?: "low" | "medium" | "high" | "xhigh" | "max" | null
+    format?: { type: "json_schema"; schema: Record<string, unknown> }
   }
   service_tier?: "auto" | "standard_only"
   reasoning_effort?:

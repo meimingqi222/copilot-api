@@ -91,10 +91,12 @@ export async function handleClaudeMcpCallback(
       }
     }
     logger.debug(`claude-cli: wait_for_tool collecting ${target}`)
-    return run.awaitWaitRequest(target)
+    const result = await run.awaitWaitRequest(target)
+    return { ...result, tools: run.toolDefinitions?.() }
   }
   logger.debug(
     `claude-cli: tool call ${name} (${toolCallId}) parked, waiting for the caller`,
   )
-  return run.awaitToolCall(toolCallId, name)
+  const result = await run.awaitToolCall(toolCallId, name)
+  return { ...result, tools: run.toolDefinitions?.() }
 }

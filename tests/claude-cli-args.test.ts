@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { claudeCliArgs, mapClaudeEffort } from "~/services/claude/cli/args"
+import { claudeCliArgs } from "~/services/claude/cli/args"
 
 describe("claudeCliArgs", () => {
   test("builds the headless stream-json invocation", () => {
@@ -26,6 +26,7 @@ describe("claudeCliArgs", () => {
       "/tmp/m.json",
       "--setting-sources",
       "",
+      "--no-session-persistence",
       "--dangerously-skip-permissions",
     ])
   })
@@ -64,14 +65,16 @@ describe("claudeCliArgs", () => {
   })
 })
 
-describe("mapClaudeEffort", () => {
-  test("maps xhigh to the CLI's max", () => {
-    expect(mapClaudeEffort("xhigh")).toBe("max")
-  })
-
-  test("passes other values through", () => {
-    expect(mapClaudeEffort("low")).toBe("low")
-    expect(mapClaudeEffort("medium")).toBe("medium")
-    expect(mapClaudeEffort("high")).toBe("high")
-  })
+describe("Claude effort arguments", () => {
+  test.each(["low", "medium", "high", "xhigh", "max"])(
+    "passes %s through to the CLI",
+    (effort) => {
+      const args = claudeCliArgs({
+        model: "m",
+        mcpConfigPath: "/tmp/m.json",
+        effort,
+      })
+      expect(args[args.indexOf("--effort") + 1]).toBe(effort)
+    },
+  )
 })

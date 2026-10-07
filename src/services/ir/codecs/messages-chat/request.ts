@@ -26,6 +26,10 @@ import type {
 
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
+  decodeChatTextFormat,
+  encodeChatTextFormat,
+} from "~/services/ir/codecs/messages-chat/text-format"
+import {
   readAnthropicServiceTier,
   readOpenAIServiceTier,
 } from "~/lib/service-tier"
@@ -281,6 +285,12 @@ export function decodeMessagesRequest(
     }),
     generation: {
       maxOutputTokens: payload.max_tokens,
+      ...(payload.output_config?.format && {
+        textFormat: {
+          type: "json_schema" as const,
+          jsonSchema: { schema: payload.output_config.format.schema },
+        },
+      }),
       temperature: payload.temperature,
       topP: payload.top_p,
       topK: payload.top_k,
@@ -502,6 +512,7 @@ export function encodeChatRequest(
     top_p: generation?.topP,
     user: generation?.user,
     ...chatToolConfig(ir),
+    ...encodeChatTextFormat(generation?.textFormat),
     reasoning_effort:
       (
         effort === "auto"
@@ -622,6 +633,7 @@ export function decodeChatRequest(payload: ChatCompletionsPayload): RequestIR {
     }),
     generation: {
       maxOutputTokens: payload.max_tokens ?? undefined,
+      textFormat: decodeChatTextFormat(payload.response_format),
       serviceTier: readOpenAIServiceTier(payload.service_tier),
       temperature: payload.temperature ?? undefined,
       topP: payload.top_p ?? undefined,
@@ -956,9 +968,27 @@ export function encodeMessagesRequest(
               : ("auto" as const),
           },
     }),
-    ...(claudeEffort && {
-      thinking: { type: "adaptive" as const },
-      output_config: { effort: claudeEffort },
-    }),
+    ...(claudeEffort && { thinking: { type: "adaptive" as const } }),
+    ...messagesOutputConfig(generation, claudeEffort),
+  }
+}
+
+function messagesOutputConfig(
+  generation: RequestIR["generation"],
+  effort?: "low" | "medium" | "high",
+): Pick<AnthropicMessagesPayload, "output_config"> {
+  const textFormat = generation?.textFormat
+  if (!effort && textFormat?.type !== "json_schema") return {}
+  return {
+    output_config: {
+      ...(effort && { effort }),
+      ...(textFormat?.type === "json_schema" && {
+        format: {
+          type: "json_schema",
+          schema: (textFormat.jsonSchema.schema
+            ?? textFormat.jsonSchema) as Record<string, unknown>,
+        },
+      }),
+    },
   }
 }

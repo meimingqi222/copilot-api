@@ -138,6 +138,91 @@ function textOf(events: Array<{ type: string }>): string {
 // ── happy paths ─────────────────────────────────────────────────────────────
 
 describe("claude cli bridge", () => {
+  loopbackTest.each(["text", "image"])(
+    "replays a mixed tool continuation instead of dropping new instructions (%s)",
+    async (kind) => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool"
+      await drain(
+        await streamClaudeCliMessages(context, userPayload("weather?")),
+      )
+      const resumed = toolResultPayload(TOOL_USE_ID, "sunny")
+      const mixed = {
+        ...resumed,
+        messages: [
+          ...resumed.messages.slice(0, -1),
+          {
+            role: "user" as const,
+            content: [
+              {
+                type: "tool_result" as const,
+                tool_use_id: TOOL_USE_ID,
+                content: "sunny",
+              },
+              ...(kind === "text" ?
+                [
+                  {
+                    type: "text" as const,
+                    text: "New instruction: answer in Chinese",
+                  },
+                ]
+              : [
+                  {
+                    type: "image" as const,
+                    source: {
+                      type: "base64" as const,
+                      media_type: "image/png" as const,
+                      data: "new-image-content",
+                    },
+                  },
+                ]),
+            ],
+          },
+        ],
+      }
+      process.env.FAKE_CLAUDE_SCENARIO = "persistent"
+      const response = await collectClaudeCliMessages(context, mixed)
+      expect(JSON.stringify(response.content)).toContain(
+        kind === "text" ?
+          "New instruction: answer in Chinese"
+        : "new-image-content",
+      )
+      expect(JSON.stringify(response.content)).toContain("sunny")
+    },
+  )
+  loopbackTest(
+    "accepts an immediate tool result before the callback and adds tools to the same run",
+    async () => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool-delayed"
+      const tools = [{ name: "get_weather", input_schema: { type: "object" } }]
+      const first = await drain(
+        await streamClaudeCliMessages(context, {
+          ...userPayload("weather?"),
+          tools,
+        }),
+      )
+      expect(first.at(-1)?.type).toBe("message_stop")
+      const parked = runRegistry.findParked([TOOL_USE_ID], {
+        connectionId: context.connection.id,
+        credentialId: context.credential.id,
+      })
+      expect(parked).toBeDefined()
+      expect(parked?.run.hasPending(TOOL_USE_ID)).toBe(false)
+      const second = await drain(
+        await streamClaudeCliMessages(context, {
+          ...toolResultPayload(TOOL_USE_ID, "sunny"),
+          tools: [
+            ...tools,
+            { name: "extra", input_schema: { type: "object" } },
+          ],
+        }),
+      )
+      expect(textOf(second)).toContain("sunny")
+      expect(textOf(second)).toContain('"name":"extra"')
+      expect(runRegistry.size).toBeLessThanOrEqual(1)
+    },
+  )
   test("streams a text turn", async () => {
     process.env.FAKE_CLAUDE_SCENARIO = "text"
     const events = await drain(
