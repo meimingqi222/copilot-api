@@ -413,7 +413,7 @@ export function getUsageByTimestampRangeData(
     FROM usage_stats
     WHERE account_id IN (${placeholders})
       AND timestamp >= ?
-      AND timestamp <= ?
+      AND timestamp < ?
     GROUP BY model
   `)
   const rows = stmt.all(...accountIds, startMs, effectiveEndMs) as Array<{

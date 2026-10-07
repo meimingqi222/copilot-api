@@ -1,4 +1,5 @@
 import type { OAuthProviderId } from "~/lib/provider-config"
+import type { TimestampRangeUsage } from "~/lib/stats/types"
 import type {
   ClaudeUsagePayload,
   AntigravityQuotaSummaryPayload,
@@ -11,6 +12,8 @@ import {
 } from "~/lib/quota/codex"
 import { CLAUDE_USAGE_WINDOW_KEYS } from "~/lib/quota/constants"
 import { parseCodexUsagePayload } from "~/lib/quota/parsers"
+import { getProviderConnection } from "~/lib/provider-connections"
+import { parseModelReference } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
 
 const CYCLE_USAGE_PROVIDERS = new Set<OAuthProviderId>([
@@ -20,23 +23,6 @@ const CYCLE_USAGE_PROVIDERS = new Set<OAuthProviderId>([
   "kimi",
 ])
 
-interface CycleUsageModelSummary {
-  requests: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cost: number
-}
-
-interface CycleUsageSummary {
-  requests: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  cost: number
-  models: Record<string, CycleUsageModelSummary>
-}
-
 interface QuotaWindowDescriptor {
   id: string
   labelKey: string
@@ -45,7 +31,7 @@ interface QuotaWindowDescriptor {
   windowEndMs: number
   usedPercent?: number | null
   resetAtSeconds?: number | null
-  cycleUsage?: CycleUsageSummary
+  cycleUsage?: TimestampRangeUsage
 }
 
 const CLAUDE_WINDOW_LABEL_KEYS: Record<string, string> = {
@@ -368,21 +354,70 @@ export function supportsCycleUsage(provider: string | undefined): boolean {
   return CYCLE_USAGE_PROVIDERS.has(provider as OAuthProviderId)
 }
 
+function filterClaudeFamilyUsage(
+  accountId: string,
+  window: QuotaWindowDescriptor,
+  usage: TimestampRangeUsage,
+): TimestampRangeUsage {
+  const family = {
+    "quota.oauth.claude.sevenDayOpus": "opus",
+    "quota.oauth.claude.sevenDaySonnet": "sonnet",
+  }[window.labelKey]
+  if (!family) return usage
+
+  const connection = getProviderConnection(accountId)
+  const familyPattern = new RegExp(
+    `^claude-(?:\\d+(?:[.-]\\d+)*-)?${family}(?:-|$)`,
+    "i",
+  )
+  const summary: TimestampRangeUsage = {
+    requests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    totalTokens: 0,
+    cost: 0,
+    models: {},
+  }
+  for (const [model, stats] of Object.entries(usage.models)) {
+    const nativeModel = parseModelReference(
+      model,
+      connection?.modelPrefix,
+    ).nativeModelId
+    const mapping = connection?.models?.find(
+      (entry) => entry.publicId === model || entry.publicId === nativeModel,
+    )
+    const upstreamModel = mapping?.upstreamId ?? nativeModel
+    if (!familyPattern.test(upstreamModel)) continue
+    summary.models[model] = stats
+    summary.requests += stats.requests
+    summary.promptTokens += stats.promptTokens
+    summary.completionTokens += stats.completionTokens
+    summary.cacheReadTokens += stats.cacheReadTokens
+    summary.cacheWriteTokens += stats.cacheWriteTokens
+    summary.totalTokens += stats.totalTokens
+    summary.cost += stats.cost
+  }
+  return summary
+}
+
 export function attachCycleUsage(
   accountId: string,
   windows: Array<QuotaWindowDescriptor>,
 ): Array<QuotaWindowDescriptor> {
   const now = Date.now()
   return windows.map((window) => {
-    const endMs = Math.min(window.windowEndMs, now)
-    const cycleUsage = statsStore.getUsageByTimestampRange(
+    // Include usage stamped this millisecond, but never the cycle reset itself.
+    const endMs = Math.min(window.windowEndMs, now + 1)
+    const usage = statsStore.getUsageByTimestampRange(
       accountId,
       window.windowStartMs,
       endMs,
     )
     return {
       ...window,
-      cycleUsage,
+      cycleUsage: filterClaudeFamilyUsage(accountId, window, usage),
     }
   })
 }

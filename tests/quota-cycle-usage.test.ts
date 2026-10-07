@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 
 import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
 
@@ -158,6 +158,152 @@ describe("quota cycle window resolution", () => {
 })
 
 describe("quota cycle usage aggregation", () => {
+  test("cycle usage includes the current millisecond but excludes reset and future rows", () => {
+    const now = Date.now()
+    const clock = spyOn(Date, "now").mockReturnValue(now)
+    try {
+      for (const timestamp of [now - 1, now, now + 1]) {
+        statsStore.recordUsage({
+          date: "2026-10-07",
+          accountId: "acct-current",
+          model: "gpt-5",
+          promptTokens: 1,
+          completionTokens: 1,
+          totalTokens: 2,
+          cost: 1,
+          timestamp,
+        })
+      }
+      const usage = attachCycleUsage("acct-current", [
+        {
+          id: "expired",
+          labelKey: "test",
+          windowStartMs: now - 1000,
+          windowEndMs: now,
+        },
+        {
+          id: "active",
+          labelKey: "test",
+          windowStartMs: now - 1000,
+          windowEndMs: now + 1000,
+        },
+        {
+          id: "future",
+          labelKey: "test",
+          windowStartMs: now + 1,
+          windowEndMs: now + 1000,
+        },
+      ])
+      expect(usage.map((window) => window.cycleUsage?.cost)).toEqual([1, 2, 0])
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  test("adjacent cycles count a reset-time request only in the new cycle", () => {
+    const reset = Date.now() - 60_000
+    for (const timestamp of [reset - 1, reset, reset + 1]) {
+      statsStore.recordUsage({
+        date: "2026-10-07",
+        accountId: "acct-boundary",
+        model: "gpt-5",
+        promptTokens: 100,
+        completionTokens: 10,
+        totalTokens: 110,
+        cost: 1,
+        timestamp,
+      })
+    }
+    expect(
+      statsStore.getUsageByTimestampRange("acct-boundary", reset - 1000, reset)
+        .cost,
+    ).toBe(1)
+    expect(
+      statsStore.getUsageByTimestampRange("acct-boundary", reset, reset + 1000)
+        .cost,
+    ).toBe(2)
+    expect(
+      statsStore.getUsageByTimestampRange("acct-boundary", reset, reset)
+        .requests,
+    ).toBe(0)
+    expect(
+      statsStore.getUsageByTimestampRange("acct-boundary", reset, reset - 1)
+        .requests,
+    ).toBe(0)
+  })
+
+  test("Claude family windows filter models including mapped public names and stored windows", async () => {
+    const end = Date.now() + 60_000
+    const connection = await createConnection({
+      id: "acct-family",
+      name: "family",
+      protocol: "claude-native",
+      baseUrl: "https://api.anthropic.com",
+      priority: 0,
+      credentials: [{ id: "cred-family", value: "x", authMode: "bearer" }],
+      models: [
+        {
+          publicId: "premium",
+          upstreamId: "claude-opus-4-6",
+          enabled: true,
+          endpoints: ["messages"],
+        },
+      ],
+    })
+    connection.modelPrefix = "team"
+    for (const [model, cost] of [
+      ["team/premium", 1],
+      ["team/claude-sonnet-4-6", 2],
+      ["claude-3-5-haiku", 4],
+    ] as const) {
+      statsStore.recordUsage({
+        date: "2026-10-07",
+        accountId: "acct-family",
+        model,
+        promptTokens: 100,
+        completionTokens: 10,
+        cacheReadTokens: 20,
+        cacheWriteTokens: 30,
+        totalTokens: 160,
+        cost,
+        timestamp: end - 120_000,
+      })
+    }
+    const details = enrichQuotaDetails(
+      "claude",
+      Object.fromEntries(
+        ["seven_day", "seven_day_opus", "seven_day_sonnet"].map((id) => [
+          id,
+          { utilization: 0.2, resets_at: new Date(end).toISOString() },
+        ]),
+      ),
+    )
+    const windows = details._quotaWindows as ReturnType<
+      typeof resolveClaudeQuotaWindows
+    >
+    const usage = attachCycleUsage("acct-family", windows)
+    expect(usage[0]?.cycleUsage?.cost).toBe(7)
+    expect(usage[1]?.cycleUsage?.cost).toBe(1)
+    expect(usage[2]?.cycleUsage?.cost).toBe(2)
+    expect(usage[1]?.cycleUsage?.requests).toBe(1)
+    expect(usage[1]?.cycleUsage?.totalTokens).toBe(160)
+    expect(usage[1]?.cycleUsage?.cacheReadTokens).toBe(20)
+    expect(usage[1]?.cycleUsage?.cacheWriteTokens).toBe(30)
+    expect(Object.keys(usage[1]?.cycleUsage?.models ?? {})).toEqual([
+      "team/premium",
+    ])
+    // Existing persisted descriptors have no new scope metadata.
+    const response = enrichQuotaInfoForResponse("acct-family", "claude", {
+      details,
+    })
+    const responseWindows = response?.details?._quotaWindows as typeof usage
+    expect(responseWindows[1]?.cycleUsage?.cost).toBe(1)
+    const unrelated = attachCycleUsage("acct-family", [
+      { ...windows[1]!, labelKey: "quota.oauth.kimi.limitCycle" },
+    ])
+    expect(unrelated[0]?.cycleUsage?.cost).toBe(7)
+  })
+
   test("getUsageByTimestampRange sums cost and tokens inside the window", () => {
     const windowStart = new Date("2026-06-24T08:00:00.000Z").getTime()
     const windowEnd = new Date("2026-06-24T13:00:00.000Z").getTime()
@@ -252,6 +398,22 @@ describe("quota cycle usage aggregation", () => {
       windowStart,
       windowEnd,
     )
+    expect(statsStore.getUsageStats("acct-cycle-conn")[0]?.cost).toBeCloseTo(
+      1.9,
+      10,
+    )
+    expect(
+      statsStore.getUsageStatsByTimeRange({
+        accountId: "acct-cycle-conn",
+        startMs: windowStart,
+        endMs: windowEnd,
+        tz: "UTC",
+      })[0]?.cost,
+    ).toBeCloseTo(1.9, 10)
+    expect(
+      statsStore.getUsageStatsByInterval(60, "acct-cycle-conn", "2026-06-24")[0]
+        ?.cost,
+    ).toBeCloseTo(1.9, 10)
     expect(summary.requests).toBe(2)
     expect(summary.totalTokens).toBe(1800)
     expect(summary.cost).toBeCloseTo(1.9, 10)
