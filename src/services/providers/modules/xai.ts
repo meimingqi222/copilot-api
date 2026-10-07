@@ -1,3 +1,4 @@
+import { getXaiModelsForConnection } from "~/services/xai/get-models"
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { xaiCallbackConfig } from "~/services/providers/callbacks/xai"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
@@ -77,6 +78,7 @@ export function getXaiModule(): ProviderModule {
     callback: xaiCallbackConfig,
     fetchQuota: fetchXaiQuota,
     fallbackModels: getXaiFallbackModels,
+    discoverModels: getXaiModelsForConnection,
     adapter: xaiNativeAdapter,
     createRuntime: () => createOAuthProviderRuntime("xai"),
     oauth: xaiStrategy,

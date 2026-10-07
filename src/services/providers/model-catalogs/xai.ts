@@ -4,6 +4,12 @@ import { toModelMappings } from "~/services/providers/model-catalogs/mapping"
 
 const XAI_CATALOG: Array<CatalogEntry> = [
   {
+    id: "grok-4.7",
+    name: "Grok 4.7",
+    vendor: "xai",
+    supportedEndpoints: ["/v1/responses"],
+  },
+  {
     id: "grok-4.6",
     name: "Grok 4.6",
     vendor: "xai",

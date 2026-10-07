@@ -1,0 +1,15 @@
+Command: bun test tests/xai-model-discovery.test.ts
+Pre-fix assertion output (workspace paths omitted):
+
+xAI live model discovery > discovers current Grok models through the CLI models endpoint
+expect(requests).toHaveLength(1)
+Expected length: 1
+Received length: 0
+
+xAI live model discovery > fallback catalog includes Grok 4.7
+expect(getXaiFallbackModels().find((model) => model.publicId === "grok-4.7")).toMatchObject(...)
+Matcher error: received value must be a non-null object
+
+0 pass
+2 fail
+2 expect() calls
