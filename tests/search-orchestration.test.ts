@@ -264,6 +264,93 @@ afterEach(() => {
   else process.env.SEARCH_ORCHESTRATION = originalEnv
 })
 
+for (const endpoint of ["messages", "responses"] as const) {
+  for (const stream of [false, true]) {
+    test.each([150_000, 250_000])(
+      `search prices each round independently (${endpoint}, stream=${stream}, second input=%s)`,
+      async (secondInput) => {
+        await createSearcher()
+        await createChatTarget()
+        statsStore.setModelPricing("writer-model", {
+          promptPricePer1k: 0.001,
+          completionPricePer1k: 0.002,
+          cacheReadPricePer1k: 0.0001,
+          contextThresholdTokens: 200_000,
+          extendedPromptPricePer1k: 0.002,
+          extendedCompletionPricePer1k: 0.004,
+          extendedCacheReadPricePer1k: 0.0002,
+        })
+        let rounds = 0
+        globalThis.fetch = mock((url: string) => {
+          if (!url.includes("chat.test")) return searcherSearchResponse([])
+          rounds++
+          const reply = chatResponse(
+            "answer",
+            rounds === 1 ?
+              { id: "call_1", name: "web_search", args: '{"query":"test"}' }
+            : undefined,
+          ).json()
+          const usage = {
+            prompt_tokens: rounds === 1 ? 150_000 : secondInput,
+            completion_tokens: 10,
+            total_tokens: (rounds === 1 ? 150_000 : secondInput) + 10,
+            prompt_tokens_details: { cached_tokens: 50_000 },
+          }
+          if (!stream)
+            return new Response(JSON.stringify({ ...reply, usage }), {
+              headers: { "content-type": "application/json" },
+            })
+          return sse([
+            {
+              ...reply,
+              choices: reply.choices.map((choice) => ({
+                index: choice.index,
+                delta: choice.message,
+                finish_reason: choice.finish_reason,
+              })),
+            },
+            { choices: [], usage },
+            { choices: [], usage },
+          ])
+        }) as unknown as typeof fetch
+        const body =
+          endpoint === "messages" ?
+            {
+              model: "writer-model",
+              stream,
+              max_tokens: 100,
+              messages: [{ role: "user", content: "search" }],
+              tools: [{ type: "web_search_20250305", name: "web_search" }],
+            }
+          : {
+              model: "writer-model",
+              stream,
+              input: "search",
+              tools: [{ type: "web_search" }],
+            }
+        const response = await server.fetch(
+          new Request(`http://localhost/v1/${endpoint}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        )
+        expect(response.status).toBe(200)
+        await response.text()
+        expect(rounds).toBe(2)
+        const usage = statsStore.getUsageStats("chat-only")[0]
+        expect(usage?.requests).toBe(1)
+        expect(usage?.totalTokens).toBe(150_000 + secondInput + 20)
+        expect(usage?.cacheReadTokens).toBe(100_000)
+        expect(usage?.cost).toBeCloseTo(
+          secondInput === 150_000 ? 0.21004 : 0.51506,
+          10,
+        )
+      },
+    )
+  }
+}
+
 test("messages client → chat upstream: the proxy runs the search and reports it as server tool events", async () => {
   await createSearcher()
   await createChatTarget()

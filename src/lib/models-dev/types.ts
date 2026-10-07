@@ -21,7 +21,7 @@ export interface ModelsDevCost {
   output: number
   cache_read?: number
   cache_write?: number
-  /** 新格式：按上下文长度分档，取 type=context 的最小 size 一档。 */
+  /** 新格式：按上下文长度分档，保留全部 type=context 档位。 */
   tiers?: Array<ModelsDevTierRate>
   /** 旧格式：>200k 整单跳价（与 tiers[0] 同义）。 */
   context_over_200k?: ModelsDevTierCost
@@ -62,6 +62,8 @@ export interface ModelPricingPer1k {
    * 为 null/undefined 表示无分档。
    */
   contextTierAbove?: ContextTierPricingPer1k | null
+  /** 全部上下文档位；存在时优先于兼容字段 contextTierAbove。 */
+  contextTiers?: Array<ContextTierPricingPer1k>
 }
 
 export interface ContextTierPricingPer1k {

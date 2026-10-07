@@ -60,6 +60,8 @@ interface SearchAwareParams {
   execute: SearchAwareExecutor
   signal?: AbortSignal
   initiator?: "agent" | "user"
+  /** One final usage snapshot per upstream round, for nonlinear pricing. */
+  onUsage?: (usage: IRUsage | undefined) => void
 }
 
 /** One executed search, in the order it happened. */
@@ -289,6 +291,7 @@ export async function runSearchAwareResult(
       request: params.request,
     })
     last = current
+    params.onUsage?.(current.usage)
     usage = addUsage(usage, current.usage)
     const calls = current.parts.filter((part) =>
       isInternalCall(part, internalName),
@@ -462,6 +465,7 @@ export async function* runSearchAwareStream(
       yield remapIndex(raw, round)
     }
     usage = addUsage(usage, roundUsage)
+    params.onUsage?.(roundUsage)
     // A call that never received a part_end still has to be answerable.
     if (openInternalPartId !== undefined) {
       const call = calls.at(-1)

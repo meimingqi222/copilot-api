@@ -425,6 +425,7 @@ class StatsStore {
     cacheReadPricePer1k: number
     cacheWritePricePer1k: number
     contextTierAbove: ContextTierPricingPer1k | null
+    contextTiers?: Array<ContextTierPricingPer1k>
   } | null {
     const db = this.ensureDb()
     return getModelPricing(db, model, provider)

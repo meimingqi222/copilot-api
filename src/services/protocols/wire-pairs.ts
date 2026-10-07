@@ -29,6 +29,10 @@ import type {
 
 import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import {
+  clearUsagePricingRounds,
+  createUsagePricingRecorder,
+} from "~/lib/usage-pricing-rounds"
+import {
   addRequestTranslationTime,
   measureTranslatedStream,
 } from "~/lib/request-performance"
@@ -294,6 +298,7 @@ export async function createTranslatedCall(
   params: TranslatedCallParams,
 ): Promise<{ credentialId: string; response: unknown }> {
   const { source, target, targetPayload, connection, routeTarget } = params
+  clearUsagePricingRounds(params.ctx?.c)
   const translationStarted = performance.now()
   const sourceSpec = WIRE_SPECS[source]
   const targetSpec = WIRE_SPECS[target]
@@ -376,6 +381,7 @@ export async function createTranslatedCall(
       execute: executor,
       signal: params.signal,
       initiator: params.ctx?.initiator,
+      onUsage: createUsagePricingRecorder(params.ctx?.c, connection.id),
     }
     if (stream === true) {
       // The credential is known up front (it is the one the engine selected);

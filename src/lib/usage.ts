@@ -22,6 +22,7 @@ import {
   resolveModelRouting,
 } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
+import { takeUsagePricingRounds } from "~/lib/usage-pricing-rounds"
 import { codexServiceTierCostMultiplier } from "~/lib/stats/service-tier-pricing"
 import { requestPerformanceSnapshot } from "~/lib/request-performance"
 import { incrementUserTokens } from "~/lib/users"
@@ -171,14 +172,20 @@ export function recordUsage(input: UsageRecordInput): void {
       ?? (actual.upstream ?
         statsStore.getModelPricing(actual.upstream, providerHint)
       : null)
+    const pricingRounds = takeUsagePricingRounds(c, accountId) ?? [
+      {
+        promptTokens,
+        completionTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
+      },
+    ]
     const cost =
       pricing ?
-        calculateModelCost(pricing, {
-          promptTokens,
-          completionTokens,
-          cacheReadTokens,
-          cacheWriteTokens,
-        })
+        pricingRounds.reduce(
+          (sum, tokens) => sum + calculateModelCost(pricing, tokens),
+          0,
+        )
         * codexServiceTierCostMultiplier(
           provider,
           accountId,

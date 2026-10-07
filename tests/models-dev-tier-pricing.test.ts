@@ -93,6 +93,103 @@ function mustGet<K, V>(map: Map<K, V>, key: K): V {
 }
 
 describe("models.dev context-tier parsing", () => {
+  test("a base-priced first threshold does not hide a later tier or its Fast multiplier", () => {
+    setModelsDevCatalogForTest({
+      openai: {
+        id: "openai",
+        models: {
+          "gpt-5.5": {
+            id: "gpt-5.5",
+            cost: {
+              input: 1,
+              output: 2,
+              tiers: [
+                {
+                  input: 1,
+                  output: 2,
+                  tier: { type: "context", size: 200_000 },
+                },
+                {
+                  input: 4,
+                  output: 8,
+                  tier: { type: "context", size: 400_000 },
+                },
+              ],
+            },
+          },
+        },
+      },
+    })
+    const pricing = statsStore.getModelPricing("windsurf/gpt-5.5-fast")
+    if (!pricing) throw new Error("missing Fast pricing")
+    expect(
+      calculateModelCost(pricing, {
+        promptTokens: 500_000,
+        completionTokens: 1000,
+      }),
+    ).toBeCloseTo(4.016, 10)
+  })
+
+  test("all context thresholds survive resolution and select the highest applicable tier", () => {
+    const catalog: ModelsDevCatalog = {
+      google: {
+        id: "google",
+        models: {
+          "multi-tier": {
+            id: "multi-tier",
+            cost: {
+              input: 1,
+              output: 2,
+              cache_read: 0.1,
+              tiers: [
+                {
+                  input: 4,
+                  output: 8,
+                  cache_read: 0.4,
+                  tier: { type: "context", size: 400_000 },
+                },
+                {
+                  input: 2,
+                  output: 4,
+                  cache_read: 0.2,
+                  tier: { type: "context", size: 200_000 },
+                },
+              ],
+            },
+          },
+        },
+      },
+    }
+    setModelsDevCatalogForTest(catalog)
+    const pricing = statsStore.getModelPricing("multi-tier")
+    if (!pricing) throw new Error("missing multi-tier pricing")
+    expect(
+      calculateModelCost(pricing, {
+        promptTokens: 500_000,
+        completionTokens: 1000,
+      }),
+    ).toBeCloseTo(2.008, 10)
+    expect(
+      calculateModelCost(pricing, {
+        promptTokens: 400_000,
+        completionTokens: 1000,
+      }),
+    ).toBeCloseTo(0.804, 10)
+    expect(
+      calculateModelCost(pricing, {
+        promptTokens: 200_000,
+        completionTokens: 1000,
+      }),
+    ).toBeCloseTo(0.202, 10)
+    expect(
+      calculateModelCost(pricing, {
+        promptTokens: 380_000,
+        cacheReadTokens: 30_000,
+        completionTokens: 1000,
+      }),
+    ).toBeCloseTo(1.54, 10)
+  })
+
   test("parses tiers[] with threshold", () => {
     const idx = buildModelsDevPriceIndexes(TIER_CATALOG)
     const g = idx.byProviderModel.get("google/gemini-2.5-pro")

@@ -83,6 +83,13 @@ function applyFastMultiplier(
             basePricing.contextTierAbove.cacheWritePricePer1k * multiplier,
         }
       : basePricing.contextTierAbove,
+    contextTiers: basePricing.contextTiers?.map((tier) => ({
+      thresholdTokens: tier.thresholdTokens,
+      promptPricePer1k: tier.promptPricePer1k * multiplier,
+      completionPricePer1k: tier.completionPricePer1k * multiplier,
+      cacheReadPricePer1k: tier.cacheReadPricePer1k * multiplier,
+      cacheWritePricePer1k: tier.cacheWritePricePer1k * multiplier,
+    })),
   }
 }
 
@@ -129,6 +136,7 @@ export function resolveModelsDevPrice(
     cacheReadPricePer1k: resolved.cacheReadPricePer1k,
     cacheWritePricePer1k: resolved.cacheWritePricePer1k,
     contextTierAbove: resolved.contextTierAbove,
+    contextTiers: resolved.contextTiers,
   }
 }
 

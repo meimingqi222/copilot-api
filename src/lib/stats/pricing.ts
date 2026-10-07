@@ -221,6 +221,7 @@ export function getModelPricing(
   cacheReadPricePer1k: number
   cacheWritePricePer1k: number
   contextTierAbove: ContextTierPricingPer1k | null
+  contextTiers?: Array<ContextTierPricingPer1k>
 } | null {
   const resolved = resolveModelPricing(db, model, provider)
   if (!resolved) {
@@ -232,6 +233,7 @@ export function getModelPricing(
     cacheReadPricePer1k: resolved.cacheReadPricePer1k,
     cacheWritePricePer1k: resolved.cacheWritePricePer1k,
     contextTierAbove: resolved.contextTierAbove ?? null,
+    contextTiers: resolved.contextTiers,
   }
 }
 

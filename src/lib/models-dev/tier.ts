@@ -28,8 +28,18 @@ export function selectEffectivePricing(
   tiered: boolean
   tier: ContextTierPricingPer1k | null
 } {
-  const tier = pricing.contextTierAbove ?? null
-  if (tier && promptTotal > tier.thresholdTokens) {
+  let tier: ContextTierPricingPer1k | null = null
+  const tiers =
+    pricing.contextTiers
+    ?? (pricing.contextTierAbove ? [pricing.contextTierAbove] : [])
+  for (const candidate of tiers) {
+    if (
+      promptTotal > candidate.thresholdTokens
+      && (!tier || candidate.thresholdTokens >= tier.thresholdTokens)
+    )
+      tier = candidate
+  }
+  if (tier) {
     return {
       promptPricePer1k: tier.promptPricePer1k,
       completionPricePer1k: tier.completionPricePer1k,
