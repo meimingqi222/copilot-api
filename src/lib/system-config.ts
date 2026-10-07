@@ -25,6 +25,12 @@ const settingsSchema = z
     memoryVerbose: z.boolean(),
     performanceDetails: z.boolean(),
     codexAutoReset: z.boolean().default(false),
+    codexModelIds: z
+      .array(z.string().trim().min(1).max(256))
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length, "Duplicate model IDs")
+      .nullable()
+      .default(null),
     quotaDisplayMode: z.enum(["remaining", "used"]).default("remaining"),
     logRetentionDays: z
       .number()
@@ -43,6 +49,9 @@ const settingsSchema = z
 
 export const systemConfigUpdateSchema = settingsSchema
   .extend({
+    codexModelIds: settingsSchema.shape.codexModelIds
+      .removeDefault()
+      .optional(),
     logRetentionDays: settingsSchema.shape.logRetentionDays
       .removeDefault()
       .optional(),
@@ -76,6 +85,7 @@ const safeDefaults: SystemSettings = {
   memoryVerbose: false,
   performanceDetails: true,
   codexAutoReset: false,
+  codexModelIds: null,
   quotaDisplayMode: "remaining",
   ...environmentLogStorage(),
 }
@@ -119,7 +129,7 @@ export function getSystemConfig(): {
   expiresAt: number | null
 } {
   return {
-    settings: { ...effectiveSettings() },
+    settings: structuredClone(effectiveSettings()),
     source: stored ? "webui" : "environment",
     expiresAt: stored?.expiresAt ?? null,
   }
@@ -128,7 +138,7 @@ export function getSystemConfig(): {
 function applySettings(): void {
   if (expiryTimer) clearTimeout(expiryTimer)
   expiryTimer = undefined
-  apply?.({ ...effectiveSettings() })
+  apply?.(structuredClone(effectiveSettings()))
   if (stored?.expiresAt && stored.expiresAt > Date.now()) {
     expiryTimer = setTimeout(applySettings, stored.expiresAt - Date.now())
     expiryTimer.unref()
@@ -179,6 +189,10 @@ export function updateSystemConfig(
   const next: StoredConfig = {
     settings: {
       ...settings,
+      codexModelIds:
+        settings.codexModelIds === undefined ?
+          effectiveSettings().codexModelIds
+        : settings.codexModelIds,
       logRetentionDays:
         settings.logRetentionDays ?? effectiveSettings().logRetentionDays,
       logMaxTotalBytes:

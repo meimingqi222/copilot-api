@@ -5,6 +5,7 @@ import type {
   Message,
   Tool,
 } from "~/services/protocols/chat/types"
+import { normalizeCompatRoles } from "~/services/protocols/openai-compat-payload"
 
 import {
   extractReasoningBlockText,
@@ -232,7 +233,7 @@ function writeChatMessagePrompt(
 ): boolean {
   const { message, index, cascadeId } = opts
 
-  if (message.role === "user" || message.role === "developer") {
+  if (message.role === "user") {
     const { text, images } = serializeMessageContent(message.content)
     if (!hasText(text) && images.length === 0) return false
 
@@ -497,8 +498,7 @@ function isUserTurnBoundary(
       case "system": {
         continue
       }
-      case "user":
-      case "developer": {
+      case "user": {
         // Skip empty turns the same way writeChatMessagePrompt does.
         const { text, images } = serializeMessageContent(message.content)
         if (!hasText(text) && images.length === 0) continue
@@ -567,7 +567,7 @@ export function buildRequest(opts: {
   }) => void
 }): Uint8Array {
   const {
-    payload,
+    payload: originalPayload,
     apiKey,
     requestModel,
     cascadeId,
@@ -575,6 +575,12 @@ export function buildRequest(opts: {
     turnIndex,
     userJwt,
   } = opts
+  // Share strict-backend role normalization without mutating caller history.
+  const payload = {
+    ...originalPayload,
+    messages: originalPayload.messages.map((message) => ({ ...message })),
+  }
+  normalizeCompatRoles(payload.messages)
   const request = new ProtobufEncoder(estimateRequestBytes(payload))
 
   request.writeMessage(1, buildWindsurfClientMetadata(apiKey, userJwt))

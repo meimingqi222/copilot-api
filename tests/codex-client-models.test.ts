@@ -12,9 +12,11 @@ import {
 } from "~/lib/provider-connections"
 import { clearRoutingGroupsCacheForTest } from "~/lib/routing-groups"
 import { state } from "~/lib/state"
+import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import { cacheModels } from "~/lib/utils"
 import type { User } from "~/lib/users"
 import { modelRoutes } from "~/routes/models/route"
+import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
 import { getCodexFallbackModels } from "~/services/providers/model-catalogs/codex"
 import {
   resetCodexClientModelsForTest,
@@ -28,6 +30,7 @@ const originalFetch = globalThis.fetch
 let testDir: string
 
 beforeEach(async () => {
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
   await fs.mkdir("temp", { recursive: true })
   testDir = await fs.mkdtemp(path.resolve("temp/codex-catalog-"))
   redirectPathsToDir(testDir)
@@ -48,6 +51,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
   redirectPathsToDir(originalPath)
   __resetProviderConnectionsForTest()
   clearRoutingGroupsCacheForTest()
@@ -55,6 +59,103 @@ afterEach(async () => {
   globalThis.fetch = originalFetch
   resetCodexClientModelsForTest()
   await fs.rm(testDir, { recursive: true, force: true })
+})
+
+test("custom Codex picker orders visible models ahead of hidden dependencies without changing OpenAI catalogs", async () => {
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    codexModelIds: ["gpt-5.6-luna", "gpt-5.6-sol", "missing-model"],
+  })
+  const response = await catalog()
+  const visible = response.models!.filter(
+    (model) => model.visibility === "list",
+  )
+  expect(visible.map((model) => model.slug)).toEqual([
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+  ])
+  expect(visible.map((model) => model.priority)).toEqual([0, 1])
+  const reviewer = response.models!.find(
+    (model) => model.slug === "codex-auto-review",
+  )!
+  expect(reviewer.visibility).toBe("hide")
+  expect(Number(reviewer.priority)).toBeGreaterThanOrEqual(100)
+  expect(visible[1].auto_review_model_override).toBe("codex-auto-review")
+  const ordinary = await catalog("")
+  expect(ordinary.data!.length).toBeGreaterThan(response.models!.length)
+  const restricted = await catalog(undefined, ["gpt-5.6-sol"])
+  expect(restricted.models!.map((model) => model.slug)).toEqual(["gpt-5.6-sol"])
+  expect(restricted.models![0].auto_review_model_override).toBeNull()
+  const app = new Hono().route("/", systemConfigApiRoutes)
+  const choices = (await (await app.request("/codex-models")).json()) as {
+    models: Array<{ id: string }>
+  }
+  expect(choices.models.length).toBeGreaterThan(visible.length)
+  expect(choices.models.some((model) => model.id === "codex-auto-review")).toBe(
+    false,
+  )
+})
+
+test("an empty custom picker keeps only hidden models and null restores the full catalog", async () => {
+  const settings = {
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+  } as const
+  updateSystemConfig({ ...settings, codexModelIds: [] })
+  expect(
+    (await catalog()).models!.every((model) => model.visibility === "hide"),
+  ).toBe(true)
+  updateSystemConfig({ ...settings, codexModelIds: null })
+  expect(
+    (await catalog()).models!.some((model) => model.visibility === "list"),
+  ).toBe(true)
+})
+
+test("all 100 selected models fit in the first Codex page when hidden models are included", async () => {
+  const template = state.models!.data.find(
+    (model) => model.id === "gpt-5.6-sol",
+  )!
+  state.models!.data.push(
+    ...Array.from({ length: 105 }, (_, index) => ({
+      ...template,
+      id: `external-${index}`,
+      name: `External ${index}`,
+      model_picker_enabled: true,
+    })),
+  )
+  const ids = Array.from(
+    { length: 100 },
+    (_, index) => `external-${104 - index}`,
+  )
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    codexModelIds: ids,
+  })
+  const response = await catalog()
+  const sorted = [...response.models!].sort(
+    (left, right) => Number(left.priority) - Number(right.priority),
+  )
+  expect(sorted.slice(0, 100).map((model) => model.slug)).toEqual(ids)
+  expect(
+    sorted.slice(100).some((model) => model.slug === "codex-auto-review"),
+  ).toBe(true)
+  expect(response.models!.some((model) => model.slug === "external-0")).toBe(
+    false,
+  )
+  expect(
+    (await catalog("", ["external-0"])).data!.map((model) => model.id),
+  ).toEqual(["external-0"])
 })
 
 async function catalog(

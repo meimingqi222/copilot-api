@@ -2,6 +2,7 @@ import type { Model } from "~/lib/model-catalog"
 
 import { listProviderConnections } from "~/lib/provider-connections"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import { getSystemSettings } from "~/lib/system-config"
 import fallbackCatalog from "~/services/codex/client-models-fallback.json"
 
 type CodexClientModel = Record<string, unknown>
@@ -155,6 +156,7 @@ function sanitizeReasoningLevels(
 export function buildCodexClientModelsResponse(
   models: Array<Model>,
   clientVersion: string,
+  modelIds: ReadonlyArray<string> | null = getSystemSettings().codexModelIds,
 ): { models: Array<CodexClientModel> } {
   const nativeIds = nativeCodexModelIds()
   const reviewer = models.find(
@@ -178,5 +180,19 @@ export function buildCodexClientModelsResponse(
   const legacyClient =
     !!version && Number(version[1]) === 0 && Number(version[2]) < 144
   for (const entry of entries) sanitizeReasoningLevels(entry, legacyClient)
-  return { models: entries }
+  if (modelIds === null) return { models: entries }
+  const byId = new Map(entries.map((entry) => [entry.slug, entry]))
+  const visible = modelIds.flatMap((id) => {
+    const entry = byId.get(id)
+    return entry?.visibility === "list" ? [entry] : []
+  })
+  // Codex sorts by priority before model/list pagination (including hidden models).
+  visible.forEach((entry, index) => {
+    entry.priority = index
+  })
+  const hidden = entries.filter((entry) => entry.visibility !== "list")
+  hidden.forEach((entry, index) => {
+    entry.priority = 100 + index
+  })
+  return { models: [...visible, ...hidden] }
 }

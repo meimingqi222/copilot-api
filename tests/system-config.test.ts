@@ -68,6 +68,42 @@ test("saved settings override environment and survive reinitialization", () => {
   expect(getSystemConfig().expiresAt).toBeNull()
 })
 
+test("Codex picker selection persists, survives expiry and omitted updates, and validates the 100 model limit", () => {
+  expect(getSystemSettings().codexModelIds).toBeNull()
+  updateSystemConfig({
+    ...normal,
+    codexModelIds: ["second", "first"],
+    logLevel: "debug",
+  })
+  const value = JSON.parse(saved!) as { expiresAt: number }
+  value.expiresAt = Date.now() - 1
+  initialize(JSON.stringify(value))
+  expect(getSystemSettings().codexModelIds).toEqual(["second", "first"])
+  updateSystemConfig(normal)
+  expect(getSystemSettings().codexModelIds).toEqual(["second", "first"])
+  updateSystemConfig({
+    ...normal,
+    codexModelIds: Array.from({ length: 100 }, (_, i) => `model-${i}`),
+  })
+  for (const ids of [
+    ["duplicate", "duplicate"],
+    [""],
+    [1],
+    "model",
+    Array.from({ length: 101 }, (_, i) => `model-${i}`),
+  ]) {
+    expect(() =>
+      updateSystemConfig({ ...normal, codexModelIds: ids }),
+    ).toThrow()
+  }
+  expect(getSystemSettings().codexModelIds).toHaveLength(100)
+  updateSystemConfig({ ...normal, codexModelIds: [] })
+  initialize(saved)
+  expect(getSystemSettings().codexModelIds).toEqual([])
+  updateSystemConfig({ ...normal, codexModelIds: null })
+  expect(getSystemSettings().codexModelIds).toBeNull()
+})
+
 test("log storage limits persist and survive diagnostic expiry", () => {
   updateSystemConfig({
     ...normal,
@@ -272,4 +308,11 @@ test("production admin mount forbids unauthenticated reads and writes", async ()
     )
     expect(response.status).toBe(403)
   }
+  expect(
+    (
+      await server.request(
+        "http://localhost/admin/api/system-config/codex-models",
+      )
+    ).status,
+  ).toBe(403)
 })

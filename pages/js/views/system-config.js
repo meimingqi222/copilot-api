@@ -10,9 +10,45 @@ function systemConfigView() {
     saving: false,
     error: "",
     saved: false,
+    codexModels: [],
+    codexModelSearch: "",
+
+    get filteredCodexModels() {
+      const query = this.codexModelSearch.trim().toLowerCase()
+      return this.codexModels.filter((model) =>
+        `${model.id} ${model.name}`.toLowerCase().includes(query),
+      )
+    },
+
+    setCustomCodexModels(enabled) {
+      this.settings.codexModelIds = enabled ? [] : null
+      this.saved = false
+    },
+
+    toggleCodexModel(id, checked) {
+      const ids = this.settings.codexModelIds
+      if (!ids) return
+      if (!checked)
+        this.settings.codexModelIds = ids.filter((value) => value !== id)
+      else if (ids.length < 100 && !ids.includes(id)) ids.push(id)
+      this.saved = false
+    },
+
+    moveCodexModel(index, direction) {
+      const ids = this.settings.codexModelIds
+      const next = index + direction
+      if (!ids || next < 0 || next >= ids.length) return
+      ;[ids[index], ids[next]] = [ids[next], ids[index]]
+      this.saved = false
+    },
+
+    codexModelName(id) {
+      return this.codexModels.find((model) => model.id === id)?.name || id
+    },
 
     accept(data) {
       this.settings = data.settings
+      this.settings.codexModelIds ??= null
       this.maxLogMiB = Math.ceil(data.settings.logMaxTotalBytes / (1024 * 1024))
       globalThis.dispatchEvent(
         new CustomEvent("quota-display-mode", {
@@ -29,7 +65,12 @@ function systemConfigView() {
       this.error = ""
       this.saved = false
       try {
-        this.accept(await API.request("/system-config"))
+        const [config, catalog] = await Promise.all([
+          API.request("/system-config"),
+          API.request("/system-config/codex-models"),
+        ])
+        this.accept(config)
+        this.codexModels = catalog.models
       } catch (error) {
         this.error = error.message
       } finally {
@@ -44,6 +85,7 @@ function systemConfigView() {
         memoryVerbose: false,
         performanceDetails: true,
         codexAutoReset: false,
+        codexModelIds: this.settings?.codexModelIds ?? null,
         quotaDisplayMode: "remaining",
         logRetentionDays: 7,
         logMaxTotalBytes: 1024 * 1024 * 1024,

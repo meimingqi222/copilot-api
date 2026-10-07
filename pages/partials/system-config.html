@@ -51,6 +51,107 @@
           x-text="t('system.quotaDisplayHint')"
         ></span>
       </label>
+      <fieldset class="space-y-3">
+        <legend
+          class="text-sm font-medium"
+          x-text="t('system.codexModels')"
+        ></legend>
+        <label class="flex items-center gap-3">
+          <input
+            type="checkbox"
+            :checked="settings.codexModelIds !== null"
+            @change="setCustomCodexModels($event.target.checked)"
+            :disabled="saving"
+          />
+          <span class="text-sm" x-text="t('system.codexModelsCustom')"></span>
+        </label>
+        <p
+          class="text-sm text-[var(--apple-text-secondary)]"
+          x-text="t('system.codexModelsHint')"
+        ></p>
+        <template x-if="settings.codexModelIds !== null">
+          <div class="space-y-3">
+            <p
+              class="text-sm"
+              x-text="t('system.codexModelsSelected') + ': ' + settings.codexModelIds.length + ' / 100'"
+            ></p>
+            <ol
+              class="space-y-2 max-h-64 overflow-y-auto"
+              :aria-label="t('system.codexModelsSelected')"
+            >
+              <template x-for="(id, index) in settings.codexModelIds" :key="id">
+                <li class="flex items-center gap-2 text-sm">
+                  <span class="flex-1 min-w-0 break-all">
+                    <span x-text="codexModelName(id)"></span>
+                    <span
+                      class="block text-xs text-[var(--apple-text-secondary)]"
+                      x-text="id"
+                    ></span>
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    @click="moveCodexModel(index, -1)"
+                    :disabled="saving || index === 0"
+                    :aria-label="t('system.codexModelsUp')"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    @click="moveCodexModel(index, 1)"
+                    :disabled="saving || index === settings.codexModelIds.length - 1"
+                    :aria-label="t('system.codexModelsDown')"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    @click="toggleCodexModel(id, false)"
+                    :disabled="saving"
+                    x-text="t('system.codexModelsRemove')"
+                  ></button>
+                </li>
+              </template>
+            </ol>
+            <input
+              type="search"
+              class="input w-full"
+              x-model="codexModelSearch"
+              :placeholder="t('system.codexModelsSearch')"
+              :aria-label="t('system.codexModelsSearch')"
+              :disabled="saving"
+            />
+            <div class="space-y-2 max-h-64 overflow-y-auto">
+              <template x-for="model in filteredCodexModels" :key="model.id">
+                <label class="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    class="mt-1"
+                    :checked="settings.codexModelIds.includes(model.id)"
+                    @change="toggleCodexModel(model.id, $event.target.checked)"
+                    :disabled="saving || (settings.codexModelIds.length >= 100 && !settings.codexModelIds.includes(model.id))"
+                  />
+                  <span>
+                    <span x-text="model.name"></span>
+                    <span
+                      class="block text-xs text-[var(--apple-text-secondary)]"
+                      x-text="model.id"
+                    ></span>
+                  </span>
+                </label>
+              </template>
+              <p
+                class="text-sm"
+                x-show="filteredCodexModels.length === 0"
+                x-text="t('system.codexModelsEmpty')"
+              ></p>
+            </div>
+          </div>
+        </template>
+      </fieldset>
       <label class="block">
         <span
           class="block text-sm font-medium mb-2"

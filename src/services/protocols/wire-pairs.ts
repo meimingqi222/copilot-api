@@ -27,7 +27,7 @@ import type {
   StreamEvent,
 } from "~/services/ir/types"
 
-import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import {
   addRequestTranslationTime,
   measureTranslatedStream,
@@ -298,6 +298,28 @@ export async function createTranslatedCall(
   const sourceSpec = WIRE_SPECS[source]
   const targetSpec = WIRE_SPECS[target]
   const requestIR = sourceSpec.decodeRequest(targetPayload)
+  if (
+    source === "responses"
+    && target !== "responses"
+    && requestIR.generation?.previousResponseId
+  ) {
+    // A Chat/Messages/Gemini target cannot resolve a Responses continuation ID.
+    // Codex recognizes this code and can retry with the complete transcript.
+    const errorBody = JSON.stringify({
+      error: {
+        type: "invalid_request_error",
+        code: "previous_response_not_found",
+        param: "previous_response_id",
+        message:
+          "This translated Responses request requires full input replay without previous_response_id.",
+      },
+    })
+    throw new HTTPError(
+      "previous_response_not_found: full input replay required",
+      new Response(errorBody, { status: 400 }),
+      errorBody,
+    )
+  }
   params.onPhase?.("request_decoded", { request: requestIR })
   const searchers = listSearchers()
   const orchestrate =

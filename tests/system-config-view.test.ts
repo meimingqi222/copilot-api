@@ -41,3 +41,73 @@ test("system settings display MiB and save the selected storage budget", async (
   expect(view.maxLogMiB).toBe(1024)
   expect(view.settings.logRetentionDays).toBe(7)
 })
+
+test("Codex picker loads all choices, searches IDs, enforces 100 selections, reorders and saves", async () => {
+  const source = readFileSync("pages/js/views/system-config.js", "utf8")
+  const models = Array.from({ length: 102 }, (_, index) => ({
+    id: `model-${index}`,
+    name: `Model ${index}`,
+  }))
+  let submitted: { codexModelIds: Array<string> | null } | undefined
+  const view = runInNewContext(source + "\nsystemConfigView()", {
+    CustomEvent: class {},
+    dispatchEvent: () => {},
+    API: {
+      request: (
+        url: string,
+        options?: { body: { codexModelIds: Array<string> | null } },
+      ) => {
+        if (url.endsWith("/codex-models")) return Promise.resolve({ models })
+        if (options) submitted = options.body
+        return Promise.resolve({
+          settings: options?.body ?? {
+            logMaxTotalBytes: 1024 ** 3,
+            codexModelIds: null,
+          },
+          source: "webui",
+          expiresAt: null,
+        })
+      },
+    },
+  }) as {
+    settings: { codexModelIds: Array<string> | null }
+    codexModels: typeof models
+    codexModelSearch: string
+    filteredCodexModels: typeof models
+    saved: boolean
+    load: () => Promise<void>
+    save: () => Promise<void>
+    useRecommended: () => void
+    setCustomCodexModels: (enabled: boolean) => void
+    toggleCodexModel: (id: string, checked: boolean) => void
+    moveCodexModel: (index: number, direction: number) => void
+  }
+  await view.load()
+  expect(view.codexModels).toHaveLength(102)
+  view.codexModelSearch = "MODEL-101"
+  expect(view.filteredCodexModels.map((model) => model.id)).toEqual([
+    "model-101",
+  ])
+  view.setCustomCodexModels(true)
+  for (const model of models) view.toggleCodexModel(model.id, true)
+  expect(view.settings.codexModelIds).toHaveLength(100)
+  view.toggleCodexModel("model-0", true)
+  expect(view.settings.codexModelIds).toHaveLength(100)
+  view.moveCodexModel(99, 1)
+  view.moveCodexModel(0, -1)
+  view.moveCodexModel(0, 1)
+  expect(view.settings.codexModelIds!.slice(0, 2)).toEqual([
+    "model-1",
+    "model-0",
+  ])
+  view.toggleCodexModel("model-99", false)
+  view.toggleCodexModel("model-101", true)
+  view.useRecommended()
+  expect(view.settings.codexModelIds).toHaveLength(100)
+  await view.save()
+  expect(submitted?.codexModelIds?.at(-1)).toBe("model-101")
+  expect(view.saved).toBe(true)
+  view.setCustomCodexModels(false)
+  await view.save()
+  expect(submitted?.codexModelIds).toBeNull()
+})

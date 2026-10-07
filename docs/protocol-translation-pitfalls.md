@@ -263,6 +263,20 @@ trailing whitespace"）。剥空的 assistant turn 若正好落在数组末尾�
 
 ---
 
+### 3.11 Responses 续接与 Windsurf 指令角色
+
+Responses 请求携带 `previous_response_id` 时，Chat、Messages 和 Gemini 转换
+目标无法解析这个续接 ID。共享转换入口必须在发起上游调用前返回
+`previous_response_not_found`，要求客户端重放完整 input；不可静默丢掉 ID
+后只发送增量工具结果。原生 Responses 的续接路径不受此限制。
+
+Windsurf 只有一个 `system_prompt` 字段，必须合并 Chat 的 system 和 developer
+指令。developer 不得作为普通用户 prompt，也不得影响用户轮次边界。
+`tests/windsurf-responses-translation.test.ts` 从 HTTP 与 WebSocket 入口验证
+这些边界，以及实际发出的 Protobuf、工具历史和返回的 Responses 事件。
+
+---
+
 ## 4. messages ↔ responses（已开放）
 
 IR 不经 Chat 枢纽，两个方向各自直连：
