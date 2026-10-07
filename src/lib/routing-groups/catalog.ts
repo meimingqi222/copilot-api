@@ -16,6 +16,13 @@ export async function publicRoutingGroupModels(): Promise<Array<Model>> {
       vendor: "routing-group",
       preview: false,
       model_picker_enabled: true,
+      // Client endpoints accepted by group routing, not a member's native wire.
+      supported_endpoints: [
+        "/chat/completions",
+        "/v1/responses",
+        "/v1/messages",
+        "/generateContent",
+      ],
       // A mixed-model pool cannot advertise one member's context or vision limits.
       capabilities: {
         family: "routing-group",

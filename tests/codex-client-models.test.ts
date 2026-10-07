@@ -10,7 +10,10 @@ import {
   getMutableProviderConnection,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
-import { clearRoutingGroupsCacheForTest } from "~/lib/routing-groups"
+import {
+  clearRoutingGroupsCacheForTest,
+  upsertRoutingGroup,
+} from "~/lib/routing-groups"
 import { state } from "~/lib/state"
 import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import { cacheModels } from "~/lib/utils"
@@ -96,6 +99,66 @@ test("custom Codex picker orders visible models ahead of hidden dependencies wit
   }
   expect(choices.models.length).toBeGreaterThan(visible.length)
   expect(choices.models.some((model) => model.id === "codex-auto-review")).toBe(
+    false,
+  )
+})
+
+test("exposed routing groups survive Codex discovery, selection and permission filtering", async () => {
+  await upsertRoutingGroup({
+    id: "codex-pool",
+    name: "Codex Pool",
+    expose: true,
+    members: ["gpt-5.6-sol"],
+    rules: [],
+  })
+  await upsertRoutingGroup({
+    id: "private-pool",
+    name: "Private Pool",
+    members: ["gpt-5.6-sol"],
+    rules: [],
+  })
+  const app = new Hono().route("/", systemConfigApiRoutes)
+  const choices = (await (await app.request("/codex-models")).json()) as {
+    models: Array<{ id: string; name: string }>
+  }
+  expect(choices.models).toContainEqual({
+    id: "group/codex-pool",
+    name: "Codex Pool",
+  })
+  expect(
+    choices.models.some((model) => model.id === "group/private-pool"),
+  ).toBe(false)
+  expect((await catalog()).models).toContainEqual(
+    expect.objectContaining({ slug: "group/codex-pool", visibility: "list" }),
+  )
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    codexModelIds: ["group/codex-pool"],
+  })
+  expect(
+    (await catalog()).models!.filter((model) => model.visibility === "list"),
+  ).toEqual([
+    expect.objectContaining({ slug: "group/codex-pool", priority: 0 }),
+  ])
+  expect(
+    (await catalog(undefined, ["group/codex-pool"])).models!.map(
+      (model) => model.slug,
+    ),
+  ).toEqual(["group/codex-pool"])
+  expect(
+    (await catalog(undefined, ["gpt-5.6-sol"])).models!.some(
+      (model) => model.slug === "group/codex-pool",
+    ),
+  ).toBe(false)
+  const ordinary = (await catalog("")).data!
+  expect(ordinary).toContainEqual(
+    expect.objectContaining({ id: "group/codex-pool" }),
+  )
+  expect(ordinary.some((model) => model.id === "group/private-pool")).toBe(
     false,
   )
 })
