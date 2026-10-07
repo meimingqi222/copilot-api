@@ -1,310 +1,690 @@
 <div
   x-data="systemConfigView()"
   x-init="load(); $watch('currentView', view => { if (view === 'system-config') load() })"
+  class="space-y-6 max-w-4xl pb-12"
 >
-  <header class="page-header">
+  <!-- Page Header -->
+  <header
+    class="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+  >
     <div class="page-heading">
-      <h2 class="text-headline" x-text="t('nav.system-config')"></h2>
-      <p class="page-description" x-text="t('system.subtitle')"></p>
+      <div class="flex items-center gap-3 flex-wrap">
+        <h2 class="text-headline" x-text="t('nav.system-config')"></h2>
+        <template x-if="source">
+          <span
+            class="badge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+            :class="source === 'webui' ? 'bg-[rgba(52,199,89,0.1)] text-[var(--apple-green)] border border-[rgba(52,199,89,0.2)]' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]'"
+          >
+            <span
+              class="w-1.5 h-1.5 rounded-full"
+              :class="source === 'webui' ? 'bg-[var(--apple-green)]' : 'bg-[var(--apple-gray)]'"
+            ></span>
+            <span x-text="t('system.source.' + source)"></span>
+          </span>
+        </template>
+      </div>
+      <p
+        class="page-description mt-1 text-sm text-[var(--apple-text-secondary)]"
+        x-text="t('system.subtitle')"
+      ></p>
     </div>
-    <button
-      class="btn btn-secondary"
-      @click="load()"
-      :disabled="loading || saving"
-      x-text="t('refresh')"
-    ></button>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        class="btn btn-secondary"
+        @click="load()"
+        :disabled="loading || saving"
+        x-text="t('refresh')"
+      ></button>
+    </div>
   </header>
+
+  <!-- Global Alert Error -->
   <p
     role="alert"
-    class="text-sm text-red-600 mb-4"
+    class="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-xl"
     x-show="error"
     x-text="error"
   ></p>
+
   <template x-if="settings">
-    <form
-      @submit.prevent="save()"
-      class="card p-5 space-y-5 max-w-3xl"
-      @input="saved = false"
-    >
-      <p
-        class="text-sm text-[var(--apple-text-secondary)]"
-        x-text="t('system.source.' + source)"
-      ></p>
-      <label class="block">
-        <span
-          class="block text-sm font-medium mb-2"
-          x-text="t('system.quotaDisplayMode')"
-        ></span>
-        <select
-          class="input w-full"
-          x-model="settings.quotaDisplayMode"
-          :disabled="saving"
+    <form @submit.prevent="save()" class="space-y-6" @input="saved = false">
+      <!-- Section 1: 界面与显示偏好 -->
+      <section
+        class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"
+      >
+        <div
+          class="px-5 py-3.5 border-b border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] flex items-center justify-between"
         >
-          <option
-            value="remaining"
-            x-text="t('system.quotaMode.remaining')"
-          ></option>
-          <option value="used" x-text="t('system.quotaMode.used')"></option>
-        </select>
-        <span
-          class="block text-sm text-[var(--apple-text-secondary)] mt-1"
-          x-text="t('system.quotaDisplayHint')"
-        ></span>
-      </label>
-      <fieldset class="space-y-3">
-        <legend
-          class="text-sm font-medium"
-          x-text="t('system.codexModels')"
-        ></legend>
-        <label class="flex items-center gap-3">
-          <input
-            type="checkbox"
-            :checked="settings.codexModelIds !== null"
-            @change="setCustomCodexModels($event.target.checked)"
-            :disabled="saving"
-          />
-          <span class="text-sm" x-text="t('system.codexModelsCustom')"></span>
-        </label>
-        <p
-          class="text-sm text-[var(--apple-text-secondary)]"
-          x-text="t('system.codexModelsHint')"
-        ></p>
-        <p
-          role="alert"
-          class="text-sm text-red-600"
-          x-show="codexModelsError"
-          x-text="codexModelsError"
-        ></p>
-        <template x-if="settings.codexModelIds !== null">
-          <div class="space-y-3">
-            <p
-              class="text-sm"
-              x-text="t('system.codexModelsSelected') + ': ' + settings.codexModelIds.length + ' / 100'"
-            ></p>
-            <ol
-              class="space-y-2 max-h-64 overflow-y-auto"
-              :aria-label="t('system.codexModelsSelected')"
-            >
-              <template x-for="(id, index) in settings.codexModelIds" :key="id">
-                <li class="flex items-center gap-2 text-sm">
-                  <span class="flex-1 min-w-0 break-all">
-                    <span x-text="codexModelName(id)"></span>
-                    <span
-                      class="block text-xs text-[var(--apple-text-secondary)]"
-                      x-text="id"
-                    ></span>
-                  </span>
-                  <button
-                    type="button"
-                    class="btn btn-secondary"
-                    @click="moveCodexModel(index, -1)"
-                    :disabled="saving || index === 0"
-                    :aria-label="t('system.codexModelsUp')"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-secondary"
-                    @click="moveCodexModel(index, 1)"
-                    :disabled="saving || index === settings.codexModelIds.length - 1"
-                    :aria-label="t('system.codexModelsDown')"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-secondary"
-                    @click="toggleCodexModel(id, false)"
-                    :disabled="saving"
-                    x-text="t('system.codexModelsRemove')"
-                  ></button>
-                </li>
-              </template>
-            </ol>
-            <input
-              type="search"
-              class="input w-full"
-              x-model="codexModelSearch"
-              :placeholder="t('system.codexModelsSearch')"
-              :aria-label="t('system.codexModelsSearch')"
-              :disabled="saving"
-            />
-            <div class="space-y-2 max-h-64 overflow-y-auto">
-              <template x-for="model in filteredCodexModels" :key="model.id">
-                <label class="flex items-start gap-3 text-sm">
-                  <input
-                    type="checkbox"
-                    class="mt-1"
-                    :checked="settings.codexModelIds.includes(model.id)"
-                    @change="toggleCodexModel(model.id, $event.target.checked)"
-                    :disabled="saving || (settings.codexModelIds.length >= 100 && !settings.codexModelIds.includes(model.id))"
-                  />
-                  <span>
-                    <span x-text="model.name"></span>
-                    <span
-                      class="block text-xs text-[var(--apple-text-secondary)]"
-                      x-text="model.id"
-                    ></span>
-                  </span>
-                </label>
-              </template>
+          <div class="flex items-center gap-2">
+            <span
+              class="w-2.5 h-2.5 rounded-full bg-[var(--apple-blue)]"
+            ></span>
+            <h3
+              class="font-semibold text-sm text-[var(--apple-text)]"
+              x-text="t('system.section.display')"
+            ></h3>
+          </div>
+          <span
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('system.section.displayHint')"
+          ></span>
+        </div>
+
+        <div class="divide-y divide-[var(--apple-gray-5)]">
+          <!-- 配额百分比显示口径 -->
+          <div
+            class="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-lg">
+              <label
+                class="block text-sm font-medium text-[var(--apple-text)]"
+                x-text="t('system.quotaDisplayMode')"
+              ></label>
               <p
-                class="text-sm"
-                x-show="filteredCodexModels.length === 0"
-                x-text="t('system.codexModelsEmpty')"
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.quotaDisplayHint')"
               ></p>
             </div>
+            <div
+              class="flex items-center bg-[var(--apple-gray-6)] p-1 rounded-xl border border-[var(--apple-gray-5)] self-start sm:self-auto"
+            >
+              <button
+                type="button"
+                class="px-3.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer"
+                :class="settings.quotaDisplayMode === 'remaining' ? 'bg-white shadow-sm text-[var(--apple-blue)] font-semibold' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                @click="settings.quotaDisplayMode = 'remaining'; saved = false"
+                :disabled="saving"
+                x-text="t('system.quotaMode.remaining')"
+              ></button>
+              <button
+                type="button"
+                class="px-3.5 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer"
+                :class="settings.quotaDisplayMode === 'used' ? 'bg-white shadow-sm text-[var(--apple-blue)] font-semibold' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                @click="settings.quotaDisplayMode = 'used'; saved = false"
+                :disabled="saving"
+                x-text="t('system.quotaMode.used')"
+              ></button>
+            </div>
           </div>
-        </template>
-      </fieldset>
-      <label class="block">
-        <span
-          class="block text-sm font-medium mb-2"
-          x-text="t('system.logLevel')"
-        ></span>
-        <select
-          class="input w-full"
-          x-model="settings.logLevel"
-          :disabled="saving"
-        >
-          <option value="warn" x-text="t('system.level.warn')"></option>
-          <option value="info" x-text="t('system.level.info')"></option>
-          <option value="debug" x-text="t('system.level.debug')"></option>
-        </select>
-        <span
-          class="block text-sm text-[var(--apple-text-secondary)] mt-1"
-          x-text="t('system.logHint')"
-        ></span>
-      </label>
-      <template
-        x-for="key in ['codexAutoReset', 'performanceDetails', 'memoryVerbose', 'requestDump']"
-        :key="key"
+        </div>
+      </section>
+
+      <!-- Section 2: Codex 客户端集成 -->
+      <section
+        class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"
       >
-        <label class="flex items-start gap-3">
-          <input
-            type="checkbox"
-            class="mt-1"
-            x-model="settings[key]"
+        <div
+          class="px-5 py-3.5 border-b border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] flex items-center justify-between"
+        >
+          <div class="flex items-center gap-2">
+            <span
+              class="w-2.5 h-2.5 rounded-full bg-[var(--apple-purple)]"
+            ></span>
+            <h3
+              class="font-semibold text-sm text-[var(--apple-text)]"
+              x-text="t('system.section.codex')"
+            ></h3>
+          </div>
+          <span
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('system.section.codexHint')"
+          ></span>
+        </div>
+
+        <div class="divide-y divide-[var(--apple-gray-5)]">
+          <!-- 自动使用即将过期的 Codex 重置次数 -->
+          <div
+            class="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl">
+              <div
+                class="text-sm font-medium text-[var(--apple-text)] flex items-center gap-2 flex-wrap"
+              >
+                <span x-text="t('system.codexAutoReset')"></span>
+                <span
+                  class="badge text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+                  >定时轮询</span
+                >
+              </div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.codexAutoResetHint')"
+              ></p>
+            </div>
+            <label class="apple-switch">
+              <input
+                type="checkbox"
+                x-model="settings.codexAutoReset"
+                :disabled="saving"
+              />
+              <span class="apple-switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- 自定义显示模型 -->
+          <div
+            class="p-4 sm:p-5 space-y-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="flex items-center justify-between gap-4">
+              <div class="space-y-1 max-w-xl">
+                <div
+                  class="text-sm font-medium text-[var(--apple-text)] flex items-center gap-2 flex-wrap"
+                >
+                  <span x-text="t('system.codexModels')"></span>
+                  <span
+                    class="badge text-[10px] px-1.5 py-0.5 rounded"
+                    :class="settings.codexModelIds !== null ? 'bg-blue-50 text-[var(--apple-blue)] border border-blue-200' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]'"
+                    x-text="settings.codexModelIds !== null ? (t('system.codexModelsSelected') + ': ' + settings.codexModelIds.length + ' / 100') : '默认展示全部'"
+                  ></span>
+                </div>
+                <p
+                  class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                  x-text="t('system.codexModelsHint')"
+                ></p>
+              </div>
+              <label class="apple-switch">
+                <input
+                  type="checkbox"
+                  :checked="settings.codexModelIds !== null"
+                  @change="setCustomCodexModels($event.target.checked)"
+                  :disabled="saving"
+                />
+                <span class="apple-switch-slider"></span>
+              </label>
+            </div>
+
+            <!-- 错误提示 -->
+            <p
+              role="alert"
+              class="text-xs text-red-600 bg-red-50 p-2 rounded-lg"
+              x-show="codexModelsError"
+              x-text="codexModelsError"
+            ></p>
+
+            <!-- 折叠抽屉：模型选择与排序列表 -->
+            <template x-if="settings.codexModelIds !== null">
+              <div class="pt-4 border-t border-[var(--apple-gray-5)] space-y-4">
+                <!-- 头部状态与搜索 -->
+                <div
+                  class="flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <span
+                    class="text-xs font-medium text-[var(--apple-text)]"
+                    x-text="t('system.codexModelsSelected') + ': ' + settings.codexModelIds.length + ' / 100'"
+                  ></span>
+                  <input
+                    type="search"
+                    class="input text-xs py-1.5 px-3 w-full sm:w-64"
+                    x-model="codexModelSearch"
+                    :placeholder="t('system.codexModelsSearch')"
+                    :aria-label="t('system.codexModelsSearch')"
+                    :disabled="saving"
+                  />
+                </div>
+
+                <!-- 选中的模型列表 (可排序) -->
+                <div class="space-y-2">
+                  <span class="text-xs text-[var(--apple-text-secondary)] block"
+                    >已选择的可见模型（按序排列）：</span
+                  >
+                  <ol
+                    class="space-y-1.5 max-h-56 overflow-y-auto pr-1"
+                    :aria-label="t('system.codexModelsSelected')"
+                  >
+                    <template
+                      x-for="(id, index) in settings.codexModelIds"
+                      :key="id"
+                    >
+                      <li
+                        class="flex items-center justify-between gap-2 p-2 rounded-xl bg-[var(--apple-bg-secondary)] border border-[var(--apple-gray-5)] text-xs"
+                      >
+                        <div class="flex items-center gap-2 min-w-0 flex-1">
+                          <span
+                            class="font-mono text-[var(--apple-text-secondary)] w-5 text-center flex-shrink-0"
+                            x-text="index + 1"
+                          ></span>
+                          <div class="min-w-0 flex-1 truncate">
+                            <span
+                              class="font-medium text-[var(--apple-text)]"
+                              x-text="codexModelName(id)"
+                            ></span>
+                            <span
+                              class="text-[11px] text-[var(--apple-text-secondary)] ml-1 font-mono"
+                              x-text="'(' + id + ')'"
+                            ></span>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            type="button"
+                            class="btn btn-secondary px-2 py-1 text-xs"
+                            @click="moveCodexModel(index, -1)"
+                            :disabled="saving || index === 0"
+                            :aria-label="t('system.codexModelsUp')"
+                            title="上移"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-secondary px-2 py-1 text-xs"
+                            @click="moveCodexModel(index, 1)"
+                            :disabled="saving || index === settings.codexModelIds.length - 1"
+                            :aria-label="t('system.codexModelsDown')"
+                            title="下移"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn-secondary px-2 py-1 text-xs text-red-600 hover:bg-red-50 hover:border-red-200"
+                            @click="toggleCodexModel(id, false)"
+                            :disabled="saving"
+                            x-text="t('system.codexModelsRemove')"
+                          ></button>
+                        </div>
+                      </li>
+                    </template>
+                  </ol>
+                </div>
+
+                <!-- 待选模型列表 (勾选加入) -->
+                <div
+                  class="space-y-2 pt-2 border-t border-dashed border-[var(--apple-gray-5)]"
+                >
+                  <span class="text-xs text-[var(--apple-text-secondary)] block"
+                    >选择添加模型（支持搜索过滤）：</span
+                  >
+                  <div
+                    class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto p-1"
+                  >
+                    <template
+                      x-for="model in filteredCodexModels"
+                      :key="model.id"
+                    >
+                      <label
+                        class="flex items-start gap-2.5 p-2 rounded-lg border border-[var(--apple-gray-5)] bg-white hover:bg-[var(--apple-bg-secondary)] cursor-pointer text-xs transition"
+                      >
+                        <input
+                          type="checkbox"
+                          class="mt-0.5 rounded accent-[var(--apple-blue)]"
+                          :checked="settings.codexModelIds.includes(model.id)"
+                          @change="toggleCodexModel(model.id, $event.target.checked)"
+                          :disabled="saving || (settings.codexModelIds.length >= 100 && !settings.codexModelIds.includes(model.id))"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <span
+                            class="font-medium text-[var(--apple-text)] block truncate"
+                            x-text="model.name"
+                          ></span>
+                          <span
+                            class="block text-[11px] text-[var(--apple-text-secondary)] font-mono truncate"
+                            x-text="model.id"
+                          ></span>
+                        </div>
+                      </label>
+                    </template>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)] col-span-2 py-3 text-center"
+                      x-show="filteredCodexModels.length === 0"
+                      x-text="t('system.codexModelsEmpty')"
+                    ></p>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 3: 日志级别与存储治理 -->
+      <section
+        class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"
+      >
+        <div
+          class="px-5 py-3.5 border-b border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] flex items-center justify-between"
+        >
+          <div class="flex items-center gap-2">
+            <span
+              class="w-2.5 h-2.5 rounded-full bg-[var(--apple-green)]"
+            ></span>
+            <h3
+              class="font-semibold text-sm text-[var(--apple-text)]"
+              x-text="t('system.section.logging')"
+            ></h3>
+          </div>
+          <span
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('system.section.loggingHint')"
+          ></span>
+        </div>
+
+        <div class="divide-y divide-[var(--apple-gray-5)]">
+          <!-- 日志输出级别 -->
+          <div
+            class="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-lg">
+              <label
+                class="block text-sm font-medium text-[var(--apple-text)]"
+                x-text="t('system.logLevel')"
+              ></label>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.logHint')"
+              ></p>
+            </div>
+            <select
+              class="input text-xs sm:text-sm py-1.5 px-3 min-w-[200px]"
+              x-model="settings.logLevel"
+              :disabled="saving"
+            >
+              <option value="warn" x-text="t('system.level.warn')"></option>
+              <option value="info" x-text="t('system.level.info')"></option>
+              <option value="debug" x-text="t('system.level.debug')"></option>
+            </select>
+          </div>
+
+          <!-- 日志存储限额与轮转 -->
+          <div
+            class="p-4 sm:p-5 space-y-3 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1">
+              <span
+                class="block text-sm font-medium text-[var(--apple-text)]"
+                x-text="t('system.logStorage')"
+              ></span>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.logStorageHint')"
+              ></p>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div
+                class="bg-[var(--apple-bg-secondary)] p-3.5 rounded-xl border border-[var(--apple-gray-5)] flex items-center justify-between"
+              >
+                <div>
+                  <label
+                    class="block text-xs font-medium text-[var(--apple-text-secondary)]"
+                    x-text="t('system.logRetentionDays')"
+                  ></label>
+                  <div class="flex items-center gap-1.5 mt-1">
+                    <input
+                      type="number"
+                      class="bg-transparent text-sm font-semibold w-20 focus:outline-none"
+                      min="1"
+                      max="3650"
+                      step="1"
+                      required
+                      x-model.number="settings.logRetentionDays"
+                      :disabled="saving"
+                    />
+                    <span class="text-xs text-[var(--apple-text-secondary)]"
+                      >天</span
+                    >
+                  </div>
+                </div>
+                <span class="text-xs text-[var(--apple-text-secondary)]"
+                  >默认 7 天</span
+                >
+              </div>
+
+              <div
+                class="bg-[var(--apple-bg-secondary)] p-3.5 rounded-xl border border-[var(--apple-gray-5)] flex items-center justify-between"
+              >
+                <div>
+                  <label
+                    class="block text-xs font-medium text-[var(--apple-text-secondary)]"
+                    x-text="t('system.logMaxTotalMiB')"
+                  ></label>
+                  <div class="flex items-center gap-1.5 mt-1">
+                    <input
+                      type="number"
+                      class="bg-transparent text-sm font-semibold w-24 focus:outline-none"
+                      min="1"
+                      max="1048576"
+                      step="1"
+                      required
+                      x-model.number="maxLogMiB"
+                      :disabled="saving"
+                    />
+                    <span class="text-xs text-[var(--apple-text-secondary)]"
+                      >MiB</span
+                    >
+                  </div>
+                </div>
+                <span class="text-xs text-[var(--apple-text-secondary)]"
+                  >1024 MiB (1 GiB)</span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: 探针指标与临时排障 -->
+      <section
+        class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"
+      >
+        <div
+          class="px-5 py-3.5 border-b border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] flex items-center justify-between"
+        >
+          <div class="flex items-center gap-2">
+            <span
+              class="w-2.5 h-2.5 rounded-full bg-[var(--apple-orange)]"
+            ></span>
+            <h3
+              class="font-semibold text-sm text-[var(--apple-text)]"
+              x-text="t('system.section.diagnostics')"
+            ></h3>
+          </div>
+          <span
+            class="badge text-[10px] px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+            >按需临时开启</span
+          >
+        </div>
+
+        <div class="divide-y divide-[var(--apple-gray-5)]">
+          <!-- 详细性能指标 -->
+          <div
+            class="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl">
+              <div
+                class="text-sm font-medium text-[var(--apple-text)] flex items-center gap-2 flex-wrap"
+              >
+                <span x-text="t('system.performanceDetails')"></span>
+                <span
+                  class="badge text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-[var(--apple-blue)] border border-blue-200"
+                  >推荐开启</span
+                >
+              </div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.performanceDetailsHint')"
+              ></p>
+            </div>
+            <label class="apple-switch">
+              <input
+                type="checkbox"
+                x-model="settings.performanceDetails"
+                :disabled="saving"
+              />
+              <span class="apple-switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- 详细内存检查点日志 -->
+          <div
+            class="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl">
+              <div
+                class="text-sm font-medium text-[var(--apple-text)]"
+                x-text="t('system.memoryVerbose')"
+              ></div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.memoryVerboseHint')"
+              ></p>
+            </div>
+            <label class="apple-switch">
+              <input
+                type="checkbox"
+                x-model="settings.memoryVerbose"
+                :disabled="saving"
+              />
+              <span class="apple-switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- 请求与失败上游请求脱敏落盘 -->
+          <div
+            class="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl">
+              <div
+                class="text-sm font-medium text-[var(--apple-text)] flex items-center gap-2 flex-wrap"
+              >
+                <span x-text="t('system.requestDump')"></span>
+                <span
+                  class="badge text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-600 border border-red-200"
+                  >高磁盘与 I/O 开销</span
+                >
+              </div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.requestDumpHint')"
+              ></p>
+            </div>
+            <label class="apple-switch">
+              <input
+                type="checkbox"
+                x-model="settings.requestDump"
+                :disabled="saving"
+              />
+              <span class="apple-switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- 临时调试会话面板 (当开启 debug 或脱敏落盘或内存日志时激活) -->
+          <div
+            class="p-5 bg-amber-50/50 border-t border-amber-200/70 space-y-4"
+            x-show="settings.logLevel === 'debug' || settings.requestDump || settings.memoryVerbose"
+          >
+            <div class="flex items-start gap-3">
+              <div
+                class="w-5 h-5 rounded-full bg-[var(--apple-orange)] text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5"
+              >
+                !
+              </div>
+              <div class="space-y-0.5">
+                <h4
+                  class="text-sm font-semibold text-amber-900"
+                  x-text="t('system.debugSessionActive')"
+                ></h4>
+                <p
+                  class="text-xs text-amber-800/80 leading-relaxed"
+                  x-text="t('system.debugSessionHint')"
+                ></p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <!-- 临时调试时长 -->
+              <div class="space-y-1.5">
+                <label
+                  class="block text-xs font-medium text-amber-900"
+                  x-text="t('system.duration')"
+                ></label>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="number"
+                    class="input text-xs py-1.5 px-3 w-28 bg-white"
+                    min="1"
+                    max="120"
+                    step="1"
+                    x-model.number="debugMinutes"
+                    :disabled="saving"
+                  />
+                  <span class="text-xs text-amber-800/80">分钟 (1~120)</span>
+                </div>
+                <p
+                  class="text-[11px] text-amber-700/80 mt-1"
+                  x-text="t('system.expiryHint')"
+                ></p>
+              </div>
+
+              <!-- 最近到期时间 -->
+              <div class="space-y-1.5" x-show="expiresAt">
+                <span
+                  class="block text-xs font-medium text-amber-900"
+                  x-text="t('system.expiresAt')"
+                ></span>
+                <span
+                  class="inline-block text-xs font-mono text-amber-800 bg-white/70 px-2.5 py-1.5 rounded-lg border border-amber-200"
+                  x-text="formatTime(expiresAt)"
+                ></span>
+              </div>
+            </div>
+
+            <!-- 脱敏落盘安全确认勾选框 -->
+            <div
+              class="pt-2 border-t border-amber-200/60"
+              x-show="settings.requestDump"
+            >
+              <label class="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="mt-0.5 rounded accent-[var(--apple-blue)]"
+                  x-model="acknowledgeSensitiveData"
+                  :disabled="saving"
+                />
+                <span
+                  class="text-xs font-medium text-red-700 leading-relaxed"
+                  x-text="t('system.acknowledge')"
+                ></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bottom Sticky / Fixed Action Bar -->
+      <div
+        class="card p-4 sm:p-5 border border-[var(--apple-gray-5)] bg-white shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      >
+        <div class="flex items-center gap-3">
+          <button
+            type="submit"
+            class="btn btn-primary"
+            :disabled="saving || loading || (settings.requestDump && !acknowledgeSensitiveData)"
+            x-text="t('system.save')"
+          ></button>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            @click="useRecommended()"
             :disabled="saving"
-          />
-          <span>
+            x-text="t('system.recommended')"
+          ></button>
+          <span
+            role="status"
+            class="inline-flex items-center gap-1.5 text-xs text-[var(--apple-green)] font-medium px-2 py-1 rounded bg-[rgba(52,199,89,0.1)] border border-[rgba(52,199,89,0.2)]"
+            x-show="saved"
+          >
             <span
-              class="block text-sm font-medium"
-              x-text="t('system.' + key)"
+              class="w-1.5 h-1.5 rounded-full bg-[var(--apple-green)]"
             ></span>
-            <span
-              class="block text-sm text-[var(--apple-text-secondary)]"
-              x-text="t('system.' + key + 'Hint')"
-            ></span>
+            <span x-text="t('system.saved')"></span>
           </span>
-        </label>
-      </template>
-      <fieldset class="space-y-3">
-        <legend
-          class="text-sm font-medium"
-          x-text="t('system.logStorage')"
-        ></legend>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class="block">
-            <span
-              class="block text-sm mb-2"
-              x-text="t('system.logRetentionDays')"
-            ></span>
-            <input
-              type="number"
-              class="input w-full"
-              min="1"
-              max="3650"
-              step="1"
-              required
-              x-model.number="settings.logRetentionDays"
-              :disabled="saving"
-            />
-          </label>
-          <label class="block">
-            <span
-              class="block text-sm mb-2"
-              x-text="t('system.logMaxTotalMiB')"
-            ></span>
-            <input
-              type="number"
-              class="input w-full"
-              min="1"
-              max="1048576"
-              step="1"
-              required
-              x-model.number="maxLogMiB"
-              :disabled="saving"
-            />
-          </label>
         </div>
         <p
-          class="text-sm text-[var(--apple-text-secondary)]"
-          x-text="t('system.logStorageHint')"
+          class="text-xs text-[var(--apple-text-secondary)] max-w-sm sm:text-right"
+          x-text="t('system.boundaries')"
         ></p>
-      </fieldset>
-      <label class="flex items-start gap-3" x-show="settings.requestDump">
-        <input
-          type="checkbox"
-          class="mt-1"
-          x-model="acknowledgeSensitiveData"
-          :disabled="saving"
-        />
-        <span class="text-sm" x-text="t('system.acknowledge')"></span>
-      </label>
-      <label
-        class="block"
-        x-show="settings.logLevel === 'debug' || settings.requestDump || settings.memoryVerbose"
-      >
-        <span
-          class="block text-sm font-medium mb-2"
-          x-text="t('system.duration')"
-        ></span>
-        <input
-          type="number"
-          class="input w-full"
-          min="1"
-          max="120"
-          step="1"
-          x-model.number="debugMinutes"
-          :disabled="saving"
-        />
-        <span
-          class="block text-sm text-[var(--apple-text-secondary)] mt-1"
-          x-text="t('system.expiryHint')"
-        ></span>
-      </label>
-      <p
-        class="text-sm"
-        x-show="expiresAt"
-        x-text="t('system.expiresAt') + ': ' + formatTime(expiresAt)"
-      ></p>
-      <div class="flex flex-wrap items-center gap-3">
-        <button
-          type="submit"
-          class="btn btn-primary"
-          :disabled="saving || loading || (settings.requestDump && !acknowledgeSensitiveData)"
-          x-text="t('system.save')"
-        ></button>
-        <button
-          type="button"
-          class="btn btn-secondary"
-          @click="useRecommended()"
-          :disabled="saving"
-          x-text="t('system.recommended')"
-        ></button>
-        <span
-          role="status"
-          class="text-sm"
-          x-show="saved"
-          x-text="t('system.saved')"
-        ></span>
       </div>
-      <p
-        class="text-sm text-[var(--apple-text-secondary)]"
-        x-text="t('system.boundaries')"
-      ></p>
     </form>
   </template>
 </div>

@@ -1394,3 +1394,60 @@ select.form-input {
   color: var(--apple-blue);
   font-weight: 600;
 }
+
+/* Apple Style Switch Toggle */
+.apple-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.apple-switch input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+.apple-switch-slider {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  background-color: var(--apple-gray-4);
+  border-radius: 9999px;
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-sizing: border-box;
+}
+.apple-switch-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: #ffffff;
+  border-radius: 9999px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.apple-switch input:checked + .apple-switch-slider {
+  background-color: var(--apple-blue);
+}
+.apple-switch input:checked + .apple-switch-slider::after {
+  transform: translateX(20px);
+}
+.apple-switch input:focus-visible + .apple-switch-slider {
+  outline: 2px solid var(--apple-blue);
+  outline-offset: 2px;
+}
+.apple-switch input:disabled + .apple-switch-slider {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -47,6 +47,17 @@ const i18n = {
       "nav.group.access": "访问与安全",
       "nav.system-config": "系统配置",
       "system.subtitle": "即时控制诊断开销；保留基础统计、请求追踪和错误告警。",
+      "system.section.display": "界面与显示偏好",
+      "system.section.displayHint": "影响管理后台与追踪看板展示",
+      "system.section.codex": "Codex 客户端集成",
+      "system.section.codexHint": "GitHub Copilot / Codex 专用设置",
+      "system.section.logging": "日志级别与存储治理",
+      "system.section.loggingHint": "控制台与文件持久化预算",
+      "system.section.diagnostics": "探针指标与临时排障",
+      "system.section.diagnosticsHint": "即时控制诊断开销，高开销项限时生效",
+      "system.debugSessionActive": "临时诊断会话已就绪",
+      "system.debugSessionHint":
+        "高开销排障项采用限时生效机制，到期后自动降级恢复，防止资源与磁盘持续消耗。",
       "system.source.environment":
         "配置来源：启动参数 / 环境变量。首次保存后，WebUI 配置优先。",
       "system.source.webui": "配置来源：WebUI（已持久化，重启后保留）。",
@@ -1566,6 +1577,18 @@ const i18n = {
       "nav.system-config": "System Settings",
       "system.subtitle":
         "Control diagnostic overhead live; keep basic usage, traces and error alerts.",
+      "system.section.display": "Display & Preferences",
+      "system.section.displayHint": "Affects admin console and trace metrics",
+      "system.section.codex": "Codex Integration",
+      "system.section.codexHint": "GitHub Copilot and Codex client settings",
+      "system.section.logging": "Logging & Storage",
+      "system.section.loggingHint": "Console and persistent file budget",
+      "system.section.diagnostics": "Diagnostics & Probes",
+      "system.section.diagnosticsHint":
+        "Manage diagnostic overhead; intensive features expire automatically",
+      "system.debugSessionActive": "Temporary Diagnostic Session",
+      "system.debugSessionHint":
+        "Intensive diagnostics expire automatically to prevent persistent disk and performance overhead.",
       "system.source.environment":
         "Source: startup options / environment. Saved WebUI settings take precedence.",
       "system.source.webui": "Source: WebUI (persisted across restarts).",
