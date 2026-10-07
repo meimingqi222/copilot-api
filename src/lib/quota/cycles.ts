@@ -367,7 +367,7 @@ function filterClaudeFamilyUsage(
 
   const connection = getProviderConnection(accountId)
   const familyPattern = new RegExp(
-    `^claude-(?:\\d+(?:[.-]\\d+)*-)?${family}(?:-|$)`,
+    `(?:^|[/._-])claude-(?:\\d+(?:[.-]\\d+)*-)?${family}(?:[-.:]|$)`,
     "i",
   )
   const summary: TimestampRangeUsage = {

@@ -158,6 +158,68 @@ describe("quota cycle window resolution", () => {
 })
 
 describe("quota cycle usage aggregation", () => {
+  test("Claude family windows include namespaced upstream aliases without false family matches", async () => {
+    const models = [
+      ["opus-premium", "anthropic/claude-opus-4-6"],
+      ["opus-bedrock", "us.anthropic.claude-opus-4-6-v1:0"],
+      ["sonnet-premium", "anthropic/claude-sonnet-4"],
+      ["sonnet-legacy", "us.anthropic.claude-3-5-sonnet-v2:0"],
+      ["wrong-boundary", "notclaude-opus-4-6"],
+      ["wrong-family", "anthropic/claude-opusplus-4-6"],
+    ] as const
+    await createConnection({
+      id: "acct-namespaced-family",
+      name: "namespaced family",
+      protocol: "claude-native",
+      baseUrl: "https://api.anthropic.com",
+      priority: 0,
+      credentials: [{ id: "cred-family", value: "x", authMode: "bearer" }],
+      models: models.map(([publicId, upstreamId]) => ({
+        publicId,
+        upstreamId,
+        enabled: true,
+        endpoints: ["messages" as const],
+      })),
+    })
+    const now = Date.now()
+    for (const [model] of models) {
+      statsStore.recordUsage({
+        date: statsStore.getDateString(now),
+        accountId: "acct-namespaced-family",
+        model,
+        promptTokens: 100,
+        completionTokens: 10,
+        totalTokens: 110,
+        cost: 1,
+        timestamp: now - 1000,
+      })
+    }
+    const windows = resolveClaudeQuotaWindows({
+      seven_day_opus: {
+        utilization: 0.2,
+        resets_at: new Date(now + 60_000).toISOString(),
+      },
+      seven_day_sonnet: {
+        utilization: 0.2,
+        resets_at: new Date(now + 60_000).toISOString(),
+      },
+    })
+    const usage = attachCycleUsage("acct-namespaced-family", windows)
+    for (const window of usage) {
+      expect(window.cycleUsage?.requests).toBe(2)
+      expect(window.cycleUsage?.totalTokens).toBe(220)
+      expect(window.cycleUsage?.cost).toBe(2)
+    }
+    expect(Object.keys(usage[0]?.cycleUsage?.models ?? {}).sort()).toEqual([
+      "opus-bedrock",
+      "opus-premium",
+    ])
+    expect(Object.keys(usage[1]?.cycleUsage?.models ?? {}).sort()).toEqual([
+      "sonnet-legacy",
+      "sonnet-premium",
+    ])
+  })
+
   test("cycle usage includes the current millisecond but excludes reset and future rows", () => {
     const now = Date.now()
     const clock = spyOn(Date, "now").mockReturnValue(now)
