@@ -90,12 +90,18 @@ function sweepStaleInFlight(now: number): void {
 function upsert(entry: TraceRecord, phase: TracePhase): void {
   const now = Date.now()
   sweepStaleInFlight(now)
-  seqCounter += 1
-  const stamped: TraceRecord = { ...entry, seq: seqCounter, atMs: now }
   const existing =
     entry.requestId ?
       recent.findIndex((r) => r.requestId === entry.requestId)
     : -1
+  const previous = existing >= 0 ? recent[existing] : undefined
+  // A detached WS turn can finish on client close before its upstream call
+  // settles. Late routing/attempt snapshots must not reopen that final result.
+  // TTL settlement is provisional: a still-running producer may resume it.
+  if (phase !== "final" && previous?.inFlight === false && !previous.stale)
+    return
+  seqCounter += 1
+  const stamped: TraceRecord = { ...entry, seq: seqCounter, atMs: now }
   if (existing >= 0) {
     // Start/update carry partial data — merge so the later phase never drops
     // fields an earlier one already knew. `final` 总是结算态：即便这条记录先前被

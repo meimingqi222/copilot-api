@@ -376,12 +376,20 @@ loopbackTest(
 loopbackTest(
   "WS /v1/responses logs an active turn as cancelled on client close",
   async () => {
-    globalThis.fetch = mock(
-      () =>
-        new Promise<Response>((resolve) =>
-          setTimeout(() => resolve(new Response("late")), 500),
-        ),
-    ) as unknown as typeof fetch
+    let releaseUpstream: (() => void) | undefined
+    let upstreamSignal: AbortSignal | undefined
+    const upstreamGate = new Promise<void>((resolve) => {
+      releaseUpstream = resolve
+    })
+    const fetchMock = mock(async (_url: unknown, options?: RequestInit) => {
+      upstreamSignal = options?.signal ?? undefined
+      await upstreamGate
+      return new Response(
+        JSON.stringify({ id: "late", model: "gpt-responses", output: [] }),
+        { headers: { "content-type": "application/json" } },
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
     using appServer = Bun.serve({
       port: 0,
       fetch: server.fetch,
@@ -396,7 +404,7 @@ loopbackTest(
         response: { model: "gpt-responses", input: "cancel me" },
       }),
     )
-    await Bun.sleep(20)
+    await waitFor(() => fetchMock.mock.calls.length > 0)
     ws.close()
 
     await waitFor(() =>
@@ -410,6 +418,26 @@ loopbackTest(
     expect(cancelledTrace?.inFlight).toBe(false)
     expect(cancelledTrace?.outcome).toBe("cancelled")
     expect(cancelledTrace?.statusCode).toBe(499)
+    expect(upstreamSignal?.aborted).toBe(true)
+    const lateUpdates: unknown[] = []
+    const unsubscribe = subscribeTrace(({ entry, phase }) => {
+      if (entry.requestId === cancelledTrace?.requestId && phase !== "final")
+        lateUpdates.push(entry)
+    })
+    try {
+      releaseUpstream?.()
+      await Bun.sleep(50)
+      expect(lateUpdates).toHaveLength(0)
+      expect(
+        recentTraces().find(
+          (entry) => entry.requestId === cancelledTrace?.requestId,
+        ),
+      ).toEqual(cancelledTrace)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      releaseUpstream?.()
+      unsubscribe()
+    }
   },
 )
 

@@ -25,6 +25,36 @@ describe("trace bus in-flight 自愈", () => {
     clearTraceBusForTest()
   })
 
+  test.each(["start", "update"] as const)(
+    "late %s cannot reopen a finalized request",
+    (phase) => {
+      publishTrace({ requestId: "cancelled", model: "original" }, "start")
+      publishTrace(
+        {
+          requestId: "cancelled",
+          outcome: "cancelled",
+          error: "Client disconnected",
+          statusCode: 499,
+          latencyMs: 3900,
+        },
+        "final",
+      )
+      const settled = recentTraces()[0]
+      const events: unknown[] = []
+      const unsubscribe = subscribeTrace((event) => events.push(event))
+      try {
+        publishTrace(
+          { requestId: "cancelled", model: "late", outcome: "success" },
+          phase,
+        )
+        expect(recentTraces()[0]).toEqual(settled)
+        expect(events).toHaveLength(0)
+      } finally {
+        unsubscribe()
+      }
+    },
+  )
+
   test("超过 TTL 没有后续更新的 in-flight 记录会被结算，并通知已连接的视图", () => {
     const events: Array<{ requestId: string; inFlight?: boolean }> = []
     subscribeTrace((event) =>
@@ -142,5 +172,18 @@ describe("trace bus in-flight 自愈", () => {
     const record = recentTraces().find((r) => r.requestId === "replay-1")
     expect(record?.inFlight).toBe(true)
     expect(record?.stale).toBeUndefined()
+  })
+
+  test("an update can resume a provisionally expired request", () => {
+    publishTrace({ requestId: "resumed" }, "start")
+    __sweepStaleInFlightForTest(Date.now() + TRACE_INFLIGHT_TTL_MS + 1000)
+    publishTrace({ requestId: "resumed", ttftMs: 42 }, "update")
+    expect(recentTraces()[0]).toMatchObject({ inFlight: true, ttftMs: 42 })
+    publishTrace({ requestId: "resumed", outcome: "success" }, "final")
+    expect(recentTraces()[0]).toMatchObject({
+      inFlight: false,
+      outcome: "success",
+    })
+    expect(recentTraces()[0]?.stale).toBeUndefined()
   })
 })

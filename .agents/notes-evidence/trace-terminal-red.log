@@ -1,0 +1,113 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\responses-ws-route.test.ts:
+<-- GET /responses
+--> GET /responses 200 5ms
+(pass) WS /responses supports sequential response.create requests [54.03ms]
+<-- GET /v1/responses
+--> GET /v1/responses 401 1ms
+(pass) WS /v1/responses handshake requires API key middleware [3.99ms]
+<-- GET /v1/responses
+--> GET /v1/responses 200 0ms
+(pass) WS /v1/responses returns busy error on concurrent response.create [115.56ms]
+<-- GET /v1/responses
+--> GET /v1/responses 200 0ms
+[warn] Windsurf upstream rate-limited account "test-account-id": {"retryAfterMs":30000,"appliedCooldownMs":30000,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":30,"consecutive429Count":1,"theoreticalArrivalDelayMs":30000}}
+[warn] Connection "test" marked unavailable due to rate limit (upstream_ws_server)
+(pass) WS /v1/responses forwards upstream errors as error events [22.54ms]
+<-- GET /v1/responses
+--> GET /v1/responses 200 0ms
+425 |         lateUpdates.push(entry)
+426 |     })
+427 |     try {
+428 |       releaseUpstream?.()
+429 |       await Bun.sleep(50)
+430 |       expect(lateUpdates).toHaveLength(0)
+                                ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 0
+Received length: 1
+
+      at <anonymous> (tests\responses-ws-route.test.ts:430:27)
+(fail) WS /v1/responses logs an active turn as cancelled on client close [94.07ms]
+<-- GET /v1/responses
+--> GET /v1/responses 200 1ms
+(pass) WS /v1/responses retries a truncated pre-output stream over HTTP [10.83ms]
+(pass) Responses WS send detects a message dropped by Bun [3.27ms]
+(pass) Responses WS send waits for buffered output to drain [31.74ms]
+[unrelated sandbox diagnostic omitted]
+
+tests\trace-bus-stale.test.ts:
+45 |       try {
+46 |         publishTrace(
+47 |           { requestId: "cancelled", model: "late", outcome: "success" },
+48 |           phase,
+49 |         )
+50 |         expect(recentTraces()[0]).toEqual(settled)
+                                       ^
+error: expect(received).toEqual(expected)
+
+  {
+    "atMs": 1791358553309,
+    "error": "Client disconnected",
+-   "inFlight": false,
++   "inFlight": true,
+    "latencyMs": 3900,
+-   "model": "original",
+-   "outcome": "cancelled",
++   "model": "late",
++   "outcome": "success",
+    "requestId": "cancelled",
+-   "seq": 2,
++   "seq": 3,
+    "stale": undefined,
+    "statusCode": 499,
+  }
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (tests\trace-bus-stale.test.ts:50:35)
+(fail) trace bus in-flight 自愈 > late start cannot reopen a finalized request [5.97ms]
+45 |       try {
+46 |         publishTrace(
+47 |           { requestId: "cancelled", model: "late", outcome: "success" },
+48 |           phase,
+49 |         )
+50 |         expect(recentTraces()[0]).toEqual(settled)
+                                       ^
+error: expect(received).toEqual(expected)
+
+  {
+    "atMs": 1791358553315,
+    "error": "Client disconnected",
+-   "inFlight": false,
++   "inFlight": true,
+    "latencyMs": 3900,
+-   "model": "original",
+-   "outcome": "cancelled",
++   "model": "late",
++   "outcome": "success",
+    "requestId": "cancelled",
+-   "seq": 2,
++   "seq": 3,
+    "stale": undefined,
+    "statusCode": 499,
+  }
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (tests\trace-bus-stale.test.ts:50:35)
+(fail) trace bus in-flight 自愈 > late update cannot reopen a finalized request [0.33ms]
+(pass) trace bus in-flight 自愈 > 超过 TTL 没有后续更新的 in-flight 记录会被结算，并通知已连接的视图 [0.22ms]
+(pass) trace bus in-flight 自愈 > idle subscribers receive settlement without another trace read or publish [0.18ms]
+(pass) trace bus in-flight 自愈 > TTL 内的 in-flight 记录不被动 [0.05ms]
+(pass) trace bus in-flight 自愈 > 长请求最终收尾时，final 会抹掉兜底的 stale 标记 [0.08ms]
+(pass) trace bus in-flight 自愈 > 带很旧 timestamp 但刚进入总线的记录不会被立刻判定超时 [0.04ms]
+
+ 12 pass
+ 3 fail
+ 66 expect() calls
+Ran 15 tests across 2 files. [971.00ms]
