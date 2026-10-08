@@ -397,8 +397,6 @@
               >
                 诊断提示
               </th>
-              <!-- 列 8: 操作 -->
-              <th class="py-2.5 px-3 text-center font-semibold w-14">分析</th>
             </tr>
           </thead>
           <tbody>
@@ -409,35 +407,51 @@
                 class="border-b border-[var(--apple-gray-5)]/70 hover:bg-[var(--apple-bg-secondary)]/50 cursor-pointer transition-colors"
                 :class="isRowExpanded(getRowKey(row)) ? 'bg-[var(--apple-blue)]/5 border-[var(--apple-blue)]/30' : ''"
               >
-                <!-- 列 1: 模型与渠道徽章 -->
+                <!-- 列 1: 展开控件 + 模型与渠道徽章 -->
                 <td class="py-2.5 px-3 min-w-[200px]">
-                  <div
-                    class="font-medium text-[var(--apple-text)] break-all flex items-center gap-1.5 flex-wrap"
-                  >
-                    <span
-                      class="font-semibold text-sm"
-                      x-text="row.model"
-                    ></span>
-                    <span
-                      class="badge badge-info text-[10px] px-1.5 py-0 font-medium"
-                      x-text="row.connectionName || row.provider"
-                      :title="row.provider + ' / ' + row.endpoint"
-                    ></span>
-                    <span
-                      class="badge text-[10px] px-1.5 py-0 font-normal"
-                      :class="row.streaming ? 'badge-purple' : 'badge-gray'"
-                      x-text="row.streaming ? '流式' : '非流式'"
-                    ></span>
-                    <span
-                      class="badge text-[10px] px-1.5 py-0 font-normal hidden sm:inline"
-                      :class="row.translated ? 'badge-purple' : 'badge-success'"
-                      x-text="row.translated ? '转译' : '原生'"
-                    ></span>
+                  <div class="flex items-start gap-1.5">
+                    <!-- 展开控件与整行点击等效，单独成按钮是为了键盘/读屏可达 -->
+                    <button
+                      type="button"
+                      class="mt-0.5 shrink-0 rounded-md p-0.5 text-[var(--apple-text-secondary)] hover:text-[var(--apple-blue)] hover:bg-[var(--apple-gray-6)] cursor-pointer transition-transform duration-200"
+                      :class="isRowExpanded(getRowKey(row)) ? 'rotate-180 text-[var(--apple-blue)]' : ''"
+                      :aria-expanded="isRowExpanded(getRowKey(row))"
+                      :title="isRowExpanded(getRowKey(row)) ? t('perf.collapseRow') : t('perf.expandRow')"
+                      :aria-label="isRowExpanded(getRowKey(row)) ? t('perf.collapseRow') : t('perf.expandRow')"
+                      @click.stop="toggleRow(getRowKey(row))"
+                    >
+                      <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                    </button>
+                    <div class="min-w-0">
+                      <div
+                        class="font-medium text-[var(--apple-text)] break-all flex items-center gap-1.5 flex-wrap"
+                      >
+                        <span
+                          class="font-semibold text-sm"
+                          x-text="row.model"
+                        ></span>
+                        <span
+                          class="badge badge-info text-[10px] px-1.5 py-0 font-medium"
+                          x-text="row.connectionName || row.provider"
+                          :title="row.provider + ' / ' + row.endpoint"
+                        ></span>
+                        <span
+                          class="badge text-[10px] px-1.5 py-0 font-normal"
+                          :class="row.streaming ? 'badge-purple' : 'badge-gray'"
+                          x-text="row.streaming ? '流式' : '非流式'"
+                        ></span>
+                        <span
+                          class="badge text-[10px] px-1.5 py-0 font-normal hidden sm:inline"
+                          :class="row.translated ? 'badge-purple' : 'badge-success'"
+                          x-text="row.translated ? '转译' : '原生'"
+                        ></span>
+                      </div>
+                      <div
+                        class="text-[11px] font-mono text-[var(--apple-text-tertiary)] mt-0.5 truncate"
+                        x-text="row.endpoint"
+                      ></div>
+                    </div>
                   </div>
-                  <div
-                    class="text-[11px] font-mono text-[var(--apple-text-tertiary)] mt-0.5 truncate"
-                    x-text="row.endpoint"
-                  ></div>
                 </td>
 
                 <!-- 列 2: 请求数与样本数 -->
@@ -568,16 +582,6 @@
                     >
                   </div>
                 </td>
-
-                <!-- 列 8: 展开操作 -->
-                <td class="py-2.5 px-3 text-center">
-                  <div
-                    class="p-1 rounded-md text-[var(--apple-text-secondary)] hover:text-[var(--apple-blue)] inline-block transition-transform duration-200"
-                    :class="isRowExpanded(getRowKey(row)) ? 'rotate-180 text-[var(--apple-blue)]' : ''"
-                  >
-                    <i data-lucide="chevron-down" class="w-4 h-4"></i>
-                  </div>
-                </td>
               </tr>
 
               <!-- 下钻分析详情面板 (按需展开) -->
@@ -585,7 +589,7 @@
                 x-show="isRowExpanded(getRowKey(row))"
                 class="bg-[var(--apple-bg-secondary)]/30 border-b border-[var(--apple-gray-5)]"
               >
-                <td colspan="8" class="p-3 sm:p-5">
+                <td colspan="7" class="p-3 sm:p-5">
                   <div
                     class="bg-white rounded-xl border border-[var(--apple-gray-5)] p-4 sm:p-5 shadow-sm space-y-4"
                   >

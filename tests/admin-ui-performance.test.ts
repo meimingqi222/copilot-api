@@ -81,6 +81,49 @@ describe("admin view lifecycle", () => {
   })
 })
 
+describe("channels table row disclosure", () => {
+  const section = () => {
+    const html = readFileSync("pages/partials/performance-detail.html", "utf8")
+    return html.slice(
+      html.indexOf("<!-- 3. 主体内容 TAB 1"),
+      html.indexOf("<!-- 4. 主体内容 TAB 2"),
+    )
+  }
+
+  test("exposes expand/collapse as a real button inside the model column", () => {
+    const html = section()
+    const anchor = html.indexOf("展开控件与整行点击等效")
+    expect(anchor).toBeGreaterThan(-1)
+    const button = html.slice(anchor, html.indexOf("</button>", anchor))
+    // 键盘/读屏可达：真 button + aria 状态，而不是只能靠冒泡到整行的装饰图标
+    expect(button).toContain("<button")
+    expect(button).toContain('data-lucide="chevron-down"')
+    expect(button).toContain(':aria-expanded="isRowExpanded(getRowKey(row))"')
+    // 自己处理点击必须 stop，否则会和整行点击叠成两次 toggle
+    expect(button).toContain('@click.stop="toggleRow(getRowKey(row))"')
+    // 展开控件不能跑回最右侧：模型名必须先于它出现
+    expect(html.indexOf('x-text="row.model"')).toBeGreaterThan(anchor)
+  })
+
+  test("keeps a single set of 7 columns without a decorative 分析 column", () => {
+    const html = section()
+    const thead = html.slice(html.indexOf("<thead>"), html.indexOf("</thead>"))
+    expect(thead.match(/<th\b/g)).toHaveLength(7)
+    expect(thead).not.toContain(">分析</th>")
+
+    const rowStart = html.indexOf('@click="toggleRow')
+    const row = html.slice(
+      html.lastIndexOf("<tr", rowStart),
+      html.indexOf("</tr>", rowStart),
+    )
+    expect(row.match(/<td\b/g)).toHaveLength(7)
+
+    // 详情面板的跨列数必须跟上表头
+    expect(html).toContain('<td colspan="7"')
+    expect(html).not.toContain('colspan="8"')
+  })
+})
+
 describe("incremental admin icons", () => {
   test("coalesces refreshes and preserves unchanged SVG nodes and bindings", () => {
     const frames: Array<() => void> = []
