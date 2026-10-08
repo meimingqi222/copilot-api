@@ -1279,7 +1279,8 @@ const i18n = {
       "perf.streaming": "流式请求",
       "perf.avgTtft": "平均首字耗时",
       "perf.avgTps": "平均 TPS",
-      "perf.streamingTps": "流式 TPS",
+      "perf.streamingTps": "流式 TPS（端到端）",
+      "perf.decodeTps": "解码 TPS（首字后）",
       "perf.nonStreamingTps": "非流式 TPS",
       "perf.noData": "暂无性能数据",
       "perf.byProvider": "按提供商",
@@ -1328,7 +1329,15 @@ const i18n = {
       "perf.upstreamToOutputMs": "首上游事件 → 有效输出观测",
       "perf.responseReadyMs": "请求进入 → 非流式调度结果就绪",
       "perf.streamingTpsDesc":
-        "从请求发出到响应结束的完整 token 速率（含首字延迟和缓冲）",
+        "从请求发出到响应结束的完整 token 速率（含首字延迟、上游排队与缓冲）",
+      "perf.decodeTpsDesc":
+        "首个有效输出到响应结束的生成速率，不含首字延迟，等价于 1000/TPOT",
+      "perf.tpsSplitTitle": "TPS 口径（端到端 / 解码）",
+      "perf.tpsSplitDesc":
+        "端到端 TPS 含首字等待与上游排队；解码 TPS 只统计首个有效输出之后的生成速度（=1000/TPOT），短回答下两列差距最大。解码列仅覆盖已采集分段性能的流式请求。",
+      "perf.decodeTpsSamples":
+        "解码速率可用样本 {samples} 条（仅已采集分段性能的流式请求）",
+      "perf.decodeTpsMissing": "该行未采集分段性能，无法计算首字后速率",
       "perf.nonStreamingTpsDesc": "完整的请求-响应周期 token 速率",
 
       // 性能监控 UX 重构增强
@@ -1336,11 +1345,13 @@ const i18n = {
       "perf.tabModels": "按模型汇总",
       "perf.tabProviders": "按供应商汇总",
       "perf.globalTtft": "全局首字响应",
-      "perf.globalTps": "平均流式速率",
+      "perf.globalTps": "平均流式速率（端到端）",
       "perf.proxyOverhead": "代理处理开销",
       "perf.proxyOverheadDesc": "代理自身极速处理，上游推理占绝对主导",
       "perf.monitoredChannels": "活跃通道 / 评估样本",
       "perf.drillDown": "下钻分析",
+      "perf.expandRow": "展开耗时流水线分析",
+      "perf.collapseRow": "折叠耗时流水线分析",
       "perf.collapse": "收起详情",
       "perf.thinkingTag": "思考/工具",
       "perf.upstreamRatio": "上游占比",
@@ -2857,7 +2868,8 @@ const i18n = {
       "perf.streaming": "Streaming Requests",
       "perf.avgTtft": "Avg TTFT",
       "perf.avgTps": "Avg TPS",
-      "perf.streamingTps": "Streaming TPS",
+      "perf.streamingTps": "Streaming TPS (end-to-end)",
+      "perf.decodeTps": "Decode TPS (post-TTFT)",
       "perf.nonStreamingTps": "Non-Streaming TPS",
       "perf.noData": "No performance data available",
       "perf.byProvider": "By Provider",
@@ -2914,7 +2926,16 @@ const i18n = {
       "perf.firstTranslatedFrameMs":
         "First upstream frame → first translated frame",
       "perf.streamingTpsDesc":
-        "Full response rate including TTFT and buffering (request to last token)",
+        "Full response rate from request to last token, including TTFT, upstream queueing and buffering",
+      "perf.decodeTpsDesc":
+        "Generation rate from first meaningful output to the last token; excludes TTFT. Equals 1000/TPOT.",
+      "perf.tpsSplitTitle": "TPS definitions (end-to-end vs decode)",
+      "perf.tpsSplitDesc":
+        "End-to-end TPS includes TTFT and upstream queueing; decode TPS measures only after the first meaningful output (=1000/TPOT), so short answers diverge most. The decode column covers instrumented streaming requests only.",
+      "perf.decodeTpsSamples":
+        "Decode rate from {samples} instrumented streaming requests",
+      "perf.decodeTpsMissing":
+        "No segmented performance recorded for this row; decode rate unavailable",
       "perf.nonStreamingTpsDesc":
         "Overall tokens-per-second for the full request-response cycle",
 
@@ -2923,11 +2944,13 @@ const i18n = {
       "perf.tabModels": "By Model",
       "perf.tabProviders": "By Provider",
       "perf.globalTtft": "Global TTFT",
-      "perf.globalTps": "Avg Streaming TPS",
+      "perf.globalTps": "Avg Streaming TPS (end-to-end)",
       "perf.proxyOverhead": "Proxy Overhead",
       "perf.proxyOverheadDesc": "Minimal proxy latency; upstream dominates",
       "perf.monitoredChannels": "Active Channels / Samples",
       "perf.drillDown": "Drill Down",
+      "perf.expandRow": "Expand timing pipeline analysis",
+      "perf.collapseRow": "Collapse timing pipeline analysis",
       "perf.collapse": "Collapse",
       "perf.thinkingTag": "Reasoning/Tools",
       "perf.upstreamRatio": "Upstream",

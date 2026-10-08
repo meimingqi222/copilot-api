@@ -291,6 +291,8 @@ class StatsStore {
     streamingRequests: number
     avgTtftMs: number | null
     avgStreamingTps: number | null
+    avgDecodeTps: number | null
+    decodeSamples: number
     avgNonStreamingTps: number | null
   }> {
     const db = this.ensureDb()
@@ -308,6 +310,8 @@ class StatsStore {
     streamingRequests: number
     avgTtftMs: number | null
     avgStreamingTps: number | null
+    avgDecodeTps: number | null
+    decodeSamples: number
     avgNonStreamingTps: number | null
   }> {
     const db = this.ensureDb()

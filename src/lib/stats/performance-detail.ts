@@ -1,4 +1,7 @@
-import type { RequestPerformance } from "~/lib/request-performance"
+import {
+  readGenerationSample,
+  readRequestPerformance,
+} from "~/lib/stats/performance-generation"
 import type { UsageRawRow } from "~/lib/stats/types"
 
 const TIMING_FIELDS = [
@@ -86,7 +89,7 @@ export function computePerformanceDetails(
 ): PerformanceDetail[] {
   const groups = new Map<string, DetailAccumulator>()
   for (const row of rows) {
-    const metrics = readPerformance(row.performance_json)
+    const metrics = readRequestPerformance(row)
     if (!metrics) continue
     const identity = {
       connectionId: row.connection_id ?? row.account_id,
@@ -118,33 +121,12 @@ export function computePerformanceDetails(
       if (typeof value === "number" && Number.isFinite(value) && value >= 0)
         group.timings[field].push(value)
     }
-    if (
-      row.streaming === 1
-      && typeof metrics.generationMs === "number"
-      && Number.isFinite(metrics.generationMs)
-      && metrics.generationMs > 0
-      && row.completion_tokens > 0
-    ) {
-      let effectiveGenMs = metrics.generationMs
-      const instantTps = row.completion_tokens / (metrics.generationMs / 1000)
-      // 若单帧突发导致瞬时 TPS 突破物理极限（> 800 tok/s），且具备持久化的全局真实 TPS，则用真实耗时做平滑校准；
-      // 若无有效 row.tps，则将耗时下限钳位至物理极速上限 800 tok/s 对应的毫秒数，避免除零爆表
-      if (instantTps > 800) {
-        if (typeof row.tps === "number" && row.tps > 0 && row.tps <= 800) {
-          effectiveGenMs = Math.max(
-            metrics.generationMs,
-            (row.completion_tokens / row.tps) * 1000,
-          )
-        } else {
-          effectiveGenMs = Math.max(
-            metrics.generationMs,
-            (row.completion_tokens / 800) * 1000,
-          )
-        }
-      }
+    // 与按模型 / 按供应商视图共用同一套判定与钳位，口径必须一致
+    const sample = readGenerationSample(row)
+    if (sample) {
       group.generationSamples += 1
-      group.tokens += row.completion_tokens
-      group.generationMs += effectiveGenMs
+      group.tokens += sample.tokens
+      group.generationMs += sample.generationMs
     }
   }
   return [...groups.values()]
@@ -164,23 +146,4 @@ export function computePerformanceDetails(
       ) as Record<TimingField, TimingSummary>,
     }))
     .sort((left, right) => right.requests - left.requests)
-}
-
-function readPerformance(
-  raw: string | null | undefined,
-): RequestPerformance | undefined {
-  if (!raw) return undefined
-  try {
-    const value = JSON.parse(raw) as Partial<RequestPerformance> | null
-    if (
-      value?.version !== 1
-      || typeof value.endpoint !== "string"
-      || (value.transport !== "http" && value.transport !== "ws")
-      || typeof value.translated !== "boolean"
-    )
-      return undefined
-    return value as RequestPerformance
-  } catch {
-    return undefined
-  }
 }

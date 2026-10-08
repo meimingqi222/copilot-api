@@ -316,6 +316,13 @@ function performanceView() {
       }).format(tps)
     },
 
+    // 解码 TPS 只覆盖已采集分段性能的流式请求，悬停说明这行的样本量
+    decodeTpsTitle(row) {
+      const samples = row.decodeSamples || 0
+      if (!samples || !row.avgDecodeTps) return this.t("perf.decodeTpsMissing")
+      return this.t("perf.decodeTpsSamples", { samples })
+    },
+
     getChannelTps(row) {
       if (!row.streaming || !row.generationTps) return null
       // 若单通道 generationTps 因极短毫秒突发出现异常 (> 800 tok/s)，回退至对应模型的基准流式 TPS
@@ -451,6 +458,11 @@ function performanceView() {
           const bVal = b.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
           return (aVal - bVal) * dir
         }
+        if (this.sortBy === "decodeTps") {
+          const aVal = a.avgDecodeTps ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.avgDecodeTps ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
         if (this.sortBy === "model") {
           return (a.model || "").localeCompare(b.model || "") * dir
         }
@@ -484,6 +496,11 @@ function performanceView() {
         if (this.sortBy === "tps") {
           const aVal = a.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
           const bVal = b.avgStreamingTps ?? (this.sortDesc ? -1 : 999999)
+          return (aVal - bVal) * dir
+        }
+        if (this.sortBy === "decodeTps") {
+          const aVal = a.avgDecodeTps ?? (this.sortDesc ? -1 : 999999)
+          const bVal = b.avgDecodeTps ?? (this.sortDesc ? -1 : 999999)
           return (aVal - bVal) * dir
         }
         if (this.sortBy === "model") {

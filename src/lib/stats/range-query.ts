@@ -12,6 +12,7 @@ import type {
 } from "~/lib/stats/types"
 
 import { formatDateInTimeZone, resolveTimeZone } from "~/lib/stats/timezone"
+import { readGenerationSample } from "~/lib/stats/performance-generation"
 
 function emptyModelStats(): UsageModelStats {
   return {
@@ -94,7 +95,12 @@ interface PerformanceByModel {
   requests: number
   streamingRequests: number
   avgTtftMs: number | null
+  /** 端到端：tokens / (dispatch → 记账)，含首字等待与上游排队。 */
   avgStreamingTps: number | null
+  /** 解码：tokens / (首个有效输出 → 记账)，不含首字等待，等价于 1000/TPOT。 */
+  avgDecodeTps: number | null
+  /** 参与 avgDecodeTps 的样本数（仅已采集分段性能的流式请求）。 */
+  decodeSamples: number
   avgNonStreamingTps: number | null
 }
 
@@ -106,6 +112,10 @@ interface PerformanceByModel {
  * timing data (an aborted stream that reported no usage, a usage-missing
  * fallback). The count therefore matches the usage table instead of only the
  * timed subset, while the averages still ignore untimed rows.
+ *
+ * `avgDecodeTps` / `decodeSamples` come from versioned `performance_json`, so
+ * their coverage is narrower than `avgStreamingTps` (legacy rows have no
+ * first-output boundary). `decodeSamples` reports that coverage.
  */
 export function computePerformanceByModel(
   rows: Array<UsageRawRow>,
@@ -182,6 +192,9 @@ interface PerfAccumulator {
   streamTokenSeconds: number
   nonStreamTokens: number
   nonStreamTokenSeconds: number
+  decodeTokens: number
+  decodeMs: number
+  decodeSamples: number
 }
 
 function newPerfAccumulator(): PerfAccumulator {
@@ -194,6 +207,9 @@ function newPerfAccumulator(): PerfAccumulator {
     streamTokenSeconds: 0,
     nonStreamTokens: 0,
     nonStreamTokenSeconds: 0,
+    decodeTokens: 0,
+    decodeMs: 0,
+    decodeSamples: 0,
   }
 }
 
@@ -214,6 +230,12 @@ function accumulatePerfRow(acc: PerfAccumulator, row: UsageRawRow): void {
       acc.nonStreamTokenSeconds += seconds
     }
   }
+  const decode = readGenerationSample(row)
+  if (decode) {
+    acc.decodeSamples += 1
+    acc.decodeTokens += decode.tokens
+    acc.decodeMs += decode.generationMs
+  }
 }
 
 function perfAverages(acc: PerfAccumulator): {
@@ -221,6 +243,8 @@ function perfAverages(acc: PerfAccumulator): {
   streamingRequests: number
   avgTtftMs: number | null
   avgStreamingTps: number | null
+  avgDecodeTps: number | null
+  decodeSamples: number
   avgNonStreamingTps: number | null
 } {
   return {
@@ -231,6 +255,9 @@ function perfAverages(acc: PerfAccumulator): {
       acc.streamTokenSeconds > 0 ?
         acc.streamTokens / acc.streamTokenSeconds
       : null,
+    avgDecodeTps:
+      acc.decodeMs > 0 ? acc.decodeTokens / (acc.decodeMs / 1000) : null,
+    decodeSamples: acc.decodeSamples,
     avgNonStreamingTps:
       acc.nonStreamTokenSeconds > 0 ?
         acc.nonStreamTokens / acc.nonStreamTokenSeconds

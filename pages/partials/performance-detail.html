@@ -29,6 +29,7 @@
     <!-- KPI 2: 全局平均流式速率 -->
     <div
       class="card p-3.5 sm:p-4 border border-[var(--apple-gray-5)] bg-white shadow-sm relative overflow-hidden"
+      :title="t('perf.streamingTpsDesc')"
     >
       <div
         class="flex items-center justify-between text-xs text-[var(--apple-text-secondary)] mb-1"
@@ -212,7 +213,7 @@
     <div
       x-show="showGuide"
       x-transition
-      class="mt-3 pt-3 border-t border-[var(--apple-gray-5)] grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+      class="mt-3 pt-3 border-t border-[var(--apple-gray-5)] grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-[var(--apple-text-secondary)] leading-relaxed"
     >
       <div class="p-2.5 rounded-lg bg-[var(--apple-bg-secondary)]">
         <strong class="text-[var(--apple-text)] block mb-0.5"
@@ -227,6 +228,13 @@
         <p>
           若两者存在明显时间差，代表大模型正在进行深度思考推理（Reasoning）或工具解析，正文随后呈现。
         </p>
+      </div>
+      <div class="p-2.5 rounded-lg bg-[var(--apple-bg-secondary)]">
+        <strong
+          class="text-[var(--apple-text)] block mb-0.5"
+          x-text="t('perf.tpsSplitTitle')"
+        ></strong>
+        <p x-text="t('perf.tpsSplitDesc')"></p>
       </div>
       <div class="p-2.5 rounded-lg bg-[var(--apple-bg-secondary)]">
         <strong class="text-[var(--apple-text)] block mb-0.5"
@@ -361,13 +369,14 @@
               <th class="py-2.5 px-3 text-right font-semibold">
                 首正文 (Text TTFT)
               </th>
-              <!-- 列 5: 输出速度 TPS -->
+              <!-- 列 5: 解码 TPS（首字后） -->
               <th
                 class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
                 @click="setSort('tps')"
+                :title="t('perf.decodeTpsDesc')"
               >
                 <div class="flex items-center justify-end gap-1">
-                  <span>输出 TPS</span>
+                  <span x-text="t('perf.decodeTps')"></span>
                   <i
                     data-lucide="arrow-up-down"
                     class="w-3 h-3 opacity-50"
@@ -929,6 +938,21 @@
                   ></i>
                 </div>
               </th>
+              <!-- 解码 TPS：首个有效输出之后的速度，不含首字等待 -->
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('decodeTps')"
+                :title="t('perf.decodeTpsDesc')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span x-text="t('perf.decodeTps')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'decodeTps'"
+                  ></i>
+                </div>
+              </th>
               <th
                 class="py-2.5 px-3 text-right font-semibold"
                 x-text="t('perf.nonStreamingTps')"
@@ -961,6 +985,12 @@
                   class="py-2.5 px-3 text-right font-mono font-semibold"
                   :class="getTpsClass(row.avgStreamingTps)"
                   x-text="formatTps(row.avgStreamingTps) + ' tok/s'"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono font-semibold"
+                  :class="getTpsClass(row.avgDecodeTps)"
+                  :title="decodeTpsTitle(row)"
+                  x-text="row.avgDecodeTps ? formatTps(row.avgDecodeTps) + ' tok/s' : '-'"
                 ></td>
                 <td
                   class="py-2.5 px-3 text-right font-mono text-[var(--apple-text-secondary)]"
@@ -1054,6 +1084,21 @@
                   ></i>
                 </div>
               </th>
+              <!-- 解码 TPS：同上，口径与按模型汇总完全一致 -->
+              <th
+                class="py-2.5 px-3 text-right font-semibold cursor-pointer hover:text-[var(--apple-blue)]"
+                @click="setSort('decodeTps')"
+                :title="t('perf.decodeTpsDesc')"
+              >
+                <div class="flex items-center justify-end gap-1">
+                  <span x-text="t('perf.decodeTps')"></span>
+                  <i
+                    :data-lucide="sortDesc ? 'arrow-down' : 'arrow-up'"
+                    class="w-3 h-3 text-[var(--apple-blue)]"
+                    x-show="sortBy === 'decodeTps'"
+                  ></i>
+                </div>
+              </th>
               <th
                 class="py-2.5 px-3 text-right font-semibold"
                 x-text="t('perf.nonStreamingTps')"
@@ -1095,6 +1140,12 @@
                   class="py-2.5 px-3 text-right font-mono font-semibold"
                   :class="getTpsClass(row.avgStreamingTps)"
                   x-text="formatTps(row.avgStreamingTps) + ' tok/s'"
+                ></td>
+                <td
+                  class="py-2.5 px-3 text-right font-mono font-semibold"
+                  :class="getTpsClass(row.avgDecodeTps)"
+                  :title="decodeTpsTitle(row)"
+                  x-text="row.avgDecodeTps ? formatTps(row.avgDecodeTps) + ' tok/s' : '-'"
                 ></td>
                 <td
                   class="py-2.5 px-3 text-right font-mono text-[var(--apple-text-secondary)]"

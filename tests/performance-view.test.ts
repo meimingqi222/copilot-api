@@ -17,6 +17,8 @@ const mockI18n = {
     if (key === "perf.insightFailoverRetries")
       text = "发生过失败调度并触发重试（累计耗时 {ms}）"
     if (key === "perf.stage.gateway") text = "网关接入与准入"
+    if (key === "perf.decodeTpsSamples") text = "解码速率可用样本 {samples} 条"
+    if (key === "perf.decodeTpsMissing") text = "未采集分段性能"
     if (key === "perf.stage.dispatch") text = "调度与格式准备"
     if (key === "perf.stage.upstream") text = "上游响应与推理"
     if (key === "perf.stage.downstream") text = "流转换与下游写出"
@@ -279,5 +281,53 @@ describe("performanceView UX redesign", () => {
     view.performance = []
     const fallbackStats = view.globalStats
     expect(fallbackStats.avgTps).toBe(800) // 钳位到上限 800
+  })
+
+  test("sorts by decode TPS and explains its narrower sample coverage", () => {
+    const view = sandbox.performanceView()
+    view.performance = [
+      {
+        model: "end-to-end-fast",
+        requests: 1,
+        streamingRequests: 1,
+        avgStreamingTps: 200,
+        avgDecodeTps: 40,
+        decodeSamples: 1,
+      },
+      {
+        model: "decode-fast",
+        requests: 1,
+        streamingRequests: 1,
+        avgStreamingTps: 20,
+        avgDecodeTps: 300,
+        decodeSamples: 1,
+      },
+      {
+        model: "legacy-only",
+        requests: 1,
+        streamingRequests: 1,
+        avgStreamingTps: 50,
+        avgDecodeTps: null,
+        decodeSamples: 0,
+      },
+    ]
+
+    view.sortBy = "decodeTps"
+    view.sortDesc = true
+    // 两列排序互不影响：端到端最快的行不是解码最快的行
+    expect(
+      view.sortedModels.map((row: { model: string }) => row.model),
+    ).toEqual(["decode-fast", "end-to-end-fast", "legacy-only"])
+    view.sortBy = "tps"
+    expect(
+      view.sortedModels.map((row: { model: string }) => row.model),
+    ).toEqual(["end-to-end-fast", "legacy-only", "decode-fast"])
+
+    expect(view.decodeTpsTitle({ decodeSamples: 2, avgDecodeTps: 150 })).toBe(
+      "解码速率可用样本 2 条",
+    )
+    expect(view.decodeTpsTitle({ decodeSamples: 0, avgDecodeTps: null })).toBe(
+      "未采集分段性能",
+    )
   })
 })

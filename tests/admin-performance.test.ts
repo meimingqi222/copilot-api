@@ -23,6 +23,8 @@ type PerformanceRow = {
   streamingRequests: number
   avgTtftMs: number | null
   avgStreamingTps: number | null
+  avgDecodeTps: number | null
+  decodeSamples: number
   avgNonStreamingTps: number | null
 }
 
@@ -267,6 +269,55 @@ test("GET /admin/api/usage/performance uses a weighted TPS average", async () =>
     avgNonStreamingTps: 5,
   })
   expect(body.performance[0].avgStreamingTps).toBeCloseTo(10.1, 1)
+})
+
+test("GET /admin/api/usage/performance reports decode TPS without TTFT", async () => {
+  const ts = new Date("2026-05-24T08:00:00.000Z").getTime()
+  const base = {
+    date: "2026-05-24",
+    accountId: "account-1",
+    model: "decode-tps-model",
+    promptTokens: 10,
+    // 端到端 30 tok/s 含 8.3s 首字等待；首输出后只有 2s → 150 tok/s
+    completionTokens: 300,
+    totalTokens: 310,
+    timestamp: ts,
+    ttftMs: 8300,
+    tps: 30,
+    streaming: true,
+  }
+  const metrics = (generationMs: number) => ({
+    version: 1 as const,
+    endpoint: "/v1/chat/completions",
+    transport: "http" as const,
+    translated: false,
+    generationMs,
+  })
+  statsStore.recordUsage({ ...base, performance: metrics(2000) })
+  // 只有旧口径的行：没有首输出边界，不参与解码 TPS
+  statsStore.recordUsage({ ...base, timestamp: ts + 1 })
+  // 单帧突发 1ms 会算出 300000 tok/s，须用持久化 tps 校准回 10s
+  statsStore.recordUsage({
+    ...base,
+    timestamp: ts + 2,
+    performance: metrics(1),
+  })
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as PerformanceResponse
+  const row = body.performance.find((it) => it.model === "decode-tps-model")
+  expect(row?.requests).toBe(3)
+  // 两列的分母不同，覆盖样本也不同
+  expect(row?.avgStreamingTps).toBeCloseTo(30, 5)
+  expect(row?.decodeSamples).toBe(2)
+  expect(row?.avgDecodeTps).toBeCloseTo(600 / 12, 5)
+  expect(
+    body.byProvider.find((it) => it.model === "decode-tps-model")?.avgDecodeTps,
+  ).toBeCloseTo(600 / 12, 5)
 })
 
 test("GET /admin/api/usage/performance splits the same model by provider", async () => {
