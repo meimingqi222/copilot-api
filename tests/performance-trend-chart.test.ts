@@ -11,6 +11,7 @@ interface TrendData {
 }
 
 interface TrendView {
+  dateRange: string
   expandedRows: Record<string, boolean>
   renderTrendChart(key: string, canvasId: string, data: TrendData): void
   updateOrRenderTrendChart(key: string, canvasId: string, data: TrendData): void
@@ -160,5 +161,23 @@ describe("performance trend chart lifecycle", () => {
     expect(env.charts[0].destroyed).toBe(true)
     expect(env.charts[1].destroyed).toBe(false)
     second.destroyTrendCharts()
+  })
+
+  test("live rolling ranges auto-refresh; historical ranges stay frozen", async () => {
+    const env = setup()
+    const view = env.createView()
+    const key = "model::gpt-6.1-sol"
+    view.expandedRows[key] = true
+    view.renderTrendChart(key, "chart", env.trend)
+
+    // Historical range: no traffic flows in, so auto-refresh must skip it.
+    view.dateRange = "last30d"
+    await view.refreshCachedUsage()
+    expect(env.charts[0].updates).toEqual([])
+
+    // Rolling live window: updates in place every poll.
+    view.dateRange = "last1h"
+    await view.refreshCachedUsage()
+    expect(env.charts[0].updates).toEqual(["none"])
   })
 })

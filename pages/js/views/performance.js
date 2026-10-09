@@ -2,6 +2,10 @@ function performanceView() {
   // Chart.js owns mutable internal objects; keep instances outside Alpine reactivity.
   const trendCharts = new Map()
 
+  // Ranges that keep receiving traffic and therefore auto-refresh on the timer.
+  // `last1h`/`last6h` are rolling windows whose right edge tracks "now".
+  const LIVE_RANGES = new Set(["today", "last1h", "last6h"])
+
   const LIFECYCLE_STAGES = [
     {
       id: "gateway",
@@ -126,12 +130,13 @@ function performanceView() {
     },
 
     async refreshCachedUsage() {
-      // 仅日线 (today) 会有持续请求流入；历史范围数据不变，无需自动轮询
-      if (this.dateRange !== "today") return
+      // 只有"实时"范围会有持续请求流入；历史范围数据不变，无需自动轮询。
+      // today 是日历日，last1h/last6h 是滚动窗口（右端点跟随 now）。
+      if (!LIVE_RANGES.has(this.dateRange)) return
 
       // 1. 静默刷新表格与大盘数据（避免整屏 loading 遮罩）
       try {
-        const data = await API.usage.performance({ range: "today" })
+        const data = await API.usage.performance({ range: this.dateRange })
         this.performance = data.performance || []
         this.byProvider = data.byProvider || []
         this.details = data.details || []
@@ -155,7 +160,7 @@ function performanceView() {
           try {
             const isModel = key.startsWith("model::")
             const canvasId = "trend_chart_" + this.sanitizeChartId(key)
-            const queryParams = { range: "today" }
+            const queryParams = { range: this.dateRange }
             if (isModel) {
               queryParams.model = key.slice("model::".length)
             } else {

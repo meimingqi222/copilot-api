@@ -20,6 +20,7 @@ import {
 import { statsStore } from "~/lib/stats-store"
 import {
   addDays,
+  formatDateInTimeZone,
   resolveTimeZone,
   startOfDayMs,
   todayInTimeZone,
@@ -397,6 +398,8 @@ usageApiRoutes.delete("/pricing/:model{.+}", (c) => {
 // Resolve a date range from query params (days are viewer-timezone days).
 // Supported `range` values:
 //   - "today"      : today only
+//   - "last1h"     : rolling 1 hour ending now (live view; ~1-minute buckets)
+//   - "last6h"     : rolling 6 hours ending now (~2-minute buckets)
 //   - "week"       : current ISO-style week (Monday→today)
 //   - "month"      : current calendar month (1st → today)
 //   - "lastMonth"  : previous calendar month (full)
@@ -452,6 +455,22 @@ function resolveDateRange(opts: {
   switch (range) {
     case "today": {
       return withBounds(today, today, timeZone)
+    }
+    case "last1h":
+    case "last6h": {
+      // Rolling window ending "now" so the right edge tracks live traffic.
+      // Buckets align to absolute boundaries (alignMs defaults to 0), so the
+      // x-axis does not jitter as the window slides.
+      const hours = range === "last1h" ? 1 : 6
+      const endMs = Date.now()
+      const startMs = endMs - hours * 3_600_000
+      return {
+        startDate: formatDateInTimeZone(startMs, timeZone),
+        endDate: formatDateInTimeZone(endMs, timeZone),
+        startMs,
+        endMs,
+        timeZone,
+      }
     }
     case "week": {
       const weekday = weekdayInTimeZone(today) // 0=Sun..6=Sat

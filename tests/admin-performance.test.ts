@@ -721,3 +721,55 @@ test("GET /admin/api/usage/performance/trend includes byProvider breakdown for m
   const labels = body.byProvider?.map((p) => p.providerLabel).sort()
   expect(labels).toEqual(["DeepSeek Test", "Volcengine Test"])
 })
+
+test("rolling live ranges (last1h/last6h) end at now and pick fine buckets", async () => {
+  const now = Date.now()
+  const ts = now - 10 * 60 * 1000
+  statsStore.recordUsage({
+    date: statsStore.getDateString(ts),
+    accountId: "test-acc",
+    provider: "openai-compatible",
+    model: "live-model",
+    promptTokens: 10,
+    completionTokens: 100,
+    totalTokens: 110,
+    timestamp: ts,
+    ttftMs: 400,
+    tps: 80,
+    streaming: true,
+  })
+
+  const hourResponse = await server.fetch(
+    adminRequest(
+      "http://localhost/admin/api/usage/performance/trend?model=live-model&range=last1h",
+    ),
+  )
+  expect(hourResponse.status).toBe(200)
+  const hour = (await hourResponse.json()) as {
+    intervalMinutes: number
+    series: Array<{ slotTs: number; requests: number }>
+  }
+  // ~1-minute buckets over the last hour (auto interval, no explicit value)
+  expect(hour.intervalMinutes).toBe(1)
+  expect(hour.series.length).toBeGreaterThanOrEqual(60)
+  expect(hour.series.length).toBeLessThanOrEqual(62)
+  // the request recorded 10 minutes ago falls inside the rolling window
+  expect(hour.series.some((s) => s.requests > 0)).toBe(true)
+  // right edge tracks "now" so the live view keeps growing
+  const lastSlot = hour.series[hour.series.length - 1]!.slotTs
+  expect(now - lastSlot).toBeLessThan(2 * 60 * 1000)
+
+  const sixHourResponse = await server.fetch(
+    adminRequest(
+      "http://localhost/admin/api/usage/performance/trend?model=live-model&range=last6h",
+    ),
+  )
+  expect(sixHourResponse.status).toBe(200)
+  const sixHour = (await sixHourResponse.json()) as {
+    intervalMinutes: number
+    series: unknown[]
+  }
+  expect(sixHour.intervalMinutes).toBe(2)
+  expect(sixHour.series.length).toBeGreaterThanOrEqual(180)
+  expect(sixHour.series.length).toBeLessThanOrEqual(182)
+})

@@ -5563,6 +5563,20 @@
                       x-text="t('quota.today')"
                     ></button>
                     <button
+                      @click="setRange('last1h')"
+                      class="btn btn-small"
+                      :class="dateRange === 'last1h' ? 'btn-primary' : 'btn-secondary'"
+                      :title="t('quota.live1hHint')"
+                      x-text="t('quota.last1h')"
+                    ></button>
+                    <button
+                      @click="setRange('last6h')"
+                      class="btn btn-small"
+                      :class="dateRange === 'last6h' ? 'btn-primary' : 'btn-secondary'"
+                      :title="t('quota.live6hHint')"
+                      x-text="t('quota.last6h')"
+                    ></button>
+                    <button
                       @click="setRange('week')"
                       class="btn btn-small"
                       :class="dateRange === 'week' ? 'btn-primary' : 'btn-secondary'"

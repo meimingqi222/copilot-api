@@ -342,7 +342,11 @@ class StatsStore {
     const durationHours = (options.endMs - options.startMs) / (3600 * 1000)
     let intervalMinutes = options.intervalMinutes
     if (!intervalMinutes || intervalMinutes <= 0) {
-      if (durationHours <= 24) {
+      if (durationHours <= 2) {
+        intervalMinutes = 1
+      } else if (durationHours <= 6) {
+        intervalMinutes = 2
+      } else if (durationHours <= 24) {
         intervalMinutes = 30
       } else if (durationHours <= 7 * 24) {
         intervalMinutes = 120
