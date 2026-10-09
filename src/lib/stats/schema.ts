@@ -137,7 +137,7 @@ export function createTables(db: Database): void {
 /** One-time: drop obvious junk swe-1-6-fast test rows (tiny input, zero output). */
 function migrateSwe16UsageLabels(db: Database): void {
   const applied = db
-    .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
+    .query("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
     .get("swe-1-6-fast-junk-cleanup") as { ok: number } | undefined
   if (applied) return
 
@@ -160,11 +160,11 @@ function migrateSwe16UsageLabels(db: Database): void {
  */
 function backfillProviderColumn(db: Database): void {
   const applied = db
-    .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
+    .query("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
     .get("backfill-usage-provider") as { ok: number } | undefined
   if (applied) return
 
-  const stmt = db.prepare(
+  const stmt = db.query(
     "UPDATE usage_stats SET provider = ? WHERE account_id = ? AND provider IS NULL",
   )
   // 用 connection 原生回填 provider（metadata.provider 优先）。
@@ -192,13 +192,13 @@ function backfillProviderColumn(db: Database): void {
  */
 function repairCodebuddyProviderAttribution(db: Database): void {
   const applied = db
-    .prepare("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
+    .query("SELECT 1 AS ok FROM stats_migrations WHERE name = ?")
     .get("repair-codebuddy-provider-attribution-v2") as
     | { ok: number }
     | undefined
   if (applied) return
 
-  const stmt = db.prepare(
+  const stmt = db.query(
     "UPDATE usage_stats SET provider = ? WHERE account_id = ? AND (provider IS NULL OR provider != ?)",
   )
   const connections = listAccountManagedConnections()
@@ -224,7 +224,7 @@ function ensureColumn(
   column: string,
   type: string,
 ): void {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+  const rows = db.query(`PRAGMA table_info(${table})`).all() as Array<{
     name: string
   }>
   if (!rows.some((r) => r.name === column)) {
@@ -233,7 +233,7 @@ function ensureColumn(
 }
 
 function ensureUsageUserColumn(db: Database): void {
-  const rows = db.prepare("PRAGMA table_info(usage_stats)").all() as Array<{
+  const rows = db.query("PRAGMA table_info(usage_stats)").all() as Array<{
     name: string
   }>
   if (rows.some((row) => row.name === "user_id")) {
