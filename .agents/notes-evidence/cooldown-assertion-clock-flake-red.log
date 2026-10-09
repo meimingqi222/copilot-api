@@ -1,0 +1,18 @@
+# 复现: provider-connections.test.ts 的 cooldownUntil 断言跨 Date.now() 抖动
+#
+# 旧写法在 markCredentialCooldown 之前用 Date.now()+60_000 预猜期望值,
+# 实现是在调用时才取 Date.now();两次取时钟跨过毫秒边界即差 1ms。
+# 这里在两处断言前插入 2ms 延迟,把偶发变成确定性。
+
+$ bun test tests/zz-tmp-cooldown-oldstyle.test.ts   # 旧写法
+error: expect(received).toBe(expected)
+Expected: 1791563442817
+Received: 1791563442814
+(fail) availability state machine > setConnectionQuotaState available does not clear generic cooldown [4.01ms]
+(fail) availability state machine > setConnectionQuotaState available does not clear generic cooldown [4.01ms]
+ 53 pass
+ 1 fail
+
+$ bun test tests/zz-tmp-cooldown-fixed.test.ts   # 新写法(期望值取自实现的写入)
+ 54 pass
+ 0 fail

@@ -298,12 +298,19 @@ describe("availability state machine", () => {
     await setupSimpleConnection({ id: "quota-no-touch-cooldown" })
     const conn = getProviderConnection("quota-no-touch-cooldown")
     if (!conn) throw new Error("connection not found")
-    const cooldownUntil = Date.now() + 60_000
     markCredentialCooldown(conn.credentials[0], {
       retryAfterMs: 60_000,
       reason: "upstream 429",
     })
     expect(conn.credentials[0].status).toBe("cooldown")
+
+    // 期望值必须取自实现自己写下的到期时间。以前这里用 `Date.now() + 60_000`
+    // 预猜，而 markCredentialCooldown 是在调用时才取 Date.now()：两次取时钟
+    // 一旦跨过毫秒边界就差 1ms，全量并行时偶发红(与任何代码改动无关)。
+    const cooldownUntil = conn.credentials[0].cooldownUntil
+    expect(typeof cooldownUntil).toBe("number")
+    // 保持断言的强度：顺带确认冷却确实按 retryAfterMs 算了 ~60s。
+    expect((cooldownUntil as number) - Date.now()).toBeGreaterThan(55_000)
 
     setConnectionQuotaState(conn, "available")
     expect(conn.credentials[0].status).toBe("cooldown")
