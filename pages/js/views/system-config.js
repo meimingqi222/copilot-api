@@ -50,6 +50,8 @@ function systemConfigView() {
     accept(data) {
       this.settings = data.settings
       this.settings.codexModelIds ??= null
+      this.settings.concurrencyQueueLimit ??= 100
+      this.settings.concurrencyQueueWaitSeconds ??= 30
       this.maxLogMiB = Math.ceil(data.settings.logMaxTotalBytes / (1024 * 1024))
       globalThis.dispatchEvent(
         new CustomEvent("quota-display-mode", {
@@ -93,6 +95,8 @@ function systemConfigView() {
         requestDump: false,
         memoryVerbose: false,
         performanceDetails: true,
+        concurrencyQueueLimit: 100,
+        concurrencyQueueWaitSeconds: 30,
         codexAutoReset: false,
         codexModelIds: this.settings?.codexModelIds ?? null,
         quotaDisplayMode: "remaining",

@@ -22,8 +22,14 @@ Both dump paths sanitize their disk copies before queueing an append. Detect cre
 
 Redaction is automatic whenever dumps are enabled. It changes dump formatting and is not a general anonymizer for arbitrary personal data or unlabeled secrets in prose. The existing sensitive-data acknowledgement remains appropriate. Historical dumps are not rewritten. Request forwarding and provider credentials are not modified.
 
+Large plain text now skips key/value matching when colon and equals are absent, and skips URL userinfo matching when an at-sign or HTTP scheme is absent. These necessary match conditions preserve redaction; known-secret and other credential/media matchers still run. Dump size and synchronous processing are unchanged.
+
 ## Verification
 
 - `tests/request-dump.test.ts`
+- `tests/request-dump-sanitizer-performance.test.ts::skips key and URL credential matchers when their delimiters are absent`
+- `tests/request-dump-sanitizer-performance.test.ts::still redacts nested text credentials and URL userinfo`
+
+Proved: The delimiter-gate assertion failed before optimization because the expensive matchers ran on a 1 MiB plain-text string (temp/concurrency-audit/optimization-red.log). It passes afterward; nested text/URL credentials and existing disk redaction tests still pass.
 
 Proved: before the implementation, bun test tests/request-dump.test.ts failed four assertions (8 pass, 4 fail, temp/request-dump-red.log), including secrets present in incoming and upstream files and raw-prefix truncation. The restored implementation passes tests that inspect actual disk output, retain ordinary values, confirm forwarded bodies are unchanged and bound UTF-8 output bytes.

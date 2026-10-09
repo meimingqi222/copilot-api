@@ -2,11 +2,48 @@ import { describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
 import { HTTPError } from "~/lib/error"
-import { readJsonBody, readTextBody } from "~/lib/request-body"
+import { readBinaryBody, readJsonBody, readTextBody } from "~/lib/request-body"
 import { getRequestLogContext, initRequestLog } from "~/lib/request-log"
 import { requestPerformanceSnapshot } from "~/lib/request-performance"
 
 describe("readJsonBody", () => {
+  test("keeps split UTF-8 text intact across empty and small chunks", async () => {
+    const source = new TextEncoder().encode(JSON.stringify({ text: "中文😀" }))
+    const request = new Request("http://localhost", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          for (const byte of source) {
+            controller.enqueue(new Uint8Array(0))
+            controller.enqueue(new Uint8Array([byte]))
+          }
+          controller.close()
+        },
+      }),
+      duplex: "half",
+    })
+    expect(
+      await readJsonBody<{ text: string }>(request, source.byteLength),
+    ).toEqual({
+      text: "中文😀",
+    })
+  })
+  test("retains a single body chunk without allocating another large buffer", async () => {
+    const chunk = new Uint8Array(1024 * 1024)
+    const request = new Request("http://localhost", {
+      method: "POST",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk)
+          controller.close()
+        },
+      }),
+      duplex: "half",
+    })
+    const bytes = await readBinaryBody(request)
+    expect(bytes.buffer).toBe(chunk.buffer)
+    expect(bytes.byteLength).toBe(chunk.byteLength)
+  })
   test("records actual UTF-8 bytes and separates delayed upload from JSON decoding", async () => {
     const payload = new TextEncoder().encode(JSON.stringify({ text: "中文😀" }))
     const app = new Hono()

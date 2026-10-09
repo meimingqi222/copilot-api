@@ -8,6 +8,7 @@
  * `holdLeaseForStream` in ~/services/dispatch/failover.
  */
 
+import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
@@ -22,7 +23,10 @@ import {
   createConnection,
   getProviderConnection,
 } from "~/lib/provider-connections"
-import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
+import {
+  holdLimiterLockForTest,
+  resetAdaptiveRateLimiterForTest,
+} from "~/lib/rate-limit"
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
@@ -48,9 +52,19 @@ beforeEach(async () => {
   redirectPathsToDir(tempAppDir)
   resetAdaptiveRateLimiterForTest()
   __resetCredentialGatesForTest()
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    concurrencyQueueLimit: 0,
+  })
 })
 
 afterEach(async () => {
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
   redirectPathsToDir(isolationRoot)
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
@@ -362,6 +376,58 @@ describe("per-credential lease across a streaming turn", () => {
     expect(remainingLeases(admission.target)).toBe(cap)
   })
 
+  test("rejects a saturated credential before waiting for its pacing lock", async () => {
+    await setupConnection("conn")
+    const admission = buildAdmissionFor("model-x")
+    const held: Array<CredentialLease> = []
+    for (;;) {
+      const lease = tryAcquireCredentialLease(admission.target)
+      if (!lease) break
+      held.push(lease)
+    }
+    const blocked = holdLimiterLockForTest("conn", 100)
+    try {
+      const error = await executeWithFailover({
+        payload: { model: "model-x" },
+        admission,
+        routeKind: "chat",
+        signal: AbortSignal.timeout(25),
+        execute: () => Promise.resolve("unreachable"),
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      )
+      expect(error).toBeInstanceOf(CredentialConcurrencyLimitError)
+    } finally {
+      for (const lease of held) lease.release()
+      await blocked
+    }
+  })
+
+  test("releases its reserved slot when cancelled during pacing", async () => {
+    await setupConnection("conn")
+    const admission = buildAdmissionFor("model-x")
+    const capacity = remainingLeases(admission.target)
+    const blocked = holdLimiterLockForTest("conn", 100)
+    try {
+      await expect(
+        executeWithFailover({
+          payload: { model: "model-x" },
+          admission,
+          routeKind: "chat",
+          signal: AbortSignal.timeout(25),
+          execute: () => Promise.resolve("unreachable"),
+        }),
+      ).rejects.toThrow()
+      expect(remainingLeases(admission.target)).toBe(capacity)
+      expect(
+        getProviderConnection("conn")?.credentials[0]?.cooldownUntil,
+      ).toBeUndefined()
+    } finally {
+      await blocked
+    }
+  })
+
   test("rotates to another credential at the cap without cooling the saturated one", async () => {
     await setupConnection("conn")
     await setupConnection("acc", 5)
@@ -398,4 +464,96 @@ describe("per-credential lease across a streaming turn", () => {
 
     for (const lease of held) lease.release()
   })
+})
+
+test("HTTP waits across saturated candidates and holds its granted lease until stream completion", async () => {
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    concurrencyQueueLimit: 5,
+  })
+  await setupConnection("queue-a", 10)
+  await setupConnection("queue-b", 0)
+  const admission = buildAdmissionFor("model-x")
+  const targets = buildRouteTargets({
+    publicModelId: "model-x",
+    endpoint: "chat",
+  })
+  const held = targets.map((target) => {
+    const leases: CredentialLease[] = []
+    for (;;) {
+      const lease = tryAcquireCredentialLease(target)
+      if (!lease) return { target, leases }
+      leases.push(lease)
+    }
+  })
+  const source = controllableStream<string>()
+  const called: string[] = []
+  const waiting = executeWithFailover({
+    payload: { model: "model-x" },
+    admission,
+    routeKind: "chat",
+    execute: (_adapter, target) => {
+      called.push(target.connectionId)
+      return Promise.resolve(wrapped(source.stream))
+    },
+  })
+  await Bun.sleep(10)
+  expect(called).toEqual([])
+  const lane = held.find(
+    (entry) => entry.target.connectionId === admission.connection.id,
+  )!
+  lane.leases.pop()!.release()
+  const result = await waiting
+  expect(called).toEqual([admission.connection.id])
+  expect(tryAcquireCredentialLease(lane.target)).toBeNull()
+  source.finish()
+  for await (const _item of result.response as AsyncIterable<string>) {
+    /* drain */
+  }
+  expect(remainingLeases(lane.target)).toBe(1)
+  for (const entry of held) for (const lease of entry.leases) lease.release()
+})
+
+test("cancellation while HTTP is queued sends nothing and does not cool a healthy credential", async () => {
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    concurrencyQueueLimit: 5,
+  })
+  await setupConnection("queue-cancel")
+  const admission = buildAdmissionFor("model-x")
+  const held: CredentialLease[] = []
+  for (;;) {
+    const lease = tryAcquireCredentialLease(admission.target)
+    if (!lease) break
+    held.push(lease)
+  }
+  let called = false
+  const signal = AbortSignal.timeout(10)
+  await expect(
+    executeWithFailover({
+      payload: { model: "model-x" },
+      admission,
+      routeKind: "chat",
+      signal,
+      execute: () => {
+        called = true
+        return Promise.resolve("unexpected")
+      },
+    }),
+  ).rejects.toMatchObject({ name: "TimeoutError" })
+  expect(called).toBe(false)
+  expect(
+    getProviderConnection(admission.connection.id)?.credentials[0]
+      .cooldownUntil,
+  ).toBeUndefined()
+  for (const lease of held) lease.release()
+  expect(remainingLeases(admission.target)).toBe(held.length)
 })

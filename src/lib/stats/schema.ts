@@ -9,6 +9,10 @@ import {
 
 /** 创建所有统计相关的表与索引，并执行一次性迁移。 */
 export function createTables(db: Database): void {
+  // WAL permits dashboard readers beside inference writes and avoids the
+  // rollback-journal churn of one transaction per completed request.
+  // Keep SQLite's durability setting unchanged; in-memory DBs stay in memory.
+  db.exec("PRAGMA journal_mode = WAL")
   db.run(`
     CREATE TABLE IF NOT EXISTS daily_stats (
       date TEXT NOT NULL,

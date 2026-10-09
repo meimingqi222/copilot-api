@@ -110,7 +110,7 @@ async function readBodyBytes(
 ): Promise<Uint8Array> {
   if (!body) return new Uint8Array(0)
   const reader = (body as unknown as ReadableStream<Uint8Array>).getReader()
-  let bytes = new Uint8Array(Math.min(64 * 1024, maxBytes))
+  let bytes: Uint8Array = new Uint8Array(0)
   let totalBytes = 0
   try {
     while (true) {
@@ -121,16 +121,22 @@ async function readBodyBytes(
         await reader.cancel().catch(() => undefined)
         throw bodyTooLarge(maxBytes)
       }
-      if (nextLength > bytes.length) {
-        const nextCapacity = Math.min(
-          maxBytes,
-          Math.max(nextLength, Math.max(bytes.length * 2, 64 * 1024)),
-        )
-        const next = new Uint8Array(nextCapacity)
-        next.set(bytes.subarray(0, totalBytes))
-        bytes = next
+      if (totalBytes === 0) {
+        // Most bodies arrive in one chunk. Keep it without allocating or
+        // copying; subsequent chunks switch to a bounded growable buffer.
+        bytes = value
+      } else {
+        if (nextLength > bytes.length) {
+          const capacity = Math.min(
+            maxBytes,
+            Math.max(nextLength, bytes.length * 2),
+          )
+          const next = new Uint8Array(capacity)
+          next.set(bytes.subarray(0, totalBytes))
+          bytes = next
+        }
+        bytes.set(value, totalBytes)
       }
-      bytes.set(value, totalBytes)
       totalBytes = nextLength
     }
   } finally {

@@ -101,6 +101,11 @@ const i18n = {
       "system.level.debug": "调试日志（临时）",
       "system.logHint":
         "关闭调试日志可减少格式化和写盘，但无法消除所有调用方预先构造日志的开销。",
+      "system.concurrencyQueue": "并发等待队列",
+      "system.concurrencyQueueHint":
+        "先使用空闲连接，全部满载后排队。队列由 HTTP 与 WebSocket 共用；满队或超时返回 429。设为 0 可关闭排队。保存后立即对新请求生效，已有请求保留入队时的等待期限。",
+      "system.concurrencyQueueLimit": "最大排队请求数（0–10000）",
+      "system.concurrencyQueueWaitSeconds": "最大等待时间（秒，1–600）",
       "system.codexAutoReset": "自动使用即将过期的 Codex 重置次数",
       "system.codexAutoResetHint":
         "后台每分钟检查，在重置次数到期前 5 分钟内自动使用一次；5 小时和周额度均为满额时跳过。需要服务保持运行。",
@@ -1653,6 +1658,11 @@ const i18n = {
       "system.level.debug": "Debug (temporary)",
       "system.logHint":
         "Disabling debug reduces formatting and disk writes, but not all eagerly built log arguments.",
+      "system.concurrencyQueue": "Concurrency waiting queue",
+      "system.concurrencyQueueHint":
+        "Use idle connections first; queue when all are busy. HTTP and WebSocket share the queue. Full queues or expired waits return 429. Set the limit to 0 to disable queuing. Saved changes apply to new requests; existing waits keep their original deadline.",
+      "system.concurrencyQueueLimit": "Maximum queued requests (0–10000)",
+      "system.concurrencyQueueWaitSeconds": "Maximum wait (seconds, 1–600)",
       "system.codexAutoReset": "Automatically use expiring Codex reset credits",
       "system.codexAutoResetHint":
         "Checks every minute and uses a credit within 5 minutes of expiry, unless both 5-hour and weekly quotas are full. The server must stay running.",

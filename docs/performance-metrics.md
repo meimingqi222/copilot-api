@@ -1,5 +1,27 @@
 # Performance measurement
 
+Routing skips saturated lanes when another preferred-endpoint candidate has
+capacity. Equal fine-band quota ranks prefer the less busy lane; healthy session
+bindings and quota/renewal ordering remain authoritative. Dispatch reserves a
+credential slot before pacing, so pending sends count toward the existing
+concurrency cap and saturated attempts rotate without a pacing wait. When every
+eligible lane is full, HTTP and Responses WebSocket turns share a bounded queue
+(default 100 requests, 30 seconds). System settings can change the maximum queue
+length (0 disables queuing) and waiting time without restarting. Existing waits
+keep their original deadline; lowering the limit does not evict queued requests.
+FIFO applies to overlapping candidate lanes; independent idle lanes can proceed.
+The first eligible released slot is reserved for its waiting request before new
+arrivals can take it. Full queues and expired waits return a local retryable 429.
+Cancellation removes a waiter or releases its reservation without cooling a
+healthy upstream. Credentials are revalidated after waiting. Streaming turns keep
+the slot until stream completion. The wait limit covers concurrency queuing;
+pacing and upstream execution have their own cancellation/deadline behavior.
+
+File-backed usage statistics use SQLite WAL with the existing durability setting.
+Live database copies must use a consistent SQLite backup/checkpoint rather than
+copying only the main file. WAL reduces rollback-journal contention; statistics
+operations remain synchronous.
+
 The existing TPS and TTFT columns retain their historical meaning. TPS is output
 tokens divided by dispatch-to-usage-recording elapsed time, including first-output
 waiting. TTFT measures dispatch to first meaningful output, including reasoning

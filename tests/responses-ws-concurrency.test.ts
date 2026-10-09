@@ -10,6 +10,7 @@
  * holds no lease and would tunnel around the gate.
  */
 
+import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import { afterEach, beforeEach, expect, mock } from "bun:test"
 
 import type { RouteTarget } from "~/lib/provider-connections"
@@ -55,6 +56,16 @@ beforeEach(() => {
   clearSessionAffinityForTest()
   __resetRouteTargetRoundRobin()
   __resetCredentialGatesForTest()
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  updateSystemConfig({
+    logLevel: "info",
+    requestDump: false,
+    memoryVerbose: false,
+    performanceDetails: true,
+    debugMinutes: 15,
+    concurrencyQueueLimit: 0,
+  })
+
   logStore.clearForTest()
   setTestAccounts([
     {
@@ -99,6 +110,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
   globalThis.fetch = originalFetch
   setTestAccounts(originalAccounts)
   state.models = originalModels
@@ -527,3 +539,63 @@ async function waitFor(
     await Bun.sleep(5)
   }
 }
+
+loopbackTest(
+  "a saturated WS turn waits for a lease and resumes without a 429",
+  async () => {
+    updateSystemConfig({
+      logLevel: "info",
+      requestDump: false,
+      memoryVerbose: false,
+      performanceDetails: true,
+      debugMinutes: 15,
+      concurrencyQueueLimit: 5,
+    })
+    const target = responsesTarget()
+    const held = occupy(target, remainingLeases(target))
+    let upstreamCalls = 0
+    globalThis.fetch = mock(() => {
+      upstreamCalls++
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: crypto.randomUUID(),
+            object: "response",
+            model: MODEL,
+            status: "completed",
+            output: [],
+            output_text: "resumed",
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200 },
+        ),
+      )
+    }) as unknown as typeof fetch
+    using appServer = Bun.serve({
+      port: 0,
+      fetch: server.fetch,
+      websocket: bunWebsocket,
+    })
+    const { ws, queue } = await openSocket(
+      `ws://localhost:${appServer.port}/v1/responses`,
+    )
+    ws.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { model: MODEL, input: "queue-me" },
+      }),
+    )
+    await Bun.sleep(20)
+    expect(upstreamCalls).toBe(0)
+    held.pop()!.release()
+    const message = JSON.parse(await queue.next()) as {
+      type?: string
+      output_text?: string
+    }
+    expect(message.type).not.toBe("error")
+    expect(message.output_text).toBe("resumed")
+    expect(upstreamCalls).toBe(1)
+    for (const lease of held) lease.release()
+    ws.close()
+  },
+)

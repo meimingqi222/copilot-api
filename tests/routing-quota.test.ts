@@ -17,13 +17,21 @@ import {
   clearRecentServeForTest,
   recordServedTokens,
   selectRouteTarget,
+  commitRouteTargetAffinity,
 } from "~/lib/route-target"
+import { clearSessionAffinityForTest } from "~/lib/routing"
 import { state } from "~/lib/state"
+import {
+  __resetCredentialGatesForTest,
+  tryAcquireCredentialLease,
+} from "~/services/dispatch/concurrency"
 
 const originalStrategy = state.routing.strategy
 const originalAffinity = state.routing.sessionAffinity
 
 beforeEach(() => {
+  clearSessionAffinityForTest()
+  __resetCredentialGatesForTest()
   __resetProviderConnectionsForTest()
   clearRecentServeForTest()
   // No affinity in these tests: sessionId is never passed, so selection is
@@ -32,6 +40,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  clearSessionAffinityForTest()
+  __resetCredentialGatesForTest()
   __resetProviderConnectionsForTest()
   clearRecentServeForTest()
   state.routing.strategy = originalStrategy
@@ -98,6 +108,50 @@ function targetOf(conn: ProviderConnection): RouteTarget {
 }
 
 describe("quota strategy", () => {
+  test("keeps a healthy session binding even when an equally ranked lane is idle", async () => {
+    state.routing.strategy = "quota"
+    state.routing.sessionAffinity = true
+    const a = targetOf(await account("bound"))
+    const b = targetOf(await account("idle"))
+    commitRouteTargetAffinity(a, "conversation")
+    const lease = tryAcquireCredentialLease(a)
+    try {
+      expect(
+        selectRouteTarget([a, b], { sessionId: "conversation" })?.connectionId,
+      ).toBe(a.connectionId)
+    } finally {
+      lease?.release()
+    }
+  })
+  test("uses an idle equally ranked connection while the first is serving a turn", async () => {
+    state.routing.strategy = "quota"
+    const a = targetOf(await account("busy"))
+    const b = targetOf(await account("idle"))
+    const lease = tryAcquireCredentialLease(a)
+    expect(lease).not.toBeNull()
+    try {
+      expect(selectRouteTarget([a, b])?.connectionId).toBe(b.connectionId)
+    } finally {
+      lease?.release()
+    }
+    expect(selectRouteTarget([a, b])?.connectionId).toBe(a.connectionId)
+  })
+  test("uses an available backup instead of waiting on a saturated primary", async () => {
+    state.routing.strategy = "quota"
+    const a = targetOf(await account("primary"))
+    const b = { ...targetOf(await account("backup")), connectionPriority: 20 }
+    const leases = []
+    for (;;) {
+      const lease = tryAcquireCredentialLease(a)
+      if (!lease) break
+      leases.push(lease)
+    }
+    try {
+      expect(selectRouteTarget([a, b])?.connectionId).toBe(b.connectionId)
+    } finally {
+      for (const lease of leases) lease.release()
+    }
+  })
   test("picks the soonest-renewing big window among fine candidates", async () => {
     const week = await account("a-week", {
       chatRemaining: 50,

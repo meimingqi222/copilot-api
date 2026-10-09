@@ -49,6 +49,50 @@
 
   <template x-if="settings">
     <form @submit.prevent="save()" class="space-y-6" @input="saved = false">
+      <section class="card p-5 space-y-4">
+        <h3
+          class="font-semibold text-sm"
+          x-text="t('system.concurrencyQueue')"
+        ></h3>
+        <p
+          class="text-xs text-[var(--apple-text-secondary)]"
+          x-text="t('system.concurrencyQueueHint')"
+        ></p>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="space-y-2 text-sm">
+            <span
+              class="block"
+              x-text="t('system.concurrencyQueueLimit')"
+            ></span>
+            <input
+              type="number"
+              min="0"
+              max="10000"
+              step="1"
+              required
+              class="input w-full"
+              x-model.number="settings.concurrencyQueueLimit"
+              :disabled="saving"
+            />
+          </label>
+          <label class="space-y-2 text-sm">
+            <span
+              class="block"
+              x-text="t('system.concurrencyQueueWaitSeconds')"
+            ></span>
+            <input
+              type="number"
+              min="1"
+              max="600"
+              step="1"
+              required
+              class="input w-full"
+              x-model.number="settings.concurrencyQueueWaitSeconds"
+              :disabled="saving"
+            />
+          </label>
+        </div>
+      </section>
       <!-- Section 1: 界面与显示偏好 -->
       <section
         class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"

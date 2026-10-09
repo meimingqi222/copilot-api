@@ -464,7 +464,10 @@ describe("GET /admin/api/trace/history", () => {
     const directory = await mkdtemp(join(root, "trace-history-"))
     redirectPathsToDir(directory)
     await mkdir(PATHS.LOG_DIR, { recursive: true })
-    const timestamp = new Date("2026-10-01T12:00:00Z").getTime()
+    // Keep the fixture inside retention even when a deferred append triggers
+    // a storage sweep while history is being read.
+    const timestamp = Date.now() - 60_000
+    const fixtureDate = new Date(timestamp).toISOString().slice(0, 10)
     const kept = {
       ...frame({ requestId: "persisted", timestamp, model: "history-model" }),
       serviceTierRequested: "default",
@@ -475,7 +478,7 @@ describe("GET /admin/api/trace/history", () => {
     }
     try {
       await writeFile(
-        join(PATHS.LOG_DIR, "requests-2026-10-01.jsonl"),
+        join(PATHS.LOG_DIR, `requests-${fixtureDate}.jsonl`),
         [
           kept,
           ...Array.from({ length: 501 }, (_, index) => ({

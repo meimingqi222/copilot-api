@@ -77,8 +77,8 @@ interface SaturationOutcome {
  * account — it is healthy, just busy, and cooling it would punish its other
  * clients. This marks the target tried, logs the rejected attempt via the
  * returned error, and picks the next same-protocol account. A null `next` means
- * the caller should surface a retryable 429 (mirroring the HTTP path's
- * `RateLimitQueueFullError` handling) rather than a 500.
+ * the caller should wait in the bounded shared queue; full queues and expired
+ * waits surface a local retryable 429 rather than a 500.
  */
 export function resolveSaturatedCredential(
   admission: RequestAdmission,

@@ -57,7 +57,10 @@ import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-tran
 import { createResponses } from "~/services/copilot/create-responses"
 import { inferInitiatorFromResponsesPayload } from "~/lib/initiator-header"
 import { extractMessageContentFromResponsesPayload } from "~/services/protocols/responses/types"
-import { tryAcquireCredentialLease } from "~/services/dispatch/concurrency"
+import {
+  tryAcquireCredentialLease,
+  waitForAdmissionLease,
+} from "~/services/dispatch/concurrency"
 import { recordUpstreamFailure } from "~/services/dispatch/failover"
 import { hasCompactionTrigger } from "~/services/responses/compact"
 import { closeUpstreamWebsocketSessionsByExecutionId } from "~/services/responses/upstream-ws"
@@ -398,41 +401,48 @@ async function processResponseCreate(
   // 且能避开上游 WS 的 transcript/链式语义坑。
   if (isCompactRequest) httpRecoveryTried = true
 
+  const saturated = new Map<string, RequestAdmission>()
   while (true) {
-    if (current.group) {
-      current.groupOverrides = applyGroupOverrides(payload, current.group, {
-        endpoint: "responses",
-        baseline: current.groupOverrideBaseline,
-      })
-      patchRequestLog(c, {
-        routingGroupSelectedMember: current.group.member,
-        reasoningEffort: current.groupOverrides.effort,
-      })
-    }
     // Per-credential in-flight gate. The WS path bypasses
     // `executeWithFailover`, so this is the only cross-session bound: session
     // affinity deliberately pins many Codex sessions to one credential, and
     // nothing else stops N sessions from flooding it at once. A turn holds the
     // lease for its whole lifetime (including the streamed pump), and an idle
     // session holds nothing.
-    const lease = tryAcquireCredentialLease(current.target)
+    let lease = tryAcquireCredentialLease(current.target)
     if (!lease) {
+      saturated.set(targetKey(current.target), current)
       const saturation = resolveSaturatedCredential(admission, current, {
         modelId: payload.model,
         tried,
         memoryTraceId,
         compact: isCompactRequest || undefined,
       })
-      if (!saturation.next) {
-        recordTraceError(c, saturation.error)
-        await handleResponseError(ws, saturation.error, signal)
+      if (saturation.next) {
+        current = saturation.next
+        httpRecoveryTried = false
+        continue
+      }
+      try {
+        const granted = await waitForAdmissionLease(
+          [...saturated.values()],
+          signal,
+        )
+        lease = granted.lease
+        httpRecoveryTried =
+          isCompactRequest
+          || (targetKey(current.target) === targetKey(granted.admission.target)
+            && httpRecoveryTried)
+        current = granted.admission
+      } catch (error) {
+        recordTraceError(c, error)
+        await handleResponseError(ws, error, signal)
         return signal.aborted ? "aborted" : "error"
       }
-      current = saturation.next
-      httpRecoveryTried = false
-      continue
     }
 
+    for (const key of saturated.keys()) tried.delete(key)
+    saturated.clear()
     let outcome: Awaited<ReturnType<typeof runResponsesAttempt>>
     // Release the slot the moment the turn is aborted (client close/error), not
     // only when `runResponsesAttempt` settles: an upstream that ignores the
@@ -442,6 +452,16 @@ async function processResponseCreate(
     if (signal.aborted) releaseOnAbort()
     else signal.addEventListener("abort", releaseOnAbort, { once: true })
     try {
+      if (current.group) {
+        current.groupOverrides = applyGroupOverrides(payload, current.group, {
+          endpoint: "responses",
+          baseline: current.groupOverrideBaseline,
+        })
+        patchRequestLog(c, {
+          routingGroupSelectedMember: current.group.member,
+          reasoningEffort: current.groupOverrides.effort,
+        })
+      }
       outcome = await runWithPerformanceContext(c, () =>
         runResponsesAttempt({
           c,

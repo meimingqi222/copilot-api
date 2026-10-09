@@ -32,6 +32,7 @@ import {
 } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 import { state } from "~/lib/state"
+import { routeTargetLoad, routeTargetLoadKey } from "~/lib/route-target/load"
 
 import { servedTokensOf } from "./recent-serve"
 import { type RestInfo } from "./rest-reason"
@@ -368,7 +369,8 @@ function compareFine(a: WeighRow, b: WeighRow): number {
 /**
  * Order a priority layer by allowance pressure: plenty left
  * (soonest-renewing big window ahead), then nearly used, then spent.
- * Ties keep the incoming order so the vendor's prompt cache stays warm.
+ * Equal allowance ranks prefer the less busy lane, then keep incoming order.
+ * Explicit session affinity is still applied before this ordering.
  */
 export function orderByQuota(targets: Array<RouteTarget>): Array<RouteTarget> {
   if (targets.length < 2) return targets
@@ -390,7 +392,12 @@ export function orderByQuota(targets: Array<RouteTarget>): Array<RouteTarget> {
     else if (band === 1) lowBand.push(entry)
     else fine.push(entry)
   }
-  fine.sort((a, b) => compareFine(a.row, b.row))
+  fine.sort(
+    (a, b) =>
+      compareFine(a.row, b.row)
+      || routeTargetLoad(routeTargetLoadKey(a.target))
+        - routeTargetLoad(routeTargetLoadKey(b.target)),
+  )
   const ascending = (
     a: (typeof rows)[number],
     b: (typeof rows)[number],

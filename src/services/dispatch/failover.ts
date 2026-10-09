@@ -77,10 +77,10 @@ import {
   recordCodebuddyModelCooldown,
 } from "~/services/codebuddy/model-cooldown"
 import {
-  CredentialConcurrencyLimitError,
   isAsyncIterable,
   tryAcquireCredentialLease,
   wrapLeaseStream,
+  waitForAdmissionLease,
 } from "~/services/dispatch/concurrency"
 import {
   getProtocolAdapter,
@@ -155,6 +155,24 @@ function isWrappedStream(
   return isAsyncIterable((value as { response?: unknown }).response)
 }
 
+function applyCurrentGroupOverrides(
+  payload: { model: string },
+  current: RequestAdmission,
+  endpoint: FailoverOptions<unknown, unknown>["routeKind"],
+  c?: Context,
+): void {
+  if (!current.group) return
+  current.groupOverrides = applyGroupOverrides(payload, current.group, {
+    endpoint,
+    baseline: current.groupOverrideBaseline,
+  })
+  if (c)
+    patchRequestLog(c, {
+      routingGroupSelectedMember: current.group.member,
+      reasoningEffort: current.groupOverrides.effort,
+    })
+}
+
 export async function executeWithFailover<
   TPayload extends { model: string },
   TResult,
@@ -201,19 +219,12 @@ export async function executeWithFailover<
     }
     if (current.group) {
       current.group = retargetGroupDecision(current.group, next)
-      current.groupOverrides = applyGroupOverrides(payload, current.group, {
-        endpoint: routeKind,
-        baseline: current.groupOverrideBaseline,
-      })
-      if (c)
-        patchRequestLog(c, {
-          routingGroupSelectedMember: current.group.member,
-          reasoningEffort: current.groupOverrides.effort,
-        })
+      applyCurrentGroupOverrides(payload, current, routeKind, c)
     }
     return true
   }
 
+  const saturated = new Map<string, RequestAdmission>()
   let attemptIndex = 0
   while (true) {
     // A `verify` refusal the vendor gave a moment ago is answered from memory:
@@ -239,30 +250,40 @@ export async function executeWithFailover<
       )
     }
 
-    const adapter = getProtocolAdapter(current.target.protocol)
     const attemptStart = Date.now()
     const metricAttemptStart = performance.now()
     try {
-      // Pacing gate (burst + interval per connection). Runs before lease
-      // acquisition so waiting requests don't hold credential leases.
-      // Queue-full is local saturation, not an upstream failure — it is
-      // handled in the catch block by rotating without any cooldown.
-      const rateLimitStarted = performance.now()
-      try {
-        await checkRateLimit(current.connection.id, signal)
-      } finally {
-        addPerformanceTiming(
-          c,
-          "rateLimitWaitMs",
-          performance.now() - rateLimitStarted,
-        )
-      }
-      const lease = tryAcquireCredentialLease(current.target)
+      signal?.throwIfAborted()
+      // Reserve before pacing: a busy lane gives way immediately, without
+      // consuming a future send time or accumulating wait on every fallback.
+      let lease = tryAcquireCredentialLease(current.target)
       if (!lease) {
-        throw new CredentialConcurrencyLimitError(targetKey(current.target))
+        saturated.set(targetKey(current.target), current)
+        tried.add(targetKey(current.target))
+        if (advanceToNextTarget()) continue
+        const granted = await waitForAdmissionLease(
+          [...saturated.values()],
+          signal,
+        )
+        lease = granted.lease
+        current = granted.admission
       }
+      for (const key of saturated.keys()) tried.delete(key)
+      saturated.clear()
       let handedOffToStream = false
       try {
+        const adapter = getProtocolAdapter(current.target.protocol)
+        applyCurrentGroupOverrides(payload, current, routeKind, c)
+        const rateLimitStarted = performance.now()
+        try {
+          await checkRateLimit(current.connection.id, signal)
+        } finally {
+          addPerformanceTiming(
+            c,
+            "rateLimitWaitMs",
+            performance.now() - rateLimitStarted,
+          )
+        }
         // Tell the live trace view which connection/credential is being
         // contacted *before* the upstream call, so an in-flight request is
         // not shown with an empty route for the whole upstream wait.
@@ -278,14 +299,9 @@ export async function executeWithFailover<
         )
         if (!isWrappedStream(result) && !isAsyncIterable(result))
           markResponseReady(c)
-        // Windsurf resolves the real SKU (e.g. glm-5-2-max) from
-        // reasoning_effort inside the adapter and patches modelUpstream.
-        // recordUpstreamAttempt below would overwrite it with the head
-        // default (glm-5-2), so snapshot and restore it.
+        // Windsurf resolves its SKU inside the adapter. Preserve it when the
+        // attempt recorder writes the original target model below.
         const sku = c ? getRequestLogContext(c)?.entry.modelUpstream : undefined
-        // Upstream accepted the request: clear any 429 backoff pressure so
-        // the next 429 episode starts from the base backoff again, and lift
-        // any rest this credential was sitting out.
         await reportUpstreamSuccess(current.connection.id)
         clearRest(current.credential.id)
         recordUpstreamAttempt(
@@ -332,7 +348,9 @@ export async function executeWithFailover<
           new Response(null, { status: 429 }),
         )
       }
-      if (isAbortError(error)) throw error
+      // AbortSignal.timeout uses TimeoutError rather than AbortError. A
+      // cancelled local pacing wait must not penalize a healthy upstream.
+      if (signal?.aborted || isAbortError(error)) throw error
 
       const latencyMs = Date.now() - attemptStart
       const idx = ++attemptIndex

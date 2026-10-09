@@ -24,6 +24,8 @@ const settingsSchema = z
     requestDump: z.boolean(),
     memoryVerbose: z.boolean(),
     performanceDetails: z.boolean(),
+    concurrencyQueueLimit: z.number().int().min(0).max(10000).default(100),
+    concurrencyQueueWaitSeconds: z.number().int().min(1).max(600).default(30),
     codexAutoReset: z.boolean().default(false),
     codexModelIds: z
       .array(z.string().trim().min(1).max(256))
@@ -58,6 +60,13 @@ export const systemConfigUpdateSchema = settingsSchema
     logMaxTotalBytes: settingsSchema.shape.logMaxTotalBytes
       .removeDefault()
       .optional(),
+    concurrencyQueueLimit: settingsSchema.shape.concurrencyQueueLimit
+      .removeDefault()
+      .optional(),
+    concurrencyQueueWaitSeconds:
+      settingsSchema.shape.concurrencyQueueWaitSeconds
+        .removeDefault()
+        .optional(),
     debugMinutes: z.number().int().min(1).max(120),
     acknowledgeSensitiveData: z.boolean().optional(),
   })
@@ -84,6 +93,8 @@ const safeDefaults: SystemSettings = {
   requestDump: false,
   memoryVerbose: false,
   performanceDetails: true,
+  concurrencyQueueLimit: 100,
+  concurrencyQueueWaitSeconds: 30,
   codexAutoReset: false,
   codexModelIds: null,
   quotaDisplayMode: "remaining",
@@ -193,6 +204,12 @@ export function updateSystemConfig(
         settings.codexModelIds === undefined ?
           effectiveSettings().codexModelIds
         : settings.codexModelIds,
+      concurrencyQueueLimit:
+        settings.concurrencyQueueLimit
+        ?? effectiveSettings().concurrencyQueueLimit,
+      concurrencyQueueWaitSeconds:
+        settings.concurrencyQueueWaitSeconds
+        ?? effectiveSettings().concurrencyQueueWaitSeconds,
       logRetentionDays:
         settings.logRetentionDays ?? effectiveSettings().logRetentionDays,
       logMaxTotalBytes:

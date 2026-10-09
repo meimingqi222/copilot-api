@@ -119,7 +119,7 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
     let result = input
     for (const secret of currentSecrets())
       result = result.replaceAll(secret, REDACTED)
-    return result
+    result = result
       .replaceAll(
         /\b(Bearer|Basic|Cloud-IDE-JWT)\s+[^\s,;"'<>]+/gi,
         "$1 [redacted]",
@@ -132,13 +132,18 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
         /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/g,
         REDACTED,
       )
-      .replaceAll(
+    // No key/value or URL userinfo can match without these delimiters.
+    // Avoid scanning megabytes of ordinary prose with backtracking patterns.
+    if (result.includes(":") || result.includes("=")) {
+      result = result.replaceAll(
         /\b([a-z][a-z0-9_-]*)(["']?\s*[=:]\s*)("[^"\n]*(?:"|$)|'[^'\n]*(?:'|$)|[^\s,;&"'<>]+)/gi,
         (_match: string, key: string, separator: string, value: string) =>
           isDumpSecretField(key) ?
             `${key}${separator}${REDACTED}`
           : `${key}${separator}${text(value, depth + 1)}`,
       )
+    }
+    result = result
       .replaceAll(/\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]*/gi, "$1[redacted]")
       .replaceAll(
         /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
@@ -148,8 +153,13 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
         /data:[^\s,;"'<>]+(?:;[^,\s"'<>]*)?,[^\s"'<>]+/gi,
         "[redacted media]",
       )
-      .replaceAll(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, "$1[redacted]@")
-      .replaceAll(/([?&]key=)[^&\s"'<>]+/gi, "$1[redacted]")
+    if (result.includes("@") && /https?:\/\//i.test(result)) {
+      result = result.replaceAll(
+        /(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi,
+        "$1[redacted]@",
+      )
+    }
+    return result.replaceAll(/([?&]key=)[^&\s"'<>]+/gi, "$1[redacted]")
   }
 
   function sanitize(value: unknown, depth = 0): unknown {

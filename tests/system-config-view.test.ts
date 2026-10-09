@@ -3,9 +3,19 @@ import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 
 test("system settings display MiB and save the selected storage budget", async () => {
-  const settings = { logRetentionDays: 7, logMaxTotalBytes: 1024 ** 3 }
+  const settings = {
+    logRetentionDays: 7,
+    logMaxTotalBytes: 1024 ** 3,
+    concurrencyQueueLimit: 100,
+    concurrencyQueueWaitSeconds: 30,
+  }
   let submitted:
-    | { logRetentionDays: number; logMaxTotalBytes: number }
+    | {
+        logRetentionDays: number
+        logMaxTotalBytes: number
+        concurrencyQueueLimit: number
+        concurrencyQueueWaitSeconds: number
+      }
     | undefined
   const source = readFileSync("pages/js/views/system-config.js", "utf8")
   const view = runInNewContext(source + "\nsystemConfigView()", {
@@ -32,13 +42,19 @@ test("system settings display MiB and save the selected storage budget", async (
   view.accept({ settings, source: "environment", expiresAt: null })
   expect(view.maxLogMiB).toBe(1024)
   view.settings.logRetentionDays = 3
+  view.settings.concurrencyQueueLimit = 64
+  view.settings.concurrencyQueueWaitSeconds = 12
   view.maxLogMiB = 128
   await view.save()
   expect(submitted?.logMaxTotalBytes).toBe(128 * 1024 * 1024)
   expect(submitted?.logRetentionDays).toBe(3)
+  expect(submitted?.concurrencyQueueLimit).toBe(64)
+  expect(submitted?.concurrencyQueueWaitSeconds).toBe(12)
   expect(view.saved).toBe(true)
   view.useRecommended()
   expect(view.maxLogMiB).toBe(1024)
+  expect(view.settings.concurrencyQueueLimit).toBe(100)
+  expect(view.settings.concurrencyQueueWaitSeconds).toBe(30)
   expect(view.settings.logRetentionDays).toBe(7)
 })
 

@@ -35,6 +35,10 @@ import {
   effectiveStrategyFor,
 } from "~/lib/routing/connection-routing-override"
 import { state } from "~/lib/state"
+import {
+  hasRouteTargetCapacity,
+  routeTargetLoadKey,
+} from "~/lib/route-target/load"
 
 import {
   isQuotaSpent,
@@ -212,7 +216,13 @@ export function selectRouteTarget(
   //       转换是有损的(丢 cache_control 断点、字段降级),同优先级下
   //       不应抢占一个原生支持该 endpoint 的 provider。
   //       failover 把原生 target 排除后,转换 target 仍会作为后备被选中。
-  const pool = preferredRouteTargets(allPool)
+  const preferred = preferredRouteTargets(allPool)
+  const withCapacity = preferred.filter((t) =>
+    hasRouteTargetCapacity(targetKey(t)),
+  )
+  // Keep a saturated candidate when every lane is full so dispatch returns
+  // its retryable local 429 instead of an unrelated model-not-found error.
+  const pool = withCapacity.length ? withCapacity : preferred
 
   // 1) connection priority 最小值
   let minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))
@@ -374,7 +384,7 @@ function pickFromPriorityPool(
 
 /** 用作 exclude 集合的键。 */
 export function targetKey(target: RouteTarget): string {
-  return `${target.connectionId}::${target.credentialId}::${target.endpoint}`
+  return routeTargetLoadKey(target)
 }
 
 /** 仅供测试重置 RR 游标。 */
