@@ -709,10 +709,10 @@
                                 配额:
                                 <span
                                   class="font-medium text-[var(--apple-text)]"
-                                  x-text="item.quotaInfo.chatRemaining"
+                                  x-text="item.quotaInfo?.chatRemaining"
                                 ></span>
                                 /
-                                <span x-text="item.quotaInfo.chatTotal"></span>
+                                <span x-text="item.quotaInfo?.chatTotal"></span>
                               </span>
                               <span
                                 x-show="!item.statusMessage && item.quotaInfo && item.quotaInfo.unlimited"
