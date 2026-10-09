@@ -1748,6 +1748,35 @@
                             x-text="t('accounts.priorityHint')"
                           ></p>
                         </div>
+                        <!-- 连接级代理：留空 = 跟随系统设置里的默认代理 -->
+                        <div
+                          class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg"
+                        >
+                          <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2 shrink-0">
+                              <i
+                                data-lucide="network"
+                                class="w-4 h-4 text-[var(--apple-text-secondary)]"
+                              ></i>
+                              <span
+                                class="text-sm text-[var(--apple-text-secondary)]"
+                                x-text="t('accounts.proxyUrl')"
+                              ></span>
+                            </div>
+                            <input
+                              type="text"
+                              class="input flex-1 min-w-0 font-mono text-xs py-1 px-2 h-8"
+                              placeholder="http://127.0.0.1:18090"
+                              :value="account.proxyUrl ?? ''"
+                              @change="saveAccountProxyUrl(account, $event.target.value)"
+                              :disabled="!account.enabled"
+                            />
+                          </div>
+                          <p
+                            class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                            x-text="t('accounts.proxyUrlHint')"
+                          ></p>
+                        </div>
                         <!-- xAI Endpoint Toggle (CLI chat-proxy vs official API) -->
                         <div
                           x-show="(account.provider || 'copilot') === 'xai'"

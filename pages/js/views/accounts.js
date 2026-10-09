@@ -932,6 +932,24 @@ function accountsView() {
       }
     },
 
+    /**
+     * 连接级代理：留空即清除该字段，退回系统设置里的默认代理。
+     * 后端 settings 白名单已接受 proxyUrl（空字符串会清成 undefined）。
+     */
+    async saveAccountProxyUrl(account, value) {
+      const proxyUrl = String(value ?? "").trim()
+      try {
+        const result = await API.accounts.update(account.id, {
+          settings: { proxyUrl },
+        })
+        account.settings = result.account.settings
+        account.proxyUrl = result.account.proxyUrl ?? null
+        this.showToast(I18n.t("accounts.proxyUrlSuccess"), "success")
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
     claudeTransport(account) {
       return account.settings?.claudeTransport === "http" ? "http" : "cli"
     },

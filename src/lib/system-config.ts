@@ -2,6 +2,9 @@ import { z } from "zod"
 
 export const SYSTEM_CONFIG_KEY = "system-diagnostics-v1"
 
+/** 连接级代理允许的 scheme(Bun fetch 的 proxy 选项)。 */
+const PROXY_URL_PATTERN = /^(https?|socks[45]h?):\/\//iu
+
 function environmentLogStorage(): {
   logRetentionDays: number
   logMaxTotalBytes: number
@@ -34,6 +37,16 @@ const settingsSchema = z
       .nullable()
       .default(null),
     quotaDisplayMode: z.enum(["remaining", "used"]).default("remaining"),
+    // 连接自身没配代理时的默认代理；留空表示不使用默认代理。
+    defaultProxyUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .refine(
+        (value) => value === "" || PROXY_URL_PATTERN.test(value),
+        "Unsupported proxy scheme (use http://, https:// or socks5://)",
+      )
+      .default(""),
     logRetentionDays: z
       .number()
       .int()
@@ -55,6 +68,9 @@ export const systemConfigUpdateSchema = settingsSchema
       .removeDefault()
       .optional(),
     logRetentionDays: settingsSchema.shape.logRetentionDays
+      .removeDefault()
+      .optional(),
+    defaultProxyUrl: settingsSchema.shape.defaultProxyUrl
       .removeDefault()
       .optional(),
     logMaxTotalBytes: settingsSchema.shape.logMaxTotalBytes
@@ -98,6 +114,7 @@ const safeDefaults: SystemSettings = {
   codexAutoReset: false,
   codexModelIds: null,
   quotaDisplayMode: "remaining",
+  defaultProxyUrl: "",
   ...environmentLogStorage(),
 }
 
@@ -210,6 +227,8 @@ export function updateSystemConfig(
       concurrencyQueueWaitSeconds:
         settings.concurrencyQueueWaitSeconds
         ?? effectiveSettings().concurrencyQueueWaitSeconds,
+      defaultProxyUrl:
+        settings.defaultProxyUrl ?? effectiveSettings().defaultProxyUrl,
       logRetentionDays:
         settings.logRetentionDays ?? effectiveSettings().logRetentionDays,
       logMaxTotalBytes:

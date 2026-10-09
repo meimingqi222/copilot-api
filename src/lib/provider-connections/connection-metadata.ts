@@ -6,6 +6,7 @@
  * 本模块提供类型安全的字段读取器，替代散装 `metadata.xxx as string` 强转。
  */
 import { isOAuthProviderId, type ProviderId } from "~/lib/provider-config"
+import { getSystemSettings } from "~/lib/system-config"
 
 import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-definitions"
 
@@ -258,7 +259,11 @@ export function getConnectionProxyUrl(
   conn: ProviderConnection,
 ): string | undefined {
   // T5.2.5:优先读 connection.proxyUrl(类型化字段),回退到 metadata
-  return conn.proxyUrl ?? readConnectionMetadata(conn)?.proxyUrl
+  const own = conn.proxyUrl ?? readConnectionMetadata(conn)?.proxyUrl
+  if (own) return own
+  // 连接自身没配时回退到系统设置里的"默认代理 URL"(空串视为未配置),
+  // 这样新接入的账号不必逐条填写代理。
+  return getSystemSettings().defaultProxyUrl?.trim() || undefined
 }
 
 export function getConnectionRedirectUri(

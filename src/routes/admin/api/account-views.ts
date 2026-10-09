@@ -1,3 +1,4 @@
+import { getConnectionProxyUrl } from "~/lib/provider-connections"
 /**
  * Phase 4:从 ProviderConnection 派生与原 publicAccount(account) 完全一致的 JSON 视图。
  *
@@ -42,6 +43,8 @@ export function publicAccountFromConnection(conn: ProviderConnection) {
   const subtitle = connectionOAuthSubtitle(conn)
   const availableModels = connectionModelsToAccountModels(conn)
   const settings = { ...getConnectionSettings(conn) }
+  // 有效代理值(连接级 → 系统默认)。UI 用它回显，留空表示跟随默认。
+  const proxyUrl = getConnectionProxyUrl(conn) ?? null
   if (provider === "claude") delete settings.claudeTransport
   if (
     provider === "claude"
@@ -74,6 +77,7 @@ export function publicAccountFromConnection(conn: ProviderConnection) {
     supportsQuota: runtime.supports(conn, "quota"),
     createdAt: conn.createdAt,
     settings,
+    proxyUrl,
     providerFeatures: runtime.descriptor.features,
     authStatus: authStatus ?? "ready",
     authError: authError ?? null,

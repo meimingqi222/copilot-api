@@ -52,6 +52,7 @@ function systemConfigView() {
       this.settings.codexModelIds ??= null
       this.settings.concurrencyQueueLimit ??= 100
       this.settings.concurrencyQueueWaitSeconds ??= 30
+      this.settings.defaultProxyUrl ??= ""
       this.maxLogMiB = Math.ceil(data.settings.logMaxTotalBytes / (1024 * 1024))
       globalThis.dispatchEvent(
         new CustomEvent("quota-display-mode", {

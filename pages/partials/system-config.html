@@ -52,6 +52,26 @@
       <section class="card p-5 space-y-4">
         <h3
           class="font-semibold text-sm"
+          x-text="t('system.defaultProxyUrl')"
+        ></h3>
+        <div>
+          <input
+            type="text"
+            class="input w-full font-mono text-xs"
+            placeholder="http://127.0.0.1:7890"
+            x-model="settings.defaultProxyUrl"
+            :disabled="saving"
+          />
+          <p
+            class="text-xs text-[var(--apple-text-tertiary)] mt-1.5"
+            x-text="t('system.defaultProxyUrlHint')"
+          ></p>
+        </div>
+      </section>
+
+      <section class="card p-5 space-y-4">
+        <h3
+          class="font-semibold text-sm"
           x-text="t('system.concurrencyQueue')"
         ></h3>
         <p

@@ -62,6 +62,9 @@ const i18n = {
         "配置来源：启动参数 / 环境变量。首次保存后，WebUI 配置优先。",
       "system.source.webui": "配置来源：WebUI（已持久化，重启后保留）。",
       "system.logLevel": "控制台与文件日志级别",
+      "system.defaultProxyUrl": "默认代理 URL",
+      "system.defaultProxyUrlHint":
+        "连接自身未配置代理时使用它（Bun fetch 的 proxy 选项，逐请求透传）。留空表示不使用默认代理；连接级「代理 URL」始终优先。修改后无需重启，下一次请求即生效。",
       "system.codexModels": "Codex 客户端模型列表",
       "system.autoResetPolling": "定时轮询",
       "system.codexModelsOrdered": "已选择的可见模型（按序排列）：",
@@ -486,6 +489,10 @@ const i18n = {
       "accounts.priority": "优先级",
       "accounts.priorityHint": "数值越小优先级越高，相同优先级按顺序使用",
       "accounts.prioritySuccess": "优先级已更新",
+      "accounts.proxyUrl": "代理 URL",
+      "accounts.proxyUrlHint":
+        "留空则跟随「系统设置 → 默认代理 URL」；填在此处则该账号单独使用。改动立即生效，无需重启。",
+      "accounts.proxyUrlSuccess": "代理已更新",
       "accounts.xaiEndpoint": "接入端点",
       "accounts.xaiEndpoint.cli": "Grok CLI",
       "accounts.xaiEndpoint.api": "官方 API",
@@ -1636,6 +1643,9 @@ const i18n = {
         "Source: startup options / environment. Saved WebUI settings take precedence.",
       "system.source.webui": "Source: WebUI (persisted across restarts).",
       "system.logLevel": "Console and file log level",
+      "system.defaultProxyUrl": "Default proxy URL",
+      "system.defaultProxyUrlHint":
+        'Used when a connection has no proxy of its own (Bun fetch `proxy` option, passed per request). Leave empty to disable. A connection-level "Proxy URL" always wins. Takes effect on the next request; no restart needed.',
       "system.codexModels": "Codex client model list",
       "system.autoResetPolling": "Periodic polling",
       "system.codexModelsOrdered": "Selected visible models (in order):",
@@ -2076,6 +2086,10 @@ const i18n = {
       "accounts.priorityHint":
         "Lower value = higher priority. Same priority uses order.",
       "accounts.prioritySuccess": "Priority updated",
+      "accounts.proxyUrl": "Proxy URL",
+      "accounts.proxyUrlHint":
+        "Leave empty to follow the default proxy from System settings; a value here applies to this account only. Takes effect immediately, no restart.",
+      "accounts.proxyUrlSuccess": "Proxy updated",
       "accounts.xaiEndpoint": "Endpoint",
       "accounts.xaiEndpoint.cli": "Grok CLI",
       "accounts.xaiEndpoint.api": "Official API",
