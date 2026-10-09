@@ -258,8 +258,21 @@ export function getConnectionAuthError(
 export function getConnectionProxyUrl(
   conn: ProviderConnection,
 ): string | undefined {
-  // T5.2.5:优先读 connection.proxyUrl(类型化字段),回退到 metadata
-  const own = conn.proxyUrl ?? readConnectionMetadata(conn)?.proxyUrl
+  // T5.2.5:优先读 connection.proxyUrl(类型化字段),回退到 metadata。
+  //
+  // metadata 这里读**原始对象**:`readConnectionMetadata` 以
+  // `metadata.provider` 存在为前提,而代理是传输层字段 —— 不该因为 provider
+  // 缺失(anthropic-compatible 这类账号连接的 metadata 只有 proxyUrl/settings)
+  // 就整条失效。
+  const meta = conn.metadata as
+    | { proxyUrl?: unknown; settings?: Record<string, unknown> }
+    | undefined
+  const fromMetadata =
+    typeof meta?.proxyUrl === "string" && meta.proxyUrl !== "" ? meta.proxyUrl
+    : typeof meta?.settings?.["proxyUrl"] === "string" ?
+      meta.settings["proxyUrl"]
+    : undefined
+  const own = conn.proxyUrl ?? fromMetadata
   if (own) return own
   // 连接自身没配时回退到系统设置里的"默认代理 URL"(空串视为未配置),
   // 这样新接入的账号不必逐条填写代理。

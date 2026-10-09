@@ -65,10 +65,19 @@ test("a connection-level proxy wins over the system default", () => {
 test("metadata.proxyUrl is used when the typed field is absent", () => {
   setDefaultProxy(DEFAULT_PROXY)
   const conn = makeConnection()
-  // readConnectionMetadata 以 metadata.provider 存在为前提
+  // 故意不带 metadata.provider：代理是传输层字段，不该被 provider 派生拦掉
+  // （anthropic-compatible 的账号连接 metadata 就只有 proxyUrl/settings）。
   conn.metadata = {
-    provider: "codebuddy",
     proxyUrl: CONNECTION_PROXY,
+  } as unknown as ProviderConnection["metadata"]
+  expect(getConnectionProxyUrl(conn)).toBe(CONNECTION_PROXY)
+})
+
+test("metadata.settings.proxyUrl is honoured when the top-level field is absent", () => {
+  setDefaultProxy(DEFAULT_PROXY)
+  const conn = makeConnection()
+  conn.metadata = {
+    settings: { proxyUrl: CONNECTION_PROXY },
   } as unknown as ProviderConnection["metadata"]
   expect(getConnectionProxyUrl(conn)).toBe(CONNECTION_PROXY)
 })
@@ -87,9 +96,6 @@ test("an emptied connection proxy falls back to the default", () => {
   // 空串是"清除"语义（PUT 路由与原 UI 都这么做），所以它等同未配置。
   setDefaultProxy(DEFAULT_PROXY)
   const conn = makeConnection({ proxyUrl: "" })
-  conn.metadata = {
-    provider: "codebuddy",
-    proxyUrl: "",
-  } as unknown as ProviderConnection["metadata"]
+  conn.metadata = { proxyUrl: "" } as unknown as ProviderConnection["metadata"]
   expect(getConnectionProxyUrl(conn)).toBe(DEFAULT_PROXY)
 })
