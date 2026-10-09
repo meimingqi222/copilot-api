@@ -39,6 +39,7 @@ import {
 } from "~/services/codebuddy/model-cooldown"
 import { HTTPError } from "~/lib/error"
 import {
+  connectionFetch,
   connectionFetchInit,
   detectOpenAIStreamError,
   handleUpstreamFailure,
@@ -685,7 +686,11 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     // base64。`COMPAT_INLINE_IMAGE_REFERENCES=0` 可整体回到逐字节透传。
     // 详见 openai-compat-payload.ts 里 inlineCompatImageReferences 的注释。
     if (compatImageReferenceInliningEnabled()) {
-      await inlineCompatImageReferences(upstreamPayload.messages)
+      // 图片取回同样是上游流量，必须走连接代理：否则大陆图床会绕过隧道直连，
+      // 与 adapter 自身的上游请求走出两条不同的网络路径（漏传时代理被静默绕过）。
+      await inlineCompatImageReferences(upstreamPayload.messages, {
+        fetch: connectionFetch(connection),
+      })
     }
 
     const accessToken = await ensureCodebuddyAccessToken(

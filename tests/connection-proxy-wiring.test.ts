@@ -352,6 +352,65 @@ describe("minimax-native adapter proxy wiring", () => {
 })
 
 describe("codebuddy-native adapter proxy wiring", () => {
+  test("inline image fetch carries the connection proxy", async () => {
+    // 未过期的 JWT：ensureCodebuddyAccessToken 不会再发刷新请求，于是只剩
+    // 图片取回与聊天两条上游调用。图片用公网 IP 字面量，compatValidateRemoteUrl
+    // 对 IP 字面量跳过 DNS 解析，所以这条用例离线可跑、不触网。
+    const sub = Buffer.from(
+      JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }),
+    ).toString("base64url")
+    const token = `h.${sub}.sig`
+    const connection = makeConnection("codebuddy-native", {
+      baseUrl: "https://www.workbuddy.ai/v2",
+      metadata: { provider: "codebuddy" },
+      credentials: [makeCredential({ value: token })],
+    })
+    const calls = stubFetch((url) => {
+      if (url.includes("93.184.216.34")) {
+        return new Response(
+          new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          { status: 200, headers: { "content-type": "image/png" } },
+        )
+      }
+      return jsonResponse({
+        choices: [{ message: { role: "assistant", content: "ok" } }],
+        usage: {},
+      })
+    })
+
+    type ChatArgs = Parameters<
+      NonNullable<typeof codebuddyNativeAdapter.createChatCompletions>
+    >[0]
+    const payload = {
+      model: "m",
+      stream: false,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            {
+              type: "image_url",
+              image_url: { url: "https://93.184.216.34/a.png" },
+            },
+          ],
+        },
+      ],
+    } as unknown as ChatArgs["payload"]
+
+    await codebuddyNativeAdapter.createChatCompletions!({
+      target: makeTarget(connection, "m", "chat"),
+      connection,
+      credential: makeCredential({ value: token }),
+      payload,
+    })
+
+    const image = calls.find((call) => call.url.includes("93.184.216.34"))
+    expect(image).toBeDefined()
+    expect(image?.init.proxy).toBe(PROXY)
+    expectProxied(calls)
+  })
+
   test("model discovery carries the connection proxy", async () => {
     // 未过期的 JWT：ensureCodebuddyAccessToken 不会再发刷新请求，
     // 于是唯一的 fetch 就是 /v3/config。

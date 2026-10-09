@@ -1,5 +1,8 @@
 import { events } from "fetch-event-stream"
-import { observeUpstreamResponse } from "~/lib/upstream-performance"
+import {
+  observeUpstreamResponse,
+  performanceFetch,
+} from "~/lib/upstream-performance"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
@@ -156,6 +159,30 @@ export function connectionFetchInit(
   init: RequestInit,
 ): RequestInit & { proxy?: string } {
   return withProxyUrl(init, getConnectionProxyUrl(connection))
+}
+
+/**
+ * 注入用的连接级 `fetch` 实现：给需要**自己发请求**的旁路使用（目前是
+ * CodeBuddy 的图片内联取回），保证旁路与 adapter 自身的上游请求走同一条
+ * 出站路径 —— 漏传时不会报错，只会静默绕过代理直连。
+ *
+ * `connectionFetchInit` 只包 `init`；这里给出整个实现，便于以
+ * `options.fetch` 的形式注入。`preconnect` 是 Bun fetch 类型上的必需属性，
+ * 转发给全局 fetch。
+ */
+export function connectionFetch(
+  connection: ProviderConnection,
+): typeof globalThis.fetch {
+  const impl = ((
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> =>
+    performanceFetch(
+      input,
+      connectionFetchInit(connection, init ?? {}),
+    )) as typeof globalThis.fetch
+  impl.preconnect = (url, options) => globalThis.fetch.preconnect(url, options)
+  return impl
 }
 
 interface UpstreamFailureOptions {
