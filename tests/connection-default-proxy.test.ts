@@ -6,7 +6,7 @@
  * 在连接自身没配时回退到它 —— 这里锁住优先级：连接级 > metadata > 系统默认 >
  * 无，并明确空串等同未配置。
  */
-import { beforeEach, expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 import { getConnectionProxyUrl } from "~/lib/provider-connections"
@@ -29,6 +29,7 @@ function initialize(): void {
 function setDefaultProxy(url: string): void {
   updateSystemConfig({
     ...getSystemSettings(),
+    requestDump: false,
     debugMinutes: 15,
     defaultProxyUrl: url,
   })
@@ -54,6 +55,7 @@ beforeEach(() => {
   initialize()
   setDefaultProxy("")
 })
+afterEach(initialize)
 
 test("a connection-level proxy wins over the system default", () => {
   setDefaultProxy(DEFAULT_PROXY)

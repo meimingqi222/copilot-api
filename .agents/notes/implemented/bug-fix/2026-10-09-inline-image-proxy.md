@@ -41,9 +41,11 @@ through.
 
 ## Verification
 
-`tests/connection-proxy-wiring.test.ts::inline image fetch carries the connection
-proxy` drives the CodeBuddy adapter with an `https://` image reference and asserts
-`init.proxy === connection.proxyUrl` on the image request (plus `expectProxied`
-over every upstream call). The reference uses a public IPv4 literal so
-`compatValidateRemoteUrl` skips DNS and the test never touches the network.
-Removing the injection makes this test fail.
+- `tests/connection-proxy-wiring.test.ts::inline image fetch carries the connection proxy`
+
+The test drives the CodeBuddy adapter with an `https://` image reference and
+asserts `init.proxy === connection.proxyUrl` on the image request, plus proxy
+checks over every upstream call. Its public IPv4 literal avoids DNS and the test
+never touches the network.
+
+Proved: replacing the injected connection fetch with global fetch made the image proxy assertion fail with Received undefined; evidence is `.agents/notes-evidence/inline-image-proxy-red.log`. The injection was restored and the same focused test passed.

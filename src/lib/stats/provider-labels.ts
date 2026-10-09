@@ -93,7 +93,7 @@ export function providerBucketLabel(key: string, providerId: string): string {
  * `/summary` 按 provider  rollup 时的展示名。
  *
  * 这里的分组是 SQL `GROUP BY provider`，无法像性能视图那样拆到 connection，
- * 所以只在「整个 protocol 桶只对应一个活着的上游」时点名 —— 那种情况下
+ * 所以只在「整个 protocol 桶只有一个连接，且它仍存活并具名」时点名 —— 那种情况下
  * 协议名和上游名是一对一的，点名更 informative。桶里混了多个上游时保留
  * 协议标签：那本来就是个混合汇总，点名会把 A 的延迟安到 B 头上；具体上游
  * 在嵌套的账号行里已经各自具名。
@@ -102,14 +102,13 @@ export function providerSummaryLabel(
   providerId: string,
   connectionIds: Iterable<string>,
 ): string {
-  if (!isPlainCompatibleProvider(providerId)) {
-    return PROVIDER_LABELS[providerId] ?? providerId
-  }
-  const names = new Set<string>()
-  for (const connectionId of connectionIds) {
-    const name = connectionDisplayName(connectionId)
-    if (name) names.add(name)
-  }
-  if (names.size === 1) return [...names][0]
-  return PROVIDER_LABELS[providerId] ?? providerId
+  const fallback = PROVIDER_LABELS[providerId] ?? providerId
+  if (!isPlainCompatibleProvider(providerId)) return fallback
+
+  // 已删除/无名连接也占据汇总桶，不能把它们的历史用量安到存活连接头上。
+  // 身份按 ID 判断：两个同名连接仍是两个独立上游。
+  const ids = new Set(connectionIds)
+  if (ids.size !== 1) return fallback
+  const [connectionId] = ids
+  return connectionDisplayName(connectionId) ?? fallback
 }

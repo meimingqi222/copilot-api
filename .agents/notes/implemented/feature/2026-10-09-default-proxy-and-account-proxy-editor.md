@@ -15,21 +15,24 @@ Worse, an account-managed connection had **no way to be edited after creation**:
 the endpoint-connections page filters `isAccountManagedConnection` out of its list
 (deliberately — the comment there says editing from that page breaks account-path
 metadata), and the accounts page only ever read `settings.proxyUrl` while creating
-an account. The backend already accepted it (`account-update.ts` whitelists
-`proxyUrl`), so the missing half was purely frontend.
+an account. The backend accepted `settings.proxyUrl`, but acceptance alone did
+not guarantee that the effective typed proxy was updated. The reader/writer
+repair is recorded in `2026-10-09-account-proxy-update.md`.
 
 ## Decision
 
 Add `defaultProxyUrl` to the system settings (validated: trimmed, ≤2048 chars,
 `http(s)`/`socks[45]h` schemes only) and make `getConnectionProxyUrl` fall back to
 it when the connection has no proxy of its own. Precedence is now: connection
-typed field → `metadata.proxyUrl` → system default → none. An empty default means
+typed field → `metadata.proxyUrl` → `metadata.settings.proxyUrl` → system default
+→ none. An empty default means
 "no proxy", so the behaviour is unchanged until someone fills it in.
 
 Expose an effective `proxyUrl` on the admin account payload
 (`publicAccountFromConnection`) and add an inline editor in the accounts list,
 bound to that effective value, saving through `API.accounts.update` with
-`settings.proxyUrl`. An emptied field keeps the existing "clear" semantics.
+`settings.proxyUrl`. The account patch writes the typed connection proxy and
+clears stale metadata; empty input clears the per-account override.
 
 ## Alternatives considered
 

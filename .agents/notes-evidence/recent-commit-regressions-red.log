@@ -1,0 +1,438 @@
+bun test v1.4.2 (744846f84)
+
+tests/performance-view.test.ts:
+67 |       { provider: "connection:other", providerLabel: "Other" },
+68 |       { provider: "copilot", providerLabel: "GitHub Copilot" },
+69 |       { provider: "openai-compatible", providerLabel: "OpenAI Compatible" },
+70 |     ]
+71 |     view.providerFilter = view.providerOptions.find((option: { label: string }) => option.label === "DeepSeek").provider
+72 |     expect(view.filteredDetails).toEqual([deepseek])
+                                      ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "connectionId": "deepseek",
+-     "connectionName": "DeepSeek",
+-     "model": "shared",
+-     "provider": "openai-compatible",
+-   },
+- ]
++ []
+
+- Expected  - 8
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/performance-view.test.ts:72:34)
+(fail) performanceView UX redesign > connection provider filters keep only their channel details [timing omitted]
+(pass) performanceView UX redesign > connection names are searchable and connection IDs distinguish channel keys [timing omitted]
+(pass) performanceView UX redesign > filters out empty metrics when hideEmpty is true [timing omitted]
+(pass) performanceView UX redesign > calculates end-to-end pipeline breakdown correctly [timing omitted]
+(pass) performanceView UX redesign > generates smart diagnostic insights from raw performance timings [timing omitted]
+(pass) performanceView UX redesign > supports model/provider search filtering [timing omitted]
+(pass) performanceView UX redesign > manages stage collapse and expand toggle [timing omitted]
+(pass) performanceView UX redesign > calculates globalStats.avgTps accurately and clamps extreme outliers [timing omitted]
+(pass) performanceView UX redesign > sorts by decode TPS and explains its narrower sample coverage [timing omitted]
+
+tests/admin-performance.test.ts:
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 8ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) performance details show live connection names and deleted connection fallback [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) performance cache reuses unchanged data and invalidates immediately after writes and reset [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+(pass) performance API exposes segmented new samples without inventing historical values [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+(pass) GET /admin/api/usage/performance uses a weighted TPS average [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 1ms
+(pass) GET /admin/api/usage/performance reports decode TPS without TTFT [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) GET /admin/api/usage/performance splits the same model by provider [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) GET /admin/api/usage/performance counts untimed requests, averages only timed ones [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) performance by-provider names the real upstream instead of the protocol [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) performance by-provider keeps distinct upstreams apart instead of merging them [timing omitted]
+<-- GET /admin/api/usage/performance?range=all
+--> GET /admin/api/usage/performance?range=all 200 0ms
+(pass) performance by-provider falls back to the protocol label for deleted upstreams [timing omitted]
+<-- GET /admin/api/usage/summary?range=all
+--> GET /admin/api/usage/summary?range=all 200 1ms
+(pass) usage summary names the single upstream behind a compatible protocol [timing omitted]
+<-- GET /admin/api/usage/summary?range=all
+--> GET /admin/api/usage/summary?range=all 200 1ms
+(pass) usage summary keeps the protocol label when a protocol serves several upstreams [timing omitted]
+<-- GET /admin/api/usage/summary?range=all
+--> GET /admin/api/usage/summary?range=all 200 2ms
+608 |     expect(response.status).toBe(200)
+609 |     const body = (await response.json()) as {
+610 |       byProvider: Record<string, { label: string; requests: number; accounts: Record<string, { requests: number; deleted?: boolean }> }>
+611 |     }
+612 |     const bucket = body.byProvider["openai-compatible"]!
+613 |     expect(bucket.label).toBe("OpenAI Compatible")
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "OpenAI Compatible"
+Received: "DeepSeek"
+
+      at <anonymous> (<repo>/tests/admin-performance.test.ts:613:26)
+(fail) usage summary keeps mixed upstreams unattributed: deleted [timing omitted]
+<-- GET /admin/api/usage/summary?range=all
+--> GET /admin/api/usage/summary?range=all 200 2ms
+608 |     expect(response.status).toBe(200)
+609 |     const body = (await response.json()) as {
+610 |       byProvider: Record<string, { label: string; requests: number; accounts: Record<string, { requests: number; deleted?: boolean }> }>
+611 |     }
+612 |     const bucket = body.byProvider["openai-compatible"]!
+613 |     expect(bucket.label).toBe("OpenAI Compatible")
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "OpenAI Compatible"
+Received: "DeepSeek"
+
+      at <anonymous> (<repo>/tests/admin-performance.test.ts:613:26)
+(fail) usage summary keeps mixed upstreams unattributed: unnamed [timing omitted]
+<-- GET /admin/api/usage/summary?range=all
+--> GET /admin/api/usage/summary?range=all 200 2ms
+608 |     expect(response.status).toBe(200)
+609 |     const body = (await response.json()) as {
+610 |       byProvider: Record<string, { label: string; requests: number; accounts: Record<string, { requests: number; deleted?: boolean }> }>
+611 |     }
+612 |     const bucket = body.byProvider["openai-compatible"]!
+613 |     expect(bucket.label).toBe("OpenAI Compatible")
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "OpenAI Compatible"
+Received: "DeepSeek"
+
+      at <anonymous> (<repo>/tests/admin-performance.test.ts:613:26)
+(fail) usage summary keeps mixed upstreams unattributed: same-name [timing omitted]
+<-- GET /admin/api/usage/performance/trend?model=trend-model&range=all&intervalMinutes=60
+--> GET /admin/api/usage/performance/trend?model=trend-model&range=all&intervalMinutes=60 200 2ms
+(pass) GET /admin/api/usage/performance/trend returns continuous slot series for a model [timing omitted]
+<-- GET /admin/api/usage/performance/trend?model=multi-upstream-model&range=all
+--> GET /admin/api/usage/performance/trend?model=multi-upstream-model&range=all 200 2ms
+(pass) GET /admin/api/usage/performance/trend includes byProvider breakdown for multi-provider models [timing omitted]
+
+tests/accounts-proxy-url-update.test.ts:
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: "http://old-proxy.invalid:8080"
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > copilot: edits and clears a proxy stored in typed [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > copilot: edits and clears a proxy stored in metadata [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > copilot: edits and clears a proxy stored in settings [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: "http://old-proxy.invalid:8080"
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > windsurf: edits and clears a proxy stored in typed [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > windsurf: edits and clears a proxy stored in metadata [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > windsurf: edits and clears a proxy stored in settings [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: "http://old-proxy.invalid:8080"
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > codebuff: edits and clears a proxy stored in typed [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > codebuff: edits and clears a proxy stored in metadata [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > codebuff: edits and clears a proxy stored in settings [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: "http://old-proxy.invalid:8080"
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > codex: edits and clears a proxy stored in typed [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > codex: edits and clears a proxy stored in metadata [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > codex: edits and clears a proxy stored in settings [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: "http://old-proxy.invalid:8080"
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > claude: edits and clears a proxy stored in typed [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > claude: edits and clears a proxy stored in metadata [timing omitted]
+67 |         const update = (proxyUrl: string) => applyConnectionPatchToConnection(
+68 |           connection,
+69 |           parseBodyToPatch(connection, { settings: { proxyUrl } }),
+70 |         )
+71 |         update(`  ${NEW_PROXY}  `)
+72 |         expect(connection.proxyUrl).toBe(NEW_PROXY)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: "http://new-proxy.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/accounts-proxy-url-update.test.ts:72:37)
+(fail) account proxy updates > claude: edits and clears a proxy stored in settings [timing omitted]
+(pass) account proxy updates > an unrelated settings patch preserves the connection proxy [timing omitted]
+
+tests/connection-proxy-wiring.test.ts:
+(pass) connectionFetchInit > adds the Bun proxy option only when the connection has a proxy [timing omitted]
+(pass) connectionFetchInit > falls back to metadata.proxyUrl for v1 connections [timing omitted]
+(pass) openai-compatible adapter proxy wiring > discovery, chat and embeddings all carry the connection proxy [timing omitted]
+(pass) openai-responses-compatible adapter proxy wiring > discovery, chat and responses all carry the connection proxy [timing omitted]
+(pass) anthropic-compatible adapter proxy wiring > default discovery normalizes the version for https://upstream.test [timing omitted]
+249 |   ])("default discovery normalizes the version for %s", async (baseUrl, expectedUrl) => {
+250 |     const connection = makeConnection("anthropic-compatible", { baseUrl })
+251 |     const credential = makeCredential({ authMode: "header", headerName: "x-api-key" })
+252 |     const calls = stubFetch(() => jsonResponse({ data: [{ id: "m" }] }))
+253 |     const models = await anthropicCompatibleAdapter.discoverModels!({ connection, credential })
+254 |     expect(calls.map((call) => call.url)).toEqual([expectedUrl])
+                                                ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "https://upstream.test/v1/models",
++   "https://upstream.test/v1/v1/models",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/connection-proxy-wiring.test.ts:254:43)
+(fail) anthropic-compatible adapter proxy wiring > default discovery normalizes the version for https://upstream.test/v1 [timing omitted]
+(pass) anthropic-compatible adapter proxy wiring > default discovery normalizes the version for https://upstream.test/coding [timing omitted]
+249 |   ])("default discovery normalizes the version for %s", async (baseUrl, expectedUrl) => {
+250 |     const connection = makeConnection("anthropic-compatible", { baseUrl })
+251 |     const credential = makeCredential({ authMode: "header", headerName: "x-api-key" })
+252 |     const calls = stubFetch(() => jsonResponse({ data: [{ id: "m" }] }))
+253 |     const models = await anthropicCompatibleAdapter.discoverModels!({ connection, credential })
+254 |     expect(calls.map((call) => call.url)).toEqual([expectedUrl])
+                                                ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "https://upstream.test/coding/v1/models",
++   "https://upstream.test/coding/v1/v1/models",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/connection-proxy-wiring.test.ts:254:43)
+(fail) anthropic-compatible adapter proxy wiring > default discovery normalizes the version for https://upstream.test/coding/v1/ [timing omitted]
+(pass) anthropic-compatible adapter proxy wiring > explicit discovery endpoint remains authoritative: /catalog [timing omitted]
+(pass) anthropic-compatible adapter proxy wiring > explicit discovery endpoint remains authoritative: https://discovery.test/models [timing omitted]
+(pass) anthropic-compatible adapter proxy wiring > messages and discovery carry the connection proxy [timing omitted]
+(pass) gemini-compatible adapter proxy wiring > generateContent and discovery carry the connection proxy [timing omitted]
+(pass) gemini-native adapter proxy wiring > generateContent carries the connection proxy [timing omitted]
+(pass) minimax-native adapter proxy wiring > messages carry the connection proxy [timing omitted]
+(pass) codebuddy-native adapter proxy wiring > inline image fetch carries the connection proxy [timing omitted]
+(pass) codebuddy-native adapter proxy wiring > model discovery carries the connection proxy [timing omitted]
+(pass) qoder-native adapter proxy wiring > model discovery carries the connection proxy [timing omitted]
+(pass) lobsterai-native adapter proxy wiring > model discovery carries the connection proxy [timing omitted]
+(pass) commandcode-native adapter proxy wiring > model discovery carries the connection proxy [timing omitted]
+(pass) dimagent-native adapter proxy wiring > model discovery carries the connection proxy [timing omitted]
+(pass) zed-native adapter proxy wiring > both the llm token exchange and the completion carry the proxy [timing omitted]
+(pass) native token refresh proxy wiring > codebuddy refresh carries the connection proxy [timing omitted]
+(pass) native token refresh proxy wiring > lobsterai refresh carries the connection proxy [timing omitted]
+(pass) protocol adapters never fetch without a proxy helper > every fetching protocol module mentions a proxy helper [timing omitted]
+
+21 tests failed:
+(fail) performanceView UX redesign > connection provider filters keep only their channel details [timing omitted]
+(fail) usage summary keeps mixed upstreams unattributed: deleted [timing omitted]
+(fail) usage summary keeps mixed upstreams unattributed: unnamed [timing omitted]
+(fail) usage summary keeps mixed upstreams unattributed: same-name [timing omitted]
+(fail) account proxy updates > copilot: edits and clears a proxy stored in typed [timing omitted]
+(fail) account proxy updates > copilot: edits and clears a proxy stored in metadata [timing omitted]
+(fail) account proxy updates > copilot: edits and clears a proxy stored in settings [timing omitted]
+(fail) account proxy updates > windsurf: edits and clears a proxy stored in typed [timing omitted]
+(fail) account proxy updates > windsurf: edits and clears a proxy stored in metadata [timing omitted]
+(fail) account proxy updates > windsurf: edits and clears a proxy stored in settings [timing omitted]
+(fail) account proxy updates > codebuff: edits and clears a proxy stored in typed [timing omitted]
+(fail) account proxy updates > codebuff: edits and clears a proxy stored in metadata [timing omitted]
+(fail) account proxy updates > codebuff: edits and clears a proxy stored in settings [timing omitted]
+(fail) account proxy updates > codex: edits and clears a proxy stored in typed [timing omitted]
+(fail) account proxy updates > codex: edits and clears a proxy stored in metadata [timing omitted]
+(fail) account proxy updates > codex: edits and clears a proxy stored in settings [timing omitted]
+(fail) account proxy updates > claude: edits and clears a proxy stored in typed [timing omitted]
+(fail) account proxy updates > claude: edits and clears a proxy stored in metadata [timing omitted]
+(fail) account proxy updates > claude: edits and clears a proxy stored in settings [timing omitted]
+(fail) anthropic-compatible adapter proxy wiring > default discovery normalizes the version for https://upstream.test/v1 [timing omitted]
+(fail) anthropic-compatible adapter proxy wiring > default discovery normalizes the version for https://upstream.test/coding/v1/ [timing omitted]
+
+ 45 pass
+ 21 fail
+ 221 expect() calls
+Ran 66 tests across 4 files. [timing omitted]

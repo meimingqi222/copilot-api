@@ -590,6 +590,47 @@ test("usage summary keeps the protocol label when a protocol serves several upst
   expect(body.byProvider["openai-compatible"]?.label).toBe("OpenAI Compatible")
 })
 
+test.each(["deleted", "unnamed", "same-name"])(
+  "usage summary keeps mixed upstreams unattributed: %s",
+  async (otherState) => {
+    const live = addPlainConnection("DeepSeek")
+    const other = addPlainConnection(
+      otherState === "same-name" ? "DeepSeek" : "Other",
+    )
+    recordPlainUsage(live, "shared-model", 300)
+    recordPlainUsage(other, "shared-model", 900)
+    if (otherState === "deleted") removeProviderConnection(other)
+    if (otherState === "unnamed") {
+      upsertProviderConnection({
+        ...getProviderConnection(other)!,
+        name: "   ",
+      })
+    }
+
+    const response = await server.fetch(
+      adminRequest("http://localhost/admin/api/usage/summary?range=all"),
+    )
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      byProvider: Record<
+        string,
+        {
+          label: string
+          requests: number
+          accounts: Record<string, { requests: number; deleted?: boolean }>
+        }
+      >
+    }
+    const bucket = body.byProvider["openai-compatible"]!
+    expect(bucket.label).toBe("OpenAI Compatible")
+    expect(bucket.requests).toBe(2)
+    expect(Object.keys(bucket.accounts).sort()).toEqual([live, other].sort())
+    expect(bucket.accounts[other]?.requests).toBe(1)
+    if (otherState === "deleted")
+      expect(bucket.accounts[other]?.deleted).toBe(true)
+  },
+)
+
 // ── 性能趋势接口测试 ──────────────────────────────────────────────
 
 test("GET /admin/api/usage/performance/trend returns continuous slot series for a model", async () => {

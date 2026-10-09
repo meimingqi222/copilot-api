@@ -1,0 +1,23 @@
+bun test v1.4.2 (744846f84)
+
+tests/connection-proxy-wiring.test.ts:
+434 |       payload,
+435 |     })
+436 | 
+437 |     const image = calls.find((call) => call.url.includes("93.184.216.34"))
+438 |     expect(image).toBeDefined()
+439 |     expect(image?.init.proxy).toBe(PROXY)
+                                    ^
+error: expect(received).toBe(expected)
+
+Expected: "http://proxy.example.invalid:8080"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/connection-proxy-wiring.test.ts:439:31)
+(fail) codebuddy-native adapter proxy wiring > inline image fetch carries the connection proxy [timing omitted]
+
+ 0 pass
+ 23 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [timing omitted]

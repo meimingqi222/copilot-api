@@ -119,12 +119,12 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
 
   async discoverModels({ connection, credential, signal }) {
     // Anthropic 没有统一模型发现端点:配置了自定义 endpoint 就用它;
-    // 没配时退回标准的 `/v1/models`（joinUrl 会补上 /v1）。
+    // 没配时使用 `/models`，由 joinUrl 按需补 /v1，避免版本后缀重复。
     //
     // 官方 Anthropic 与兼容供应商（Kimi Coding 等）都在 /v1 下提供该
     // 列表,而预设声明了 fetchable:true 就该真的能拉模型。不支持的上游
     // 会 404/405,由调用方把状态码报给用户,好过静默返回空列表。
-    const endpoint = connection.modelDiscovery?.endpoint || "/v1/models"
+    const endpoint = connection.modelDiscovery?.endpoint || "/models"
     const url =
       /^https?:/i.test(endpoint) ? endpoint : (
         joinUrl(connection.baseUrl, endpoint)

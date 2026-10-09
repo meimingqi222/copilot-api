@@ -288,7 +288,6 @@ function applySettingsPatchToConnection(
     //  修复写错的区域时必须能改）。
     for (const key of [
       "baseUrl",
-      "proxyUrl",
       "modelPrefix",
       "tokenEndpoint",
       "redirectUri",
@@ -299,10 +298,6 @@ function applySettingsPatchToConnection(
         setConnectionSetting(conn, key, value)
         // routing 字段同步到 metadata 顶层
         switch (key) {
-          case "proxyUrl": {
-            meta.proxyUrl = value
-            break
-          }
           case "modelPrefix": {
             meta.modelPrefix = value
             break
@@ -335,5 +330,14 @@ function applySettingsPatchToConnection(
   } else {
     // 其他 provider:直接合并 settings
     meta.settings = { ...meta.settings, ...settings }
+  }
+
+  // 代理是所有账号共用的传输字段。写入读取器优先使用的 v2 字段，
+  // 并移除旧副本，避免修改/清空后仍被 metadata 里的旧值覆盖。
+  if (typeof settings.proxyUrl === "string") {
+    const proxyUrl = settings.proxyUrl.trim() || undefined
+    conn.proxyUrl = proxyUrl
+    delete meta.proxyUrl
+    setConnectionSetting(conn, "proxyUrl", proxyUrl)
   }
 }

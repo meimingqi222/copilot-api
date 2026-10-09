@@ -241,6 +241,55 @@ describe("openai-responses-compatible adapter proxy wiring", () => {
 })
 
 describe("anthropic-compatible adapter proxy wiring", () => {
+  test.each([
+    ["https://upstream.test", "https://upstream.test/v1/models"],
+    ["https://upstream.test/v1", "https://upstream.test/v1/models"],
+    ["https://upstream.test/coding", "https://upstream.test/coding/v1/models"],
+    [
+      "https://upstream.test/coding/v1/",
+      "https://upstream.test/coding/v1/models",
+    ],
+  ])(
+    "default discovery normalizes the version for %s",
+    async (baseUrl, expectedUrl) => {
+      const connection = makeConnection("anthropic-compatible", { baseUrl })
+      const credential = makeCredential({
+        authMode: "header",
+        headerName: "x-api-key",
+      })
+      const calls = stubFetch(() => jsonResponse({ data: [{ id: "m" }] }))
+      const models = await anthropicCompatibleAdapter.discoverModels!({
+        connection,
+        credential,
+      })
+      expect(calls.map((call) => call.url)).toEqual([expectedUrl])
+      expect(new Headers(calls[0]!.init.headers).get("x-api-key")).toBe(
+        "sk-test",
+      )
+      expect(models.map((model) => model.publicId)).toEqual(["m"])
+      expectProxied(calls)
+    },
+  )
+
+  test.each([
+    ["/catalog", "https://upstream.test/v1/catalog"],
+    ["https://discovery.test/models", "https://discovery.test/models"],
+  ])(
+    "explicit discovery endpoint remains authoritative: %s",
+    async (endpoint, expectedUrl) => {
+      const connection = makeConnection("anthropic-compatible", {
+        modelDiscovery: { enabled: true, mode: "manual-only", endpoint },
+      })
+      const calls = stubFetch(() => jsonResponse({ data: [] }))
+      await anthropicCompatibleAdapter.discoverModels!({
+        connection,
+        credential: makeCredential(),
+      })
+      expect(calls.map((call) => call.url)).toEqual([expectedUrl])
+      expectProxied(calls)
+    },
+  )
+
   test("messages and discovery carry the connection proxy", async () => {
     const connection = makeConnection("anthropic-compatible", {
       modelDiscovery: {
