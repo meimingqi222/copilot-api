@@ -10,6 +10,12 @@
  * 未成形的尾巴要么留着等下一片，要么在流结束时按原文吐出（绝不吞掉用户可见文本）。
  */
 
+import {
+  TOOL_CALL_CLOSE as CALL_CLOSE,
+  TOOL_CALL_OPEN as CALL_OPEN,
+  parseXmlToolCall,
+} from "~/services/tool-call-text"
+
 interface QoderToolCall {
   name: string
   args: string
@@ -18,12 +24,6 @@ interface QoderToolCall {
 export type QoderFragment =
   | { kind: "text"; text: string }
   | { kind: "call"; call: QoderToolCall }
-
-const CALL_OPEN = "<tool_call>"
-const CALL_CLOSE = "</tool_call>"
-
-const FUNCTION_RE = /<function=([^>]+)>([\s\S]*?)<\/function>/
-const PARAMETER_RE = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/g
 
 /** 尾部仍可能长成调用标记的长度。 */
 function markerSuffix(value: string): number {
@@ -72,28 +72,9 @@ function parseQoderToolCall(value: string): QoderToolCall | undefined {
     // 不是 JSON 形态，继续走 XML。
   }
 
-  const match = FUNCTION_RE.exec(value)
-  if (!match) return undefined
-  const name = (match[1] ?? "").trim()
-  if (!name) return undefined
-
-  const args: Record<string, unknown> = {}
-  PARAMETER_RE.lastIndex = 0
-  for (
-    let param = PARAMETER_RE.exec(match[2] ?? "");
-    param;
-    param = PARAMETER_RE.exec(match[2] ?? "")
-  ) {
-    const key = (param[1] ?? "").trim()
-    if (!key) continue
-    const raw = (param[2] ?? "").trim()
-    try {
-      args[key] = JSON.parse(raw) as unknown
-    } catch {
-      args[key] = raw
-    }
-  }
-  return { name, args: JSON.stringify(args) }
+  const xml = parseXmlToolCall(value)
+  if (!xml) return undefined
+  return { name: xml.name, args: JSON.stringify(xml.arguments) }
 }
 
 /**

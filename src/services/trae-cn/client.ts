@@ -12,14 +12,22 @@
  * - Trae 的一个「chat function」（chat_v3 / solo_work_lite / solo_agent /
  *   solo_agent_lite）不是全模型：模型列表按 function 拿，请求时先试
  *   「列出过这个模型的 function」，code 4001/4023/1005 时轮换下一个。
- * - 会话里无 tool 回合：tools 以系统提示 + 文本协议 `<tool_call>{json}
- *   </tool_call>` 下发，历史调用与结果回填成文本；模型把 call 写成块时
- *   再从文本里剥出来还原成 OpenAI tool_calls。
+ * - 会话里无 tool 回合：tools 以系统提示 + 文本协议
+ *   `<tool_call>{json}</tool_call>` 下发，历史调用与结果回填成文本；模型把
+ *   call 写成块时再从文本里剥出来还原成 OpenAI tool_calls。模型有时不按
+ *   提示写 JSON，而用 Trae IDE 插件的
+ *   `<function=name><parameter=k>v</parameter>` XML 形态——两种都要剥
+ *   （见 `~/services/tool-call-text`）。
  */
 
 import { randomBytes, randomUUID } from "node:crypto"
 import { iterateLines } from "~/lib/stream-lines"
 import { TraeCnNativeTools } from "~/services/trae-cn/native-tools"
+import {
+  TOOL_CALL_CLOSE as TOOL_CLOSE,
+  TOOL_CALL_OPEN as TOOL_OPEN,
+  parseXmlToolCall,
+} from "~/services/tool-call-text"
 
 import type {
   ChatCompletionChunk,
@@ -125,9 +133,6 @@ export function traeCnNoteFunction(connectionId: string, fn: string): void {
 }
 
 // ── 消息翻译（text-only 会话 + 文本 tool 协议） ─────────────────
-
-const TOOL_OPEN = "<tool_call>"
-const TOOL_CLOSE = "</tool_call>"
 
 interface TraeToolSpec {
   name?: string
@@ -524,8 +529,11 @@ function normalizeCallArguments(value: unknown): string {
 }
 
 /**
- * 把模型文本里写的 `<tool_call>{…}</tool_call>` 块剥出来：
- * 块没闭合前把可能的块头留在缓冲里，避免半截 XML 泄漏给用户。
+ * 把模型文本里写的 `<tool_call>…</tool_call>` 块剥出来，块体支持两种形态：
+ * JSON `{"name":…,"arguments":…}` 与 XML
+ * `<function=name><parameter=k>v</parameter></function>`。
+ * 块没闭合前把可能的块头留在缓冲里，避免半截 XML 泄漏给用户；两种形态都
+ * 认不出的块仍按原文透出（绝不吞掉用户可见文本）。
  */
 export class TraeCnTextTools {
   private buf = ""
@@ -560,7 +568,20 @@ export class TraeCnTextTools {
           ),
         })
       } else {
-        text += TOOL_OPEN + raw + TOOL_CLOSE
+        // 模型有时退回 Trae 插件的 XML 形态：
+        // `<function=name><parameter=k>v</parameter></function>`。只认 JSON
+        // 会把整块当正文透出，客户端渲染成乱码工具调用。
+        const xml = parseXmlToolCall(raw)
+        if (xml) {
+          calls.push({
+            upstreamId: "",
+            id: nextCallId(),
+            name: xml.name,
+            arguments: normalizeCallArguments(xml.arguments),
+          })
+        } else {
+          text += TOOL_OPEN + raw + TOOL_CLOSE
+        }
       }
     }
     if (end) {
