@@ -1,4 +1,7 @@
 function performanceView() {
+  // Chart.js owns mutable internal objects; keep instances outside Alpine reactivity.
+  const trendCharts = new Map()
+
   const LIFECYCLE_STAGES = [
     {
       id: "gateway",
@@ -86,7 +89,6 @@ function performanceView() {
     showGuide: false, // 是否展开指标说明
 
     // TPS 走势图状态
-    trendCharts: {}, // rowKey -> Chart instance
     trendData: {}, // rowKey -> trend response
     trendLoading: {}, // rowKey -> boolean
     trendMetricMode: {}, // rowKey -> 'all' | 'decode' | 'stream' | 'providers'
@@ -109,14 +111,14 @@ function performanceView() {
     },
 
     destroyTrendCharts() {
-      for (const [key, chart] of Object.entries(this.trendCharts)) {
+      for (const chart of trendCharts.values()) {
         try {
           chart?.destroy()
         } catch {
           // ignore destroy errors
         }
       }
-      this.trendCharts = {}
+      trendCharts.clear()
     },
 
     destroyChart() {
@@ -660,9 +662,9 @@ function performanceView() {
         const canvasId = "trend_chart_" + this.sanitizeChartId(key)
         this.loadAndRenderTrend(key, canvasId, { model })
       } else {
-        if (this.trendCharts[key]) {
-          this.trendCharts[key].destroy()
-          delete this.trendCharts[key]
+        if (trendCharts.get(key)) {
+          trendCharts.get(key).destroy()
+          trendCharts.delete(key)
         }
       }
       this.$nextTick?.(() => refreshAdminIcons(this.$el))
@@ -684,9 +686,9 @@ function performanceView() {
           provider: row.provider,
         })
       } else {
-        if (this.trendCharts[key]) {
-          this.trendCharts[key].destroy()
-          delete this.trendCharts[key]
+        if (trendCharts.get(key)) {
+          trendCharts.get(key).destroy()
+          trendCharts.delete(key)
         }
       }
       this.$nextTick?.(() => refreshAdminIcons(this.$el))
@@ -727,9 +729,9 @@ function performanceView() {
         return
       }
 
-      if (this.trendCharts[key]) {
-        this.trendCharts[key].destroy()
-        delete this.trendCharts[key]
+      if (trendCharts.get(key)) {
+        trendCharts.get(key).destroy()
+        trendCharts.delete(key)
       }
 
       const ctx = canvas.getContext("2d")
@@ -834,7 +836,7 @@ function performanceView() {
         }
       }
 
-      this.trendCharts[key] = new Chart(ctx, {
+      const chart = new Chart(ctx, {
         type: "line",
         data: { labels, datasets },
         options: {
@@ -910,10 +912,11 @@ function performanceView() {
           },
         },
       })
+      trendCharts.set(key, chart)
     },
 
     updateOrRenderTrendChart(key, canvasId, data) {
-      const existingChart = this.trendCharts[key]
+      const existingChart = trendCharts.get(key)
       const canvas = document.getElementById(canvasId)
       if (!canvas || !existingChart || !existingChart.ctx) {
         return this.renderTrendChart(key, canvasId, data)

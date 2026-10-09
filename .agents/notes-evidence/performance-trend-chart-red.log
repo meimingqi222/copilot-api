@@ -1,0 +1,58 @@
+bun test v1.4.2 (744846f84)
+
+tests/performance-trend-chart.test.ts:
+115 | 
+116 |     await view.refreshCachedUsage()
+117 |     await view.refreshCachedUsage()
+118 | 
+119 |     expect(env.charts).toHaveLength(1)
+120 |     expect(env.charts[0].updates).toEqual(["none", "none"])
+                                        ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "none",
+-   "none",
+- ]
++ []
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> (tests/performance-trend-chart.test.ts:120:35)
+(fail) performance trend chart lifecycle > silent refresh updates the original chart outside reactive state [5.90ms]
+60 |       expect(charts.includes(this)).toBe(true)
+61 |       this.updates.push(mode)
+62 |     }
+63 | 
+64 |     destroy() {
+65 |       expect(charts.includes(this)).toBe(true)
+                                         ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at destroy (tests/performance-trend-chart.test.ts:65:37)
+      at renderTrendChart (evalmachine.<anonymous>:820:38)
+      at <anonymous> (tests/performance-trend-chart.test.ts:135:10)
+(fail) performance trend chart lifecycle > redraw, row collapse and view cleanup destroy original instances [0.82ms]
+152 |     const first = env.createView()
+153 |     const second = env.createView()
+154 |     first.renderTrendChart("model::same", "first", env.trend)
+155 |     second.renderTrendChart("model::same", "second", env.trend)
+156 |     first.destroyTrendCharts()
+157 |     expect(env.charts[0].destroyed).toBe(true)
+                                          ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (tests/performance-trend-chart.test.ts:157:37)
+(fail) performance trend chart lifecycle > chart storage is isolated between view instances [0.43ms]
+
+ 0 pass
+ 3 fail
+ 7 expect() calls
+Ran 3 tests across 1 file. [23.00ms]
