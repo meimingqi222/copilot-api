@@ -1063,6 +1063,7 @@ const i18n = {
       "connections.headerValue": "值",
       "connections.customHeadersHint":
         "随上游请求附加的固定请求头（不应包含 API Key，鉴权由凭据自动处理）",
+      "connections.tierHint": "该模型需要 {tier} 及以上的会员档位",
       "connections.emptyTitle": "暂未配置端点连接",
       "connections.emptyHint":
         "选择下方常用 Provider 快速接入，或点击上方添加连接自定义配置",
@@ -2660,6 +2661,7 @@ const i18n = {
       "connections.headerValue": "Value",
       "connections.customHeadersHint":
         "Fixed headers appended to upstream requests (do not include API Key — auth is handled by credentials)",
+      "connections.tierHint": "This model needs the {tier} plan or above",
       "connections.emptyTitle": "No endpoint connections yet",
       "connections.emptyHint":
         "Quick-add a popular provider below, or click Add to customize.",

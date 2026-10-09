@@ -953,6 +953,14 @@
                           ></span>
                         </template>
                       </div>
+                      <!-- 会员档位门槛（预设给的提示）:提醒这个模型要哪一档才能用 -->
+                      <div class="flex gap-1 flex-shrink-0" x-show="model.tier">
+                        <span
+                          class="text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)]"
+                          :title="t('connections.tierHint', { tier: model.tier })"
+                          x-text="model.tier"
+                        ></span>
+                      </div>
                     </label>
                   </template>
                   <div

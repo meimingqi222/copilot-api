@@ -150,6 +150,11 @@ export async function probeModelsEndpoint(
 ): Promise<{ ok: boolean; status: number; error?: string }> {
   const testUrl = `${connection.baseUrl}/models`
   const headers: Record<string, string> = {}
+  // 连接上配置的固定请求头先落位（供应商要求的客户端身份头等），
+  // 鉴权在它们之后覆写同名项。
+  for (const [name, value] of Object.entries(connection.headers ?? {})) {
+    headers[name] = value
+  }
   if (credential.authMode === "header") {
     headers[credential.headerName ?? "Authorization"] = credential.value
   } else {

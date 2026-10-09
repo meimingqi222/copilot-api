@@ -1,6 +1,6 @@
 /**
  * 验证 Provider Presets 与即时模型探测接口:
- * 1. GET /admin/api/provider-connections/presets 返回内置 33 个预设
+ * 1. GET /admin/api/provider-connections/presets 返回内置预设
  * 2. 读取用户自定义 provider-presets.json 并正确覆盖/追加
  * 3. POST /admin/api/provider-connections/fetch-models 临时探测模型
  */

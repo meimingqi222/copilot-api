@@ -78,6 +78,13 @@ export async function handleFetchModels(c: Context): Promise<Response> {
     baseUrl,
     enabled: true,
     priority: 0,
+    // 探测走与落库后同一套固定请求头：供应商要求客户端身份头时（Kimi
+    // Coding 的 /coding 端点），不带头部探测会被 403，而保存后的真实
+    // 请求带头部却能通。
+    headers:
+      payload.headers && typeof payload.headers === "object" ?
+        (payload.headers as Record<string, string>)
+      : undefined,
     // 探测走与落库后同一个代理：否则新建表单里“在线获取模型”能通、
     // 保存后的真实请求却不通（或反之）。
     proxyUrl:

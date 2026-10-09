@@ -1,4 +1,12 @@
 function connectionsView() {
+  // 落库时的模型元数据：原有的字段（renamedByUser 改名标记等）原样带上，
+  // 预设给的档位门槛存进 metadata.tier —— 它是显示用的标签，不该占一个
+  // 类型化字段，但存下来才能在下次编辑时还在。
+  const metadataOf = (m) => {
+    if (!m.tier && !m.metadata) return undefined
+    return { ...m.metadata, ...(m.tier ? { tier: m.tier } : {}) }
+  }
+
   return {
     ...ViewHelpers,
     loading: false,
@@ -199,10 +207,19 @@ function connectionsView() {
       this.connForm.baseUrl = preset.baseUrl
       this.connForm.apiKey = ""
       this.connForm.stripPreviousResponseId = false
+      // 预设要求的固定请求头（如 Kimi Coding 的客户端身份头）填入可编辑的
+      // 自定义请求头行：用户能看见自己发的是什么，也能改或删。换预设/换
+      // 自定义时整体重建，不会把上一个供应商的身份头带到下一个。
+      this.connForm.customHeaders = Object.entries(preset.headers || {}).map(
+        ([key, value]) => ({ key, value }),
+      )
       this.fetchedModels = (preset.defaultModels || []).map((m) => ({
         publicId: m.publicId,
         upstreamId: m.upstreamId,
         name: m.name,
+        // 档位门槛只是提示（模型列表里的一枚标签），不挡勾选：
+        // 能不能用由上游判定
+        tier: m.tier,
         endpoints:
           m.endpoints
           || (preset.protocol === "anthropic-compatible" ?
@@ -218,6 +235,7 @@ function connectionsView() {
     selectCustomPreset() {
       // 代理是部署/网络设置，与所选 provider 无关：切换预设/自定义时刻意不清空
       // （弹窗每次 openCreate 都会开一份全新的 connForm）。
+      // 请求头则相反：预设带的身份头属于那个供应商，自定义连接不与它共享。
       this.selectedPresetId = "custom"
       this.selectedPreset = null
       this.connForm.name = ""
@@ -225,6 +243,7 @@ function connectionsView() {
       this.connForm.baseUrl = ""
       this.connForm.apiKey = ""
       this.connForm.stripPreviousResponseId = false
+      this.connForm.customHeaders = []
       this.fetchedModels = []
       this.selectedModelIds = []
       this.showFetchedModelsPanel = false
@@ -272,6 +291,9 @@ function connectionsView() {
           apiKey: form.apiKey || "",
           authMode,
           headerName,
+          // 探测走与落库相同的固定请求头：Kimi Coding 的端点对裸客户端
+          // 直接 403，不带头部探测会“表单里能拉模型、保存后请求全挂”。
+          headers: this.customHeadersToRecord(),
           // 探测走与落库相同的连接级代理
           proxyUrl: (form.proxyUrl || "").trim() || undefined,
         })
@@ -431,6 +453,9 @@ function connectionsView() {
         upstreamId: m.upstreamId || m.publicId,
         name: m.name,
         vendor: m.vendor,
+        // 档位标签跟着连接走（落库在 metadata.tier），否则编辑已有连接时
+        // 标签消失了，同一个模型看起来像两个
+        tier: m.metadata?.tier,
         endpoints: m.endpoints || [],
         aliases: m.aliases ? [...m.aliases] : [],
         pickerEnabled: m.pickerEnabled !== false,
@@ -479,10 +504,10 @@ function connectionsView() {
         pickerCategory: m.pickerCategory,
         // 别名透传:编辑框打开 + 保存不再吞掉抽屉里配好的别名
         aliases: m.aliases && m.aliases.length > 0 ? [...m.aliases] : undefined,
-        // 元数据透传:含 renamedByUser 改名标记
-        metadata: m.metadata ? { ...m.metadata } : undefined,
+        // 元数据透传:含 renamedByUser 改名标记；档位标签也存这里，
+        // 这样编辑时标签还在（它来自预设，用户改不了模型档位）
+        metadata: metadataOf(m),
       }))
-
       // 自动发现已从弹窗移除:新建默认不开启,编辑时不触碰服务端原值。
       // 需要拉新模型时用右侧「在线获取模型」或连接行的手动刷新。
       const payload = {
@@ -496,7 +521,9 @@ function connectionsView() {
         enabled: form.enabled,
         stripPreviousResponseId: Boolean(form.stripPreviousResponseId),
         models: selectedModels,
-        headers: this.customHeadersToRecord(),
+        // 删光所有行 = 清除：`null` 是 PUT 的清除语义，`undefined` 会被
+        // JSON 丢掉、服务端当成“没改”，被删掉的头又回来了。
+        headers: this.customHeadersToRecord() ?? null,
       }
 
       const preset = this.selectedPreset

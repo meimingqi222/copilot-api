@@ -108,7 +108,7 @@ src/
 │   │   ├── discovery.ts    # Model discovery helpers
 │   │   └── index.ts        # Public barrel
 │   ├── provider-defaults.ts # Managed default connections (Codebuff/Windsurf)
-│   ├── provider-presets/   # Built-in provider preset catalog (33 presets)
+│   ├── provider-presets/   # Built-in provider preset catalog
 │   │   ├── types.ts        # PresetModel, ProviderPreset interfaces
 │   │   ├── commandcode.ts  # Command Code dual presets (openai + anthropic, model families are endpoint-locked)
 │   │   ├── domestic-primary.ts   # DeepSeek/SiliconFlow/Moonshot/Zhipu/MiniMax/Z.AI
@@ -653,6 +653,33 @@ through `POST/PUT /admin/api/provider-connections` (the `proxyUrl` field is also
 honoured by `/fetch-models`, the connectivity test and export/import);
 account-managed connections get it from the sign-in flow or a
 `settings.proxyUrl` account patch.
+
+### 10. Vendor Client Whitelists (Kimi Coding)
+
+Some vendors serve a subscription's key only to clients they recognize, by the
+request's `User-Agent` (Kimi Code's `/coding` endpoint: Kimi CLI, Claude Code,
+Roo Code, Kilo Code …; anything else gets `403 agent not allowed` or a `429`
+that only looks like a rate limit). A preset states the headers its vendor asks
+for in `ProviderPreset.headers` (`src/lib/provider-presets/types.ts`), the
+connection editor fills its editable "custom headers" rows from them, and the
+connection stores them in `connection.headers`, which every adapter sends
+through `buildBaseHeaders`.
+
+The probes must send the same headers as the saved connection — otherwise
+"Fetch models" and the connectivity test disagree with real traffic. Both
+`/admin/api/provider-connections/fetch-models` and `probeModelsEndpoint`
+(`src/routes/admin/api/provider-connections-helpers.ts`) put the connection's
+headers on their probe. Device fingerprints (`X-Msh-Device-*`) are per-machine
+and are deliberately not preset values.
+
+Preset model lists are vendor data that drifts: Kimi retired the whole
+`kimi-k2` series and `kimi-latest`, so a preset listing them hands a new
+connection models the upstream answers `model not found` for. The vendor's own
+current lists are `platform.kimi.ai/docs/models` (open platform) and
+`kimi.com/code/docs/en` (Kimi Code's four IDs);
+`tests/kimi-preset-models.test.ts` fails when a first-party Kimi preset lists a
+retired ID, and its `RETIRED_KIMI_IDS` needs the new ID added when the vendor
+retires another.
 
 ## CI/CD
 
