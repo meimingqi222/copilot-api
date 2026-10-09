@@ -5511,6 +5511,33 @@
               <div class="page-heading">
                 <h2 class="text-headline" x-text="t('perf.title')"></h2>
               </div>
+              <div class="page-actions flex items-center gap-2">
+                <select
+                  class="input input-small"
+                  :value="autoRefreshSeconds"
+                  @change="setAutoRefresh($event.target.value)"
+                  :aria-label="t('usage.autoRefresh')"
+                  :title="t('usage.autoRefresh')"
+                >
+                  <option value="0" x-text="t('usage.refreshOff')"></option>
+                  <option
+                    value="5"
+                    x-text="t('usage.refreshEvery', { seconds: 5 })"
+                  ></option>
+                  <option
+                    value="10"
+                    x-text="t('usage.refreshEvery', { seconds: 10 })"
+                  ></option>
+                  <option
+                    value="30"
+                    x-text="t('usage.refreshEvery', { seconds: 30 })"
+                  ></option>
+                  <option
+                    value="60"
+                    x-text="t('usage.refreshEvery', { seconds: 60 })"
+                  ></option>
+                </select>
+              </div>
             </header>
 
             <div x-show="loading" class="flex justify-center py-20">

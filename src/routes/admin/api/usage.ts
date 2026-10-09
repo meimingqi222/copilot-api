@@ -959,6 +959,44 @@ usageApiRoutes.get("/performance", async (c) => {
   }
 })
 
+// ── /performance/trend 短缓存 ───────────────────────────────────
+const TREND_CACHE_TTL_MS = 2_000
+const TREND_CACHE_MAX = 64
+const trendCache = new Map<
+  string,
+  {
+    at: number
+    revision: number
+    result: ReturnType<typeof statsStore.getPerformanceTrendInRange>
+  }
+>()
+
+function getPerfTrendBundle(options: {
+  startMs: number
+  endMs: number
+  intervalMinutes?: number
+  model?: string
+  provider?: string
+}) {
+  const key = `${options.model ?? ""}:${options.provider ?? ""}:${options.startMs}:${options.endMs}:${options.intervalMinutes ?? 0}`
+  const now = Date.now()
+  const hit = trendCache.get(key)
+  const revision = statsStore.getUsageRevision()
+  if (hit && hit.revision === revision && now - hit.at < TREND_CACHE_TTL_MS) {
+    return hit.result
+  }
+  const result = statsStore.getPerformanceTrendInRange(options)
+  trendCache.set(key, { at: now, revision, result })
+  if (trendCache.size > TREND_CACHE_MAX) {
+    let remove = trendCache.size - TREND_CACHE_MAX / 2
+    for (const k of trendCache.keys()) {
+      if (remove-- <= 0) break
+      trendCache.delete(k)
+    }
+  }
+  return result
+}
+
 // Get performance trend time-series for a model or provider (TTFT, TPS)
 usageApiRoutes.get("/performance/trend", async (c) => {
   try {
@@ -981,7 +1019,7 @@ usageApiRoutes.get("/performance/trend", async (c) => {
       tz,
     })
 
-    const trend = statsStore.getPerformanceTrendInRange({
+    const trend = getPerfTrendBundle({
       startMs,
       endMs,
       intervalMinutes,
@@ -991,6 +1029,7 @@ usageApiRoutes.get("/performance/trend", async (c) => {
 
     return c.json({
       ...trend,
+      revision: statsStore.getUsageRevision(),
       period: { startDate, endDate, timeZone },
     })
   } catch (error) {

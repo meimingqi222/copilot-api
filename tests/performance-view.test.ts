@@ -47,12 +47,55 @@ const sandbox = {
 }
 
 runInNewContext(
-  readFileSync("pages/js/views/performance.js", "utf8")
+  readFileSync("pages/js/usage-auto-refresh.js", "utf8")
+    + "\n"
+    + readFileSync("pages/js/views/performance.js", "utf8")
     + "\nsandbox.performanceView = performanceView;",
   { sandbox, ...sandbox },
 )
 
 describe("performanceView UX redesign", () => {
+  test("connection provider filters keep only their channel details", () => {
+    const view = sandbox.performanceView()
+    const deepseek = {
+      provider: "openai-compatible",
+      connectionId: "deepseek",
+      connectionName: "DeepSeek",
+      model: "shared",
+    }
+    const other = {
+      ...deepseek,
+      connectionId: "other",
+      connectionName: "Other",
+    }
+    const copilot = {
+      ...deepseek,
+      provider: "copilot",
+      connectionId: "copilot-1",
+    }
+    const deleted = { ...deepseek, connectionId: "deleted" }
+    view.details = [deepseek, other, copilot, deleted]
+    view.byProvider = [
+      { provider: "connection:deepseek", providerLabel: "DeepSeek" },
+      { provider: "connection:other", providerLabel: "Other" },
+      { provider: "copilot", providerLabel: "GitHub Copilot" },
+      { provider: "openai-compatible", providerLabel: "OpenAI Compatible" },
+    ]
+    view.providerFilter = view.providerOptions.find(
+      (option: { label: string }) => option.label === "DeepSeek",
+    ).provider
+    expect(view.filteredDetails).toEqual([deepseek])
+    view.searchQuery = "missing"
+    expect(view.filteredDetails).toEqual([])
+    view.searchQuery = ""
+    view.providerFilter = "copilot"
+    expect(view.filteredDetails).toEqual([copilot])
+    view.providerFilter = "openai-compatible"
+    expect(view.filteredDetails).toEqual([deleted])
+    view.providerFilter = "all"
+    expect(view.filteredDetails).toEqual([deepseek, other, copilot, deleted])
+  })
+
   test("connection names are searchable and connection IDs distinguish channel keys", () => {
     const view = sandbox.performanceView()
     const first = {

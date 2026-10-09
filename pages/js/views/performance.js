@@ -64,6 +64,7 @@ function performanceView() {
 
   return {
     ...ViewHelpers,
+    ...usageAutoRefresh("performance"),
     loading: false,
     dateRange: "today",
     selectedMonth: "",
@@ -93,6 +94,7 @@ function performanceView() {
     lifecycleStages: LIFECYCLE_STAGES,
 
     init() {
+      this.initAutoRefresh()
       this.load()
       const app = document.querySelector("[x-data^=adminApp]")
       if (app) {
@@ -115,6 +117,58 @@ function performanceView() {
         }
       }
       this.trendCharts = {}
+    },
+
+    destroyChart() {
+      this.destroyTrendCharts()
+    },
+
+    async refreshCachedUsage() {
+      // 仅日线 (today) 会有持续请求流入；历史范围数据不变，无需自动轮询
+      if (this.dateRange !== "today") return
+
+      // 1. 静默刷新表格与大盘数据（避免整屏 loading 遮罩）
+      try {
+        const data = await API.usage.performance({ range: "today" })
+        this.performance = data.performance || []
+        this.byProvider = data.byProvider || []
+        this.details = data.details || []
+        this.period = data.period || this.period
+        this.lastUpdatedAt = Date.now()
+      } catch (e) {
+        console.warn("Performance auto refresh failed", e)
+      }
+
+      // 2. 检查当前处于展开状态的走势图 (按模型与按供应商)
+      const activeKeys = Object.keys(this.expandedRows).filter(
+        (key) =>
+          this.expandedRows[key]
+          && (key.startsWith("model::") || key.startsWith("prov::")),
+      )
+      if (!activeKeys.length) return
+
+      // 3. 静默增量更新已展开的走势图（使用 Promise.allSettled 控制并发）
+      await Promise.allSettled(
+        activeKeys.map(async (key) => {
+          try {
+            const isModel = key.startsWith("model::")
+            const canvasId = "trend_chart_" + this.sanitizeChartId(key)
+            const queryParams = { range: "today" }
+            if (isModel) {
+              queryParams.model = key.slice("model::".length)
+            } else {
+              const parts = key.split("::")
+              queryParams.provider = parts[1]
+              queryParams.model = parts[2]
+            }
+            const trend = await API.usage.performanceTrend(queryParams)
+            this.trendData[key] = trend
+            this.updateOrRenderTrendChart(key, canvasId, trend)
+          } catch (err) {
+            console.warn(`Trend silent refresh failed for ${key}`, err)
+          }
+        }),
+      )
     },
 
     setRange(range) {
@@ -400,10 +454,17 @@ function performanceView() {
 
     get filteredDetails() {
       const query = (this.searchQuery || "").trim().toLowerCase()
+      const providerKeys = new Set(
+        (this.byProvider || []).map((row) => row.provider),
+      )
       return this.details.filter((row) => {
+        // 明细保留原始 protocol；筛选键与汇总一致，已删除连接仍落在协议桶。
+        const connectionKey = "connection:" + row.connectionId
+        const providerKey =
+          providerKeys.has(connectionKey) ? connectionKey : row.provider
         if (
           this.providerFilter !== "all"
-          && row.provider !== this.providerFilter
+          && providerKey !== this.providerFilter
         ) {
           return false
         }
@@ -849,6 +910,84 @@ function performanceView() {
           },
         },
       })
+    },
+
+    updateOrRenderTrendChart(key, canvasId, data) {
+      const existingChart = this.trendCharts[key]
+      const canvas = document.getElementById(canvasId)
+      if (!canvas || !existingChart || !existingChart.ctx) {
+        return this.renderTrendChart(key, canvasId, data)
+      }
+
+      const series = data.series || []
+      if (!series.length) return
+
+      const firstTs = series[0]?.slotTs || 0
+      const lastTs = series[series.length - 1]?.slotTs || 0
+      const spanHours = (lastTs - firstTs) / (3600 * 1000)
+      const useDatePrefix = spanHours > 24
+
+      const labels = series.map((d) => {
+        const date = new Date(d.slotTs)
+        const hh = String(date.getHours()).padStart(2, "0")
+        const mm = String(date.getMinutes()).padStart(2, "0")
+        if (useDatePrefix) {
+          const m = date.getMonth() + 1
+          const day = date.getDate()
+          return `${m}/${day} ${hh}:${mm}`
+        }
+        return `${hh}:${mm}`
+      })
+
+      const mode = this.getTrendMode(
+        key,
+        data.byProvider && data.byProvider.length > 1 ? "providers" : "all",
+      )
+
+      const expectedDsCount =
+        mode === "providers" ? data.byProvider?.length || 0
+        : mode === "all" ? 2
+        : 1
+
+      // 若数据集数量或结构变了（如动态新增了 provider），直接做一次完整重绘
+      if (
+        !existingChart.data.datasets
+        || existingChart.data.datasets.length !== expectedDsCount
+      ) {
+        return this.renderTrendChart(key, canvasId, data)
+      }
+
+      existingChart.data.labels = labels
+
+      if (mode === "providers" && data.byProvider?.length) {
+        data.byProvider.forEach((p, idx) => {
+          if (existingChart.data.datasets[idx]) {
+            existingChart.data.datasets[idx].data = p.series.map(
+              (s) => s.avgDecodeTps ?? s.avgStreamingTps,
+            )
+          }
+        })
+      } else {
+        let dsIdx = 0
+        if (mode === "all" || mode === "decode") {
+          if (existingChart.data.datasets[dsIdx]) {
+            existingChart.data.datasets[dsIdx].data = series.map(
+              (s) => s.avgDecodeTps,
+            )
+            dsIdx++
+          }
+        }
+        if (mode === "all" || mode === "stream") {
+          if (existingChart.data.datasets[dsIdx]) {
+            existingChart.data.datasets[dsIdx].data = series.map(
+              (s) => s.avgStreamingTps,
+            )
+          }
+        }
+      }
+
+      // 静默原地刷新，无动画，零闪烁
+      existingChart.update("none")
     },
 
     getTrendPeak(key) {
