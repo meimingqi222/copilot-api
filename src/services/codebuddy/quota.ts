@@ -20,7 +20,7 @@ import {
 } from "~/lib/provider-connections"
 import { persistProviderConnections } from "~/lib/provider-connections/state"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
-import { getHeader } from "~/services/protocols/shared"
+import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
 
 import {
   ensureCodebuddyAccessToken,
@@ -268,12 +268,15 @@ export async function fetchCodebuddyQuota(
 
   let summary: CodebuddyResourceSummary | undefined
   for (const [index, path] of paths.entries()) {
-    const response = await fetch(`${base}${path}`, {
-      method: "POST",
-      headers,
-      body,
-      signal,
-    })
+    const response = await fetch(
+      `${base}${path}`,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers,
+        body,
+        signal,
+      }),
+    )
     // 国际版路径候选：404 则换下一候选（workbuddy 域同款回退语义）。
     if (response.status === 404 && index < paths.length - 1) {
       continue

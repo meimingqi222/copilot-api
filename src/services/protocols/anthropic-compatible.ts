@@ -19,6 +19,7 @@ import type {
 
 import {
   buildBaseHeaders,
+  connectionFetchInit,
   detectAnthropicStreamError,
   handleUpstreamFailure,
   joinUrl,
@@ -75,20 +76,23 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
 
     const forwardedHeaders = ctx?.forwardedHeaders ?? {}
 
-    const response = await fetch(joinUrl(connection.baseUrl, "/messages"), {
-      method: "POST",
-      headers: buildHeaders(connection, credential, {
-        anthropicVersion: forwardedHeaders["anthropic-version"],
-        anthropicBeta: forwardedHeaders["anthropic-beta"],
-        sessionId:
-          forwardedHeaders["x-claude-code-session-id"]
-          ?? forwardedHeaders["session_id"]
-          ?? forwardedHeaders["session-id"],
-        promptCacheKey: forwardedHeaders["prompt_cache_key"],
+    const response = await fetch(
+      joinUrl(connection.baseUrl, "/messages"),
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers: buildHeaders(connection, credential, {
+          anthropicVersion: forwardedHeaders["anthropic-version"],
+          anthropicBeta: forwardedHeaders["anthropic-beta"],
+          sessionId:
+            forwardedHeaders["x-claude-code-session-id"]
+            ?? forwardedHeaders["session_id"]
+            ?? forwardedHeaders["session-id"],
+          promptCacheKey: forwardedHeaders["prompt_cache_key"],
+        }),
+        body: serializeUpstreamBody(upstreamPayload),
+        signal,
       }),
-      body: serializeUpstreamBody(upstreamPayload),
-      signal,
-    })
+    )
 
     if (!response.ok) {
       await handleUpstreamFailure(
@@ -121,10 +125,13 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
       /^https?:/i.test(endpoint) ? endpoint : (
         joinUrl(connection.baseUrl, endpoint)
       )
-    const response = await fetch(url, {
-      headers: buildHeaders(connection, credential),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        headers: buildHeaders(connection, credential),
+        signal,
+      }),
+    )
     if (!response.ok) {
       await handleUpstreamFailure(
         response,

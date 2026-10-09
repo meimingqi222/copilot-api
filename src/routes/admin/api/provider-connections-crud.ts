@@ -95,6 +95,10 @@ providerConnectionCrudRoutes.post("/", async (c) => {
         payload.headers && typeof payload.headers === "object" ?
           (payload.headers as Record<string, string>)
         : undefined,
+      proxyUrl:
+        typeof payload.proxyUrl === "string" && payload.proxyUrl.trim() ?
+          payload.proxyUrl.trim()
+        : undefined,
       modelDiscovery:
         payload.modelDiscovery && typeof payload.modelDiscovery === "object" ?
           (payload.modelDiscovery as ModelDiscoveryConfig)
@@ -175,6 +179,11 @@ providerConnectionCrudRoutes.put("/:id", async (c) => {
         | Record<string, string>
         | null
         | undefined,
+      // 字符串为空(UI 清空输入框)与显式 null 都是“清除代理”。
+      proxyUrl:
+        typeof payload.proxyUrl === "string" ? payload.proxyUrl.trim() || null
+        : payload.proxyUrl === null ? null
+        : undefined,
       modelDiscovery: normalizeNullableObject(payload.modelDiscovery) as
         | ModelDiscoveryConfig
         | null

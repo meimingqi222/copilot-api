@@ -21,7 +21,7 @@ import {
   listProviderConnections,
   persistProviderConnections,
 } from "~/lib/provider-connections/state"
-import { getHeader } from "~/services/protocols/shared"
+import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
 
 const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
 const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
@@ -181,11 +181,14 @@ export async function refreshCodebuddyTokenForConnection(
 
   let response: Response
   try {
-    response = await fetch(resolveCodebuddyRefreshUrl(conn), {
-      method: "POST",
-      headers,
-      signal,
-    })
+    response = await fetch(
+      resolveCodebuddyRefreshUrl(conn),
+      connectionFetchInit(conn, {
+        method: "POST",
+        headers,
+        signal,
+      }),
+    )
   } catch (e) {
     logger.error(
       `[codebuddy] refresh request failed for "${conn.name}":`,

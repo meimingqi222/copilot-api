@@ -38,6 +38,7 @@ import {
 } from "~/lib/request-dump"
 import {
   buildBaseHeaders,
+  connectionFetchInit,
   detectOpenAIStreamError,
   detectResponsesStreamError,
   handleUpstreamFailure,
@@ -89,10 +90,13 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
         joinUrl(connection.baseUrl, endpoint)
       )
 
-    const response = await fetch(url, {
-      headers: buildHeaders(connection, credential),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        headers: buildHeaders(connection, credential),
+        signal,
+      }),
+    )
 
     if (!response.ok) {
       await handleUpstreamFailure(
@@ -135,12 +139,12 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
 
     const response = await fetch(
       joinUrl(connection.baseUrl, "/chat/completions"),
-      {
+      connectionFetchInit(connection, {
         method: "POST",
         headers: buildHeaders(connection, credential),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
-      },
+      }),
     )
 
     if (!response.ok) {
@@ -232,12 +236,15 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       }
     }
 
-    const response = await fetch(joinUrl(connection.baseUrl, "/responses"), {
-      method: "POST",
-      headers: buildHeaders(connection, credential),
-      body: serializeUpstreamBody(upstreamPayload),
-      signal,
-    })
+    const response = await fetch(
+      joinUrl(connection.baseUrl, "/responses"),
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers: buildHeaders(connection, credential),
+        body: serializeUpstreamBody(upstreamPayload),
+        signal,
+      }),
+    )
 
     if (!response.ok) {
       // 上游 400 诊断:控制台只记形状统计(条数/类型/tools),不记正文;

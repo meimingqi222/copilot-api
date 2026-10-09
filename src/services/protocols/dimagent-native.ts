@@ -18,6 +18,7 @@ import {
   DIMAGENT_CHAT_UA,
   DIMAGENT_REFERER,
 } from "~/services/oauth/dimagent"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 import { openAICompatibleAdapter } from "./openai-compatible"
 import type { ProtocolAdapter } from "./types"
@@ -58,15 +59,18 @@ export const dimagentNativeAdapter: ProtocolAdapter = {
       connection,
       credential,
     )
-    const response = await fetch(`${DIMAGENT_BASE}/v1/models?type=dim`, {
-      headers: {
-        authorization: `Bearer ${cred.value}`,
-        "user-agent": DIMAGENT_CHAT_UA,
-        "x-title": "DimCode",
-        "http-referer": DIMAGENT_REFERER,
-      },
-      signal,
-    })
+    const response = await fetch(
+      `${DIMAGENT_BASE}/v1/models?type=dim`,
+      connectionFetchInit(connection, {
+        headers: {
+          authorization: `Bearer ${cred.value}`,
+          "user-agent": DIMAGENT_CHAT_UA,
+          "x-title": "DimCode",
+          "http-referer": DIMAGENT_REFERER,
+        },
+        signal,
+      }),
+    )
     if (!response.ok) return []
     const body = (await response.json()) as {
       data?: Array<{ id?: string }>

@@ -25,6 +25,7 @@ import {
 } from "~/lib/provider-connections"
 import {
   buildBaseHeaders,
+  connectionFetchInit,
   detectOpenAIStreamError,
   handleUpstreamFailure,
   joinUrl,
@@ -84,10 +85,13 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
         joinUrl(connection.baseUrl, endpoint)
       )
 
-    const response = await fetch(url, {
-      headers: buildHeaders(connection, credential),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        headers: buildHeaders(connection, credential),
+        signal,
+      }),
+    )
 
     if (!response.ok) {
       await handleUpstreamFailure(
@@ -130,12 +134,12 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
 
     const response = await fetch(
       joinUrl(connection.baseUrl, "/chat/completions"),
-      {
+      connectionFetchInit(connection, {
         method: "POST",
         headers: buildHeaders(connection, credential),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
-      },
+      }),
     )
 
     if (!response.ok) {
@@ -175,12 +179,15 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       model: target.upstreamModelId,
     }
 
-    const response = await fetch(joinUrl(connection.baseUrl, "/embeddings"), {
-      method: "POST",
-      headers: buildHeaders(connection, credential),
-      body: serializeUpstreamBody(upstreamPayload),
-      signal,
-    })
+    const response = await fetch(
+      joinUrl(connection.baseUrl, "/embeddings"),
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers: buildHeaders(connection, credential),
+        body: serializeUpstreamBody(upstreamPayload),
+        signal,
+      }),
+    )
 
     if (!response.ok) {
       await handleUpstreamFailure(

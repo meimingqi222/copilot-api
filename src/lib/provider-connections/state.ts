@@ -136,6 +136,8 @@ interface CreateConnectionInput {
   priority?: number
   weight?: number
   headers?: Record<string, string>
+  /** 连接级代理（Bun fetch 的 `proxy` 选项）。 */
+  proxyUrl?: string
   modelDiscovery?: ModelDiscoveryConfig
   models?: Array<ModelMapping>
   credentials?: Array<CreateCredentialInput>
@@ -172,6 +174,7 @@ export async function createConnection(
       priority: input.priority ?? DEFAULTS.CONNECTION_PRIORITY,
       weight: input.weight ?? DEFAULTS.CONNECTION_WEIGHT,
       headers: input.headers,
+      proxyUrl: input.proxyUrl,
       modelDiscovery: input.modelDiscovery,
       models:
         input.models ?
@@ -197,6 +200,8 @@ interface UpdateConnectionInput {
   priority?: number
   weight?: number
   headers?: Record<string, string> | null
+  /** 连接级代理；`null` 表示清除。 */
+  proxyUrl?: string | null
   modelDiscovery?: ModelDiscoveryConfig | null
   models?: Array<ModelMapping> | null
   stripPreviousResponseId?: boolean
@@ -219,6 +224,9 @@ export async function updateConnection(
     if (patch.weight !== undefined) connection.weight = patch.weight
     if (patch.headers !== undefined) {
       connection.headers = patch.headers ?? undefined
+    }
+    if (patch.proxyUrl !== undefined) {
+      connection.proxyUrl = patch.proxyUrl ?? undefined
     }
     if (patch.modelDiscovery !== undefined) {
       connection.modelDiscovery = patch.modelDiscovery ?? undefined

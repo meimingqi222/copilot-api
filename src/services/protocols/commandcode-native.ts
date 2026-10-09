@@ -19,6 +19,7 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 import { COMMANDCODE_PROVIDER_BASE } from "~/services/oauth/commandcode"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 import { anthropicCompatibleAdapter } from "./anthropic-compatible"
 import { openAICompatibleAdapter } from "./openai-compatible"
@@ -48,15 +49,22 @@ export const commandCodeNativeAdapter: ProtocolAdapter = {
 
   // 模型列表在 Provider API 的 /models（`api.commandcode.ai/provider/v1/models`），
   // key 同时进 Authorization: Bearer + x-api-key。
-  async discoverModels({ credential, signal }): Promise<Array<ModelMapping>> {
-    const response = await fetch(`${COMMANDCODE_PROVIDER_BASE}/models`, {
-      headers: {
-        authorization: `Bearer ${credential.value}`,
-        "x-api-key": credential.value,
-        accept: "application/json",
-      },
-      signal,
-    })
+  async discoverModels({
+    connection,
+    credential,
+    signal,
+  }): Promise<Array<ModelMapping>> {
+    const response = await fetch(
+      `${COMMANDCODE_PROVIDER_BASE}/models`,
+      connectionFetchInit(connection, {
+        headers: {
+          authorization: `Bearer ${credential.value}`,
+          "x-api-key": credential.value,
+          accept: "application/json",
+        },
+        signal,
+      }),
+    )
     if (!response.ok) return []
     const body = (await response.json()) as {
       data?: Array<{ id?: string }>

@@ -5,6 +5,7 @@ import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   classifyUpstreamError,
+  getConnectionProxyUrl,
   markCredentialAuthError,
   markCredentialCooldown,
   markCredentialQuotaExhausted,
@@ -14,6 +15,7 @@ import {
   type ProviderConnection,
 } from "~/lib/provider-connections"
 import { readResponseBytes } from "~/lib/request-body"
+import { withProxyUrl } from "~/services/oauth/fetch"
 
 /**
  * Standard OpenAI / Anthropic-compatible resource paths that live under `/v1`.
@@ -135,6 +137,25 @@ export function buildBaseHeaders(
     }
   }
   return headers
+}
+
+/**
+ * 把连接上配置的代理接到本次 fetch 的 `proxy` 选项上。
+ *
+ * 运行时是 Bun，只有两个代理开关真的生效：
+ *   - 进程级 `HTTPS_PROXY` / `HTTP_PROXY` 环境变量（Bun 自带）；
+ *   - 显式 `init.proxy`（Bun 原生 fetch 选项）。
+ * `~/lib/proxy` 的 undici 全局 dispatcher 在 Bun 下是空操作，所以连接级
+ * 代理必须逐请求透传，不能依赖环境变量。
+ *
+ * 没有配置代理时原样返回 `init`（不写 `proxy: undefined`：Bun 对显式的
+ * `undefined` 会退回环境变量，行为与省略一致，但保持对象干净便于断言）。
+ */
+export function connectionFetchInit(
+  connection: ProviderConnection,
+  init: RequestInit,
+): RequestInit & { proxy?: string } {
+  return withProxyUrl(init, getConnectionProxyUrl(connection))
 }
 
 interface UpstreamFailureOptions {

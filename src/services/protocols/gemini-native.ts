@@ -27,6 +27,7 @@ import {
   GEMINI_CODE_ASSIST_BASE,
   geminiUserAgent,
 } from "~/services/oauth/gemini"
+import { connectionFetchInit } from "~/services/protocols/shared"
 import type { GeminiStreamEvent } from "~/services/protocols/gemini/types"
 
 import type { AdapterGeminiResult, ProtocolAdapter } from "./types"
@@ -107,16 +108,19 @@ export const geminiNativeAdapter: ProtocolAdapter = {
       user_prompt_id: randomId(),
     }
     const url = `${GEMINI_CODE_ASSIST_BASE}/v1internal:${method}${stream ? "?alt=sse" : ""}`
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${credential.value}`,
-        "content-type": "application/json",
-        "user-agent": geminiUserAgent(),
-      },
-      body: serializeUpstreamBody(envelope),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential.value}`,
+          "content-type": "application/json",
+          "user-agent": geminiUserAgent(),
+        },
+        body: serializeUpstreamBody(envelope),
+        signal,
+      }),
+    )
     if (!response.ok) {
       const body = await response.text().catch(() => "")
       throw new HTTPError(

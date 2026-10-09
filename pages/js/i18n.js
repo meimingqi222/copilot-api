@@ -1055,6 +1055,9 @@ const i18n = {
         "暂无模型，可点击「在线获取模型」拉取上游模型清单",
       "connections.noModelsFound": "未找到匹配的模型",
       "connections.advancedOptions": "高级选项",
+      "connections.proxyUrl": "代理 URL（可选）",
+      "connections.proxyUrlHint":
+        "该连接的请求走此代理（Bun 原生 fetch proxy 选项，逐请求生效），留空则直连",
       "connections.customHeaders": "自定义请求头",
       "connections.addHeader": "添加请求头",
       "connections.headerValue": "值",
@@ -2649,6 +2652,9 @@ const i18n = {
         'No models yet. Click "Fetch Models" to pull the upstream model list.',
       "connections.noModelsFound": "No models match your search",
       "connections.advancedOptions": "Advanced Options",
+      "connections.proxyUrl": "Proxy URL (optional)",
+      "connections.proxyUrlHint":
+        "Route this connection's requests through the proxy (Bun fetch proxy option, applied per request). Leave empty for direct.",
       "connections.customHeaders": "Custom Headers",
       "connections.addHeader": "Add Header",
       "connections.headerValue": "Value",

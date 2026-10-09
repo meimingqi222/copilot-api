@@ -18,9 +18,13 @@
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 import { HTTPError } from "~/lib/error"
-import { getCredentialContextString } from "~/lib/provider-connections"
+import {
+  getConnectionProxyUrl,
+  getCredentialContextString,
+} from "~/lib/provider-connections"
 import { iterateLines } from "~/lib/stream-lines"
 import { fetchZedLlmToken, ZED_CLOUD, zedUserAgent } from "~/services/oauth/zed"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
 
@@ -77,7 +81,9 @@ async function zedLlmToken(connection: ProviderConnection): Promise<string> {
       "",
     )
   }
-  return fetchZedLlmToken(uid, accountToken, systemId, org)
+  return fetchZedLlmToken(uid, accountToken, systemId, org, {
+    proxyUrl: getConnectionProxyUrl(connection),
+  })
 }
 
 /** 把 zed 的 NDJSON 流转成 handler 期望的 `{data}` 事件流。 */
@@ -105,23 +111,27 @@ async function postZedCompletion(
   signal?: AbortSignal,
 ): Promise<Response> {
   const send = (llmToken: string) =>
-    fetch(ZED_COMPLETIONS_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${llmToken}`,
-        "content-type": "application/json",
-        "x-zed-version": "1.23.0",
-        "x-zed-client-supports-status-messages": "true",
-        "x-zed-client-supports-stream-ended-request-completion-status": "true",
-        "user-agent": zedUserAgent(),
-      },
-      body: JSON.stringify({
-        provider,
-        model,
-        provider_request: providerRequest,
+    fetch(
+      ZED_COMPLETIONS_URL,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${llmToken}`,
+          "content-type": "application/json",
+          "x-zed-version": "1.23.0",
+          "x-zed-client-supports-status-messages": "true",
+          "x-zed-client-supports-stream-ended-request-completion-status":
+            "true",
+          "user-agent": zedUserAgent(),
+        },
+        body: JSON.stringify({
+          provider,
+          model,
+          provider_request: providerRequest,
+        }),
+        signal,
       }),
-      signal,
-    })
+    )
 
   let response = await send(await zedLlmToken(connection))
   const stale =

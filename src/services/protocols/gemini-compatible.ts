@@ -27,6 +27,7 @@ import type {
 
 import {
   buildBaseHeaders,
+  connectionFetchInit,
   detectOpenAIStreamError,
   handleUpstreamFailure,
   joinUrl,
@@ -64,10 +65,13 @@ export const geminiCompatibleAdapter: ProtocolAdapter = {
       /^https?:/i.test(endpoint) ? endpoint : (
         joinUrl(connection.baseUrl, endpoint)
       )
-    const response = await fetch(url, {
-      headers: buildBaseHeaders(connection, credential),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        headers: buildBaseHeaders(connection, credential),
+        signal,
+      }),
+    )
     if (!response.ok) {
       await handleUpstreamFailure(
         response,
@@ -116,12 +120,15 @@ export const geminiCompatibleAdapter: ProtocolAdapter = {
       connection.baseUrl,
       `/models/${modelPath(target.upstreamModelId)}:${action}`,
     )}${stream ? "?alt=sse" : ""}`
-    const response = await fetch(url, {
-      method: "POST",
-      headers: buildBaseHeaders(connection, credential),
-      body: serializeUpstreamBody(upstreamBody(payload)),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers: buildBaseHeaders(connection, credential),
+        body: serializeUpstreamBody(upstreamBody(payload)),
+        signal,
+      }),
+    )
     if (!response.ok) {
       await handleUpstreamFailure(
         response,

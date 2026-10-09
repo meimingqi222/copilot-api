@@ -38,6 +38,7 @@ import {
 } from "~/lib/provider-connections"
 import {
   buildBaseHeaders,
+  connectionFetchInit,
   handleUpstreamFailure,
   safeSseStream,
   setHeader,
@@ -158,13 +159,13 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
     const accessToken = await ensureLobsteraiAccessToken(connection, credential)
     const response = await fetch(
       `${lobsteraiServerRoot(connection)}${MODELS_PATH}`,
-      {
+      connectionFetchInit(connection, {
         headers: buildLobsteraiHeaders(connection, {
           ...credential,
           value: accessToken ?? credential.value,
         }),
         signal,
-      },
+      }),
     )
 
     if (!response.ok) {
@@ -245,7 +246,7 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
     const accessToken = await ensureLobsteraiAccessToken(connection, credential)
     const response = await fetch(
       `${lobsteraiServerRoot(connection)}${CHAT_PATH}`,
-      {
+      connectionFetchInit(connection, {
         method: "POST",
         headers: buildLobsteraiHeaders(connection, {
           ...credential,
@@ -253,7 +254,7 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
         }),
         body: JSON.stringify(upstreamPayload),
         signal,
-      },
+      }),
     )
 
     if (!response.ok) {

@@ -22,6 +22,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
   buildBaseHeaders,
+  connectionFetchInit,
   detectAnthropicStreamError,
   handleUpstreamFailure,
   joinUrl,
@@ -77,12 +78,12 @@ export const minimaxNativeAdapter: ProtocolAdapter = {
 
     const response = await fetch(
       joinUrl(resolveMinimaxBaseUrl(connection), "/messages"),
-      {
+      connectionFetchInit(connection, {
         method: "POST",
         headers,
         body: JSON.stringify(upstreamPayload),
         signal,
-      },
+      }),
     )
     if (!response.ok) {
       await handleUpstreamFailure(

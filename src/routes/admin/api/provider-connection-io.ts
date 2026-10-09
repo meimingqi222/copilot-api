@@ -177,6 +177,7 @@ interface ImportedConnectionInput {
   priority?: number
   weight?: number
   headers?: Record<string, string>
+  proxyUrl?: string
   modelDiscovery?: ProviderConnection["modelDiscovery"]
   models?: ProviderConnection["models"]
   credentials?: Array<{
@@ -269,6 +270,11 @@ function normalizeImportedConnection(
     priority: typeof raw.priority === "number" ? raw.priority : undefined,
     weight: typeof raw.weight === "number" ? raw.weight : undefined,
     headers,
+    // 导出包含 proxyUrl，导入必须回填，否则导出/导入一轮后代理静默丢失。
+    proxyUrl:
+      typeof raw.proxyUrl === "string" && raw.proxyUrl.trim() ?
+        raw.proxyUrl.trim()
+      : undefined,
     modelDiscovery:
       raw.modelDiscovery && typeof raw.modelDiscovery === "object" ?
         (raw.modelDiscovery as ProviderConnection["modelDiscovery"])

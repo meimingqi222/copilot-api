@@ -23,6 +23,7 @@ function connectionsView() {
       name: "",
       protocol: "openai-compatible",
       baseUrl: "",
+      proxyUrl: "",
       priority: 10,
       weight: 1,
       enabled: true,
@@ -215,6 +216,8 @@ function connectionsView() {
     },
 
     selectCustomPreset() {
+      // 代理是部署/网络设置，与所选 provider 无关：切换预设/自定义时刻意不清空
+      // （弹窗每次 openCreate 都会开一份全新的 connForm）。
       this.selectedPresetId = "custom"
       this.selectedPreset = null
       this.connForm.name = ""
@@ -269,6 +272,8 @@ function connectionsView() {
           apiKey: form.apiKey || "",
           authMode,
           headerName,
+          // 探测走与落库相同的连接级代理
+          proxyUrl: (form.proxyUrl || "").trim() || undefined,
         })
         if (res.error) {
           const msg = (res.hint ? res.hint + ": " : "") + res.error
@@ -363,6 +368,7 @@ function connectionsView() {
         name: "",
         protocol: "openai-compatible",
         baseUrl: "",
+        proxyUrl: "",
         priority: 10,
         weight: 1,
         enabled: true,
@@ -408,6 +414,7 @@ function connectionsView() {
         name: conn.name,
         protocol: conn.protocol,
         baseUrl: conn.baseUrl,
+        proxyUrl: conn.proxyUrl || "",
         priority: conn.priority,
         weight: conn.weight ?? 1,
         enabled: conn.enabled,
@@ -482,6 +489,8 @@ function connectionsView() {
         name: form.name,
         protocol: form.protocol,
         baseUrl: form.baseUrl,
+        // 空字符串在服务端 PUT 语义是“清除”；新建时后端忽略空值
+        proxyUrl: (form.proxyUrl || "").trim(),
         priority: form.priority,
         weight: form.weight,
         enabled: form.enabled,

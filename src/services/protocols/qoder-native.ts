@@ -44,6 +44,7 @@ import {
 import { qoderUserFromConnection } from "~/services/oauth/qoder"
 import type { CopilotStreamEvent } from "~/services/protocols/chat/types"
 import {
+  connectionFetchInit,
   handleUpstreamFailure,
   safeSseStream,
   setHeader,
@@ -391,7 +392,10 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     const url = qoderListModelsUrl(base)
     // GET 的 COSY 签名用空 body。
     const headers = buildQoderHeaders(connection, credential.value, url, "")
-    const response = await fetch(url, { headers, signal })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, { headers, signal }),
+    )
     if (!response.ok) {
       await handleUpstreamFailure(
         response,
@@ -444,12 +448,15 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     setHeader(headers, "X-Model-Key", model.key)
     setHeader(headers, "X-Model-Source", model.source)
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: wire,
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers,
+        body: wire,
+        signal,
+      }),
+    )
     if (!response.ok) {
       await handleUpstreamFailure(
         response,

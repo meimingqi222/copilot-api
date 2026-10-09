@@ -629,6 +629,31 @@ User data (tokens, logs, stats) is stored in:
 
 Paths are defined in `src/lib/paths.ts`.
 
+### 9. Connection-Level Proxy (Bun)
+
+The runtime is Bun, and only two proxy switches actually take effect:
+
+- the process-wide `HTTPS_PROXY` / `HTTP_PROXY` environment variables, and
+- an explicit `proxy` field in the `fetch` init (a Bun extension).
+
+`initProxyFromEnv()` in `src/lib/proxy.ts` installs an undici global dispatcher,
+which is a no-op under Bun — so a connection-level proxy must be threaded into
+every upstream call. Use `connectionFetchInit(connection, init)`
+(`src/services/protocols/shared.ts`) for protocol adapters, or `oauthFetch` /
+`withProxyUrl` (`src/services/oauth/fetch.ts`) elsewhere. Both read
+`getConnectionProxyUrl(connection)` (`connection.proxyUrl`, falling back to
+`metadata.proxyUrl`).
+
+The failure mode is silent: a forgotten proxy still succeeds by connecting
+directly, so `tests/connection-proxy-wiring.test.ts` asserts the outgoing
+`init.proxy` for every adapter and statically fails any file under
+`src/services/protocols/` that calls bare `fetch` without a proxy helper.
+Endpoint connections set the field
+through `POST/PUT /admin/api/provider-connections` (the `proxyUrl` field is also
+honoured by `/fetch-models`, the connectivity test and export/import);
+account-managed connections get it from the sign-in flow or a
+`settings.proxyUrl` account patch.
+
 ## CI/CD
 
 The CI workflow (`.github/workflows/ci.yml`) runs on push/PR:

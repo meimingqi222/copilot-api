@@ -759,6 +759,24 @@
                   </label>
                 </div>
 
+                <!-- 连接级代理：Bun fetch 的 proxy 选项，逐请求透传 -->
+                <div>
+                  <label
+                    class="form-label"
+                    x-text="t('connections.proxyUrl')"
+                  ></label>
+                  <input
+                    type="text"
+                    x-model="connForm.proxyUrl"
+                    class="form-input"
+                    placeholder="http://127.0.0.1:7890"
+                  />
+                  <p
+                    class="text-[11px] text-[var(--apple-text-tertiary)] mt-1"
+                    x-text="t('connections.proxyUrlHint')"
+                  ></p>
+                </div>
+
                 <!-- 自定义请求头 -->
                 <div class="space-y-1.5">
                   <div class="flex items-center justify-between">

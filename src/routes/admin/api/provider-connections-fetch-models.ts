@@ -78,6 +78,12 @@ export async function handleFetchModels(c: Context): Promise<Response> {
     baseUrl,
     enabled: true,
     priority: 0,
+    // 探测走与落库后同一个代理：否则新建表单里“在线获取模型”能通、
+    // 保存后的真实请求却不通（或反之）。
+    proxyUrl:
+      typeof payload.proxyUrl === "string" && payload.proxyUrl.trim() ?
+        payload.proxyUrl.trim()
+      : undefined,
     credentials: [],
     createdAt: Date.now(),
     modelDiscovery: {

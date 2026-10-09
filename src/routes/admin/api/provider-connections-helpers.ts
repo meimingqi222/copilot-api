@@ -19,6 +19,7 @@ import {
   persistProviderConnections,
   resetCredentialStatus,
 } from "~/lib/provider-connections"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 // ── model → RouteTarget ────────────────────────────────────────────────
 
@@ -155,7 +156,10 @@ export async function probeModelsEndpoint(
     headers["Authorization"] = `Bearer ${credential.value}`
   }
   try {
-    const res = await fetch(testUrl, { headers, signal })
+    const res = await fetch(
+      testUrl,
+      connectionFetchInit(connection, { headers, signal }),
+    )
     return { ok: res.ok, status: res.status }
   } catch (error) {
     return {

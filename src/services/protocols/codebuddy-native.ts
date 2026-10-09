@@ -39,6 +39,7 @@ import {
 } from "~/services/codebuddy/model-cooldown"
 import { HTTPError } from "~/lib/error"
 import {
+  connectionFetchInit,
   detectOpenAIStreamError,
   handleUpstreamFailure,
   safeSseStream,
@@ -608,10 +609,10 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     )
     const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     // /v3/config 不在 /v2 路径下，用独立 URL
-    const response = await fetch(resolveCodebuddyConfigUrl(connection), {
-      headers,
-      signal,
-    })
+    const response = await fetch(
+      resolveCodebuddyConfigUrl(connection),
+      connectionFetchInit(connection, { headers, signal }),
+    )
 
     if (!response.ok) {
       await handleUpstreamFailure(
@@ -696,12 +697,15 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     headers.Accept = "application/json, text/event-stream"
     const url = `${resolveCodebuddyBaseUrl(connection)}/chat/completions`
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(upstreamPayload),
-      signal,
-    })
+    const response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(upstreamPayload),
+        signal,
+      }),
+    )
 
     if (!response.ok) {
       // 6004 模型级限流：只冷却 (credential, model)，账号本身不标记，

@@ -22,6 +22,7 @@ import {
 } from "~/lib/provider-connections"
 import { getMutableProviderConnection } from "~/lib/provider-connections/state"
 import { parseJwtPayload } from "~/services/oauth/jwt"
+import { connectionFetchInit } from "~/services/protocols/shared"
 import { lobsteraiClientVersion, lobsteraiServerRoot } from "./config"
 
 const REFRESH_LEAD_MS = 5 * 60 * 1000
@@ -99,14 +100,17 @@ export async function refreshLobsteraiTokenForConnection(
 
   let response: Response
   try {
-    response = await fetch(`${lobsteraiServerRoot(conn)}/api/auth/refresh`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-    })
+    response = await fetch(
+      `${lobsteraiServerRoot(conn)}/api/auth/refresh`,
+      connectionFetchInit(conn, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+    )
   } catch (e) {
     logger.error(
       `[lobsterai] refresh request failed for "${conn.name}":`,
