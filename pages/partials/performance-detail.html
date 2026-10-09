@@ -399,8 +399,11 @@
               </th>
             </tr>
           </thead>
-          <tbody>
-            <template x-for="row in sortedDetails" :key="getRowKey(row)">
+          <!-- 每个通道 = 数据行 + 下钻详情行, 两者必须同处 x-for 模板的唯一根元素内:
+               Alpine 只克隆模板的第一个根元素, 多出的根元素会被静默丢弃
+               (控制台仅一句 warning), 表现为箭头能转但展开后没有任何内容。 -->
+          <template x-for="row in sortedDetails" :key="getRowKey(row)">
+            <tbody>
               <!-- 正常数据行 -->
               <tr
                 @click="toggleRow(getRowKey(row))"
@@ -859,8 +862,8 @@
                   </div>
                 </td>
               </tr>
-            </template>
-          </tbody>
+            </tbody>
+          </template>
         </table>
       </div>
     </div>
@@ -963,15 +966,34 @@
               ></th>
             </tr>
           </thead>
-          <tbody>
-            <template x-for="row in sortedModels" :key="row.model">
+          <!-- 每个模型 = 数据行 + TPS 走势折线图行，同处 x-for 模板的单一根元素 tbody 内 -->
+          <template x-for="row in sortedModels" :key="row.model">
+            <tbody>
+              <!-- 正常数据行 -->
               <tr
-                class="hover:bg-[var(--apple-gray-6)] border-b border-[var(--apple-gray-5)]/70"
+                @click="toggleModelTrend(row.model)"
+                class="border-b border-[var(--apple-gray-5)]/70 hover:bg-[var(--apple-bg-secondary)]/50 cursor-pointer transition-colors"
+                :class="isRowExpanded('model::' + row.model) ? 'bg-[var(--apple-blue)]/5 border-[var(--apple-blue)]/30' : ''"
               >
-                <td
-                  class="py-2.5 px-3 font-semibold text-sm text-[var(--apple-text)] break-all"
-                  x-text="row.model"
-                ></td>
+                <!-- 列 1: 展开箭头 + 模型名 -->
+                <td class="py-2.5 px-3 min-w-[200px]">
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md p-0.5 text-[var(--apple-text-secondary)] hover:text-[var(--apple-blue)] hover:bg-[var(--apple-gray-6)] cursor-pointer transition-transform duration-200"
+                      :class="isRowExpanded('model::' + row.model) ? 'rotate-180 text-[var(--apple-blue)]' : ''"
+                      :title="isRowExpanded('model::' + row.model) ? t('perf.trendCollapse') : t('perf.trendExpand')"
+                      :aria-label="isRowExpanded('model::' + row.model) ? t('perf.trendCollapse') : t('perf.trendExpand')"
+                      @click.stop="toggleModelTrend(row.model)"
+                    >
+                      <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                    </button>
+                    <span
+                      class="font-semibold text-sm text-[var(--apple-text)] break-all"
+                      x-text="row.model"
+                    ></span>
+                  </div>
+                </td>
                 <td
                   class="py-2.5 px-3 text-center font-mono font-medium"
                   x-text="row.requests"
@@ -1001,8 +1023,186 @@
                   x-text="formatTps(row.avgNonStreamingTps)"
                 ></td>
               </tr>
-            </template>
-          </tbody>
+
+              <!-- 展开下钻：TPS 走势折线图卡片 -->
+              <tr
+                x-show="isRowExpanded('model::' + row.model)"
+                class="bg-[var(--apple-bg-secondary)]/30 border-b border-[var(--apple-gray-5)]"
+              >
+                <td colspan="7" class="p-3 sm:p-5">
+                  <div
+                    class="bg-white rounded-xl border border-[var(--apple-gray-5)] p-4 sm:p-5 shadow-sm space-y-4"
+                  >
+                    <!-- 走势卡片顶部工具栏 -->
+                    <div
+                      class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--apple-gray-5)]"
+                    >
+                      <div class="flex items-center gap-2">
+                        <i
+                          data-lucide="trending-up"
+                          class="w-4 h-4 text-[var(--apple-blue)]"
+                        ></i>
+                        <h4 class="font-bold text-sm text-[var(--apple-text)]">
+                          <span x-text="row.model"></span> ·
+                          <span x-text="t('perf.trendTitle')"></span>
+                        </h4>
+                        <span
+                          class="text-xs text-[var(--apple-text-secondary)] font-mono"
+                          x-show="trendData['model::' + row.model]?.intervalMinutes"
+                          x-text="'(' + (trendData['model::' + row.model]?.intervalMinutes >= 60 ? (trendData['model::' + row.model]?.intervalMinutes / 60) + 'h' : trendData['model::' + row.model]?.intervalMinutes + 'm') + ' 槽位)'"
+                        ></span>
+                      </div>
+
+                      <!-- 指标模式切换按钮组 -->
+                      <div
+                        class="flex items-center gap-1 bg-[var(--apple-gray-6)] p-0.5 rounded-lg border border-[var(--apple-gray-5)] text-xs"
+                      >
+                        <button
+                          type="button"
+                          @click="setTrendMetricMode('model::' + row.model, 'all', 'trend_chart_' + sanitizeChartId('model::' + row.model))"
+                          :class="getTrendMode('model::' + row.model) === 'all' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                          class="px-2 py-1 rounded transition-all cursor-pointer"
+                          x-text="t('perf.trendMetricAll')"
+                        ></button>
+                        <button
+                          type="button"
+                          @click="setTrendMetricMode('model::' + row.model, 'decode', 'trend_chart_' + sanitizeChartId('model::' + row.model))"
+                          :class="getTrendMode('model::' + row.model) === 'decode' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                          class="px-2 py-1 rounded transition-all cursor-pointer"
+                          x-text="t('perf.trendMetricDecode')"
+                        ></button>
+                        <button
+                          type="button"
+                          @click="setTrendMetricMode('model::' + row.model, 'stream', 'trend_chart_' + sanitizeChartId('model::' + row.model))"
+                          :class="getTrendMode('model::' + row.model) === 'stream' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                          class="px-2 py-1 rounded transition-all cursor-pointer"
+                          x-text="t('perf.trendMetricStream')"
+                        ></button>
+                        <template
+                          x-if="trendData['model::' + row.model]?.byProvider?.length > 1"
+                        >
+                          <button
+                            type="button"
+                            @click="setTrendMetricMode('model::' + row.model, 'providers', 'trend_chart_' + sanitizeChartId('model::' + row.model))"
+                            :class="getTrendMode('model::' + row.model) === 'providers' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                            class="px-2 py-1 rounded transition-all cursor-pointer"
+                            x-text="t('perf.trendByProvider')"
+                          ></button>
+                        </template>
+                      </div>
+                    </div>
+
+                    <!-- 走势统计快报小卡片 -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.trendMaxTps')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-green)] mt-0.5"
+                        >
+                          <span
+                            x-text="getTrendPeak('model::' + row.model)"
+                          ></span>
+                          <span
+                            class="text-[10px] text-[var(--apple-text-secondary)]"
+                          >
+                            tok/s</span
+                          >
+                        </div>
+                      </div>
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.trendAvgTps')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-blue)] mt-0.5"
+                        >
+                          <span
+                            x-text="getTrendAvg('model::' + row.model)"
+                          ></span>
+                          <span
+                            class="text-[10px] text-[var(--apple-text-secondary)]"
+                          >
+                            tok/s</span
+                          >
+                        </div>
+                      </div>
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.trendTotalSamples')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-text)] mt-0.5"
+                        >
+                          <span
+                            x-text="getTrendRequests('model::' + row.model) + ' 次'"
+                          ></span>
+                        </div>
+                      </div>
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.avgTtft')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-orange)] mt-0.5"
+                        >
+                          <span x-text="formatMs(row.avgTtftMs)"></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 折线图主体 Canvas 容器 -->
+                    <div class="relative w-full h-52 sm:h-60">
+                      <!-- 加载中 -->
+                      <div
+                        x-show="trendLoading['model::' + row.model]"
+                        class="absolute inset-0 flex items-center justify-center bg-white/80 z-10"
+                      >
+                        <div
+                          class="flex items-center gap-2 text-xs text-[var(--apple-text-secondary)]"
+                        >
+                          <i
+                            data-lucide="loader-2"
+                            class="w-4 h-4 animate-spin text-[var(--apple-blue)]"
+                          ></i>
+                          <span x-text="t('perf.trendLoading')"></span>
+                        </div>
+                      </div>
+
+                      <!-- 暂无走势样本 -->
+                      <div
+                        x-show="!trendLoading['model::' + row.model] && (!trendData['model::' + row.model] || !trendData['model::' + row.model].series?.length)"
+                        class="absolute inset-0 flex flex-col items-center justify-center text-xs text-[var(--apple-text-secondary)]"
+                      >
+                        <i
+                          data-lucide="activity"
+                          class="w-6 h-6 opacity-40 mb-1"
+                        ></i>
+                        <span x-text="t('perf.trendNoData')"></span>
+                      </div>
+
+                      <canvas
+                        :id="'trend_chart_' + sanitizeChartId('model::' + row.model)"
+                      ></canvas>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </template>
         </table>
       </div>
     </div>
@@ -1109,19 +1309,37 @@
               ></th>
             </tr>
           </thead>
-          <tbody>
-            <template
-              x-for="row in sortedProviders"
-              :key="row.provider + '/' + row.model"
-            >
+          <!-- 每个供应商模型 = 数据行 + 走势折线图行，同处单一根元素 tbody 内 -->
+          <template
+            x-for="row in sortedProviders"
+            :key="getProviderRowKey(row)"
+          >
+            <tbody>
+              <!-- 正常数据行 -->
               <tr
-                class="hover:bg-[var(--apple-gray-6)] border-b border-[var(--apple-gray-5)]/70"
+                @click="toggleProviderTrend(row)"
+                class="border-b border-[var(--apple-gray-5)]/70 hover:bg-[var(--apple-bg-secondary)]/50 cursor-pointer transition-colors"
+                :class="isRowExpanded(getProviderRowKey(row)) ? 'bg-[var(--apple-blue)]/5 border-[var(--apple-blue)]/30' : ''"
               >
+                <!-- 列 1: 展开箭头 + 供应商标签 -->
                 <td class="py-2.5 px-3">
-                  <span
-                    class="badge badge-info text-xs font-medium"
-                    x-text="row.providerLabel || row.provider"
-                  ></span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md p-0.5 text-[var(--apple-text-secondary)] hover:text-[var(--apple-blue)] hover:bg-[var(--apple-gray-6)] cursor-pointer transition-transform duration-200"
+                      :class="isRowExpanded(getProviderRowKey(row)) ? 'rotate-180 text-[var(--apple-blue)]' : ''"
+                      :title="isRowExpanded(getProviderRowKey(row)) ? t('perf.trendCollapse') : t('perf.trendExpand')"
+                      :aria-label="isRowExpanded(getProviderRowKey(row)) ? t('perf.trendCollapse') : t('perf.trendExpand')"
+                      @click.stop="toggleProviderTrend(row)"
+                    >
+                      <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                    </button>
+                    <span
+                      class="badge badge-info text-xs font-medium"
+                      x-text="row.providerLabel || row.provider"
+                      :title="row.providerId && row.providerId !== row.provider ? row.providerId : ''"
+                    ></span>
+                  </div>
                 </td>
                 <td
                   class="py-2.5 px-3 font-semibold text-sm text-[var(--apple-text)] break-all"
@@ -1156,8 +1374,180 @@
                   x-text="formatTps(row.avgNonStreamingTps)"
                 ></td>
               </tr>
-            </template>
-          </tbody>
+
+              <!-- 展开下钻：特定渠道 TPS 走势折线图卡片 -->
+              <tr
+                x-show="isRowExpanded(getProviderRowKey(row))"
+                class="bg-[var(--apple-bg-secondary)]/30 border-b border-[var(--apple-gray-5)]"
+              >
+                <td colspan="8" class="p-3 sm:p-5">
+                  <div
+                    class="bg-white rounded-xl border border-[var(--apple-gray-5)] p-4 sm:p-5 shadow-sm space-y-4"
+                  >
+                    <!-- 走势卡片顶部工具栏 -->
+                    <div
+                      class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--apple-gray-5)]"
+                    >
+                      <div class="flex items-center gap-2">
+                        <i
+                          data-lucide="trending-up"
+                          class="w-4 h-4 text-[var(--apple-blue)]"
+                        ></i>
+                        <h4 class="font-bold text-sm text-[var(--apple-text)]">
+                          <span
+                            x-text="row.providerLabel || row.provider"
+                          ></span>
+                          ·
+                          <span x-text="row.model"></span>
+                          ·
+                          <span x-text="t('perf.trendTitle')"></span>
+                        </h4>
+                        <span
+                          class="text-xs text-[var(--apple-text-secondary)] font-mono"
+                          x-show="trendData[getProviderRowKey(row)]?.intervalMinutes"
+                          x-text="'(' + (trendData[getProviderRowKey(row)]?.intervalMinutes >= 60 ? (trendData[getProviderRowKey(row)]?.intervalMinutes / 60) + 'h' : trendData[getProviderRowKey(row)]?.intervalMinutes + 'm') + ' 槽位)'"
+                        ></span>
+                      </div>
+
+                      <!-- 指标模式切换按钮组 -->
+                      <div
+                        class="flex items-center gap-1 bg-[var(--apple-gray-6)] p-0.5 rounded-lg border border-[var(--apple-gray-5)] text-xs"
+                      >
+                        <button
+                          type="button"
+                          @click="setTrendMetricMode(getProviderRowKey(row), 'all', 'trend_chart_' + sanitizeChartId(getProviderRowKey(row)))"
+                          :class="getTrendMode(getProviderRowKey(row)) === 'all' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                          class="px-2 py-1 rounded transition-all cursor-pointer"
+                          x-text="t('perf.trendMetricAll')"
+                        ></button>
+                        <button
+                          type="button"
+                          @click="setTrendMetricMode(getProviderRowKey(row), 'decode', 'trend_chart_' + sanitizeChartId(getProviderRowKey(row)))"
+                          :class="getTrendMode(getProviderRowKey(row)) === 'decode' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                          class="px-2 py-1 rounded transition-all cursor-pointer"
+                          x-text="t('perf.trendMetricDecode')"
+                        ></button>
+                        <button
+                          type="button"
+                          @click="setTrendMetricMode(getProviderRowKey(row), 'stream', 'trend_chart_' + sanitizeChartId(getProviderRowKey(row)))"
+                          :class="getTrendMode(getProviderRowKey(row)) === 'stream' ? 'bg-white shadow-sm font-semibold text-[var(--apple-text)]' : 'text-[var(--apple-text-secondary)] hover:text-[var(--apple-text)]'"
+                          class="px-2 py-1 rounded transition-all cursor-pointer"
+                          x-text="t('perf.trendMetricStream')"
+                        ></button>
+                      </div>
+                    </div>
+
+                    <!-- 走势统计快报小卡片 -->
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.trendMaxTps')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-green)] mt-0.5"
+                        >
+                          <span
+                            x-text="getTrendPeak(getProviderRowKey(row))"
+                          ></span>
+                          <span
+                            class="text-[10px] text-[var(--apple-text-secondary)]"
+                          >
+                            tok/s</span
+                          >
+                        </div>
+                      </div>
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.trendAvgTps')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-blue)] mt-0.5"
+                        >
+                          <span
+                            x-text="getTrendAvg(getProviderRowKey(row))"
+                          ></span>
+                          <span
+                            class="text-[10px] text-[var(--apple-text-secondary)]"
+                          >
+                            tok/s</span
+                          >
+                        </div>
+                      </div>
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.trendTotalSamples')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-text)] mt-0.5"
+                        >
+                          <span
+                            x-text="getTrendRequests(getProviderRowKey(row)) + ' 次'"
+                          ></span>
+                        </div>
+                      </div>
+                      <div
+                        class="bg-[var(--apple-bg-secondary)]/50 p-2.5 rounded-lg border border-[var(--apple-gray-5)]"
+                      >
+                        <span
+                          class="text-[var(--apple-text-secondary)] text-[11px]"
+                          x-text="t('perf.avgTtft')"
+                        ></span>
+                        <div
+                          class="font-mono font-bold text-sm text-[var(--apple-orange)] mt-0.5"
+                        >
+                          <span x-text="formatMs(row.avgTtftMs)"></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 折线图主体 Canvas 容器 -->
+                    <div class="relative w-full h-52 sm:h-60">
+                      <!-- 加载中 -->
+                      <div
+                        x-show="trendLoading[getProviderRowKey(row)]"
+                        class="absolute inset-0 flex items-center justify-center bg-white/80 z-10"
+                      >
+                        <div
+                          class="flex items-center gap-2 text-xs text-[var(--apple-text-secondary)]"
+                        >
+                          <i
+                            data-lucide="loader-2"
+                            class="w-4 h-4 animate-spin text-[var(--apple-blue)]"
+                          ></i>
+                          <span x-text="t('perf.trendLoading')"></span>
+                        </div>
+                      </div>
+
+                      <!-- 暂无走势样本 -->
+                      <div
+                        x-show="!trendLoading[getProviderRowKey(row)] && (!trendData[getProviderRowKey(row)] || !trendData[getProviderRowKey(row)].series?.length)"
+                        class="absolute inset-0 flex flex-col items-center justify-center text-xs text-[var(--apple-text-secondary)]"
+                      >
+                        <i
+                          data-lucide="activity"
+                          class="w-6 h-6 opacity-40 mb-1"
+                        ></i>
+                        <span x-text="t('perf.trendNoData')"></span>
+                      </div>
+
+                      <canvas
+                        :id="'trend_chart_' + sanitizeChartId(getProviderRowKey(row))"
+                      ></canvas>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </template>
         </table>
       </div>
     </div>

@@ -84,6 +84,12 @@ function performanceView() {
     expandedStages: {}, // rowKey:stageId -> boolean
     showGuide: false, // 是否展开指标说明
 
+    // TPS 走势图状态
+    trendCharts: {}, // rowKey -> Chart instance
+    trendData: {}, // rowKey -> trend response
+    trendLoading: {}, // rowKey -> boolean
+    trendMetricMode: {}, // rowKey -> 'all' | 'decode' | 'stream' | 'providers'
+
     lifecycleStages: LIFECYCLE_STAGES,
 
     init() {
@@ -93,12 +99,27 @@ function performanceView() {
         Alpine.$data(app).$watch("currentView", (view) => {
           if (view === "performance") {
             this.load()
+          } else {
+            this.destroyTrendCharts()
           }
         })
       }
     },
 
+    destroyTrendCharts() {
+      for (const [key, chart] of Object.entries(this.trendCharts)) {
+        try {
+          chart?.destroy()
+        } catch {
+          // ignore destroy errors
+        }
+      }
+      this.trendCharts = {}
+    },
+
     setRange(range) {
+      this.destroyTrendCharts()
+      this.trendData = {}
       this.dateRange = range
       if (range !== "custom") {
         this.selectedMonth = ""
@@ -110,6 +131,8 @@ function performanceView() {
 
     setMonth(month) {
       if (!month) return
+      this.destroyTrendCharts()
+      this.trendData = {}
       this.dateRange = "custom"
       this.selectedMonth = month
       this.loadPerformance().catch(() => {
@@ -120,6 +143,8 @@ function performanceView() {
     async load() {
       if (this.loading) return
       this.loading = true
+      this.destroyTrendCharts()
+      this.trendData = {}
       try {
         await this.loadPerformance()
       } catch {
@@ -175,9 +200,11 @@ function performanceView() {
           seen.set(row.provider, row.providerLabel || row.provider)
         }
       }
+      // 按标签而不是键排序：plain connection 的键是 `connection:<id>`，
+      // 按键排等于按 uuid 排，对人没有意义。
       return [...seen.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
         .map(([provider, label]) => ({ provider, label }))
+        .sort((left, right) => left.label.localeCompare(right.label))
     },
 
     get filteredByProvider() {
@@ -543,6 +570,309 @@ function performanceView() {
       return this.filteredDetails.every((r) =>
         this.isRowExpanded(this.getRowKey(r)),
       )
+    },
+
+    // ── TPS 走势图交互与图表管理 ────────────────────────────────────
+
+    sanitizeChartId(key) {
+      return String(key).replace(/[^a-zA-Z0-9_-]/g, "_")
+    },
+
+    getTrendMode(key, defaultMode = "all") {
+      return this.trendMetricMode[key] || defaultMode
+    },
+
+    setTrendMetricMode(key, mode, canvasId) {
+      this.trendMetricMode[key] = mode
+      const data = this.trendData[key]
+      if (data) {
+        this.$nextTick(() => this.renderTrendChart(key, canvasId, data))
+      }
+    },
+
+    toggleModelTrend(model) {
+      const key = "model::" + model
+      const willExpand = !this.isRowExpanded(key)
+      this.expandedRows[key] = willExpand
+
+      if (willExpand) {
+        const canvasId = "trend_chart_" + this.sanitizeChartId(key)
+        this.loadAndRenderTrend(key, canvasId, { model })
+      } else {
+        if (this.trendCharts[key]) {
+          this.trendCharts[key].destroy()
+          delete this.trendCharts[key]
+        }
+      }
+      this.$nextTick?.(() => refreshAdminIcons(this.$el))
+    },
+
+    getProviderRowKey(row) {
+      return "prov::" + (row.provider || "unknown") + "::" + row.model
+    },
+
+    toggleProviderTrend(row) {
+      const key = this.getProviderRowKey(row)
+      const willExpand = !this.isRowExpanded(key)
+      this.expandedRows[key] = willExpand
+
+      if (willExpand) {
+        const canvasId = "trend_chart_" + this.sanitizeChartId(key)
+        this.loadAndRenderTrend(key, canvasId, {
+          model: row.model,
+          provider: row.provider,
+        })
+      } else {
+        if (this.trendCharts[key]) {
+          this.trendCharts[key].destroy()
+          delete this.trendCharts[key]
+        }
+      }
+      this.$nextTick?.(() => refreshAdminIcons(this.$el))
+    },
+
+    async loadAndRenderTrend(key, canvasId, params) {
+      this.trendLoading[key] = true
+      try {
+        const queryParams = {
+          ...params,
+          range: this.dateRange,
+          month: this.dateRange === "custom" ? this.selectedMonth : undefined,
+        }
+        const data = await API.usage.performanceTrend(queryParams)
+        this.trendData[key] = data
+        this.$nextTick(() => {
+          this.renderTrendChart(key, canvasId, data)
+        })
+      } catch {
+        this.showToast?.(I18n.t("error.load"), "error")
+      } finally {
+        this.trendLoading[key] = false
+        this.$nextTick?.(() => refreshAdminIcons(this.$el))
+      }
+    },
+
+    renderTrendChart(key, canvasId, data, retryCount = 0) {
+      if (typeof Chart === "undefined") return
+
+      const canvas = document.getElementById(canvasId)
+      if (!canvas || canvas.offsetParent === null) {
+        if (retryCount < 20) {
+          setTimeout(
+            () => this.renderTrendChart(key, canvasId, data, retryCount + 1),
+            60,
+          )
+        }
+        return
+      }
+
+      if (this.trendCharts[key]) {
+        this.trendCharts[key].destroy()
+        delete this.trendCharts[key]
+      }
+
+      const ctx = canvas.getContext("2d")
+      if (!ctx) return
+
+      const series = data.series || []
+      if (!series.length) return
+
+      const root = getComputedStyle(document.documentElement)
+      const blueColor =
+        root.getPropertyValue("--apple-blue")?.trim() || "#007AFF"
+      const greenColor =
+        root.getPropertyValue("--apple-green")?.trim() || "#34C759"
+      const orangeColor =
+        root.getPropertyValue("--apple-orange")?.trim() || "#FF9500"
+      const purpleColor =
+        root.getPropertyValue("--apple-purple")?.trim() || "#AF52DE"
+      const pinkColor =
+        root.getPropertyValue("--apple-pink")?.trim() || "#FF2D55"
+      const textColor =
+        root.getPropertyValue("--apple-text")?.trim() || "#1D1D1F"
+      const secondaryText =
+        root.getPropertyValue("--apple-text-secondary")?.trim() || "#86868B"
+
+      const palette = [
+        blueColor,
+        greenColor,
+        orangeColor,
+        purpleColor,
+        pinkColor,
+      ]
+
+      const firstTs = series[0]?.slotTs || 0
+      const lastTs = series[series.length - 1]?.slotTs || 0
+      const spanHours = (lastTs - firstTs) / (3600 * 1000)
+      const useDatePrefix = spanHours > 24
+
+      const labels = series.map((d) => {
+        const date = new Date(d.slotTs)
+        const hh = String(date.getHours()).padStart(2, "0")
+        const mm = String(date.getMinutes()).padStart(2, "0")
+        if (useDatePrefix) {
+          const m = date.getMonth() + 1
+          const day = date.getDate()
+          return `${m}/${day} ${hh}:${mm}`
+        }
+        return `${hh}:${mm}`
+      })
+
+      const mode = this.getTrendMode(
+        key,
+        data.byProvider && data.byProvider.length > 1 ? "providers" : "all",
+      )
+
+      const datasets = []
+
+      if (mode === "providers" && data.byProvider?.length) {
+        data.byProvider.forEach((p, idx) => {
+          const color = palette[idx % palette.length]
+          datasets.push({
+            label: `${p.providerLabel} (${I18n.t("perf.decodeTps")})`,
+            data: p.series.map((s) => s.avgDecodeTps ?? s.avgStreamingTps),
+            borderColor: color,
+            backgroundColor: color + "15",
+            fill: false,
+            tension: 0.35,
+            pointRadius: 2.5,
+            pointHoverRadius: 5,
+            borderWidth: 2,
+            spanGaps: true,
+          })
+        })
+      } else {
+        if (mode === "all" || mode === "decode") {
+          datasets.push({
+            label: I18n.t("perf.decodeTps"),
+            data: series.map((s) => s.avgDecodeTps),
+            borderColor: greenColor,
+            backgroundColor: greenColor + "15",
+            fill: true,
+            tension: 0.35,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            borderWidth: 2.5,
+            spanGaps: true,
+          })
+        }
+        if (mode === "all" || mode === "stream") {
+          datasets.push({
+            label: I18n.t("perf.streamingTps"),
+            data: series.map((s) => s.avgStreamingTps),
+            borderColor: blueColor,
+            backgroundColor: blueColor + "10",
+            fill: false,
+            borderDash: mode === "all" ? [4, 4] : undefined,
+            tension: 0.35,
+            pointRadius: 2.5,
+            pointHoverRadius: 5,
+            borderWidth: 2,
+            spanGaps: true,
+          })
+        }
+      }
+
+      this.trendCharts[key] = new Chart(ctx, {
+        type: "line",
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: {
+              position: "top",
+              align: "end",
+              labels: {
+                boxWidth: 10,
+                boxHeight: 10,
+                usePointStyle: true,
+                color: secondaryText,
+                font: {
+                  size: 11,
+                  family: "-apple-system, BlinkMacSystemFont, sans-serif",
+                },
+              },
+            },
+            tooltip: {
+              backgroundColor: "rgba(255, 255, 255, 0.95)",
+              titleColor: textColor,
+              bodyColor: textColor,
+              borderColor: "rgba(0, 0, 0, 0.1)",
+              borderWidth: 1,
+              padding: 10,
+              boxPadding: 4,
+              usePointStyle: true,
+              callbacks: {
+                label: (tooltipItem) => {
+                  const val = tooltipItem.parsed.y
+                  if (val === null || val === undefined) return null
+                  return `${tooltipItem.dataset.label}: ${val.toFixed(1)} tok/s`
+                },
+                afterBody: (tooltipItems) => {
+                  const idx = tooltipItems[0]?.dataIndex
+                  if (idx === undefined) return []
+                  const slot = series[idx]
+                  if (!slot || !slot.requests) return ["样本: 0 请求"]
+                  const extra = [`请求数: ${slot.requests} 次`]
+                  if (slot.avgTtftMs) {
+                    extra.push(
+                      `平均首字: ${(slot.avgTtftMs / 1000).toFixed(2)}s (${Math.round(slot.avgTtftMs)}ms)`,
+                    )
+                  }
+                  return extra
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              grid: { color: "rgba(0, 0, 0, 0.04)" },
+              ticks: {
+                color: secondaryText,
+                font: { size: 10 },
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 12,
+              },
+            },
+            y: {
+              beginAtZero: true,
+              grid: { color: "rgba(0, 0, 0, 0.06)" },
+              ticks: {
+                color: secondaryText,
+                font: { size: 10 },
+                callback: (val) => `${val} tok/s`,
+              },
+            },
+          },
+        },
+      })
+    },
+
+    getTrendPeak(key) {
+      const series = this.trendData[key]?.series || []
+      const vals = series
+        .map((s) => s.avgDecodeTps ?? s.avgStreamingTps)
+        .filter((v) => typeof v === "number" && v > 0)
+      if (!vals.length) return "-"
+      return Math.max(...vals).toFixed(1)
+    },
+
+    getTrendAvg(key) {
+      const series = this.trendData[key]?.series || []
+      const vals = series
+        .map((s) => s.avgDecodeTps ?? s.avgStreamingTps)
+        .filter((v) => typeof v === "number" && v > 0)
+      if (!vals.length) return "-"
+      const sum = vals.reduce((a, b) => a + b, 0)
+      return (sum / vals.length).toFixed(1)
+    },
+
+    getTrendRequests(key) {
+      const series = this.trendData[key]?.series || []
+      return series.reduce((sum, s) => sum + (s.requests || 0), 0)
     },
 
     getThinkingDiff(row) {

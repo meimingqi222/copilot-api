@@ -35,6 +35,21 @@ export function isProviderProtocol(value: string): value is ProviderProtocol {
   return PROVIDER_PROTOCOLS.includes(value as ProviderProtocol)
 }
 
+/**
+ * 是否「plain connection」协议 —— 即 *-compatible 这类不绑定任何服务商、
+ * 只描述线上协议的自定义上游。
+ *
+ * 与 isProviderProtocol 的区别：后者对 account-managed 的原生协议
+ * (codex-native / copilot-native …) 也返回 true。只有这里返回 true 的
+ * protocol 才是「同一个值底下挂着多个不同服务商」的那一类，统计汇总必须
+ * 额外下沉到 connection 才能还原真实上游(见 lib/stats/provider-labels)。
+ */
+export function isCompatibleProtocol(
+  value: string,
+): value is (typeof COMPATIBLE_PROTOCOLS)[number] {
+  return (COMPATIBLE_PROTOCOLS as ReadonlyArray<string>).includes(value)
+}
+
 export type ModelEndpoint =
   | "chat"
   | "responses"

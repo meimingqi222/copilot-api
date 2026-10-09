@@ -13,6 +13,10 @@ import type {
 
 import { formatDateInTimeZone, resolveTimeZone } from "~/lib/stats/timezone"
 import { readGenerationSample } from "~/lib/stats/performance-generation"
+import {
+  providerBucketKey,
+  providerBucketLabel,
+} from "~/lib/stats/provider-labels"
 
 function emptyModelStats(): UsageModelStats {
   return {
@@ -140,12 +144,22 @@ export function computePerformanceByModel(
 }
 
 interface PerformanceByProviderModel extends PerformanceByModel {
+  /**
+   * 汇总键。account-managed 是 provider id；plain connection 是
+   * `connection:<id>`（见 provider-labels）。
+   */
   provider: string
+  /** 原始 `provider` 列值（plain connection 即 protocol），用于标签回退。 */
+  providerId: string
 }
 
 /**
  * Per-(provider, model) TTFT/TPS averages.同一模型在不同 provider
  * 的速度可能差很大，聚合时不能只按 model 分组。
+ *
+ * plain connection 按 connection 而不是 protocol 分组：否则 DeepSeek、火山
+ * 引擎、AiHubMix 全部塌进同一个 `openai-compatible` 桶，既分不清是谁，也
+ * 把各家的延迟混在一起求均值（见 lib/stats/provider-labels）。
  *
  * Same counting rule as `computePerformanceByModel`: a (provider, model) pair
  * is listed once it has a timed request, and then counts all of its rows.
@@ -153,31 +167,46 @@ interface PerformanceByProviderModel extends PerformanceByModel {
 export function computePerformanceByProviderModel(
   rows: Array<UsageRawRow>,
 ): Array<PerformanceByProviderModel> {
-  const keyOf = (row: UsageRawRow): string =>
-    (row.provider ?? "unknown") + "\0" + row.model
+  // 每行的汇总键只算一次：providerBucketKey 会查连接注册表，而旧实现把
+  // keyOf 调了三次（建 timedKeys 一遍、聚合一遍、键内再算一遍）。
+  const keys = rows.map((row) => providerBucketKey(row))
   const timedKeys = new Set<string>()
-  for (const row of rows) {
-    if (row.ttft_ms !== null || row.tps !== null) timedKeys.add(keyOf(row))
+  for (const [index, row] of rows.entries()) {
+    if (row.ttft_ms !== null || row.tps !== null) {
+      timedKeys.add(keys[index] + "\0" + row.model)
+    }
   }
   const byKey = new Map<
     string,
-    { acc: PerfAccumulator; provider: string; model: string }
+    {
+      acc: PerfAccumulator
+      provider: string
+      providerId: string
+      model: string
+    }
   >()
-  for (const row of rows) {
-    const key = keyOf(row)
+  for (const [index, row] of rows.entries()) {
+    const key = keys[index] + "\0" + row.model
     if (!timedKeys.has(key)) continue
-    const provider = row.provider ?? "unknown"
+    const provider = keys[index]
+    const providerId = row.provider ?? "unknown"
     let entry = byKey.get(key)
     if (!entry) {
-      entry = { acc: newPerfAccumulator(), provider, model: row.model }
+      entry = {
+        acc: newPerfAccumulator(),
+        provider,
+        providerId,
+        model: row.model,
+      }
       byKey.set(key, entry)
     }
     accumulatePerfRow(entry.acc, row)
   }
   return [...byKey.values()]
     .sort((left, right) => right.acc.requests - left.acc.requests)
-    .map(({ acc, provider, model }) => ({
+    .map(({ acc, provider, providerId, model }) => ({
       provider,
+      providerId,
       model,
       ...perfAverages(acc),
     }))
@@ -294,4 +323,145 @@ export function bucketRowsByInterval(
     slot.models[modelKey] = modelStats
   }
   return [...slots.values()].sort((a, b) => a.slotTs - b.slotTs)
+}
+
+export interface PerformanceTrendSlot {
+  slotTs: number
+  requests: number
+  streamingRequests: number
+  avgTtftMs: number | null
+  avgStreamingTps: number | null
+  avgDecodeTps: number | null
+  decodeSamples: number
+  avgNonStreamingTps: number | null
+}
+
+export interface PerformanceTrendProviderSeries {
+  provider: string
+  providerLabel: string
+  series: Array<PerformanceTrendSlot>
+}
+
+export interface PerformanceTrendResult {
+  model?: string
+  provider?: string
+  intervalMinutes: number
+  series: Array<PerformanceTrendSlot>
+  byProvider?: Array<PerformanceTrendProviderSeries>
+}
+
+export function computePerformanceTrend(options: {
+  rows: Array<UsageRawRow>
+  startMs: number
+  endMs: number
+  intervalMinutes: number
+  model?: string
+  provider?: string
+  alignMs?: number
+}): PerformanceTrendResult {
+  const { rows, startMs, endMs, model, provider } = options
+  let intervalMinutes = Math.max(1, options.intervalMinutes)
+  let intervalMs = intervalMinutes * 60 * 1000
+  const align = options.alignMs ?? 0
+
+  const effectiveEnd = Math.max(startMs, endMs)
+  let effectiveStartMs =
+    startMs > 0 ? startMs : (
+      (rows[0]?.timestamp ?? Math.max(0, effectiveEnd - 7 * 86_400_000))
+    )
+
+  if (effectiveEnd - effectiveStartMs < intervalMs) {
+    effectiveStartMs = Math.max(0, effectiveEnd - intervalMs)
+  }
+
+  // 避免跨度过长导致 slot 过多（上限 ~180 个点）
+  while ((effectiveEnd - effectiveStartMs) / intervalMs > 180) {
+    intervalMinutes *= 2
+    intervalMs = intervalMinutes * 60 * 1000
+  }
+
+  const firstSlot =
+    align + Math.floor((effectiveStartMs - align) / intervalMs) * intervalMs
+  const lastSlot =
+    align
+    + Math.floor(
+      (Math.max(effectiveStartMs, effectiveEnd - 1) - align) / intervalMs,
+    )
+      * intervalMs
+
+  const slotTimestamps: number[] = []
+  for (let t = firstSlot; t <= lastSlot; t += intervalMs) {
+    slotTimestamps.push(t)
+  }
+
+  // 总体 slot 累加器
+  const overallSlots = new Map<number, PerfAccumulator>()
+  for (const t of slotTimestamps) {
+    overallSlots.set(t, newPerfAccumulator())
+  }
+
+  // 分 provider 累加器映射
+  const providerIds = new Map<string, string>()
+  const providerSlots = new Map<string, Map<number, PerfAccumulator>>()
+
+  for (const row of rows) {
+    const slotTs =
+      align + Math.floor((row.timestamp - align) / intervalMs) * intervalMs
+    const overallAcc = overallSlots.get(slotTs)
+    if (overallAcc) {
+      accumulatePerfRow(overallAcc, row)
+    }
+
+    const pKey = providerBucketKey(row)
+    if (!providerIds.has(pKey)) {
+      providerIds.set(pKey, row.provider ?? "unknown")
+    }
+    let pSlotMap = providerSlots.get(pKey)
+    if (!pSlotMap) {
+      pSlotMap = new Map<number, PerfAccumulator>()
+      for (const t of slotTimestamps) {
+        pSlotMap.set(t, newPerfAccumulator())
+      }
+      providerSlots.set(pKey, pSlotMap)
+    }
+    const pAcc = pSlotMap.get(slotTs)
+    if (pAcc) {
+      accumulatePerfRow(pAcc, row)
+    }
+  }
+
+  const series: Array<PerformanceTrendSlot> = slotTimestamps.map((slotTs) => ({
+    slotTs,
+    ...perfAverages(overallSlots.get(slotTs)!),
+  }))
+
+  let byProvider: Array<PerformanceTrendProviderSeries> | undefined
+  if (!provider && providerSlots.size > 1) {
+    byProvider = [...providerSlots.entries()]
+      .map(([pKey, pSlotMap]) => {
+        const rawId = providerIds.get(pKey) ?? "unknown"
+        const pSeries = slotTimestamps.map((slotTs) => ({
+          slotTs,
+          ...perfAverages(pSlotMap.get(slotTs)!),
+        }))
+        return {
+          provider: pKey,
+          providerLabel: providerBucketLabel(pKey, rawId),
+          series: pSeries,
+        }
+      })
+      .sort((a, b) => {
+        const reqA = a.series.reduce((sum, s) => sum + s.requests, 0)
+        const reqB = b.series.reduce((sum, s) => sum + s.requests, 0)
+        return reqB - reqA
+      })
+  }
+
+  return {
+    model,
+    provider,
+    intervalMinutes,
+    series,
+    byProvider,
+  }
 }

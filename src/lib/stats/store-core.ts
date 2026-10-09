@@ -45,6 +45,8 @@ import {
   bucketRowsByInterval,
   computePerformanceByModel,
   computePerformanceByProviderModel,
+  computePerformanceTrend,
+  type PerformanceTrendResult,
   groupRowsByProvider,
   groupRowsByViewerDate,
 } from "~/lib/stats/range-query"
@@ -327,6 +329,50 @@ class StatsStore {
   getPerformanceInRange(options: { startMs: number; endMs: number }) {
     const rows = queryUsageRawRows(this.ensureDb(), options)
     return runPerformanceBundle(rows)
+  }
+
+  getPerformanceTrendInRange(options: {
+    startMs: number
+    endMs: number
+    intervalMinutes?: number
+    model?: string
+    provider?: string
+  }): PerformanceTrendResult {
+    const db = this.ensureDb()
+    const durationHours = (options.endMs - options.startMs) / (3600 * 1000)
+    let intervalMinutes = options.intervalMinutes
+    if (!intervalMinutes || intervalMinutes <= 0) {
+      if (durationHours <= 24) {
+        intervalMinutes = 30
+      } else if (durationHours <= 7 * 24) {
+        intervalMinutes = 120
+      } else {
+        intervalMinutes = 1440
+      }
+    }
+
+    const filter: Parameters<typeof queryUsageRawRows>[1] = {
+      startMs: options.startMs,
+      endMs: options.endMs,
+      model: options.model,
+    }
+    if (options.provider) {
+      if (options.provider.startsWith("connection:")) {
+        filter.connectionId = options.provider.slice("connection:".length)
+      } else {
+        filter.provider = options.provider
+      }
+    }
+
+    const rows = queryUsageRawRows(db, filter)
+    return computePerformanceTrend({
+      rows,
+      startMs: options.startMs,
+      endMs: options.endMs,
+      intervalMinutes,
+      model: options.model,
+      provider: options.provider,
+    })
   }
 
   getUsageStatsByIntervalInRange(options: {

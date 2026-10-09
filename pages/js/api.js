@@ -387,6 +387,20 @@ const API = {
       const query = qs.toString()
       return API.request(`/usage/performance${query ? "?" + query : ""}`)
     },
+    performanceTrend: (params = {}) => {
+      const qs = new URLSearchParams()
+      if (params.model) qs.set("model", params.model)
+      if (params.provider) qs.set("provider", params.provider)
+      if (params.range) qs.set("range", params.range)
+      if (params.month) qs.set("month", params.month)
+      if (params.startDate) qs.set("startDate", params.startDate)
+      if (params.endDate) qs.set("endDate", params.endDate)
+      if (params.intervalMinutes)
+        qs.set("intervalMinutes", params.intervalMinutes)
+      setViewerTimezone(qs)
+      const query = qs.toString()
+      return API.request(`/usage/performance/trend${query ? "?" + query : ""}`)
+    },
     getPricing: () => API.request("/usage/pricing"),
     updatePricing: (model, pricing) =>
       API.request(`/usage/pricing/${encodeURIComponent(model)}`, {

@@ -12,6 +12,11 @@ import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
 import { onStateChange } from "~/lib/state-events"
+import {
+  PROVIDER_LABELS,
+  providerBucketLabel,
+  providerSummaryLabel,
+} from "~/lib/stats/provider-labels"
 import { statsStore } from "~/lib/stats-store"
 import {
   addDays,
@@ -76,26 +81,10 @@ function buildModelProviderHintsUncached(): Map<string, ProviderId> {
 
 export const usageApiRoutes = new Hono()
 
-/** Friendly display names for provider ids (also covers "unknown" orphans). */
-const PROVIDER_LABELS: Record<string, string> = {
-  copilot: "GitHub Copilot",
-  claude: "Claude",
-  kimi: "Kimi",
-  xai: "xAI",
-  codex: "Codex",
-  windsurf: "Windsurf",
-  antigravity: "Antigravity",
-  codebuff: "Codebuff",
-  "mimo-aistudio": "Mimo Claw",
-  codebuddy: "CodeBuddy",
-  "codebuddy-cn": "CodeBuddy CN",
-  unknown: "Unknown",
-  // Protocol values used as provider for plain (non-account-managed) connections.
-  "openai-compatible": "OpenAI Compatible",
-  "openai-responses-compatible": "OpenAI Responses",
-  "anthropic-compatible": "Anthropic Compatible",
-}
-
+/**
+ * 已删除连接的 `provider` 列兜底名：连接不在了，拿不到真实上游，只能退回
+ * protocol 标签（活着的连接在调用方已经先用 connection.name 点名）。
+ */
 function providerLabel(providerId: string): string {
   return PROVIDER_LABELS[providerId] ?? providerId
 }
@@ -805,7 +794,7 @@ function aggregateByProvider(range: { startMs: number; endMs: number }) {
     }
 
     result[providerId] = {
-      label: providerLabel(providerId),
+      label: providerSummaryLabel(providerId, Object.keys(accounts)),
       ...enrichUsageMetrics({
         requests: provider.requests,
         promptTokens: provider.promptTokens,
@@ -960,8 +949,48 @@ usageApiRoutes.get("/performance", async (c) => {
       })),
       byProvider: byProvider.map((row) => ({
         ...row,
-        providerLabel: providerLabel(row.provider),
+        providerLabel: providerBucketLabel(row.provider, row.providerId),
       })),
+      period: { startDate, endDate, timeZone },
+    })
+  } catch (error) {
+    recordTraceError(c, error)
+    return forwardError(c, error)
+  }
+})
+
+// Get performance trend time-series for a model or provider (TTFT, TPS)
+usageApiRoutes.get("/performance/trend", async (c) => {
+  try {
+    const model = c.req.query("model")
+    const provider = c.req.query("provider")
+    const range = c.req.query("range") || "today"
+    const month = c.req.query("month")
+    const requestedStartDate = c.req.query("startDate")
+    const requestedEndDate = c.req.query("endDate")
+    const tz = c.req.query("tz")
+    const intervalParam = c.req.query("intervalMinutes")
+    const intervalMinutes =
+      intervalParam ? Number.parseInt(intervalParam, 10) : undefined
+
+    const { startDate, endDate, startMs, endMs, timeZone } = resolveDateRange({
+      range,
+      month,
+      startDate: requestedStartDate,
+      endDate: requestedEndDate,
+      tz,
+    })
+
+    const trend = statsStore.getPerformanceTrendInRange({
+      startMs,
+      endMs,
+      intervalMinutes,
+      model: model || undefined,
+      provider: provider || undefined,
+    })
+
+    return c.json({
+      ...trend,
       period: { startDate, endDate, timeZone },
     })
   } catch (error) {

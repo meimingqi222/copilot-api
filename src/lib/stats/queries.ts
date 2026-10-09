@@ -311,6 +311,9 @@ class UsageRangeTooLargeError extends HTTPError {
 interface UsageRawRowFilter {
   accountId?: string
   userId?: string
+  model?: string
+  provider?: string
+  connectionId?: string
   startMs: number
   endMs: number
 }
@@ -341,6 +344,17 @@ export function queryUsageRawRows(
   if (filter.userId) {
     countFilter += " AND user_id = ?"
     countParams.push(filter.userId)
+  }
+  if (filter.model) {
+    countFilter += " AND model = ?"
+    countParams.push(filter.model)
+  }
+  if (filter.connectionId) {
+    countFilter += " AND connection_id = ?"
+    countParams.push(filter.connectionId)
+  } else if (filter.provider) {
+    countFilter += " AND provider = ?"
+    countParams.push(filter.provider)
   }
   const countRow = db.prepare(countQuery + countFilter).get(...countParams) as {
     count: number
@@ -380,6 +394,17 @@ export function queryUsageRawRows(
   if (filter.userId) {
     query += " AND user_id = ?"
     params.push(filter.userId)
+  }
+  if (filter.model) {
+    query += " AND model = ?"
+    params.push(filter.model)
+  }
+  if (filter.connectionId) {
+    query += " AND connection_id = ?"
+    params.push(filter.connectionId)
+  } else if (filter.provider) {
+    query += " AND provider = ?"
+    params.push(filter.provider)
   }
   query += " ORDER BY timestamp ASC"
   const stmt = db.prepare(query)

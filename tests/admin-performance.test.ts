@@ -2,8 +2,12 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { state } from "~/lib/state"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import {
   getProviderConnection,
+  isAccountManagedConnection,
+  listProviderConnections,
+  removeProviderConnection,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { statsStore } from "~/lib/stats-store"
@@ -40,7 +44,11 @@ type PerformanceResponse = {
   }>
   performance: Array<PerformanceRow>
   byProvider: Array<
-    PerformanceRow & { provider: string; providerLabel: string }
+    PerformanceRow & {
+      provider: string
+      providerId: string
+      providerLabel: string
+    }
   >
 }
 
@@ -204,6 +212,11 @@ test("performance API exposes segmented new samples without inventing historical
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
   setTestAccounts(originalAccounts)
+  // setTestAccounts 只清理 account-managed 连接；测试里临时插进来的 plain
+  // connection 必须自己收尾，否则会漏进下一个用例。
+  for (const conn of listProviderConnections()) {
+    if (!isAccountManagedConnection(conn)) removeProviderConnection(conn.id)
+  }
   state.legacyApiKey = originalApiKey
   state.adminPassword = originalAdminPassword
   state.users = originalUsers
@@ -432,4 +445,238 @@ test("GET /admin/api/usage/performance counts untimed requests, averages only ti
     requests: 2,
     streamingRequests: 1,
   })
+})
+
+// ── plain connection 的供应商名 ──────────────────────────────────
+// `provider` 列对 plain connection 存的是 protocol（openai-compatible），
+// 不是服务商。汇总必须下沉到 connection，否则 DeepSeek / 火山引擎 /
+// AiHubMix 全塌成一个「OpenAI Compatible」。
+
+let plainConnectionSeq = 0
+
+function addPlainConnection(name: string): string {
+  const id = `plain-${++plainConnectionSeq}`
+  const connection: ProviderConnection = {
+    id,
+    name,
+    protocol: "openai-compatible",
+    baseUrl: "https://plain.invalid/v1",
+    enabled: true,
+    priority: 10,
+    credentials: [
+      {
+        id: `${id}-cred`,
+        label: "key",
+        authMode: "bearer",
+        value: "sk-test",
+        enabled: true,
+        priority: 0,
+        status: "ready",
+        createdAt: Date.now(),
+      },
+    ],
+    createdAt: Date.now(),
+  }
+  upsertProviderConnection(connection)
+  return id
+}
+
+function recordPlainUsage(
+  connectionId: string,
+  model: string,
+  ttftMs: number,
+): void {
+  const timestamp = Date.now()
+  statsStore.recordUsage({
+    date: statsStore.getDateString(timestamp),
+    accountId: connectionId,
+    connectionId,
+    provider: "openai-compatible",
+    model,
+    promptTokens: 10,
+    completionTokens: 20,
+    totalTokens: 30,
+    timestamp,
+    ttftMs,
+    tps: 50,
+    streaming: true,
+  })
+}
+
+test("performance by-provider names the real upstream instead of the protocol", async () => {
+  const deepseek = addPlainConnection("DeepSeek (深度求索)")
+  recordPlainUsage(deepseek, "deepseek-v4.1-flash", 400)
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  const body = (await response.json()) as PerformanceResponse
+  const row = body.byProvider.find((it) => it.model === "deepseek-v4.1-flash")
+  expect(row).toBeDefined()
+  // 标签是连接名（默认就是预设的服务商名），不再是 "OpenAI Compatible"。
+  expect(row?.providerLabel).toBe("DeepSeek (深度求索)")
+  expect(row?.provider).toBe(`connection:${deepseek}`)
+  expect(row?.providerId).toBe("openai-compatible")
+})
+
+test("performance by-provider keeps distinct upstreams apart instead of merging them", async () => {
+  const deepseek = addPlainConnection("DeepSeek (深度求索)")
+  const volcengine = addPlainConnection("火山引擎 (豆包)")
+  // 两个不同上游服务同一个模型：必须拆成两行，不能混在一起求均值。
+  recordPlainUsage(deepseek, "shared-model", 200)
+  recordPlainUsage(volcengine, "shared-model", 2000)
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  const body = (await response.json()) as PerformanceResponse
+  const rows = body.byProvider.filter((it) => it.model === "shared-model")
+  expect(rows).toHaveLength(2)
+  expect(rows.map((it) => it.providerLabel).sort()).toEqual([
+    "DeepSeek (深度求索)",
+    "火山引擎 (豆包)",
+  ])
+  // 各自只含自己的样本，没有被对方的 2000ms 拖均值。
+  expect(
+    rows.find((it) => it.providerLabel === "DeepSeek (深度求索)")?.avgTtftMs,
+  ).toBe(200)
+  expect(
+    rows.find((it) => it.providerLabel === "火山引擎 (豆包)")?.avgTtftMs,
+  ).toBe(2000)
+})
+
+test("performance by-provider falls back to the protocol label for deleted upstreams", async () => {
+  const gone = addPlainConnection("AiHubMix")
+  recordPlainUsage(gone, "gpt-4o-mini", 300)
+  // 连接删掉后无法归因：仍旧按 protocol 合并，显示层退回协议标签。
+  removeProviderConnection(gone)
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  const body = (await response.json()) as PerformanceResponse
+  const row = body.byProvider.find((it) => it.model === "gpt-4o-mini")
+  expect(row?.providerLabel).toBe("OpenAI Compatible")
+  expect(row?.provider).toBe("openai-compatible")
+})
+
+test("usage summary names the single upstream behind a compatible protocol", async () => {
+  const cline = addPlainConnection("Cline Pass")
+  recordPlainUsage(cline, "gpt-4o-mini", 300)
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/summary?range=all"),
+  )
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as {
+    byProvider: Record<string, { label: string }>
+  }
+  expect(body.byProvider["openai-compatible"]?.label).toBe("Cline Pass")
+})
+
+test("usage summary keeps the protocol label when a protocol serves several upstreams", async () => {
+  const cline = addPlainConnection("Cline Pass")
+  const aihubmix = addPlainConnection("AiHubMix")
+  recordPlainUsage(cline, "gpt-4o-mini", 300)
+  recordPlainUsage(aihubmix, "gpt-4o-mini", 900)
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/summary?range=all"),
+  )
+  const body = (await response.json()) as {
+    byProvider: Record<string, { label: string }>
+  }
+  // 混合汇总点名会把 A 的用量安到 B 头上，保留协议标签；具体上游在嵌套行里。
+  expect(body.byProvider["openai-compatible"]?.label).toBe("OpenAI Compatible")
+})
+
+// ── 性能趋势接口测试 ──────────────────────────────────────────────
+
+test("GET /admin/api/usage/performance/trend returns continuous slot series for a model", async () => {
+  const baseTime = Date.now() - 3600 * 1000 * 5
+  statsStore.recordUsage({
+    date: statsStore.getDateString(baseTime),
+    accountId: "test-acc",
+    provider: "openai-compatible",
+    model: "trend-model",
+    promptTokens: 10,
+    completionTokens: 100,
+    totalTokens: 110,
+    timestamp: baseTime,
+    ttftMs: 500,
+    tps: 50,
+    streaming: true,
+  })
+  statsStore.recordUsage({
+    date: statsStore.getDateString(baseTime + 3600 * 1000 * 2),
+    accountId: "test-acc",
+    provider: "openai-compatible",
+    model: "trend-model",
+    promptTokens: 10,
+    completionTokens: 200,
+    totalTokens: 210,
+    timestamp: baseTime + 3600 * 1000 * 2,
+    ttftMs: 300,
+    tps: 100,
+    streaming: true,
+  })
+
+  const response = await server.fetch(
+    adminRequest(
+      "http://localhost/admin/api/usage/performance/trend?model=trend-model&range=all&intervalMinutes=60",
+    ),
+  )
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as {
+    model: string
+    intervalMinutes: number
+    series: Array<{
+      slotTs: number
+      requests: number
+      avgStreamingTps: number | null
+      avgTtftMs: number | null
+    }>
+  }
+  expect(body.model).toBe("trend-model")
+  expect(body.series.length).toBeGreaterThanOrEqual(3)
+
+  // 包含有数据的槽
+  const activeSlots = body.series.filter((s) => s.requests > 0)
+  expect(activeSlots.length).toBe(2)
+  expect(activeSlots[0]?.avgStreamingTps).toBe(50)
+  expect(activeSlots[0]?.avgTtftMs).toBe(500)
+  expect(activeSlots[1]?.avgStreamingTps).toBe(100)
+  expect(activeSlots[1]?.avgTtftMs).toBe(300)
+
+  // 包含空隙槽（无请求时为 null）
+  const emptySlots = body.series.filter((s) => s.requests === 0)
+  expect(emptySlots.length).toBeGreaterThan(0)
+  expect(emptySlots[0]?.avgStreamingTps).toBeNull()
+})
+
+test("GET /admin/api/usage/performance/trend includes byProvider breakdown for multi-provider models", async () => {
+  const deepseek = addPlainConnection("DeepSeek Test")
+  const volcengine = addPlainConnection("Volcengine Test")
+  recordPlainUsage(deepseek, "multi-upstream-model", 200)
+  recordPlainUsage(volcengine, "multi-upstream-model", 800)
+
+  const response = await server.fetch(
+    adminRequest(
+      "http://localhost/admin/api/usage/performance/trend?model=multi-upstream-model&range=all",
+    ),
+  )
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as {
+    model: string
+    series: Array<{ requests: number }>
+    byProvider?: Array<{
+      provider: string
+      providerLabel: string
+      series: Array<{ requests: number }>
+    }>
+  }
+  expect(body.byProvider).toBeDefined()
+  expect(body.byProvider?.length).toBe(2)
+  const labels = body.byProvider?.map((p) => p.providerLabel).sort()
+  expect(labels).toEqual(["DeepSeek Test", "Volcengine Test"])
 })
