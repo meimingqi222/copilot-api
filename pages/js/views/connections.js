@@ -155,7 +155,7 @@ function connectionsView() {
         this.showToast(e.message || "Failed to load connections", "error")
       } finally {
         this.loading = false
-        this.$nextTick(() => refreshAdminIcons(this.$el))
+        this.$nextTick(() => refreshAdminIcons(this.$root))
       }
     },
 

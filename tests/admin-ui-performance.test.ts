@@ -125,6 +125,71 @@ describe("channels table row disclosure", () => {
 })
 
 describe("incremental admin icons", () => {
+  test("saving a connection from a modal renders the new card's action icons", async () => {
+    const frames: Array<() => void> = []
+    const icon = {
+      localName: "i",
+      getAttribute: () => "pencil",
+      setAttribute: () => {},
+    }
+    const root = {
+      isConnected: true,
+      contains: () => false,
+      querySelectorAll: () => [icon],
+    }
+    // Alpine's $el is the clicked modal button, not the connections component.
+    const button = {
+      isConnected: true,
+      contains: () => false,
+      querySelectorAll: () => [],
+    }
+    const connection = { id: "new-connection" }
+    const view = runInNewContext(
+      readFileSync("pages/js/admin-icons.js", "utf8")
+        + "\n"
+        + readFileSync("pages/js/views/connections.js", "utf8")
+        + "\nconnectionsView()",
+      {
+        ViewHelpers: { showToast: () => {} },
+        API: {
+          providerConnections: {
+            create: async () => ({ connection }),
+            list: async () => ({ connections: [connection] }),
+            presets: async () => ({ presets: [] }),
+          },
+        },
+        requestAnimationFrame: (callback: () => void) => frames.push(callback),
+        lucide: {
+          createIcons(options: {
+            root: { querySelectorAll(selector: string): Array<typeof icon> }
+          }) {
+            for (const node of options.root.querySelectorAll("[data-lucide]"))
+              node.localName = "svg"
+          },
+        },
+      },
+    ) as {
+      $root: typeof root
+      $el: typeof button
+      $nextTick(callback: () => void): void
+      connForm: { name: string; baseUrl: string }
+      connections: Array<typeof connection>
+      showConnModal: boolean
+      saveConn(): Promise<void>
+    }
+    view.$root = root
+    view.$el = button
+    view.$nextTick = (callback) => callback()
+    view.connForm.name = "New endpoint"
+    view.connForm.baseUrl = "https://example.invalid/v1"
+    view.showConnModal = true
+    await view.saveConn()
+    for (const frame of frames) frame()
+    expect(view.connections).toEqual([connection])
+    expect(view.showConnModal).toBe(false)
+    expect(icon.localName).toBe("svg")
+  })
+
   test("coalesces refreshes and preserves unchanged SVG nodes and bindings", () => {
     const frames: Array<() => void> = []
     let replacements = 0
