@@ -303,6 +303,7 @@ describe("connections view keyless flow", () => {
     selectedModelIds: Array<string>
     selectedPreset: ProviderPreset | null
     selectPreset(preset: ProviderPreset): void
+    openEdit(connection: Record<string, unknown>): void
     customHeadersToRecord(): Record<string, string> | undefined
     fetchRemoteModels(): Promise<void>
     saveConn(): Promise<void>
@@ -336,6 +337,7 @@ describe("connections view keyless flow", () => {
     ) as ConnectionView & { $nextTick: () => void; showToast(): void }
     view.$nextTick = () => {}
     view.showToast = () => {}
+    Object.assign(view, { t: (key: string) => key })
     return view
   }
 
@@ -369,5 +371,64 @@ describe("connections view keyless flow", () => {
       mode: "manual-only",
       freeOnly: true,
     })
+  })
+
+  test("saved keyless connections can probe models while editing and preserve freeOnly", async () => {
+    for (const protocol of ["openai-compatible", "opencode-zen-free"]) {
+      const requests: Array<{
+        method: string
+        payload: Record<string, unknown>
+      }> = []
+      const view = createView(requests)
+      view.openEdit({
+        id: "free-lane",
+        name: "Free lane",
+        protocol,
+        baseUrl: "https://example.test",
+        credentials: [],
+        models: [],
+        modelDiscovery: { enabled: true, mode: "manual-only", freeOnly: true },
+      })
+      await view.fetchRemoteModels()
+      expect(requests.map((request) => request.method)).toEqual(["fetch"])
+      expect(requests[0]!.payload.apiKey).toBe("")
+      expect(requests[0]!.payload.freeOnly).toBe(true)
+    }
+  })
+
+  test("keyless discovery does not imply freeOnly for custom endpoints", async () => {
+    const requests: Array<{
+      method: string
+      payload: Record<string, unknown>
+    }> = []
+    const view = createView(requests)
+    view.openEdit({
+      id: "custom",
+      name: "Custom",
+      protocol: "openai-compatible",
+      baseUrl: "https://example.test",
+      credentials: [],
+      models: [],
+    })
+    await view.fetchRemoteModels()
+    expect(requests.map((request) => request.method)).toEqual(["fetch"])
+    expect(requests[0]!.payload.freeOnly).toBeUndefined()
+  })
+
+  test("missing credentials do not bypass the editor API key requirement", async () => {
+    const requests: Array<{
+      method: string
+      payload: Record<string, unknown>
+    }> = []
+    const view = createView(requests)
+    view.openEdit({
+      id: "incomplete",
+      name: "Incomplete",
+      protocol: "openai-compatible",
+      baseUrl: "https://example.test",
+      models: [],
+    })
+    await view.fetchRemoteModels()
+    expect(requests).toEqual([])
   })
 })

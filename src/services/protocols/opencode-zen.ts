@@ -606,7 +606,6 @@ export function restoreAndFilterToolStream(
   stream: AsyncIterable<CopilotStreamEvent>,
   wire: ZenToolWire,
 ): AsyncIterable<CopilotStreamEvent> {
-  if (wire.rename.size === 0 && wire.declared.size === 0) return stream
   const filter = createToolCallFilter(wire)
   // Responses 线按 output_index 记住要整条丢掉的 function_call
   const droppedOutputs = new Set<number>()
@@ -652,6 +651,7 @@ export function restoreAndFilterToolStream(
           }
         } else if (
           type === "response.function_call_arguments.delta"
+          || type === "response.function_call_arguments.done"
           || type === "response.output_item.done"
         ) {
           const index = root.output_index
@@ -690,6 +690,8 @@ export function restoreAndFilterToolStream(
 
 /** 这一帧去掉占位调用之后,还剩不值得发的内容吗? */
 function hasStreamContent(root: Record<string, unknown>): boolean {
+  // 独立 usage 末帧没有 choices 内容,但客户端和统计仍然需要它。
+  if (root.usage) return true
   const choices = root.choices
   if (Array.isArray(choices)) {
     for (const choice of choices) {

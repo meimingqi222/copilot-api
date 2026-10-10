@@ -270,8 +270,9 @@ function connectionsView() {
         || form.baseUrl.includes("127.0.0.1")
       // 免费车道(Kilo 公共网关这类匿名上游)没有 Key 可填:上游要么完全匿名,
       // 要么用连接上的固定公共池凭据。仍按老规矩拦一次性写死的 key,只是把
-      // 「必须有 key」放宽到「keyless 预设除外」。
-      const isKeyless = Boolean(preset?.keyless)
+      // 「必须有 key」放宽到免密预设或已保存的免密连接。
+      const isKeyless = Boolean(preset?.keyless || form._keyless)
+      const freeOnly = Boolean(preset?.keyless || form._freeOnly)
       if (!form.apiKey && !form._credentialId && !isLocal && !isKeyless) {
         this.showToast(
           this.t("connections.apiKeyRequiredForFetch")
@@ -297,7 +298,7 @@ function connectionsView() {
           headerName,
           // 免费车道的 /models 混着大量匿名必 401 的付费 id,只保留上游
           // 自己标记 isFree 的那一片
-          ...(isKeyless ? { freeOnly: true } : {}),
+          ...(freeOnly ? { freeOnly: true } : {}),
           // 探测走与落库相同的固定请求头：Kimi Coding 的端点对裸客户端
           // 直接 403，不带头部探测会“表单里能拉模型、保存后请求全挂”。
           headers: this.customHeadersToRecord(),
@@ -450,6 +451,10 @@ function connectionsView() {
         stripPreviousResponseId: conn.stripPreviousResponseId === true,
         apiKey: "",
         _credentialId: conn.credentials?.[0]?.id || null,
+        // 编辑时不依赖预设:空凭据数组是已保存连接的免密声明。
+        _keyless:
+          Array.isArray(conn.credentials) && conn.credentials.length === 0,
+        _freeOnly: conn.modelDiscovery?.freeOnly === true,
         customHeaders: headerEntries.map(([key, value]) => ({ key, value })),
       }
       this.selectedPresetId = ""

@@ -328,18 +328,70 @@ describe("free lane tool fingerprint", () => {
     expect((anthropic.tool_choice as { name: string }).name).toBe("bash")
   })
 
-  test("an empty rename map leaves the stream untouched", async () => {
+  test("a tool-free Responses stream suppresses decoy calls and keeps text and completion", async () => {
+    const wire = applyFreeTierFingerprint({}, "responses")
+    const decoy = {
+      type: "function_call",
+      name: "bash",
+      call_id: "call_x",
+      arguments: "{}",
+    }
+    const events = [
+      { type: "response.output_item.added", output_index: 0, item: decoy },
+      {
+        type: "response.function_call_arguments.delta",
+        output_index: 0,
+        delta: "{}",
+      },
+      {
+        type: "response.function_call_arguments.done",
+        output_index: 0,
+        arguments: "{}",
+      },
+      { type: "response.output_item.done", output_index: 0, item: decoy },
+      { type: "response.output_text.delta", output_index: 1, delta: "hello" },
+      {
+        type: "response.completed",
+        response: {
+          output: [decoy],
+          usage: { input_tokens: 10, output_tokens: 2 },
+        },
+      },
+    ]
     async function* source(): AsyncIterable<{ data?: string }> {
-      yield { data: '{"choices":[]}' }
+      for (const event of events) yield { data: JSON.stringify(event) }
+    }
+    const seen: Array<Record<string, unknown>> = []
+    for await (const event of restoreAndFilterToolStream(source(), wire)) {
+      seen.push(JSON.parse(event.data!) as Record<string, unknown>)
+    }
+    expect(seen.map((event) => event.type)).toEqual([
+      "response.output_text.delta",
+      "response.completed",
+    ])
+    expect(seen[1]!.response).toEqual({
+      output: [],
+      usage: { input_tokens: 10, output_tokens: 2 },
+    })
+  })
+
+  test("a Chat tool stream preserves standalone usage frames", async () => {
+    const wire = applyFreeTierFingerprint(
+      { tools: [{ type: "function", function: { name: "get_weather" } }] },
+      "chat",
+    )
+    const usage = {
+      choices: [],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    }
+    async function* source(): AsyncIterable<{ data?: string }> {
+      yield { data: JSON.stringify(usage) }
+      yield { data: "[DONE]" }
     }
     const seen: Array<string | undefined> = []
-    for await (const event of restoreAndFilterToolStream(
-      source() as unknown as AsyncIterable<{ data?: string }>,
-      { rename: new Map(), declared: new Set() },
-    )) {
+    for await (const event of restoreAndFilterToolStream(source(), wire))
       seen.push(event.data)
-    }
-    expect(seen).toEqual(['{"choices":[]}'])
+    expect(seen).toEqual([JSON.stringify(usage), "[DONE]"])
   })
 
   test("a decoy call is dropped whole, arguments included", async () => {
