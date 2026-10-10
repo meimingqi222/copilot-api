@@ -362,6 +362,96 @@ describe("Responses IR result and stream codec", () => {
     ).toBe(true)
   })
 
+  test("turns image_generation_call into an image the client can render", () => {
+    const response: ResponsesResponse = {
+      id: "img1",
+      model: "test-model",
+      status: "completed",
+      output: [
+        {
+          type: "image_generation_call",
+          id: "ig_1",
+          status: "generating",
+          output_format: "png",
+          result: "aGVsbG8=",
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "done" }],
+        },
+      ],
+    }
+    const ir = decodeResponsesResult(response)
+    expect(ir.parts[0]).toEqual({
+      type: "image",
+      id: "ig_1",
+      source: { type: "base64", mediaType: "image/png", data: "aGVsbG8=" },
+    })
+    const encoded = encodeResponsesResult(ir)
+    expect(JSON.stringify(encoded.output)).not.toContain(
+      "image_generation_call",
+    )
+    expect(encoded.output?.[0]).toMatchObject({
+      type: "message",
+      status: "completed",
+      content: [
+        { type: "output_image", image_url: "data:image/png;base64,aGVsbG8=" },
+      ],
+    })
+  })
+
+  test("recovers an image that arrives only on output_item.done", async () => {
+    async function* upstream() {
+      yield {
+        data: JSON.stringify({
+          type: "response.output_item.done",
+          output_index: 0,
+          item: {
+            type: "image_generation_call",
+            id: "ig_done",
+            status: "generating",
+            output_format: "jpeg",
+            result: "aW1n",
+          },
+        }),
+      }
+      yield {
+        data: JSON.stringify({
+          type: "response.completed",
+          response: {
+            id: "img-stream",
+            model: "test-model",
+            status: "completed",
+            output: [],
+          },
+        }),
+      }
+    }
+    const decoded: Array<StreamEvent> = []
+    for await (const item of decodeResponsesStream(upstream(), "test-model"))
+      decoded.push(item)
+    expect(decoded.find((item) => item.type === "part_start")).toMatchObject({
+      part: {
+        type: "image",
+        source: { type: "base64", mediaType: "image/jpeg", data: "aW1n" },
+      },
+    })
+    const wire: Array<CopilotStreamEventLike> = []
+    async function* events() {
+      for (const item of decoded) yield item
+    }
+    for await (const item of encodeResponsesStream(events())) wire.push(item)
+    const types = wire.map((item) => JSON.parse(item.data ?? "{}").type)
+    expect(types).toContain("response.output_item.done")
+    expect(wire.map((item) => item.data ?? "").join("\n")).not.toContain(
+      "image_generation_call",
+    )
+    expect(wire.map((item) => item.data ?? "").join("\n")).toContain(
+      "output_image",
+    )
+  })
+
   test("uses a terminal-only response without losing content", async () => {
     async function* terminal() {
       yield {

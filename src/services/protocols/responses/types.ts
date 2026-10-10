@@ -72,6 +72,19 @@ interface ResponsesWebSearchCallItem {
   action?: unknown
 }
 
+/**
+ * Codex image tool result. Decoded into an image part before any client sees
+ * it; the type stays so a raw upstream response can be parsed.
+ */
+interface ResponsesImageGenerationCallItem {
+  type: "image_generation_call"
+  id?: string
+  status?: string
+  result?: string
+  output_format?: string
+  revised_prompt?: string
+}
+
 interface ResponsesTextConfig {
   format:
     | { type: "text" }
@@ -225,6 +238,7 @@ export interface ResponsesResponse {
     | ResponsesFunctionCallItem
     | ResponsesReasoningItem
     | ResponsesWebSearchCallItem
+    | ResponsesImageGenerationCallItem
   >
   output_text?: string
   incomplete_details?: {

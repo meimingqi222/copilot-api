@@ -11,6 +11,10 @@ import type {
   RequestIR,
   ResultIR,
 } from "~/services/ir/types"
+import {
+  imagePartFromGenerationCall,
+  responsesImageMessage,
+} from "~/services/ir/image-generation"
 
 type WireRecord = Record<string, unknown>
 
@@ -131,6 +135,9 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
           parts.push({ type: "text", text: part.text })
         }
       }
+    } else if (item.type === "image_generation_call") {
+      const image = imagePartFromGenerationCall(item)
+      if (image) parts.push(image)
     } else if (item.type === "function_call") {
       const callId = text(item.call_id) ?? text(item.id)
       const name = text(item.name)
@@ -214,6 +221,8 @@ function responseItem(
     }
   }
   if (part.type === "server_tool_use") return webSearchCallItem(part, part.id)
+  if (part.type === "image")
+    return responsesImageMessage(part, part.id ?? `img_${responseId}_${index}`)
   return undefined
 }
 

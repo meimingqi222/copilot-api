@@ -152,6 +152,7 @@ export type AnthropicUserContentBlock =
 
 export type AnthropicAssistantContentBlock =
   | AnthropicTextBlock
+  | AnthropicImageBlock
   | AnthropicToolUseBlock
   | AnthropicThinkingBlock
   | AnthropicServerToolUseBlock
@@ -221,6 +222,7 @@ interface AnthropicContentBlockStartEvent {
   // signature_delta event - never in content_block_start. Do not add signature here.
   content_block:
     | { type: "text"; text: string }
+    | AnthropicImageBlock
     | (Omit<AnthropicToolUseBlock, "input"> & {
         input: Record<string, unknown>
       })

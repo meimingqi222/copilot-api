@@ -12,6 +12,10 @@ import type {
 } from "~/services/ir/types"
 
 import {
+  imagePartFromGenerationCall,
+  responsesImageMessage,
+} from "~/services/ir/image-generation"
+import {
   decodeResponsesResult,
   encodeResponsesResult,
   restoreResponsesToolNamespace,
@@ -57,6 +61,8 @@ function decodeAddedPart(
 ): IRPart | undefined {
   if (item.type === "message") return { type: "text", text: "" }
   if (item.type === "reasoning") return { type: "thinking", text: "", source }
+  if (item.type === "image_generation_call")
+    return imagePartFromGenerationCall(item)
   if (item.type !== "function_call") return undefined
   const namespace = text(item.namespace)
   const name = text(item.name) ?? "unknown_function"
@@ -222,9 +228,23 @@ export async function* decodeResponsesStream(
       continue
     }
     if (type === "response.output_item.done") {
-      const index = number(wire.output_index)
-      const current = index !== undefined ? started.get(index) : undefined
-      if (current && index !== undefined) {
+      const index = number(wire.output_index) ?? nextIndex++
+      nextIndex = Math.max(nextIndex, index + 1)
+      const item = record(wire.item)
+      let current = started.get(index)
+      // Image results often arrive only on `output_item.done`, with no
+      // preceding `added` event the client can render.
+      if (!current && item?.type === "image_generation_call") {
+        const part = imagePartFromGenerationCall(item)
+        if (part) {
+          const partId = text(item.id) ?? `image_${index}`
+          current = { id: partId, part }
+          started.set(index, current)
+          populated.add(index)
+          yield { type: "part_start", partId, index, part }
+        }
+      }
+      if (current) {
         yield { type: "part_end", partId: current.id, index }
         started.delete(index)
       }
@@ -382,6 +402,14 @@ export async function* encodeResponsesStream(
             role: "assistant",
             content: [],
           },
+        })
+      } else if (part.type === "image") {
+        // The bytes are complete at start; emit a finished image message
+        // instead of an `image_generation_call` the client cannot render.
+        yield event("response.output_item.done", {
+          response_id: responseId,
+          output_index: current.index,
+          item: responsesImageMessage(part, current.partId),
         })
       } else if (part.type === "tool_call") {
         yield event("response.output_item.added", {

@@ -12,6 +12,10 @@ import type {
 
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
+  imagePartToChat,
+  imagePartToMessages,
+} from "~/services/ir/image-generation"
+import {
   extractReasoningBlockText,
   extractReasoningTextAlias,
   extractSignatureAlias,
@@ -206,7 +210,10 @@ export function encodeMessagesResponse(ir: ResultIR): AnthropicResponse {
       })
     else if (part.type === "text")
       content.push({ type: "text", text: part.text })
-    else if (part.type === "server_tool_use")
+    else if (part.type === "image") {
+      const image = imagePartToMessages(part)
+      if (image) content.push(image)
+    } else if (part.type === "server_tool_use")
       content.push({
         type: "server_tool_use",
         id: sanitizeId(part.id),
@@ -259,6 +266,18 @@ export function encodeMessagesResponse(ir: ResultIR): AnthropicResponse {
 export function decodeMessagesResponse(response: AnthropicResponse): ResultIR {
   const parts: Array<IRPart> = response.content.map((block) => {
     if (block.type === "text") return { type: "text", text: block.text }
+    if (block.type === "image") {
+      if (block.source.type === "url")
+        return { type: "image", source: { type: "url", url: block.source.url } }
+      return {
+        type: "image",
+        source: {
+          type: "base64",
+          mediaType: block.source.media_type,
+          data: block.source.data,
+        },
+      }
+    }
     if (block.type === "thinking")
       return {
         type: "thinking",
@@ -321,6 +340,9 @@ export function encodeChatResponse(ir: ResultIR): ChatCompletionResponse {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("")
+  const images = ir.parts
+    .filter((part) => part.type === "image")
+    .map((part) => imagePartToChat(part))
   const thinking = ir.parts.filter((part) => part.type === "thinking")
   const hasThinkingAfterText = ir.parts.some(
     (part, index) =>
@@ -330,6 +352,7 @@ export function encodeChatResponse(ir: ResultIR): ChatCompletionResponse {
   const ordered: Array<ContentPart> = ir.parts.flatMap(
     (part): Array<ContentPart> => {
       if (part.type === "text") return [{ type: "text", text: part.text }]
+      if (part.type === "image") return [imagePartToChat(part)]
       if (part.type === "thinking")
         return [
           {
@@ -362,7 +385,11 @@ export function encodeChatResponse(ir: ResultIR): ChatCompletionResponse {
         index: 0,
         message: {
           role: "assistant",
-          content: hasThinkingAfterText ? ordered : text || null,
+          content:
+            hasThinkingAfterText ? ordered
+            : images.length > 0 ?
+              [...(text ? [{ type: "text" as const, text }] : []), ...images]
+            : text || null,
           ...(thinking.length > 0 && {
             reasoning_content: thinking.map((part) => part.text).join(""),
             ...(thinking.length > 1 && {

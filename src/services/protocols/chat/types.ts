@@ -46,7 +46,7 @@ interface ChatCompletionReasoningDetail {
 }
 
 interface Delta {
-  content?: string | null
+  content?: string | Array<ContentPart> | null
   role?: "user" | "assistant" | "system" | "tool"
   tool_calls?: Array<{
     index: number

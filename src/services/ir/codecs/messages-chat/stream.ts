@@ -13,6 +13,10 @@ import type {
 
 import { sanitizeId } from "~/lib/id-sanitizer"
 import {
+  imagePartToChat,
+  imagePartToMessages,
+} from "~/services/ir/image-generation"
+import {
   extractReasoningBlockText,
   extractReasoningTextAlias,
   extractSignatureAlias,
@@ -240,7 +244,7 @@ export async function* decodeChatStream(
           index: open.index,
           delta: { type: "signature", text: signature },
         }
-      if (delta.content) {
+      if (typeof delta.content === "string" && delta.content) {
         if (open?.type !== "text") {
           const previous = close()
           if (previous) yield previous
@@ -530,6 +534,14 @@ export async function* encodeMessagesStream(
             index: event.index,
             delta: { type: "input_json_delta", partial_json: part.arguments },
           }
+      } else if (part.type === "image") {
+        const image = imagePartToMessages(part)
+        if (!image) continue
+        yield {
+          type: "content_block_start",
+          index: event.index,
+          content_block: image,
+        }
       } else if (part.type === "text") {
         yield {
           type: "content_block_start",
@@ -710,6 +722,10 @@ export async function* encodeChatStream(
             ],
           }),
         ),
+      }
+    } else if (event.type === "part_start" && event.part.type === "image") {
+      yield {
+        data: JSON.stringify(chunk({ content: [imagePartToChat(event.part)] })),
       }
     } else if (
       event.type === "part_start"

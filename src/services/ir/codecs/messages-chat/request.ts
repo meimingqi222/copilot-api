@@ -243,6 +243,7 @@ export function decodeMessagesRequest(
               name: block.name,
               input: JSON.stringify(block.input ?? {}),
             }
+          if (block.type === "image") return imageFromMessages(block)
           return {
             type: "tool_call",
             id: block.id,

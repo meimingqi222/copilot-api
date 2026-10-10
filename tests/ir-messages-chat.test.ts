@@ -324,6 +324,44 @@ describe("Messages and Chat IR codecs", () => {
     ])
   })
 
+  test("renders a generated image as a Messages image block", () => {
+    const ir = {
+      id: "img",
+      model: "gpt-5.4",
+      source: { wire: "responses" as const },
+      parts: [
+        {
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            mediaType: "image/png",
+            data: "aGVsbG8=",
+          },
+        },
+        { type: "text" as const, text: "here" },
+      ],
+      stop: { reason: "complete" as const },
+    }
+    expect(encodeMessagesResponse(ir).content).toEqual([
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "aGVsbG8=",
+        },
+      },
+      { type: "text", text: "here" },
+    ])
+    expect(encodeChatResponse(ir).choices[0]?.message.content).toEqual([
+      { type: "text", text: "here" },
+      {
+        type: "image_url",
+        image_url: { url: "data:image/png;base64,aGVsbG8=" },
+      },
+    ])
+  })
+
   test("marks a missing Chat finish reason as unknown in IR", () => {
     const response = {
       id: "chat_1",
