@@ -6,11 +6,12 @@ import {
   BUILTIN_PROVIDER_PRESETS,
   type ProviderPreset,
 } from "~/lib/provider-presets"
-import { buildRouteTargets } from "~/lib/route-target"
+import { buildRouteTargets, listExposedPublicModels } from "~/lib/route-target"
 import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
+import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
 import { buildBaseHeaders } from "~/services/protocols/shared"
 import { openAICompatibleAdapter } from "~/services/protocols/openai-compatible"
 
@@ -159,6 +160,38 @@ describe("keyless connection routing", () => {
     expect(
       Object.keys(headers).some((key) => key.toLowerCase() === "authorization"),
     ).toBe(false)
+  })
+
+  test("a keyless connection still lists its models in the public catalog", () => {
+    // 免费车道不挂 credential,但模型必须照常进 /v1/models——否则客户端拉不到,
+    // 表现就是「拉取模型失败」。
+    const exposed = listExposedPublicModels([keylessConnection() as never])
+    expect(exposed.map((entry) => entry.publicId)).toContain("kilo-auto/free")
+  })
+
+  test("a record whose credentials field is missing stays out of the catalog", () => {
+    // 与「刻意的无密钥连接」相反:脏数据不能因为免费车道的新能力突然可见。
+    const broken = keylessConnection() as unknown as Record<string, unknown>
+    delete broken.credentials
+    expect(listExposedPublicModels([broken as never])).toEqual([])
+  })
+
+  test("the target's credentialId resolves to the anonymous credential", () => {
+    // 准入 / 轮换按住 target.credentialId 反查凭据;免密连接的 id 就是
+    // connection.id,必须能解析到合成匿名凭据,否则表现为 503
+    // "Route target resolution failed"。
+    const connection = keylessConnection()
+    const targets = buildRouteTargets({
+      connections: [connection as never],
+      endpoint: "chat",
+      publicModelId: "kilo-auto/free",
+    })
+    const credential = findEffectiveCredential(
+      connection as never,
+      targets[0]!.credentialId,
+    )
+    expect(credential?.id).toBe("kilo")
+    expect(credential?.value).toBe("")
   })
 })
 

@@ -20,7 +20,6 @@ import { measurePerformanceStage } from "~/lib/request-performance"
 import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
 import {
   connectionProvider,
-  findCredential,
   getConnectionRoutability,
   getProviderConnection,
   isAccountManagedConnection,
@@ -28,6 +27,7 @@ import {
   type ModelEndpoint,
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
+import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
 import { patchRequestLog, publishTraceSnapshot } from "~/lib/request-log"
 import {
   buildGroupRouteTargets,
@@ -666,8 +666,9 @@ async function prepareRequestAdmissionImpl(
   }
 
   const connection = getProviderConnection(target.connectionId)
-  const found = findCredential(target.connectionId, target.credentialId)
-  if (!connection || !found) {
+  const credential =
+    connection && findEffectiveCredential(connection, target.credentialId)
+  if (!connection || !credential) {
     throw new HTTPError(
       "Route target resolution failed",
       new Response("Service Unavailable", { status: 503 }),
@@ -692,7 +693,7 @@ async function prepareRequestAdmissionImpl(
     connectionId: target.connectionId,
     connectionName: connection.name,
     credentialId: target.credentialId,
-    credentialLabel: found.credential.label,
+    credentialLabel: credential.label,
     upstreamBaseUrl: safeOrigin(connection.baseUrl),
     isTranslated: target.isTranslated,
     isWildcard: target.isWildcard,
@@ -741,7 +742,7 @@ async function prepareRequestAdmissionImpl(
   return {
     target,
     connection,
-    credential: found.credential,
+    credential,
     compact: options.compact,
     initiator,
     ...sessionFields,

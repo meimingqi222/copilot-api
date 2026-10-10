@@ -40,7 +40,10 @@ import {
   type RouteTarget,
 } from "~/lib/provider-connections"
 
-import { effectiveCredentials } from "~/lib/provider-connections/anonymous-credential"
+import {
+  effectiveCredentials,
+  hasEnabledCredential,
+} from "~/lib/provider-connections/anonymous-credential"
 
 import { connectionModelEndpoints } from "./model-support"
 import { isResting } from "./resting"
@@ -441,7 +444,7 @@ export function listExposedPublicModels(
     // 产出空 target,若此时仍在 /v1/models 列出,客户端会看到“可见但不可用”
     // 的模型。注意只看手动开关 cred.enabled,不看瞬时 status(cooldown /
     // quota_exhausted / auth_error),避免限流抖动导致模型列表频繁闪烁。
-    if (!connection.credentials?.some((c) => c.enabled)) continue
+    if (!hasEnabledCredential(connection)) continue
     refreshConnectionAvailability(connection)
     for (const model of connection.models ?? []) {
       if (!model.enabled) continue

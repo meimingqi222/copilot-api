@@ -14,6 +14,7 @@ import { isResting } from "~/lib/route-target/resting"
 
 import type { ApiCredential, ProviderConnection } from "./types"
 
+import { effectiveCredentials } from "./anonymous-credential"
 import {
   getConnectionAuthStatus,
   getConnectionCooldownUntil,
@@ -113,7 +114,9 @@ export function isCredentialAvailable(credential: ApiCredential): boolean {
 
 export function isConnectionAvailable(connection: ProviderConnection): boolean {
   if (!connection.enabled) return false
-  return connection.credentials.some((c) => isCredentialAvailable(c))
+  // 无密钥连接(免费车道)在此补合成匿名凭据,否则空 credentials 会被当成
+  // 「无可用凭据」而整条判为不可用。
+  return effectiveCredentials(connection).some((c) => isCredentialAvailable(c))
 }
 
 type ConnectionUnavailabilityReason =

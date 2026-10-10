@@ -15,6 +15,7 @@ import {
   persistProviderConnections,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { hasEnabledCredential } from "~/lib/provider-connections/anonymous-credential"
 import { listExposedPublicModels } from "~/lib/route-target/build"
 import { onStateChange } from "~/lib/state-events"
 import { globalTimers } from "~/lib/timer-registry"
@@ -69,7 +70,7 @@ export function cacheModels(): void {
   // 瞬时 status(cooldown/quota/auth_error)不影响列表,避免限流抖动导致闪烁;
   // 它们的调度过滤由 buildRouteTargets(onlyAvailable) 负责。
   const connectionModels = listAccountManagedConnections()
-    .filter((conn) => conn.enabled && conn.credentials?.some((c) => c.enabled))
+    .filter((conn) => conn.enabled && hasEnabledCredential(conn))
     .map((conn, originalIndex) => ({ conn, originalIndex }))
     .sort((left, right) => {
       if (left.conn.priority !== right.conn.priority) {

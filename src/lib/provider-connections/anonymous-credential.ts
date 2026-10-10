@@ -52,3 +52,36 @@ export function effectiveCredentials(
   if (credentials.length > 0) return credentials as Array<ApiCredential>
   return [anonymousCredentialFor(connection)]
 }
+
+/**
+ * 连接是否至少有一个已启用的凭据。
+ *
+ * 无密钥连接(免费车道,`credentials` 为空数组)按合成匿名凭据计——它们照常参与
+ * 路由、模型照常进 `/v1/models`。字段整个缺失(脏数据 / 旧 schema)时,
+ * `effectiveCredentials` 返回 `[]`,仍按「无凭据」处理。
+ *
+ * 列举 / 可用性过滤一律用本函数,而不是直接读 `connection.credentials`:
+ * 后者会把免密连接误判成「无凭据」而整条漏掉。
+ */
+export function hasEnabledCredential(connection: ProviderConnection): boolean {
+  return effectiveCredentials(connection).some(
+    (credential) => credential.enabled,
+  )
+}
+
+/**
+ * 读路径按 id 解析凭据:免密连接用合成匿名凭据兜底。
+ *
+ * 路由 target 上无密钥连接的 `credentialId` 取 `credentials[0]?.id ??
+ * connection.id`(见 `buildRouteTargets`),而匿名凭据的 id 正是 connection.id。
+ * 但那份凭据只存在于 `effectiveCredentials` 里,原始 `connection.credentials`
+ * 是空数组——若读路径直接 `.find` 就会解析失败(准入层表现为 503
+ * "Route target resolution failed")。变更 / admin 路径要操作真实凭据,仍用
+ * `findCredential`。
+ */
+export function findEffectiveCredential(
+  connection: ProviderConnection,
+  credentialId: string,
+): ApiCredential | undefined {
+  return effectiveCredentials(connection).find((c) => c.id === credentialId)
+}

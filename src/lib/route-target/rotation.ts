@@ -17,10 +17,10 @@ import type { AffinityMode } from "~/lib/state"
 import type { GroupRoutingMode } from "~/lib/routing-groups/types"
 
 import {
-  findCredential,
   getProviderConnection,
   isAccountManagedProtocol,
 } from "~/lib/provider-connections"
+import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
 
 import { buildRouteTargets } from "./build"
 import { selectGroupRouteTarget } from "./group-select"
@@ -169,7 +169,8 @@ export function resolveConnectionFromTarget(target: RouteTarget): {
   // 批次 3：target.account 已删除，统一走 getProviderConnection
   const connection = getProviderConnection(target.connectionId)
   if (!connection) return null
-  const found = findCredential(target.connectionId, target.credentialId)
-  if (!found) return null
-  return { connection, credential: found.credential }
+  // 读路径：免密连接用合成匿名凭据兜底,否则免费车道在这里解析失败。
+  const credential = findEffectiveCredential(connection, target.credentialId)
+  if (!credential) return null
+  return { connection, credential }
 }

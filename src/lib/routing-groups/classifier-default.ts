@@ -21,10 +21,8 @@
 import type { ProviderId } from "~/lib/provider-config"
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
-import {
-  findCredential,
-  getProviderConnection,
-} from "~/lib/provider-connections"
+import { getProviderConnection } from "~/lib/provider-connections"
+import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
 import { buildRouteTargets, selectRouteTarget } from "~/lib/route-target"
 import { initializeProtocolAdapters } from "~/services/protocols"
 import { getProtocolAdapter } from "~/services/protocols/registry"
@@ -128,8 +126,9 @@ async function completeWithModel(
 
   const connection = getProviderConnection(target.connectionId)
   if (!connection) return ""
-  const found = findCredential(target.connectionId, target.credentialId)
-  if (!found) return ""
+  // 读路径：免密连接用合成匿名凭据兜底。
+  const credential = findEffectiveCredential(connection, target.credentialId)
+  if (!credential) return ""
 
   const adapter = getProtocolAdapter(connection.protocol)
   const createChat = adapter?.createChatCompletions?.bind(adapter)
@@ -150,7 +149,7 @@ async function completeWithModel(
   const result = await createChat({
     target,
     connection,
-    credential: found.credential,
+    credential,
     payload,
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })

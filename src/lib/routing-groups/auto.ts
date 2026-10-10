@@ -25,6 +25,7 @@ import {
   isAccountManagedConnection,
   listProviderConnections,
 } from "~/lib/provider-connections"
+import { hasEnabledCredential } from "~/lib/provider-connections/anonymous-credential"
 import { isProviderId } from "~/lib/provider-config"
 import { state } from "~/lib/state"
 
@@ -169,7 +170,7 @@ export function listMemberOptions(
   const seen = new Set<string>()
   for (const connection of connections) {
     if (!connection.enabled) continue
-    if (!connection.credentials?.some((credential) => credential.enabled)) {
+    if (!hasEnabledCredential(connection)) {
       continue
     }
     const provider =
@@ -219,7 +220,7 @@ export function collectServedModels(
   const out: Array<ServedModel> = []
   for (const connection of connections) {
     if (!connection.enabled) continue
-    if (!connection.credentials?.some((credential) => credential.enabled)) {
+    if (!hasEnabledCredential(connection)) {
       continue
     }
     const provider =
