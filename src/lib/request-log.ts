@@ -186,13 +186,23 @@ export function observeUpstreamResponseModelFromSseData(
   eventType?: string,
 ): void {
   if (!data || data === "[DONE]") return
+  const ctx = getRequestLogContext(c)
+  if (!ctx) return
+  // Most Responses/Messages deltas cannot report a model. Unicode escapes
+  // remain a conservative fallback so escaped JSON keys are still observed.
+  if (
+    !data.includes('"model"')
+    && !data.includes('"modelVersion"')
+    && !data.includes("\\u")
+  )
+    return
   let parsed: unknown
   try {
     parsed = JSON.parse(data)
   } catch {
     return
   }
-  observeUpstreamResponseModel(c, parsed, eventType)
+  observeUpstreamResponseModelForContext(ctx, parsed, eventType)
 }
 
 /**

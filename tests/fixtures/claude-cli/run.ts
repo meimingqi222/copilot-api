@@ -214,7 +214,28 @@ async function main(): Promise<number> {
     }
     return 0
   }
-  await readFirstLine()
+  const firstLine = await readFirstLine()
+  if (scenario === "redaction-echo") {
+    const request = JSON.parse(firstLine)
+    const args = process.argv.slice(2)
+    const config = JSON.parse(
+      fs.readFileSync(args[args.indexOf("--mcp-config") + 1], "utf8"),
+    )
+    const helperArgs: Array<string> = config.mcpServers.copilotapi.args
+    const bridge = JSON.parse(
+      fs.readFileSync(
+        helperArgs[helperArgs.indexOf("claude-mcp-helper") + 1],
+        "utf8",
+      ),
+    )
+    startTurn("msg_redaction")
+    textBlock(
+      JSON.stringify({ input: request.message.content, tools: bridge.tools }),
+    )
+    endTurn()
+    emit({ type: "result", subtype: "success", is_error: false })
+    return 0
+  }
   if (scenario === "process-hang") {
     startTurn("msg_process")
     textBlock(JSON.stringify({ pid: process.pid }))

@@ -131,29 +131,6 @@ export function buildCodexUpstreamBody(
     payload,
     responsesLite,
   )
-  // CPA preserves stream_options.reasoning_summary_delivery and (on the WS
-  // transport) include_usage; everything else is dropped. include_usage is
-  // what makes the upstream include `usage` in response.completed — without
-  // it, usage_stats/performance monitoring records nothing for the turn.
-  // The HTTP path strips include_usage again in finalizeCodexOutboundBody
-  // (the codex HTTP backend rejects it; CPA drops it there too).
-  const streamOptions = (
-    payload as unknown as {
-      stream_options?: {
-        reasoning_summary_delivery?: unknown
-        include_usage?: unknown
-      }
-    }
-  ).stream_options
-  const reasoningSummaryDelivery = streamOptions?.reasoning_summary_delivery
-  const includeUsage = streamOptions?.include_usage
-  const keptStreamOptions: Record<string, unknown> = {}
-  if (reasoningSummaryDelivery !== undefined) {
-    keptStreamOptions.reasoning_summary_delivery = reasoningSummaryDelivery
-  }
-  if (includeUsage !== undefined) {
-    keptStreamOptions.include_usage = includeUsage
-  }
   return {
     ...payload,
     model,
@@ -178,10 +155,6 @@ export function buildCodexUpstreamBody(
     // kept — it drives server-side session affinity.
     prompt_cache_options: undefined,
     safety_identifier: undefined,
-    stream_options:
-      Object.keys(keptStreamOptions).length === 0 ?
-        undefined
-      : keptStreamOptions,
     max_output_tokens: undefined,
     max_completion_tokens: undefined,
     temperature: undefined,

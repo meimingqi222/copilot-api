@@ -612,14 +612,6 @@ export async function fetchCodexUsagePayload(
   return payload
 }
 
-export async function resetCodexQuota(
-  connection: ProviderConnection,
-  signal?: AbortSignal,
-): Promise<CodexUsagePayload> {
-  await consumeCodexRateLimitResetCredit(connection, signal)
-  return fetchCodexUsagePayload(connection, signal)
-}
-
 export function canResetCodexQuota(meta: CodexQuotaMeta | undefined): boolean {
   return (meta?.rateLimitResetCreditsAvailableCount ?? 0) > 0
 }

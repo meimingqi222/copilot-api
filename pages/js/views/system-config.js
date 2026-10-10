@@ -13,6 +13,8 @@ function systemConfigView() {
     codexModels: [],
     codexModelsError: "",
     codexModelSearch: "",
+    redactionWordsText: "",
+    redactionHomePrefixesText: "",
 
     get filteredCodexModels() {
       const query = this.codexModelSearch.trim().toLowerCase()
@@ -53,6 +55,9 @@ function systemConfigView() {
       this.settings.concurrencyQueueLimit ??= 100
       this.settings.concurrencyQueueWaitSeconds ??= 30
       this.settings.defaultProxyUrl ??= ""
+      this.redactionWordsText = this.settings.redaction?.words.join("\n") ?? ""
+      this.redactionHomePrefixesText =
+        this.settings.redaction?.homePrefixes.join("\n") ?? ""
       this.maxLogMiB = Math.ceil(data.settings.logMaxTotalBytes / (1024 * 1024))
       globalThis.dispatchEvent(
         new CustomEvent("quota-display-mode", {
@@ -92,6 +97,7 @@ function systemConfigView() {
 
     useRecommended() {
       this.settings = {
+        redaction: this.settings.redaction,
         logLevel: "info",
         requestDump: false,
         memoryVerbose: false,
@@ -125,6 +131,17 @@ function systemConfigView() {
             method: "PUT",
             body: {
               ...this.settings,
+              redaction: {
+                ...this.settings.redaction,
+                words: this.redactionWordsText
+                  .split(/\r?\n/)
+                  .map((line) => line.trim())
+                  .filter(Boolean),
+                homePrefixes: this.redactionHomePrefixesText
+                  .split(/\r?\n/)
+                  .map((line) => line.trim())
+                  .filter(Boolean),
+              },
               logMaxTotalBytes: Number(this.maxLogMiB) * 1024 * 1024,
               debugMinutes: Number(this.debugMinutes),
               acknowledgeSensitiveData: this.acknowledgeSensitiveData,

@@ -49,6 +49,109 @@
 
   <template x-if="settings">
     <form @submit.prevent="save()" class="space-y-6" @input="saved = false">
+      <section class="card p-0 overflow-hidden">
+        <div class="p-4 sm:p-5 flex items-start justify-between gap-4">
+          <div class="space-y-1 max-w-xl">
+            <h3
+              class="font-semibold text-sm"
+              x-text="t('system.upstreamRedaction')"
+            ></h3>
+            <p
+              id="upstream-redaction-hint"
+              class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+              x-text="t('system.upstreamRedactionHint')"
+            ></p>
+          </div>
+          <label class="apple-switch">
+            <input
+              type="checkbox"
+              x-model="settings.redaction.enabled"
+              :aria-label="t('system.upstreamRedaction')"
+              aria-describedby="upstream-redaction-hint"
+              :disabled="saving"
+            />
+            <span class="apple-switch-slider"></span>
+          </label>
+        </div>
+        <div
+          class="divide-y divide-[var(--apple-gray-5)] border-t border-[var(--apple-gray-5)]"
+        >
+          <template
+            x-for="rule in ['secrets', 'homePaths', 'wordsEnabled']"
+            :key="rule"
+          >
+            <div class="p-4 sm:px-5 space-y-3">
+              <div
+                class="flex items-start justify-between gap-4"
+                :class="{ 'opacity-50': !settings.redaction.enabled }"
+              >
+                <div class="space-y-1 max-w-xl">
+                  <span
+                    class="text-sm font-medium"
+                    x-text="t('system.redaction.' + rule)"
+                  ></span>
+                  <p
+                    class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                    x-text="t('system.redaction.' + rule + 'Hint')"
+                  ></p>
+                </div>
+                <label class="apple-switch">
+                  <input
+                    type="checkbox"
+                    x-model="settings.redaction[rule]"
+                    :aria-label="t('system.redaction.' + rule)"
+                    :disabled="saving || !settings.redaction.enabled"
+                  />
+                  <span class="apple-switch-slider"></span>
+                </label>
+              </div>
+              <template x-if="rule === 'homePaths'">
+                <label class="block space-y-2">
+                  <span
+                    class="block text-xs font-medium"
+                    x-text="t('system.redaction.homePrefixes')"
+                  ></span>
+                  <textarea
+                    rows="3"
+                    class="input w-full min-h-[110px] font-mono text-xs resize-y"
+                    style="padding: 8px 12px"
+                    x-model="redactionHomePrefixesText"
+                    :disabled="saving"
+                    spellcheck="false"
+                    :placeholder="t('system.redaction.homePrefixesPlaceholder')"
+                  ></textarea>
+                  <span
+                    class="block text-xs text-[var(--apple-text-tertiary)]"
+                    x-text="t('system.redaction.listHint')"
+                  ></span>
+                </label>
+              </template>
+              <template x-if="rule === 'wordsEnabled'">
+                <label class="block space-y-2">
+                  <span
+                    class="block text-xs font-medium"
+                    x-text="t('system.redaction.words')"
+                  ></span>
+                  <textarea
+                    rows="3"
+                    class="input w-full min-h-[110px] font-mono text-xs resize-y"
+                    style="padding: 8px 12px"
+                    x-model="redactionWordsText"
+                    :disabled="saving"
+                    spellcheck="false"
+                    :placeholder="t('system.redaction.wordsPlaceholder')"
+                  ></textarea>
+                  <span
+                    class="block text-xs text-[var(--apple-text-tertiary)]"
+                    x-text="t('system.redaction.listHint')"
+                  ></span>
+                </label>
+              </template>
+            </div>
+          </template>
+        </div>
+      </section>
+
       <section class="card p-5 space-y-4">
         <h3
           class="font-semibold text-sm"

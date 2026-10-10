@@ -4,6 +4,7 @@ import type {
 } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import { getConnectionSettings } from "~/lib/provider-connections"
@@ -134,7 +135,7 @@ export async function createXaiImageGeneration(
   const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamBody),
+    body: serializeUpstreamBody(upstreamBody),
     signal,
   })
 
@@ -212,7 +213,7 @@ export async function createXaiImageEdit(
   const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamBody),
+    body: serializeUpstreamBody(upstreamBody),
     signal,
   })
 

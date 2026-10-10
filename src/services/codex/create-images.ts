@@ -10,6 +10,7 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import {
@@ -387,7 +388,7 @@ async function createCodexDirectImageOnce(
   const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamBody),
+    body: serializeUpstreamBody(upstreamBody),
     signal,
   })
   if (!response.ok) {
@@ -614,7 +615,7 @@ async function createCodexImageViaResponses(
   const response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamBody),
+    body: serializeUpstreamBody(upstreamBody),
     signal,
   })
   if (!response.ok) {

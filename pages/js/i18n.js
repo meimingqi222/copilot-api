@@ -62,6 +62,25 @@ const i18n = {
         "配置来源：启动参数 / 环境变量。首次保存后，WebUI 配置优先。",
       "system.source.webui": "配置来源：WebUI（已持久化，重启后保留）。",
       "system.logLevel": "控制台与文件日志级别",
+      "system.upstreamRedaction": "上游内容脱敏",
+      "system.upstreamRedactionHint":
+        "发送到上游前按下方规则脱敏，返回客户端时还原；支持 Claude Code CLI。默认关闭，保存后对新请求生效。总开关关闭时保留子开关选择，不清理本地日志，与请求脱敏落盘独立。",
+      "system.redaction.secrets": "凭据",
+      "system.redaction.secretsHint":
+        "识别常见 API 密钥、令牌、私钥及密码字段。",
+      "system.redaction.homePaths": "用户目录",
+      "system.redaction.homePathsHint":
+        "保护 Linux、macOS、Windows 用户目录前缀及已配置的额外前缀，保留项目路径后缀。",
+      "system.redaction.wordsEnabled": "自定义词条",
+      "system.redaction.wordsEnabledHint":
+        "字面子串匹配，区分大小写，不支持正则。未填写词条时无效果。",
+      "system.redaction.homePrefixes": "额外目录前缀",
+      "system.redaction.words": "词条列表",
+      "system.redaction.homePrefixesPlaceholder":
+        "/srv/private-user\n/opt/internal-team",
+      "system.redaction.wordsPlaceholder": "internal.example\n内部项目名",
+      "system.redaction.listHint":
+        "每行一条，忽略空行和首尾空白。每组最多 100 条，每条 2–1024 个字符。关闭开关不清空列表，关闭时也可编辑。",
       "system.defaultProxyUrl": "默认代理 URL",
       "system.defaultProxyUrlHint":
         "连接自身未配置代理时使用它（Bun fetch 的 proxy 选项，逐请求透传）。留空表示不使用默认代理；连接级「代理 URL」始终优先。修改后无需重启，下一次请求即生效。",
@@ -1650,6 +1669,26 @@ const i18n = {
         "Source: startup options / environment. Saved WebUI settings take precedence.",
       "system.source.webui": "Source: WebUI (persisted across restarts).",
       "system.logLevel": "Console and file log level",
+      "system.upstreamRedaction": "Upstream content redaction",
+      "system.upstreamRedactionHint":
+        "Redact using the rules below before sending upstream; restore client responses. Supports Claude Code CLI. Off by default; saving affects new requests. Turning off the master switch preserves rule selections. Does not sanitize local logs; independent of request dumps.",
+      "system.redaction.secrets": "Credentials",
+      "system.redaction.secretsHint":
+        "Recognize common API keys, tokens, private keys and password fields.",
+      "system.redaction.homePaths": "Home directories",
+      "system.redaction.homePathsHint":
+        "Protect Linux, macOS and Windows home prefixes and configured extra prefixes; preserve project path suffixes.",
+      "system.redaction.wordsEnabled": "Custom literal words",
+      "system.redaction.wordsEnabledHint":
+        "Case-sensitive literal substring matching, not regex. Has no effect when the list is empty.",
+      "system.redaction.homePrefixes": "Additional directory prefixes",
+      "system.redaction.words": "Words list",
+      "system.redaction.homePrefixesPlaceholder":
+        "/srv/private-user\n/opt/internal-team",
+      "system.redaction.wordsPlaceholder":
+        "internal.example\nInternal project name",
+      "system.redaction.listHint":
+        "One entry per line; blank lines and surrounding whitespace are ignored. Up to 100 entries per list, 2–1024 characters each. Turning off preserves the list; editing remains available while off.",
       "system.defaultProxyUrl": "Default proxy URL",
       "system.defaultProxyUrlHint":
         'Used when a connection has no proxy of its own (Bun fetch `proxy` option, passed per request). Leave empty to disable. A connection-level "Proxy URL" always wins. Takes effect on the next request; no restart needed.',

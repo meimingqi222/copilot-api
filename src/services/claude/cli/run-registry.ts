@@ -12,9 +12,11 @@
  * 两侧靠它对齐。
  */
 
+import type { BridgeTool } from "~/services/claude/cli/tools"
+
 /** MCP 工具调用的结果，形态与 MCP 的 `tools/call` 返回一致。 */
 export interface McpToolResult {
-  tools?: Array<import("~/services/claude/cli/tools").BridgeTool>
+  tools?: Array<BridgeTool>
   content: Array<
     | { type: "text"; text: string }
     | { type: "image"; data: string; mimeType: string }
@@ -37,7 +39,7 @@ export interface BridgeRun {
   awaitToolCall(toolUseId: string, name: string): Promise<McpToolResult>
   /** 取一个已经回过"still running"的调用的结果（`wait_for_tool` 的入口）。 */
   awaitWaitRequest(toolUseId: string): Promise<McpToolResult>
-  toolDefinitions?(): Array<import("~/services/claude/cli/tools").BridgeTool>
+  toolDefinitions?(): Array<BridgeTool>
   availableForResume?(): boolean
 }
 

@@ -27,7 +27,7 @@
     "dev": "bun run build:css && bun run --watch ./src/main.ts start",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "knip": "knip-bun",
+    "knip": "knip",
     "lint": "oxlint",
     "lint:all": "oxlint",
     "prepack": "bun run build",

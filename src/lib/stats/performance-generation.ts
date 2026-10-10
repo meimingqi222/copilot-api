@@ -11,9 +11,9 @@ import type { UsageRawRow } from "~/lib/stats/types"
  * 物理上限：当前没有上游能持续跑到 800 tok/s，超过即视为计时噪声
  * （典型来源是整段回答只落在极少帧里的突发流）。与前端 `formatTps` 的钳位一致。
  */
-export const MAX_PLAUSIBLE_TPS = 800
+const MAX_PLAUSIBLE_TPS = 800
 
-export interface GenerationSample {
+interface GenerationSample {
   tokens: number
   generationMs: number
 }

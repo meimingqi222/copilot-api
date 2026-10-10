@@ -6,6 +6,7 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import { maskUpstream } from "~/lib/redaction/context"
 import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { state } from "~/lib/state"
@@ -177,7 +178,7 @@ export async function createWindsurfAttempt(
     let protobufBytes = 0
     let usedTurnIndex = turnIndex ?? 0
     const requestBody = buildRequest({
-      payload: { ...payload, model },
+      payload: maskUpstream({ ...payload, model }),
       apiKey,
       requestModel,
       cascadeId: cloudIds.cascadeId,

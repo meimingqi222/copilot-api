@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto"
 import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
   type MimoMessage,
@@ -581,7 +582,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
 
     if (payload.stream) {
       const gen = streamResponse(conn, reqId, signal)
-      conn.ws.send(JSON.stringify(wsPayload))
+      conn.ws.send(serializeUpstreamBody(wsPayload))
       const response = await safeMimoStream(gen)
       return {
         credentialId: credential.id,
@@ -590,7 +591,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     }
 
     const responsePromise = collectResponse(conn, reqId, signal)
-    conn.ws.send(JSON.stringify(wsPayload))
+    conn.ws.send(serializeUpstreamBody(wsPayload))
     const response = await responsePromise
     return {
       credentialId: credential.id,
@@ -623,7 +624,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
 
     if (payload.stream) {
       const gen = streamResponse(conn, reqId, signal)
-      conn.ws.send(JSON.stringify(wsPayload))
+      conn.ws.send(serializeUpstreamBody(wsPayload))
       const response = await safeMimoMessagesStream(gen)
       return {
         credentialId: credential.id,
@@ -632,7 +633,7 @@ export const mimoNativeAdapter: ProtocolAdapter = {
     }
 
     const responsePromise = collectMessagesResponse(conn, reqId, signal)
-    conn.ws.send(JSON.stringify(wsPayload))
+    conn.ws.send(serializeUpstreamBody(wsPayload))
     const response = await responsePromise
     return {
       credentialId: credential.id,

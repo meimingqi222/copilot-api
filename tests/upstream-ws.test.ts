@@ -143,38 +143,19 @@ describe("buildUpstreamResponsesCreateBody", () => {
     expect(body.previous_response_id).toBe("resp_c1")
   })
 
-  test("codex preserves reasoning_summary_delivery and include_usage", () => {
+  test("codex preserves finalized reasoning_summary_delivery", () => {
     const body = buildUpstreamResponsesCreateBody(
       {
         model: "gpt-5",
         stream_options: {
-          include_usage: true,
           reasoning_summary_delivery: "auto",
         },
       },
       { provider: "codex" },
     )
-    // include_usage must survive on the WS transport: it is what makes the
-    // upstream attach `usage` to response.completed (CPA keeps stream_options
-    // on the codex WS path).
     expect(body.stream_options).toEqual({
       reasoning_summary_delivery: "auto",
-      include_usage: true,
     })
-  })
-
-  test("codex drops other stream_options", () => {
-    const body = buildUpstreamResponsesCreateBody(
-      {
-        model: "gpt-5",
-        stream_options: {
-          include_usage: true,
-          something_else: "x",
-        },
-      },
-      { provider: "codex" },
-    )
-    expect(body.stream_options).toEqual({ include_usage: true })
   })
 })
 

@@ -523,6 +523,17 @@ export function encodeChatRequest(
   }
 }
 
+/**
+ * OpenRouter spells upstream web search as a `web` plugin. This is the only
+ * Chat search intent; `decodeChatRequest` and the native chat detour both
+ * read it here so they cannot disagree.
+ */
+export function chatRequestsWebSearch(
+  payload: Pick<ChatCompletionsPayload, "plugins">,
+): boolean {
+  return payload.plugins?.some((plugin) => plugin.id === "web") ?? false
+}
+
 export function decodeChatRequest(payload: ChatCompletionsPayload): RequestIR {
   const instructions: RequestIR["instructions"] = []
   const turns: Array<IRTurn> = []
@@ -647,9 +658,9 @@ export function decodeChatRequest(payload: ChatCompletionsPayload): RequestIR {
       ...(payload.reasoning_effort && {
         reasoning: { effort: payload.reasoning_effort },
       }),
-      // OpenRouter spells upstream web search as a plugin. It is an intent,
-      // not a tool the client executes, so it never becomes an IR tool.
-      ...(payload.plugins?.some((plugin) => plugin.id === "web") && {
+      // A search intent, not a tool the client executes, so it never becomes
+      // an IR tool.
+      ...(chatRequestsWebSearch(payload) && {
         webSearch: true,
         webSearchOptions: { wireType: "web" },
       }),

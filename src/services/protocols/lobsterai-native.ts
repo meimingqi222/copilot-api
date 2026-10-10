@@ -23,6 +23,7 @@ import type {
 } from "~/services/protocols/chat/types"
 
 import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { logger } from "~/lib/logger"
 import {
   LOBSTERAI_CLIENT_VERSION_HEADER,
@@ -252,7 +253,7 @@ export const lobsteraiNativeAdapter: ProtocolAdapter = {
           ...credential,
           value: accessToken ?? credential.value,
         }),
-        body: JSON.stringify(upstreamPayload),
+        body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),
     )

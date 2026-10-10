@@ -5,6 +5,7 @@ import {
 import {
   performanceContext,
   measureLocalWork,
+  serializeUpstreamBody,
 } from "~/lib/upstream-performance"
 
 /**
@@ -497,7 +498,7 @@ async function openUpstreamResponsesWebsocketTurnOnce(
       replayedFullInput: usedFallback,
     })
     const wireBody = measureLocalWork("adapterPreparationMs", () =>
-      JSON.stringify(effectiveBody),
+      serializeUpstreamBody(effectiveBody),
     )
     const wireBytes = Buffer.byteLength(wireBody)
     updateMemoryTrace(options.memoryTraceId, "upstream_ws_send", {

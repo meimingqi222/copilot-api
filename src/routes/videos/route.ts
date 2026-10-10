@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
 import { forwardError } from "~/lib/error"
+import { runRedactedCall } from "~/lib/redaction/context"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
@@ -25,15 +26,19 @@ videoRoutes.post("/generations", async (c) => {
     })
 
     const idempotencyKey = c.req.header("x-idempotency-key")
-    const response = await createXaiVideoGeneration(
-      {
-        connection: admission.connection,
-        credential: admission.credential,
-      },
-      payload,
-      idempotencyKey,
-      c.req.raw.signal,
-    )
+    const result = await runRedactedCall(payload, c, async (prepared) => ({
+      accountId: admission.connection.id,
+      response: await createXaiVideoGeneration(
+        {
+          connection: admission.connection,
+          credential: admission.credential,
+        },
+        prepared,
+        idempotencyKey,
+        c.req.raw.signal,
+      ),
+    }))
+    const response = result.response
 
     c.set("accountId", admission.connection.id)
     recordUsage({

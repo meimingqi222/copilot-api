@@ -19,6 +19,7 @@
  */
 
 import type { ProviderConnection } from "~/lib/provider-connections"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 
 import {
   buildBaseHeaders,
@@ -81,7 +82,7 @@ export const minimaxNativeAdapter: ProtocolAdapter = {
       connectionFetchInit(connection, {
         method: "POST",
         headers,
-        body: JSON.stringify(upstreamPayload),
+        body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),
     )

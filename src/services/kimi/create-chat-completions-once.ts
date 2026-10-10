@@ -11,6 +11,7 @@ import type {
 } from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { isChatCompletionResponse } from "~/lib/utils"
@@ -78,7 +79,7 @@ export async function createKimiChatCompletionsOnce(
   const response = await fetchWithConnectionProxy(connection, KIMI_CHAT_URL, {
     method: "POST",
     headers: buildKimiHeaders(connection, accessToken, payload.stream === true),
-    body: JSON.stringify(requestBody),
+    body: serializeUpstreamBody(requestBody),
     signal,
   })
 

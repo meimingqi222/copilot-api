@@ -144,7 +144,7 @@ src/
 │   │       └── gemini/         # Gemini generateContent codec (request/result/stream)
 │   ├── protocols/          # Protocol wire adapters + cross-endpoint translators
 │   │   ├── registry.ts     # Protocol adapter registry (wire adapters)
-│   │   ├── wire-pairs.ts   # Table-driven pair translator (Gemini directions)
+│   │   ├── wire-pairs.ts   # Table-driven pair translator (messages↔responses + Gemini directions)
 │   │   ├── cast-*/…-via-*.ts # Cross-endpoint wrappers with per-wire behavior
 │   │   ├── chat/, responses/  # OpenAI wire types (moved out of services/copilot)
 │   │   ├── gemini/         # Gemini generateContent wire types
@@ -476,7 +476,7 @@ requests use the typed request/result IR and incremental stream events in
 translation hub. See `docs/translation-conventions.md` for the current rules.
 
 - `src/services/ir/` — shared semantic types, feature inspection, capability
-  preflight, loss records and stream collection
+  preflight, loss records and incremental stream events
 
 - `src/services/ir/codecs/` — Chat, Messages, Responses and Gemini wire codecs
 
@@ -485,12 +485,12 @@ translation hub. See `docs/translation-conventions.md` for the current rules.
 - `src/routes/chat-completions/normalize.ts` — OpenAI payload normalization
 
 - `src/services/protocols/{chat-via-messages,chat-via-responses,messages-via-chat,responses-via-chat}.ts`
-  — cross-protocol adapters with per-wire behavior (prompt-cache breakpoints,
-  structured stream twins, memory traces, SSE frame shapes) that the dispatch
-  layer picks when the route target's endpoint differs from the requested one
+  — cross-protocol adapters with prompt-cache breakpoints, structured stream
+  twins or memory traces; `chat-via-responses` also binds the Codex/xAI native
+  adapters' Chat method to the shared Responses translation
 
 - `src/services/protocols/wire-pairs.ts` — the table-driven path for the
-  remaining combinations (all Gemini directions). Each wire contributes one
+  remaining combinations (messages↔responses and all Gemini directions). Each wire contributes one
   decode/encode codec; `createTranslatedCall` is the single place that plans
   the translation, runs the capability preflight and dispatches. Prefer adding
   a `WireSpec` entry over writing another hand-rolled wrapper

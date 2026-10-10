@@ -9,6 +9,7 @@ import type {
 } from "~/services/protocols/chat/types"
 
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { logger } from "~/lib/logger"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
@@ -81,7 +82,7 @@ export async function createCodebuffChatCompletionsOnce(
     {
       method: "POST",
       headers: codebuffHeaders(authToken, settings.cliVersion),
-      body: JSON.stringify(requestPayload),
+      body: serializeUpstreamBody(requestPayload),
       signal,
     },
   )

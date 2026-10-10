@@ -172,22 +172,16 @@ export function finalizeCodexOutboundBody(
     // `generate` is WebSocket-only (CPA deletes it on the HTTP path): a
     // spawn-agent turn over plain HTTP would be rejected/orphaned upstream.
     finalized.generate = undefined
-    // The codex HTTP backend rejects stream_options.include_usage (CPA
-    // drops the whole stream_options there, keeping only
-    // reasoning_summary_delivery). include_usage is WS-only. Copy before
-    // deleting: `stream_options` may be a shared reference with the WS body.
-    const streamOptions = finalized.stream_options as
-      | Record<string, unknown>
-      | undefined
-    if (streamOptions && typeof streamOptions === "object") {
-      const httpStreamOptions = { ...streamOptions }
-      delete httpStreamOptions.include_usage
-      finalized.stream_options =
-        Object.keys(httpStreamOptions).length === 0 ?
-          undefined
-        : httpStreamOptions
-    }
   }
+  // Both HTTP and WS reject include_usage; completed responses already carry
+  // usage. Filter once at the final send boundary, including replay bodies.
+  const streamOptions = finalized.stream_options as
+    | { reasoning_summary_delivery?: unknown }
+    | undefined
+  finalized.stream_options =
+    streamOptions?.reasoning_summary_delivery !== undefined ?
+      { reasoning_summary_delivery: streamOptions.reasoning_summary_delivery }
+    : undefined
   const withImageTool =
     opts?.skipImageTool ? finalized : (
       ensureImageGenerationTool(finalized, {

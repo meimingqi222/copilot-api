@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { forwardError, HTTPError } from "~/lib/error"
 import { isAccountManagedConnection } from "~/lib/provider-connections"
 import { prepareRequestAdmission } from "~/lib/request-admission"
+import { runRedactedCall } from "~/lib/redaction/context"
 import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
 import { recordUsage } from "~/lib/usage"
@@ -26,11 +27,13 @@ embeddingRoutes.post("/", async (c) => {
         new Response("Not Implemented", { status: 501 }),
       )
     }
-    const result = await createEmbeddings(payload, {
-      connection: admission.connection,
-      credential: admission.credential,
-      signal: c.req.raw.signal,
-    })
+    const result = await runRedactedCall(payload, c, (prepared) =>
+      createEmbeddings(prepared, {
+        connection: admission.connection,
+        credential: admission.credential,
+        signal: c.req.raw.signal,
+      }),
+    )
 
     // Set accountId for logging
     c.set("accountId", result.accountId)

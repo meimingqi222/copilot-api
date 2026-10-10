@@ -237,10 +237,9 @@ describe("upstream model audit in the request log", () => {
       )
       observeUpstreamResponseModelFromSseData(
         c,
-        JSON.stringify({
-          type: "response.completed",
-          response: { model: "gpt-5.4" },
-        }),
+        // JSON permits Unicode escapes in keys; the fast path must not skip
+        // this model declaration merely because it lacks a literal "model".
+        String.raw`{"type":"response.completed","response":{"mo\u0064el":"gpt-5.4"}}`,
         "response.completed",
       )
       observeUpstreamResponseModelFromSseData(c, "[DONE]")

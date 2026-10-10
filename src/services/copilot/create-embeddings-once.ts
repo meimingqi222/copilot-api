@@ -9,6 +9,7 @@ import type {
 
 import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
@@ -26,7 +27,7 @@ export async function createCopilotEmbeddingsOnce(
   const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
     method: "POST",
     headers: copilotHeadersForToken(token),
-    body: JSON.stringify({
+    body: serializeUpstreamBody({
       ...payload,
       model: parseModelReference(payload.model).nativeModelId,
     }),

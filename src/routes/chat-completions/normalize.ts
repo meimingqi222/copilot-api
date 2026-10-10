@@ -56,7 +56,13 @@ export function normalizeChunk(
     }
   })
 
-  return { ...chunk, choices: normalizedChoices }
+  return (
+      normalizedChoices.every(
+        (choice, index) => choice === chunk.choices[index],
+      )
+    ) ?
+      chunk
+    : { ...chunk, choices: normalizedChoices }
 }
 
 /**
@@ -100,5 +106,11 @@ export function normalizeResponse(
     }
   })
 
-  return { ...response, choices: normalizedChoices }
+  return (
+      normalizedChoices.every(
+        (choice, index) => choice === response.choices[index],
+      )
+    ) ?
+      response
+    : { ...response, choices: normalizedChoices }
 }

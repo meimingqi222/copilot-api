@@ -325,7 +325,7 @@ export function bucketRowsByInterval(
   return [...slots.values()].sort((a, b) => a.slotTs - b.slotTs)
 }
 
-export interface PerformanceTrendSlot {
+interface PerformanceTrendSlot {
   slotTs: number
   requests: number
   streamingRequests: number
@@ -336,7 +336,7 @@ export interface PerformanceTrendSlot {
   avgNonStreamingTps: number | null
 }
 
-export interface PerformanceTrendProviderSeries {
+interface PerformanceTrendProviderSeries {
   provider: string
   providerLabel: string
   series: Array<PerformanceTrendSlot>

@@ -17,6 +17,7 @@ import {
   injectReasoningReplayItems,
 } from "~/lib/cache/reasoning-replay-cache"
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
@@ -231,7 +232,7 @@ async function createXaiCompactOnce(
     inputItems:
       Array.isArray(upstreamBody.input) ? upstreamBody.input.length : 0,
   })
-  const httpBody = JSON.stringify(upstreamBody)
+  const httpBody = serializeUpstreamBody(upstreamBody)
   let currentAccessToken = accessToken
   let response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
@@ -467,7 +468,7 @@ export async function createXaiResponsesOnce(
         effectiveHttpBody.input.length
       : 0,
   })
-  const httpBody = JSON.stringify(effectiveHttpBody)
+  const httpBody = serializeUpstreamBody(effectiveHttpBody)
   updateMemoryTrace(ctx?.memoryTraceId, "upstream_http_send", {
     provider: "xai",
     wireBytes: Buffer.byteLength(httpBody),

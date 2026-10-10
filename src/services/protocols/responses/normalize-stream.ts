@@ -10,6 +10,7 @@ interface NormalizationState {
   completedOutputItems: Map<number, Record<string, unknown>>
   completedOutputFallback: Array<Record<string, unknown>>
   responseId?: string
+  changed: boolean
 }
 
 export async function* normalizeResponsesStreamIds(
@@ -19,6 +20,7 @@ export async function* normalizeResponsesStreamIds(
     outputs: new Map(),
     completedOutputItems: new Map(),
     completedOutputFallback: [],
+    changed: false,
   }
 
   for await (const event of response) {
@@ -35,12 +37,10 @@ export async function* normalizeResponsesStreamIds(
       continue
     }
 
+    state.changed = false
     normalizeParsedEvent(parsed, state)
     collectAndHydrateCompletedOutput(parsed, state)
-    yield {
-      ...event,
-      data: JSON.stringify(parsed),
-    }
+    yield state.changed ? { ...event, data: JSON.stringify(parsed) } : event
   }
 }
 
@@ -74,7 +74,10 @@ function collectAndHydrateCompletedOutput(
       const item = getRecord(value)
       if (!item || hasNonEmptyString(item.id)) continue
       const completedId = state.completedOutputItems.get(index)?.id
-      if (hasNonEmptyString(completedId)) item.id = completedId
+      if (hasNonEmptyString(completedId)) {
+        item.id = completedId
+        state.changed = true
+      }
     }
 
     // A terminal response can contain a valid but partial output prefix. Keep
@@ -87,12 +90,16 @@ function collectAndHydrateCompletedOutput(
     )) {
       if (index >= output.length && !hasOutputItem(output, item)) {
         output.push(item)
+        state.changed = true
       }
     }
     for (const item of state.completedOutputFallback) {
       // Without output_index or a stable item identity we cannot distinguish a
       // missing tail item from another copy already present in completed.
-      if (outputItemKey(item) && !hasOutputItem(output, item)) output.push(item)
+      if (outputItemKey(item) && !hasOutputItem(output, item)) {
+        output.push(item)
+        state.changed = true
+      }
     }
     return
   }
@@ -102,6 +109,7 @@ function collectAndHydrateCompletedOutput(
     .map(([, item]) => item)
   if (indexed.length > 0 || state.completedOutputFallback.length > 0) {
     response.output = [...indexed, ...state.completedOutputFallback]
+    state.changed = true
   }
 }
 
@@ -187,8 +195,9 @@ function normalizeResponseId(
     if (!state.responseId && responseId) {
       state.responseId = responseId
     }
-    if (state.responseId) {
+    if (state.responseId && response.id !== state.responseId) {
       response.id = state.responseId
+      state.changed = true
     }
   }
 
@@ -196,8 +205,13 @@ function normalizeResponseId(
   if (!state.responseId && responseId) {
     state.responseId = responseId
   }
-  if (state.responseId && responseId !== undefined) {
+  if (
+    state.responseId
+    && responseId !== undefined
+    && parsed.response_id !== state.responseId
+  ) {
     parsed.response_id = state.responseId
+    state.changed = true
   }
 }
 
@@ -213,12 +227,18 @@ function normalizeOutputItem(
     getString(item.call_id),
   )
 
-  if (outputState.itemId) {
+  if (outputState.itemId && item.id !== outputState.itemId) {
     item.id = outputState.itemId
+    state.changed = true
   }
 
-  if (outputState.callId && Object.hasOwn(item, "call_id")) {
+  if (
+    outputState.callId
+    && Object.hasOwn(item, "call_id")
+    && item.call_id !== outputState.callId
+  ) {
     item.call_id = outputState.callId
+    state.changed = true
   }
 }
 
@@ -234,12 +254,22 @@ function normalizeIndexedEvent(
     getString(parsed.call_id),
   )
 
-  if (outputState.itemId && Object.hasOwn(parsed, "item_id")) {
+  if (
+    outputState.itemId
+    && Object.hasOwn(parsed, "item_id")
+    && parsed.item_id !== outputState.itemId
+  ) {
     parsed.item_id = outputState.itemId
+    state.changed = true
   }
 
-  if (outputState.callId && Object.hasOwn(parsed, "call_id")) {
+  if (
+    outputState.callId
+    && Object.hasOwn(parsed, "call_id")
+    && parsed.call_id !== outputState.callId
+  ) {
     parsed.call_id = outputState.callId
+    state.changed = true
   }
 }
 

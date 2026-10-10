@@ -1,9 +1,9 @@
 /**
- * Responses API 调度器(unified path for provider connections)。
+ * Responses API 调度器：HTTP `/responses` 与 `/responses/compact` 的统一入口。
  *
- * Account-backed 路径仍走 `~/services/copilot/create-responses` +
- * `delegateResponsesToNativeAdapter`;普通 Provider Connection 路径走本模块,
- * 通过 `dispatchRequest` 统一调度到 `adapter.createResponses`。
+ * 所有 Provider Connection 都经 `dispatchRequest` 选路与 failover：responses
+ * endpoint 走 `adapter.createResponses` 原生调用，其余 endpoint 走跨协议翻译。
+ * Responses WebSocket 已选定连接，直接调用 `~/services/copilot/create-responses`。
  */
 
 import type { Context } from "hono"

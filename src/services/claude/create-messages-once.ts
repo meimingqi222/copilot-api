@@ -11,6 +11,7 @@ import type {
 
 import { getStableSessionId } from "~/lib/cache/session-id-cache"
 import { HTTPError } from "~/lib/error"
+import { maskUpstream } from "~/lib/redaction/context"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { getCredentialContextString } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
@@ -358,6 +359,8 @@ export async function createClaudeMessagesOnce(
     throw toHttpError(error)
   }
   if (transport === "cli") {
+    // Protect the caller payload before rendering stdin, MCP definitions or resumed tool results.
+    payload = maskUpstream(payload)
     const runContext = { connection, credential, model, accessToken, signal }
     if (isStream) {
       // 流式契约是 `{ data, event }` 帧;CLI 产出的是类型化 Anthropic 事件,
@@ -414,7 +417,7 @@ export async function createClaudeMessagesOnce(
   // billing-header placeholder are touched). An unanchored placeholder is a
   // fingerprint regression; we ship `cch=00000` rather than failing, matching
   // CC's prior behaviour, but log it instead of failing silently.
-  const bodyBytes = serializeAndPatchCchBody(orderedBody, () => {
+  const bodyBytes = serializeAndPatchCchBody(maskUpstream(orderedBody), () => {
     console.warn(
       "claude: cch billing placeholder present but not patched; sending unattested request",
     )

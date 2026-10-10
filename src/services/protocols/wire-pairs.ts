@@ -3,15 +3,13 @@ import { measureLocalWork } from "~/lib/upstream-performance"
 /**
  * Pair translator for wire combinations without a hand-written wrapper.
  *
- * The four original cross-endpoint wrappers (`chat-via-messages`,
- * `messages-via-chat`, `chat-via-responses`, `responses-via-chat`) carry
- * per-wire behavior that a generic call would lose (prompt-cache breakpoints,
- * structured stream twins, memory traces, SSE framing). They stay as they are.
- *
- * Adding Gemini would have meant six more near-identical wrappers, so those
- * directions go through one spec table instead: each wire contributes a
- * decode/encode codec, and `createTranslatedCall` is the only place that
- * plans the translation, enforces the capability preflight and dispatches.
+ * Three wrappers carry prompt-cache breakpoints, structured stream twins or
+ * memory traces; `chat-via-responses` binds the Codex/xAI native Chat methods
+ * to this shared translator. Every other direction — `messages ↔ responses`
+ * and the six Gemini directions — is dispatched straight to
+ * `createTranslatedCall`: each wire contributes a decode/encode codec, and
+ * this is the only place that plans the translation, enforces the capability
+ * preflight and dispatches.
  */
 
 import type {
@@ -289,8 +287,8 @@ interface TranslatedCallParams {
  * The client-visible stream shape is whatever the source wire's encoder
  * produces, which is exactly what that route's consumer already expects.
  *
- * The six `*-via-*` wrappers are thin delegates over this function; the only
- * per-direction behavior they carry is expressed through the optional hooks
+ * The four `*-via-*` wrappers delegate to this function; per-direction behavior
+ * is expressed through the optional hooks
  * above, so there is exactly one place that plans, enforces the capability
  * preflight, and dispatches a translation.
  */
@@ -326,9 +324,11 @@ export async function createTranslatedCall(
     )
   }
   params.onPhase?.("request_decoded", { request: requestIR })
-  const searchers = listSearchers()
-  const orchestrate =
-    searchers.length > 0 && needsSearchOrchestration(requestIR, target)
+  // Only a search intent on a wire that cannot carry it pays for the searcher
+  // lookup.
+  const searchers =
+    needsSearchOrchestration(requestIR, target) ? listSearchers() : []
+  const orchestrate = searchers.length > 0
   const plan = planTranslation(requestIR, {
     wire: target,
     providerId: connection.protocol,

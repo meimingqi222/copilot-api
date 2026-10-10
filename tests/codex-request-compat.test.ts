@@ -167,7 +167,7 @@ describe("codex request compatibility (CPA parity)", () => {
   })
 
   loopbackTest(
-    "Codex WS handshake and body use the resolved Fast tier",
+    "Codex WS resolves Fast tier and strips unsupported usage options without losing usage",
     async () => {
       const capturedHeaders: { routingHint: string | null } = {
         routingHint: null,
@@ -193,6 +193,11 @@ describe("codex request compatibility (CPA parity)", () => {
                   status: "completed",
                   service_tier: "fast",
                   output: [],
+                  usage: {
+                    input_tokens: 7,
+                    output_tokens: 3,
+                    total_tokens: 10,
+                  },
                 },
               }),
             )
@@ -212,6 +217,10 @@ describe("codex request compatibility (CPA parity)", () => {
             input: "hi",
             stream: true,
             service_tier: "fast",
+            stream_options: {
+              include_usage: true,
+              reasoning_summary_delivery: "sequential_cutoff",
+            },
           } as never,
           undefined,
           {
@@ -222,9 +231,18 @@ describe("codex request compatibility (CPA parity)", () => {
             },
           },
         )
-        for await (const event of result as AsyncIterable<unknown>)
-          expect(event).toBeDefined()
+        const events = []
+        for await (const event of result as AsyncIterable<{ data: string }>)
+          if (event.data !== "[DONE]") events.push(JSON.parse(event.data))
         expect(posted?.service_tier).toBe("priority")
+        expect(posted?.stream_options).toEqual({
+          reasoning_summary_delivery: "sequential_cutoff",
+        })
+        expect(events.at(-1)?.response.usage).toEqual({
+          input_tokens: 7,
+          output_tokens: 3,
+          total_tokens: 10,
+        })
         expect(capturedHeaders.routingHint).toBe(
           "model=gpt-6.1-sol;tier=priority",
         )

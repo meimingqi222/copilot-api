@@ -21,7 +21,7 @@ export const TOOL_CALL_CLOSE = "</tool_call>"
 const FUNCTION_RE = /<function=([^>]+)>([\s\S]*?)<\/function>/
 const PARAMETER_RE = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/g
 
-export interface ParsedXmlToolCall {
+interface ParsedXmlToolCall {
   name: string
   arguments: Record<string, unknown>
 }

@@ -35,7 +35,8 @@ Chat 的翻译候选按 Responses、Messages 顺序尝试。候选的语义拒�
 
 流式 codec 逐事件消费和产出，保留消息、内容块和工具调用的身份及顺序。
 不能为了翻译把整个上游流缓存到首个下游事件前。非流式响应使用同一语义映射；
-需要由流汇总时，使用 collector。usage、stop reason 和 error 保留来源信息，
+需要由流汇总时，在 adapter 侧聚合 SSE（如 `protocols/sse-aggregate.ts`、
+`responses/sse-collector.ts`），IR 不设通用 collector。usage、stop reason 和 error 保留来源信息，
 缺失计数不能假装成精确的 0。
 
 reasoning 的三个顶层别名 `reasoning_text`、`reasoning_content`、`reasoning`
@@ -60,7 +61,9 @@ content parts 重复拼接。多个带签名 thinking 块保持独立，签名�
   responses / gemini）就透传原生声明；只有 chat 目标由代理接管，用
   `services/search/` 的循环执行并把结果渲染成 `server_tool_use` /
   `web_search_result`。既没有原生能力也没有可用 searcher 时拒绝，
-  `SEARCH_ORCHESTRATION=0` 可关。见 pitfalls §6。
+  `SEARCH_ORCHESTRATION=0` 可关。Chat 的搜索意图只认 `plugins` 里的 `web`
+  （`chatRequestsWebSearch`），原生 chat 路径没有该意图时直接透传、不查
+  searcher 也不解码 IR。见 pitfalls §6。
 - Gemini 是新公共协议：`IRWire` 含 `gemini`，`thoughtSignature` 只能回放给
   Gemini，工具结果以 `functionResponse` 表达且不支持图片。流式由方法名
   （`streamGenerateContent`）而非 body 字段决定，路由在 dispatch 前写入
@@ -75,11 +78,11 @@ Messages 只编码 `auto/standard_only`；不可表达的 tier（含 Gemini 的�
 
 ## 5. 翻译路径的选择
 
-| 情形                                                     | 走哪条路                         |
-| -------------------------------------------------------- | -------------------------------- |
-| 目标 endpoint 与请求一致                                 | 对应 adapter 的原生方法，不进 IR |
-| 组合需要专属行为（缓存断点、流 twin、memory trace、SSE） | 手写的 `*-via-*.ts` wrapper      |
-| 其余跨 wire 组合（当前：全部 Gemini 方向）               | `wire-pairs.ts` 的 `WireSpec` 表 |
+| 情形                                                        | 走哪条路                         |
+| ----------------------------------------------------------- | -------------------------------- |
+| 目标 endpoint 与请求一致                                    | 对应 adapter 的原生方法，不进 IR |
+| 组合需要专属行为（缓存断点、流 twin、memory trace、SSE）    | 手写的 `*-via-*.ts` wrapper      |
+| 其余跨 wire 组合（messages ↔ responses、全部 Gemini 方向） | `wire-pairs.ts` 的 `WireSpec` 表 |
 
 新增一条翻译路径时先问：它需要上面第二种的专属行为吗？不需要就往
 `WireSpec` 表加一项，不要在 dispatch 里内联字段映射。

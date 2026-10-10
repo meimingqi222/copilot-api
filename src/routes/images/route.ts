@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import { Hono } from "hono"
 
 import { forwardError, HTTPError } from "~/lib/error"
+import { runRedactedCall } from "~/lib/redaction/context"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
@@ -58,41 +59,45 @@ async function dispatchImageRequest(
   }
   const signal = c.req.raw.signal
 
-  let response: CodexImageGenerationResponse | ImageGenerationResponse
-  if (admission.connection.protocol === "codex-native") {
-    const forwardedHeaders = collectImageForwardedHeaders(c)
-    response =
-      action === "generations" ?
-        await createCodexImageGeneration(
-          subject,
-          payload as CodexImageGenerationRequest,
-          signal,
-          { forwardedHeaders },
-        )
-      : await createCodexImageEdit(
-          subject,
-          payload as CodexImageEditRequest,
-          signal,
-          { forwardedHeaders },
-        )
-  } else {
-    const idempotencyKey = c.req.header("x-idempotency-key")
-    response =
-      action === "generations" ?
-        await createXaiImageGeneration(
-          subject,
-          payload as ImageGenerationRequest,
-          signal,
-          idempotencyKey,
-        )
-      : await createXaiImageEdit(
-          subject,
-          payload as ImageEditRequest,
-          signal,
-          idempotencyKey,
-        )
-  }
+  const result = await runRedactedCall(payload, c, async (payload) => {
+    let response: CodexImageGenerationResponse | ImageGenerationResponse
+    if (admission.connection.protocol === "codex-native") {
+      const forwardedHeaders = collectImageForwardedHeaders(c)
+      response =
+        action === "generations" ?
+          await createCodexImageGeneration(
+            subject,
+            payload as CodexImageGenerationRequest,
+            signal,
+            { forwardedHeaders },
+          )
+        : await createCodexImageEdit(
+            subject,
+            payload as CodexImageEditRequest,
+            signal,
+            { forwardedHeaders },
+          )
+    } else {
+      const idempotencyKey = c.req.header("x-idempotency-key")
+      response =
+        action === "generations" ?
+          await createXaiImageGeneration(
+            subject,
+            payload as ImageGenerationRequest,
+            signal,
+            idempotencyKey,
+          )
+        : await createXaiImageEdit(
+            subject,
+            payload as ImageEditRequest,
+            signal,
+            idempotencyKey,
+          )
+    }
 
+    return { accountId: admission.connection.id, response }
+  })
+  const response = result.response
   c.set("accountId", admission.connection.id)
   recordUsage({
     c,

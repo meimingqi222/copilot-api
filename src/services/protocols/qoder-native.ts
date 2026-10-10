@@ -18,6 +18,7 @@
  */
 
 import { HTTPError } from "~/lib/error"
+import { maskUpstream } from "~/lib/redaction/context"
 import type { ModelMapping } from "~/lib/provider-connections"
 import { getConnectionProvider } from "~/lib/provider-connections"
 import { buildCosyHeaders, type QoderUser } from "~/services/qoder/cosy"
@@ -427,7 +428,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
       )
     }
 
-    const plaintext = buildChatEnvelope(payload, model)
+    const plaintext = buildChatEnvelope(maskUpstream(payload), model)
     if (process.env.QODER_DUMP) {
       // 调试用：把发往 Qoder 的明文信封落盘，便于比对。
       try {

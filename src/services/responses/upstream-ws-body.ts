@@ -32,11 +32,8 @@ interface UpstreamWsTransportProfile {
   /** Max wait for the first upstream event after `response.create`. */
   firstEventTimeoutMs: number
   /**
-   * Keep `stream_options` on the `response.create` frame. Codex needs
-   * `reasoning_summary_delivery` (visible thinking) and `include_usage` —
-   * without the latter the upstream attaches no `usage` to
-   * `response.completed`, so usage_stats / performance record nothing for the
-   * turn. xAI strips `stream_options` entirely (CPA parity).
+   * Keep provider-finalized `stream_options` on the `response.create` frame.
+   * Codex filters them at its outbound boundary; xAI strips them entirely.
    */
   keepStreamOptions: boolean
   /** Force `store: true`, and drop `instructions` when chaining a turn. */
@@ -80,21 +77,8 @@ export function buildUpstreamResponsesCreateBody(
   delete out.background
 
   const profile = upstreamWsProfile(options.provider)
-  const streamOptions = getRecord(out.stream_options)
-  const reasoningSummaryDelivery = streamOptions?.reasoning_summary_delivery
-  const includeUsage = streamOptions?.include_usage
-  delete out.stream_options
-  if (profile.keepStreamOptions) {
-    const kept: Record<string, unknown> = {}
-    if (reasoningSummaryDelivery !== undefined) {
-      kept.reasoning_summary_delivery = reasoningSummaryDelivery
-    }
-    if (includeUsage !== undefined) {
-      kept.include_usage = includeUsage
-    }
-    if (Object.keys(kept).length > 0) {
-      out.stream_options = kept
-    }
+  if (!profile.keepStreamOptions) {
+    delete out.stream_options
   }
 
   if (profile.storeChainedTurns) {
@@ -120,10 +104,4 @@ export function normalizeUpstreamWsEvent(
     event.type = alias.to
   }
   return typeof event.type === "string" ? event.type : ""
-}
-
-function getRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
 }

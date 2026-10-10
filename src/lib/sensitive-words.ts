@@ -4,10 +4,9 @@
  * 对配置的敏感词插入零宽空格（U+200B），在第一个 grapheme 后插入，
  * 保持人类可读性的同时破坏精确字符串匹配。
  *
- * 支持三种请求格式：
+ * 支持两种请求格式（Antigravity 在转换为 Gemini 之前处理）：
  * - OpenAI Chat / Anthropic Messages：messages 数组 + 顶层 system 字段
  * - OpenAI Responses：instructions + input 数组
- * - Gemini/Antigravity：request.systemInstruction.parts
  *
  * 通过 SENSITIVE_WORDS 环境变量配置，逗号分隔。不配则不生效。
  */
@@ -82,18 +81,25 @@ export function buildSensitiveWordMatcher(
   }
 }
 
+let cachedInput: string | undefined
+let cachedMatcher: SensitiveWordMatcher | null = null
+
 /**
  * 从 SENSITIVE_WORDS 环境变量构建匹配器（逗号分隔）。
  * 未配置时返回 null。
  */
 export function getSensitiveWordMatcherFromEnv(): SensitiveWordMatcher | null {
   const env = process.env.SENSITIVE_WORDS
+  if (env === cachedInput) return cachedMatcher
+  cachedInput = env
+  cachedMatcher = null
   if (!env) return null
   const words = env
     .split(",")
     .map((w) => w.trim())
     .filter(Boolean)
-  return buildSensitiveWordMatcher(words)
+  cachedMatcher = buildSensitiveWordMatcher(words)
+  return cachedMatcher
 }
 
 /**
@@ -108,28 +114,30 @@ export function obfuscateOpenAiMessages(
 ): Record<string, unknown> {
   if (!matcher) return payload
 
-  let changed = false
   const result: Record<string, unknown> = { ...payload }
 
   // 处理顶层 system 字段（Anthropic 格式）
   if (typeof result.system === "string") {
     result.system = matcher.obfuscate(result.system)
-    changed = true
   } else if (Array.isArray(result.system)) {
-    result.system = obfuscateSystemArray(result.system, matcher)
-    changed = true
+    result.system = mapChanged(result.system, (part) =>
+      obfuscateTextPart(part, matcher),
+    )
   }
 
   // 处理 messages 数组
   const messages = result.messages
   if (Array.isArray(messages)) {
-    result.messages = messages.map((message) =>
+    result.messages = mapChanged(messages, (message) =>
       obfuscateMessage(message, matcher),
     )
-    changed = true
   }
 
-  return changed ? result : payload
+  return (
+      result.system === payload.system && result.messages === payload.messages
+    ) ?
+      payload
+    : result
 }
 
 /**
@@ -142,71 +150,33 @@ export function obfuscateResponsesPayload(
 ): Record<string, unknown> {
   if (!matcher) return payload
 
-  let changed = false
   const result: Record<string, unknown> = { ...payload }
 
   // 处理 instructions 字段
   if (typeof result.instructions === "string") {
     result.instructions = matcher.obfuscate(result.instructions)
-    changed = true
   }
 
   // 处理 input 字段
   if (typeof result.input === "string") {
     result.input = matcher.obfuscate(result.input)
-    changed = true
   } else if (Array.isArray(result.input)) {
-    result.input = result.input.map((item) =>
-      obfuscateResponsesInputItem(item, matcher),
+    result.input = mapChanged(result.input, (item) =>
+      obfuscateMessage(item, matcher, "input_text"),
     )
-    changed = true
   }
 
-  return changed ? result : payload
-}
-
-function obfuscateResponsesInputItem(
-  item: unknown,
-  matcher: SensitiveWordMatcher,
-): unknown {
-  if (typeof item !== "object" || item === null) return item
-  const obj = item as Record<string, unknown>
-
-  if (typeof obj.content === "string") {
-    return { ...obj, content: matcher.obfuscate(obj.content) }
-  }
-
-  if (Array.isArray(obj.content)) {
-    return {
-      ...obj,
-      content: obj.content.map((part) =>
-        obfuscateTextPart(part, matcher, "input_text"),
-      ),
-    }
-  }
-
-  return item
-}
-
-function obfuscateSystemArray(
-  parts: Array<unknown>,
-  matcher: SensitiveWordMatcher,
-): Array<unknown> {
-  return parts.map((part) => {
-    if (isTextPart(part)) {
-      return { ...part, text: matcher.obfuscate(part.text) }
-    }
-    return part
-  })
-}
-
-function isTextPart(part: unknown): part is { type?: string; text: string } {
   return (
-    typeof part === "object"
-    && part !== null
-    && "text" in part
-    && typeof (part as Record<string, unknown>).text === "string"
-  )
+      result.instructions === payload.instructions
+        && result.input === payload.input
+    ) ?
+      payload
+    : result
+}
+
+function mapChanged<T>(items: Array<T>, transform: (item: T) => T): Array<T> {
+  const result = items.map(transform)
+  return result.every((item, index) => item === items[index]) ? items : result
 }
 
 /**
@@ -222,10 +192,11 @@ function obfuscateTextPart(
   const p = part as Record<string, unknown>
   if (
     typeof p.text === "string"
-    && typeof p.type === "string"
-    && textTypes.includes(p.type)
+    && (!textTypes.length
+      || (typeof p.type === "string" && textTypes.includes(p.type)))
   ) {
-    return { ...p, text: matcher.obfuscate(p.text) }
+    const text = matcher.obfuscate(p.text)
+    return text === p.text ? part : { ...p, text }
   }
   return part
 }
@@ -233,56 +204,22 @@ function obfuscateTextPart(
 function obfuscateMessage(
   message: unknown,
   matcher: SensitiveWordMatcher,
+  textType = "text",
 ): unknown {
   if (typeof message !== "object" || message === null) return message
   const msg = message as Record<string, unknown>
 
   if (typeof msg.content === "string") {
-    return { ...msg, content: matcher.obfuscate(msg.content) }
+    const content = matcher.obfuscate(msg.content)
+    return content === msg.content ? message : { ...msg, content }
   }
 
   if (Array.isArray(msg.content)) {
-    return {
-      ...msg,
-      content: msg.content.map((part) =>
-        obfuscateTextPart(part, matcher, "text"),
-      ),
-    }
+    const content = mapChanged(msg.content, (part) =>
+      obfuscateTextPart(part, matcher, textType),
+    )
+    return content === msg.content ? message : { ...msg, content }
   }
 
   return message
-}
-
-/**
- * 对 Gemini/Antigravity 格式的请求体进行敏感词混淆。
- * 只处理 request.systemInstruction 中的 text 字段。
- */
-export function obfuscateGeminiSystemInstruction(
-  payload: Record<string, unknown>,
-  matcher: SensitiveWordMatcher | null,
-): Record<string, unknown> {
-  if (!matcher) return payload
-
-  const request = payload.request as Record<string, unknown> | undefined
-  if (!request) return payload
-
-  const si = request.systemInstruction as
-    | { parts?: Array<{ text?: string }>; role?: string }
-    | undefined
-  if (!si?.parts) return payload
-
-  const newParts = si.parts.map((part) => {
-    if (typeof part.text === "string") {
-      return { ...part, text: matcher.obfuscate(part.text) }
-    }
-    return part
-  })
-
-  return {
-    ...payload,
-    request: {
-      ...request,
-      systemInstruction: { ...si, parts: newParts },
-    },
-  }
 }

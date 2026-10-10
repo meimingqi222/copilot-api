@@ -153,9 +153,10 @@ export function handleStreamingResponse(
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
+          const normalized = normalizeChunk(chunk)
           await writeSseEvent(
             stream,
-            JSON.stringify(normalizeChunk(chunk)),
+            normalized === chunk ? rawEvent.data : JSON.stringify(normalized),
             undefined,
             chunk,
           )
@@ -364,9 +365,10 @@ export async function handleStreamingCompletion(
           if (chunkFinishReason) {
             lastFinishReason = chunkFinishReason
           }
+          const normalized = normalizeChunk(chunk)
           await writeSseEvent(
             stream,
-            JSON.stringify(normalizeChunk(chunk)),
+            normalized === chunk ? rawEvent.data : JSON.stringify(normalized),
             undefined,
             chunk,
           )

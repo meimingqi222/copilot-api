@@ -1,5 +1,10 @@
 import { z } from "zod"
 
+import {
+  environmentRedaction,
+  redactionConfigSchema,
+} from "~/lib/redaction/rules"
+
 export const SYSTEM_CONFIG_KEY = "system-diagnostics-v1"
 
 /** 连接级代理允许的 scheme(Bun fetch 的 proxy 选项)。 */
@@ -23,6 +28,7 @@ function environmentLogStorage(): {
 
 const settingsSchema = z
   .object({
+    redaction: redactionConfigSchema.default(() => environmentRedaction()),
     logLevel: z.enum(["warn", "info", "debug"]),
     requestDump: z.boolean(),
     memoryVerbose: z.boolean(),
@@ -64,6 +70,7 @@ const settingsSchema = z
 
 export const systemConfigUpdateSchema = settingsSchema
   .extend({
+    redaction: settingsSchema.shape.redaction.removeDefault().optional(),
     codexModelIds: settingsSchema.shape.codexModelIds
       .removeDefault()
       .optional(),
@@ -105,6 +112,7 @@ type SystemSettings = z.infer<typeof settingsSchema>
 type StoredConfig = z.infer<typeof storedSchema>
 
 const safeDefaults: SystemSettings = {
+  redaction: environmentRedaction(),
   logLevel: "info",
   requestDump: false,
   memoryVerbose: false,
@@ -127,6 +135,7 @@ let expiryTimer: ReturnType<typeof setTimeout> | undefined
 function effectiveSettings(now = Date.now()): SystemSettings {
   if (!stored) {
     Object.assign(defaults, environmentLogStorage())
+    defaults.redaction = environmentRedaction()
     defaults.requestDump = ["1", "true", "yes"].includes(
       process.env.DUMP_REQUESTS?.trim().toLowerCase() ?? "",
     )
@@ -217,6 +226,7 @@ export function updateSystemConfig(
   const next: StoredConfig = {
     settings: {
       ...settings,
+      redaction: settings.redaction ?? effectiveSettings().redaction,
       codexModelIds:
         settings.codexModelIds === undefined ?
           effectiveSettings().codexModelIds

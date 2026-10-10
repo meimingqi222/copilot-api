@@ -54,11 +54,11 @@ function connectionDisplayName(connectionId: string): string | undefined {
 }
 
 /** `provider` 列是否是 plain connection 的 protocol 值。 */
-export function isPlainCompatibleProvider(providerId: string): boolean {
+function isPlainCompatibleProvider(providerId: string): boolean {
   return isCompatibleProtocol(providerId)
 }
 
-export interface ProviderBucketRow {
+interface ProviderBucketRow {
   provider: string | null
   connection_id?: string | null
 }

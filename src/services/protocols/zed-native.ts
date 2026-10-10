@@ -18,6 +18,7 @@
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import {
   getConnectionProxyUrl,
   getCredentialContextString,
@@ -124,7 +125,7 @@ async function postZedCompletion(
             "true",
           "user-agent": zedUserAgent(),
         },
-        body: JSON.stringify({
+        body: serializeUpstreamBody({
           provider,
           model,
           provider_request: providerRequest,

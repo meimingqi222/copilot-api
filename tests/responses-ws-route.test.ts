@@ -7,6 +7,7 @@ import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+import { initializeSystemConfig } from "~/lib/system-config"
 import {
   clearTraceBusForTest,
   recentTraces,
@@ -27,6 +28,7 @@ const originalApiKey = state.legacyApiKey
 const originalVsCodeVersion = state.vsCodeVersion
 const originalAccountType = state.accountType
 const originalUsers = state.users
+const originalRedaction = process.env.UPSTREAM_REDACTION
 
 beforeEach(() => {
   resetProtectedRouteGuardForTest()
@@ -84,11 +86,18 @@ afterEach(() => {
   state.vsCodeVersion = originalVsCodeVersion
   state.accountType = originalAccountType
   state.users = originalUsers
+  if (originalRedaction === undefined) delete process.env.UPSTREAM_REDACTION
+  else process.env.UPSTREAM_REDACTION = originalRedaction
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
 })
 
-loopbackTest(
-  "WS /responses supports sequential response.create requests",
-  async () => {
+loopbackTest.each([false, true])(
+  "WS /responses supports sequential response.create requests (redaction=%s)",
+  async (redaction) => {
+    process.env.UPSTREAM_REDACTION = JSON.stringify({ enabled: redaction })
+    initializeSystemConfig({ save: () => {}, onChange: () => {} })
+    const firstInput = "/home/ws-user/first DB_PASSWORD=privateValue123"
+    const secondInput = "/home/ws-user/second DB_PASSWORD=privateValue123"
     state.legacyApiKey = "secret"
     const finalTraceIds: string[] = []
     const unsubscribe = subscribeTrace(({ entry, phase }) => {
@@ -100,6 +109,12 @@ loopbackTest(
       const payload = JSON.parse(opts.body ?? "{}") as {
         model?: string
         input?: string
+      }
+      if (redaction) {
+        expect(opts.body).not.toContain("ws-user")
+        expect(opts.body).not.toContain("privateValue123")
+        expect(opts.body).toContain("{{HOME_")
+        expect(opts.body).toContain("{{SECRET_")
       }
 
       return {
@@ -145,7 +160,7 @@ loopbackTest(
         type: "response.create",
         response: {
           model: "gpt-responses",
-          input: "first",
+          input: firstInput,
         },
       }),
     )
@@ -154,14 +169,14 @@ loopbackTest(
       output_text: string
     }
     expect(first.object).toBe("response")
-    expect(first.output_text).toBe("first")
+    expect(first.output_text).toBe(firstInput)
 
     ws.send(
       JSON.stringify({
         type: "response.create",
         response: {
           model: "gpt-responses",
-          input: "second",
+          input: secondInput,
         },
       }),
     )
@@ -170,7 +185,7 @@ loopbackTest(
       output_text: string
     }
     expect(second.object).toBe("response")
-    expect(second.output_text).toBe("second")
+    expect(second.output_text).toBe(secondInput)
 
     await waitFor(
       () =>

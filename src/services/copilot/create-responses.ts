@@ -19,6 +19,7 @@ import {
   inferInitiatorFromResponsesPayload,
 } from "~/lib/initiator-header"
 import { accountManagedModelPrefix } from "~/lib/provider-connections"
+import { runRedactedCall } from "~/lib/redaction/context"
 import { connectionModelSupportsEndpoint } from "~/lib/route-target/model-support"
 import { hasVisionInput } from "~/services/copilot/create-responses-once"
 import {
@@ -56,7 +57,16 @@ interface CreateResponsesOptions {
   compact?: boolean
 }
 
-export const createResponses = async (
+export function createResponses(
+  payload: ResponsesPayload,
+  options: CreateResponsesOptions,
+): ReturnType<typeof createPreparedResponses> {
+  return runRedactedCall(payload, options.c, (prepared) =>
+    createPreparedResponses(prepared, options),
+  )
+}
+
+const createPreparedResponses = async (
   payload: ResponsesPayload,
   options: CreateResponsesOptions,
 ): Promise<{

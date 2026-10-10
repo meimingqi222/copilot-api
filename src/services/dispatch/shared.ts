@@ -20,6 +20,7 @@ import type { GeminiGenerateContentRequest } from "~/services/protocols/gemini"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { runRedactedCall } from "~/lib/redaction/context"
 import { connectionProvider } from "~/lib/provider-connections"
 import {
   clearUsagePricingRounds,
@@ -38,10 +39,11 @@ import { isAsyncIterable } from "~/services/dispatch/concurrency"
 import { createChatViaMessages } from "~/services/protocols/chat-via-messages"
 import { createChatViaResponses } from "~/services/protocols/chat-via-responses"
 import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
-import { createMessagesViaResponses } from "~/services/protocols/messages-via-responses"
 import { createResponsesViaChat } from "~/services/protocols/responses-via-chat"
-import { createResponsesViaMessages } from "~/services/protocols/responses-via-messages"
-import { decodeChatRequest } from "~/services/ir/codecs/messages-chat/request"
+import {
+  chatRequestsWebSearch,
+  decodeChatRequest,
+} from "~/services/ir/codecs/messages-chat/request"
 import { getProtocolAdapter } from "~/services/protocols/registry"
 import {
   createTranslatedCall,
@@ -49,7 +51,6 @@ import {
   type WireExecutor,
 } from "~/services/protocols/wire-pairs"
 import {
-  needsSearchOrchestration,
   runSearchAwareResult,
   runSearchAwareStream,
   type SearchAwareExecutor,
@@ -104,10 +105,11 @@ function chatSearchDetour(params: {
   ctx?: RequestExecutionContext
 }): Promise<{ credentialId: string; response: unknown }> | undefined {
   clearUsagePricingRounds(params.ctx?.c)
+  // The chat wire never carries search itself, so the intent alone decides.
+  if (!chatRequestsWebSearch(params.payload)) return undefined
   const searchers = listSearchers()
   if (searchers.length === 0) return undefined
   const request = decodeChatRequest(params.payload)
-  if (!needsSearchOrchestration(request, "chat")) return undefined
 
   const spec = wireSpec("chat")
   const searchParams = {
@@ -342,6 +344,20 @@ export async function dispatchRequest(
   admission: RequestAdmission,
   signal?: AbortSignal,
 ): Promise<DispatchResult> {
+  return runRedactedCall(options.payload, options.c, (payload) =>
+    dispatchPreparedRequest(
+      { ...options, payload } as DispatchOptions,
+      admission,
+      signal,
+    ),
+  )
+}
+
+async function dispatchPreparedRequest(
+  options: DispatchOptions,
+  admission: RequestAdmission,
+  signal?: AbortSignal,
+): Promise<DispatchResult> {
   // 统一敏感词混淆：在进入 provider 适配器之前处理所有 payload 格式。
   // chat/messages 用 obfuscateOpenAiMessages，responses 用 obfuscateResponsesPayload。
   // Antigravity 走 chat 路由，翻译成 Gemini 格式前已在此处混淆 messages。
@@ -512,23 +528,8 @@ export async function dispatchRequest(
             chatExecutor: (p) => createChat(p),
           }).then((r) => decorateResult(r, current, options.c))
         }
-        const createMessages = adapter?.createMessages?.bind(adapter)
-        if (target.endpoint === "messages" && createMessages) {
-          return createResponsesViaMessages({
-            target,
-            connection: conn,
-            credential: cred,
-            payload: {
-              ...payload,
-              model: resolveDispatchModel(target),
-            },
-            signal,
-            ctx: executionContext,
-            messagesExecutor: (p) => createMessages(p),
-          }).then((r) => decorateResult(r, current, options.c))
-        }
-        if (target.endpoint === "gemini") {
-          const bound = wireExecutor(adapter, "gemini")
+        if (target.endpoint === "messages" || target.endpoint === "gemini") {
+          const bound = wireExecutor(adapter, target.endpoint)
           if (bound) {
             return translatedCall("responses", bound, {
               target,
@@ -623,27 +624,10 @@ export async function dispatchRequest(
         }).then((r) => decorateResult(r, current, options.c))
       }
 
-      // Cross-protocol fallback: translate Anthropic Messages -> Responses,
-      // delegate to createResponses, then translate the response back. Enables
-      // /v1/messages to reach responses-only targets (codex/xai).
-      const createResponses = adapter?.createResponses?.bind(adapter)
-      if (target.endpoint === "responses" && createResponses) {
-        return createMessagesViaResponses({
-          target,
-          connection: conn,
-          credential: cred,
-          payload: {
-            ...payload,
-            model: resolveDispatchModel(target),
-          },
-          signal,
-          ctx: messageExecutionContext,
-          responsesExecutor: (p) => createResponses(p),
-        }).then((r) => decorateResult(r, current, options.c))
-      }
-
-      if (target.endpoint === "gemini") {
-        const bound = wireExecutor(adapter, "gemini")
+      // Responses (codex/xai and other responses-only targets) and Gemini
+      // need no per-wire behavior, so the shared codec table serves them.
+      if (target.endpoint === "responses" || target.endpoint === "gemini") {
+        const bound = wireExecutor(adapter, target.endpoint)
         if (bound) {
           return translatedCall("messages", bound, {
             target,

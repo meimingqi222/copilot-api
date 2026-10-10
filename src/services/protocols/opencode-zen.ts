@@ -43,10 +43,7 @@ import {
   serializeUpstreamBody,
 } from "~/lib/upstream-performance"
 
-import type {
-  ChatCompletionsPayload,
-  CopilotStreamEvent,
-} from "~/services/protocols/chat/types"
+import type { CopilotStreamEvent } from "~/services/protocols/chat/types"
 
 import {
   type ApiCredential,
@@ -72,8 +69,6 @@ import type {
   ProtocolAdapter,
 } from "./types"
 import type { Context } from "hono"
-
-import type { ResponsesPayload } from "./responses/types"
 
 /** 网关要求的客户端版本号（UA 检查是搜索而非锚定匹配，>= 1.17 即可）。 */
 export const ZEN_CLIENT_UA = "opencode/1.18.31"
@@ -394,7 +389,7 @@ function quartetSlotOf(name: string): string {
     : ""
 }
 
-export interface ZenToolWire {
+interface ZenToolWire {
   /** 上游看到的拼写 → 调用方拼写。 */
   rename: Map<string, string>
   /** 调用方声明过的工具名(调用方拼写)。 */
@@ -1007,5 +1002,3 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     } satisfies AdapterResponsesResult
   },
 }
-
-export type { ChatCompletionsPayload, ResponsesPayload }

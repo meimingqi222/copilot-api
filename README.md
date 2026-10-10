@@ -40,6 +40,56 @@ A reverse-engineered proxy for the GitHub Copilot API that exposes it as an Open
 - **Flexible Authentication**: Authenticate interactively or provide a GitHub token directly, suitable for CI/CD environments.
 - **Support for Different Account Types**: Works with individual, business, and enterprise GitHub Copilot plans.
 
+### Reversible upstream redaction
+
+Optional content redaction replaces recognized credentials, home-directory prefixes
+and configured literal words before provider execution. Client responses and tool
+arguments are restored, including placeholders split across streaming chunks.
+For example, `/home/alice/project/src` becomes `{{HOME_…}}/project/src`: the
+project-relative path is preserved, and `alice` in ordinary prose is unchanged.
+
+```bash
+UPSTREAM_REDACTION='{"enabled":true,"words":["internal.example"],"homePrefixes":["/srv/private-user"]}' bun run start
+```
+
+All options are optional: `enabled` defaults to `false`, `secrets`, `homePaths` and `wordsEnabled`
+default to `true`, and `words`/`homePrefixes` default to empty lists. Extra entries
+are exact, case-sensitive strings, not user-supplied regular expressions. The
+same configuration is available as `settings.redaction` in the system-config
+admin API. The admin **System Settings → Upstream content redaction** switch
+controls `enabled`, with independent Credentials (`secrets`), Home directories
+(`homePaths`, including extra prefixes) and Custom literal words (`wordsEnabled`)
+switches. Edit the words and extra directory prefixes in the multiline fields,
+one entry per line. Blank lines and surrounding whitespace are ignored; commas
+and regex symbols remain literal text. Each list allows up to 100 entries of
+2–1024 characters. Fields remain editable while redaction is off. Turning off
+a switch does not clear its configured lists. Save to apply
+to new requests. Persisted settings override environment defaults. Do not combine it
+with the legacy, irreversible `SENSITIVE_WORDS` filter.
+
+Mappings are isolated by authenticated user (a shared legacy API key is one
+caller). Anonymous requests have request-local mappings only. Responses restore
+only mappings admitted by their current request. Signed reasoning that was
+restored to the client is cached alongside its exact upstream content and issuer:
+later requests replay the original bytes rather than invalidating the signature.
+Edited signed content, missing restoration context or a different issuer is
+rejected instead of being sent unsafely. State is memory-only, with a one-hour
+idle lifetime. The recovery-cache budget is 16 MiB globally and 2 MiB / 1024
+items per caller (placeholders and signed replay combined). Least-recently-used
+history may expire earlier under pressure; entries used by in-flight requests
+are protected from eviction. If protected state alone exceeds capacity, the
+request fails explicitly rather than leaking content. After restart or expiry, replay original
+input or start a new conversation if signed restored history cannot be replayed.
+Multi-instance deployments need sticky routing for this feature.
+
+Claude Code CLI remains supported: caller content is masked before stdin,
+MCP tool definitions, continuation messages and resumed tool results are built.
+This is **content protection, not an egress firewall**. It does not inspect the
+CLI's internally generated system context/telemetry, redact upstream authentication
+headers, OCR images, transcribe audio, or sanitize local logs. Built-in credential
+patterns are deliberately conservative and do not identify every possible secret;
+use explicit `words` for sensitive values they do not recognize.
+
 ## Demo
 
 https://github.com/user-attachments/assets/7654b383-669d-4eb9-b23c-06d7aefee8c5

@@ -27,13 +27,14 @@ OpenAI Responses）互转时的信息落差，以及历史回归。下文列出�
 | `gemini`      | `gemini`（原生）、`chat`、`messages`、`responses` |
 | `embeddings`  | `embeddings`（不做 fallback）                     |
 
-`messages ↔ responses` 已开放（§4），两个方向各自有 wrapper
-（`messages-via-responses.ts`、`responses-via-messages.ts`），不经 Chat 串联。
-
-Gemini 的六个方向走 `src/services/protocols/wire-pairs.ts` 的表驱动路径。
+`messages ↔ responses` 已开放（§4），两个方向不经 Chat 串联，与 Gemini 的六个方向一样
+由 dispatch 直接调用 `src/services/protocols/wire-pairs.ts` 的表驱动路径
+（`createTranslatedCall`）。
 **新增跨 wire 组合时优先往那张表加 `WireSpec` 项**，不要再写一份手写 wrapper；
 只有该组合需要专属行为（缓存断点、结构化流 twin、memory trace、SSE 帧形状）时
-才值得单独成文件——现有四条手写 wrapper 正是因为这个原因保留。
+才值得单独成文件——`chat-via-messages`、`messages-via-chat`、`responses-via-chat`
+因这些专属行为保留；`chat-via-responses` 则负责把 Codex/xAI 原生 adapter 的 Chat
+方法接到共享翻译路径。
 
 ### 选路层级
 
@@ -279,10 +280,9 @@ Windsurf 只有一个 `system_prompt` 字段，必须合并 Chat 的 system 和 
 
 ## 4. messages ↔ responses（已开放）
 
-IR 不经 Chat 枢纽，两个方向各自直连：
-
-- `messages-via-responses.ts` — Messages 客户端 → `createResponses` 上游
-- `responses-via-messages.ts` — Responses 客户端 → `createMessages` 上游
+IR 不经 Chat 枢纽，两个方向各自直连，没有专属行为，因此不设 wrapper：
+`src/services/dispatch/shared.ts` 用 `wireExecutor()` 绑定目标 adapter 的
+`createResponses` / `createMessages`，交给 `createTranslatedCall` 翻译与回译。
 
 开放时验证过的契约，回归时不要回退：
 
@@ -321,7 +321,13 @@ Gemini 是新公共协议，不是某个既有 wire 的方言，因此它在
 
 判定只看目标 wire（`needsSearchOrchestration`）：messages / responses / gemini 的 wire 本身能表达搜索
 （`WIRE_CAPABILITIES[wire].webSearch` 为 `true`），只有 **chat** 不能 —— 因此只有 chat 目标会触发循环，
-其余路径保持单次调用。
+其余路径保持单次调用。`createTranslatedCall` 先判 `needsSearchOrchestration`，命中才调用
+`listSearchers()`。
+
+原生 chat → chat 路径（`dispatch/shared.ts` 的 `chatSearchDetour`）先用
+`chatRequestsWebSearch()`（`plugins` 含 `web`，与 `decodeChatRequest` 写入
+`generation.webSearch` 的条件同一个函数）判断意图；没有意图时立即透传，不查 searcher、
+不解码 IR。`clearUsagePricingRounds` 在判断之前执行，每次调用都重置上一候选的计价轮次。
 
 **代理循环**（`orchestrate.ts`，最多 6 轮）：往目标请求注入内部工具
 `web_search`（与客户端工具重名时降级为 `__proxy_web_search`），模型每要一次搜索，代理就用一个

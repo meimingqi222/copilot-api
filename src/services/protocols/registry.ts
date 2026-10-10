@@ -16,6 +16,11 @@
  */
 
 import type { ProviderProtocol } from "~/lib/provider-connections"
+import {
+  bindRedactionStream,
+  maskUpstream,
+  withRedactionIssuer,
+} from "~/lib/redaction/context"
 
 import type { ProtocolAdapter } from "./types"
 
@@ -25,7 +30,46 @@ export function registerProtocolAdapter(adapter: ProtocolAdapter): void {
   if (registry.has(adapter.protocol)) {
     throw new Error(`Protocol adapter already registered: ${adapter.protocol}`)
   }
+  Object.assign(adapter, {
+    createChatCompletions:
+      adapter.createChatCompletions
+      && protect(adapter.createChatCompletions.bind(adapter)),
+    createMessages:
+      adapter.createMessages && protect(adapter.createMessages.bind(adapter)),
+    createResponses:
+      adapter.createResponses && protect(adapter.createResponses.bind(adapter)),
+    createGeminiGenerateContent:
+      adapter.createGeminiGenerateContent
+      && protect(adapter.createGeminiGenerateContent.bind(adapter)),
+    createEmbeddings:
+      adapter.createEmbeddings
+      && protect(adapter.createEmbeddings.bind(adapter)),
+  })
   registry.set(adapter.protocol, adapter)
+}
+
+function protect<
+  P extends { payload: unknown; connection: { id: string } },
+  R extends { response: unknown },
+>(call: (params: P) => Promise<R>): (params: P) => Promise<R> {
+  return (params) =>
+    withRedactionIssuer(params.connection.id, async () => {
+      const result = await call({
+        ...params,
+        payload: maskUpstream(params.payload),
+      })
+      const response = result.response
+      return (
+          response
+            && typeof response === "object"
+            && Symbol.asyncIterator in response
+        ) ?
+          {
+            ...result,
+            response: bindRedactionStream(response as AsyncIterable<unknown>),
+          }
+        : result
+    })
 }
 
 export function getProtocolAdapter(

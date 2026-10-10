@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
 import {
-  collectStreamEvents,
   getTranslationLossMetricsSnapshot,
   getTranslationLossesForContext,
   inspectRequestFeatures,
@@ -9,7 +8,7 @@ import {
   recordTranslationLossesForContext,
   resetTranslationLossMetricsForTest,
 } from "~/services/ir"
-import type { RequestIR, StreamEvent } from "~/services/ir"
+import type { RequestIR } from "~/services/ir"
 import {
   createDetachedRequestLog,
   finalizeRequestLogContext,
@@ -255,44 +254,5 @@ describe("IR loss logging", () => {
     expect(JSON.stringify(entry)).not.toContain("my-secret")
     expect(Object.keys(entry)).not.toContain("translationLosses")
     expect(getTranslationLossesForContext(ctx)).toEqual([])
-  })
-})
-
-describe("IR stream collector", () => {
-  test("keeps adjacent thinking blocks separate and marks an interrupted stream", async () => {
-    async function* events(): AsyncIterable<StreamEvent> {
-      yield { type: "message_start", id: "m1", model: "test-model", source }
-      yield {
-        type: "part_start",
-        partId: "a",
-        index: 0,
-        part: { type: "thinking", text: "", source },
-      }
-      yield {
-        type: "part_delta",
-        partId: "a",
-        index: 0,
-        delta: { type: "thinking", text: "first" },
-      }
-      yield { type: "part_end", partId: "a", index: 0 }
-      yield {
-        type: "part_start",
-        partId: "b",
-        index: 1,
-        part: { type: "thinking", text: "", source },
-      }
-      yield {
-        type: "part_delta",
-        partId: "b",
-        index: 1,
-        delta: { type: "thinking", text: "second" },
-      }
-    }
-    const result = await collectStreamEvents(events())
-    expect(result.parts).toHaveLength(2)
-    expect(
-      result.parts.map((part) => (part.type === "thinking" ? part.text : "")),
-    ).toEqual(["first", "second"])
-    expect(result.status).toBe("incomplete")
   })
 })

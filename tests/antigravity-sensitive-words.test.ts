@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 
 import {
   buildSensitiveWordMatcher,
-  obfuscateGeminiSystemInstruction,
   obfuscateOpenAiMessages,
 } from "~/lib/sensitive-words"
 import {
@@ -60,41 +59,6 @@ describe("antigravity sensitive word obfuscation", () => {
     expect(buildSensitiveWordMatcher(undefined)).toBeNull()
     expect(buildSensitiveWordMatcher([])).toBeNull()
     expect(buildSensitiveWordMatcher(["", "  "])).toBeNull()
-  })
-
-  test("obfuscateSensitiveWordsInSystemInstruction only affects systemInstruction text", () => {
-    const matcher = buildSensitiveWordMatcher(["proxy"])
-    const payload = {
-      request: {
-        contents: [{ role: "user", parts: [{ text: "use proxy here" }] }],
-        systemInstruction: {
-          role: "user",
-          parts: [{ text: "you are a proxy assistant" }],
-        },
-      },
-    }
-    const result = obfuscateGeminiSystemInstruction(
-      payload as unknown as Record<string, unknown>,
-      matcher,
-    )
-    const si = (result.request as Record<string, unknown>)
-      .systemInstruction as { parts: Array<{ text: string }> }
-    expect(si.parts[0].text).toBe("you are a p\u200Broxy assistant")
-    // contents should be unchanged
-    const contents = (result.request as Record<string, unknown>)
-      .contents as Array<{ parts: Array<{ text: string }> }>
-    expect(contents[0].parts[0].text).toBe("use proxy here")
-  })
-
-  test("null matcher returns payload unchanged", () => {
-    const payload = {
-      request: { systemInstruction: { parts: [{ text: "x" }] } },
-    }
-    const result = obfuscateGeminiSystemInstruction(
-      payload as unknown as Record<string, unknown>,
-      null,
-    )
-    expect(result).toBe(payload)
   })
 })
 

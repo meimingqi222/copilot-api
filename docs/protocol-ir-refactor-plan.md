@@ -6,14 +6,14 @@
 
 实施记录（2026-09-30）：
 
-- `src/services/ir/` 已包含类型化请求/结果、增量事件、collector、能力预检和脱敏损失记录；四个 `via-*` wrapper 已切换到 IR codec。
+- `src/services/ir/` 已包含类型化请求/结果、增量事件、能力预检和脱敏损失记录（早期的通用 collector 无生产调用，已删除）；四个 `via-*` wrapper 已切换到 IR codec。
 - 路由现在枚举可用端点；原生路径优先，语义拒绝会尝试下一候选且不冷却凭证。`AGENTS.md` 与翻译规约已更新。
 - 历史 pair translator 已全部删除。Copilot adapter 内部按模型能力自行做 Chat↔Responses 翻译的私有实现（`chat-to-responses*`、`responses-to-chat`）也随之移除：端点选择统一由 `buildRouteTargets` 负责，翻译统一走 IR wrapper，Copilot 与其它 provider 一样只按 `target.endpoint` 调用本协议端点。WS 直连路径（`createResponses`）的 chat 回退同样改走 `createResponsesViaChat`。
 - 本次提交只落地 IR 内核与既有四方向；Gemini 公共协议试点、`messages ↔ responses` 路由和代理级 `web_search` 编排随后在 Phase 4/5 实施完成（见下文），核心约束仍是「不引入未被调用的 codec」。
 
 实施记录（Phase 4，2026-09-30）：
 
-- **`messages ↔ responses` 双向开放**。`resolveEndpoints` 的 fallback 表补全为「任一端点可回退到其余三个」；新增 `messages-via-responses.ts` 与 `responses-via-messages.ts`，复用既有 IR codec。`unified-routing.test.ts` 与两个新路由测试覆盖请求/响应两个方向。
+- **`messages ↔ responses` 双向开放**。`resolveEndpoints` 的 fallback 表补全为「任一端点可回退到其余三个」；当时新增 `messages-via-responses.ts` 与 `responses-via-messages.ts`；它们只是 `createTranslatedCall` 的薄转发，后已删除，dispatch 直接走表驱动路径。`unified-routing.test.ts` 与两个新路由测试覆盖请求/响应两个方向。
 - **Gemini 公共协议试点完成**。新增 `IRWire = "gemini"`、`codecs/gemini/`（请求/结果/流）、`protocols/gemini-compatible.ts` adapter、`gemini-compatible` 协议与 `gemini` endpoint、`routes/gemini/`（`/v1beta/models/{model}:generateContent` 与 `:streamGenerateContent`）。真实成本：1 个 wire codec（4 文件）+ 1 个 adapter + 1 个路由 + 1 张表项，**没有与每个既有协议成对新增翻译器**。
 - **表驱动翻译路径**。Gemini 的六个方向（gemini→chat/messages/responses 与反向）由 `services/protocols/wire-pairs.ts` 的一张 `WireSpec` 表组装，`createTranslatedCall` 是唯一的预检/编码/调度入口。手写 wrapper 只保留存在专属行为（缓存断点、结构化流 twin、memory trace、SSE 帧形状）的既有四条。
 - **`web_search` 代理编排已实施**（见 Phase 5）。IR 新增 `generation.webSearch` / `webSearchOptions`（意图）与 `IRServerToolUsePart` / `IRWebSearchResultPart`（事件）；messages 与 responses 已能双向保留，chat 对当前轮 `reject`、对历史 `drop`，Gemini 只保留 `google_search` 意图。任一目标都无法原生承载时仍然明确拒绝，符合 §3 的「不能静默丢弃」。
@@ -193,7 +193,7 @@ ResultIR 与请求 IR 分开。usage 记录输入、输出、缓存读取、缓�
 实施结果：
 
 - Gemini 成本 = 1 个 wire codec（`ir/codecs/gemini/{part,request,result,stream}.ts`）+ 1 个 adapter（`protocols/gemini-compatible.ts`）+ 1 个路由（`routes/gemini/`）+ 协议/端点枚举各一行 + `wire-pairs.ts` 一张表项。**没有新增与既有协议成对的翻译器**，公共能力规则仍只在 `ir/capabilities.ts` 维护一处。
-- `messages ↔ responses` 双向开放：两个 wrapper（`messages-via-responses.ts`、`responses-via-messages.ts`）复用既有 codec，未引入新 wire 语义。
+- `messages ↔ responses` 双向开放：复用既有 codec，由 dispatch 直接调用 `createTranslatedCall`，未引入新 wire 语义（早期的两个薄 wrapper 已删除）。
 - `web_search`：IR 意图与事件语义落地；代理编排见 Phase 5。
 
 ### Phase 5 — web_search 代理编排（已实施）

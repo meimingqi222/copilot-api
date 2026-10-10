@@ -17,6 +17,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 
 import type {
   CopilotStreamEvent,
@@ -707,7 +708,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       connectionFetchInit(connection, {
         method: "POST",
         headers,
-        body: JSON.stringify(upstreamPayload),
+        body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),
     )

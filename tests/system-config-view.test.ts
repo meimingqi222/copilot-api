@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
+import { getSystemConfig, initializeSystemConfig } from "~/lib/system-config"
+import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
 
 test("system settings display MiB and save the selected storage budget", async () => {
   const settings = {
@@ -8,6 +10,22 @@ test("system settings display MiB and save the selected storage budget", async (
     logMaxTotalBytes: 1024 ** 3,
     concurrencyQueueLimit: 100,
     concurrencyQueueWaitSeconds: 30,
+    redaction: {
+      enabled: false,
+      secrets: true,
+      homePaths: false,
+      wordsEnabled: true,
+      words: ["private.example"],
+      homePrefixes: ["/srv/private-user"],
+    },
+  }
+  const originalRedaction = structuredClone(settings.redaction)
+  const selectedRedaction = {
+    ...originalRedaction,
+    enabled: true,
+    secrets: false,
+    homePaths: true,
+    wordsEnabled: false,
   }
   let submitted:
     | {
@@ -15,6 +33,7 @@ test("system settings display MiB and save the selected storage budget", async (
         logMaxTotalBytes: number
         concurrencyQueueLimit: number
         concurrencyQueueWaitSeconds: number
+        redaction: typeof settings.redaction
       }
     | undefined
   const source = readFileSync("pages/js/views/system-config.js", "utf8")
@@ -44,18 +63,111 @@ test("system settings display MiB and save the selected storage budget", async (
   view.settings.logRetentionDays = 3
   view.settings.concurrencyQueueLimit = 64
   view.settings.concurrencyQueueWaitSeconds = 12
+  view.settings.redaction.enabled = true
+  view.settings.redaction.secrets = false
+  view.settings.redaction.homePaths = true
+  view.settings.redaction.wordsEnabled = false
   view.maxLogMiB = 128
   await view.save()
   expect(submitted?.logMaxTotalBytes).toBe(128 * 1024 * 1024)
   expect(submitted?.logRetentionDays).toBe(3)
   expect(submitted?.concurrencyQueueLimit).toBe(64)
   expect(submitted?.concurrencyQueueWaitSeconds).toBe(12)
+  expect(submitted?.redaction).toEqual(selectedRedaction)
   expect(view.saved).toBe(true)
   view.useRecommended()
   expect(view.maxLogMiB).toBe(1024)
   expect(view.settings.concurrencyQueueLimit).toBe(100)
   expect(view.settings.concurrencyQueueWaitSeconds).toBe(30)
   expect(view.settings.logRetentionDays).toBe(7)
+  expect(view.settings.redaction).toEqual(selectedRedaction)
+  view.settings.redaction.enabled = false
+  await view.save()
+  expect(submitted?.redaction).toEqual({ ...selectedRedaction, enabled: false })
+})
+
+test("redaction editors save literal lines through the API and retain invalid drafts without changing stored rules", async () => {
+  let stored: string | undefined
+  initializeSystemConfig({
+    save: (value) => {
+      stored = value
+    },
+    onChange: () => {},
+  })
+  const source = readFileSync("pages/js/views/system-config.js", "utf8")
+  const view = runInNewContext(source + "\nsystemConfigView()", {
+    CustomEvent: class {},
+    dispatchEvent: () => {},
+    API: {
+      async request(_path: string, options: { body: unknown }) {
+        const response = await systemConfigApiRoutes.request("/", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(options.body),
+        })
+        const value = (await response.json()) as { error?: string }
+        if (!response.ok) throw new Error(value.error)
+        return value
+      },
+    },
+  }) as {
+    settings: ReturnType<typeof getSystemConfig>["settings"]
+    redactionWordsText: string
+    redactionHomePrefixesText: string
+    error: string
+    saved: boolean
+    accept: (value: unknown) => void
+    save: () => Promise<void>
+    useRecommended: () => void
+  }
+  try {
+    view.accept(getSystemConfig())
+    view.settings.redaction.enabled = false
+    view.settings.redaction.wordsEnabled = false
+    view.settings.redaction.homePaths = false
+    view.redactionWordsText = "  private.example \r\n\nfoo.*bar\nhost,part\n"
+    view.redactionHomePrefixesText = " /srv/private-user \nC:\\Users\\Private\n"
+    view.useRecommended()
+    await view.save()
+    expect(view.error).toBe("")
+    expect(view.saved).toBe(true)
+    const saved = getSystemConfig().settings.redaction
+    expect(saved.words).toEqual(["private.example", "foo.*bar", "host,part"])
+    expect(saved.homePrefixes).toEqual([
+      "/srv/private-user",
+      "C:\\Users\\Private",
+    ])
+    expect(saved.enabled).toBe(false)
+    expect(saved.wordsEnabled).toBe(false)
+    expect(saved.homePaths).toBe(false)
+    view.accept(getSystemConfig())
+    expect(view.redactionWordsText).toBe("private.example\nfoo.*bar\nhost,part")
+    expect(view.redactionHomePrefixesText).toBe(
+      "/srv/private-user\nC:\\Users\\Private",
+    )
+    const persisted = stored
+    for (const invalid of [
+      "x",
+      "x".repeat(1025),
+      Array.from({ length: 101 }, (_, i) => `word-${i}`).join("\n"),
+    ]) {
+      view.redactionWordsText = invalid
+      await view.save()
+      expect(view.saved).toBe(false)
+      expect(view.error).not.toBe("")
+      expect(view.redactionWordsText).toBe(invalid)
+      expect(stored).toBe(persisted)
+      expect(getSystemConfig().settings.redaction.words).toEqual(saved.words)
+    }
+    view.redactionWordsText = "\n  \n"
+    view.redactionHomePrefixesText = ""
+    await view.save()
+    expect(view.error).toBe("")
+    expect(getSystemConfig().settings.redaction.words).toEqual([])
+    expect(getSystemConfig().settings.redaction.homePrefixes).toEqual([])
+  } finally {
+    initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  }
 })
 
 test("Codex picker loads all choices, searches IDs, enforces 100 selections, reorders and saves", async () => {
@@ -157,6 +269,7 @@ test("system settings render translated labels and titles in English", () => {
             t,
             settings: { codexModelIds: [] },
             source: "webui",
+            rule: "secrets",
           })
         : ""
       return `>${String(value)}`

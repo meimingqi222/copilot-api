@@ -17,6 +17,7 @@
  */
 
 import { HTTPError } from "~/lib/error"
+import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { oauthFetch } from "~/services/oauth/fetch"
 import {
@@ -103,7 +104,7 @@ export const traeCnNativeAdapter: ProtocolAdapter = {
           headers: traeCnIdeHeaders(account, {
             Accept: "text/event-stream",
           }),
-          body: JSON.stringify(
+          body: serializeUpstreamBody(
             traeCnChatBody(payload, fn, upstreamModel, modelName),
           ),
           signal,
