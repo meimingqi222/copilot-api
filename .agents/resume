@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Dependencies live in the project snapshot. Never reinstall on resume.
+command -v bun >/dev/null
+test -d node_modules
+echo "[resume] Bun and dependencies ready"

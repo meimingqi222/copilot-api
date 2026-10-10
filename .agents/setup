@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+SECONDS=0
+
+# CI uses the available Bun release rather than a repository version pin.
+# Keep an existing toolchain on warm snapshots; install only when absent.
+if ! command -v bun >/dev/null 2>&1; then
+  missing_packages=()
+  for package in curl unzip; do
+    if ! command -v "$package" >/dev/null 2>&1; then
+      missing_packages+=("$package")
+    fi
+  done
+  if ((${#missing_packages[@]})); then
+    sudo apt-get update
+    sudo apt-get install -y "${missing_packages[@]}"
+  fi
+
+  echo "[setup] Installing Bun"
+  curl --fail --silent --show-error --location https://bun.sh/install | bash
+  # Amp and supervised services use separate shells, not this installer's PATH.
+  sudo install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+fi
+
+echo "[setup] Bun $(bun --version); installing locked dependencies"
+bun install --frozen-lockfile
+echo "[setup] Ready in ${SECONDS}s (no provider authentication required for tests/build)"

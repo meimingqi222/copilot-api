@@ -32,3 +32,4 @@ temp_*
 # local caches
 .eslintcache
 .playwright-cli/
+.amp/portals/*
