@@ -26,6 +26,8 @@ import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
+  clearRestRegistryForTest,
+  listRests,
   selectRouteTarget,
   targetKey,
 } from "~/lib/route-target"
@@ -49,6 +51,14 @@ afterEach(async () => {
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
   resetAdaptiveRateLimiterForTest()
+  // rest 注册表是模块级的,而本文件的每个测试都用同一批凭据 id
+  // (conn-cred / acc-cred)重建连接。新凭据的 createdAt 是 Date.now(),
+  // 与上一个测试 recordRest 的时刻落在同一毫秒时,实例守卫
+  // (instanceMatches 比较 createdAt)区分不出两者,上一个测试打上的
+  // 15s/30s/60s rest 就会渗进来——于是候选池被淘空,failover 找不到下一个
+  // target,把上游错误原样抛给客户端。整份文件 ~200ms 跑完,所有 rest 的
+  // TTL 都还新鲜,所以漏排这一步是随机失败,不是偶发。
+  clearRestRegistryForTest()
   setTestConnections([])
   await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
 })
@@ -848,5 +858,14 @@ describe("account targetKey uniqueness", () => {
 
     const keys = targets.map((t) => targetKey(t))
     expect(new Set(keys).size).toBe(keys.length)
+  })
+})
+
+describe("test isolation", () => {
+  // 必须排在会 recordRest 的用例之后:它断言 afterEach 真的把 rest 注册表
+  // 清空了。删掉那句 clearRestRegistryForTest(),这个用例立刻失败——
+  // 而上面的 failover 用例只会随机失败,调起来全是噪音。
+  test("no rest leaks into the next test", () => {
+    expect(listRests()).toEqual([])
   })
 })
