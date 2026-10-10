@@ -69,6 +69,9 @@ export async function handleFetchModels(c: Context): Promise<Response> {
     : "bearer"
   const headerName =
     typeof payload.headerName === "string" ? payload.headerName : "x-api-key"
+  // 免费车道(Kilo 公共网关这类匿名上游):只保留上游标记 isFree 的模型,
+  // 否则探测结果里全是匿名请求必 401 的付费 id。
+  const freeOnly = payload.freeOnly === true
 
   // 构造临时 connection 和 credential 对象 (不落盘)
   const tempConnection: ProviderConnection = {
@@ -100,6 +103,7 @@ export async function handleFetchModels(c: Context): Promise<Response> {
         typeof payload.discoveryEndpoint === "string" ?
           payload.discoveryEndpoint
         : undefined,
+      freeOnly,
     },
   }
   const tempCredential: ApiCredential = {

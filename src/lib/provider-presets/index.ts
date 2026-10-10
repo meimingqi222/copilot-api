@@ -9,6 +9,7 @@ import type { ProviderPreset } from "~/lib/provider-presets/types"
 
 import { DOMESTIC_PRIMARY_PRESETS } from "~/lib/provider-presets/domestic-primary"
 import { DOMESTIC_SECONDARY_PRESETS } from "~/lib/provider-presets/domestic-secondary"
+import { FREE_PRESETS } from "~/lib/provider-presets/free"
 import { OTHERS_PRESETS } from "~/lib/provider-presets/others"
 
 export { type ProviderPreset } from "~/lib/provider-presets/types"
@@ -20,7 +21,12 @@ const DOMESTIC_PRESETS = [
 ]
 
 // 全部内置预设清单
-export const BUILTIN_PROVIDER_PRESETS = [...DOMESTIC_PRESETS, ...OTHERS_PRESETS]
+// 免费车道排在最后：它们是兜底/测试流量，不该挤占常用供应商的位置
+export const BUILTIN_PROVIDER_PRESETS = [
+  ...DOMESTIC_PRESETS,
+  ...OTHERS_PRESETS,
+  ...FREE_PRESETS,
+]
 
 /**
  * 合并内置预设与用户自定义预设。

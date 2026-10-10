@@ -613,6 +613,13 @@ export function classifyUpstreamError(input: {
     if (body && isCodebuddyContentBlocked(body)) {
       return { kind: "client_error" }
     }
+    // OpenCode Zen 免费车道的 403 有两种,都与凭据无关(那条连接本来就是匿名的):
+    //   - RegionError:部署机出口地区不放行,换机器/换代理才好;
+    //   - FreeTierError:客户端指纹不符(例如工具清单不是它认的那四件)。
+    // 判成 auth_error 会把整条连接永久锁死,而用户能做的只是换个出口。
+    if (body && isOpenCodeFreeTierBlock(body)) {
+      return { kind: "client_error" }
+    }
     return { kind: "auth_error" }
   }
 
@@ -652,6 +659,27 @@ function isCodebuddyContentBlocked(body: string): boolean {
     lower.includes("blocked by security policy")
     || lower.includes("unapproved channel")
     || lower.includes("illegal api invocation")
+  )
+}
+
+/**
+ * Detects OpenCode Zen free-tier refusals that are not credential problems.
+ *
+ * The lane is anonymous by design (`Authorization: Bearer public`), so a 403
+ * there never means "bad key": either the egress region is blocked, or the
+ * request did not look like the OpenCode desktop client. Both are request /
+ * deployment problems — marking the credential auth_error would lock the
+ * connection out permanently for something the user fixes by changing egress.
+ */
+export function isOpenCodeFreeTierBlock(body: string): boolean {
+  if (!body) return false
+  if (/"type"\s*:\s*"(?:RegionError|FreeTierError)"/.test(body)) return true
+  const lower = body.toLowerCase()
+  return (
+    lower.includes("regionerror")
+    || lower.includes("freeusageerror")
+    || lower.includes("can only be used from within opencode")
+    || lower.includes("not available in your region")
   )
 }
 

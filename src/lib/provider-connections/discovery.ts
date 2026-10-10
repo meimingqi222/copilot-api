@@ -9,6 +9,7 @@ import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
 import { getProtocolAdapter } from "~/services/protocols/registry"
 
+import { anonymousCredentialFor } from "./anonymous-credential"
 import {
   listProviderConnections,
   mergeDiscoveredModels,
@@ -49,11 +50,14 @@ async function refreshConnectionModelsUnsafe(
   const usable = connection.credentials.filter(
     (c) => c.enabled && c.status !== "auth_error" && c.status !== "disabled",
   )
+  // 无密钥连接(免费车道):没有 credential 可挑,退回合成匿名凭据——
+  // 否则后台发现只会留下一句 "no usable credential" 再也不刷。
   const credential =
     usable.length > 0 ?
       usable.reduce((best, c) =>
         (c.priority ?? 0) < (best.priority ?? 0) ? c : best,
       )
+    : connection.credentials.length === 0 ? anonymousCredentialFor(connection)
     : undefined
   if (credential === undefined) {
     connection.lastModelDiscoveryError = "no usable credential"

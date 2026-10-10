@@ -511,6 +511,14 @@
                 class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
                 x-text="t('connections.tabLocal')"
               ></button>
+              <!-- 免费车道：匿名/公共池凭据，无需账号与 Key -->
+              <button
+                type="button"
+                @click="presetCategory = 'free'"
+                :class="presetCategory === 'free' && !presetSearchQuery ? 'btn-tab-active' : 'btn-tab'"
+                class="px-2 py-0.5 text-[11px] font-medium rounded-md transition-colors"
+                x-text="t('connections.tabFree')"
+              ></button>
               <button
                 type="button"
                 @click="selectCustomPreset()"
@@ -663,7 +671,7 @@
               ></p>
             </div>
 
-            <div>
+            <div x-show="!selectedPreset?.keyless">
               <div class="flex items-center justify-between mb-1">
                 <label
                   class="form-label mb-0"
@@ -676,6 +684,22 @@
                 class="form-input"
                 :placeholder="connForm._credentialId ? t('connections.leaveBlank') : (selectedPreset?.keyPlaceholder || 'sk-...')"
               />
+            </div>
+
+            <!-- 免费车道没有 Key：上游匿名或走连接上的公共池凭据。
+                 刻意不渲染输入框而不是禁用它，避免用户以为留空即可。 -->
+            <div
+              x-show="selectedPreset?.keyless"
+              class="flex items-start gap-2 rounded-lg border border-[var(--apple-orange)]/30 bg-[var(--apple-orange)]/5 p-2.5"
+            >
+              <i
+                data-lucide="info"
+                class="w-3.5 h-3.5 mt-0.5 text-[var(--apple-orange)] flex-shrink-0"
+              ></i>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)]"
+                x-text="t('connections.apiKeyNotNeeded')"
+              ></p>
             </div>
 
             <!-- 高级选项折叠面板 -->

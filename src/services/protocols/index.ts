@@ -1,6 +1,7 @@
 import { anthropicCompatibleAdapter } from "~/services/protocols/anthropic-compatible"
 import { geminiCompatibleAdapter } from "~/services/protocols/gemini-compatible"
 import { openAICompatibleAdapter } from "~/services/protocols/openai-compatible"
+import { openCodeZenAdapter } from "~/services/protocols/opencode-zen"
 import { openAIResponsesCompatibleAdapter } from "~/services/protocols/openai-responses"
 import { registerProtocolAdapter } from "~/services/protocols/registry"
 import { listBuiltinProviderModules } from "~/services/providers/builtins"
@@ -17,6 +18,7 @@ export function initializeProtocolAdapters(): void {
     openAIResponsesCompatibleAdapter,
     anthropicCompatibleAdapter,
     geminiCompatibleAdapter,
+    openCodeZenAdapter,
     ...modules.map((module) => module.adapter),
   ])
   for (const adapter of adapters) registerProtocolAdapter(adapter)

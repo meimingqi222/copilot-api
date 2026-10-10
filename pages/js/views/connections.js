@@ -268,7 +268,11 @@ function connectionsView() {
         preset?.category === "local"
         || form.baseUrl.includes("localhost")
         || form.baseUrl.includes("127.0.0.1")
-      if (!form.apiKey && !form._credentialId && !isLocal) {
+      // 免费车道(Kilo 公共网关这类匿名上游)没有 Key 可填:上游要么完全匿名,
+      // 要么用连接上的固定公共池凭据。仍按老规矩拦一次性写死的 key,只是把
+      // 「必须有 key」放宽到「keyless 预设除外」。
+      const isKeyless = Boolean(preset?.keyless)
+      if (!form.apiKey && !form._credentialId && !isLocal && !isKeyless) {
         this.showToast(
           this.t("connections.apiKeyRequiredForFetch")
             || "在线探测需要有效的 API Key，请先输入 API Key",
@@ -291,6 +295,9 @@ function connectionsView() {
           apiKey: form.apiKey || "",
           authMode,
           headerName,
+          // 免费车道的 /models 混着大量匿名必 401 的付费 id,只保留上游
+          // 自己标记 isFree 的那一片
+          ...(isKeyless ? { freeOnly: true } : {}),
           // 探测走与落库相同的固定请求头：Kimi Coding 的端点对裸客户端
           // 直接 403，不带头部探测会“表单里能拉模型、保存后请求全挂”。
           headers: this.customHeadersToRecord(),
@@ -510,6 +517,14 @@ function connectionsView() {
       }))
       // 自动发现已从弹窗移除:新建默认不开启,编辑时不触碰服务端原值。
       // 需要拉新模型时用右侧「在线获取模型」或连接行的手动刷新。
+      // 例外是免费车道:它的 /models 混着大量匿名必 401 的付费 id,
+      // `freeOnly` 必须随连接落库,否则连接行上的「刷新模型」会把
+      // 整份付费目录灌进来。manual-only 不会触发后台轮询,
+      // 只影响手动刷新与在线探测的过滤。
+      const keylessDiscovery =
+        this.selectedPreset?.keyless && !isEdit ?
+          { enabled: true, mode: "manual-only", freeOnly: true }
+        : undefined
       const payload = {
         name: form.name,
         protocol: form.protocol,
@@ -521,6 +536,7 @@ function connectionsView() {
         enabled: form.enabled,
         stripPreviousResponseId: Boolean(form.stripPreviousResponseId),
         models: selectedModels,
+        ...(keylessDiscovery ? { modelDiscovery: keylessDiscovery } : {}),
         // 删光所有行 = 清除：`null` 是 PUT 的清除语义，`undefined` 会被
         // JSON 丢掉、服务端当成“没改”，被删掉的头又回来了。
         headers: this.customHeadersToRecord() ?? null,

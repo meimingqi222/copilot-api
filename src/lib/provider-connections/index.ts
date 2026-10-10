@@ -12,6 +12,7 @@ export {
   classifyUpstreamError,
   getConnectionRoutability,
   isCodexUsageLimitError,
+  isOpenCodeFreeTierBlock,
   isConnectionAvailable,
   isCredentialAvailable,
   markCredentialAuthError,

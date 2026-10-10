@@ -1058,6 +1058,8 @@ const i18n = {
       "connections.fetching": "获取中...",
       "connections.apiKeyRequiredForFetch":
         "在线探测需要有效的 API Key，请先输入 API Key（或直接使用预设默认模型）",
+      "connections.apiKeyNotNeeded":
+        "该预设无需 API Key：上游匿名或使用固定的公共池凭据。免费池的 prompt 可能被上游记录并用于改进服务，请勿发送敏感内容。",
       "connections.selectAll": "全选",
       "connections.clearAll": "清空",
       "connections.searchModels": "搜索模型...",
@@ -1083,6 +1085,7 @@ const i18n = {
       "connections.tabInternational": "海外大厂",
       "connections.tabAggregator": "聚合中转",
       "connections.tabLocal": "本地/自建",
+      "connections.tabFree": "免费车道",
       "connections.tabCustom": "自定义",
       "connections.searchPreset": "搜索提供商 (如 DeepSeek, OpenAI...)",
       "connections.noPresetsFound": "未找到匹配的提供商",
@@ -2681,6 +2684,8 @@ const i18n = {
       "connections.fetching": "Fetching...",
       "connections.apiKeyRequiredForFetch":
         "A valid API Key is required to fetch models online. Please enter your API Key first (or use the preset default models).",
+      "connections.apiKeyNotNeeded":
+        "This preset needs no API Key: the upstream is anonymous or uses a fixed pooled credential. Free-pool prompts may be logged and used to improve the service — do not send sensitive content.",
       "connections.selectAll": "Select All",
       "connections.clearAll": "Clear",
       "connections.searchModels": "Search models...",
@@ -2706,6 +2711,7 @@ const i18n = {
       "connections.tabInternational": "International",
       "connections.tabAggregator": "Aggregator",
       "connections.tabLocal": "Local / Self-Hosted",
+      "connections.tabFree": "Free Lanes",
       "connections.tabCustom": "Custom",
       "connections.searchPreset": "Search providers (e.g. DeepSeek, OpenAI...)",
       "connections.noPresetsFound": "No providers match your search",

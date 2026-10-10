@@ -20,6 +20,9 @@ const COMPATIBLE_PROTOCOLS = [
   "openai-responses-compatible",
   "anthropic-compatible",
   "gemini-compatible",
+  // OpenCode Zen 免费车道:匿名上游,自带客户端指纹与工具白名单,
+  // 因此有独立的 wire adapter,但仍是手工配置的端点连接(无账号生命周期)。
+  "opencode-zen-free",
 ] as const
 
 export type ProviderProtocol =
@@ -250,6 +253,14 @@ export interface ModelDiscoveryConfig {
   mode?: ModelDiscoveryMode
   include?: Array<string>
   exclude?: Array<string>
+  /**
+   * 只保留上游自己标记为免费的模型(`isFree: true`)。
+   *
+   * 免费车道(如 Kilo 公共网关)的 `/models` 一次返回全量目录——实测 390 个
+   * 模型里只有 16 个匿名可用,其余带上任何请求都 401。开了这个开关,发现结果
+   * 只剩免费切片,连接不会挂上一堆必然失败的付费 id。
+   */
+  freeOnly?: boolean
 }
 
 export interface ProviderConnection {

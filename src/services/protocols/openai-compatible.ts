@@ -108,7 +108,13 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     if (!body.data || !Array.isArray(body.data)) {
       return []
     }
-    return body.data
+    // 免费车道:上游目录里混着大量付费 id(匿名请求一律 401),
+    // 只保留它自己标记 isFree 的那一片(见 ModelDiscoveryConfig.freeOnly)。
+    const discovered =
+      connection.modelDiscovery?.freeOnly ?
+        body.data.filter((m) => (m as { isFree?: unknown }).isFree === true)
+      : body.data
+    return discovered
       .filter((m) => typeof m.id === "string")
       .map<ModelMapping>((m) => ({
         publicId: m.id,

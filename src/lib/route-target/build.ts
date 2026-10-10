@@ -40,12 +40,17 @@ import {
   type RouteTarget,
 } from "~/lib/provider-connections"
 
+import { effectiveCredentials } from "~/lib/provider-connections/anonymous-credential"
+
 import { connectionModelEndpoints } from "./model-support"
 import { isResting } from "./resting"
 
+/**
+ * 凭据列表:无密钥连接(免费车道)在这里补上合成匿名凭据,
+ * 脏数据(credentials 字段缺失)继续按不可路由处理。
+ */
 function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
-  const credentials = (connection as { credentials?: unknown }).credentials
-  return Array.isArray(credentials) ? (credentials as Array<ApiCredential>) : []
+  return effectiveCredentials(connection)
 }
 
 /**

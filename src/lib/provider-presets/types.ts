@@ -31,6 +31,7 @@ export interface ProviderPreset {
     | "international"
     | "aggregator"
     | "local"
+    | "free"
     | "custom"
   protocol: ProviderProtocol
   baseUrl: string
@@ -43,8 +44,22 @@ export interface ProviderPreset {
    * 裸客户端的请求会被 403/429 拒绝。
    */
   headers?: Record<string, string>
-  authMode: "bearer" | "header"
+  /**
+   * 凭据如何送达上游。`keyless: true` 时留空——那条连接根本不挂 credential,
+   * 没有凭据需要发送(匿名上游,或用 `headers` 里的固定公共池凭据)。
+   */
+  authMode?: "bearer" | "header"
   headerName?: string
+  /**
+   * 该预设**不需要 API Key**：上游要么完全匿名（Kilo 免费池），要么用
+   * 固定的公共池凭据（由 `headers` 提供，如 OpenCode Zen 的 `Bearer public`）。
+   *
+   * 选中后连接可以不带任何 credential 保存，路由层为它合成一个匿名凭据
+   * （id 取 connection id，cooldown 状态在同一进程内可累积）。
+   * 关键约束：这类上游**不能**收到 `Authorization` 头 —— Kilo 对带头部的
+   * 匿名请求直接回 401 INVALID_TOKEN，所以连接上不要配凭据。
+   */
+  keyless?: boolean
   keyPlaceholder?: string
   portalUrl?: string
   description?: string

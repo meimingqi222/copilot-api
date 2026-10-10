@@ -8,6 +8,8 @@
 
 import { Hono } from "hono"
 
+import { anonymousCredentialFor } from "~/lib/provider-connections/anonymous-credential"
+
 import { logger } from "~/lib/logger"
 import {
   type ApiCredential,
@@ -54,7 +56,13 @@ providerConnectionModelRoutes.post("/:id/refresh-models", async (c) => {
       400,
     )
   }
-  const usable = connection.credentials.find((cred) => cred.enabled)
+  // 无密钥连接(免费车道)没有 credential 可用:退回合成匿名凭据,
+  // 否则连接行上的「刷新模型」对 Kilo 这类上游直接 400。
+  const usable =
+    connection.credentials.find((cred) => cred.enabled)
+    ?? (connection.credentials.length === 0 ?
+      anonymousCredentialFor(connection)
+    : undefined)
   if (!usable) {
     return c.json({ error: "No enabled credentials" }, 400)
   }
