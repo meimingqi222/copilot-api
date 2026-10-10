@@ -745,15 +745,82 @@ describe("zen requests", () => {
     expect(body.functions).toBeUndefined()
   })
 
-  test("responses line sends auto, because the gateway rejects none there", async () => {
+  test("a non-streaming client is still sent upstream as a stream, then aggregated", async () => {
+    // 免费车道门禁要求上游请求必须流式:客户端发 stream:false 会被上游 403
+    // FreeTierError。适配器一律按流式发,再把整条流聚合成一个 JSON 回给客户端。
     const calls: Array<{ url: string; init: RequestInit }> = []
+    const frames = [
+      'data: {"id":"c1","model":"nemotron-3-ultra-free","choices":[{"index":0,"delta":{"role":"assistant","content":"he"}}]}',
+      "",
+      'data: {"id":"c1","model":"nemotron-3-ultra-free","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":"stop"}]}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n")
     globalThis.fetch = ((input: string, init: RequestInit) => {
       calls.push({ url: String(input), init })
       return Promise.resolve(
-        new Response(JSON.stringify({ id: "r", output: [] }), {
+        new Response(frames, {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "text/event-stream" },
         }),
+      )
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await openCodeZenAdapter.createChatCompletions!({
+      target: {
+        connectionId: "zen",
+        connectionName: "zen",
+        protocol: "opencode-zen-free",
+        credentialId: "zen",
+        publicModelId: "nemotron-3-ultra-free",
+        upstreamModelId: "nemotron-3-ultra-free",
+        endpoint: "chat",
+        connectionPriority: 20,
+        connectionWeight: 1,
+        credentialPriority: 0,
+        credentialWeight: 1,
+      } as never,
+      connection: zenConnection() as never,
+      credential: zenCredential() as never,
+      payload: {
+        model: "nemotron-3-ultra-free",
+        messages: [{ role: "user", content: "hi" }],
+        stream: false,
+      } as never,
+    })
+
+    // 上游请求:即便客户端要非流式,body 也必须是 stream:true 且 accept 走 SSE
+    const sent = JSON.parse(String(calls[0]!.init.body)) as { stream?: boolean }
+    expect(sent.stream).toBe(true)
+    expect((calls[0]!.init.headers as Record<string, string>)["accept"]).toBe(
+      "text/event-stream",
+    )
+
+    // 客户端拿到的是聚合后的非流式 chat.completion
+    const response = result.response as {
+      choices?: Array<{
+        message?: { content?: string }
+        finish_reason?: string
+      }>
+    }
+    expect(response.choices?.[0]?.message?.content).toBe("hello")
+    expect(response.choices?.[0]?.finish_reason).toBe("stop")
+  })
+
+  test("responses line sends auto, because the gateway rejects none there", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    // 免费车道上游恒定流式:非流式请求也会拿到 SSE,这里用一条最小流回包。
+    globalThis.fetch = ((input: string, init: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return Promise.resolve(
+        new Response(
+          'data: {"type":"response.completed","response":{"id":"r","output":[]}}\n\ndata: [DONE]\n\n',
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
       )
     }) as unknown as typeof globalThis.fetch
 
@@ -792,6 +859,63 @@ describe("zen requests", () => {
     // 调用方没给 tool_choice 时兜底为 auto:这条线传 "none" 会 400
     // `only "auto" is supported for tool_choice`
     expect(body.tool_choice).toBe("auto")
+  })
+
+  test("the responses line also forces upstream streaming and de-streams", async () => {
+    // 与 chat 线同源:免费车道门禁要求上游流式,客户端发非流式会被 403。
+    const calls: Array<{ url: string; init: RequestInit }> = []
+    const frames = [
+      'data: {"type":"response.output_text.delta","delta":"hi"}',
+      "",
+      'data: {"type":"response.completed","response":{"id":"r1","model":"muse-spark-1.3-contributor-free","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"output_text":"hi"}}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n")
+    globalThis.fetch = ((input: string, init: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return Promise.resolve(
+        new Response(frames, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      )
+    }) as unknown as typeof globalThis.fetch
+
+    const result = await openCodeZenAdapter.createResponses!({
+      target: {
+        connectionId: "zen",
+        connectionName: "zen",
+        protocol: "opencode-zen-free",
+        credentialId: "zen",
+        publicModelId: "muse-spark-1.3-contributor-free",
+        upstreamModelId: "muse-spark-1.3-contributor-free",
+        endpoint: "responses",
+        connectionPriority: 20,
+        connectionWeight: 1,
+        credentialPriority: 0,
+        credentialWeight: 1,
+      } as never,
+      connection: zenConnection() as never,
+      credential: zenCredential() as never,
+      payload: {
+        model: "muse-spark-1.3-contributor-free",
+        input: "hi",
+        stream: false,
+      } as never,
+    })
+
+    const sent = JSON.parse(String(calls[0]!.init.body)) as { stream?: boolean }
+    expect(sent.stream).toBe(true)
+    expect((calls[0]!.init.headers as Record<string, string>)["accept"]).toBe(
+      "text/event-stream",
+    )
+
+    const response = result.response as {
+      output_text?: string
+      output?: Array<unknown>
+    }
+    expect(response.output_text).toBe("hi")
   })
 
   test("discovery keeps only the free slice and annotates capabilities", async () => {
@@ -889,13 +1013,14 @@ describe("zen failure classification", () => {
 })
 
 describe("free lane documentation", () => {
-  test("the adapter header explains the three gates it works around", () => {
+  test("the adapter header explains the gates it works around", () => {
     const source = readFileSync(
       "src/services/protocols/opencode-zen.ts",
       "utf8",
     )
-    // 后来人改这个文件前必须先知道为什么工具清单不能被透传
+    // 后来人改这个文件前必须先知道为什么工具清单不能被透传、为什么必须流式
     expect(source).toContain("工具白名单")
     expect(source).toContain("按 session 记账")
+    expect(source).toContain("请求必须流式")
   })
 })

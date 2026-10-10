@@ -2,7 +2,7 @@
  * OpenCode Zen 免费车道（匿名免密）的 wire adapter。
  *
  * 这条车道是 opencode.ai 的公共池：`Authorization: Bearer public` 是**所有人共用**
- * 的凭据，没有 per-user secret。它能用，但上游加了三道门，全部实测于 2026-10-09：
+ * 的凭据，没有 per-user secret。它能用，但上游加了四道门：
  *
  * 1. **客户端指纹**：`user-agent` 必须含 `opencode/<version>`（>= 1.17），
  *    外加 `x-opencode-client: desktop` 与 `x-opencode-session` /
@@ -17,6 +17,12 @@
  * 3. **按 session 记账的配额**：每个请求换新 session id 会立刻 429
  *    FreeUsageLimitError。所以 session 必须由「连接 + 调用方身份 + 模型」
  *    确定性派生，同一路客户端固定复用同一个 session。
+ * 4. **请求必须流式**：`stream` 必须是 `true`（2026-10-10 实测）。非流式请求
+ *    一律 403 FreeTierError。所以两条线对上游一律按流式发,客户端要非流式时
+ *    再由 adapter 把整条流聚合回 JSON（见 `createChatCompletions` /
+ *    `createResponses`）。
+ *
+ * 门禁 1~3 实测于 2026-10-09，门禁 4 于 2026-10-10。
  *
  * 另外上游按模型分流端点：muse-spark 系只服务 `/responses`（打 `/chat/completions`
  * 会回 400 ModelProtocolUnsupported），其余走 `/chat/completions`。清单里曾经出现
@@ -38,7 +44,6 @@ import {
 } from "~/lib/upstream-performance"
 
 import type {
-  ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
 } from "~/services/protocols/chat/types"
@@ -58,6 +63,9 @@ import {
   setHeader,
 } from "~/services/protocols/shared"
 
+import { aggregateSseToResponse } from "./sse-aggregate"
+import { collectResponsesFromEventStream } from "~/services/responses/sse-collector"
+
 import type {
   AdapterChatResult,
   AdapterResponsesResult,
@@ -65,7 +73,7 @@ import type {
 } from "./types"
 import type { Context } from "hono"
 
-import type { ResponsesPayload, ResponsesResponse } from "./responses/types"
+import type { ResponsesPayload } from "./responses/types"
 
 /** 网关要求的客户端版本号（UA 检查是搜索而非锚定匹配，>= 1.17 即可）。 */
 export const ZEN_CLIENT_UA = "opencode/1.18.31"
@@ -540,6 +548,15 @@ export function suppressDecoyToolCalls(
 }
 
 /**
+ * 把一份上游回包（或单帧）里的工具名改回调用方拼写,并丢掉不可执行的诱饵调用。
+ * chat / responses 两条线、流式逐帧与非流式聚包共用。
+ */
+function applyToolWireFixups(payload: unknown, wire: ZenToolWire): void {
+  restoreToolNamesInPayload(payload, wire.rename)
+  suppressDecoyToolCalls(payload, wire)
+}
+
+/**
  * Chat 流式路径的占位调用过滤器。
  *
  * 端口自 dsh-our-free-model `src/forward.js` 的 `createToolWire`:它只在本地
@@ -641,8 +658,7 @@ export function restoreAndFilterToolStream(
           if (typeof index === "number" && droppedOutputs.has(index)) continue
         }
 
-        restoreToolNamesInPayload(parsed, wire.rename)
-        suppressDecoyToolCalls(parsed, wire)
+        applyToolWireFixups(parsed, wire)
 
         // Chat:按 block 过滤占位调用,名字出现前的参数片段扣住
         if (Array.isArray(root.choices)) {
@@ -865,6 +881,8 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     const upstreamPayload: Record<string, unknown> = {
       ...(payload as unknown as Record<string, unknown>),
       model: upstreamModelId,
+      // 门禁 4（见文件头）：上游必须流式，非流式由下方聚合回 JSON。
+      stream: true,
     }
     // 调用方的工具照常透传,只把四件组补齐;重命名过的工具在响应侧改回去
     const wire = applyFreeTierFingerprint(upstreamPayload, "chat")
@@ -878,7 +896,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
           credential,
           session,
           requestId,
-          payload.stream ? "text/event-stream" : "application/json",
+          "text/event-stream",
         ),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
@@ -894,23 +912,27 @@ export const openCodeZenAdapter: ProtocolAdapter = {
       )
     }
 
-    if (payload.stream) {
-      const stream = await safeSseStream(response, detectOpenAIStreamError)
+    const stream = await safeSseStream(response, detectOpenAIStreamError)
+
+    // 非流式请求:上游只给了流,聚合回一个 ChatCompletionResponse。
+    if (!payload.stream) {
+      const aggregated = await aggregateSseToResponse(
+        stream as unknown as AsyncIterable<CopilotStreamEvent>,
+        upstreamModelId,
+      )
+      applyToolWireFixups(aggregated, wire)
       return {
         credentialId: credential.id,
-        response: restoreAndFilterToolStream(
-          stream as unknown as AsyncIterable<CopilotStreamEvent>,
-          wire,
-        ),
+        response: aggregated,
       } satisfies AdapterChatResult
     }
 
-    const body = (await readUpstreamJson(response)) as ChatCompletionResponse
-    restoreToolNamesInPayload(body, wire.rename)
-    suppressDecoyToolCalls(body, wire)
     return {
       credentialId: credential.id,
-      response: body,
+      response: restoreAndFilterToolStream(
+        stream as unknown as AsyncIterable<CopilotStreamEvent>,
+        wire,
+      ),
     } satisfies AdapterChatResult
   },
 
@@ -929,6 +951,8 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     const upstreamPayload: Record<string, unknown> = {
       ...(payload as unknown as Record<string, unknown>),
       model: upstreamModelId,
+      // 门禁 4（见文件头）：上游必须流式，非流式由下方聚合回 JSON。
+      stream: true,
     }
     const wire = applyFreeTierFingerprint(upstreamPayload, "responses")
 
@@ -941,7 +965,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
           credential,
           session,
           requestId,
-          payload.stream ? "text/event-stream" : "application/json",
+          "text/event-stream",
         ),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
@@ -957,23 +981,27 @@ export const openCodeZenAdapter: ProtocolAdapter = {
       )
     }
 
-    if (payload.stream) {
-      const stream = await safeSseStream(response, detectOpenAIStreamError)
+    const stream = await safeSseStream(response, detectOpenAIStreamError)
+
+    // 非流式请求:上游只给了流,收敛回一个 ResponsesResponse。
+    if (!payload.stream) {
+      const aggregated = await collectResponsesFromEventStream(
+        stream as unknown as AsyncIterable<CopilotStreamEvent>,
+        upstreamModelId,
+      )
+      applyToolWireFixups(aggregated, wire)
       return {
         credentialId: credential.id,
-        response: restoreAndFilterToolStream(
-          stream as unknown as AsyncIterable<CopilotStreamEvent>,
-          wire,
-        ) as unknown as AsyncIterable<{ data?: string }>,
+        response: aggregated,
       } satisfies AdapterResponsesResult
     }
 
-    const body = (await readUpstreamJson(response)) as ResponsesResponse
-    restoreToolNamesInPayload(body, wire.rename)
-    suppressDecoyToolCalls(body, wire)
     return {
       credentialId: credential.id,
-      response: body,
+      response: restoreAndFilterToolStream(
+        stream as unknown as AsyncIterable<CopilotStreamEvent>,
+        wire,
+      ) as unknown as AsyncIterable<{ data?: string }>,
     } satisfies AdapterResponsesResult
   },
 }
