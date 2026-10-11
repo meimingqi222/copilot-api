@@ -89,6 +89,20 @@ Messages 只编码 `auto/standard_only`；不可表达的 tier（含 Gemini 的�
 
 ## 6. 验证
 
+生成图片沿用 `IRImagePart`：Responses 输出和历史输入使用原生
+`image_generation_call`，不构造 `output_image` 消息块；Chat 输出使用
+`message.images` / `delta.images` 的 `image_url` 扩展，文本仍放在 `content`
+字符串中，需要客户端支持该扩展。Gemini 使用 `inlineData` / `fileData`，
+并保留 assistant 历史中的图片。Responses 跨协议流式只转发最终图片，不转发生成预览，
+`output_item.done` 和终结响应中的同一图片只发送一次。
+Messages 协议没有图片响应块：遇到生成图片明确返回不支持错误，引导客户端
+使用 Images / Responses 或支持图片输出的 Chat / Gemini，而不是静默丢图。
+原生 Responses 透传保持不变。
+Codex 普通请求不得自动追加 `image_generation`：客户端声明的函数生图工具
+应继续返回函数调用，不能被代理新增的原生图片工具绕过。原生图片生成只由
+客户端显式声明该工具，或由独立的 Images 路由主动构造请求；HTTP、WebSocket
+和历史重放遵循同一规则。
+
 每条可达方向都应覆盖请求、非流式、流式、错误和终止事件。
 对照 `docs/protocol-translation-pitfalls.md` 的回归用例检查语义与损失记录；
 不要求 SSE 分片边界逐字相同。原生路径仍需覆盖，以确认它没有被公共 IR 改写。

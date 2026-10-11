@@ -14,6 +14,10 @@ import { createHash } from "node:crypto"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { readOpenAIServiceTier } from "~/lib/service-tier"
 import { isResponsesServerTool } from "~/services/protocols/responses/types"
+import {
+  imagePartFromGenerationCall,
+  responsesImageCall,
+} from "~/services/ir/image-generation"
 
 type RecordValue = Record<string, unknown>
 
@@ -325,6 +329,19 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     const item = record(valueItem)
     if (!item)
       throw new LocalPayloadUnsupportedError("Malformed Responses input item")
+    if (item.type === "image_generation_call") {
+      const image = imagePartFromGenerationCall(item)
+      if (!image)
+        throw new LocalPayloadUnsupportedError(
+          "Responses image_generation_call has no image result",
+        )
+      turns.push({
+        role: "assistant",
+        source,
+        parts: [...takeReasoning(), image],
+      })
+      continue
+    }
     if (item.type === "reasoning") {
       const summary =
         Array.isArray(item.summary) ?
@@ -583,10 +600,10 @@ function encodeToolChoice(
   return { type: "allowed_tools", mode: choice.mode, tools: allowed }
 }
 
-/** Encode a request into Responses wire. Opaque replay material stays on its originating wire. */
-export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
+/** Opaque replay material stays on its originating wire. */
+function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
   const items: Array<RecordValue> = []
-  for (const turn of ir.turns) {
+  for (const turn of turns) {
     if (turn.role === "tool") {
       for (const part of turn.parts) {
         if (part.type !== "tool_result") continue
@@ -602,9 +619,19 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
       }
       continue
     }
-    const content = encodeContent(turn.parts)
+    const replayImages =
+      turn.role === "assistant" && turn.source?.wire === "responses"
+    const content = encodeContent(
+      turn.parts.filter(
+        (part) => !(replayImages && part.type === "image" && part.id),
+      ),
+    )
     if (turn.role === "assistant") {
       for (const part of turn.parts) {
+        if (replayImages && part.type === "image" && part.id) {
+          items.push(responsesImageCall(part, part.id))
+          continue
+        }
         if (part.type !== "thinking") continue
         // Responses accepts only its own replay objects as opaque reasoning.
         // Historical thinking from another wire remains readable assistant
@@ -644,6 +671,11 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
       })
     }
   }
+  return items
+}
+
+/** Encode conversation history and generation options into Responses wire. */
+export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
   const generation = ir.generation
   const tools = ir.tools ?? []
   const encodedTools = encodeRequestTools(tools, generation?.webSearchOptions)
@@ -652,7 +684,7 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
   ).response_format
   const payload: RecordValue = {
     model: ir.model,
-    input: items,
+    input: encodeResponsesTurns(ir.turns),
     service_tier: readOpenAIServiceTier(generation?.serviceTier),
     ...(ir.instructions.length ?
       {

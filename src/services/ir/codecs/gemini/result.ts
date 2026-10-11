@@ -9,6 +9,7 @@ import type { IRPart, IRStop, IRUsage, ResultIR } from "~/services/ir/types"
 import { sanitizeId } from "~/lib/id-sanitizer"
 
 import { decodeGeminiPart } from "./part"
+import { toBase64Image } from "~/services/ir/codecs/gemini/request"
 
 export function stopFromGemini(finishReason: string | undefined): IRStop {
   switch (finishReason) {
@@ -108,6 +109,7 @@ export function decodeGeminiResult(
 
 function toGeminiResultPart(part: IRPart): GeminiPart | undefined {
   if (part.type === "text") return { text: part.text }
+  if (part.type === "image") return toBase64Image(part)
   if (part.type === "thinking")
     return {
       text: part.text,

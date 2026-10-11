@@ -47,6 +47,10 @@ interface ChatCompletionReasoningDetail {
 
 interface Delta {
   content?: string | Array<ContentPart> | null
+  /** OpenRouter/CLIProxyAPI image output extension. */
+  images?: Array<
+    Extract<ContentPart, { type: "image_url" }> & { index?: number }
+  >
   role?: "user" | "assistant" | "system" | "tool"
   tool_calls?: Array<{
     index: number
@@ -101,6 +105,7 @@ export interface ChatCompletionResponse {
 interface ResponseMessage {
   role: "assistant"
   content: string | Array<ContentPart> | null
+  images?: Array<Extract<ContentPart, { type: "image_url" }>>
   tool_calls?: Array<ToolCall>
   reasoning?: string | null
   reasoning_text?: string | null
@@ -201,6 +206,7 @@ export interface Tool {
 export interface Message {
   role: "user" | "assistant" | "system" | "tool" | "developer"
   content: string | Array<ContentPart> | null
+  images?: Array<Extract<ContentPart, { type: "image_url" }>>
 
   name?: string
   tool_calls?: Array<ToolCall>

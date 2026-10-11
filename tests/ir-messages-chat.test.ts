@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test"
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
+  CopilotStreamEvent,
 } from "~/services/protocols/chat/types"
 import type {
   AnthropicMessagesPayload,
@@ -324,7 +325,7 @@ describe("Messages and Chat IR codecs", () => {
     ])
   })
 
-  test("renders a generated image as a Messages image block", () => {
+  test("preserves Chat image output and explicitly rejects unsupported Messages output", async () => {
     const ir = {
       id: "img",
       model: "gpt-5.4",
@@ -339,27 +340,92 @@ describe("Messages and Chat IR codecs", () => {
           },
         },
         { type: "text" as const, text: "here" },
+        {
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            mediaType: "image/webp",
+            data: "c2Vjb25k",
+          },
+        },
       ],
       stop: { reason: "complete" as const },
     }
-    expect(encodeMessagesResponse(ir).content).toEqual([
-      {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/png",
-          data: "aGVsbG8=",
-        },
-      },
-      { type: "text", text: "here" },
-    ])
-    expect(encodeChatResponse(ir).choices[0]?.message.content).toEqual([
-      { type: "text", text: "here" },
+    expect(() => encodeMessagesResponse(ir)).toThrow(
+      "Messages API cannot return generated images",
+    )
+    const chat = encodeChatResponse(ir)
+    expect(chat.choices[0]?.message.content).toBe("here")
+    expect(chat.choices[0]?.message.images).toEqual([
       {
         type: "image_url",
         image_url: { url: "data:image/png;base64,aGVsbG8=" },
       },
+      {
+        type: "image_url",
+        image_url: { url: "data:image/webp;base64,c2Vjb25k" },
+      },
     ])
+    expect(decodeChatResponse(chat).parts).toEqual([
+      ir.parts[1],
+      ir.parts[0],
+      ir.parts[2],
+    ])
+    expect(
+      decodeChatRequest({
+        model: ir.model,
+        messages: [chat.choices[0]!.message],
+      }).turns[0]?.parts,
+    ).toEqual([ir.parts[1], ir.parts[0], ir.parts[2]])
+    async function* source() {
+      yield {
+        data: JSON.stringify({
+          ...chat,
+          choices: [
+            {
+              index: 0,
+              delta: chat.choices[0]!.message,
+              finish_reason: "stop",
+              logprobs: null,
+            },
+          ],
+        }),
+      }
+    }
+    const wire: Array<CopilotStreamEvent> = []
+    for await (const item of encodeChatStream(decodeChatStream(source())))
+      wire.push(item)
+    expect(
+      wire
+        .filter((item) => item.data !== "[DONE]")
+        .flatMap((item) =>
+          (
+            (JSON.parse(item.data ?? "{}").choices?.[0]?.delta.images
+              ?? []) as Array<{ index: number }>
+          ).map((image) => image.index),
+        ),
+    ).toEqual([0, 1])
+    async function* replay() {
+      yield* wire
+    }
+    const decoded = []
+    for await (const item of decodeChatStream(replay())) decoded.push(item)
+    expect(
+      decoded.filter(
+        (item) => item.type === "part_start" && item.part.type === "image",
+      ),
+    ).toHaveLength(2)
+    expect(decoded.filter((item) => item.type === "part_delta")).toMatchObject([
+      { delta: { type: "text", text: "here" } },
+    ])
+    const messages = []
+    for await (const item of encodeMessagesStream(decodeChatStream(replay())))
+      messages.push(item)
+    expect(messages.at(-1)).toMatchObject({
+      type: "error",
+      error: { type: "invalid_request_error" },
+    })
+    expect(messages.some((item) => item.type === "message_stop")).toBe(false)
   })
 
   test("marks a missing Chat finish reason as unknown in IR", () => {

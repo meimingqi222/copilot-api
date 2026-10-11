@@ -12,10 +12,73 @@ import {
   decodeGeminiStream,
   encodeGeminiStream,
 } from "~/services/ir/codecs/gemini/stream"
-import type { StreamEvent } from "~/services/ir/types"
-import type { GeminiGenerateContentRequest } from "~/services/protocols/gemini"
+import type { ResultIR, StreamEvent } from "~/services/ir/types"
+import type {
+  GeminiGenerateContentRequest,
+  GeminiStreamEvent,
+} from "~/services/protocols/gemini"
 
 describe("gemini request codec", () => {
+  test("preserves generated images in results, assistant history and streaming", async () => {
+    const ir: ResultIR = {
+      id: "images",
+      model: "m",
+      source: { wire: "responses" },
+      stop: { reason: "complete" },
+      parts: [
+        { type: "text", text: "before" },
+        {
+          type: "image",
+          source: { type: "base64", mediaType: "image/webp", data: "Zmlyc3Q=" },
+        },
+        { type: "text", text: "after" },
+        {
+          type: "image",
+          source: { type: "base64", mediaType: "image/jpeg", data: "c2Vjb25k" },
+        },
+      ],
+    }
+    const encoded = encodeGeminiResult(ir)
+    expect(encoded.candidates?.[0]?.content?.parts).toEqual([
+      { text: "before" },
+      { inlineData: { mimeType: "image/webp", data: "Zmlyc3Q=" } },
+      { text: "after" },
+      { inlineData: { mimeType: "image/jpeg", data: "c2Vjb25k" } },
+    ])
+    expect(decodeGeminiResult(encoded).parts).toEqual(ir.parts)
+    const request = encodeGeminiRequest({
+      model: "m",
+      source: { wire: "responses" },
+      instructions: [],
+      turns: [{ role: "assistant", parts: ir.parts }],
+    })
+    expect(decodeGeminiRequest(request).turns[0]?.parts).toEqual(ir.parts)
+    async function* upstream() {
+      yield { data: JSON.stringify(encoded) }
+    }
+    const wire: Array<GeminiStreamEvent> = []
+    for await (const chunk of encodeGeminiStream(
+      decodeGeminiStream(upstream(), "m"),
+    ))
+      wire.push(chunk)
+    async function* replay() {
+      yield* wire
+    }
+    const parts = []
+    const text = []
+    for await (const event of decodeGeminiStream(replay(), "m")) {
+      if (event.type === "part_start" && event.part.type === "image")
+        parts.push(event.part)
+      if (event.type === "part_delta" && event.delta.type === "text")
+        text.push(event.delta.text)
+    }
+    expect(parts.map((part) => part.source)).toEqual([
+      { type: "base64", mediaType: "image/webp", data: "Zmlyc3Q=" },
+      { type: "base64", mediaType: "image/jpeg", data: "c2Vjb25k" },
+    ])
+    expect(text).toEqual(["before", "after"])
+  })
+
   test("decodes system instruction, contents and generation config", () => {
     const ir = decodeGeminiRequest({
       model: "gemini-3-pro",

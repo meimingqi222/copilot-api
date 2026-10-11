@@ -442,60 +442,6 @@ export function normalizeCodexBuiltinTools(
   return next
 }
 
-const CODEX_IMAGE_GEN_TOOL = { type: "image_generation", output_format: "png" }
-
-/** Mirrors CPA isImageGenerationFunctionTool. */
-function isImageGenerationTool(tool: unknown): boolean {
-  if (tool === null || typeof tool !== "object" || Array.isArray(tool)) {
-    return false
-  }
-  const t = tool as Record<string, unknown>
-  switch (t.type) {
-    case "image_generation":
-      return true
-    case "function":
-      return t.name === "image_gen.imagegen"
-    case "namespace": {
-      if (t.name !== "image_gen" || !Array.isArray(t.tools)) return false
-      return (t.tools as Array<unknown>).some(
-        (nested) =>
-          nested !== null
-          && typeof nested === "object"
-          && (nested as Record<string, unknown>).type === "function"
-          && (nested as Record<string, unknown>).name === "imagegen",
-      )
-    }
-    default:
-      return false
-  }
-}
-
-/**
- * Inject the `image_generation` built-in tool so paid-plan accounts can
- * actually call imagegen through /responses (mirrors CPA
- * ensureImageGenerationTool). Skipped for Responses Lite requests, `*-spark`
- * models, and free-plan credentials (upstream rejects the tool there), and
- * when the body already carries an image-generation tool in any of its
- * accepted shapes.
- */
-export function ensureImageGenerationTool(
-  body: Record<string, unknown>,
-  options: { model?: string; responsesLite?: boolean; planType?: string },
-): Record<string, unknown> {
-  if (options.responsesLite) return body
-  if (typeof options.model === "string" && options.model.endsWith("spark")) {
-    return body
-  }
-  if (options.planType?.trim().toLowerCase() === "free") return body
-
-  const tools = body.tools
-  if (!Array.isArray(tools)) {
-    return { ...body, tools: [CODEX_IMAGE_GEN_TOOL] }
-  }
-  if (tools.some(isImageGenerationTool)) return body
-  return { ...body, tools: [...tools, CODEX_IMAGE_GEN_TOOL] }
-}
-
 /**
  * Reject a chained Codex /responses request that would otherwise travel over
  * plain HTTP. `previous_response_id` is WebSocket-only (CPA): a fresh HTTP

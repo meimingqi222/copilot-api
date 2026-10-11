@@ -205,6 +205,17 @@ describe("codex request compatibility (CPA parity)", () => {
         },
       })
       const subject = makeCodexSubject()
+      subject.credential.context = {
+        ...subject.credential.context,
+        planType: "plus",
+      }
+      const clientTools = [
+        {
+          type: "function",
+          name: "functions.painter",
+          parameters: { type: "object" },
+        },
+      ]
       subject.connection.metadata = {
         provider: "codex",
         settings: { baseUrl: `http://127.0.0.1:${upstream.port}` },
@@ -216,6 +227,7 @@ describe("codex request compatibility (CPA parity)", () => {
             model: "gpt-6.1-sol",
             input: "hi",
             stream: true,
+            tools: clientTools,
             service_tier: "fast",
             stream_options: {
               include_usage: true,
@@ -235,6 +247,7 @@ describe("codex request compatibility (CPA parity)", () => {
         for await (const event of result as AsyncIterable<{ data: string }>)
           if (event.data !== "[DONE]") events.push(JSON.parse(event.data))
         expect(posted?.service_tier).toBe("priority")
+        expect(posted?.tools).toEqual(clientTools)
         expect(posted?.stream_options).toEqual({
           reasoning_summary_delivery: "sequential_cutoff",
         })
@@ -528,7 +541,7 @@ describe("codex request compatibility (CPA parity)", () => {
     expect(tc.tools[0].type).toBe("web_search")
   })
 
-  test("image_generation tool is injected for paid plans and skipped for free/lite/spark", async () => {
+  test("image generation is opt-in regardless of plan, model or lite mode", async () => {
     const paid = makeCodexSubject()
     paid.credential.context = { ...paid.credential.context, planType: "plus" }
     const paidBody = await capturePostedBody(
@@ -540,9 +553,35 @@ describe("codex request compatibility (CPA parity)", () => {
       {},
       paid,
     )
-    expect(paidBody.tools).toEqual([
-      { type: "image_generation", output_format: "png" },
-    ])
+    expect(paidBody.tools).toBeUndefined()
+
+    const clientTools = [
+      {
+        type: "function",
+        name: "functions.painter",
+        parameters: {
+          type: "object",
+          properties: { prompt: { type: "string" } },
+        },
+      },
+    ]
+    const toolBody = await capturePostedBody(
+      {
+        model: "gpt-5",
+        stream: true,
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: "Draw a blue square using the painter tool.",
+          },
+        ],
+        tools: clientTools,
+      },
+      {},
+      paid,
+    )
+    expect(toolBody.tools).toEqual(clientTools)
 
     const free = makeCodexSubject()
     free.credential.context = { ...free.credential.context, planType: "free" }
@@ -557,7 +596,7 @@ describe("codex request compatibility (CPA parity)", () => {
     )
     expect(freeBody.tools).toBeUndefined()
 
-    // spark models skip injection even on paid plans.
+    // A different model must not expand the client's declared capabilities.
     const sparkBody = await capturePostedBody(
       {
         model: "gpt-5.3-codex-spark",
@@ -569,7 +608,7 @@ describe("codex request compatibility (CPA parity)", () => {
     )
     expect(sparkBody.tools).toBeUndefined()
 
-    // responses-lite requests skip injection via the forwarded header.
+    // The lite header must not change this contract either.
     const liteBody = await capturePostedBody(
       {
         model: "gpt-5",

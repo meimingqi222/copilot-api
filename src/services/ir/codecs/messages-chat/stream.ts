@@ -12,10 +12,11 @@ import type {
 } from "~/services/ir/types"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { MESSAGES_IMAGE_OUTPUT_ERROR } from "~/services/ir/image-generation"
 import {
-  imagePartToChat,
-  imagePartToMessages,
-} from "~/services/ir/image-generation"
+  imageFromChat,
+  imageToChat,
+} from "~/services/ir/codecs/messages-chat/request"
 import {
   extractReasoningBlockText,
   extractReasoningTextAlias,
@@ -210,6 +211,25 @@ export async function* decodeChatStream(
       }
     for (const choice of chunk.choices) {
       const delta = choice.delta
+      const images = [
+        ...(delta.images ?? []),
+        ...(Array.isArray(delta.content) ?
+          delta.content.filter((part) => part.type === "image_url")
+        : []),
+      ]
+      for (const image of images) {
+        const previous = close()
+        if (previous) yield previous
+        const imageIndex = index++
+        const partId = `image_${imageIndex}`
+        yield {
+          type: "part_start",
+          index: imageIndex,
+          partId,
+          part: imageFromChat(image.image_url.url, image.image_url.detail),
+        }
+        yield { type: "part_end", index: imageIndex, partId }
+      }
       const reasoning =
         extractReasoningTextAlias(delta)
         || delta.reasoning_details?.map(extractReasoningBlockText).find(Boolean)
@@ -244,7 +264,16 @@ export async function* decodeChatStream(
           index: open.index,
           delta: { type: "signature", text: signature },
         }
-      if (typeof delta.content === "string" && delta.content) {
+      const content =
+        typeof delta.content === "string" ?
+          delta.content
+        : delta.content
+            ?.filter(
+              (part) => part.type === "text" || part.type === "output_text",
+            )
+            .map((part) => part.text)
+            .join("")
+      if (content) {
         if (open?.type !== "text") {
           const previous = close()
           if (previous) yield previous
@@ -260,7 +289,7 @@ export async function* decodeChatStream(
           type: "part_delta",
           partId: open.id,
           index: open.index,
-          delta: { type: "text", text: delta.content },
+          delta: { type: "text", text: content },
         }
       }
       for (const call of delta.tool_calls ?? []) {
@@ -535,13 +564,14 @@ export async function* encodeMessagesStream(
             delta: { type: "input_json_delta", partial_json: part.arguments },
           }
       } else if (part.type === "image") {
-        const image = imagePartToMessages(part)
-        if (!image) continue
         yield {
-          type: "content_block_start",
-          index: event.index,
-          content_block: image,
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: MESSAGES_IMAGE_OUTPUT_ERROR,
+          },
         }
+        return
       } else if (part.type === "text") {
         yield {
           type: "content_block_start",
@@ -687,6 +717,7 @@ export async function* encodeChatStream(
   let ended = false
   const tools = new Map<string, number>()
   let nextTool = 0
+  let nextImage = 0
   const chunk = (
     delta: ChatDelta,
     finish: ChatCompletionChunk["choices"][number]["finish_reason"] = null,
@@ -725,7 +756,11 @@ export async function* encodeChatStream(
       }
     } else if (event.type === "part_start" && event.part.type === "image") {
       yield {
-        data: JSON.stringify(chunk({ content: [imagePartToChat(event.part)] })),
+        data: JSON.stringify(
+          chunk({
+            images: [{ ...imageToChat(event.part), index: nextImage++ }],
+          }),
+        ),
       }
     } else if (
       event.type === "part_start"

@@ -180,7 +180,8 @@ export interface AnthropicResponse {
   type: "message"
   role: "assistant"
   content: Array<
-    AnthropicAssistantContentBlock | AnthropicWebSearchToolResultBlock
+    | Exclude<AnthropicAssistantContentBlock, AnthropicImageBlock>
+    | AnthropicWebSearchToolResultBlock
   >
   model: string
   stop_reason:
@@ -222,7 +223,6 @@ interface AnthropicContentBlockStartEvent {
   // signature_delta event - never in content_block_start. Do not add signature here.
   content_block:
     | { type: "text"; text: string }
-    | AnthropicImageBlock
     | (Omit<AnthropicToolUseBlock, "input"> & {
         input: Record<string, unknown>
       })

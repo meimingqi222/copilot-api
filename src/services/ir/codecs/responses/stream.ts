@@ -13,7 +13,7 @@ import type {
 
 import {
   imagePartFromGenerationCall,
-  responsesImageMessage,
+  responsesImageCall,
 } from "~/services/ir/image-generation"
 import {
   decodeResponsesResult,
@@ -61,8 +61,6 @@ function decodeAddedPart(
 ): IRPart | undefined {
   if (item.type === "message") return { type: "text", text: "" }
   if (item.type === "reasoning") return { type: "thinking", text: "", source }
-  if (item.type === "image_generation_call")
-    return imagePartFromGenerationCall(item)
   if (item.type !== "function_call") return undefined
   const namespace = text(item.namespace)
   const name = text(item.name) ?? "unknown_function"
@@ -80,12 +78,16 @@ function* terminalMissingEvents(
   populated: ReadonlySet<number>,
   reasoningPopulated: boolean,
   startIndex: number,
+  imageIndices: ReadonlyMap<string, number>,
 ): Iterable<StreamEvent> {
   let nextIndex = startIndex
   for (const [outputIndex, item] of (response.output ?? []).entries()) {
     if (
       populated.has(outputIndex)
       || (item.type === "reasoning" && reasoningPopulated)
+      || (item.type === "image_generation_call"
+        && item.id !== undefined
+        && populated.has(imageIndices.get(item.id) ?? -1))
     )
       continue
     const missing = decodeResponsesResult({ ...response, output: [item] })
@@ -109,6 +111,23 @@ function* terminalMissingEvents(
   }
 }
 
+/** Image bytes are atomic and may first appear on done; previews are not IR parts. */
+function* imageResultEvents(
+  item: Record<string, unknown>,
+  index: number,
+  populated: Set<number>,
+  imageIndices: Map<string, number>,
+): Iterable<StreamEvent> {
+  if (populated.has(index)) return
+  const part = imagePartFromGenerationCall(item)
+  if (!part) return
+  const partId = part.id ?? `image_${index}`
+  populated.add(index)
+  if (part.id) imageIndices.set(part.id, index)
+  yield { type: "part_start", partId, index, part }
+  yield { type: "part_end", partId, index }
+}
+
 /** Decode Responses SSE one event at a time; no full-stream buffering. */
 export async function* decodeResponsesStream(
   stream: AsyncIterable<CopilotStreamEventLike>,
@@ -117,6 +136,7 @@ export async function* decodeResponsesStream(
   const source = { wire: "responses" as const, model }
   const started = new Map<number, { id: string; part: IRPart }>()
   const populated = new Set<number>()
+  const imageIndices = new Map<string, number>()
   let reasoningPopulated = false
   let messageStarted = false
   let nextIndex = 0
@@ -177,6 +197,11 @@ export async function* decodeResponsesStream(
       const index = number(wire.output_index) ?? nextIndex++
       nextIndex = Math.max(nextIndex, index + 1)
       if (!item) continue
+      if (item.type === "image_generation_call") {
+        const id = text(item.id)
+        if (id) imageIndices.set(id, index)
+        continue // Only final bytes are portable; do not forward previews.
+      }
       const part = decodeAddedPart(item, index, source)
       if (!part) continue
       const partId = text(item.id) ?? `${part.type}_${index}`
@@ -228,22 +253,18 @@ export async function* decodeResponsesStream(
       continue
     }
     if (type === "response.output_item.done") {
-      const index = number(wire.output_index) ?? nextIndex++
-      nextIndex = Math.max(nextIndex, index + 1)
       const item = record(wire.item)
-      let current = started.get(index)
-      // Image results often arrive only on `output_item.done`, with no
-      // preceding `added` event the client can render.
-      if (!current && item?.type === "image_generation_call") {
-        const part = imagePartFromGenerationCall(item)
-        if (part) {
-          const partId = text(item.id) ?? `image_${index}`
-          current = { id: partId, part }
-          started.set(index, current)
-          populated.add(index)
-          yield { type: "part_start", partId, index, part }
-        }
+      const imageId = text(item?.id)
+      const index =
+        number(wire.output_index)
+        ?? (imageId ? imageIndices.get(imageId) : undefined)
+        ?? nextIndex++
+      nextIndex = Math.max(nextIndex, index + 1)
+      if (item?.type === "image_generation_call") {
+        yield* imageResultEvents(item, index, populated, imageIndices)
+        continue
       }
+      const current = started.get(index)
       if (current) {
         yield { type: "part_end", partId: current.id, index }
         started.delete(index)
@@ -260,6 +281,7 @@ export async function* decodeResponsesStream(
           populated,
           reasoningPopulated,
           nextIndex,
+          imageIndices,
         )
         if (result.usage) yield { type: "usage", usage: result.usage }
         yield { type: "message_end", stop: result.stop, status: result.status }
@@ -362,7 +384,12 @@ export async function* encodeResponsesStream(
       const pendingDone = flushPendingSearchCall()
       if (pendingDone) yield pendingDone
       const part = restoreResponsesToolNamespace(current.part, request)
-      parts.set(current.index, part)
+      parts.set(
+        current.index,
+        part.type === "image" ?
+          { ...part, id: part.id ?? current.partId }
+        : part,
+      )
       if (part.type === "server_tool_use") {
         yield event("response.output_item.added", {
           response_id: responseId,
@@ -404,12 +431,14 @@ export async function* encodeResponsesStream(
           },
         })
       } else if (part.type === "image") {
-        // The bytes are complete at start; emit a finished image message
-        // instead of an `image_generation_call` the client cannot render.
-        yield event("response.output_item.done", {
+        yield event("response.output_item.added", {
           response_id: responseId,
           output_index: current.index,
-          item: responsesImageMessage(part, current.partId),
+          item: {
+            ...responsesImageCall(part, part.id ?? current.partId),
+            result: null,
+            status: "in_progress",
+          },
         })
       } else if (part.type === "tool_call") {
         yield event("response.output_item.added", {
@@ -462,11 +491,23 @@ export async function* encodeResponsesStream(
       if (pendingSearchCall && pendingSearchCall.index === current.index)
         continue
       const part = parts.get(current.index)
-      if (part)
+      const item =
+        part ?
+          encodeResponsesResult({
+            id: responseId,
+            model,
+            source,
+            parts: [part],
+          }).output?.[0]
+        : undefined
+      if (item)
         yield event("response.output_item.done", {
           response_id: responseId,
           output_index: current.index,
-          item: part,
+          item: {
+            ...item,
+            id: part?.type === "image" ? part.id : current.partId,
+          },
         })
       continue
     }

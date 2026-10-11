@@ -13,7 +13,7 @@ import type {
 } from "~/services/ir/types"
 import {
   imagePartFromGenerationCall,
-  responsesImageMessage,
+  responsesImageCall,
 } from "~/services/ir/image-generation"
 
 type WireRecord = Record<string, unknown>
@@ -222,7 +222,7 @@ function responseItem(
   }
   if (part.type === "server_tool_use") return webSearchCallItem(part, part.id)
   if (part.type === "image")
-    return responsesImageMessage(part, part.id ?? `img_${responseId}_${index}`)
+    return responsesImageCall(part, part.id ?? `img_${responseId}_${index}`)
   return undefined
 }
 

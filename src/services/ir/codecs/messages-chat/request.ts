@@ -55,7 +55,7 @@ const IMAGE_MEDIA_TYPES = new Set([
   "image/webp",
 ])
 
-function imageFromChat(
+export function imageFromChat(
   url: string,
   detail?: "low" | "high" | "auto",
 ): IRImagePart {
@@ -71,7 +71,9 @@ function imageFromChat(
   }
 }
 
-function imageToChat(image: IRImagePart): ContentPart {
+export function imageToChat(
+  image: IRImagePart,
+): Extract<ContentPart, { type: "image_url" }> {
   const url =
     image.source.type === "url" ?
       image.source.url
@@ -465,9 +467,13 @@ export function encodeChatRequest(
         )
       : []
     const toolCalls = turn.parts.filter((part) => part.type === "tool_call")
+    const images = turn.parts
+      .filter((part) => part.type === "image")
+      .map(imageToChat)
     messages.push({
       role: "assistant",
       content: text || null,
+      ...(images.length > 0 && { images }),
       ...(thinking.length > 0 && {
         reasoning_content: thinking.map((part) => part.text).join("\n\n"),
         ...(thinking.length > 1 && {
@@ -560,6 +566,8 @@ export function decodeChatRequest(payload: ChatCompletionsPayload): RequestIR {
       })
     } else {
       const parts: Array<IRPart> = chatContentParts(message.content)
+      for (const image of message.images ?? [])
+        parts.push(imageFromChat(image.image_url.url, image.image_url.detail))
       if (message.role === "assistant") {
         const alias = extractReasoningTextAlias(message)
         const details =

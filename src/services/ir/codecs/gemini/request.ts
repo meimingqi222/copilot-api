@@ -148,7 +148,7 @@ function effortToGeminiLevel(effort: string): string | undefined {
   return undefined
 }
 
-function toBase64Image(part: IRImagePart): GeminiPart | undefined {
+export function toBase64Image(part: IRImagePart): GeminiPart | undefined {
   if (part.source.type === "base64")
     return {
       inlineData: { mimeType: part.source.mediaType, data: part.source.data },
@@ -248,6 +248,10 @@ function encodeGeminiContents(
     for (const part of turn.parts) {
       if (part.type === "thinking") parts.push(thinkingToGeminiPart(part))
       if (part.type === "text") parts.push({ text: part.text })
+      if (part.type === "image") {
+        const image = toBase64Image(part)
+        if (image) parts.push(image)
+      }
       if (part.type === "tool_call") {
         let args: Record<string, unknown> = {}
         try {

@@ -389,15 +389,25 @@ describe("Responses IR result and stream codec", () => {
       source: { type: "base64", mediaType: "image/png", data: "aGVsbG8=" },
     })
     const encoded = encodeResponsesResult(ir)
-    expect(JSON.stringify(encoded.output)).not.toContain(
-      "image_generation_call",
-    )
     expect(encoded.output?.[0]).toMatchObject({
-      type: "message",
+      type: "image_generation_call",
       status: "completed",
-      content: [
-        { type: "output_image", image_url: "data:image/png;base64,aGVsbG8=" },
-      ],
+      result: "aGVsbG8=",
+      output_format: "png",
+    })
+    expect(decodeResponsesResult(encoded).parts).toEqual(ir.parts)
+    expect(
+      decodeResponsesRequest(payload(encoded.output)).turns[0]?.parts,
+    ).toEqual([ir.parts[0]])
+    expect(
+      encodeResponsesRequest(decodeResponsesRequest(payload(encoded.output)))
+        .input[0],
+    ).toEqual({
+      type: "image_generation_call",
+      id: "ig_1",
+      status: "completed",
+      output_format: "png",
+      result: "aGVsbG8=",
     })
   })
 
@@ -439,17 +449,90 @@ describe("Responses IR result and stream codec", () => {
     })
     const wire: Array<CopilotStreamEventLike> = []
     async function* events() {
-      for (const item of decoded) yield item
+      for (const item of decoded)
+        yield item.type === "part_start" || item.type === "part_end" ?
+          { ...item, partId: `translated_${item.partId}` }
+        : item
     }
     for await (const item of encodeResponsesStream(events())) wire.push(item)
     const types = wire.map((item) => JSON.parse(item.data ?? "{}").type)
-    expect(types).toContain("response.output_item.done")
-    expect(wire.map((item) => item.data ?? "").join("\n")).not.toContain(
-      "image_generation_call",
-    )
-    expect(wire.map((item) => item.data ?? "").join("\n")).toContain(
-      "output_image",
-    )
+    expect(
+      types.filter((type) => type === "response.output_item.done"),
+    ).toHaveLength(1)
+    const done = wire
+      .map((item) => JSON.parse(item.data ?? "{}"))
+      .find((item) => item.type === "response.output_item.done")
+    expect(done.item).toMatchObject({
+      type: "image_generation_call",
+      id: "ig_done",
+      result: "aW1n",
+      output_format: "jpeg",
+    })
+    const replayed: Array<StreamEvent> = []
+    async function* encodedStream() {
+      yield* wire
+    }
+    for await (const item of decodeResponsesStream(
+      encodedStream(),
+      "test-model",
+    ))
+      replayed.push(item)
+    expect(
+      replayed.filter(
+        (item) => item.type === "part_start" && item.part.type === "image",
+      ),
+    ).toHaveLength(1)
+  })
+
+  test("emits final image bytes once across added, repeated done and completed events", async () => {
+    const image = {
+      type: "image_generation_call" as const,
+      id: "ig_final",
+      output_format: "webp",
+      result: "ZmluYWw=",
+    }
+    async function* upstream() {
+      for (const frame of [
+        {
+          type: "response.output_item.added",
+          output_index: 4,
+          item: { ...image, result: "cHJldmlldw==" },
+        },
+        {
+          type: "response.image_generation_call.partial_image",
+          item_id: image.id,
+          partial_image_b64: "cHJldmlldw==",
+        },
+        { type: "response.output_item.done", item: image },
+        { type: "response.output_item.done", item: image },
+        {
+          type: "response.completed",
+          response: {
+            id: "image",
+            model: "m",
+            status: "completed",
+            output: [
+              image,
+              {
+                ...image,
+                id: "ig_second",
+                output_format: "jpeg",
+                result: "c2Vjb25k",
+              },
+            ],
+          },
+        },
+      ])
+        yield { data: JSON.stringify(frame) }
+    }
+    const images = []
+    for await (const event of decodeResponsesStream(upstream(), "m"))
+      if (event.type === "part_start" && event.part.type === "image")
+        images.push(event.part.source)
+    expect(images).toEqual([
+      { type: "base64", mediaType: "image/webp", data: "ZmluYWw=" },
+      { type: "base64", mediaType: "image/jpeg", data: "c2Vjb25k" },
+    ])
   })
 
   test("uses a terminal-only response without losing content", async () => {

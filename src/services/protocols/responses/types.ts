@@ -73,8 +73,7 @@ interface ResponsesWebSearchCallItem {
 }
 
 /**
- * Codex image tool result. Decoded into an image part before any client sees
- * it; the type stays so a raw upstream response can be parsed.
+ * Native image tool result, also replayable in Responses history.
  */
 interface ResponsesImageGenerationCallItem {
   type: "image_generation_call"
@@ -152,6 +151,7 @@ export type ResponsesInputItem =
     }
   /** Replayed by clients that used the upstream `web_search` tool. */
   | ResponsesWebSearchCallItem
+  | ResponsesImageGenerationCallItem
 
 interface ResponsesFunctionTool {
   type: "function"

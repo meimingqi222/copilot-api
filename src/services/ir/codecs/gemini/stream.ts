@@ -6,6 +6,7 @@ import type {
 import type { IRPart, IRStop, IRUsage, StreamEvent } from "~/services/ir/types"
 
 import { decodeGeminiPart } from "./part"
+import { toBase64Image } from "~/services/ir/codecs/gemini/request"
 import {
   geminiFinishReason,
   geminiUsage,
@@ -62,10 +63,10 @@ export async function* decodeGeminiStream(
     for (const part of candidate?.content?.parts ?? []) {
       const decoded = decodeGeminiPart(part)
       if (!decoded) continue
-      if (decoded.type === "tool_call") {
+      if (decoded.type === "tool_call" || decoded.type === "image") {
         const previous = close()
         if (previous) yield previous
-        const id = `gemini_tool_${index}`
+        const id = `gemini_${decoded.type}_${index}`
         const toolIndex = index++
         yield {
           type: "part_start",
@@ -156,7 +157,10 @@ export async function* encodeGeminiStream(
         yield frame([{ text: event.part.text }])
       else if (event.part.type === "thinking" && event.part.text)
         yield frame([{ text: event.part.text, thought: true }])
-      else if (event.part.type === "tool_call") {
+      else if (event.part.type === "image") {
+        const image = toBase64Image(event.part)
+        if (image) yield frame([image])
+      } else if (event.part.type === "tool_call") {
         let args: Record<string, unknown> = {}
         try {
           const parsed: unknown = JSON.parse(event.part.arguments)
