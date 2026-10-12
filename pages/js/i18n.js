@@ -773,6 +773,8 @@ const i18n = {
       "quota.oauth.minimax.credits": "积分",
       "quota.oauth.minimax.creditsValue": "{count} 积分",
       "quota.oauth.minimax.creditsBreakdown": "赠送 {free} · 购买 {purchased}",
+      "quota.oauth.lobsterai.credits": "积分",
+      "quota.oauth.lobsterai.creditsValue": "{count} 积分",
       "quota.oauth.qoder.credits": "Credits",
       "quota.oauth.codebuddy.packages": "套餐数",
       "quota.oauth.xai.planLabel": "套餐",
@@ -2406,6 +2408,8 @@ const i18n = {
       "quota.oauth.minimax.creditsValue": "{count} credits",
       "quota.oauth.minimax.creditsBreakdown":
         "Free {free} · Purchased {purchased}",
+      "quota.oauth.lobsterai.credits": "Credits",
+      "quota.oauth.lobsterai.creditsValue": "{count} credits",
       "quota.oauth.qoder.credits": "Credits",
       "quota.oauth.codebuddy.credits": "Credit balance",
       "quota.oauth.codebuddy.packages": "Packages",

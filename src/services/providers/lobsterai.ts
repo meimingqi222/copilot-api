@@ -10,7 +10,13 @@ import { getProviderDescriptor } from "~/lib/provider-descriptors"
 
 import type { ModelMapping } from "~/lib/provider-connections"
 
+import {
+  getMutableProviderConnection,
+  persistProviderConnections,
+} from "~/lib/provider-connections"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { getProtocolAdapter } from "~/services/protocols"
+import { fetchLobsteraiQuota } from "~/lib/quota/fetchers/lobsterai"
 
 import type { ProviderRuntime } from "~/services/providers/runtime"
 
@@ -77,5 +83,19 @@ export const lobsteraiProviderRuntime: ProviderRuntime = {
   },
   getFallbackModels(_connection) {
     return LOBSTERAI_FALLBACK_MODELS
+  },
+  async refreshQuota(connection, signal) {
+    // 快照必须自己落到 connection（与 createOAuthProviderRuntime / windsurf /
+    // codebuddy 一致）：只把 snapshot 返回出去的话 quotaInfo 永远为空，管理台
+    // 读不到配额，积分归零也不会把账号摘出路由。
+    const liveConnection = getMutableProviderConnection(connection.id)
+    if (!liveConnection) {
+      return undefined
+    }
+
+    const snapshot = await fetchLobsteraiQuota(liveConnection, signal)
+    applyOAuthQuotaSnapshot(liveConnection, snapshot)
+    await persistProviderConnections()
+    return snapshot
   },
 }

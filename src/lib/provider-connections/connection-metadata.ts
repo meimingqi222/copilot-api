@@ -13,6 +13,7 @@ import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-de
 import type { BalanceResult } from "~/lib/balance/types"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
+import { DEFAULTS } from "./types"
 import type { ProviderConnection } from "./types"
 
 /** 配额状态(credential.status 的粗粒度投影)。 */
@@ -457,6 +458,18 @@ export function setConnectionQuotaState(
   if (quotaState === "exhausted") {
     if (cred && cred.status !== "auth_error") {
       cred.status = "quota_exhausted"
+      // 耗尽标记必须同时带 cooldown：refreshCredentialAvailability 会把
+      // 「没有 cooldownUntil 的 quota_exhausted」当历史遗留直接恢复成
+      // ready，而 persistProviderConnections() 末尾的
+      // emitStateChange("models-stale") → cacheModels →
+      // listExposedPublicModels 走的正是这条路——快照刚落库的耗尽判定
+      // 立刻被擦掉，0 配额账号照旧留在调度里。与
+      // markCredentialQuotaExhausted 同一语义：冷却到自动恢复窗口结束，
+      // 期间刷新报告配额已恢复时由下面的恢复分支清掉。
+      setConnectionCooldownUntil(
+        conn,
+        Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+      )
     }
     return
   }

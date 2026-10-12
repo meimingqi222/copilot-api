@@ -16,7 +16,7 @@ export const providerMetadata = defineProviderMetadata({
     name: "LobsterAI",
     icon: "bot",
     authMode: "oauth",
-    features: ["cooldown", "model_discovery", "oauth"],
+    features: ["quota", "cooldown", "model_discovery", "oauth"],
     // LobsterAI sign-in is the primary path; the manual JSON / sqlite paste
     // stays available as a fallback (see the add modal). Kept out of
     // `OAUTH_PROVIDER_IDS` so legacy direct-token classification is untouched.

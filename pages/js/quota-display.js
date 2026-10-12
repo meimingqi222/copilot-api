@@ -9,6 +9,7 @@ const QuotaDisplay = {
     "minimax",
     "qoder",
     "qoder-cn",
+    "lobsterai",
   ]),
   CYCLE_USAGE_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi"]),
 
@@ -340,6 +341,11 @@ const QuotaDisplay = {
       }
       case "windsurf": {
         rows = this.buildWindsurfRows(info.details, t)
+
+        break
+      }
+      case "lobsterai": {
+        rows = this.buildLobsteraiRows(info.details, t)
 
         break
       }
@@ -695,6 +701,51 @@ const QuotaDisplay = {
           typeof window.display === "string" && window.display ?
             window.display
           : undefined,
+      })
+    }
+    return rows
+  },
+
+  /**
+   * LobsterAI 积分：余额（无上限，只报数）+ 免费额度窗口（有 total 时给百分比）。
+   * details.lobsterai = { host, plan, subscriptionStatus, user, credits, windows }。
+   */
+  buildLobsteraiRows(details, t) {
+    if (!details || typeof details !== "object") return []
+    const block = details.lobsterai
+    if (!block || typeof block !== "object") return []
+    const rows = []
+    const credits = block.credits
+    const remaining = this.normalizeNumber(credits?.remaining)
+    if (remaining !== undefined) {
+      rows.push({
+        id: "lobsterai-credits",
+        label: t("quota.oauth.lobsterai.credits"),
+        remaining,
+        valueText: this.formatCredits(remaining),
+        amountText:
+          typeof credits?.expiresAt === "number" ?
+            this.formatDateTimeValue(credits.expiresAt)
+          : undefined,
+        hideBar: true,
+      })
+    }
+    const windows = Array.isArray(block.windows) ? block.windows : []
+    for (const [index, window] of windows.entries()) {
+      if (!window || typeof window !== "object") continue
+      const usedPercent = this.normalizeNumber(window.usedPercent)
+      if (usedPercent === undefined) continue
+      const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
+      rows.push({
+        id: `lobsterai-${index}`,
+        label: window.name || t("quota.oauth.lobsterai.credits"),
+        remainingPercent,
+        valueText: `${Math.round(remainingPercent)}%`,
+        amountText:
+          typeof window.display === "string" && window.display ?
+            window.display
+          : undefined,
+        resetText: this.formatResetTime(window.resetsAt, t),
       })
     }
     return rows
@@ -1093,6 +1144,18 @@ const QuotaDisplay = {
       return t("quota.noData")
     }
     if (this.isOAuthProvider(provider)) {
+      // LobsterAI 只有一笔积分余额（无窗口占比），照实报余额而不是编百分比。
+      if (provider === "lobsterai") {
+        const credits = this.normalizeNumber(
+          info.details?.lobsterai?.credits?.remaining,
+        )
+        if (credits !== undefined) {
+          return t("quota.oauth.lobsterai.creditsValue", {
+            count: this.formatCredits(credits),
+          })
+        }
+        return t("quota.noData")
+      }
       // MiniMax 没有订阅时卡片上只有积分：那是余额，不是某个窗口的百分比，
       // 报成百分比就是编数。
       if (
