@@ -51,7 +51,12 @@ export async function handleResponseError(
     return
   }
 
-  await sendJson(ws, createResponsesErrorPayload(error), signal)
+  const payload = createResponsesErrorPayload(error)
+  // Codex deserializes error.code as Option<String>; a numeric SSE code
+  // makes it discard the entire WS error frame and wait for another event.
+  if (typeof payload.error.code === "number")
+    payload.error.code = String(payload.error.code)
+  await sendJson(ws, payload, signal)
 }
 
 export async function sendError(
@@ -59,12 +64,16 @@ export async function sendError(
   message: string,
   code?: string,
 ): Promise<void> {
+  let status = 400
+  if (code === "busy") status = 409
+  if (code === "request_too_large") status = 413
   await sendJson(ws, {
     type: "error",
+    status,
     error: {
       message,
-      type: "error",
-      ...(code ? { code } : {}),
+      type: "invalid_request_error",
+      code: code ?? "invalid_request",
     },
   })
 }

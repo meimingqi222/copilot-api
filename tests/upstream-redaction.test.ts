@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test"
+import { afterEach, expect, spyOn, test } from "bun:test"
 import { randomUUID, createHmac } from "node:crypto"
 import { Hono } from "hono"
 
@@ -64,7 +64,25 @@ test("keeps stable placeholders per caller but only restores values used by the 
   const other = createScope()
   expect(other.maskText("DB_PASSWORD=hello1234")).not.toContain(token)
   expect(other.restoreText(token)).toBe(token)
-  expect(() => other.maskText(token)).toThrow("another caller")
+  expect(other.maskText(token)).toBe(token)
+  expect(other.restoreText(token)).toBe(token)
+})
+
+test("expired ordinary placeholders remain opaque while new sensitive input is still masked", () => {
+  const caller = randomUUID()
+  const first = new RedactionScope(config, caller)
+  const token = first.maskText("/home/expired-user/work")
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 61 * 60_000)
+  try {
+    const next = new RedactionScope(config, caller)
+    const masked = next.maskText(`${token} /home/new-user/work`)
+    expect(masked).toStartWith(token + " ")
+    expect(masked).not.toContain("new-user")
+    expect(next.restoreText(masked)).toBe(`${token} /home/new-user/work`)
+    expect(next.restoreText(token)).toBe(token)
+  } finally {
+    clock.mockRestore()
+  }
 })
 
 test("repeated masking still protects changed content, newly learned secrets and JSON contexts", () => {
@@ -97,7 +115,7 @@ test("repeated masking still protects changed content, newly learned secrets and
   )
 })
 
-test("cache eviction isolates callers, expires old replay and protects in-flight placeholders", () => {
+test("cache eviction isolates callers, preserves opaque old replay and protects in-flight placeholders", () => {
   const caller = randomUUID()
   const active = new RedactionScope(config, caller)
   const release = active.acquire()
@@ -115,7 +133,8 @@ test("cache eviction isolates callers, expires old replay and protects in-flight
       }
     }
     const next = new RedactionScope(config, caller)
-    expect(() => next.maskText(oldest)).toThrow("expired")
+    expect(next.maskText(oldest)).toBe(oldest)
+    expect(next.restoreText(oldest)).toBe(oldest)
     expect(next.restoreText(next.maskText(pinned))).toBe("/home/live-request")
     expect(active.restoreText(pinned)).toBe("/home/live-request")
     const other = createScope()
@@ -140,9 +159,9 @@ test("byte pressure evicts idle history without evicting live requests or starvi
       release()
     }
   }
-  expect(() => new RedactionScope(config, caller).maskText(oldest)).toThrow(
-    "expired",
-  )
+  const next = new RedactionScope(config, caller)
+  expect(next.maskText(oldest)).toBe(oldest)
+  expect(next.restoreText(oldest)).toBe(oldest)
 
   const liveId = randomUUID()
   const live = new RedactionScope(config, liveId)
@@ -166,9 +185,9 @@ test("byte pressure evicts idle history without evicting live requests or starvi
         done()
       }
     }
-    expect(() =>
-      new RedactionScope(config, idleId).maskText(idleToken),
-    ).toThrow("expired")
+    const idle = new RedactionScope(config, idleId)
+    expect(idle.maskText(idleToken)).toBe(idleToken)
+    expect(idle.restoreText(idleToken)).toBe(idleToken)
     expect(new RedactionScope(config, liveId).maskText(liveToken)).toBe(
       liveToken,
     )

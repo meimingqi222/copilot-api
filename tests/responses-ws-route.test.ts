@@ -333,13 +333,13 @@ loopbackTest(
   },
 )
 
-loopbackTest(
-  "WS /v1/responses forwards upstream errors as error events",
-  async () => {
+loopbackTest.each([422, 500])(
+  "WS /v1/responses forwards upstream errors as error events (status=%i)",
+  async (status) => {
     const fetchMock = mock(
       () =>
         new Response("upstream failed", {
-          status: 500,
+          status,
         }),
     )
     globalThis.fetch = fetchMock as unknown as typeof fetch
@@ -368,13 +368,15 @@ loopbackTest(
       type: string
       status: number
       error: {
+        code: string
         message: string
         type: string
       }
     }
 
     expect(message.type).toBe("error")
-    expect(message.status).toBe(500)
+    expect(message.status).toBe(status)
+    expect(message.error.code).toBe(String(status))
     expect(message.error.type).toBe("error")
     expect(message.error.message).toContain("upstream failed")
 
@@ -382,7 +384,39 @@ loopbackTest(
       recentTraces().some((entry) => entry.inFlight === false),
     )
     expect(recentTraces()[0]?.outcome).toBe("failed")
-    expect(recentTraces()[0]?.statusCode).toBe(500)
+    expect(recentTraces()[0]?.statusCode).toBe(status)
+
+    if (status === 422) {
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            id: "resp_after_error",
+            object: "response",
+            model: "gpt-responses",
+            status: "completed",
+            output: [],
+            output_text: "ok",
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+          { headers: { "content-type": "application/json" } },
+        )) as unknown as typeof fetch
+      ws.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            model: "gpt-responses",
+            input: "try again",
+            stream: false,
+          },
+        }),
+      )
+      const next = JSON.parse(await queue.next()) as {
+        status: string
+        id: string
+      }
+      expect(next.status).toBe("completed")
+      expect(next.id).toBe("resp_after_error")
+    }
 
     ws.close()
   },

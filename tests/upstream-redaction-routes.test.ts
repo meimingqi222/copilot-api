@@ -274,6 +274,49 @@ function events(wire: Wire, masked: string): Array<Record<string, unknown>> {
   ]
 }
 
+for (const streaming of [false, true]) {
+  test(`responses route accepts unknown placeholders and masks new input (${streaming ? "SSE" : "JSON"})`, async () => {
+    await connection("responses")
+    const opaque = `{{HOME_${"0".repeat(32)}}}`
+    let sent = ""
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      sent = String(init?.body)
+      const masked = readText(
+        JSON.parse(sent) as Record<string, unknown>,
+        "responses",
+      )
+      return new Response(
+        streaming ?
+          events("responses", masked)
+            .map((packet) => `data: ${JSON.stringify(packet)}\n\n`)
+            .join("")
+        : JSON.stringify(result("responses", masked)),
+        {
+          headers: {
+            "content-type":
+              streaming ? "text/event-stream" : "application/json",
+          },
+        },
+      )
+    }) as typeof fetch
+    const base = request("responses", streaming)
+    const payload = (await base.json()) as Record<string, unknown>
+    const input = `${opaque}/old-work ${text}`
+    const response = await server.fetch(
+      new Request(base, {
+        method: "POST",
+        body: JSON.stringify({ ...payload, input }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(sent).toContain(opaque)
+    expect(sent).not.toContain("redaction-user")
+    const received = await response.text()
+    expect(received).toContain(opaque)
+    expect(received).toContain(input)
+  })
+}
+
 for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
   for (const streaming of [false, true])
     test(`${wire} route masks actual upstream bytes and restores ${streaming ? "SSE" : "JSON"}`, async () => {

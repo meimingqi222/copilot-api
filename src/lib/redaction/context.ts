@@ -253,12 +253,12 @@ export class RedactionScope {
     const tokenSpans: Array<{ start: number; end: number }> = []
     for (const token of text.matchAll(TOKEN)) {
       const entry = this.tenant.entries.get(token[0])
-      if (!entry)
-        throw new RedactionError(
-          "Redaction context expired or belongs to another caller; replay original input",
-        )
-      this.allowed.set(token[0], entry)
-      this.touch(token[0])
+      // Restarted/evicted contexts and other tools can supply opaque placeholders.
+      // Preserve them without granting access to another caller's original value.
+      if (entry) {
+        this.allowed.set(token[0], entry)
+        this.touch(token[0])
+      }
       tokenSpans.push({
         start: token.index,
         end: token.index + token[0].length,
