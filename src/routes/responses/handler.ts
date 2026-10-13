@@ -436,11 +436,14 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
     return
   }
 
-  // OpenAI Responses API only reports cache reads via
-  // `input_tokens_details.cached_tokens`. There is no cache-creation field
-  // (that is an Anthropic-only concept).
+  // Compatible translations may retain Anthropic cache creation details.
   const cacheReadTokens = usage.input_tokens_details?.cached_tokens ?? 0
-  const promptTokens = Math.max((usage.input_tokens ?? 0) - cacheReadTokens, 0)
+  const cacheWriteTokens =
+    usage.input_tokens_details?.cache_creation_input_tokens ?? 0
+  const promptTokens = Math.max(
+    (usage.input_tokens ?? 0) - cacheReadTokens - cacheWriteTokens,
+    0,
+  )
   recordUsage({
     c,
     accountId,
@@ -451,7 +454,9 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
       usage.total_tokens
       ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
     cacheReadTokens,
-    cacheWriteTokens: 0,
+    cacheWriteTokens,
+    cacheWrite1hTokens:
+      usage.input_tokens_details?.cache_creation?.ephemeral_1h_input_tokens,
     tps,
     streaming,
     ttftMs,

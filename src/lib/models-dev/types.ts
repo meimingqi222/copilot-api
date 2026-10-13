@@ -43,6 +43,7 @@ export interface ModelsDevModel {
 }
 
 interface ModelsDevProvider {
+  api?: string
   id: string
   name?: string
   models: Record<string, ModelsDevModel>

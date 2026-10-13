@@ -122,13 +122,17 @@ export function buildPricingLookupCandidates(
     return []
   }
 
-  for (const variant of generateStrippedVariants(nativeModelId)) {
+  for (const variant of provider === "windsurf" ?
+    generateStrippedVariants(nativeModelId)
+  : [nativeModelId]) {
     add(variant)
   }
 
   const decoded = decodeOpaqueModelToken(nativeModelId)
   if (decoded) {
-    for (const variant of generateStrippedVariants(decoded)) {
+    for (const variant of provider === "windsurf" ?
+      generateStrippedVariants(decoded)
+    : [decoded]) {
       add(variant)
     }
   }

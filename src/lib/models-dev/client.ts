@@ -45,13 +45,26 @@ function parseCatalog(text: string): ModelsDevCatalog {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("models.dev catalog payload was empty or invalid")
   }
+  for (const provider of Object.values(parsed)) {
+    if (
+      !provider
+      || typeof provider !== "object"
+      || !provider.models
+      || typeof provider.models !== "object"
+      || Array.isArray(provider.models)
+    ) {
+      throw new Error("models.dev catalog provider has no valid models map")
+    }
+  }
   return parsed as ModelsDevCatalog
 }
 
 function setCatalog(nextCatalog: ModelsDevCatalog): void {
+  const nextIndexes = buildModelsDevPriceIndexes(nextCatalog)
+  const nextContextIndexes = buildModelsDevContextIndexes(nextCatalog)
   catalog = nextCatalog
-  indexes = buildModelsDevPriceIndexes(nextCatalog)
-  contextIndexes = buildModelsDevContextIndexes(nextCatalog)
+  indexes = nextIndexes
+  contextIndexes = nextContextIndexes
 }
 
 /** The context-window index, or null until the catalog has loaded once. */
@@ -91,9 +104,10 @@ async function fetchCatalogFromNetwork(): Promise<ModelsDevCatalog> {
     )
   }
   const text = await response.text()
+  const parsed = parseCatalog(text)
   ensureCacheDir()
   writeFileSync(cachePath(), text, "utf8")
-  return parseCatalog(text)
+  return parsed
 }
 
 export function getModelsDevIndexes(): ModelsDevPriceIndexes | null {
@@ -106,12 +120,13 @@ export function setModelsDevCatalogForTest(
   if (!nextCatalog) {
     catalog = null
     indexes = null
+    contextIndexes = null
     return
   }
   setCatalog(nextCatalog)
 }
 
-async function refreshModelsDevCatalog(force = false): Promise<void> {
+export async function refreshModelsDevCatalog(force = false): Promise<void> {
   if (refreshInFlight) {
     await refreshInFlight
     return

@@ -1,3 +1,4 @@
+import { cacheCreationFor1h } from "~/lib/cache-usage"
 import type {
   ChatCompletionResponse,
   ContentPart,
@@ -187,6 +188,9 @@ export function decodeChatResponse(response: ChatCompletionResponse): ResultIR {
         cacheReadTokens: usage.prompt_tokens_details?.cached_tokens,
         cacheWriteTokens:
           usage.prompt_tokens_details?.cache_creation_input_tokens,
+        cacheWrite1hTokens:
+          usage.prompt_tokens_details?.cache_creation
+            ?.ephemeral_1h_input_tokens,
         reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
       },
     }),
@@ -254,6 +258,10 @@ export function encodeMessagesResponse(ir: ResultIR): AnthropicResponse {
     prompt_tokens_details: {
       cached_tokens: ir.usage?.cacheReadTokens,
       cache_creation_input_tokens: ir.usage?.cacheWriteTokens,
+      cache_creation: cacheCreationFor1h(
+        ir.usage?.cacheWriteTokens,
+        ir.usage?.cacheWrite1hTokens,
+      ),
     },
   })
   return {
@@ -324,6 +332,7 @@ export function decodeMessagesResponse(response: AnthropicResponse): ResultIR {
       outputTokens: usage.output_tokens,
       cacheReadTokens: usage.cache_read_input_tokens,
       cacheWriteTokens: usage.cache_creation_input_tokens,
+      cacheWrite1hTokens: usage.cache_creation?.ephemeral_1h_input_tokens,
     },
   }
 }
@@ -366,6 +375,10 @@ export function encodeChatResponse(ir: ResultIR): ChatCompletionResponse {
     output_tokens: ir.usage?.outputTokens ?? 0,
     cache_read_input_tokens: ir.usage?.cacheReadTokens,
     cache_creation_input_tokens: ir.usage?.cacheWriteTokens,
+    cache_creation: cacheCreationFor1h(
+      ir.usage?.cacheWriteTokens,
+      ir.usage?.cacheWrite1hTokens,
+    ),
   })
   return {
     id: ir.id,

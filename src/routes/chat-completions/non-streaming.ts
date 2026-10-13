@@ -46,6 +46,8 @@ export function handleNonStreamingResponse(
       totalTokens: calculateTotalTokens(usage),
       cacheReadTokens,
       cacheWriteTokens,
+      cacheWrite1hTokens:
+        usage.prompt_tokens_details?.cache_creation?.ephemeral_1h_input_tokens,
       tps,
       streaming: false,
       finishReason: normalized.choices.find((c) => c.finish_reason)

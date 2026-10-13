@@ -1,3 +1,4 @@
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 /**
  * Shared OpenAI → Anthropic usage translation.
  *
@@ -21,6 +22,7 @@ interface OpenAIUsageLike {
   prompt_tokens_details?: {
     cached_tokens?: number
     cache_creation_input_tokens?: number
+    cache_creation?: CacheCreationUsage
   }
 }
 
@@ -29,6 +31,7 @@ interface AnthropicUsageLike {
   output_tokens: number
   cache_read_input_tokens?: number
   cache_creation_input_tokens?: number
+  cache_creation?: CacheCreationUsage
 }
 
 /** OpenAI 形状 usage → Anthropic 形状 usage（净值语义）。 */
@@ -45,6 +48,9 @@ export function openAIUsageToAnthropic(
       usage.prompt_tokens - cachedTokens - (cacheCreationTokens ?? 0),
     ),
     output_tokens: usage.completion_tokens,
+    ...(usage.prompt_tokens_details?.cache_creation && {
+      cache_creation: usage.prompt_tokens_details.cache_creation,
+    }),
     ...(cachedTokens !== 0 && { cache_read_input_tokens: cachedTokens }),
     ...(cacheCreationTokens !== undefined && {
       cache_creation_input_tokens: cacheCreationTokens,
@@ -67,10 +73,15 @@ export function anthropicUsageToOpenAI(
   const cacheCreationTokens = usage.cache_creation_input_tokens
 
   const details:
-    | { cached_tokens?: number; cache_creation_input_tokens?: number }
+    | {
+        cached_tokens?: number
+        cache_creation_input_tokens?: number
+        cache_creation?: CacheCreationUsage
+      }
     | undefined =
     cacheReadTokens !== 0 || cacheCreationTokens !== undefined ?
       {
+        ...(usage.cache_creation && { cache_creation: usage.cache_creation }),
         ...(cacheReadTokens !== 0 && { cached_tokens: cacheReadTokens }),
         ...(cacheCreationTokens !== undefined && {
           cache_creation_input_tokens: cacheCreationTokens,

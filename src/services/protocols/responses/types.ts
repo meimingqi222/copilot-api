@@ -1,3 +1,4 @@
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 /**
  * OpenAI Responses 协议的 wire 类型与共享 helpers。
  *
@@ -21,6 +22,7 @@ export interface ResponsesUsage {
     // Anthropic-only concept smuggled through the OpenAI/Responses usage
     // shape. See docs/refactor-usage-translation.md.
     cache_creation_input_tokens?: number
+    cache_creation?: CacheCreationUsage
   }
   output_tokens?: number
   output_tokens_details?: {

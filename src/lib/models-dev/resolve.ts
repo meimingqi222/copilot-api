@@ -1,8 +1,11 @@
 import type {
   ModelPricingPer1k,
+  ModelsDevCatalog,
   ResolvedModelPricing,
 } from "~/lib/models-dev/types"
-import type { ProviderId } from "~/lib/provider-config"
+import { isProviderId, type ProviderId } from "~/lib/provider-config"
+
+import type { ModelsDevPriceIndexes } from "~/lib/models-dev/catalog"
 
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
@@ -12,6 +15,7 @@ import {
   lookupProviderModelPrice,
 } from "~/lib/models-dev/catalog"
 import {
+  getModelsDevCatalog,
   getModelsDevContextIndexes,
   getModelsDevIndexes,
 } from "~/lib/models-dev/client"
@@ -94,14 +98,10 @@ function applyFastMultiplier(
 }
 
 function lookupCandidates(
+  indexes: ModelsDevPriceIndexes,
   providerIds: Array<string>,
   candidates: Array<string>,
 ): ModelPricingPer1k | null {
-  const indexes = getModelsDevIndexes()
-  if (!indexes) {
-    return null
-  }
-
   for (const candidate of candidates) {
     const providerMatch = lookupProviderModelPrice(
       indexes,
@@ -112,6 +112,8 @@ function lookupCandidates(
       return providerMatch
     }
   }
+
+  if (providerIds.length > 0) return null
 
   for (const candidate of candidates) {
     const globalMatch = lookupGlobalModelPrice(indexes, candidate)
@@ -140,50 +142,92 @@ export function resolveModelsDevPrice(
   }
 }
 
+function priceProviderBuckets(provider: string | undefined): Array<string> {
+  if (!provider) return []
+  if (isProviderId(provider))
+    return MODELS_DEV_PROVIDER_PRIORITY[provider] ?? [provider]
+  return [provider]
+}
+
 export function resolveModelsDevPriceDetailed(
   modelId: string,
-  providerHint?: ProviderId,
+  providerHint?: string,
 ): ResolvedModelPricing | null {
   const indexes = getModelsDevIndexes()
   if (!indexes) {
     return null
   }
 
+  const catalog = getModelsDevCatalog()
+  if (!catalog) return null
+  return resolveCatalogPrice(indexes, catalog, modelId, providerHint)
+}
+
+export function resolveCatalogPrice(
+  indexes: ModelsDevPriceIndexes,
+  catalog: ModelsDevCatalog,
+  modelId: string,
+  providerHint?: string,
+): ResolvedModelPricing | null {
+  // Catalog channel/full-model references take precedence over routing aliases.
+  const raw = modelId.trim().toLowerCase()
+  const direct = indexes.byProviderModel.get(raw)
+  if (direct && !providerHint) return { ...direct, source: "models-dev" }
+  const channel = raw.split("/")[0]!
+  const explicitChannel = catalog[channel]
+  if (explicitChannel && !providerHint) {
+    const candidates = buildPricingLookupCandidates(
+      raw.slice(channel.length + 1),
+    )
+    for (const candidate of candidates) {
+      const price = lookupProviderModelPrice(indexes, [channel], candidate)
+      if (price) return { ...price, source: "models-dev" }
+    }
+    return null
+  }
   const parsed = parseModelReference(modelId)
-  const provider = parsed.provider ?? providerHint
+  const provider = providerHint ?? parsed.provider
+  const nativeModelId =
+    providerHint && parsed.provider !== providerHint ?
+      raw
+    : parsed.nativeModelId
   const candidates = buildPricingLookupCandidates(
-    parsed.nativeModelId,
-    provider,
+    nativeModelId,
+    provider && isProviderId(provider) ? provider : undefined,
   )
 
   if (candidates.length === 0) {
     return null
   }
 
-  const providerBuckets =
-    provider ? (MODELS_DEV_PROVIDER_PRIORITY[provider] ?? []) : []
+  const providerBuckets = priceProviderBuckets(provider)
+  if (provider === "windsurf") {
+    const nativeQuote = lookupProviderModelPrice(
+      indexes,
+      ["windsurf"],
+      nativeModelId,
+    )
+    if (nativeQuote) return { ...nativeQuote, source: "models-dev" }
+  }
   const windsurfBuckets =
-    provider === "windsurf" ?
-      inferWindsurfVendorBucket(parsed.nativeModelId)
-    : []
+    provider === "windsurf" ? inferWindsurfVendorBucket(nativeModelId) : []
 
   const orderedProviderIds = [
     ...providerBuckets,
     ...windsurfBuckets.filter((bucket) => !providerBuckets.includes(bucket)),
   ]
 
-  const pricing = lookupCandidates(orderedProviderIds, candidates)
+  if (provider && orderedProviderIds.length === 0) return null
+  const pricing = lookupCandidates(indexes, orderedProviderIds, candidates)
   if (!pricing) {
     return null
   }
 
-  const hasFast = parsed.nativeModelId.toLowerCase().endsWith("-fast")
-  const isWindsurfLike =
-    provider === "windsurf"
-    || (!provider && inferWindsurfVendorBucket(parsed.nativeModelId).length > 0)
+  const hasFast = nativeModelId.toLowerCase().endsWith("-fast")
+  const isWindsurfLike = provider === "windsurf"
   const resolvedPricing =
     hasFast && isWindsurfLike ?
-      applyFastMultiplier(pricing, parsed.nativeModelId)
+      applyFastMultiplier(pricing, nativeModelId)
     : pricing
 
   return {

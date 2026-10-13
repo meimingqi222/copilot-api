@@ -1,0 +1,13 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\connection-pricing.test.ts:
+(pass) compatible connection prices the actual model through its endpoint channel [84.59ms]
+(pass) one-hour cache writes retain their TTL through messages and chat codecs [0.49ms]
+(pass) one-hour writes use twice the effective input price, including context tiers [0.12ms]
+(pass) streaming TTL merges and Responses cache writes reach persisted costs [5.83ms]
+(pass) historical repricing skips insufficient metadata instead of erasing costs [0.09ms]
+
+ 5 pass
+ 0 fail
+ 16 expect() calls
+Ran 5 tests across 1 file. [558.00ms]

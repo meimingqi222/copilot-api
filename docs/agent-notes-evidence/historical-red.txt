@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\connection-pricing.test.ts:
+205 |     cache_write_tokens: 0,
+206 |   }
+207 |   expect(historicalCostEstimate(null, row)).toBeNull()
+208 |   expect(
+209 |     historicalCostEstimate(pricing, { ...row, provider: "codex" }),
+210 |   ).toBeNull()
+          ^
+error: expect(received).toBeNull()
+
+Received: 0.004503000000000001
+
+      at <anonymous> (<repo>\tests\connection-pricing.test.ts:210:5)
+(fail) historical repricing skips insufficient metadata instead of erasing costs [0.52ms]
+
+ 0 pass
+ 4 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [441.00ms]

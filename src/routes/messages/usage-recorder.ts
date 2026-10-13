@@ -1,3 +1,4 @@
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 import type { Context } from "hono"
 
 import type {
@@ -59,6 +60,7 @@ export function recordDirectStreamingUsage(
       + cacheWriteTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    cacheWrite1hTokens: lastUsage.cache_creation?.ephemeral_1h_input_tokens,
     ttftMs: timing?.ttftMs,
     tps: timing?.tps,
     streaming: true,
@@ -94,6 +96,7 @@ export function recordAnthropicUsage(
       + cacheWriteTokens,
     cacheReadTokens,
     cacheWriteTokens,
+    cacheWrite1hTokens: usage.cache_creation?.ephemeral_1h_input_tokens,
     tps,
     streaming: false,
   })
@@ -180,6 +183,7 @@ export function updateLastUsage(
           output_tokens?: number
           cache_read_input_tokens?: number
           cache_creation_input_tokens?: number
+          cache_creation?: CacheCreationUsage
         }
       }
       usage?: {
@@ -187,6 +191,7 @@ export function updateLastUsage(
         output_tokens?: number
         cache_read_input_tokens?: number
         cache_creation_input_tokens?: number
+        cache_creation?: CacheCreationUsage
       }
     }
     if (parsed.type === "message_start" && parsed.message?.usage) {
@@ -206,6 +211,7 @@ export function updateLastUsage(
           lastUsage?.cache_read_input_tokens,
           msgUsage.cache_read_input_tokens,
         ),
+        cache_creation: msgUsage.cache_creation ?? lastUsage?.cache_creation,
         cache_creation_input_tokens: pickOptionalTokenCount(
           lastUsage?.cache_creation_input_tokens,
           msgUsage.cache_creation_input_tokens,
@@ -231,6 +237,7 @@ export function updateLastUsage(
           lastUsage?.cache_read_input_tokens,
           deltaUsage.cache_read_input_tokens,
         ),
+        cache_creation: deltaUsage.cache_creation ?? lastUsage?.cache_creation,
         cache_creation_input_tokens: pickOptionalTokenCount(
           lastUsage?.cache_creation_input_tokens,
           deltaUsage.cache_creation_input_tokens,

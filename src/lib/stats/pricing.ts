@@ -6,7 +6,9 @@ import type {
   ContextTierPricingPer1k,
   ResolvedModelPricing,
 } from "~/lib/models-dev"
-import type { ProviderId } from "~/lib/provider-config"
+
+import { parseModelReference } from "~/lib/route-target/model-reference"
+import { getModelsDevCatalog } from "~/lib/models-dev/client"
 
 import { getDefaultModelPrice } from "~/lib/default-prices"
 import { resolveDevinPrice } from "~/lib/devin-pricing"
@@ -49,16 +51,6 @@ function toContextTier(row: {
     || (row.extended_cache_write_price_per_1k !== null
       && row.extended_cache_write_price_per_1k !== undefined)
   if (!hasAnyExtended) return null
-  // 防呆：高档价全 0 几乎不可能是真实定价（多为误填），此时忽略分档、
-  // 回退基础价，避免 >阈值 的整单被按 0 计费。
-  if (
-    (row.extended_prompt_price_per_1k ?? 0) === 0
-    && (row.extended_completion_price_per_1k ?? 0) === 0
-    && (row.extended_cache_read_price_per_1k ?? 0) === 0
-    && (row.extended_cache_write_price_per_1k ?? 0) === 0
-  ) {
-    return null
-  }
   return {
     thresholdTokens: Math.floor(threshold),
     // 未单独填写的高档价回退基础价：空输入表示“同基础价”，而非免费。
@@ -183,7 +175,7 @@ export function getManualModelPricing(
 export function resolveModelPricing(
   db: Database,
   model: string,
-  provider?: ProviderId,
+  provider?: string,
 ): ResolvedModelPricing | null {
   const manual = getManualModelPricing(db, model)
   if (manual) {
@@ -192,18 +184,35 @@ export function resolveModelPricing(
       source: "manual",
     }
   }
-  const fromDevin = resolveDevinPrice(model)
+  const parsed = parseModelReference(model)
+  const channel = provider ?? parsed.provider
+  const catalogChannel =
+    model.includes("/") ? model.split("/")[0]!.toLowerCase() : undefined
+  const fromDevin =
+    (
+      (!channel || channel === "windsurf")
+      && (!catalogChannel || catalogChannel === "windsurf")
+    ) ?
+      resolveDevinPrice(model)
+    : null
   if (fromDevin) return fromDevin
   const fromModelsDev = resolveModelsDevPriceDetailed(model, provider)
   if (fromModelsDev) {
     return fromModelsDev
   }
 
-  const builtin = getDefaultModelPrice(model)
+  // The static table mixes historical reference quotes; never apply it to
+  // an explicitly different reseller channel.
+  if (
+    catalogChannel
+    && getModelsDevCatalog()?.[catalogChannel]
+    && !parsed.provider
+  )
+    return null
+  const builtin = getDefaultModelPrice(model, provider)
   if (builtin) {
     return {
       ...builtin,
-      contextTierAbove: null,
       source: "builtin",
     }
   }
@@ -214,7 +223,7 @@ export function resolveModelPricing(
 export function getModelPricing(
   db: Database,
   model: string,
-  provider?: ProviderId,
+  provider?: string,
 ): {
   promptPricePer1k: number
   completionPricePer1k: number

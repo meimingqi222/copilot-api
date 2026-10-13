@@ -2,6 +2,7 @@ import type { Context } from "hono"
 
 import type { RequestAdmission } from "~/lib/request-admission"
 
+import { resolveConnectionModelPricing } from "~/lib/connection-pricing"
 import { logger } from "~/lib/logger"
 import { resolveModelAlias } from "~/lib/model-aliases"
 import { calculateModelCost } from "~/lib/models-dev"
@@ -88,6 +89,7 @@ interface UsageRecordInput {
   totalTokens: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  cacheWrite1hTokens?: number
   timestamp?: number
   ttftMs?: number
   tps?: number
@@ -137,6 +139,7 @@ export function recordUsage(input: UsageRecordInput): void {
     totalTokens,
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
+    cacheWrite1hTokens,
     timestamp,
     ttftMs,
     tps,
@@ -168,16 +171,16 @@ export function recordUsage(input: UsageRecordInput): void {
       credentialId ?? (c.get("credentialId") as string | undefined)
     const providerHint = isProviderId(provider) ? provider : undefined
     const pricing =
-      statsStore.getModelPricing(usageModel, providerHint)
-      ?? (actual.upstream ?
-        statsStore.getModelPricing(actual.upstream, providerHint)
-      : null)
+      conn ?
+        resolveConnectionModelPricing(conn, usageModel, actual.upstream)
+      : statsStore.getModelPricing(usageModel, providerHint)
     const pricingRounds = takeUsagePricingRounds(c, accountId) ?? [
       {
         promptTokens,
         completionTokens,
         cacheReadTokens,
         cacheWriteTokens,
+        cacheWrite1hTokens,
       },
     ]
     const cost =

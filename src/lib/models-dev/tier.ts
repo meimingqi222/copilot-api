@@ -67,6 +67,7 @@ export function calculateModelCost(
     completionTokens: number
     cacheReadTokens?: number
     cacheWriteTokens?: number
+    cacheWrite1hTokens?: number
   },
 ): number {
   const cacheReadTokens = tokens.cacheReadTokens ?? 0
@@ -75,10 +76,15 @@ export function calculateModelCost(
     pricing,
     promptTotalForTier(tokens.promptTokens, cacheReadTokens, cacheWriteTokens),
   )
+  const oneHour = Math.max(
+    0,
+    Math.min(tokens.cacheWrite1hTokens ?? 0, cacheWriteTokens),
+  )
   return (
     (tokens.promptTokens / 1000) * effective.promptPricePer1k
     + (tokens.completionTokens / 1000) * effective.completionPricePer1k
     + (cacheReadTokens / 1000) * effective.cacheReadPricePer1k
-    + (cacheWriteTokens / 1000) * effective.cacheWritePricePer1k
+    + ((cacheWriteTokens - oneHour) / 1000) * effective.cacheWritePricePer1k
+    + (oneHour / 1000) * effective.promptPricePer1k * 2
   )
 }

@@ -262,6 +262,7 @@ function addUsage(
     outputTokens: sum(total.outputTokens, next.outputTokens),
     cacheReadTokens: sum(total.cacheReadTokens, next.cacheReadTokens),
     cacheWriteTokens: sum(total.cacheWriteTokens, next.cacheWriteTokens),
+    cacheWrite1hTokens: sum(total.cacheWrite1hTokens, next.cacheWrite1hTokens),
     reasoningTokens: sum(total.reasoningTokens, next.reasoningTokens),
     totalTokens: sum(total.totalTokens, next.totalTokens),
   }
@@ -424,6 +425,8 @@ export async function* runSearchAwareStream(
             raw.usage.cacheReadTokens ?? roundUsage?.cacheReadTokens,
           cacheWriteTokens:
             raw.usage.cacheWriteTokens ?? roundUsage?.cacheWriteTokens,
+          cacheWrite1hTokens:
+            raw.usage.cacheWrite1hTokens ?? roundUsage?.cacheWrite1hTokens,
           reasoningTokens:
             raw.usage.reasoningTokens ?? roundUsage?.reasoningTokens,
           totalTokens: raw.usage.totalTokens ?? roundUsage?.totalTokens,

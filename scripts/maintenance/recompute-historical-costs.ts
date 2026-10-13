@@ -13,13 +13,15 @@
  */
 import { Database } from "bun:sqlite"
 
+import { historicalCostEstimate } from "~/lib/stats/historical-pricing"
+import { refreshModelsDevCatalog } from "~/lib/models-dev/client"
 import { PATHS } from "~/lib/paths"
-import { isProviderId } from "~/lib/provider-config"
 import { statsStore } from "~/lib/stats-store"
 
 const apply = process.argv.includes("--apply")
 
 statsStore.init()
+await refreshModelsDevCatalog()
 const db = new Database(PATHS.STATS_PATH)
 
 type Row = {
@@ -46,12 +48,14 @@ const summary: Record<
   { rows: number; oldCost: number; newCost: number }
 > = {}
 
+// Tiered, Codex Fast, cache-TTL and unmatched rows are deliberately skipped.
 const updates: Array<{ id: number; cost: number }> = []
 const pricingCache = new Map<
   string,
   ReturnType<typeof statsStore.getModelPricing>
 >()
 
+let skipped = 0
 for (const row of rows) {
   // Key pricing lookups by model+provider: the same model id can be served
   // by different providers with different models.dev pricing buckets.
@@ -59,20 +63,17 @@ for (const row of rows) {
   if (!pricingCache.has(cacheKey)) {
     pricingCache.set(
       cacheKey,
-      statsStore.getModelPricing(
-        row.model,
-        row.provider && isProviderId(row.provider) ? row.provider : undefined,
-      ),
+      statsStore.getModelPricing(row.model, row.provider ?? undefined),
     )
   }
   const pricing = pricingCache.get(cacheKey)
-  const newCost =
-    pricing ?
-      (row.prompt_tokens / 1000) * pricing.promptPricePer1k
-      + (row.completion_tokens / 1000) * pricing.completionPricePer1k
-      + (row.cache_read_tokens / 1000) * pricing.cacheReadPricePer1k
-      + (row.cache_write_tokens / 1000) * pricing.cacheWritePricePer1k
-    : 0
+  const newCost = historicalCostEstimate(pricing, row)
+  // Leave the original cost intact when the persisted row lacks sufficient
+  // billing metadata. An unmatched estimate must never erase recorded costs.
+  if (newCost === null) {
+    skipped++
+    continue
+  }
 
   const bucket = (summary[row.model] ??= {
     rows: 0,
@@ -88,7 +89,9 @@ for (const row of rows) {
   }
 }
 
-console.log(`Scanned ${rows.length} rows; ${updates.length} need updating.\n`)
+console.log(
+  `Scanned ${rows.length} rows; ${updates.length} need updating; ${skipped} skipped for insufficient billing metadata.\n`,
+)
 console.log("Per-model summary (cost in USD):")
 console.log(
   ["model", "rows", "old_cost", "new_cost", "delta"]

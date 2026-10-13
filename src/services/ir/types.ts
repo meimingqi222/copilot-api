@@ -212,6 +212,7 @@ export interface IRUsage {
   outputTokens?: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  cacheWrite1hTokens?: number
   reasoningTokens?: number
   totalTokens?: number
   /** Source fields may be retained for diagnostics, never used as normalized counts. */

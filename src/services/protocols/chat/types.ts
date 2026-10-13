@@ -1,3 +1,4 @@
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 /**
  * Chat Completions / Embeddings 的 wire 类型。
  *
@@ -28,6 +29,7 @@ export interface ChatCompletionChunk {
     prompt_tokens_details?: {
       cached_tokens?: number
       cache_creation_input_tokens?: number
+      cache_creation?: CacheCreationUsage
     }
     completion_tokens_details?: {
       accepted_prediction_tokens?: number
@@ -95,6 +97,7 @@ export interface ChatCompletionResponse {
     prompt_tokens_details?: {
       cached_tokens?: number
       cache_creation_input_tokens?: number
+      cache_creation?: CacheCreationUsage
     }
     completion_tokens_details?: {
       reasoning_tokens?: number

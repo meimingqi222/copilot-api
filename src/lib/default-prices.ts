@@ -1,10 +1,17 @@
+import type { ModelPricingPer1k } from "~/lib/models-dev/types"
+import { buildModelsDevPriceIndexes } from "~/lib/models-dev/catalog"
+import { resolveCatalogPrice } from "~/lib/models-dev/resolve"
+import snapshot from "~/lib/models-dev/snapshot.json"
+
+const fallbackIndexes = buildModelsDevPriceIndexes(snapshot.catalog)
+
 /**
  * Default model prices from OpenRouter (per 1M tokens in USD)
  * Users can override these via the admin panel
  * Source: https://openrouter.ai/models
  *
- * Note: Models not found on OpenRouter (like claude-xxx-fast variants)
- * are calculated as 6x the base model price when matched.
+ * Scoped catalog snapshot is preferred. The legacy table is retained only
+ * for bare historical references and Copilot-calibrated fallback estimates.
  *
  * Prices stored in database are per 1K tokens, but this file uses per 1M
  * for better readability. Conversion happens in the API layer.
@@ -663,12 +670,30 @@ const DEFAULT_MODEL_PRICES: Record<
  * @param modelId - The model ID
  * @returns Default pricing per 1K tokens or null if not found
  */
-export function getDefaultModelPrice(modelId: string): {
-  promptPricePer1k: number
-  completionPricePer1k: number
-  cacheReadPricePer1k: number
-  cacheWritePricePer1k: number
-} | null {
+export function getDefaultModelPrice(
+  modelId: string,
+  provider?: string,
+): ModelPricingPer1k | null {
+  const scoped = resolveCatalogPrice(
+    fallbackIndexes,
+    snapshot.catalog,
+    modelId,
+    provider,
+  )
+  if (scoped) return scoped
+  const base = modelId.replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, "")
+  if (base !== modelId) {
+    const dated = resolveCatalogPrice(
+      fallbackIndexes,
+      snapshot.catalog,
+      base,
+      provider,
+    )
+    if (dated) return dated
+  }
+  // The legacy table contains Copilot-calibrated reference rates. It cannot
+  // fill holes in another explicitly selected billing channel.
+  if (provider && provider !== "copilot") return null
   const toPer1kPrice = (price: (typeof DEFAULT_MODEL_PRICES)[string]) => ({
     promptPricePer1k: price.promptPricePer1m / 1000,
     completionPricePer1k: price.completionPricePer1m / 1000,
@@ -689,13 +714,13 @@ export function getDefaultModelPrice(modelId: string): {
     }
   }
 
-  // Try partial match, preferring the most specific model id first.
-  const matchedEntry = Object.entries(DEFAULT_MODEL_PRICES)
-    .sort(([leftKey], [rightKey]) => rightKey.length - leftKey.length)
-    .find(([key]) => lowerModelId.includes(key.toLowerCase()))
-
-  if (matchedEntry !== undefined) {
-    return toPer1kPrice(matchedEntry[1])
+  // Only dated snapshots may inherit a base quote; product suffixes cannot.
+  const snapshotBase = lowerModelId.replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, "")
+  if (
+    snapshotBase !== lowerModelId
+    && Object.hasOwn(DEFAULT_MODEL_PRICES, snapshotBase)
+  ) {
+    return toPer1kPrice(DEFAULT_MODEL_PRICES[snapshotBase])
   }
 
   return null

@@ -6,8 +6,8 @@ export const MODELS_DEV_PROVIDER_PRIORITY: Partial<
   Record<ProviderId, Array<string>>
 > = {
   copilot: ["github-copilot", "github-models"],
-  codex: ["openai", "github-copilot"],
-  claude: ["anthropic", "github-copilot"],
+  codex: ["openai"],
+  claude: ["anthropic"],
   antigravity: ["google", "google-vertex", "google-vertex-anthropic"],
   kimi: ["moonshotai", "moonshotai-cn", "kimi-for-coding"],
   xai: ["xai"],

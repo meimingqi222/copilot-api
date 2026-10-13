@@ -1,3 +1,4 @@
+import { cacheCreationFor1h } from "~/lib/cache-usage"
 import type {
   ResponsesPayload,
   ResponsesResponse,
@@ -49,6 +50,8 @@ function decodeResponsesUsage(
     totalTokens: usage.total_tokens,
     cacheReadTokens: usage.input_tokens_details?.cached_tokens,
     cacheWriteTokens: usage.input_tokens_details?.cache_creation_input_tokens,
+    cacheWrite1hTokens:
+      usage.input_tokens_details?.cache_creation?.ephemeral_1h_input_tokens,
     reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
   }
 }
@@ -71,6 +74,10 @@ function encodeResponsesUsage(
     ) ?
       {
         input_tokens_details: {
+          cache_creation: cacheCreationFor1h(
+            usage.cacheWriteTokens,
+            usage.cacheWrite1hTokens,
+          ),
           ...(usage.cacheReadTokens !== undefined ?
             { cached_tokens: usage.cacheReadTokens }
           : {}),

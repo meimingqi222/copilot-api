@@ -245,12 +245,8 @@ describe("models.dev pricing resolver", () => {
     expect(resolved?.completionPricePer1k).toBeCloseTo(0.05, 10)
   })
 
-  test("matches bare claude-opus-4-8-max-fast without provider hint (inferred windsurf)", () => {
-    const resolved = resolveModelsDevPriceDetailed("claude-opus-4-8-max-fast")
-    expect(resolved?.source).toBe("models-dev")
-    // Inferred as windsurf-like because vendor bucket is non-empty
-    expect(resolved?.promptPricePer1k).toBeCloseTo(0.01, 10)
-    expect(resolved?.completionPricePer1k).toBeCloseTo(0.05, 10)
+  test("does not infer a Windsurf Fast SKU from a bare model name", () => {
+    expect(resolveModelsDevPriceDetailed("claude-opus-4-8-max-fast")).toBeNull()
   })
 
   test("prefers manual DB pricing over models.dev", () => {
@@ -274,13 +270,9 @@ describe("models.dev pricing resolver", () => {
     expect(resolved?.completionPricePer1k).toBeCloseTo(0.015, 10)
   })
 
-  test("without a provider hint, a stale bucket earlier in global priority wins", () => {
-    // github-copilot ranks ahead of openai in GLOBAL_MODEL_PROVIDER_PRIORITY,
-    // so the provider-agnostic global lookup picks up its stale price even
-    // though openai's own listing has already been discounted.
+  test("bare author models prefer the author bucket over a reseller", () => {
     const resolved = resolveModelsDevPriceDetailed("gpt-9-mini")
-    expect(resolved?.source).toBe("models-dev")
-    expect(resolved?.promptPricePer1k).toBeCloseTo(0.001, 10)
+    expect(resolved?.promptPricePer1k).toBeCloseTo(0.0002, 10)
   })
 
   test("a correct provider hint resolves through the fresh bucket instead", () => {
@@ -294,7 +286,7 @@ describe("models.dev pricing resolver", () => {
   test("statsStore.getModelPricing threads the provider hint through to resolution", () => {
     expect(
       statsStore.getModelPricing("gpt-9-mini")?.promptPricePer1k,
-    ).toBeCloseTo(0.001, 10)
+    ).toBeCloseTo(0.0002, 10)
     expect(
       statsStore.getModelPricing("gpt-9-mini", "codex")?.promptPricePer1k,
     ).toBeCloseTo(0.0002, 10)

@@ -324,7 +324,7 @@ describe("manual tier pricing roundtrip", () => {
     ).toBeCloseTo(300 * 0.006 + 1 * 0.015, 10)
   })
 
-  test("all-zero extended prices are ignored (falls back to base)", () => {
+  test("explicit all-zero extended prices remain free", () => {
     statsStore.setModelPricing("test/zero-tier-model", {
       promptPricePer1k: 0.003,
       completionPricePer1k: 0.015,
@@ -336,7 +336,7 @@ describe("manual tier pricing roundtrip", () => {
     })
     const resolved = statsStore.resolveModelPricing("test/zero-tier-model")
     expect(resolved?.source).toBe("manual")
-    expect(resolved?.contextTierAbove).toBeNull()
+    expect(resolved?.contextTierAbove?.promptPricePer1k).toBe(0)
     const pricing = statsStore.getModelPricing("test/zero-tier-model")
     if (pricing === null) throw new Error("missing manual pricing")
     expect(
@@ -344,6 +344,6 @@ describe("manual tier pricing roundtrip", () => {
         promptTokens: 300_000,
         completionTokens: 1000,
       }),
-    ).toBeCloseTo(300 * 0.003 + 1 * 0.015, 10)
+    ).toBe(0)
   })
 })

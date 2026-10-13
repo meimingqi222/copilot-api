@@ -10,6 +10,7 @@ interface PricingRound {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheWrite1hTokens?: number
 }
 
 interface RequestPricingRounds {
@@ -47,6 +48,7 @@ export function createUsagePricingRecorder(
       completionTokens: usage.outputTokens ?? 0,
       cacheReadTokens,
       cacheWriteTokens,
+      cacheWrite1hTokens: usage.cacheWrite1hTokens,
     })
   }
 }

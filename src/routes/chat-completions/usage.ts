@@ -1,3 +1,4 @@
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 import type { Context } from "hono"
 
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
@@ -17,6 +18,7 @@ export interface UsageInfo {
   prompt_tokens_details?: {
     cached_tokens?: number
     cache_creation_input_tokens?: number
+    cache_creation?: CacheCreationUsage
   }
 }
 
@@ -99,6 +101,9 @@ export function recordStreamingUsage(input: StreamUsageInput): boolean {
       totalTokens: calculateTotalTokens(lastUsage),
       cacheReadTokens,
       cacheWriteTokens,
+      cacheWrite1hTokens:
+        lastUsage.prompt_tokens_details?.cache_creation
+          ?.ephemeral_1h_input_tokens,
       ttftMs: timing?.ttftMs,
       tps: timing?.tps,
       streaming: true,

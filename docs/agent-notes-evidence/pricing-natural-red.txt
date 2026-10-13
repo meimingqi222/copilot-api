@@ -1,0 +1,15 @@
+Observed before implementation, 2026-10-13.
+Command: bun test tests/pricing-channel-safety.test.ts
+0 pass, 5 fail.
+provider-local full IDs survive conflicting tail aliases: expected 0.001, received 0.009.
+explicit channel cannot borrow another channel's quote: expected null for xai/claude-test; received promptPricePer1k 0.002 from anthropic.
+native commercial variants never borrow a base price: expected null for gpt-99-mini; received base promptPricePer1k 0.002.
+missing cache rate falls back to input while explicit zero remains free: expected 0.002, received 0.
+Devin product prices do not override explicitly unrelated channels: expected null for codex/swe-1-6, received source devin-official.
+Command: bun test tests/connection-pricing.test.ts
+1 pass, 2 fail.
+one-hour cache writes retain their TTL through messages and chat codecs: expected 60, received undefined.
+one-hour writes use twice the effective input price, including context tiers: expected 0.00168, received 0.00141.
+Command: bun test tests/pricing-channel-safety.test.ts -t 'offline fallback'
+0 pass, 1 fail.
+offline fallback retains official rates and context thresholds: expected GPT-4.1 input 0.002 per1k, received Copilot-calibrated 0.0005.

@@ -1,3 +1,4 @@
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 // Anthropic API Types
 
 import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
@@ -197,6 +198,7 @@ export interface AnthropicResponse {
     input_tokens: number
     output_tokens: number
     cache_creation_input_tokens?: number
+    cache_creation?: CacheCreationUsage
     cache_read_input_tokens?: number
     service_tier?: "standard" | "priority" | "batch"
   }
@@ -258,6 +260,7 @@ export interface AnthropicMessageDeltaEvent {
     input_tokens?: number
     output_tokens: number
     cache_creation_input_tokens?: number
+    cache_creation?: CacheCreationUsage
     cache_read_input_tokens?: number
   }
 }
@@ -332,6 +335,7 @@ export interface AnthropicStreamingUsage {
   input_tokens?: number
   output_tokens: number
   cache_creation_input_tokens?: number
+  cache_creation?: CacheCreationUsage
   cache_read_input_tokens?: number
 }
 

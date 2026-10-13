@@ -6,14 +6,16 @@ import type {
   ModelsDevModel,
 } from "~/lib/models-dev/types"
 
-import { GLOBAL_MODEL_PROVIDER_PRIORITY } from "~/lib/models-dev/provider-map"
-
 export interface ModelsDevPriceIndexes {
   byProviderModel: Map<string, ModelPricingPer1k>
   byModelId: Map<
     string,
     Array<{ provider: string; pricing: ModelPricingPer1k }>
   >
+}
+
+function validRate(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
 }
 
 function extractContextTiers(
@@ -24,7 +26,10 @@ function extractContextTiers(
       (t) =>
         t?.tier?.type === "context"
         && Number.isFinite(t.tier.size)
-        && t.tier.size > 0,
+        && t.tier.size > 0
+        && [t.input, t.output, t.cache_read, t.cache_write].every(
+          (rate) => rate === undefined || validRate(rate),
+        ),
     )
     .sort((a, b) => a.tier.size - b.tier.size)
   if (contextTiers.length > 0) {
@@ -32,8 +37,10 @@ function extractContextTiers(
       thresholdTokens: t.tier.size,
       promptPricePer1k: (t.input ?? cost.input) / 1000,
       completionPricePer1k: (t.output ?? cost.output) / 1000,
-      cacheReadPricePer1k: (t.cache_read ?? cost.cache_read ?? 0) / 1000,
-      cacheWritePricePer1k: (t.cache_write ?? cost.cache_write ?? 0) / 1000,
+      cacheReadPricePer1k:
+        (t.cache_read ?? cost.cache_read ?? t.input ?? cost.input) / 1000,
+      cacheWritePricePer1k:
+        (t.cache_write ?? cost.cache_write ?? t.input ?? cost.input) / 1000,
     }))
   }
   if (cost.context_over_200k) {
@@ -43,8 +50,10 @@ function extractContextTiers(
         thresholdTokens: 200_000,
         promptPricePer1k: (t.input ?? cost.input) / 1000,
         completionPricePer1k: (t.output ?? cost.output) / 1000,
-        cacheReadPricePer1k: (t.cache_read ?? cost.cache_read ?? 0) / 1000,
-        cacheWritePricePer1k: (t.cache_write ?? cost.cache_write ?? 0) / 1000,
+        cacheReadPricePer1k:
+          (t.cache_read ?? cost.cache_read ?? t.input ?? cost.input) / 1000,
+        cacheWritePricePer1k:
+          (t.cache_write ?? cost.cache_write ?? t.input ?? cost.input) / 1000,
       },
     ]
   }
@@ -56,8 +65,8 @@ function costToPer1k(cost: ModelsDevCost): ModelPricingPer1k {
   const base = {
     promptPricePer1k: cost.input / 1000,
     completionPricePer1k: cost.output / 1000,
-    cacheReadPricePer1k: (cost.cache_read ?? 0) / 1000,
-    cacheWritePricePer1k: (cost.cache_write ?? 0) / 1000,
+    cacheReadPricePer1k: (cost.cache_read ?? cost.input) / 1000,
+    cacheWritePricePer1k: (cost.cache_write ?? cost.input) / 1000,
   }
   // 跳过与基础价完全相同的“假分档”（部分网关条目会原样回填）。
   if (
@@ -84,27 +93,21 @@ function collectModelCosts(
   model: ModelsDevModel,
   indexes: ModelsDevPriceIndexes,
 ): void {
-  if (!model.cost) {
+  if (
+    !model.cost
+    || ![model.cost.input, model.cost.output].every(validRate)
+    || [model.cost.cache_read, model.cost.cache_write].some(
+      (rate) => rate !== undefined && !validRate(rate),
+    )
+  ) {
     return
   }
   const pricing = costToPer1k(model.cost)
-  const nativeId = (model.id || modelKey).trim().toLowerCase()
-  const slashParts = nativeId.includes("/") ? nativeId.split("/") : []
-  const tailId = slashParts.at(-1) ?? nativeId
-  const keys = new Set<string>([
-    nativeId,
-    modelKey.trim().toLowerCase(),
-    tailId,
-  ])
-
-  for (const key of keys) {
-    indexes.byProviderModel.set(`${providerId}/${key}`, pricing)
-    const existing = indexes.byModelId.get(key) ?? []
-    if (!existing.some((entry) => entry.provider === providerId)) {
-      existing.push({ provider: providerId, pricing })
-      indexes.byModelId.set(key, existing)
-    }
-  }
+  const key = modelKey.trim().toLowerCase()
+  indexes.byProviderModel.set(`${providerId}/${key}`, pricing)
+  const existing = indexes.byModelId.get(key) ?? []
+  existing.push({ provider: providerId, pricing })
+  indexes.byModelId.set(key, existing)
 }
 
 export function buildModelsDevPriceIndexes(
@@ -121,20 +124,45 @@ export function buildModelsDevPriceIndexes(
     }
   }
 
-  for (const [, entries] of indexes.byModelId) {
-    entries.sort((left, right) => {
-      const leftIndex = GLOBAL_MODEL_PROVIDER_PRIORITY.indexOf(
-        left.provider as (typeof GLOBAL_MODEL_PROVIDER_PRIORITY)[number],
+  const aliases = new Map<string, Array<ModelPricingPer1k>>()
+  for (const [providerId, provider] of Object.entries(catalog)) {
+    for (const [modelKey, model] of Object.entries(provider.models)) {
+      const pricing = indexes.byProviderModel.get(
+        `${providerId}/${modelKey.toLowerCase()}`,
       )
-      const rightIndex = GLOBAL_MODEL_PROVIDER_PRIORITY.indexOf(
-        right.provider as (typeof GLOBAL_MODEL_PROVIDER_PRIORITY)[number],
+      if (!pricing) continue
+      const native = (model.id || modelKey).trim().toLowerCase()
+      const keys = new Set([native, native.split("/").at(-1)!])
+      for (const alias of keys) {
+        const key = `${providerId}/${alias}`
+        const entries = aliases.get(key) ?? []
+        entries.push(pricing)
+        aliases.set(key, entries)
+      }
+    }
+  }
+  for (const [key, entries] of aliases) {
+    const slashIndex = key.indexOf("/")
+    const providerModels = catalog[key.slice(0, slashIndex)]?.models
+    if (
+      indexes.byProviderModel.has(key)
+      || (providerModels
+        && Object.hasOwn(providerModels, key.slice(slashIndex + 1)))
+    )
+      continue
+    if (
+      !entries.every(
+        (entry) => JSON.stringify(entry) === JSON.stringify(entries[0]),
       )
-      const normalizedLeft =
-        leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex
-      const normalizedRight =
-        rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex
-      return normalizedLeft - normalizedRight
-    })
+    )
+      continue
+    const pricing = entries[0]!
+    indexes.byProviderModel.set(key, pricing)
+    const slash = key.indexOf("/")
+    const model = key.slice(slash + 1)
+    const global = indexes.byModelId.get(model) ?? []
+    global.push({ provider: key.slice(0, slash), pricing })
+    indexes.byModelId.set(model, global)
   }
 
   return indexes
@@ -155,6 +183,14 @@ export function lookupProviderModelPrice(
   return null
 }
 
+function modelAuthorProvider(model: string): string | undefined {
+  if (model.startsWith("claude-")) return "anthropic"
+  if (/^(gpt-|o[134](?:-|$)|text-embedding-)/.test(model)) return "openai"
+  if (model.startsWith("gemini-")) return "google"
+  if (model.startsWith("grok-")) return "xai"
+  return undefined
+}
+
 export function lookupGlobalModelPrice(
   indexes: ModelsDevPriceIndexes,
   modelId: string,
@@ -164,7 +200,19 @@ export function lookupGlobalModelPrice(
   if (!entries || entries.length === 0) {
     return null
   }
-  return entries[0]?.pricing ?? null
+  // Bare author IDs use the author's quote. Unrecognized names must agree
+  // across channels; catalog insertion order is not a billing policy.
+  const owner = modelAuthorProvider(normalized)
+  const official = entries.find((entry) => entry.provider === owner)
+  if (official) return official.pricing
+  const first = entries[0]!.pricing
+  return (
+      entries.every(
+        (entry) => JSON.stringify(entry.pricing) === JSON.stringify(first),
+      )
+    ) ?
+      first
+    : null
 }
 
 // ── Context windows ───────────────────────────────────────────────

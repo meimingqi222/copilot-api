@@ -1,3 +1,5 @@
+import { cacheCreationFor1h } from "~/lib/cache-usage"
+import type { CacheCreationUsage } from "~/lib/cache-usage"
 import type {
   ChatCompletionChunk,
   CopilotStreamEvent,
@@ -205,6 +207,9 @@ export async function* decodeChatStream(
           cacheReadTokens: chunk.usage.prompt_tokens_details?.cached_tokens,
           cacheWriteTokens:
             chunk.usage.prompt_tokens_details?.cache_creation_input_tokens,
+          cacheWrite1hTokens:
+            chunk.usage.prompt_tokens_details?.cache_creation
+              ?.ephemeral_1h_input_tokens,
           reasoningTokens:
             chunk.usage.completion_tokens_details?.reasoning_tokens,
         },
@@ -344,6 +349,7 @@ interface MessagesEventLike {
       output_tokens?: number
       cache_read_input_tokens?: number
       cache_creation_input_tokens?: number
+      cache_creation?: CacheCreationUsage
     }
   }
   content_block?: {
@@ -367,6 +373,7 @@ interface MessagesEventLike {
     output_tokens?: number
     cache_read_input_tokens?: number
     cache_creation_input_tokens?: number
+    cache_creation?: CacheCreationUsage
   }
   error?: { type?: string; message?: string; code?: number; status?: number }
 }
@@ -376,6 +383,7 @@ function messagesUsage(
 ): IRUsage {
   return {
     source: "reported",
+    cacheWrite1hTokens: usage.cache_creation?.ephemeral_1h_input_tokens,
     ...(usage.input_tokens !== undefined && {
       inputTokens:
         usage.input_tokens
@@ -670,6 +678,10 @@ export async function* encodeMessagesStream(
         prompt_tokens_details: {
           cached_tokens: usage?.cacheReadTokens,
           cache_creation_input_tokens: usage?.cacheWriteTokens,
+          cache_creation: cacheCreationFor1h(
+            usage?.cacheWriteTokens,
+            usage?.cacheWrite1hTokens,
+          ),
         },
       })
       yield {
@@ -680,6 +692,7 @@ export async function* encodeMessagesStream(
           output_tokens: converted.output_tokens,
           cache_read_input_tokens: converted.cache_read_input_tokens,
           cache_creation_input_tokens: converted.cache_creation_input_tokens,
+          cache_creation: converted.cache_creation,
         },
       }
       yield { type: "message_stop" }
@@ -817,6 +830,10 @@ export async function* encodeChatStream(
         output_tokens: usage?.outputTokens ?? 0,
         cache_read_input_tokens: usage?.cacheReadTokens,
         cache_creation_input_tokens: usage?.cacheWriteTokens,
+        cache_creation: cacheCreationFor1h(
+          usage?.cacheWriteTokens,
+          usage?.cacheWrite1hTokens,
+        ),
       })
       yield {
         data: JSON.stringify({

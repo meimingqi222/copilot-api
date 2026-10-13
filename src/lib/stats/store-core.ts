@@ -9,7 +9,6 @@ import type {
   ContextTierPricingPer1k,
   ResolvedModelPricing,
 } from "~/lib/models-dev"
-import type { ProviderId } from "~/lib/provider-config"
 import type {
   TimestampRangeUsage,
   UsageDayStats,
@@ -464,7 +463,7 @@ class StatsStore {
 
   resolveModelPricing(
     model: string,
-    provider?: ProviderId,
+    provider?: string,
   ): ResolvedModelPricing | null {
     const db = this.ensureDb()
     return resolveModelPricing(db, model, provider)
@@ -472,7 +471,7 @@ class StatsStore {
 
   getModelPricing(
     model: string,
-    provider?: ProviderId,
+    provider?: string,
   ): {
     promptPricePer1k: number
     completionPricePer1k: number

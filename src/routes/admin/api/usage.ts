@@ -1,12 +1,16 @@
 import { Hono } from "hono"
 
-import type { ProviderId } from "~/lib/provider-config"
+import type { ProviderConnection } from "~/lib/provider-connections"
+import {
+  connectionPricingProvider,
+  resolveConnectionModelPricing,
+} from "~/lib/connection-pricing"
 
 import { forwardError, HTTPError } from "~/lib/error"
 import {
   getProviderConnection,
+  listProviderConnections,
   listAccountManagedConnections,
-  accountManagedProvider,
 } from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
@@ -42,12 +46,14 @@ const MODEL_HINTS_TTL_MS = 5_000
  * change rarely, so a short TTL stops one page load from rebuilding an
  * identical map three times. Callers only read the returned map.
  */
-let modelHintsCache: { at: number; hints: Map<string, ProviderId> } | undefined
+let modelHintsCache:
+  | { at: number; hints: Map<string, ProviderConnection> }
+  | undefined
 onStateChange("models-stale", () => {
   modelHintsCache = undefined
 })
 
-function buildModelProviderHints(): Map<string, ProviderId> {
+function buildModelProviderHints(): Map<string, ProviderConnection> {
   const now = Date.now()
   if (modelHintsCache && now - modelHintsCache.at < MODEL_HINTS_TTL_MS)
     return modelHintsCache.hints
@@ -56,10 +62,10 @@ function buildModelProviderHints(): Map<string, ProviderId> {
   return hints
 }
 
-function buildModelProviderHintsUncached(): Map<string, ProviderId> {
-  const hints = new Map<string, ProviderId>()
+function buildModelProviderHintsUncached(): Map<string, ProviderConnection> {
+  const hints = new Map<string, ProviderConnection>()
   // 使用 connection 原生列表(替代 listAccounts())
-  const sortedConnections = listAccountManagedConnections()
+  const sortedConnections = listProviderConnections()
     .map((conn, originalIndex) => ({ conn, originalIndex }))
     .sort((left, right) => {
       if (left.conn.priority !== right.conn.priority) {
@@ -69,11 +75,9 @@ function buildModelProviderHintsUncached(): Map<string, ProviderId> {
     })
 
   for (const { conn } of sortedConnections) {
-    // codebuddy / codebuddy-cn 共用协议，必须用 metadata 优先的派生
-    const provider = accountManagedProvider(conn)
     for (const model of conn.models ?? []) {
       if (!hints.has(model.publicId)) {
-        hints.set(model.publicId, provider as ProviderId)
+        hints.set(model.publicId, conn)
       }
     }
   }
@@ -218,10 +222,11 @@ usageApiRoutes.get("/pricing", (c) => {
       if (Object.hasOwn(pricing, model.id)) {
         continue
       }
-      const resolved = statsStore.resolveModelPricing(
-        model.id,
-        providerHints.get(model.id),
-      )
+      const connection = providerHints.get(model.id)
+      const resolved =
+        connection ?
+          resolveConnectionModelPricing(connection, model.id)
+        : statsStore.resolveModelPricing(model.id)
       if (resolved) {
         pricing[model.id] = {
           promptPricePer1k: resolved.promptPricePer1k,
@@ -272,7 +277,7 @@ usageApiRoutes.get("/pricing", (c) => {
   for (const id of Object.keys(pricing)) {
     const hint = providerHints.get(id)
     if (hint) {
-      providers[id] = hint
+      providers[id] = connectionPricingProvider(hint)
     } else if (id.includes("/")) {
       providers[id] = id.split("/")[0]
     }
@@ -316,7 +321,11 @@ usageApiRoutes.put("/pricing/:model{.+}", async (c) => {
     return c.json({ error: "Invalid JSON payload." }, 400)
   }
 
-  const existing = statsStore.getModelPricing(model)
+  const connection = buildModelProviderHints().get(model)
+  const existing =
+    connection ?
+      resolveConnectionModelPricing(connection, model)
+    : statsStore.getModelPricing(model)
   // 阈值区分“字段缺席”（沿用已有分档）与“显式清空”（null/非法值→无分档），
   // 与其他按 `?? existing` 合并的字段保持一致。
   let normalizedThreshold: number | null
@@ -365,10 +374,11 @@ usageApiRoutes.delete("/pricing/:model{.+}", (c) => {
   const model = decodeURIComponent(c.req.param("model"))
   statsStore.deleteModelPricing(model)
   const providerHints = buildModelProviderHints()
-  const resolved = statsStore.resolveModelPricing(
-    model,
-    providerHints.get(model),
-  )
+  const connection = providerHints.get(model)
+  const resolved =
+    connection ?
+      resolveConnectionModelPricing(connection, model)
+    : statsStore.resolveModelPricing(model)
   return c.json({
     ok: true,
     pricing:
