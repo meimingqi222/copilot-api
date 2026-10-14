@@ -392,6 +392,73 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
     })
 }
 
+test("chat route restores fragmented legacy function_call arguments before returning them to the agent", async () => {
+  await connection("chat")
+  const path = ["", "home", "chat-fixture", "work"].join("/")
+  let sent = ""
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    sent = String(init?.body)
+    const masked = readText(JSON.parse(sent) as Record<string, unknown>, "chat")
+    const args = JSON.stringify({ command: `cd ${masked}` })
+    const packets = [
+      ...[args.slice(0, 24), args.slice(24)].map((argumentsChunk, index) => ({
+        id: "chat_legacy",
+        object: "chat.completion.chunk",
+        model: "redaction-model",
+        choices: [
+          {
+            index: 0,
+            delta: {
+              function_call: {
+                ...(index === 0 ? { name: "shell_command" } : {}),
+                arguments: argumentsChunk,
+              },
+            },
+            finish_reason: null,
+          },
+        ],
+      })),
+      {
+        id: "chat_legacy",
+        choices: [{ index: 0, delta: {}, finish_reason: "function_call" }],
+      },
+    ]
+    return new Response(
+      packets.map((packet) => `data: ${JSON.stringify(packet)}\n\n`).join("")
+        + "data: [DONE]\n\n",
+      { headers: { "content-type": "text/event-stream" } },
+    )
+  }) as typeof fetch
+  const base = request("chat", true)
+  const payload = (await base.json()) as Record<string, unknown>
+  const response = await server.fetch(
+    new Request(base, {
+      method: "POST",
+      body: JSON.stringify({
+        ...payload,
+        messages: [{ role: "user", content: path }],
+      }),
+    }),
+  )
+  expect(response.status).toBe(200)
+  expect(sent).toContain("{{HOME_")
+  expect(sent).not.toContain(path)
+  const packets = (await response.text())
+    .split("\n")
+    .filter((line) => line.startsWith("data: ") && !line.includes("[DONE]"))
+    .map(
+      (line) =>
+        JSON.parse(line.slice(6)) as {
+          choices?: Array<{ delta: { function_call?: { arguments?: string } } }>
+        },
+    )
+  const args = packets
+    .flatMap((packet) => packet.choices ?? [])
+    .map((choice) => choice.delta.function_call?.arguments ?? "")
+    .join("")
+  expect(JSON.parse(args)).toEqual({ command: `cd ${path}` })
+})
+
 test("chat to messages translation remains masked through the target adapter", async () => {
   await connection("messages")
   let sent = ""

@@ -69,13 +69,19 @@ with the legacy, irreversible `SENSITIVE_WORDS` filter.
 
 Mappings are isolated by authenticated user (a shared legacy API key is one
 caller). Anonymous requests have request-local mappings only. Responses restore
-only mappings admitted by their current request. Signed reasoning that was
+only mappings admitted by their current request or inherited from that caller's
+`previous_response_id`. Completed Responses retain their mapping references so
+chained turns can restore paths from upstream history even when the new input
+does not repeat them. Unresolved placeholders in tool inputs are rejected with
+an explicit error asking for the original context, rather than passed to the
+agent for execution; unknown placeholders in ordinary text remain opaque.
+Signed reasoning that was
 restored to the client is cached alongside its exact upstream content and issuer:
 later requests replay the original bytes rather than invalidating the signature.
 Edited signed content, missing restoration context or a different issuer is
 rejected instead of being sent unsafely. State is memory-only, with a one-hour
 idle lifetime. The recovery-cache budget is 16 MiB globally and 2 MiB / 1024
-items per caller (placeholders and signed replay combined). Least-recently-used
+items per caller (placeholders, response references and signed replay combined). Least-recently-used
 history may expire earlier under pressure; entries used by in-flight requests
 are protected from eviction. If protected state alone exceeds capacity, the
 request fails explicitly rather than leaking content. After restart or expiry, replay original

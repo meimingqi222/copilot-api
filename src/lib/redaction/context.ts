@@ -12,6 +12,7 @@ import {
 } from "~/lib/redaction/rules"
 import {
   coveredContent,
+  record,
   transformContent,
   type SignedContent,
 } from "~/lib/redaction/wire"
@@ -43,6 +44,7 @@ interface SignedReplay {
 interface Tenant {
   entries: Map<string, Entry>
   signed: Map<string, SignedReplay>
+  responses: Map<string, Set<string>>
   bytes: number
   touched: number
   leases: number
@@ -66,6 +68,7 @@ function evictUnused(tenant: Tenant): boolean {
     tenant.cache.delete(key)
     tenant.entries.delete(key)
     tenant.signed.delete(key)
+    tenant.responses.delete(key)
     tenant.bytes -= bytes
     if (tenant.tracked) retainedBytes -= bytes
     tenant.version++
@@ -89,6 +92,7 @@ function tenantFor(id?: string): Tenant {
   const tenant: Tenant = {
     entries: new Map(),
     signed: new Map(),
+    responses: new Map(),
     bytes: 0,
     touched: now,
     leases: 0,
@@ -196,6 +200,34 @@ export class RedactionScope {
       this.tenant.cache.delete(key)
       this.tenant.cache.set(key, bytes)
     }
+  }
+
+  inheritResponse(id: string): void {
+    const key = `response:${id}`
+    const tokens = this.tenant.responses.get(key)
+    if (!tokens) return
+    // Pin the conversation's mappings before any new input can evict them.
+    for (const token of tokens) {
+      const entry = this.tenant.entries.get(token)
+      if (!entry)
+        throw new RedactionError(
+          "Redaction conversation context expired; resend the original unredacted context",
+        )
+      this.allowed.set(token, entry)
+      this.touch(token)
+    }
+    this.touch(key)
+  }
+
+  private rememberResponse(id: string): void {
+    const key = `response:${id}`
+    if (this.tenant.responses.has(key)) return
+    const tokens = new Set(this.allowed.keys())
+    const bytes = Buffer.byteLength(key) + tokens.size * 128 + 128
+    reserve(this.tenant, bytes)
+    this.tenant.responses.set(key, tokens)
+    this.tenant.cache.set(key, bytes)
+    this.touch(key)
   }
 
   private placeholder(match: RedactionMatch): string {
@@ -316,10 +348,14 @@ export class RedactionScope {
     return output + text.slice(cursor)
   }
 
-  restoreText(text: string, json = false): string {
+  restoreText(text: string, json = false, toolInput = false): string {
     this.tenant.touched = Date.now()
     return text.replaceAll(TOKEN, (token) => {
       const entry = this.allowed.get(token)
+      if (!entry && toolInput)
+        throw new RedactionError(
+          "Cannot restore redacted tool input; resend the original unredacted context",
+        )
       if (!entry) return token // Never disclose a different request's known secret.
       return json ? entry.json : entry.value
     })
@@ -407,17 +443,31 @@ export class RedactionScope {
   }
 
   restore<T>(value: T, issuer: string): T {
-    return transformContent(
+    const restored = transformContent(
       value,
-      (text, json) => this.restoreText(text, json),
+      (text, json, _secret, toolInput) =>
+        this.restoreText(text, json, toolInput),
       (node, signed) => {
-        const visible = transformContent(node, (text, json) =>
-          this.restoreText(text, json),
+        const visible = transformContent(
+          node,
+          (text, json, _secret, toolInput) =>
+            this.restoreText(text, json, toolInput),
         ) as Record<string, unknown>
         this.rememberSigned(node, visible, signed, issuer)
         return visible
       },
     ) as T
+    const packet = record(value)
+    const response =
+      (
+        packet?.type === "response.completed"
+        || packet?.type === "response.incomplete"
+      ) ?
+        record(packet.response)
+      : packet
+    if (typeof response?.id === "string" && Array.isArray(response.output))
+      this.rememberResponse(response.id)
+    return restored
   }
 }
 
@@ -485,6 +535,8 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
   const scope = new RedactionScope(config, identity)
   const release = scope.acquire()
   try {
+    const previousId = record(payload)?.previous_response_id
+    if (typeof previousId === "string") scope.inheritResponse(previousId.trim())
     const result = await active.run({ scope }, () =>
       execute(scope.mask(payload)),
     )

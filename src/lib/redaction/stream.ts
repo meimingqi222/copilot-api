@@ -28,6 +28,7 @@ interface DeltaSpec {
   group: string
   emit: Emit
   json?: boolean
+  toolInput?: boolean
   thinking?: Channel["wire"]
   /** The channel ends in this frame, so nothing may stay held. */
   final?: boolean
@@ -184,6 +185,7 @@ class StreamRestorer {
     object[key] = this.scope.restoreText(
       combined.slice(0, combined.length - channel.tail.length),
       spec.json,
+      spec.toolInput ?? spec.json,
     )
     channel.emit = channel.tail ? spec.emit : undefined
     channel.wrapper = channel.tail ? this.wrapper : undefined
@@ -266,6 +268,15 @@ class StreamRestorer {
         })
       this.sign(this.get(id, group), detail.signature)
     }
+    const legacyCall = record(change.function_call)
+    if (legacyCall)
+      this.delta(legacyCall, "arguments", {
+        id: `${group}:function_call`,
+        group,
+        final,
+        json: true,
+        emit: at((out, tail) => (out.function_call = { arguments: tail })),
+      })
     for (const rawCall of Array.isArray(change.tool_calls) ?
       change.tool_calls
     : []) {
@@ -331,6 +342,9 @@ class StreamRestorer {
         id,
         group: id,
         json: type.includes("arguments"),
+        toolInput:
+          type.includes("arguments")
+          || type === "response.custom_tool_call_input.delta",
         emit: (tail) => {
           const { logprobs: _logprobs, ...meta } = packet
           return { ...meta, delta: tail }

@@ -68,6 +68,71 @@ test("keeps stable placeholders per caller but only restores values used by the 
   expect(other.restoreText(token)).toBe(token)
 })
 
+test("unresolved placeholders are rejected in tool inputs but preserved in ordinary text and tool outputs", async () => {
+  const scope = createScope()
+  const token = `{{HOME_${"a".repeat(32)}}}`
+  const command = `cd ${token}/work/code/project`
+  const argumentsJson = JSON.stringify({ command })
+  const calls = [
+    { type: "tool_use", input: { command } },
+    { type: "tool_use", input: { output: command, name: token } },
+    { function: { arguments: argumentsJson } },
+    { type: "function_call", arguments: argumentsJson },
+    { type: "custom_tool_call", input: command },
+    { functionCall: { args: { command } }, thoughtSignature: "signed" },
+  ]
+  for (const call of calls)
+    expect(() => scope.restore(scope.mask(call), "issuer")).toThrow(
+      "Cannot restore redacted tool input",
+    )
+  const ordinary = {
+    text: command,
+    output: [{ type: "function_call_output", output: { text: command } }],
+  }
+  expect(scope.restore(scope.mask(ordinary), "issuer")).toEqual(ordinary)
+
+  for (const wire of ["chat", "legacy-chat", "messages", "responses", "custom"])
+    for (let split = 1; split < token.length; split++) {
+      const chunks = [token.slice(0, split), token.slice(split)]
+      const packets = chunks.map((chunk) =>
+        wire === "chat" ?
+          {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [{ index: 0, function: { arguments: chunk } }],
+                },
+              },
+            ],
+          }
+        : wire === "legacy-chat" ?
+          {
+            choices: [
+              { index: 0, delta: { function_call: { arguments: chunk } } },
+            ],
+          }
+        : wire === "messages" ?
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: chunk },
+          }
+        : {
+            type:
+              wire === "custom" ?
+                "response.custom_tool_call_input.delta"
+              : "response.function_call_arguments.delta",
+            item_id: "tool",
+            delta: chunk,
+          },
+      )
+      await expect(collect(packets, scope)).rejects.toThrow(
+        "Cannot restore redacted tool input",
+      )
+    }
+})
+
 test("expired ordinary placeholders remain opaque while new sensitive input is still masked", () => {
   const caller = randomUUID()
   const first = new RedactionScope(config, caller)
@@ -479,6 +544,49 @@ test("restores every placeholder split position in chat and JSON argument stream
       .map((call) => call.function.arguments)
       .join("")
     expect(JSON.parse(json)).toEqual({ path: value })
+    for (const wire of ["legacy-chat", "messages", "responses"]) {
+      const chunks = [
+        '{"path":"' + token.slice(0, split),
+        token.slice(split) + '\\\\a\\"quoted"}',
+      ]
+      const frames = chunks.map((argumentsChunk) =>
+        wire === "legacy-chat" ?
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { function_call: { arguments: argumentsChunk } },
+              },
+            ],
+          }
+        : wire === "messages" ?
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: argumentsChunk },
+          }
+        : {
+            type: "response.function_call_arguments.delta",
+            item_id: "tool",
+            delta: argumentsChunk,
+          },
+      )
+      const restored = await collect(frames, scope)
+      const json = restored
+        .map((packet) =>
+          wire === "legacy-chat" ?
+            (
+              packet.choices as Array<{
+                delta: { function_call: { arguments: string } }
+              }>
+            )[0].delta.function_call.arguments
+          : wire === "messages" ?
+            (packet.delta as { partial_json: string }).partial_json
+          : (packet.delta as string),
+        )
+        .join("")
+      expect(JSON.parse(json)).toEqual({ path: value })
+    }
   }
 })
 
@@ -635,6 +743,88 @@ test("disabled calls are untouched; enabled async egress uses one isolated conte
     injected: "/Users/server-owner/code",
   })
   expect(maskUpstream(payload)).toBe(payload)
+})
+
+test("chained Responses inherit only their caller's previous response mappings, including streamed completion", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  const original = ["", "home", "chain-fixture", "project"].join("/")
+  for (const streaming of [false, true]) {
+    const caller = randomUUID()
+    const responseId = randomUUID()
+    let upstreamPath = ""
+    const app = new Hono()
+    app.onError((error, c) => c.json({ error: error.message }, 422))
+    app.post("/:caller", async (c) => {
+      c.set("userId", c.req.param("caller"))
+      const payload = await c.req.json<{
+        input: string
+        previous_response_id?: string
+      }>()
+      const result = await runRedactedCall(payload, c, async (masked) => {
+        if (!masked.previous_response_id) upstreamPath = masked.input
+        const response = {
+          id: masked.previous_response_id ? randomUUID() : responseId,
+          object: "response",
+          output: [
+            {
+              type: "function_call",
+              arguments: JSON.stringify({ command: `cd ${upstreamPath}` }),
+            },
+          ],
+        }
+        return {
+          accountId: "issuer",
+          response:
+            streaming ?
+              frames([{ type: "response.completed", response }])
+            : response,
+        }
+      })
+      if (streaming) {
+        const output = []
+        for await (const frame of result.response as AsyncIterable<{
+          data: string
+        }>)
+          output.push(JSON.parse(frame.data))
+        return c.json(output)
+      }
+      return c.json(result.response)
+    })
+    const send = (user: string, input: string, previous_response_id?: string) =>
+      app.request(`/${user}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ input, previous_response_id }),
+      })
+    const first = await send(caller, original)
+    expect(first.status).toBe(200)
+    expect(await first.text()).not.toContain("{{HOME_")
+    expect(upstreamPath).toContain("{{HOME_")
+    const next = await send(
+      caller,
+      "Continue using the previous directory",
+      responseId,
+    )
+    expect(next.status).toBe(200)
+    type ResponseBody = {
+      id: string
+      output: Array<{ arguments: string }>
+    }
+    const visible: unknown = await next.json()
+    const response =
+      streaming ?
+        (visible as Array<{ response: ResponseBody }>)[0].response
+      : (visible as ResponseBody)
+    expect(JSON.parse(response.output[0].arguments)).toEqual({
+      command: `cd ${original}`,
+    })
+    const third = await send(caller, "Continue again", response.id)
+    expect(third.status).toBe(200)
+    expect(await third.text()).not.toContain("{{HOME_")
+    const other = await send(randomUUID(), "Continue", responseId)
+    expect(other.status).toBe(422)
+    expect(await other.text()).toContain("Cannot restore redacted tool input")
+  }
 })
 
 test("redaction settings persist and survive unrelated admin updates", () => {

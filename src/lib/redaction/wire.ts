@@ -97,13 +97,19 @@ export function coveredContent(
 /** Walk values without changing property names, protocol identifiers or opaque media. */
 export function transformContent(
   value: unknown,
-  text: (value: string, json: boolean, secretField?: boolean) => string,
+  text: (
+    value: string,
+    json: boolean,
+    secretField?: boolean,
+    toolInput?: boolean,
+  ) => string,
   sealed?: (value: Record<string, unknown>, signed: SignedContent) => unknown,
-  toolData = false,
+  toolData: boolean | "output" = false,
   depth = 0,
 ): unknown {
   if (depth > 64) throw new Error("Redaction content nesting exceeds 64 levels")
-  if (typeof value === "string") return text(value, false)
+  if (typeof value === "string")
+    return text(value, false, false, toolData === true)
   if (Array.isArray(value)) {
     const result = value.map((item) =>
       transformContent(item, text, sealed, toolData, depth + 1),
@@ -148,11 +154,9 @@ export function transformContent(
         ]
       } catch (error) {
         if (!(error instanceof SyntaxError)) throw error
-        return [key, text(nested, true)]
+        return [key, text(nested, true, false, true)]
       }
     }
-    if (typeof nested === "string")
-      return [key, text(nested, false, isDumpSecretField(key))]
     const args =
       toolData
       || key === "args"
@@ -163,14 +167,22 @@ export function transformContent(
           "function_call",
           "custom_tool_call",
           "function_call_output",
+          "response.custom_tool_call_input.done",
         ].includes(String(obj.type)))
+    const nestedToolData =
+      !toolData && args && key === "output" ? "output" : args
+    if (typeof nested === "string")
+      return [
+        key,
+        text(nested, false, isDumpSecretField(key), nestedToolData === true),
+      ]
     return [
       key,
       transformContent(
         nested,
         text,
         args ? undefined : sealed,
-        args,
+        nestedToolData,
         depth + 1,
       ),
     ]
