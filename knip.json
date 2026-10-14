@@ -9,6 +9,10 @@
     "tests/fixtures/**",
     "tests/setup/**"
   ],
-  "entry": ["tests/**/*.test.ts"],
+  "entry": [
+    "tests/**/*.test.ts",
+    "scripts/maintenance/recompute-historical-costs.ts",
+    "scripts/maintenance/update-pricing-snapshot.ts"
+  ],
   "ignoreBinaries": ["publish"]
 }
