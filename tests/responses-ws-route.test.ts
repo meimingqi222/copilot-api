@@ -333,13 +333,14 @@ loopbackTest(
   },
 )
 
-loopbackTest.each([422, 500])(
+loopbackTest.each([422, 500, 503])(
   "WS /v1/responses forwards upstream errors as error events (status=%i)",
   async (status) => {
     const fetchMock = mock(
       () =>
         new Response("upstream failed", {
           status,
+          ...(status >= 500 ? { headers: { "Retry-After": "17" } } : {}),
         }),
     )
     globalThis.fetch = fetchMock as unknown as typeof fetch
@@ -367,6 +368,7 @@ loopbackTest.each([422, 500])(
     const message = JSON.parse(await queue.next()) as {
       type: string
       status: number
+      headers?: Record<string, string>
       error: {
         code: string
         message: string
@@ -379,12 +381,33 @@ loopbackTest.each([422, 500])(
     expect(message.error.code).toBe(String(status))
     expect(message.error.type).toBe("error")
     expect(message.error.message).toContain("upstream failed")
+    expect(message.headers?.["Retry-After"]).toBe(
+      status >= 500 ? "17" : undefined,
+    )
 
     await waitFor(() =>
       recentTraces().some((entry) => entry.inFlight === false),
     )
     expect(recentTraces()[0]?.outcome).toBe("failed")
     expect(recentTraces()[0]?.statusCode).toBe(status)
+
+    if (status >= 500) {
+      ws.send(
+        JSON.stringify({
+          type: "response.create",
+          response: {
+            model: "gpt-responses",
+            input: "retry while cooling down",
+          },
+        }),
+      )
+      const retry = JSON.parse(await queue.next()) as typeof message
+      expect(retry.status).toBe(429)
+      expect(retry.error.code).toBe("rate_limit_exceeded")
+      const seconds = Number(retry.headers?.["Retry-After"])
+      expect(seconds).toBeGreaterThan(0)
+      expect(seconds).toBeLessThanOrEqual(17)
+    }
 
     if (status === 422) {
       globalThis.fetch = (async () =>

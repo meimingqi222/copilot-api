@@ -6,6 +6,7 @@
  * the top level or the client ignores the frame until idle timeout.
  */
 
+import { HTTPError } from "~/lib/error"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
@@ -37,6 +38,9 @@ export async function handleResponseError(
       {
         type: "error",
         status: knownError.status,
+        ...(knownError.retryAfterSeconds > 0 ?
+          { headers: { "Retry-After": String(knownError.retryAfterSeconds) } }
+        : {}),
         error: {
           message: knownError.message,
           type: knownError.type,
@@ -56,7 +60,19 @@ export async function handleResponseError(
   // makes it discard the entire WS error frame and wait for another event.
   if (typeof payload.error.code === "number")
     payload.error.code = String(payload.error.code)
-  await sendJson(ws, payload, signal)
+  const retryAfter =
+    error instanceof HTTPError ?
+      error.response.headers.get("Retry-After")
+    : null
+  // Codex reads retry deadlines from frame headers, not error.retry_after or retryable.
+  await sendJson(
+    ws,
+    {
+      ...payload,
+      ...(retryAfter ? { headers: { "Retry-After": retryAfter } } : {}),
+    },
+    signal,
+  )
 }
 
 export async function sendError(
