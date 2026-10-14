@@ -246,11 +246,12 @@ export async function refreshWindsurfQuota(
       windowRemaining(details.weeklyUsedPercent),
       details.weeklyResetAt,
     )
+    const now = Date.now()
     const recoveryMs =
       resetMs === undefined ?
         DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
       : Math.min(
-          Math.max(resetMs - Date.now(), 60_000),
+          Math.max(resetMs - now, 60_000),
           DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
         )
     const credential = connection.credentials[0]
@@ -259,6 +260,7 @@ export async function refreshWindsurfQuota(
         credential,
         "windsurf quota exhausted",
         recoveryMs,
+        now,
       )
     }
   } else {

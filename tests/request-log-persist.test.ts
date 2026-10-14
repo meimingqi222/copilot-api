@@ -7,6 +7,7 @@ import type { LogEntry } from "~/lib/log-store"
 
 import {
   appendRequestLog,
+  appendRequestLogSync,
   readPersistedRequestLogs,
   sanitizePersistedEntry,
 } from "~/lib/request-log-persist"
@@ -69,7 +70,10 @@ describe("request log persistence", () => {
   })
 
   test("reads persisted JSONL from the configured log directory", async () => {
+    const previousDir = fs.mkdtempSync(path.join(os.tmpdir(), "request-logs-"))
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "request-logs-"))
+    process.env.LOG_DIR = previousDir
+    appendRequestLogSync({ ...requestEntry(), requestId: "previous-request" })
     process.env.LOG_DIR = logDir
 
     try {
@@ -79,7 +83,12 @@ describe("request log persistence", () => {
       expect(entries).toHaveLength(1)
       expect(entries[0]?.requestId).toBe("request-1")
       expect(entries[0]?.sessionId).toBeUndefined()
+      process.env.LOG_DIR = previousDir
+      const previousEntries = await readPersistedRequestLogs()
+      expect(previousEntries).toHaveLength(1)
+      expect(previousEntries[0]?.requestId).toBe("previous-request")
     } finally {
+      fs.rmSync(previousDir, { recursive: true, force: true })
       fs.rmSync(logDir, { recursive: true, force: true })
     }
   })

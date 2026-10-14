@@ -274,8 +274,8 @@ export function markCredentialQuotaExhausted(
   credential: ApiCredential,
   reason?: string,
   recoveryMs: number = DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+  now: number = Date.now(),
 ): void {
-  const now = Date.now()
   credential.status = "quota_exhausted"
   credential.cooldownUntil = now + recoveryMs
   credential.lastError = reason

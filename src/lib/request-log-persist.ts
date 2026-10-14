@@ -24,16 +24,19 @@ function isPersistEnabled(): boolean {
 
 export async function appendRequestLog(entry: RequestLogRecord): Promise<void> {
   if (!isPersistEnabled()) return
-  const operation = appendQueue.then(() => appendRequestLogSerialized(entry))
+  const config = readLogRotationConfig()
+  const operation = appendQueue.then(() =>
+    appendRequestLogSerialized(entry, config),
+  )
   appendQueue = operation.catch(() => undefined)
   await operation
 }
 
 async function appendRequestLogSerialized(
   entry: RequestLogRecord,
+  config: ReturnType<typeof readLogRotationConfig>,
 ): Promise<void> {
   try {
-    const config = readLogRotationConfig()
     await mkdir(config.logDir, { recursive: true })
     const line = `${JSON.stringify(sanitizePersistedEntry(entry))}\n`
     const dateKey = dateKeyFromDate(new Date(entry.timestamp))
@@ -197,6 +200,5 @@ export async function findPersistedRequestLog(
 }
 
 export function appendRequestLogSync(entry: RequestLogRecord): void {
-  if (!isPersistEnabled()) return
-  queueMicrotask(() => void appendRequestLog(entry))
+  void appendRequestLog(entry)
 }

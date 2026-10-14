@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test"
+import { describe, expect, mock, spyOn, test } from "bun:test"
 
 import {
   __resetProviderConnectionsForTest,
@@ -213,14 +213,23 @@ describe("fetchWindsurfQuota", () => {
       })
 
       await withStubbedQuota(payload, async (connection) => {
-        const snapshot = await refreshWindsurfQuota(connection)
-        // 剩余取更紧张的窗口：日 0%
-        expect(snapshot.premiumInteractionsRemaining).toBe(0)
-        expect(getConnectionQuotaState(connection)).toBe("exhausted")
-        const cooldownUntil = connection.credentials[0].cooldownUntil ?? 0
-        expect(cooldownUntil).toBeGreaterThan(Date.now())
-        // 对齐日窗口重置（而不是 24h 兜底）
-        expect(cooldownUntil).toBeLessThanOrEqual(resetInSeconds * 1000)
+        const now = Date.now()
+        let elapsed = 0
+        const clock = spyOn(Date, "now").mockImplementation(
+          () => now + elapsed++,
+        )
+        try {
+          const snapshot = await refreshWindsurfQuota(connection)
+          // 剩余取更紧张的窗口：日 0%
+          expect(snapshot.premiumInteractionsRemaining).toBe(0)
+          expect(getConnectionQuotaState(connection)).toBe("exhausted")
+          const cooldownUntil = connection.credentials[0].cooldownUntil ?? 0
+          expect(cooldownUntil).toBeGreaterThan(Date.now())
+          // 对齐日窗口重置（而不是 24h 兜底）
+          expect(cooldownUntil).toBe(resetInSeconds * 1000)
+        } finally {
+          clock.mockRestore()
+        }
       })
     })
 
