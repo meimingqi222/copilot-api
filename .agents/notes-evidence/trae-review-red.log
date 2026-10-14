@@ -1,0 +1,71 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\trae-cn-conversion-regression.test.ts:
+(pass) Trae parses GLM and DSML calls across every chunk boundary without trimming code [8.45ms]
+(pass) Trae repairs raw controls and inner quotes while preserving valid escaped paths [0.72ms]
+(pass) Trae keeps inline and fenced tool examples as prose and tolerates null [0.27ms]
+(pass) Trae fails unreadable and truncated calls instead of leaking them or guessing arguments [0.63ms]
+(pass) Trae delta events and finish reasons survive both client modes [5.81ms]
+(pass) Trae malformed calls produce an error in streaming and non-streaming output [0.61ms]
+(pass) Trae respects string schemas and literal closing tags inside tool arguments [2.37ms]
+(pass) Trae rejects partial openers and incomplete XML parameters [0.26ms]
+(pass) Trae preserves DSML calls wrapped in a tool_call block [0.35ms]
+(pass) Trae closes the upstream iterator when the downstream stops consuming [0.28ms]
+(pass) Trae does not invent empty arguments for a malformed native call [0.47ms]
+244 |     "<tool_ca",
+245 |     "<toolcall",
+246 |     "<｜DSML｜inv",
+247 |   ]) {
+248 |     const r = parse(block)
+249 |     expect(r.error).toBeDefined()
+                          ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:249:21)
+(fail) Trae rejects XML trailing garbage and truncated call prefixes [0.51ms]
+251 |     expect(r.output).toBe("")
+252 |   }
+253 | })
+254 |
+255 | test("Trae rejects explicit null inputs in text and native calls", async () => {
+256 |   expect(parse('<tool_call>{"name":"edit","arguments":null}</tool_call>').error).toBeDefined()
+                                                                                       ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:256:82)
+(fail) Trae rejects explicit null inputs in text and native calls [0.34ms]
+263 |
+264 | test("Trae retains nested delta finish reasons in both client modes", async () => {
+265 |   for (const finish of ["length", "content_filter"]) {
+266 |     const source = () => upstream("delta", { delta: { content: "answer", finish_reason: finish } }, "stop")
+267 |     const result = await traeCnCollect(source(), "glm")
+268 |     expect(result.choices).toMatchObject([{ finish_reason: finish }])
+                                 ^
+error: expect(received).toMatchObject(expected)
+
+  [
+    {
+-     "finish_reason": "length",
++     "finish_reason": "stop",
++     "index": 0,
++     "message": {
++       "content": "answer",
++       "role": "assistant",
++     },
+    },
+  ]
+
+- Expected  - 1
++ Received  + 6
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:268:28)
+(fail) Trae retains nested delta finish reasons in both client modes [0.71ms]
+
+ 11 pass
+ 3 fail
+ 1760 expect() calls
+Ran 14 tests across 1 file. [510.00ms]

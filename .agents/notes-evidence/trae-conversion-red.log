@@ -1,0 +1,112 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\trae-cn-conversion-regression.test.ts:
+41 |   ]
+42 |   for (const fixture of fixtures) {
+43 |     for (let size = 1; size <= fixture.length; size++) {
+44 |       const r = parse(fixture, size)
+45 |       expect(r.error).toBeUndefined()
+46 |       expect(r.output).toBe("")
+                            ^
+error: expect(received).toBe(expected)
+
+- ""
++ "<tool_call>edit<arg_key>new_string</arg_key><arg_value>  print("ok")
++ </arg_value></tool_call>"
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:46:24)
+(fail) Trae parses GLM and DSML calls across every chunk boundary without trimming code [5.26ms]
+54 |   for (const block of [
+55 |     '<tool_call>{"name":"edit","arguments":{"new_string":"first\nsecond"}}</tool_call>',
+56 |     '<tool_call>{"name":"edit","arguments":{"new_string":"print("ok")"}}</tool_call>',
+57 |   ]) {
+58 |     const r = parse(block)
+59 |     expect(r.output).toBe("")
+                          ^
+error: expect(received).toBe(expected)
+
+- ""
++ "<tool_call>{"name":"edit","arguments":{"new_string":"first
++ second"}}</tool_call>"
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:59:22)
+(fail) Trae repairs raw controls and inner quotes while preserving valid escaped paths [0.42ms]
+67 |
+68 | test("Trae keeps inline and fenced tool examples as prose and tolerates null", () => {
+69 |   const block = '<tool_call>{"name":"edit","arguments":{}}</tool_call>'
+70 |   for (const text of [`Example: \`${block}\``, `\`\`\`xml\n${block}\n\`\`\``, "<tool_call>null</tool_call>"]) {
+71 |     const r = parse(text)
+72 |     expect(r.output).toBe(text)
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: "Example: `<tool_call>{"name":"edit","arguments":{}}</tool_call>`"
+Received: "Example: ``"
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:72:22)
+(fail) Trae keeps inline and fenced tool examples as prose and tolerates null [0.34ms]
+78 | const malformed = String.raw`<tool_call>{"name":"edit","arguments":{"file_path":"C:\workspace\example\trade_client.py","new_string":" self._log(f"probe ok type={f['type']:#x} ver={f['version']} "\n f"clen={f['clen']} ulen={f['ulen']}")"="" ,"old_string":""}"></tool_call>`
+79 |
+80 | test("Trae fails unreadable and truncated calls instead of leaking them or guessing arguments", () => {
+81 |   for (const block of [malformed, '<tool_call>{"name":"edit","arguments":{"new_string":"unfinished', '<tool_call>{"name":"edit","arguments":"not JSON"}</tool_call>']) {
+82 |     const r = parse(block)
+83 |     expect(r.error).toBeDefined()
+                         ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:83:21)
+(fail) Trae fails unreadable and truncated calls instead of leaking them or guessing arguments [0.92ms]
+92 | }
+93 |
+94 | test("Trae delta events and finish reasons survive both client modes", async () => {
+95 |   for (const event of ["output", "delta", "content", "message_delta", "output_delta"]) {
+96 |     const result = await traeCnCollect(upstream(event, { delta: { content: "hello", reasoning_content: "thought" } }), "glm")
+97 |     expect(result.choices).toMatchObject([{ message: { content: "hello", reasoning_content: "thought" }, finish_reason: "length" }])
+                                ^
+error: expect(received).toMatchObject(expected)
+
+  [
+    {
+-     "finish_reason": "length",
++     "finish_reason": "stop",
++     "index": 0,
+      "message": {
+-       "content": "hello",
+-       "reasoning_content": "thought",
++       "content": "",
++       "role": "assistant",
+      },
+    },
+  ]
+
+- Expected  - 3
++ Received  + 4
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:97:28)
+(fail) Trae delta events and finish reasons survive both client modes [7.15ms]
+104 |   }
+105 | })
+106 |
+107 | test("Trae malformed calls produce an error in streaming and non-streaming output", async () => {
+108 |   const result = await traeCnCollect(upstream("output", { response: malformed }), "glm")
+109 |   expect(result.error).toMatchObject({ code: "invalid_tool_call" })
+                             ^
+error: expect(received).toMatchObject(expected)
+
+Matcher error: received value must be a non-null object
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:109:24)
+(fail) Trae malformed calls produce an error in streaming and non-streaming output [0.78ms]
+
+ 0 pass
+ 6 fail
+ 7 expect() calls
+Ran 6 tests across 1 file. [538.00ms]

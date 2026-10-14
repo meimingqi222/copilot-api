@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-LobsterAI account creation accepted access and refresh tokens, but no production path scheduled the LobsterAI refresher. Request dispatch also sent the stored token without checking expiry. A token therefore expired even when a usable refresh token was present. Concurrent requests could independently refresh the same connection.
+LobsterAI account creation accepted access and refresh tokens, but no production path scheduled the LobsterAI refresher. Request dispatch also sent the stored token without checking expiry. A token therefore expired even when a usable refresh token was present. Concurrent requests could independently refresh the same connection. Tokens expiring more than 24.8 days ahead also overflowed setTimeout to 1 ms; the still-valid-token branch immediately rescheduled the oversized delay, causing a warning and CPU loop.
 
 ## Decision
 
@@ -18,7 +18,7 @@ Offer the browser callback and authorization-code exchange used by the LobsterAI
 
 ## Consequences
 
-The browser login uses the local callback address on port 18239. A browser on another machine must paste the full callback URL so state can be verified. A refresh response without an expiry is retried after one minute. Token paste remains available for accounts without a refresh token.
+The browser login uses the local callback address on port 18239. A browser on another machine must paste the full callback URL so state can be verified. A refresh response without an expiry is retried after one minute. Bound each timer to 2,147,483,647 ms and recheck the live credential at wake-up; a token still valid beyond that interval is rescheduled without an early refresh. Unref the timer so it does not prevent process shutdown. Token paste remains available for accounts without a refresh token.
 
 ## Verification
 
@@ -27,3 +27,7 @@ The browser login uses the local callback address on port 18239. A browser on an
 - `tests/oauth-lobsterai.test.ts`
 
 Proved: temporarily bypassed the per-connection in-flight refresh map; `coalesces request-time refresh` failed with 2 fetches instead of 1, then restored the map and the test passed.
+
+- `tests/lobsterai-refresh-timer.test.ts::LobsterAI long-lived credentials never overflow timers or refresh early`
+
+Proved: removing only the timer cap made the 30-day token regression fail with a delay near 2,591,700,000 instead of 2,147,483,647; `.agents/notes-evidence/trae-timer-red.log` preserves that assertion. Restoring the cap passes and a manually fired callback re-arms safely without calling fetch.

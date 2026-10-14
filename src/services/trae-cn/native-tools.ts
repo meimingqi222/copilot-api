@@ -31,7 +31,9 @@ export class TraeCnNativeTools {
     const id = String(call.id ?? call.tool_call_id ?? "")
     const index = typeof call.index === "number" ? call.index : undefined
     const name = String(fn.name ?? call.tool_name ?? "")
-    const args = fn.arguments ?? call.params ?? call.input ?? call.parameters
+    const args = [fn.arguments, call.params, call.input, call.parameters].find(
+      (input) => input !== undefined,
+    )
     const key =
       !id && index === undefined ? `${name}:${JSON.stringify(args)}` : undefined
     let pending =

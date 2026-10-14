@@ -18,7 +18,7 @@
 export const TOOL_CALL_OPEN = "<tool_call>"
 export const TOOL_CALL_CLOSE = "</tool_call>"
 
-const FUNCTION_RE = /<function=([^>]+)>([\s\S]*?)<\/function>/
+const FUNCTION_RE = /^\s*<function=([^>]+)>([\s\S]*?)<\/function>\s*$/
 const PARAMETER_RE = /<parameter=([^>]+)>([\s\S]*?)<\/parameter>/g
 
 interface ParsedXmlToolCall {
@@ -30,7 +30,10 @@ interface ParsedXmlToolCall {
  * 解析 XML 形态的调用块。`<function=name>` 缺失或名字为空返回 undefined。
  * 参数值原样取用（上游没有约定转义规则），能当 JSON 解析就按 JSON 放。
  */
-export function parseXmlToolCall(value: string): ParsedXmlToolCall | undefined {
+export function parseXmlToolCall(
+  value: string,
+  isStringParameter?: (name: string, key: string) => boolean,
+): ParsedXmlToolCall | undefined {
   const match = FUNCTION_RE.exec(value)
   if (!match) return undefined
   const name = (match[1] ?? "").trim()
@@ -38,6 +41,7 @@ export function parseXmlToolCall(value: string): ParsedXmlToolCall | undefined {
 
   const args: Record<string, unknown> = {}
   const body = match[2] ?? ""
+  let consumed = 0
   PARAMETER_RE.lastIndex = 0
   for (
     let param = PARAMETER_RE.exec(body);
@@ -46,12 +50,19 @@ export function parseXmlToolCall(value: string): ParsedXmlToolCall | undefined {
   ) {
     const key = (param[1] ?? "").trim()
     if (!key) continue
-    const raw = (param[2] ?? "").trim()
+    if (body.slice(consumed, param.index).trim()) return undefined
+    consumed = param.index + param[0].length
+    const raw = param[2] ?? ""
+    if (isStringParameter?.(name, key)) {
+      args[key] = raw
+      continue
+    }
     try {
       args[key] = JSON.parse(raw) as unknown
     } catch {
       args[key] = raw
     }
   }
+  if (body.slice(consumed).trim()) return undefined
   return { name, arguments: args }
 }

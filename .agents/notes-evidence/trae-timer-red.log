@@ -1,0 +1,27 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\lobsterai-refresh-timer.test.ts:
+59 |   const fetchMock = mock(() =>
+60 |     Promise.reject(new Error("must not refresh early")),
+61 |   )
+62 |   globalThis.fetch = fetchMock as unknown as typeof fetch
+63 |   scheduleLobsteraiRefresh(conn)
+64 |   expect(delays).toEqual([2_147_483_647])
+                      ^
+error: expect(received).toEqual(expected)
+
+  [
+-   2147483647,
++   2591699999,
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>\tests\lobsterai-refresh-timer.test.ts:64:18)
+(fail) LobsterAI long-lived credentials never overflow timers or refresh early [2.01ms]
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [528.00ms]

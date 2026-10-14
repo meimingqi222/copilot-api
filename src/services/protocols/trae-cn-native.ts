@@ -135,12 +135,15 @@ export const traeCnNativeAdapter: ProtocolAdapter = {
       if (!response.body) {
         throw traeCnFailure(502, "", "Trae CN returned an empty stream")
       }
-      const it = traeCnParts(traeCnSse(response.body))[Symbol.asyncIterator]()
+      const it = traeCnParts(traeCnSse(response.body), payload.tools ?? [])[
+        Symbol.asyncIterator
+      ]()
       const { held, done } = await traeCnFirstParts(it)
       const err = held.find(
         (p): p is { error: string; code?: string | number } => "error" in p,
       )
       if (err) {
+        await it.return?.()
         last = traeCnFailure(502, err.code, err.error)
         if (traeCnWrongFunction(err.code)) continue
         throw last

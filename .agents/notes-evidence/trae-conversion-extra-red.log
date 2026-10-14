@@ -1,0 +1,69 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\trae-cn-conversion-regression.test.ts:
+(pass) Trae parses GLM and DSML calls across every chunk boundary without trimming code [7.50ms]
+(pass) Trae repairs raw controls and inner quotes while preserving valid escaped paths [0.53ms]
+(pass) Trae keeps inline and fenced tool examples as prose and tolerates null [0.17ms]
+(pass) Trae fails unreadable and truncated calls instead of leaking them or guessing arguments [0.50ms]
+(pass) Trae delta events and finish reasons survive both client modes [5.80ms]
+(pass) Trae malformed calls produce an error in streaming and non-streaming output [0.55ms]
+(pass) Trae respects string schemas and literal closing tags inside tool arguments [3.10ms]
+180 | })
+181 |
+182 | test("Trae rejects partial openers and incomplete XML parameters", () => {
+183 |   for (const block of ["<tool_call", '<tool_call><function=edit><parameter=new_string>unfinished</function></tool_call>']) {
+184 |     const r = parse(block)
+185 |     expect(r.error).toBeDefined()
+                          ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:185:21)
+(fail) Trae rejects partial openers and incomplete XML parameters [0.44ms]
+188 |   }
+189 | })
+190 |
+191 | test("Trae preserves DSML calls wrapped in a tool_call block", () => {
+192 |   const r = parse('<tool_call><｜DSML｜invoke name="edit"><｜DSML｜parameter name="new_string" string="true"> 123 </｜DSML｜parameter></｜DSML｜invoke></tool_call>')
+193 |   expect(r.output).toBe("")
+                         ^
+error: expect(received).toBe(expected)
+
+Expected: ""
+Received: "<tool_call><｜DSML｜invoke name="edit"><｜DSML｜parameter name="new_string" string="true"> 123 </｜DSML｜parameter></｜DSML｜invoke></tool_call>"
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:193:20)
+(fail) Trae preserves DSML calls wrapped in a tool_call block [0.53ms]
+200 |   async function* source() {
+201 |     try { yield { text: "hello" }; yield { text: "unused" } }
+202 |     finally { closed = true }
+203 |   }
+204 |   for await (const _part of traeCnChain([], source()[Symbol.asyncIterator]())) break
+205 |   expect(closed).toBe(true)
+                       ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:205:18)
+(fail) Trae closes the upstream iterator when the downstream stops consuming [0.42ms]
+205 |   expect(closed).toBe(true)
+206 | })
+207 |
+208 | test("Trae does not invent empty arguments for a malformed native call", async () => {
+209 |   const result = await traeCnCollect(upstream("output", { tool_calls: [{ index: 0, function: { name: "edit", arguments: '{"new_string":' } }] }), "glm")
+210 |   expect(result.error).toMatchObject({ code: "invalid_tool_call" })
+                             ^
+error: expect(received).toMatchObject(expected)
+
+Matcher error: received value must be a non-null object
+
+      at <anonymous> (<repo>\tests\trae-cn-conversion-regression.test.ts:210:24)
+(fail) Trae does not invent empty arguments for a malformed native call [0.81ms]
+
+ 7 pass
+ 4 fail
+ 1750 expect() calls
+Ran 11 tests across 1 file. [495.00ms]

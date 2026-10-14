@@ -22,11 +22,12 @@
 
 import { randomBytes, randomUUID } from "node:crypto"
 import { iterateLines } from "~/lib/stream-lines"
+import { TraeCnTextTools } from "~/services/trae-cn/text-tools"
+
 import { TraeCnNativeTools } from "~/services/trae-cn/native-tools"
 import {
   TOOL_CALL_CLOSE as TOOL_CLOSE,
   TOOL_CALL_OPEN as TOOL_OPEN,
-  parseXmlToolCall,
 } from "~/services/tool-call-text"
 
 import type {
@@ -41,6 +42,8 @@ import {
   traeCnErrorOf,
   type TraeCnAccount,
 } from "~/services/oauth/trae-cn"
+
+export { TraeCnTextTools } from "~/services/trae-cn/text-tools"
 
 // IDE 的 chat function：经典 IDE agent、SOLO Work、TRAE agent
 //（solo_agent，deepseek-v4.1-flash 在这里）、SOLO Lite agent。
@@ -435,6 +438,7 @@ type TraeChatPart =
   | { reasoning: string }
   | { call: TraeChatCall }
   | { usage: TraeChatUsage }
+  | { finish: "length" | "content_filter" }
   | { error: string; code?: string | number }
 
 function usageDetails(value: unknown): Record<string, unknown> {
@@ -508,13 +512,10 @@ const nextCallId = () =>
  * - 对象（正常）：直接 stringify；
  * - JSON 字符串 `"{\"cmd\":\"x\"}"`：parse 一次出来还是 string
  *   （双重编码），拆开再验证，最多拆三层；
- * - 裸文本 `"git status"`（根本不是 JSON）：没有忠实的对象表示，
- *   降级 `{}`——和 IR 翻译层 parseToolInput/parseArguments 的约定一致。
- *   透出原样会让下游收到一个 parse 不出对象的字符串，客户端校验
- *   直接报 "expected object, received string"。
+ * Invalid or incomplete arguments fail the turn rather than inventing inputs.
  */
-function normalizeCallArguments(value: unknown): string {
-  let v: unknown = value ?? {}
+function normalizeCallArguments(value: unknown): string | undefined {
+  let v: unknown = value === "" || value === undefined ? {} : value
   for (let i = 0; i < 3 && typeof v === "string"; i++) {
     try {
       v = JSON.parse(v)
@@ -525,88 +526,7 @@ function normalizeCallArguments(value: unknown): string {
   if (v && typeof v === "object" && !Array.isArray(v)) {
     return JSON.stringify(v)
   }
-  return "{}"
-}
-
-/**
- * 把模型文本里写的 `<tool_call>…</tool_call>` 块剥出来，块体支持两种形态：
- * JSON `{"name":…,"arguments":…}` 与 XML
- * `<function=name><parameter=k>v</parameter></function>`。
- * 块没闭合前把可能的块头留在缓冲里，避免半截 XML 泄漏给用户；两种形态都
- * 认不出的块仍按原文透出（绝不吞掉用户可见文本）。
- */
-export class TraeCnTextTools {
-  private buf = ""
-
-  push(s: string, end = false): { text: string; calls: Array<TraeChatCall> } {
-    this.buf += s
-    let text = ""
-    const calls: Array<TraeChatCall> = []
-    for (;;) {
-      const i = this.buf.indexOf(TOOL_OPEN)
-      if (i < 0) break
-      const j = this.buf.indexOf(TOOL_CLOSE, i + TOOL_OPEN.length)
-      if (j < 0) break
-      text += this.buf.slice(0, i)
-      const raw = this.buf.slice(i + TOOL_OPEN.length, j).trim()
-      this.buf = this.buf.slice(j + TOOL_CLOSE.length)
-      let v: Record<string, unknown> = {}
-      try {
-        v = JSON.parse(raw) as Record<string, unknown>
-      } catch {
-        v = {}
-      }
-      if (v.name) {
-        calls.push({
-          upstreamId: "",
-          id: nextCallId(),
-          name: String(v.name),
-          // 与插件一致地接受 arguments / input / parameters / params 变体，
-          // 但过一遍归一化：字符串原样透传会把双重编码和裸文本交给下游。
-          arguments: normalizeCallArguments(
-            v.arguments ?? v.input ?? v.parameters ?? v.params,
-          ),
-        })
-      } else {
-        // 模型有时退回 Trae 插件的 XML 形态：
-        // `<function=name><parameter=k>v</parameter></function>`。只认 JSON
-        // 会把整块当正文透出，客户端渲染成乱码工具调用。
-        const xml = parseXmlToolCall(raw)
-        if (xml) {
-          calls.push({
-            upstreamId: "",
-            id: nextCallId(),
-            name: xml.name,
-            arguments: normalizeCallArguments(xml.arguments),
-          })
-        } else {
-          text += TOOL_OPEN + raw + TOOL_CLOSE
-        }
-      }
-    }
-    if (end) {
-      text += this.buf
-      this.buf = ""
-    } else {
-      const i = this.buf.indexOf(TOOL_OPEN)
-      let keep = i >= 0 ? this.buf.length - i : 0
-      if (!keep) {
-        for (
-          let k = Math.min(TOOL_OPEN.length - 1, this.buf.length);
-          k > 0;
-          k--
-        ) {
-          if (TOOL_OPEN.startsWith(this.buf.slice(-k))) {
-            keep = k
-            break
-          }
-        }
-      }
-      text += this.buf.slice(0, this.buf.length - keep)
-      this.buf = this.buf.slice(this.buf.length - keep)
-    }
-    return { text, calls }
-  }
+  return undefined
 }
 
 /**
@@ -615,13 +535,36 @@ export class TraeCnTextTools {
  */
 export async function* traeCnParts(
   events: AsyncIterable<TraeSseEvent>,
+  tools: ReadonlyArray<unknown> = [],
 ): AsyncIterable<TraeChatPart> {
-  const tt = new TraeCnTextTools()
+  const tt = new TraeCnTextTools(tools)
   const nativeTools = new TraeCnNativeTools()
+  let finish: "length" | "content_filter" | undefined
   for await (const { event, data } of events) {
     const name = eventName(event)
     const d =
       data && typeof data === "object" ? (data as Record<string, unknown>) : {}
+    const delta =
+      d.delta && typeof d.delta === "object" ?
+        (d.delta as Record<string, unknown>)
+      : {}
+    const reason = String(
+      d.finish_reason
+        ?? d.stop_reason
+        ?? d.finishReason
+        ?? delta.finish_reason
+        ?? delta.stop_reason
+        ?? delta.finishReason
+        ?? "",
+    ).toLowerCase()
+    if (
+      ["length", "max_tokens", "max_output_tokens", "max_length"].includes(
+        reason,
+      )
+    )
+      finish = "length"
+    if (reason === "content_filter" || reason === "sensitive")
+      finish = "content_filter"
     if (data === "[DONE]") break
     if (
       name === "error"
@@ -641,38 +584,79 @@ export async function* traeCnParts(
       if (u) yield { usage: u }
       break
     }
-    if (name && name !== "output" && name !== "message") continue
-    const reasoning = d.reasoning_content ?? d.reasoning ?? ""
+    if (
+      ![
+        "",
+        "output",
+        "message",
+        "delta",
+        "content",
+        "text",
+        "answer",
+        "chunk",
+        "output_delta",
+        "message_delta",
+      ].includes(name)
+    )
+      continue
+    const reasoning =
+      d.reasoning_content
+      || d.reasoning_text
+      || d.reasoning
+      || delta.reasoning_content
+      || delta.reasoning_text
+      || delta.reasoning
+      || ""
     if (typeof reasoning === "string" && reasoning) yield { reasoning }
     let text =
       typeof d.response === "string" ? d.response
       : typeof d.content === "string" ? d.content
+      : typeof delta.content === "string" ? delta.content
+      : typeof d.delta === "string" ? d.delta
       : ""
     // IDE 自己的进度行，不是模型的输出。
     if (/^(Building prompt:|Completed building prompt)/.test(text)) text = ""
     if (text) {
       const r = tt.push(text)
+      if (r.error) {
+        yield { error: r.error, code: "invalid_tool_call" }
+        return
+      }
       if (r.text) yield { text: r.text }
       for (const c of r.calls) yield { call: c }
     }
-    for (const tc of Array.isArray(d.tool_calls) ? d.tool_calls : []) {
+    const toolCalls = d.tool_calls ?? delta.tool_calls
+    for (const tc of Array.isArray(toolCalls) ? toolCalls : []) {
       nativeTools.push(tc)
     }
     const u = tokensOf(d.usage)
     if (u) yield { usage: u }
   }
   const r = tt.push("", true)
+  if (r.error) {
+    yield { error: r.error, code: "invalid_tool_call" }
+    return
+  }
   if (r.text) yield { text: r.text }
   for (const c of r.calls) yield { call: c }
   for (const call of nativeTools.finish()) {
+    const argumentsJson = normalizeCallArguments(call.arguments)
+    if (argumentsJson === undefined) {
+      yield {
+        error: "Trae returned invalid native tool arguments",
+        code: "invalid_tool_call",
+      }
+      return
+    }
     yield {
       call: {
         ...call,
         id: call.upstreamId || nextCallId(),
-        arguments: normalizeCallArguments(call.arguments),
+        arguments: argumentsJson,
       },
     }
   }
+  if (finish) yield { finish }
 }
 
 /**
@@ -695,11 +679,15 @@ export async function* traeCnChain(
   held: Array<TraeChatPart>,
   it: AsyncIterator<TraeChatPart>,
 ): AsyncIterable<TraeChatPart> {
-  yield* held
-  for (;;) {
-    const n = await it.next()
-    if (n.done) return
-    yield n.value
+  try {
+    yield* held
+    for (;;) {
+      const n = await it.next()
+      if (n.done) return
+      yield n.value
+    }
+  } finally {
+    await it.return?.()
   }
 }
 
@@ -940,6 +928,7 @@ export async function* traeCnStreamEvents(
   let calls = 0
   let usage: TraeChatUsage | undefined
   let errored = false
+  let finish: "length" | "content_filter" | undefined
   for await (const p of parts) {
     if ("error" in p) {
       yield {
@@ -969,9 +958,10 @@ export async function* traeCnStreamEvents(
       })
     }
     if ("usage" in p) usage = p.usage
+    if ("finish" in p) finish = p.finish
   }
   if (!errored) {
-    yield chunk({}, calls > 0 ? "tool_calls" : "stop")
+    yield chunk({}, finish ?? (calls > 0 ? "tool_calls" : "stop"))
   }
   if (usage) {
     yield {
@@ -997,6 +987,7 @@ export async function traeCnCollect(
   let reasoning = ""
   const calls: Array<TraeChatCall> = []
   let usage: TraeChatUsage | undefined
+  let finish: "length" | "content_filter" | undefined
   for await (const p of parts) {
     if ("error" in p) {
       return {
@@ -1011,6 +1002,7 @@ export async function traeCnCollect(
     if ("reasoning" in p) reasoning += p.reasoning
     if ("call" in p) calls.push(p.call)
     if ("usage" in p) usage = p.usage
+    if ("finish" in p) finish = p.finish
   }
   const message: Record<string, unknown> = {
     role: "assistant",
@@ -1033,7 +1025,7 @@ export async function traeCnCollect(
       {
         index: 0,
         message,
-        finish_reason: calls.length > 0 ? "tool_calls" : "stop",
+        finish_reason: finish ?? (calls.length > 0 ? "tool_calls" : "stop"),
       },
     ],
     ...(usage ? { usage } : {}),

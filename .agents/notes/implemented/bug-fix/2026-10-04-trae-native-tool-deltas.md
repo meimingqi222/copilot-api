@@ -1,6 +1,7 @@
 # Agent Note: Assemble Trae CN native tool deltas before emitting calls
 
 Status: implemented
+Partly-superseded-by: 2026-10-14-trae-text-tool-integrity.md
 
 ## Problem
 
@@ -18,7 +19,7 @@ Collect native tool events by upstream id and index until the stream finishes, t
 
 ## Consequences
 
-Native calls are emitted after upstream completion rather than exposing partial arguments. Text tool blocks retain their existing handling. The host's IR and credential persistence contracts remain unchanged. Malformed complete arguments still follow the existing normalization fallback; this fix does not invent missing parameters.
+Native calls are emitted after upstream completion rather than exposing partial arguments. Text tool blocks retain their existing handling. The host's IR and credential persistence contracts remain unchanged. Malformed complete arguments now fail with invalid_tool_call under the successor note; native fragment assembly still waits for completion.
 
 ## Verification
 
@@ -31,3 +32,7 @@ Native calls are emitted after upstream completion rather than exposing partial 
 - `tests/provider-modules.test.ts::refresh-only, OAuth-only and protocol-only entry points work in a fresh process`
 
 Proved: before the accumulator fix, the fragment and parallel-call regressions failed (0 pass, 2 fail, temp/trae-tool-red.log); after restoring the fix they pass. A direct client import also failed with Cannot access TRAE_CN_CALLBACK_PORT before initialization before splitting the constants; fresh-process imports now pass. Live Doubao diagnostics independently confirmed an empty named event followed by an unnamed event containing an object with the required field.
+
+## Superseded
+
+The successor `2026-10-14-trae-text-tool-integrity.md` replaces the empty-object fallback for malformed complete arguments. The id/index accumulator and completion-time emission decision remain in force.

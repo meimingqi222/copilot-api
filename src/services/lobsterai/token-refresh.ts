@@ -248,21 +248,25 @@ export function scheduleLobsteraiRefresh(conn: ProviderConnection): void {
     `[lobsterai] scheduling refresh for "${conn.name}" in ${refreshInSeconds}s`,
   )
 
-  const timer = setTimeout(async () => {
-    refreshTimers.delete(conn.id)
-    const mutable = getMutableProviderConnection(conn.id)
-    if (!mutable) return
-    const cred = mutable.credentials[0]
-    if (!cred) return
-    if (!lobsteraiNeedsRefresh(cred)) {
-      scheduleLobsteraiRefresh(mutable)
-      return
-    }
+  const timer = setTimeout(
+    async () => {
+      refreshTimers.delete(conn.id)
+      const mutable = getMutableProviderConnection(conn.id)
+      if (!mutable) return
+      const cred = mutable.credentials[0]
+      if (!cred) return
+      if (!lobsteraiNeedsRefresh(cred)) {
+        scheduleLobsteraiRefresh(mutable)
+        return
+      }
 
-    await refreshOnce(mutable)
-    // A transient failure must not permanently stop automatic refresh.
-    scheduleLobsteraiRefresh(mutable)
-  }, refreshInMs)
+      await refreshOnce(mutable)
+      // A transient failure must not permanently stop automatic refresh.
+      scheduleLobsteraiRefresh(mutable)
+    },
+    Math.min(refreshInMs, 2_147_483_647),
+  )
+  timer.unref?.()
   refreshTimers.set(conn.id, timer)
 }
 
