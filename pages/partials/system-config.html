@@ -277,7 +277,7 @@
         </div>
       </section>
 
-      <section class="card p-0 overflow-hidden" id="account-warmup-settings">
+      <section class="card p-0" id="account-warmup-settings">
         <div class="p-4 sm:p-5 flex items-start justify-between gap-4">
           <div class="space-y-1 max-w-xl">
             <h3
@@ -320,19 +320,116 @@
                 aria-describedby="account-warmup-schedule-hint"
               />
             </label>
-            <label class="block space-y-2">
+            <div
+              class="relative space-y-2"
+              @click.outside="warmupTimeZoneOpen = false"
+              @keydown.escape.stop.prevent="closeWarmupTimeZone()"
+            >
               <span
+                id="warmup-time-zone-label"
                 class="block text-xs font-medium"
                 x-text="t('system.warmupTimeZone')"
               ></span>
-              <input
-                type="text"
-                class="input w-full font-mono text-sm"
-                x-model="settings.accountWarmup.timeZone"
-                placeholder="Asia/Shanghai"
+              <button
+                type="button"
+                class="input w-full text-sm flex items-center justify-between gap-2 text-left"
+                x-ref="warmupTimeZoneTrigger"
+                @click="warmupTimeZoneOpen ? closeWarmupTimeZone() : openWarmupTimeZone()"
+                @keydown.arrow-down.prevent="openWarmupTimeZone()"
+                :aria-expanded="warmupTimeZoneOpen"
+                aria-haspopup="listbox"
+                aria-controls="warmup-time-zone-list"
+                aria-labelledby="warmup-time-zone-label warmup-time-zone-selected"
                 :disabled="saving || !settings.accountWarmup.enabled"
-              />
-            </label>
+              >
+                <span
+                  id="warmup-time-zone-selected"
+                  class="min-w-0 break-words"
+                  x-text="warmupTimeZoneLabel"
+                ></span>
+                <span aria-hidden="true">⌄</span>
+              </button>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] break-words"
+                x-text="settings.accountWarmup.timeZone"
+              ></p>
+              <div
+                x-show="warmupTimeZoneOpen && settings.accountWarmup.enabled && !saving"
+                x-cloak
+                class="absolute top-full left-0 right-0 z-30 p-2 space-y-2 rounded-lg border border-[var(--apple-gray-4)] bg-[var(--apple-bg)] shadow-lg"
+              >
+                <input
+                  type="search"
+                  class="input w-full text-sm"
+                  x-ref="warmupTimeZoneSearch"
+                  x-model="warmupTimeZoneSearch"
+                  @input="warmupTimeZoneActive = 0"
+                  :placeholder="t('system.warmupTimeZoneSearch')"
+                  :aria-label="t('system.warmupTimeZoneSearch')"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded="true"
+                  aria-controls="warmup-time-zone-list"
+                  :aria-activedescendant="filteredWarmupTimeZones.length ? 'warmup-time-zone-' + warmupTimeZoneActive : null"
+                  @keydown.arrow-down.prevent="moveWarmupTimeZone(1)"
+                  @keydown.arrow-up.prevent="moveWarmupTimeZone(-1)"
+                  @keydown.enter.prevent="filteredWarmupTimeZones[warmupTimeZoneActive] && selectWarmupTimeZone(filteredWarmupTimeZones[warmupTimeZoneActive].id)"
+                />
+                <button
+                  type="button"
+                  class="btn-secondary text-xs w-full"
+                  @click="useLocalWarmupTimeZone()"
+                  x-text="t('system.warmupTimeZoneLocal')"
+                ></button>
+                <p
+                  class="text-xs text-[var(--apple-text-secondary)] px-2"
+                  x-text="t('system.warmupTimeZoneListHint')"
+                ></p>
+                <div
+                  id="warmup-time-zone-list"
+                  role="listbox"
+                  :aria-label="t('system.warmupTimeZone')"
+                  class="max-h-60 overflow-y-auto"
+                >
+                  <template
+                    x-for="(zone, index) in filteredWarmupTimeZones"
+                    :key="zone.id"
+                  >
+                    <button
+                      type="button"
+                      role="option"
+                      :id="'warmup-time-zone-' + index"
+                      :aria-selected="zone.id === settings.accountWarmup.timeZone"
+                      tabindex="-1"
+                      class="w-full p-2 flex items-start justify-between gap-2 text-left rounded text-sm hover:bg-[var(--apple-gray-6)]"
+                      :class="{ 'bg-[var(--apple-gray-6)]': index === warmupTimeZoneActive }"
+                      @click="selectWarmupTimeZone(zone.id)"
+                    >
+                      <span class="min-w-0"
+                        ><span
+                          class="block break-words"
+                          x-text="zone.name"
+                        ></span
+                        ><span
+                          class="block text-xs text-[var(--apple-text-secondary)] break-all"
+                          x-text="zone.id"
+                        ></span
+                      ></span>
+                      <span
+                        class="text-xs text-[var(--apple-text-secondary)] whitespace-nowrap"
+                        x-text="zone.offset + (zone.id === settings.accountWarmup.timeZone ? ' ✓' : '')"
+                      ></span>
+                    </button>
+                  </template>
+                </div>
+                <p
+                  x-show="!filteredWarmupTimeZones.length"
+                  role="status"
+                  class="text-xs text-[var(--apple-text-secondary)] p-2"
+                  x-text="t('system.warmupTimeZoneEmpty')"
+                ></p>
+              </div>
+            </div>
             <template
               x-for="pool in ['claude', 'codex', 'antigravityGemini', 'antigravityClaude']"
               :key="pool"
@@ -376,6 +473,10 @@
             x-text="warmupModelsError"
             role="alert"
             class="text-xs text-[var(--apple-red)]"
+          ></p>
+          <p
+            class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            x-text="t('system.warmupTimeZoneHint')"
           ></p>
           <p
             id="account-warmup-model-hint"

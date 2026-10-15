@@ -148,7 +148,13 @@ const i18n = {
       "system.warmupModelHint":
         "推荐：Claude 用 Haiku，Codex 优先 Luna、其次 Mini，Antigravity Gemini 用 Flash，Claude 池用 Haiku。下拉列表来自已启用账号的已启用模型，推荐模型排在前面。自动模式逐账号选择，没有低消耗模型就跳过；指定模型时，不支持它的账号会跳过。非推荐模型可能增加消耗，不同额度池不能互相预热。",
       "system.warmupTimes": "每日预热时刻（HH:mm，逗号分隔）",
-      "system.warmupTimeZone": "时区（IANA）",
+      "system.warmupTimeZone": "预热时区",
+      "system.warmupTimeZoneSearch": "搜索城市、IANA 名称或 UTC 偏移",
+      "system.warmupTimeZoneLocal": "使用我的时区",
+      "system.warmupTimeZoneListHint": "当前与常用时区优先，可搜索完整列表",
+      "system.warmupTimeZoneEmpty": "未找到匹配时区，请换一个城市或时区名称。",
+      "system.warmupTimeZoneHint":
+        "每日预热时刻按所选时区执行，保存 IANA 名称并自动遵循夏令时；列表展示当前 UTC 偏移。更换浏览器或访问者不会自动改变配置。",
       "system.warmupScheduleHint":
         "按所选时区每天执行，最多 24 个时刻。服务需保持运行；仅补偿 5 分钟内错过的时刻，同账号每个时刻最多尝试一次，失败不自动重发。建议按实际工作时间设置，不保证每天获得四轮额度。结果记录在服务日志中。",
       "system.performanceDetails": "详细性能指标",
@@ -1778,7 +1784,15 @@ const i18n = {
       "system.warmupModelHint":
         "Recommended: Haiku for Claude, Luna then Mini for Codex, Flash for Antigravity Gemini, and Haiku for its Claude pool. Lists show enabled models from enabled accounts, with recommendations first. Auto selects per account and skips when no low-cost model exists. An explicit choice skips accounts without that model. Other models may use more allowance; separate quota pools cannot warm each other.",
       "system.warmupTimes": "Daily times (HH:mm, comma-separated)",
-      "system.warmupTimeZone": "Time zone (IANA)",
+      "system.warmupTimeZone": "Warmup time zone",
+      "system.warmupTimeZoneSearch": "Search city, IANA name or UTC offset",
+      "system.warmupTimeZoneLocal": "Use my time zone",
+      "system.warmupTimeZoneListHint":
+        "Current and common zones first; search the full list",
+      "system.warmupTimeZoneEmpty":
+        "No matching time zone. Try another city or zone name.",
+      "system.warmupTimeZoneHint":
+        "Daily warmup times use the selected IANA time zone and follow daylight saving changes. Offsets shown are current. A different browser or visitor never changes the saved zone automatically.",
       "system.warmupScheduleHint":
         "Runs daily in the selected time zone, up to 24 times. Keep the server running; missed times are caught up only within 5 minutes. Each account is attempted once per time, with no automatic resend on failure. Match your working hours; four daily allowances are not guaranteed. Results appear in server logs.",
       "system.performanceDetails": "Detailed performance metrics",

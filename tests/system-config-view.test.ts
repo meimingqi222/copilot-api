@@ -51,6 +51,7 @@ test("system settings display MiB and save the selected storage budget", async (
   const source = readFileSync("pages/js/views/system-config.js", "utf8")
   const view = runInNewContext(source + "\nsystemConfigView()", {
     CustomEvent: class {},
+    I18n: { currentLang: () => "en" },
     dispatchEvent: () => {},
     API: {
       request: (_path: string, options: { body: typeof settings }) => {
@@ -125,6 +126,7 @@ test("redaction editors save literal lines through the API and retain invalid dr
   const source = readFileSync("pages/js/views/system-config.js", "utf8")
   const view = runInNewContext(source + "\nsystemConfigView()", {
     CustomEvent: class {},
+    I18n: { currentLang: () => "en" },
     dispatchEvent: () => {},
     API: {
       async request(_path: string, options: { body: unknown }) {
@@ -207,6 +209,7 @@ test("Codex picker loads all choices, searches IDs, enforces 100 selections, reo
   let submitted: { codexModelIds: Array<string> | null } | undefined
   const view = runInNewContext(source + "\nsystemConfigView()", {
     CustomEvent: class {},
+    I18n: { currentLang: () => "en" },
     dispatchEvent: () => {},
     API: {
       request: (
@@ -266,6 +269,84 @@ test("Codex picker loads all choices, searches IDs, enforces 100 selections, reo
   view.setCustomCodexModels(false)
   await view.save()
   expect(submitted?.codexModelIds).toBeNull()
+})
+
+test("warmup time zone search preserves saved IANA names, supports city and offset lookup, and saves explicit choices", async () => {
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  let epoch = Date.parse("2026-01-15T12:00:00Z")
+  const view = runInNewContext(
+    readFileSync("pages/js/views/system-config.js", "utf8")
+      + "\nsystemConfigView()",
+    {
+      CustomEvent: class {},
+      dispatchEvent: () => {},
+      I18n: { currentLang: () => "zh" },
+      Date: class extends Date {
+        constructor() {
+          super(epoch)
+        }
+      },
+      API: {
+        async request(_path: string, options: { body: unknown }) {
+          const response = await systemConfigApiRoutes.request("/", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(options.body),
+          })
+          if (!response.ok) throw new Error(await response.text())
+          return response.json()
+        },
+      },
+    },
+  ) as {
+    settings: ReturnType<typeof getSystemConfig>["settings"]
+    warmupTimeZoneSearch: string
+    warmupTimeZoneLabel: string
+    filteredWarmupTimeZones: Array<{ id: string; offset: string }>
+    accept: (config: unknown) => void
+    openWarmupTimeZone: () => void
+    selectWarmupTimeZone: (id: string) => void
+    useLocalWarmupTimeZone: () => void
+    save: () => Promise<void>
+    $refs: Record<string, { focus: () => void }>
+    $nextTick: (callback: () => void) => void
+  }
+  view.$refs = {
+    warmupTimeZoneTrigger: { focus: () => {} },
+    warmupTimeZoneSearch: { focus: () => {} },
+  }
+  view.$nextTick = (callback) => callback()
+  view.accept(getSystemConfig())
+  view.settings.accountWarmup.timeZone = "Asia/Calcutta"
+  view.openWarmupTimeZone()
+  expect(view.settings.accountWarmup.timeZone).toBe("Asia/Calcutta")
+  expect(view.filteredWarmupTimeZones[0].id).toBe("Asia/Calcutta")
+  for (const query of ["北京", "Shanghai", "Asia/Shanghai", "UTC+8"]) {
+    view.warmupTimeZoneSearch = query
+    expect(view.filteredWarmupTimeZones.map((zone) => zone.id)).toContain(
+      "Asia/Shanghai",
+    )
+  }
+  view.warmupTimeZoneSearch = "UTC+05:30"
+  expect(view.filteredWarmupTimeZones.map((zone) => zone.id)).toContain(
+    "Asia/Calcutta",
+  )
+  view.warmupTimeZoneSearch = "not-a-timezone"
+  expect(view.filteredWarmupTimeZones).toHaveLength(0)
+  expect(view.settings.accountWarmup.timeZone).toBe("Asia/Calcutta")
+  view.selectWarmupTimeZone("America/New_York")
+  expect(view.warmupTimeZoneLabel).toContain("UTC-05:00")
+  epoch = Date.parse("2026-07-15T12:00:00Z")
+  view.openWarmupTimeZone()
+  expect(view.warmupTimeZoneLabel).toContain("UTC-04:00")
+  await view.save()
+  expect(getSystemConfig().settings.accountWarmup.timeZone).toBe(
+    "America/New_York",
+  )
+  view.useLocalWarmupTimeZone()
+  expect(view.settings.accountWarmup.timeZone).toBe(
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+  )
 })
 
 test("system settings render translated labels and titles in English", () => {
