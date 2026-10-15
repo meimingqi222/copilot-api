@@ -39,16 +39,16 @@ export const FREE_PRESETS: Array<ProviderPreset> = [
     name: "OpenCode Zen 免费层",
     category: "free",
     protocol: "opencode-zen-free",
-    // joinUrl 会补 /v1:https://opencode.ai/zen/v1/{models,chat/completions,responses}
-    baseUrl: "https://opencode.ai/zen",
+    // 匿名免费入口已从 /zen/v1 移至 /inference/v1。
+    baseUrl: "https://opencode.ai/inference",
     keyless: true,
     description:
-      "opencode.ai 公共池：12 个匿名模型（nemotron / mimo / muse-spark / step 等），"
+      "opencode.ai 公共池：匿名模型（nemotron / mimo / muse-spark / step 等），"
       + "无需账号与 Key；仅支持不带工具的请求，出口地区可能被拦",
     defaultModels: [
       {
-        publicId: "nemotron-3-ultra-free",
-        upstreamId: "nemotron-3-ultra-free",
+        publicId: "cat-jam-free",
+        upstreamId: "cat-jam-free",
         endpoints: ["chat"],
       },
       {
@@ -72,23 +72,13 @@ export const FREE_PRESETS: Array<ProviderPreset> = [
         endpoints: ["chat"],
       },
       {
-        publicId: "ling-3.0-flash-fin-free",
-        upstreamId: "ling-3.0-flash-fin-free",
-        endpoints: ["chat"],
-      },
-      {
-        publicId: "ling-3.1-flash-free",
-        upstreamId: "ling-3.1-flash-free",
-        endpoints: ["chat"],
-      },
-      {
         publicId: "longcat-2.5-preview-free",
         upstreamId: "longcat-2.5-preview-free",
         endpoints: ["chat"],
       },
       {
-        publicId: "exo-free",
-        upstreamId: "exo-free",
+        publicId: "deepseek-v4.1-flash-free",
+        upstreamId: "deepseek-v4.1-flash-free",
         endpoints: ["chat"],
       },
       {

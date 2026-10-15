@@ -37,9 +37,9 @@ import {
  * 按 session 记账的配额），任何一道被绕过或漏掉，症状都是「时好时坏」而不是
  * 明确报错。所以这里把三个不变量钉死：
  *
- * 1. 请求必须带全套指纹头，且 session 由种子确定性派生（否则每请求一个新
+ * 1. 请求必须带全套指纹头，且 session 首次生成后按种子持久化复用（否则每请求一个新
  *    session，额度瞬间烧穿换来 429）；
- * 2. 工具清单必须**恰好**是四件组（上游对多带的任何一个工具都 403）；
+ * 2. 工具清单包含四件组，已声明的槽位要有非空参数 properties；
  * 3. 调用方的工具照常透传,四件组缺哪个就规范化/提升/补齐哪个,响应侧再把
  *    改过拼写的工具名改回调用方的原名。
  */
@@ -107,8 +107,7 @@ describe("opencode zen free lane preset", () => {
     expect(preset.protocol).toBe("opencode-zen-free")
     // 指纹头由 adapter 兜底;放预设里只会多一种「用户删了必接头」的坏法
     expect(preset.headers).toBeUndefined()
-    // joinUrl 补 /v1 后必须落在 /zen/v1/*
-    expect(preset.baseUrl).toBe("https://opencode.ai/zen")
+    expect(preset.baseUrl).toBe("https://opencode.ai/inference")
   })
 
   test("muse-spark is declared on the responses line only", () => {
@@ -117,12 +116,53 @@ describe("opencode zen free lane preset", () => {
       (m) => m.upstreamId === "muse-spark-1.3-contributor-free",
     )
     expect(muse?.endpoints).toEqual(["responses"])
-    const plain = models.find((m) => m.upstreamId === "nemotron-3-ultra-free")
+    const plain = models.find(
+      (m) => m.upstreamId === "nemotron-3.5-lightning-free",
+    )
     expect(plain?.endpoints).toEqual(["chat"])
   })
 })
 
 describe("free lane tool fingerprint", () => {
+  test("every quartet slot declares properties without mutating caller tools or populated schemas", () => {
+    for (const style of ["chat", "responses"] as const) {
+      const schema = {
+        type: "object",
+        properties: { filePath: { type: "string" } },
+        required: ["filePath"],
+        additionalProperties: false,
+      }
+      const read = { name: "read", parameters: schema }
+      const body: Record<string, unknown> = {
+        tools: [
+          style === "chat" ?
+            { type: "function", function: read }
+          : { type: "function", ...read },
+          style === "chat" ?
+            { type: "function", function: { name: "Bash", parameters: {} } }
+          : { type: "function", name: "Bash", parameters: {} },
+        ],
+      }
+      const callerTools = body.tools
+      const original = structuredClone(callerTools)
+      applyFreeTierFingerprint(body, style)
+      const tools = body.tools as Array<Record<string, unknown>>
+      for (const name of ZEN_TOOL_QUARTET) {
+        const tool = tools
+          .map((t) =>
+            style === "chat" ? (t.function as Record<string, unknown>) : t,
+          )
+          .find((t) => t.name === name)!
+        expect(
+          Object.keys((tool.parameters as { properties: object }).properties)
+            .length,
+        ).toBeGreaterThan(0)
+        if (name === "read") expect(tool.parameters).toEqual(schema)
+      }
+      expect(callerTools).toEqual(original)
+    }
+  })
+
   test("caller tools pass through and the quartet is filled in", () => {
     const body: Record<string, unknown> = {
       tools: [
@@ -637,14 +677,29 @@ describe("free lane tool fingerprint", () => {
 })
 
 describe("zen fingerprint", () => {
-  test("session ids are deterministic per seed and gateway-shaped", () => {
-    const first = zenSessionFor("zen\u0000user-1\u0000nemotron-3-ultra-free")
-    const second = zenSessionFor("zen\u0000user-1\u0000nemotron-3-ultra-free")
-    const other = zenSessionFor("zen\u0000user-2\u0000nemotron-3-ultra-free")
+  test("session ids are stable per seed and use descending time prefixes", async () => {
+    const first = await zenSessionFor(
+      "zen\u0000user-1\u0000nemotron-3-ultra-free",
+    )
+    const second = await zenSessionFor(
+      "zen\u0000user-1\u0000nemotron-3-ultra-free",
+    )
+    const other = await zenSessionFor(
+      "zen\u0000user-2\u0000nemotron-3-ultra-free",
+    )
     // 每请求一个新 session 会立刻 429 FreeUsageLimitError
     expect(first).toBe(second)
     expect(first).not.toBe(other)
     expect(first).toMatch(/^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+    const decoded = ~BigInt(`0x${first.slice(4, 16)}`) & 0xffffffffffffn
+    const now = BigInt(Date.now()) & 0xfffffffffn
+    expect(now - (decoded >> 12n)).toBeGreaterThanOrEqual(0n)
+    expect(now - (decoded >> 12n)).toBeLessThan(1000n)
+    expect(decoded & 0xfffn).toBeGreaterThan(0n)
+    const concurrent = await Promise.all(
+      Array.from({ length: 20 }, () => zenSessionFor("concurrent-user")),
+    )
+    expect(new Set(concurrent).size).toBe(1)
   })
 
   test("request ids are unique per call", () => {
@@ -654,53 +709,69 @@ describe("zen fingerprint", () => {
       expect(id).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
   })
 
-  test("the session bucket follows the caller, not the connection alone", () => {
+  test("the session bucket follows the caller, not the connection alone", async () => {
     const connection = zenConnection() as never
     // 多用户模式按 userId 分桶:所有人挤同一个 session 时,一个人就能把整条
     // 连接搞到 429
-    const userA = zenSessionForRequest(connection, "nemotron-3-ultra-free", {
-      c: { get: () => "user-a" } as never,
-    })
-    const userAAgain = zenSessionForRequest(
+    const userA = await zenSessionForRequest(
       connection,
       "nemotron-3-ultra-free",
       {
         c: { get: () => "user-a" } as never,
       },
     )
-    const userB = zenSessionForRequest(connection, "nemotron-3-ultra-free", {
-      c: { get: () => "user-b" } as never,
-    })
+    const userAAgain = await zenSessionForRequest(
+      connection,
+      "nemotron-3-ultra-free",
+      {
+        c: { get: () => "user-a" } as never,
+      },
+    )
+    const userB = await zenSessionForRequest(
+      connection,
+      "nemotron-3-ultra-free",
+      {
+        c: { get: () => "user-b" } as never,
+      },
+    )
     expect(userA).toBe(userAAgain)
     expect(userA).not.toBe(userB)
   })
 
-  test("no caller identity degrades to one stable bucket instead of throwing", () => {
+  test("no caller identity degrades to one stable bucket instead of throwing", async () => {
     const connection = zenConnection() as never
     // 单用户模式没有 userId,getClientIp 在测试上下文里取不到连接信息:
     // 必须退化成固定桶,而不是每请求一个新 session(那会立刻烧穿额度)
-    const first = zenSessionForRequest(connection, "nemotron-3-ultra-free", {
-      c: { get: () => undefined } as never,
-    })
-    const second = zenSessionForRequest(connection, "nemotron-3-ultra-free", {
-      c: { get: () => undefined } as never,
-    })
+    const first = await zenSessionForRequest(
+      connection,
+      "nemotron-3-ultra-free",
+      {
+        c: { get: () => undefined } as never,
+      },
+    )
+    const second = await zenSessionForRequest(
+      connection,
+      "nemotron-3-ultra-free",
+      {
+        c: { get: () => undefined } as never,
+      },
+    )
     expect(first).toBe(second)
     // 与任何带身份的桶都不同
     expect(first).not.toBe(
-      zenSessionForRequest(connection, "nemotron-3-ultra-free", {
+      await zenSessionForRequest(connection, "nemotron-3-ultra-free", {
         c: { get: () => "user-a" } as never,
       }),
     )
   })
 
-  test("model ids keep their thinking suffix out of the session bucket", () => {
-    const plain = zenSessionForRequest(
+  test("model ids keep their thinking suffix out of the session bucket", async () => {
+    const plain = await zenSessionForRequest(
       zenConnection() as never,
       "nemotron-3-ultra-free",
       { c: { get: () => "u" } as never },
     )
-    const suffixed = zenSessionForRequest(
+    const suffixed = await zenSessionForRequest(
       zenConnection() as never,
       "nemotron-3-ultra-free (Deep)",
       { c: { get: () => "u" } as never },
@@ -724,6 +795,39 @@ describe("zen fingerprint", () => {
 })
 
 describe("zen requests", () => {
+  test("official legacy URLs upgrade without changing custom gateways or saved connections", async () => {
+    const calls: Array<string> = []
+    globalThis.fetch = ((input: string) => {
+      calls.push(String(input))
+      return Promise.resolve(Response.json({ data: [] }))
+    }) as unknown as typeof globalThis.fetch
+    for (const [baseUrl, expected] of [
+      ["https://opencode.ai", "https://opencode.ai/inference/v1/models"],
+      [
+        "https://opencode.ai/zen/v1/",
+        "https://opencode.ai/inference/v1/models",
+      ],
+      [
+        "https://opencode.ai/inference",
+        "https://opencode.ai/inference/v1/models",
+      ],
+      [
+        "https://opencode.ai/inference/v1/",
+        "https://opencode.ai/inference/v1/models",
+      ],
+      ["https://gateway.test/zen", "https://gateway.test/zen/v1/models"],
+      ["https://opencode.ai/custom/v1", "https://opencode.ai/custom/v1/models"],
+    ]) {
+      const connection = zenConnection({ baseUrl })
+      await openCodeZenAdapter.discoverModels!({
+        connection: connection as never,
+        credential: zenCredential() as never,
+      })
+      expect(calls.at(-1)).toBe(expected)
+      expect(connection.baseUrl).toBe(baseUrl)
+    }
+  })
+
   test("chat completions carry the full fingerprint and the exact quartet", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = []
     globalThis.fetch = ((input: string, init: RequestInit) => {
@@ -770,15 +874,18 @@ describe("zen requests", () => {
     })
 
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.url).toBe("https://opencode.ai/zen/v1/chat/completions")
+    expect(calls[0]!.url).toBe(
+      "https://opencode.ai/inference/v1/chat/completions",
+    )
     const headers = calls[0]!.init.headers as Record<string, string>
     expect(headers["authorization"]).toBe("Bearer public")
     expect(headers["user-agent"]).toBe(ZEN_CLIENT_UA)
-    expect(headers["x-opencode-client"]).toBe("desktop")
+    expect(headers["x-opencode-client"]).toBe("cli")
     expect(headers["x-opencode-project"]).toBe("global")
     expect(headers["x-opencode-session"]).toMatch(
       /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/,
     )
+    expect(headers["x-opencode-session-id"]).toBe(headers["x-opencode-session"])
     expect(headers["x-opencode-request"]).toMatch(
       /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/,
     )
@@ -899,7 +1006,7 @@ describe("zen requests", () => {
       } as never,
     })
 
-    expect(calls[0]!.url).toBe("https://opencode.ai/zen/v1/responses")
+    expect(calls[0]!.url).toBe("https://opencode.ai/inference/v1/responses")
     const body = JSON.parse(String(calls[0]!.init.body)) as {
       tools: Array<{ name?: string }>
       tool_choice: unknown
@@ -994,7 +1101,7 @@ describe("zen requests", () => {
       credential: zenCredential() as never,
     })
 
-    expect(calls).toEqual(["https://opencode.ai/zen/v1/models"])
+    expect(calls).toEqual(["https://opencode.ai/inference/v1/models"])
     expect(models.map((m) => m.publicId)).toEqual([
       "nemotron-3-ultra-free",
       "muse-spark-1.3-contributor-free",

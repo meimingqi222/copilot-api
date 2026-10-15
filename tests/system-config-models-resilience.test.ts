@@ -30,7 +30,7 @@ function createView(options: {
 }): ConfigView {
   return runInNewContext(`${source}\nsystemConfigView()`, {
     API: { request: options.request },
-    I18n: { t: (key: string) => key },
+    I18n: { t: (key: string) => key, currentLang: () => "en" },
     confirm: options.confirm ?? (() => true),
     dispatchEvent: () => true,
     CustomEvent,

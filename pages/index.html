@@ -272,7 +272,7 @@
                     :key="alert.id"
                   >
                     <div
-                      class="flex items-center justify-between p-2.5 rounded-xl bg-white dark:bg-[#1c1c1e] border text-xs shadow-xs"
+                      class="flex items-center justify-between p-2.5 rounded-xl bg-[var(--apple-bg)] border text-xs shadow-xs"
                       :class="alert.actionable ? 'border-[var(--apple-red)]/30' : 'border-[var(--apple-gray-5)]'"
                     >
                       <div class="flex items-center gap-2 overflow-hidden mr-2">
@@ -289,7 +289,7 @@
                           x-text="alert.connectionName"
                         ></span>
                         <span
-                          class="text-[var(--apple-text-secondary)] truncate"
+                          class="text-[var(--apple-text-tertiary)] truncate"
                           :title="alert.message"
                           x-text="alert.message"
                         ></span>
@@ -674,7 +674,7 @@
                       :key="item.id"
                     >
                       <div
-                        class="p-3 rounded-xl border border-[var(--apple-gray-5)] bg-white/50 dark:bg-black/20 hover:border-[var(--apple-blue)]/30 transition-colors flex items-center justify-between"
+                        class="p-3 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-bg)] hover:border-[var(--apple-blue)]/30 transition-colors flex items-center justify-between"
                       >
                         <div class="flex items-center gap-3 min-w-0">
                           <!-- Status dot -->
@@ -804,7 +804,7 @@
                     >
                       <a
                         href="#traces"
-                        class="p-3 rounded-xl border border-[var(--apple-gray-5)] bg-white/50 dark:bg-black/20 hover:border-[var(--apple-blue)]/30 transition-all block text-xs"
+                        class="p-3 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-bg)] hover:border-[var(--apple-blue)]/30 transition-all block text-xs"
                       >
                         <div class="flex items-center justify-between mb-1.5">
                           <div class="flex items-center gap-2">

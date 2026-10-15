@@ -302,9 +302,23 @@ export class RedactionScope {
       && secretField
       && text.length >= 4
       && !text.startsWith("${")
-      && !tokenSpans.length
-    )
-      matches.push({ start: 0, end: text.length, value: text, kind: "SECRET" })
+    ) {
+      // Preserve existing placeholders without exempting surrounding credential bytes.
+      let start = 0
+      for (const span of [
+        ...tokenSpans,
+        { start: text.length, end: text.length },
+      ]) {
+        if (span.start > start)
+          matches.push({
+            start,
+            end: span.start,
+            value: text.slice(start, span.start),
+            kind: "SECRET",
+          })
+        start = span.end
+      }
+    }
     // A secret echoed without its original `password=` context still needs protection.
     for (const entry of this.tenant.entries.values()) {
       if (entry.kind === "SECRET" && !this.config.secrets) continue

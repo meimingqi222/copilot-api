@@ -853,3 +853,157 @@ test("redaction settings persist and survive unrelated admin updates", () => {
       .settings.redaction.enabled,
   ).toBe(true)
 })
+
+test("media references remain opaque while text and media-shaped tool arguments are redacted", () => {
+  const scope = new RedactionScope(
+    redactionConfigSchema.parse({ enabled: true, words: ["image", "private"] }),
+    randomUUID(),
+  )
+  const url = "data:image/png;base64,cHJpdmF0ZQ=="
+  const remote = "https://example.test/private/image.png"
+  const media = [
+    { type: "image_url", image_url: { url } },
+    { type: "input_image", image_url: url },
+    { type: "image", source: { type: "url", url: remote } },
+    {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "private" },
+    },
+    { inlineData: { mimeType: "image/png", data: "private" } },
+    { fileData: { mimeType: "image/png", fileUri: remote } },
+    { file_data: { mime_type: "image/png", file_uri: remote } },
+    { type: "input_file", file_url: remote },
+    { type: "file", file: { file_data: url, filename: "private.png" } },
+    { type: "video_url", video_url: { url: remote } },
+    { type: "input_audio", input_audio: { data: "private", format: "wav" } },
+  ]
+  expect(scope.mask(media)).toEqual(media)
+  const tool = {
+    type: "tool_use",
+    input: { type: "image_url", image_url: { url: remote } },
+  }
+  expect(JSON.stringify(scope.mask(tool))).not.toContain("private")
+  expect(scope.restore(scope.mask(tool), "issuer")).toEqual(tool)
+  expect(scope.mask({ type: "text", text: remote }).text).not.toContain(
+    "private",
+  )
+})
+
+test("tool data named arguments is a plain value, not another protocol JSON layer", () => {
+  const scope = createScope()
+  const path = ["C:", "Users", "audit-user", 'a"quoted'].join("\\")
+  const input = {
+    arguments: path,
+    partial_json: path,
+    name: path,
+    signature: path,
+  }
+  const calls = [
+    { type: "tool_use", input },
+    { type: "function_call", arguments: JSON.stringify(input) },
+    { functionCall: { name: "read", args: input } },
+  ]
+  for (const call of calls) {
+    const masked = scope.mask(call)
+    expect(JSON.stringify(masked)).not.toContain("audit-user")
+    expect(scope.restore(masked, "issuer")).toEqual(call)
+  }
+  const unknown = `{{HOME_${"a".repeat(32)}}}`
+  const result = {
+    functionResponse: {
+      name: "read",
+      response: { arguments: unknown, name: path },
+    },
+  }
+  const masked = scope.mask(result)
+  expect(masked.functionResponse.name).toBe("read")
+  expect(masked.functionResponse.response.name).not.toContain("audit-user")
+  expect(scope.restore(masked, "issuer")).toEqual(result)
+})
+
+test("signed detail aliases do not seal the aggregate with a single block signature", () => {
+  for (const field of [
+    "signature",
+    "reasoning_opaque",
+    "thinking_signature",
+    "reasoning_signature",
+  ]) {
+    const scope = createScope()
+    const paths = ["first-detail-user", "second-detail-user"].map((user) =>
+      ["", "home", user].join("/"),
+    )
+    const tokens = paths.map((path) => scope.maskText(path))
+    const original = {
+      role: "assistant",
+      reasoning_content: tokens.join("\n\n"),
+      signature: sign(tokens[0]),
+      reasoning_details: tokens.map((text) => ({
+        type: "reasoning.text",
+        text,
+        [field]: sign(text),
+      })),
+    }
+    const visible = scope.restore(original, "issuer")
+    expect(visible.reasoning_content).toBe(paths.join("\n\n"))
+    expect(scope.mask(visible, "issuer")).toEqual(original)
+    for (const [index, detail] of visible.reasoning_details.entries())
+      expect(scope.mask(detail, "issuer")).toEqual(
+        original.reasoning_details[index],
+      )
+  }
+})
+
+test("signed reasoning aliases replay exact bytes even with empty alternate aliases", () => {
+  const path = ["", "home", "alias-user"].join("/")
+  for (const field of [
+    "reasoning_text",
+    "reasoning_content",
+    "reasoning",
+    "thinking",
+  ])
+    for (const signatureField of [
+      "signature",
+      "reasoning_opaque",
+      "thinking_signature",
+      "reasoning_signature",
+    ]) {
+      const scope = createScope()
+      const raw = scope.maskText(path)
+      const signature = sign(raw)
+      const original: Record<string, string> = {
+        role: "assistant",
+        [field]: raw,
+        [signatureField]: signature,
+      }
+      const visible = scope.restore(original, "issuer")
+      expect(visible[field]).toBe(path)
+      expect(visible[signatureField]).toBe(signature)
+      expect(
+        scope.mask<Record<string, string>>(
+          {
+            ...visible,
+            signature: signatureField === "signature" ? signature : "",
+          },
+          "issuer",
+        )[field],
+      ).toBe(raw)
+      expect(() => scope.mask(visible, "other-issuer")).toThrow(
+        "different upstream",
+      )
+    }
+})
+
+test("a placeholder inside a credential does not exempt surrounding secret text", () => {
+  const scope = createScope()
+  const home = ["", "home", "credential-user"].join("/")
+  const token = scope.maskText(home)
+  const payload = { password: `prefix123${token}suffix456` }
+  const masked = scope.mask(payload)
+  expect(masked.password).not.toContain("prefix123")
+  expect(masked.password).not.toContain("suffix456")
+  expect(masked.password).toContain(token)
+  expect(scope.mask(masked)).toEqual(masked)
+  expect(scope.restore(masked, "issuer").password).toBe(
+    `prefix123${home}suffix456`,
+  )
+})

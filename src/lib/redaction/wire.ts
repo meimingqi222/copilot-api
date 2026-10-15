@@ -1,4 +1,5 @@
 import { isDumpSecretField } from "~/lib/request-dump-sanitizer"
+import { extractSignatureAlias } from "~/lib/thinking"
 
 export function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ?
@@ -19,6 +20,8 @@ const RESERVED = new Set([
   "thoughtSignature",
   "thought_signature",
   "reasoning_opaque",
+  "thinking_signature",
+  "reasoning_signature",
   "encrypted_content",
   "mimeType",
   "mime_type",
@@ -47,15 +50,14 @@ function signedContent(
     Array.isArray(value.reasoning_details)
     && value.reasoning_details.some((detail) => {
       const block = record(detail)
-      return typeof block?.signature === "string" && block.signature.length > 0
+      return block && Boolean(extractSignatureAlias(block))
     })
   )
     return undefined
   const signature =
     value.thoughtSignature
-    ?? value.thought_signature
-    ?? value.signature
-    ?? value.reasoning_opaque
+    || value.thought_signature
+    || extractSignatureAlias(value)
   if (
     typeof signature !== "string"
     || !signature
@@ -63,18 +65,14 @@ function signedContent(
   )
     return undefined
   const fields =
-    value.thoughtSignature || value.thought_signature ? ["text", "functionCall"]
-    : (
-      value.type === "thinking"
-      || value.type === "reasoning"
-      || value.type === "reasoning.text"
-      || (value.type === undefined
-        && (typeof value.text === "string"
-          || typeof value.thinking === "string"))
-    ) ?
-      ["thinking", "text", "reasoning"]
-    : ["reasoning_text", "reasoning_content", "reasoning"]
-  const present = fields.filter((key) => value[key] !== undefined)
+    value.thoughtSignature || value.thought_signature ?
+      ["text", "functionCall"]
+    : ["thinking", "text", "reasoning_text", "reasoning_content", "reasoning"]
+  const present = fields.filter((key) =>
+    key === "functionCall" ?
+      value[key] !== undefined
+    : typeof value[key] === "string" && value[key].length > 0,
+  )
   return present.length ? { signature, fields: present } : undefined
 }
 
@@ -131,12 +129,26 @@ export function transformContent(
       && (RESERVED.has(key)
         || (key === "data"
           && (obj.type === "base64" || obj.encoding === "base64"))
-        || ["inlineData", "inline_data", "input_audio", "file_data"].includes(
-          key,
-        ))
+        || [
+          "inlineData",
+          "inline_data",
+          "fileData",
+          "file_data",
+          "input_audio",
+        ].includes(key)
+        || (key === "image_url"
+          && ["image_url", "input_image", "output_image"].includes(
+            String(obj.type),
+          ))
+        || (key === "url" && obj.type === "url")
+        || (key === "file_url" && obj.type === "input_file")
+        || (key === "file" && obj.type === "file")
+        || (key === "video_url" && obj.type === "video_url"))
     )
       return [key, nested]
-    const isArguments = key === "arguments" || key === "partial_json"
+    // Inside tool data these are ordinary property names, not another JSON layer.
+    const isArguments =
+      !toolData && (key === "arguments" || key === "partial_json")
     if (isArguments && typeof nested === "string") {
       // Complete arguments can be parsed; streaming partial JSON must be escaped at its own layer.
       try {
@@ -169,8 +181,11 @@ export function transformContent(
           "function_call_output",
           "response.custom_tool_call_input.done",
         ].includes(String(obj.type)))
+      || (key === "response" && typeof obj.name === "string")
     const nestedToolData =
-      !toolData && args && key === "output" ? "output" : args
+      !toolData && args && (key === "output" || key === "response") ?
+        "output"
+      : args
     if (typeof nested === "string")
       return [
         key,

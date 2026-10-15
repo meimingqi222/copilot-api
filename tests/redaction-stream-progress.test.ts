@@ -83,6 +83,68 @@ const chatDeltas = (outputs: Array<Output>) =>
 const joinField = (deltas: Array<Packet>, key: string) =>
   deltas.map((delta) => (delta[key] as string | undefined) ?? "").join("")
 
+test("empty reasoning details do not discard a fragmented Chat signature", async () => {
+  const scope = createScope()
+  const path = ["", "home", "empty-details-user"].join("/")
+  const token = scope.maskText(path)
+  const signature = sign(token)
+  const outputs = await run(
+    [
+      sse(chat({ reasoning: token.slice(0, 16), reasoning_details: [] })),
+      sse(
+        chat(
+          { reasoning: token.slice(16), reasoning_details: [], signature },
+          "stop",
+        ),
+      ),
+    ],
+    scope,
+  )
+  const reasoning = joinField(chatDeltas(outputs), "reasoning")
+  expect(reasoning).toBe(path)
+  expect(
+    scope.mask({ role: "assistant", reasoning, signature }, "issuer").reasoning,
+  ).toBe(token)
+})
+
+test("Gemini accepts a thought signature alias when the other alias is empty", async () => {
+  const scope = createScope()
+  const path = ["", "home", "gemini-alias-user"].join("/")
+  const token = scope.maskText(path)
+  const signature = sign(token)
+  const frame = (part: Packet, finish = false) => ({
+    candidates: [
+      {
+        content: { parts: [part] },
+        ...(finish ? { finishReason: "STOP" } : {}),
+      },
+    ],
+  })
+  const outputs = await run(
+    [
+      frame({ thought: true, text: token.slice(0, 16) }),
+      frame(
+        {
+          thought: true,
+          text: token.slice(16),
+          thoughtSignature: "",
+          thought_signature: signature,
+        },
+        true,
+      ),
+    ],
+    scope,
+  )
+  const text = outputs
+    .flatMap((o) => o.packet?.candidates?.[0].content.parts ?? [])
+    .map((p) => p.text ?? "")
+    .join("")
+  expect(text).toBe(path)
+  expect(
+    scope.mask({ text, thought_signature: signature }, "issuer").text,
+  ).toBe(token)
+})
+
 test("a held chat tail never blocks other channels and is sent before the finish chunk", async () => {
   for (const [held, other] of [
     ["content", "tool"],
@@ -377,4 +439,200 @@ test("Gemini object streams emit the held tail before a finish-only chunk", asyn
       .map((part) => part.text)
       .join(""),
   ).toBe("content {")
+})
+
+test("all Chat reasoning and signature aliases restore split tokens and preserve signed replay", async () => {
+  const path = ["", "home", "stream-alias-user"].join("/")
+  for (const field of [
+    "reasoning_text",
+    "reasoning_content",
+    "reasoning",
+    "thinking",
+  ])
+    for (const signatureField of [
+      "signature",
+      "reasoning_opaque",
+      "thinking_signature",
+      "reasoning_signature",
+    ]) {
+      const scope = createScope()
+      const token = scope.maskText(path)
+      const signature = sign(token)
+      for (let split = 1; split < token.length; split++) {
+        const outputs = await run(
+          [
+            sse(chat({ [field]: token.slice(0, split) })),
+            sse(chat({ [field]: token.slice(split) })),
+            sse(chat({ signature: "", [signatureField]: signature })),
+            sse(chat({}, "stop")),
+          ],
+          scope,
+        )
+        const restored = joinField(chatDeltas(outputs), field)
+        expect(restored).toBe(path)
+        expect(
+          scope.mask(
+            {
+              role: "assistant",
+              [field]: restored,
+              [signatureField]: signature,
+            },
+            "issuer",
+          )[field],
+        ).toBe(token)
+      }
+    }
+})
+
+test("Chat content parts restore independently, including duplicated signed reasoning aliases", async () => {
+  const scope = createScope()
+  const path = ["", "home", "content-part-user"].join("/")
+  const token = scope.maskText(path)
+  const signature = sign(token)
+  const outputs = await run(
+    [
+      sse(
+        chat({
+          content: [
+            { type: "text", text: token.slice(0, 13) },
+            { type: "thinking", thinking: token.slice(0, 27) },
+          ],
+        }),
+      ),
+      sse(
+        chat({
+          content: [
+            { type: "text", text: token.slice(13) },
+            { type: "thinking", thinking: token.slice(27), signature },
+          ],
+        }),
+      ),
+      sse(
+        chat({
+          reasoning_details: [
+            {
+              index: 0,
+              type: "reasoning.text",
+              text: token.slice(0, 19),
+              thinking: token.slice(0, 19),
+            },
+          ],
+        }),
+      ),
+      sse(
+        chat({
+          reasoning_details: [
+            {
+              index: 0,
+              type: "reasoning.text",
+              text: token.slice(19),
+              thinking: token.slice(19),
+              signature,
+            },
+          ],
+        }),
+      ),
+      sse(chat({}, "stop")),
+    ],
+    scope,
+  )
+  const deltas = chatDeltas(outputs)
+  const parts = deltas.flatMap((d) => (d.content ?? []) as Array<Packet>)
+  expect(
+    parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text ?? "")
+      .join(""),
+  ).toBe(path)
+  expect(
+    parts
+      .filter((p) => p.type === "thinking")
+      .map((p) => p.thinking ?? "")
+      .join(""),
+  ).toBe(path)
+  const details = deltas.flatMap(
+    (d) => (d.reasoning_details ?? []) as Array<Packet>,
+  )
+  for (const field of ["text", "thinking"])
+    expect(details.map((d) => d[field] ?? "").join("")).toBe(path)
+  expect(
+    scope.mask({ type: "thinking", thinking: path, signature }, "issuer")
+      .thinking,
+  ).toBe(token)
+})
+
+test("Messages block starts participate in text and signed thinking reassembly", async () => {
+  const path = ["", "home", "block-start-user"].join("/")
+  for (const field of ["text", "thinking"]) {
+    const scope = createScope()
+    const token = scope.maskText(path)
+    const signature = sign(token)
+    const outputs = await run(
+      [
+        sse(
+          {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: field, [field]: token.slice(0, 15) },
+          },
+          { event: "content_block_start" },
+        ),
+        sse(
+          {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: field + "_delta", [field]: token.slice(15) },
+          },
+          { event: "content_block_delta" },
+        ),
+        ...(field === "thinking" ?
+          [
+            sse({
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "signature_delta", signature },
+            }),
+          ]
+        : []),
+        sse({ type: "content_block_stop", index: 0 }),
+      ],
+      scope,
+    )
+    const text = outputs
+      .map(
+        (o) =>
+          (
+            (o.packet?.content_block ?? o.packet?.delta) as Packet | undefined
+          )?.[field] ?? "",
+      )
+      .join("")
+    expect(text).toBe(path)
+    if (field === "thinking")
+      expect(
+        scope.mask({ type: "thinking", thinking: text, signature }, "issuer")
+          .thinking,
+      ).toBe(token)
+    const tail = await run(
+      [
+        sse(
+          {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: field, [field]: "literal {" },
+          },
+          { event: "content_block_start" },
+        ),
+        sse(
+          { type: "content_block_stop", index: 0 },
+          { event: "content_block_stop" },
+        ),
+      ],
+      scope,
+    )
+    expect(tail[1].raw.event).toBe("content_block_delta")
+    expect(tail[1].packet?.delta).toEqual({
+      type: field + "_delta",
+      [field]: "{",
+    })
+  }
 })

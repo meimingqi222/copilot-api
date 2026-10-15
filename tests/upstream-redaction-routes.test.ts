@@ -392,6 +392,120 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
     })
 }
 
+for (const wire of ["chat", "messages", "responses", "gemini"] as const)
+  test(`${wire} egress protects text without changing encoded images`, async () => {
+    process.env.UPSTREAM_REDACTION = JSON.stringify({
+      enabled: true,
+      words: ["image", "iVBOR"],
+    })
+    initializeSystemConfig({ save: () => {}, onChange: () => {} })
+    await connection(wire)
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aCYkAAAAASUVORK5CYII="
+    const url = `data:image/png;base64,${png}`
+    const media =
+      wire === "chat" ? { type: "image_url", image_url: { url } }
+      : wire === "responses" ? { type: "input_image", image_url: url }
+      : wire === "messages" ?
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: png },
+        }
+      : { inlineData: { mimeType: "image/png", data: png } }
+    const content = [
+      {
+        ...(wire === "gemini" ?
+          {}
+        : { type: wire === "responses" ? "input_text" : "text" }),
+        text: "describe image",
+      },
+      media,
+    ]
+    const body =
+      wire === "responses" ?
+        {
+          model: "redaction-model",
+          input: [{ role: "user", content }],
+          stream: false,
+        }
+      : wire === "gemini" ? { contents: [{ role: "user", parts: content }] }
+      : {
+          model: "redaction-model",
+          messages: [{ role: "user", content }],
+          max_tokens: 256,
+          stream: false,
+        }
+    let sentContent: Array<Record<string, unknown>> = []
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      const sent = JSON.parse(String(init?.body))
+      sentContent =
+        wire === "responses" ? sent.input[0].content
+        : wire === "gemini" ? sent.contents[0].parts
+        : sent.messages[0].content
+      return Response.json(result(wire, String(sentContent[0].text)))
+    }) as typeof fetch
+    const original = request(wire, false)
+    const response = await server.fetch(
+      new Request(original.url, {
+        method: "POST",
+        headers: original.headers,
+        body: JSON.stringify(body),
+      }),
+    )
+    expect(response.status).toBe(200)
+    expect(sentContent[1]).toEqual(media)
+    expect(sentContent[0].text).not.toContain("image")
+    expect(await response.text()).toContain("describe image")
+  })
+
+test("chat route restores fragmented thinking before reasoning alias normalization", async () => {
+  await connection("chat")
+  const path = ["", "home", "thinking-route-user"].join("/")
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const sent = JSON.parse(String(init?.body))
+    const token = sent.messages[0].content as string
+    const packets = [token.slice(0, 17), token.slice(17)].map((thinking) => ({
+      id: "chat_thinking",
+      object: "chat.completion.chunk",
+      model: "redaction-model",
+      choices: [{ index: 0, delta: { thinking }, finish_reason: null }],
+    }))
+    return new Response(
+      packets.map((p) => `data: ${JSON.stringify(p)}\n\n`).join("")
+        + "data: [DONE]\n\n",
+      { headers: { "content-type": "text/event-stream" } },
+    )
+  }) as typeof fetch
+  const original = request("chat", true)
+  const response = await server.fetch(
+    new Request(original.url, {
+      method: "POST",
+      headers: original.headers,
+      body: JSON.stringify({
+        model: "redaction-model",
+        messages: [{ role: "user", content: path }],
+        stream: true,
+      }),
+    }),
+  )
+  const received = await response.text()
+  const reasoning = received
+    .split("\n")
+    .filter((l) => l.startsWith("data: ") && !l.includes("[DONE]"))
+    .flatMap(
+      (l) =>
+        (
+          JSON.parse(l.slice(6)) as {
+            choices?: Array<{ delta?: { reasoning_content?: string } }>
+          }
+        ).choices ?? [],
+    )
+    .map((c) => c.delta?.reasoning_content ?? "")
+    .join("")
+  expect(response.status).toBe(200)
+  expect(reasoning).toBe(path)
+})
+
 test("chat route restores fragmented legacy function_call arguments before returning them to the agent", async () => {
   await connection("chat")
   const path = ["", "home", "chat-fixture", "work"].join("/")

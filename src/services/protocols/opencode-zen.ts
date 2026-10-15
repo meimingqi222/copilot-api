@@ -4,25 +4,26 @@
  * 这条车道是 opencode.ai 的公共池：`Authorization: Bearer public` 是**所有人共用**
  * 的凭据，没有 per-user secret。它能用，但上游加了四道门：
  *
- * 1. **客户端指纹**：`user-agent` 必须含 `opencode/<version>`（>= 1.17），
- *    外加 `x-opencode-client: desktop` 与 `x-opencode-session` /
- *    `x-opencode-request` / `x-opencode-project`。缺一个就 403 FreeTierError
- *    "can only be used from within OpenCode"。
- * 2. **工具白名单**：`tools` 必须**包含** `bash` / `glob` / `grep` / `read`
- *    四个小写名字——是子集要求,不是全集。多带调用方自己的工具完全允许
- *    (实测四件组 + `get_weather` 时模型会正常调用它,名字原样带回),但四个名字
- *    缺任何一个、或只差大小写(有 `Bash` 而没有 `bash`)都是 403。所以调用方工具
- *    照常透传,由 `applyFreeTierFingerprint` 把缺的槽位规范化/提升/补齐,
- *    响应侧再把改过的名字改回调用方的拼写。
+ * 1. **客户端指纹**：请求走 `/inference/v1`，而不是旧的 `/zen/v1`；
+ *    `user-agent` 带 `opencode/<version>`，`x-opencode-client: cli`。
+ *    `x-opencode-session-id` 与 `x-opencode-session` 必须携带相同会话值，
+ *    同时保留 request/project 头。
+ * 2. **工具白名单**：保留小写四件组 `bash` / `glob` / `grep` / `read`，
+ *    已声明的槽位参数 schema 必须有 property，并允许额外的调用方工具。
+ *    缺的槽位由 `applyFreeTierFingerprint` 规范化/提升/补齐，已有非空 schema
+ *    不改，响应侧把改过的名字还原。
  * 3. **按 session 记账的配额**：每个请求换新 session id 会立刻 429
  *    FreeUsageLimitError。所以 session 必须由「连接 + 调用方身份 + 模型」
- *    确定性派生，同一路客户端固定复用同一个 session。
+ *    稳定复用。session 的时间前缀必须按官方降序 ID 格式生成，不能使用散列前缀；
+ *    首次生成后持久化缓存，不因请求失败而轮换。
  * 4. **请求必须流式**：`stream` 必须是 `true`（2026-10-10 实测）。非流式请求
  *    一律 403 FreeTierError。所以两条线对上游一律按流式发,客户端要非流式时
  *    再由 adapter 把整条流聚合回 JSON（见 `createChatCompletions` /
  *    `createResponses`）。
  *
- * 门禁 1~3 实测于 2026-10-09，门禁 4 于 2026-10-10。
+ * 旧门禁实测于 2026-10-09/10；新入口、会话与 schema 的变化参考
+ * Ebony-Vinyl/dsh-our-free-model 的 docs/free-lane-wire.md（2026-10-14）。
+ * 满足这些请求条件不保证可用，上游仍可能限制免费客户端或出口地区。
  *
  * 另外上游按模型分流端点：muse-spark 系只服务 `/responses`（打 `/chat/completions`
  * 会回 400 ModelProtocolUnsupported），其余走 `/chat/completions`。清单里曾经出现
@@ -36,6 +37,7 @@
 
 import crypto from "node:crypto"
 
+import { PersistentTTLMap, hashKeyPart } from "~/lib/cache/persistent-map"
 import { getClientIp } from "~/lib/utils"
 import {
   performanceFetch as fetch,
@@ -94,6 +96,12 @@ const MESSAGES_MODELS = new Set(["union-alpha"])
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+const sessions = new PersistentTTLMap<string>(
+  "opencode-zen-sessions",
+  30 * 24 * 60 * 60_000,
+)
+let sessionsInit: Promise<void> | undefined
+
 /** 模型 id 可能带 "(Deep)" 这类思考档后缀，匹配前先剥掉。 */
 export function baseModelId(model: string): string {
   return String(model ?? "")
@@ -125,21 +133,31 @@ function base62From(bytes: Uint8Array, length: number): string {
 }
 
 /**
- * 由种子确定性地铸出一个网关形状的 session id。
+ * 同一个种子复用持久化的官方形状 session id（30 天滑动过期）。
  *
- * 配额按 session 记账，所以同一个种子必须永远得到同一个 id——否则每请求一个新
- * session，免费额度瞬间烧穿并换来 429。格式是网关校验过的：
+ * 配额按 session 记账，所以同一个种子应复用同一个 id——否则每请求一个新
+ * session，免费额度瞬间烧穿并换来 429。时间前缀按降序生成，格式为：
  * `ses_` + 12 位十六进制 + 14 位 base62。
  */
-export function zenSessionFor(seed: string): string {
-  const digest = crypto.createHash("sha256").update(seed).digest()
-  return `ses_${digest.subarray(0, 6).toString("hex")}${base62From(digest.subarray(6, 20), 14)}`
+export async function zenSessionFor(seed: string): Promise<string> {
+  sessionsInit ??= sessions.init()
+  await sessionsInit
+  const key = hashKeyPart(seed)
+  const existing = sessions.get(key)
+  if (existing) return existing
+  const stamp = ~(BigInt(Date.now()) * 0x1000n + 1n)
+  const prefix = BigInt.asUintN(48, stamp).toString(16).padStart(12, "0")
+  return sessions.setNX(
+    key,
+    `ses_${prefix}${base62From(crypto.randomBytes(14), 14)}`,
+  )
 }
 
 /** 每个请求一个 request id（只是关联 id，不参与配额）。 */
 export function zenRequestId(): string {
-  const bytes = crypto.randomBytes(20)
-  return `msg_${bytes.subarray(0, 6).toString("hex")}${base62From(bytes.subarray(6, 20), 14)}`
+  const stamp = BigInt(Date.now()) * 0x1000n + 1n
+  const prefix = BigInt.asUintN(48, stamp).toString(16).padStart(12, "0")
+  return `msg_${prefix}${base62From(crypto.randomBytes(14), 14)}`
 }
 
 /**
@@ -153,7 +171,7 @@ export function zenSessionForRequest(
   connection: ProviderConnection,
   model: string,
   ctx?: { c?: Context },
-): string {
+): Promise<string> {
   // 身份优先取多用户模式下的 userId;单用户模式退回客户端 IP。走仓库自己的
   // getClientIp 而不是裸读 x-forwarded-for——那个头客户端可伪造,拿它当配额桶
   // 等于谁都能靠无限换 session 绕开限额(是否信任转发头由 TRUST_PROXY 统一决定)。
@@ -185,9 +203,10 @@ function zenHeaders(
   const headers = buildBaseHeaders(connection, credential)
   setHeader(headers, "authorization", "Bearer public")
   setHeader(headers, "user-agent", ZEN_CLIENT_UA)
-  setHeader(headers, "x-opencode-client", "desktop")
+  setHeader(headers, "x-opencode-client", "cli")
   setHeader(headers, "x-opencode-project", "global")
   setHeader(headers, "x-opencode-session", session)
+  setHeader(headers, "x-opencode-session-id", session)
   setHeader(headers, "x-opencode-request", requestId)
   setHeader(headers, "accept", accept)
   return headers
@@ -336,7 +355,31 @@ export function applyFreeTierFingerprint(
   // 「上游拼写 → 调用方拼写」,所以要反向查。
   rewriteNamedToolChoice(body.tool_choice, rename, style)
 
-  body.tools = out
+  body.tools = out.map((tool) => {
+    const name = toolNameOf(tool)
+    if (!quartetSlotOf(name)) return tool
+    const entry = tool as Record<string, unknown>
+    const fn = functionOf(entry)
+    const holder = fn ?? entry
+    const schema = holder.parameters as Record<string, unknown> | undefined
+    const properties = schema?.properties
+    if (
+      properties
+      && typeof properties === "object"
+      && Object.keys(properties).length > 0
+    )
+      return tool
+    const parameters = {
+      ...schema,
+      type: "object",
+      properties: {
+        input: { type: "string", description: "Optional tool input." },
+      },
+    }
+    return fn ?
+        { ...entry, function: { ...fn, parameters } }
+      : { ...entry, parameters }
+  })
   if (body.tool_choice === undefined) {
     if (style === "responses") body.tool_choice = "auto"
     else if (!hadClientTools) body.tool_choice = "none"
@@ -807,14 +850,23 @@ function endpointsForModel(modelId: string): Array<"chat" | "responses"> {
   return endpointForModel(modelId) === "/responses" ? ["responses"] : ["chat"]
 }
 
+/** Upgrade saved official legacy URLs without rewriting user-supplied gateways. */
+function zenUrl(baseUrl: string, endpoint: string): string {
+  const url = new URL(baseUrl)
+  if (
+    url.origin === "https://opencode.ai"
+    && ["", "/zen", "/zen/v1", "/v1"].includes(url.pathname.replace(/\/+$/, ""))
+  )
+    baseUrl = "https://opencode.ai/inference"
+  return joinUrl(baseUrl, endpoint)
+}
+
 export const openCodeZenAdapter: ProtocolAdapter = {
   protocol: "opencode-zen-free",
 
   async discoverModels({ connection, credential, signal }) {
-    // baseUrl 形如 https://opencode.ai/zen；joinUrl 会补上 /v1，
-    // 正好落在 https://opencode.ai/zen/v1/models。
-    const url = joinUrl(connection.baseUrl, "/models")
-    const session = zenSessionFor(`discover\u0000${connection.id}`)
+    const url = zenUrl(connection.baseUrl, "/models")
+    const session = await zenSessionFor(`discover\u0000${connection.id}`)
     const response = await fetch(
       url,
       connectionFetchInit(connection, {
@@ -872,7 +924,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     const upstreamModelId = target.upstreamModelId
     // 门禁只认 muse-spark 走 Responses；真撞上了由上层按 model.endpoints 分流，
     // 这里仍然按 chat 线发，让上游的 400 说清楚而不是静默改协议。
-    const session = zenSessionForRequest(connection, upstreamModelId, ctx)
+    const session = await zenSessionForRequest(connection, upstreamModelId, ctx)
     const requestId = zenRequestId()
 
     const upstreamPayload: Record<string, unknown> = {
@@ -885,7 +937,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     const wire = applyFreeTierFingerprint(upstreamPayload, "chat")
 
     const response = await fetch(
-      joinUrl(connection.baseUrl, "/chat/completions"),
+      zenUrl(connection.baseUrl, "/chat/completions"),
       connectionFetchInit(connection, {
         method: "POST",
         headers: zenHeaders(
@@ -942,7 +994,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     ctx,
   }) {
     const upstreamModelId = target.upstreamModelId
-    const session = zenSessionForRequest(connection, upstreamModelId, ctx)
+    const session = await zenSessionForRequest(connection, upstreamModelId, ctx)
     const requestId = zenRequestId()
 
     const upstreamPayload: Record<string, unknown> = {
@@ -954,7 +1006,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     const wire = applyFreeTierFingerprint(upstreamPayload, "responses")
 
     const response = await fetch(
-      joinUrl(connection.baseUrl, "/responses"),
+      zenUrl(connection.baseUrl, "/responses"),
       connectionFetchInit(connection, {
         method: "POST",
         headers: zenHeaders(

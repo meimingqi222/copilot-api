@@ -1,5 +1,6 @@
 import { RedactionError, type RedactionScope } from "~/lib/redaction/context"
 import { record } from "~/lib/redaction/wire"
+import { extractSignatureAlias } from "~/lib/thinking"
 
 type Packet = Record<string, unknown>
 interface Frame {
@@ -231,7 +232,12 @@ class StreamRestorer {
       Array.isArray(change.reasoning_details) ?
         change.reasoning_details
       : undefined
-    for (const key of ["reasoning_text", "reasoning_content", "reasoning"]) {
+    for (const key of [
+      "reasoning_text",
+      "reasoning_content",
+      "reasoning",
+      "thinking",
+    ]) {
       const id = `${group}:thinking:${key}`
       const channel = this.delta(change, key, {
         id,
@@ -241,33 +247,11 @@ class StreamRestorer {
         emit: at((out, tail) => (out[key] = tail)),
       })
       const existing = channel ?? this.channels.get(id)
-      if (!details && existing)
-        this.sign(existing, change.signature ?? change.reasoning_opaque)
+      if (!details?.length && existing)
+        this.sign(existing, extractSignatureAlias(change))
     }
-    for (const [position, rawDetail] of (details ?? []).entries()) {
-      const detail = record(rawDetail)
-      if (!detail) continue
-      const ref =
-        detail.index === undefined && detail.id !== undefined ?
-          { id: detail.id }
-        : { index: detail.index ?? position }
-      const id = `${group}:detail:${detail.index ?? detail.id ?? position}`
-      for (const key of ["text", "thinking", "reasoning"])
-        this.delta(detail, key, {
-          id,
-          group,
-          final,
-          thinking: "chat",
-          emit: at((out, tail) =>
-            append(out, "reasoning_details", {
-              ...ref,
-              type: detail.type,
-              [key]: tail,
-            }),
-          ),
-        })
-      this.sign(this.get(id, group), detail.signature)
-    }
+    this.chatParts(change, "content", group, final, at)
+    this.chatParts(change, "reasoning_details", group, final, at)
     const legacyCall = record(change.function_call)
     if (legacyCall)
       this.delta(legacyCall, "arguments", {
@@ -299,18 +283,63 @@ class StreamRestorer {
     }
   }
 
+  private chatParts(
+    change: Packet,
+    field: string,
+    group: string,
+    final: boolean,
+    at: (put: (change: Packet, tail: string) => void) => Emit,
+  ): void {
+    const parts = change[field]
+    if (!Array.isArray(parts)) return
+    for (const [position, rawPart] of parts.entries()) {
+      const part = record(rawPart)
+      if (!part) continue
+      const thinking =
+        field === "reasoning_details"
+        || part.type === "thinking"
+        || part.type === "reasoning"
+      const ref =
+        part.index !== undefined ? { index: part.index }
+        : part.id !== undefined ? { id: part.id }
+        : field === "reasoning_details" ? { index: position }
+        : {}
+      for (const key of ["text", "thinking", "reasoning"]) {
+        const id = `${group}:${field}:${part.index ?? part.id ?? position}:${key}`
+        const channel =
+          this.delta(part, key, {
+            id,
+            group,
+            final,
+            thinking: thinking ? "chat" : undefined,
+            emit: at((out, tail) =>
+              append(out, field, { ...ref, type: part.type, [key]: tail }),
+            ),
+          }) ?? this.channels.get(id)
+        if (thinking && channel) this.sign(channel, extractSignatureAlias(part))
+      }
+    }
+  }
+
   private messages(packet: Packet, type: string): void {
     const group = `messages:${packet.index ?? 0}`
     const block = record(packet.content_block)
-    if (
-      type === "content_block_start"
-      && block?.type === "thinking"
-      && typeof block.thinking === "string"
-    ) {
-      const channel = this.get(group, group)
-      channel.thinking = block.thinking
-      channel.wire = "messages"
-      this.retain(channel, block.thinking)
+    if (type === "content_block_start" && block) {
+      for (const key of ["text", "thinking"]) {
+        const channel = this.delta(block, key, {
+          id: group,
+          group,
+          thinking: key === "thinking" ? "messages" : undefined,
+          emit: (tail) => ({
+            type: "content_block_delta",
+            index: packet.index,
+            delta: { type: `${key}_delta`, [key]: tail },
+          }),
+        })
+        if (channel?.tail && this.wrapper?.event)
+          channel.wrapper = { ...this.wrapper, event: "content_block_delta" }
+        if (channel && key === "thinking") this.sign(channel, block.signature)
+      }
     }
     const change = record(packet.delta)
     if (type === "content_block_delta" && change) {
@@ -391,7 +420,7 @@ class StreamRestorer {
       for (const [position, rawPart] of parts.entries()) {
         const part = record(rawPart)
         if (!part) continue
-        const signature = part.thoughtSignature ?? part.thought_signature
+        const signature = part.thoughtSignature || part.thought_signature
         const sealed = Boolean(part.thought) && typeof signature === "string"
         // Signed functionCall parts are complete objects, restored by the normal walker.
         const channel = this.delta(part, "text", {
