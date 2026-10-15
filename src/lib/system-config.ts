@@ -36,6 +36,62 @@ const settingsSchema = z
     concurrencyQueueLimit: z.number().int().min(0).max(10000).default(100),
     concurrencyQueueWaitSeconds: z.number().int().min(1).max(600).default(30),
     codexAutoReset: z.boolean().default(false),
+    accountWarmup: z
+      .object({
+        enabled: z.boolean(),
+        models: z
+          .object({
+            claude: z.string().trim().max(256).default(""),
+            codex: z.string().trim().max(256).default(""),
+            antigravityGemini: z.string().trim().max(256).default(""),
+            antigravityClaude: z.string().trim().max(256).default(""),
+          })
+          .strict()
+          .default({
+            claude: "",
+            codex: "",
+            antigravityGemini: "",
+            antigravityClaude: "",
+          }),
+        times: z
+          .array(
+            z
+              .string()
+              .regex(
+                /^(?:[01]\d|2[0-3]):[0-5]\d$/,
+                "Warmup times must use HH:mm (00:00–23:59)",
+              ),
+          )
+          .min(1)
+          .max(24)
+          .refine(
+            (times) => new Set(times).size === times.length,
+            "Duplicate warmup times",
+          ),
+        timeZone: z
+          .string()
+          .max(100)
+          .refine((value) => {
+            try {
+              new Intl.DateTimeFormat("en", { timeZone: value }).format()
+              return true
+            } catch {
+              return false
+            }
+          }, "Invalid warmup time zone"),
+      })
+      .strict()
+      .default(() => ({
+        enabled: false,
+        models: {
+          claude: "",
+          codex: "",
+          antigravityGemini: "",
+          antigravityClaude: "",
+        },
+        times: ["07:00", "12:00", "17:00", "22:00"],
+        timeZone: "Asia/Shanghai",
+      })),
     codexModelIds: z
       .array(z.string().trim().min(1).max(256))
       .max(100)
@@ -71,6 +127,9 @@ const settingsSchema = z
 export const systemConfigUpdateSchema = settingsSchema
   .extend({
     redaction: settingsSchema.shape.redaction.removeDefault().optional(),
+    accountWarmup: settingsSchema.shape.accountWarmup
+      .removeDefault()
+      .optional(),
     codexModelIds: settingsSchema.shape.codexModelIds
       .removeDefault()
       .optional(),
@@ -120,6 +179,7 @@ const safeDefaults: SystemSettings = {
   concurrencyQueueLimit: 100,
   concurrencyQueueWaitSeconds: 30,
   codexAutoReset: false,
+  accountWarmup: settingsSchema.shape.accountWarmup.parse(undefined),
   codexModelIds: null,
   quotaDisplayMode: "remaining",
   defaultProxyUrl: "",
@@ -227,6 +287,8 @@ export function updateSystemConfig(
     settings: {
       ...settings,
       redaction: settings.redaction ?? effectiveSettings().redaction,
+      accountWarmup:
+        settings.accountWarmup ?? effectiveSettings().accountWarmup,
       codexModelIds:
         settings.codexModelIds === undefined ?
           effectiveSettings().codexModelIds

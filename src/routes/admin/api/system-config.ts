@@ -2,6 +2,7 @@ import { Hono } from "hono"
 
 import { readJsonBody } from "~/lib/request-body"
 import { state } from "~/lib/state"
+import { getAccountWarmupModels } from "~/lib/quota/warmup"
 import { publicRoutingGroupModels } from "~/lib/routing-groups/catalog"
 import { refreshModelsForAllAccounts } from "~/lib/utils"
 import { buildCodexClientModelsResponse } from "~/services/codex/client-models"
@@ -14,6 +15,10 @@ import {
 export const systemConfigApiRoutes = new Hono()
 
 systemConfigApiRoutes.get("/", (c) => c.json(getSystemConfig()))
+
+systemConfigApiRoutes.get("/warmup-models", (c) =>
+  c.json({ models: getAccountWarmupModels() }),
+)
 
 systemConfigApiRoutes.get("/codex-models", async (c) => {
   if (!state.models) await refreshModelsForAllAccounts()

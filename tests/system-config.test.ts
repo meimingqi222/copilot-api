@@ -180,6 +180,40 @@ test("quota display mode persists and legacy configs default to remaining", () =
   expect(getSystemSettings().quotaDisplayMode).toBe("remaining")
 })
 
+test("account warmup defaults off, persists, preserves omitted updates and rejects invalid schedules", () => {
+  expect(getSystemSettings().accountWarmup.enabled).toBe(false)
+  const accountWarmup = {
+    enabled: true,
+    times: ["06:30", "11:30"],
+    timeZone: "Asia/Shanghai",
+    models: {
+      claude: "claude-haiku-4-5",
+      codex: "",
+      antigravityGemini: "gemini-3.8-flash",
+      antigravityClaude: "",
+    },
+  }
+  updateSystemConfig({ ...normal, accountWarmup, logLevel: "debug" })
+  const value = JSON.parse(saved!) as { expiresAt: number }
+  value.expiresAt = Date.now() - 1
+  initialize(JSON.stringify(value))
+  updateSystemConfig(normal)
+  expect(getSystemSettings().accountWarmup).toEqual(accountWarmup)
+  for (const invalid of [
+    { ...accountWarmup, times: [] },
+    { ...accountWarmup, times: ["24:00"] },
+    { ...accountWarmup, times: ["7:00"] },
+    { ...accountWarmup, times: ["07:00", "07:00"] },
+    { ...accountWarmup, timeZone: "invalid/zone" },
+    { ...accountWarmup, enabled: "true" },
+    { ...accountWarmup, models: { codex: 123 } },
+    { ...accountWarmup, models: { unknown: "model" } },
+  ])
+    expect(() =>
+      updateSystemConfig({ ...normal, accountWarmup: invalid }),
+    ).toThrow()
+})
+
 test("Codex auto reset defaults off, persists and survives diagnostic expiry", () => {
   expect(getSystemSettings().codexAutoReset).toBe(false)
   updateSystemConfig({ ...normal, codexAutoReset: true, logLevel: "debug" })

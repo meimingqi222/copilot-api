@@ -277,6 +277,119 @@
         </div>
       </section>
 
+      <section class="card p-0 overflow-hidden" id="account-warmup-settings">
+        <div class="p-4 sm:p-5 flex items-start justify-between gap-4">
+          <div class="space-y-1 max-w-xl">
+            <h3
+              class="font-semibold text-sm"
+              x-text="t('system.accountWarmup')"
+            ></h3>
+            <p
+              id="account-warmup-hint"
+              class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+              x-text="t('system.accountWarmupHint')"
+            ></p>
+          </div>
+          <label class="apple-switch">
+            <input
+              type="checkbox"
+              x-model="settings.accountWarmup.enabled"
+              :aria-label="t('system.accountWarmup')"
+              aria-describedby="account-warmup-hint"
+              :disabled="saving"
+            />
+            <span class="apple-switch-slider"></span>
+          </label>
+        </div>
+        <div class="border-t border-[var(--apple-gray-5)] p-4 sm:p-5 space-y-4">
+          <div
+            class="grid grid-cols-1 sm:grid-cols-2 gap-4"
+            :class="{ 'opacity-50': !settings.accountWarmup.enabled }"
+          >
+            <label class="block space-y-2">
+              <span
+                class="block text-xs font-medium"
+                x-text="t('system.warmupTimes')"
+              ></span>
+              <input
+                type="text"
+                class="input w-full font-mono text-sm"
+                x-model="warmupTimesText"
+                placeholder="07:00, 12:00, 17:00, 22:00"
+                :disabled="saving || !settings.accountWarmup.enabled"
+                aria-describedby="account-warmup-schedule-hint"
+              />
+            </label>
+            <label class="block space-y-2">
+              <span
+                class="block text-xs font-medium"
+                x-text="t('system.warmupTimeZone')"
+              ></span>
+              <input
+                type="text"
+                class="input w-full font-mono text-sm"
+                x-model="settings.accountWarmup.timeZone"
+                placeholder="Asia/Shanghai"
+                :disabled="saving || !settings.accountWarmup.enabled"
+              />
+            </label>
+            <template
+              x-for="pool in ['claude', 'codex', 'antigravityGemini', 'antigravityClaude']"
+              :key="pool"
+            >
+              <label class="block space-y-2">
+                <span
+                  class="block text-xs font-medium"
+                  x-text="t('system.warmupModel.' + pool)"
+                ></span>
+                <select
+                  class="input w-full text-sm"
+                  x-model="settings.accountWarmup.models[pool]"
+                  :disabled="saving || !settings.accountWarmup.enabled || warmupModelsLoading"
+                  aria-describedby="account-warmup-model-hint"
+                >
+                  <option
+                    value=""
+                    x-text="t('system.warmupModelAuto')"
+                  ></option>
+                  <template
+                    x-for="model in warmupModelOptions(pool)"
+                    :key="model.id"
+                  >
+                    <option
+                      :value="model.id"
+                      :disabled="model.unavailable"
+                      x-text="warmupModelLabel(model)"
+                    ></option>
+                  </template>
+                </select>
+                <span
+                  class="block text-xs text-[var(--apple-text-secondary)]"
+                  x-show="!warmupModelsLoading && !(warmupModels[pool] || []).some(model => model.recommended)"
+                  x-text="t('system.warmupModelNoRecommendation')"
+                ></span>
+              </label>
+            </template>
+          </div>
+          <p
+            x-show="warmupModelsError"
+            x-text="warmupModelsError"
+            role="alert"
+            class="text-xs text-[var(--apple-red)]"
+          ></p>
+          <p
+            id="account-warmup-model-hint"
+            class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            x-text="t('system.warmupModelHint')"
+          ></p>
+          <p
+            id="account-warmup-schedule-hint"
+            class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            x-text="t('system.warmupScheduleHint')"
+          ></p>
+        </div>
+      </section>
+
       <!-- Section 2: Codex 客户端集成 -->
       <section
         class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"

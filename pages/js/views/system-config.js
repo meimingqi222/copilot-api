@@ -15,6 +15,45 @@ function systemConfigView() {
     codexModelSearch: "",
     redactionWordsText: "",
     redactionHomePrefixesText: "",
+    warmupTimesText: "",
+    warmupModels: {},
+    warmupModelsError: "",
+    warmupModelsLoading: false,
+
+    warmupModelOptions(pool) {
+      const options = (this.warmupModels[pool] || []).map((model) => ({
+        ...model,
+        unavailable: false,
+      }))
+      const selected = this.settings?.accountWarmup.models[pool]
+      if (!selected || options.some((model) => model.id === selected))
+        return options
+      return [...options, { id: selected, name: selected, unavailable: true }]
+    },
+
+    warmupModelLabel(model) {
+      const name =
+        model.name === model.id ? model.id : `${model.name} (${model.id})`
+      const label =
+        model.unavailable ? "system.warmupModelUnavailable"
+        : model.recommended ? "system.warmupModelRecommended"
+        : "system.warmupModelOther"
+      return `${name} · ${this.t(label)}`
+    },
+
+    async loadWarmupModels() {
+      this.warmupModelsLoading = true
+      this.warmupModelsError = ""
+      try {
+        this.warmupModels = (
+          await API.request("/system-config/warmup-models")
+        ).models
+      } catch (error) {
+        this.warmupModelsError = error.message
+      } finally {
+        this.warmupModelsLoading = false
+      }
+    },
 
     get filteredCodexModels() {
       const query = this.codexModelSearch.trim().toLowerCase()
@@ -55,6 +94,18 @@ function systemConfigView() {
       this.settings.concurrencyQueueLimit ??= 100
       this.settings.concurrencyQueueWaitSeconds ??= 30
       this.settings.defaultProxyUrl ??= ""
+      this.settings.accountWarmup ??= {
+        enabled: false,
+        times: ["07:00", "12:00", "17:00", "22:00"],
+        timeZone: "Asia/Shanghai",
+      }
+      this.settings.accountWarmup.models ??= {
+        claude: "",
+        codex: "",
+        antigravityGemini: "",
+        antigravityClaude: "",
+      }
+      this.warmupTimesText = this.settings.accountWarmup.times.join(", ")
       this.redactionWordsText = this.settings.redaction?.words.join("\n") ?? ""
       this.redactionHomePrefixesText =
         this.settings.redaction?.homePrefixes.join("\n") ?? ""
@@ -74,6 +125,7 @@ function systemConfigView() {
       this.error = ""
       this.saved = false
       void this.loadCodexModels()
+      void this.loadWarmupModels()
       try {
         const config = await API.request("/system-config")
         this.accept(config)
@@ -105,6 +157,7 @@ function systemConfigView() {
         concurrencyQueueLimit: 100,
         concurrencyQueueWaitSeconds: 30,
         codexAutoReset: false,
+        accountWarmup: { ...this.settings.accountWarmup, enabled: false },
         codexModelIds: this.settings?.codexModelIds ?? null,
         quotaDisplayMode: "remaining",
         logRetentionDays: 7,
@@ -131,6 +184,10 @@ function systemConfigView() {
             method: "PUT",
             body: {
               ...this.settings,
+              accountWarmup: {
+                ...this.settings.accountWarmup,
+                times: this.warmupTimesText.split(/[,，\s]+/).filter(Boolean),
+              },
               redaction: {
                 ...this.settings.redaction,
                 words: this.redactionWordsText

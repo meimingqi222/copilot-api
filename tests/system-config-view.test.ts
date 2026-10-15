@@ -10,6 +10,17 @@ test("system settings display MiB and save the selected storage budget", async (
     logMaxTotalBytes: 1024 ** 3,
     concurrencyQueueLimit: 100,
     concurrencyQueueWaitSeconds: 30,
+    accountWarmup: {
+      enabled: false,
+      times: ["07:00"],
+      timeZone: "Asia/Shanghai",
+      models: {
+        claude: "",
+        codex: "",
+        antigravityGemini: "",
+        antigravityClaude: "",
+      },
+    },
     redaction: {
       enabled: false,
       secrets: true,
@@ -33,6 +44,7 @@ test("system settings display MiB and save the selected storage budget", async (
         logMaxTotalBytes: number
         concurrencyQueueLimit: number
         concurrencyQueueWaitSeconds: number
+        accountWarmup: typeof settings.accountWarmup
         redaction: typeof settings.redaction
       }
     | undefined
@@ -52,6 +64,7 @@ test("system settings display MiB and save the selected storage budget", async (
     },
   }) as {
     settings: typeof settings
+    warmupTimesText: string
     maxLogMiB: number
     saved: boolean
     accept: (value: unknown) => void
@@ -63,6 +76,9 @@ test("system settings display MiB and save the selected storage budget", async (
   view.settings.logRetentionDays = 3
   view.settings.concurrencyQueueLimit = 64
   view.settings.concurrencyQueueWaitSeconds = 12
+  view.settings.accountWarmup.enabled = true
+  view.settings.accountWarmup.models.codex = "gpt-6-luna"
+  view.warmupTimesText = "06:30，11:30, 16:30"
   view.settings.redaction.enabled = true
   view.settings.redaction.secrets = false
   view.settings.redaction.homePaths = true
@@ -73,12 +89,24 @@ test("system settings display MiB and save the selected storage budget", async (
   expect(submitted?.logRetentionDays).toBe(3)
   expect(submitted?.concurrencyQueueLimit).toBe(64)
   expect(submitted?.concurrencyQueueWaitSeconds).toBe(12)
+  expect(submitted?.accountWarmup).toEqual({
+    enabled: true,
+    times: ["06:30", "11:30", "16:30"],
+    timeZone: "Asia/Shanghai",
+    models: {
+      claude: "",
+      codex: "gpt-6-luna",
+      antigravityGemini: "",
+      antigravityClaude: "",
+    },
+  })
   expect(submitted?.redaction).toEqual(selectedRedaction)
   expect(view.saved).toBe(true)
   view.useRecommended()
   expect(view.maxLogMiB).toBe(1024)
   expect(view.settings.concurrencyQueueLimit).toBe(100)
   expect(view.settings.concurrencyQueueWaitSeconds).toBe(30)
+  expect(view.settings.accountWarmup.enabled).toBe(false)
   expect(view.settings.logRetentionDays).toBe(7)
   expect(view.settings.redaction).toEqual(selectedRedaction)
   view.settings.redaction.enabled = false
@@ -270,6 +298,7 @@ test("system settings render translated labels and titles in English", () => {
             settings: { codexModelIds: [] },
             source: "webui",
             rule: "secrets",
+            pool: "antigravityClaude",
           })
         : ""
       return `>${String(value)}`

@@ -131,6 +131,26 @@ const i18n = {
       "system.codexAutoReset": "自动使用即将过期的 Codex 重置次数",
       "system.codexAutoResetHint":
         "后台每分钟检查，在重置次数到期前 5 分钟内自动使用一次；5 小时和周额度均为满额时跳过。需要服务保持运行。",
+      "system.accountWarmup": "Claude / Codex / Antigravity 定时预热",
+      "system.accountWarmupHint":
+        "默认关闭。对没有活动 5 小时窗口的可用账号发送真实请求，提示词为 Reply only OK.，尝试提前启动窗口；会消耗额度，不能增加额度或绕过周限额。Antigravity 分别检查 Gemini 与 Claude/GPT 额度池，窗口信息不明确时跳过；不保证上游从首次请求开始计时。",
+      "system.warmupModel.claude": "Claude 预热模型",
+      "system.warmupModel.codex": "Codex 预热模型",
+      "system.warmupModel.antigravityGemini": "Antigravity · Gemini 池预热模型",
+      "system.warmupModel.antigravityClaude":
+        "Antigravity · Claude/GPT 池预热模型（Claude）",
+      "system.warmupModelAuto": "自动选择低消耗模型（推荐）",
+      "system.warmupModelRecommended": "推荐 · 低消耗",
+      "system.warmupModelOther": "非推荐 · 注意消耗",
+      "system.warmupModelUnavailable": "已不可用，预热时跳过",
+      "system.warmupModelNoRecommendation":
+        "暂无可用推荐模型；自动模式将跳过此类账号。",
+      "system.warmupModelHint":
+        "推荐：Claude 用 Haiku，Codex 优先 Luna、其次 Mini，Antigravity Gemini 用 Flash，Claude 池用 Haiku。下拉列表来自已启用账号的已启用模型，推荐模型排在前面。自动模式逐账号选择，没有低消耗模型就跳过；指定模型时，不支持它的账号会跳过。非推荐模型可能增加消耗，不同额度池不能互相预热。",
+      "system.warmupTimes": "每日预热时刻（HH:mm，逗号分隔）",
+      "system.warmupTimeZone": "时区（IANA）",
+      "system.warmupScheduleHint":
+        "按所选时区每天执行，最多 24 个时刻。服务需保持运行；仅补偿 5 分钟内错过的时刻，同账号每个时刻最多尝试一次，失败不自动重发。建议按实际工作时间设置，不保证每天获得四轮额度。结果记录在服务日志中。",
       "system.performanceDetails": "详细性能指标",
       "system.performanceDetailsHint":
         "记录首输出、首文本、首写入和协议转换耗时。关闭仅影响新请求，基础 TPS、用量与原有 TTFT 仍保留。",
@@ -1741,6 +1761,26 @@ const i18n = {
       "system.codexAutoReset": "Automatically use expiring Codex reset credits",
       "system.codexAutoResetHint":
         "Checks every minute and uses a credit within 5 minutes of expiry, unless both 5-hour and weekly quotas are full. The server must stay running.",
+      "system.accountWarmup": "Scheduled Claude / Codex / Antigravity warmup",
+      "system.accountWarmupHint":
+        "Off by default. Sends a real request with Reply only OK. to an available account without an active 5-hour window to try to start it early. Uses allowance; cannot increase quotas or bypass weekly limits. Antigravity checks Gemini and Claude/GPT pools separately and skips unclear windows. First-use window timing is not guaranteed.",
+      "system.warmupModel.claude": "Claude warmup model",
+      "system.warmupModel.codex": "Codex warmup model",
+      "system.warmupModel.antigravityGemini": "Antigravity · Gemini pool model",
+      "system.warmupModel.antigravityClaude":
+        "Antigravity · Claude/GPT pool model (Claude)",
+      "system.warmupModelAuto": "Auto-select a low-cost model (recommended)",
+      "system.warmupModelRecommended": "Recommended · low cost",
+      "system.warmupModelOther": "Not recommended · higher usage possible",
+      "system.warmupModelUnavailable": "Unavailable; warmup will skip",
+      "system.warmupModelNoRecommendation":
+        "No recommended model available; auto mode will skip these accounts.",
+      "system.warmupModelHint":
+        "Recommended: Haiku for Claude, Luna then Mini for Codex, Flash for Antigravity Gemini, and Haiku for its Claude pool. Lists show enabled models from enabled accounts, with recommendations first. Auto selects per account and skips when no low-cost model exists. An explicit choice skips accounts without that model. Other models may use more allowance; separate quota pools cannot warm each other.",
+      "system.warmupTimes": "Daily times (HH:mm, comma-separated)",
+      "system.warmupTimeZone": "Time zone (IANA)",
+      "system.warmupScheduleHint":
+        "Runs daily in the selected time zone, up to 24 times. Keep the server running; missed times are caught up only within 5 minutes. Each account is attempted once per time, with no automatic resend on failure. Match your working hours; four daily allowances are not guaranteed. Results appear in server logs.",
       "system.performanceDetails": "Detailed performance metrics",
       "system.performanceDetailsHint":
         "Measure first output, text, write and translation timings. Disabling affects new requests only; basic TPS, usage and original TTFT remain.",

@@ -13,6 +13,27 @@ const templates = new Map<string, CodexClientModel>(
 )
 const discoveredCatalogs = new Map<string, Map<string, CodexClientModel>>()
 
+/** Lowest effort representable by our Responses payload, from this account's catalog. */
+export function lowestCodexReasoningEffort(
+  connectionId: string,
+  model: string,
+): "low" | "medium" | "high" | undefined {
+  const id = canonicalNativeModelId(model)
+  const entry =
+    discoveredCatalogs.get(connectionId)?.get(id) ?? templates.get(id)
+  const levels = entry?.supported_reasoning_levels
+  if (!Array.isArray(levels)) return undefined
+  return (["low", "medium", "high"] as const).find((effort) =>
+    levels.some(
+      (level: unknown) =>
+        level !== null
+        && typeof level === "object"
+        && "effort" in level
+        && level.effort === effort,
+    ),
+  )
+}
+
 interface NativeModelSource {
   connectionId: string
   nativeId: string

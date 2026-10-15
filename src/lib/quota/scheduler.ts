@@ -23,6 +23,7 @@ import {
 } from "~/lib/provider-connections"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
 import { autoResetExpiringCodexQuota } from "~/lib/quota/codex-reset"
+import { runAccountWarmups } from "~/lib/quota/warmup"
 import { initializeProviderRegistry } from "~/services/providers"
 import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
@@ -85,6 +86,10 @@ export async function refreshQuotaForConnection(
 export function scheduleQuotaRefresh(): void {
   initializeProviderRegistry()
   void refreshAllQuotas()
+  void runAccountWarmups()
+  globalTimers.interval(() => {
+    void runAccountWarmups()
+  }, 30_000)
   globalTimers.interval(() => {
     void refreshAllQuotas()
   }, QUOTA_RECHECK_INTERVAL_MS)
