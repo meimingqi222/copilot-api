@@ -167,15 +167,20 @@ function buildSnapshot(parsed: ParsedQoderQuota, host: string): QuotaSnapshot {
   }
   if (parsed.windows.length === 0) return base
 
-  // 头号百分比取最紧的那个窗口：任一窗口见底就该停止路由。
-  const usedPercent = Math.max(...parsed.windows.map((w) => w.usedPercent))
-  const primary = parsed.windows[0]!
+  // Qoder 的几个 credits 池可以互用：套餐额度见底时加购包仍能继续打。
+  // 耗尽判定必须看全部窗口的剩余总量，不能拿最紧那个窗口当整号已空。
+  const remaining = parsed.windows.reduce(
+    (sum, window) => sum + Math.max(0, window.total - window.used),
+    0,
+  )
+  const total = parsed.windows.reduce((sum, window) => sum + window.total, 0)
+  const remainingPercent = total > 0 ? (100 * remaining) / total : 0
   return {
     ...base,
-    premiumInteractionsRemaining: Math.round(Math.max(0, 100 - usedPercent)),
+    premiumInteractionsRemaining: Math.round(Math.max(0, remainingPercent)),
     premiumInteractionsTotal: 100,
-    chatRemaining: Math.max(0, Math.round(primary.total - primary.used)),
-    chatTotal: Math.round(primary.total),
+    chatRemaining: Math.max(0, Math.round(remaining)),
+    chatTotal: Math.round(total),
   }
 }
 

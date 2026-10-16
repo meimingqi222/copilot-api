@@ -7,7 +7,13 @@
  */
 import { afterEach, describe, expect, mock, test } from "bun:test"
 
+import {
+  __resetProviderConnectionsForTest,
+  createConnection,
+  getConnectionQuotaState,
+} from "~/lib/provider-connections"
 import type { ProviderConnection } from "~/lib/provider-connections/types"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { parseQoderQuota } from "~/lib/quota/fetchers/qoder"
 import { fetchQoderQuota } from "~/lib/quota/fetchers/qoder"
 
@@ -15,6 +21,7 @@ const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  __resetProviderConnectionsForTest()
 })
 
 function makeConnection(): ProviderConnection {
@@ -135,12 +142,11 @@ describe("fetchQoderQuota", () => {
     expect(seen[0]?.auth).toBe("Bearer dt-1")
     expect(snapshot.provider).toBe("qoder")
     expect(snapshot.unlimited).toBe(false)
-    // 头号百分比取最紧的窗口：Team pack 已用 100% ⇒ 剩余 0%。
-    expect(snapshot.premiumInteractionsRemaining).toBe(0)
+    // 耗尽看全部 credits 池：userQuota 1500 + Top-up 100 + Team pack 0 = 1600 / 2150。
+    expect(snapshot.premiumInteractionsRemaining).toBe(74)
     expect(snapshot.premiumInteractionsTotal).toBe(100)
-    // 计数用第一个窗口（userQuota）。
-    expect(snapshot.chatRemaining).toBe(1500)
-    expect(snapshot.chatTotal).toBe(2000)
+    expect(snapshot.chatRemaining).toBe(1600)
+    expect(snapshot.chatTotal).toBe(2150)
     const details = snapshot.details?.qoder as
       | { displayMode?: string; plan?: string }
       | undefined
@@ -171,7 +177,48 @@ describe("fetchQoderQuota", () => {
     expect(urls[1]).toBe("https://openapi.qoder.sh/api/v1/deviceToken/refresh")
     expect(connection.credentials[0]?.context?.deviceToken).toBe("dt-2")
     expect(connection.credentials[0]?.context?.deviceRefreshToken).toBe("drt-2")
-    expect(snapshot.premiumInteractionsRemaining).toBe(0)
+    expect(snapshot.premiumInteractionsRemaining).toBe(74)
+  })
+
+  test("keeps the account available when one pack is empty but add-on credits remain", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        jsonResponse({
+          displayMode: "qoder",
+          qoderUsage: {
+            addOnQuota: {
+              total: 2600,
+              used: 507,
+              name: "Add-on credits",
+              unit: "credits",
+            },
+            dedicatedResourcePackages: [
+              {
+                total: 2000,
+                used: 2000,
+                name: "act-20261014-129",
+                unit: "credits",
+              },
+            ],
+          },
+        }),
+      ),
+    ) as unknown as typeof fetch
+
+    const snapshot = await fetchQoderQuota(makeConnection())
+    expect(snapshot.chatRemaining).toBe(2093)
+    expect(snapshot.premiumInteractionsRemaining).toBe(46)
+
+    __resetProviderConnectionsForTest()
+    const connection = await createConnection({
+      id: "qoder-addon",
+      name: "Qoder",
+      protocol: "qoder-native",
+      baseUrl: "https://api3.qoder.sh",
+      credentials: [{ id: "cred", value: "jt-1", authMode: "bearer" }],
+    })
+    applyOAuthQuotaSnapshot(connection, snapshot)
+    expect(getConnectionQuotaState(connection)).toBe("available")
   })
 
   test("reports an unavailable usage page without touching the chat credential", async () => {

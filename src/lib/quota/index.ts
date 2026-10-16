@@ -55,11 +55,16 @@ export function applyOAuthQuotaSnapshot(
   // limit (e.g. Grok CLI weekly-credit accounts). Exhaustion for xAI is
   // already handled by the percentage threshold (weekly/credit usage percent).
   // LobsterAI credits are a wallet balance: a few remaining points are still
-  // usable, so only 0 is exhausted (same as auto-checkin).
+  // usable, so only 0 is exhausted (same as auto-checkin). Qoder is the same:
+  // leftover add-on / dedicated packs are still spendable after one window hits 0.
   const countExhausted =
     provider !== "xai"
     && snapshot.chatRemaining !== undefined
-    && (provider === "lobsterai" ?
+    && ((
+      provider === "lobsterai"
+      || provider === "qoder"
+      || provider === "qoder-cn"
+    ) ?
       snapshot.chatRemaining <= 0
     : snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD)
 
