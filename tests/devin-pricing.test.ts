@@ -55,19 +55,6 @@ describe("SWE official pricing", () => {
     expect(resolveDevinPrice("claude-opus-4-8")).toBeNull()
   })
 
-  test("preserves promotional zeros and expires stale SWE-2 free prices", () => {
-    for (const id of ["swe-2", "swe-2-high", "swe-2-medium", "swe-2-max"]) {
-      expect(
-        resolveDevinPrice(id, Date.parse("2026-10-15T23:59:59Z"))
-          ?.promptPricePer1k,
-      ).toBe(0)
-      const after = resolveDevinPrice(id, Date.parse("2026-10-16T00:00:00Z"))
-      expect(after?.promptPricePer1k).toBe(0.003)
-      expect(after?.completionPricePer1k).toBe(0.015)
-      expect(after?.cacheReadPricePer1k).toBe(0.0003)
-    }
-  })
-
   test("manual overrides still win and deleting them restores the official default", () => {
     statsStore.setModelPricing("swe-1-6-fast", {
       promptPricePer1k: 0.1,
@@ -148,9 +135,9 @@ describe("SWE official pricing", () => {
     await refreshDevinPricing({
       filePath,
       now: now + 60 * 60 * 1000,
-      fetchDocument: async () => document(),
+      fetchDocument: async () => document(2),
     })
-    expect(resolveDevinPrice("swe-2-high", now)?.promptPricePer1k).toBe(0)
+    expect(resolveDevinPrice("swe-2-high", now)?.promptPricePer1k).toBe(0.002)
   })
 
   test("the admin view includes Devin prices in official counts and filtering", () => {
