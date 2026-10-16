@@ -31,7 +31,7 @@ function emptyModelStats(): UsageModelStats {
 }
 
 function addRowToModelStats(target: UsageModelStats, row: UsageRawRow): void {
-  target.requests += 1
+  target.requests += row.request_count ?? 1
   target.promptTokens += row.prompt_tokens
   target.completionTokens += row.completion_tokens
   target.cacheReadTokens += row.cache_read_tokens
@@ -243,6 +243,7 @@ function newPerfAccumulator(): PerfAccumulator {
 }
 
 function accumulatePerfRow(acc: PerfAccumulator, row: UsageRawRow): void {
+  if (row.request_count === 0) return
   acc.requests += 1
   if (row.streaming === 1) acc.streamingRequests += 1
   if (row.ttft_ms !== null) {

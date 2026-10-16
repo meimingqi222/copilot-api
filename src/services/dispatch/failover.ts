@@ -14,6 +14,11 @@ import {
   LocalUnavailableError,
 } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { identityFromAdmission, recordAccountUsage } from "~/lib/usage"
+import {
+  takeUsagePricingRounds,
+  toPricingRound,
+} from "~/lib/usage-pricing-rounds"
 import {
   addPerformanceTiming,
   markResponseReady,
@@ -173,6 +178,25 @@ function applyCurrentGroupOverrides(
     })
 }
 
+function recordFailedAttemptUsage(
+  current: RequestAdmission,
+  c: Context | undefined,
+  error: unknown,
+): void {
+  // Settle only this candidate's reported consumption before advancing.
+  const rounds =
+    c ? (takeUsagePricingRounds(c, current.connection.id) ?? []) : []
+  if (error instanceof HTTPError && error.reportedUsage) {
+    rounds.push(toPricingRound(error.reportedUsage))
+  }
+  recordAccountUsage({
+    identity: identityFromAdmission(current),
+    model: current.target.publicModelId,
+    rounds,
+    serviceTier: error instanceof HTTPError ? error.serviceTier : undefined,
+  })
+}
+
 export async function executeWithFailover<
   TPayload extends { model: string },
   TResult,
@@ -329,6 +353,7 @@ export async function executeWithFailover<
         if (!handedOffToStream) lease.release()
       }
     } catch (error) {
+      recordFailedAttemptUsage(current, c, error)
       addPerformanceTiming(
         c,
         "failedAttemptMs",

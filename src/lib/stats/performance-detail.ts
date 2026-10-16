@@ -89,6 +89,7 @@ export function computePerformanceDetails(
 ): PerformanceDetail[] {
   const groups = new Map<string, DetailAccumulator>()
   for (const row of rows) {
+    if (row.request_count === 0) continue
     const metrics = readRequestPerformance(row)
     if (!metrics) continue
     const identity = {

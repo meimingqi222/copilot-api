@@ -76,6 +76,9 @@ export function createTables(db: Database): void {
   ensureColumn(db, "usage_stats", "tps", "REAL")
   ensureColumn(db, "usage_stats", "performance_json", "TEXT")
   ensureColumn(db, "usage_stats", "streaming", "INTEGER DEFAULT 0")
+  // Existing rows remain one client request; internal/failed upstream usage
+  // can add tokens and cost without inflating client request totals.
+  ensureColumn(db, "usage_stats", "request_count", "INTEGER NOT NULL DEFAULT 1")
   // Add provider column so usage can be aggregated by provider even after
   // an account/connection is deleted (historical rows keep their provider).
   ensureColumn(db, "usage_stats", "provider", "TEXT")

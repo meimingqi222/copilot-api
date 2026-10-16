@@ -16,7 +16,7 @@ export function getUsageStatsByIntervalData(
   let query = `
     SELECT
       (timestamp / ?) * ? AS slot_ts,
-      COUNT(*) as requests,
+      SUM(request_count) as requests,
       SUM(prompt_tokens) as prompt_tokens,
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,

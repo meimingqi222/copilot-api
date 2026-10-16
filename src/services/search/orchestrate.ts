@@ -439,6 +439,9 @@ export async function* runSearchAwareStream(
         continue
       }
       if (raw.type === "error") {
+        usage = addUsage(usage, roundUsage)
+        params.onUsage?.(roundUsage)
+        if (usage) yield { type: "usage", usage }
         yield raw
         return
       }
@@ -469,6 +472,8 @@ export async function* runSearchAwareStream(
     }
     usage = addUsage(usage, roundUsage)
     params.onUsage?.(roundUsage)
+    // Preserve completed rounds even if a later search/model call fails.
+    if (usage) yield { type: "usage", usage }
     // A call that never received a part_end still has to be answerable.
     if (openInternalPartId !== undefined) {
       const call = calls.at(-1)

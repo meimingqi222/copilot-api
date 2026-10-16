@@ -158,6 +158,102 @@ describe("quota cycle window resolution", () => {
 })
 
 describe("quota cycle usage aggregation", () => {
+  test("legacy relative Codex reset uses fetch time and does not drift on repeated reads", () => {
+    const fetchedAt = Date.now() - 3_600_000
+    const details = {
+      rate_limit: {
+        primary_window: {
+          used_percent: 40,
+          limit_window_seconds: 18_000,
+          reset_after_seconds: 7200,
+        },
+        secondary_window: {
+          used_percent: 10,
+          limit_window_seconds: 604_800,
+          reset_after_seconds: 86400,
+        },
+      },
+    }
+    const first = enrichQuotaInfoForResponse("legacy", "codex", {
+      fetchedAt,
+      details,
+    })
+    const clock = spyOn(Date, "now").mockReturnValue(fetchedAt + 4 * 3_600_000)
+    try {
+      const second = enrichQuotaInfoForResponse("legacy", "codex", {
+        fetchedAt,
+        details,
+      })
+      const windows = first?.details?._quotaWindows as ReturnType<
+        typeof resolveCodexQuotaWindows
+      >
+      expect(
+        windows.map((window) => [window.windowStartMs, window.windowEndMs]),
+      ).toEqual([
+        [
+          Math.floor(fetchedAt / 1000) * 1000 + 7200_000 - FIVE_HOUR_MS,
+          Math.floor(fetchedAt / 1000) * 1000 + 7200_000,
+        ],
+        [
+          Math.floor(fetchedAt / 1000) * 1000 + 86400_000 - SEVEN_DAY_MS,
+          Math.floor(fetchedAt / 1000) * 1000 + 86400_000,
+        ],
+      ])
+      expect(second?.details?._quotaWindows).toEqual(windows)
+      expect(
+        enrichQuotaInfoForResponse("legacy", "codex", { details })?.details
+          ?._quotaWindows,
+      ).toBeUndefined()
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  test("supplementary consumption contributes cost and tokens, not client requests or performance samples", async () => {
+    const now = Date.now() - 1000
+    for (const requestCount of [1, 0]) {
+      statsStore.recordUsage({
+        date: statsStore.getDateString(now),
+        accountId: "supplementary",
+        provider: "codex",
+        model: "gpt-5",
+        promptTokens: 100,
+        completionTokens: 20,
+        cacheReadTokens: 30,
+        totalTokens: 150,
+        cost: 0.25,
+        timestamp: now,
+        requestCount,
+        tps: requestCount === 1 ? 10 : undefined,
+      })
+    }
+    const range = {
+      accountId: "supplementary",
+      startMs: now - 1,
+      endMs: now + 1,
+      tz: "UTC",
+    }
+    for (const summary of [
+      statsStore.getUsageStats("supplementary")[0],
+      statsStore.getUsageStatsByTimeRange(range)[0],
+      statsStore.getUsageStatsByInterval(
+        60,
+        "supplementary",
+        statsStore.getDateString(now),
+      )[0],
+      statsStore.getUsageByTimestampRange("supplementary", now - 1, now + 1),
+    ]) {
+      expect(summary).toMatchObject({
+        requests: 1,
+        totalTokens: 300,
+        cost: 0.5,
+      })
+    }
+    expect(
+      (await statsStore.getPerformanceInRange(range)).performance[0]?.requests,
+    ).toBe(1)
+  })
+
   test("Claude family windows include namespaced upstream aliases without false family matches", async () => {
     const models = [
       ["opus-premium", "anthropic/claude-opus-4-6"],

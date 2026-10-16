@@ -5,7 +5,7 @@ import type { IRUsage } from "~/services/ir/types"
 import { logger } from "~/lib/logger"
 import { getRequestLogContext } from "~/lib/request-log"
 
-interface PricingRound {
+export interface PricingRound {
   promptTokens: number
   completionTokens: number
   cacheReadTokens: number
@@ -21,6 +21,21 @@ interface RequestPricingRounds {
 
 // Internal accounting metadata; never add round breakdowns to client wire usage.
 const requestRounds = new WeakMap<Context, RequestPricingRounds>()
+
+export function toPricingRound(usage: IRUsage): PricingRound {
+  const cacheReadTokens = usage.cacheReadTokens ?? 0
+  const cacheWriteTokens = usage.cacheWriteTokens ?? 0
+  return {
+    promptTokens: Math.max(
+      (usage.inputTokens ?? 0) - cacheReadTokens - cacheWriteTokens,
+      0,
+    ),
+    completionTokens: usage.outputTokens ?? 0,
+    cacheReadTokens,
+    cacheWriteTokens,
+    cacheWrite1hTokens: usage.cacheWrite1hTokens,
+  }
+}
 
 export function clearUsagePricingRounds(c: Context | undefined): void {
   if (c) requestRounds.delete(c)
@@ -38,18 +53,7 @@ export function createUsagePricingRecorder(
   if (c) requestRounds.set(c, state)
   return (usage) => {
     if (!usage) return
-    const cacheReadTokens = usage.cacheReadTokens ?? 0
-    const cacheWriteTokens = usage.cacheWriteTokens ?? 0
-    state.rounds.push({
-      promptTokens: Math.max(
-        (usage.inputTokens ?? 0) - cacheReadTokens - cacheWriteTokens,
-        0,
-      ),
-      completionTokens: usage.outputTokens ?? 0,
-      cacheReadTokens,
-      cacheWriteTokens,
-      cacheWrite1hTokens: usage.cacheWrite1hTokens,
-    })
+    state.rounds.push(toPricingRound(usage))
   }
 }
 

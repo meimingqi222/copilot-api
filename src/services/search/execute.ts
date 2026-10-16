@@ -6,11 +6,23 @@
  */
 
 import type { RequestExecutionContext } from "~/services/providers/runtime"
-import type { ResponsesPayload } from "~/services/protocols/responses/types"
+import type {
+  ResponsesPayload,
+  ResponsesUsage,
+} from "~/services/protocols/responses/types"
+import type { AnthropicResponse } from "~/services/protocols/anthropic"
+import type { IRUsage } from "~/services/ir/types"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
-import { markCredentialCooldown } from "~/lib/provider-connections"
+import {
+  connectionProvider,
+  markCredentialCooldown,
+} from "~/lib/provider-connections"
+import { recordAccountUsage } from "~/lib/usage"
+import { toPricingRound } from "~/lib/usage-pricing-rounds"
+import { decodeResponsesUsage } from "~/services/ir/codecs/responses/result"
+import { decodeMessagesResponse } from "~/services/ir/codecs/messages-chat/response"
 import {
   checkRateLimit,
   reportUpstreamRateLimitMs,
@@ -112,7 +124,37 @@ function collectText(
   return text || undefined
 }
 
-function parseAnswer(body: unknown): SearchAnswer {
+function recordSearchUsage(
+  searcher: Searcher,
+  usage: IRUsage | undefined,
+  serviceTier?: string,
+): void {
+  if (!usage) return
+  recordAccountUsage({
+    identity: {
+      ownerId: searcher.connection.id,
+      connectionId: searcher.connection.id,
+      credentialId: searcher.credential.id,
+      provider: connectionProvider(searcher.connection),
+    },
+    model: searcher.model,
+    rounds: [toPricingRound(usage)],
+    serviceTier,
+  })
+}
+
+function parseAnswer(body: unknown, searcher: Searcher): SearchAnswer {
+  if (body && typeof body === "object" && "usage" in body && body.usage) {
+    const usage =
+      searcher.target.endpoint === "messages" ?
+        decodeMessagesResponse(body as AnthropicResponse).usage
+      : decodeResponsesUsage(body.usage as ResponsesUsage)
+    const tier =
+      "service_tier" in body && typeof body.service_tier === "string" ?
+        body.service_tier
+      : undefined
+    recordSearchUsage(searcher, usage, tier)
+  }
   const blocks = [
     ...(objectList(body, "content") ?? []),
     ...(objectList(body, "output") ?? []),
@@ -163,7 +205,7 @@ async function callOnce(
         "Search backend unexpectedly streamed a non-streaming request",
         new Response(null, { status: 502 }),
       )
-    return parseAnswer(result)
+    return parseAnswer(result, searcher)
   }
 
   const adapter = getProtocolAdapter(connection.protocol)
@@ -192,7 +234,7 @@ async function callOnce(
         stream: false,
       },
     })
-    return parseAnswer(result.response)
+    return parseAnswer(result.response, searcher)
   }
 
   if (!adapter.createResponses)
@@ -204,7 +246,7 @@ async function callOnce(
     ...params,
     payload: buildResponsesPayload(searcher, query),
   })
-  return parseAnswer(result.response)
+  return parseAnswer(result.response, searcher)
 }
 
 /**
@@ -232,6 +274,9 @@ export async function executeWebSearch(
       return answer
     } catch (error) {
       lastError = error
+      if (error instanceof HTTPError) {
+        recordSearchUsage(searcher, error.reportedUsage, error.serviceTier)
+      }
       logger.warn(
         `[search] ${describeSearcher(searcher)} failed (query ${query.length} chars): ${
           error instanceof Error ? error.message : String(error)

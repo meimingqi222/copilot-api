@@ -1,9 +1,11 @@
 import type {
   CopilotStreamEventLike,
   ResponsesResponse,
+  ResponsesUsage,
 } from "~/services/protocols/responses/types"
 
 import { HTTPError } from "~/lib/error"
+import { decodeResponsesUsage } from "~/services/ir/codecs/responses/result"
 import { readResponseBytes } from "~/lib/request-body"
 import {
   measureUpstreamRead,
@@ -143,11 +145,19 @@ function createTerminalError(event: Record<string, unknown>): HTTPError {
   const responseBody = JSON.stringify({
     error: error ?? { message, type: "error" },
   })
-  return new HTTPError(
+  const failure = new HTTPError(
     message,
     new Response(null, { status, headers }),
     responseBody,
   )
+  failure.reportedUsage = decodeResponsesUsage(
+    getRecord(response?.usage) as ResponsesUsage | undefined,
+  )
+  failure.serviceTier =
+    typeof response?.service_tier === "string" ?
+      response.service_tier
+    : undefined
+  return failure
 }
 
 function consumeResponsesEvent(

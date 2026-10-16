@@ -44,7 +44,7 @@ function queryUsageDayRows(
   let query = `
     SELECT
       date,
-      COUNT(*) as requests,
+      SUM(request_count) as requests,
       SUM(prompt_tokens) as prompt_tokens,
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
@@ -89,7 +89,7 @@ function queryUsageModelsByDate(
   let query = `
     SELECT
       model,
-      COUNT(*) as requests,
+      SUM(request_count) as requests,
       SUM(prompt_tokens) as prompt_tokens,
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
@@ -197,7 +197,7 @@ export function getUsageStatsByProviderData(
       provider,
       account_id,
       model,
-      COUNT(*) as requests,
+      SUM(request_count) as requests,
       SUM(prompt_tokens) as prompt_tokens,
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
@@ -367,6 +367,7 @@ export function queryUsageRawRows(
     SELECT
       model,
       account_id,
+      request_count,
       connection_id,
       user_id,
       provider,
@@ -428,7 +429,7 @@ export function getUsageByTimestampRangeData(
   const stmt = db.prepare(`
     SELECT
       model,
-      COUNT(*) as requests,
+      SUM(request_count) as requests,
       SUM(prompt_tokens) as prompt_tokens,
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,

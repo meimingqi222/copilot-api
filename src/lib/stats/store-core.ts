@@ -190,8 +190,9 @@ class StatsStore {
       INSERT INTO usage_stats (
         date, account_id, user_id, model, provider, connection_id, credential_id,
         prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens,
-        total_tokens, cost, timestamp, ttft_ms, tps, streaming, performance_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        total_tokens, cost, timestamp, ttft_ms, tps, streaming, performance_json,
+        request_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       stats.date,
@@ -212,6 +213,7 @@ class StatsStore {
       stats.tps ?? null,
       stats.streaming ? 1 : 0,
       stats.performance ? JSON.stringify(stats.performance) : null,
+      stats.requestCount ?? 1,
     )
     this.usageRevision++
   }

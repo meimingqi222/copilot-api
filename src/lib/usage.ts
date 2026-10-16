@@ -23,7 +23,10 @@ import {
   resolveModelRouting,
 } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
-import { takeUsagePricingRounds } from "~/lib/usage-pricing-rounds"
+import {
+  takeUsagePricingRounds,
+  type PricingRound,
+} from "~/lib/usage-pricing-rounds"
 import { codexServiceTierCostMultiplier } from "~/lib/stats/service-tier-pricing"
 import { requestPerformanceSnapshot } from "~/lib/request-performance"
 import { incrementUserTokens } from "~/lib/users"
@@ -75,6 +78,69 @@ export function applyUsageIdentity(c: Context, identity: UsageIdentity): void {
   c.set("provider", identity.provider)
   c.set("connectionId", identity.connectionId)
   c.set("credentialId", identity.credentialId)
+}
+
+/** Internal search and failed attempts add account consumption, not another
+ * client request, user charge, performance sample, or main-request log patch. */
+export function recordAccountUsage(input: {
+  identity: UsageIdentity
+  model: string
+  rounds: Array<PricingRound>
+  serviceTier?: string
+}): void {
+  if (input.rounds.length === 0) return
+  try {
+    const { identity, rounds } = input
+    const connection = getProviderConnection(identity.connectionId)
+    if (!connection) return
+    const model = resolveUsageModelId(identity.ownerId, input.model)
+    const pricing = resolveConnectionModelPricing(
+      connection,
+      model,
+      input.model,
+    )
+    const totals = rounds.reduce<PricingRound & { cost: number }>(
+      (sum, round) => ({
+        promptTokens: sum.promptTokens + round.promptTokens,
+        completionTokens: sum.completionTokens + round.completionTokens,
+        cacheReadTokens: sum.cacheReadTokens + round.cacheReadTokens,
+        cacheWriteTokens: sum.cacheWriteTokens + round.cacheWriteTokens,
+        cost: sum.cost + (pricing ? calculateModelCost(pricing, round) : 0),
+      }),
+      {
+        promptTokens: 0,
+        completionTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        cost: 0,
+      },
+    )
+    const now = Date.now()
+    statsStore.recordUsage({
+      ...totals,
+      accountId: identity.ownerId,
+      connectionId: identity.connectionId,
+      credentialId: identity.credentialId,
+      provider: identity.provider,
+      model,
+      date: statsStore.getDateString(now),
+      timestamp: now,
+      requestCount: 0,
+      totalTokens:
+        totals.promptTokens
+        + totals.completionTokens
+        + totals.cacheReadTokens
+        + totals.cacheWriteTokens,
+      cost:
+        totals.cost
+        * codexServiceTierCostMultiplier(identity.provider, identity.ownerId, {
+          connectionId: identity.connectionId,
+          serviceTierResponse: input.serviceTier,
+        }),
+    })
+  } catch (error) {
+    logger.warn("Failed to record account consumption:", error)
+  }
 }
 
 interface UsageRecordInput {

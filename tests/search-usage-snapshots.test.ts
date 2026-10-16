@@ -53,7 +53,7 @@ test("search orchestration sums distinct rounds without summing duplicate snapsh
     execute: async () => ({ response: response(), credentialId: "cred" }),
   }))
     events.push(event)
-  const usage = events.find((event) => event.type === "usage")
+  const usage = events.findLast((event) => event.type === "usage")
   expect(round).toBe(2)
   expect(usage?.type === "usage" && usage.usage.inputTokens).toBe(30)
   expect(usage?.type === "usage" && usage.usage.outputTokens).toBe(5)

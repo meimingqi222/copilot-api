@@ -14,6 +14,7 @@ import type {
 } from "~/services/ir/types"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { mergeUsage } from "~/services/ir/usage"
 import { MESSAGES_IMAGE_OUTPUT_ERROR } from "~/services/ir/image-generation"
 import {
   imageFromChat,
@@ -385,10 +386,7 @@ function messagesUsage(
     source: "reported",
     cacheWrite1hTokens: usage.cache_creation?.ephemeral_1h_input_tokens,
     ...(usage.input_tokens !== undefined && {
-      inputTokens:
-        usage.input_tokens
-        + (usage.cache_read_input_tokens ?? 0)
-        + (usage.cache_creation_input_tokens ?? 0),
+      inputTokens: usage.input_tokens,
     }),
     ...(usage.output_tokens !== undefined && {
       outputTokens: usage.output_tokens,
@@ -426,6 +424,23 @@ export async function* decodeMessagesStream(
   let started = false
   let ended = false
   let stop: IRStop | undefined
+  // Keep Anthropic's NET input until all separately reported cache fields
+  // have been merged; only then normalize to IR's inclusive input.
+  let netUsage: IRUsage | undefined
+  const updateUsage = (
+    next: NonNullable<MessagesEventLike["usage"]>,
+  ): IRUsage => {
+    netUsage = mergeUsage(netUsage, messagesUsage(next))
+    const inputTokens =
+      (netUsage.inputTokens ?? 0)
+      + (netUsage.cacheReadTokens ?? 0)
+      + (netUsage.cacheWriteTokens ?? 0)
+    return {
+      ...netUsage,
+      inputTokens,
+      totalTokens: inputTokens + (netUsage.outputTokens ?? 0),
+    }
+  }
   const blocks = new Map<number, { id: string; index: number; type: string }>()
   for await (const raw of stream) {
     const data = (raw as { data?: string }).data
@@ -457,7 +472,7 @@ export async function* decodeMessagesStream(
         source: { wire: "messages" },
       }
       if (event.message?.usage)
-        yield { type: "usage", usage: messagesUsage(event.message.usage) }
+        yield { type: "usage", usage: updateUsage(event.message.usage) }
     } else if (event.type === "content_block_start") {
       const index = event.index ?? blocks.size
       const block = event.content_block
@@ -501,8 +516,7 @@ export async function* decodeMessagesStream(
       }
     } else if (event.type === "message_delta") {
       stop = messagesStop(event.delta?.stop_reason) ?? stop
-      if (event.usage)
-        yield { type: "usage", usage: messagesUsage(event.usage) }
+      if (event.usage) yield { type: "usage", usage: updateUsage(event.usage) }
     } else if (event.type === "message_stop") {
       ended = true
       yield { type: "message_end", stop, status: "completed" }
@@ -524,190 +538,220 @@ export async function* encodeMessagesStream(
   let usage: IRUsage | undefined
   let started = false
   let ended = false
-  for await (const event of stream) {
-    if (event.type === "message_start") {
-      started = true
-      yield {
-        type: "message_start",
-        message: {
-          id: event.id,
-          type: "message",
-          role: "assistant",
-          content: [],
-          model: event.model,
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: estimatedInputTokens, output_tokens: 0 },
-        },
-      }
-    } else if (event.type === "part_start") {
-      const part = event.part
-      if (part.type === "thinking") {
+  const usageDelta = (): AnthropicStreamEventData => ({
+    type: "message_delta",
+    delta: {},
+    usage: openAIUsageToAnthropic({
+      prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
+      completion_tokens: usage?.outputTokens ?? 0,
+      prompt_tokens_details: {
+        cached_tokens: usage?.cacheReadTokens,
+        cache_creation_input_tokens: usage?.cacheWriteTokens,
+        cache_creation: cacheCreationFor1h(
+          usage?.cacheWriteTokens,
+          usage?.cacheWrite1hTokens,
+        ),
+      },
+    }),
+  })
+  try {
+    for await (const event of stream) {
+      if (event.type === "message_start") {
+        started = true
         yield {
-          type: "content_block_start",
-          index: event.index,
-          content_block: { type: "thinking", thinking: "" },
-        }
-        if (part.text)
-          yield {
-            type: "content_block_delta",
-            index: event.index,
-            delta: { type: "thinking_delta", thinking: part.text },
-          }
-      } else if (part.type === "tool_call") {
-        yield {
-          type: "content_block_start",
-          index: event.index,
-          content_block: {
-            type: "tool_use",
-            id: sanitizeId(part.id),
-            name: part.name,
-            input: {},
+          type: "message_start",
+          message: {
+            id: event.id,
+            type: "message",
+            role: "assistant",
+            content: [],
+            model: event.model,
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: estimatedInputTokens, output_tokens: 0 },
           },
         }
-        if (part.arguments)
+      } else if (event.type === "part_start") {
+        const part = event.part
+        if (part.type === "thinking") {
+          yield {
+            type: "content_block_start",
+            index: event.index,
+            content_block: { type: "thinking", thinking: "" },
+          }
+          if (part.text)
+            yield {
+              type: "content_block_delta",
+              index: event.index,
+              delta: { type: "thinking_delta", thinking: part.text },
+            }
+        } else if (part.type === "tool_call") {
+          yield {
+            type: "content_block_start",
+            index: event.index,
+            content_block: {
+              type: "tool_use",
+              id: sanitizeId(part.id),
+              name: part.name,
+              input: {},
+            },
+          }
+          if (part.arguments)
+            yield {
+              type: "content_block_delta",
+              index: event.index,
+              delta: { type: "input_json_delta", partial_json: part.arguments },
+            }
+        } else if (part.type === "image") {
+          yield {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: MESSAGES_IMAGE_OUTPUT_ERROR,
+            },
+          }
+          return
+        } else if (part.type === "text") {
+          yield {
+            type: "content_block_start",
+            index: event.index,
+            content_block: { type: "text", text: "" },
+          }
+          if (part.text)
+            yield {
+              type: "content_block_delta",
+              index: event.index,
+              delta: { type: "text_delta", text: part.text },
+            }
+        } else if (part.type === "server_tool_use") {
+          yield {
+            type: "content_block_start",
+            index: event.index,
+            content_block: {
+              type: "server_tool_use",
+              id: sanitizeId(part.id),
+              name: part.name,
+              input: {},
+            },
+          }
+          // The tool call is complete when it appears (the proxy already ran
+          // it), so the input is emitted as one delta rather than streamed.
+          if (part.input)
+            yield {
+              type: "content_block_delta",
+              index: event.index,
+              delta: { type: "input_json_delta", partial_json: part.input },
+            }
+        } else if (part.type === "web_search_result") {
+          yield {
+            type: "content_block_start",
+            index: event.index,
+            content_block: {
+              type: "web_search_tool_result",
+              tool_use_id: part.toolUseId,
+              content: part.results.map((result) => ({
+                type: "web_search_result",
+                url: result.url,
+                ...(result.title && { title: result.title }),
+                ...(result.pageAge && { page_age: result.pageAge }),
+                ...(result.encryptedContent && {
+                  encrypted_content: result.encryptedContent,
+                }),
+              })),
+            },
+          }
+        }
+      } else if (event.type === "part_delta") {
+        const delta = event.delta
+        if (delta.type === "text")
           yield {
             type: "content_block_delta",
             index: event.index,
-            delta: { type: "input_json_delta", partial_json: part.arguments },
+            delta: { type: "text_delta", text: delta.text },
           }
-      } else if (part.type === "image") {
+        else if (delta.type === "thinking")
+          yield {
+            type: "content_block_delta",
+            index: event.index,
+            delta: { type: "thinking_delta", thinking: delta.text },
+          }
+        else if (delta.type === "signature")
+          yield {
+            type: "content_block_delta",
+            index: event.index,
+            delta: { type: "signature_delta", signature: delta.text },
+          }
+        else
+          yield {
+            type: "content_block_delta",
+            index: event.index,
+            delta: { type: "input_json_delta", partial_json: delta.text },
+          }
+      } else if (event.type === "part_end") {
+        yield { type: "content_block_stop", index: event.index }
+      } else if (event.type === "usage") {
+        usage = mergeUsage(usage, event.usage)
+      } else if (event.type === "message_end") {
+        ended = true
+        if (
+          event.status === "incomplete"
+          && event.stop?.reason !== "max_tokens"
+        ) {
+          if (usage) yield usageDelta()
+          yield {
+            type: "error",
+            error: {
+              type: "api_error",
+              message: "Chat upstream stream ended before completion",
+            },
+          }
+          continue
+        }
+        const converted = openAIUsageToAnthropic({
+          prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
+          completion_tokens: usage?.outputTokens ?? 0,
+          prompt_tokens_details: {
+            cached_tokens: usage?.cacheReadTokens,
+            cache_creation_input_tokens: usage?.cacheWriteTokens,
+            cache_creation: cacheCreationFor1h(
+              usage?.cacheWriteTokens,
+              usage?.cacheWrite1hTokens,
+            ),
+          },
+        })
+        yield {
+          type: "message_delta",
+          delta: {
+            stop_reason: toMessagesStop(event.stop),
+            stop_sequence: null,
+          },
+          usage: {
+            input_tokens: converted.input_tokens,
+            output_tokens: converted.output_tokens,
+            cache_read_input_tokens: converted.cache_read_input_tokens,
+            cache_creation_input_tokens: converted.cache_creation_input_tokens,
+            cache_creation: converted.cache_creation,
+          },
+        }
+        yield { type: "message_stop" }
+      } else if (event.type === "error") {
+        ended = true
+        if (usage) yield usageDelta()
         yield {
           type: "error",
           error: {
-            type: "invalid_request_error",
-            message: MESSAGES_IMAGE_OUTPUT_ERROR,
+            type: event.error.type,
+            message: event.error.message,
+            code: event.error.status,
+            status: event.error.status,
           },
         }
-        return
-      } else if (part.type === "text") {
-        yield {
-          type: "content_block_start",
-          index: event.index,
-          content_block: { type: "text", text: "" },
-        }
-        if (part.text)
-          yield {
-            type: "content_block_delta",
-            index: event.index,
-            delta: { type: "text_delta", text: part.text },
-          }
-      } else if (part.type === "server_tool_use") {
-        yield {
-          type: "content_block_start",
-          index: event.index,
-          content_block: {
-            type: "server_tool_use",
-            id: sanitizeId(part.id),
-            name: part.name,
-            input: {},
-          },
-        }
-        // The tool call is complete when it appears (the proxy already ran
-        // it), so the input is emitted as one delta rather than streamed.
-        if (part.input)
-          yield {
-            type: "content_block_delta",
-            index: event.index,
-            delta: { type: "input_json_delta", partial_json: part.input },
-          }
-      } else if (part.type === "web_search_result") {
-        yield {
-          type: "content_block_start",
-          index: event.index,
-          content_block: {
-            type: "web_search_tool_result",
-            tool_use_id: part.toolUseId,
-            content: part.results.map((result) => ({
-              type: "web_search_result",
-              url: result.url,
-              ...(result.title && { title: result.title }),
-              ...(result.pageAge && { page_age: result.pageAge }),
-              ...(result.encryptedContent && {
-                encrypted_content: result.encryptedContent,
-              }),
-            })),
-          },
-        }
-      }
-    } else if (event.type === "part_delta") {
-      const delta = event.delta
-      if (delta.type === "text")
-        yield {
-          type: "content_block_delta",
-          index: event.index,
-          delta: { type: "text_delta", text: delta.text },
-        }
-      else if (delta.type === "thinking")
-        yield {
-          type: "content_block_delta",
-          index: event.index,
-          delta: { type: "thinking_delta", thinking: delta.text },
-        }
-      else if (delta.type === "signature")
-        yield {
-          type: "content_block_delta",
-          index: event.index,
-          delta: { type: "signature_delta", signature: delta.text },
-        }
-      else
-        yield {
-          type: "content_block_delta",
-          index: event.index,
-          delta: { type: "input_json_delta", partial_json: delta.text },
-        }
-    } else if (event.type === "part_end") {
-      yield { type: "content_block_stop", index: event.index }
-    } else if (event.type === "usage") {
-      usage = { ...usage, ...event.usage }
-    } else if (event.type === "message_end") {
-      ended = true
-      if (event.status === "incomplete") {
-        yield {
-          type: "error",
-          error: {
-            type: "api_error",
-            message: "Chat upstream stream ended before completion",
-          },
-        }
-        continue
-      }
-      const converted = openAIUsageToAnthropic({
-        prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
-        completion_tokens: usage?.outputTokens ?? 0,
-        prompt_tokens_details: {
-          cached_tokens: usage?.cacheReadTokens,
-          cache_creation_input_tokens: usage?.cacheWriteTokens,
-          cache_creation: cacheCreationFor1h(
-            usage?.cacheWriteTokens,
-            usage?.cacheWrite1hTokens,
-          ),
-        },
-      })
-      yield {
-        type: "message_delta",
-        delta: { stop_reason: toMessagesStop(event.stop), stop_sequence: null },
-        usage: {
-          input_tokens: converted.input_tokens,
-          output_tokens: converted.output_tokens,
-          cache_read_input_tokens: converted.cache_read_input_tokens,
-          cache_creation_input_tokens: converted.cache_creation_input_tokens,
-          cache_creation: converted.cache_creation,
-        },
-      }
-      yield { type: "message_stop" }
-    } else if (event.type === "error") {
-      ended = true
-      yield {
-        type: "error",
-        error: {
-          type: event.error.type,
-          message: event.error.message,
-          code: event.error.status,
-          status: event.error.status,
-        },
       }
     }
+  } catch (error) {
+    // Preserve reported consumption even if a later upstream round throws.
+    if (usage) yield usageDelta()
+    throw error
   }
   if (started && !ended) {
     yield {
@@ -741,119 +785,155 @@ export async function* encodeChatStream(
     object: "chat.completion.chunk",
     choices: [{ index: 0, delta, finish_reason: finish, logprobs: null }],
   })
-  for await (const event of stream) {
-    if (event.type === "message_start") {
-      id = event.id
-      model = event.model
-      created = event.createdAt ?? Math.floor(Date.now() / 1000)
-      yield { data: JSON.stringify(chunk({ role: "assistant", content: "" })) }
-    } else if (event.type === "part_start" && event.part.type === "tool_call") {
-      const toolIndex = nextTool++
-      tools.set(event.partId, toolIndex)
-      yield {
-        data: JSON.stringify(
-          chunk({
-            tool_calls: [
-              {
-                index: toolIndex,
-                id: sanitizeId(event.part.id),
-                type: "function",
-                function: {
-                  name: event.part.name,
-                  arguments: event.part.arguments,
-                },
-              },
-            ],
-          }),
-        ),
-      }
-    } else if (event.type === "part_start" && event.part.type === "image") {
-      yield {
-        data: JSON.stringify(
-          chunk({
-            images: [{ ...imageToChat(event.part), index: nextImage++ }],
-          }),
-        ),
-      }
-    } else if (
-      event.type === "part_start"
-      && event.part.type === "text"
-      && event.part.text
-    ) {
-      yield { data: JSON.stringify(chunk({ content: event.part.text })) }
-    } else if (
-      event.type === "part_start"
-      && event.part.type === "thinking"
-      && event.part.text
-    ) {
-      yield {
-        data: JSON.stringify(chunk({ reasoning_content: event.part.text })),
-      }
-    } else if (event.type === "part_delta") {
-      if (event.delta.type === "text")
-        yield { data: JSON.stringify(chunk({ content: event.delta.text })) }
-      else if (event.delta.type === "thinking")
+  try {
+    for await (const event of stream) {
+      if (event.type === "message_start") {
+        id = event.id
+        model = event.model
+        created = event.createdAt ?? Math.floor(Date.now() / 1000)
         yield {
-          data: JSON.stringify(chunk({ reasoning_content: event.delta.text })),
+          data: JSON.stringify(chunk({ role: "assistant", content: "" })),
         }
-      else if (event.delta.type === "signature")
-        yield { data: JSON.stringify(chunk({ signature: event.delta.text })) }
-      else {
-        const toolIndex = tools.get(event.partId)
-        if (toolIndex !== undefined)
+      } else if (
+        event.type === "part_start"
+        && event.part.type === "tool_call"
+      ) {
+        const toolIndex = nextTool++
+        tools.set(event.partId, toolIndex)
+        yield {
+          data: JSON.stringify(
+            chunk({
+              tool_calls: [
+                {
+                  index: toolIndex,
+                  id: sanitizeId(event.part.id),
+                  type: "function",
+                  function: {
+                    name: event.part.name,
+                    arguments: event.part.arguments,
+                  },
+                },
+              ],
+            }),
+          ),
+        }
+      } else if (event.type === "part_start" && event.part.type === "image") {
+        yield {
+          data: JSON.stringify(
+            chunk({
+              images: [{ ...imageToChat(event.part), index: nextImage++ }],
+            }),
+          ),
+        }
+      } else if (
+        event.type === "part_start"
+        && event.part.type === "text"
+        && event.part.text
+      ) {
+        yield { data: JSON.stringify(chunk({ content: event.part.text })) }
+      } else if (
+        event.type === "part_start"
+        && event.part.type === "thinking"
+        && event.part.text
+      ) {
+        yield {
+          data: JSON.stringify(chunk({ reasoning_content: event.part.text })),
+        }
+      } else if (event.type === "part_delta") {
+        if (event.delta.type === "text")
+          yield { data: JSON.stringify(chunk({ content: event.delta.text })) }
+        else if (event.delta.type === "thinking")
           yield {
             data: JSON.stringify(
-              chunk({
-                tool_calls: [
-                  {
-                    index: toolIndex,
-                    function: { arguments: event.delta.text },
-                  },
-                ],
-              }),
+              chunk({ reasoning_content: event.delta.text }),
             ),
           }
+        else if (event.delta.type === "signature")
+          yield { data: JSON.stringify(chunk({ signature: event.delta.text })) }
+        else {
+          const toolIndex = tools.get(event.partId)
+          if (toolIndex !== undefined)
+            yield {
+              data: JSON.stringify(
+                chunk({
+                  tool_calls: [
+                    {
+                      index: toolIndex,
+                      function: { arguments: event.delta.text },
+                    },
+                  ],
+                }),
+              ),
+            }
+        }
+      } else if (event.type === "usage") {
+        usage = mergeUsage(usage, event.usage)
+      } else if (event.type === "message_end") {
+        if (
+          event.status === "incomplete"
+          && event.stop?.reason !== "max_tokens"
+        )
+          throw new Error("Anthropic upstream stream ended before completion")
+        ended = true
+        const translated = anthropicUsageToOpenAI({
+          input_tokens: Math.max(
+            0,
+            (usage?.inputTokens ?? 0)
+              - (usage?.cacheReadTokens ?? 0)
+              - (usage?.cacheWriteTokens ?? 0),
+          ),
+          output_tokens: usage?.outputTokens ?? 0,
+          cache_read_input_tokens: usage?.cacheReadTokens,
+          cache_creation_input_tokens: usage?.cacheWriteTokens,
+          cache_creation: cacheCreationFor1h(
+            usage?.cacheWriteTokens,
+            usage?.cacheWrite1hTokens,
+          ),
+        })
+        yield {
+          data: JSON.stringify({
+            ...chunk({}, toChatStop(event.stop)),
+            ...(usage && {
+              usage: {
+                prompt_tokens: translated.prompt_tokens,
+                completion_tokens: translated.completion_tokens,
+                total_tokens:
+                  translated.prompt_tokens + translated.completion_tokens,
+                ...(translated.prompt_tokens_details && {
+                  prompt_tokens_details: translated.prompt_tokens_details,
+                }),
+              },
+            }),
+          }),
+        }
+      } else if (event.type === "error") {
+        throw new Error(
+          `Anthropic upstream stream error: ${event.error.message}`,
+        )
       }
-    } else if (event.type === "usage") {
-      usage = { ...usage, ...event.usage }
-    } else if (event.type === "message_end") {
-      if (event.status === "incomplete")
-        throw new Error("Anthropic upstream stream ended before completion")
-      ended = true
-      const translated = anthropicUsageToOpenAI({
-        input_tokens: Math.max(
-          0,
-          (usage?.inputTokens ?? 0)
-            - (usage?.cacheReadTokens ?? 0)
-            - (usage?.cacheWriteTokens ?? 0),
-        ),
-        output_tokens: usage?.outputTokens ?? 0,
-        cache_read_input_tokens: usage?.cacheReadTokens,
-        cache_creation_input_tokens: usage?.cacheWriteTokens,
-        cache_creation: cacheCreationFor1h(
-          usage?.cacheWriteTokens,
-          usage?.cacheWrite1hTokens,
-        ),
-      })
+    }
+  } catch (error) {
+    if (usage)
       yield {
         data: JSON.stringify({
-          ...chunk({}, toChatStop(event.stop)),
-          ...(usage && {
-            usage: {
-              prompt_tokens: translated.prompt_tokens,
-              completion_tokens: translated.completion_tokens,
-              total_tokens:
-                translated.prompt_tokens + translated.completion_tokens,
-              ...(translated.prompt_tokens_details && {
-                prompt_tokens_details: translated.prompt_tokens_details,
-              }),
+          ...chunk({}),
+          choices: [],
+          usage: {
+            prompt_tokens: usage.inputTokens ?? 0,
+            completion_tokens: usage.outputTokens ?? 0,
+            total_tokens: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
+            prompt_tokens_details: {
+              cached_tokens: usage.cacheReadTokens,
+              cache_creation_input_tokens: usage.cacheWriteTokens,
+              cache_creation: cacheCreationFor1h(
+                usage.cacheWriteTokens,
+                usage.cacheWrite1hTokens,
+              ),
             },
-          }),
+          },
         }),
       }
-    } else if (event.type === "error") {
-      throw new Error(`Anthropic upstream stream error: ${event.error.message}`)
-    }
+    throw error
   }
   if (!ended) yield { data: JSON.stringify(chunk({}, "stop")) }
   yield { data: "[DONE]" }

@@ -179,12 +179,13 @@ function codexEntryToDescriptor(
 
 export function resolveCodexQuotaWindows(
   details: Record<string, unknown>,
+  referenceTimeMs = Date.now(),
 ): Array<QuotaWindowDescriptor> {
   const payload = parseCodexUsagePayload(details)
   if (!payload) {
     return []
   }
-  return buildCodexQuotaWindows(payload)
+  return buildCodexQuotaWindows(payload, referenceTimeMs)
     .map((entry) => codexEntryToDescriptor(entry))
     .filter((entry): entry is QuotaWindowDescriptor => entry !== null)
 }
@@ -338,6 +339,7 @@ const CYCLE_WINDOW_RESOLVERS: Partial<
 function resolveQuotaWindows(
   provider: OAuthProviderId,
   details: Record<string, unknown> | undefined,
+  fetchedAt?: number,
 ): Array<QuotaWindowDescriptor> {
   if (!details || typeof details !== "object") {
     return []
@@ -346,6 +348,11 @@ function resolveQuotaWindows(
     return details._quotaWindows as Array<QuotaWindowDescriptor>
   }
 
+  if (provider === "codex") {
+    // Relative reset durations belong to the snapshot, not the time of GET.
+    // Without a timestamp only absolute upstream boundaries are trustworthy.
+    return resolveCodexQuotaWindows(details, fetchedAt ?? Number.NaN)
+  }
   const resolver = CYCLE_WINDOW_RESOLVERS[provider]
   return resolver ? resolver(details) : []
 }
@@ -447,7 +454,10 @@ export function enrichQuotaDetails(
 export function enrichQuotaInfoForResponse(
   accountId: string,
   provider: string | undefined,
-  quotaInfo: { details?: Record<string, unknown> } | null | undefined,
+  quotaInfo:
+    | { fetchedAt?: number; details?: Record<string, unknown> }
+    | null
+    | undefined,
 ): { details?: Record<string, unknown> } | null | undefined {
   if (!quotaInfo?.details || !supportsCycleUsage(provider)) {
     return quotaInfo
@@ -455,6 +465,7 @@ export function enrichQuotaInfoForResponse(
   const windows = resolveQuotaWindows(
     provider as OAuthProviderId,
     quotaInfo.details,
+    quotaInfo.fetchedAt,
   )
   if (windows.length === 0) {
     return quotaInfo

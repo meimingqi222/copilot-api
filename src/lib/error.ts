@@ -1,11 +1,15 @@
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
+import type { IRUsage } from "~/services/ir/types"
 
 import { logger } from "~/lib/logger"
 
 export class HTTPError extends Error {
   response: Response
   responseBody: string
+  /** Reported consumption survives a terminal error without changing its status. */
+  reportedUsage?: IRUsage
+  serviceTier?: string
 
   constructor(message: string, response: Response, responseBody = "") {
     super(message)

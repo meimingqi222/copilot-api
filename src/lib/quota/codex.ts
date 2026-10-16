@@ -127,6 +127,7 @@ function isMonthlyWindow(window?: CodexUsageWindow | null): boolean {
 
 function resolveCodexResetAtSeconds(
   window?: CodexUsageWindow | null,
+  referenceTimeMs = Date.now(),
 ): number | null {
   if (!window) {
     return null
@@ -138,8 +139,12 @@ function resolveCodexResetAtSeconds(
   const resetAfter = normalizeNumber(
     window.reset_after_seconds ?? window.resetAfterSeconds,
   )
-  if (resetAfter !== undefined && resetAfter > 0) {
-    return Math.floor(Date.now() / 1000 + resetAfter)
+  if (
+    resetAfter !== undefined
+    && resetAfter > 0
+    && Number.isFinite(referenceTimeMs)
+  ) {
+    return Math.floor(referenceTimeMs / 1000 + resetAfter)
   }
   return null
 }
@@ -213,11 +218,15 @@ function addCodexWindowEntry(
     limitReached?: boolean
     allowed?: boolean
   },
+  referenceTimeMs: number,
 ): void {
   if (!entry.window) {
     return
   }
-  const resetAtSeconds = resolveCodexResetAtSeconds(entry.window)
+  const resetAtSeconds = resolveCodexResetAtSeconds(
+    entry.window,
+    referenceTimeMs,
+  )
   const usedPercentRaw = normalizeNumber(
     entry.window.used_percent ?? entry.window.usedPercent,
   )
@@ -248,6 +257,7 @@ function addCodexWindowEntry(
 
 export function buildCodexQuotaWindows(
   payload: CodexUsagePayload,
+  referenceTimeMs = Date.now(),
 ): Array<CodexQuotaWindowEntry> {
   const WINDOW_META = {
     codeFiveHour: {
@@ -287,52 +297,68 @@ export function buildCodexQuotaWindows(
   const rawAllowed = rateLimit?.allowed
   const rateWindows = pickClassifiedWindows(rateLimit)
 
-  addCodexWindowEntry(windows, {
-    id: WINDOW_META.codeFiveHour.id,
-    labelKey: WINDOW_META.codeFiveHour.labelKey,
-    window: rateWindows.fiveHourWindow,
-    limitReached: rawLimitReached,
-    allowed: rawAllowed,
-  })
+  addCodexWindowEntry(
+    windows,
+    {
+      id: WINDOW_META.codeFiveHour.id,
+      labelKey: WINDOW_META.codeFiveHour.labelKey,
+      window: rateWindows.fiveHourWindow,
+      limitReached: rawLimitReached,
+      allowed: rawAllowed,
+    },
+    referenceTimeMs,
+  )
 
   const codeSecondaryWindowMeta = selectSecondaryWindowMeta(
     rateWindows.weeklyWindow,
     WINDOW_META.codeWeekly,
     WINDOW_META.codeMonthly,
   )
-  addCodexWindowEntry(windows, {
-    id: codeSecondaryWindowMeta.id,
-    labelKey: codeSecondaryWindowMeta.labelKey,
-    window: rateWindows.weeklyWindow,
-    limitReached: rawLimitReached,
-    allowed: rawAllowed,
-  })
+  addCodexWindowEntry(
+    windows,
+    {
+      id: codeSecondaryWindowMeta.id,
+      labelKey: codeSecondaryWindowMeta.labelKey,
+      window: rateWindows.weeklyWindow,
+      limitReached: rawLimitReached,
+      allowed: rawAllowed,
+    },
+    referenceTimeMs,
+  )
 
   const codeReviewWindows = pickClassifiedWindows(codeReviewLimit)
   const codeReviewLimitReached =
     codeReviewLimit?.limit_reached ?? codeReviewLimit?.limitReached
   const codeReviewAllowed = codeReviewLimit?.allowed
 
-  addCodexWindowEntry(windows, {
-    id: WINDOW_META.codeReviewFiveHour.id,
-    labelKey: WINDOW_META.codeReviewFiveHour.labelKey,
-    window: codeReviewWindows.fiveHourWindow,
-    limitReached: codeReviewLimitReached,
-    allowed: codeReviewAllowed,
-  })
+  addCodexWindowEntry(
+    windows,
+    {
+      id: WINDOW_META.codeReviewFiveHour.id,
+      labelKey: WINDOW_META.codeReviewFiveHour.labelKey,
+      window: codeReviewWindows.fiveHourWindow,
+      limitReached: codeReviewLimitReached,
+      allowed: codeReviewAllowed,
+    },
+    referenceTimeMs,
+  )
 
   const codeReviewSecondaryWindowMeta = selectSecondaryWindowMeta(
     codeReviewWindows.weeklyWindow,
     WINDOW_META.codeReviewWeekly,
     WINDOW_META.codeReviewMonthly,
   )
-  addCodexWindowEntry(windows, {
-    id: codeReviewSecondaryWindowMeta.id,
-    labelKey: codeReviewSecondaryWindowMeta.labelKey,
-    window: codeReviewWindows.weeklyWindow,
-    limitReached: codeReviewLimitReached,
-    allowed: codeReviewAllowed,
-  })
+  addCodexWindowEntry(
+    windows,
+    {
+      id: codeReviewSecondaryWindowMeta.id,
+      labelKey: codeReviewSecondaryWindowMeta.labelKey,
+      window: codeReviewWindows.weeklyWindow,
+      limitReached: codeReviewLimitReached,
+      allowed: codeReviewAllowed,
+    },
+    referenceTimeMs,
+  )
 
   for (const [index, limitItem] of additionalRateLimits.entries()) {
     const rateInfo = limitItem.rate_limit ?? limitItem.rateLimit ?? null
@@ -359,14 +385,18 @@ export function buildCodexQuotaWindows(
       rateInfo.limit_reached ?? rateInfo.limitReached
     const additionalAllowed = rateInfo.allowed
 
-    addCodexWindowEntry(windows, {
-      id: `${idPrefix}-five-hour-${index}`,
-      labelKey: "quota.oauth.codex.additionalFiveHour",
-      labelParams: { name: limitName },
-      window: additionalPrimaryWindow,
-      limitReached: additionalLimitReached,
-      allowed: additionalAllowed,
-    })
+    addCodexWindowEntry(
+      windows,
+      {
+        id: `${idPrefix}-five-hour-${index}`,
+        labelKey: "quota.oauth.codex.additionalFiveHour",
+        labelParams: { name: limitName },
+        window: additionalPrimaryWindow,
+        limitReached: additionalLimitReached,
+        allowed: additionalAllowed,
+      },
+      referenceTimeMs,
+    )
 
     const additionalSecondaryMeta = selectSecondaryWindowMeta(
       additionalSecondaryWindow,
@@ -379,14 +409,18 @@ export function buildCodexQuotaWindows(
         labelKey: "quota.oauth.codex.additionalMonthly",
       },
     )
-    addCodexWindowEntry(windows, {
-      id: `${idPrefix}-${additionalSecondaryMeta.id}-${index}`,
-      labelKey: additionalSecondaryMeta.labelKey,
-      labelParams: { name: limitName },
-      window: additionalSecondaryWindow,
-      limitReached: additionalLimitReached,
-      allowed: additionalAllowed,
-    })
+    addCodexWindowEntry(
+      windows,
+      {
+        id: `${idPrefix}-${additionalSecondaryMeta.id}-${index}`,
+        labelKey: additionalSecondaryMeta.labelKey,
+        labelParams: { name: limitName },
+        window: additionalSecondaryWindow,
+        limitReached: additionalLimitReached,
+        allowed: additionalAllowed,
+      },
+      referenceTimeMs,
+    )
   }
 
   return windows

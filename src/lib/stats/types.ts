@@ -5,6 +5,8 @@ import type { RequestPerformance } from "~/lib/request-performance"
 export interface UsageStats {
   date: string
   accountId: string
+  /** Supplementary upstream consumption contributes no client request. */
+  requestCount?: number
   userId?: string
   model: string
   provider?: string
@@ -105,6 +107,7 @@ export type UsageProviderRow = {
 
 /** Per-request usage row for timestamp-range aggregation (grouped in JS). */
 export type UsageRawRow = {
+  request_count?: number
   connection_id?: string | null
   performance_json?: string | null
   model: string

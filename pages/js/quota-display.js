@@ -454,6 +454,9 @@ const QuotaDisplay = {
     if (meta?.windows?.length) {
       return this.buildCodexRowsFromMeta(meta, t)
     }
+    if (details._quotaWindows?.length) {
+      return this.buildCodexRowsFromMeta({ windows: details._quotaWindows }, t)
+    }
 
     const rows = []
     const sources = [

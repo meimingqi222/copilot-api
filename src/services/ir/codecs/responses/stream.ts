@@ -15,6 +15,7 @@ import {
   imagePartFromGenerationCall,
   responsesImageCall,
 } from "~/services/ir/image-generation"
+import { mergeUsage } from "~/services/ir/usage"
 import {
   decodeResponsesResult,
   encodeResponsesResult,
@@ -128,6 +129,21 @@ function* imageResultEvents(
   yield { type: "part_end", partId, index }
 }
 
+function* decodeFailure(wire: WireRecord): Iterable<StreamEvent> {
+  const response = responseFromRecord(wire.response)
+  const usage = response && decodeResponsesResult(response).usage
+  if (usage) yield { type: "usage", usage }
+  const error = record(wire.error) ?? record(response?.error)
+  yield {
+    type: "error",
+    error: {
+      type: text(error?.type) ?? text(wire.type) ?? "api_error",
+      message:
+        text(error?.message) ?? text(wire.message) ?? "Responses stream failed",
+    },
+  }
+}
+
 /** Decode Responses SSE one event at a time; no full-stream buffering. */
 export async function* decodeResponsesStream(
   stream: AsyncIterable<CopilotStreamEventLike>,
@@ -147,17 +163,7 @@ export async function* decodeResponsesStream(
     if (!wire) continue
     const type = text(wire.type)
     if (type === "error" || type === "response.failed") {
-      const error = record(wire.error)
-      yield {
-        type: "error",
-        error: {
-          type: text(error?.type) ?? type,
-          message:
-            text(error?.message)
-            ?? text(wire.message)
-            ?? "Responses stream failed",
-        },
-      }
+      yield* decodeFailure(wire)
       return
     }
     if (type === "response.created" || type === "response.in_progress") {
@@ -357,184 +363,216 @@ export async function* encodeResponsesStream(
         created_at: createdAt ?? Math.floor(Date.now() / 1000),
       },
     })
-  for await (const current of stream) {
-    if (current.type === "error") {
-      yield event("error", { error: current.error })
-      return
-    }
-    if (current.type === "message_start") {
-      responseId = current.id
-      model = current.model
-      source = current.source
-      createdAt = current.createdAt
+  const failure = (
+    error: Extract<StreamEvent, { type: "error" }>["error"],
+  ): CopilotStreamEventLike =>
+    usage ?
+      event("response.failed", {
+        response: {
+          ...encodeResponsesResult(
+            {
+              id: responseId,
+              model,
+              source,
+              parts: [],
+              usage,
+              status: "failed",
+            },
+            request,
+          ),
+          error,
+        },
+      })
+    : event("error", { error })
+  try {
+    for await (const current of stream) {
+      if (current.type === "error") {
+        yield failure(current.error)
+        return
+      }
+      if (current.type === "message_start") {
+        responseId = current.id
+        model = current.model
+        source = current.source
+        createdAt = current.createdAt
+        if (!started) {
+          started = true
+          yield start()
+        }
+        continue
+      }
       if (!started) {
         started = true
         yield start()
       }
-      continue
-    }
-    if (!started) {
-      started = true
-      yield start()
-    }
-    if (current.type === "part_start") {
-      // A search's sources arrive as a separate `web_search_result` part right
-      // after the call, but Responses reports both in one item — so the call's
-      // `output_item.done` is deferred until the result has been merged in.
-      const pendingDone = flushPendingSearchCall()
-      if (pendingDone) yield pendingDone
-      const part = restoreResponsesToolNamespace(current.part, request)
-      parts.set(
-        current.index,
-        part.type === "image" ?
-          { ...part, id: part.id ?? current.partId }
-        : part,
-      )
-      if (part.type === "server_tool_use") {
-        yield event("response.output_item.added", {
-          response_id: responseId,
-          output_index: current.index,
-          item: webSearchCallItem(part, current.partId),
-        })
-        pendingSearchCall = { index: current.index, partId: current.partId }
-        continue
-      }
-      if (part.type === "web_search_result") {
-        // Merged into the stashed call when its `done` event flushes.
-        const stashed =
-          pendingSearchCall ? parts.get(pendingSearchCall.index) : undefined
-        if (
-          stashed
-          && pendingSearchCall
-          && stashed.type === "server_tool_use"
-          && stashed.id === part.toolUseId
-        ) {
-          parts.set(pendingSearchCall.index, {
-            ...stashed,
-            input: JSON.stringify(
-              webSearchCallItem(stashed, pendingSearchCall.partId, part.results)
-                .action,
-            ),
+      if (current.type === "part_start") {
+        // A search's sources arrive as a separate `web_search_result` part right
+        // after the call, but Responses reports both in one item — so the call's
+        // `output_item.done` is deferred until the result has been merged in.
+        const pendingDone = flushPendingSearchCall()
+        if (pendingDone) yield pendingDone
+        const part = restoreResponsesToolNamespace(current.part, request)
+        parts.set(
+          current.index,
+          part.type === "image" ?
+            { ...part, id: part.id ?? current.partId }
+          : part,
+        )
+        if (part.type === "server_tool_use") {
+          yield event("response.output_item.added", {
+            response_id: responseId,
+            output_index: current.index,
+            item: webSearchCallItem(part, current.partId),
+          })
+          pendingSearchCall = { index: current.index, partId: current.partId }
+          continue
+        }
+        if (part.type === "web_search_result") {
+          // Merged into the stashed call when its `done` event flushes.
+          const stashed =
+            pendingSearchCall ? parts.get(pendingSearchCall.index) : undefined
+          if (
+            stashed
+            && pendingSearchCall
+            && stashed.type === "server_tool_use"
+            && stashed.id === part.toolUseId
+          ) {
+            parts.set(pendingSearchCall.index, {
+              ...stashed,
+              input: JSON.stringify(
+                webSearchCallItem(
+                  stashed,
+                  pendingSearchCall.partId,
+                  part.results,
+                ).action,
+              ),
+            })
+          }
+          continue
+        }
+        if (part.type === "text") {
+          yield event("response.output_item.added", {
+            response_id: responseId,
+            output_index: current.index,
+            item: {
+              type: "message",
+              id: current.partId,
+              role: "assistant",
+              content: [],
+            },
+          })
+        } else if (part.type === "image") {
+          yield event("response.output_item.added", {
+            response_id: responseId,
+            output_index: current.index,
+            item: {
+              ...responsesImageCall(part, part.id ?? current.partId),
+              result: null,
+              status: "in_progress",
+            },
+          })
+        } else if (part.type === "tool_call") {
+          yield event("response.output_item.added", {
+            response_id: responseId,
+            output_index: current.index,
+            item: {
+              type: "function_call",
+              id: current.partId,
+              call_id: part.id,
+              name: part.originalName ?? part.name,
+              ...(part.namespace ? { namespace: part.namespace } : {}),
+              arguments: part.arguments,
+            },
+          })
+        } else if (part.type === "thinking") {
+          yield event("response.output_item.added", {
+            response_id: responseId,
+            output_index: current.index,
+            item: { type: "reasoning", id: current.partId, summary: [] },
           })
         }
         continue
       }
-      if (part.type === "text") {
-        yield event("response.output_item.added", {
-          response_id: responseId,
-          output_index: current.index,
-          item: {
-            type: "message",
-            id: current.partId,
-            role: "assistant",
-            content: [],
-          },
-        })
-      } else if (part.type === "image") {
-        yield event("response.output_item.added", {
-          response_id: responseId,
-          output_index: current.index,
-          item: {
-            ...responsesImageCall(part, part.id ?? current.partId),
-            result: null,
-            status: "in_progress",
-          },
-        })
-      } else if (part.type === "tool_call") {
-        yield event("response.output_item.added", {
-          response_id: responseId,
-          output_index: current.index,
-          item: {
-            type: "function_call",
-            id: current.partId,
-            call_id: part.id,
-            name: part.originalName ?? part.name,
-            ...(part.namespace ? { namespace: part.namespace } : {}),
-            arguments: part.arguments,
-          },
-        })
-      } else if (part.type === "thinking") {
-        yield event("response.output_item.added", {
-          response_id: responseId,
-          output_index: current.index,
-          item: { type: "reasoning", id: current.partId, summary: [] },
-        })
-      }
-      continue
-    }
-    if (current.type === "part_delta") {
-      const part = parts.get(current.index)
-      if (part) parts.set(current.index, updatePart(part, current))
-      if (current.delta.type === "text")
-        yield event("response.output_text.delta", {
-          response_id: responseId,
-          output_index: current.index,
-          delta: current.delta.text,
-        })
-      else if (current.delta.type === "thinking")
-        yield event("response.reasoning_summary_text.delta", {
-          response_id: responseId,
-          output_index: current.index,
-          delta: current.delta.text,
-        })
-      else if (current.delta.type === "tool_arguments")
-        yield event("response.function_call_arguments.delta", {
-          response_id: responseId,
-          output_index: current.index,
-          item_id: current.partId,
-          delta: current.delta.text,
-        })
-      continue
-    }
-    if (current.type === "part_end") {
-      // A search call's `done` waits for its result part (see above).
-      if (pendingSearchCall && pendingSearchCall.index === current.index)
+      if (current.type === "part_delta") {
+        const part = parts.get(current.index)
+        if (part) parts.set(current.index, updatePart(part, current))
+        if (current.delta.type === "text")
+          yield event("response.output_text.delta", {
+            response_id: responseId,
+            output_index: current.index,
+            delta: current.delta.text,
+          })
+        else if (current.delta.type === "thinking")
+          yield event("response.reasoning_summary_text.delta", {
+            response_id: responseId,
+            output_index: current.index,
+            delta: current.delta.text,
+          })
+        else if (current.delta.type === "tool_arguments")
+          yield event("response.function_call_arguments.delta", {
+            response_id: responseId,
+            output_index: current.index,
+            item_id: current.partId,
+            delta: current.delta.text,
+          })
         continue
-      const part = parts.get(current.index)
-      const item =
-        part ?
-          encodeResponsesResult({
-            id: responseId,
-            model,
-            source,
-            parts: [part],
-          }).output?.[0]
-        : undefined
-      if (item)
-        yield event("response.output_item.done", {
-          response_id: responseId,
-          output_index: current.index,
-          item: {
-            ...item,
-            id: part?.type === "image" ? part.id : current.partId,
-          },
-        })
-      continue
-    }
-    if (current.type === "usage") {
-      usage = current.usage
-      continue
-    }
-    if (current.type === "message_end") {
-      const pendingDone = flushPendingSearchCall()
-      if (pendingDone) yield pendingDone
-      const result: ResultIR = {
-        id: responseId,
-        model,
-        source,
-        parts: [...parts.entries()]
-          .sort(([a], [b]) => a - b)
-          .map(([, part]) => part),
-        usage,
-        stop: current.stop,
-        status: current.status,
-        createdAt,
       }
-      yield event("response.completed", {
-        response: encodeResponsesResult(result, request),
-      })
-      return
+      if (current.type === "part_end") {
+        // A search call's `done` waits for its result part (see above).
+        if (pendingSearchCall && pendingSearchCall.index === current.index)
+          continue
+        const part = parts.get(current.index)
+        const item =
+          part ?
+            encodeResponsesResult({
+              id: responseId,
+              model,
+              source,
+              parts: [part],
+            }).output?.[0]
+          : undefined
+        if (item)
+          yield event("response.output_item.done", {
+            response_id: responseId,
+            output_index: current.index,
+            item: {
+              ...item,
+              id: part?.type === "image" ? part.id : current.partId,
+            },
+          })
+        continue
+      }
+      if (current.type === "usage") {
+        usage = mergeUsage(usage, current.usage)
+        continue
+      }
+      if (current.type === "message_end") {
+        const pendingDone = flushPendingSearchCall()
+        if (pendingDone) yield pendingDone
+        const result: ResultIR = {
+          id: responseId,
+          model,
+          source,
+          parts: [...parts.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([, part]) => part),
+          usage,
+          stop: current.stop,
+          status: current.status,
+          createdAt,
+        }
+        yield event("response.completed", {
+          response: encodeResponsesResult(result, request),
+        })
+        return
+      }
     }
+  } catch (error) {
+    yield failure({
+      type: "api_error",
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return
   }
   if (started) {
     const result: ResultIR = {

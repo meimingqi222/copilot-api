@@ -8,9 +8,14 @@ interface Row {
   percentText?: string
   valueText: string
   amountText?: string
+  cycleUsageText?: string
 }
 
 interface Display {
+  buildRows: (
+    account: Record<string, unknown>,
+    t: (key: string, params?: Record<string, unknown>) => string,
+  ) => Array<Row>
   displayPercent: (percent: unknown, mode?: string) => number | undefined
   applyDisplayMode: (
     rows: Array<Row>,
@@ -42,6 +47,42 @@ const trace = runInNewContext(
   { ViewHelpers: {}, Date, performance, globalThis },
 ) as TraceView
 const translate = (key: string) => (key.endsWith(".used") ? "已用" : "剩余")
+
+test("legacy Codex windows without metadata retain matching cycle costs", () => {
+  const rows = display.buildRows(
+    {
+      provider: "codex",
+      quotaInfo: {
+        details: {
+          rate_limit: {
+            primary_window: { used_percent: 20 },
+            secondary_window: { used_percent: 35 },
+          },
+          _quotaWindows: [
+            {
+              id: "code-five-hour",
+              labelKey: "quota.oauth.codex.fiveHour",
+              usedPercent: 20,
+              cycleUsage: { cost: 1.23 },
+            },
+            {
+              id: "code-weekly",
+              labelKey: "quota.oauth.codex.weekly",
+              usedPercent: 35,
+              cycleUsage: { cost: 4.56 },
+            },
+          ],
+        },
+      },
+    },
+    (key, params) =>
+      key === "quota.oauth.cycleUsage" ? `周期用量 ${params?.cost}` : key,
+  )
+  expect(rows.map((row) => [row.valueText, row.cycleUsageText])).toEqual([
+    ["80%", "周期用量 $1.23"],
+    ["65%", "周期用量 $4.56"],
+  ])
+})
 
 test("quota and trace use the same percentage and bar direction in both modes", () => {
   for (const mode of ["remaining", "used"]) {
