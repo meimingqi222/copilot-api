@@ -1,0 +1,56 @@
+# Agent Note: Warmup skips report their reason
+
+Status: implemented
+
+## Problem
+
+The scheduled account warmup could decide to send nothing and leave **no trace at
+all**. `warmConnection` had four silent `return`s before the first durable write
+(`eligible`, model selection, per-slot dedupe, `idleWindow`), and only thrown
+errors produced the `Account warmup skipped for ...` line. For an account under
+continuous load — its five hour window full, its credential resting — the
+observable behaviour is therefore identical to a feature that never ran: no
+request, no log line, no metadata. Diagnosing "why was this account not warmed"
+required reading the source and replaying the quota snapshots by hand.
+
+`runAccountWarmups` also never reported that it had reached a configured slot, so
+"the scheduler did not fire" and "the scheduler fired and skipped" were
+indistinguishable from outside.
+
+## Decision
+
+Keep every existing gate exactly where it was and give each one a reason.
+
+- `idleWindow`/`idleAntigravityPool` return the reason they are not idle
+  (`five_hour window is at 100% until ...`, `weekly allowance is exhausted`,
+  `five hour window is active until ...`, ...) instead of a bare `false`; the
+  reason strings mirror the original predicate order, so the decisions are
+  unchanged.
+- `eligible` becomes `ineligibleReason` (`credential is resting (status ...)`,
+  `connection is busy on responses`, ...), keeping the same clause order and
+  short-circuits as the boolean it replaces.
+- Skips are reported once per connection, pool and slot: `logger.info` plus a
+  durable `metadata.accountWarmup.lastSkip = { slot, pool, reason, at }`. The
+  dedupe lives in memory only, because the 30s ticker fires ~10 times inside the
+  five minute catch-up window and repeating a reason would bury it; `lastSkip` is
+  durable precisely because the in-memory map dies with the process.
+- The pre-send re-check records `status: "skipped"` with `not sent: <reason>`
+  instead of leaving a permanent `pending` record.
+- `runAccountWarmups` logs one line per slot: `Account warmup slot
+<tz>/<date>/<time>: evaluating N account connection(s)`.
+
+No gate was relaxed and no extra request is ever sent, so quota spend is
+unchanged. `resetWarmupReportingForTest` exists because the per-slot dedupe is
+process state (same pattern as `resetLoggerForTest`).
+
+## Verification
+
+- `bun run typecheck` clean.
+- `bun test tests/account-warmup.test.ts`: 15 pass / 0 fail, including three new
+  cases (busy window reports once and writes once across repeated ticks; a skipped
+  account does not block the others and the next day's slot reports again; a
+  disabled account and a missing model each name their own reason).
+- Full `bun test`: 2986 pass / 1 fail — the failure is
+  `tests/devin-pricing.test.ts > refresh caches valid prices, preserves last good
+data on failure and backs off`, which fails identically on the unmodified HEAD
+  (reproduced with the warmup change stashed), so it is pre-existing and unrelated.

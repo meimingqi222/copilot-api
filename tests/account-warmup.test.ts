@@ -7,7 +7,10 @@ import {
 import * as store from "~/lib/provider-connections/store"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 import * as quota from "~/lib/quota/refresh"
-import { runAccountWarmups } from "~/lib/quota/warmup"
+import {
+  resetWarmupReportingForTest,
+  runAccountWarmups,
+} from "~/lib/quota/warmup"
 import { acquireRouteTargetSlot } from "~/lib/route-target/load"
 import { onStateChange } from "~/lib/state-events"
 import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
@@ -15,6 +18,7 @@ import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import * as claude from "~/services/claude/create-messages-once"
 import * as codex from "~/services/codex/create-responses-once"
 import * as antigravity from "~/services/antigravity/create-chat-completions-once"
+import { logger } from "~/lib/logger"
 import {
   rememberCodexClientModels,
   resetCodexClientModelsForTest,
@@ -60,6 +64,7 @@ function enable(times = ["07:00"]) {
 }
 
 beforeEach(() => {
+  resetWarmupReportingForTest()
   now = Date.parse("2026-10-15T23:00:30Z") // 07:00 next day in Shanghai
   clock = spyOn(Date, "now").mockImplementation(() => now)
   save = spyOn(store, "saveProviderConnections").mockResolvedValue(undefined)
@@ -485,6 +490,14 @@ test("model changes during quota refresh or persistence prevent sending the old 
   try {
     await runAccountWarmups()
     expect(requests).toEqual([])
+    // Nothing was sent, so the reason must be visible instead of silent.
+    expect(connection("claude").metadata?.accountWarmup).toMatchObject({
+      lastSkip: {
+        reason: expect.stringMatching(
+          /model selection changed|no enabled messages model matched the claude pool/,
+        ),
+      },
+    })
   } finally {
     unsubscribe()
   }
@@ -548,4 +561,106 @@ test("warmup catalog lists enabled native upstream IDs once, recommends low-cost
     models.antigravityClaude.map((model: { id: string }) => model.id),
   ).toEqual(["claude-haiku-4-5", "claude-opus-4-6"])
   expect(requests).toEqual([])
+})
+
+test("a slot that sends nothing still explains itself: one reason per connection, durable and write-once", async () => {
+  enable()
+  // The real production shape: the five hour window is full and has not reset,
+  // and the weekly allowance is still healthy.
+  snapshots.codex.details!.rate_limit = {
+    primary_window: {
+      used_percent: 100,
+      limit_window_seconds: 18000,
+      reset_at: Math.floor(now / 1000) + 3600,
+    },
+    secondary_window: {
+      used_percent: 30,
+      limit_window_seconds: 604800,
+      reset_at: Math.floor(now / 1000) + 86400,
+    },
+  }
+  const info = spyOn(logger, "info")
+  try {
+    await runAccountWarmups()
+    const writes = save.mock.calls.length
+    await runAccountWarmups()
+    await runAccountWarmups()
+    const lines = info.mock.calls.map((call) => String(call[0]))
+    // Claude was idle and warmed; Codex was busy and said so.
+    expect(requests).toEqual(["claude/claude-haiku-4-5"])
+    expect(
+      lines.filter((line) => line.startsWith("Account warmup slot ")),
+    ).toHaveLength(1)
+    expect(lines).toContain(
+      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 account connection(s)",
+    )
+    const skips = lines.filter((line) =>
+      line.startsWith("Account warmup skipped for"),
+    )
+    expect(skips).toHaveLength(1)
+    expect(skips[0]).toMatch(/skipped for "codex" \(codex\)/)
+    expect(skips[0]).toMatch(/window is at 100% until/)
+    // Reasons are durable so a restart does not erase the explanation.
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      lastSkip: {
+        slot: "Asia/Shanghai/2026-10-16/07:00",
+        pool: "codex",
+        reason: expect.stringMatching(/window is at 100% until/),
+      },
+    })
+    // Repeated ticks inside the catch-up window must not re-report or re-write.
+    expect(save.mock.calls.length).toBe(writes)
+  } finally {
+    info.mockRestore()
+  }
+})
+
+test("a skipped connection does not block the others, and the next day's slot reports again", async () => {
+  enable()
+  snapshots.codex.premiumInteractionsRemaining = 0
+  const info = spyOn(logger, "info")
+  try {
+    await runAccountWarmups()
+    expect(requests).toEqual(["claude/claude-haiku-4-5"])
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      lastSkip: { reason: "weekly allowance is exhausted" },
+    })
+    now += 86400_000
+    snapshots.claude.fetchedAt = snapshots.codex.fetchedAt = now
+    await runAccountWarmups()
+    const slots = info.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith("Account warmup slot "))
+    expect(slots).toEqual([
+      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 account connection(s)",
+      "Account warmup slot Asia/Shanghai/2026-10-17/07:00: evaluating 2 account connection(s)",
+    ])
+  } finally {
+    info.mockRestore()
+  }
+})
+
+test("a resting credential, a disabled account and a missing model each name their own reason", async () => {
+  enable()
+  const info = spyOn(logger, "info")
+  try {
+    connection("codex").enabled = false
+    await runAccountWarmups()
+    expect(requests).toEqual(["claude/claude-haiku-4-5"])
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      lastSkip: { reason: "connection is disabled" },
+    })
+    connection("codex").enabled = true
+    connection("codex").models = []
+    now += 86400_000
+    snapshots.claude.fetchedAt = snapshots.codex.fetchedAt = now
+    await runAccountWarmups()
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      lastSkip: {
+        reason: "no enabled responses model matched the codex pool",
+      },
+    })
+  } finally {
+    info.mockRestore()
+  }
 })

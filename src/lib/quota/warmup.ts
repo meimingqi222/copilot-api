@@ -31,6 +31,12 @@ import { createAntigravityChatCompletionsOnce } from "~/services/antigravity/cre
 
 let running = false
 const GRACE_MINUTES = 5
+// Skips used to return silently, which made "warmed nothing" indistinguishable
+// from "never ran". Report every reason once per slot: the ticker fires every
+// 30s inside the five minute catch-up window, so repeating a reason would bury
+// the single line that explains why nothing was sent.
+let reportedSlot: string | undefined
+const reportedSkips = new Map<string, string>()
 type WarmupPool = keyof ReturnType<
   typeof getSystemSettings
 >["accountWarmup"]["models"]
@@ -128,11 +134,11 @@ function selectModel(
   return undefined
 }
 
-function idleAntigravityPool(
+function idleAntigravityReason(
   snapshot: QuotaSnapshot,
   pool: WarmupPool,
   now: number,
-): boolean {
+): string | undefined {
   const groups =
     (snapshot.details as AntigravityQuotaSummaryPayload).groups ?? []
   const matching = groups.filter((group) => {
@@ -142,7 +148,10 @@ function idleAntigravityPool(
     return pool === "antigravityGemini" ? gemini && !claude : claude && !gemini
   })
   // Ambiguous groups and weekly-only/free plans are deliberately not warmed.
-  if (matching.length !== 1) return false
+  if (matching.length !== 1)
+    return matching.length === 0 ?
+        `no quota group matched ${pool}`
+      : `${matching.length} quota groups matched ${pool}`
   const windows = resolveAntigravityQuotaWindows({ groups: matching })
   const fiveHour = windows.find(
     (window) => window.windowEndMs - window.windowStartMs === 18_000_000,
@@ -150,16 +159,17 @@ function idleAntigravityPool(
   const weekly = windows.find(
     (window) => window.windowEndMs - window.windowStartMs === 604_800_000,
   )
-  return (
-    !!fiveHour
-    && !!weekly
-    && fiveHour.windowEndMs <= now
-    && fiveHour.usedPercent != null
-    && fiveHour.usedPercent < 100
-    && weekly.usedPercent != null
-    && weekly.usedPercent < 100
-    && weekly.windowEndMs > now
-  )
+  if (!fiveHour) return "five hour window is missing"
+  if (!weekly) return "weekly window is missing"
+  if (fiveHour.windowEndMs > now)
+    return `five hour window is active until ${new Date(fiveHour.windowEndMs).toISOString()}`
+  if (fiveHour.usedPercent == null) return "five hour usage is unknown"
+  if (fiveHour.usedPercent >= 100)
+    return `five hour window is at ${fiveHour.usedPercent}%`
+  if (weekly.usedPercent == null) return "weekly usage is unknown"
+  if (weekly.usedPercent >= 100) return "weekly allowance is exhausted"
+  if (weekly.windowEndMs <= now) return "weekly window has already ended"
+  return undefined
 }
 
 function dueSlot(now: number): string | undefined {
@@ -194,62 +204,107 @@ function dueSlot(now: number): string | undefined {
   return `${config.timeZone}/${date.toISOString().slice(0, 10)}/${due.value}`
 }
 
-function eligible(connection: ProviderConnection): boolean {
-  const credential = connection.credentials[0]
-  return (
-    getSystemSettings().accountWarmup.enabled
-    && getMutableProviderConnection(connection.id) === connection
-    && connection.enabled
-    && ["claude-native", "codex-native", "antigravity-native"].includes(
+function ineligibleReason(connection: ProviderConnection): string | undefined {
+  if (!getSystemSettings().accountWarmup.enabled)
+    return "account warmup is disabled"
+  if (getMutableProviderConnection(connection.id) !== connection)
+    return "connection is no longer managed here"
+  if (!connection.enabled) return "connection is disabled"
+  if (
+    !["claude-native", "codex-native", "antigravity-native"].includes(
       connection.protocol,
     )
-    && credential !== undefined
-    && isCredentialAvailable(credential)
-    && ["chat", "messages", "responses", "gemini"].every(
-      (endpoint) =>
-        routeTargetLoad(`${connection.id}::${credential.id}::${endpoint}`)
-        === 0,
-    )
   )
+    return `protocol ${connection.protocol} is not warmed`
+  const credential = connection.credentials[0]
+  if (credential === undefined) return "connection has no credential"
+  if (!isCredentialAvailable(credential))
+    return `credential is resting (status ${credential.status ?? "unknown"})`
+  const busy = ["chat", "messages", "responses", "gemini"].find(
+    (endpoint) =>
+      routeTargetLoad(`${connection.id}::${credential.id}::${endpoint}`) !== 0,
+  )
+  if (busy) return `connection is busy on ${busy}`
+  return undefined
 }
 
-function idleWindow(
+function idleWindowReason(
   connection: ProviderConnection,
   snapshot: QuotaSnapshot,
   now: number,
   pool: WarmupPool,
-): boolean {
-  if (!snapshot.details || now - snapshot.fetchedAt > 60_000) return false
+): string | undefined {
+  if (!snapshot.details) return "quota read returned no window details"
+  if (now - snapshot.fetchedAt > 60_000) return "quota read is stale"
   if (connection.protocol === "antigravity-native")
-    return idleAntigravityPool(snapshot, pool, now)
+    return idleAntigravityReason(snapshot, pool, now)
   // A depleted weekly allowance must never turn a warmup into paid extra usage.
-  if (
-    snapshot.premiumInteractionsRemaining === undefined
-    || snapshot.premiumInteractionsRemaining <= 0
-  )
-    return false
+  if (snapshot.premiumInteractionsRemaining === undefined)
+    return "weekly allowance is unknown"
+  if (snapshot.premiumInteractionsRemaining <= 0)
+    return "weekly allowance is exhausted"
   const windows =
     connection.protocol === "claude-native" ?
       resolveClaudeQuotaWindows(snapshot.details)
     : resolveCodexQuotaWindows(snapshot.details)
-  if (
-    windows.some(
-      (window) => (window.usedPercent ?? 0) >= 100 && window.windowEndMs > now,
-    )
+  const full = windows.find(
+    (window) => (window.usedPercent ?? 0) >= 100 && window.windowEndMs > now,
   )
-    return false
+  if (full)
+    return `${full.id} window is at ${Math.round(full.usedPercent ?? 0)}% until ${new Date(full.windowEndMs).toISOString()}`
   const fiveHour = windows.find((window) =>
     ["five_hour", "five-hour"].includes(window.id),
   )
-  if (fiveHour) return fiveHour.windowEndMs <= now
+  if (fiveHour)
+    return fiveHour.windowEndMs <= now ?
+        undefined
+      : `five hour window is active until ${new Date(fiveHour.windowEndMs).toISOString()}`
   // Claude explicitly returns null when the session window has not started.
   // Missing/malformed reset data must not be mistaken for an idle account.
-  if (connection.protocol !== "claude-native") return false
+  if (connection.protocol !== "claude-native")
+    return "quota read has no five hour window"
   const raw = snapshot.details.five_hour
-  if (raw === null) return true
-  if (!raw || typeof raw !== "object") return false
+  if (raw === null) return undefined
+  if (!raw || typeof raw !== "object")
+    return "reset data is missing or malformed"
   const window = raw as { utilization?: number; resets_at?: unknown }
-  return window.utilization === 0 && window.resets_at === null
+  return window.utilization === 0 && window.resets_at === null ?
+      undefined
+    : "session window has already started"
+}
+
+/** Test-only: the per-slot report dedupe is process state, so tests must clear it. */
+export function resetWarmupReportingForTest(): void {
+  reportedSlot = undefined
+  reportedSkips.clear()
+}
+
+/**
+ * Report a skipped warmup once per slot and remember why. `lastSkip` is durable
+ * on purpose: the in-memory dedupe map dies with the process and the log rotates
+ * away, so a no-op would otherwise be undiagnosable after a restart.
+ */
+async function reportSkip(
+  connection: ProviderConnection,
+  slot: string,
+  pool: WarmupPool,
+  reason: string,
+): Promise<void> {
+  const key = `${slot}::${connection.id}::${pool}`
+  if (reportedSkips.get(key) === reason) return
+  reportedSkips.set(key, reason)
+  logger.info(
+    `Account warmup skipped for "${connection.name}" (${pool}): ${reason}`,
+  )
+  const previous = connection.metadata?.accountWarmup as
+    | Record<string, unknown>
+    | undefined
+  connection.metadata ??= {}
+  connection.metadata.accountWarmup = {
+    ...previous,
+    lastSkip: { slot, pool, reason, at: Date.now() },
+  }
+  await persistProviderConnections()
 }
 
 async function warmConnection(
@@ -257,13 +312,20 @@ async function warmConnection(
   slot: string,
   pool: WarmupPool,
 ): Promise<void> {
-  if (!eligible(connection)) return
+  const ineligible = ineligibleReason(connection)
+  if (ineligible) return reportSkip(connection, slot, pool, ineligible)
   const endpoint =
     connection.protocol === "antigravity-native" ? "chat"
     : connection.protocol === "claude-native" ? "messages"
     : "responses"
   const model = selectModel(connection, pool, endpoint)
-  if (!model) return
+  if (!model)
+    return reportSkip(
+      connection,
+      slot,
+      pool,
+      `no enabled ${endpoint} model matched the ${pool} pool`,
+    )
   const previous = connection.metadata?.accountWarmup as
     | {
         slot?: string
@@ -276,13 +338,17 @@ async function warmConnection(
   )
     return
   const snapshot = await refreshManagedQuota(connection, { force: true })
-  if (
-    !snapshot
-    || !idleWindow(connection, snapshot, Date.now(), pool)
-    || !eligible(connection)
-    || selectModel(connection, pool, endpoint) !== model
-  )
-    return
+  if (!snapshot)
+    return reportSkip(connection, slot, pool, "quota read returned nothing")
+  const busy = idleWindowReason(connection, snapshot, Date.now(), pool)
+  if (busy) return reportSkip(connection, slot, pool, busy)
+  const changed =
+    ineligibleReason(connection)
+    ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
+    ?? (selectModel(connection, pool, endpoint) === model ? undefined : (
+      "the model selection changed"
+    ))
+  if (changed) return reportSkip(connection, slot, pool, changed)
   const attempt = {
     slot,
     attemptedAt: Date.now(),
@@ -297,12 +363,22 @@ async function warmConnection(
   }
   // Record before sending: a timeout or restart must not replay a billed request.
   await persistProviderConnections()
-  if (
-    !eligible(connection)
-    || dueSlot(Date.now()) !== slot
-    || selectModel(connection, pool, endpoint) !== model
-  )
+  const late =
+    ineligibleReason(connection)
+    ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
+    ?? (selectModel(connection, pool, endpoint) === model ? undefined : (
+      "the model selection changed"
+    ))
+  if (late) {
+    attempt.status = "skipped"
+    attempt.error = `not sent: ${late}`
+    logger.info(
+      `Account warmup skipped for "${connection.name}" (${pool}): not sent, ${late}`,
+    )
+    Object.assign(connection.metadata.accountWarmup as object, attempt)
+    await persistProviderConnections()
     return
+  }
   const credential = connection.credentials[0]
   const release = acquireRouteTargetSlot(
     `${connection.id}::${credential.id}::${endpoint}`,
@@ -382,8 +458,18 @@ export async function runAccountWarmups(now = Date.now()): Promise<void> {
   if (!slot || running) return
   running = true
   try {
+    const connections = listAccountManagedConnections()
+    if (reportedSlot !== slot) {
+      reportedSlot = slot
+      reportedSkips.clear()
+      // One line per slot: proves the scheduler reached the configured time and
+      // says how many accounts were considered, even when nothing is sent.
+      logger.info(
+        `Account warmup slot ${slot}: evaluating ${connections.length} account connection(s)`,
+      )
+    }
     // Sequential sends avoid a burst of synthetic requests across all accounts.
-    for (const connection of listAccountManagedConnections()) {
+    for (const connection of connections) {
       if (dueSlot(Date.now()) !== slot) break
       try {
         const pools: WarmupPool[] =
