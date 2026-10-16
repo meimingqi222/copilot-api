@@ -41,6 +41,34 @@ type WarmupPool = keyof ReturnType<
   typeof getSystemSettings
 >["accountWarmup"]["models"]
 
+/** Protocols that a scheduled warmup can ever send for. Everything else is out of scope. */
+const WARMABLE_PROTOCOLS = [
+  "claude-native",
+  "codex-native",
+  "antigravity-native",
+] as const
+
+function isWarmableProtocol(connection: ProviderConnection): boolean {
+  return (WARMABLE_PROTOCOLS as readonly string[]).includes(connection.protocol)
+}
+
+/**
+ * Warm only when the five hour window is effectively untouched: more than
+ * `WARMUP_MIN_REMAINING_PERCENT` of it is left. Requiring the window to have
+ * expired meant an account with a trickle of traffic could never be warmed,
+ * because any usage at all kept a window open.
+ */
+const WARMUP_MIN_REMAINING_PERCENT = 99
+
+function fiveHourRemainingReason(window: {
+  usedPercent?: number | null
+  windowEndMs: number
+}): string | undefined {
+  const remaining = 100 - (window.usedPercent ?? 0)
+  if (remaining > WARMUP_MIN_REMAINING_PERCENT) return undefined
+  return `five hour window has ${Math.round(remaining * 10) / 10}% left (needs more than ${WARMUP_MIN_REMAINING_PERCENT}%), resets ${new Date(window.windowEndMs).toISOString()}`
+}
+
 function poolForModel(
   id: string,
 ): "antigravityGemini" | "antigravityClaude" | undefined {
@@ -161,11 +189,9 @@ function idleAntigravityReason(
   )
   if (!fiveHour) return "five hour window is missing"
   if (!weekly) return "weekly window is missing"
-  if (fiveHour.windowEndMs > now)
-    return `five hour window is active until ${new Date(fiveHour.windowEndMs).toISOString()}`
   if (fiveHour.usedPercent == null) return "five hour usage is unknown"
-  if (fiveHour.usedPercent >= 100)
-    return `five hour window is at ${fiveHour.usedPercent}%`
+  const fiveHourLeft = fiveHourRemainingReason(fiveHour)
+  if (fiveHourLeft) return fiveHourLeft
   if (weekly.usedPercent == null) return "weekly usage is unknown"
   if (weekly.usedPercent >= 100) return "weekly allowance is exhausted"
   if (weekly.windowEndMs <= now) return "weekly window has already ended"
@@ -210,11 +236,7 @@ function ineligibleReason(connection: ProviderConnection): string | undefined {
   if (getMutableProviderConnection(connection.id) !== connection)
     return "connection is no longer managed here"
   if (!connection.enabled) return "connection is disabled"
-  if (
-    !["claude-native", "codex-native", "antigravity-native"].includes(
-      connection.protocol,
-    )
-  )
+  if (!isWarmableProtocol(connection))
     return `protocol ${connection.protocol} is not warmed`
   const credential = connection.credentials[0]
   if (credential === undefined) return "connection has no credential"
@@ -255,10 +277,7 @@ function idleWindowReason(
   const fiveHour = windows.find((window) =>
     ["five_hour", "five-hour"].includes(window.id),
   )
-  if (fiveHour)
-    return fiveHour.windowEndMs <= now ?
-        undefined
-      : `five hour window is active until ${new Date(fiveHour.windowEndMs).toISOString()}`
+  if (fiveHour) return fiveHourRemainingReason(fiveHour)
   // Claude explicitly returns null when the session window has not started.
   // Missing/malformed reset data must not be mistaken for an idle account.
   if (connection.protocol !== "claude-native")
@@ -458,15 +477,25 @@ export async function runAccountWarmups(now = Date.now()): Promise<void> {
   if (!slot || running) return
   running = true
   try {
-    const connections = listAccountManagedConnections()
+    const managed = listAccountManagedConnections()
+    const connections = managed.filter(isWarmableProtocol)
     if (reportedSlot !== slot) {
       reportedSlot = slot
       reportedSkips.clear()
       // One line per slot: proves the scheduler reached the configured time and
-      // says how many accounts were considered, even when nothing is sent.
+      // says how many warmable accounts were considered, even when nothing is
+      // sent. Connections whose protocol is never warmed are left out so their
+      // skips cannot bury the reasons that matter.
       logger.info(
-        `Account warmup slot ${slot}: evaluating ${connections.length} account connection(s)`,
+        `Account warmup slot ${slot}: evaluating ${connections.length} warmable account connection(s)`
+          + (managed.length > connections.length ?
+            ` of ${managed.length} account connection(s)`
+          : ""),
       )
+      if (managed.length > connections.length)
+        logger.debug(
+          `Account warmup: ${managed.length - connections.length} account connection(s) use a protocol that is never warmed`,
+        )
     }
     // Sequential sends avoid a burst of synthetic requests across all accounts.
     for (const connection of connections) {

@@ -54,3 +54,19 @@ process state (same pattern as `resetLoggerForTest`).
   `tests/devin-pricing.test.ts > refresh caches valid prices, preserves last good
 data on failure and backs off`, which fails identically on the unmodified HEAD
   (reproduced with the warmup change stashed), so it is pre-existing and unrelated.
+
+## Update: the five hour gate is usage based, not "window still open"
+
+The first cut kept the original idle rule: a five hour window that had not
+expired counted as busy, so an account with a trickle of traffic could never be
+warmed — only a window that had already ended qualified. The rule is now
+`100 - usedPercent > 99`: an effectively untouched window warms even while it is
+still open, and anything above 1% used stands the warmup down
+(`five hour window has 90% left (needs more than 99%), resets ...`). The same
+threshold replaces the "window has ended" requirement in the Antigravity pools;
+the weekly guards there are unchanged.
+
+Skips are also quieter: only the three warmable protocols are evaluated, so the
+slot line reads `evaluating N warmable account connection(s)` (plus
+`of M account connection(s)` when out-of-scope connections exist) and a scripted
+fleet of 13 non-warmable connections no longer buries the reasons that matter.

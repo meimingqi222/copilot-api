@@ -454,13 +454,16 @@ test("Antigravity pools warm independently, do not cross pools and persist per-p
   })
 })
 
-test("Antigravity unknown, active and weekly-only windows skip; explicit models cannot cross pools", async () => {
+test("Antigravity busy, unknown and weekly-only windows skip; explicit models cannot cross pools", async () => {
   const groups = setupAntigravity()
   enable()
-  groups[0].buckets[0].resetTime = new Date(now + 3600_000).toISOString()
+  // A busy five hour window skips even while more than 99% is not required:
+  // the gate is usage based now, not "is the window still open".
+  groups[0].buckets[0].remainingFraction = 0.5
   groups[1].buckets.shift()
   await runAccountWarmups()
   expect(requests).toEqual([])
+  groups[0].buckets[0].remainingFraction = 1
   groups[0].buckets[0].resetTime = ""
   await runAccountWarmups()
   expect(requests).toEqual([])
@@ -592,7 +595,7 @@ test("a slot that sends nothing still explains itself: one reason per connection
       lines.filter((line) => line.startsWith("Account warmup slot ")),
     ).toHaveLength(1)
     expect(lines).toContain(
-      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 account connection(s)",
+      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 warmable account connection(s)",
     )
     const skips = lines.filter((line) =>
       line.startsWith("Account warmup skipped for"),
@@ -632,8 +635,8 @@ test("a skipped connection does not block the others, and the next day's slot re
       .map((call) => String(call[0]))
       .filter((line) => line.startsWith("Account warmup slot "))
     expect(slots).toEqual([
-      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 account connection(s)",
-      "Account warmup slot Asia/Shanghai/2026-10-17/07:00: evaluating 2 account connection(s)",
+      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 warmable account connection(s)",
+      "Account warmup slot Asia/Shanghai/2026-10-17/07:00: evaluating 2 warmable account connection(s)",
     ])
   } finally {
     info.mockRestore()
@@ -660,6 +663,102 @@ test("a resting credential, a disabled account and a missing model each name the
         reason: "no enabled responses model matched the codex pool",
       },
     })
+  } finally {
+    info.mockRestore()
+  }
+})
+
+test("a five hour window with more than 99% left warms even while it is still open", async () => {
+  enable()
+  // Open window (reset in the future) but almost untouched: the old gate treated
+  // any open window as busy and never warmed this account.
+  snapshots.codex.details!.rate_limit = {
+    primary_window: {
+      used_percent: 0.5,
+      limit_window_seconds: 18000,
+      reset_at: Math.floor(now / 1000) + 3600,
+    },
+    secondary_window: {
+      used_percent: 30,
+      limit_window_seconds: 604800,
+      reset_at: Math.floor(now / 1000) + 86400,
+    },
+  }
+  const info = spyOn(logger, "info")
+  try {
+    await runAccountWarmups()
+    expect(requests).toEqual(["claude/claude-haiku-4-5", "codex/gpt-6-luna"])
+    const lines = info.mock.calls.map((call) => String(call[0]))
+    expect(
+      lines.filter((line) => line.startsWith("Account warmup skipped for")),
+    ).toEqual([])
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      status: "succeeded",
+      slot: "Asia/Shanghai/2026-10-16/07:00",
+    })
+    // With 10% used the window is busy again and the warmup stands down.
+    now += 86400_000
+    snapshots.claude.fetchedAt = snapshots.codex.fetchedAt = now
+    const rateLimit = snapshots.codex.details!.rate_limit as {
+      primary_window: { used_percent: number }
+    }
+    rateLimit.primary_window.used_percent = 10
+    await runAccountWarmups()
+    const next = info.mock.calls.map((call) => String(call[0]))
+    expect(
+      next.filter((line) => line.includes("Account warmup skipped for")),
+    ).toHaveLength(1)
+    expect(next.find((line) => line.includes("five hour window has"))).toMatch(
+      /five hour window has 90% left \(needs more than 99%\)/,
+    )
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      lastSkip: {
+        reason: expect.stringMatching(/five hour window has 90% left/),
+      },
+    })
+  } finally {
+    info.mockRestore()
+  }
+})
+
+test("connections whose protocol is never warmed are excluded from the slot line and never reported", async () => {
+  setTestAccounts([
+    {
+      id: "xai",
+      label: "xai-fixture",
+      provider: "xai",
+      enabled: true,
+      credentials: { accessToken: "test-token" },
+    },
+    ...["claude", "codex"].map((provider) => ({
+      id: provider,
+      label: provider,
+      provider: provider as "claude" | "codex",
+      enabled: true,
+      credentials: { accessToken: "test-token" },
+    })),
+  ])
+  for (const id of ["claude", "codex"])
+    connection(id).models = [
+      {
+        publicId: `${id}-public`,
+        upstreamId: id === "claude" ? "claude-haiku-4-5" : "gpt-6-luna",
+        enabled: true,
+        endpoints: [id === "claude" ? "messages" : "responses"],
+      },
+    ]
+  enable()
+  const info = spyOn(logger, "info")
+  try {
+    await runAccountWarmups()
+    const lines = info.mock.calls.map((call) => String(call[0]))
+    expect(lines).toContain(
+      "Account warmup slot Asia/Shanghai/2026-10-16/07:00: evaluating 2 warmable account connection(s) of 3 account connection(s)",
+    )
+    expect(
+      lines.filter((line) => line.startsWith("Account warmup skipped for")),
+    ).toEqual([])
+    expect(lines.some((line) => line.includes("xai-fixture"))).toBe(false)
   } finally {
     info.mockRestore()
   }
