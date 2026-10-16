@@ -1,27 +1,19 @@
 /**
  * LobsterAI（有道龙虾）积分/配额拉取。
  *
- * LobsterAI 客户端把额度叫「积分」，有两个只读端点（与官方客户端同一套鉴权
- * 头 + keyfrom query）：
+ * 与 auto-checkin 同一口径：客户端头部那个数来自
+ * `GET {root}/api/user/profile-summary` 的 `data.totalCreditsRemaining`，
+ * 不是 `/api/user/quota` 的免费额度窗口。后者是另一套计数，拿来当余额或
+ * 进度条会把「还有几百积分」显示成 0/300。
  *
- * 1. `GET {root}/api/user/profile-summary` —— 积分钱包总览：
- *      data.totalCreditsRemaining  剩余积分总额（客户端头部的那个数）
- *      data.nickname               账号昵称
- *      data.creditItems[]          逐项积分：{ type, label, labelEn,
- *                                  creditsRemaining, expiresAt }
- *                                  type ∈ subscription|boost|free|bonus|
- *                                  invitation|campaign
+ * profile-summary 还带：
+ *   data.nickname
+ *   data.creditItems[]  { type, label, creditsRemaining, expiresAt }
+ *                       expiresAt 是 epoch 毫秒（偶发 ISO 串）
  *
- * 2. `GET {root}/api/user/quota` —— 套餐与免费额度窗口：
- *      data.planName               "免费" | "标准" | "进阶" | "专业"
- *      data.subscriptionStatus     "free" | "active" | "enterprise"
- *      data.freeCreditsTotal/Used/Remaining/ExpiresAt  免费额度窗口
- *      data.dailyCreditsUsed       当日已用
- *
- * 积分是一笔**余额**（没有总额上限），不是某个窗口的占比，所以不硬算百分比：
- * 余额由 `chatRemaining` 承载（归零即判耗尽，与客户端「0 分 = 无可用资源」一
- * 致），明细放在 details 里按余额展示。免费额度窗口有 total 时另算一个百分比
- * 行，供进度条显示。
+ * `/api/user/quota` 只用来读套餐名（planName / subscriptionStatus），
+ * 不参与余额。积分是一笔没有总额上限的余额，由 `chatRemaining` 原样承载，
+ * 归零才判耗尽。
  */
 
 import type { QuotaSnapshot } from "~/lib/quota/types"
@@ -44,7 +36,7 @@ interface LobsteraiCreditItem {
   label?: string
   labelEn?: string
   creditsRemaining?: number
-  expiresAt?: string | null
+  expiresAt?: string | number | null
 }
 
 interface LobsteraiProfileSummary {
@@ -56,18 +48,6 @@ interface LobsteraiProfileSummary {
 interface LobsteraiUserQuota {
   planName?: string
   subscriptionStatus?: string
-  freeCreditsTotal?: number
-  freeCreditsUsed?: number
-  freeCreditsRemaining?: number
-  freeCreditsExpiresAt?: string | null
-  dailyCreditsUsed?: number
-}
-
-interface LobsteraiQuotaWindow {
-  name: string
-  usedPercent: number
-  display: string
-  resetsAt?: number
 }
 
 interface ParsedLobsteraiQuota {
@@ -94,16 +74,22 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined
 }
 
-/** ISO / date 串或 epoch 毫秒 → 毫秒；其余 undefined。 */
-function readWhen(value: unknown): number | undefined {
+/**
+ * creditItems.expiresAt → epoch 毫秒。
+ * 官方客户端与 auto-checkin 都按毫秒存；秒级时间戳（~1e9）乘 1000。
+ */
+function readMillis(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return value
+    return value < 1e12 ? value * 1000 : value
   }
   if (typeof value === "string" && value.trim()) {
-    const ms = Date.parse(value.trim())
+    const trimmed = value.trim()
+    if (/^\d+(\.\d+)?$/.test(trimmed)) {
+      const n = Number(trimmed)
+      if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n
+    }
+    const ms = Date.parse(trimmed)
     if (!Number.isNaN(ms)) return ms
-    const n = Number(value)
-    if (Number.isFinite(n) && n > 0) return n
   }
   return undefined
 }
@@ -124,7 +110,7 @@ function earliestCreditExpiry(
   if (!Array.isArray(items)) return undefined
   let soonest: number | undefined
   for (const item of items) {
-    const at = readWhen(item?.expiresAt)
+    const at = readMillis(item?.expiresAt)
     if (at !== undefined && (soonest === undefined || at < soonest)) {
       soonest = at
     }
@@ -133,8 +119,8 @@ function earliestCreditExpiry(
 }
 
 /**
- * 从 profile-summary / user/quota 两个响应组装快照。
- * 两者都可能缺：任一可用即可出快照，全缺由调用方报错。
+ * 从 profile-summary（余额）和可选的 user/quota（套餐名）组装快照。
+ * 余额只认 totalCreditsRemaining，缺它就不报数，避免拿免费窗口冒充钱包。
  */
 export function buildLobsteraiSnapshot(
   parsed: ParsedLobsteraiQuota,
@@ -143,30 +129,14 @@ export function buildLobsteraiSnapshot(
   const profile = parsed.profile
   const quota = parsed.quota
 
-  const creditsRemainingRaw =
-    finiteNumber(profile?.totalCreditsRemaining)
-    ?? finiteNumber(quota?.freeCreditsRemaining)
-  // 参考客户端 getCreditQuotaSnapshot 的 Math.max(0, ...)：余额为负时按 0 处理，
-  // 避免把哨兵值/异常值当成「负数余额」显示或判耗尽。
+  const creditsRemainingRaw = finiteNumber(profile?.totalCreditsRemaining)
+  // 参考客户端 getCreditQuotaSnapshot 的 Math.max(0, ...)：余额为负时按 0 处理。
+  // 保留两位小数（与 auto-checkin `round(rem, 2)` 一致），不要四舍五入成整数。
   const creditsRemaining =
     creditsRemainingRaw === undefined ? undefined : (
-      Math.max(0, creditsRemainingRaw)
+      Math.max(0, Math.round(creditsRemainingRaw * 100) / 100)
     )
   const creditsExpiresAt = earliestCreditExpiry(profile?.creditItems)
-
-  const windows: Array<LobsteraiQuotaWindow> = []
-  const freeTotal = finiteNumber(quota?.freeCreditsTotal)
-  if (freeTotal !== undefined && freeTotal > 0) {
-    const used = finiteNumber(quota?.freeCreditsUsed) ?? 0
-    const clampedUsed = Math.min(Math.max(used, 0), freeTotal)
-    const remaining = Math.max(0, freeTotal - clampedUsed)
-    windows.push({
-      name: "Free",
-      usedPercent: (100 * clampedUsed) / freeTotal,
-      display: `${Math.round(remaining * 100) / 100} / ${Math.round(freeTotal * 100) / 100}`,
-      resetsAt: readWhen(quota?.freeCreditsExpiresAt),
-    })
-  }
 
   const details = {
     host,
@@ -182,21 +152,19 @@ export function buildLobsteraiSnapshot(
           : { expiresAt: creditsExpiresAt }),
         }
       ),
-    windows,
   }
 
   const base: QuotaSnapshot = {
     fetchedAt: Date.now(),
     provider: "lobsterai",
-    // 积分余额会花光，不是「不限量」。
     unlimited: false,
     details: { lobsterai: details },
   }
 
-  // 有余额时把它当作可花额度（整数计数）：归零即由 applyOAuthQuotaSnapshot
-  // 的计数阈值判为耗尽。余额没有上限，故不设 premiumInteractions*。
+  // 有余额时原样承载；归零才判耗尽。不要设 premiumInteractions*，
+  // 那会让卡片把积分编成百分比。
   if (creditsRemaining !== undefined) {
-    return { ...base, chatRemaining: Math.round(creditsRemaining) }
+    return { ...base, chatRemaining: creditsRemaining }
   }
   return base
 }
@@ -284,10 +252,8 @@ export async function fetchLobsteraiQuota(
       unwrapData(quotaResult.value)
     : undefined
 
-  if (!profileData && !quotaData) {
-    throw new Error(
-      "LobsterAI usage response carried neither profile-summary nor quota data",
-    )
+  if (finiteNumber(profileData?.totalCreditsRemaining) === undefined) {
+    throw new Error("LobsterAI usage response carried no totalCreditsRemaining")
   }
 
   return buildLobsteraiSnapshot(

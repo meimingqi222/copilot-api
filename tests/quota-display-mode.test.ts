@@ -18,6 +18,14 @@ interface Display {
     translate: (key: string) => string,
   ) => Array<Row>
   getBarColor: (percent?: number) => string
+  buildLobsteraiRows: (
+    details: Record<string, unknown>,
+    t: (key: string) => string,
+  ) => Array<Row & { hideBar?: boolean; remaining?: number }>
+  formatSummary: (
+    account: Record<string, unknown>,
+    t: (key: string, params?: Record<string, unknown>) => string,
+  ) => string
 }
 
 interface TraceView {
@@ -88,4 +96,29 @@ test("amounts, counts and metadata are preserved while percentage amount text fo
   expect(rows[1]?.valueText).toBe("70 / 100")
   expect(rows[1]?.displayPercent).toBe(30)
   expect(rows[2]?.displayPercent).toBeUndefined()
+})
+
+test("LobsterAI quota shows the wallet balance, not a free-window percent", () => {
+  const details = {
+    lobsterai: {
+      plan: "免费",
+      credits: { remaining: 584.83, expiresAt: 1_783_972_800_000 },
+      windows: [{ name: "Free", usedPercent: 100, display: "0 / 300" }],
+    },
+  }
+  const rows = display.buildLobsteraiRows(details, (key) => key)
+  expect(rows).toHaveLength(1)
+  expect(rows[0]?.valueText).toBe("584.83")
+  expect(rows[0]?.hideBar).toBe(true)
+  expect(rows[0]?.remainingPercent).toBeUndefined()
+  expect(rows[0]?.amountText).toContain("2026")
+
+  const summary = display.formatSummary(
+    { provider: "lobsterai", quotaInfo: { details } },
+    (key, params) =>
+      key === "quota.oauth.lobsterai.creditsValue" ?
+        `${params?.count} credits`
+      : key,
+  )
+  expect(summary).toBe("584.83 credits")
 })

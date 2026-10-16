@@ -1,10 +1,8 @@
 /**
  * LobsterAI 积分拉取测试。
  *
- * 两个只读端点（与官方客户端同一套鉴权头 + keyfrom query）：
- *   GET /api/user/profile-summary → totalCreditsRemaining + creditItems[]
- *   GET /api/user/quota           → planName / freeCredits* 窗口
- * 积分是余额（无上限），余额由 chatRemaining 承载、归零判耗尽。
+ * 与 auto-checkin 同一口径：只认 profile-summary 的 totalCreditsRemaining。
+ * /api/user/quota 的免费窗口不能当余额或进度条。
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
@@ -73,12 +71,12 @@ const PROFILE = {
       {
         type: "campaign",
         creditsRemaining: 84.83,
-        expiresAt: "2026-11-06T07:00:00",
+        expiresAt: 1_783_972_800_000,
       },
       {
         type: "campaign",
         creditsRemaining: 100,
-        expiresAt: "2026-11-07T07:00:01",
+        expiresAt: 1_784_059_201_000,
       },
     ],
   },
@@ -98,31 +96,26 @@ const QUOTA = {
 }
 
 describe("buildLobsteraiSnapshot", () => {
-  test("reads the wallet balance and the free-credit window", () => {
+  test("reads the wallet balance and ignores the free-credit window", () => {
     const snapshot = buildLobsteraiSnapshot(
       { profile: PROFILE.data, quota: QUOTA.data },
       "https://lobsterai-server.youdao.com",
     )
     expect(snapshot.provider).toBe("lobsterai")
     expect(snapshot.unlimited).toBe(false)
-    // 余额是计数，不是窗口占比。
-    expect(snapshot.chatRemaining).toBe(585)
+    expect(snapshot.chatRemaining).toBe(584.83)
     expect(snapshot.premiumInteractionsRemaining).toBeUndefined()
     const block = snapshot.details?.lobsterai as {
       plan?: string
       user?: string
       credits?: { remaining: number; expiresAt?: number }
-      windows: Array<{ name: string; usedPercent: number; display: string }>
+      windows?: unknown
     }
     expect(block.plan).toBe("免费")
     expect(block.user).toBe("15559885978")
     expect(block.credits?.remaining).toBe(584.83)
-    // 最早到期的积分项时间戳（做钱包到期提示）。
-    expect(block.credits?.expiresAt).toBe(Date.parse("2026-11-06T07:00:00"))
-    expect(block.windows).toHaveLength(1)
-    expect(block.windows[0]?.name).toBe("Free")
-    expect(block.windows[0]?.usedPercent).toBe(100)
-    expect(block.windows[0]?.display).toBe("0 / 300")
+    expect(block.credits?.expiresAt).toBe(1_783_972_800_000)
+    expect(block.windows).toBeUndefined()
   })
 
   test("still reports the balance when the quota endpoint is missing", () => {
@@ -130,26 +123,42 @@ describe("buildLobsteraiSnapshot", () => {
       { profile: PROFILE.data },
       "https://lobsterai-server.youdao.com",
     )
-    expect(snapshot.chatRemaining).toBe(585)
-    const block = snapshot.details?.lobsterai as { windows: unknown[] }
-    expect(block.windows).toEqual([])
+    expect(snapshot.chatRemaining).toBe(584.83)
   })
 
-  test("falls back to the free balance and drops an empty window", () => {
+  test("does not treat the free-credit window as the wallet", () => {
     const snapshot = buildLobsteraiSnapshot(
       {
         quota: {
           planName: "标准",
           subscriptionStatus: "active",
-          freeCreditsTotal: 0,
-          freeCreditsRemaining: 12,
         },
       },
       "https://lobsterai-server.youdao.com",
     )
-    expect(snapshot.chatRemaining).toBe(12)
-    const block = snapshot.details?.lobsterai as { windows: unknown[] }
-    expect(block.windows).toEqual([])
+    expect(snapshot.chatRemaining).toBeUndefined()
+    const block = snapshot.details?.lobsterai as {
+      credits?: { remaining: number }
+      plan?: string
+    }
+    expect(block.credits).toBeUndefined()
+    expect(block.plan).toBe("标准")
+  })
+
+  test("treats millisecond credit expiry as milliseconds", () => {
+    const snapshot = buildLobsteraiSnapshot(
+      {
+        profile: {
+          totalCreditsRemaining: 10,
+          creditItems: [{ expiresAt: 1_800_000_000_000 }],
+        },
+      },
+      "https://lobsterai-server.youdao.com",
+    )
+    const block = snapshot.details?.lobsterai as {
+      credits?: { expiresAt?: number }
+    }
+    expect(block.credits?.expiresAt).toBe(1_800_000_000_000)
   })
 
   test("clamps a negative balance to zero like the official client", () => {
@@ -185,10 +194,10 @@ describe("fetchLobsteraiQuota", () => {
     const summaryUrl = seen.find((s) => s.url.includes("profile-summary"))!.url
     expect(summaryUrl).toContain("firstKeyfrom=official")
     expect(summaryUrl).toContain("latestKeyfrom=official")
-    expect(snapshot.chatRemaining).toBe(585)
+    expect(snapshot.chatRemaining).toBe(584.83)
   })
 
-  test("survives one endpoint failing as long as the other answers", async () => {
+  test("does not invent a balance from the quota endpoint alone", async () => {
     globalThis.fetch = mock((url: string) => {
       if (url.includes("/api/user/profile-summary")) {
         return Promise.resolve(jsonResponse({ message: "boom" }, 500))
@@ -196,11 +205,9 @@ describe("fetchLobsteraiQuota", () => {
       return Promise.resolve(jsonResponse(QUOTA))
     }) as unknown as typeof fetch
 
-    const snapshot = await fetchLobsteraiQuota(makeConnection())
-    // profile 缺失 → 退回免费额度余额。
-    expect(snapshot.chatRemaining).toBe(0)
-    const block = snapshot.details?.lobsterai as { plan?: string }
-    expect(block.plan).toBe("免费")
+    await expect(fetchLobsteraiQuota(makeConnection())).rejects.toThrow(
+      /no totalCreditsRemaining/,
+    )
   })
 
   test("rejects a credential the endpoint refuses", async () => {
@@ -256,7 +263,7 @@ describe("lobsteraiProviderRuntime.refreshQuota", () => {
       new AbortController().signal,
     )
 
-    expect(snapshot?.chatRemaining).toBe(585)
+    expect(snapshot?.chatRemaining).toBe(584.83)
     // 快照要落到 credential.quota：只把 snapshot 返回出去的话，管理台读不到
     // 配额，路由也不会因积分归零而摘掉这个账号。
     expect(connection.credentials[0]?.quota).toBe(snapshot)
@@ -284,5 +291,32 @@ describe("lobsteraiProviderRuntime.refreshQuota", () => {
 
     expect(connection.credentials[0]?.quota?.chatRemaining).toBe(0)
     expect(getConnectionQuotaState(connection)).toBe("exhausted")
+  })
+
+  test("keeps a few remaining credits available instead of treating them as exhausted", async () => {
+    const connection = await makeStateConnection()
+    globalThis.fetch = mock((url: string) => {
+      if (url.includes("/api/user/profile-summary")) {
+        return Promise.resolve(
+          jsonResponse({
+            code: 0,
+            data: {
+              nickname: "u",
+              totalCreditsRemaining: 3.2,
+              creditItems: [],
+            },
+          }),
+        )
+      }
+      return Promise.resolve(jsonResponse(QUOTA))
+    }) as unknown as typeof fetch
+
+    await lobsteraiProviderRuntime.refreshQuota?.(
+      connection,
+      new AbortController().signal,
+    )
+
+    expect(connection.credentials[0]?.quota?.chatRemaining).toBe(3.2)
+    expect(getConnectionQuotaState(connection)).toBe("available")
   })
 })

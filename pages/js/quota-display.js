@@ -707,48 +707,38 @@ const QuotaDisplay = {
   },
 
   /**
-   * LobsterAI 积分：余额（无上限，只报数）+ 免费额度窗口（有 total 时给百分比）。
-   * details.lobsterai = { host, plan, subscriptionStatus, user, credits, windows }。
+   * LobsterAI 积分：只报钱包余额，不把 /api/user/quota 的免费窗口画成进度条。
+   * details.lobsterai = { host, plan, subscriptionStatus, user, credits }。
+   * expiresAt 是 epoch 毫秒。
    */
   buildLobsteraiRows(details, t) {
     if (!details || typeof details !== "object") return []
     const block = details.lobsterai
     if (!block || typeof block !== "object") return []
-    const rows = []
     const credits = block.credits
     const remaining = this.normalizeNumber(credits?.remaining)
-    if (remaining !== undefined) {
-      rows.push({
+    if (remaining === undefined) return []
+    const expiresAt = this.normalizeNumber(credits?.expiresAt)
+    return [
+      {
         id: "lobsterai-credits",
         label: t("quota.oauth.lobsterai.credits"),
         remaining,
         valueText: this.formatCredits(remaining),
         amountText:
-          typeof credits?.expiresAt === "number" ?
-            this.formatDateTimeValue(credits.expiresAt)
+          expiresAt !== undefined ?
+            new Date(expiresAt).toLocaleString(undefined, {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })
           : undefined,
         hideBar: true,
-      })
-    }
-    const windows = Array.isArray(block.windows) ? block.windows : []
-    for (const [index, window] of windows.entries()) {
-      if (!window || typeof window !== "object") continue
-      const usedPercent = this.normalizeNumber(window.usedPercent)
-      if (usedPercent === undefined) continue
-      const remainingPercent = Math.max(0, Math.min(100, 100 - usedPercent))
-      rows.push({
-        id: `lobsterai-${index}`,
-        label: window.name || t("quota.oauth.lobsterai.credits"),
-        remainingPercent,
-        valueText: `${Math.round(remainingPercent)}%`,
-        amountText:
-          typeof window.display === "string" && window.display ?
-            window.display
-          : undefined,
-        resetText: this.formatResetTime(window.resetsAt, t),
-      })
-    }
-    return rows
+      },
+    ]
   },
 
   /**

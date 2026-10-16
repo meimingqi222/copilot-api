@@ -1,4 +1,3 @@
-import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
@@ -49,16 +48,20 @@ export function applyOAuthQuotaSnapshot(
   // transiently replays this one instead of losing the last known allowance.
   noteSnapshotReading(connection, snapshot)
 
-  const provider = snapshot.provider as OAuthProviderId | undefined
+  const provider = snapshot.provider
 
   // xAI's `chatRemaining` is monthly credit *cents*, not a message count, so
   // the count threshold must not mark it exhausted when the user has no monthly
   // limit (e.g. Grok CLI weekly-credit accounts). Exhaustion for xAI is
   // already handled by the percentage threshold (weekly/credit usage percent).
+  // LobsterAI credits are a wallet balance: a few remaining points are still
+  // usable, so only 0 is exhausted (same as auto-checkin).
   const countExhausted =
     provider !== "xai"
     && snapshot.chatRemaining !== undefined
-    && snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD
+    && (provider === "lobsterai" ?
+      snapshot.chatRemaining <= 0
+    : snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD)
 
   const exhausted =
     !snapshot.unlimited
