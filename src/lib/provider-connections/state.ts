@@ -507,25 +507,36 @@ export function mergeProviderRefreshedModels(
  * 避免自动发现淹没用户手工维护的启用选择;
  * 空列表(首次发现)保持上游原值,保留开箱即用体验。
  *
- * 判重同时比对 publicId 与 upstreamId:用户改名后,上游原名不再
- * 被当成“新模型”加回来(比对大小写不敏感,上游 id 大小写偶发漂移)。
+ * 判重同时比对 publicId、upstreamId 与 aliases:用户改名或给模型加过别名后,
+ * 上游原名不再被当成“新模型”加回来(比对大小写不敏感,上游 id 大小写偶发漂移)。
  */
 export function mergeDiscoveredModels(
   existing: Array<ModelMapping>,
   discovered: Array<ModelMapping>,
 ): { models: Array<ModelMapping>; added: number } {
   const byId = new Map(existing.map((m) => [m.publicId, m]))
-  const byUpstream = new Set(
-    existing.map((m) => (m.upstreamId || m.publicId).toLowerCase()),
-  )
+  const known = new Set<string>()
+  const remember = (id: string | undefined) => {
+    const v = (id || "").trim().toLowerCase()
+    if (v) known.add(v)
+  }
+  for (const m of existing) {
+    remember(m.publicId)
+    remember(m.upstreamId)
+    for (const alias of m.aliases ?? []) remember(alias)
+    for (const alias of m.hiddenAliases ?? []) remember(alias)
+  }
   let added = 0
   for (const m of discovered) {
     if (byId.has(m.publicId)) continue
-    if (byUpstream.has((m.upstreamId || m.publicId).toLowerCase())) continue
+    if (known.has((m.publicId || "").toLowerCase())) continue
+    if (known.has((m.upstreamId || m.publicId).toLowerCase())) continue
     byId.set(
       m.publicId,
       existing.length > 0 ? { ...m, enabled: false, pickerEnabled: false } : m,
     )
+    remember(m.publicId)
+    remember(m.upstreamId)
     added++
   }
   return { models: [...byId.values()], added }

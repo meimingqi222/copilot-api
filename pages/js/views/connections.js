@@ -310,11 +310,32 @@ function connectionsView() {
           this.showToast(msg, "error")
           return
         }
-        // 编辑模式:保留已有条目(含改名/enabled),仅追加新增且默认不勾选;
-        // 新建模式:沿用旧行为(替换 + 全选)
+        // 编辑模式:保留已有条目(含改名/enabled/别名),仅追加真正的新模型且默认不勾选;
+        // 判重看 publicId、upstreamId、aliases(大小写不敏感),避免改名或别名后
+        // 把上游原名再加一遍。新建模式:沿用旧行为(替换 + 全选)
         if (form.id) {
-          const known = new Set(this.fetchedModels.map((m) => m.publicId))
-          const fresh = (res.models || []).filter((m) => !known.has(m.publicId))
+          const known = new Set()
+          const remember = (id) => {
+            const v = String(id || "")
+              .trim()
+              .toLowerCase()
+            if (v) known.add(v)
+          }
+          for (const m of this.fetchedModels) {
+            remember(m.publicId)
+            remember(m.upstreamId)
+            for (const alias of m.aliases || []) remember(alias)
+            for (const alias of m.hiddenAliases || []) remember(alias)
+          }
+          const fresh = (res.models || []).filter((m) => {
+            const publicId = String(m.publicId || "")
+              .trim()
+              .toLowerCase()
+            const upstream = String(m.upstreamId || m.publicId || "")
+              .trim()
+              .toLowerCase()
+            return !known.has(publicId) && !known.has(upstream)
+          })
           this.fetchedModels = [
             ...this.fetchedModels,
             ...fresh.map((m) => ({ ...m, enabled: false })),

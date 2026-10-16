@@ -93,6 +93,27 @@ describe("mergeDiscoveredModels", () => {
       false,
     )
   })
+
+  test("用户别名撞上上游 publicId 时不再当新模型加回来", () => {
+    const existing = [
+      model("my-gpt", {
+        upstreamId: "gpt-4o-custom",
+        aliases: ["gpt-4o", "GPT4"],
+      }),
+    ]
+    const discovered = [
+      model("gpt-4o", { upstreamId: "gpt-4o" }),
+      model("gpt4", { upstreamId: "gpt4" }),
+      model("other-model", { upstreamId: "other-model" }),
+    ]
+    const { models, added } = mergeDiscoveredModels(existing, discovered)
+    expect(added).toBe(1)
+    expect(models.map((m) => m.publicId)).toEqual(["my-gpt", "other-model"])
+    expect(models.find((m) => m.publicId === "my-gpt")?.aliases).toEqual([
+      "gpt-4o",
+      "GPT4",
+    ])
+  })
 })
 
 describe("mergeProviderRefreshedModels", () => {
