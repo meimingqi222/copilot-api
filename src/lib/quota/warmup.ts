@@ -365,9 +365,11 @@ async function warmConnection(
   const changed =
     ineligibleReason(connection)
     ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
-    ?? (selectModel(connection, pool, endpoint) === model ? undefined : (
-      "the model selection changed"
-    ))
+    ?? ((
+      selectModel(connection, pool, endpoint)?.upstreamId === model.upstreamId
+    ) ?
+      undefined
+    : "the model selection changed")
   if (changed) return reportSkip(connection, slot, pool, changed)
   const attempt = {
     slot,
@@ -386,9 +388,11 @@ async function warmConnection(
   const late =
     ineligibleReason(connection)
     ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
-    ?? (selectModel(connection, pool, endpoint) === model ? undefined : (
-      "the model selection changed"
-    ))
+    ?? ((
+      selectModel(connection, pool, endpoint)?.upstreamId === model.upstreamId
+    ) ?
+      undefined
+    : "the model selection changed")
   if (late) {
     attempt.status = "skipped"
     attempt.error = `not sent: ${late}`
@@ -416,9 +420,6 @@ async function warmConnection(
             messages: [{ role: "user", content: "Reply only OK." }],
             max_tokens: 1,
             stream: false,
-            ...(pool === "antigravityGemini" ?
-              { reasoning_effort: "minimal" as const }
-            : {}),
           },
           signal,
         )
@@ -437,7 +438,14 @@ async function warmConnection(
           { connection, credential },
           {
             model: model.upstreamId,
-            input: "Reply only OK.",
+            // The upstream rejects a bare string: input must be a list of
+            // message items (400 "Input must be a list").
+            input: [
+              {
+                role: "user",
+                content: [{ type: "input_text", text: "Reply only OK." }],
+              },
+            ],
             tools: [],
             ...(effort ? { reasoning: { effort } } : {}),
             stream: false,

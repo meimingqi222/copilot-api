@@ -320,7 +320,12 @@ test("auto selection skips expensive, disabled and wrong-endpoint models; Luna w
     max_tokens: 1,
   })
   expect(responses.mock.calls[0][1]).toMatchObject({
-    input: "Reply only OK.",
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "Reply only OK." }],
+      },
+    ],
     tools: [],
     reasoning: { effort: "low" },
   })
@@ -440,8 +445,9 @@ test("Antigravity pools warm independently, do not cross pools and persist per-p
   expect(requests).toEqual(["ag/gemini-3.8-flash"])
   expect(chats.mock.calls[0][1]).toMatchObject({
     max_tokens: 1,
-    reasoning_effort: "minimal",
   })
+  // MINIMAL is rejected by the model (400 INVALID_ARGUMENT), so it must not be sent.
+  expect(chats.mock.calls[0][1]).not.toHaveProperty("reasoning_effort")
   groups[1].buckets[1].remainingFraction = 0.8
   upsertProviderConnection(structuredClone(connection("ag")))
   await runAccountWarmups()
@@ -793,5 +799,25 @@ test("a failed warmup keeps the upstream body so the reason survives the log", a
   } finally {
     info.mockRestore()
     warn.mockRestore()
+  }
+})
+
+test("a model list replaced during the quota read does not abort the warmup", async () => {
+  enable()
+  refresh.mockImplementation(async (conn) => {
+    // Discovery rewrites connection.models with fresh objects on every refresh.
+    conn.models = (conn.models ?? []).map((model) => ({ ...model }))
+    return snapshots[conn.id]
+  })
+  const info = spyOn(logger, "info")
+  try {
+    await runAccountWarmups()
+    expect(requests).toEqual(["claude/claude-haiku-4-5", "codex/gpt-6-luna"])
+    const lines = info.mock.calls.map((call) => String(call[0]))
+    expect(lines.some((line) => line.includes("model selection changed"))).toBe(
+      false,
+    )
+  } finally {
+    info.mockRestore()
   }
 })

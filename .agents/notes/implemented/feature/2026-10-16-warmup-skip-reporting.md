@@ -70,3 +70,19 @@ Skips are also quieter: only the three warmable protocols are evaluated, so the
 slot line reads `evaluating N warmable account connection(s)` (plus
 `of M account connection(s)` when out-of-scope connections exist) and a scripted
 fleet of 13 non-warmable connections no longer buries the reasons that matter.
+
+## Update: the warmup payload itself was invalid (upstream 400)
+
+The first slot that actually reached the upstream proved the feature had never
+sent a valid request:
+
+- Codex: `input: "Reply only OK."` — the Responses upstream requires a list
+  (`400 {"detail":"Input must be a list"}`). Now sends
+  `[{ role: "user", content: [{ type: "input_text", text: "Reply only OK." }] }]`,
+  which is the same shape the IR responses codec emits.
+- Antigravity Gemini: `reasoning_effort: "minimal"` is rejected by the model
+  (`400 INVALID_ARGUMENT: Thinking level MINIMAL is not supported`). The field is
+  no longer sent; the model default applies.
+- Both pre-send re-checks compared the selected model by object identity, so a
+  quota refresh that rebuilt `connection.models` (discovery does exactly that)
+  aborted the send with `model selection changed`. They now compare `upstreamId`.
