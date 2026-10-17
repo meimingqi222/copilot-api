@@ -650,18 +650,44 @@ export function classifyUpstreamError(input: {
 /**
  * Detects CodeBuddy content-policy blocks in an error body.
  * Upstream audits prompt fingerprints literally and answers 400/403 with
- * code 11128 plus one of the fixed phrases below (workbuddy2api
- * contentBlockedRule). These are request problems — retrying with another
- * account changes nothing and the credential must not be disabled.
+ * code 11128 (or hyphenated 11-128) plus one of the fixed phrases below
+ * (workbuddy2api contentBlockedRule). These are request problems — retrying
+ * with another account changes nothing and the credential must not be disabled.
+ *
+ * Note: channel-verification refusals share the same business code but carry
+ * different wording — they are detected by isCodebuddyChannelCheck and, unlike
+ * content blocks, are worth retrying on the /console path. Both kinds map to
+ * client_error (never auth_error) so the credential is never locked.
  */
 function isCodebuddyContentBlocked(body: string): boolean {
   if (!body) return false
-  if (/"code"\s*:\s*"?11128"?/.test(body)) return true
+  if (/"code"\s*:\s*"?11-?128"?/.test(body)) return true
   const lower = body.toLowerCase()
   return (
     lower.includes("blocked by security policy")
     || lower.includes("unapproved channel")
     || lower.includes("illegal api invocation")
+  )
+}
+
+/**
+ * Detects CodeBuddy channel-verification refusals (workbuddy-manager
+ * upstream.IsChannelCheck, 2026-10-17).
+ *
+ * The same 11128/11-128 code carries several meanings (content audit, missing
+ * system first message, missing conversation id, channel check). Only the
+ * channel check carries one of the three phrases below — code alone is not
+ * enough, otherwise a content block would wrongly trigger a path retry.
+ * Both spellings of the code (11128 and 11-128, quoted or not) are accepted.
+ */
+export function isCodebuddyChannelCheck(body: string): boolean {
+  if (!body) return false
+  if (!/11-?128/.test(body)) return false
+  const lower = body.toLowerCase()
+  return (
+    body.includes("渠道校验")
+    || lower.includes("channel verification")
+    || lower.includes("official client")
   )
 }
 

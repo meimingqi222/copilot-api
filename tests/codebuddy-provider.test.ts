@@ -256,7 +256,8 @@ describe("CodeBuddy request handling", () => {
     const msgs = upstreamBody?.messages as Array<{
       content: Array<{ image_url: unknown }>
     }>
-    expect(msgs[0]?.content[0]?.image_url).toEqual({
+    // 首条 system 保障：用户消息后移一位
+    expect(msgs[1]?.content[0]?.image_url).toEqual({
       url: "data:image/png;base64,xx",
     })
   })
@@ -313,16 +314,17 @@ describe("CodeBuddy request handling", () => {
       tool_calls?: Array<{ id: string }>
     }>
     // c02 无结果 → 从 tool_calls 裁剪；orphan 结果整条删除；
-    // system 插入消息挪到结果组之后。
+    // system 插入消息挪到结果组之后；首条 system 保障再在头部补一条。
     expect(msgs.map((m) => m.role)).toEqual([
+      "system",
       "assistant",
       "tool",
       "tool",
       "system",
     ])
-    expect(msgs[0]?.tool_calls?.map((tc) => tc.id)).toEqual(["c00", "c01"])
-    expect(msgs[1]?.tool_call_id).toBe("c00")
-    expect(msgs[2]?.tool_call_id).toBe("c01")
+    expect(msgs[1]?.tool_calls?.map((tc) => tc.id)).toEqual(["c00", "c01"])
+    expect(msgs[2]?.tool_call_id).toBe("c00")
+    expect(msgs[3]?.tool_call_id).toBe("c01")
   })
 
   test("injects thinking and backfills reasoning for deepseek models only", async () => {
@@ -349,11 +351,14 @@ describe("CodeBuddy request handling", () => {
     expect(upstreamBody?.thinking).toEqual({ type: "enabled" })
     expect(upstreamBody?.reasoning_effort).toBe("high")
     const msgs = upstreamBody?.messages as Array<{
+      role?: string
       reasoning?: string
       reasoning_content?: string
     }>
-    expect(msgs[0]?.reasoning_content).toBe("")
-    expect(msgs[0]?.reasoning).toBe(" ")
+    // 首条 system 保障：回填对象是后移一位的 assistant
+    expect(msgs[0]?.role).toBe("system")
+    expect(msgs[1]?.reasoning_content).toBe("")
+    expect(msgs[1]?.reasoning).toBe(" ")
 
     // 非 deepseek 模型零改动
     await codebuddyNativeAdapter.createChatCompletions?.({

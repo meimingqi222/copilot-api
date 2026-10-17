@@ -11,6 +11,7 @@ export {
 export {
   classifyUpstreamError,
   getConnectionRoutability,
+  isCodebuddyChannelCheck,
   isCodexUsageLimitError,
   isOpenCodeFreeTierBlock,
   isConnectionAvailable,

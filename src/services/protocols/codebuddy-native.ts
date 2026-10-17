@@ -1,15 +1,23 @@
 /**
  * CodeBuddy Native Protocol Adapter。
  *
- * CodeBuddy 后端使用标准 OpenAI Chat Completions 协议（/v2/chat/completions），
- * 但有以下差异需要本 adapter 处理：
+ * CodeBuddy 后端使用标准 OpenAI Chat Completions 协议，但有以下差异需要本 adapter 处理：
  *
  * 1. 鉴权需要额外 header：X-User-Id（用户 UID）、X-Domain、X-Product、User-Agent。
  *    其中 X-User-Id 从 JWT accessToken 的 `sub` 字段自动提取，用户只需粘贴 token。
  * 2. 后端只支持流式（stream: true），非流式请求会报错。
  *    本 adapter 对非流式请求强制 stream: true 上游，再聚合 SSE 为 ChatCompletionResponse。
  * 3. 模型发现走 /v3/config（而非标准 /v1/models），返回 CodeBuddy 专属模型列表。
- * 4. 请求体兼容改写：tool_choice 归一化（上游该字段是 string，对象形式 400）、
+ * 4. 聊天路径：/v2/chat/completions 为主，渠道校验被拦时回落
+ *    /console/chat/completions（对齐 workbuddy-manager 2026-10-17
+ *    IsChannelCheck + chatPaths 兜底：业务码 11128/11-128 且文案含
+ *    渠道校验/channel verification/official client 才算渠道校验，
+ *    内容审核拦截同码不同文案，不换路）。两条都被拦则按 client_error
+ *    透出，永不禁用 credential。
+ * 5. 首条消息必须为 system（上游 passthrough 后不再代插，否则 11128
+ *    first message is not system prompt）：缺失时补一条中性 system，
+ *    与 workbuddy-manager probe_account 的做法一致。
+ * 6. 请求体兼容改写：tool_choice 归一化（上游该字段是 string，对象形式 400）、
  *    max_completion_tokens→max_tokens、image_url 字符串→对象、tool_call↔tool
  *    孤儿配对清理、developer→system、空 assistant content，以及 deepseek 系
  *    thinking 注入与 reasoning_content 回填。前六项与 LobsterAI 上游共用，
@@ -28,6 +36,7 @@ import {
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
+  isCodebuddyChannelCheck,
 } from "~/lib/provider-connections"
 import {
   ensureCodebuddyAccessToken,
@@ -84,6 +93,45 @@ function resolveCodebuddyConfigUrl(connection: ProviderConnection): string {
   const base = resolveCodebuddyBaseUrl(connection)
   const origin = new URL(base).origin
   return `${origin}/v3/config`
+}
+
+/**
+ * 聊天补全的候选 URL，按尝试顺序：/v2 优先，/console 兜底。
+ *
+ * 对齐 workbuddy-manager realm.chat_paths（2026-10-17）：上游给 /v2 加了渠道
+ * 强校验而官方客户端走的 /console 放行；/console 挂腾讯云 WAF 的 body 内容规则，
+ * 所以只在判为渠道校验时才换过去，404/405 与内容审核拦截不回落。
+ */
+export function resolveCodebuddyChatUrls(
+  connection: ProviderConnection,
+): string[] {
+  const base = resolveCodebuddyBaseUrl(connection)
+  const primary = `${base}/chat/completions`
+  // baseUrl 是用户手填项：非法时 new URL 会抛 TypeError，必须兜底为单路径，
+  // 否则错误绕过 handleUpstreamFailure/failover 直接上浮。
+  try {
+    const origin = new URL(base).origin
+    return [primary, `${origin}/console/chat/completions`]
+  } catch {
+    return [primary]
+  }
+}
+
+/**
+ * 首条必须是 system：上游要求 messages[0].role == 'system'，否则回
+ * 11128 first message is not system prompt（passthrough 后上游不再代插）。
+ * 缺失时补一条中性 system，与 workbuddy-manager probe_account 一致；
+ * 已有 system（或 normalize 后的 developer→system）则零改动。
+ */
+export function ensureCodebuddyFirstSystemMessage(
+  messages: Array<Message>,
+): void {
+  if (messages.length === 0 || messages[0]?.role !== "system") {
+    messages.unshift({
+      role: "system",
+      content: "You are a helpful assistant.",
+    } as unknown as Message)
+  }
 }
 
 // ── 分布式追踪 ID 生成 ──────────────────────────────────────────────
@@ -672,6 +720,12 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     if (raw.stream_options === undefined) {
       raw.stream_options = { include_usage: true }
     }
+    // 首条 system 保障：缺失时补中性 system，否则 11128 首条非 system。
+    if (Array.isArray(upstreamPayload.messages)) {
+      ensureCodebuddyFirstSystemMessage(
+        upstreamPayload.messages as Array<Message>,
+      )
+    }
     // deepseek 系：开思考需 thinking.type=enabled + effort 档位；
     // assistant 消息回填 reasoning_content/reasoning 过多轮校验。
     injectCodebuddyThinking(raw)
@@ -701,55 +755,84 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     )
     const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     headers.Accept = "application/json, text/event-stream"
-    const url = `${resolveCodebuddyBaseUrl(connection)}/chat/completions`
+    const chatUrls = resolveCodebuddyChatUrls(connection)
+    const requestBody = serializeUpstreamBody(upstreamPayload)
 
-    const response = await fetch(
-      url,
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers,
-        body: serializeUpstreamBody(upstreamPayload),
-        signal,
-      }),
-    )
+    // 路径候选：/v2 优先、/console 兜底。仅渠道校验换路（与 workbuddy-manager
+    // IsChannelCheck 同口径）；内容审核拦截同码不同文案，不换路直接透出。
+    // 两条都被拦则按 client_error 透出，credential 永不禁用。
+    let lastChannelCheckBody = ""
+    for (let urlIdx = 0; urlIdx < chatUrls.length; urlIdx++) {
+      const url = chatUrls[urlIdx] as string
+      const isLastPath = urlIdx === chatUrls.length - 1
 
-    if (!response.ok) {
-      // 6004 模型级限流：只冷却 (credential, model)，账号本身不标记，
-      // 同账号其它模型立即可用。skipAccountPenalty 跳过账号级惩罚。
-      const rawBody = await response
-        .clone()
-        .text()
-        .catch(() => "")
-      const modelLimited = isCodebuddyModelRateLimit(response.status, rawBody)
-      if (modelLimited) {
-        recordCodebuddyModelCooldown({
-          connectionId: connection.id,
-          credentialId: credential.id,
-          model: target.upstreamModelId,
-          body: rawBody,
-        })
-      }
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to create CodeBuddy chat completions",
-        "codebuddy-native",
-        modelLimited ?
-          {
-            skipAccountPenalty: true,
-            // 账号级惩罚被跳过时 credential.cooldownUntil 为空，客户端拿不到
-            // Retry-After；用 6004 body 里的「将在 … 重置」解析值补齐。
-            retryAfterMs: resolveCodebuddyModelCooldownMs(rawBody),
-          }
-        : undefined,
+      const response = await fetch(
+        url,
+        connectionFetchInit(connection, {
+          method: "POST",
+          headers,
+          body: requestBody,
+          signal,
+        }),
       )
-    }
 
-    // 首帧即 6004 的 SSE 错误：模型级落库（幂等，failover.markCooldown
-    // 命中时取最晚冷却）+ 把上游重置时间折算成 Retry-After 透给客户端
-    // （detectOpenAIStreamError 产出的 HTTPError 默认无 Retry-After）。
-    const stream = await safeSseStream(response, detectOpenAIStreamError).catch(
-      (error: unknown) => {
+      if (!response.ok) {
+        const rawBody = await response
+          .clone()
+          .text()
+          .catch(() => "")
+        if (isCodebuddyChannelCheck(rawBody) && !isLastPath) {
+          lastChannelCheckBody = rawBody
+          try {
+            await response.body?.cancel()
+          } catch {
+            // 换路前尽力释放连接体，失败不影响重试。
+          }
+          continue
+        }
+        // 6004 模型级限流：只冷却 (credential, model)，账号本身不标记，
+        // 同账号其它模型立即可用。skipAccountPenalty 跳过账号级惩罚。
+        const modelLimited = isCodebuddyModelRateLimit(response.status, rawBody)
+        if (modelLimited) {
+          recordCodebuddyModelCooldown({
+            connectionId: connection.id,
+            credentialId: credential.id,
+            model: target.upstreamModelId,
+            body: rawBody,
+          })
+        }
+        await handleUpstreamFailure(
+          response,
+          credential,
+          "Failed to create CodeBuddy chat completions",
+          "codebuddy-native",
+          modelLimited ?
+            {
+              skipAccountPenalty: true,
+              // 账号级惩罚被跳过时 credential.cooldownUntil 为空，客户端拿不到
+              // Retry-After；用 6004 body 里的「将在 … 重置」解析值补齐。
+              retryAfterMs: resolveCodebuddyModelCooldownMs(rawBody),
+            }
+          : undefined,
+        )
+      }
+
+      // 首帧即 6004 的 SSE 错误：模型级落库（幂等，failover.markCooldown
+      // 命中时取最晚冷却）+ 把上游重置时间折算成 Retry-After 透给客户端
+      // （detectOpenAIStreamError 产出的 HTTPError 默认无 Retry-After）。
+      // 首帧即渠道校验（200 包 SSE 错误帧）：同样换 /console 再试一次。
+      let stream: AsyncIterable<CopilotStreamEvent>
+      try {
+        stream = await safeSseStream(response, detectOpenAIStreamError)
+      } catch (error: unknown) {
+        if (
+          error instanceof HTTPError
+          && isCodebuddyChannelCheck(error.responseBody ?? "")
+          && !isLastPath
+        ) {
+          lastChannelCheckBody = error.responseBody ?? ""
+          continue
+        }
         if (
           error instanceof HTTPError
           && isCodebuddyModelRateLimit(
@@ -769,25 +852,33 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
           )
         }
         throw error
-      },
-    )
+      }
 
-    // 非流式请求：聚合 SSE 为 ChatCompletionResponse
-    if (!payload.stream) {
-      const aggregated = await aggregateSseToResponse(
-        stream,
-        target.upstreamModelId,
-      )
+      // 非流式请求：聚合 SSE 为 ChatCompletionResponse
+      if (!payload.stream) {
+        const aggregated = await aggregateSseToResponse(
+          stream,
+          target.upstreamModelId,
+        )
+        return {
+          credentialId: credential.id,
+          response: aggregated,
+        } satisfies AdapterChatResult
+      }
+
+      // 流式请求：清洗后透传 SSE
       return {
         credentialId: credential.id,
-        response: aggregated,
+        response: sanitizeCodebuddyStream(stream),
       } satisfies AdapterChatResult
     }
 
-    // 流式请求：清洗后透传 SSE
-    return {
-      credentialId: credential.id,
-      response: sanitizeCodebuddyStream(stream),
-    } satisfies AdapterChatResult
+    // 理论不可达：循环内所有路径要么 return 要么 throw。兜底把最后一次
+    // 渠道校验按 client_error 透出（credential 不标记、不禁用）。
+    throw new HTTPError(
+      "Failed to create CodeBuddy chat completions",
+      new Response(lastChannelCheckBody || null, { status: 400 }),
+      lastChannelCheckBody,
+    )
   },
 }
