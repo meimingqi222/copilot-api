@@ -18,6 +18,7 @@ import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import * as claude from "~/services/claude/create-messages-once"
 import * as codex from "~/services/codex/create-responses-once"
 import * as antigravity from "~/services/antigravity/create-chat-completions-once"
+import { translateOpenAiChatToAntigravity } from "~/services/antigravity/translate-request"
 import { logger } from "~/lib/logger"
 import { HTTPError } from "~/lib/error"
 import {
@@ -445,9 +446,8 @@ test("Antigravity pools warm independently, do not cross pools and persist per-p
   expect(requests).toEqual(["ag/gemini-3.8-flash"])
   expect(chats.mock.calls[0][1]).toMatchObject({
     max_tokens: 1,
+    reasoning_effort: "low",
   })
-  // MINIMAL is rejected by the model (400 INVALID_ARGUMENT), so it must not be sent.
-  expect(chats.mock.calls[0][1]).not.toHaveProperty("reasoning_effort")
   groups[1].buckets[1].remainingFraction = 0.8
   upsertProviderConnection(structuredClone(connection("ag")))
   await runAccountWarmups()
@@ -512,6 +512,67 @@ test("model changes during quota refresh or persistence prevent sending the old 
     unsubscribe()
   }
 })
+
+test.each(["quota refresh", "persistence"])(
+  "equivalent model objects replaced during %s still warm exactly once",
+  async (phase) => {
+    enable()
+    const replace = () => {
+      for (const id of ["claude", "codex"])
+        connection(id).models = structuredClone(connection(id).models)
+    }
+    const unsubscribe =
+      phase === "persistence" ?
+        onStateChange("models-stale", replace)
+      : () => {}
+    if (phase === "quota refresh")
+      refresh.mockImplementation(async (conn) => {
+        replace()
+        return snapshots[conn.id]
+      })
+    try {
+      await runAccountWarmups()
+      await runAccountWarmups()
+      expect(requests).toEqual(["claude/claude-haiku-4-5", "codex/gpt-6-luna"])
+    } finally {
+      unsubscribe()
+    }
+  },
+)
+
+test("an in-place upstream model change during quota refresh prevents sending", async () => {
+  enable()
+  refresh.mockImplementation(async (conn) => {
+    conn.models![0].upstreamId =
+      conn.id === "claude" ? "claude-haiku-4-6" : "gpt-6.1-luna"
+    return snapshots[conn.id]
+  })
+  await runAccountWarmups()
+  expect(requests).toEqual([])
+})
+
+test.each(["gemini-3.1-pro", "gemini-3.8-flash"])(
+  "Gemini warmup uses a supported low thinking level for %s on the wire",
+  async (model) => {
+    setupAntigravity()
+    updateSystemConfig({
+      ...normal,
+      accountWarmup: {
+        enabled: true,
+        times: ["07:00"],
+        timeZone: "Asia/Shanghai",
+        models: { antigravityGemini: model },
+      },
+    })
+    await runAccountWarmups()
+    const payload = chats.mock.calls[0][1]
+    expect(payload.model).toBe(model)
+    const body = translateOpenAiChatToAntigravity(payload, "test-project")
+    expect(body.request.generationConfig).toMatchObject({
+      thinkingConfig: { thinkingLevel: "low" },
+    })
+  },
+)
 
 test("warmup catalog lists enabled native upstream IDs once, recommends low-cost families first and separates pools", async () => {
   connection("codex").models!.unshift(

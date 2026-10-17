@@ -1,0 +1,191 @@
+bun test v1.3.14 (0d9b296a)
+
+tests\account-warmup.test.ts:
+(pass) off by default; each native account sends once at its configured local time, including concurrent ticks [20.05ms]
+(pass) before the slot and beyond its catch-up window sends nothing; next day's slot runs [3.49ms]
+(pass) active windows, exhausted weekly quotas, disabled accounts and missing native models are skipped [3.69ms]
+[warn] Account warmup skipped for "codex": quota unavailable
+[warn] Account warmup failed for "claude": temporary upstream error
+[warn] Account warmup failed for "codex": temporary upstream error
+(pass) failed or stale quota reads cannot trigger inference; upstream failures are recorded without resending [4.63ms]
+(pass) catch-up across midnight uses the previous local date and does not replay that slot [3.97ms]
+(pass) unknown or malformed window resets are not treated as idle windows [2.06ms]
+318 |   expect(requests).toEqual(["claude/claude-haiku-4-5", "codex/gpt-6-luna"])
+319 |   expect(messages.mock.calls[0][1]).toMatchObject({
+320 |     messages: [{ role: "user", content: "Reply only OK." }],
+321 |     max_tokens: 1,
+322 |   })
+323 |   expect(responses.mock.calls[0][1]).toMatchObject({
+                                           ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "input": [
+-     {
+-       "content": "Reply only OK.",
+-       "role": "user",
+-     },
+-   ],
++   "input": "Reply only OK.",
++   "model": "gpt-6-luna",
+    "reasoning": {
+      "effort": "low",
+    },
++   "store": false,
++   "stream": false,
+    "tools": [],
+  }
+
+- Expected  - 6
++ Received  + 4
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:323:38)
+(fail) auto selection skips expensive, disabled and wrong-endpoint models; Luna wins over Mini [8.77ms]
+(pass) exact upstream overrides are respected without fallback; discovered effort levels override templates [5.08ms]
+437 |   const groups = setupAntigravity()
+438 |   groups[1].buckets[1].remainingFraction = 0
+439 |   enable()
+440 |   await runAccountWarmups()
+441 |   expect(requests).toEqual(["ag/gemini-3.8-flash"])
+442 |   expect(chats.mock.calls[0][1]).toMatchObject({
+                                       ^
+error: expect(received).toMatchObject(expected)
+
+  {
+    "max_tokens": 1,
+-   "reasoning_effort": "low",
++   "messages": [
++     {
++       "content": "Reply only OK.",
++       "role": "user",
++     },
++   ],
++   "model": "gemini-3.8-flash",
++   "reasoning_effort": "minimal",
++   "stream": false,
+  }
+
+- Expected  - 1
++ Received  + 9
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:442:34)
+(fail) Antigravity pools warm independently, do not cross pools and persist per-pool dedup [4.04ms]
+(pass) Antigravity busy, unknown and weekly-only windows skip; explicit models cannot cross pools [5.19ms]
+(pass) model changes during quota refresh or persistence prevent sending the old selection [1.67ms]
+524 |         return snapshots[conn.id]
+525 |       })
+526 |     try {
+527 |       await runAccountWarmups()
+528 |       await runAccountWarmups()
+529 |       expect(requests).toEqual(["claude/claude-haiku-4-5", "codex/gpt-6-luna"])
+                             ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "claude/claude-haiku-4-5",
+-   "codex/gpt-6-luna",
+- ]
++ []
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:529:24)
+(fail) equivalent model objects replaced during quota refresh still warm exactly once [4.00ms]
+524 |         return snapshots[conn.id]
+525 |       })
+526 |     try {
+527 |       await runAccountWarmups()
+528 |       await runAccountWarmups()
+529 |       expect(requests).toEqual(["claude/claude-haiku-4-5", "codex/gpt-6-luna"])
+                             ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "claude/claude-haiku-4-5",
+-   "codex/gpt-6-luna",
+- ]
++ []
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:529:24)
+(fail) equivalent model objects replaced during persistence still warm exactly once [3.24ms]
+539 |     conn.models![0].upstreamId =
+540 |       conn.id === "claude" ? "claude-haiku-4-6" : "gpt-6.1-luna"
+541 |     return snapshots[conn.id]
+542 |   })
+543 |   await runAccountWarmups()
+544 |   expect(requests).toEqual([])
+                         ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   "claude/claude-haiku-4-6",
++   "codex/gpt-6.1-luna",
++ ]
+
+- Expected  - 1
++ Received  + 4
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:544:20)
+(fail) an in-place upstream model change during quota refresh prevents sending [2.03ms]
+559 |     })
+560 |     await runAccountWarmups()
+561 |     const payload = chats.mock.calls[0][1]
+562 |     expect(payload.model).toBe(model)
+563 |     const body = translateOpenAiChatToAntigravity(payload, "test-project")
+564 |     expect(body.request.generationConfig).toMatchObject({
+                                                ^
+error: expect(received).toMatchObject(expected)
+
+  {
+    "thinkingConfig": {
+-     "thinkingLevel": "low",
++     "includeThoughts": true,
++     "thinkingLevel": "minimal",
+    },
+  }
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:564:43)
+(fail) Gemini warmup uses a supported low thinking level for gemini-3.1-pro on the wire [3.89ms]
+559 |     })
+560 |     await runAccountWarmups()
+561 |     const payload = chats.mock.calls[0][1]
+562 |     expect(payload.model).toBe(model)
+563 |     const body = translateOpenAiChatToAntigravity(payload, "test-project")
+564 |     expect(body.request.generationConfig).toMatchObject({
+                                                ^
+error: expect(received).toMatchObject(expected)
+
+  {
+    "thinkingConfig": {
+-     "thinkingLevel": "low",
++     "includeThoughts": true,
++     "thinkingLevel": "minimal",
+    },
+  }
+
+- Expected  - 1
++ Received  + 2
+
+      at <anonymous> (<repo>\tests\account-warmup.test.ts:564:43)
+(fail) Gemini warmup uses a supported low thinking level for gemini-3.8-flash on the wire [2.94ms]
+(pass) warmup catalog lists enabled native upstream IDs once, recommends low-cost families first and separates pools [4.31ms]
+(pass) a slot that sends nothing still explains itself: one reason per connection, durable and write-once [3.14ms]
+(pass) a skipped connection does not block the others, and the next day's slot reports again [3.44ms]
+(pass) a resting credential, a disabled account and a missing model each name their own reason [2.39ms]
+(pass) a five hour window with more than 99% left warms even while it is still open [2.50ms]
+(pass) connections whose protocol is never warmed are excluded from the slot line and never reported [2.12ms]
+[warn] Account warmup failed for "codex": HTTP 429 {"error":{"message":"usage limit reached"}}
+(pass) a failed warmup keeps the upstream body so the reason survives the log [1.76ms]
+
+ 16 pass
+ 7 fail
+ 67 expect() calls
+Ran 23 tests across 1 file. [1477.00ms]

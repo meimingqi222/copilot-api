@@ -346,6 +346,9 @@ async function warmConnection(
       pool,
       `no enabled ${endpoint} model matched the ${pool} pool`,
     )
+  // Discovery and models-stale listeners can rebuild equivalent model objects.
+  // Capture the wire identity so replacements pass and in-place changes do not.
+  const upstreamId = model.upstreamId
   const previous = connection.metadata?.accountWarmup as
     | {
         slot?: string
@@ -365,16 +368,14 @@ async function warmConnection(
   const changed =
     ineligibleReason(connection)
     ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
-    ?? ((
-      selectModel(connection, pool, endpoint)?.upstreamId === model.upstreamId
-    ) ?
+    ?? (selectModel(connection, pool, endpoint)?.upstreamId === upstreamId ?
       undefined
     : "the model selection changed")
   if (changed) return reportSkip(connection, slot, pool, changed)
   const attempt = {
     slot,
     attemptedAt: Date.now(),
-    model: model.upstreamId,
+    model: upstreamId,
     status: "pending",
     error: undefined as string | undefined,
   }
@@ -388,9 +389,7 @@ async function warmConnection(
   const late =
     ineligibleReason(connection)
     ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
-    ?? ((
-      selectModel(connection, pool, endpoint)?.upstreamId === model.upstreamId
-    ) ?
+    ?? (selectModel(connection, pool, endpoint)?.upstreamId === upstreamId ?
       undefined
     : "the model selection changed")
   if (late) {
@@ -410,16 +409,20 @@ async function warmConnection(
   if (!release) return
   const signal = AbortSignal.timeout(30_000)
   try {
-    const effort = lowestCodexReasoningEffort(connection.id, model.upstreamId)
+    const effort = lowestCodexReasoningEffort(connection.id, upstreamId)
     const response =
       endpoint === "chat" ?
         await createAntigravityChatCompletionsOnce(
           { connection, credential },
           {
-            model: model.upstreamId,
+            model: upstreamId,
             messages: [{ role: "user", content: "Reply only OK." }],
             max_tokens: 1,
             stream: false,
+            ...(pool === "antigravityGemini" ?
+              // Pro models reject minimal; low is supported by Pro and Flash.
+              { reasoning_effort: "low" as const }
+            : {}),
           },
           signal,
         )
@@ -427,7 +430,7 @@ async function warmConnection(
         await createClaudeMessagesOnce(
           { connection, credential },
           {
-            model: model.upstreamId,
+            model: upstreamId,
             messages: [{ role: "user", content: "Reply only OK." }],
             max_tokens: 1,
             stream: false,
@@ -437,7 +440,7 @@ async function warmConnection(
       : await createCodexResponsesOnce(
           { connection, credential },
           {
-            model: model.upstreamId,
+            model: upstreamId,
             // The upstream rejects a bare string: input must be a list of
             // message items (400 "Input must be a list").
             input: [
@@ -462,7 +465,7 @@ async function warmConnection(
       throw new Error("Upstream warmup did not complete")
     attempt.status = "succeeded"
     logger.info(
-      `Account warmup succeeded for "${connection.name}" (${model.upstreamId})`,
+      `Account warmup succeeded for "${connection.name}" (${upstreamId})`,
     )
   } catch (error) {
     attempt.status = "failed"

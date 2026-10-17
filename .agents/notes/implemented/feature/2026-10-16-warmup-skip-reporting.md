@@ -82,7 +82,7 @@ sent a valid request:
   which is the same shape the IR responses codec emits.
 - Antigravity Gemini: `reasoning_effort: "minimal"` is rejected by the model
   (`400 INVALID_ARGUMENT: Thinking level MINIMAL is not supported`). The field is
-  no longer sent; the model default applies.
+  sent as `low`, which passed live probes and keeps warmup reasoning inexpensive.
 - Both pre-send re-checks compared the selected model by object identity, so a
   quota refresh that rebuilt `connection.models` (discovery does exactly that)
   aborted the send with `model selection changed`. They now compare `upstreamId`.
