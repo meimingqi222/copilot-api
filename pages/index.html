@@ -1649,6 +1649,41 @@
                             ></span>
                           </div>
                         </div>
+                        <!-- 认证失败:直接在卡片上显示(不只在徽标 tooltip 里) -->
+                        <div
+                          x-show="account.authStatus === 'error' && account.authError"
+                          class="mb-3 rounded-lg px-3 py-2 text-xs"
+                          style="
+                            background: rgba(255, 59, 48, 0.08);
+                            border: 1px solid rgba(255, 59, 48, 0.25);
+                            color: var(--apple-red);
+                          "
+                        >
+                          <div class="flex items-start gap-1.5">
+                            <span
+                              class="font-semibold shrink-0"
+                              x-text="t('accounts.authErrorTitle') || '认证失败'"
+                            ></span>
+                            <span
+                              class="flex-1 break-words"
+                              x-text="account.authError"
+                              :title="account.authError"
+                            ></span>
+                          </div>
+                          <div class="mt-1.5 flex items-center gap-2">
+                            <span
+                              class="opacity-80"
+                              x-text="t('accounts.authErrorHint') || '这个账号需要重新认证'"
+                            ></span>
+                            <button
+                              x-show="['codex','claude','xai','antigravity','kimi','lobsterai','minimax','qoder'].includes(account.provider)"
+                              @click="openReauthModal(account)"
+                              class="btn btn-sm"
+                              style="background: var(--apple-orange); color: white"
+                              x-text="t('accounts.reauth') || '重新认证'"
+                            ></button>
+                          </div>
+                        </div>
                         <div
                           x-show="account.providerFeatures && account.providerFeatures.length"
                           class="mb-4 flex flex-wrap gap-1"

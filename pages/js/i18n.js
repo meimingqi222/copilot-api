@@ -444,6 +444,8 @@ const i18n = {
       "accounts.enable": "启用",
       "accounts.disable": "禁用",
       "accounts.reauth": "重新认证",
+      "accounts.authErrorTitle": "认证失败",
+      "accounts.authErrorHint": "这个账号需要重新认证",
       "accounts.oauth.reauthHint":
         "正在为已有账号重新授权，完成后保留原账号的用量统计。",
       "accounts.setActive": "设为当前",
@@ -2092,6 +2094,8 @@ const i18n = {
       "accounts.enable": "Enable",
       "accounts.disable": "Disable",
       "accounts.reauth": "Re-authenticate",
+      "accounts.authErrorTitle": "Authentication failed",
+      "accounts.authErrorHint": "This account needs to be re-authenticated",
       "accounts.oauth.reauthHint":
         "Re-authorizing the existing account; usage history is preserved.",
       "accounts.setActive": "Set Active",
