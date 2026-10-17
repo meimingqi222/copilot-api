@@ -5,6 +5,7 @@ import type {
 import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { AntigravityQuotaSummaryPayload } from "~/lib/quota/parsers"
 
+import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   getMutableProviderConnection,
@@ -457,8 +458,13 @@ async function warmConnection(
     )
   } catch (error) {
     attempt.status = "failed"
+    // The upstream body is the only place the real reason lives: a generic
+    // "Failed to create Codex responses" is not diagnosable on its own.
     attempt.error = sanitizeDiagnosticSnippet(
-      error instanceof Error ? error.message : String(error),
+      error instanceof HTTPError ?
+        `HTTP ${error.response.status} ${error.responseBody || "(unreadable)"}`
+      : error instanceof Error ? error.message
+      : String(error),
       300,
     )
     logger.warn(

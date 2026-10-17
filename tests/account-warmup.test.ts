@@ -19,6 +19,7 @@ import * as claude from "~/services/claude/create-messages-once"
 import * as codex from "~/services/codex/create-responses-once"
 import * as antigravity from "~/services/antigravity/create-chat-completions-once"
 import { logger } from "~/lib/logger"
+import { HTTPError } from "~/lib/error"
 import {
   rememberCodexClientModels,
   resetCodexClientModelsForTest,
@@ -761,5 +762,36 @@ test("connections whose protocol is never warmed are excluded from the slot line
     expect(lines.some((line) => line.includes("xai-fixture"))).toBe(false)
   } finally {
     info.mockRestore()
+  }
+})
+
+test("a failed warmup keeps the upstream body so the reason survives the log", async () => {
+  enable()
+  responses.mockImplementation(async () => {
+    throw new HTTPError(
+      "Failed to create Codex responses",
+      new Response("{}", { status: 429 }),
+      '{"error":{"message":"usage limit reached"}}',
+    )
+  })
+  const info = spyOn(logger, "info")
+  const warn = spyOn(logger, "warn")
+  try {
+    await runAccountWarmups()
+    expect(connection("codex").metadata?.accountWarmup).toMatchObject({
+      status: "failed",
+      error: expect.stringMatching(/HTTP 429 .*usage limit reached/),
+    })
+    const warned = warn.mock.calls.map((call) => String(call[0]))
+    expect(
+      warned.some(
+        (line) =>
+          line.includes("Account warmup failed")
+          && line.includes("usage limit reached"),
+      ),
+    ).toBe(true)
+  } finally {
+    info.mockRestore()
+    warn.mockRestore()
   }
 })
