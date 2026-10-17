@@ -217,6 +217,7 @@ interface PerfAccumulator {
   streamingRequests: number
   ttftSum: number
   ttftCount: number
+  tpsCount: number
   streamTokens: number
   streamTokenSeconds: number
   nonStreamTokens: number
@@ -232,6 +233,7 @@ function newPerfAccumulator(): PerfAccumulator {
     streamingRequests: 0,
     ttftSum: 0,
     ttftCount: 0,
+    tpsCount: 0,
     streamTokens: 0,
     streamTokenSeconds: 0,
     nonStreamTokens: 0,
@@ -250,7 +252,8 @@ function accumulatePerfRow(acc: PerfAccumulator, row: UsageRawRow): void {
     acc.ttftSum += row.ttft_ms
     acc.ttftCount += 1
   }
-  if (row.tps !== null && row.tps > 0) {
+  if (row.tps !== null && row.tps > 0 && row.completion_tokens > 0) {
+    acc.tpsCount += 1
     const seconds = row.completion_tokens / row.tps
     if (row.streaming === 1) {
       acc.streamTokens += row.completion_tokens
@@ -265,6 +268,20 @@ function accumulatePerfRow(acc: PerfAccumulator, row: UsageRawRow): void {
     acc.decodeSamples += 1
     acc.decodeTokens += decode.tokens
     acc.decodeMs += decode.generationMs
+  }
+}
+
+/** Aggregate raw samples, never request-weight already averaged model rates. */
+export function computePerformanceSummary(rows: UsageRawRow[]) {
+  const acc = newPerfAccumulator()
+  for (const row of rows) accumulatePerfRow(acc, row)
+  const seconds = acc.streamTokenSeconds + acc.nonStreamTokenSeconds
+  return {
+    ...perfAverages(acc),
+    ttftSamples: acc.ttftCount,
+    tpsSamples: acc.tpsCount,
+    avgTps:
+      seconds > 0 ? (acc.streamTokens + acc.nonStreamTokens) / seconds : null,
   }
 }
 

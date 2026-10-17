@@ -281,10 +281,10 @@ describe("performanceView UX redesign", () => {
     expect(view.isAllExpanded(key)).toBe(false)
   })
 
-  test("calculates globalStats.avgTps accurately and clamps extreme outliers", () => {
+  test("uses raw-sample summary instead of reweighting model averages or substituting decode TPS", () => {
     const view = sandbox.performanceView()
 
-    // 1. 优先使用 performance 数组中的真实模型级吞吐
+    // Model averages alone cannot recover the global timing distribution.
     view.performance = [
       {
         model: "claude-3-7-sonnet",
@@ -311,19 +311,46 @@ describe("performanceView UX redesign", () => {
       },
     ]
 
+    view.summary = { requests: 160, tpsSamples: 2, avgTtftMs: 500, avgTps: 50 }
     const stats = view.globalStats
-    // 加权均值应为: (80 * 100 + 100 * 50) / 150 = 13000 / 150 ≈ 86.67 tok/s，而不是 5000+
-    expect(stats.avgTps).toBeCloseTo(86.67, 1)
-    expect(stats.totalSamples).toBe(150)
+    expect(stats.avgTps).toBe(50)
+    expect(stats.avgTtft).toBe(500)
+    expect(stats.totalRequests).toBe(160)
+    expect(stats.totalSamples).toBe(2)
 
     // 2. getChannelTps 防护: 离群通道自动回退到模型基准
     const clampedTps = view.getChannelTps(view.details[0])
     expect(clampedTps).toBe(80) // 回退到 claude-3-7-sonnet 的 80 tok/s 基准
 
-    // 3. 当 performance 为空回退到 details 时，>800 tok/s 也会被安全钳位
+    // Missing end-to-end samples must not be replaced with decode samples.
+    view.summary = null
     view.performance = []
     const fallbackStats = view.globalStats
-    expect(fallbackStats.avgTps).toBe(800) // 钳位到上限 800
+    expect(fallbackStats.avgTps).toBeNull()
+    expect(fallbackStats.avgTtft).toBeNull()
+    expect(fallbackStats.totalSamples).toBe(0)
+  })
+
+  test("proxy overhead uses timing sample counts, not all channel requests", () => {
+    const view = sandbox.performanceView()
+    view.summary = {
+      requests: 30,
+      tpsSamples: 0,
+      avgTtftMs: null,
+      avgTps: null,
+    }
+    view.details = [
+      {
+        requests: 10,
+        timings: {
+          preprocessingMs: { average: 100, samples: 1 },
+          downstreamWriteMs: { average: 20, samples: 5 },
+          dispatchToOutputMs: { average: 400, samples: 2 },
+        },
+      },
+    ]
+    expect(view.globalStats.proxyOverheadMs).toBe(20)
+    expect(view.globalStats.upstreamRatio).toBe(80)
   })
 
   test("sorts by decode TPS and explains its narrower sample coverage", () => {

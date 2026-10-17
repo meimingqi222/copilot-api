@@ -962,13 +962,14 @@ usageApiRoutes.get("/performance", async (c) => {
       tz,
     })
 
-    // 一次原始行扫描同时产出三个视图（之前各扫一遍）。
-    const { performance, details, byProvider } = await getPerfBundle(
+    // Share raw samples across the global summary and grouped views.
+    const { summary, performance, details, byProvider } = await getPerfBundle(
       startMs,
       endMs,
     )
 
     return c.json({
+      summary,
       performance,
       details: details.map((row) => ({
         ...row,

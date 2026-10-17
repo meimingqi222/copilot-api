@@ -179,8 +179,10 @@ export async function readPersistedRequestLogs(options?: {
   for await (const entry of iteratePersistedRequestLogs({
     newestFirst: true,
   })) {
-    if (options?.timeFrom && entry.timestamp < options.timeFrom) continue
-    if (options?.timeTo && entry.timestamp > options.timeTo) continue
+    if (options?.timeFrom !== undefined && entry.timestamp < options.timeFrom)
+      continue
+    if (options?.timeTo !== undefined && entry.timestamp > options.timeTo)
+      continue
     if (options?.llmOnly && !isLlmRequest(entry)) continue
     entries.push(entry)
     if (options?.limit && entries.length >= options.limit) break

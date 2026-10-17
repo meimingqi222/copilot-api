@@ -81,7 +81,12 @@ const API = {
 
   // Dashboard
   dashboard: {
-    get: () => API.request("/dashboard"),
+    get: () => {
+      const qs = new URLSearchParams()
+      setViewerTimezone(qs)
+      const query = qs.toString()
+      return API.request(`/dashboard${query ? "?" + query : ""}`)
+    },
   },
 
   // Users

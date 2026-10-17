@@ -71,6 +71,31 @@ export function createTables(db: Database): void {
     )
   `)
 
+  // Legacy daily counters have no timestamps: retain them, but never pretend
+  // they can be split at a viewer's midnight. Persist the coverage boundary.
+  db.transaction(() => {
+    const existing = db
+      .query("SELECT 1 FROM sqlite_master WHERE name = 'request_stats'")
+      .get()
+    if (!existing) {
+      const legacy = db.query("SELECT 1 FROM daily_stats LIMIT 1").get()
+      db.run(`CREATE TABLE request_stats (
+        timestamp INTEGER NOT NULL,
+        account_id TEXT NOT NULL,
+        requests INTEGER NOT NULL,
+        errors INTEGER NOT NULL
+      )`)
+      const now = Date.now()
+      db.run(
+        "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)",
+        ["request_stats_since", String(legacy ? now : 0), now],
+      )
+    }
+    db.run(
+      "CREATE INDEX IF NOT EXISTS idx_request_timestamp ON request_stats(timestamp)",
+    )
+  })()
+
   // Add performance columns to usage_stats (migration for existing DBs)
   ensureColumn(db, "usage_stats", "ttft_ms", "REAL")
   ensureColumn(db, "usage_stats", "tps", "REAL")

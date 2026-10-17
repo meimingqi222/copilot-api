@@ -439,6 +439,27 @@ describe("GET /admin/api/trace/recent", () => {
 })
 
 describe("GET /admin/api/trace/history", () => {
+  test("public time bounds include both endpoints and exclude adjacent milliseconds", async () => {
+    const start = Date.now() - 60_000
+    const end = start + 100
+    for (const timestamp of [start - 1, start, end, end + 1]) {
+      logStore.push(frame({ requestId: `boundary-${timestamp}`, timestamp }))
+    }
+    const response = await server.fetch(
+      adminRequest(
+        `http://localhost/admin/api/trace/history?timeFrom=${start}&timeTo=${end}`,
+      ),
+    )
+    expect(response.status).toBe(200)
+    const data = (await response.json()) as {
+      traces: Array<{ requestId: string }>
+    }
+    expect(data.traces.map((trace) => trace.requestId)).toEqual([
+      `boundary-${start}`,
+      `boundary-${end}`,
+    ])
+  })
+
   test("requires admin role", async () => {
     clearAdminAuth()
     const response = await server.fetch(

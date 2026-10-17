@@ -54,6 +54,36 @@ function requestEntry(): LogEntry {
 }
 
 describe("request log persistence", () => {
+  test("time bounds are inclusive and zero is an explicit bound", async () => {
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "request-logs-"))
+    process.env.LOG_DIR = logDir
+    try {
+      fs.writeFileSync(
+        path.join(logDir, "requests-1970-01-01.jsonl"),
+        [-1, 0, 1, 2]
+          .map((timestamp) =>
+            JSON.stringify({
+              ...requestEntry(),
+              timestamp,
+              requestId: String(timestamp),
+            }),
+          )
+          .join("\n") + "\n",
+      )
+      const timestamps = async (bounds: {
+        timeFrom?: number
+        timeTo?: number
+      }) =>
+        (await readPersistedRequestLogs(bounds)).map((entry) => entry.timestamp)
+      expect(await timestamps({ timeFrom: 0, timeTo: 1 })).toEqual([1, 0])
+      expect(await timestamps({ timeTo: 0 })).toEqual([0, -1])
+      expect(await timestamps({ timeFrom: 0, timeTo: 0 })).toEqual([0])
+      expect(await timestamps({})).toEqual([2, 1, 0, -1])
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true })
+    }
+  })
+
   test("removes session and preserves only sanitized snippets", () => {
     const sanitized = sanitizePersistedEntry(requestEntry())
 

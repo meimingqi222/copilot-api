@@ -287,16 +287,9 @@ function dashboardView() {
       return Number(num).toLocaleString()
     },
 
-    formatTokens(num) {
-      if (!num || num <= 0) return "0"
-      if (num >= 1e6) return (num / 1e6).toFixed(2) + "M"
-      if (num >= 1e3) return (num / 1e3).toFixed(1) + "K"
-      return String(num)
-    },
-
     formatCost(num) {
-      if (!num || num <= 0) return "$0.00"
-      return "$" + Number(num).toFixed(2)
+      if (!num || num <= 0) return "$0.0000"
+      return "$" + Number(num).toFixed(4)
     },
 
     formatTime(ts) {

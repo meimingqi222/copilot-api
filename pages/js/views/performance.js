@@ -76,6 +76,7 @@ function performanceView() {
     dateRange: "today",
     selectedMonth: "",
     performance: [],
+    summary: null,
     byProvider: [],
     details: [],
     providerFilter: "all",
@@ -137,6 +138,7 @@ function performanceView() {
       // 1. 静默刷新表格与大盘数据（避免整屏 loading 遮罩）
       try {
         const data = await API.usage.performance({ range: this.dateRange })
+        this.summary = data.summary || null
         this.performance = data.performance || []
         this.byProvider = data.byProvider || []
         this.details = data.details || []
@@ -223,6 +225,7 @@ function performanceView() {
             { month: this.selectedMonth }
           : { range: this.dateRange }
         const data = await API.usage.performance(params)
+        this.summary = data.summary || null
         this.performance = data.performance || []
         this.byProvider = data.byProvider || []
         this.details = data.details || []
@@ -246,6 +249,7 @@ function performanceView() {
         this.period = data.period || { startDate: "", endDate: "" }
       } catch (e) {
         console.error("Failed to load performance data:", e)
+        this.summary = null
         this.performance = []
         this.byProvider = []
         this.details = []
@@ -279,101 +283,43 @@ function performanceView() {
     get globalStats() {
       const details = this.details || []
       const perf = this.performance || []
-      let totalRequests = 0
-      let totalSamples = 0
-      let ttftSum = 0
-      let ttftCount = 0
-      let tpsWeightedSum = 0
-      let tpsCount = 0
+      // Model averages omit the raw sample counts and durations needed to
+      // combine them. Use the server's raw-row aggregate, including untimed
+      // requests in the request count, but never in timing sample counts.
+      const totalRequests = this.summary?.requests || 0
+      const totalSamples = this.summary?.tpsSamples || 0
       let proxyOverheadSum = 0
       let upstreamSum = 0
+      let overheadRequests = 0
 
-      // 1. 全局流式 TPS 均值与 TTFT 优先对齐 dashboard 官方大盘算法：
-      // 从 perf (this.performance) 读取各模型的实际流式速率，按流式样本数进行真实加权。
-      // range-query.ts 的模型级聚合是基于 SQLite streamTokenSeconds 真实吞吐计算的，
-      // 绝不会因为单次微秒除零或极短突发导致均值爆炸到数千 tok/s。
-      if (perf && perf.length > 0) {
-        for (const row of perf) {
-          totalRequests += row.requests || 0
-          if (
-            typeof row.avgTtftMs === "number"
-            && row.avgTtftMs > 0
-            && row.requests > 0
-          ) {
-            ttftSum += row.avgTtftMs * row.requests
-            ttftCount += row.requests
-          }
-          const tps = row.avgStreamingTps ?? row.avgNonStreamingTps
-          const sReqs = row.streamingRequests || 0
-          if (typeof tps === "number" && tps > 0 && sReqs > 0) {
-            const saneTps = Math.min(tps, 800)
-            tpsWeightedSum += saneTps * sReqs
-            tpsCount += sReqs
-            totalSamples += sReqs
-          }
-        }
-      }
-
-      // 2. 如果 perf 为空或无流式样本，回退使用 details 汇总
-      if (tpsCount === 0 && details.length > 0) {
-        for (const row of details) {
-          if (!totalRequests) totalRequests += row.requests || 0
-          const t = row.timings || {}
-          const ttft = t.outputTtftMs?.p50 ?? t.outputTtftMs?.average
-          if (!ttftCount && typeof ttft === "number" && ttft > 0) {
-            const s = t.outputTtftMs?.samples || row.requests || 1
-            ttftSum += ttft * s
-            ttftCount += s
-          }
-          if (
-            row.generationSamples
-            && row.generationTps
-            && row.generationTps > 0
-          ) {
-            const saneTps = Math.min(row.generationTps, 800)
-            totalSamples += row.generationSamples
-            tpsWeightedSum += saneTps * row.generationSamples
-            tpsCount += row.generationSamples
-          }
-        }
-      }
-
-      // 补齐总请求数
-      if (totalRequests === 0) {
-        for (const row of details) {
-          totalRequests += row.requests || 0
-        }
-      }
-
-      // 3. 计算代理层开销（从 details 汇总）
+      // 从实际采样的耗时汇总代理层开销。
       for (const row of details) {
-        const reqs = row.requests || 1
         const t = row.timings || {}
-        const gatewayMs = t.preprocessingMs?.average || 0
-        const dispatchMs =
-          (t.adapterPreparationMs?.average || 0)
-          + (t.requestTranslationMs?.average || 0)
-        const downstreamMs = t.downstreamWriteMs?.average || 0
-        const proxyMs = gatewayMs + dispatchMs + downstreamMs
-        const upMs =
-          t.dispatchToOutputMs?.average
-          || t.upstreamFirstEventMs?.average
-          || t.upstreamBodyReadMs?.average
-          || 0
-
-        if (upMs > 0 || proxyMs > 0) {
-          proxyOverheadSum += proxyMs * reqs
-          upstreamSum += upMs * reqs
+        overheadRequests += row.requests || 0
+        for (const field of [
+          "preprocessingMs",
+          "adapterPreparationMs",
+          "requestTranslationMs",
+          "downstreamWriteMs",
+        ]) {
+          proxyOverheadSum +=
+            (t[field]?.average || 0) * (t[field]?.samples || 0)
         }
+        const upstream = [
+          t.dispatchToOutputMs,
+          t.upstreamFirstEventMs,
+          t.upstreamBodyReadMs,
+        ].find((timing) => timing?.samples > 0)
+        upstreamSum += (upstream?.average || 0) * (upstream?.samples || 0)
       }
 
-      const avgTtft = ttftCount > 0 ? ttftSum / ttftCount : null
-      const avgTps = tpsCount > 0 ? tpsWeightedSum / tpsCount : null
+      const avgTtft = this.summary?.avgTtftMs ?? null
+      const avgTps = this.summary?.avgTps ?? null
       const totalTime = proxyOverheadSum + upstreamSum
       const upstreamRatio =
         totalTime > 0 ? Math.round((upstreamSum / totalTime) * 100) : 99
       const proxyOverheadMs =
-        totalRequests > 0 ? proxyOverheadSum / totalRequests : 0
+        overheadRequests > 0 ? proxyOverheadSum / overheadRequests : 0
 
       return {
         totalRequests,

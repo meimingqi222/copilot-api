@@ -32,6 +32,35 @@ function tierView(language = "zh") {
 }
 
 describe("request trace view", () => {
+  test("selected day includes both day boundaries but not next midnight", async () => {
+    const start = new Date("2026-03-08T00:00:00").getTime()
+    const next = new Date("2026-03-09T00:00:00").getTime()
+    const frames = [start - 1, start, next - 1, next].map((timestamp) => ({
+      requestId: String(timestamp),
+      timestamp,
+    }))
+    const v = view({
+      trace: {
+        history: (filters: { timeFrom: number; timeTo: number }) => {
+          expect(filters.timeFrom).toBe(start)
+          expect(filters.timeTo).toBe(next - 1)
+          return {
+            traces: frames.filter(
+              (frame) =>
+                frame.timestamp >= filters.timeFrom
+                && frame.timestamp <= filters.timeTo,
+            ),
+          }
+        },
+      },
+    })
+    v.historyDate = "2026-03-08"
+    await v.showHistory()
+    expect(
+      v.history.map((frame: { timestamp: number }) => frame.timestamp),
+    ).toEqual([start, next - 1])
+  })
+
   test("packets are positioned before the first animation frame", () => {
     const v = view(
       {},

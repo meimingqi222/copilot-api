@@ -180,7 +180,7 @@ function tracesView() {
           const end = new Date(start)
           end.setDate(end.getDate() + 1)
           filters.timeFrom = start.getTime()
-          filters.timeTo = end.getTime()
+          filters.timeTo = end.getTime() - 1
         }
         const data = await API.trace.history(filters)
         if (this.mode !== "history" || token !== this._historyToken) return

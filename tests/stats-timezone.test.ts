@@ -82,6 +82,44 @@ describe("timestamp-range stats regroup by viewer timezone", () => {
     statsStore.clearUsageStatsForTest()
   })
 
+  test("request counters respect viewer midnight and report legacy coverage without discarding server-day totals", () => {
+    const start = startOfDayMs("2026-09-07", SHANGHAI)
+    const end = startOfDayMs("2026-09-08", SHANGHAI)
+    statsStore.incrementRequests("a", start - 1)
+    statsStore.incrementRequests("a", start)
+    statsStore.incrementRequestAndError("b", end - 1)
+    statsStore.incrementErrors("a", start + 1)
+    statsStore.incrementRequests("b", end)
+    const counts = statsStore.getRequestCountsInRange(start, end)
+    expect(counts).toMatchObject({ requests: 2, errors: 2, sinceMs: null })
+    expect(counts.byAccount.get("a")).toEqual({ requests: 1, errors: 1 })
+    expect(counts.byAccount.get("b")).toEqual({ requests: 1, errors: 1 })
+    statsStore.setConfig("request_stats_since", String(start + 500))
+    expect(statsStore.getRequestCountsInRange(start + 1, end + 1).sinceMs).toBe(
+      start + 500,
+    )
+    expect(
+      statsStore.getRequestCountsInRange(end, end + 86400000).sinceMs,
+    ).toBeNull()
+
+    const localStart = new Date(2026, 8, 7).getTime()
+    const localEnd = new Date(2026, 8, 8).getTime()
+    const local = statsStore.getRequestCountsInRange(localStart, localEnd)
+    expect(local.sinceMs).toBeNull()
+    // Independent of the process timezone, the sum of two complete server
+    // days must preserve every legacy increment (including error-only calls).
+    const previous = statsStore.getRequestCountsInRange(
+      new Date(2026, 8, 6).getTime(),
+      localStart,
+    )
+    const next = statsStore.getRequestCountsInRange(
+      localEnd,
+      new Date(2026, 8, 9).getTime(),
+    )
+    expect(previous.requests + local.requests + next.requests).toBe(4)
+    expect(previous.errors + local.errors + next.errors).toBe(2)
+  })
+
   test("same instants land on different days per viewer zone", () => {
     // Beijing 2026-09-07 01:00 and 22:00 (both 9/7 in Shanghai;
     // the first is still 9/6 in New York).
@@ -122,6 +160,7 @@ describe("timestamp-range stats regroup by viewer timezone", () => {
       totalTokens: 150,
       cost: 0.5,
       timestamp: ts + 1,
+      ttftMs: 0,
       tps: 10,
       streaming: false,
     })
@@ -136,6 +175,15 @@ describe("timestamp-range stats regroup by viewer timezone", () => {
     // `requests`; only the timed row feeds the averages.
     expect(entry?.requests).toBe(2)
     expect(entry?.avgNonStreamingTps).toBe(10)
+    expect(
+      statsStore.getPerformanceSummaryInRange({ startMs, endMs }),
+    ).toMatchObject({
+      requests: 2,
+      ttftSamples: 1,
+      avgTtftMs: 0,
+      tpsSamples: 1,
+      avgTps: 10,
+    })
   })
 
   test("provider and performance range queries respect instant bounds", () => {

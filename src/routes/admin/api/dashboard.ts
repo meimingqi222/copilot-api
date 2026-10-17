@@ -17,6 +17,7 @@ import {
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import {
+  addDays,
   resolveTimeZone,
   startOfDayMs,
   todayInTimeZone,
@@ -137,7 +138,10 @@ interface DashboardFleetItem {
   } | null
 }
 
-function collectFleetAndAlerts(now: number) {
+function collectFleetAndAlerts(
+  now: number,
+  requestCounts: Map<string, { requests: number; errors: number }>,
+) {
   const connections = listProviderConnections()
   const alerts: Array<DashboardAlert> = []
   const fleetItems: Array<DashboardFleetItem> = []
@@ -159,7 +163,7 @@ function collectFleetAndAlerts(now: number) {
       ?? getConnectionLastRateLimitReason(conn)
     const provider = (getConnectionProvider(conn) ?? conn.protocol) as string
     const quotaInfo = getConnectionQuotaInfo(conn)
-    const accountStats = statsStore.getTodayStats(conn.id)
+    const accountStats = requestCounts.get(conn.id)
     const isAccountManaged = isAccountManagedConnection(conn)
 
     let status: DashboardFleetItem["status"] = "healthy"
@@ -244,7 +248,7 @@ function collectFleetAndAlerts(now: number) {
       statusMessage,
       cooldownRemainingMs,
       modelsCount: conn.models?.length ?? 0,
-      todayRequests: accountStats.requests,
+      todayRequests: accountStats?.requests ?? 0,
       quotaInfo:
         quotaInfo ?
           {
@@ -284,13 +288,14 @@ dashboardApiRoutes.get("/", (c) => {
   const tz = resolveTimeZone(c.req.query("tz"))
   const todayStr = todayInTimeZone(tz)
   const startOfDay = startOfDayMs(todayStr, tz)
+  const endOfDay = startOfDayMs(addDays(todayStr, 1), tz)
 
   // 1. 基础汇总数据 (兼容旧版)
   const aggregated = aggregateQuotaInfo()
   const activeQuotaInfo = getActiveQuotaInfo()
   const activeUsers = state.users.filter((u) => u.enabled).length
   const totalUsers = state.users.length
-  const todayTotals = statsStore.getTodayTotals()
+  const todayTotals = statsStore.getRequestCountsInRange(startOfDay, endOfDay)
   const connections = listAccountManagedConnections()
   const activeAccounts = connections.filter((conn) =>
     isConnectionAvailable(conn),
@@ -298,7 +303,7 @@ dashboardApiRoutes.get("/", (c) => {
   const totalAccounts = connections.length
 
   // 2. 上游健康矩阵与告警
-  const { alerts, fleet } = collectFleetAndAlerts(now)
+  const { alerts, fleet } = collectFleetAndAlerts(now, todayTotals.byAccount)
 
   // 3. 实时并发与请求追踪
   const recentTraceRecords = recentTraces(10)
@@ -327,7 +332,7 @@ dashboardApiRoutes.get("/", (c) => {
   // 4. 今日 Token、成本与热门模型聚合
   const dayStats = statsStore.getUsageStatsByTimeRange({
     startMs: startOfDay,
-    endMs: now + 60_000,
+    endMs: endOfDay,
     tz,
   })
 
@@ -369,6 +374,7 @@ dashboardApiRoutes.get("/", (c) => {
       Number(((cacheReadTokens / inputTokens) * 100).toFixed(1))
     : null
 
+  const modelRequests = dayStats.reduce((sum, day) => sum + day.requests, 0)
   const topModels = [...modelUsageMap.entries()]
     .sort((left, right) => right[1].requests - left[1].requests)
     .slice(0, 5)
@@ -378,37 +384,20 @@ dashboardApiRoutes.get("/", (c) => {
       totalTokens: s.totalTokens,
       cost: Number(s.cost.toFixed(4)),
       percentage:
-        todayTotals.requests > 0 ?
-          Number(((s.requests / todayTotals.requests) * 100).toFixed(1))
+        modelRequests > 0 ?
+          Number(((s.requests / modelRequests) * 100).toFixed(1))
         : 0,
     }))
 
   // 5. 今日性能均值 (TTFT, TPS)
-  const perfRows = statsStore.getPerformanceByModelInRange({
+  const performance = statsStore.getPerformanceSummaryInRange({
     startMs: startOfDay,
-    endMs: now + 60_000,
+    endMs: endOfDay,
   })
-  let weightedTtftSum = 0
-  let ttftCount = 0
-  let weightedTpsSum = 0
-  let tpsCount = 0
-
-  for (const row of perfRows) {
-    if (row.avgTtftMs !== null && row.requests > 0) {
-      weightedTtftSum += row.avgTtftMs * row.requests
-      ttftCount += row.requests
-    }
-    const tps = row.avgStreamingTps ?? row.avgNonStreamingTps
-    if (tps !== null && row.requests > 0) {
-      weightedTpsSum += tps * row.requests
-      tpsCount += row.requests
-    }
-  }
-
   const avgTtftMs =
-    ttftCount > 0 ? Math.round(weightedTtftSum / ttftCount) : null
+    performance.avgTtftMs !== null ? Math.round(performance.avgTtftMs) : null
   const avgTps =
-    tpsCount > 0 ? Number((weightedTpsSum / tpsCount).toFixed(1)) : null
+    performance.avgTps !== null ? Number(performance.avgTps.toFixed(1)) : null
 
   // 6. 过去 24 小时走势
   const past24hMs = now - 24 * 60 * 60 * 1000
@@ -418,8 +407,12 @@ dashboardApiRoutes.get("/", (c) => {
     endMs: now,
   })
   const hourlyTrend = hourlySlots.map((slot) => {
-    const d = new Date(slot.slotTs)
-    const hourStr = `${String(d.getHours()).padStart(2, "0")}:00`
+    const hourStr =
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: tz,
+        hour: "2-digit",
+        hourCycle: "h23",
+      }).format(slot.slotTs) + ":00"
     return {
       slotTs: slot.slotTs,
       hour: hourStr,
@@ -455,6 +448,7 @@ dashboardApiRoutes.get("/", (c) => {
     metrics: {
       requestsToday: todayTotals.requests,
       errorsToday: todayTotals.errors,
+      requestCountsSince: todayTotals.sinceMs,
       successRate,
       inFlightRequests,
       todayTokens: {

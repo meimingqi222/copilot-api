@@ -207,6 +207,8 @@ const i18n = {
       "dashboard.activeAccounts": "活跃账户",
       "dashboard.requestsToday": "今日请求",
       "dashboard.errorsToday": "今日错误",
+      "dashboard.requestCountsPartial":
+        "旧请求缺少时间戳，跨时区请求数和成功率仅含升级后数据",
       "dashboard.quotaSummary": "配额概览",
       "dashboard.recentActivity": "最近活动",
       "dashboard.noActivity": "暂无活动",
@@ -216,7 +218,7 @@ const i18n = {
       "dashboard.kpi.successRate": "请求成功率",
       "dashboard.kpi.inFlight": "实时并发",
       "dashboard.kpi.inFlightHint": "当前正在处理中的请求数",
-      "dashboard.kpi.tokensToday": "今日 Token 吞吐",
+      "dashboard.kpi.tokensToday": "今日 Token 总用量",
       "dashboard.kpi.cacheHitRate": "缓存命中率",
       "dashboard.kpi.estCost": "预估成本",
       "dashboard.kpi.avgTtft": "平均首字延迟",
@@ -1417,7 +1419,9 @@ const i18n = {
       "perf.tabModels": "按模型汇总",
       "perf.tabProviders": "按供应商汇总",
       "perf.globalTtft": "全局首字响应",
-      "perf.globalTps": "平均流式速率（端到端）",
+      "perf.globalTps": "平均生成速率（端到端）",
+      "perf.globalTpsDesc":
+        "有效计时请求的输出 Token 总量 / 总耗时，包含流式与非流式请求，不包含补记用量和缺少计时的请求。",
       "perf.proxyOverhead": "代理处理开销",
       "perf.proxyOverheadDesc": "代理自身极速处理，上游推理占绝对主导",
       "perf.monitoredChannels": "活跃通道 / 评估样本",
@@ -1859,6 +1863,8 @@ const i18n = {
       "dashboard.unlimitedPlan": "Unlimited Plan",
       "dashboard.autoRefresh": "Auto-refresh",
       "dashboard.kpi.successRate": "Success Rate",
+      "dashboard.requestCountsPartial":
+        "Legacy requests have no timestamps; cross-timezone counts and success rate cover post-upgrade data only",
       "dashboard.kpi.inFlight": "In-Flight Requests",
       "dashboard.kpi.inFlightHint": "Requests currently being processed",
       "dashboard.kpi.tokensToday": "Tokens Today",
@@ -3105,7 +3111,9 @@ const i18n = {
       "perf.tabModels": "By Model",
       "perf.tabProviders": "By Provider",
       "perf.globalTtft": "Global TTFT",
-      "perf.globalTps": "Avg Streaming TPS (end-to-end)",
+      "perf.globalTps": "Avg Generation TPS (end-to-end)",
+      "perf.globalTpsDesc":
+        "Total output tokens / total elapsed time of timed streaming and non-streaming requests. Excludes supplemental usage and requests without timing data.",
       "perf.proxyOverhead": "Proxy Overhead",
       "perf.proxyOverheadDesc": "Minimal proxy latency; upstream dominates",
       "perf.monitoredChannels": "Active Channels / Samples",

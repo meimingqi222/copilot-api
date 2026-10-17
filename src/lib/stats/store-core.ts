@@ -44,6 +44,7 @@ import {
   bucketRowsByInterval,
   computePerformanceByModel,
   computePerformanceByProviderModel,
+  computePerformanceSummary,
   computePerformanceTrend,
   type PerformanceTrendResult,
   groupRowsByProvider,
@@ -94,40 +95,74 @@ class StatsStore {
   }
 
   incrementRequests(accountId: string, timestamp?: number): void {
-    const db = this.ensureDb()
-    const date = this.getDateString(timestamp)
-    const stmt = db.prepare(`
-      INSERT INTO daily_stats (date, account_id, requests, errors)
-      VALUES (?, ?, 1, 0)
-      ON CONFLICT(date, account_id) DO UPDATE SET
-        requests = requests + 1
-    `)
-    stmt.run(date, accountId)
+    this.recordRequestCounts(accountId, 1, 0, timestamp)
   }
 
   incrementRequestAndError(accountId: string, timestamp?: number): void {
-    const db = this.ensureDb()
-    const date = this.getDateString(timestamp)
-    const stmt = db.prepare(`
-      INSERT INTO daily_stats (date, account_id, requests, errors)
-      VALUES (?, ?, 1, 1)
-      ON CONFLICT(date, account_id) DO UPDATE SET
-        requests = requests + 1,
-        errors = errors + 1
-    `)
-    stmt.run(date, accountId)
+    this.recordRequestCounts(accountId, 1, 1, timestamp)
   }
 
   incrementErrors(accountId: string, timestamp?: number): void {
+    this.recordRequestCounts(accountId, 0, 1, timestamp)
+  }
+
+  private recordRequestCounts(
+    accountId: string,
+    requests: number,
+    errors: number,
+    timestamp = Date.now(),
+  ): void {
     const db = this.ensureDb()
-    const date = this.getDateString(timestamp)
-    const stmt = db.prepare(`
-      INSERT INTO daily_stats (date, account_id, requests, errors)
-      VALUES (?, ?, 0, 1)
-      ON CONFLICT(date, account_id) DO UPDATE SET
-        errors = errors + 1
-    `)
-    stmt.run(date, accountId)
+    db.transaction(() => {
+      db.run(
+        `INSERT INTO daily_stats (date, account_id, requests, errors)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(date, account_id) DO UPDATE SET
+          requests = requests + excluded.requests,
+          errors = errors + excluded.errors`,
+        [this.getDateString(timestamp), accountId, requests, errors],
+      )
+      db.run(
+        "INSERT INTO request_stats (timestamp, account_id, requests, errors) VALUES (?, ?, ?, ?)",
+        [timestamp, accountId, requests, errors],
+      )
+    })()
+  }
+
+  getRequestCountsInRange(startMs: number, endMs: number) {
+    const db = this.ensureDb()
+    const start = new Date(startMs)
+    const nextDay = new Date(start)
+    nextDay.setDate(nextDay.getDate() + 1)
+    const wholeServerDay =
+      start.getHours() === 0
+      && start.getMinutes() === 0
+      && start.getSeconds() === 0
+      && start.getMilliseconds() === 0
+      && nextDay.getTime() === endMs
+    const rows = db
+      .query(
+        wholeServerDay ?
+          "SELECT account_id, requests, errors FROM daily_stats WHERE date = ?"
+        : `SELECT account_id, SUM(requests) AS requests, SUM(errors) AS errors
+       FROM request_stats WHERE timestamp >= ? AND timestamp < ? GROUP BY account_id`,
+      )
+      .all(
+        ...(wholeServerDay ? [this.getDateString(startMs)] : [startMs, endMs]),
+      ) as Array<{ account_id: string; requests: number; errors: number }>
+    const since = Number(getConfig(db, "request_stats_since") ?? 0)
+    return {
+      requests: rows.reduce((sum, row) => sum + row.requests, 0),
+      errors: rows.reduce((sum, row) => sum + row.errors, 0),
+      byAccount: new Map(
+        rows.map((row) => [
+          row.account_id,
+          { requests: row.requests, errors: row.errors },
+        ]),
+      ),
+      // Full server days can still use the exact legacy totals.
+      sinceMs: !wholeServerDay && since > startMs ? since : null,
+    }
   }
 
   getTodayStats(accountId: string): { requests: number; errors: number } {
@@ -285,6 +320,12 @@ class StatsStore {
     )
   }
 
+  getPerformanceSummaryInRange(options: { startMs: number; endMs: number }) {
+    return computePerformanceSummary(
+      queryUsageRawRows(this.ensureDb(), options),
+    )
+  }
+
   getPerformanceByModelInRange(options: {
     startMs: number
     endMs: number
@@ -323,7 +364,7 @@ class StatsStore {
   }
 
   /**
-   * 三个性能视图共享一次原始行扫描。按时间范围拉行是主要成本，
+   * 全局汇总和三个性能视图共享一次原始行扫描。按时间范围拉行是主要成本，
    * 需要多个视图的调用方（/performance 端点）应改用这个方法，
    * 而不是分别调用三个 getter（各自重扫一遍）。
    */

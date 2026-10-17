@@ -904,7 +904,12 @@ function usageView() {
 
     get sortedAccountUsage() {
       return Object.entries(this.usageSummary.byAccount || {})
-        .filter(([, data]) => (data.requests || 0) > 0)
+        .filter(
+          ([, data]) =>
+            (data.requests || 0) > 0
+            || (data.totalTokens || 0) > 0
+            || (data.cost || 0) > 0,
+        )
         .sort(([, left], [, right]) => {
           return (right.totalTokens || 0) - (left.totalTokens || 0)
         })
@@ -918,7 +923,12 @@ function usageView() {
 
     get sortedProviderUsage() {
       return Object.entries(this.usageSummary.byProvider || {})
-        .filter(([, data]) => (data.requests || 0) > 0)
+        .filter(
+          ([, data]) =>
+            (data.requests || 0) > 0
+            || (data.totalTokens || 0) > 0
+            || (data.cost || 0) > 0,
+        )
         .sort(([, left], [, right]) => {
           return (right.totalTokens || 0) - (left.totalTokens || 0)
         })
@@ -926,7 +936,12 @@ function usageView() {
 
     sortedProviderAccounts(providerData) {
       return Object.entries(providerData?.accounts || {})
-        .filter(([, data]) => (data.requests || 0) > 0)
+        .filter(
+          ([, data]) =>
+            (data.requests || 0) > 0
+            || (data.totalTokens || 0) > 0
+            || (data.cost || 0) > 0,
+        )
         .sort(([, left], [, right]) => {
           return (right.totalTokens || 0) - (left.totalTokens || 0)
         })

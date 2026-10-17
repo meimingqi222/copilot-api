@@ -369,6 +369,11 @@
                       class="text-3xl font-bold tracking-tight text-[var(--apple-text)]"
                       x-text="formatNumber(data.metrics?.requestsToday)"
                     ></p>
+                    <p
+                      x-show="data.metrics?.requestCountsSince"
+                      class="text-xs text-[var(--apple-orange)] mt-2"
+                      x-text="t('dashboard.requestCountsPartial')"
+                    ></p>
                   </div>
                   <div
                     class="flex items-center justify-between pt-3 mt-3 border-t border-[var(--apple-gray-5)] text-xs"
@@ -604,7 +609,7 @@
                             <span
                               x-text="formatTokens(item.totalTokens) + ' tokens'"
                             ></span>
-                            <span x-text="'$' + item.cost.toFixed(3)"></span>
+                            <span x-text="formatCost(item.cost)"></span>
                           </div>
                         </div>
                       </template>
@@ -1679,7 +1684,10 @@
                               x-show="['codex','claude','xai','antigravity','kimi','lobsterai','minimax','qoder'].includes(account.provider)"
                               @click="openReauthModal(account)"
                               class="btn btn-sm"
-                              style="background: var(--apple-orange); color: white"
+                              style="
+                                background: var(--apple-orange);
+                                color: white;
+                              "
                               x-text="t('accounts.reauth') || '重新认证'"
                             ></button>
                           </div>
@@ -4332,7 +4340,7 @@
                                     x-text="formatCacheHitRate(modelData.cacheHitRate)"
                                   ></span>
                                   <span
-                                    x-text="'$' + (modelData.cost || 0).toFixed(2)"
+                                    x-text="'$' + (modelData.cost || 0).toFixed(4)"
                                   ></span>
                                 </div>
                               </div>
@@ -4454,7 +4462,7 @@
                                       ></span>
                                       <span
                                         class="text-xs text-[var(--apple-blue)]"
-                                        x-text="'$' + (accountData.cost || 0).toFixed(2)"
+                                        x-text="'$' + (accountData.cost || 0).toFixed(4)"
                                       ></span>
                                       <i
                                         data-lucide="chevron-down"
@@ -4491,7 +4499,7 @@
                                           x-text="formatCacheHitRate(modelData.cacheHitRate)"
                                         ></span>
                                         <span
-                                          x-text="'$' + (modelData.cost || 0).toFixed(2)"
+                                          x-text="'$' + (modelData.cost || 0).toFixed(4)"
                                         ></span>
                                       </div>
                                     </div>

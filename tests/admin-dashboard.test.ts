@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { runInNewContext } from "node:vm"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import {
   markCredentialCooldown,
@@ -104,6 +106,215 @@ describe("Admin Dashboard API", () => {
     expect(data.recentTraces.length).toBeGreaterThanOrEqual(1)
     expect(data.recentTraces[0].requestId).toBe("req-1")
     expect(data.recentTraces[0].ttftMs).toBe(320)
+  })
+
+  test("dashboard and usage Today agree across viewer midnight, including supplementary and cache tokens", async () => {
+    const clock = spyOn(Date, "now").mockReturnValue(
+      Date.parse("2026-10-17T15:59:30Z"),
+    )
+    setupAdminAuth()
+    try {
+      for (const [
+        timestamp,
+        promptTokens,
+        completionTokens,
+        cacheReadTokens,
+        cacheWriteTokens,
+        requestCount,
+      ] of [
+        [Date.parse("2026-10-16T15:59:59.999Z"), 90, 10, 0, 0, 1],
+        [Date.parse("2026-10-16T16:00:00Z"), 4, 2, 3, 1, 1],
+        [Date.parse("2026-10-17T00:00:00Z"), 10, 5, 4, 1, 0],
+        [Date.parse("2026-10-17T16:00:00Z"), 900, 100, 0, 0, 1],
+      ]) {
+        statsStore.recordUsage({
+          date: statsStore.getDateString(timestamp),
+          timestamp,
+          accountId: "viewer-day",
+          model: "gpt-5",
+          promptTokens,
+          completionTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
+          requestCount,
+          totalTokens:
+            promptTokens
+            + completionTokens
+            + cacheReadTokens
+            + cacheWriteTokens,
+          cost: 0,
+        })
+      }
+      const api = runInNewContext(
+        `${readFileSync("pages/js/api.js", "utf8")}\nAPI`,
+        {
+          URLSearchParams,
+          Intl: {
+            DateTimeFormat: () => ({
+              resolvedOptions: () => ({ timeZone: "Asia/Shanghai" }),
+            }),
+          },
+        },
+      ) as {
+        request: (url: string) => Promise<unknown>
+        dashboard: {
+          get: () => Promise<{
+            metrics: {
+              todayTokens: {
+                totalTokens: number
+                cacheReadTokens: number
+                cacheWriteTokens: number
+              }
+            }
+          }>
+        }
+        usage: {
+          summary: () => Promise<{
+            totals: { totalTokens: number; requests: number }
+            period: { timeZone: string }
+          }>
+        }
+      }
+      api.request = async (url) => {
+        const response = await server.fetch(
+          adminRequest(`http://localhost/admin/api${url}`),
+        )
+        expect(response.status).toBe(200)
+        return response.json()
+      }
+      const dashboard = await api.dashboard.get()
+      const usage = await api.usage.summary()
+      expect(usage.period.timeZone).toBe("Asia/Shanghai")
+      expect(usage.totals).toMatchObject({ totalTokens: 30, requests: 1 })
+      expect(dashboard.metrics.todayTokens).toMatchObject({
+        totalTokens: 30,
+        cacheReadTokens: 7,
+        cacheWriteTokens: 2,
+      })
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  test("viewer-day counts retain failures while model shares and performance use their own sample denominators", async () => {
+    const clock = spyOn(Date, "now").mockReturnValue(
+      Date.parse("2026-10-17T03:00:00Z"),
+    )
+    setupAdminAuth()
+    try {
+      const start = Date.parse("2026-10-16T16:00:00Z")
+      const end = Date.parse("2026-10-17T16:00:00Z")
+      // Nine A requests, but just one timing sample; B has a different
+      // output size and rate. Arithmetic/request-weighted TPS is incorrect.
+      for (let i = 0; i < 13; i++) {
+        const timestamp =
+          i === 11 ? start - 1
+          : i === 12 ? end
+          : start + i
+        const timed = i === 0 || i === 9 || i >= 10
+        const isB = i === 9
+        if (i !== 10) statsStore.incrementRequests("day-account", timestamp)
+        statsStore.recordUsage({
+          date: statsStore.getDateString(timestamp),
+          timestamp,
+          accountId: "day-account",
+          model: isB ? "model-b" : "model-a",
+          promptTokens: 1,
+          completionTokens: isB ? 1800 : 100,
+          totalTokens: isB ? 1801 : 101,
+          cost: 0,
+          requestCount: i === 10 ? 0 : 1,
+          ttftMs:
+            timed ?
+              isB ? 900
+              : i === 0 ? 100
+              : 9900
+            : undefined,
+          tps:
+            timed ?
+              isB ? 90
+              : i === 0 ? 10
+              : 990
+            : undefined,
+          streaming: !isB,
+        })
+      }
+      statsStore.incrementRequestAndError("failed-no-usage", start + 100)
+      const response = await server.fetch(
+        adminRequest("http://localhost/admin/api/dashboard?tz=Asia/Shanghai"),
+      )
+      const data = (await response.json()) as {
+        requestsToday: number
+        errorsToday: number
+        metrics: {
+          successRate: number
+          requestCountsSince: number | null
+          performance: { avgTtftMs: number | null; avgTps: number | null }
+        }
+        topModels: Array<{ percentage: number }>
+        hourlyTrend: Array<{ slotTs: number; hour: string }>
+      }
+      expect(data.requestsToday).toBe(11)
+      expect(data.errorsToday).toBe(1)
+      expect(data.metrics.successRate).toBe(90.9)
+      expect(data.metrics.requestCountsSince).toBeNull()
+      expect(
+        data.topModels.map((row: { percentage: number }) => row.percentage),
+      ).toEqual([90, 10])
+      expect(data.metrics.performance).toEqual({ avgTtftMs: 500, avgTps: 63.3 })
+      expect(
+        data.hourlyTrend.every(
+          (slot: { slotTs: number; hour: string }) =>
+            slot.hour
+            === new Intl.DateTimeFormat("en-GB", {
+              timeZone: "Asia/Shanghai",
+              hour: "2-digit",
+              hourCycle: "h23",
+            }).format(slot.slotTs)
+              + ":00",
+        ),
+      ).toBe(true)
+
+      const perfResponse = await server.fetch(
+        adminRequest(
+          "http://localhost/admin/api/usage/performance?range=today&tz=Asia/Shanghai",
+        ),
+      )
+      const perf = (await perfResponse.json()) as Awaited<
+        ReturnType<typeof statsStore.getPerformanceInRange>
+      >
+      expect(perf.summary).toMatchObject({
+        requests: 10,
+        streamingRequests: 9,
+        ttftSamples: 2,
+        tpsSamples: 2,
+        avgTtftMs: 500,
+      })
+      // 100 output tokens / 10 tok/s = 10s; 1800 / 90 = 20s.
+      // Combined throughput is 1900 / 30, not the arithmetic mean (50).
+      expect(perf.summary.avgTps).toBeCloseTo(63.333333, 5)
+      const view = runInNewContext(
+        readFileSync("pages/js/views/performance.js", "utf8")
+          + "\nperformanceView()",
+        {
+          ViewHelpers: {},
+          usageAutoRefresh: () => ({}),
+          API: { usage: { performance: async () => perf } },
+        },
+      )
+      await view.loadPerformance()
+      expect(view.globalStats).toMatchObject({
+        totalRequests: 10,
+        totalSamples: 2,
+        avgTtft: 500,
+      })
+      expect(view.globalStats.avgTps).toBeCloseTo(63.333333, 5)
+      view.summary = null
+      await view.refreshCachedUsage()
+      expect(view.globalStats.avgTps).toBeCloseTo(63.333333, 5)
+    } finally {
+      clock.mockRestore()
+    }
   })
 
   test("surfaces cooldown alerts in fleet and alerts list", async () => {
