@@ -144,6 +144,59 @@ function* decodeFailure(wire: WireRecord): Iterable<StreamEvent> {
   }
 }
 
+/** Final argument snapshots include any prefix already sent as deltas. */
+function* completeToolArguments(
+  current: { id: string; part: IRPart } | undefined,
+  index: number,
+  arguments_: string | undefined,
+): Iterable<StreamEvent> {
+  if (current?.part.type !== "tool_call" || !arguments_) return
+  const prefix = current.part.arguments
+  if (!arguments_.startsWith(prefix)) {
+    throw new Error("Responses tool arguments changed after being streamed")
+  }
+  const suffix = arguments_.slice(prefix.length)
+  current.part = { ...current.part, arguments: arguments_ }
+  if (suffix) {
+    yield {
+      type: "part_delta",
+      partId: current.id,
+      index,
+      delta: { type: "tool_arguments", text: suffix },
+    }
+  }
+}
+
+function* finishResponsePart(
+  started: Map<number, { id: string; part: IRPart }>,
+  index: number,
+  item: WireRecord | undefined,
+): Iterable<StreamEvent> {
+  const current = started.get(index)
+  if (!current) return
+  if (current.part.type === "tool_call") {
+    // If done omits arguments, keep the call open for the terminal snapshot.
+    if (!text(item?.arguments)) return
+    yield* completeToolArguments(current, index, text(item?.arguments))
+  }
+  yield { type: "part_end", partId: current.id, index }
+  started.delete(index)
+}
+
+function* completeTerminalToolArguments(
+  response: ResponsesResponse,
+  started: Map<number, { id: string; part: IRPart }>,
+): Iterable<StreamEvent> {
+  for (const [index, item] of (response.output ?? []).entries()) {
+    if (
+      started.get(index)?.part.type === "tool_call"
+      && item.type === "function_call"
+    ) {
+      yield* finishResponsePart(started, index, record(item))
+    }
+  }
+}
+
 /** Decode Responses SSE one event at a time; no full-stream buffering. */
 export async function* decodeResponsesStream(
   stream: AsyncIterable<CopilotStreamEventLike>,
@@ -245,7 +298,7 @@ export async function* decodeResponsesStream(
       populated.add(index)
       if (type === "response.reasoning_summary_text.delta")
         reasoningPopulated = true
-      yield {
+      const deltaEvent: StreamEvent & { type: "part_delta" } = {
         type: "part_delta",
         partId: current.id,
         index,
@@ -256,6 +309,18 @@ export async function* decodeResponsesStream(
             { type: "thinking", text: delta }
           : { type: "text", text: delta },
       }
+      if (current.part.type === "tool_call")
+        current.part = updatePart(current.part, deltaEvent)
+      yield deltaEvent
+      continue
+    }
+    if (type === "response.function_call_arguments.done") {
+      const index = number(wire.output_index) ?? 0
+      yield* completeToolArguments(
+        started.get(index),
+        index,
+        text(wire.arguments),
+      )
       continue
     }
     if (type === "response.output_item.done") {
@@ -270,17 +335,14 @@ export async function* decodeResponsesStream(
         yield* imageResultEvents(item, index, populated, imageIndices)
         continue
       }
-      const current = started.get(index)
-      if (current) {
-        yield { type: "part_end", partId: current.id, index }
-        started.delete(index)
-      }
+      yield* finishResponsePart(started, index, item)
       continue
     }
     if (type === "response.completed" || type === "response.incomplete") {
       const response = responseFromRecord(wire.response)
       if (response) {
         const result = decodeResponsesResult(response)
+        yield* completeTerminalToolArguments(response, started)
         // Recover items that appeared only in the terminal response object.
         yield* terminalMissingEvents(
           response,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
+import type { ChatCompletionChunk } from "~/services/protocols/chat/types"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
@@ -9,6 +10,7 @@ import type { RequestIR, StreamEvent } from "~/services/ir/types"
 
 import { planTranslation } from "~/services/ir"
 import { encodeChatRequest } from "~/services/ir/codecs/messages-chat/request"
+import { encodeChatStream } from "~/services/ir/codecs/messages-chat/stream"
 import {
   decodeResponsesRequest,
   encodeResponsesRequest,
@@ -533,6 +535,178 @@ describe("Responses IR result and stream codec", () => {
       { type: "base64", mediaType: "image/webp", data: "ZmluYWw=" },
       { type: "base64", mediaType: "image/jpeg", data: "c2Vjb25k" },
     ])
+  })
+
+  test.each([
+    "arguments.done",
+    "output_item.done",
+    "response.completed",
+    "empty_output_item.done",
+  ])(
+    "recovers tool arguments from %s without duplicating streamed prefixes",
+    async (completion) => {
+      const arguments_ = '{"path":"src/对话.js","offset":37}'
+      for (const prefix of ["", '{"path":', arguments_]) {
+        const call = {
+          type: "function_call",
+          id: "fc_read",
+          call_id: "call_read",
+          name: "Read",
+          arguments: arguments_,
+        }
+        async function* upstream() {
+          const events = [
+            {
+              type: "response.output_item.added",
+              output_index: 0,
+              item: { ...call, arguments: "" },
+            },
+            {
+              type: "response.function_call_arguments.delta",
+              output_index: 0,
+              delta: prefix,
+            },
+            // A second call must keep its own identity and already-streamed arguments.
+            {
+              type: "response.output_item.added",
+              output_index: 1,
+              item: {
+                type: "function_call",
+                id: "fc_other",
+                call_id: "call_other",
+                name: "Grep",
+                arguments: "",
+              },
+            },
+            {
+              type: "response.function_call_arguments.delta",
+              output_index: 1,
+              delta: '{"pattern":"pacify"}',
+            },
+            ...(completion === "arguments.done" ?
+              [
+                {
+                  type: "response.function_call_arguments.done",
+                  output_index: 0,
+                  arguments: arguments_,
+                },
+              ]
+            : []),
+            ...(completion !== "response.completed" ?
+              [
+                {
+                  type: "response.output_item.done",
+                  output_index: 0,
+                  item:
+                    completion === "empty_output_item.done" ?
+                      { ...call, arguments: "" }
+                    : call,
+                },
+              ]
+            : []),
+            {
+              type: "response.completed",
+              response: {
+                id: "r_args",
+                model: "test-model",
+                status: "completed",
+                output: [
+                  call,
+                  {
+                    type: "function_call",
+                    id: "fc_other",
+                    call_id: "call_other",
+                    name: "Grep",
+                    arguments: '{"pattern":"pacify"}',
+                  },
+                ],
+              },
+            },
+          ]
+          for (const event of events) {
+            yield { data: JSON.stringify(event) }
+            if (
+              event.type === "response.function_call_arguments.done"
+              || (event.type === "response.output_item.done"
+                && completion !== "empty_output_item.done")
+            ) {
+              // Completion snapshots must repair the public stream immediately,
+              // not wait until the whole upstream response has been buffered.
+              expect(calls.get(0)?.arguments).toBe(arguments_)
+            }
+          }
+        }
+        const calls = new Map<
+          number,
+          { id: string; name: string; arguments: string }
+        >()
+        let finish: string | undefined
+        for await (const event of encodeChatStream(
+          decodeResponsesStream(upstream(), "test-model"),
+        )) {
+          if (event.data === "[DONE]") continue
+          const chunk = JSON.parse(event.data!) as ChatCompletionChunk
+          const choice = chunk.choices[0]!
+          for (const call of choice.delta.tool_calls ?? []) {
+            const existing = calls.get(call.index) ?? {
+              id: "",
+              name: "",
+              arguments: "",
+            }
+            existing.id += call.id ?? ""
+            existing.name += call.function?.name ?? ""
+            existing.arguments += call.function?.arguments ?? ""
+            calls.set(call.index, existing)
+          }
+          if (choice.finish_reason) finish = choice.finish_reason
+        }
+        expect([...calls.values()]).toEqual([
+          { id: "call_read", name: "Read", arguments: arguments_ },
+          { id: "call_other", name: "Grep", arguments: '{"pattern":"pacify"}' },
+        ])
+        expect(finish).toBe("tool_calls")
+      }
+    },
+  )
+
+  test("rejects a final tool snapshot that contradicts emitted arguments", async () => {
+    async function* upstream() {
+      for (const event of [
+        {
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            type: "function_call",
+            id: "fc1",
+            call_id: "call1",
+            name: "Read",
+            arguments: "",
+          },
+        },
+        {
+          type: "response.function_call_arguments.delta",
+          output_index: 0,
+          delta: '{"path":"first.js"',
+        },
+        {
+          type: "response.function_call_arguments.done",
+          output_index: 0,
+          arguments: '{"path":"different.js"}',
+        },
+      ])
+        yield { data: JSON.stringify(event) }
+    }
+    const consume = async () => {
+      for await (const event of encodeChatStream(
+        decodeResponsesStream(upstream(), "test-model"),
+      )) {
+        // Consume through the snapshot; already-sent bytes cannot be rewritten.
+        void event
+      }
+    }
+    await expect(consume()).rejects.toThrow(
+      "tool arguments changed after being streamed",
+    )
   })
 
   test("uses a terminal-only response without losing content", async () => {
