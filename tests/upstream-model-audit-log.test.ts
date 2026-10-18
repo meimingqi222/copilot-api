@@ -54,6 +54,21 @@ describe("upstream model audit in the request log", () => {
     expect(entry?.level).toBe("warn")
   })
 
+  test("keeps the Grok 4.7 build identity without a mismatch warning", async () => {
+    const app = makeApp((c) => {
+      patchRequestLog(c, { model: "grok-4.7", modelUpstream: "grok-4.7" })
+      observeUpstreamResponseModel(c, { model: "grok-4.7-build" })
+      return c.json({ ok: true })
+    })
+
+    await call(app)
+    const entry = logStore.query({ limit: 1 }).entries[0]
+    expect(entry?.modelResponse).toBe("grok-4.7-build")
+    expect(entry?.modelMismatch).toBe(false)
+    expect(entry?.modelVariant).toBe(false)
+    expect(entry?.level).toBe("info")
+  })
+
   test("classifies a date-snapshot difference as a variant, not a mismatch", async () => {
     const app = makeApp((c) => {
       patchRequestLog(c, {

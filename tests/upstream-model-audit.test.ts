@@ -204,6 +204,11 @@ describe("compareUpstreamModels", () => {
   })
 
   test("treats xAI grok runtime build ids as the same model", () => {
+    expect(compareUpstreamModels("grok-4.7", "grok-4.7-build")).toBe("match")
+    expect(compareUpstreamModels("grok-4.7-build", "grok-4.7")).toBe("match")
+    expect(compareUpstreamModels("grok-4.7-latest", "grok-4.7-build")).toBe(
+      "match",
+    )
     expect(compareUpstreamModels("grok-4.6", "grok-4.6-build")).toBe("match")
     expect(compareUpstreamModels("grok-4.5-latest", "grok-4.5-build")).toBe(
       "match",
@@ -217,6 +222,10 @@ describe("compareUpstreamModels", () => {
     expect(compareUpstreamModels("gpt-5.6-sol", "gpt-5.4")).toBe("mismatch")
     expect(compareUpstreamModels("gpt-5.5", "gpt-5.5-build")).toBe("mismatch")
     expect(compareUpstreamModels("grok-4.5", "grok-4.6-build")).toBe("mismatch")
+    expect(compareUpstreamModels("grok-4.7", "grok-4.6-build")).toBe("mismatch")
+    expect(compareUpstreamModels("grok-4.7", "grok-4.7-build-fast")).toBe(
+      "mismatch",
+    )
     expect(compareUpstreamModels("claude-opus-4", "claude-sonnet-4")).toBe(
       "mismatch",
     )

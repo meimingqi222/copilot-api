@@ -241,6 +241,11 @@ export function canonicalRuntimeModelAlias(model: string): string | undefined {
     case "grok-4.6-build": {
       return "grok-4.6-build"
     }
+    case "grok-4.7":
+    case "grok-4.7-latest":
+    case "grok-4.7-build": {
+      return "grok-4.7-build"
+    }
     default: {
       return undefined
     }
