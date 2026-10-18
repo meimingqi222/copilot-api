@@ -80,6 +80,7 @@ export async function getXaiModelsForConnection(
         false,
         undefined,
         !xaiUsesApi(connection),
+        connection.headers,
       ),
       signal,
     },

@@ -14,6 +14,7 @@ export function buildXaiHeaders(
   stream?: boolean,
   sessionId?: string,
   cliIdentity?: boolean,
+  customHeaders?: Record<string, string>,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -37,6 +38,16 @@ export function buildXaiHeaders(
     headers["User-Agent"] = `xai-grok-workspace/${XAI_CLI_CLIENT_VERSION}`
     headers["x-grok-client-identifier"] = "grok-shell"
     headers["x-authenticateresponse"] = "authenticate-response"
+  }
+
+  // Connection overrides are last, like CPA. Match header names without case
+  // so e.g. user-agent replaces User-Agent instead of sending both values.
+  for (const [name, value] of Object.entries(customHeaders ?? {})) {
+    for (const existing of Object.keys(headers)) {
+      if (existing.toLowerCase() === name.toLowerCase())
+        delete headers[existing]
+    }
+    headers[name] = value
   }
 
   return headers

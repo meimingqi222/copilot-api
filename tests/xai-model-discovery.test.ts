@@ -113,12 +113,16 @@ describe("xAI discovery configuration and failures", () => {
       ) as typeof fetch
       const conn = connection(settings)
       conn.proxyUrl = "http://proxy.example.invalid:8080"
+      conn.headers = { "X-Trace": "model-probe" }
       const models = await discoverOAuthModelsForConnection(conn)
       expect(
         models.filter((model) => model.publicId === "grok-imagine-image"),
       ).toMatchObject([{ endpoints: ["images"] }])
       expect(capturedUrl).toBe(expectedUrl)
       expect(capturedInit.proxy).toBe(conn.proxyUrl)
+      expect(new Headers(capturedInit.headers).get("X-Trace")).toBe(
+        "model-probe",
+      )
       expect(new Headers(capturedInit.headers).has("X-XAI-Token-Auth")).toBe(
         cliIdentity,
       )

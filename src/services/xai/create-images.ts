@@ -127,7 +127,13 @@ export async function createXaiImageGeneration(
     n: payload.n ?? 1,
   }
 
-  const headers = buildXaiHeaders(accessToken, false)
+  const headers = buildXaiHeaders(
+    accessToken,
+    false,
+    undefined,
+    false,
+    connection.headers,
+  )
   if (idempotencyKey) {
     headers["x-idempotency-key"] = idempotencyKey
   }
@@ -205,7 +211,13 @@ export async function createXaiImageEdit(
     upstreamBody.image = payload.image
   }
 
-  const headers = buildXaiHeaders(accessToken, false)
+  const headers = buildXaiHeaders(
+    accessToken,
+    false,
+    undefined,
+    false,
+    connection.headers,
+  )
   if (idempotencyKey) {
     headers["x-idempotency-key"] = idempotencyKey
   }

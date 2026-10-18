@@ -183,7 +183,13 @@ export async function createXaiVideoGeneration(
     upstreamBody.reference_images = payload.reference_images
   }
 
-  const headers = buildXaiHeaders(accessToken, false)
+  const headers = buildXaiHeaders(
+    accessToken,
+    false,
+    undefined,
+    false,
+    connection.headers,
+  )
   if (idempotencyKey) {
     headers["x-idempotency-key"] = idempotencyKey
   }
@@ -255,7 +261,13 @@ export async function retrieveXaiVideo(
 
   const response = await fetchWithConnectionProxy(connection, url, {
     method: "GET",
-    headers: buildXaiHeaders(accessToken, false),
+    headers: buildXaiHeaders(
+      accessToken,
+      false,
+      undefined,
+      false,
+      connection.headers,
+    ),
     signal,
   })
 

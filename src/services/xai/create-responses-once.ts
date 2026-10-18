@@ -21,6 +21,7 @@ import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
+import { resolveTranscriptScopeId } from "~/lib/request-scope"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { normalizeResponsesStreamIds } from "~/services/protocols/responses/normalize-stream"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
@@ -35,6 +36,10 @@ import {
   collectResponsesFromSseResponse,
 } from "~/services/responses/sse-collector"
 import {
+  normalizeXaiReasoningItem,
+  normalizeXaiReasoningStream,
+} from "~/services/xai/normalize-stream"
+import {
   applyXaiWebsocketHeaders,
   destroyUpstreamWebsocketSession,
   isAbortLikeError,
@@ -48,7 +53,6 @@ import {
   appendCodexTranscript,
   buildResponsesTranscriptInput,
   getCodexTranscript,
-  resolveSocketResponsesTranscriptSessionId,
   type TranscriptStoreResult,
   xaiTranscriptKey,
 } from "../codex/ws-transcript-cache"
@@ -236,7 +240,13 @@ async function createXaiCompactOnce(
   let currentAccessToken = accessToken
   let response = await fetchWithConnectionProxy(connection, url, {
     method: "POST",
-    headers: buildXaiHeaders(currentAccessToken, false, sessionId, false),
+    headers: buildXaiHeaders(
+      currentAccessToken,
+      false,
+      sessionId,
+      false,
+      connection.headers,
+    ),
     body: httpBody,
     signal,
   })
@@ -265,7 +275,13 @@ async function createXaiCompactOnce(
         currentAccessToken = refreshedToken
         response = await fetchWithConnectionProxy(connection, url, {
           method: "POST",
-          headers: buildXaiHeaders(currentAccessToken, false, sessionId, false),
+          headers: buildXaiHeaders(
+            currentAccessToken,
+            false,
+            sessionId,
+            false,
+            connection.headers,
+          ),
           body: httpBody,
           signal,
         })
@@ -332,6 +348,17 @@ export async function createXaiResponsesOnce(
     !ctx?.forceUpstreamHttp
     && shouldUseUpstreamResponsesWebsocket(connection, "xai", ctx)
   const sessionId = resolveXaiSessionId(payload, model, ctx)
+  // Chat/Messages dispatch carries the Hono context but no explicit scope.
+  const callerScope =
+    ctx?.c ?
+      resolveTranscriptScopeId(ctx.c)
+    : (ctx?.transcriptScopeId ?? "anonymous")
+  // Client-controlled session IDs are not globally unique. Keep upstream
+  // affinity unchanged, but isolate opaque replay by caller and credential.
+  const replaySessionId =
+    sessionId ?
+      JSON.stringify([connection.id, credential.id, callerScope, sessionId])
+    : undefined
 
   // Log cache-prefix diagnostic so we can compare prefix stability across
   // turns within the same session. If instr/tools hash changes between
@@ -366,8 +393,8 @@ export async function createXaiResponsesOnce(
   // so replay is injected only into HTTP requests, mirroring CPA. Reading the
   // cache here lets the HTTP path below reuse the result.
   const replayItems =
-    sessionId && !previousResponseId ?
-      await getReasoningReplayItems(model, sessionId)
+    replaySessionId && !previousResponseId ?
+      await getReasoningReplayItems(model, replaySessionId)
     : undefined
 
   const sanitized = sanitizeXaiResponsesBodyWithRefs(baseBody, model)
@@ -384,11 +411,8 @@ export async function createXaiResponsesOnce(
   // is not an orphan.
   const executionSessionId =
     ctx?.executionSessionId?.trim() || sessionId || connection.id
-  const transcriptSessionId = resolveSocketResponsesTranscriptSessionId(
-    executionSessionId,
-    sessionId,
-    ctx?.transcriptScopeId,
-  )
+  // Transcripts survive account failover, but never cross downstream callers.
+  const transcriptSessionId = JSON.stringify([callerScope, executionSessionId])
   const transcriptKey = xaiTranscriptKey(transcriptSessionId)
   const rawDelta =
     Array.isArray(payload.input) ? (payload.input as Array<unknown>) : []
@@ -431,6 +455,7 @@ export async function createXaiResponsesOnce(
       accessToken,
       wsUrl,
       sessionId,
+      replaySessionId,
       wsBody,
       executionSessionId,
       previousResponseId,
@@ -482,6 +507,7 @@ export async function createXaiResponsesOnce(
       true,
       sessionId,
       useCliIdentity,
+      connection.headers,
     ),
     // HTTP: no previous_response_id. On a chained-turn WS fallback, send the
     // full self-contained input (httpFallbackBody) so the turn is not orphaned.
@@ -518,6 +544,7 @@ export async function createXaiResponsesOnce(
             true,
             sessionId,
             useCliIdentity,
+            connection.headers,
           ),
           body: httpBody,
           signal,
@@ -537,7 +564,7 @@ export async function createXaiResponsesOnce(
   if (clientStream) {
     const stream = await safeSseStream(response, detectResponsesStreamError)
     const normalized = normalizeResponsesStreamIds(
-      stream as unknown as AsyncIterable<CopilotStreamEventLike>,
+      normalizeXaiReasoningStream(stream),
     )
     const restored = restoreXaiNamespaceCallsInStream(
       normalized,
@@ -549,22 +576,23 @@ export async function createXaiResponsesOnce(
         filtered,
         transcriptKey,
         fullInputThisTurn,
-        { model, sessionId },
+        { model, sessionId: replaySessionId },
         ctx.memoryTraceId,
       )
     }
     // Plain HTTP streaming has no transcript to piggyback on — cache the
     // reasoning so a subsequent HTTP turn in this session can replay it.
-    return cacheXaiReasoningReplayInStream(filtered, model, sessionId)
+    return cacheXaiReasoningReplayInStream(filtered, model, replaySessionId)
   }
 
   const result = await collectResponsesFromSseResponse(response, model)
+  for (const item of result.output ?? []) normalizeXaiReasoningItem(item)
   restoreXaiNamespaceToolCallsInResponse(result, namespaceToolRefs)
   searchFilter.filterResponse(result)
-  if (sessionId) {
+  if (replaySessionId) {
     void cacheReasoningReplayItems(
       model,
-      sessionId,
+      replaySessionId,
       result as unknown as Record<string, unknown>,
     )
   }
@@ -602,6 +630,7 @@ interface RunXaiWebSocketTurnOptions {
   accessToken: string
   wsUrl: string
   sessionId?: string
+  replaySessionId?: string
   wsBody: Record<string, unknown>
   executionSessionId: string
   previousResponseId?: string
@@ -628,7 +657,15 @@ async function runXaiWebSocketTurn(
 ): Promise<XaiWsTurnOutcome> {
   let wsToken = opts.accessToken
   const buildWsHeaders = () =>
-    applyXaiWebsocketHeaders(buildXaiHeaders(wsToken, true, opts.sessionId))
+    applyXaiWebsocketHeaders(
+      buildXaiHeaders(
+        wsToken,
+        true,
+        opts.sessionId,
+        false,
+        opts.connection.headers,
+      ),
+    )
 
   for (let wsAttempt = 0; wsAttempt < 2; wsAttempt++) {
     try {
@@ -645,7 +682,9 @@ async function runXaiWebSocketTurn(
         fallbackFullInputBody: opts.fallbackFullInputBody,
         memoryTraceId: opts.ctx?.memoryTraceId,
       })
-      const normalized = normalizeResponsesStreamIds(wsStream)
+      const normalized = normalizeResponsesStreamIds(
+        normalizeXaiReasoningStream(wsStream),
+      )
       const restored = restoreXaiNamespaceCallsInStream(
         normalized,
         opts.namespaceToolRefs,
@@ -660,7 +699,7 @@ async function runXaiWebSocketTurn(
             filtered,
             opts.transcriptKey,
             opts.fullInputThisTurn,
-            { model: opts.model, sessionId: opts.sessionId },
+            { model: opts.model, sessionId: opts.replaySessionId },
             opts.ctx?.memoryTraceId,
           )
         : filtered
@@ -672,10 +711,10 @@ async function runXaiWebSocketTurn(
         opts.model,
       )
       opts.searchFilter.filterResponse(collected)
-      if (opts.sessionId) {
+      if (opts.replaySessionId) {
         void cacheReasoningReplayItems(
           opts.model,
-          opts.sessionId,
+          opts.replaySessionId,
           collected as unknown as Record<string, unknown>,
         )
       }

@@ -245,8 +245,9 @@ function normalizeXaiTool(
     toolType = FUNCTION_TOOL_TYPE
   }
 
-  if (toolType === WEB_SEARCH_TOOL_TYPE && "external_web_access" in next) {
-    const { external_web_access: _e, ...rest } = next
+  if (toolType === WEB_SEARCH_TOOL_TYPE) {
+    // These OpenAI-only options are rejected by Grok (CPA #6641).
+    const { external_web_access: _e, search_context_size: _s, ...rest } = next
     next = rest
   }
 

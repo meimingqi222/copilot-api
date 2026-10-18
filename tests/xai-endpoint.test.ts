@@ -450,6 +450,9 @@ describe("sanitizeXaiResponsesBody", () => {
           {
             type: "web_search",
             external_web_access: true,
+            search_context_size: "high",
+            filters: { allowed_domains: ["example.com"] },
+            user_location: { type: "approximate", country: "GB" },
           },
         ],
       },
@@ -466,7 +469,11 @@ describe("sanitizeXaiResponsesBody", () => {
         name: "fs__write",
         parameters: { type: "object", properties: {} },
       },
-      { type: "web_search" },
+      {
+        type: "web_search",
+        filters: { allowed_domains: ["example.com"] },
+        user_location: { type: "approximate", country: "GB" },
+      },
     ])
   })
 
