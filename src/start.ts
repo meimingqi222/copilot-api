@@ -15,6 +15,7 @@ import {
 import { enforceLogStorageLimits } from "~/lib/log-rotation"
 import { startMemoryDiagnostics } from "~/lib/memory-diagnostics"
 import { loadModelAliases } from "~/lib/model-aliases"
+import { startXaiVersionUpdater } from "~/lib/xai-client-version"
 import { startAntigravityVersionUpdater } from "~/services/antigravity/version"
 import { runRegistry } from "~/services/claude/cli/run-registry"
 
@@ -119,6 +120,8 @@ async function runServer(options: RunServerOptions): Promise<void> {
   if (options.proxyEnv) {
     initProxyFromEnv()
   }
+
+  startXaiVersionUpdater()
 
   state.accountType = options.accountType
   if (options.accountType !== "individual") {

@@ -148,7 +148,7 @@ describe("buildXaiHeaders CLI identity", () => {
     )
     expect(headers["x-grok-client-identifier"]).toBe("grok-shell")
     expect(headers["x-authenticateresponse"]).toBe("authenticate-response")
-    expect(XAI_CLI_CLIENT_VERSION).toBe("0.2.120")
+    expect(XAI_CLI_CLIENT_VERSION).toBe("1.0.62")
   })
 
   test("omits x-grok-conv-id when session is empty (stateless)", () => {

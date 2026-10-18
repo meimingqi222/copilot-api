@@ -1,8 +1,6 @@
-/**
- * Grok CLI client version that cli-chat-proxy expects. Keep in sync with
- * CLIProxyAPI's `xaiClientVersionValue`.
- */
-export const XAI_CLI_CLIENT_VERSION = "0.2.120"
+import { XAI_CLI_CLIENT_VERSION } from "~/lib/xai-client-version"
+
+export { XAI_CLI_CLIENT_VERSION } from "~/lib/xai-client-version"
 
 /**
  * Build headers for xAI upstream requests.

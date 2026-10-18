@@ -1,3 +1,5 @@
+import { XAI_CLI_CLIENT_VERSION } from "~/lib/xai-client-version"
+
 export const ANTIGRAVITY_QUOTA_URLS = [
   "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
   "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
@@ -75,8 +77,6 @@ export const CODEX_RATE_LIMIT_RESET_CREDITS_URL =
 export const CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL =
   "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
 export const XAI_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing"
-/** Keep in sync with `XAI_CLI_CLIENT_VERSION` in `src/services/xai/headers.ts`. */
-const XAI_GROK_CLIENT_VERSION = "0.2.120"
 
 export const CODEX_REQUEST_HEADERS = {
   Authorization: "Bearer $TOKEN$",
@@ -87,9 +87,13 @@ export const CODEX_REQUEST_HEADERS = {
 export const XAI_REQUEST_HEADERS = {
   Authorization: "Bearer $TOKEN$",
   "x-xai-token-auth": "xai-grok-cli",
-  "x-grok-client-version": XAI_GROK_CLIENT_VERSION,
+  get "x-grok-client-version"() {
+    return XAI_CLI_CLIENT_VERSION
+  },
   Accept: "*/*",
-  "User-Agent": `grok-pager/${XAI_GROK_CLIENT_VERSION} grok-shell/${XAI_GROK_CLIENT_VERSION} (macos; aarch64)`,
+  get "User-Agent"() {
+    return `grok-pager/${XAI_CLI_CLIENT_VERSION} grok-shell/${XAI_CLI_CLIENT_VERSION} (macos; aarch64)`
+  },
 } as const
 
 export const CLAUDE_USAGE_WINDOW_KEYS = [
