@@ -396,6 +396,9 @@ describe("CodeBuddy request handling", () => {
     expect(upstreamHeaders?.get("origin")).toBe("https://www.workbuddy.ai")
     expect(upstreamHeaders?.get("referer")).toBe("https://www.workbuddy.ai/")
     expect(upstreamHeaders?.get("accept-language")).toBe("en-US")
+    expect(upstreamHeaders?.get("user-agent")).toBe(
+      "CLI/2.148.0 CodeBuddy/2.148.0",
+    )
     expect(upstreamHeaders?.get("x-no-enterprise-id")).toBe("1")
     expect(upstreamHeaders?.get("x-machine-id")).toMatch(/^[0-9a-f]{36}$/)
     expect(upstreamHeaders?.get("x-session-id")).toMatch(/^[0-9a-f]{36}$/)

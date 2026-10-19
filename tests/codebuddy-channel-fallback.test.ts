@@ -103,6 +103,38 @@ afterEach(() => {
 })
 
 describe("CodeBuddy model discovery", () => {
+  test.each([undefined, "custom-client"])(
+    "international discovery uses WorkBuddy identity unless overridden (%s)",
+    async (customUa) => {
+      const credential = makeCredential()
+      const connection = makeConnection(credential)
+      if (customUa) connection.headers!["uSeR-aGeNt"] = customUa
+      globalThis.fetch = Object.assign(
+        async (_input: string | URL | Request, init?: RequestInit) => {
+          const ua = new Headers(init?.headers).get("user-agent")
+          const supported =
+            ua
+            === (customUa ?? "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1")
+          return Response.json({
+            code: 0,
+            data: {
+              models:
+                supported ?
+                  [{ id: "step-5-preview", name: "Step-5-Preview" }]
+                : [],
+            },
+          })
+        },
+        { preconnect: originalFetch.preconnect },
+      ) as typeof fetch
+      const models = await codebuddyNativeAdapter.discoverModels!({
+        connection,
+        credential,
+      })
+      expect(models.map((m) => m.publicId)).toEqual(["step-5-preview"])
+    },
+  )
+
   test.each([false, true])(
     "merges account-only IDs with config metadata (string array: %s)",
     async (strings) => {
@@ -236,7 +268,10 @@ describe("CodeBuddy model discovery", () => {
     connection.baseUrl = "https://copilot.tencent.com/v2"
     connection.headers = { "X-Domain": "www.codebuddy.cn" }
     globalThis.fetch = Object.assign(
-      async (input: string | URL | Request) => {
+      async (input: string | URL | Request, init?: RequestInit) => {
+        expect(new Headers(init?.headers).get("user-agent")).toBe(
+          "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1",
+        )
         if (String(input).endsWith("/v3/config"))
           return Response.json({
             code: 0,

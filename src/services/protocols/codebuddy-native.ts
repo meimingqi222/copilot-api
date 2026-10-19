@@ -189,6 +189,7 @@ function buildCodebuddyHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
   accessToken = credential.value,
+  userAgent = CODEBUDDY_USER_AGENT,
 ): Record<string, string> {
   const requestId = randomUUID()
   const conversationId = randomUUID()
@@ -227,7 +228,7 @@ function buildCodebuddyHeaders(
     "X-IDE-Version": CODEBUDDY_IDE_VERSION,
     "X-Private-Data": "false",
     "x-codebuddy-request": "1",
-    "User-Agent": CODEBUDDY_USER_AGENT,
+    "User-Agent": userAgent,
 
     // 会话 / 请求追踪
     "X-Request-Id": requestId,
@@ -723,10 +724,19 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       credential,
       signal,
     )
-    const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     const base = new URL(resolveCodebuddyBaseUrl(connection))
     const origin = base.origin
     const isCn = isCodebuddyCnDomain(base.hostname)
+    // config 按 UA 下发不同目录，模型发现优先使用对应 realm 的 WorkBuddy 身份。
+    // 聊天保留原有 CLI 指纹，自定义 header 仍可覆盖。
+    const headers = buildCodebuddyHeaders(
+      connection,
+      credential,
+      accessToken,
+      isCn ?
+        "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1"
+      : "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1",
+    )
     const sources = [
       ["/v3/config"],
       isCn ?
