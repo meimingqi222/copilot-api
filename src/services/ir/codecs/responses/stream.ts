@@ -183,7 +183,7 @@ function* finishResponsePart(
   started.delete(index)
 }
 
-function* completeTerminalToolArguments(
+function* completeTerminalParts(
   response: ResponsesResponse,
   started: Map<number, { id: string; part: IRPart }>,
 ): Iterable<StreamEvent> {
@@ -195,6 +195,31 @@ function* completeTerminalToolArguments(
       yield* finishResponsePart(started, index, record(item))
     }
   }
+  for (const [index, current] of started) {
+    if (current.part.type === "tool_call") continue
+    yield { type: "part_end", partId: current.id, index }
+    started.delete(index)
+  }
+}
+
+function refusalStop(result: ResultIR, refused: boolean): ResultIR["stop"] {
+  return refused && result.stop?.reason === "complete" ?
+      { reason: "refusal", raw: "refusal" }
+    : result.stop
+}
+
+function refusalDelta(wire: WireRecord, refusals: Map<string, string>): string {
+  const key = `${number(wire.output_index) ?? 0}:${number(wire.content_index) ?? 0}`
+  const prefix = refusals.get(key) ?? ""
+  const snapshot = text(wire.refusal) ?? ""
+  const delta =
+    wire.type === "response.refusal.done" ?
+      snapshot.startsWith(prefix) ?
+        snapshot.slice(prefix.length)
+      : ""
+    : (text(wire.delta) ?? "")
+  refusals.set(key, prefix + delta)
+  return delta
 }
 
 /** Decode Responses SSE one event at a time; no full-stream buffering. */
@@ -206,6 +231,8 @@ export async function* decodeResponsesStream(
   const started = new Map<number, { id: string; part: IRPart }>()
   const populated = new Set<number>()
   const imageIndices = new Map<string, number>()
+  const refusals = new Map<string, string>()
+  let refused = false
   let reasoningPopulated = false
   let messageStarted = false
   let nextIndex = 0
@@ -270,15 +297,26 @@ export async function* decodeResponsesStream(
       continue
     }
     if (
-      type === "response.output_text.delta"
-      || type === "response.reasoning_summary_text.delta"
-      || type === "response.function_call_arguments.delta"
+      [
+        "response.output_text.delta",
+        "response.refusal.delta",
+        "response.refusal.done",
+        "response.reasoning_summary_text.delta",
+        "response.function_call_arguments.delta",
+      ].includes(type ?? "")
     ) {
       const index =
         number(wire.output_index)
         ?? (type === "response.reasoning_summary_text.delta" ? -1 : 0)
       let current = started.get(index)
-      if (!current && type === "response.output_text.delta") {
+      if (
+        !current
+        && [
+          "response.output_text.delta",
+          "response.refusal.delta",
+          "response.refusal.done",
+        ].includes(type ?? "")
+      ) {
         const partId = `text_${index}`
         const part: IRPart = { type: "text", text: "" }
         current = { id: partId, part }
@@ -293,7 +331,12 @@ export async function* decodeResponsesStream(
         yield { type: "part_start", partId, index, part }
       }
       if (!current) continue
-      const delta = text(wire.delta)
+      const refusal =
+        type === "response.refusal.delta" || type === "response.refusal.done"
+      const delta = refusal ? refusalDelta(wire, refusals) : text(wire.delta)
+      if (refusal) {
+        refused = true
+      }
       if (!delta) continue
       populated.add(index)
       if (type === "response.reasoning_summary_text.delta")
@@ -342,7 +385,7 @@ export async function* decodeResponsesStream(
       const response = responseFromRecord(wire.response)
       if (response) {
         const result = decodeResponsesResult(response)
-        yield* completeTerminalToolArguments(response, started)
+        yield* completeTerminalParts(response, started)
         // Recover items that appeared only in the terminal response object.
         yield* terminalMissingEvents(
           response,
@@ -352,7 +395,11 @@ export async function* decodeResponsesStream(
           imageIndices,
         )
         if (result.usage) yield { type: "usage", usage: result.usage }
-        yield { type: "message_end", stop: result.stop, status: result.status }
+        yield {
+          type: "message_end",
+          stop: refusalStop(result, refused),
+          status: result.status,
+        }
       } else {
         yield {
           type: "message_end",

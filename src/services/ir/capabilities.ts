@@ -518,8 +518,8 @@ function recordReasoningLoss(
   switch (feature.kind as ReasoningFeatureKind) {
     case "signed_thinking":
       if (
-        target.wire === "gemini"
-        && feature.source?.wire !== "gemini"
+        ((target.wire === "gemini" && feature.source?.wire !== "gemini")
+          || (target.wire === "messages" && feature.source?.wire === "gemini"))
         && capabilities.signedThinking
       ) {
         record(

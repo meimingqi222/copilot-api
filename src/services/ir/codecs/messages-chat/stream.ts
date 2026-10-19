@@ -148,9 +148,7 @@ export async function* decodeChatStream(
 ): AsyncIterable<StreamEvent> {
   let started = false
   let index = 0
-  let open:
-    | { id: string; index: number; type: "text" | "thinking" | "tool_call" }
-    | undefined
+  let open: { id: string; index: number; type: "text" | "thinking" } | undefined
   let stop: IRStop | undefined
   let streamId: string | undefined
   let streamModel: string | undefined
@@ -299,12 +297,11 @@ export async function* decodeChatStream(
         }
       }
       for (const call of delta.tool_calls ?? []) {
-        if (call.id || call.function?.name) {
+        if (!tools.has(call.index) && (call.id || call.function?.name)) {
           const previous = close()
           if (previous) yield previous
           const id = `tool_${index}`
           const toolIndex = index++
-          open = { id, index: toolIndex, type: "tool_call" }
           tools.set(call.index, { id, index: toolIndex })
           yield {
             type: "part_start",
@@ -332,6 +329,8 @@ export async function* decodeChatStream(
   }
   const previous = close()
   if (previous) yield previous
+  for (const tool of tools.values())
+    yield { type: "part_end", partId: tool.id, index: tool.index }
   yield {
     type: "message_end",
     stop: stop ?? { reason: "incomplete" },
@@ -530,7 +529,31 @@ export async function* decodeMessagesStream(
     }
 }
 
-/** Anthropic client wire encoder. No event array or full-response buffering. */
+/** Messages blocks are sequential, unlike interleaved Chat/Responses tools. */
+async function* sequentialMessagesParts(
+  stream: AsyncIterable<StreamEvent>,
+): AsyncIterable<StreamEvent> {
+  const pending = new Map<string, Array<StreamEvent>>()
+  for await (const event of stream) {
+    if (!("partId" in event)) {
+      yield event
+      if (event.type === "error") return
+      continue
+    }
+    const queue = pending.get(event.partId) ?? []
+    queue.push(event)
+    pending.set(event.partId, queue)
+    for (const [id, events] of pending) {
+      const complete = events.at(-1)?.type === "part_end"
+      yield* events
+      events.length = 0
+      if (!complete) break
+      pending.delete(id)
+    }
+  }
+}
+
+/** Streams the active block immediately; only overlapping blocks are queued. */
 export async function* encodeMessagesStream(
   stream: AsyncIterable<StreamEvent>,
   estimatedInputTokens = 0,
@@ -538,6 +561,7 @@ export async function* encodeMessagesStream(
   let usage: IRUsage | undefined
   let started = false
   let ended = false
+  const messagesThinking = new Set<string>()
   const usageDelta = (): AnthropicStreamEventData => ({
     type: "message_delta",
     delta: {},
@@ -555,7 +579,7 @@ export async function* encodeMessagesStream(
     }),
   })
   try {
-    for await (const event of stream) {
+    for await (const event of sequentialMessagesParts(stream)) {
       if (event.type === "message_start") {
         started = true
         yield {
@@ -574,6 +598,7 @@ export async function* encodeMessagesStream(
       } else if (event.type === "part_start") {
         const part = event.part
         if (part.type === "thinking") {
+          if (part.source.wire !== "gemini") messagesThinking.add(event.partId)
           yield {
             type: "content_block_start",
             index: event.index,
@@ -584,6 +609,16 @@ export async function* encodeMessagesStream(
               type: "content_block_delta",
               index: event.index,
               delta: { type: "thinking_delta", thinking: part.text },
+            }
+          if (
+            messagesThinking.has(event.partId)
+            && part.signature
+            && part.signedText === part.text
+          )
+            yield {
+              type: "content_block_delta",
+              index: event.index,
+              delta: { type: "signature_delta", signature: part.signature },
             }
         } else if (part.type === "tool_call") {
           yield {
@@ -675,19 +710,21 @@ export async function* encodeMessagesStream(
             index: event.index,
             delta: { type: "thinking_delta", thinking: delta.text },
           }
-        else if (delta.type === "signature")
-          yield {
-            type: "content_block_delta",
-            index: event.index,
-            delta: { type: "signature_delta", signature: delta.text },
-          }
-        else
+        else if (delta.type === "signature") {
+          if (messagesThinking.has(event.partId))
+            yield {
+              type: "content_block_delta",
+              index: event.index,
+              delta: { type: "signature_delta", signature: delta.text },
+            }
+        } else
           yield {
             type: "content_block_delta",
             index: event.index,
             delta: { type: "input_json_delta", partial_json: delta.text },
           }
       } else if (event.type === "part_end") {
+        messagesThinking.delete(event.partId)
         yield { type: "content_block_stop", index: event.index }
       } else if (event.type === "usage") {
         usage = mergeUsage(usage, event.usage)

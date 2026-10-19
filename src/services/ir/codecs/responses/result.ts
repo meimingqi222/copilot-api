@@ -100,6 +100,12 @@ function decodeStop(response: ResponsesResponse): IRStop {
     return { reason: "max_tokens", raw: "max_output_tokens" }
   if (response.status === "incomplete")
     return { reason: "incomplete", raw: response.incomplete_details?.reason }
+  if (
+    response.output?.some((item) =>
+      array(item, "content").some((part) => part.type === "refusal"),
+    )
+  )
+    return { reason: "refusal", raw: "refusal" }
   if (response.output?.some((item) => item.type === "function_call"))
     return { reason: "tool_calls" }
   return { reason: "complete", raw: response.status }
@@ -140,6 +146,11 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
           && typeof part.text === "string"
         ) {
           parts.push({ type: "text", text: part.text })
+        } else if (
+          part?.type === "refusal"
+          && typeof part.refusal === "string"
+        ) {
+          parts.push({ type: "text", text: part.refusal })
         }
       }
     } else if (item.type === "image_generation_call") {

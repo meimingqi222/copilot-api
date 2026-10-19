@@ -576,10 +576,10 @@ export function decodeChatRequest(payload: ChatCompletionsPayload): RequestIR {
           ) ?? []
         if (
           details.length > 0
-          && alias
-          && details.every((detail) =>
-            alias.includes(extractReasoningBlockText(detail) ?? ""),
-          )
+          && (!alias
+            || details.every((detail) =>
+              alias.includes(extractReasoningBlockText(detail) ?? ""),
+            ))
         ) {
           parts.unshift(
             ...details.map((detail) => ({
@@ -873,7 +873,11 @@ export function encodeMessagesRequest(
     }
     flush()
     const content: Array<AnthropicAssistantContentBlock> = []
-    for (const part of turn.parts) {
+    for (const part of turn.parts.filter((part) =>
+      part.type === "thinking" ?
+        part.source.wire !== "gemini"
+      : part.type !== "text" || part.text.trim(),
+    )) {
       if (part.type === "image" || part.type === "file")
         throw new Error("Assistant media cannot be represented by Messages")
       if (

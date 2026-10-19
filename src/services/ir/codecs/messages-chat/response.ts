@@ -216,7 +216,9 @@ export function encodeMessagesResponse(ir: ResultIR): AnthropicResponse {
       content.push({
         type: "thinking",
         thinking: part.text,
-        ...(part.signature && { signature: part.signature }),
+        ...(part.source.wire !== "gemini"
+          && part.signedText === part.text
+          && part.signature && { signature: part.signature }),
       })
     else if (part.type === "text")
       content.push({ type: "text", text: part.text })

@@ -29,6 +29,7 @@ export async function* decodeGeminiStream(
   let index = 0
   let open: { id: string; index: number; type: "text" | "thinking" } | undefined
   let stop: IRStop | undefined
+  let hasToolCalls = false
   const close = (): StreamEvent | undefined => {
     if (!open) return undefined
     const event: StreamEvent = {
@@ -48,6 +49,21 @@ export async function* decodeGeminiStream(
     } catch {
       continue
     }
+    if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) continue
+    const error = (
+      chunk as { error?: { code?: number; message?: string; status?: string } }
+    ).error
+    if (error) {
+      yield {
+        type: "error",
+        error: {
+          type: error.status ?? "api_error",
+          message: error.message ?? "Gemini upstream stream error",
+          status: error.code,
+        },
+      }
+      return
+    }
     if (!started) {
       started = true
       yield {
@@ -64,6 +80,7 @@ export async function* decodeGeminiStream(
       const decoded = decodeGeminiPart(part)
       if (!decoded) continue
       if (decoded.type === "tool_call" || decoded.type === "image") {
+        if (decoded.type === "tool_call") hasToolCalls = true
         const previous = close()
         if (previous) yield previous
         const id = `gemini_${decoded.type}_${index}`
@@ -109,7 +126,9 @@ export async function* decodeGeminiStream(
         }
     }
     if (candidate?.finishReason)
-      stop = stopFromGemini(candidate.finishReason) ?? stop
+      stop = stopFromGemini(candidate.finishReason, hasToolCalls)
+    else if (chunk.promptFeedback?.blockReason)
+      stop = { reason: "refusal", raw: chunk.promptFeedback.blockReason }
   }
   const previous = close()
   if (previous) yield previous
@@ -128,7 +147,8 @@ export async function* encodeGeminiStream(
   let id = ""
   let resolvedModel = model
   let usage: IRUsage | undefined
-  let ended = false
+  const tools = new Map<string, { name: string; arguments: string }>()
+  const geminiThinking = new Set<string>()
   const frame = (
     parts: Array<GeminiPart>,
     finishReason?: string,
@@ -146,6 +166,15 @@ export async function* encodeGeminiStream(
       ...(id && { responseId: id }),
     }),
   })
+  const incomplete = (): GeminiStreamEvent => ({
+    data: JSON.stringify({
+      error: {
+        code: 502,
+        message: "Upstream stream ended before completion",
+        status: "api_error",
+      },
+    }),
+  })
   for await (const event of stream) {
     if (event.type === "message_start") {
       id = event.id
@@ -155,36 +184,67 @@ export async function* encodeGeminiStream(
     if (event.type === "part_start") {
       if (event.part.type === "text" && event.part.text)
         yield frame([{ text: event.part.text }])
-      else if (event.part.type === "thinking" && event.part.text)
-        yield frame([{ text: event.part.text, thought: true }])
-      else if (event.part.type === "image") {
+      else if (event.part.type === "thinking") {
+        const part = event.part
+        if (part.source?.wire === "gemini") geminiThinking.add(event.partId)
+        const signature =
+          geminiThinking.has(event.partId) && part.signedText === part.text ?
+            part.signature
+          : undefined
+        if (part.text || signature)
+          yield frame([
+            {
+              text: part.text,
+              thought: true,
+              ...(signature && { thoughtSignature: signature }),
+            },
+          ])
+      } else if (event.part.type === "image") {
         const image = toBase64Image(event.part)
         if (image) yield frame([image])
       } else if (event.part.type === "tool_call") {
-        let args: Record<string, unknown> = {}
-        try {
-          const parsed: unknown = JSON.parse(event.part.arguments)
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-            args = parsed as Record<string, unknown>
-        } catch {
-          /* Truncated tool JSON cannot be represented; send an empty object. */
-        }
-        yield frame([{ functionCall: { name: event.part.name, args } }])
+        tools.set(event.partId, {
+          name: event.part.name,
+          arguments: event.part.arguments,
+        })
       }
     } else if (event.type === "part_delta") {
       const delta = event.delta
       if (delta.type === "text") yield frame([{ text: delta.text }])
       else if (delta.type === "thinking")
         yield frame([{ text: delta.text, thought: true }])
-      else if (delta.type === "signature")
-        yield frame([{ thoughtSignature: delta.text }])
+      else if (delta.type === "signature" && geminiThinking.has(event.partId))
+        yield frame([{ text: "", thought: true, thoughtSignature: delta.text }])
+      else if (delta.type === "tool_arguments") {
+        const tool = tools.get(event.partId)
+        if (tool) tool.arguments += delta.text
+      }
+    } else if (event.type === "part_end") {
+      geminiThinking.delete(event.partId)
+      const tool = tools.get(event.partId)
+      tools.delete(event.partId)
+      if (tool) {
+        let args: Record<string, unknown> = {}
+        try {
+          const parsed: unknown = JSON.parse(tool.arguments)
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+            args = parsed as Record<string, unknown>
+        } catch {
+          // Match the result codec's fallback for completed malformed calls.
+        }
+        yield frame([{ functionCall: { name: tool.name, args } }])
+      }
     } else if (event.type === "usage") {
       usage = { ...usage, ...event.usage }
     } else if (event.type === "message_end") {
-      ended = true
-      yield frame([], geminiFinishReason(event.stop))
+      yield (
+        (event.status === "incomplete" && event.stop?.reason !== "max_tokens")
+        || event.stop?.reason === "incomplete"
+      ) ?
+        incomplete()
+      : frame([], geminiFinishReason(event.stop))
+      return
     } else if (event.type === "error") {
-      ended = true
       yield {
         data: JSON.stringify({
           error: {
@@ -194,7 +254,8 @@ export async function* encodeGeminiStream(
           },
         }),
       }
+      return
     }
   }
-  if (!ended) yield frame([], "STOP")
+  yield incomplete()
 }

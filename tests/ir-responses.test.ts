@@ -33,6 +33,19 @@ function payload(
 }
 
 describe("Responses IR request codec", () => {
+  test("encodes boolean search intent and respects explicit opt-out", () => {
+    const request = decodeResponsesRequest(payload("hello"))
+    request.generation = { webSearch: true }
+    expect(encodeResponsesRequest(request).tools).toEqual([
+      { type: "web_search" },
+    ])
+    request.generation = {
+      webSearch: false,
+      webSearchOptions: { allowedDomains: ["example.com"] },
+    }
+    expect(encodeResponsesRequest(request).tools).toBeUndefined()
+  })
+
   test("retains namespace mapping and rejects unknown allowed tool names", () => {
     const request = decodeResponsesRequest(
       payload("hello", {
@@ -209,6 +222,75 @@ describe("Responses IR request codec", () => {
 })
 
 describe("Responses IR result and stream codec", () => {
+  const refusalResponse = {
+    id: "refused",
+    model: "test-model",
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "refusal", refusal: "Cannot comply" }],
+      },
+    ],
+  } as unknown as ResponsesResponse
+
+  test("preserves refusal text in results and replayed history", () => {
+    expect(decodeResponsesResult(refusalResponse)).toMatchObject({
+      parts: [{ type: "text", text: "Cannot comply" }],
+      stop: { reason: "refusal" },
+    })
+    expect(
+      decodeResponsesRequest(payload(refusalResponse.output)).turns[0]?.parts,
+    ).toEqual([{ type: "text", text: "Cannot comply" }])
+  })
+
+  test.each(["", "Cannot ", "Cannot comply"])(
+    "preserves refusal text and stop without duplicating snapshots after prefix %j",
+    async (prefix) => {
+      async function* upstream() {
+        for (const frame of [
+          { type: "response.refusal.delta", output_index: 0, delta: prefix },
+          {
+            type: "response.refusal.done",
+            output_index: 0,
+            refusal: "Cannot comply",
+          },
+          {
+            type: "response.refusal.done",
+            output_index: 0,
+            refusal: "Cannot comply",
+          },
+          { type: "response.completed", response: refusalResponse },
+        ])
+          yield { data: JSON.stringify(frame) }
+      }
+      const events: Array<StreamEvent> = []
+      for await (const event of decodeResponsesStream(upstream(), "test-model"))
+        events.push(event)
+      expect(
+        events
+          .flatMap((event) =>
+            event.type === "part_delta" ? [event.delta.text] : [],
+          )
+          .join(""),
+      ).toBe("Cannot comply")
+      expect(events.at(-1)).toMatchObject({
+        type: "message_end",
+        stop: { reason: "refusal" },
+      })
+      expect(
+        events
+          .filter((event) => event.type === "part_end")
+          .map((event) => event.partId),
+      ).toEqual(
+        events
+          .filter((event) => event.type === "part_start")
+          .map((event) => event.partId),
+      )
+    },
+  )
+
   test("keeps reasoning order and reported usage without inventing ciphertext", () => {
     const response: ResponsesResponse = {
       id: "r1",

@@ -56,6 +56,8 @@ function decodeContent(value: unknown): Array<IRPart> {
       && typeof part.text === "string"
     ) {
       parts.push({ type: "text", text: part.text })
+    } else if (part.type === "refusal" && typeof part.refusal === "string") {
+      parts.push({ type: "text", text: part.refusal })
     } else if (part.type === "input_image") {
       const url = string(part.image_url)
       const fileId = string(part.file_id)
@@ -678,7 +680,12 @@ function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
 export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
   const generation = ir.generation
   const tools = ir.tools ?? []
-  const encodedTools = encodeRequestTools(tools, generation?.webSearchOptions)
+  const encodedTools = encodeRequestTools(
+    tools,
+    generation?.webSearch === false ? undefined
+    : generation?.webSearch ? (generation.webSearchOptions ?? {})
+    : generation?.webSearchOptions,
+  )
   const textFormat = encodeChatTextFormat(
     generation?.textFormat,
   ).response_format

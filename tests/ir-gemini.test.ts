@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
 
+import { planTranslation } from "~/services/ir"
+import {
+  encodeMessagesRequest,
+  encodeMessagesResponse,
+  encodeMessagesStream,
+} from "~/services/ir/codecs/messages-chat"
 import {
   decodeGeminiRequest,
   encodeGeminiRequest,
@@ -19,6 +25,96 @@ import type {
 } from "~/services/protocols/gemini"
 
 describe("gemini request codec", () => {
+  test("never replays Gemini thought signatures as Anthropic signatures", async () => {
+    const thought = {
+      text: "reason",
+      thought: true,
+      thoughtSignature: "gemini_sig",
+    }
+    const request = decodeGeminiRequest({
+      contents: [{ role: "model", parts: [thought, { text: "answer" }] }],
+    })
+    const plan = planTranslation(request, { wire: "messages" })
+    expect(plan.losses.records).toContainEqual(
+      expect.objectContaining({ feature: "signed_thinking", action: "drop" }),
+    )
+    expect(encodeMessagesRequest(request).messages[0]?.content).toEqual([
+      { type: "text", text: "answer" },
+    ])
+    const response = {
+      candidates: [{ content: { parts: [thought] }, finishReason: "STOP" }],
+    }
+    expect(
+      encodeMessagesResponse(decodeGeminiResult(response)).content,
+    ).toEqual([{ type: "thinking", thinking: "reason" }])
+    async function* upstream() {
+      yield { data: JSON.stringify(response) }
+    }
+    const events = []
+    for await (const event of encodeMessagesStream(
+      decodeGeminiStream(upstream(), "m"),
+    ))
+      events.push(event)
+    expect(
+      events.some(
+        (event) =>
+          event.type === "content_block_delta"
+          && event.delta.type === "signature_delta",
+      ),
+    ).toBe(false)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "content_block_delta",
+        delta: { type: "thinking_delta", thinking: "reason" },
+      }),
+    )
+  })
+
+  test.each([
+    { finishReason: "STOP", reason: "tool_calls" },
+    { finishReason: "MAX_TOKENS", reason: "max_tokens" },
+    { finishReason: "SAFETY", reason: "refusal" },
+  ] as const)(
+    "maps $finishReason consistently when the model calls tools",
+    async ({ finishReason, reason }) => {
+      const response = {
+        candidates: [
+          {
+            content: {
+              parts: [
+                { functionCall: { name: "lookup", args: { city: "Paris" } } },
+              ],
+            },
+            finishReason,
+          },
+        ],
+      }
+      expect(decodeGeminiResult(response).stop?.reason).toBe(reason)
+      async function* upstream() {
+        yield {
+          data: JSON.stringify({
+            candidates: [{ content: response.candidates[0]!.content }],
+          }),
+        }
+        yield { data: JSON.stringify({ candidates: [{ finishReason }] }) }
+      }
+      const events = []
+      for await (const event of decodeGeminiStream(upstream(), "m"))
+        events.push(event)
+      expect(events.at(-1)).toMatchObject({
+        type: "message_end",
+        stop: { reason },
+      })
+      expect(
+        decodeGeminiResult({
+          candidates: [
+            { content: { parts: [{ text: "answer" }] }, finishReason: "STOP" },
+          ],
+        }).stop?.reason,
+      ).toBe("complete")
+    },
+  )
+
   test("preserves generated images in results, assistant history and streaming", async () => {
     const ir: ResultIR = {
       id: "images",
@@ -382,6 +478,212 @@ describe("gemini result codec", () => {
 })
 
 describe("gemini stream codec", () => {
+  async function encode(events: Array<StreamEvent>) {
+    const output = []
+    for await (const frame of encodeGeminiStream(
+      (async function* () {
+        yield* events
+        yield { type: "message_end", stop: { reason: "complete" } } as const
+      })(),
+    ))
+      output.push(JSON.parse(frame.data ?? "{}"))
+    return output
+  }
+
+  test.each([false, true])(
+    "does not report truncated output as STOP (terminal event: %s)",
+    async (terminal) => {
+      async function* source(): AsyncIterable<StreamEvent> {
+        yield {
+          type: "part_start",
+          partId: "text",
+          index: 0,
+          part: { type: "text", text: "partial" },
+        }
+        if (terminal)
+          yield {
+            type: "message_end",
+            stop: { reason: "incomplete" },
+            status: "incomplete",
+          }
+      }
+      const frames = []
+      for await (const frame of encodeGeminiStream(source()))
+        frames.push(JSON.parse(frame.data ?? "{}"))
+      expect(frames[0]?.candidates[0].content.parts).toEqual([
+        { text: "partial" },
+      ])
+      expect(frames.at(-1)).toMatchObject({ error: { code: 502 } })
+      expect(
+        frames.some((frame) =>
+          frame.candidates?.some(
+            (candidate: { finishReason?: string }) =>
+              candidate.finishReason === "STOP",
+          ),
+        ),
+      ).toBe(false)
+      expect(
+        (
+          await encode([
+            {
+              type: "message_end",
+              stop: { reason: "max_tokens" },
+              status: "incomplete",
+            },
+          ])
+        ).at(-1),
+      ).toMatchObject({ candidates: [{ finishReason: "MAX_TOKENS" }] })
+    },
+  )
+
+  test("aggregates interleaved tools by identity without delaying text", async () => {
+    const output = await encode([
+      {
+        type: "part_start",
+        partId: "a",
+        index: 0,
+        part: { type: "tool_call", id: "a", name: "first", arguments: '{"q":' },
+      },
+      {
+        type: "part_start",
+        partId: "b",
+        index: 1,
+        part: {
+          type: "tool_call",
+          id: "b",
+          name: "second",
+          arguments: '{"n":2}',
+        },
+      },
+      {
+        type: "part_delta",
+        partId: "text",
+        index: 2,
+        delta: { type: "text", text: "live" },
+      },
+      { type: "part_end", partId: "b", index: 1 },
+      {
+        type: "part_delta",
+        partId: "a",
+        index: 0,
+        delta: { type: "tool_arguments", text: '"value"}' },
+      },
+      { type: "part_end", partId: "a", index: 0 },
+    ])
+    expect(
+      output.flatMap((frame) => frame.candidates[0].content.parts),
+    ).toEqual([
+      { text: "live" },
+      { functionCall: { name: "second", args: { n: 2 } } },
+      { functionCall: { name: "first", args: { q: "value" } } },
+    ])
+  })
+
+  test("does not emit unfinished tools or consume beyond an error", async () => {
+    const output = await encode([
+      {
+        type: "part_start",
+        partId: "a",
+        index: 0,
+        part: { type: "tool_call", id: "a", name: "first", arguments: "" },
+      },
+      {
+        type: "error",
+        error: { type: "UNAVAILABLE", status: 503, message: "failed" },
+      },
+      { type: "part_end", partId: "a", index: 0 },
+    ])
+    expect(output).toEqual([
+      { error: { code: 503, message: "failed", status: "UNAVAILABLE" } },
+    ])
+  })
+
+  test.each([false, true])(
+    "preserves late upstream errors (with malformed prelude: %s)",
+    async (malformed) => {
+      async function* upstream() {
+        if (malformed) {
+          yield { data: "bad json" }
+          yield { data: "null" }
+        }
+        yield* frames([
+          { candidates: [{ content: { parts: [{ text: "partial" }] } }] },
+          {
+            error: {
+              code: 429,
+              message: "quota",
+              status: "RESOURCE_EXHAUSTED",
+            },
+          },
+          { candidates: [{ finishReason: "STOP" }] },
+        ])
+      }
+      const events = []
+      for await (const event of decodeGeminiStream(upstream(), "m"))
+        events.push(event)
+      expect(events.at(-1)).toEqual({
+        type: "error",
+        error: { status: 429, message: "quota", type: "RESOURCE_EXHAUSTED" },
+      })
+      expect(events.some((event) => event.type === "message_end")).toBe(false)
+    },
+  )
+
+  test("only emits Gemini signatures, including initial and incremental signatures", async () => {
+    const parts: ResultIR["parts"] = [
+      {
+        type: "thinking",
+        text: "foreign",
+        signature: "bad",
+        signedText: "foreign",
+        source: { wire: "messages" },
+      },
+      {
+        type: "thinking",
+        text: "native",
+        signature: "good",
+        signedText: "native",
+        source: { wire: "gemini" },
+      },
+      {
+        type: "thinking",
+        text: "changed",
+        signature: "stale",
+        signedText: "original",
+        source: { wire: "gemini" },
+      },
+    ]
+    const result = encodeGeminiResult({
+      id: "r",
+      model: "m",
+      source: { wire: "gemini" },
+      parts,
+    })
+    expect(
+      result.candidates?.[0].content?.parts?.map(
+        (part) => part.thoughtSignature,
+      ),
+    ).toEqual([undefined, "good", undefined])
+    const events: Array<StreamEvent> = []
+    parts.forEach((part, index) => {
+      events.push({ type: "part_start", partId: String(index), index, part })
+      events.push({
+        type: "part_delta",
+        partId: String(index),
+        index,
+        delta: { type: "signature", text: `delta_${index}` },
+      })
+      events.push({ type: "part_end", partId: String(index), index })
+    })
+    const output = await encode(events)
+    expect(
+      output
+        .flatMap((frame) => frame.candidates[0].content.parts)
+        .map((part) => part.thoughtSignature)
+        .filter(Boolean),
+    ).toEqual(["good", "delta_1", "delta_2"])
+  })
+
   async function* frames(events: Array<Record<string, unknown>>) {
     for (const event of events) yield { data: JSON.stringify(event) }
   }

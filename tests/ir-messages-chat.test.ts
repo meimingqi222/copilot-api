@@ -48,7 +48,48 @@ describe("Messages and Chat IR codecs", () => {
     ])
     const replay = encodeMessagesRequest(decodeChatRequest(chat))
     expect(replay.messages[0]?.content).toEqual(payload.messages[0]?.content)
+    delete chat.messages[0]!.reasoning_content
+    const detailsOnly = encodeMessagesRequest(decodeChatRequest(chat))
+    expect(detailsOnly.messages[0]?.content).toEqual(
+      payload.messages[0]?.content,
+    )
   })
+
+  test.each(["", " \n"])(
+    "omits blank assistant text beside tools (%j)",
+    (content) => {
+      const messages = encodeMessagesRequest(
+        decodeChatRequest({
+          model: "claude",
+          messages: [
+            {
+              role: "assistant",
+              content,
+              tool_calls: [
+                {
+                  id: "call_a",
+                  type: "function",
+                  function: { name: "read", arguments: '{"path":"a"}' },
+                },
+              ],
+            },
+          ],
+        }),
+      ).messages
+      expect(messages[0]?.content).toEqual([
+        { type: "tool_use", id: "call_a", name: "read", input: { path: "a" } },
+      ])
+      const empty = encodeMessagesRequest(
+        decodeChatRequest({
+          model: "claude",
+          messages: [{ role: "assistant", content }],
+        }),
+      ).messages
+      expect(empty[0]?.content).toEqual([
+        { type: "text", text: "(no content)" },
+      ])
+    },
+  )
 
   test("moves every tool_result image directly after its matching Chat tool message", () => {
     const payload: AnthropicMessagesPayload = {
@@ -591,6 +632,82 @@ describe("Messages and Chat IR codecs", () => {
       events.push(event)
     expect(events.at(-1)?.type).toBe("error")
     expect(events.some((event) => event.type === "message_stop")).toBe(false)
+  })
+
+  test("serializes interleaved Chat tool arguments into complete Messages blocks", async () => {
+    let upstreamFinished = false
+    async function* source() {
+      const deltas = [
+        {
+          content: "Checking",
+          tool_calls: [
+            {
+              index: 0,
+              id: "call_a",
+              type: "function",
+              function: { name: "read", arguments: '{"path":' },
+            },
+            {
+              index: 1,
+              id: "call_b",
+              type: "function",
+              function: { name: "count", arguments: '{"limit":' },
+            },
+          ],
+        },
+        {
+          tool_calls: [
+            { index: 1, function: { arguments: "7}" } },
+            { index: 0, function: { arguments: '"a"}' } },
+          ],
+        },
+      ]
+      for (const [i, delta] of deltas.entries())
+        yield {
+          data: JSON.stringify({
+            id: "chat_tools",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "m",
+            choices: [
+              { index: 0, delta, finish_reason: i === 1 ? "tool_calls" : null },
+            ],
+          }),
+        }
+      upstreamFinished = true
+    }
+    const blocks: Array<{ name: string; json: string }> = []
+    let current: number | undefined
+    let sawEarlyArgument = false
+    for await (const event of encodeMessagesStream(
+      decodeChatStream(source()),
+    )) {
+      if (event.type === "content_block_start") {
+        expect(current).toBeUndefined()
+        current = event.index
+        if (event.content_block.type === "tool_use")
+          blocks[event.index] = { name: event.content_block.name, json: "" }
+      } else if (event.type === "content_block_delta") {
+        expect(current).toBe(event.index)
+        if (event.delta.type === "input_json_delta") {
+          blocks[event.index]!.json += event.delta.partial_json
+          if (!upstreamFinished) sawEarlyArgument = true
+        }
+      } else if (event.type === "content_block_stop") {
+        expect(current).toBe(event.index)
+        current = undefined
+      }
+    }
+    expect(current).toBeUndefined()
+    expect(sawEarlyArgument).toBe(true)
+    expect(
+      blocks
+        .filter(Boolean)
+        .map((block) => ({ name: block.name, input: JSON.parse(block.json) })),
+    ).toEqual([
+      { name: "read", input: { path: "a" } },
+      { name: "count", input: { limit: 7 } },
+    ])
   })
 
   test("streams Messages tool call to Chat chunks with stable tool index", async () => {

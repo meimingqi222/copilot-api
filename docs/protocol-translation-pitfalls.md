@@ -278,6 +278,30 @@ Windsurf 只有一个 `system_prompt` 字段，必须合并 Chat 的 system 和 
 
 ---
 
+### 3.12 工具流生命周期、拒绝正文和签名来源
+
+- Chat assistant 的空字符串／纯空白正文不能生成 Messages 空 text block；
+  有工具调用时只保留工具，整轮为空才放非空占位符。只有 `reasoning_details`
+  而没有顶层 reasoning 别名时，仍须逐块保留带签名的原文。
+- Chat 并行工具调用的参数可以交错到达。IR 不能在第二个工具开始时结束第一个工具；
+  Messages 编码器按开始顺序串行输出内容块，只缓冲与当前块重叠的后续块，
+  不允许 stop 后再发 delta。Responses 最终快照也必须结束仍打开的正文块。
+- Gemini 的 functionCall 需要完整对象：按 partId 累积初始参数和参数增量，
+  在该块结束时输出一次，不能在开始时输出空对象后忽略增量。Gemini 的 STOP
+  若伴随 functionCall，应转成 tool_calls／tool_use，而非普通回答结束；
+  MAX_TOKENS 和安全拒绝仍保留原有优先级。
+- Responses 的 refusal 正文在响应、历史重放和流式中都要保留。
+  refusal.done 是完整快照，只补尚未发送的后缀，不能重复 delta 中的正文。
+- Gemini google_search 的布尔意图足以在 Responses 中声明 web_search，
+  不能要求一定存在 webSearchOptions 才发送搜索工具。
+- Anthropic signature 与 Gemini thoughtSignature 不可互换，响应和流式同样遵守
+  这一来源边界。Gemini 的后续 SSE error 必须保留错误码和原因，不能降成普通截断。
+
+回归：`tests/ir-messages-chat.test.ts`、`tests/ir-responses.test.ts`、
+`tests/ir-gemini.test.ts`。
+
+---
+
 ## 4. messages ↔ responses（已开放）
 
 IR 不经 Chat 枢纽，两个方向各自直连，没有专属行为，因此不设 wrapper：

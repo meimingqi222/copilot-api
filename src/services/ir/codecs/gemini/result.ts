@@ -11,12 +11,18 @@ import { sanitizeId } from "~/lib/id-sanitizer"
 import { decodeGeminiPart } from "./part"
 import { toBase64Image } from "~/services/ir/codecs/gemini/request"
 
-export function stopFromGemini(finishReason: string | undefined): IRStop {
+export function stopFromGemini(
+  finishReason: string | undefined,
+  hasToolCalls = false,
+): IRStop {
   switch (finishReason) {
     case undefined:
       return { reason: "unknown" }
     case "STOP":
-      return { reason: "complete", raw: finishReason }
+      return {
+        reason: hasToolCalls ? "tool_calls" : "complete",
+        raw: finishReason,
+      }
     case "MAX_TOKENS":
       return { reason: "max_tokens", raw: finishReason }
     case "SAFETY":
@@ -98,7 +104,11 @@ export function decodeGeminiResult(
     source: { wire: "gemini" },
     parts,
     stop:
-      candidate ? stopFromGemini(candidate.finishReason)
+      candidate ?
+        stopFromGemini(
+          candidate.finishReason,
+          parts.some((part) => part.type === "tool_call"),
+        )
       : blocked ? { reason: "refusal", raw: blocked }
       : { reason: "unknown" },
     ...(response.usageMetadata && {
@@ -114,7 +124,11 @@ function toGeminiResultPart(part: IRPart): GeminiPart | undefined {
     return {
       text: part.text,
       thought: true,
-      ...(part.signature && { thoughtSignature: part.signature }),
+      ...(part.signature
+        && part.source?.wire === "gemini"
+        && part.signedText === part.text && {
+          thoughtSignature: part.signature,
+        }),
     }
   if (part.type === "tool_call") {
     let args: Record<string, unknown> = {}
