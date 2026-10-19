@@ -9,7 +9,7 @@ import { getProviderDescriptor } from "~/lib/provider-descriptors"
  *
  * 两个 provider 共用 codebuddy-native 协议，仅 baseUrl / X-Domain 不同：
  * - `codebuddy`（国际版）：www.workbuddy.ai，内置 GPT/Gemini/Kimi 等国际模型
- * - `codebuddy-cn`（国内版）：copilot.tencent.com，内置 DeepSeek/GLM/混元等国产模型
+ * - `codebuddy-cn`（国内版）：copilot.tencent.com，模型列表完全由上游发现
  */
 
 import type { ModelMapping } from "~/lib/provider-connections"
@@ -18,31 +18,6 @@ import { refreshCodebuddyQuota } from "~/services/codebuddy/quota"
 import { getProtocolAdapter } from "~/services/protocols"
 
 import type { ProviderRuntime } from "~/services/providers/runtime"
-
-// ── 国内版（codebuddy-cn）内置模型列表 ──────────────────────────────
-const CODEBUDDY_CN_FALLBACK_MODELS: Array<ModelMapping> = [
-  "deepseek-v4-pro",
-  "deepseek-v4-flash",
-  "deepseek-v4.1-flash",
-  "deepseek-v3-2-volc",
-  "minimax-m3",
-  "minimax-m2.7",
-  "glm-5.3",
-  "glm-5.3-flash",
-  "glm-5.2",
-  "glm-5.1",
-  "kimi-k3-1",
-  "kimi-k2.7",
-  "kimi-k2.6",
-  "hy3",
-  "hy4-preview",
-].map((id) => ({
-  publicId: id,
-  upstreamId: id,
-  endpoints: ["chat" as const],
-  enabled: true,
-  pickerEnabled: true,
-}))
 
 // ── 国际版（codebuddy）内置模型列表 ──────────────────────────────
 // 从 https://www.workbuddy.ai/v3/config 抓取，排除 image/video 专用模型。
@@ -97,7 +72,7 @@ const CODEBUDDY_INTL_FALLBACK_MODELS: Array<ModelMapping> = [
 
 /**
  * 创建 CodeBuddy provider runtime 的工厂函数。
- * 国际版与国内版共用 codebuddy-native 协议，仅 fallback 模型与 i18n key 不同。
+ * 国际版保留静态补充；国内版不补入固定模型，发现失败时返回空列表。
  */
 function createCodebuddyRuntime(opts: {
   id: "codebuddy" | "codebuddy-cn"
@@ -159,5 +134,5 @@ export const codebuddyCnProviderRuntime: ProviderRuntime =
   createCodebuddyRuntime({
     id: "codebuddy-cn",
     name: "CodeBuddy CN",
-    fallbackModels: CODEBUDDY_CN_FALLBACK_MODELS,
+    fallbackModels: [],
   })

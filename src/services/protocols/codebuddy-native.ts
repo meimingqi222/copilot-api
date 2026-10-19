@@ -7,7 +7,7 @@
  *    其中 X-User-Id 从 JWT accessToken 的 `sub` 字段自动提取，用户只需粘贴 token。
  * 2. 后端只支持流式（stream: true），非流式请求会报错。
  *    本 adapter 对非流式请求强制 stream: true 上游，再聚合 SSE 为 ChatCompletionResponse。
- * 3. 模型发现走 /v3/config，国际版另合并个人账号模型接口（非 /v1/models）。
+ * 3. 模型发现合并 /v3/config 与个人账号模型接口（非 /v1/models）。
  * 4. 聊天路径：/v2/chat/completions 为主，渠道校验被拦时回落
  *    /console/chat/completions（对齐 workbuddy-manager 2026-10-17
  *    IsChannelCheck + chatPaths 兜底：业务码 11128/11-128 且文案含
@@ -642,12 +642,38 @@ function codebuddyVendorLabel(
 // ── Adapter ──────────────────────────────────────────────────────────
 
 /** 账号接口返回 ID 数组，config 返回 { models: [...] }；保留上游原始 ID。 */
-function parseCodebuddyModels(data: unknown): Array<ModelMapping> {
+function parseCodebuddyModels(
+  data: unknown,
+  isCn: boolean,
+): Array<ModelMapping> {
   const raw =
     Array.isArray(data) ? data
     : data && typeof data === "object" && "models" in data ? data.models
     : undefined
   if (!Array.isArray(raw)) return []
+  let cliIds: Array<unknown> | undefined
+  if (
+    isCn
+    && data
+    && typeof data === "object"
+    && "agents" in data
+    && Array.isArray(data.agents)
+  ) {
+    const cli = data.agents.find(
+      (agent: unknown) =>
+        agent
+        && typeof agent === "object"
+        && "name" in agent
+        && agent.name === "cli",
+    )
+    if (
+      cli
+      && "models" in cli
+      && Array.isArray(cli.models)
+      && cli.models.length > 0
+    )
+      cliIds = cli.models
+  }
   return raw.flatMap((entry: unknown): Array<ModelMapping> => {
     const model = typeof entry === "string" ? { id: entry } : entry
     if (!model || typeof model !== "object" || !("id" in model)) return []
@@ -658,6 +684,19 @@ function parseCodebuddyModels(data: unknown): Array<ModelMapping> {
       || model.id === "default"
     )
       return []
+    if (cliIds && !cliIds.includes(model.id)) return []
+    if (isCn && typeof entry !== "string") {
+      const maxOutput =
+        "maxOutputTokens" in model ? Number(model.maxOutputTokens) : 0
+      const tags =
+        "tags" in model && Array.isArray(model.tags) ? model.tags : []
+      if (
+        /^(nes-|completion-|codewise-)/i.test(model.id)
+        || (maxOutput > 0 && maxOutput <= 256)
+        || tags.includes("text-to-image")
+      )
+        return []
+    }
     return [
       {
         publicId: model.id,
@@ -687,13 +726,16 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
     const headers = buildCodebuddyHeaders(connection, credential, accessToken)
     const base = new URL(resolveCodebuddyBaseUrl(connection))
     const origin = base.origin
-    const sources = [["/v3/config"]]
-    if (!isCodebuddyCnDomain(base.hostname)) {
-      sources.push([
-        "/v2/enterprises/personal/models",
-        "/console/enterprises/personal/models",
-      ])
-    }
+    const isCn = isCodebuddyCnDomain(base.hostname)
+    const sources = [
+      ["/v3/config"],
+      isCn ?
+        ["/console/enterprises/personal/models"]
+      : [
+          "/v2/enterprises/personal/models",
+          "/console/enterprises/personal/models",
+        ],
+    ]
     const results = await Promise.allSettled(
       sources.map(async (paths) => {
         let lastError: unknown
@@ -721,7 +763,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
             if (!body.data || typeof body.data !== "object") {
               throw new Error(`No CodeBuddy model data from ${path}`)
             }
-            return parseCodebuddyModels(body.data)
+            return parseCodebuddyModels(body.data, isCn)
           } catch (error) {
             signal?.throwIfAborted()
             // 发现接口的失败不应禁用聊天凭据，另一个来源仍可能可用。

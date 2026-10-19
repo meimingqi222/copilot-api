@@ -13,6 +13,11 @@ import {
 } from "~/lib/provider-connections"
 import { resetModelCooldownsForTest } from "~/lib/model-cooldown"
 import { HTTPError } from "~/lib/error"
+import { initializeProtocolAdapters } from "~/services/protocols"
+import {
+  codebuddyCnProviderRuntime,
+  codebuddyProviderRuntime,
+} from "~/services/providers/codebuddy"
 import {
   codebuddyNativeAdapter,
   ensureCodebuddyFirstSystemMessage,
@@ -225,26 +230,117 @@ describe("CodeBuddy model discovery", () => {
     expect(credential.status).toBe("ready")
   })
 
-  test("CN discovery stays on the existing config endpoint", async () => {
+  test("CN merges config with CLI account models and filters non-chat entries", async () => {
     const credential = makeCredential()
     const connection = makeConnection(credential)
     connection.baseUrl = "https://copilot.tencent.com/v2"
     connection.headers = { "X-Domain": "www.codebuddy.cn" }
     globalThis.fetch = Object.assign(
       async (input: string | URL | Request) => {
-        expect(String(input)).toBe("https://copilot.tencent.com/v3/config")
+        if (String(input).endsWith("/v3/config"))
+          return Response.json({
+            code: 0,
+            data: {
+              models: [
+                { id: "cn-model", name: "Config name" },
+                { id: "config-only", maxOutputTokens: 257 },
+                { id: "nes-config" },
+                { id: "tiny-config", maxOutputTokens: 256 },
+                { id: "image-config", tags: ["text-to-image"] },
+              ],
+            },
+          })
+        expect(String(input)).toBe(
+          "https://copilot.tencent.com/console/enterprises/personal/models",
+        )
         return Response.json({
           code: 0,
-          data: { models: [{ id: "cn-model" }] },
+          data: {
+            models: [
+              { id: "cn-model", name: "Account name" },
+              { id: "account-only" },
+              { id: "not-cli" },
+              { id: "disabled", disabled: true },
+              { id: "completion-hidden" },
+              { id: "codewise-hidden" },
+            ],
+            agents: [
+              {
+                name: "cli",
+                models: [
+                  "cn-model",
+                  "account-only",
+                  "disabled",
+                  "completion-hidden",
+                  "codewise-hidden",
+                  "missing",
+                ],
+              },
+            ],
+          },
         })
       },
       { preconnect: originalFetch.preconnect },
     ) as typeof fetch
-    expect(
-      (
-        await codebuddyNativeAdapter.discoverModels!({ connection, credential })
-      ).map((m) => m.publicId),
-    ).toEqual(["cn-model"])
+    initializeProtocolAdapters()
+    const models = await codebuddyCnProviderRuntime.refreshModels(connection)
+    expect(models.map((m) => m.publicId)).toEqual([
+      "cn-model",
+      "config-only",
+      "account-only",
+    ])
+    expect(models[0]?.name).toBe("Config name")
+  })
+
+  test.each(["empty-cli", "no-cli", "string-list", "failed"])(
+    "CN has no static membership fallback (%s)",
+    async (shape) => {
+      const credential = makeCredential()
+      const connection = makeConnection(credential)
+      connection.baseUrl = "https://copilot.tencent.com/v2"
+      globalThis.fetch = Object.assign(
+        async () =>
+          shape === "failed" ?
+            new Response("unavailable", { status: 503 })
+          : Response.json({
+              code: 0,
+              data:
+                shape === "string-list" ?
+                  ["dynamic-only"]
+                : {
+                    models: [{ id: "dynamic-only", maxOutputTokens: 0 }],
+                    ...(shape === "empty-cli" ?
+                      { agents: [{ name: "cli", models: [] }] }
+                    : {}),
+                  },
+            }),
+        { preconnect: originalFetch.preconnect },
+      ) as typeof fetch
+      initializeProtocolAdapters()
+      expect(
+        (await codebuddyCnProviderRuntime.refreshModels(connection)).map(
+          (m) => m.publicId,
+        ),
+      ).toEqual(shape === "failed" ? [] : ["dynamic-only"])
+      expect(
+        codebuddyCnProviderRuntime.getFallbackModels?.(connection),
+      ).toEqual([])
+    },
+  )
+
+  test("international runtime retains its static supplement", async () => {
+    const credential = makeCredential()
+    const connection = makeConnection(credential)
+    globalThis.fetch = Object.assign(
+      async () => Response.json({ code: 0, data: ["dynamic-only"] }),
+      { preconnect: originalFetch.preconnect },
+    ) as typeof fetch
+    initializeProtocolAdapters()
+    const ids = (await codebuddyProviderRuntime.refreshModels(connection)).map(
+      (m) => m.publicId,
+    )
+    expect(ids).toContain("dynamic-only")
+    expect(ids).toContain("gpt-5.6-sol")
   })
 })
 
