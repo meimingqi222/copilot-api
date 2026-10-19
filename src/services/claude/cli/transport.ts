@@ -35,12 +35,16 @@ function explicitTransport(
   return raw === "cli" || raw === "http" ? raw : undefined
 }
 
+export function isClaudeHttpForced(): boolean {
+  return (
+    process.env.COPILOT_API_CLAUDE_TRANSPORT?.trim().toLowerCase() === "http"
+  )
+}
+
 export function resolveClaudeTransport(
   connection: ProviderConnection,
 ): ClaudeTransport {
-  if (
-    process.env.COPILOT_API_CLAUDE_TRANSPORT?.trim().toLowerCase() === "http"
-  ) {
+  if (isClaudeHttpForced()) {
     return "http"
   }
   const explicit = explicitTransport(connection)

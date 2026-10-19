@@ -16,6 +16,8 @@ import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
+import { findClaudeBinary } from "~/services/claude/cli/binary"
+import { isClaudeHttpForced } from "~/services/claude/cli/transport"
 import { cancelConnectionTokenRefresh } from "~/services/copilot/token-refresh"
 import { upgradeOAuthConnectionLabels } from "~/services/oauth/account-label"
 import {
@@ -58,6 +60,10 @@ accountApiRoutes.get("/", async (c) => {
   }
   return c.json({
     accounts: connections.map((conn) => publicAccountFromConnection(conn)),
+    claudeCli: {
+      installed: Boolean(findClaudeBinary()),
+      httpForced: isClaudeHttpForced(),
+    },
   })
 })
 

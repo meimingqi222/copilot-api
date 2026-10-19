@@ -3,6 +3,7 @@ function accountsView() {
     ...ViewHelpers,
     loading: false,
     accounts: [],
+    claudeCli: null,
     searchQuery: "",
     enabledFilter: "",
     providers: [],
@@ -224,6 +225,7 @@ function accountsView() {
           API.providers.list(),
         ])
         this.accounts = data.accounts || []
+        this.claudeCli = data.claudeCli ?? null
         this.providers = providerData.providers || []
       } catch {
         this.showToast(I18n.t("error.load"), "error")
@@ -952,6 +954,13 @@ function accountsView() {
 
     claudeTransport(account) {
       return account.settings?.claudeTransport === "http" ? "http" : "cli"
+    },
+
+    claudeCliStatus(account) {
+      if (!this.claudeCli) return null
+      if (this.claudeCli.httpForced) return "httpForced"
+      if (this.claudeTransport(account) === "http") return "http"
+      return this.claudeCli.installed ? "installed" : "missing"
     },
 
     async toggleClaudeTransport(account) {

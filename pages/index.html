@@ -1877,6 +1877,13 @@
                             class="text-xs text-[var(--apple-text-tertiary)] mt-1"
                             x-text="t('accounts.claudeTransportHint')"
                           ></p>
+                          <p
+                            x-show="claudeCliStatus(account)"
+                            role="status"
+                            class="text-xs mt-2 p-2 rounded-lg"
+                            :class="claudeCliStatus(account) === 'missing' ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300' : 'text-[var(--apple-text-secondary)]'"
+                            x-text="claudeCliStatus(account) ? t('accounts.claudeCli.' + claudeCliStatus(account)) : ''"
+                          ></p>
                         </div>
                         <div
                           x-show="account.availableModels && account.availableModels.length"

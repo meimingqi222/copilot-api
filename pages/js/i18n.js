@@ -553,6 +553,14 @@ const i18n = {
       "accounts.claudeTransportHint":
         "默认固定走 Claude Code CLI；未安装时会报错，不会自动改走 HTTP。点击按钮可切换。全局 HTTP 环境变量会覆盖此设置。",
       "accounts.claudeTransportSuccess": "Claude 接入方式已更新",
+      "accounts.claudeCli.missing":
+        "未检测到 Claude Code CLI，当前无法使用 CLI 接入。请在运行 copilot-api 的服务器或容器中安装 Claude Code，并确保服务进程能找到 claude 命令；安装后刷新此页重新检测。也可手动切换为 HTTP（旧版）。",
+      "accounts.claudeCli.installed":
+        "已检测到服务端 Claude Code CLI。此检测仅确认命令存在，不代表授权或模型请求一定成功。",
+      "accounts.claudeCli.http":
+        "当前使用 HTTP（旧版），无需安装 Claude Code CLI。",
+      "accounts.claudeCli.httpForced":
+        "全局环境变量已强制使用 HTTP（旧版），覆盖此卡片设置；当前无需安装 Claude Code CLI。",
       "accounts.export": "导出账户",
       "accounts.exportSuccess": "账户导出成功",
       "accounts.exportOne": "导出此账户",
@@ -2213,6 +2221,14 @@ const i18n = {
       "accounts.claudeTransportHint":
         "Claude Code CLI is the fixed default. If it is missing, requests fail instead of switching to HTTP. Click to change transport. The global HTTP environment setting overrides this choice.",
       "accounts.claudeTransportSuccess": "Claude transport updated",
+      "accounts.claudeCli.missing":
+        "Claude Code CLI was not found; CLI transport cannot run. Install Claude Code on the server or in the container running copilot-api and make the claude command accessible to the service process. Refresh this page after installation to check again, or manually select HTTP (legacy).",
+      "accounts.claudeCli.installed":
+        "Claude Code CLI was found on the server. This only confirms the command exists, not that authorization or model requests will succeed.",
+      "accounts.claudeCli.http":
+        "Using HTTP (legacy); Claude Code CLI is not required.",
+      "accounts.claudeCli.httpForced":
+        "The global environment setting forces HTTP (legacy), overriding this card. Claude Code CLI is not required.",
       "accounts.export": "Export Accounts",
       "accounts.exportSuccess": "Accounts exported successfully",
       "accounts.exportOne": "Export this account",
