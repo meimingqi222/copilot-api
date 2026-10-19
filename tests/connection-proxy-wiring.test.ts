@@ -462,7 +462,7 @@ describe("codebuddy-native adapter proxy wiring", () => {
 
   test("model discovery carries the connection proxy", async () => {
     // 未过期的 JWT：ensureCodebuddyAccessToken 不会再发刷新请求，
-    // 于是唯一的 fetch 就是 /v3/config。
+    // 只请求 config 和账号模型接口。
     const sub = Buffer.from(
       JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 }),
     ).toString("base64url")
@@ -481,8 +481,9 @@ describe("codebuddy-native adapter proxy wiring", () => {
       credential: connection.credentials[0]!,
     })
 
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
     expect(calls[0]?.url).toContain("/v3/config")
+    expect(calls[1]?.url).toContain("/v2/enterprises/personal/models")
     expectProxied(calls)
   })
 })

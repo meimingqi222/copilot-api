@@ -97,6 +97,157 @@ afterEach(() => {
   __resetProviderConnectionsForTest()
 })
 
+describe("CodeBuddy model discovery", () => {
+  test.each([false, true])(
+    "merges account-only IDs with config metadata (string array: %s)",
+    async (strings) => {
+      const credential = makeCredential()
+      const connection = makeConnection(credential)
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request) => {
+          const config = String(input).endsWith("/v3/config")
+          return Response.json({
+            code: 0,
+            data:
+              config ?
+                {
+                  models: [
+                    { id: "shared", name: "Config name" },
+                    { id: "config-only" },
+                    { id: "default" },
+                    { id: "disabled", disabled: true },
+                  ],
+                }
+              : strings ? ["shared", "account-only", "account-only"]
+              : {
+                  models: [
+                    { id: "shared", name: "Account name" },
+                    { id: "account-only" },
+                  ],
+                },
+          })
+        },
+        { preconnect: originalFetch.preconnect },
+      ) as typeof fetch
+      const models = await codebuddyNativeAdapter.discoverModels!({
+        connection,
+        credential,
+      })
+      expect(models.map((m) => m.publicId)).toEqual([
+        "shared",
+        "config-only",
+        "account-only",
+      ])
+      expect(models[0]?.name).toBe("Config name")
+      expect(models[2]?.upstreamId).toBe("account-only")
+    },
+  )
+
+  test.each(["http", "business", "network"])(
+    "uses console alternate after %s failure, even with null config models",
+    async (failure) => {
+      const credential = makeCredential()
+      const connection = makeConnection(credential)
+      connection.proxyUrl = "http://proxy.example.invalid:8080"
+      const controller = new AbortController()
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request, init?: RequestInit) => {
+          expect((init as RequestInit & { proxy?: string }).proxy).toBe(
+            connection.proxyUrl,
+          )
+          expect(init?.signal).toBe(controller.signal)
+          expect(new Headers(init?.headers).get("authorization")).toBe(
+            `Bearer ${credential.value}`,
+          )
+          const url = String(input)
+          if (url.endsWith("/v3/config"))
+            return Response.json({ code: 0, data: { models: null } })
+          if (url.includes("/v2/enterprises")) {
+            if (failure === "network") throw new Error("network unavailable")
+            return Response.json(
+              { code: 11128 },
+              { status: failure === "http" ? 403 : 200 },
+            )
+          }
+          return Response.json({ code: 0, data: ["account-only"] })
+        },
+        { preconnect: originalFetch.preconnect },
+      ) as typeof fetch
+      const models = await codebuddyNativeAdapter.discoverModels!({
+        connection,
+        credential,
+        signal: controller.signal,
+      })
+      expect(models.map((m) => m.publicId)).toEqual(["account-only"])
+      expect(credential.status).toBe("ready")
+    },
+  )
+
+  test.each(["config", "account"])(
+    "keeps the other source when %s fails",
+    async (failed) => {
+      const credential = makeCredential()
+      const connection = makeConnection(credential)
+      globalThis.fetch = Object.assign(
+        async (input: string | URL | Request) => {
+          const config = String(input).endsWith("/v3/config")
+          return (failed === "config") === config ?
+              new Response("unavailable", { status: 503 })
+            : Response.json({
+                code: 0,
+                data: config ? { models: [{ id: "survivor" }] } : ["survivor"],
+              })
+        },
+        { preconnect: originalFetch.preconnect },
+      ) as typeof fetch
+      expect(
+        (
+          await codebuddyNativeAdapter.discoverModels!({
+            connection,
+            credential,
+          })
+        ).map((m) => m.publicId),
+      ).toEqual(["survivor"])
+      expect(credential.status).toBe("ready")
+    },
+  )
+
+  test("all sources failing rejects without disabling the credential", async () => {
+    const credential = makeCredential()
+    const connection = makeConnection(credential)
+    globalThis.fetch = Object.assign(
+      async () => new Response("forbidden", { status: 403 }),
+      { preconnect: originalFetch.preconnect },
+    ) as typeof fetch
+    await expect(
+      codebuddyNativeAdapter.discoverModels!({ connection, credential }),
+    ).rejects.toBeInstanceOf(HTTPError)
+    expect(credential.status).toBe("ready")
+  })
+
+  test("CN discovery stays on the existing config endpoint", async () => {
+    const credential = makeCredential()
+    const connection = makeConnection(credential)
+    connection.baseUrl = "https://copilot.tencent.com/v2"
+    connection.headers = { "X-Domain": "www.codebuddy.cn" }
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request) => {
+        expect(String(input)).toBe("https://copilot.tencent.com/v3/config")
+        return Response.json({
+          code: 0,
+          data: { models: [{ id: "cn-model" }] },
+        })
+      },
+      { preconnect: originalFetch.preconnect },
+    ) as typeof fetch
+    expect(
+      (
+        await codebuddyNativeAdapter.discoverModels!({ connection, credential })
+      ).map((m) => m.publicId),
+    ).toEqual(["cn-model"])
+  })
+})
+
 describe("isCodebuddyChannelCheck", () => {
   test("hybrid body (first-message msg + channel tips) is a channel check", () => {
     expect(isCodebuddyChannelCheck(hybridChannelBody())).toBe(true)

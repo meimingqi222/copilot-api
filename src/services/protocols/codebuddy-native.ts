@@ -7,7 +7,7 @@
  *    其中 X-User-Id 从 JWT accessToken 的 `sub` 字段自动提取，用户只需粘贴 token。
  * 2. 后端只支持流式（stream: true），非流式请求会报错。
  *    本 adapter 对非流式请求强制 stream: true 上游，再聚合 SSE 为 ChatCompletionResponse。
- * 3. 模型发现走 /v3/config（而非标准 /v1/models），返回 CodeBuddy 专属模型列表。
+ * 3. 模型发现走 /v3/config，国际版另合并个人账号模型接口（非 /v1/models）。
  * 4. 聊天路径：/v2/chat/completions 为主，渠道校验被拦时回落
  *    /console/chat/completions（对齐 workbuddy-manager 2026-10-17
  *    IsChannelCheck + chatPaths 兜底：业务码 11128/11-128 且文案含
@@ -86,13 +86,6 @@ function resolveCodebuddyBaseUrl(connection: ProviderConnection): string {
   const base = raw.replace(/\/+$/, "")
   if (/\/v\d+$/.test(base)) return base
   return `${base}/v2`
-}
-
-/** 从 base URL 的 origin 派生 /v3/config 端点。 */
-function resolveCodebuddyConfigUrl(connection: ProviderConnection): string {
-  const base = resolveCodebuddyBaseUrl(connection)
-  const origin = new URL(base).origin
-  return `${origin}/v3/config`
 }
 
 /**
@@ -648,6 +641,40 @@ function codebuddyVendorLabel(
 
 // ── Adapter ──────────────────────────────────────────────────────────
 
+/** 账号接口返回 ID 数组，config 返回 { models: [...] }；保留上游原始 ID。 */
+function parseCodebuddyModels(data: unknown): Array<ModelMapping> {
+  const raw =
+    Array.isArray(data) ? data
+    : data && typeof data === "object" && "models" in data ? data.models
+    : undefined
+  if (!Array.isArray(raw)) return []
+  return raw.flatMap((entry: unknown): Array<ModelMapping> => {
+    const model = typeof entry === "string" ? { id: entry } : entry
+    if (!model || typeof model !== "object" || !("id" in model)) return []
+    if ("disabled" in model && model.disabled) return []
+    if (
+      typeof model.id !== "string"
+      || !model.id.trim()
+      || model.id === "default"
+    )
+      return []
+    return [
+      {
+        publicId: model.id,
+        upstreamId: model.id,
+        name:
+          "name" in model && typeof model.name === "string" ?
+            model.name
+          : undefined,
+        vendor: codebuddyVendorLabel(model.id),
+        endpoints: ["chat"],
+        enabled: true,
+        pickerEnabled: true,
+      },
+    ]
+  })
+}
+
 export const codebuddyNativeAdapter: ProtocolAdapter = {
   protocol: "codebuddy-native",
 
@@ -658,45 +685,65 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       signal,
     )
     const headers = buildCodebuddyHeaders(connection, credential, accessToken)
-    // /v3/config 不在 /v2 路径下，用独立 URL
-    const response = await fetch(
-      resolveCodebuddyConfigUrl(connection),
-      connectionFetchInit(connection, { headers, signal }),
-    )
-
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to discover CodeBuddy models",
-        "codebuddy-native",
-      )
+    const base = new URL(resolveCodebuddyBaseUrl(connection))
+    const origin = base.origin
+    const sources = [["/v3/config"]]
+    if (!isCodebuddyCnDomain(base.hostname)) {
+      sources.push([
+        "/v2/enterprises/personal/models",
+        "/console/enterprises/personal/models",
+      ])
     }
-
-    const body = (await response.json()) as {
-      code?: number
-      data?: {
-        models?: Array<{
-          id: string
-          name?: string
-          vendor?: string
-        }>
+    const results = await Promise.allSettled(
+      sources.map(async (paths) => {
+        let lastError: unknown
+        for (const path of paths) {
+          try {
+            const response = await fetch(
+              `${origin}${path}`,
+              connectionFetchInit(connection, { headers, signal }),
+            )
+            const text = await response.text()
+            if (!response.ok)
+              throw new HTTPError(
+                "Failed to discover CodeBuddy models",
+                response,
+                text,
+              )
+            const body = JSON.parse(text) as { code?: number; data?: unknown }
+            if (body.code !== undefined && body.code !== 0) {
+              throw new HTTPError(
+                "Failed to discover CodeBuddy models",
+                response,
+                text,
+              )
+            }
+            if (!body.data || typeof body.data !== "object") {
+              throw new Error(`No CodeBuddy model data from ${path}`)
+            }
+            return parseCodebuddyModels(body.data)
+          } catch (error) {
+            signal?.throwIfAborted()
+            // 发现接口的失败不应禁用聊天凭据，另一个来源仍可能可用。
+            lastError = error
+          }
+        }
+        throw lastError
+      }),
+    )
+    signal?.throwIfAborted()
+    const models = new Map<string, ModelMapping>()
+    for (const result of results) {
+      if (result.status !== "fulfilled") continue
+      for (const model of result.value) {
+        if (!models.has(model.publicId)) models.set(model.publicId, model)
       }
     }
-    const models = body.data?.models
-    if (!models || !Array.isArray(models)) return []
-
-    return models
-      .filter((m) => typeof m.id === "string" && m.id !== "default")
-      .map<ModelMapping>((m) => ({
-        publicId: m.id,
-        upstreamId: m.id,
-        name: m.name,
-        vendor: codebuddyVendorLabel(m.id, m.vendor),
-        endpoints: ["chat"],
-        enabled: true,
-        pickerEnabled: true,
-      }))
+    if (results.every((result) => result.status === "rejected")) {
+      const failed = results[0] as PromiseRejectedResult
+      throw failed.reason
+    }
+    return [...models.values()]
   },
 
   async createChatCompletions({
