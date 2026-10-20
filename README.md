@@ -40,6 +40,40 @@ A reverse-engineered proxy for the GitHub Copilot API that exposes it as an Open
 - **Flexible Authentication**: Authenticate interactively or provide a GitHub token directly, suitable for CI/CD environments.
 - **Support for Different Account Types**: Works with individual, business, and enterprise GitHub Copilot plans.
 
+### Google AI Studio (experimental)
+
+In **Account Connections → Add Account**, choose **Google AI Studio**. This
+provider uses the signed-in Playground, not a Gemini API key. Sign in at
+`aistudio.google.com`, open Developer Tools → Network, send a message, and copy
+the **complete Cookie request header** from `GenerateContent`. Paste that value
+into the account's Cookie field; a single cookie or the Authorization header is
+not sufficient. The default Google account (`authuser=0`) is used. Treat this
+Cookie as an account password; never share it. Global Google Cookie rotations
+returned by upstream responses are saved automatically, including on error
+responses. The existing ten-minute model refresh also provides opportunities
+to receive these updates; this cannot guarantee that Google renews the session.
+Expired or revoked logins still require fresh cookies: Cookie-only credentials
+cannot perform Chrome OAuth login recovery. An optional per-account proxy applies
+to all upstream requests, including verification images.
+
+The implementation is pure Bun: no Go executable, installed browser, or helper
+service is needed. It discovers non-paid Playground text-generation models and
+speaks native Gemini; the shared translation layer also serves Chat Completions,
+Messages, and Responses, both streaming and non-streaming. Text, inline/file
+media, function calls/results, search, and signed thinking have wire codecs.
+Live, generated images/audio/video, Interactions, uploads, strict tool choice,
+and schema keywords outside the supported Gemini subset are not implemented;
+unsupported request fields fail explicitly rather than being silently dropped.
+
+Each generation initializes Google's WAA verification and adds about three
+seconds of settling time, plus network latency. Free quotas and account/region
+eligibility still apply; this provider does not bypass a `429` or guarantee every
+challenge will pass. The runtime incorporates MIT-licensed assets from
+[AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) (attribution bundled with
+the assets). It executes Google's hash-checked interpreter in `node:vm` for
+compatibility; **`node:vm` is not a security sandbox**. This reverse-engineered
+integration may break when the website changes.
+
 ### Reversible upstream redaction
 
 Optional content redaction replaces recognized credentials, home-directory prefixes

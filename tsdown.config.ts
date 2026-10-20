@@ -13,6 +13,12 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   removeNodeProtocol: false,
+  copy: [
+    {
+      from: "src/services/aistudio/waa/LICENSE",
+      to: "dist/AIStudio2API-LICENSE.txt",
+    },
+  ],
 
   env: {
     NODE_ENV: "production",

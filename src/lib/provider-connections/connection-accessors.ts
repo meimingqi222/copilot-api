@@ -114,6 +114,9 @@ export function connectionHasCredentials(conn: ProviderConnection): boolean {
   if (provider === "windsurf") {
     return Boolean(getConnectionWindsurfApiKey(conn))
   }
+  if (provider === "aistudio") {
+    return Boolean(getCredentialValue(conn))
+  }
   if (provider !== undefined && isOAuthProviderId(provider)) {
     return Boolean(
       getConnectionOAuthAccessToken(conn) || getConnectionOAuthApiKey(conn),

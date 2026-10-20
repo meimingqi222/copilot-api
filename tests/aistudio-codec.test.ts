@@ -1,0 +1,346 @@
+import { describe, expect, test } from "bun:test"
+import { LocalPayloadUnsupportedError } from "~/lib/error"
+import {
+  encodeGenerateRequest,
+  decodeGenerateStream,
+  collectGenerateResponse,
+} from "~/services/aistudio/codec"
+import type { GeminiGenerateContentRequest } from "~/services/protocols/gemini/types"
+
+const payload: GeminiGenerateContentRequest = {
+  contents: [{ role: "user", parts: [{ text: "hello" }] }],
+}
+
+function response(raw: string, size = 1): Response {
+  const bytes = new TextEncoder().encode(raw)
+  let offset = 0
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.length) {
+          controller.close()
+          return
+        }
+        controller.enqueue(bytes.slice(offset, offset + size))
+        offset += size
+      },
+    }),
+  )
+}
+
+function frame(parts: unknown[], finish?: number): unknown[] {
+  return [
+    [[[parts, "model"], finish]],
+    null,
+    [7, 3, 12, 1, null, null, null, 0, null, 2],
+  ]
+}
+
+describe("AI Studio codec", () => {
+  test("request root and binding preserve ordered multimodal parts", () => {
+    const encoded = encodeGenerateRequest(
+      {
+        ...payload,
+        contents: [
+          {
+            parts: [
+              { text: "hi" },
+              { inlineData: { mimeType: "image/png", data: "YWJj" } },
+              { fileData: { mimeType: "image/png", fileUri: "gs://file" } },
+            ],
+          },
+        ],
+      },
+      "gemini-3-pro",
+    )
+    expect(encoded.body[0]).toBe("models/gemini-3-pro")
+    expect(encoded.body[4]).toBeUndefined()
+    expect(encoded.body[10]).toBe(1)
+    expect(encoded.binding).toBe("hi YWJj ")
+  })
+
+  test("strict tools and unsupported schemas fail explicitly; NONE suppresses tools", () => {
+    expect(() =>
+      encodeGenerateRequest(
+        { ...payload, toolConfig: { functionCallingConfig: { mode: "ANY" } } },
+        "m",
+      ),
+    ).toThrow(LocalPayloadUnsupportedError)
+    expect(() =>
+      encodeGenerateRequest(
+        {
+          ...payload,
+          tools: [
+            {
+              functionDeclarations: [
+                {
+                  name: "f",
+                  parameters: { type: "object", additionalProperties: false },
+                },
+              ],
+            },
+          ],
+        },
+        "m",
+      ),
+    ).toThrow(LocalPayloadUnsupportedError)
+    expect(
+      encodeGenerateRequest(
+        {
+          ...payload,
+          tools: [{ functionDeclarations: [{ name: "f" }] }],
+          toolConfig: { functionCallingConfig: { mode: "NONE" } },
+        },
+        "m",
+      ).body[6],
+    ).toEqual([])
+  })
+
+  test("asymmetric nested tool arguments and signed thoughts round trip through native results", async () => {
+    const args = {
+      s: "not a number",
+      n: 4.5,
+      b: false,
+      nil: null,
+      list: [true, 7, "x", { nested: [null, false] }],
+    }
+    const parts = [
+      { text: "分析😀", thought: true, thoughtSignature: "sig" },
+      {
+        functionCall: { name: "f", id: "call", args },
+        thoughtSignature: "call-sig",
+      },
+    ]
+    const encoded = encodeGenerateRequest(
+      { contents: [{ role: "model", parts }] },
+      "m",
+    )
+    const wire = encoded.body[1] as unknown[][]
+    const raw = JSON.stringify([
+      [frame(wire[0][0] as unknown[]), frame([[null, "done"]], 1)],
+      null,
+    ])
+    for (const size of [1, 2, 7, 4096]) {
+      const result = await collectGenerateResponse(
+        decodeGenerateStream(response(raw, size)),
+      )
+      expect(result.candidates?.[0].content?.parts).toEqual([
+        ...parts,
+        { text: "done" },
+      ])
+      expect(result.candidates?.[0].finishReason).toBe("STOP")
+      expect(result.usageMetadata).toMatchObject({
+        promptTokenCount: 7,
+        candidatesTokenCount: 3,
+        thoughtsTokenCount: 2,
+      })
+    }
+  })
+
+  test("sparse slots, XSSI and multipart frames", async () => {
+    const raw = `)]}'\n[[[[[[[[,"a\\"😀"],[,"b"]],"model"],1]],,[1,2,3]]]]`
+    const result = await collectGenerateResponse(
+      decodeGenerateStream(response(raw)),
+    )
+    expect(result.candidates?.[0].content?.parts).toEqual([
+      { text: 'a"😀' },
+      { text: "b" },
+    ])
+  })
+
+  test("yields before EOF, then detects late transport errors", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c
+      },
+    })
+    const events = decodeGenerateStream(new Response(stream))
+    controller.enqueue(
+      new TextEncoder().encode(
+        `[[${JSON.stringify(frame([[null, "early"]], 1))}`,
+      ),
+    )
+    expect((await events.next()).value?.candidates?.[0].content?.parts).toEqual(
+      [{ text: "early" }],
+    )
+    controller.error(new Error("late failure"))
+    await expect(events.next()).rejects.toThrow("late failure")
+  })
+
+  test("decodes independent protobuf Struct fixtures without coercing string/boolean arguments", async () => {
+    const call: unknown[] = []
+    call[10] = [
+      "lookup",
+      [
+        [
+          ["query", [null, null, "42"]],
+          ["count", [null, 3]],
+          ["exact", [null, null, null, false]],
+          ["empty", [0]],
+        ],
+      ],
+      "id",
+    ]
+    const result = await collectGenerateResponse(
+      decodeGenerateStream(response(JSON.stringify([[frame([call], 1)]]))),
+    )
+    expect(result.candidates?.[0].content?.parts[0].functionCall).toEqual({
+      name: "lookup",
+      id: "id",
+      args: { query: "42", count: 3, exact: false, empty: null },
+    })
+  })
+
+  test("nested schema, search and default thinking wire fields follow source contract", () => {
+    const encoded = encodeGenerateRequest(
+      {
+        ...payload,
+        tools: [
+          {
+            functionDeclarations: [
+              {
+                name: "f",
+                parameters: {
+                  type: "object",
+                  properties: {
+                    entries: { type: "array", items: { type: "integer" } },
+                  },
+                  required: ["entries"],
+                },
+              },
+            ],
+          },
+          { google_search: {} },
+        ],
+      },
+      "gemini-3-pro",
+    )
+    const toolWire = encoded.body[6] as unknown[][]
+    expect(toolWire[0]).toEqual([
+      null,
+      [
+        [
+          "f",
+          undefined,
+          [
+            6,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            [
+              [
+                "entries",
+                [
+                  5,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  [3, undefined, undefined, undefined, undefined],
+                ],
+              ],
+            ],
+            ["entries"],
+          ],
+        ],
+      ],
+    ])
+    expect(toolWire[1]).toEqual([null, null, null, [null, [[]]]])
+    expect((encoded.body[3] as unknown[])[16]).toEqual([1, null, null, 1])
+    expect(
+      (
+        encodeGenerateRequest(payload, "gemini-3-flash-lite")
+          .body[3] as unknown[]
+      )[16],
+    ).toEqual([1, null, null, 4])
+  })
+
+  test("abort cancels an outstanding reader", async () => {
+    let cancelled = false
+    const controller = new AbortController()
+    const events = decodeGenerateStream(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true
+          },
+        }),
+      ),
+      controller.signal,
+    )
+    const pending = events.next()
+    controller.abort(new Error("cancel requested"))
+    await expect(pending).rejects.toThrow("cancel requested")
+    expect(cancelled).toBe(true)
+  })
+
+  test("rejects missing finish, truncation even after finish, late rejection and trailing garbage", async () => {
+    for (const raw of [
+      JSON.stringify([[frame([[null, "x"]])]]),
+      JSON.stringify([[frame([[null, "x"]], 0)]]),
+      `[[${JSON.stringify(frame([], 1))}`,
+      JSON.stringify([[frame([], 1), [null, [1]]]]),
+      JSON.stringify([[frame([[null, "partial"]], 1)], [8, "quota"]]),
+      `${JSON.stringify([[frame([], 1)]])}garbage`,
+    ]) {
+      await expect(
+        collectGenerateResponse(decodeGenerateStream(response(raw))),
+      ).rejects.toThrow()
+    }
+  })
+
+  test("replays unsigned tool calls without replacing genuine signatures", () => {
+    const encoded = encodeGenerateRequest(
+      {
+        contents: [
+          {
+            role: "model",
+            parts: [
+              { functionCall: { name: "a", args: {} } },
+              {
+                functionCall: { name: "b", args: {} },
+                thoughtSignature: "original",
+              },
+            ],
+          },
+        ],
+      },
+      "gemini-3-pro",
+    )
+    const contents = encoded.body[1] as unknown[][]
+    const parts = contents[0][0] as unknown[][]
+    expect(parts[0][14]).toBe("skip_thought_signature_validator")
+    expect(parts[1][14]).toBe("original")
+  })
+
+  test("catalog thinking limits override name heuristics and includeThoughts preserves defaults", () => {
+    const input = {
+      ...payload,
+      generationConfig: { thinkingConfig: { includeThoughts: false } },
+    }
+    const metadata = {
+      outputTokenLimit: 4096,
+      thinkingConfig: [512, null, null, null, null, 3, [1, 3]],
+    }
+    const cfg = encodeGenerateRequest(input, "gemini-3-flash-lite", metadata)
+      .body[3] as unknown[]
+    expect(cfg[3]).toBe(4096)
+    expect(cfg[16]).toEqual([1, 512, null, 3])
+    expect(() =>
+      encodeGenerateRequest(
+        {
+          ...payload,
+          generationConfig: { thinkingConfig: { thinkingLevel: "MINIMAL" } },
+        },
+        "gemini-3-flash-lite",
+        metadata,
+      ),
+    ).toThrow(LocalPayloadUnsupportedError)
+    expect(
+      (encodeGenerateRequest(input, "gemini-3-pro").body[3] as unknown[])[16],
+    ).toEqual([1, null, null, 1])
+  })
+})

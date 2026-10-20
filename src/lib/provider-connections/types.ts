@@ -92,7 +92,7 @@ export function defaultEndpointsForProtocol(
   if (protocol === "anthropic-compatible" || protocol === "claude-native") {
     return ["messages"]
   }
-  if (protocol === "gemini-compatible") {
+  if (protocol === "gemini-compatible" || protocol === "aistudio-native") {
     return ["gemini"]
   }
   return ["chat"]

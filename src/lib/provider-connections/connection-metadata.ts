@@ -377,6 +377,9 @@ export function getPrimaryTokenKey(provider: string): string | undefined {
     case "mimo-aistudio": {
       return "serviceToken"
     }
+    case "aistudio": {
+      return "cookie"
+    }
     default: {
       if (isOAuthProviderId(provider)) return "accessToken"
       return undefined

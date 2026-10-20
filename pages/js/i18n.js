@@ -339,6 +339,10 @@ const i18n = {
         "xiaomichatbot_ph Cookie",
       "accounts.provider.mimo-aistudio.cookieHint":
         "粘贴 Cookie 自动解析（可选）",
+      "accounts.provider.aistudio.name": "Google AI Studio（实验性）",
+      "accounts.provider.aistudio.fields.cookie": "完整 Cookie 请求头",
+      "accounts.provider.aistudio.hint":
+        "实验性纯 Bun 接入，无需 Go 或浏览器助手。先登录 aistudio.google.com，打开开发者工具 → Network，发送一次对话，在 GenerateContent 请求的 Request Headers 中复制完整 Cookie 值（不是单个 token，也不是 Authorization）。Cookie 等同账号凭证，请勿分享；过期后需重新添加账号。当前发现非付费的 Playground generateContent 模型，不支持 Live、视频生成及 Interactions；上游验证与免费额度可能变化，每次请求验证约需额外 3 秒。",
       "accounts.provider.codebuddy": "CodeBuddy",
       "accounts.provider.codebuddy.name": "CodeBuddy",
       "accounts.provider.codebuddy.fields.accessToken": "CodeBuddy AccessToken",
@@ -2000,6 +2004,11 @@ const i18n = {
         "xiaomichatbot_ph Cookie",
       "accounts.provider.mimo-aistudio.cookieHint":
         "Paste cookie to auto-parse (optional)",
+      "accounts.provider.aistudio.name": "Google AI Studio (Experimental)",
+      "accounts.provider.aistudio.fields.cookie":
+        "Complete Cookie request header",
+      "accounts.provider.aistudio.hint":
+        "Experimental pure Bun integration; no Go or browser helper required. Sign in at aistudio.google.com, open Developer Tools → Network, send a message, and copy the complete Cookie value from the GenerateContent request headers (not a single token or Authorization). Treat it as an account password; never share it. Add the account again when it expires. Discovery includes non-paid Playground generateContent models, not Live, video generation or Interactions. Upstream verification and free quotas may change; verification adds about 3 seconds to every request.",
       "accounts.provider.codebuddy": "CodeBuddy",
       "accounts.provider.codebuddy.name": "CodeBuddy",
       "accounts.provider.codebuddy.fields.accessToken": "CodeBuddy AccessToken",

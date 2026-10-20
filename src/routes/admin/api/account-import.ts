@@ -24,6 +24,7 @@ import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
+import { cookieHeader, parseCookieHeader } from "~/services/aistudio/auth"
 import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
   cancelConnectionTokenRefresh,
@@ -245,6 +246,28 @@ function buildProviderAccount(
     }
     case "windsurf": {
       return buildWindsurfAccount(raw, label)
+    }
+    case "aistudio": {
+      try {
+        return {
+          input: {
+            ...baseAccountFields(raw, label, provider),
+            credentials: {
+              cookie: cookieHeader(
+                parseCookieHeader(credentialString(raw, "cookie") ?? ""),
+              ),
+            },
+            settings: raw.settings ?? {},
+          },
+        }
+      } catch (error) {
+        return {
+          error:
+            error instanceof Error ?
+              error.message
+            : "Invalid AI Studio Cookie.",
+        }
+      }
     }
     case "mimo-aistudio": {
       return buildMimoAccount(raw, label)

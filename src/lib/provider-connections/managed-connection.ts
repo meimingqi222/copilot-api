@@ -117,6 +117,7 @@ function tokenValueOf(input: ManagedConnectionInput): string {
   }
   if (provider === "codebuff") return readString(credentials, "authToken") ?? ""
   if (provider === "windsurf") return readString(credentials, "apiKey") ?? ""
+  if (provider === "aistudio") return readString(credentials, "cookie") ?? ""
   if (provider === "mimo-aistudio") {
     return readString(credentials, "serviceToken") ?? ""
   }
@@ -218,6 +219,7 @@ function accountModelToMapping(model: AccountModel): ModelMapping {
     if (ep.includes("chat/completions")) endpoints.push("chat")
     else if (ep.includes("messages")) endpoints.push("messages")
     else if (ep.includes("responses")) endpoints.push("responses")
+    else if (ep === "gemini") endpoints.push("gemini")
     else if (ep.includes("embeddings")) endpoints.push("embeddings")
     else if (ep.includes("images")) endpoints.push("images")
     else if (ep.includes("videos")) endpoints.push("videos")
@@ -425,6 +427,7 @@ function connectionCredentialRecord(
   if (!cred) return {}
   const credentials: Record<string, unknown> = {}
   const ctx = cred.context
+  if (provider === "aistudio") credentials.cookie = cred.value
   if (cred.value) {
     if (provider === "codebuff") credentials.authToken = cred.value
     else if (provider === "windsurf") credentials.apiKey = cred.value
@@ -531,6 +534,9 @@ export function serializeConnectionForExport(
   }
   if (provider === "windsurf") {
     return { ...base, credentials: { apiKey: credentials.apiKey }, settings }
+  }
+  if (provider === "aistudio") {
+    return { ...base, credentials: { cookie: credentials.cookie }, settings }
   }
   if (provider === "codebuddy" || provider === "codebuddy-cn") {
     return {

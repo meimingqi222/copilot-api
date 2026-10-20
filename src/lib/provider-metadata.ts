@@ -1,4 +1,5 @@
 import { providerMetadata as antigravityMetadata } from "~/lib/provider-descriptors/antigravity"
+import { providerMetadata as aistudioMetadata } from "~/lib/provider-descriptors/aistudio"
 import { providerMetadata as claudeMetadata } from "~/lib/provider-descriptors/claude"
 import {
   codebuddyCnMetadata,
@@ -48,6 +49,7 @@ export const PROVIDER_METADATA_ENTRIES = [
   dimagentMetadata,
   geminiMetadata,
   traeCnMetadata,
+  aistudioMetadata,
 ] as const
 
 export const PROVIDER_METADATA = createProviderMetadataCatalog(
