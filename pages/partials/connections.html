@@ -1371,22 +1371,24 @@
                 ></span>
                 <button
                   @click="toggleAliasEditor(m)"
-                  class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0 flex items-center gap-0.5"
+                  class="btn btn-sm btn-secondary flex-shrink-0"
                   :title="t('connections.modelAliases')"
                 >
                   <i data-lucide="tags" class="w-3.5 h-3.5"></i>
+                  <span x-text="t('connections.modelAliases')"></span>
                   <span
                     class="text-[10px] font-mono"
                     x-show="(m.aliases || []).length > 0"
-                    x-text="(m.aliases || []).length"
+                    x-text="'(' + (m.aliases || []).length + ')'"
                   ></span>
                 </button>
                 <button
                   @click="startRenameModel(m)"
-                  class="p-1 rounded hover:bg-[var(--apple-gray-5)] text-[var(--apple-text-secondary)] flex-shrink-0"
+                  class="btn btn-sm btn-secondary flex-shrink-0"
                   :title="t('edit')"
                 >
                   <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                  <span x-text="t('edit')"></span>
                 </button>
                 <button
                   @click="deleteModel(modelManagerConn, m)"
