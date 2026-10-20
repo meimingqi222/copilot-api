@@ -50,6 +50,8 @@ interface RestingQuery {
    * (the trace view) leave it out, and every existing entry keeps applying.
    */
   credentialCreatedAt?: number
+  /** Zero-credit models ignore balance exhaustion, not rate/auth/verify rests. */
+  ignoreCreditExhaustion?: boolean
 }
 
 /**
@@ -106,8 +108,17 @@ export function restingReasonFor(query: RestingQuery): RestInfo | undefined {
 /** Whether the query's scope is sitting out right now. */
 export function isResting(query: RestingQuery): boolean {
   const reads = readResting(query, Date.now())
-  if (reads.registry?.untilMs !== undefined) return true
+  if (
+    reads.registry?.untilMs !== undefined
+    && !(query.ignoreCreditExhaustion && reads.registry.reason === "credit")
+  )
+    return true
   if (reads.modelCooldown !== undefined) return true
+  if (
+    query.ignoreCreditExhaustion
+    && query.credential?.status === "quota_exhausted"
+  )
+    return false
   return reads.credentialStatus !== undefined
 }
 

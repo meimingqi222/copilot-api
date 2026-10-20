@@ -148,7 +148,10 @@ function drainQueue(): void {
       const resolved = resolveConnectionFromTarget(candidate)
       return (
         resolved?.connection.enabled
-        && isCredentialAvailable(resolved.credential)
+        && isCredentialAvailable(resolved.credential, {
+          connection: resolved.connection,
+          modelId: candidate.upstreamModelId,
+        })
       )
     })
     if (eligible.length === 0) {
@@ -254,7 +257,10 @@ export async function waitForAdmissionLease(
     !admission
     || !resolved
     || !resolved.connection.enabled
-    || !isCredentialAvailable(resolved.credential)
+    || !isCredentialAvailable(resolved.credential, {
+      connection: resolved.connection,
+      modelId: granted.target.upstreamModelId,
+    })
     || signal?.aborted
   ) {
     granted.lease.release()

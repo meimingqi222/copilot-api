@@ -140,17 +140,10 @@ export function buildRouteTargets(
 
     const accountManaged = isAccountManagedConnection(connection)
 
-    // account-managed 可用性预过滤(镜像原 isAccountAvailable 账户级门禁:
-    // credential.enabled / authStatus / 限流器冷却 / 配额耗尽)
-    if (
-      onlyAvailable
-      && accountManaged
-      && !isAccountManagedConnectionRoutable(connection)
-    )
-      continue
-
     // account-managed connection 尚未加载模型(undefined/null)→ 通配 target
     if (accountManaged && modelsNotLoaded(connection)) {
+      if (onlyAvailable && !getConnectionRoutability(connection).routable)
+        continue
       // 尚未加载:为请求的模型生成通配 target(publicModelId 为空则不生成)
       if (!options.publicModelId) continue
       // 通配 target 也受模型休息约束（upstreamModelId 即请求模型）。
@@ -208,6 +201,12 @@ export function buildRouteTargets(
     const models = connection.models ?? []
     for (const model of models) {
       if (!model.enabled) continue
+      if (
+        onlyAvailable
+        && accountManaged
+        && !getConnectionRoutability(connection, model.upstreamId).routable
+      )
+        continue
       // account-backed 和普通 connection 都走 resolveEndpoints,使请求的
       // endpoint(如 "messages")可以回退到 connection 实际支持的另一个
       // endpoint(如 "chat"),由 dispatch 层做跨协议翻译。
@@ -233,7 +232,14 @@ export function buildRouteTargets(
       }
 
       for (const credential of credentials) {
-        if (onlyAvailable && !isCredentialAvailable(credential)) continue
+        if (
+          onlyAvailable
+          && !isCredentialAvailable(credential, {
+            connection,
+            modelId: model.upstreamId,
+          })
+        )
+          continue
         // 模型级休息的 (credential, model) 不生成候选。
         if (
           isModelRestingExcluded(connection, credential.id, model.upstreamId)
@@ -273,16 +279,6 @@ export function buildRouteTargets(
 function modelsNotLoaded(connection: ProviderConnection): boolean {
   const models = (connection as { models?: unknown }).models
   return models === undefined || models === null
-}
-
-/**
- * account-managed connection 是否可参与调度。委托统一定义
- * getConnectionRoutability(布尔投影),语义见该函数注释。
- */
-function isAccountManagedConnectionRoutable(
-  connection: ProviderConnection,
-): boolean {
-  return getConnectionRoutability(connection).routable
 }
 
 /**

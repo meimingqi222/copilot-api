@@ -685,6 +685,22 @@ function parseCodebuddyModels(
       || model.id === "default"
     )
       return []
+    const promotions =
+      (
+        data
+        && typeof data === "object"
+        && "modelPromotions" in data
+        && Array.isArray(data.modelPromotions)
+      ) ?
+        data.modelPromotions.filter(
+          (promotion: unknown) =>
+            promotion
+            && typeof promotion === "object"
+            && "modelIds" in promotion
+            && Array.isArray(promotion.modelIds)
+            && promotion.modelIds.includes(model.id),
+        )
+      : []
     if (cliIds && !cliIds.includes(model.id)) return []
     if (isCn && typeof entry !== "string") {
       const maxOutput =
@@ -710,6 +726,10 @@ function parseCodebuddyModels(
         endpoints: ["chat"],
         enabled: true,
         pickerEnabled: true,
+        metadata: {
+          ...("credits" in model && { codebuddyCredits: model.credits }),
+          ...(promotions.length > 0 && { codebuddyPromotions: promotions }),
+        },
       },
     ]
   })

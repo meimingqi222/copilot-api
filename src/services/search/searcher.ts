@@ -103,7 +103,9 @@ function listSearcherCandidates(): Array<Searcher> {
     // Expired cooldowns/quota must be restored before judging routability.
     refreshConnectionAvailability(connection)
     if (!getConnectionRoutability(connection).routable) continue
-    const credential = connection.credentials.find(isCredentialAvailable)
+    const credential = connection.credentials.find((credential) =>
+      isCredentialAvailable(credential),
+    )
     if (!credential) continue
     const model = pickModel(connection, policy.endpoint)
     if (!model) continue

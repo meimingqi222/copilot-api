@@ -8,6 +8,7 @@
  */
 
 import { logger } from "~/lib/logger"
+import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 import { isResting } from "~/lib/route-target/resting"
@@ -97,7 +98,10 @@ function latestExhaustedMarker(
 }
 
 /** Credential 是否当前可调度。 */
-export function isCredentialAvailable(credential: ApiCredential): boolean {
+export function isCredentialAvailable(
+  credential: ApiCredential,
+  scope?: { connection: ProviderConnection; modelId: string },
+): boolean {
   if (!credential.enabled) return false
   // A live rest keeps the credential out even while its persisted status still
   // reads ready: the registry carries the richer reason (verify / credit /
@@ -109,6 +113,9 @@ export function isCredentialAvailable(credential: ApiCredential): boolean {
     credentialId: credential.id,
     credential,
     credentialCreatedAt: credential.createdAt,
+    ignoreCreditExhaustion:
+      scope !== undefined
+      && isCodebuddyModelFree(scope.connection, scope.modelId),
   })
 }
 
@@ -147,6 +154,7 @@ interface ConnectionRoutability {
  */
 export function getConnectionRoutability(
   connection: ProviderConnection,
+  modelId?: string,
 ): ConnectionRoutability {
   if (!connection.enabled) {
     return { routable: false, reason: "disabled", retryAfterSeconds: 0 }
@@ -173,7 +181,10 @@ export function getConnectionRoutability(
     }
   }
   // 配额:credential 级与 connection 级(双写镜像)取并集。
-  const quotaWaitSeconds = getQuotaRetryAfterSeconds(connection)
+  const quotaWaitSeconds =
+    isCodebuddyModelFree(connection, modelId) ? null : (
+      getQuotaRetryAfterSeconds(connection)
+    )
   if (quotaWaitSeconds !== null) {
     return {
       routable: false,

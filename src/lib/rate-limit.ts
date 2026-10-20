@@ -258,7 +258,16 @@ export function getRemainingCooldownSeconds(accountId: string): number {
     // limiter state. Phase 3: cooldownUntil 现存储在 credential.cooldownUntil
     // (由 setConnectionCooldownUntil 同步写入 metadata + credential)。
     const connection = getProviderConnection(accountId)
-    const cooldownUntil = connection?.credentials[0]?.cooldownUntil
+    const credential = connection?.credentials[0]
+    // CodeBuddy balance exhaustion only blocks paid models. Do not import
+    // that quota timestamp into the shared request-pacing limiter.
+    const cooldownUntil =
+      (
+        connection?.protocol === "codebuddy-native"
+        && credential?.status === "quota_exhausted"
+      ) ?
+        undefined
+      : credential?.cooldownUntil
     if (
       cooldownUntil
       && typeof cooldownUntil === "number"

@@ -10,8 +10,24 @@ import {
   __resetProviderConnectionsForTest,
   classifyUpstreamError,
   isCodebuddyChannelCheck,
+  setConnectionQuotaState,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
+import {
+  buildRouteTargets,
+  clearRestRegistryForTest,
+  recordRest,
+} from "~/lib/route-target"
+import {
+  checkRateLimit,
+  getRemainingCooldownSeconds,
+  reportUpstreamRateLimitMs,
+  resetAdaptiveRateLimiterForTest,
+} from "~/lib/rate-limit"
 import { resetModelCooldownsForTest } from "~/lib/model-cooldown"
+import { refreshCodebuddyQuota } from "~/services/codebuddy/quota"
+import { waitForCredentialLease } from "~/services/dispatch/concurrency"
+import { executeWithFailover } from "~/services/dispatch/failover"
 import { HTTPError } from "~/lib/error"
 import { initializeProtocolAdapters } from "~/services/protocols"
 import {
@@ -99,10 +115,219 @@ function contentBlockedBody(): string {
 afterEach(() => {
   globalThis.fetch = originalFetch
   resetModelCooldownsForTest()
+  clearRestRegistryForTest()
+  resetAdaptiveRateLimiterForTest()
   __resetProviderConnectionsForTest()
 })
 
 describe("CodeBuddy model discovery", () => {
+  test("zero credits retain discovered free models, not paid or unknown models", async () => {
+    const credential = makeCredential()
+    const connection = makeConnection(credential)
+    const now = Date.now()
+    const promotion = (id: string, schedule: Record<string, unknown>) => ({
+      kind: "discount",
+      modelIds: [id],
+      schedule,
+      discount: { discountedCredits: "0.00x" },
+    })
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request) => {
+        if (String(input).endsWith("/chat/completions")) return sseResponse()
+        if (String(input).endsWith("get-user-resource"))
+          return Response.json({
+            code: 0,
+            data: {
+              Response: {
+                Data: {
+                  Accounts: [
+                    {
+                      CycleCapacitySize: 100,
+                      CycleCapacityRemain: 0,
+                      CycleCapacityUsed: 100,
+                    },
+                  ],
+                },
+              },
+            },
+          })
+        return Response.json({
+          code: 0,
+          data:
+            String(input).endsWith("/v3/config") ?
+              {
+                models: [
+                  { id: "free", name: "Shared name", credits: "x0.00" },
+                  { id: "free-sg", name: "Shared name", credits: "x0.03" },
+                  { id: "numeric-free", credits: 0 },
+                  { id: "units-free", credits: "x0.00 credits" },
+                  { id: "unknown" },
+                  { id: "blank", credits: "" },
+                  { id: "invalid", credits: "free" },
+                  { id: "null", credits: null },
+                  { id: "promo", credits: "x0.5" },
+                  { id: "expired", credits: "x0.00" },
+                  { id: "night", credits: "x0.00" },
+                ],
+                modelPromotions: [
+                  promotion("promo", {
+                    validUntil: new Date(now + 60_000).toISOString(),
+                  }),
+                  promotion("expired", {
+                    validUntil: new Date(now - 60_000).toISOString(),
+                  }),
+                  promotion("night", {
+                    daily: [{ start: "00:00", end: "08:00" }],
+                  }),
+                ],
+              }
+            : ["account-only"],
+        })
+      },
+      { preconnect: originalFetch.preconnect },
+    ) as typeof fetch
+    connection.models = await codebuddyNativeAdapter.discoverModels!({
+      connection,
+      credential,
+    })
+    connection.models.find((m) => m.upstreamId === "free")!.publicId =
+      "renamed-free"
+    upsertProviderConnection(connection)
+    await refreshCodebuddyQuota(connection)
+    expect(credential.status).toBe("quota_exhausted")
+    // A paid request's balance refusal must not prevent free-model routing.
+    recordRest({
+      credentialId: credential.id,
+      reason: "credit",
+      by: "credit",
+      untilMs: now + 60_000,
+    })
+    const targets = buildRouteTargets({
+      connectionId: connection.id,
+      endpoint: "messages",
+    })
+    expect(targets.map((t) => t.upstreamModelId)).toEqual([
+      "free",
+      "numeric-free",
+      "units-free",
+      "promo",
+    ])
+    expect(targets[0].publicModelId).toBe("renamed-free")
+    expect(targets[0].isTranslated).toBe(true)
+    expect(getRemainingCooldownSeconds(connection.id)).toBe(0)
+    await checkRateLimit(connection.id, AbortSignal.timeout(200))
+    // Queue rechecks must use the same model-scoped availability contract.
+    const granted = await waitForCredentialLease(
+      [targets[0]],
+      AbortSignal.timeout(200),
+    )
+    granted.lease.release()
+    const payload: ChatCompletionsPayload = {
+      model: "renamed-free",
+      messages: [{ role: "user", content: "hello" }],
+      stream: false,
+    }
+    const result = await executeWithFailover({
+      payload,
+      admission: { target: targets[0], connection, credential },
+      routeKind: "chat",
+      signal: AbortSignal.timeout(200),
+      execute: (_adapter, target, current) =>
+        codebuddyNativeAdapter.createChatCompletions!({
+          target,
+          connection: current.connection,
+          credential: current.credential,
+          payload,
+        }),
+    })
+    expect(
+      "choices" in result.response
+        && result.response.choices[0].message.content,
+    ).toBe("ok")
+    expect(credential.status).toBe("quota_exhausted")
+
+    const promo = connection.models.find((m) => m.publicId === "promo")!
+    promo.metadata!.codebuddyPromotions = [
+      promotion("promo", { validUntil: new Date(now - 1).toISOString() }),
+    ]
+    expect(
+      buildRouteTargets({
+        connectionId: connection.id,
+        publicModelId: "promo",
+      }),
+    ).toEqual([])
+
+    // Balance restoration re-enables paid/unknown models, without changing prices.
+    setConnectionQuotaState(connection, "available")
+    clearRestRegistryForTest()
+    expect(
+      buildRouteTargets({
+        connectionId: connection.id,
+        publicModelId: "free-sg",
+      }),
+    ).toHaveLength(1)
+    expect(
+      buildRouteTargets({
+        connectionId: connection.id,
+        publicModelId: "account-only",
+      }),
+    ).toHaveLength(1)
+  })
+
+  test("zero-credit exemptions never bypass auth, rate, verification or model rests", async () => {
+    const credential = makeCredential()
+    const connection = makeConnection(credential)
+    connection.models = [
+      {
+        publicId: "free",
+        upstreamId: "free",
+        endpoints: ["chat"],
+        enabled: true,
+        metadata: { codebuddyCredits: "x0.00" },
+      },
+    ]
+    upsertProviderConnection(connection)
+    setConnectionQuotaState(connection, "exhausted")
+    const targets = () =>
+      buildRouteTargets({ connectionId: connection.id, publicModelId: "free" })
+    expect(targets()).toHaveLength(1)
+    credential.enabled = false
+    expect(targets()).toEqual([])
+    credential.enabled = true
+    credential.status = "auth_error"
+    expect(targets()).toEqual([])
+    credential.status = "quota_exhausted"
+    for (const reason of ["verify", "rate", "quota"] as const) {
+      recordRest({
+        credentialId: credential.id,
+        reason,
+        by: "cooldown",
+        untilMs: Date.now() + 60_000,
+      })
+      expect(targets()).toEqual([])
+      clearRestRegistryForTest()
+    }
+    // The vendor can still refuse a nominally free model; rest that model.
+    await expect(
+      executeWithFailover({
+        payload: { model: "free" },
+        admission: { target: targets()[0], connection, credential },
+        routeKind: "chat",
+        execute: async () => {
+          throw new HTTPError(
+            "No active package",
+            new Response(null, { status: 429 }),
+            '{"error":{"message":"Credits exhausted"}}',
+          )
+        },
+      }),
+    ).rejects.toThrow("No active package")
+    expect(targets()).toEqual([])
+    clearRestRegistryForTest()
+    await reportUpstreamRateLimitMs(connection.id, 1000)
+    expect(targets()).toEqual([])
+  })
+
   test.each([undefined, "custom-client"])(
     "international discovery uses WorkBuddy identity unless overridden (%s)",
     async (customUa) => {

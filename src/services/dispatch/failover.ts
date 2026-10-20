@@ -14,6 +14,7 @@ import {
   LocalUnavailableError,
 } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { identityFromAdmission, recordAccountUsage } from "~/lib/usage"
 import {
   takeUsagePricingRounds,
@@ -858,6 +859,12 @@ async function markCooldown(
   const isHttp = error instanceof HTTPError
   const status = isHttp ? error.response.status : 503
   const authKey = affinityAuthKey(admission.target)
+  const modelCreditRefusal =
+    rest?.reason === "credit"
+    && isCodebuddyModelFree(
+      admission.connection,
+      admission.target.upstreamModelId,
+    )
 
   // Record the richer rest (by / failures / link) so the trace can say why
   // the candidate sits out and for how long, and so a verify refusal can be
@@ -874,12 +881,16 @@ async function markCooldown(
       // Bind the rest to this credential instance, so deleting and re-adding
       // the same key doesn't inherit a rest taken by the one before it.
       credentialCreatedAt: admission.credential.createdAt,
+      ...(modelCreditRefusal && { model: admission.target.upstreamModelId }),
       reason: rest.reason,
       by: rest.by,
       untilMs: rest.restMs > 0 ? rest.untilMs : 0,
       said: isHttp ? (error.responseBody ?? undefined) : undefined,
     })
   }
+  // Even a zero-rate model may require an active package. Honour that actual
+  // refusal for this model instead of repeatedly bypassing a global credit rest.
+  if (modelCreditRefusal) return
 
   // Phase 3: a semantic refusal (the vendor's safety filter, an unapproved
   // channel) rests nothing — same prompt fails everywhere — so leave the
